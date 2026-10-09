@@ -3386,8 +3386,31 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
   }
 
   if (message.type === 'CONNECT_CURRENT_ACCOUNT_TO_DAPP') {
-    dappHandler
-      .connectCurrentAccountToDApp(message.origin)
+    Promise.resolve()
+      .then(async () => {
+        await rehydrateWalletStore()
+        await multichainRuntimeReady
+        const connection = await dappManager.getConnection(message.origin)
+        if (!connection) throw new Error('No connection found for this site')
+        if (connection.caip25Session) {
+          throw new Error('Reconnect from the site to update this multichain session')
+        }
+        if (
+          connection.chainAuthorizations?.some(
+            authorization => authorization.chainId === evmDAppHandler.getCaip2ChainId()
+          )
+        ) {
+          await evmDAppHandler.connectCurrentAccountToDApp(message.origin)
+          return
+        }
+        if (connection.authorizedAccounts || connection.boundWalletId) {
+          await accountContextTransition.runActiveOperation(() =>
+            dappHandler.connectCurrentAccountToDApp(message.origin)
+          )
+          return
+        }
+        throw new Error('Reconnect from the site to update this network permission')
+      })
       .then(() => sendResponse({ success: true }))
       .catch(error => sendResponse({ error: error.message }))
     return true
@@ -5135,19 +5158,21 @@ async function handleSwitchWalletAccount(walletId: string, accountId: string) {
       await synchronizeNativeActiveAccount(walletId, accountId)
       return { selectionStatus: selection.status, generationId: selection.generationId }
     }
+    const restoreFromSession =
+      !isZcashHardwareKeySource(wallet.keySource) &&
+      backgroundZcashWalletRuntime.getSessionPassword() === null
+    // Native accounts have no current Zcash binding. Restore the selected
+    // software credential directly instead of requiring the previous account.
+    if (restoreFromSession && !(await credentialSession.bindZcashCredential(walletId))) {
+      await backgroundZcashWalletRuntime.lock().catch(() => {})
+      throw new Error('Wallet credential is not available in the active session')
+    }
     if (
+      !restoreFromSession &&
       backgroundZcashWalletRuntime.isLocked() &&
       !(await restoreBackgroundZcashRuntimeFromSession())
     ) {
       throw new Error('Wallet is locked. Please unlock and try again.')
-    }
-
-    const restoreFromSession =
-      !isZcashHardwareKeySource(wallet.keySource) &&
-      backgroundZcashWalletRuntime.getSessionPassword() === null
-    if (restoreFromSession && !(await credentialSession.bindZcashCredential(walletId))) {
-      await backgroundZcashWalletRuntime.lock().catch(() => {})
-      throw new Error('Wallet credential is not available in the active session')
     }
 
     const selection = await switchActiveAccountPersistently(walletId, accountId)

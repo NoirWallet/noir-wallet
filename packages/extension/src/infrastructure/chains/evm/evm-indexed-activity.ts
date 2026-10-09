@@ -110,7 +110,7 @@ function mapNormalActivityItem(
       })
     : null
   const status = transaction.failed ? ('failed' as const) : ('final' as const)
-  const id = `rpc:evm:${transaction.transactionHash}:native`
+  const id = `rpc:evm:${chainId}:${transaction.transactionHash}:native`
   return Object.freeze({
     id,
     source: 'rpc' as const,
@@ -182,7 +182,7 @@ function mapTokenActivityItem(
     decodedSupply?.assetId === transfer.assetId &&
     decodedSupply.amountRaw === transfer.amountRaw &&
     normal?.from === transfer.from
-  const id = `rpc:evm:${transfer.transactionHash}:token`
+  const id = `rpc:evm:${chainId}:${transfer.transactionHash}:token`
   const status = 'final' as const
   return Object.freeze({
     id,

@@ -108,6 +108,7 @@ function parseItems(
   for (const item of model.items) {
     if (
       item.source !== 'rpc' ||
+      !item.id.startsWith(`rpc:evm:${chainId}:`) ||
       item.segments.some(
         segment => segment.target.kind !== 'onchain' || segment.target.chainId !== chainId
       )

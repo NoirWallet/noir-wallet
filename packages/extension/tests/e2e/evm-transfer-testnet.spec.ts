@@ -29,12 +29,7 @@ const USDC_CONTRACT = '0x1c7d4b196cb0c7b01d743fbc6116a902379c7238'
 const SEPOLIA_RPC_URL = 'https://ethereum-sepolia-rpc.publicnode.com/**'
 const SEPOLIA_EXPLORER_URL = 'https://sepolia.etherscan.io'
 const ARBITRUM_SEPOLIA_RPC_URL = 'https://sepolia-rollup.arbitrum.io/rpc'
-const EVM_HISTORY_URLS = [
-  'https://eth-sepolia.blockscout.com/api/**',
-  'https://arbitrum-sepolia.blockscout.com/api/**',
-  'https://base-sepolia.blockscout.com/api/**',
-  'https://testnet-explorer.optimism.io/api/**'
-] as const
+const EVM_HISTORY_URLS = ['https://arbitrum-sepolia.blockscout.com/api/**'] as const
 const EVM_HISTORY_PROXY_ORIGINS = new Set([DEFAULT_HISTORY_API_ORIGIN, 'https://evm-history.test'])
 
 async function expectDAppRequestHeader(
@@ -2134,10 +2129,17 @@ test('prepares, signs, broadcasts, monitors, and records a Sepolia transfer in r
   const rpcMethods: string[] = []
   const historyRequests: string[] = []
   const ankrRequests: Array<{ method: string; address: string; blockchains: string[] }> = []
+  const unexpectedHistoryProxyRequests: string[] = []
 
   context.on('request', request => {
     const requestUrl = request.url()
     const url = new URL(requestUrl)
+    if (
+      EVM_HISTORY_PROXY_ORIGINS.has(url.origin) &&
+      /^\/(?:bitcoin|solana|near|evm)(?:\/|$)/.test(url.pathname)
+    ) {
+      unexpectedHistoryProxyRequests.push(requestUrl)
+    }
     if (
       EVM_HISTORY_PROXY_ORIGINS.has(url.origin) &&
       url.pathname === '/' &&
@@ -2351,6 +2353,7 @@ test('prepares, signs, broadcasts, monitors, and records a Sepolia transfer in r
     }))
   )
   expect(ankrRequests).toHaveLength(4)
+  expect(unexpectedHistoryProxyRequests).toEqual([])
   expect(new Set(ankrRequests.map(request => request.address)).size).toBe(2)
   for (const request of ankrRequests) {
     expect(request.blockchains.slice().sort()).toEqual([

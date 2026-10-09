@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test'
 
 import { createEvmAnkrHistoryClient } from '../src/infrastructure/chains/evm/evm-ankr-history-client.ts'
 import { createCachedEvmAnkrHistoryBatchSource } from '../src/infrastructure/chains/evm/evm-cached-history-source.ts'
+import { buildActivityReadModel, parseActivityReadModel } from '../src/core/activity/index.ts'
 
 const ADDRESS = `0x${'1'.repeat(40)}`
 const OTHER = `0x${'2'.repeat(40)}`
@@ -64,6 +65,32 @@ function memoryCache(initial = []) {
     writes
   }
 }
+
+test('keeps identical transaction hashes on different EVM chains distinct after aggregation', async () => {
+  const client = createEvmAnkrHistoryClient(
+    'https://history.example/',
+    chains,
+    async (_url, init) =>
+      JSON.parse(init.body).method === 'ankr_getTransactionsByAddress'
+        ? rpc({ transactions: [tx('eth'), tx('base')] })
+        : rpc({ transfers: [] })
+  )
+  const result = await client.readAddressActivities(
+    chains.map(chain => ({ chainId: chain.chainId, address: ADDRESS, scope }))
+  )
+  const model = buildActivityReadModel({
+    scope,
+    localGraphs: [],
+    supplementalItems: chains.flatMap(chain => result.get(chain.chainId).items)
+  })
+
+  expect(parseActivityReadModel(model).items).toHaveLength(2)
+  expect(new Set(model.items.map(item => item.id)).size).toBe(2)
+  expect(model.items.map(item => item.segments[0].target.chainId).sort()).toEqual([
+    'eip155:1',
+    'eip155:8453'
+  ])
+})
 
 test('Ankr history batches chains by address with the earliest incremental block', async () => {
   const requests = []

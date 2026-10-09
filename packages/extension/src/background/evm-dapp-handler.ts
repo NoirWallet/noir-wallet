@@ -72,6 +72,7 @@ export interface BackgroundEvmDAppHandlerOptions {
     DAppManager,
     | 'getAllConnections'
     | 'getChainAuthorization'
+    | 'addEvmAuthorizedAccount'
     | 'removeChainAuthorization'
     | 'setChainAuthorizedAccounts'
   >
@@ -296,6 +297,16 @@ export class BackgroundEvmDAppHandler {
           .catch(() => {})
       })
     )
+  }
+
+  async connectCurrentAccountToDApp(origin: string): Promise<void> {
+    await this.options.runActiveOperation(async () => {
+      this.assertActiveRuntime()
+      const active = await this.requireUnlockedActiveAccount()
+      await this.options.manager.addEvmAuthorizedAccount(origin, this.chainId, active.reference)
+      const accounts = await this.getAccounts(origin)
+      await this.options.approval.broadcastProviderEvent(origin, 'evm', 'accountsChanged', accounts)
+    })
   }
 
   async notifyChainChanged(numericChainId: number): Promise<void> {

@@ -24,7 +24,10 @@ export interface ActivityCoordinatorOptions {
     scope: ActivityScope,
     accountMode: 'main' | 'private' | 'all'
   ) => Promise<readonly ActivityItem[]>
-  readonly loadPrivateExecutionAddresses?: (scope: ActivityScope) => Promise<readonly string[]>
+  readonly loadPrivateExecutionAddresses?: (
+    scope: ActivityScope,
+    localGraphs: readonly TransactionGraph[]
+  ) => Promise<readonly string[]>
   readonly filterLocalGraphs?: (
     scope: ActivityScope,
     graphs: readonly TransactionGraph[]
@@ -44,25 +47,18 @@ export class ActivityCoordinator {
     const scope = await this.loadActiveScope()
     if (!scope) return null
     const accountMode = options.accountMode ?? 'main'
-    const supplementalItemsPromise =
-      options.includeSupplemental === false
-        ? (this.options.loadCachedSupplementalItems?.(scope, accountMode) ??
-          Promise.resolve(Object.freeze([])))
-        : (this.options.loadSupplementalItems?.(scope, accountMode, options.chainIds) ??
-          Promise.resolve(Object.freeze([])))
-    const [storedLocalGraphs, zcashTransactions, supplementalItems, privateExecutionAddresses] =
-      await Promise.all([
-        this.options.transactionRepository.list({ scope, limit: 200 }),
-        this.options.loadZcashTransactions(scope),
-        supplementalItemsPromise,
-        this.options.loadPrivateExecutionAddresses?.(scope) ?? Promise.resolve(Object.freeze([]))
-      ])
+    const [storedLocalGraphs, zcashTransactions, supplementalItems] = await Promise.all([
+      this.options.transactionRepository.list({ scope, limit: 200 }),
+      this.options.loadZcashTransactions(scope),
+      this.loadSupplementalItems(scope, accountMode, options)
+    ])
     const localGraphs = this.options.filterLocalGraphs
       ? await this.options.filterLocalGraphs(scope, storedLocalGraphs)
       : storedLocalGraphs
+    const privateExecutionAddresses = await this.loadPrivateExecutionAddresses(scope, localGraphs)
     return buildActivityReadModel({
       scope,
-      localGraphs: localGraphs as readonly TransactionGraph[],
+      localGraphs,
       supplementalItems: Object.freeze([
         ...zcashTransactions.map(transaction =>
           mapZcashV1TransactionToActivityItem(transaction, scope)
@@ -72,6 +68,48 @@ export class ActivityCoordinator {
       privateExecutionAddresses,
       limit: 200
     })
+  }
+
+  private async loadSupplementalItems(
+    scope: ActivityScope,
+    accountMode: 'main' | 'private' | 'all',
+    options: ActivityReadOptions
+  ): Promise<readonly ActivityItem[]> {
+    if (options.includeSupplemental !== false && this.options.loadSupplementalItems) {
+      try {
+        return await this.options.loadSupplementalItems(scope, accountMode, options.chainIds)
+      } catch (error) {
+        console.warn(
+          '[Activity] Supplemental refresh failed:',
+          error instanceof Error ? error.name : 'UnknownError'
+        )
+      }
+    }
+    try {
+      return (await this.options.loadCachedSupplementalItems?.(scope, accountMode)) ?? []
+    } catch (error) {
+      console.warn(
+        '[Activity] Supplemental cache read failed:',
+        error instanceof Error ? error.name : 'UnknownError'
+      )
+      return []
+    }
+  }
+
+  private async loadPrivateExecutionAddresses(
+    scope: ActivityScope,
+    localGraphs: readonly TransactionGraph[]
+  ): Promise<readonly string[]> {
+    try {
+      return (await this.options.loadPrivateExecutionAddresses?.(scope, localGraphs)) ?? []
+    } catch (error) {
+      // Optional address classification must not prevent reading persisted transactions.
+      console.warn(
+        '[Activity] Private address lookup failed:',
+        error instanceof Error ? error.name : 'UnknownError'
+      )
+      return []
+    }
   }
 
   private async loadActiveScope(): Promise<ActivityScope | null> {

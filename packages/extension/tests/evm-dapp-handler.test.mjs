@@ -67,6 +67,20 @@ function harness(overrides = {}) {
     async setChainAuthorizedAccounts(origin, tabInfo, chainId, accounts, binding) {
       authorization = { chainId, accounts, binding }
     },
+    async addEvmAuthorizedAccount(origin, chainId, accountRef) {
+      if (!authorization || authorization.chainId !== chainId) {
+        throw new Error('Reconnect from the site to update this network permission')
+      }
+      authorization = {
+        ...authorization,
+        accounts: authorization.accounts.some(
+          item => item.walletId === accountRef.walletId && item.accountId === accountRef.accountId
+        )
+          ? authorization.accounts
+          : [...authorization.accounts, accountRef],
+        binding: accountRef
+      }
+    },
     async removeChainAuthorization() {
       authorization = null
     }
@@ -239,6 +253,50 @@ function harness(overrides = {}) {
 }
 
 test.describe('Background EVM dApp handler', () => {
+  test('wallet-side Connect adds the active account to an existing EVM grant and broadcasts it', async () => {
+    let activeContext = account
+    const state = harness({ loadActiveContext: async () => activeContext })
+    const origin = 'https://dapp.example'
+    await state.handler.request({ method: 'eth_requestAccounts' }, origin, {})
+    activeContext = {
+      ...account,
+      chainAccount: {
+        ...account.chainAccount,
+        scope: { ...account.chainAccount.scope, accountId: 'account-2' },
+        identity: {
+          kind: 'account-identifier',
+          value: '0x2222222222222222222222222222222222222222'
+        }
+      }
+    }
+    await state.handler.connectCurrentAccountToDApp(origin)
+    expect(state.getAuthorization()).toEqual({
+      chainId: 'eip155:1',
+      accounts: [
+        { walletId: 'wallet-1', accountId: 'account-1' },
+        { walletId: 'wallet-1', accountId: 'account-2' }
+      ],
+      binding: { walletId: 'wallet-1', accountId: 'account-2' }
+    })
+    expect(state.events.at(-1)).toEqual({
+      origin,
+      chainId: 'evm',
+      eventName: 'accountsChanged',
+      data: ['0x2222222222222222222222222222222222222222']
+    })
+
+    const locked = harness({ hasUnlockSession: async () => false })
+    await expect(locked.handler.connectCurrentAccountToDApp(origin)).rejects.toMatchObject({
+      code: 4100
+    })
+    expect(locked.getAuthorization()).toBeNull()
+
+    const unconnected = harness()
+    await expect(unconnected.handler.connectCurrentAccountToDApp(origin)).rejects.toThrow(
+      'Reconnect from the site to update this network permission'
+    )
+  })
+
   test('grants one chain-scoped account after explicit approval', async () => {
     const { handler, approvalCalls, getAuthorization } = harness()
 

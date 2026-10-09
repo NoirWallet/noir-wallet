@@ -347,10 +347,7 @@ test.describe('dApp account reference cleanup', () => {
     })
     expect(getConnectionChainAuthorization(withNear, 'near:testnet')?.binding).toEqual(evmAccount)
     expect(
-      getConnectionChainAuthorization(
-        withNear,
-        'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1'
-      )?.binding
+      getConnectionChainAuthorization(withNear, 'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1')?.binding
     ).toEqual(evmAccount)
     const withSolanaMainnet = replaceDAppChainAuthorization(withNear, {
       origin: withNear.origin,
@@ -372,10 +369,8 @@ test.describe('dApp account reference cleanup', () => {
       evmAccount
     )
     expect(
-      getConnectionChainAuthorization(
-        withNearMainnet,
-        'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp'
-      )?.binding
+      getConnectionChainAuthorization(withNearMainnet, 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp')
+        ?.binding
     ).toEqual(evmAccount)
   })
 
@@ -671,17 +666,66 @@ test.describe('dApp account reference cleanup', () => {
       accounts: [account],
       binding: account
     })
-    await expect(reloaded.getChainAuthorization('https://other.example', 'eip155:56')).resolves.toBeNull()
+    await expect(
+      reloaded.getChainAuthorization('https://other.example', 'eip155:56')
+    ).resolves.toBeNull()
 
-    await reloaded.setChainAuthorizedAccounts(origin, {}, 'eip155:137', [otherAccount], otherAccount)
+    await reloaded.setChainAuthorizedAccounts(
+      origin,
+      {},
+      'eip155:137',
+      [otherAccount],
+      otherAccount
+    )
     await reloaded.carryEvmAuthorizationToChain(origin, 'eip155:1', 'eip155:137')
     await expect(reloaded.getChainAuthorization(origin, 'eip155:137')).resolves.toEqual({
       chainId: 'eip155:137',
       accounts: [otherAccount],
       binding: otherAccount
     })
-    await reloaded.carryEvmAuthorizationToChain('https://unconnected.example', 'eip155:1', 'eip155:56')
+    await reloaded.carryEvmAuthorizationToChain(
+      'https://unconnected.example',
+      'eip155:1',
+      'eip155:56'
+    )
     await expect(reloaded.getConnection('https://unconnected.example')).resolves.toBeNull()
+  })
+
+  test('adds a wallet-side account only to an existing EVM grant', async () => {
+    let stored
+    const storage = {
+      get: async () => ({ connectedDApps: stored }),
+      set: async items => {
+        stored = structuredClone(items.connectedDApps)
+      }
+    }
+    const manager = new DAppManager(storage)
+    const origin = 'https://wallet-connect.example'
+    const previous = { walletId: 'wallet-1', accountId: 'account-1' }
+    const active = { walletId: 'wallet-1', accountId: 'account-2' }
+    await manager.setChainAuthorizedAccounts(origin, {}, 'eip155:1', [previous], previous)
+    await manager.setChainAuthorizedAccounts(origin, {}, 'eip155:56', [previous], previous)
+
+    await manager.addEvmAuthorizedAccount(origin, 'eip155:1', active)
+    const reloaded = new DAppManager(storage)
+    await expect(reloaded.getChainAuthorization(origin, 'eip155:1')).resolves.toEqual({
+      chainId: 'eip155:1',
+      accounts: [previous, active],
+      binding: active
+    })
+    await expect(reloaded.getChainAuthorization(origin, 'eip155:56')).resolves.toEqual({
+      chainId: 'eip155:56',
+      accounts: [previous],
+      binding: previous
+    })
+    await expect(reloaded.getAuthorizedAccounts(origin)).resolves.toEqual([])
+    await expect(reloaded.addEvmAuthorizedAccount(origin, 'eip155:137', active)).rejects.toThrow(
+      'Reconnect from the site to update this network permission'
+    )
+    await expect(reloaded.getChainAuthorization(origin, 'eip155:137')).resolves.toBeNull()
+    await expect(
+      reloaded.addEvmAuthorizedAccount(origin, 'bip122:000000000019d6689c085ae165831e93', active)
+    ).rejects.toThrow('Wallet-side account connection requires an EVM network')
   })
 
   test('removes only legacy Zcash authorization and preserves chain-scoped permissions', async () => {

@@ -274,4 +274,72 @@ test.describe('Activity coordinator', () => {
 
     await expect(coordinator.readActive()).rejects.toThrow(/does not match/)
   })
+
+  test('retains local transactions and cached history when supplemental refresh throws', async () => {
+    const cachedHash = `0x${'d'.repeat(64)}`
+    const coordinator = new ActivityCoordinator({
+      storageRepository: storage(),
+      transactionRepository: await repositoryWithEvmTransfer(),
+      loadZcashTransactions: async () => [zcashTransaction()],
+      loadSupplementalItems: async () => {
+        throw new Error('History source unavailable')
+      },
+      loadCachedSupplementalItems: async () => [rpcActivity(cachedHash)]
+    })
+
+    const result = await coordinator.readActive()
+    expect(result.items.map(item => item.id)).toEqual([
+      `rpc:evm:${cachedHash}:native`,
+      'zcash-v1:activity',
+      'transaction:evm:activity'
+    ])
+  })
+
+  test('retains local transactions when refresh, cache, and private address derivation fail', async () => {
+    const coordinator = new ActivityCoordinator({
+      storageRepository: storage(),
+      transactionRepository: await repositoryWithEvmTransfer(),
+      loadZcashTransactions: async () => [zcashTransaction()],
+      loadSupplementalItems: async () => {
+        throw new Error('History source unavailable')
+      },
+      loadCachedSupplementalItems: async () => {
+        throw new Error('History cache unavailable')
+      },
+      loadPrivateExecutionAddresses: async () => {
+        throw new Error('Signer unavailable')
+      }
+    })
+
+    for (const includeSupplemental of [true, false]) {
+      const result = await coordinator.readActive({ includeSupplemental })
+      expect(result.items.map(item => item.id)).toEqual([
+        'zcash-v1:activity',
+        'transaction:evm:activity'
+      ])
+    }
+  })
+
+  test('does not hide authoritative transaction storage or account filtering failures', async () => {
+    const coordinator = new ActivityCoordinator({
+      storageRepository: storage(),
+      transactionRepository: {
+        list: async () => {
+          throw new Error('Local transaction storage unavailable')
+        }
+      },
+      loadZcashTransactions: async () => []
+    })
+    await expect(coordinator.readActive()).rejects.toThrow('Local transaction storage unavailable')
+
+    const filtered = new ActivityCoordinator({
+      storageRepository: storage(),
+      transactionRepository: await repositoryWithEvmTransfer(),
+      loadZcashTransactions: async () => [],
+      filterLocalGraphs: async () => {
+        throw new Error('Account filter unavailable')
+      }
+    })
+    await expect(filtered.readActive()).rejects.toThrow('Account filter unavailable')
+  })
 })
