@@ -1,6 +1,6 @@
 # Contributing
 
-This repository contains the Noir Wallet extension, website, documentation, and supporting packages. The SDK is a [separate Git submodule](./.gitmodules); contribute SDK changes in its own repository using its [contribution guide](https://github.com/NoirWallet/noir-wallet-sdk/blob/main/CONTRIBUTING.md). The Rust/WASM source is maintained separately; this repository tracks its built package and [lock file](./wasm-package.lock.json).
+This repository contains the Noir Wallet extension, SDK, website, documentation, and supporting packages. Contribute SDK changes here; its [package guide](./packages/sdk/CONTRIBUTING.md) lists the focused checks. The Rust/WASM source is maintained separately; this repository tracks its built package and [lock file](./wasm-package.lock.json).
 
 Start with the [README quick start](./README.md#quick-start). Keep changes scoped, and include a short description of the behavior changed and the checks you ran when opening a pull request. Run the relevant type check, build, and tests described in the [project verification guide](./AGENTS.md#verification). Documentation changes should update the existing authoritative page described in [documentation governance](./AGENTS.md#documentation-governance).
 

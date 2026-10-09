@@ -13,7 +13,7 @@ These rules apply to documentation-only work as well as documentation affected b
 | Project overview and local development, test, and build  | [README.md](./README.md)                                                                                                       |
 | AI work rules, architecture, and development constraints | `AGENTS.md`; `CLAUDE.md` only directs readers here                                                                             |
 | Wallet guides and SDK integration/API explanations       | Source MDX under [packages/docs/content/docs/](./packages/docs/content/docs/)                                                  |
-| SDK package installation and package-local quick start   | [SDK README](./packages/sdk/README.md), in the independent SDK repository                                                      |
+| SDK package installation and package-local quick start   | [SDK README](./packages/sdk/README.md)                                                                                         |
 | Module-specific reference material                       | Existing topic documents such as [analytics events](./docs/analytics-events.md) and [error messages](./docs/error-messages.md) |
 | Task-specific operations and recovery                    | [Release runbook](./docs/release-workflow.md) and existing task-specific operational guides under `docs/`                      |
 | Developer release history and user-facing update notes   | [CHANGELOG.md](./CHANGELOG.md) and `packages/web/public/changelog.json`, respectively; retain their distinct audiences         |
@@ -310,7 +310,7 @@ The complete operational runbook is in `docs/release-workflow.md`.
 - Pushing `main` builds mainnet and testnet preview artifacts labeled `v{version}-beta.{YYYYMMDDHHMM}.{sha}`. Public, non-fork repositories also publish these as prereleases.
 - Production releases are promoted from an existing `main` commit by pushing the matching `v{version}` tag. The workflow rejects tags that do not match `packages/extension/package.json`, are not contained in `main`, or lack valid developer and user-facing release notes.
 - Preview builds and production tags run the same deterministic core tests before publishing artifacts. Browser verification is a separate local development activity, not an automated release gate.
-- Wallet Releases use the source repository's tags and built-in `GITHUB_TOKEN`, with write permission limited to publication. Private repositories and forks retain Actions artifacts only. SDK versioning and publication remain independent.
+- Wallet Releases use the source repository's tags and built-in `GITHUB_TOKEN`, with write permission limited to publication. Private repositories and forks retain Actions artifacts only. The SDK is maintained in this workspace; its versioning and npm publication remain independent of wallet releases.
 - Chrome Web Store submission is currently manual; the workflow does not contain store credentials or an automated submission step.
 
 ### User-Facing Release Notes

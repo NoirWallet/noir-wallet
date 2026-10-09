@@ -11,7 +11,7 @@ noir-wallet/
 │   │   └── tests/            # Wallet core tests
 │   ├── rpc-registry/         # RPC registry and monitoring service
 │   │   └── tests/            # Service core tests
-│   ├── sdk/                  # dApp SDK (Git submodule)
+│   ├── sdk/                  # dApp SDK
 │   │   └── example/          # SDK integration example app
 │   ├── web/                  # Landing page and installation guide
 │   ├── docs/                 # User and developer documentation site
@@ -43,14 +43,14 @@ The documentation site is maintained in `packages/docs/content/docs/`. The top-l
 
 ## Quick Start
 
-Run commands from the repository root. Use the Node.js version in [`.node-version`](./.node-version) and the pnpm version declared in `package.json` to match CI. Node.js 22 or newer is supported. Clone with submodules to check out the separate SDK repository at the pinned commit:
+Run commands from the repository root. Use the Node.js version in [`.node-version`](./.node-version) and the pnpm version declared in `package.json` to match CI. Node.js 22 or newer is supported:
 
 ```bash
-git clone --recurse-submodules https://github.com/NoirWallet/noir-wallet.git
+git clone https://github.com/NoirWallet/noir-wallet.git
 cd noir-wallet
 ```
 
-If you already cloned the repository, run `git submodule update --init packages/sdk`. An inaccessible submodule blocks workspace installation and SDK builds. The source under `packages/zcash-wallet-wasm/` is a separate checkout, not a Git submodule, and is excluded from this pnpm workspace. Ordinary extension builds use the vendored package at `packages/extension/src/lib/wasm-pkg/` and do not require that source checkout. Updating the vendored package requires access to the WASM source or a published artifact and must follow the [WASM package workflow](./AGENTS.md#wasm-package-workflow). Do not replace the vendored package with an unrelated build.
+The SDK and its example are included in the clone. The source under `packages/zcash-wallet-wasm/` is a separate checkout, not a Git submodule, and is excluded from this pnpm workspace. Ordinary extension builds use the vendored package at `packages/extension/src/lib/wasm-pkg/` and do not require that source checkout. Updating the vendored package requires access to the WASM source or a published artifact and must follow the [WASM package workflow](./AGENTS.md#wasm-package-workflow). Do not replace the vendored package with an unrelated build.
 
 No `.env` file or analytics credentials are required for local development, default builds, beta builds, or testnet builds. Production mainnet builds require the process environment variables listed in [`.env.example`](./.env.example); see the [release configuration](./docs/release-workflow.md#workflow-stages). Those values are embedded in the extension and are visible to its users, so they must not grant privileged server access.
 
@@ -158,7 +158,7 @@ supported by Noir Wallet extension **1.0.27 or later**.
 
 - [SDK integration guide](./packages/docs/content/docs/noir-sdk-integration.mdx): installation, provider detection, account access, and usage examples.
 - [API reference](./packages/docs/content/docs/developers/provider-api.mdx): methods, request and response types, and limitations.
-- [SDK package README](https://github.com/NoirWallet/noir-wallet-sdk/blob/main/README.md): the independent package's installation and quick start.
+- [SDK package README](./packages/sdk/README.md): package installation and quick start.
 
 ## RPC Registry Service
 
@@ -183,4 +183,4 @@ from the historical `staging` branch.
 
 [MIT](./LICENSE). Extension ZIPs include this license. Bundled Jost and DM Mono fonts use the SIL Open Font License; their [Jost](./packages/extension/public/fonts/jost-OFL.txt) and [DM Mono](./packages/extension/public/fonts/dm-mono-OFL.txt) license texts are included with the fonts.
 
-The SDK and Rust/WASM source are separate repositories. Verify their licensing and third-party attribution before redistribution; this project's MIT license does not replace those terms.
+The SDK is included under this project's [MIT license](./LICENSE) and retains its [package license](./packages/sdk/LICENSE). The Rust/WASM source is a separate repository; verify its licensing and third-party attribution before redistribution.
