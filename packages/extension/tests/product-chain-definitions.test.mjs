@@ -116,42 +116,6 @@ test.describe('initial multichain product definitions', () => {
     }
   })
 
-  test('uses only the approved credential-free Blockscout history instances', () => {
-    expect(
-      getEvmNetworkConfigs('mainnet').map(network => [
-        network.chainId,
-        network.historyApiUrl ?? null
-      ])
-    ).toEqual([
-      ['eip155:1', 'https://eth.blockscout.com/api/'],
-      ['eip155:56', null],
-      ['eip155:42161', 'https://arbitrum.blockscout.com/api/'],
-      ['eip155:8453', 'https://base.blockscout.com/api/'],
-      ['eip155:10', 'https://explorer.optimism.io/api/'],
-      ['eip155:137', 'https://polygon.blockscout.com/api/'],
-      ['eip155:43114', null],
-      ['eip155:143', null],
-      ['eip155:100', 'https://gnosis.blockscout.com/api/'],
-      ['eip155:9745', null],
-      ['eip155:196', null],
-      ['eip155:80094', null]
-    ])
-    expect(
-      getEvmNetworkConfigs('testnet').map(network => [
-        network.chainId,
-        network.historyApiUrl ?? null
-      ])
-    ).toEqual([
-      ['eip155:11155111', 'https://eth-sepolia.blockscout.com/api/'],
-      ['eip155:97', null],
-      ['eip155:421614', 'https://arbitrum-sepolia.blockscout.com/api/'],
-      ['eip155:84532', 'https://base-sepolia.blockscout.com/api/'],
-      ['eip155:11155420', 'https://testnet-explorer.optimism.io/api/'],
-      ['eip155:80002', null],
-      ['eip155:43113', null]
-    ])
-  })
-
   test('registers trusted native BTC against the build-network genesis', () => {
     for (const network of ['mainnet', 'testnet']) {
       const chains = createEvmBitcoinChainRegistry(network)

@@ -74,7 +74,7 @@ pnpm dev:docs
 
 **Note**:
 
-- After starting `pnpm dev:extension`, load `packages/extension/dist-dev/` in `chrome://extensions` with Developer Mode enabled
+- After starting `pnpm dev:extension`, load `packages/extension/dist-dev/` in `chrome://extensions` with Developer Mode enabled. Generated build and test output is excluded from HMR so verification builds do not reload the development extension.
 - EVM History uses the deployed proxy by default. Set `EVM_HISTORY_API_ORIGIN` only to use another proxy; configuration details are in the [release runbook](docs/release-workflow.md#verification-and-build).
 - Main local entrypoints match production routes:
   - `http://localhost:5001`

@@ -84,22 +84,34 @@ A V1 status string alone cannot construct a complete graph. Migration also needs
 
 ## 6. Local-First Activity Merge
 
-Background Activity merges records in one active `KeyDomainId + AccountId` partition:
+`ActivityCoordinator` obtains the sole `KeyDomainId + AccountId` partition from the active Storage V2 pointer and merges these sources in Background:
 
-1. Zcash uses its V1 IndexedDB records and existing detail entry point.
-2. Non-Zcash wallet-originated transactions use V2 graphs. The local immutable snapshot owns assets, amounts, and participants; RPC evidence owns hash, block, confirmations, and finality.
-3. RPC and indexer history supplements external records absent locally, deduplicated by `chainId + transactionHash`.
-4. Priority is `zcash-v1 > wallet-v2 > rpc`: shadow graphs cannot replace Zcash V1 records, and incomplete remote rows cannot overwrite local wallet records.
-5. EVM and BIP122 hexadecimal hashes deduplicate case-insensitively; other namespaces retain native case semantics.
-6. Standard RPC does not imply complete address history. A trusted indexer must be explicitly integrated where required.
+1. Zcash uses V1 IndexedDB records and retains its existing behavior and detail entry point.
+2. Non-Zcash transactions initiated by the wallet use Transaction V2 graphs. The immutable snapshot determines assets, amounts, and participants; RPC evidence determines hash, block, confirmations, and finality.
+3. RPC and indexer records supplement external history absent locally. Deduplicate by `chainId + transactionHash`; EVM RPC item and Segment IDs include chainId so identical hashes on different chains remain distinct.
+4. Source priority is `zcash-v1 > wallet-v2 > rpc`. A Zcash shadow graph cannot displace its V1 display, and incomplete RPC data cannot overwrite an authoritative local wallet record.
+5. Hexadecimal hash deduplication is case-insensitive for EVM and BIP122. Other namespaces retain native case semantics.
+6. Chains whose standard RPC lacks complete address history require an explicitly integrated trusted indexer. Wallet-originated records must not be described as complete on-chain history.
 
-The Popup reads only the current account through trusted `GET_ACTIVITY`. Content scripts cannot choose Account scope or enumerate other partitions.
+The Popup reads only the current account through trusted `GET_ACTIVITY`. Content scripts cannot specify Account scope or enumerate partitions. `createConfiguredActivityHistorySources` selects adapters; Background uses one aggregation and local fallback path, while each adapter still contacts its configured source:
 
-EVM supplemental history and sync cursors use `noir-wallet-evm-history-cache`, partitioned by `KeyDomainId + AccountId + chainId + address`. Background combines cached address records and Storage V2 public Main addresses to project Main/Private Activity; reading that address cache does not itself require Private address derivation. Bitcoin, Solana, and NEAR keep bounded 50-entry supplemental projections in `noir-wallet-activity-history-cache`, partitioned by network, Account scope, and Bitcoin address type. EVM mode does not duplicate those projections. Supplemental-history windows and refresh policies do not delete authoritative Zcash V1 transactions or V2 graphs.
+| Chain / network            | History source                                                                                 |
+| -------------------------- | ---------------------------------------------------------------------------------------------- |
+| EVM supported by Ankr      | History Worker → Ankr Advanced API                                                             |
+| Arbitrum Sepolia           | Configured Blockscout directly                                                                 |
+| Bitcoin Mainnet / Testnet3 | Configured Esplora directly, with custom RPC, network checks, and managed endpoint failover    |
+| Solana Mainnet / Devnet    | Configured Solana RPC directly, with custom RPC, network checks, and managed endpoint failover |
+| NEAR Mainnet               | FastNear transfers indexer directly                                                            |
 
-Ankr-supported EVM chains query the History Worker's root path with POST JSON-RPC. Each address refresh calls `ankr_getTransactionsByAddress` with a string address and `ankr_getTokenTransfers` with an address array; both pass explicit `blockchain` arrays. Split results by chain before updating address caches. A truncated shared page with no records for a requested chain triggers a bounded single-chain follow-up. Partial pagination, partial failure, or service unavailability cannot clear that address cache. Other chains use their configured providers. See [History proxy deployment](../../release-workflow.md#history-proxy-deployment).
+EVM chains without an approved source and NEAR Testnet use cache and local records. Adapters provide bounded recent history, not complete account history. Bitcoin, Solana, NEAR, and Blockscout do not consume the History Worker's Ankr quota or rate limiter. For deployment and build configuration, see the [History proxy release procedure](../../release-workflow.md#history-proxy-deployment).
 
-Old beta RPC History caches are cleared and refreshed, including `activity_history_cache_v2:*` local keys, obsolete IndexedDB schemas or mode partitions, mixed-EVM projections, and EVM records without Account scope. Preserve wallet credentials, Zcash WASM data, and authoritative local transactions. Account deletion and Wallet Reset clear both supplemental caches and legacy Chrome keys.
+When supplemental refresh fails, return the account's persisted RPC cache and readable authoritative local transactions. A locked software wallet or failed derivation can recover one unique Private address from the current account's public Main address and persisted signers of EVM origin transactions. Exclude other accounts, non-EVM records, inbound senders, and conflicting candidates. Main-to-Private transactions remain assigned to Main; cancellation still verifies account ownership through the signer. Account partition, local-storage, and address-type filtering failures must surface as errors rather than empty history. The Popup shows local data and cache before refreshing remotely and keeps them visible if refresh fails.
+
+EVM history and sync cursors are partitioned by `KeyDomainId + AccountId + chainId + address` in `noir-wallet-evm-history-cache`. Background combines those address records with Storage V2's public Main address without needing Private address derivation for cache reads. Bitcoin, Solana, and NEAR use `noir-wallet-activity-history-cache`, partitioned by network, Account scope, and current Bitcoin address type. The supplemental merge window holds at most 50 entries. After merging with up to 200 local graph and Zcash V1 records, Activity returns at most 200; display limits do not delete authoritative transactions. The caches retain independent refresh and fallback behavior.
+
+Supported EVM chains query the History Worker's root path with POST JSON-RPC. Each address refresh calls `ankr_getTransactionsByAddress` with a string address and `ankr_getTokenTransfers` with an address array; both pass an explicit `blockchain` array. Split results by chain before caching. If a truncated shared first page contains no records for one chain, make a bounded single-chain follow-up. Incomplete pagination, partial failures, and outages cannot clear the current address cache. Unsupported chains use their configured indexer.
+
+Old beta RPC History caches are cleared and fetched again, including `activity_history_cache_v2:*` Chrome local keys, obsolete IndexedDB schema or mode partitions, mixed-EVM projections, and EVM items without Account scope or chainId in their IDs. Wallet credentials, Zcash WASM data, and authoritative local transactions remain. Account deletion and Wallet Reset clear both supplemental caches and legacy Chrome keys.
 
 ## 7. Persistence and Recovery
 

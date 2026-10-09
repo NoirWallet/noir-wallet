@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Icon } from '@iconify/react'
 import { formatAccountName } from '@/lib/format'
+import { toast } from '@/store/toast-store'
 
 interface DAppConnectPromptProps {
   host: string
@@ -29,6 +30,7 @@ export function DAppConnectPrompt({
       await onConnect()
     } catch (error) {
       console.error('Failed to connect account to dApp:', error)
+      toast.error(error instanceof Error ? error.message : 'Unable to connect this account')
     } finally {
       setConnecting(false)
     }

@@ -131,14 +131,21 @@ test('removes one account logically and rejects unverified wallet deletion', asy
         })
       const seedEvmHistory = async (id: string, addressCharacter: string) => {
         const database = await openEvmHistoryDb()
+        const now = Date.now()
         await new Promise<void>((resolve, reject) => {
           const transaction = database.transaction('records', 'readwrite')
           transaction.objectStore('records').put(
             {
+              schemaVersion: 1,
+              chainId: 'eip155:1',
               scope: { keyDomainId: walletId, accountId: id },
-              address: `0x${addressCharacter.repeat(40)}`
+              address: `0x${addressCharacter.repeat(40)}`,
+              lastAttemptAt: now,
+              successfulSyncAt: now,
+              retryAfter: now,
+              items: []
             },
-            `eip155:1:0x${addressCharacter.repeat(40)}`
+            `${walletId}:${id}:eip155:1:0x${addressCharacter.repeat(40)}`
           )
           transaction.oncomplete = () => resolve()
           transaction.onerror = () => reject(transaction.error)

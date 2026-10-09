@@ -1,47 +1,26 @@
-import {
-  BITCOIN_CHAIN_FEATURE_FLAG,
-  EVM_CHAIN_FEATURE_FLAG,
-  NEAR_CHAIN_FEATURE_FLAG,
-  SOLANA_CHAIN_FEATURE_FLAG
-} from '@/config/multichain-feature-flags'
-import { getBitcoinNetworkConfig, getEvmNetworkConfigs } from '@/config/networks'
 import { DEFAULT_NETWORK } from '@/lib/runtime-network'
-import {
-  resolveNearRuntimeNetworkConfig,
-  resolveSolanaRuntimeNetworkConfig
-} from '@/core/chains/solana-near-runtime-config'
 import type { ChainEndpointSettings } from '@/core/chains/chain-endpoint-settings'
 import { keySourceSupportsChainFamily, resolveKeyDomain } from '@/core/accounts/application'
-import type { ActivityItem, ActivityScope } from '@/core/activity'
+import {
+  inferPrivateExecutionAddressFromLocalGraphs,
+  type ActivityItem,
+  type ActivityScope
+} from '@/core/activity'
 import type { TransactionGraph } from '@/core/transactions/domain'
 import { buildAccountKey } from '@/core/wallet/account-scope'
-import { ActivityCoordinator } from '@/infrastructure/activity'
+import {
+  ActivityCoordinator,
+  createConfiguredActivityHistorySources
+} from '@/infrastructure/activity'
 import {
   BITCOIN_ACTIVITY_HISTORY_LIMITS,
-  createBitcoinActivityHistorySource,
-  createConfiguredBitcoinEsploraClient,
   IndexedDbBitcoinDiscoveryRepository,
   isActiveBitcoinAddressObservation,
   loadActiveBitcoinDiscoveryContext,
-  type BitcoinActivityHistorySource,
   type BitcoinDiscoveryState
 } from '@/infrastructure/chains/bitcoin'
-import {
-  createEvmActivityHistoryReader,
-  createEvmActivityHistoryBatchReader,
-  parseEvmAccountBinding,
-  type EvmActivityHistorySource
-} from '@/infrastructure/chains/evm'
+import { parseEvmAccountBinding } from '@/infrastructure/chains/evm'
 import { listEvmHistoryCacheByScope } from '@/infrastructure/chains/evm/evm-activity-history-cache'
-import {
-  createNearActivityHistorySource,
-  type NearActivityHistorySource
-} from '@/infrastructure/chains/near'
-import {
-  createSolanaActivityHistorySource,
-  createConfiguredSolanaRpcClient,
-  type SolanaActivityHistorySource
-} from '@/infrastructure/chains/solana'
 import { EvmMultichainSigningClient } from '@/infrastructure/keyring/multichain/evm-signing-client'
 import type { StorageV2ReadRepository } from '@/ports/repositories'
 import {
@@ -132,7 +111,7 @@ async function resolveEvmExecutionAddresses(
 ): Promise<EvmExecutionAddresses | null> {
   const account = await resolveEvmMainAddress(storageRepository, scope)
   if (!account) return null
-  if (!includePrivate || !account.software || !credentialSession.hasUnlockSession()) {
+  if (!includePrivate || !account.software || !(await credentialSession.hasUnlockSession())) {
     return Object.freeze({ main: account.main, privateAddress: null })
   }
   const privateAddress = (
@@ -241,53 +220,22 @@ export function createBackgroundActivityCoordinator(
   const peaSigner = new EvmMultichainSigningClient({ credentials: credentialSession })
   const historyCache = new ActivityHistoryCache(DEFAULT_NETWORK)
   const accountPreferences = getBitcoinAccountPreferences()
-  const bitcoinEnabled = __ENABLED_CHAIN_FEATURE_FLAGS__.includes(BITCOIN_CHAIN_FEATURE_FLAG)
-  const evmEnabled = __ENABLED_CHAIN_FEATURE_FLAGS__.includes(EVM_CHAIN_FEATURE_FLAG)
-  const solanaEnabled = __ENABLED_CHAIN_FEATURE_FLAGS__.includes(SOLANA_CHAIN_FEATURE_FLAG)
-  const nearEnabled = __ENABLED_CHAIN_FEATURE_FLAGS__.includes(NEAR_CHAIN_FEATURE_FLAG)
-  const bitcoinNetwork = getBitcoinNetworkConfig(DEFAULT_NETWORK)
-  const bitcoinDiscovery = bitcoinEnabled ? new IndexedDbBitcoinDiscoveryRepository() : undefined
-  const bitcoinHistory: BitcoinActivityHistorySource | undefined = bitcoinEnabled
-    ? createBitcoinActivityHistorySource({
-        chainId: bitcoinNetwork.chainId,
-        assetId: `${bitcoinNetwork.chainId}/slip44:0`,
-        requiredConfirmations: bitcoinNetwork.requiredConfirmations,
-        rpc: createConfiguredBitcoinEsploraClient(DEFAULT_NETWORK, bitcoinCustomRpcUrl)
-      })
-    : undefined
-
-  const evmNetworkConfigs = evmEnabled ? getEvmNetworkConfigs(DEFAULT_NETWORK) : []
-  const evmBatchHistory = createEvmActivityHistoryBatchReader(evmNetworkConfigs)
-  const evmHistorySources: ReadonlyArray<{
-    chainId: string
-    source: EvmActivityHistorySource
-  }> = evmEnabled
-    ? evmNetworkConfigs.reduce<Array<{ chainId: string; source: EvmActivityHistorySource }>>(
-        (acc, network) => {
-          acc.push({
-            chainId: network.chainId,
-            source: createEvmActivityHistoryReader(DEFAULT_NETWORK, network)
-          })
-          return acc
-        },
-        []
-      )
-    : []
-  const solanaNetwork = resolveSolanaRuntimeNetworkConfig(DEFAULT_NETWORK, endpointSettings)
-  const solanaHistory: SolanaActivityHistorySource | undefined = solanaEnabled
-    ? createSolanaActivityHistorySource({
-        chainId: solanaNetwork.chainId,
-        rpc: createConfiguredSolanaRpcClient({
-          chainId: solanaNetwork.chainId,
-          rpcUrl: solanaNetwork.rpcUrl
-        })
-      })
-    : undefined
-  const nearNetwork = resolveNearRuntimeNetworkConfig(DEFAULT_NETWORK, endpointSettings)
-  const nearHistory: NearActivityHistorySource | undefined =
-    nearEnabled && DEFAULT_NETWORK === 'mainnet'
-      ? createNearActivityHistorySource({ chainId: nearNetwork.chainId })
-      : undefined
+  const {
+    bitcoinNetwork,
+    bitcoinHistory,
+    evmBatchHistory,
+    evmHistorySources,
+    solanaNetwork,
+    solanaHistory,
+    nearNetwork,
+    nearHistory
+  } = createConfiguredActivityHistorySources({
+    network: DEFAULT_NETWORK,
+    enabledChainFeatureFlags: __ENABLED_CHAIN_FEATURE_FLAGS__,
+    bitcoinCustomRpcUrl,
+    endpointSettings
+  })
+  const bitcoinDiscovery = bitcoinHistory ? new IndexedDbBitcoinDiscoveryRepository() : undefined
 
   const loadBitcoinItems = async (
     scope: ActivityScope,
@@ -469,7 +417,7 @@ export function createBackgroundActivityCoordinator(
     if (evmHistorySources.length === 0) return empty
     const account = await resolveEvmMainAddress(storageRepository, scope)
     if (!account) return empty
-    const supportedChains = new Set(evmHistorySources.map(source => source.chainId))
+    const supportedChains = new Set<string>(evmHistorySources.map(source => source.chainId))
     const records = await listEvmHistoryCacheByScope(scope)
     const items: ActivityItem[] = []
     const retryAfterByChainId: Record<string, number> = {}
@@ -728,15 +676,35 @@ export function createBackgroundActivityCoordinator(
       loadTransactions(buildAccountKey(DEFAULT_NETWORK, scope.keyDomainId, scope.accountId)),
     loadSupplementalItems,
     loadCachedSupplementalItems,
-    ...(evmEnabled
+    ...(evmHistorySources.length > 0
       ? {
-          loadPrivateExecutionAddresses: async (scope: ActivityScope) => {
-            const addresses = await resolveEvmExecutionAddresses(
-              storageRepository,
-              peaSigner,
-              scope
+          loadPrivateExecutionAddresses: async (
+            scope: ActivityScope,
+            localGraphs: readonly TransactionGraph[]
+          ) => {
+            const account = await resolveEvmMainAddress(storageRepository, scope)
+            if (!account?.software) return Object.freeze([])
+            if (await credentialSession.hasUnlockSession()) {
+              try {
+                const derived = await peaSigner.deriveGlobalPea(
+                  scope.keyDomainId,
+                  account.addressIndex
+                )
+                return Object.freeze([derived.address.toLowerCase()])
+              } catch (error) {
+                logger.warn(
+                  `Activity Private address derivation failed: ${formatLogError(error)}`,
+                  scope.keyDomainId,
+                  scope.accountId
+                )
+              }
+            }
+            const inferred = inferPrivateExecutionAddressFromLocalGraphs(
+              localGraphs,
+              scope,
+              account.main
             )
-            return Object.freeze(addresses?.privateAddress ? [addresses.privateAddress] : [])
+            return Object.freeze(inferred ? [inferred] : [])
           }
         }
       : {}),

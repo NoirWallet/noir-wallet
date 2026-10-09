@@ -115,6 +115,37 @@ function assertReconfirming(
   }
 }
 
+export function inferPrivateExecutionAddressFromLocalGraphs(
+  graphs: readonly TransactionGraph[],
+  scope: ActivityScope,
+  mainAddress: string
+): string | null {
+  if (!/^0x[0-9a-fA-F]{40}$/.test(mainAddress)) return null
+  const candidates = new Set<string>()
+  for (const graph of graphs) {
+    if (!scopesMatch(graph.root.scope, scope)) continue
+    const intent = graph.root.intent
+    const sender = intent?.sender
+    if (
+      !intent?.evm ||
+      intent.direction === 'incoming' ||
+      !sender?.chainId.startsWith('eip155:') ||
+      !/^0x[0-9a-fA-F]{40}$/.test(sender.address) ||
+      !graph.segments.some(
+        segment =>
+          segment.role === 'origin' &&
+          segment.target.kind === 'onchain' &&
+          segment.target.chainId === sender.chainId
+      )
+    ) {
+      continue
+    }
+    const address = sender.address.toLowerCase()
+    if (address !== mainAddress.toLowerCase()) candidates.add(address)
+  }
+  return candidates.size === 1 ? [...candidates][0] : null
+}
+
 export function mapTransactionGraphToActivityItem(
   value: TransactionGraph,
   privateExecutionAddresses: ReadonlySet<string> = new Set()

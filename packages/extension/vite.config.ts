@@ -399,6 +399,10 @@ export default defineConfig({
   server: {
     port: extensionDevServerPort,
     strictPort: true,
+    watch: {
+      // Verification builds must not reload Offscreen and end the dev wallet session.
+      ignored: ['**/e2e-dist/**', '**/dist/**', '**/dist-dev/**', '**/e2e-output/**']
+    },
     hmr: {
       port: extensionDevServerPort
     },

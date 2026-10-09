@@ -188,7 +188,6 @@ export interface EvmNetworkConfig {
 }
 
 interface DefaultEvmNetworkConfig extends EvmNetworkConfig {
-  readonly historyApiUrl: string
   readonly usdcContract: `0x${string}`
 }
 
@@ -217,7 +216,6 @@ export const BUILTIN_EVM_NETWORKS = Object.freeze({
         decimals: 18,
         slip44Reference: '60'
       },
-      historyApiUrl: 'https://eth.blockscout.com/api/',
       explorerUrl: 'https://etherscan.io',
       usdcContract: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'
     }),
@@ -249,7 +247,6 @@ export const BUILTIN_EVM_NETWORKS = Object.freeze({
         decimals: 18,
         slip44Reference: '60'
       },
-      historyApiUrl: 'https://arbitrum.blockscout.com/api/',
       explorerUrl: 'https://arbiscan.io',
       usdcContract: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831'
     }),
@@ -266,7 +263,6 @@ export const BUILTIN_EVM_NETWORKS = Object.freeze({
         decimals: 18,
         slip44Reference: '60'
       },
-      historyApiUrl: 'https://base.blockscout.com/api/',
       explorerUrl: 'https://base.blockscout.com',
       usdcContract: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'
     }),
@@ -283,7 +279,6 @@ export const BUILTIN_EVM_NETWORKS = Object.freeze({
         decimals: 18,
         slip44Reference: '60'
       },
-      historyApiUrl: 'https://explorer.optimism.io/api/',
       explorerUrl: 'https://optimistic.etherscan.io',
       usdcContract: '0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85'
     }),
@@ -300,7 +295,6 @@ export const BUILTIN_EVM_NETWORKS = Object.freeze({
         decimals: 18,
         slip44Reference: '966'
       },
-      historyApiUrl: 'https://polygon.blockscout.com/api/',
       explorerUrl: 'https://polygonscan.com',
       usdcContract: '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359'
     }),
@@ -348,7 +342,6 @@ export const BUILTIN_EVM_NETWORKS = Object.freeze({
         decimals: 18,
         slip44Reference: '700'
       },
-      historyApiUrl: 'https://gnosis.blockscout.com/api/',
       explorerUrl: 'https://gnosisscan.io'
     }),
     defineNetwork({
@@ -411,7 +404,6 @@ export const BUILTIN_EVM_NETWORKS = Object.freeze({
         decimals: 18,
         slip44Reference: '60'
       },
-      historyApiUrl: 'https://eth-sepolia.blockscout.com/api/',
       explorerUrl: 'https://sepolia.etherscan.io',
       usdcContract: '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238'
     }),
@@ -460,7 +452,6 @@ export const BUILTIN_EVM_NETWORKS = Object.freeze({
         decimals: 18,
         slip44Reference: '60'
       },
-      historyApiUrl: 'https://base-sepolia.blockscout.com/api/',
       explorerUrl: 'https://sepolia.basescan.org',
       usdcContract: '0x036CbD53842c5426634e7929541eC2318f3dCF7e'
     }),
@@ -477,7 +468,6 @@ export const BUILTIN_EVM_NETWORKS = Object.freeze({
         decimals: 18,
         slip44Reference: '60'
       },
-      historyApiUrl: 'https://testnet-explorer.optimism.io/api/',
       explorerUrl: 'https://sepolia-optimism.etherscan.io',
       usdcContract: '0x5fd84259d66Cd46123540766Be93DFE6D43130D7'
     }),

@@ -824,6 +824,40 @@ export class DAppManager {
     return dapp ? getConnectionChainAuthorization(dapp, chainId) : null
   }
 
+  async addEvmAuthorizedAccount(
+    origin: string,
+    chainIdValue: string,
+    account: AccountRef
+  ): Promise<void> {
+    if (parseChainId(chainIdValue).namespace !== 'eip155') {
+      throw new Error('Wallet-side account connection requires an EVM network')
+    }
+    return this.enqueueMutation(async () => {
+      await this.initialize()
+      const existing = this.connectedDApps.get(origin)
+      const authorization = existing && getConnectionChainAuthorization(existing, chainIdValue)
+      if (!existing || !authorization || existing.caip25Session) {
+        throw new Error('Reconnect from the site to update this network permission')
+      }
+      const accounts = authorization.accounts.some(ref => accountRefsEqual(ref, account))
+        ? authorization.accounts
+        : [...authorization.accounts, account]
+      const next = new Map(this.connectedDApps)
+      next.set(
+        origin,
+        replaceDAppChainAuthorization(existing, {
+          origin,
+          id: existing.id,
+          chainId: authorization.chainId,
+          accounts,
+          binding: account,
+          now: Date.now()
+        })
+      )
+      await this.commitConnections(next)
+    })
+  }
+
   async carryEvmAuthorizationToChain(
     origin: string,
     sourceChainId: string,

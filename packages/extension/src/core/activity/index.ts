@@ -1,6 +1,7 @@
 export {
   ACTIVITY_READ_LIMITS,
   buildActivityReadModel,
+  inferPrivateExecutionAddressFromLocalGraphs,
   mapTransactionGraphToActivityItem,
   parseActivityReadModel
 } from './activity-read-model'

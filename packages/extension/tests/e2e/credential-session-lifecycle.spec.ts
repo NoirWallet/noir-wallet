@@ -82,6 +82,36 @@ async function prepareUnlockedInventorySession(page: Page, extensionId: string, 
   return setup
 }
 
+async function selectRetainedAccountThroughPopup(
+  page: Page,
+  target: { walletName: string; accountName: string; walletId: string; accountId: string }
+): Promise<void> {
+  await expect(page.getByRole('button', { name: 'Choose wallet' })).toBeVisible()
+  await page.getByRole('button', { name: 'Choose wallet' }).click()
+  await page.getByPlaceholder('Search Account').fill(target.walletName)
+  await page.getByRole('button', { name: `Switch to ${target.accountName}` }).click()
+  const chooseWallet = page.getByRole('button', { name: 'Choose wallet' })
+  const syncConfirmation = page.getByRole('dialog', { name: 'Switch Account' })
+  await expect(chooseWallet.or(syncConfirmation)).toBeVisible()
+  if (await syncConfirmation.isVisible()) {
+    await syncConfirmation.getByRole('button', { name: 'Switch anyway' }).click()
+  }
+  await expect(chooseWallet).toBeVisible()
+  await expect
+    .poll(() =>
+      page.evaluate(async () => {
+        const stored = await chrome.storage.local.get('wallet_state')
+        const { currentWalletId, currentAccountId } = stored.wallet_state.state
+        return { walletId: currentWalletId, accountId: currentAccountId }
+      })
+    )
+    .toEqual({ walletId: target.walletId, accountId: target.accountId })
+  await expect(
+    page.evaluate(() => chrome.runtime.sendMessage({ type: 'GET_WALLET_SESSION_STATE' }))
+  ).resolves.toEqual({ active: true })
+  await expect(page.getByRole('heading', { name: 'Enter your password' })).toHaveCount(0)
+}
+
 async function requestWorkerPublicKey(page: Page, walletId: string, accountIndex = 0) {
   return page.evaluate(
     ({ walletId, accountIndex }) =>
@@ -149,6 +179,125 @@ test('keeps the unlocked session after closing and reopening only the popup', as
   await expect(reopenedPopup.getByText('Enter your password', { exact: true })).toHaveCount(0)
   await expect.poll(() => new URL(reopenedPopup.url()).hash).not.toContain('/unlock')
   await reopenedPopup.close()
+})
+
+test('keeps the unlocked session while switching between software wallets', async ({
+  context,
+  popup,
+  extensionId
+}) => {
+  test.setTimeout(180_000)
+  const setup = await prepareUnlockedInventorySession(
+    popup,
+    extensionId,
+    'cross-wallet-session-password'
+  )
+  await popup.reload()
+  await selectRetainedAccountThroughPopup(popup, {
+    walletName: 'Retained V1 Wallet',
+    accountName: 'Account 1',
+    walletId: setup.previousWalletId,
+    accountId: setup.previousAccountId
+  })
+  await terminateExtensionServiceWorker(context, popup)
+  await expect
+    .poll(() =>
+      popup.evaluate(() => chrome.runtime.sendMessage({ type: 'GET_WALLET_SESSION_STATE' }))
+    )
+    .toEqual({ active: true })
+  await selectRetainedAccountThroughPopup(popup, {
+    walletName: 'Added V1 Wallet',
+    accountName: 'Account 2',
+    walletId: setup.walletId,
+    accountId: setup.accountIds[1]
+  })
+  await selectRetainedAccountThroughPopup(popup, {
+    walletName: 'Retained V1 Wallet',
+    accountName: 'Account 1',
+    walletId: setup.previousWalletId,
+    accountId: setup.previousAccountId
+  })
+  await expect(
+    popup.evaluate(() => chrome.runtime.sendMessage({ type: 'WALLET_LOCKED' }))
+  ).resolves.toMatchObject({ success: true })
+  const denied = await popup.evaluate(
+    ({ walletId, accountId }) =>
+      chrome.runtime.sendMessage({ type: 'SWITCH_ACCOUNT', walletId, accountId }),
+    { walletId: setup.walletId, accountId: setup.accountIds[1] }
+  )
+  expect(denied).toMatchObject({ error: expect.stringMatching(/Wallet is locked/) })
+  await expect
+    .poll(() =>
+      popup.evaluate(async () => {
+        const stored = await chrome.storage.local.get('wallet_state')
+        const { currentWalletId, currentAccountId } = stored.wallet_state.state
+        return { walletId: currentWalletId, accountId: currentAccountId }
+      })
+    )
+    .toEqual({ walletId: setup.previousWalletId, accountId: setup.previousAccountId })
+})
+
+test('returns from an active private-key wallet to a retained Zcash wallet', async ({
+  context,
+  popup,
+  extensionId
+}) => {
+  test.setTimeout(180_000)
+  const setup = await prepareUnlockedInventorySession(
+    popup,
+    extensionId,
+    'native-to-zcash-session-password'
+  )
+  const imported = await popup.evaluate(() =>
+    chrome.runtime.sendMessage({
+      type: 'IMPORT_PRIVATE_KEY_WALLET',
+      privateKey: `0x${'00'.repeat(31)}01`,
+      chainFamily: 'eip155',
+      displayName: 'Imported EVM Test'
+    })
+  )
+  expect(imported).toMatchObject({
+    success: true,
+    result: { keyDomainId: expect.any(String), accountId: expect.any(String) }
+  })
+  await expect
+    .poll(() =>
+      popup.evaluate(async () => {
+        const saved = await chrome.storage.local.get('wallet_state')
+        return saved.wallet_state.state.currentWalletId
+      })
+    )
+    .toBeNull()
+  await popup.reload()
+  await selectRetainedAccountThroughPopup(popup, {
+    walletName: 'Retained V1 Wallet',
+    accountName: 'Account 1',
+    walletId: setup.previousWalletId,
+    accountId: setup.previousAccountId
+  })
+  await popup.getByRole('button', { name: 'Choose wallet' }).click()
+  await popup.getByPlaceholder('Search Account').fill('Imported EVM Test')
+  await popup.getByRole('button', { name: 'Switch to Account 1' }).click()
+  await expect(popup.getByRole('button', { name: 'Choose wallet' })).toBeVisible()
+  await expect
+    .poll(() =>
+      popup.evaluate(async walletId => {
+        const response = await chrome.runtime.sendMessage({ type: 'GET_ACCOUNT_NETWORKS' })
+        return response.result?.accounts?.find(
+          (account: { walletId: string }) => account.walletId === walletId
+        )?.active
+      }, imported.result.keyDomainId)
+    )
+    .toBe(true)
+
+  await terminateExtensionServiceWorker(context, popup)
+  await popup.reload()
+  await selectRetainedAccountThroughPopup(popup, {
+    walletName: 'Added V1 Wallet',
+    accountName: 'Account 1',
+    walletId: setup.walletId,
+    accountId: setup.accountIds[0]
+  })
 })
 
 test('recovers an existing healthy Wallet when the selected retained credential is missing', async ({
@@ -284,8 +433,8 @@ test('backs up and removes the intended retained software wallet with word proof
     .filter(label => /^Word \d+$/.test(label.trim()))
     .map(label => Number(label.trim().slice(5)) - 1)
   expect(indices).toHaveLength(2)
-  await popup.getByLabel(`Word ${indices[0] + 1}`).fill(phraseWords[indices[0]])
-  await popup.getByLabel(`Word ${indices[1] + 1}`).fill(phraseWords[indices[1]])
+  await popup.getByLabel(`Word ${indices[0] + 1}`, { exact: true }).fill(phraseWords[indices[0]])
+  await popup.getByLabel(`Word ${indices[1] + 1}`, { exact: true }).fill(phraseWords[indices[1]])
   await popup.getByRole('button', { name: 'Confirm backup' }).click()
   await expect
     .poll(() =>

@@ -146,13 +146,13 @@ test.describe('EVM Blockscout history client', () => {
       client.readAddressActivity({ scope: SCOPE, address: ADDRESS, fromBlock: 90 })
     ).resolves.toEqual([
       expect.objectContaining({
-        id: `rpc:evm:${hash('f')}:native`,
+        id: `rpc:evm:eip155:1:${hash('f')}:native`,
         kind: 'approve',
         status: 'final',
         snapshot: expect.objectContaining({ direction: 'contract' })
       }),
       expect.objectContaining({
-        id: `rpc:evm:${hash('d')}:token`,
+        id: `rpc:evm:eip155:1:${hash('d')}:token`,
         source: 'rpc',
         status: 'final',
         completeness: 'complete',
@@ -172,7 +172,7 @@ test.describe('EVM Blockscout history client', () => {
         ]
       }),
       expect.objectContaining({
-        id: `rpc:evm:${hash('a')}:native`,
+        id: `rpc:evm:eip155:1:${hash('a')}:native`,
         source: 'rpc',
         status: 'final',
         completeness: 'complete',
@@ -251,7 +251,7 @@ test.describe('EVM Blockscout history client', () => {
 
     const [item] = await client.readAddressActivity({ scope: SCOPE, address: ADDRESS })
     expect(item).toMatchObject({
-      id: `rpc:evm:${hash('d')}:token`,
+      id: `rpc:evm:eip155:1:${hash('d')}:token`,
       completeness: 'partial',
       segments: [
         {
@@ -276,7 +276,7 @@ test.describe('EVM Blockscout history client', () => {
 
     await expect(client.readAddressActivity({ scope: SCOPE, address: ADDRESS })).resolves.toEqual([
       expect.objectContaining({
-        id: `rpc:evm:${hash('a')}:native`,
+        id: `rpc:evm:eip155:1:${hash('a')}:native`,
         completeness: 'partial'
       })
     ])
@@ -291,7 +291,7 @@ test.describe('EVM Blockscout history client', () => {
 
     await expect(client.readAddressActivity({ scope: SCOPE, address: ADDRESS })).resolves.toEqual([
       expect.objectContaining({
-        id: `rpc:evm:${hash('a')}:native`,
+        id: `rpc:evm:eip155:1:${hash('a')}:native`,
         completeness: 'partial'
       })
     ])
@@ -318,8 +318,14 @@ test.describe('EVM Blockscout history client', () => {
     await expect(
       partialClient.readAddressActivity({ scope: SCOPE, address: ADDRESS })
     ).resolves.toEqual([
-      expect.objectContaining({ id: `rpc:evm:${hash('d')}:token`, completeness: 'partial' }),
-      expect.objectContaining({ id: `rpc:evm:${hash('a')}:native`, completeness: 'partial' })
+      expect.objectContaining({
+        id: `rpc:evm:eip155:1:${hash('d')}:token`,
+        completeness: 'partial'
+      }),
+      expect.objectContaining({
+        id: `rpc:evm:eip155:1:${hash('a')}:native`,
+        completeness: 'partial'
+      })
     ])
 
     const emptyPartialClient = createClient(async request =>

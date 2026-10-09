@@ -634,12 +634,12 @@ test('recovers a finalized Bitcoin replacement across service worker reconstruct
 
   network.setReplacementDepth(6)
   await triggerBitcoinMonitor(popup)
-  await expect(popup.getByText('Transaction Failed', { exact: true })).toBeVisible({
-    timeout: 20_000
-  })
+  await expect(
+    popup.getByRole('heading', { name: 'Transaction Replaced', exact: true })
+  ).toBeVisible({ timeout: 20_000 })
   await expect(popup.locator('header')).toHaveCount(0)
   await expect(
-    popup.getByText('Replaced by another transaction · 6/6', { exact: true })
+    popup.getByText('Another transaction used the same network input.', { exact: true })
   ).toBeVisible()
   await expect(popup.getByText('Replacement', { exact: true })).toBeVisible()
   await expect(
