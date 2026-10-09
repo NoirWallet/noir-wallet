@@ -6,6 +6,7 @@ on:
     tags: ['v*']
     paths:
       - 'packages/extension/**'
+      - 'packages/sdk/**'
       - 'packages/evm-history-worker/**'
       - 'packages/web/public/changelog.json'
       - 'package.json'
@@ -28,6 +29,7 @@ on:
     branches: [v2]
     paths:
       - 'packages/extension/**'
+      - 'packages/sdk/**'
       - 'packages/evm-history-worker/**'
       - 'packages/web/public/changelog.json'
       - 'package.json'
@@ -119,7 +121,6 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
-          submodules: true
           persist-credentials: false
 
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v5
@@ -150,7 +151,6 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           fetch-depth: 0
-          submodules: true
           persist-credentials: false
 
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v5
