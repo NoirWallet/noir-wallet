@@ -6,7 +6,7 @@ This runbook describes the browser extension workflow implemented in [build-exte
 
 - `main` is the long-lived integration branch and should remain releasable. Submit features and fixes through short-lived pull request branches.
 - Relevant pushes to `main` validate and build beta artifacts. A manual `workflow_dispatch` from `main` can also create a beta preview.
-- Public, non-fork repositories publish wallet Releases in the same repository as the source. Private repositories and forks retain Actions build artifacts without publishing Releases.
+- The canonical `NoirWallet/noir-wallet` repository publishes wallet Releases even while private. Other public, non-fork repositories also publish to themselves. Forks and other private repositories retain Actions build artifacts without publishing Releases.
 - Production is released by pushing a `v{version}` tag that points to a commit already contained in `main`.
 - There is no long-lived `release` branch. Create a temporary `release/{version}` branch only when a version freeze is needed, and remove it after release.
 
@@ -15,11 +15,11 @@ flowchart LR
   A["Feature / Fix PR"] --> B["main"]
   B --> C["Automatic or manual preview workflow"]
   C --> D["Beta verification and build artifacts"]
-  D --> E["Same-repository prerelease when public"]
+  D --> E["Same-repository prerelease when eligible"]
   B --> F["Release preparation PR"]
   F --> G["Tag vX.Y.Z on main commit"]
   G --> H["Production validation and tests"]
-  H --> I["Same-repository production Release when public"]
+  H --> I["Same-repository production Release when eligible"]
   I --> J["Manual Chrome Web Store submission"]
 ```
 
@@ -33,7 +33,7 @@ The workflow generates beta labels; do not create them manually:
 v{version}-beta.{UTC timestamp YYYYMMDDHHMM}.{short commit SHA}
 ```
 
-For example: `v1.0.27-beta.202607221530.a1b2c3d`. A new run on the same `main` ref cancels an unfinished older beta run. Multiple betas can use the same extension version. In private repositories and forks, this label identifies the Actions artifact; no Git tag or Release is created.
+For example: `v1.0.27-beta.202607221530.a1b2c3d`. A new run on the same `main` ref cancels an unfinished older beta run. Multiple betas can use the same extension version. In forks and private repositories other than `NoirWallet/noir-wallet`, this label identifies the Actions artifact; no Git tag or Release is created.
 
 ### Production tag validation
 
@@ -85,7 +85,7 @@ Analytics values embedded in the extension are visible to its users. They must n
 
 ### Publish
 
-The publish job runs only in a public, non-fork repository. It downloads the preceding job's exact artifact and checks `SHA256SUMS` before publishing to `github.repository`. Only this job receives `contents: write`; it uses the built-in `GITHUB_TOKEN` and does not publish the SDK.
+The publish job runs in `NoirWallet/noir-wallet` regardless of visibility, and in other public, non-fork repositories. It downloads the preceding job's exact artifact and checks `SHA256SUMS` before publishing to `github.repository`. Only this job receives `contents: write`; it uses the built-in `GITHUB_TOKEN` and does not publish the SDK. Releases in a private repository are visible only to people with repository access.
 
 - Beta uses a prerelease and is not marked Latest. Its tag points to the wallet source commit that produced the ZIPs.
 - Production uses the validated, existing `v{version}` tag and is marked Latest. Earlier prereleases remain available.
@@ -93,7 +93,7 @@ The publish job runs only in a public, non-fork repository. It downloads the pre
 
 Asset names are `noir-wallet-v{release-version}.zip` for mainnet and `noir-wallet-v{release-version}-testnet.zip` for testnet. An existing Release is left unchanged when a run is retried. GitHub's automatically attached source archives now come from the wallet repository at the release tag.
 
-The SDK is maintained in `packages/sdk/` but keeps its own version and npm publication process. Existing wallet downloads in the former SDK repository remain historical releases; this workflow does not modify them. The public download and repository entry points are [wallet builds](https://zknoir.com/beta/versions) and [wallet source](https://zknoir.com/github). Website builds target `NoirWallet/noir-wallet` by default; see the [website build configuration](../README.md#build).
+The SDK is maintained in `packages/sdk/` but keeps its own version and npm publication process. For historical stable wallet Releases migrated from [the former SDK repository](https://github.com/NoirWallet/noir-wallet-sdk/releases), copy the binary assets byte-for-byte and link each original Release in the migration notes. Preserve wallet source commit links where the original notes provide them, pointing old `NoirWallet/noir-wallet` commit URLs to `NoirWallet/noir-wallet-private` with the same SHA; do not infer missing wallet source commits from the SDK Release target. Migration tags in this repository point to its initial commit (`5d7fcf4`); their source archives are not snapshots of the historical wallet source. This workflow does not modify those Releases. The wallet download and repository entry points are [wallet builds](https://zknoir.com/beta/versions) and [wallet source](https://zknoir.com/github). Website builds target `NoirWallet/noir-wallet` by default; see the [website build configuration](../README.md#build).
 
 ## WASM Package Updates
 
@@ -126,7 +126,7 @@ pnpm update-wasm-pkg:local -- \
 1. Branch from the latest `main`, implement the change, and run relevant local checks.
 2. Submit a pull request and merge it after review.
 3. After all changes intended for the beta are merged, wait for the Build Extension workflow to validate and build.
-4. Download the Actions artifact, or the prerelease ZIPs when using the public wallet repository, and test the affected wallet flows.
+4. Download the Actions artifact or, when a Release is published, the prerelease ZIPs, and test the affected wallet flows.
 
 No version bump or manually created tag is required for each beta.
 
@@ -167,7 +167,7 @@ Do not tag a feature branch, an unmerged commit, or an outdated local `main`.
 
 ### 4. Check publication
 
-For a public release, confirm the Prepare, Verify, Build, and Publish jobs succeeded in GitHub Actions. In the wallet repository's Releases page, check the source tag/commit, Latest status, both ZIP assets, and release notes against the changelog. Download `SHA256SUMS` beside the ZIPs and run `sha256sum --check SHA256SUMS` (or `shasum -a 256 --check SHA256SUMS` on macOS). A private-repository run produces an Actions artifact only and is not a public release.
+For a publishing repository, confirm the Prepare, Verify, Build, and Publish jobs succeeded in GitHub Actions. In the wallet repository's Releases page, check the source tag/commit, Latest status, both ZIP assets, and release notes against the changelog. Download `SHA256SUMS` beside the ZIPs and run `sha256sum --check SHA256SUMS` (or `shasum -a 256 --check SHA256SUMS` on macOS). Forks and private repositories other than `NoirWallet/noir-wallet` produce Actions artifacts only.
 
 ### 5. Submit to Chrome Web Store
 
