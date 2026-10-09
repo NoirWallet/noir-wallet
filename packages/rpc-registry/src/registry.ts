@@ -73,6 +73,11 @@ export const RPC_REGISTRY: RpcRegistryDocument = {
       probe: 'zcash-lightwalletd-grpc-web',
       endpoints: [
         {
+          id: 'zero-indexer',
+          label: 'ZeroIndexer',
+          url: 'https://tee.unsafe.zec.rocks'
+        },
+        {
           id: 'zec-rocks',
           label: 'zec.rocks',
           url: 'https://zjs.zec.rocks'

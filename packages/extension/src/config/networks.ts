@@ -1,5 +1,6 @@
 import { Network } from '@/types'
 import { getActiveZcashRpcUrl } from './rpc-endpoints'
+import { ZERO_INDEXER_ENDPOINT, ZERO_INDEXER_TESTNET_URL } from './zero-indexer'
 
 export interface NetworkConfig {
   id: Network
@@ -18,7 +19,7 @@ export const NETWORKS: Record<Network, NetworkConfig> = {
     id: 'mainnet',
     name: 'Zcash Mainnet',
     chainId: 1,
-    rpcUrl: 'https://zcash-wallet-grpc-self.deltarpc.com',
+    rpcUrl: ZERO_INDEXER_ENDPOINT.url,
     nodeRpcUrl: 'https://zcash-wallet-history.deltarpc.com',
     compactBlockCdn: { baseUrl: 'https://zcashblocks.deltarpc.com/compact-blocks/v1' },
     explorerUrl: 'https://blockchair.com/zcash',
@@ -28,7 +29,7 @@ export const NETWORKS: Record<Network, NetworkConfig> = {
     id: 'testnet',
     name: 'Zcash Testnet',
     chainId: 2,
-    rpcUrl: 'https://zcash-wallet-grpc-testnet.deltarpc.com',
+    rpcUrl: ZERO_INDEXER_TESTNET_URL,
     nodeRpcUrl:
       'https://lingering-lively-dinghy.zec-testnet.quiknode.pro/17d5a5100419bb2d3571523748bc75347495d47d/',
     compactBlockCdn: null,

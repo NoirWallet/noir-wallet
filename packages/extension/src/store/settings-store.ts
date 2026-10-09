@@ -15,6 +15,7 @@ import {
 import {
   DEFAULT_RPC_ENDPOINT_MODES,
   DEFAULT_RPC_ENDPOINT_PREFERENCES,
+  migrateRpcEndpointDefaults,
   parseRpcEndpointModes,
   setActiveCustomRpcEndpoints,
   setActiveRpcEndpointModes,
@@ -41,6 +42,7 @@ interface SettingsStore {
   rpcEndpointPreferences: RpcEndpointPreferences
   rpcEndpointModes: RpcEndpointModes
   customRpcEndpoints: CustomRpcEndpoints
+  zeroIndexerDefaultApplied: boolean
   feeTier: FeeTier
   votingIntroSeen: boolean
   sidePanelMode: boolean
@@ -76,6 +78,7 @@ export const useSettingsStore = create<SettingsStore>()(
       rpcEndpointPreferences: DEFAULT_RPC_ENDPOINT_PREFERENCES,
       rpcEndpointModes: DEFAULT_RPC_ENDPOINT_MODES,
       customRpcEndpoints: EMPTY_CUSTOM_RPC_ENDPOINTS,
+      zeroIndexerDefaultApplied: true,
       feeTier: DEFAULT_FEE_TIER,
       votingIntroSeen: false,
       sidePanelMode: false,
@@ -148,7 +151,7 @@ export const useSettingsStore = create<SettingsStore>()(
           [chain]: endpointId
         }
         const rpcEndpointModes = { ...get().rpcEndpointModes, [chain]: 'fixed' as const }
-        set({ rpcEndpointPreferences, rpcEndpointModes })
+        set({ rpcEndpointPreferences, rpcEndpointModes, zeroIndexerDefaultApplied: true })
         setActiveRpcEndpointPreferences(rpcEndpointPreferences)
         setActiveRpcEndpointModes(rpcEndpointModes)
       },
@@ -160,7 +163,12 @@ export const useSettingsStore = create<SettingsStore>()(
       ) => {
         const rpcEndpointModes = parseRpcEndpointModes(rpcEndpointModesValue)
         const customRpcEndpoints = parseCustomRpcEndpoints(customRpcEndpointsValue)
-        set({ rpcEndpointPreferences, rpcEndpointModes, customRpcEndpoints })
+        set({
+          rpcEndpointPreferences,
+          rpcEndpointModes,
+          customRpcEndpoints,
+          zeroIndexerDefaultApplied: true
+        })
         setActiveCustomRpcEndpoints(customRpcEndpoints)
         setActiveRpcEndpointPreferences(rpcEndpointPreferences)
         setActiveRpcEndpointModes(rpcEndpointModes)
@@ -207,6 +215,14 @@ export const useSettingsStore = create<SettingsStore>()(
         persistedSettings.rpcEndpointModes = parseRpcEndpointModes(
           persistedSettings.rpcEndpointModes
         )
+        const migrated = migrateRpcEndpointDefaults(
+          persistedSettings.rpcEndpointPreferences,
+          persistedSettings.rpcEndpointModes,
+          persistedSettings.zeroIndexerDefaultApplied
+        )
+        persistedSettings.rpcEndpointPreferences = migrated.preferences
+        persistedSettings.rpcEndpointModes = migrated.modes
+        persistedSettings.zeroIndexerDefaultApplied = true
         return { ...currentState, ...persistedSettings }
       },
       partialize: state => ({
@@ -217,6 +233,7 @@ export const useSettingsStore = create<SettingsStore>()(
         rpcEndpointPreferences: state.rpcEndpointPreferences,
         rpcEndpointModes: state.rpcEndpointModes,
         customRpcEndpoints: state.customRpcEndpoints,
+        zeroIndexerDefaultApplied: state.zeroIndexerDefaultApplied,
         feeTier: state.feeTier,
         votingIntroSeen: state.votingIntroSeen
       })

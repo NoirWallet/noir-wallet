@@ -1,6 +1,11 @@
 {
   "schemaVersion": 1,
   "releases": {
+    "1.0.39": {
+      "changes": [
+        "ZeroIndexer is now the default Zcash connection, with your manually selected RPC provider preserved."
+      ]
+    },
     "1.0.38": {
       "changes": [
         "Verify recovery phrase backups, with reminders for existing wallets and backup checks before removing a wallet.",

@@ -15,17 +15,24 @@ import {
   getRetryableWalletRpcUserMessage
 } from '../src/core/zcash/wallet-rpc-errors'
 import {
+  DEFAULT_RPC_ENDPOINT_MODES,
+  DEFAULT_RPC_ENDPOINT_PREFERENCES,
   getActiveRpcEndpointOption,
+  getActiveRpcEndpointMode,
   getNextRpcEndpointOption,
   getRpcEndpointOptions,
   isRpcEndpointUrlConfigured,
+  migrateRpcEndpointDefaults,
   parseRpcEndpointModes,
   selectStartupRpcEndpoint,
   setActiveCustomRpcEndpoints,
   setActiveRpcEndpointOverride,
   setActiveRpcEndpointModes,
-  setActiveRpcEndpointPreferences
+  setActiveRpcEndpointPreferences,
+  withRequiredRpcEndpoints
 } from '../src/config/rpc-endpoints'
+import { NETWORKS } from '../src/config/networks'
+import { ZERO_INDEXER_ENDPOINT, ZERO_INDEXER_TESTNET_URL } from '../src/config/zero-indexer'
 import {
   fetchBlockTime,
   fetchLatestBlockHeight,
@@ -312,13 +319,92 @@ test('excludes custom endpoints from automatic fallback', () => {
   setActiveCustomRpcEndpoints()
 })
 
+test('new installations use fixed Zero on mainnet and the separate testnet endpoint', () => {
+  assert.deepEqual(DEFAULT_RPC_ENDPOINT_PREFERENCES, { zcash: ZERO_INDEXER_ENDPOINT.id })
+  assert.deepEqual(DEFAULT_RPC_ENDPOINT_MODES, { zcash: 'fixed' })
+  assert.equal(NETWORKS.mainnet.rpcUrl, ZERO_INDEXER_ENDPOINT.url)
+  assert.equal(NETWORKS.testnet.rpcUrl, ZERO_INDEXER_TESTNET_URL)
+  assert.notEqual(NETWORKS.mainnet.rpcUrl, NETWORKS.testnet.rpcUrl)
+})
+
+test('upgrades an old automatic choice once while preserving deliberate later choices', () => {
+  const upgraded = migrateRpcEndpointDefaults({ zcash: 'deltarpc' }, { zcash: 'auto' }, undefined)
+  assert.deepEqual(upgraded.preferences, { zcash: ZERO_INDEXER_ENDPOINT.id })
+  assert.deepEqual(upgraded.modes, { zcash: 'fixed' })
+
+  const laterAuto = migrateRpcEndpointDefaults(
+    { zcash: 'deltarpc' },
+    { zcash: 'auto' },
+    upgraded.migrationApplied
+  )
+  assert.deepEqual(laterAuto.preferences, { zcash: 'deltarpc' })
+  assert.deepEqual(laterAuto.modes, { zcash: 'auto' })
+
+  const explicitFixed = migrateRpcEndpointDefaults(
+    { zcash: 'custom:private' },
+    { zcash: 'fixed' },
+    undefined
+  )
+  assert.deepEqual(explicitFixed.preferences, { zcash: 'custom:private' })
+  assert.deepEqual(explicitFixed.modes, { zcash: 'fixed' })
+})
+
+test('retains the canonical Zero endpoint when a remote or cached registry omits it', () => {
+  const stale = [
+    {
+      chain: 'zcash' as const,
+      label: 'Zcash',
+      iconChain: 'zec',
+      options: [
+        { id: 'deltarpc', label: 'DeltaRPC', url: 'https://rpc.example.com' },
+        { id: ZERO_INDEXER_ENDPOINT.id, label: 'Old Zero', url: 'https://old.example.com' }
+      ]
+    }
+  ]
+  const merged = withRequiredRpcEndpoints(stale)
+  assert.deepEqual(merged[0].options[0], ZERO_INDEXER_ENDPOINT)
+  assert.equal(merged[0].options.filter(option => option.id === ZERO_INDEXER_ENDPOINT.id).length, 1)
+  assert.equal(stale[0].options[1].url, 'https://old.example.com')
+  assert.deepEqual(
+    withRequiredRpcEndpoints([{ ...stale[0], options: stale[0].options.slice(0, 1) }])[0]
+      .options[0],
+    ZERO_INDEXER_ENDPOINT
+  )
+})
+
+test('Zero never automatically switches provider, even with an auto mode or stale override', async () => {
+  setActiveRpcEndpointPreferences({ zcash: ZERO_INDEXER_ENDPOINT.id })
+  setActiveRpcEndpointModes({ zcash: 'auto' })
+  setActiveRpcEndpointOverride('zcash', 'deltarpc')
+  try {
+    assert.equal(getActiveRpcEndpointMode('zcash'), 'fixed')
+    assert.equal(getActiveRpcEndpointOption('zcash').id, ZERO_INDEXER_ENDPOINT.id)
+    assert.equal(
+      getNextRpcEndpointOption('zcash', ZERO_INDEXER_ENDPOINT.id, ZERO_INDEXER_ENDPOINT.id),
+      undefined
+    )
+    assert.equal(await recordRpcFailure(), null)
+    assert.equal(getActiveRpcEndpointOption('zcash').id, ZERO_INDEXER_ENDPOINT.id)
+  } finally {
+    setActiveRpcEndpointOverride('zcash')
+    setActiveRpcEndpointPreferences({ zcash: 'deltarpc' })
+    setActiveRpcEndpointModes({ zcash: 'auto' })
+  }
+})
+
+test('ordinary automatic fallback excludes Zero', () => {
+  const next = getNextRpcEndpointOption('zcash', 'deltarpc', 'deltarpc')
+  assert.ok(next)
+  assert.notEqual(next.id, ZERO_INDEXER_ENDPOINT.id)
+})
+
 test('defaults invalid or missing RPC modes to auto', () => {
   assert.deepEqual(parseRpcEndpointModes(undefined), { zcash: 'auto' })
   assert.deepEqual(parseRpcEndpointModes({ zcash: 'unknown' }), { zcash: 'auto' })
   assert.deepEqual(parseRpcEndpointModes({ zcash: 'fixed' }), { zcash: 'fixed' })
 })
 
-test('does not probe unselected custom endpoints during startup fallback', async () => {
+test('does not probe Zero or unselected custom endpoints during automatic startup fallback', async () => {
   const customA = createCustomRpcEndpoint('Custom A', 'https://a.example.com', 'custom:a')
   const customB = createCustomRpcEndpoint('Custom B', 'https://b.example.com', 'custom:b')
   setActiveCustomRpcEndpoints({ zcash: [customA, customB] })
@@ -332,6 +418,7 @@ test('does not probe unselected custom endpoints during startup fallback', async
   assert.equal(selected.id, 'deltarpc')
   assert.ok(!probedIds.includes(customA.id))
   assert.ok(!probedIds.includes(customB.id))
+  assert.ok(!probedIds.includes(ZERO_INDEXER_ENDPOINT.id))
 
   setActiveCustomRpcEndpoints()
 })
