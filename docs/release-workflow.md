@@ -1,6 +1,6 @@
 # Noir Wallet CI/CD and Release Workflow
 
-This runbook describes the browser extension workflow implemented in [build-extension.yml](../.github/workflows/build-extension.yml). The [documentation workflow](../.github/workflows/docs.yml) verifies the documentation site on relevant pull requests but does not deploy it. SDK npm publication, website production deployment, and Chrome Web Store submission are separate manual operations.
+This runbook describes the browser extension workflow implemented in [build-extension.yml](../.github/workflows/build-extension.yml). The [documentation workflow](../.github/workflows/docs.yml) verifies the documentation site on relevant pull requests but does not deploy it. The [SDK workflow](../.github/workflows/sdk.yml) checks the SDK package and example from this workspace without publishing them. SDK npm publication, website production deployment, and Chrome Web Store submission are separate manual operations.
 
 ## Branches and Releases
 
@@ -85,7 +85,7 @@ Analytics values embedded in the extension are visible to its users. They must n
 
 ### Publish
 
-The publish job runs only in a public, non-fork repository. It downloads the preceding job's exact artifact and checks `SHA256SUMS` before publishing to `github.repository`. Only this job receives `contents: write`; it uses the built-in `GITHUB_TOKEN` and does not write to the SDK repository.
+The publish job runs only in a public, non-fork repository. It downloads the preceding job's exact artifact and checks `SHA256SUMS` before publishing to `github.repository`. Only this job receives `contents: write`; it uses the built-in `GITHUB_TOKEN` and does not publish the SDK.
 
 - Beta uses a prerelease and is not marked Latest. Its tag points to the wallet source commit that produced the ZIPs.
 - Production uses the validated, existing `v{version}` tag and is marked Latest. Earlier prereleases remain available.
@@ -93,7 +93,7 @@ The publish job runs only in a public, non-fork repository. It downloads the pre
 
 Asset names are `noir-wallet-v{release-version}.zip` for mainnet and `noir-wallet-v{release-version}-testnet.zip` for testnet. An existing Release is left unchanged when a run is retried. GitHub's automatically attached source archives now come from the wallet repository at the release tag.
 
-The SDK keeps its own version and npm publication process. Existing wallet downloads in the SDK repository remain historical releases; this workflow does not modify them. The public download and repository entry points are [wallet builds](https://zknoir.com/beta/versions) and [wallet source](https://zknoir.com/github). Website builds target `NoirWallet/noir-wallet` by default; see the [website build configuration](../README.md#build).
+The SDK is maintained in `packages/sdk/` but keeps its own version and npm publication process. Existing wallet downloads in the former SDK repository remain historical releases; this workflow does not modify them. The public download and repository entry points are [wallet builds](https://zknoir.com/beta/versions) and [wallet source](https://zknoir.com/github). Website builds target `NoirWallet/noir-wallet` by default; see the [website build configuration](../README.md#build).
 
 ## WASM Package Updates
 
