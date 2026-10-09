@@ -1,5 +1,10 @@
 import type { AccountId } from '@/core/accounts/domain'
-import { keySourceSupportsAddressFamily, resolveKeyDomain } from '@/core/accounts/application'
+import {
+  keySourceSupportsAddressFamily,
+  loadActiveReceiveWalletSet,
+  resolveKeyDomain
+} from '@/core/accounts/application'
+import type { WalletDAppActiveAccount } from './wallet-dapp-connection'
 import {
   createBuildAddressGatedChainRegistry,
   createInitialProductChainRegistry,
@@ -67,6 +72,19 @@ export interface AccountNetworksCoordinatorOptions {
 
 export class AccountNetworksCoordinator {
   constructor(private readonly options: AccountNetworksCoordinatorOptions) {}
+
+  async readActiveAccount(): Promise<WalletDAppActiveAccount | null> {
+    const active = await loadActiveReceiveWalletSet({
+      repository: this.options.repository,
+      chainRegistry: this.options.chains
+    })
+    const selection = active?.catalog.activeAccount
+    if (!selection) return null
+    return {
+      reference: { walletId: selection.keyDomainId, accountId: selection.accountId },
+      chainIds: active.availableChainAccounts.map(item => item.chain.id)
+    }
+  }
 
   async readCatalog(): Promise<AccountNetworksCatalog | null> {
     const pointer = await this.options.repository.getActivePointer()

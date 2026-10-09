@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useWalletStore } from '@/store/wallet-store'
 import type { ConnectedDApp } from '@/core/dapp/dapp-manager'
+import { getOwnExtensionSenderContext } from '@/lib/runtime-message-security'
 
 export type { ConnectedDApp } from '@/core/dapp/dapp-manager'
 
@@ -10,23 +11,28 @@ export function useDAppConnection() {
   const [connectedDApps, setConnectedDApps] = useState<ConnectedDApp[]>([])
   const [loading, setLoading] = useState(true)
   const { currentWalletId, currentAccountId } = useWalletStore()
+  const statusRequest = useRef(0)
 
-  const loadCurrentTabDApp = async () => {
+  const loadCurrentTabDApp = useCallback(async () => {
+    const request = ++statusRequest.current
     try {
       const response = await chrome.runtime.sendMessage({
         type: 'GET_CURRENT_TAB_DAPP'
       })
 
+      if (response?.error) throw new Error(response.error)
+      if (request !== statusRequest.current) return
       setCurrentDApp(response.dapp ?? null)
       setCurrentAccountAuthorized(response.dapp ? !!response.currentAccountAuthorized : true)
     } catch (error) {
+      if (request !== statusRequest.current) return
       console.error('Failed to load current tab dApp:', error)
       setCurrentDApp(null)
       setCurrentAccountAuthorized(true)
     }
-  }
+  }, [])
 
-  const loadConnectedDApps = async () => {
+  const loadConnectedDApps = useCallback(async () => {
     setLoading(true)
     try {
       const response = await chrome.runtime.sendMessage({
@@ -41,7 +47,7 @@ export function useDAppConnection() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
 
   const disconnectDApp = async (origin: string) => {
     try {
@@ -77,9 +83,30 @@ export function useDAppConnection() {
 
   // Re-resolve on account switches so the connect prompt tracks the active account
   useEffect(() => {
-    loadCurrentTabDApp()
-    loadConnectedDApps()
-  }, [currentWalletId, currentAccountId])
+    void loadCurrentTabDApp()
+    void loadConnectedDApps()
+  }, [currentWalletId, currentAccountId, loadCurrentTabDApp, loadConnectedDApps])
+
+  useEffect(() => {
+    const listener = (message: unknown, sender: chrome.runtime.MessageSender) => {
+      if (
+        !message ||
+        typeof message !== 'object' ||
+        !('type' in message) ||
+        message.type !== 'ACCOUNT_CONTEXT_CHANGED' ||
+        getOwnExtensionSenderContext(sender, chrome.runtime.id) !== 'service-worker'
+      ) {
+        return
+      }
+      void loadCurrentTabDApp()
+      void loadConnectedDApps()
+    }
+    chrome.runtime.onMessage.addListener(listener)
+    return () => {
+      ++statusRequest.current
+      chrome.runtime.onMessage.removeListener(listener)
+    }
+  }, [loadCurrentTabDApp, loadConnectedDApps])
 
   return {
     currentDApp,

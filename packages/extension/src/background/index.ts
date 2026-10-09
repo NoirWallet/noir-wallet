@@ -159,6 +159,7 @@ import {
 import { accountContextTransition } from './account-context-transition'
 import { createBackgroundAdditionalReceiveTargetsCoordinator } from './receive-targets'
 import { createBackgroundAccountNetworksCoordinator } from './account-networks'
+import { WalletDAppConnectionCoordinator } from './wallet-dapp-connection'
 import { createBackgroundBitcoinAddressBalancesCoordinator } from './bitcoin-address-balances'
 import { createBackgroundEvmDAppHandler } from './evm-dapp'
 import { handleEvmDAppNetworkSwitch } from './evm-dapp-network-switch'
@@ -462,6 +463,21 @@ const NETWORK_MODE_RESTART_ALARM = 'network-mode-restart'
 let activeEvmNumericChainId = 0
 let multichainRuntimeKey = ''
 let multichainRuntimeReady: Promise<void> = runtimeNetworkReady.then(() => undefined)
+
+const walletDAppConnection = new WalletDAppConnectionCoordinator({
+  getCurrentTabDApp: () => dappManager.getCurrentTabDApp(),
+  getConnection: origin => dappManager.getConnection(origin),
+  loadActiveAccount: () => accountNetworksCoordinator.readActiveAccount(),
+  getEvmChainId: () => evmDAppHandler.getCaip2ChainId(),
+  getZcashChainId: () => getZcashChainId(DEFAULT_NETWORK),
+  connectEvm: origin => evmDAppHandler.connectCurrentAccountToDApp(origin),
+  connectZcash: origin => dappHandler.connectCurrentAccountToDApp(origin),
+  runActiveOperation: async operation => {
+    await rehydrateWalletStore()
+    await multichainRuntimeReady
+    return accountContextTransition.runActiveOperation(operation)
+  }
+})
 
 function requireActiveDAppExecutionModeScope(): DAppExecutionModeScope {
   const { currentWalletId, currentAccountId } = useWalletStore.getState()
@@ -3334,7 +3350,7 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
   }
 
   if (message.type === 'GET_CURRENT_TAB_DAPP') {
-    dappHandler
+    walletDAppConnection
       .getCurrentTabDAppStatus()
       .then(status => sendResponse(status))
       .catch(error => sendResponse({ error: error.message }))
@@ -3386,31 +3402,8 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
   }
 
   if (message.type === 'CONNECT_CURRENT_ACCOUNT_TO_DAPP') {
-    Promise.resolve()
-      .then(async () => {
-        await rehydrateWalletStore()
-        await multichainRuntimeReady
-        const connection = await dappManager.getConnection(message.origin)
-        if (!connection) throw new Error('No connection found for this site')
-        if (connection.caip25Session) {
-          throw new Error('Reconnect from the site to update this multichain session')
-        }
-        if (
-          connection.chainAuthorizations?.some(
-            authorization => authorization.chainId === evmDAppHandler.getCaip2ChainId()
-          )
-        ) {
-          await evmDAppHandler.connectCurrentAccountToDApp(message.origin)
-          return
-        }
-        if (connection.authorizedAccounts || connection.boundWalletId) {
-          await accountContextTransition.runActiveOperation(() =>
-            dappHandler.connectCurrentAccountToDApp(message.origin)
-          )
-          return
-        }
-        throw new Error('Reconnect from the site to update this network permission')
-      })
+    walletDAppConnection
+      .connectCurrentAccount(message.origin)
       .then(() => sendResponse({ success: true }))
       .catch(error => sendResponse({ error: error.message }))
     return true

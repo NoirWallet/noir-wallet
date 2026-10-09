@@ -1,11 +1,6 @@
 import { isZcashHardwareKeySource } from '@/core/wallet/hardware-wallet-data'
 import { backgroundZcashWalletRuntime } from './zcash-wallet-runtime'
-import {
-  connectionAuthorizesAccount,
-  connectionAuthorizesAccountForWalletStatus,
-  dappManager,
-  type ConnectedDApp
-} from '../core/dapp/dapp-manager'
+import { connectionAuthorizesAccount, dappManager } from '../core/dapp/dapp-manager'
 import { syncScheduler } from './sync-scheduler'
 import type {
   AccountData,
@@ -2146,35 +2141,6 @@ export class DAppHandler {
 
   async getAllConnectedDApps() {
     return await dappManager.getAllConnections()
-  }
-
-  async getCurrentTabDApp() {
-    return await dappManager.getCurrentTabDApp()
-  }
-
-  /**
-   * Current-tab connection plus whether the wallet's active account is
-   * authorized for it — drives the wallet-side connect prompt.
-   */
-  async getCurrentTabDAppStatus(): Promise<{
-    dapp: ConnectedDApp | null
-    currentAccountAuthorized: boolean
-  }> {
-    const dapp = await dappManager.getCurrentTabDApp()
-    if (!dapp) {
-      return { dapp: null, currentAccountAuthorized: false }
-    }
-    const { currentWalletId, currentAccountId } = useWalletStore.getState()
-    if (!currentWalletId || !currentAccountId) {
-      return { dapp, currentAccountAuthorized: false }
-    }
-    return {
-      dapp,
-      currentAccountAuthorized: connectionAuthorizesAccountForWalletStatus(dapp, {
-        walletId: currentWalletId,
-        accountId: currentAccountId
-      })
-    }
   }
 
   /**
