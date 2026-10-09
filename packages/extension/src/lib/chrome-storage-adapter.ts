@@ -5,11 +5,13 @@
 
 type StorageArea = 'local' | 'session'
 
+import { SETTINGS_STORAGE_KEY } from '../config/storage-keys'
 import {
   readWalletMetadata,
   writeWalletMetadata,
   WALLET_STATE_KEY
 } from './wallet-metadata-storage'
+import { withWalletSettingsLock } from './wallet-settings-storage'
 
 interface StorageAdapter {
   getItem(key: string): Promise<unknown>
@@ -43,27 +45,41 @@ export function createChromeStorageAdapter(area: StorageArea = 'local'): Storage
         await writeWalletMetadata(storage, value)
         return
       }
-      try {
-        await storage.set({ [key]: value })
-      } catch (error: any) {
-        // Handle quota exceeded
-        if (error.message?.includes('QUOTA_BYTES')) {
-          console.warn('[ChromeStorageAdapter] Quota exceeded, attempting cleanup...')
-          await clearOldCacheEntries(storage)
+      const write = async () => {
+        try {
           await storage.set({ [key]: value })
-        } else {
-          console.error('[ChromeStorageAdapter] setItem error:', error)
-          throw error
+        } catch (error: any) {
+          // Handle quota exceeded
+          if (error.message?.includes('QUOTA_BYTES')) {
+            console.warn('[ChromeStorageAdapter] Quota exceeded, attempting cleanup...')
+            await clearOldCacheEntries(storage)
+            await storage.set({ [key]: value })
+          } else {
+            console.error('[ChromeStorageAdapter] setItem error:', error)
+            throw error
+          }
         }
+      }
+      if (area === 'local' && key === SETTINGS_STORAGE_KEY) {
+        await withWalletSettingsLock(write)
+      } else {
+        await write()
       }
     },
 
     removeItem: async (key: string): Promise<void> => {
-      try {
-        await storage.remove(key)
-      } catch (error) {
-        console.error('[ChromeStorageAdapter] removeItem error:', error)
-        throw error
+      const remove = async () => {
+        try {
+          await storage.remove(key)
+        } catch (error) {
+          console.error('[ChromeStorageAdapter] removeItem error:', error)
+          throw error
+        }
+      }
+      if (area === 'local' && key === SETTINGS_STORAGE_KEY) {
+        await withWalletSettingsLock(remove)
+      } else {
+        await remove()
       }
     }
   }

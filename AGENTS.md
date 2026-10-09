@@ -133,7 +133,8 @@ Mainnet and testnet are separate builds selected by `NETWORK_MODE` at build time
 - Testnet builds use `NETWORK_MODE=testnet` and the name `[Testnet] Noir Wallet`.
 - Separate extension IDs isolate Chrome storage, IndexedDB, and runtime state.
 - There is no runtime network switch. `zcash_switchNetwork` and SDK `switchNetwork()` are deprecated and must direct users to install the testnet extension.
-- Mainnet may use a user-selected wallet RPC endpoint; testnet uses its fixed configuration.
+- Mainnet defaults to fixed ZeroIndexer and preserves explicit fixed RPC choices on upgrade; testnet uses its fixed configuration.
+- Keep ZeroIndexer outside automatic provider selection and failover. A selected ZeroIndexer endpoint must not silently switch transaction submission to another provider.
 
 Current network endpoints and chain IDs live in `packages/extension/src/config/networks.ts`. Do not duplicate endpoint values in business logic.
 
@@ -185,7 +186,7 @@ Important persisted store keys include:
 - `wallet_state`: wallet metadata and current wallet/account pointers.
 - `wallet_deleted_ids`: durable wallet deletion markers that prevent stale extension contexts from restoring removed entries. Wallet metadata writes and deletions use the shared Web Lock in `src/lib/wallet-metadata-storage.ts`; commit metadata removal before clearing credentials.
 - `account_data`: cached balances and sync state. Transaction arrays are persisted separately in IndexedDB.
-- `wallet_settings`: user settings.
+- `wallet_settings`: user settings. RPC updates and store writes use the shared Web Lock in `src/lib/wallet-settings-storage.ts`.
 - `swap_preferences`: swap preferences.
 - `seed_<walletId>`: encrypted wallet credential data.
 

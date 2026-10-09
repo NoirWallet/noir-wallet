@@ -24,6 +24,7 @@ import { ChainIcon } from '../../components/common/ChainIcon'
 import { PageHeader } from '../../components/common/PageHeader'
 import { cn } from '@/lib/utils'
 import { DEFAULT_NETWORK, getNetworkConfig } from '@/config/networks'
+import { ZERO_INDEXER_ENDPOINT } from '@/config/zero-indexer'
 import { Button } from '../../components/ui/button'
 import { Input } from '../../components/ui/input'
 import {
@@ -43,8 +44,8 @@ const fixedTestnetEndpointGroups = isFixedTestnetEndpoint
         iconChain: 'zec',
         options: [
           {
-            id: 'deltarpc' as const,
-            label: 'DeltaRPC Testnet',
+            id: ZERO_INDEXER_ENDPOINT.id,
+            label: 'ZeroIndexer Testnet',
             url: getNetworkConfig('testnet').rpcUrl
           }
         ]
