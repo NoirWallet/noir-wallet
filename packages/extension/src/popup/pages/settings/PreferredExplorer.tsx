@@ -1,96 +1,165 @@
-import { useEffect } from 'react'
-import { BLOCK_EXPLORER_GROUPS } from '@/config/block-explorers'
+import { useMemo, useState } from 'react'
+import { Icon } from '@iconify/react'
+import { findChainEndpointOverride, withChainExplorer } from '@/core/chains/chain-endpoint-settings'
 import { useSettingsStore } from '@/store/settings-store'
+import { toast } from '@/store/toast-store'
 import { ChainIcon } from '../../components/common/ChainIcon'
 import { PageHeader } from '../../components/common/PageHeader'
-import { DEFAULT_NETWORK, getNetworkConfig } from '@/config/networks'
-
-const isFixedTestnetExplorer = DEFAULT_NETWORK === 'testnet'
-const displayedBlockExplorerGroups = isFixedTestnetExplorer
-  ? [
-      {
-        chain: 'zcash' as const,
-        label: 'Zcash Testnet',
-        iconChain: 'zec',
-        options: [
-          {
-            id: 'blockchair' as const,
-            label: 'Cipherscan Testnet',
-            baseUrl: getNetworkConfig('testnet').explorerUrl,
-            transactionPath: 'tx'
-          }
-        ]
-      }
-    ]
-  : BLOCK_EXPLORER_GROUPS
+import { Button } from '../../components/ui/button'
+import { Input } from '../../components/ui/input'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle
+} from '../../components/ui/dialog'
+import { chainEndpointSettingsClient } from '../../services/chain-endpoint-settings-client'
+import {
+  buildExplorerChainOptions,
+  type ExplorerChainOption
+} from '@/popup/services/chain-settings-options'
 
 export function PreferredExplorer() {
-  const { blockExplorerPreferences, setBlockExplorerPreference, loadSettings } = useSettingsStore()
+  const settings = useSettingsStore(state => state.chainEndpointSettings)
+  const setSettings = useSettingsStore(state => state.setChainEndpointSettings)
+  const [editing, setEditing] = useState<ExplorerChainOption | null>(null)
+  const [url, setUrl] = useState('')
+  const [transactionPath, setTransactionPath] = useState('tx')
+  const [saving, setSaving] = useState(false)
+  const options = useMemo(() => buildExplorerChainOptions(settings), [settings])
 
-  useEffect(() => {
-    loadSettings()
-  }, [loadSettings])
+  const openEditor = (option: ExplorerChainOption) => {
+    const override = findChainEndpointOverride(settings, option.chainId)?.explorer
+    setUrl(override?.baseUrl ?? option.defaultUrl)
+    setTransactionPath(override?.transactionPath ?? option.defaultTransactionPath)
+    setEditing(option)
+  }
+
+  const apply = async (custom: boolean) => {
+    if (!editing || saving) return
+    setSaving(true)
+    try {
+      const next = withChainExplorer(
+        settings,
+        editing.chainId,
+        custom
+          ? {
+              label: `Custom ${editing.label} Explorer`,
+              baseUrl: url.trim(),
+              transactionPath: transactionPath.trim()
+            }
+          : undefined
+      )
+      const saved = await chainEndpointSettingsClient.apply(next)
+      setSettings(saved)
+      toast.success(
+        custom ? 'Custom Explorer Saved' : 'Default Explorer Restored',
+        `${editing.label} transaction links were updated.`
+      )
+      setEditing(null)
+    } catch (error) {
+      toast.error(
+        'Explorer Update Failed',
+        error instanceof Error ? error.message : 'Check the explorer URL and path.'
+      )
+    } finally {
+      setSaving(false)
+    }
+  }
 
   return (
     <div className="page-container">
-      <PageHeader title="Preferred Explorer" showBack />
-
-      <div className="page-content space-y-6">
-        {displayedBlockExplorerGroups.map(group => (
-          <section key={group.chain} className="space-y-3">
-            <div className="flex items-center gap-2">
-              <div className="size-6 rounded-full bg-white flex items-center justify-center overflow-hidden">
-                <ChainIcon chain={group.iconChain} className="size-6" />
+      <PageHeader title="Block Explorers" showBack />
+      <div className="page-content space-y-3 pb-5">
+        <p className="text-xs leading-5 text-muted">
+          Explorer settings only change outbound transaction links. They are not used for signing or
+          broadcasting.
+        </p>
+        {options.map(option => {
+          const custom = findChainEndpointOverride(settings, option.chainId)?.explorer
+          return (
+            <button
+              key={option.chainId}
+              type="button"
+              onClick={() => openEditor(option)}
+              className="flex w-full min-w-0 items-center gap-3 rounded-xl border border-border/60 bg-card px-3 py-3 text-left transition-colors hover:border-primary/30"
+            >
+              <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-white">
+                <ChainIcon
+                  chain={option.iconChain}
+                  className="size-8 rounded-full"
+                  showTooltip={false}
+                />
               </div>
-              <h2 className="text-base font-medium text-white">{group.label}</h2>
-            </div>
-
-            <div className="overflow-hidden rounded-xl bg-card">
-              {group.options.map((option, index) => {
-                const isSelected =
-                  isFixedTestnetExplorer || blockExplorerPreferences[group.chain] === option.id
-
-                return (
-                  <button
-                    key={option.id}
-                    type="button"
-                    disabled={isFixedTestnetExplorer}
-                    onClick={() => {
-                      if (!isFixedTestnetExplorer) {
-                        setBlockExplorerPreference(group.chain, option.id)
-                      }
-                    }}
-                    className={`w-full min-h-11 px-4 py-3 flex items-center justify-between gap-3 text-left transition-colors hover:bg-white/5 ${
-                      index > 0 ? 'border-t border-white/10' : ''
-                    }`}
-                  >
-                    <span className="min-w-0 flex-1">
-                      <span className="block text-sm text-white">{option.label}</span>
-                      <span className="block text-xs text-muted truncate">
-                        {option.baseUrl.replace(/^https?:\/\//, '')}
-                      </span>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <span className="truncate text-sm font-medium">{option.label}</span>
+                  {custom && (
+                    <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">
+                      Custom
                     </span>
-                    <span
-                      className={`size-4 rounded-full border flex items-center justify-center shrink-0 ${
-                        isSelected ? 'border-primary bg-primary/15' : 'border-white/15 bg-white/5'
-                      }`}
-                      aria-hidden="true"
-                    >
-                      {isSelected && <span className="size-2 rounded-full bg-primary" />}
-                    </span>
-                  </button>
-                )
-              })}
-            </div>
-          </section>
-        ))}
-
-        {isFixedTestnetExplorer && (
-          <p className="text-xs text-muted">
-            Testnet builds use Cipherscan Testnet for transaction links.
-          </p>
-        )}
+                  )}
+                </div>
+                <p className="truncate text-xs text-muted">
+                  {custom?.baseUrl || option.defaultUrl
+                    ? (custom?.baseUrl ?? option.defaultUrl).replace(/^https?:\/\//, '')
+                    : 'Not configured'}
+                </p>
+              </div>
+              <Icon icon="lucide:chevron-right" className="size-4 shrink-0 text-muted" />
+            </button>
+          )
+        })}
       </div>
+
+      <Dialog open={editing !== null} onOpenChange={open => !open && !saving && setEditing(null)}>
+        <DialogContent position="bottom">
+          <DialogHeader>
+            <DialogTitle>{editing?.label} Explorer</DialogTitle>
+            <DialogDescription>
+              Transaction links use Base URL / Transaction path / Hash.
+            </DialogDescription>
+          </DialogHeader>
+          <Input
+            aria-label={`${editing?.label ?? ''} explorer URL`}
+            type="url"
+            value={url}
+            onChange={event => setUrl(event.target.value)}
+            placeholder="https://explorer.example"
+            className="h-11 rounded-xl font-mono text-xs"
+          />
+          <Input
+            aria-label="Transaction path"
+            value={transactionPath}
+            onChange={event => setTransactionPath(event.target.value)}
+            placeholder="tx"
+            className="h-11 rounded-xl font-mono text-xs"
+          />
+          <div className="grid grid-cols-2 gap-2">
+            <Button
+              variant="outline"
+              className="h-11"
+              disabled={
+                !editing ||
+                !editing.defaultUrl ||
+                !findChainEndpointOverride(settings, editing.chainId)?.explorer
+              }
+              onClick={() => void apply(false)}
+            >
+              Use Default
+            </Button>
+            <Button
+              className="h-11"
+              isLoading={saving}
+              disabled={!url.trim() || !transactionPath.trim()}
+              onClick={() => void apply(true)}
+            >
+              Save Explorer
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import {
   Dialog,
   DialogContent,
@@ -24,12 +24,6 @@ interface ModalConfig {
   className?: string
   resolve: (value: any) => void
 }
-
-interface ModalContextType {
-  openModal: <T>(options: OpenModalOptions<T>) => Promise<T>
-}
-
-const ModalContext = createContext<ModalContextType | null>(null)
 
 let globalOpenModal: (<T>(options: OpenModalOptions<T>) => Promise<T>) | null = null
 
@@ -72,7 +66,7 @@ export function ModalProvider({ children }: { children: React.ReactNode }) {
   }, [openModalFn])
 
   return (
-    <ModalContext.Provider value={{ openModal: openModalFn }}>
+    <>
       {children}
       {modals.map(modal => (
         <Dialog
@@ -102,16 +96,8 @@ export function ModalProvider({ children }: { children: React.ReactNode }) {
           </DialogContent>
         </Dialog>
       ))}
-    </ModalContext.Provider>
+    </>
   )
-}
-
-export function useModal() {
-  const context = useContext(ModalContext)
-  if (!context) {
-    throw new Error('useModal must be used within ModalProvider')
-  }
-  return context
 }
 
 export function openModal<T = any>(options: OpenModalOptions<T>): Promise<T> {

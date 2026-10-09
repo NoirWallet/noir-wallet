@@ -13,35 +13,10 @@ export interface SyncJob {
   batchCount: number
   persistFailures: string[]
   reason?: SyncReason
-  /** False for intentionally budgeted background work that should wait for its next alarm. */
-  resumeOnStartup?: boolean
 }
 
 const STORAGE_KEY = 'sync_jobs'
 const MAX_PERSIST_FAILURES = 20
-
-export interface SyncJobCompletionState {
-  snapshotFailed: boolean
-  flushFailed: boolean
-  finalPersistFailed: boolean
-  skippedFinalPersist: boolean
-  hasPendingJournal: boolean
-  hasPendingBalanceSettlement: boolean
-}
-
-/**
- * A sync job only remains interrupted when durable scan progress may be missing.
- * Pending confirmations and balance settlement are separate lifecycle states and
- * must not force the next sync to reload an otherwise valid wallet snapshot.
- */
-export function shouldMarkSyncJobInterrupted(state: SyncJobCompletionState): boolean {
-  return (
-    state.snapshotFailed ||
-    state.flushFailed ||
-    state.finalPersistFailed ||
-    (state.skippedFinalPersist && state.hasPendingJournal)
-  )
-}
 
 function jobKey(walletId: string, network: Network): string {
   return `${network}_${walletId}`
@@ -77,8 +52,7 @@ export const syncJobStore = {
       startedAt: patch.startedAt ?? existing?.startedAt ?? Date.now(),
       batchCount: patch.batchCount ?? existing?.batchCount ?? 0,
       persistFailures: patch.persistFailures ?? existing?.persistFailures ?? [],
-      reason: patch.reason ?? existing?.reason,
-      resumeOnStartup: patch.resumeOnStartup ?? existing?.resumeOnStartup
+      reason: patch.reason ?? existing?.reason
     }
     jobs[key] = updated
     await saveAll(jobs)
@@ -90,8 +64,7 @@ export const syncJobStore = {
     accountId: string,
     network: Network,
     targetHeight: number,
-    lastPersistedHeight: number,
-    resumeOnStartup = true
+    lastPersistedHeight: number
   ): Promise<SyncJob> {
     return this.upsert(walletId, network, {
       accountId,
@@ -100,8 +73,7 @@ export const syncJobStore = {
       status: 'running',
       startedAt: Date.now(),
       batchCount: 0,
-      persistFailures: [],
-      resumeOnStartup
+      persistFailures: []
     })
   },
 

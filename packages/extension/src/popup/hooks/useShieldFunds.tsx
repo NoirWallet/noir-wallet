@@ -1,3 +1,4 @@
+import { isZcashHardwareKeySource } from '@/core/wallet/hardware-wallet-data'
 import { useState, useCallback } from 'react'
 import { useAccountDataStore, buildAccountKey } from '@/store/account-data-store'
 import { useTransactionResultStore } from '@/store/transaction-result-store'
@@ -7,20 +8,19 @@ import { openHardwareSignAndWait, openHardwareSignTab } from '@/lib/hardware-tab
 import { ShieldConfirmSheet } from '../components/transaction/ShieldConfirmSheet'
 import { WALLET_CONFIG } from '@/config/wallet'
 import { ANALYTICS_EVENTS, PAGE_IDS } from '@/lib/analytics'
-import { MARGINAL_FEE_ZATS, sanitizeMarginalFeeZats } from '@/config/fee'
+import { MARGINAL_FEE_ZATS } from '@/config/fee'
+import { sanitizeMarginalFeeZats } from '@/core/zcash/fee-policy'
 import type { Transaction } from '@/types/wallet'
 import { safeBig } from '@/lib/big'
 import { classifyError } from '@/lib/errors'
-import { loadTransactions } from '@/lib/indexed-db'
 import { isValidAddTransactionResponse } from '@/lib/transaction-record-response'
 import {
   getShieldableTransparentBalance,
   hasEnoughTransparentBalanceToShield,
   MIN_SHIELDING_BALANCE_MESSAGE
 } from '@/core/zcash/shielding'
-import { isHardwareKeySource } from '@/lib/hardware-capabilities'
 import { getStandardTransactionResultCopy } from '@/lib/transaction-status-copy'
-import { isSidePanelSurface } from '@/config/extension-display'
+import { isSidePanelSurface } from '@/lib/extension-display-mode'
 import { toast } from '@/store/toast-store'
 
 const SHIELD_FAILED_COPY = getStandardTransactionResultCopy('failed', { shield: true })
@@ -83,9 +83,9 @@ export function useShieldFunds(): UseShieldFundsResult {
         return
       }
 
-      // Hardware wallets sign in a dedicated tab.
+      // Hardware wallets sign via QR codes in a dedicated tab
       const currentWallet = walletStore.getCurrentWallet()
-      if (isHardwareKeySource(currentWallet?.keySource)) {
+      if (isZcashHardwareKeySource(currentWallet?.keySource)) {
         if (!currentWalletId || !currentAccountId) return
         const request = {
           kind: 'shield' as const,
@@ -94,9 +94,7 @@ export function useShieldFunds(): UseShieldFundsResult {
           amount: transparentBalance,
           marginalFeeZats
         }
-        const isSidePanel = isSidePanelSurface(window.location.search)
-
-        if (!isSidePanel) {
+        if (!isSidePanelSurface(window.location.search)) {
           await openHardwareSignTab(request)
           window.close()
           return
@@ -104,13 +102,13 @@ export function useShieldFunds(): UseShieldFundsResult {
 
         setIsShielding(true)
         try {
-          const result = await openHardwareSignAndWait(request)
+          const result = await openHardwareSignAndWait(request, { presentation: 'window' })
           if (result.status === 'success') {
             setResult(
               {
                 type: 'zcash',
                 step: 'submitted',
-                amount: transparentBalance,
+                amount: result.amount,
                 fromAddress: currentAccount?.addresses.transparent,
                 toAddress: currentAccount?.addresses.shielded,
                 txHash: result.txHash,
@@ -141,6 +139,21 @@ export function useShieldFunds(): UseShieldFundsResult {
       let pendingTx: Transaction | null = null
 
       try {
+        const syncState = accountDataStore.getCurrentSyncState()
+
+        const now = Date.now()
+        const lastSyncTime = syncState.lastSyncTime || 0
+        const syncStuckTimeout = 5 * 60 * 1000
+
+        if (syncState.isSyncing && now - lastSyncTime > syncStuckTimeout) {
+          console.warn('[useShieldFunds] Sync state appears stuck, forcing reset')
+          accountDataStore.setIsSyncing(false)
+        } else if (syncState.isSyncing) {
+          throw new Error(
+            'Blockchain sync is still in progress. Please wait for sync to complete before shielding funds.'
+          )
+        }
+
         const fromAddress = currentAccount?.addresses.transparent || ''
         const toAddress = currentAccount?.addresses.shielded || ''
 
@@ -154,7 +167,7 @@ export function useShieldFunds(): UseShieldFundsResult {
           .times(sanitizeMarginalFeeZats(marginalFeeZats) / MARGINAL_FEE_ZATS.standard)
           .toFixed()
 
-        const response = await chrome.runtime.sendMessage({
+        const response: unknown = await chrome.runtime.sendMessage({
           type: 'ADD_TRANSACTION',
           accountKey,
           transaction: {
@@ -174,8 +187,9 @@ export function useShieldFunds(): UseShieldFundsResult {
         })
 
         if (!isValidAddTransactionResponse(response)) {
-          throw new Error(response?.error || 'Failed to add transaction')
+          throw new Error('Failed to add transaction')
         }
+
         pendingTx = response.transaction
         if (!pendingTx) {
           throw new Error('Failed to create transaction')
@@ -233,9 +247,11 @@ export function useShieldFunds(): UseShieldFundsResult {
 
         if (pendingTx && currentWalletId && currentAccountId) {
           const accountKey = buildAccountKey(network, currentWalletId, currentAccountId)
-          const stored = await loadTransactions(accountKey)
-            .then(records => records.find(record => record.id === pendingTx?.id))
-            .catch(() => undefined)
+          await useAccountDataStore.getState().reloadTransactions(accountKey)
+          const stored = useAccountDataStore
+            .getState()
+            .getTransactions(accountKey)
+            .find(record => record.id === pendingTx?.id)
           const currentResult = useTransactionResultStore.getState().data
           const resultHash =
             currentResult?.type === 'zcash' &&
@@ -257,20 +273,13 @@ export function useShieldFunds(): UseShieldFundsResult {
             )
             return
           }
-
-          const transactionId = pendingTx.id
-          void Promise.resolve()
-            .then(() =>
-              chrome.runtime.sendMessage({
-                type: 'UPDATE_TRANSACTION',
-                accountKey,
-                transactionId,
-                updates: {
-                  status: 'failed',
-                  notified: true
-                }
-              })
-            )
+          await chrome.runtime
+            .sendMessage({
+              type: 'UPDATE_TRANSACTION',
+              accountKey,
+              transactionId: pendingTx.id,
+              updates: { status: 'failed', notified: true }
+            })
             .catch(() => {})
         }
 

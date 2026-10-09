@@ -1,23 +1,32 @@
-import { test as it, describe } from 'node:test'
+/**
+ * Analytics logic tests:
+ *   pnpm --filter @noir-wallet/extension test:logic
+ *
+ * Runs directly under Node (>=22, type stripping) against the TS sources.
+ * Optional live end-to-end check against the real collector:
+ *   ANALYTICS_E2E=1 pnpm --filter @noir-wallet/extension test:logic
+ */
+import { test as it } from '@playwright/test'
 import { mock } from 'node:test'
 import assert from 'node:assert/strict'
 import { createDecipheriv } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 
 import { encryptAnalyticsPayload } from '../src/lib/analytics/crypto.ts'
-import { PAGE_IDS, resolvePageId } from '../src/lib/analytics/constants.ts'
-import { buildPayload, sanitizeAnalyticsMetadata } from '../src/lib/analytics/payload.ts'
-import { calculateSwapUsdAmount } from '../src/lib/analytics/swap.ts'
-import { CUSTOM_ANALYTICS_CONFIG } from '../src/config/analytics.ts'
-import { shouldEnableAnalyticsReporting } from '../analytics-build-policy.ts'
-import { getAnalyticsDeviceMetadata } from '../src/lib/analytics/device.ts'
-import { ForegroundEngagementTracker } from '../src/lib/analytics/engagement.ts'
-import { buildOutboundClickMetadata } from '../src/lib/analytics/outbound.ts'
 import {
-  ANALYTICS_SESSION_TIMEOUT_MS,
-  decideAnalyticsSession
-} from '../src/lib/analytics/session.ts'
+  ANALYTICS_CHAIN,
+  ANALYTICS_EVENTS,
+  ANALYTICS_PROJECT_ID,
+  PAGE_IDS,
+  resolvePageId
+} from '../src/lib/analytics/constants.ts'
+import { buildPayload, sanitizeAnalyticsMetadata } from '../src/lib/analytics/payload.ts'
+import { sanitizeAnalyticsEvent } from '../src/lib/analytics/policy.ts'
+import { CUSTOM_ANALYTICS_CONFIG } from '../src/config/analytics.ts'
 
-const PASSWORD = 'test-analytics-password'
+const PASSWORD = 'analytics-test-password'
+globalThis.__CUSTOM_ANALYTICS_PASSWORD__ = PASSWORD
+const describe = it.describe
 
 /** Mirrors the backend Go DecryptStringFast: AES-128-CBC, key=iv=password[0:16] */
 function decryptLikeGoBackend(encryptedBase64, password) {
@@ -69,12 +78,42 @@ describe('crypto: AES-128-CBC compatible with the Go backend', () => {
 })
 
 describe('constants: identifiers and route mapping', () => {
+  it('project and chain identifiers are stable', () => {
+    assert.equal(ANALYTICS_PROJECT_ID, 'noir_wallet')
+    assert.equal(ANALYTICS_CHAIN, 'zcash')
+  })
+
+  it('all page_ids are unique and noir_-prefixed', () => {
+    const values = Object.values(PAGE_IDS)
+    assert.equal(new Set(values).size, values.length)
+    for (const value of values) {
+      assert.match(value, /^noir_[a-z0-9_]+$/)
+    }
+  })
+
+  it('all event names are unique snake_case', () => {
+    const values = Object.values(ANALYTICS_EVENTS)
+    assert.equal(new Set(values).size, values.length)
+    for (const value of values) {
+      assert.match(value, /^[a-z0-9]+(_[a-z0-9]+)*$/)
+    }
+  })
+
   it('resolvePageId maps known routes and strips query params', () => {
     assert.equal(resolvePageId('/'), PAGE_IDS.HOME)
     assert.equal(resolvePageId('/send'), PAGE_IDS.SEND)
     assert.equal(resolvePageId('/send?amount=1'), PAGE_IDS.SEND)
+    assert.equal(
+      resolvePageId('/onboarding/import-word-count'),
+      PAGE_IDS.ONBOARDING_IMPORT_WORD_COUNT
+    )
     assert.equal(resolvePageId('/onboarding/import'), PAGE_IDS.ONBOARDING_IMPORT)
+    assert.equal(
+      resolvePageId('/onboarding/import-zcash-history'),
+      PAGE_IDS.ONBOARDING_IMPORT_ZCASH_HISTORY
+    )
     assert.equal(resolvePageId('/security-privacy'), PAGE_IDS.SETTINGS_SECURITY_PRIVACY)
+    assert.equal(resolvePageId('/zcash-settings'), PAGE_IDS.ZCASH_SETTINGS)
     assert.equal(resolvePageId('/approval'), PAGE_IDS.DAPP_APPROVAL)
   })
 
@@ -85,15 +124,6 @@ describe('constants: identifiers and route mapping', () => {
 })
 
 describe('payload: wire format construction', () => {
-  it('calculates swap USD value from the quoted input or output token', () => {
-    assert.equal(
-      calculateSwapUsdAmount({ amountIn: '1.5', inputPrice: 48.8, amountOut: '42' }),
-      '73.20'
-    )
-    assert.equal(calculateSwapUsdAmount({ amountOut: '0.25', outputPrice: 48.8 }), '12.20')
-    assert.equal(calculateSwapUsdAmount({ amountIn: '1.5', inputPrice: 0 }), undefined)
-  })
-
   it('fills collector defaults for an empty options object', () => {
     const before = Date.now()
     const payload = buildPayload('test_event', {})
@@ -113,14 +143,7 @@ describe('payload: wire format construction', () => {
       params: {
         origin: 'https://dapp.example',
         amount: '42',
-        event_id: '9ec0e477-1744-4d28-b2a7-6bca5d266789',
-        extension_version: '1.0.36',
-        build_channel: 'production',
-        network_mode: 'mainnet',
         method: 'hardware',
-        funding_source: 'transparent',
-        from_address: 't1-sensitive-address',
-        utxo: 'sensitive-outpoint',
         previous_version: '1.0.27'
       },
       extra: {
@@ -131,12 +154,7 @@ describe('payload: wire format construction', () => {
       }
     })
     assert.deepEqual(JSON.parse(payload.extra), {
-      event_id: '9ec0e477-1744-4d28-b2a7-6bca5d266789',
-      extension_version: '1.0.36',
-      build_channel: 'production',
-      network_mode: 'mainnet',
       method: 'hardware',
-      funding_source: 'transparent',
       previous_version: '1.0.27',
       reason: 'manual',
       hardware: false
@@ -184,15 +202,6 @@ describe('payload: wire format construction', () => {
   it('applies the same metadata allowlist used by the GA reporter', () => {
     assert.deepEqual(
       sanitizeAnalyticsMetadata({
-        browser: 'Chrome',
-        browser_version: '140.0.0.0',
-        device_category: 'desktop',
-        engagement_time_msec: 1_250,
-        language: 'en-US',
-        link_domain: 'zknoir.com',
-        link_id: 'lending',
-        operating_system: 'macOS',
-        page_id: 'noir_swap',
         page_location: 'https://noir-wallet.extension/security-privacy',
         page_title: '/security-privacy',
         origin: 'https://dapp.example',
@@ -200,14 +209,6 @@ describe('payload: wire format construction', () => {
         error: 'sensitive detail'
       }),
       {
-        browser: 'Chrome',
-        device_category: 'desktop',
-        engagement_time_msec: 1_250,
-        language: 'en-US',
-        link_domain: 'zknoir.com',
-        link_id: 'lending',
-        operating_system: 'macOS',
-        page_id: 'noir_swap',
         page_location: 'https://noir-wallet.extension/security-privacy',
         page_title: '/security-privacy'
       }
@@ -248,305 +249,92 @@ describe('Google Analytics preference: default-on and persisted opt-out', () => 
   })
 })
 
-describe('Google Analytics identity', () => {
-  it('shares one persisted client id across concurrent first-use callers', async () => {
-    const originalChrome = globalThis.chrome
-    let storedClientId
-    let getCalls = 0
-    let setCalls = 0
-    globalThis.chrome = {
-      storage: {
-        local: {
-          get: async () => {
-            getCalls++
-            await new Promise(resolve => setImmediate(resolve))
-            return { ga_client_id: storedClientId }
-          },
-          set: async values => {
-            setCalls++
-            storedClientId = values.ga_client_id
-          }
-        }
-      }
-    }
-
-    try {
-      const { getClientId } = await import(
-        `../src/lib/analytics/ga.ts?identity-concurrency=${Date.now()}`
-      )
-      const ids = await Promise.all(Array.from({ length: 20 }, () => getClientId()))
-
-      assert.equal(new Set(ids).size, 1)
-      assert.equal(ids[0], storedClientId)
-      assert.equal(getCalls, 1)
-      assert.equal(setCalls, 1)
-    } finally {
-      globalThis.chrome = originalChrome
-    }
-  })
-
-  it('counts page views as engagement but excludes lifecycle events', async () => {
-    const { buildGaDevice, buildGaEventParams } = await import(
-      `../src/lib/analytics/ga.ts?engagement-policy=${Date.now()}`
-    )
-    const buildContext = {
-      appVersion: '1.0.36',
-      buildChannel: 'production',
-      foreground: false,
-      networkMode: 'mainnet'
-    }
-
-    assert.deepEqual(buildGaEventParams('extension_installed', undefined, buildContext), {
-      extension_version: '1.0.36',
-      build_channel: 'production',
-      network_mode: 'mainnet'
-    })
-    assert.deepEqual(
-      buildGaEventParams('extension_updated', { engagement_time_msec: 2_000 }, buildContext),
-      {
-        extension_version: '1.0.36',
-        build_channel: 'production',
-        network_mode: 'mainnet'
-      }
-    )
-
-    const foregroundContext = { ...buildContext, foreground: true, sessionId: 'session-1' }
-    assert.deepEqual(buildGaEventParams('page_view', undefined, foregroundContext), {
-      session_id: 'session-1',
-      extension_version: '1.0.36',
-      build_channel: 'production',
-      network_mode: 'mainnet',
-      engagement_time_msec: 100
-    })
-    const clickParams = buildGaEventParams(
-      'click',
-      {
-        browser: 'Chrome',
-        device_category: 'desktop',
-        engagement_time_msec: 1_250,
-        language: 'en-US',
-        operating_system: 'macOS',
-        page_id: 'noir_home'
+describe('privacy policy: outbound event minimization', () => {
+  it('drops exact amounts, addresses, origins, hashes and raw errors', () => {
+    const event = sanitizeAnalyticsEvent(ANALYTICS_EVENTS.DAPP_TRANSACTION_FAILED, {
+      pageId: PAGE_IDS.DAPP,
+      hasTransaction: 1,
+      inputAmount: '12.345',
+      inputSymbol: 'ZEC',
+      usdAmount: '999.99',
+      walletAddress: 'u1-wallet-address',
+      params: {
+        origin: 'https://private-dapp.example',
+        amount: '12.345',
+        hardware: true
       },
-      foregroundContext
-    )
-    assert.equal(clickParams.engagement_time_msec, 1_250)
-    assert.equal(clickParams.page_id, 'noir_home')
-    assert.deepEqual(
-      buildGaDevice({
-        browser: 'Chrome',
-        device_category: 'desktop',
-        language: 'en-US',
-        operating_system: 'macOS',
-        browser_version: 'sensitive-granularity'
-      }),
-      {
-        browser: 'Chrome',
-        category: 'desktop',
-        language: 'en-US',
-        operating_system: 'macOS'
+      extra: {
+        origin: 'https://private-dapp.example',
+        error: 'raw signer failure',
+        tx_hash: 'transaction-hash',
+        deposit_address: 'deposit-address',
+        funding_source: 'shielded'
       }
-    )
-  })
-})
-
-describe('automatic analytics context', () => {
-  it('derives only coarse device fields', () => {
-    assert.deepEqual(
-      getAnalyticsDeviceMetadata({
-        language: 'en-us',
-        userAgent:
-          'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/140.0.0.0 Safari/537.36'
-      }),
-      {
-        browser: 'Chrome',
-        device_category: 'desktop',
-        language: 'en-US',
-        operating_system: 'macOS'
-      }
-    )
-    assert.deepEqual(
-      getAnalyticsDeviceMetadata({
-        language: 'invalid language',
-        userAgent: 'Mozilla/5.0 (Windows NT 10.0) AppleWebKit/537.36 Edg/140.0.0.0'
-      }),
-      {
-        browser: 'Edge',
-        device_category: 'desktop',
-        language: 'und',
-        operating_system: 'Windows'
-      }
-    )
-  })
-
-  it('counts only active foreground intervals', () => {
-    const tracker = new ForegroundEngagementTracker(true, 1_000)
-    assert.equal(tracker.pending(1_750), 750)
-    tracker.setActive(false, 2_000)
-    assert.equal(tracker.pending(5_000), 1_000)
-    assert.equal(tracker.take(5_000), 1_000)
-    assert.equal(tracker.pending(8_000), 0)
-
-    tracker.setActive(true, 10_000)
-    assert.equal(tracker.take(10_450), 450)
-    assert.equal(tracker.pending(10_700), 250)
-  })
-
-  it('reduces outbound targets to non-identifying metadata', () => {
-    assert.deepEqual(
-      buildOutboundClickMetadata(
-        'intents_explorer',
-        'https://explorer.near-intents.org/transactions/sensitive-id?referral=noir_swap'
-      ),
-      {
-        link_domain: 'explorer.near-intents.org',
-        link_id: 'intents_explorer'
-      }
-    )
-    assert.deepEqual(buildOutboundClickMetadata(undefined, 'zknoir.com/private/path'), {
-      link_domain: 'zknoir.com',
-      link_id: 'external_link'
-    })
-    assert.equal(buildOutboundClickMetadata('unsafe label', 'mailto:sensitive@example.com'), null)
-  })
-
-  it('creates and refreshes sessions only for foreground activity', () => {
-    const startedAt = 1_700_000_000_000
-    assert.deepEqual(decideAnalyticsSession(null, false, startedAt), {
-      state: null,
-      shouldPersist: false
     })
 
-    const created = decideAnalyticsSession(null, true, startedAt)
-    assert.equal(created.sessionId, '1700000000')
-    assert.equal(created.shouldPersist, true)
-
-    const background = decideAnalyticsSession(created.state, false, startedAt + 10_000)
-    assert.equal(background.sessionId, created.sessionId)
-    assert.equal(background.state?.lastForegroundActivityAt, startedAt)
-    assert.equal(background.shouldPersist, false)
-
-    const refreshed = decideAnalyticsSession(created.state, true, startedAt + 20_000)
-    assert.equal(refreshed.state?.lastForegroundActivityAt, startedAt + 20_000)
-    assert.equal(refreshed.shouldPersist, true)
-
-    assert.deepEqual(
-      decideAnalyticsSession(
-        refreshed.state,
-        false,
-        startedAt + 20_000 + ANALYTICS_SESSION_TIMEOUT_MS
-      ),
-      { state: null, shouldPersist: true }
-    )
+    assert.deepEqual(event, {
+      name: ANALYTICS_EVENTS.DAPP_TRANSACTION_FAILED,
+      options: {
+        pageId: PAGE_IDS.DAPP,
+        hasTransaction: 1,
+        inputSymbol: 'ZEC',
+        extra: { funding_source: 'shielded' }
+      }
+    })
   })
 
-  it('does not let background events create or extend persisted GA sessions', async () => {
-    const originalChrome = globalThis.chrome
-    const stored = {}
-    let setCalls = 0
-    globalThis.chrome = {
-      storage: {
-        session: {
-          get: async keys =>
-            Object.fromEntries(
-              (Array.isArray(keys) ? keys : [keys]).map(key => [key, stored[key]])
-            ),
-          set: async values => {
-            setCalls++
-            Object.assign(stored, values)
-          },
-          remove: async keys => {
-            for (const key of Array.isArray(keys) ? keys : [keys]) delete stored[key]
-          }
-        }
+  it('uses a closed event catalog and per-event fields', () => {
+    assert.equal(sanitizeAnalyticsEvent('unreviewed_event', {}), null)
+
+    const created = sanitizeAnalyticsEvent(ANALYTICS_EVENTS.WALLET_CREATED, {
+      params: { method: 'import', seed_words: 'never-send' },
+      extra: { has_birthday_height: true, mnemonic: 'never-send' }
+    })
+    assert.deepEqual(created, {
+      name: ANALYTICS_EVENTS.WALLET_CREATED,
+      options: {
+        pageId: PAGE_IDS.BACKGROUND,
+        params: { method: 'import' },
+        extra: { has_birthday_height: true }
       }
-    }
+    })
+  })
 
-    try {
-      const { getGaSessionId } = await import(
-        `../src/lib/analytics/ga.ts?session-lifecycle=${Date.now()}`
-      )
-      const startedAt = 1_700_000_000_000
-      assert.equal(await getGaSessionId(false, startedAt), undefined)
-      assert.equal(setCalls, 0)
-
-      const sessionId = await getGaSessionId(true, startedAt)
-      assert.equal(sessionId, '1700000000')
-      assert.equal(setCalls, 1)
-
-      assert.equal(await getGaSessionId(false, startedAt + 10_000), sessionId)
-      assert.equal(setCalls, 1)
-      assert.equal(stored.ga_session_state.lastForegroundActivityAt, startedAt)
-
-      assert.equal(await getGaSessionId(false, startedAt + ANALYTICS_SESSION_TIMEOUT_MS), undefined)
-      assert.equal(stored.ga_session_state, undefined)
-    } finally {
-      globalThis.chrome = originalChrome
+  it('has an explicit policy entry for every catalog event', () => {
+    for (const eventName of Object.values(ANALYTICS_EVENTS)) {
+      assert.notEqual(sanitizeAnalyticsEvent(eventName, {}), null)
     }
   })
 })
 
-describe('analytics build isolation', () => {
-  it('reports only from production mainnet builds outside Playwright', () => {
-    assert.equal(
-      shouldEnableAnalyticsReporting({
-        buildChannel: 'production',
-        networkMode: 'mainnet',
-        isPlaywrightBuild: false
-      }),
-      true
+describe('channel routing: Google preference does not disable the custom collector', () => {
+  it('keeps UI forwarding and collector delivery independent from the Google preference', () => {
+    const analyticsIndexSource = readFileSync(
+      new URL('../src/lib/analytics/index.ts', import.meta.url),
+      'utf8'
+    )
+    const collectorClientSource = readFileSync(
+      new URL('../src/lib/analytics/client.ts', import.meta.url),
+      'utf8'
+    )
+    const collectorFinalization = analyticsIndexSource.slice(
+      analyticsIndexSource.indexOf('async function finalizeAndEnqueue'),
+      analyticsIndexSource.indexOf('/** Reports an event to both channels.')
+    )
+    const uiForwarding = analyticsIndexSource.slice(
+      analyticsIndexSource.indexOf('// UI contexts: forward to background')
     )
 
-    for (const context of [
-      { buildChannel: 'beta', networkMode: 'mainnet', isPlaywrightBuild: false },
-      { buildChannel: 'development', networkMode: 'mainnet', isPlaywrightBuild: false },
-      { buildChannel: 'production', networkMode: 'testnet', isPlaywrightBuild: false },
-      { buildChannel: 'production', networkMode: 'mainnet', isPlaywrightBuild: true }
-    ]) {
-      assert.equal(shouldEnableAnalyticsReporting(context), false)
-    }
+    assert.doesNotMatch(collectorFinalization, /AnalyticsEnabled/)
+    assert.doesNotMatch(uiForwarding, /AnalyticsEnabled/)
+    assert.doesNotMatch(collectorClientSource, /from ['"]\.\/preferences/)
   })
 })
 
 describe('client: batching, retry and drop behaviour', () => {
-  it('sends no reports when the build has no analytics credentials', async () => {
-    const realFetch = globalThis.fetch
-    const previousPassword = globalThis.__CUSTOM_ANALYTICS_PASSWORD__
-    const previousGaSecret = globalThis.__GA_API_SECRET__
-    const previousReportingEnabled = globalThis.__ANALYTICS_REPORTING_ENABLED__
-    globalThis.__CUSTOM_ANALYTICS_PASSWORD__ = ''
-    globalThis.__GA_API_SECRET__ = ''
-    globalThis.__ANALYTICS_REPORTING_ENABLED__ = true
-    globalThis.fetch = mock.fn(async () => ({ ok: true }))
-    mock.timers.enable({ apis: ['setTimeout'] })
-    try {
-      const { clearAnalyticsQueue, enqueueAnalyticsEvent } =
-        await import('../src/lib/analytics/client.ts')
-      const { sendGaEvent } = await import('../src/lib/analytics/ga.ts')
-      clearAnalyticsQueue()
-      for (let i = 0; i < 20; i++) enqueueAnalyticsEvent(buildPayload('test_event', {}))
-      mock.timers.tick(2000)
-      await sendGaEvent('test_event')
-      assert.equal(globalThis.fetch.mock.callCount(), 0)
-    } finally {
-      globalThis.fetch = realFetch
-      for (const [key, value] of [
-        ['__CUSTOM_ANALYTICS_PASSWORD__', previousPassword],
-        ['__GA_API_SECRET__', previousGaSecret],
-        ['__ANALYTICS_REPORTING_ENABLED__', previousReportingEnabled]
-      ]) {
-        if (value === undefined) delete globalThis[key]
-        else globalThis[key] = value
-      }
-      mock.timers.reset()
-    }
-  })
-
   it('batches, encrypts, retries on failure and drops after repeated failures', async () => {
     mock.timers.enable({ apis: ['setTimeout'] })
     const realFetch = globalThis.fetch
-    const previousPassword = globalThis.__CUSTOM_ANALYTICS_PASSWORD__
-    globalThis.__CUSTOM_ANALYTICS_PASSWORD__ = PASSWORD
     try {
       const fetchCalls = []
       let failuresToServe = 0
@@ -605,9 +393,34 @@ describe('client: batching, retry and drop behaviour', () => {
       assert.equal(fetchCalls.length, 8)
     } finally {
       globalThis.fetch = realFetch
-      if (previousPassword === undefined) delete globalThis.__CUSTOM_ANALYTICS_PASSWORD__
-      else globalThis.__CUSTOM_ANALYTICS_PASSWORD__ = previousPassword
       mock.timers.reset()
     }
+  })
+})
+
+describe('collector E2E (opt-in: ANALYTICS_E2E=1)', () => {
+  it.skip(
+    !process.env.ANALYTICS_E2E || !process.env.CUSTOM_ANALYTICS_PASSWORD,
+    'Set ANALYTICS_E2E=1 and CUSTOM_ANALYTICS_PASSWORD to send a live event'
+  )
+
+  it('accepts an encrypted integration_test event', async () => {
+    const event = buildPayload('integration_test', {
+      pageId: PAGE_IDS.BACKGROUND,
+      extra: { test: true, source: 'analytics.test.mjs' }
+    })
+    event.wallet_address = 'anon_automated-test'
+    const data = await encryptAnalyticsPayload(
+      JSON.stringify([event]),
+      process.env.CUSTOM_ANALYTICS_PASSWORD
+    )
+    const response = await fetch(CUSTOM_ANALYTICS_CONFIG.endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ data })
+    })
+    assert.equal(response.status, 200)
+    const body = await response.json()
+    assert.equal(body.code, 0, `collector rejected the event: ${JSON.stringify(body)}`)
   })
 })

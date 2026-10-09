@@ -9,17 +9,16 @@ import {
   type IConfig,
   type IBatchViewsWithTransformsResult
 } from '@rhea-finance/cross-chain-sdk'
-import { accountManager } from '@/core/wallet/account-manager'
-import { fetchCachedIdentity } from '@/core/wallet/identity-cache'
 import { clearLendingMcaCache, getMcaCacheKey, runMcaCheckDeduped } from './lending-mca-cache'
 import { safeBig } from '@/lib/big'
-import { ZEC_NEAR_TOKEN_ID } from '@/config/near'
+import { ZEC_NEAR_TOKEN_ID } from '@/config/intents'
 import { formatAmount } from '@/lib/format'
 
 export const REWARD_TOKEN_ID = 'lst.rhealab.near'
 export const REWARD_TOKEN_ID_DECIMALS = 24
 
 export type LendingSigningMode = 'derived' | 'legacy' | 'legacy_index0'
+export type ResolveZcashLendingPublicKey = (mode: LendingSigningMode) => Promise<string>
 
 export interface LendingMcaStatus {
   mcaId: string | null
@@ -41,65 +40,44 @@ export interface LendingData {
  */
 export async function checkLendingMcaAccount(
   walletId?: string,
-  accountId?: string
+  accountId?: string,
+  resolveZcashPublicKey?: ResolveZcashLendingPublicKey
 ): Promise<LendingMcaStatus> {
-  if (!walletId || !accountId) {
-    throw new Error('Wallet and account ID required for MCA check')
+  if (!walletId || !accountId || !resolveZcashPublicKey) {
+    throw new Error('Wallet, account ID and identity resolver required for MCA check')
   }
 
   const cacheKey = getMcaCacheKey(walletId, accountId)
 
   return runMcaCheckDeduped(cacheKey, async () => {
-    const walletCore = await accountManager.getWalletCore(walletId, accountId)
-    const network = accountManager.getNetwork()
-    const wallet = accountManager.getAllWallets().find(w => w.id === walletId)
-    const account = wallet?.accounts.find(a => a.id === accountId)
-    const derivationIndex = account?.derivationIndex ?? 0
-
-    const legacyIdentity = await fetchCachedIdentity(
-      network,
-      walletId,
-      accountId,
-      derivationIndex,
-      'legacy_index0',
-      walletCore,
-      { usePing: true }
-    )
-    if (legacyIdentity.pubkey) {
+    const legacyPublicKey = await resolveZcashPublicKey('legacy')
+    if (legacyPublicKey) {
       const mcaId = await getMcaByWallet({
         chain: 'zcash',
-        identityKey: legacyIdentity.pubkey
+        identityKey: legacyPublicKey
       })
       if (mcaId) {
         console.log(`[Lending] MCA detected: mode=legacy_index0, mcaId=${mcaId}`)
-        return { mcaId, publicKey: legacyIdentity.pubkey, signingMode: 'legacy_index0' }
+        return { mcaId, publicKey: legacyPublicKey, signingMode: 'legacy_index0' }
       }
     }
 
-    const derivedIdentity = await fetchCachedIdentity(
-      network,
-      walletId,
-      accountId,
-      derivationIndex,
-      'derived',
-      walletCore,
-      { usePing: true }
-    )
-    if (derivedIdentity.pubkey) {
+    const derivedPublicKey = await resolveZcashPublicKey('derived')
+    if (derivedPublicKey) {
       const mcaId = await getMcaByWallet({
         chain: 'zcash',
-        identityKey: derivedIdentity.pubkey
+        identityKey: derivedPublicKey
       })
       if (mcaId) {
         console.log(`[Lending] MCA detected: mode=derived, mcaId=${mcaId}`)
-        return { mcaId, publicKey: derivedIdentity.pubkey, signingMode: 'derived' }
+        return { mcaId, publicKey: derivedPublicKey, signingMode: 'derived' }
       }
     }
 
     console.log('[Lending] No MCA found, defaulting to derived mode')
     return {
       mcaId: null,
-      publicKey: derivedIdentity.pubkey || null,
+      publicKey: derivedPublicKey || null,
       signingMode: 'derived'
     }
   })

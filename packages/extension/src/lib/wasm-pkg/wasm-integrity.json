@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 3,
+  "engine": "zcash",
+  "packageVersion": "0.1.0",
+  "abiVersion": "zcash-wallet-9c0e252-v1",
+  "sourceCommit": "9c0e25267645a7ef08cb7248529de51fc9a304ef",
+  "artifacts": [
+    {
+      "path": "package.json",
+      "role": "metadata",
+      "bytes": 298,
+      "sha256": "08e72324afabc9ff4feae396383398241765cf8e75223be750073413e8b71e69"
+    },
+    {
+      "path": "snippets/wasm-bindgen-rayon-38edf6e439f6d70d/src/workerHelpers.js",
+      "role": "support",
+      "bytes": 4546,
+      "sha256": "6982a7a006a69849d666aaf4ac7ea07a42931f850c31006782b1937fd5704f96"
+    },
+    {
+      "path": "zcash_wallet_wasm.d.ts",
+      "role": "types",
+      "bytes": 49921,
+      "sha256": "d1e3ec561c08dbd4bd875f4535c3b67620ea0bb99e6890e8b9d65f03565fc28b"
+    },
+    {
+      "path": "zcash_wallet_wasm.js",
+      "role": "loader",
+      "bytes": 141500,
+      "sha256": "0ae2ac5458fc9b20041ae4a67f485c1f2f49bd1feb344f8316f39fbae5675f2d"
+    },
+    {
+      "path": "zcash_wallet_wasm_bg.wasm",
+      "role": "binary",
+      "bytes": 66556772,
+      "sha256": "86551e618d57814202d1d94330022c43738959186fc2c2a82fcd7ce9290bcfc9"
+    },
+    {
+      "path": "zcash_wallet_wasm_bg.wasm.d.ts",
+      "role": "binary-types",
+      "bytes": 16042,
+      "sha256": "0088eb2cd0e86d15a524b8ef1bc8648499e9f3a48ef365317540f47f5739e8fb"
+    }
+  ],
+  "sourceRepository": "https://github.com/NoirWallet/zcash-wallet-wasm.git",
+  "build": {
+    "rustToolchain": "nightly-2025-11-15",
+    "wasmPack": "0.14.0",
+    "wasmBindgen": "0.2.122",
+    "llvm": "22.1.4",
+    "target": "web",
+    "wasmOpt": "117",
+    "prettier": "3.8.0"
+  },
+  "capabilities": [
+    "account.zcash.derive",
+    "credential.create-24",
+    "credential.passphrase-empty-only",
+    "credential.validate-12",
+    "credential.validate-24",
+    "zcash.address.transparent",
+    "zcash.address.unified",
+    "zcash.block-source.compact-cdn",
+    "zcash.message.transparent.sign",
+    "zcash.pczt",
+    "zcash.sync",
+    "zcash.transaction.sign",
+    "zcash.voting.shielded"
+  ]
+}

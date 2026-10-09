@@ -1,15 +1,23 @@
-import { describe, it } from 'node:test'
+import { test as it } from '@playwright/test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+
 import {
   isExtensionUpdateState,
   parseProductReleaseNotesManifest,
   shouldNotifyExtensionUpdate
 } from '../src/lib/extension-update.ts'
 
-const releaseNotes = { schemaVersion: 1, releases: { '1.0.28': { changes: ['Release'] } } }
-const packageJson = { version: '1.0.28' }
+const packageJson = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+const releaseNotes = JSON.parse(
+  readFileSync(new URL('../../web/public/changelog.json', import.meta.url), 'utf8')
+)
 
-describe('Product release notes', () => {
+it('uses the RHEA SDK release that propagates lending RPC failures', () => {
+  assert.equal(packageJson.dependencies['@rhea-finance/cross-chain-sdk'], '0.1.22')
+})
+
+it.describe('Product release notes', () => {
   it('match the extension version and schema', () => {
     assert.deepEqual(parseProductReleaseNotesManifest(releaseNotes, packageJson.version), {
       version: packageJson.version,
@@ -61,7 +69,7 @@ describe('Product release notes', () => {
   })
 })
 
-describe('Extension update notification milestones', () => {
+it.describe('Extension update notification milestones', () => {
   const manifest = {
     schemaVersion: 1,
     releases: {
@@ -75,6 +83,12 @@ describe('Extension update notification milestones', () => {
   it('notifies when a marked intermediate release is newer than the installed version', () => {
     assert.equal(shouldNotifyExtensionUpdate(manifest, '1.0.27', '1.0.31'), true)
     assert.equal(shouldNotifyExtensionUpdate(manifest, '1.0.28', '1.0.31'), true)
+  })
+
+  it('does not notify for the unmarked current product release', () => {
+    assert.equal(releaseNotes.releases['1.0.31'].notifyUpdate, undefined)
+    assert.equal(shouldNotifyExtensionUpdate(releaseNotes, '1.0.30', '1.0.31'), false)
+    assert.equal(shouldNotifyExtensionUpdate(releaseNotes, '1.0.31', '1.0.32'), false)
   })
 
   it('does not reuse a milestone that is already installed', () => {
@@ -102,7 +116,7 @@ describe('Extension update notification milestones', () => {
   })
 })
 
-describe('Extension update state validation', () => {
+it.describe('Extension update state validation', () => {
   it('accepts valid states and rejects malformed states', () => {
     const validStates = [
       {

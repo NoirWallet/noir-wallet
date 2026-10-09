@@ -28,9 +28,9 @@ Transparent transactions expose public on-chain details. Zcash shielded transact
 
 No. Shielding moves funds into the shielded pool, but the original transparent transaction remains public.
 
-### Why can Max be lower than Available?
+### Why is my available balance lower than my total balance?
 
-On **Send**, Available shows confirmed funds for the selected funding source. Max estimates what can be sent to the entered destination after transaction selection, fees, and dust constraints. The final amount can change if the fee or destination changes.
+Available reflects the selected source's current usable balance. Max estimates what can be sent to the entered destination after transaction selection, fees, and dust constraints. The final amount can change if the fee or destination changes.
 
 ## Transactions
 
@@ -44,7 +44,7 @@ Noir Wallet cannot cancel a transaction after it has been broadcast to the netwo
 
 ### Why is my restored wallet still synchronizing?
 
-Restoring requires scanning Zcash history to discover notes and transactions. Keep the browser available until the initial scan catches up. If sync pauses, check the connection; **Resync wallet** is available in account settings.
+Restoring requires scanning Zcash history to discover notes and transactions. Keep the browser available until the initial scan catches up. If sync pauses, check the connection; **Resync Zcash** is available in the current account's Zcash settings.
 
 ## dApps
 
@@ -58,7 +58,7 @@ No. Locking protects local access; disconnecting removes an origin's authorizati
 
 ### How do I connect on testnet?
 
-Install the separate `[Testnet] Noir Wallet` build. Runtime network switching is not supported.
+Open **Settings > Developer Settings** and switch the wallet's global network mode to Testnet. The wallet locks and reloads before the Testnet networks become available.
 
 ## Security
 

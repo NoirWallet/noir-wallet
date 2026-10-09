@@ -1,9 +1,13 @@
-import { describe, it } from 'node:test'
+import { test as it } from '@playwright/test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+
 import {
   isIncompleteCommitmentTreeError,
   runWithCommitmentTreeRecovery
 } from '../src/core/worker/commitment-tree-recovery.ts'
+
+const describe = it.describe
 
 describe('commitment tree recovery', () => {
   it('refreshes cold subtree roots before building a PCZT', async () => {
@@ -77,7 +81,28 @@ describe('commitment tree recovery', () => {
     assert.equal(operations, 1)
   })
 
-  it('recognizes incomplete commitment trees', () => {
-    assert.equal(isIncompleteCommitmentTreeError('CommitmentTree(Query(TreeIncomplete([])))'), true)
+  it('matches the WASM error and wraps all PCZT build paths', () => {
+    assert.equal(
+      isIncompleteCommitmentTreeError(
+        'CommitmentTree(Query(TreeIncomplete([(Address { level: Level(0), index: 1 })])))'
+      ),
+      true
+    )
+
+    const worker = readFileSync(
+      new URL('../src/core/worker/zcash.worker.ts', import.meta.url),
+      'utf-8'
+    )
+    for (const method of [
+      'w.pczt_create(',
+      'w.pczt_shield_create(',
+      'w.oneclick_transfer(',
+      'w.oneclick_pczt_shield_dynamic_fee('
+    ]) {
+      const methodIndex = worker.indexOf(method)
+      assert.notEqual(methodIndex, -1)
+      const wrapperIndex = worker.lastIndexOf('runWithFreshCommitmentTrees(', methodIndex)
+      assert.ok(wrapperIndex !== -1 && methodIndex - wrapperIndex < 1_500)
+    }
   })
 })

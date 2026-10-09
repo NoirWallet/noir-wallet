@@ -10,14 +10,8 @@ import type { AnalyticsEventPayload, TrackOptions } from './types.ts'
 const ALLOWED_METADATA_KEYS = new Set([
   'account_count',
   'address_type',
-  'build_channel',
-  'browser',
   'cross_wallet',
-  'device_category',
   'direction',
-  'engagement_time_msec',
-  'event_id',
-  'extension_version',
   'fee_tier',
   'from_dapp',
   'from_token',
@@ -27,13 +21,7 @@ const ALLOWED_METADATA_KEYS = new Set([
   'is_existing_wallet',
   'is_mca_creation',
   'kind',
-  'language',
-  'link_domain',
-  'link_id',
   'method',
-  'network_mode',
-  'operating_system',
-  'page_id',
   'page_location',
   'page_title',
   'phase',
@@ -51,13 +39,6 @@ function isAnonymousMetadataValue(value: unknown): value is string | number | bo
   return typeof value === 'string' && value.length > 0 && value.length <= 64
 }
 
-function isAllowedMetadataValue(key: string, value: unknown): value is string | number | boolean {
-  if (key === 'engagement_time_msec') {
-    return typeof value === 'number' && Number.isInteger(value) && value > 0 && value <= 3_600_000
-  }
-  return isAnonymousMetadataValue(value)
-}
-
 /**
  * Keeps only bounded, non-identifying product metadata. Callers may pass richer
  * transaction context for local orchestration, but it must not cross the
@@ -70,7 +51,7 @@ export function sanitizeAnalyticsMetadata(
   for (const source of sources) {
     if (!source) continue
     for (const [key, value] of Object.entries(source)) {
-      if (ALLOWED_METADATA_KEYS.has(key) && isAllowedMetadataValue(key, value)) {
+      if (ALLOWED_METADATA_KEYS.has(key) && isAnonymousMetadataValue(value)) {
         sanitized[key] = value
       }
     }

@@ -14,10 +14,15 @@ import { formatNumber } from '@/lib/format'
 import Big from 'big.js'
 import { mergeTransactionUpdate } from '@/lib/transaction-status'
 import { getTransactionStatusCopy } from '@/lib/transaction-status-copy'
-import { migrateAccountDataState, rehydrateAccountDataState } from '@/lib/account-balance-migration'
+import { buildAccountKey } from '@/core/wallet/account-scope'
+import {
+  parseAccountPortfolioValueSnapshot,
+  type AccountPortfolioValueSnapshot
+} from '@/core/wallet/account-portfolio-value'
+
+export { buildAccountKey } from '@/core/wallet/account-scope'
 
 const EMPTY_TRANSACTIONS: Transaction[] = []
-const ACCOUNT_DATA_VERSION = 1
 
 /**
  * Sync state for blockchain synchronization
@@ -43,14 +48,42 @@ const DEFAULT_SYNC_STATE: SyncState = {
   syncReason: null
 }
 
+function restoreBalances(value: unknown): Map<string, ZcashBalance> {
+  if (value instanceof Map) return new Map(value)
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return new Map()
+  return new Map(Object.entries(value as Record<string, ZcashBalance>))
+}
+
+function restoreSyncStates(value: unknown): Map<string, SyncState> {
+  const entries =
+    value instanceof Map
+      ? value.entries()
+      : typeof value === 'object' && value !== null && !Array.isArray(value)
+        ? Object.entries(value as Record<string, SyncState>)
+        : []
+  return new Map([...entries].map(([key, syncState]) => [key, { ...syncState, isSyncing: false }]))
+}
+
+function restorePortfolioValues(value: unknown): Map<string, AccountPortfolioValueSnapshot> {
+  const entries =
+    value instanceof Map
+      ? value.entries()
+      : typeof value === 'object' && value !== null && !Array.isArray(value)
+        ? Object.entries(value)
+        : []
+  const restored = new Map<string, AccountPortfolioValueSnapshot>()
+  for (const [key, snapshot] of entries) {
+    if (typeof key !== 'string' || key.length === 0) continue
+    const parsed = parseAccountPortfolioValueSnapshot(snapshot)
+    if (parsed) restored.set(key, parsed)
+  }
+  return restored
+}
+
 /**
  * Builds storage key for account-specific data
  * Format: ${network}_${walletId}_${accountId}
  */
-export function buildAccountKey(network: Network, walletId: string, accountId: string): string {
-  return `${network}_${walletId}_${accountId}`
-}
-
 export function buildWalletKey(network: Network, walletId: string): string {
   return `${network}_${walletId}`
 }
@@ -63,6 +96,7 @@ interface AccountDataStore {
   // Keyed storage: Map<accountKey, data>
   balances: Map<string, ZcashBalance>
   syncStates: Map<string, SyncState>
+  portfolioValues: Map<string, AccountPortfolioValueSnapshot>
 
   // Transactions cache (in-memory, backed by IndexedDB)
   transactionsCache: Map<string, Transaction[]>
@@ -80,6 +114,11 @@ interface AccountDataStore {
   getSyncState: (network: Network, walletId: string, accountId: string) => SyncState
   getWalletSyncState: (network: Network, walletId: string) => SyncState
   getBalanceUsd: (walletId: string, accountId: string) => number
+  getPortfolioValue: (
+    network: Network,
+    walletId: string,
+    accountId: string
+  ) => AccountPortfolioValueSnapshot | null
 
   // Setters (auto-key by current account + network)
   setBalance: (balance: ZcashBalance) => void
@@ -121,9 +160,20 @@ interface AccountDataStore {
     syncState: Partial<SyncState>
   ) => void
   setWalletSyncStateFor: (network: Network, walletId: string, syncState: Partial<SyncState>) => void
+  setPortfolioValueFor: (
+    network: Network,
+    walletId: string,
+    accountId: string,
+    snapshot: AccountPortfolioValueSnapshot
+  ) => void
 
   // Cleanup
   deleteAccountData: (network: Network, walletId: string, accountId: string) => Promise<void>
+  deleteWalletData: (
+    network: Network,
+    walletId: string,
+    accountIds: readonly string[]
+  ) => Promise<void>
   reset: () => void
 }
 
@@ -132,6 +182,7 @@ export const useAccountDataStore = create<AccountDataStore>()(
     (set, get) => ({
       balances: new Map(),
       syncStates: new Map(),
+      portfolioValues: new Map(),
       transactionsCache: new Map(),
       transactionsLoaded: new Set(),
 
@@ -202,6 +253,11 @@ export const useAccountDataStore = create<AccountDataStore>()(
         return safeBig(balance.total).times(zecPrice).toNumber()
       },
 
+      getPortfolioValue: (network, walletId, accountId) => {
+        const key = buildAccountKey(network, walletId, accountId)
+        return get().portfolioValues.get(key) ?? null
+      },
+
       setBalance: balance => {
         const key = (get() as any)._getCurrentKey()
         if (!key) return
@@ -268,8 +324,6 @@ export const useAccountDataStore = create<AccountDataStore>()(
 
       reloadTransactions: async (accountKey: string) => {
         try {
-          console.log('[AccountDataStore] Reloading transactions for:', accountKey)
-
           set(state => {
             const newLoaded = new Set(state.transactionsLoaded)
             newLoaded.delete(accountKey)
@@ -287,8 +341,6 @@ export const useAccountDataStore = create<AccountDataStore>()(
               transactionsLoaded: newLoaded
             }
           })
-
-          console.log('[AccountDataStore] Transactions reloaded:', transactions.length)
         } catch (error) {
           console.error('[AccountDataStore] Failed to reload transactions:', error)
         }
@@ -382,35 +434,90 @@ export const useAccountDataStore = create<AccountDataStore>()(
         })
       },
 
+      setPortfolioValueFor: (network, walletId, accountId, snapshotValue) => {
+        const snapshot = parseAccountPortfolioValueSnapshot(snapshotValue)
+        if (!snapshot) throw new Error('Invalid Account Portfolio value')
+        const key = buildAccountKey(network, walletId, accountId)
+        set(state => {
+          const current = state.portfolioValues.get(key)
+          if (current?.totalUsd === snapshot.totalUsd && current.complete === snapshot.complete) {
+            return state
+          }
+          const portfolioValues = new Map(state.portfolioValues)
+          portfolioValues.set(key, snapshot)
+          return { portfolioValues }
+        })
+      },
+
       deleteAccountData: async (network, walletId, accountId) => {
         const key = buildAccountKey(network, walletId, accountId)
 
         set(state => {
           const newBalances = new Map(state.balances)
           const newSyncStates = new Map(state.syncStates)
+          const portfolioValues = new Map(state.portfolioValues)
           const newCache = new Map(state.transactionsCache)
           const newLoaded = new Set(state.transactionsLoaded)
 
           newBalances.delete(key)
           newSyncStates.delete(key)
+          portfolioValues.delete(key)
           newCache.delete(key)
           newLoaded.delete(key)
 
           return {
             balances: newBalances,
             syncStates: newSyncStates,
+            portfolioValues,
             transactionsCache: newCache,
             transactionsLoaded: newLoaded
           }
         })
 
         await Promise.all([deleteTransactions(key), deleteTransparentTxCache(key)])
+        await flushAccountDataStore()
+      },
+
+      deleteWalletData: async (network, walletId, accountIds) => {
+        const accountKeys = accountIds.map(accountId =>
+          buildAccountKey(network, walletId, accountId)
+        )
+        const walletKey = buildWalletKey(network, walletId)
+        set(state => {
+          const balances = new Map(state.balances)
+          const syncStates = new Map(state.syncStates)
+          const portfolioValues = new Map(state.portfolioValues)
+          const transactionsCache = new Map(state.transactionsCache)
+          const transactionsLoaded = new Set(state.transactionsLoaded)
+          for (const accountKey of accountKeys) {
+            balances.delete(accountKey)
+            portfolioValues.delete(accountKey)
+            transactionsCache.delete(accountKey)
+            transactionsLoaded.delete(accountKey)
+          }
+          syncStates.delete(walletKey)
+          return {
+            balances,
+            syncStates,
+            portfolioValues,
+            transactionsCache,
+            transactionsLoaded
+          }
+        })
+        await Promise.all(
+          accountKeys.flatMap(accountKey => [
+            deleteTransactions(accountKey),
+            deleteTransparentTxCache(accountKey)
+          ])
+        )
+        await flushAccountDataStore()
       },
 
       reset: () => {
         set({
           balances: new Map(),
           syncStates: new Map(),
+          portfolioValues: new Map(),
           transactionsCache: new Map(),
           transactionsLoaded: new Set()
         })
@@ -418,18 +525,58 @@ export const useAccountDataStore = create<AccountDataStore>()(
     }),
     {
       name: 'account_data',
-      version: ACCOUNT_DATA_VERSION,
       storage: createChromeStorageAdapter('local') as any,
-      migrate: persisted => migrateAccountDataState(persisted) as any,
-      merge: (persisted, current) => rehydrateAccountDataState(persisted, current) as any,
+      merge: (persisted, current) => {
+        const value =
+          persisted && typeof persisted === 'object' && !Array.isArray(persisted)
+            ? (persisted as Partial<AccountDataStore>)
+            : {}
+        return {
+          ...current,
+          ...value,
+          balances: restoreBalances(value.balances),
+          syncStates: restoreSyncStates(value.syncStates),
+          portfolioValues: restorePortfolioValues(value.portfolioValues),
+          transactionsCache: new Map(),
+          transactionsLoaded: new Set()
+        }
+      },
       partialize: state =>
         ({
           balances: Object.fromEntries(state.balances),
-          syncStates: Object.fromEntries(state.syncStates)
-        }) as any
+          syncStates: Object.fromEntries(state.syncStates),
+          portfolioValues: Object.fromEntries(state.portfolioValues)
+        }) as any,
+      onRehydrateStorage: () => state => {
+        if (state) {
+          state.balances = restoreBalances(state.balances)
+          state.syncStates = restoreSyncStates(state.syncStates)
+          state.portfolioValues = restorePortfolioValues(state.portfolioValues)
+          state.transactionsCache = new Map()
+          state.transactionsLoaded = new Set()
+        }
+      }
     }
   )
 )
+
+export async function flushAccountDataStore(): Promise<void> {
+  const state = useAccountDataStore.getState()
+  await chrome.storage.local.set({
+    account_data: {
+      state: {
+        balances: Object.fromEntries(state.balances),
+        syncStates: Object.fromEntries(state.syncStates),
+        portfolioValues: Object.fromEntries(state.portfolioValues)
+      },
+      version: 0
+    }
+  })
+}
+
+export async function rehydrateAccountDataStore(): Promise<void> {
+  await useAccountDataStore.persist.rehydrate()
+}
 
 /** Formats transaction for UI display. */
 export function formatTransactionForDisplay(tx: Transaction) {

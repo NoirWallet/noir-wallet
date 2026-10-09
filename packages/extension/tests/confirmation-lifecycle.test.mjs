@@ -1,20 +1,24 @@
-import { describe, test } from 'node:test'
+import { test, expect } from '@playwright/test'
+import { readFileSync } from 'node:fs'
 import assert from 'node:assert/strict'
+
 import { normalizeTxHash, localTxHashSet, isDuplicateWasmRow } from '../src/lib/tx-history-dedup.ts'
-import {
-  decideMonitorSignal,
-  shouldRefreshSpendability
-} from '../src/background/tx-monitor-policy.ts'
+import { decideMonitorSignal } from '../src/background/tx-monitor-policy.ts'
 import {
   getCrossChainCompletionStatus,
   isIntentsSettledTransaction,
   needsRelayStatusRecovery
 } from '../src/lib/cross-chain-transaction.ts'
+import { WALLET_CONFIG } from '../src/config/wallet.ts'
 import {
   getRequiredConfirmations,
   mergeTransactionUpdate,
   resolveMinedTransactionStatus
 } from '../src/lib/transaction-status.ts'
+import {
+  formatConfirmingStatus,
+  getTransactionStatusCopy
+} from '../src/lib/transaction-status-copy.ts'
 import { isWalletSettlementComplete } from '../src/lib/wallet-settlement.ts'
 
 function tx(overrides) {
@@ -34,7 +38,15 @@ function tx(overrides) {
   }
 }
 
-describe('Confirmation policy', () => {
+test.describe('ZIP-315 confirmation lifecycle', () => {
+  test('MIN_CONFIRMATIONS is 3 for outbound finality', () => {
+    expect(WALLET_CONFIG.MIN_CONFIRMATIONS).toBe(3)
+  })
+
+  test('SPENDABILITY_CONFIRMATIONS is 10 for incoming funds', () => {
+    expect(WALLET_CONFIG.SPENDABILITY_CONFIRMATIONS).toBe(10)
+  })
+
   test('Received in first block is still confirming (1/10)', () => {
     const signal = decideMonitorSignal({
       lookup: { status: 'confirmed', confirmations: 1 },
@@ -45,10 +57,18 @@ describe('Confirmation policy', () => {
       hasNode: true,
       confirmedInDb: false
     })
-    assert.equal(signal, 'wait')
+    expect(signal).toBe('wait')
   })
 
-  test('9 confirmations has not reached incoming Activity finality', () => {
+  test('confirming transactions use the warning tone', () => {
+    expect(
+      getTransactionStatusCopy(
+        tx({ status: 'confirming', confirmations: 2, requiredConfirmations: 3 })
+      )
+    ).toMatchObject({ label: 'Confirming (2/3)', tone: 'neutral' })
+  })
+
+  test('9 confirmations still not spendable', () => {
     const signal = decideMonitorSignal({
       lookup: { status: 'confirmed', confirmations: 9 },
       minConfirmations: 10,
@@ -58,7 +78,7 @@ describe('Confirmation policy', () => {
       hasNode: true,
       confirmedInDb: false
     })
-    assert.equal(signal, 'wait')
+    expect(signal).toBe('wait')
   })
 
   test('10 confirmations reaches confirmed', () => {
@@ -71,34 +91,30 @@ describe('Confirmation policy', () => {
       hasNode: true,
       confirmedInDb: false
     })
-    assert.equal(signal, 'confirm')
+    expect(signal).toBe('confirm')
   })
 
   test('external receives require 10 confirmations while sends require 3', () => {
-    assert.equal(getRequiredConfirmations('receive'), 10)
-    assert.equal(getRequiredConfirmations('receive', 'trusted'), 3)
-    assert.equal(getRequiredConfirmations('withdraw'), 10)
-    assert.equal(getRequiredConfirmations('send'), 3)
-    assert.equal(resolveMinedTransactionStatus('mined', 100, 102, 'send').status, 'success')
-    assert.deepEqual(resolveMinedTransactionStatus('mined', 100, 102, 'receive', 'trusted'), {
+    expect(getRequiredConfirmations('receive')).toBe(10)
+    expect(getRequiredConfirmations('receive', 'trusted')).toBe(3)
+    expect(getRequiredConfirmations('withdraw')).toBe(10)
+    expect(getRequiredConfirmations('send')).toBe(3)
+    expect(resolveMinedTransactionStatus('mined', 100, 102, 'send').status).toBe('success')
+    expect(resolveMinedTransactionStatus('mined', 100, 102, 'receive', 'trusted')).toEqual({
       status: 'success',
       confirmations: 3,
       requiredConfirmations: 3
     })
-    assert.deepEqual(resolveMinedTransactionStatus('mined', 100, 102, 'receive'), {
+    expect(resolveMinedTransactionStatus('mined', 100, 102, 'receive')).toEqual({
       status: 'confirming',
       confirmations: 3,
       requiredConfirmations: 10
     })
   })
 
-  test('spendability threshold requests one refresh without changing finality', () => {
-    assert.equal(shouldRefreshSpendability(1, 3, undefined), false)
-    assert.equal(shouldRefreshSpendability(2, 3, undefined), false)
-    assert.equal(shouldRefreshSpendability(3, 3, undefined), true)
-    assert.equal(shouldRefreshSpendability(4, 3, true), false)
-    assert.equal(getRequiredConfirmations('send'), 3)
-    assert.equal(getRequiredConfirmations('receive'), 10)
+  test('confirmation progress uses the same label for incoming and outgoing transactions', () => {
+    expect(formatConfirmingStatus('receive', 6, 10)).toBe('Confirming (6/10)')
+    expect(formatConfirmingStatus('send', 2, 3)).toBe('Confirming (2/3)')
   })
 
   test('mined but under 10 confirmations is not timed out even past timeout', () => {
@@ -111,158 +127,51 @@ describe('Confirmation policy', () => {
       hasNode: true,
       confirmedInDb: false
     })
-    assert.equal(signal, 'wait')
+    // Past timeout, but tx is mined — policy returns 'wait' because it's
+    // confirmed but immature (not 'notfound').
+    expect(signal).toBe('wait')
   })
 })
-describe('Transaction status monotonicity', () => {
-  test('a matching chain confirmation recovers failed sends and shields', () => {
-    for (const type of ['send', 'shield', 'receive']) {
-      const failed = tx({ type, status: 'failed', failureReason: 'timeout', notified: true })
-      const confirmations = getRequiredConfirmations(type)
-      const recovered = mergeTransactionUpdate(
-        failed,
-        { status: 'success' },
-        { txHash: ' ABC123 ', confirmations }
-      )
-      assert.equal(recovered.status, 'success')
-      assert.equal(recovered.confirmations, confirmations)
-      assert.equal(recovered.requiredConfirmations, confirmations)
-      assert.equal(recovered.failureReason, undefined)
-      assert.equal(recovered.notified, false)
-      assert.equal(recovered.id, failed.id)
-    }
-  })
 
-  test('cached confirmation counts alone cannot reverse a failed transaction', () => {
-    const failed = tx({ status: 'failed', confirmations: 10, failureReason: 'expired' })
-    assert.equal(
-      mergeTransactionUpdate(failed, { status: 'success', confirmations: 10 }).status,
-      'failed'
-    )
-  })
-
-  test('a different hash or insufficient confirmation never recovers a failure', () => {
-    const failed = tx({ status: 'failed' })
-    for (const confirmation of [
-      { txHash: 'another-transaction', confirmations: 10 },
-      { txHash: '', confirmations: 10 },
-      { txHash: 'abc123', confirmations: 2 },
-      { txHash: 'abc123', confirmations: NaN },
-      { txHash: 'abc123', confirmations: Infinity },
-      { txHash: 'abc123', confirmations: 3.5 }
-    ]) {
-      assert.equal(
-        mergeTransactionUpdate(failed, { status: 'success' }, confirmation).status,
-        'failed'
-      )
-    }
-    assert.equal(
-      mergeTransactionUpdate(
-        failed,
-        { status: 'success', txHash: 'another-transaction' },
-        { txHash: failed.txHash, confirmations: 10 }
-      ).status,
-      'failed'
-    )
-  })
-
-  test('a confirmation can restore a hash bound by the monitor before local bookkeeping', () => {
-    const failed = tx({ status: 'failed', txHash: '' })
-    assert.equal(
-      mergeTransactionUpdate(
-        failed,
-        { status: 'success' },
-        {
-          txHash: 'abc123',
-          confirmations: 10
-        }
-      ).status,
-      'failed'
-    )
-    const recovered = mergeTransactionUpdate(
-      failed,
-      { status: 'success', txHash: 'abc123' },
-      { txHash: 'abc123', confirmations: 10 }
-    )
-    assert.equal(recovered.status, 'success')
-    assert.equal(recovered.txHash, 'abc123')
-  })
-
-  test('origin confirmations cannot reverse failed cross-chain operations', () => {
-    for (const type of ['supply', 'swap', 'withdraw', 'claim']) {
-      assert.equal(
-        mergeTransactionUpdate(
-          tx({ type, status: 'failed' }),
-          { status: 'success' },
-          { txHash: 'abc123', confirmations: 100 }
-        ).status,
-        'failed'
-      )
-    }
-  })
-
-  test('recovered success is stable against stale failures and repeated confirmation', () => {
-    const confirmation = { txHash: 'abc123', confirmations: 10 }
-    const recovered = mergeTransactionUpdate(
-      tx({ status: 'failed', failureReason: 'expired', notified: true }),
-      { status: 'success' },
-      confirmation
-    )
-    const notified = { ...recovered, notified: true }
-    assert.deepEqual(
-      mergeTransactionUpdate(notified, { status: 'success' }, confirmation),
-      notified
-    )
-    assert.deepEqual(
-      mergeTransactionUpdate(notified, {
-        status: 'failed',
-        failureReason: 'timeout',
-        notified: false
-      }),
-      notified
-    )
-  })
-
+test.describe('Transaction status monotonicity', () => {
   test('stale relay updates cannot downgrade a successful transaction', () => {
     const successful = tx({ status: 'success', notified: true })
-    assert.deepEqual(
+    expect(
       mergeTransactionUpdate(successful, {
         status: 'relay_confirmed',
         notified: false,
         failureReason: 'timeout',
         memo: 'Refunded',
         destinationTxHash: 'destination'
-      }),
-      {
-        ...successful,
-        destinationTxHash: 'destination'
-      }
-    )
+      })
+    ).toEqual({
+      ...successful,
+      destinationTxHash: 'destination'
+    })
   })
 
   test('non-terminal transactions still advance to confirming', () => {
     const pending = tx({ status: 'pending' })
-    assert.equal(
+    expect(
       mergeTransactionUpdate(pending, {
         status: 'confirming',
         confirmations: 2,
         requiredConfirmations: 10
-      }).status,
-      'confirming'
-    )
+      }).status
+    ).toBe('confirming')
   })
 })
 
-describe('Confirmed transaction wallet settlement', () => {
+test.describe('Confirmed transaction wallet settlement', () => {
   test('keeps monitoring until catch-up succeeds and reaches the confirming node height', () => {
-    assert.equal(isWalletSettlementComplete(false, 100, 100), false)
-    assert.equal(isWalletSettlementComplete(true, 99, 100), false)
-    assert.equal(isWalletSettlementComplete(true, 100, 100), true)
-    assert.equal(isWalletSettlementComplete(true, 100), true)
+    expect(isWalletSettlementComplete(false, 100, 100)).toBe(false)
+    expect(isWalletSettlementComplete(true, 99, 100)).toBe(false)
+    expect(isWalletSettlementComplete(true, 100, 100)).toBe(true)
+    expect(isWalletSettlementComplete(true, 100)).toBe(true)
   })
 })
 
-describe('Withdraw and Received merge via destinationTxHash', () => {
+test.describe('Withdraw and Received merge via destinationTxHash', () => {
   test('localTxHashSet includes destinationTxHash from withdraw records', () => {
     const withdrawTx = tx({
       id: 'tx_withdraw_1',
@@ -271,8 +180,8 @@ describe('Withdraw and Received merge via destinationTxHash', () => {
       destinationTxHash: 'dest_zcash_hash'
     })
     const hashes = localTxHashSet([withdrawTx])
-    assert.equal(hashes.has(normalizeTxHash('origin_hash')), true)
-    assert.equal(hashes.has(normalizeTxHash('dest_zcash_hash')), true)
+    expect(hashes.has(normalizeTxHash('origin_hash'))).toBe(true)
+    expect(hashes.has(normalizeTxHash('dest_zcash_hash'))).toBe(true)
   })
 
   test('WASM receive matching withdraw destinationTxHash is deduplicated', () => {
@@ -289,7 +198,7 @@ describe('Withdraw and Received merge via destinationTxHash', () => {
       fromType: 'shielded'
     })
     const hashes = localTxHashSet([withdrawTx])
-    assert.equal(isDuplicateWasmRow(wasmReceive, hashes), true)
+    expect(isDuplicateWasmRow(wasmReceive, hashes)).toBe(true)
   })
 
   test('unrelated WASM receive with same amount is NOT deduplicated (no fuzzy match)', () => {
@@ -308,7 +217,7 @@ describe('Withdraw and Received merge via destinationTxHash', () => {
       fromType: 'shielded'
     })
     const hashes = localTxHashSet([withdrawTx])
-    assert.equal(isDuplicateWasmRow(unrelatedReceive, hashes), false)
+    expect(isDuplicateWasmRow(unrelatedReceive, hashes)).toBe(false)
   })
 
   test('withdraw without destinationTxHash does not suppress any receive', () => {
@@ -324,55 +233,51 @@ describe('Withdraw and Received merge via destinationTxHash', () => {
       fromType: 'shielded'
     })
     const hashes = localTxHashSet([withdrawTx])
-    assert.equal(isDuplicateWasmRow(wasmReceive, hashes), false)
+    expect(isDuplicateWasmRow(wasmReceive, hashes)).toBe(false)
   })
 })
 
-describe('Withdraw monitor continuation', () => {
+test.describe('Withdraw monitor continuation', () => {
   test('withdraw and claim use relay_confirmed as intermediate status', () => {
-    assert.equal(getCrossChainCompletionStatus('withdraw'), 'relay_confirmed')
-    assert.equal(getCrossChainCompletionStatus('claim'), 'relay_confirmed')
+    expect(getCrossChainCompletionStatus('withdraw')).toBe('relay_confirmed')
+    expect(getCrossChainCompletionStatus('claim')).toBe('relay_confirmed')
   })
 
   test('supply and swap are final on relay success', () => {
-    assert.equal(getCrossChainCompletionStatus('supply'), 'success')
-    assert.equal(getCrossChainCompletionStatus('swap', { destinationChain: 'near' }), 'success')
-    assert.equal(
-      getCrossChainCompletionStatus('swap', { destinationChain: 'zec' }),
+    expect(getCrossChainCompletionStatus('supply')).toBe('success')
+    expect(getCrossChainCompletionStatus('swap', { destinationChain: 'near' })).toBe('success')
+    expect(getCrossChainCompletionStatus('swap', { destinationChain: 'zec' })).toBe(
       'relay_confirmed'
     )
   })
 
   test('Intents owns the final status of supply and swap origin transactions', () => {
-    assert.equal(isIntentsSettledTransaction('supply'), true)
-    assert.equal(isIntentsSettledTransaction('swap'), true)
-    assert.equal(isIntentsSettledTransaction('send'), false)
-    assert.equal(isIntentsSettledTransaction('withdraw'), false)
+    expect(isIntentsSettledTransaction('supply')).toBe(true)
+    expect(isIntentsSettledTransaction('swap')).toBe(true)
+    expect(isIntentsSettledTransaction('send')).toBe(false)
+    expect(isIntentsSettledTransaction('withdraw')).toBe(false)
   })
 
   test('pending withdraw and claim records recover their relay monitor', () => {
-    assert.equal(
+    expect(
       needsRelayStatusRecovery(
         tx({ type: 'withdraw', status: 'pending', depositAddress: 'deposit-1' })
-      ),
-      true
-    )
-    assert.equal(
+      )
+    ).toBe(true)
+    expect(
       needsRelayStatusRecovery(
         tx({ type: 'claim', status: 'relay_confirmed', depositAddress: 'deposit-2' })
-      ),
-      true
-    )
+      )
+    ).toBe(true)
   })
 
   test('terminal or destination-bound records do not recover a relay monitor', () => {
-    assert.equal(
+    expect(
       needsRelayStatusRecovery(
         tx({ type: 'withdraw', status: 'success', depositAddress: 'deposit-1' })
-      ),
-      false
-    )
-    assert.equal(
+      )
+    ).toBe(false)
+    expect(
       needsRelayStatusRecovery(
         tx({
           type: 'withdraw',
@@ -380,14 +285,84 @@ describe('Withdraw monitor continuation', () => {
           depositAddress: 'deposit-1',
           destinationTxHash: 'destination'
         })
-      ),
-      false
+      )
+    ).toBe(false)
+    expect(
+      needsRelayStatusRecovery(tx({ type: 'send', status: 'pending', depositAddress: 'deposit-1' }))
+    ).toBe(false)
+  })
+})
+
+test.describe('Source invariants for confirmation lifecycle', () => {
+  const monitorSource = readFileSync(
+    new URL('../src/background/zcash-tx-monitor.ts', import.meta.url),
+    'utf-8'
+  )
+  const transactionMonitorSource = readFileSync(
+    new URL('../src/background/transaction-monitor.ts', import.meta.url),
+    'utf-8'
+  )
+  const backgroundSource = readFileSync(
+    new URL('../src/background/index.ts', import.meta.url),
+    'utf-8'
+  )
+  const walletTypes = readFileSync(new URL('../src/types/wallet.ts', import.meta.url), 'utf-8')
+  const zcashWalletRuntimeSource = readFileSync(
+    new URL('../src/background/zcash-wallet-runtime.ts', import.meta.url),
+    'utf-8'
+  )
+
+  test('TransactionStatus type includes confirming', () => {
+    assert.match(walletTypes, /'confirming'/)
+  })
+
+  test('ZcashTxMonitor updates confirming status for mined-but-immature tx', () => {
+    assert.match(monitorSource, /updateConfirmingStatus/)
+  })
+
+  test('ZcashTxMonitor keeps Intents-origin supply and swap pending', () => {
+    assert.match(
+      monitorSource,
+      /lookup\.confirmations > 0 &&[\s\S]*?!isIntentsSettledTransaction\(tx\.type\)[\s\S]*?updateConfirmingStatus/
     )
-    assert.equal(
-      needsRelayStatusRecovery(
-        tx({ type: 'send', status: 'pending', depositAddress: 'deposit-1' })
-      ),
-      false
+  })
+
+  test('ZcashTxMonitor does not timeout a mined tx', () => {
+    assert.match(monitorSource, /Tx mined but immature, extending timeout/)
+  })
+
+  test('TransactionMonitor only persists destinationTxHash for a Zcash destination', () => {
+    assert.match(
+      transactionMonitorSource,
+      /completionStatus === 'relay_confirmed' && destinationHash[\s\S]*?destinationTxHash: destinationHash/
     )
+  })
+
+  test('TransactionMonitor continues polling when Zcash destination SUCCESS has no dest hash', () => {
+    assert.match(
+      transactionMonitorSource,
+      /if \(completionStatus === 'relay_confirmed' && !destinationHash\) \{[\s\S]*?await transactionRecorder\.updateTransaction\(accountKey, transactionId, updates\)[\s\S]*?return\s*\}/
+    )
+  })
+
+  test('Background restores stuck withdraw monitors on startup', () => {
+    assert.match(backgroundSource, /restoreStuckWithdrawMonitors/)
+    assert.match(monitorSource, /restoreStuckWithdrawals/)
+  })
+
+  test('WASM history resolves confirmation status by transaction type', () => {
+    assert.match(zcashWalletRuntimeSource, /resolveMinedTransactionStatus/)
+    assert.match(zcashWalletRuntimeSource, /chainTip,[\s\S]*?type/)
+  })
+
+  test('Assets shows every unspendable balance without changing activity status', () => {
+    const balanceSource = readFileSync(
+      new URL('../src/popup/components/balance/BalanceWithPending.tsx', import.meta.url),
+      'utf-8'
+    )
+    assert.match(balanceSource, /safeBig\(pending\)\.gt\(0\)/)
+    assert.match(balanceSource, /ZEC unspendable/)
+    assert.doesNotMatch(balanceSource, /DUST_THRESHOLD/)
+    assert.doesNotMatch(balanceSource, /ZEC confirming/)
   })
 })

@@ -2,7 +2,6 @@ import { Icon } from '@iconify/react'
 import { PageHeader } from '../../components/common/PageHeader'
 import { useNavigate } from '../../provider/Router'
 import WalletIcon from '@/images/wallet-icon.svg'
-import { SocialLinks } from '@/popup/components/common/SocialLinks'
 
 declare const __APP_VERSION__: string
 declare const __BUILD_TIME__: string
@@ -26,13 +25,9 @@ export function About() {
           <h2 className="text-xl font-semibold mb-2">Noir Wallet</h2>
           <p className="text-sm text-muted mb-6">Version {version}</p>
 
-          <p className="text-sm text-center text-muted max-w-xs mb-4">
+          <p className="text-sm text-center text-muted max-w-xs mb-8">
             A privacy-first multi-chain wallet built for security and ease of use
           </p>
-
-          <div className="mb-8">
-            <SocialLinks />
-          </div>
 
           <div className="w-full max-w-xs space-y-2">
             <button

@@ -20,8 +20,6 @@ export function UnlockPage() {
     const requestId = getParam('requestId')
     const fromDapp = getParam('from') === 'dapp'
 
-    console.log('[UnlockPage] Unlock successful', { redirect, requestId, fromDapp })
-
     await SecureStorage.saveLastActivityTime()
     sendAnalyticsEvent(ANALYTICS_EVENTS.WALLET_UNLOCKED, {
       pageId: PAGE_IDS.UNLOCK,
@@ -32,7 +30,6 @@ export function UnlockPage() {
     if (fromDapp) {
       try {
         await chrome.runtime.sendMessage({ type: 'UNLOCK_SUCCESS' })
-        console.log('[UnlockPage] UNLOCK_SUCCESS sent, closing window')
       } catch (error) {
         console.warn('[UnlockPage] Failed to send message:', error)
       }
@@ -49,7 +46,6 @@ export function UnlockPage() {
       targetUrl = `${targetUrl}${separator}requestId=${requestId}`
     }
 
-    console.log('[UnlockPage] Redirecting to:', targetUrl)
     replace(targetUrl)
   }
 

@@ -1,0 +1,174 @@
+import { useState } from 'react'
+import { Icon } from '@iconify/react'
+import { getNetworkFeeTierLabel, type NetworkFeeTier } from '@/core/transactions/domain'
+import {
+  formatEvmPriorityFeeGwei,
+  parseEvmPriorityFeeGwei,
+  type EvmFeeSelection
+} from '@/infrastructure/chains/evm'
+import { openModal } from '@/popup/provider/ModalManager'
+import { Button } from '@/popup/components/ui/button'
+import { Input } from '@/popup/components/ui/input'
+import { NetworkFeeTierSelector } from './NetworkFeeTierSelector'
+import Big from '@/lib/big'
+import { formatNumber } from '@/lib/format'
+
+interface NetworkFeeTierPickerProps {
+  readonly chainFamily: 'bitcoin' | 'evm'
+  readonly tier: NetworkFeeTier
+  readonly selection?: EvmFeeSelection
+  readonly amount: string
+  readonly symbol: string
+  readonly onTierChange: (tier: NetworkFeeTier) => void | Promise<void>
+  readonly onSelectionChange?: (selection: EvmFeeSelection) => void | Promise<void>
+  readonly disabled?: boolean
+}
+
+export function NetworkFeeTierPicker({
+  chainFamily,
+  tier,
+  selection,
+  amount,
+  symbol,
+  onTierChange,
+  onSelectionChange,
+  disabled = false
+}: NetworkFeeTierPickerProps) {
+  const handleEdit = () => {
+    if (disabled) return
+    void openModal({
+      title: 'Network Fee',
+      showCloseButton: true,
+      body: (_resolve, close) => (
+        <NetworkFeeTierEditContent
+          chainFamily={chainFamily}
+          selection={selection ?? { kind: 'tier', tier }}
+          allowCustom={chainFamily === 'evm' && onSelectionChange !== undefined}
+          onSelect={nextSelection => {
+            if (onSelectionChange) return onSelectionChange(nextSelection)
+            if (nextSelection.kind === 'tier') return onTierChange(nextSelection.tier)
+          }}
+          close={close}
+        />
+      )
+    })
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={handleEdit}
+      disabled={disabled}
+      className="flex flex-col items-end gap-0.5 text-right transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-60"
+    >
+      <span className="whitespace-nowrap font-mono">
+        {formatNumber(amount, {
+          rm: Big.roundDown,
+          useUnit: true,
+          useSubscript: true,
+          fallback: '—'
+        })}{' '}
+        {symbol}
+      </span>
+      <span className="inline-flex items-center gap-1 text-[10px] text-muted">
+        <span>{selection?.kind === 'custom' ? 'Custom' : getNetworkFeeTierLabel(tier)}</span>
+        <Icon
+          icon={disabled ? 'lucide:loader-2' : 'lucide:pencil'}
+          className={disabled ? 'animate-spin' : ''}
+          width={12}
+          height={12}
+        />
+      </span>
+    </button>
+  )
+}
+
+function NetworkFeeTierEditContent({
+  chainFamily,
+  selection,
+  allowCustom,
+  onSelect,
+  close
+}: {
+  readonly chainFamily: 'bitcoin' | 'evm'
+  readonly selection: EvmFeeSelection
+  readonly allowCustom: boolean
+  readonly onSelect: (selection: EvmFeeSelection) => void | Promise<void>
+  readonly close: () => void
+}) {
+  const [updating, setUpdating] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [customPriorityFeeGwei, setCustomPriorityFeeGwei] = useState(
+    formatEvmPriorityFeeGwei(selection) ?? ''
+  )
+
+  const handleSelect = async (nextSelection: EvmFeeSelection) => {
+    if (updating) return
+    if (
+      nextSelection.kind === 'tier' &&
+      selection.kind === 'tier' &&
+      nextSelection.tier === selection.tier
+    ) {
+      close()
+      return
+    }
+    setUpdating(true)
+    setError(null)
+    try {
+      await onSelect(nextSelection)
+      close()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'The network fee could not be updated.')
+      setUpdating(false)
+    }
+  }
+
+  return (
+    <div className="space-y-3 pb-4 pt-1">
+      <NetworkFeeTierSelector
+        chainFamily={chainFamily}
+        value={selection.kind === 'tier' ? selection.tier : 'standard'}
+        onChange={tier => void handleSelect({ kind: 'tier', tier })}
+        hideLabel
+        disabled={updating}
+      />
+      {allowCustom && (
+        <div className="space-y-2 rounded-md border border-border/60 bg-card/45 p-3">
+          <label htmlFor="custom-priority-fee" className="block text-xs font-medium">
+            Custom priority fee
+          </label>
+          <div className="flex items-center gap-2">
+            <Input
+              id="custom-priority-fee"
+              inputMode="decimal"
+              value={customPriorityFeeGwei}
+              onChange={event => {
+                setCustomPriorityFeeGwei(event.target.value)
+                setError(null)
+              }}
+              placeholder="1.5"
+              endContent={<span className="text-xs text-muted">GWEI</span>}
+              disabled={updating}
+            />
+            <Button
+              type="button"
+              variant="outline"
+              className="h-9 shrink-0"
+              disabled={updating || customPriorityFeeGwei.trim().length === 0}
+              onClick={() => {
+                try {
+                  void handleSelect(parseEvmPriorityFeeGwei(customPriorityFeeGwei))
+                } catch (cause) {
+                  setError(cause instanceof Error ? cause.message : 'Invalid priority fee')
+                }
+              }}
+            >
+              Apply
+            </Button>
+          </div>
+        </div>
+      )}
+      {error && <p className="text-xs text-danger">{error}</p>}
+    </div>
+  )
+}

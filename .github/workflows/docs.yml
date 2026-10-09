@@ -10,13 +10,13 @@ on:
       - 'package.json'
       - 'pnpm-lock.yaml'
       - 'pnpm-workspace.yaml'
-      - '.node-version'
       - '.github/workflows/docs.yml'
-permissions:
-  contents: read
 concurrency:
   group: docs-${{ github.ref }}
   cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   verify:

@@ -35,10 +35,7 @@ export const DEFAULT_FEE_TIER: FeeTier = 'standard'
  */
 export const DEFAULT_EXPIRY_DELTA_BLOCKS = 5
 
-/** Typical logical action count for a 1-in/1-out shielded transfer. */
-const TYPICAL_ACTIONS = 3
-
-export interface FeeTierMeta {
+interface FeeTierMeta {
   id: FeeTier
   label: string
   /** Marginal-fee multiple of the ZIP-317 baseline. */
@@ -54,65 +51,7 @@ export const FEE_TIERS: readonly FeeTierMeta[] = [
   { id: 'fast', label: 'Fast', multiplier: 4, etaHint: 'Priority', icon: 'lucide:zap' }
 ]
 
-export function marginalFeeForTier(tier: FeeTier): number {
-  return MARGINAL_FEE_ZATS[tier] ?? MARGINAL_FEE_ZATS[DEFAULT_FEE_TIER]
-}
-
 /** Human-readable tier name (e.g. "Standard", "Fast"). */
 export function getFeeTierLabel(tier: FeeTier): string {
   return (FEE_TIERS.find(t => t.id === tier) ?? FEE_TIERS[0]).label
-}
-
-const ALLOWED_MARGINAL_FEES: ReadonlySet<number> = new Set(Object.values(MARGINAL_FEE_ZATS))
-
-/**
- * Snap an inbound marginal fee to a recognized tier, defaulting to Standard.
- *
- * Defense-in-depth choke point before the value reaches WASM: bounds the fee to
- * the known tier set so a malformed or forged request can never spend an
- * arbitrary amount on fees.
- */
-export function sanitizeMarginalFeeZats(value: number | undefined): number {
-  return value != null && ALLOWED_MARGINAL_FEES.has(value)
-    ? value
-    : MARGINAL_FEE_ZATS[DEFAULT_FEE_TIER]
-}
-
-/** Coarse fee estimate (zatoshis) used before live estimation resolves. */
-export function staticFeeFallbackZats(tier: FeeTier): number {
-  return marginalFeeForTier(tier) * TYPICAL_ACTIONS
-}
-
-/**
- * Derive every tier's fee from a single Standard-tier estimate.
- *
- * ZIP-317 fees scale linearly with the marginal fee while the action count stays
- * fixed, so one Standard estimate maps onto all tiers without re-running WASM on
- * tier switch. Returns `null` per tier while the estimate is pending; falls back
- * to static figures when it errored.
- */
-export function deriveFeeByTier(
-  standardZats: number | null,
-  hasError: boolean
-): Record<FeeTier, number | null> {
-  const compute = (target: FeeTier): number | null => {
-    if (standardZats != null) {
-      return Math.round(standardZats * (MARGINAL_FEE_ZATS[target] / MARGINAL_FEE_ZATS.standard))
-    }
-    return hasError ? staticFeeFallbackZats(target) : null
-  }
-  return { standard: compute('standard'), fast: compute('fast') }
-}
-
-/** Derive all tiers when the live estimate was built with an arbitrary source tier. */
-export function deriveFeeByTierFromEstimate(
-  feeZats: number | null,
-  sourceTier: FeeTier,
-  hasError: boolean
-): Record<FeeTier, number | null> {
-  const standardZats =
-    feeZats == null
-      ? null
-      : Math.round(feeZats * (MARGINAL_FEE_ZATS.standard / MARGINAL_FEE_ZATS[sourceTier]))
-  return deriveFeeByTier(standardZats, hasError)
 }

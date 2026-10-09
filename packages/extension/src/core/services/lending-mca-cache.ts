@@ -7,8 +7,12 @@ export type McaCacheStatus = {
 const mcaStatusCache = new Map<string, McaCacheStatus>()
 const mcaCheckInFlight = new Map<string, Promise<McaCacheStatus>>()
 
-export function getMcaCacheKey(walletId: string, accountId: string): string {
-  return `${walletId}:${accountId}`
+export function getMcaCacheKey(
+  walletId: string,
+  accountId: string,
+  executionMode: 'main' | 'private' = 'main'
+): string {
+  return `${walletId}:${accountId}:${executionMode}`
 }
 
 export function getCachedMcaStatus(key: string): McaCacheStatus | undefined {
@@ -21,7 +25,12 @@ export function setCachedMcaStatus(key: string, status: McaCacheStatus): void {
 
 export function clearLendingMcaCache(walletId?: string, accountId?: string): void {
   if (walletId && accountId) {
-    mcaStatusCache.delete(getMcaCacheKey(walletId, accountId))
+    for (const key of mcaStatusCache.keys()) {
+      if (key.startsWith(`${walletId}:${accountId}:`)) mcaStatusCache.delete(key)
+    }
+    for (const key of mcaCheckInFlight.keys()) {
+      if (key.startsWith(`${walletId}:${accountId}:`)) mcaCheckInFlight.delete(key)
+    }
     return
   }
   if (walletId) {
@@ -52,7 +61,11 @@ export function runMcaCheckDeduped(
 
   const promise = operation()
     .then(result => {
-      mcaStatusCache.set(cacheKey, result)
+      if (result.mcaId) {
+        mcaStatusCache.set(cacheKey, result)
+      } else {
+        mcaStatusCache.delete(cacheKey)
+      }
       return result
     })
     .finally(() => {

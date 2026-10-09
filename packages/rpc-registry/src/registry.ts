@@ -62,7 +62,7 @@ const TESTNET = 'testnet'
 
 export const RPC_REGISTRY: RpcRegistryDocument = {
   version: RPC_REGISTRY_SCHEMA_VERSION,
-  updatedAt: '2026-10-09T02:55:00.000Z',
+  updatedAt: '2026-09-30T10:47:10.000Z',
   chains: [
     {
       id: 'zcash-mainnet',
@@ -72,11 +72,6 @@ export const RPC_REGISTRY: RpcRegistryDocument = {
       iconChain: 'zec',
       probe: 'zcash-lightwalletd-grpc-web',
       endpoints: [
-        {
-          id: 'zec-rocks',
-          label: 'zec.rocks',
-          url: 'https://zjs.zec.rocks'
-        },
         {
           id: 'deltarpc',
           label: 'DeltaRPC',
@@ -130,7 +125,6 @@ export const RPC_REGISTRY: RpcRegistryDocument = {
       ]
     },
     chain('eip155:1', MAINNET, 'Ethereum', 'eth', EVM, [
-      ['thirdweb', 'thirdweb', 'https://1.rpc.thirdweb.com/6d01b8eb7af1b24d9301b6e96a925d6d'],
       ['deltarpc', 'DeltaRPC', 'https://eth.deltarpc.com'],
       ['publicnode', 'PublicNode', 'https://ethereum-rpc.publicnode.com'],
       ['drpc', 'dRPC', 'https://eth.drpc.org']
@@ -141,7 +135,6 @@ export const RPC_REGISTRY: RpcRegistryDocument = {
       ['official-2', 'BNB Chain 2', 'https://bsc-dataseed2.bnbchain.org']
     ]),
     chain('eip155:42161', MAINNET, 'Arbitrum', 'arb', EVM, [
-      ['thirdweb', 'thirdweb', 'https://42161.rpc.thirdweb.com/6d01b8eb7af1b24d9301b6e96a925d6d'],
       ['drpc', 'dRPC', 'https://arbitrum.drpc.org'],
       ['publicnode', 'PublicNode', 'https://arbitrum-one-rpc.publicnode.com'],
       ['zan', 'ZAN', 'https://api.zan.top/arb-one']
@@ -266,7 +259,7 @@ export const RPC_REGISTRY: RpcRegistryDocument = {
 
 export const ZCASH_RPC_REGISTRY: RpcRegistryDocument = {
   version: RPC_REGISTRY_SCHEMA_VERSION,
-  updatedAt: RPC_REGISTRY.updatedAt,
+  updatedAt: '2026-09-17T07:57:09.000Z',
   chains: RPC_REGISTRY.chains.filter(chain => chain.id === 'zcash-mainnet')
 }
 

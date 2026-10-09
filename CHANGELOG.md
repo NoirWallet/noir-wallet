@@ -1,70 +1,32 @@
 # Changelog
 
-Developer-oriented release history for Noir Wallet. Concise in-wallet update notes are maintained separately in [packages/web/public/changelog.json](./packages/web/public/changelog.json).
+All notable user-facing changes to Noir Wallet are documented in this file.
 
-## [1.0.38] - 2026-10-05
-
-### Added
-
-- Added recovery phrase backup verification, reminders for existing software wallets, and backup checks before wallet removal.
-- Added mainnet compact-block CDN support and an additional Singapore RPC endpoint.
-
-### Changed
-
-- Kept the voting entry hidden for this release.
-
-### Fixed
-
-- Preserved recovery phrases through wallet creation and import, and clarified which wallet is being backed up.
-- Fixed deleted wallets reappearing after writes from another extension context, and recovered unlock access when the selected wallet's credentials are missing but another wallet's credentials can be verified.
-- Preserved hardware wallet names during import and existing credentials when initialization fails after import.
-- Recovered confirmed Zcash Activity records and corrected stale confirmation status handling.
-- Fixed wallet sync errors with Zcash RPC servers that return successful empty gRPC-Web streams.
-
-### Known Issues
-
-- A sync stall was reported after switching accounts and using Swap; manual Resync restored synchronization. The cause remains unconfirmed, and this release does not include a fix for that report.
-
-## [1.0.37] - 2026-09-23
+## [2.0.0] - 2026-08-24
 
 ### Added
 
-- Added Ledger Zcash account import and hardware transaction signing over USB and Bluetooth.
-- Added configurable hardware account indexes, visible derivation paths, and shared signing flows for Ledger and Keystone.
-- Added shielded address history, address rotation, QR codes, and cached address loading across Receive and Addresses.
-- Added automatic RPC selection, additional EU endpoints, and downloadable privacy-safe diagnostic logs.
-- Added exact wallet birthday dates for faster, more precise restore and rescan setup.
-- Added a Send warning for exchanges that may not support shielded deposits.
+- Added one multichain Wallet experience for Zcash, Bitcoin, Ethereum, and released EVM networks, with unified Assets, Addresses, Send, Receive, and Activity views.
+- Added 12-word and 24-word recovery phrase creation and import, with all supported account identities derived from either phrase length.
+- Added Bitcoin Native SegWit accounts, transaction signing and broadcasting, confirmation tracking, fee tiers, and discovery of common historical address types.
+- Added EVM native and token balances, transfers, message and transaction signing, dApp permissions, discovered-token management, and network-aware activity.
+- Added encrypted EVM and Bitcoin private-key Wallet import and export without exposing secrets to the popup after provisioning.
+- Added a global Mainnet/Testnet Mode that keeps account caches, activity, RPC settings, approvals, and Zcash databases isolated between modes.
 
 ### Changed
 
-- Separated balance-query and transaction-selection confirmation policies so external funds remain Pending until 10 confirmations while eligible manual transfers can use them after 3.
-- Improved Send and Swap funding details so Available excludes Pending, Max stays within confirmed funds, and warnings identify the affected funding source.
-- Improved cross-chain progress recovery, account switching, token and network verification, and deposit confirmation safeguards.
+- Updated Swap and Lending to select from supported multichain assets, restore cached data immediately, and refresh markets in the background.
+- Redesigned Portfolio, asset details, transaction details, account management, recipient selection, and loading states for the V2 multichain interface.
+- Expanded the dApp SDK and example with EVM and Bitcoin providers, network helpers, account switching, and smart-contract testing flows.
 
 ### Fixed
 
-- Fixed Ledger import waiting on an unused address confirmation and the side panel remaining on Welcome after import.
-- Fixed Bluetooth discovery permissions, PCZT Map serialization, and transaction preview visibility during Ledger signing.
-- Fixed explicit transparent and shielded sends being treated as Max transfers, including TEX Max availability.
-- Fixed transient spendability metadata errors triggering unnecessary full wallet rescans during active sync.
-- Fixed Swap progress stopping after account changes and terminal Intents results remaining in a confirming state.
-- Fixed stale balances across routes and clarified actionable RPC, network, and upstream service errors.
-
-## [1.0.36] - 2026-09-09
-
-### Added
-
-- Added a promotional banner to the wallet Home screen.
-- Added GitHub, X, and Telegram links to wallet Settings and About.
-
-### Changed
-
-- New installations now open Noir Wallet in Chrome's side panel by default.
-
-### Fixed
-
-- Fixed transparent change from dApp transactions becoming stale or unspendable, allowing normal sync to recover it without a full resync.
+- Fixed dApp network switching after approval when the destination chain's public RPC is temporarily unavailable.
+- Fixed Bitcoin balances remaining stale after a Wallet-to-Wallet transfer by updating spent inputs, change, owned recipient outputs, and confirmation state locally before remote reconciliation.
+- Fixed repeated Bitcoin discovery requests and public indexer rate limits by reusing persisted discovery state and deduplicating refreshes.
+- Fixed repeated EVM activity reloads, empty-result retries, token/icon mismatches, value ordering, and stale price or protocol displays.
+- Fixed stale Swap quotes and fee displays, inconsistent Bitcoin address-type balances, and Zcash account recovery setup failures.
+- Preserved V1 encrypted credentials, passwords, Zcash data, account metadata, and Golden Profile compatibility during V2 migration.
 
 ## [1.0.35] - 2026-09-07
 

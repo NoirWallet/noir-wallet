@@ -1,4 +1,4 @@
-import { ZEC_DECIMALS } from '../../config/wallet.ts'
+import { WALLET_CONFIG, ZEC_DECIMALS } from '../../config/wallet.ts'
 import type { ZcashBalance } from '../../types/wallet.ts'
 
 export type WasmAccountBalanceSummary = {
@@ -39,6 +39,14 @@ function formatZatoshis(value: bigint): string {
 
 function formatZatoshisFixed(value: bigint): string {
   return Number(formatZatoshis(value)).toFixed(ZEC_DECIMALS)
+}
+
+/** Tier-agnostic available balance reserves the Standard fee and wallet dust threshold. */
+export function getMaxSpendableZec(shieldedBalance: string | number): string {
+  const rawBalance =
+    typeof shieldedBalance === 'number' ? shieldedBalance : Number(shieldedBalance || 0)
+  const reserve = WALLET_CONFIG.NETWORK_FEE * 2 + WALLET_CONFIG.DUST_THRESHOLD
+  return Math.max(0, rawBalance - reserve).toFixed(ZEC_DECIMALS)
 }
 
 export function mapWasmAccountBalanceToZcashBalance(
@@ -88,14 +96,13 @@ export function mapWasmAccountBalanceToZcashBalance(
       ? zatoshiValue(wasmBalance.spendable_balance)
       : shieldedConfirmed
   const spendableZec = formatZatoshis(spendable)
-  const totalZec = formatZatoshis(total)
 
   return {
     transparent: formatZatoshis(transparentTotal),
     shielded: formatZatoshis(shieldedTotal),
-    total: totalZec,
+    total: formatZatoshis(total),
     spendable: spendableZec,
-    available: spendableZec,
+    available: getMaxSpendableZec(spendableZec),
     shieldable: formatZatoshis(
       wasmBalance.unshielded_shieldable_balance == null
         ? transparentConfirmed
@@ -105,10 +112,6 @@ export function mapWasmAccountBalanceToZcashBalance(
       sapling: formatZatoshis(saplingTotal),
       orchard: formatZatoshis(orchardTotal),
       ironwood: formatZatoshis(ironwoodTotal)
-    },
-    confirmed: {
-      shielded: formatZatoshis(shieldedConfirmed),
-      transparent: formatZatoshis(transparentConfirmed)
     },
     pending: {
       shielded: formatZatoshis(shieldedPending),
@@ -127,7 +130,6 @@ export function zeroZcashBalance(): ZcashBalance {
     available: formatZatoshisFixed(0n),
     shieldable: '0',
     shieldedPools: { sapling: '0', orchard: '0', ironwood: '0' },
-    confirmed: { shielded: '0', transparent: '0' },
     pending: { shielded: '0', transparent: '0', total: '0' }
   }
 }

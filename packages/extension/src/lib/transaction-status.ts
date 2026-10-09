@@ -28,6 +28,20 @@ export function getRequiredConfirmations(
     : WALLET_CONFIG.MIN_CONFIRMATIONS
 }
 
+export function isRecoverableZcashFailure(
+  transaction: Pick<Transaction, 'id' | 'type' | 'status' | 'txHash'>
+): boolean {
+  return (
+    !transaction.id.startsWith('wasm_') &&
+    transaction.status === 'failed' &&
+    (transaction.type === 'send' ||
+      transaction.type === 'shield' ||
+      transaction.type === 'receive' ||
+      transaction.type === 'unshield') &&
+    !!normalizeTxHash(transaction.txHash)
+  )
+}
+
 export function resolveMinedTransactionStatus(
   status: string,
   minedHeight: number | null | undefined,
@@ -56,17 +70,13 @@ export function mergeTransactionUpdate(
   updates: Partial<Transaction>,
   confirmation?: ZcashConfirmation
 ): Transaction {
-  const recoverableType =
-    transaction.type === 'send' || transaction.type === 'shield' || transaction.type === 'receive'
   const currentHash = normalizeTxHash(transaction.txHash)
   const updatedHash = normalizeTxHash(updates.txHash)
   const confirmedHash = normalizeTxHash(confirmation?.txHash)
-  // A local failure can precede mining. Only an explicit confirmation for this
-  // transaction may correct it; an origin confirmation cannot settle Intents.
   if (
     transaction.status === 'failed' &&
     updates.status === 'success' &&
-    recoverableType &&
+    isRecoverableZcashFailure(transaction) &&
     confirmation &&
     confirmedHash &&
     (currentHash || updatedHash) === confirmedHash &&
@@ -111,7 +121,7 @@ export function synchronizeInternalTransferConfirmations(
 
   for (const transaction of transactions) {
     if (
-      transaction.type !== 'send' ||
+      (transaction.type !== 'send' && transaction.type !== 'unshield') ||
       transaction.id.startsWith('wasm_') ||
       (transaction.status !== 'confirming' && transaction.status !== 'success')
     ) {

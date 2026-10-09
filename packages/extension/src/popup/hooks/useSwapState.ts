@@ -1,178 +1,266 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from 'react'
-import type { AddressType } from '@/types'
-import {
-  fetchSwapTokens,
-  fetchDryQuote,
-  getZecToken,
-  getDefaultToToken,
-  isZecToken,
-  getCachedTokens,
-  type SwapToken
-} from '@/core/services/intents-api'
-import { usePolling } from './useRequest'
+import { isZecToken } from '@/core/services/intents-api'
+import { type RheaSwapToken } from '@/core/services/rhea-swap'
 import { safeBig } from '@/lib/big'
-import { parseAmount } from '@/lib/format'
 import { useSwapPreferences } from '@/store/swap-store'
+import {
+  WALLET_SOURCE_CHAIN_IDS,
+  ALL_DESTINATION_CHAIN_IDS,
+  mergeTokenCatalogs,
+  readCachedTokenCatalogByChain,
+  loadTokenCatalogByChain,
+  buildInitialSwapCatalogPlan,
+  findSwapTokenInCatalog,
+  type SwapInitialCatalogOptions
+} from '@/popup/services/swap-catalog-loading'
+import { estimateSwapOutputFromPrices } from '@/popup/components/swap/swap-estimate'
+import { getSwapDestinationTokens } from '@/popup/services/swap-token-selection'
 
-const PRICE_SYNC_INTERVAL = 15 * 1000
+export function useSwapState(
+  preferenceScope: string | null,
+  options: SwapInitialCatalogOptions = {}
+) {
+  const [initialSelection] = useState(() =>
+    preferenceScope ? useSwapPreferences.getState().tokenSelections[preferenceScope] : undefined
+  )
+  const [initialCatalogs] = useState(() => ({
+    sources: readCachedTokenCatalogByChain('from', WALLET_SOURCE_CHAIN_IDS),
+    destinations: readCachedTokenCatalogByChain('cross-chain-to', ALL_DESTINATION_CHAIN_IDS)
+  }))
 
-export interface SwapState {
-  tokenIn: SwapToken | null
-  tokenOut: SwapToken | null
-  amountIn: string
-  amountOut: string
-  recipientAddress: string
-  refundAddress: string
-  depositAddress: string
-  addressType: AddressType
-  slippage: number
-  isQuoting: boolean
-  quoteError: string | null
-  areTokensLoading: boolean
-}
-
-export function useSwapState(referral: string) {
-  const swapPrefs = useSwapPreferences()
-
-  const [tokenIn, setTokenIn] = useState<SwapToken | null>(null)
-  const [tokenOut, setTokenOut] = useState<SwapToken | null>(null)
+  const [tokenIn, setTokenIn] = useState<RheaSwapToken | null>(
+    initialCatalogs.sources?.find(token => token.assetId === initialSelection?.tokenInId) ?? null
+  )
+  const [tokenOut, setTokenOut] = useState<RheaSwapToken | null>(
+    initialCatalogs.destinations?.find(token => token.assetId === initialSelection?.tokenOutId) ??
+      initialCatalogs.sources?.find(token => token.assetId === initialSelection?.tokenOutId) ??
+      null
+  )
+  const [sourceCatalog, setSourceCatalog] = useState<readonly RheaSwapToken[]>(
+    initialCatalogs.sources ?? []
+  )
+  const [crossChainDestinationCatalog, setCrossChainDestinationCatalog] = useState<
+    readonly RheaSwapToken[]
+  >(initialCatalogs.destinations ?? [])
+  const selectorSourceCatalog = useRef<readonly RheaSwapToken[]>([])
   const [amountIn, setAmountIn] = useState('')
   const [amountOut, setAmountOut] = useState('')
   const [recipientAddress, setRecipientAddress] = useState('')
-  const [refundAddress, setRefundAddress] = useState('')
   const [depositAddress, setDepositAddress] = useState('')
   const [isQuoting, setIsQuoting] = useState(false)
   const [quoteError, setQuoteError] = useState<string | null>(null)
+  const [catalogError, setCatalogError] = useState(false)
+  const [catalogRequestId, setCatalogRequestId] = useState(0)
 
-  const {
-    addressType,
-    slippage,
-    setAddressType,
-    setSlippage,
-    savedTokenInId,
-    savedTokenOutId,
-    setSavedTokenInId,
-    setSavedTokenOutId
-  } = swapPrefs
+  const addressType = useSwapPreferences(state => state.addressType)
+  const slippage = useSwapPreferences(state => state.slippage)
+  const setAddressType = useSwapPreferences(state => state.setAddressType)
+  const setSlippage = useSwapPreferences(state => state.setSlippage)
+  const setSavedTokenSelection = useSwapPreferences(state => state.setSavedTokenSelection)
+  const setSavedTokenInId = useSwapPreferences(state => state.setSavedTokenInId)
+  const setSavedTokenOutId = useSwapPreferences(state => state.setSavedTokenOutId)
 
   const [areTokensLoading, setAreTokensLoading] = useState(true)
-  const [dryQuoteOut, setDryQuoteOut] = useState('')
-  const dryQuoteTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
-  const dryQuoteAbort = useRef<AbortController>(undefined)
+  const [destinationTokensLoading, setDestinationTokensLoading] = useState(true)
 
-  // Initialize tokens on mount
+  const activePreferenceScope = useRef(preferenceScope)
   useEffect(() => {
+    if (activePreferenceScope.current === preferenceScope) return
+    activePreferenceScope.current = preferenceScope
+    setTokenIn(null)
+    setTokenOut(null)
+    setAmountIn('')
+    setAmountOut('')
+    setRecipientAddress('')
+    setDepositAddress('')
+    setQuoteError(null)
+  }, [preferenceScope])
+
+  useEffect(() => {
+    let cancelled = false
+    const readActiveSelection = () => {
+      const scope = activePreferenceScope.current
+      return scope ? useSwapPreferences.getState().tokenSelections[scope] : undefined
+    }
     async function init() {
+      const selection = readActiveSelection()
+      const plan = buildInitialSwapCatalogPlan({
+        ...options,
+        sourceAssetId: options.sourceAssetId ?? selection?.tokenInId,
+        destinationAssetId: options.destinationAssetId ?? selection?.tokenOutId
+      })
+      const bypassCache = catalogRequestId > 0
+      const cachedSources = bypassCache
+        ? []
+        : readCachedTokenCatalogByChain('from', WALLET_SOURCE_CHAIN_IDS)
+      const cachedDestinations = bypassCache
+        ? []
+        : readCachedTokenCatalogByChain('cross-chain-to', ALL_DESTINATION_CHAIN_IDS)
+      setAreTokensLoading(true)
+      setDestinationTokensLoading(true)
+      setCatalogError(false)
+      setSourceCatalog(cachedSources ?? [])
+      setCrossChainDestinationCatalog(cachedDestinations ?? [])
+      const destinationsRequest = loadTokenCatalogByChain(
+        'cross-chain-to',
+        plan.destinationChainIds,
+        bypassCache,
+        tokens => {
+          setCrossChainDestinationCatalog(previous => mergeTokenCatalogs(previous, tokens))
+          setTokenOut(
+            previous =>
+              previous ??
+              tokens.find(token => token.assetId === readActiveSelection()?.tokenOutId) ??
+              null
+          )
+        },
+        () => cancelled
+      ).finally(() => {
+        if (!cancelled) setDestinationTokensLoading(false)
+      })
       try {
-        const tokens = await fetchSwapTokens()
-
-        // Find saved or default tokens
-        let defaultIn = tokens.find(t => t.assetId === savedTokenInId)
-        let defaultOut = tokens.find(t => t.assetId === savedTokenOutId)
-
-        if (!defaultIn) {
-          defaultIn = getZecToken(tokens) || undefined
+        const sources = await loadTokenCatalogByChain(
+          'from',
+          plan.sourceChainIds,
+          bypassCache,
+          tokens => {
+            setSourceCatalog(previous => mergeTokenCatalogs(previous, tokens))
+            setTokenIn(
+              previous =>
+                previous ??
+                tokens.find(token => token.assetId === readActiveSelection()?.tokenInId) ??
+                null
+            )
+          },
+          () => cancelled
+        )
+        if (cancelled) return
+        if (sources.length === 0) {
+          throw new Error('RHEA Swap source assets are unavailable')
         }
-
-        if (!defaultOut) {
-          defaultOut = getDefaultToToken(tokens) || undefined
-        }
-
-        if (defaultIn) {
-          setTokenIn(defaultIn)
-          setSavedTokenInId(defaultIn.assetId)
-        }
-        if (defaultOut) {
-          setTokenOut(defaultOut)
-          setSavedTokenOutId(defaultOut.assetId)
+        setSourceCatalog(previous => mergeTokenCatalogs(previous, sources))
+        setTokenIn(
+          previous =>
+            previous ??
+            sources.find(token => token.assetId === readActiveSelection()?.tokenInId) ??
+            null
+        )
+        setAreTokensLoading(false)
+      } catch {
+        if (!cancelled) {
+          setSourceCatalog([])
+          setCrossChainDestinationCatalog([])
+          setTokenIn(null)
+          setTokenOut(null)
+          setAmountOut('')
+          setQuoteError(null)
+          setCatalogError(true)
         }
       } finally {
-        setAreTokensLoading(false)
+        if (!cancelled) setAreTokensLoading(false)
+        await destinationsRequest
       }
     }
-    init()
-  }, [])
+    void init()
+    return () => {
+      cancelled = true
+    }
+  }, [
+    catalogRequestId,
+    preferenceScope,
+    options.sourceAssetId,
+    options.destinationAssetId,
+    options.destinationApiChainId,
+    options.defaultSourceChainId
+  ])
 
-  // Refresh prices for the selected pair by re-pulling the full 1Click list
-  const bothSelected = !!tokenIn && !!tokenOut
-
-  usePolling(
-    async () => {
-      const updated = await fetchSwapTokens(true)
-      const tokenMap = new Map(updated.map(t => [t.assetId, t]))
-
-      setTokenIn(prev => {
-        if (prev && tokenMap.has(prev.assetId)) {
-          return tokenMap.get(prev.assetId)!
+  const loadSelectorTokens = useCallback(
+    async (
+      direction: 'from' | 'cross-chain-to',
+      onTokens: (tokens: readonly RheaSwapToken[]) => void,
+      isCancelled: () => boolean
+    ) => {
+      let loaded = direction === 'from' ? sourceCatalog : crossChainDestinationCatalog
+      const publish = (next: readonly RheaSwapToken[]) => {
+        loaded = mergeTokenCatalogs(loaded, next)
+        if (direction === 'from') {
+          selectorSourceCatalog.current = loaded
+          if (tokenOut && findSwapTokenInCatalog(next, tokenOut)) {
+            setSourceCatalog(previous =>
+              findSwapTokenInCatalog(previous, tokenOut)
+                ? previous
+                : mergeTokenCatalogs(previous, [tokenOut])
+            )
+          }
         }
-        return prev
-      })
-
-      setTokenOut(prev => {
-        if (prev && tokenMap.has(prev.assetId)) {
-          return tokenMap.get(prev.assetId)!
-        }
-        return prev
-      })
-
-      return updated
+        onTokens(
+          direction === 'from' ? loaded : getSwapDestinationTokens(tokenIn, sourceCatalog, loaded)
+        )
+      }
+      await loadTokenCatalogByChain(
+        direction,
+        direction === 'from'
+          ? WALLET_SOURCE_CHAIN_IDS
+          : ALL_DESTINATION_CHAIN_IDS.filter(chainId => chainId !== tokenIn?.tokenListChainId),
+        false,
+        publish,
+        isCancelled
+      )
+      return direction === 'from'
+        ? loaded
+        : getSwapDestinationTokens(tokenIn, sourceCatalog, loaded)
     },
-    PRICE_SYNC_INTERVAL,
-    { manual: !bothSelected }
+    [sourceCatalog, crossChainDestinationCatalog, tokenIn, tokenOut]
+  )
+
+  const destinationTokens = useMemo(
+    () => getSwapDestinationTokens(tokenIn, sourceCatalog, crossChainDestinationCatalog),
+    [crossChainDestinationCatalog, sourceCatalog, tokenIn]
+  )
+  useEffect(() => {
+    if (!tokenOut || findSwapTokenInCatalog(sourceCatalog, tokenOut)) return
+    const sourceToken = findSwapTokenInCatalog(selectorSourceCatalog.current, tokenOut)
+    if (!sourceToken) return
+    setSourceCatalog(previous => mergeTokenCatalogs(previous, [sourceToken]))
+  }, [sourceCatalog, tokenOut])
+  const tokens = useMemo(
+    () => mergeTokenCatalogs(sourceCatalog, destinationTokens),
+    [destinationTokens, sourceCatalog]
   )
 
   useEffect(() => {
-    if (dryQuoteTimer.current) clearTimeout(dryQuoteTimer.current)
-    dryQuoteAbort.current?.abort()
-    setDryQuoteOut('')
-
-    if (!tokenIn || !tokenOut || !amountIn || safeBig(amountIn).lte(0)) return
-
-    dryQuoteTimer.current = setTimeout(async () => {
-      const abort = new AbortController()
-      dryQuoteAbort.current = abort
-
-      try {
-        const amount = parseAmount(amountIn, tokenIn.decimals)
-        const result = await fetchDryQuote({
-          tokenIn,
-          tokenOut,
-          amount,
-          slippageTolerance: Math.round(slippage * 100),
-          referral
-        })
-
-        if (!abort.signal.aborted && result) {
-          setDryQuoteOut(result)
-        }
-      } catch {
-        // ignore
-      }
-    }, 600)
-
-    return () => {
-      if (dryQuoteTimer.current) clearTimeout(dryQuoteTimer.current)
-      dryQuoteAbort.current?.abort()
+    if (
+      tokenOut &&
+      !destinationTokens.some(
+        token =>
+          token.rheaChainId === tokenOut.rheaChainId && token.rheaAddress === tokenOut.rheaAddress
+      )
+    ) {
+      setTokenOut(null)
+      setAmountOut('')
+      setQuoteError(null)
     }
-  }, [amountIn, tokenIn?.assetId, tokenOut?.assetId, slippage, referral])
+  }, [destinationTokens, tokenOut])
 
   // Derived state
-  const isZecToOther = isZecToken(tokenIn)
-
-  const estimatedOut = useMemo(() => {
-    if (dryQuoteOut) return dryQuoteOut
-    if (!amountIn || !tokenIn?.price || !tokenOut?.price) return ''
-    const inAmount = safeBig(amountIn).toNumber()
-    if (isNaN(inAmount) || inAmount <= 0) return ''
-    return ((inAmount * tokenIn.price) / tokenOut.price).toFixed(6)
-  }, [amountIn, tokenIn?.price, tokenOut?.price, dryQuoteOut])
+  const isZecSource = isZecToken(tokenIn)
 
   const rate = useMemo(() => {
-    if (!tokenIn?.price || !tokenOut?.price) return '...'
-    return safeBig(tokenIn.price).div(tokenOut.price).toFixed()
-  }, [tokenIn?.price, tokenOut?.price])
+    if (!amountIn || !amountOut || safeBig(amountIn).lte(0)) return '...'
+    return safeBig(amountOut).div(amountIn).toFixed()
+  }, [amountIn, amountOut])
 
-  const displayOut = amountOut || estimatedOut
+  const provisionalAmountOut = useMemo(
+    () =>
+      estimateSwapOutputFromPrices({
+        amountIn,
+        tokenInPrice: tokenIn?.price,
+        tokenOutPrice: tokenOut?.price
+      }),
+    [amountIn, tokenIn?.price, tokenOut?.price]
+  )
+  const displayOut = amountOut || (quoteError ? '' : provisionalAmountOut)
+  const isEstimatedOut = amountOut === '' && displayOut !== ''
   const fromFiat = amountIn
     ? safeBig(amountIn)
         .times(tokenIn?.price || 0)
@@ -184,114 +272,170 @@ export function useSwapState(referral: string) {
         .toFixed(2)
     : '0.00'
 
-  const canGetQuote =
-    !!tokenIn &&
-    !!tokenOut &&
-    !!amountIn &&
-    safeBig(amountIn).gt(0) &&
-    (isZecToOther ? !!recipientAddress : !!refundAddress)
-
   // Actions
-  const switchTokens = useCallback(() => {
+  const activePair = useRef({ tokenIn, tokenOut })
+  activePair.current = { tokenIn, tokenOut }
+  useEffect(
+    () => () => {
+      activePair.current = { tokenIn: null, tokenOut: null }
+    },
+    []
+  )
+  const switchTokens = useCallback(async () => {
+    if (!tokenIn || !tokenOut) return
+    if (tokenIn.rheaChainId !== tokenOut.rheaChainId) {
+      const isCancelled = () =>
+        activePair.current.tokenIn !== tokenIn || activePair.current.tokenOut !== tokenOut
+      const [reverseSources, reverseDestinations] = await Promise.all([
+        loadTokenCatalogByChain(
+          'from',
+          [tokenOut.tokenListChainId],
+          false,
+          tokens => setSourceCatalog(previous => mergeTokenCatalogs(previous, tokens)),
+          isCancelled
+        ),
+        loadTokenCatalogByChain(
+          'cross-chain-to',
+          [tokenIn.tokenListChainId],
+          false,
+          tokens =>
+            setCrossChainDestinationCatalog(previous => mergeTokenCatalogs(previous, tokens)),
+          isCancelled
+        )
+      ])
+      if (!reverseSources.some(token => token.assetId === tokenOut.assetId)) return
+      if (!reverseDestinations.some(token => token.assetId === tokenIn.assetId)) return
+      if (activePair.current.tokenIn !== tokenIn || activePair.current.tokenOut !== tokenOut) return
+    }
     const temp = tokenIn
     setTokenIn(tokenOut)
-    if (tokenOut) setSavedTokenInId(tokenOut.assetId)
+    if (preferenceScope && tokenOut) setSavedTokenInId(preferenceScope, tokenOut.assetId)
 
     setTokenOut(temp)
-    if (temp) setSavedTokenOutId(temp.assetId)
+    if (preferenceScope && temp) setSavedTokenOutId(preferenceScope, temp.assetId)
 
     setAmountIn('')
     setAmountOut('')
-    setDryQuoteOut('')
     setQuoteError(null)
-  }, [tokenIn, tokenOut, setSavedTokenInId, setSavedTokenOutId])
+  }, [preferenceScope, tokenIn, tokenOut, setSavedTokenInId, setSavedTokenOutId])
 
   const resetSwap = useCallback(() => {
-    const cached = getCachedTokens()
-    const zec = getZecToken(cached)
-    if (zec) {
-      setTokenIn(zec)
-      setSavedTokenInId(zec.assetId)
-    }
-
-    const defaultOut = getDefaultToToken(cached)
-    setTokenOut(defaultOut)
-    if (defaultOut) {
-      setSavedTokenOutId(defaultOut.assetId)
-    }
-
     setAmountIn('')
     setAmountOut('')
     setRecipientAddress('')
-    setRefundAddress('')
     setDepositAddress('')
     setQuoteError(null)
-  }, [setSavedTokenInId, setSavedTokenOutId])
+  }, [])
 
-  const selectTokenIn = useCallback(
-    (token: SwapToken) => {
-      setTokenIn(token)
-      setSavedTokenInId(token.assetId)
-
-      if (!isZecToken(token)) {
-        const cached = getCachedTokens()
-        const zec = getZecToken(cached)
-        if (zec) {
-          setTokenOut(zec)
-          setSavedTokenOutId(zec.assetId)
-        }
+  const setTokenPair = useCallback(
+    (nextTokenIn: RheaSwapToken, nextTokenOut: RheaSwapToken | null) => {
+      setTokenIn(nextTokenIn)
+      setTokenOut(nextTokenOut)
+      if (preferenceScope) {
+        setSavedTokenSelection(preferenceScope, {
+          tokenInId: nextTokenIn.assetId,
+          tokenOutId: nextTokenOut?.assetId ?? null
+        })
       }
+      setAmountIn('')
       setAmountOut('')
       setQuoteError(null)
     },
-    [setSavedTokenInId, setSavedTokenOutId]
+    [preferenceScope, setSavedTokenSelection]
+  )
+
+  const selectTokenIn = useCallback(
+    (token: RheaSwapToken) => {
+      setSourceCatalog(previous =>
+        findSwapTokenInCatalog(previous, token) ? previous : mergeTokenCatalogs(previous, [token])
+      )
+      setTokenIn(token)
+      if (preferenceScope) setSavedTokenInId(preferenceScope, token.assetId)
+      setAmountOut('')
+      setQuoteError(null)
+    },
+    [preferenceScope, setSavedTokenInId]
   )
 
   const selectTokenOut = useCallback(
-    (token: SwapToken) => {
+    (token: RheaSwapToken) => {
+      if (token.blockchain === tokenIn?.blockchain) {
+        setSourceCatalog(previous =>
+          previous.includes(token) ? previous : mergeTokenCatalogs(previous, [token])
+        )
+      } else {
+        setCrossChainDestinationCatalog(previous =>
+          findSwapTokenInCatalog(previous, token) ? previous : mergeTokenCatalogs(previous, [token])
+        )
+      }
       setTokenOut(token)
-      setSavedTokenOutId(token.assetId)
+      if (preferenceScope) setSavedTokenOutId(preferenceScope, token.assetId)
       setAmountOut('')
       setQuoteError(null)
     },
-    [setSavedTokenOutId]
+    [preferenceScope, setSavedTokenOutId, tokenIn?.blockchain]
   )
+
+  const selectTokenOutForFlow = useCallback((token: RheaSwapToken) => {
+    setTokenOut(token)
+    setAmountOut('')
+    setQuoteError(null)
+  }, [])
+
+  const clearTokenOutForFlow = useCallback(() => {
+    setTokenOut(null)
+    setAmountOut('')
+    setQuoteError(null)
+  }, [])
+
+  const clearTokenPairForFlow = useCallback(() => {
+    setTokenIn(null)
+    setTokenOut(null)
+    setAmountOut('')
+    setQuoteError(null)
+  }, [])
 
   const updateAmountIn = useCallback((value: string) => {
     setAmountIn(value.replace(/[^0-9.]/g, ''))
     setAmountOut('')
-    setDryQuoteOut('')
     setQuoteError(null)
+  }, [])
+
+  const retryTokenCatalog = useCallback(() => {
+    setCatalogRequestId(value => value + 1)
   }, [])
 
   return {
     // State
     tokenIn,
     tokenOut,
+    tokens,
+    sourceTokens: sourceCatalog,
+    crossChainDestinationTokens: crossChainDestinationCatalog,
+    destinationTokens,
     amountIn,
     amountOut,
     recipientAddress,
-    refundAddress,
     depositAddress,
     addressType,
     slippage,
     isQuoting,
     quoteError,
+    catalogError,
     areTokensLoading,
+    destinationTokensLoading,
 
     // Derived
-    isZecToOther,
-    estimatedOut,
+    isZecSource,
     rate,
     displayOut,
+    isEstimatedOut,
     fromFiat,
     toFiat,
-    canGetQuote,
 
     // Setters
     setAmountOut,
     setRecipientAddress,
-    setRefundAddress,
     setDepositAddress,
     setAddressType,
     setSlippage,
@@ -300,9 +444,15 @@ export function useSwapState(referral: string) {
 
     // Actions
     switchTokens,
+    retryTokenCatalog,
     resetSwap,
+    setTokenPair,
     selectTokenIn,
     selectTokenOut,
+    selectTokenOutForFlow,
+    loadSelectorTokens,
+    clearTokenOutForFlow,
+    clearTokenPairForFlow,
     updateAmountIn
   }
 }

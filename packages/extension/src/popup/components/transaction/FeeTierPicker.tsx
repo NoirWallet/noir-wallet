@@ -1,7 +1,8 @@
 import { Icon } from '@iconify/react'
 import { DetailRow } from '../common/DetailRow'
 import { FeeTierSelector } from './FeeTierSelector'
-import { getFeeTierLabel, staticFeeFallbackZats, type FeeTier } from '@/config/fee'
+import { getFeeTierLabel, type FeeTier } from '@/config/fee'
+import { staticFeeFallbackZats } from '@/core/zcash/fee-policy'
 import { openModal } from '../../provider/ModalManager'
 import { safeBig } from '@/lib/big'
 

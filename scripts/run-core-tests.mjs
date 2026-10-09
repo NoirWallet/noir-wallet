@@ -4,7 +4,7 @@ import path from 'node:path'
 
 const directory = path.resolve('tests')
 const files = readdirSync(directory)
-  .filter(name => /\.test\.(mjs|js|ts)$/.test(name))
+  .filter(name => /\.core\.test\.(mjs|js|ts)$/.test(name))
   .sort()
   .map(name => path.join(directory, name))
 

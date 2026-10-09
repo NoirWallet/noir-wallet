@@ -1,15 +1,8 @@
 import { useState, useEffect } from 'react'
 import { useWalletStore } from '@/store/wallet-store'
+import type { ConnectedDApp } from '@/core/dapp/dapp-manager'
 
-export interface ConnectedDApp {
-  id: string
-  name: string
-  host: string
-  origin: string
-  favicon: string
-  connectedAt: number
-  lastActiveAt: number
-}
+export type { ConnectedDApp } from '@/core/dapp/dapp-manager'
 
 export function useDAppConnection() {
   const [currentDApp, setCurrentDApp] = useState<ConnectedDApp | null>(null)
@@ -52,10 +45,11 @@ export function useDAppConnection() {
 
   const disconnectDApp = async (origin: string) => {
     try {
-      await chrome.runtime.sendMessage({
+      const response = await chrome.runtime.sendMessage({
         type: 'DISCONNECT_DAPP',
         origin
       })
+      if (response?.error) throw new Error(response.error)
 
       await loadConnectedDApps()
 

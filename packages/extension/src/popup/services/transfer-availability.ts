@@ -1,0 +1,81 @@
+import Big from '@/lib/big'
+import { safeBig } from '@/lib/big'
+import { ZEC_DECIMALS } from '@/config/wallet'
+import {
+  formatBaseUnitAmount,
+  formatBaseUnitDecimalAmount
+} from '@/popup/components/portfolio/portfolio-format'
+import { resolveTransferSpendableRaw } from './transfer-maximum'
+
+type AccountBalance = Readonly<{
+  availableRaw: string
+  mainRaw?: string
+  privateRaw?: string
+  privateOnchainRaw?: string
+  confidentialRaw?: string
+}>
+
+export function resolveAccountAvailableRaw(
+  balance: AccountBalance | undefined,
+  mode: 'main' | 'private'
+): string {
+  if (!balance) return '0'
+  return mode === 'private'
+    ? (balance.privateOnchainRaw ?? balance.privateRaw ?? '0')
+    : (balance.mainRaw ?? balance.availableRaw)
+}
+
+export function resolveEvmAccountAvailability(
+  balance: AccountBalance,
+  decimals: number,
+  privateAddress: string | undefined
+) {
+  const privateRaw = balance.privateOnchainRaw ?? balance.privateRaw
+  return {
+    privateSourceAvailable: Boolean(
+      privateAddress && balance.mainRaw !== undefined && balance.privateRaw !== undefined
+    ),
+    mainDisplay: formatBaseUnitAmount(resolveAccountAvailableRaw(balance, 'main'), decimals),
+    privateDisplay:
+      privateRaw === undefined ? undefined : formatBaseUnitAmount(privateRaw, decimals),
+    confidentialDisplay:
+      balance.confidentialRaw === undefined || BigInt(balance.confidentialRaw) === 0n
+        ? undefined
+        : formatBaseUnitAmount(balance.confidentialRaw, decimals)
+  }
+}
+
+export function resolvePortfolioTransferAvailability(input: {
+  readonly balanceRaw: string
+  readonly decimals: number
+  readonly isNative: boolean
+  readonly maximumRaw: string | null
+}): Readonly<{ amountRaw: string; display: string; label: 'Balance' | 'Available' }> {
+  const amountRaw =
+    resolveTransferSpendableRaw(input.balanceRaw, input.maximumRaw, input.isNative) ??
+    input.balanceRaw
+  return {
+    amountRaw,
+    display: formatBaseUnitDecimalAmount(amountRaw, input.decimals),
+    label: input.isNative && input.maximumRaw === null ? 'Balance' : 'Available'
+  }
+}
+
+/** Zcash account available already reserves the Standard fee. */
+export function resolveZcashTransferAvailability(input: {
+  readonly availableBalance: string
+  readonly selectedFeeZats: number
+  readonly standardFeeZats: number
+  readonly maximumAmount?: string | null
+}): Readonly<{ amount: string; fallbackAmount: string }> {
+  const feeDeltaZats = Math.max(0, input.selectedFeeZats - input.standardFeeZats)
+  const fallback = safeBig(input.availableBalance || '0').minus(safeBig(feeDeltaZats).div(1e8))
+  const fallbackAmount = (fallback.gt(0) ? fallback : safeBig(0))
+    .round(ZEC_DECIMALS, Big.roundDown)
+    .toFixed()
+  const amount = input.maximumAmount ?? fallbackAmount
+  return {
+    amount: safeBig(amount).round(ZEC_DECIMALS, Big.roundDown).toFixed(),
+    fallbackAmount
+  }
+}

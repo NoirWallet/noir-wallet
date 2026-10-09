@@ -4,7 +4,7 @@
  * Tracks user activity on route changes for auto-lock functionality
  */
 
-import { useEffect, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef } from 'react'
 import {
   MemoryRouter,
   Routes,
@@ -16,7 +16,6 @@ import type { ReactNode } from 'react'
 import type { NavigateOptions } from 'react-router-dom'
 import { SecureStorage } from '@/core/wallet/secure-storage'
 import { sendAnalyticsPageView } from '@/lib/analytics'
-import { useAnalyticsAutoCollection } from '../hooks/useAnalyticsAutoCollection'
 
 export { useLocation }
 
@@ -37,7 +36,7 @@ function isSystemRedirect(path: string): boolean {
 export function useNavigate() {
   const navigate = useRRNavigate()
 
-  const trackActivity = (path?: string) => {
+  const trackActivity = useCallback((path?: string) => {
     // Skip activity tracking for system redirects
     if (path && isSystemRedirect(path)) {
       return
@@ -46,22 +45,28 @@ export function useNavigate() {
     SecureStorage.saveLastActivityTime().catch(err => {
       console.error('[Router] Failed to save activity time:', err)
     })
-  }
+  }, [])
 
-  return {
-    navigate: (path: string, options?: NavigateOptions) => {
+  const navigateTo = useCallback(
+    (path: string, options?: NavigateOptions) => {
       trackActivity(path)
       return navigate(path, options)
     },
-    goBack: () => {
-      trackActivity()
-      return navigate(-1)
-    },
-    replace: (path: string) => {
+    [navigate, trackActivity]
+  )
+  const goBack = useCallback(() => {
+    trackActivity()
+    return navigate(-1)
+  }, [navigate, trackActivity])
+  const replace = useCallback(
+    (path: string) => {
       trackActivity(path)
       return navigate(path, { replace: true })
-    }
-  }
+    },
+    [navigate, trackActivity]
+  )
+
+  return useMemo(() => ({ navigate: navigateTo, goBack, replace }), [goBack, navigateTo, replace])
 }
 
 /**
@@ -98,11 +103,6 @@ function RouteActivityTracker() {
   return null
 }
 
-function AnalyticsAutoCollector() {
-  useAnalyticsAutoCollection()
-  return null
-}
-
 interface RouterProviderProps {
   children: ReactNode
   initialPath?: string
@@ -111,7 +111,6 @@ interface RouterProviderProps {
 export function RouterProvider({ children, initialPath = '/' }: RouterProviderProps) {
   return (
     <MemoryRouter initialEntries={[initialPath]}>
-      <AnalyticsAutoCollector />
       <RouteActivityTracker />
       {children}
     </MemoryRouter>

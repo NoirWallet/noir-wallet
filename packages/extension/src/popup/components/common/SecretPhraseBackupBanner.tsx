@@ -10,28 +10,25 @@ export function SecretPhraseBackupBanner() {
   const { navigate } = useNavigate()
   const pending = getWalletsNeedingSecretPhraseBackup(wallets)
   const wallet = pending[0]
-
   if (!wallet) return null
 
-  const remaining = pending.length - 1
-
   return (
-    <aside className="secret-phrase-backup-banner" aria-label="Secret phrase backup reminder">
+    <aside
+      aria-label="Secret phrase backup reminder"
+      className="flex shrink-0 items-center gap-3 border-b border-warning/25 bg-warning/10 px-3 py-2"
+    >
       <Icon icon="lucide:triangle-alert" width={18} height={18} className="shrink-0 text-warning" />
       <div className="min-w-0 flex-1">
-        <p className="text-xs leading-4 text-white break-words">
-          Your wallet {formatWalletBackupName(wallet, wallets, displayNames)} hasn’t backed up its
-          Secret Phrase yet. Please do so soon.
+        <p className="break-words text-xs leading-4 text-foreground">
+          Back up the secret phrase for {formatWalletBackupName(wallet, wallets, displayNames)}.
         </p>
-        {remaining > 0 && (
-          <p className="mt-1 text-xs text-white/60">
-            {remaining} more {remaining === 1 ? 'wallet' : 'wallets'} to back up
-          </p>
+        {pending.length > 1 && (
+          <p className="text-xs text-muted">{pending.length - 1} more to back up</p>
         )}
       </div>
       <button
         type="button"
-        className="shrink-0 self-center rounded bg-warning px-2.5 py-1.5 text-xs font-medium text-black hover:bg-warning/90"
+        className="shrink-0 rounded bg-warning px-2 py-1.5 text-xs font-medium text-warning-foreground"
         onClick={() =>
           navigate(`/view-seed-phrase?walletId=${encodeURIComponent(wallet.id)}&backup=1`, {
             state: { fromBackupBanner: true }

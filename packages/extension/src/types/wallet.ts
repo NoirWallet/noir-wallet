@@ -32,8 +32,6 @@ export interface ZcashWalletConfig {
 
 export type AccountAddresses = Record<AddressType, string> & {
   fullUnified?: string
-  /** External transparent child index returned for the account's full Unified Address. */
-  transparentAddressIndex?: number
 }
 
 export interface ShieldedReceiveAddress {
@@ -47,16 +45,22 @@ export interface ShieldedReceiveAddress {
 export interface AccountData {
   id: string
   name: string
-  addresses: AccountAddresses
-  /** Locally cached receive addresses so address history can render before WASM is ready. */
+  /** Network-scoped Zcash addresses. `addresses` is the active-network projection. */
+  networkAddresses?: Partial<Record<Network, AccountAddresses>>
+  /** Network-scoped scan birthday. `birthdayHeight` is the active-network projection. */
+  networkBirthdayHeights?: Partial<Record<Network, number>>
+  /** Network-scoped receive addresses, including earlier rotated addresses. */
+  networkShieldedReceiveAddressHistory?: Partial<Record<Network, ShieldedReceiveAddress[]>>
+  /** V1 migration input; promoted into the network-scoped history on hydration. */
   shieldedAddressHistory?: ShieldedReceiveAddress[]
+  addresses: AccountAddresses
   derivationIndex: number
   birthdayHeight: number
   isPinned: boolean
   isHidden: boolean
 }
 
-export type KeySource = 'software' | 'keystone' | 'ledger'
+export type KeySource = 'software' | 'private-key' | 'keystone' | 'ledger'
 
 /**
  * Hardware wallet credential payload, stored AES-GCM encrypted under `hw_<walletId>`.
@@ -65,18 +69,10 @@ export type KeySource = 'software' | 'keystone' | 'ledger'
  */
 export interface HardwareWalletData {
   ufvk: string
-  /** 32-byte ZIP-32 seed fingerprint from the device, hex encoded when available */
-  seedFingerprintHex?: string
+  /** 32-byte ZIP-32 seed fingerprint from the device, hex encoded */
+  seedFingerprintHex: string
   /** HD account index the device exported the UFVK for */
   accountHdIndex: number
-  /** Ledger model recorded at import time; absent for QR-based Keystone wallets. */
-  deviceModel?: string
-  /** Product name reported by the Ledger SDK. */
-  deviceName?: string
-  /** Legacy import transport. Kept only so existing encrypted records remain readable. */
-  ledgerTransport?: 'usb' | 'bluetooth'
-  /** Last transport selected for Ledger transaction signing. */
-  ledgerSigningTransport?: 'usb' | 'bluetooth'
 }
 
 /**
@@ -90,19 +86,21 @@ export interface WalletItem {
   createdAt: number
   isPinned: boolean
   keySource?: KeySource
-  /** Creation flow revision; absent on wallets created before this marker existed. */
+  /** A positive revision distinguishes generated wallets created after backup confirmation became mandatory. */
   secretPhraseCreationRevision?: number
-  /** Time when the stored phrase was verified for this wallet. */
   secretPhraseBackupVerifiedAt?: number
+  privateKeyScope?:
+    | { chainFamily: 'eip155' | 'solana' | 'near' }
+    | { chainFamily: 'bip122'; bitcoinNetwork: Network }
 }
 
-/** Zcash balance split between total, pending, and currently selectable funds. */
+/**
+ * Zcash balance - confirmed amounts per address type plus optional pending breakdown
+ */
 export type ZcashBalance = Record<AddressType, string> & {
   total: string
-  /** Aggregate amount currently selectable by WASM, before transaction-specific fees. */
-  spendable: string
-  /** Amount currently available for selection before transaction-specific fees. */
-  available: string
+  spendable?: string
+  available?: string
   /** Transparent funds currently eligible for a wallet-internal shielding transaction. */
   shieldable?: string
   shieldedPools?: {
@@ -110,13 +108,7 @@ export type ZcashBalance = Record<AddressType, string> & {
     orchard: string
     ironwood: string
   }
-  /** Per-source amounts that meet the runtime WASM confirmations policy. */
-  confirmed: {
-    shielded: string
-    transparent: string
-  }
-  /** Displayed funds that are not selectable under the runtime policy yet. */
-  pending: {
+  pending?: {
     shielded: string
     transparent: string
     total: string
@@ -130,6 +122,7 @@ export type TransactionType =
   | 'send'
   | 'receive'
   | 'shield'
+  | 'unshield'
   | 'swap'
   | 'supply'
   | 'withdraw'
@@ -138,9 +131,18 @@ export type TransactionType =
 export type TransactionStatus = 'pending' | 'confirming' | 'relay_confirmed' | 'success' | 'failed'
 
 export interface QuoteBinding {
+  provider?: 'near-intents' | 'rhea-cross-chain-dex'
+  quoteHandle?: string
+  executionId?: string
+  router?: string
+  orderId?: string
+  statusChainId?: string
+  isCrossChain?: boolean
+  destinationChain?: string
   depositAddress?: string
   originAsset?: string
   destinationAsset?: string
+  expectedAmountOut?: string
   minAmountOut?: string
   recipient?: string
   refundTo?: string
@@ -171,11 +173,11 @@ export interface Transaction {
   expiryHeight?: number
   /** Set when the monitor finalizes a failure; only `expired` is Speed Up eligible. */
   failureReason?: TxFailureReason
-  /** Destination Zcash txid for withdraw/claim (populated when Intents relay reports it). */
+  /** Destination-chain transaction hash reported by an Intents or RHEA order. */
   destinationTxHash?: string
   /** Current destination-chain confirmation count when known. */
   confirmations?: number
-  /** Confirmations required before this transaction reaches Activity finality. */
+  /** Confirmations required before this transaction is final or spendable. */
   requiredConfirmations?: number
   /** Original expired transaction retried by this transaction. */
   replacesTransactionId?: string
@@ -214,20 +216,3 @@ export interface TransactionDetail extends Transaction {
  * - `wallet_state_error`: persisted chain data conflicts with the active chain
  */
 export type SyncReason = 'sync_stall' | 'network_error' | 'fallback_timeout' | 'wallet_state_error'
-
-export const SYNC_TRIGGERS = [
-  'periodic',
-  'wallet-change',
-  'transaction',
-  'recovery',
-  'rpc-change',
-  'requested'
-] as const
-
-export type SyncTrigger = (typeof SYNC_TRIGGERS)[number]
-
-export function normalizeSyncTrigger(value: unknown): SyncTrigger {
-  return typeof value === 'string' && (SYNC_TRIGGERS as readonly string[]).includes(value)
-    ? (value as SyncTrigger)
-    : 'requested'
-}

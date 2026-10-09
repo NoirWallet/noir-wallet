@@ -4,13 +4,12 @@ import { TokenIcon } from '../tokens/TokenIcon'
 import { FeeTierPicker } from './FeeTierPicker'
 import { useFeeEstimate } from '../../hooks/useFeeEstimate'
 import { useSettingsStore } from '@/store/settings-store'
-import { deriveFeeByTier, marginalFeeForTier } from '@/config/fee'
+import { deriveFeeByTier, marginalFeeForTier } from '@/core/zcash/fee-policy'
 import { formatNumber } from '@/lib/format'
 import {
   hasEnoughTransparentBalanceToShield,
   MIN_SHIELDING_BALANCE_MESSAGE
 } from '@/core/zcash/shielding'
-import { UnconfirmedTransactionWarning } from './UnconfirmedTransactionWarning'
 
 interface ShieldConfirmSheetProps {
   open: boolean
@@ -51,7 +50,7 @@ export function ShieldConfirmSheet({
 
         <div className="flex flex-col items-center pb-4">
           <div className="mb-3">
-            <TokenIcon symbol="ZEC" size="xl" />
+            <TokenIcon symbol="ZEC" nativeChain="zcash" size="xl" />
           </div>
           <p className="text-2xl font-bold">{formatNumber(transparentBalance)} ZEC</p>
           <p className="text-sm text-muted mt-0.5 px-8 text-center">
@@ -67,8 +66,6 @@ export function ShieldConfirmSheet({
             loading={estimate.loading}
           />
         </div>
-
-        <UnconfirmedTransactionWarning className="mx-5 mt-3" />
 
         {!hasEnoughBalance && (
           <p className="mx-5 mt-3 text-xs text-destructive text-center">

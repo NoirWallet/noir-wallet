@@ -1,18 +1,20 @@
 import { useState, useCallback, useRef } from 'react'
-import { useAccountDataStore, buildAccountKey } from '@/store/account-data-store'
+import { buildAccountKey } from '@/store/account-data-store'
 import { useWalletStore } from '@/store/wallet-store'
-import { accountManager } from '@/core/wallet/account-manager'
+import { zcashWalletRuntimeClient } from '@/popup/services/zcash-wallet-runtime-client'
 import type { AddressType, TransactionType, Transaction, QuoteBinding } from '@/types/wallet'
 import type { TrackOptions } from '@/lib/analytics/types'
 import { WALLET_CONFIG } from '@/config/wallet'
-import { MARGINAL_FEE_ZATS, sanitizeMarginalFeeZats } from '@/config/fee'
+import { MARGINAL_FEE_ZATS } from '@/config/fee'
+import { sanitizeMarginalFeeZats } from '@/core/zcash/fee-policy'
 import { safeBig } from '@/lib/big'
 import { classifyError } from '@/lib/errors'
-import { isValidAddTransactionResponse } from '@/lib/transaction-record-response'
 import { sanitizeMemoForRecipient } from '@/lib/zcash-memo'
-import { loadTransactions } from '@/lib/indexed-db'
+import { getOwnExtensionSenderContext } from '@/lib/runtime-message-security'
 import { TimeoutError } from '@/lib/async-utils'
 import { TRANSACTION_PENDING_MESSAGE } from '@/lib/transaction-status-copy'
+import { isValidAddTransactionResponse } from '@/lib/transaction-record-response'
+import { useAccountDataStore } from '@/store/account-data-store'
 
 export type TransactionStep = 'idle' | 'pending' | 'submitted' | 'confirming' | 'success' | 'failed'
 
@@ -36,19 +38,13 @@ export interface SendTransactionParams {
   displayTo?: string
   quoteBinding?: QuoteBinding
   monitorParams?: {
-    kind: 'swap'
-    direction: 'from_zcash'
     depositAddress: string
     tokenInSymbol: string
     tokenOutSymbol: string
     amountOut: string
-    usdAmount?: string
     actionName: string
     originChain?: string
     destinationChain?: string
-    originAsset?: string
-    destinationAsset?: string
-    quoteExpiresAt?: number
   }
   /** Analytics events to fire from background when tx broadcast succeeds/fails. */
   analytics?: TxAnalyticsSpec
@@ -58,9 +54,9 @@ export interface SendTransactionParams {
 export interface TransactionResult {
   step: 'success' | 'pending' | 'failed'
   txHash?: string
-  error?: string
-  accountKey?: string
   transactionId?: string
+  accountKey?: string
+  error?: string
   timestamp?: number
 }
 
@@ -77,30 +73,27 @@ function waitForZcashTxCompleted(
   accountKey: string,
   transactionId: string,
   timeoutMs: number,
-  start: () => Promise<{ success?: boolean; error?: string }>
+  dispatch: () => Promise<unknown>
 ): Promise<{ txHash: string }> {
   return new Promise((resolve, reject) => {
-    let settled = false
-    const fail = (reason: unknown) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timer)
-      chrome.runtime.onMessage.removeListener(listener)
-      reject(reason)
-    }
     const timer = setTimeout(() => {
-      fail(new TimeoutError('Transaction completion is still pending'))
+      chrome.runtime.onMessage.removeListener(listener)
+      reject(new TimeoutError('Transaction timed out'))
     }, timeoutMs)
 
-    const listener = (message: {
-      type?: string
-      accountKey?: string
-      transactionId?: string
-      txHash?: string
-      error?: string
-      completionPending?: boolean
-    }) => {
+    const listener = (
+      message: {
+        type?: string
+        accountKey?: string
+        transactionId?: string
+        txHash?: string
+        error?: string
+        completionPending?: boolean
+      },
+      sender: chrome.runtime.MessageSender
+    ) => {
       if (
+        getOwnExtensionSenderContext(sender, chrome.runtime.id) !== 'service-worker' ||
         message.type !== 'ZCASH_TX_COMPLETED' ||
         message.accountKey !== accountKey ||
         message.transactionId !== transactionId
@@ -108,35 +101,28 @@ function waitForZcashTxCompleted(
         return
       }
 
-      if (settled) return
+      clearTimeout(timer)
+      chrome.runtime.onMessage.removeListener(listener)
 
       if (message.error) {
-        fail(
-          message.completionPending === true
-            ? new TimeoutError(message.error)
-            : new Error(message.error)
+        reject(
+          message.completionPending ? new TimeoutError(message.error) : new Error(message.error)
         )
         return
       }
       if (message.txHash) {
-        settled = true
-        clearTimeout(timer)
-        chrome.runtime.onMessage.removeListener(listener)
         resolve({ txHash: message.txHash })
         return
       }
-      fail(new Error('Transaction completed without tx hash'))
+      reject(new Error('Transaction completed without tx hash'))
     }
 
     chrome.runtime.onMessage.addListener(listener)
-    void Promise.resolve()
-      .then(start)
-      .then(response => {
-        if (response?.success !== true) {
-          fail(new Error(response?.error || 'Failed to start transaction'))
-        }
-      })
-      .catch(fail)
+    void dispatch().catch(error => {
+      clearTimeout(timer)
+      chrome.runtime.onMessage.removeListener(listener)
+      reject(error)
+    })
   })
 }
 
@@ -173,6 +159,17 @@ export function useTransaction(): UseTransactionReturn {
       } = params
       const fromType: AddressType = _fromType
       const memo = _memo ?? ''
+      const onChainMemo = sanitizeMemoForRecipient(to, _memo)
+
+      // Pending record fee: prefer caller-supplied value; otherwise derive a
+      // tier-aware approximation from marginalFeeZats so Fast tier doesn't
+      // surface as Standard. The on-chain fee will be reconciled when the
+      // tx is mined.
+      const fee =
+        explicitFee ??
+        safeBig(WALLET_CONFIG.NETWORK_FEE)
+          .times(sanitizeMarginalFeeZats(marginalFeeZats) / MARGINAL_FEE_ZATS.standard)
+          .toFixed()
 
       setStep('pending')
       setError(null)
@@ -187,21 +184,10 @@ export function useTransaction(): UseTransactionReturn {
       }
 
       const accountKey = buildAccountKey(network, capturedWalletId, capturedAccountId)
-
-      let tx: Transaction | null = null
+      let tx: Transaction | undefined
       let hash: string | undefined
       try {
-        const onChainMemo = sanitizeMemoForRecipient(to, _memo)
-        // Pending record fee: prefer caller-supplied value; otherwise derive a
-        // tier-aware approximation from marginalFeeZats so Fast tier doesn't
-        // surface as Standard. The on-chain fee will be reconciled when the
-        // tx is mined.
-        const fee =
-          explicitFee ??
-          safeBig(WALLET_CONFIG.NETWORK_FEE)
-            .times(sanitizeMarginalFeeZats(marginalFeeZats) / MARGINAL_FEE_ZATS.standard)
-            .toFixed()
-        const response = await chrome.runtime.sendMessage({
+        const response: unknown = await chrome.runtime.sendMessage({
           type: 'ADD_TRANSACTION',
           accountKey,
           transaction: {
@@ -226,10 +212,14 @@ export function useTransaction(): UseTransactionReturn {
         })
 
         if (!isValidAddTransactionResponse(response)) {
-          throw new Error(response?.error || 'Failed to add transaction')
+          const error =
+            typeof response === 'object' && response !== null && 'error' in response
+              ? String(response.error)
+              : 'Failed to add transaction'
+          throw new Error(error)
         }
 
-        const recordedTx = response.transaction as Transaction
+        const recordedTx = response.transaction
         tx = recordedTx
         currentTxRef.current = recordedTx
         onCreated?.(recordedTx, accountKey)
@@ -251,32 +241,25 @@ export function useTransaction(): UseTransactionReturn {
               marginalFeeZats,
               monitorParams: monitorParams
                 ? {
-                    kind: monitorParams.kind,
-                    direction: monitorParams.direction,
                     depositAddress: monitorParams.depositAddress,
                     tokenInSymbol: monitorParams.tokenInSymbol,
                     tokenOutSymbol: monitorParams.tokenOutSymbol,
                     amountIn: amount,
                     amountOut: monitorParams.amountOut,
-                    usdAmount: monitorParams.usdAmount,
                     actionName: monitorParams.actionName,
                     originChain: monitorParams.originChain,
-                    destinationChain: monitorParams.destinationChain,
-                    originAsset: monitorParams.originAsset,
-                    destinationAsset: monitorParams.destinationAsset,
-                    quoteExpiresAt: monitorParams.quoteExpiresAt
+                    destinationChain: monitorParams.destinationChain
                   }
                 : undefined,
               analytics
             })
         )
-
         hash = (await completion).txHash
 
         try {
-          accountManager.requestSync('transaction')
-        } catch (syncError) {
-          console.warn('Post-broadcast sync request failed:', syncError)
+          zcashWalletRuntimeClient.requestSync()
+        } catch {
+          // A later scheduled sync can still reconcile the broadcast.
         }
 
         setTxHash(hash)
@@ -284,8 +267,8 @@ export function useTransaction(): UseTransactionReturn {
         return {
           step: 'success',
           txHash: hash,
-          accountKey,
           transactionId: tx.id,
+          accountKey,
           timestamp: tx.timestamp
         }
       } catch (err) {
@@ -295,14 +278,21 @@ export function useTransaction(): UseTransactionReturn {
           return {
             step: 'success',
             txHash: hash,
-            accountKey,
             transactionId: tx.id,
+            accountKey,
             timestamp: tx.timestamp
           }
         }
         const persisted = tx
-          ? await loadTransactions(accountKey)
-              .then(records => records.find(record => record.id === tx?.id))
+          ? await useAccountDataStore
+              .getState()
+              .reloadTransactions(accountKey)
+              .then(() =>
+                useAccountDataStore
+                  .getState()
+                  .getTransactions(accountKey)
+                  .find(record => record.id === tx?.id)
+              )
               .catch(() => undefined)
           : undefined
         if (persisted?.txHash && tx) {
@@ -311,20 +301,19 @@ export function useTransaction(): UseTransactionReturn {
           return {
             step: 'success',
             txHash: persisted.txHash,
-            accountKey,
             transactionId: tx.id,
+            accountKey,
             timestamp: tx.timestamp
           }
         }
         if (err instanceof TimeoutError && tx) {
-          const errorMessage = TRANSACTION_PENDING_MESSAGE
-          setError(errorMessage)
+          setError(TRANSACTION_PENDING_MESSAGE)
           setStep('pending')
           return {
             step: 'pending',
-            error: errorMessage,
-            accountKey,
+            error: TRANSACTION_PENDING_MESSAGE,
             transactionId: tx.id,
+            accountKey,
             timestamp: tx.timestamp
           }
         }
@@ -346,7 +335,7 @@ export function useTransaction(): UseTransactionReturn {
 
         setError(errorMessage)
         setStep('failed')
-        return { step: 'failed', error: errorMessage, accountKey, transactionId: tx?.id }
+        return { step: 'failed', error: errorMessage, transactionId: tx?.id, accountKey }
       }
     },
     [network, currentWalletId, currentAccountId]

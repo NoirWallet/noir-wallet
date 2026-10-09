@@ -1,4 +1,5 @@
-import { useEffect } from 'react'
+import { isZcashHardwareKeySource } from '@/core/wallet/hardware-wallet-data'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Icon } from '@iconify/react'
 import { TokenIcon } from '../components/tokens/TokenIcon'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs'
@@ -7,11 +8,15 @@ import { CopyToast, useCopyToClipboard } from '../components/common/CopyToast'
 import { DAppChainIndicator } from '../components/dapp/DAppChainIndicator'
 import { DAppConnectionModal } from '../components/dapp/DAppConnectionModal'
 import { DAppConnectPrompt } from '../components/dapp/DAppConnectPrompt'
+import {
+  DAppExecutionModeButton,
+  DAppExecutionModeCard
+} from '../components/dapp/DAppExecutionModeCard'
 import { openModal } from '../provider/ModalManager'
 import { TransactionDetailContent } from '../components/transaction/TransactionDetail'
 import { TransactionList } from '../components/transaction/TransactionList'
 import { useDAppConnection } from '../hooks/useDAppConnection'
-import { useNavigate } from '../provider/Router'
+import { useLocation, useNavigate } from '../provider/Router'
 import { useWalletStore } from '@/store/wallet-store'
 import { buildAccountKey, useAccountDataStore } from '@/store/account-data-store'
 import {
@@ -22,42 +27,77 @@ import {
   getAccountDisplayName
 } from '@/lib/format'
 import Big, { safeBig } from '@/lib/big'
-import { accountManager, getAccountAddresses } from '@/core/wallet/account-manager'
-import { usePolling } from '../hooks/useRequest'
+import { getAccountAddresses } from '@/core/wallet/account-addresses'
 import { AddressTypeLabel } from '../components/account/AddressType'
-import { fetchSwapTokens, getZecToken } from '@/core/services/intents-api'
 import { useShieldFunds } from '../hooks/useShieldFunds'
 import { useSpeedUp } from '../hooks/useSpeedUp'
 import { Tooltip } from '../components/ui/tooltip'
-import { WALLET_CONFIG } from '@/config/wallet'
 import { useLendingStore } from '@/store/lending-store'
 import { BalanceWithPending } from '../components/balance/BalanceWithPending'
 import { ExtensionUpdateBanner } from '../components/common/ExtensionUpdateBanner'
-import { HomeAdBanner } from '../components/common/HomeAdBanner'
 import { LegacyPoolPrivacyNotice } from '../components/common/LegacyPoolPrivacyNotice'
 import { useLegacyPoolPrivacyNotice } from '../hooks/useLegacyPoolPrivacyNotice'
 import { hasLegacyOrchardBalance } from '@/lib/legacy-pool-privacy-notice'
 import { canShieldTransparentFunds } from '@/core/zcash/shielding'
-import { isHardwareKeySource } from '@/lib/hardware-capabilities'
-import { ZKNOIR_LENDING_URL } from '@/config/dapp-matches'
+import { getOwnExtensionSenderContext } from '@/lib/runtime-message-security'
+import { WalletActionButton } from '@/popup/components/common/WalletActionButton'
+import { MultichainPortfolioPanel } from '../components/portfolio/MultichainPortfolioPanel'
+import { formatDisplayAmount } from '../components/portfolio/portfolio-format'
+import { MultichainActivityPanel } from '../components/transaction/MultichainActivityPanel'
+import { ListSkeleton, Skeleton } from '../components/ui/skeleton'
+import { MultichainActivityDetail } from '../components/transaction/MultichainActivityDetail'
+import type { ActivityItem } from '@/core/activity'
+import {
+  resolveBitcoinFeatureRuntimePolicy,
+  resolveEvmFeatureRuntimePolicy
+} from '@/core/chains/feature-runtime-policy'
+import { resolveHomeDefaultTab } from '../services/home-navigation'
+import { assetPriceClient } from '../services/asset-price-client'
+import { parseAssetId } from '@/core/chains/registry'
+import type { AssetPriceReadModel } from '@/core/prices'
+import type { PortfolioReadModel } from '@/core/portfolio'
+import { summarizePortfolioFiat } from '../components/portfolio/portfolio-prices'
+import { useActiveAccountNetworks } from '../hooks/useActiveAccountNetworks'
+import { useSettingsStore } from '@/store/settings-store'
+import { hasAttestedCredentialSession } from '@/core/wallet/credential-session-client'
+import { ZcashSyncProgress } from '../components/common/ZcashSyncProgress'
+import { automaticRefreshSession } from '../services/automatic-refresh-session'
+import { AccountNetworkAddressSummary } from '../components/account/AccountNetworks'
+import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popover'
+import { useDAppExecutionMode } from '../hooks/useDAppExecutionMode'
+import { useDialog } from '../hooks/useDialog'
+import { toast } from '@/store/toast-store'
+import type { DAppExecutionMode } from '@/core/dapp/dapp-execution-mode'
+import { summarizeDAppPrivateExecutionSupport } from '@/core/dapp/dapp-manager'
+import { DAppExecutionModeClientError } from '../services/dapp-execution-mode-client'
+import { ZKNOIR_LENDING_URL } from '@/config/extension'
+import { resolveEffectiveActiveAccountIdentity } from '../lib/effective-active-account'
+import { evmExecutionAddresses } from '../services/account-network-presentation'
+import {
+  getHomeAssetBreakdown,
+  resolveHomePortfolioTotalStatus
+} from '../services/home-asset-breakdown'
 
-function formatSyncHeight(height: number): string {
-  return height > 0 ? height.toLocaleString() : '—'
-}
+const evmOperationsEnabled = resolveEvmFeatureRuntimePolicy(
+  __ENABLED_CHAIN_FEATURE_FLAGS__
+).newOperationsEnabled
 
-function formatEta(ms: number): string {
-  const totalSeconds = Math.ceil(ms / 1000)
-  if (totalSeconds < 60) return `<1 min`
-  const hours = Math.floor(totalSeconds / 3600)
-  const minutes = Math.ceil((totalSeconds % 3600) / 60)
-  if (hours > 0) return `~${hours}h ${minutes}m`
-  return `~${minutes} min`
-}
+const multichainPortfolioEnabled =
+  evmOperationsEnabled ||
+  resolveBitcoinFeatureRuntimePolicy(__ENABLED_CHAIN_FEATURE_FLAGS__).newOperationsEnabled
 
 export function Home() {
   const navigate = useNavigate()
+  const location = useLocation()
+  const { confirm } = useDialog()
   const { copyToClipboard, showToast } = useCopyToClipboard()
-  const { currentDApp, currentAccountAuthorized, connectCurrentAccount } = useDAppConnection()
+  const {
+    currentDApp,
+    currentAccountAuthorized,
+    connectedDApps,
+    loading: connectedDAppsLoading,
+    connectCurrentAccount
+  } = useDAppConnection()
   const { isShielding, handleShieldFunds, shieldSheet } = useShieldFunds()
   const { requestSpeedUp, speedUpSheet } = useSpeedUp()
   const {
@@ -67,9 +107,29 @@ export function Home() {
     setZecPrice,
     currentNetwork,
     currentWalletId,
+    currentAccountId,
     accountDisplayNames
   } = useWalletStore()
-  const { balances, getCurrentBalance, getCurrentSyncState } = useAccountDataStore()
+  const { balances, getCurrentBalance, getCurrentSyncState, setPortfolioValueFor } =
+    useAccountDataStore()
+  const [assetPrices, setAssetPrices] = useState<AssetPriceReadModel | null>(null)
+  const assetPricesRef = useRef<AssetPriceReadModel | null>(null)
+  const [assetPriceStatus, setAssetPriceStatus] = useState<'loading' | 'ready' | 'error'>('loading')
+  const [multichainPortfolio, setMultichainPortfolio] = useState<PortfolioReadModel | null>(null)
+  const [portfolioLoadStatus, setPortfolioLoadStatus] = useState<'loading' | 'ready' | 'error'>(
+    'loading'
+  )
+  const [activeTab, setActiveTab] = useState<'assets' | 'lending' | 'activity'>(() =>
+    resolveHomeDefaultTab(location.search)
+  )
+  const [focusTransactionId, setFocusTransactionId] = useState<string | null>(() =>
+    new URLSearchParams(location.search).get('transactionId')
+  )
+  const balancesHidden = useSettingsStore(state => state.balancesHidden)
+  const setBalancesHidden = useSettingsStore(state => state.setBalancesHidden)
+  const { activeAccount: storageV2Account, loading: accountNetworksLoading } =
+    useActiveAccountNetworks()
+  const [addressMenuOpen, setAddressMenuOpen] = useState(false)
 
   const openLendingApp = () => {
     chrome.tabs.create({ url: ZKNOIR_LENDING_URL }).catch(error => {
@@ -79,26 +139,56 @@ export function Home() {
 
   const currentAccount = getCurrentAccount()
   const currentWallet = getCurrentWallet()
-  // Lending requires message signing, which the hardware transaction protocols do not expose.
-  const isHardwareWallet = isHardwareKeySource(currentWallet?.keySource)
+  const effectiveAccount = resolveEffectiveActiveAccountIdentity({
+    currentWalletId,
+    currentAccountId,
+    nativeAccount: storageV2Account
+  })
+  const effectiveWalletId = effectiveAccount?.walletId ?? null
+  const effectiveAccountId = effectiveAccount?.accountId ?? null
+  const dappExecutionSupport = useMemo(() => {
+    if (!effectiveWalletId || !effectiveAccountId) {
+      return Object.freeze({ connected: 0, privateCapable: 0, mainOnly: 0 })
+    }
+    return summarizeDAppPrivateExecutionSupport(connectedDApps, {
+      walletId: effectiveWalletId,
+      accountId: effectiveAccountId
+    })
+  }, [connectedDApps, effectiveWalletId, effectiveAccountId])
+  const supportsEvmDAppExecutionMode =
+    storageV2Account?.networks.some(network => network.chain.family === 'evm') ??
+    Boolean(evmOperationsEnabled && currentAccount)
+  const dappExecutionMode = useDAppExecutionMode(
+    Boolean(supportsEvmDAppExecutionMode && effectiveWalletId && effectiveAccountId),
+    effectiveWalletId,
+    effectiveAccountId
+  )
+  const dappAddresses = evmExecutionAddresses(storageV2Account?.networks ?? [])
+  // Lending requires message signing, which supported Zcash hardware protocols lack.
+  const isHardwareWallet =
+    storageV2Account?.walletSource.kind === 'hardware' ||
+    isZcashHardwareKeySource(currentWallet?.keySource)
   const accountDisplayName =
-    currentAccount && currentWalletId
+    storageV2Account?.accountDisplayName ??
+    (currentAccount && currentWalletId
       ? getAccountDisplayName(
           currentWalletId,
           currentAccount.id,
           currentAccount.name,
           accountDisplayNames
         )
-      : 'Account 1'
+      : 'Account 1')
+  const supportsZcash =
+    storageV2Account?.networks.some(network => network.chain.family === 'zcash') ??
+    Boolean(currentAccount)
+  const supportsSwap =
+    storageV2Account?.networks.some(network =>
+      ['zcash', 'evm', 'bitcoin'].includes(network.chain.family)
+    ) ?? Boolean(currentAccount)
+  const supportsLending = !isHardwareWallet && supportsSwap
   const storeBalance = getCurrentBalance()
   const { isSyncing, syncProgress, currentHeight, latestHeight, etaMs, syncReason } =
     getCurrentSyncState()
-  const syncEta =
-    etaMs != null && etaMs > 0
-      ? formatEta(etaMs)
-      : latestHeight > 0 && currentHeight >= latestHeight
-        ? '<1 min'
-        : '—'
   const network = currentNetwork
   const isTestnet = network === 'testnet'
   const hasLegacyPoolBalance = hasLegacyOrchardBalance(
@@ -110,46 +200,297 @@ export function Home() {
   )
   const legacyPoolPrivacyNotice = useLegacyPoolPrivacyNotice(hasLegacyPoolBalance)
 
+  const applyAssetPrices = useCallback(
+    (prices: AssetPriceReadModel | null) => {
+      if (!prices) return
+      assetPricesRef.current = prices
+      setAssetPrices(prices)
+      const zec = prices.quotes.find(quote => {
+        const asset = parseAssetId(quote.assetId)
+        return asset.namespace === 'slip44' && asset.reference === '133'
+      })
+      if (zec) setZecPrice(Number(zec.priceUsd))
+    },
+    [setZecPrice]
+  )
+
+  const refreshAssetPrices = useCallback(async () => {
+    const refreshScope = `asset-prices:${network}`
+    const claimed = await automaticRefreshSession.claim(refreshScope, ['quotes'])
+    if (claimed.length === 0) return
+    if (!assetPricesRef.current) setAssetPriceStatus('loading')
+    try {
+      const refreshed = await assetPriceClient.getPrices('refresh')
+      applyAssetPrices(refreshed)
+      setAssetPriceStatus(
+        assetPricesRef.current && assetPricesRef.current.status !== 'error' ? 'ready' : 'error'
+      )
+      if (
+        !refreshed ||
+        refreshed.status !== 'ready' ||
+        refreshed.quotes.some(quote => quote.freshness === 'stale')
+      ) {
+        await automaticRefreshSession.release(refreshScope, claimed)
+      }
+    } catch (error) {
+      await automaticRefreshSession.release(refreshScope, claimed)
+      setAssetPriceStatus(
+        assetPricesRef.current && assetPricesRef.current.status !== 'error' ? 'ready' : 'error'
+      )
+      console.error('Failed to fetch asset prices:', error)
+    }
+  }, [applyAssetPrices, network])
+
   useEffect(() => {
-    const fetchPrice = async () => {
+    let cancelled = false
+    const hydrate = async () => {
       try {
-        const tokens = await fetchSwapTokens(true)
-        const zecToken = getZecToken(tokens)
-        if (zecToken) {
-          setZecPrice(zecToken.price)
+        const cached = await assetPriceClient.getPrices('read')
+        if (cancelled) return
+        applyAssetPrices(cached)
+        setAssetPriceStatus(cached && cached.status !== 'error' ? 'ready' : 'error')
+        if (
+          !cached ||
+          cached.status === 'error' ||
+          cached.fetchedAt <= 0 ||
+          Date.now() - cached.fetchedAt >= 60_000
+        ) {
+          await refreshAssetPrices()
         }
       } catch (error) {
-        console.error('Failed to fetch ZEC price:', error)
+        if (cancelled) return
+        setAssetPriceStatus(assetPricesRef.current ? 'ready' : 'error')
+        console.error('Failed to read cached asset prices:', error)
+        await refreshAssetPrices()
+      }
+    }
+    void hydrate()
+    const interval = setInterval(() => void refreshAssetPrices(), 60000)
+    return () => {
+      cancelled = true
+      clearInterval(interval)
+    }
+  }, [applyAssetPrices, refreshAssetPrices])
+
+  useEffect(() => {
+    let cancelled = false
+    let readScheduled = false
+    const unsubscribe = assetPriceClient.onCacheChanged(() => {
+      if (readScheduled) return
+      readScheduled = true
+      queueMicrotask(() => {
+        readScheduled = false
+        if (cancelled) return
+        void assetPriceClient
+          .getPrices('read')
+          .then(cached => {
+            if (cancelled) return
+            applyAssetPrices(cached)
+            setAssetPriceStatus(cached && cached.status !== 'error' ? 'ready' : 'error')
+          })
+          .catch(() => {})
+      })
+    })
+    return () => {
+      cancelled = true
+      unsubscribe()
+    }
+  }, [applyAssetPrices])
+
+  useEffect(() => {
+    const applySyncState = (msg: any) => {
+      if (!msg) return
+
+      const { currentWalletId: wid, currentNetwork: network } = useWalletStore.getState()
+      const targetWalletId = msg.walletId || currentWalletId
+      if (!targetWalletId || targetWalletId !== wid) return
+
+      const store = useAccountDataStore.getState()
+      const syncPatch: Record<string, any> = {}
+      if (msg.isSyncing !== undefined) syncPatch.isSyncing = msg.isSyncing
+      if (msg.syncProgress !== undefined) syncPatch.syncProgress = msg.syncProgress
+      if (msg.currentHeight !== undefined) syncPatch.currentHeight = msg.currentHeight
+      if (msg.latestHeight !== undefined) syncPatch.latestHeight = msg.latestHeight
+      if (msg.etaMs !== undefined) syncPatch.etaMs = msg.etaMs
+      if (msg.syncReason !== undefined) syncPatch.syncReason = msg.syncReason
+
+      if (Object.keys(syncPatch).length > 0) {
+        store.setWalletSyncStateFor(network, targetWalletId, syncPatch)
+      }
+      if (msg.balance && msg.accountId) {
+        store.setBalanceFor(network, targetWalletId, msg.accountId, msg.balance)
       }
     }
 
-    fetchPrice()
-    const interval = setInterval(fetchPrice, 60000)
-    return () => clearInterval(interval)
-  }, [])
+    if (supportsZcash && currentWalletId && currentAccountId) {
+      chrome.runtime
+        .sendMessage({
+          type: 'GET_SYNC_STATE',
+          walletId: currentWalletId,
+          accountId: currentAccountId
+        })
+        .then(applySyncState)
+        .catch(() => {})
+    }
 
-  usePolling(async () => {
-    accountManager.requestSync('requested')
-  }, WALLET_CONFIG.SYNC.BALANCE_POLL_MS)
+    const listener = (message: any, sender: chrome.runtime.MessageSender) => {
+      if (getOwnExtensionSenderContext(sender, chrome.runtime.id) !== 'service-worker') return
+      if (message.type === 'SYNC_PROGRESS') applySyncState(message)
+    }
+    chrome.runtime.onMessage.addListener(listener)
+    return () => chrome.runtime.onMessage.removeListener(listener)
+  }, [currentWalletId, currentAccountId, supportsZcash])
 
   const {
-    getFormattedSupplied,
+    getMarketAssets,
     refreshAll: refreshLending,
+    reset: resetLending,
+    accountScope: lendingAccountScope,
     dataLoaded: lendingLoaded,
     isLoadingData: lendingLoading,
     error: lendingError
   } = useLendingStore()
 
   useEffect(() => {
-    refreshLending()
-  }, [currentWalletId, currentAccount?.id, currentNetwork, refreshLending])
+    if (!supportsLending) {
+      resetLending()
+      return
+    }
+    const activeLendingScope = `${currentWalletId || 'none'}:${currentAccountId || 'none'}`
+    if (lendingAccountScope !== null && lendingAccountScope !== activeLendingScope) {
+      resetLending()
+      return
+    }
+    if (activeTab !== 'lending') return
+    let cancelled = false
+    void hasAttestedCredentialSession()
+      .then(active => {
+        if (active && !cancelled) return refreshLending()
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [
+    activeTab,
+    currentAccountId,
+    currentWalletId,
+    effectiveWalletId,
+    effectiveAccountId,
+    lendingAccountScope,
+    refreshLending,
+    resetLending,
+    supportsLending
+  ])
 
-  const lendingSupplied = getFormattedSupplied()
-  const lendingSuppliedUsd = safeBig(lendingSupplied).times(zecPrice).toNumber()
+  const lendingPositions = supportsLending
+    ? getMarketAssets().filter(market => safeBig(market.supplied).gt(0))
+    : []
+  const lendingSuppliedUsd = lendingPositions
+    .reduce((total, market) => total.plus(market.suppliedUsd), safeBig(0))
+    .toNumber()
 
   const totalBalance = storeBalance?.total ?? '0'
   const walletUsd = useAccountDataStore.getState().getCurrentBalanceUsd()
   const totalUsd = safeBig(walletUsd).plus(lendingSuppliedUsd).toNumber()
+  const multichainFiat = useMemo(
+    () => summarizePortfolioFiat(multichainPortfolio, assetPrices),
+    [multichainPortfolio, assetPrices]
+  )
+  const multichainTotalUsd = safeBig(multichainFiat.totalUsd).plus(lendingSuppliedUsd).toFixed()
+  const portfolioTotalStatus = resolveHomePortfolioTotalStatus(
+    multichainPortfolio,
+    portfolioLoadStatus,
+    assetPriceStatus,
+    effectiveWalletId,
+    effectiveAccountId,
+    multichainFiat
+  )
+  const useCurrentMultichainTotal =
+    multichainPortfolioEnabled &&
+    (portfolioTotalStatus === 'ready' || portfolioTotalStatus === 'partial')
+  const displayedTotalUsd = useCurrentMultichainTotal ? multichainTotalUsd : totalUsd
+  const assetBreakdown = getHomeAssetBreakdown({
+    multichainEnabled: multichainPortfolioEnabled,
+    liveMultichainTotal: useCurrentMultichainTotal,
+    multichainFiat,
+    zcashBalance: storeBalance,
+    zecPrice,
+    lendingUsd: lendingSuppliedUsd
+  })
+
+  useEffect(() => {
+    if (!effectiveWalletId || !effectiveAccountId) return
+
+    if (multichainPortfolioEnabled) {
+      if (
+        !multichainPortfolio ||
+        multichainPortfolio.scope.keyDomainId !== effectiveWalletId ||
+        multichainPortfolio.scope.accountId !== effectiveAccountId ||
+        multichainPortfolio.status === 'loading' ||
+        multichainPortfolio.status === 'error' ||
+        !assetPrices ||
+        assetPriceStatus === 'loading' ||
+        (multichainFiat.pricedAssetCount === 0 && multichainFiat.missingAssetCount > 0)
+      ) {
+        return
+      }
+
+      setPortfolioValueFor(network, effectiveWalletId, effectiveAccountId, {
+        totalUsd: multichainTotalUsd,
+        updatedAt: Date.now(),
+        complete:
+          multichainPortfolio.status === 'ready' &&
+          assetPriceStatus === 'ready' &&
+          multichainFiat.missingAssetCount === 0 &&
+          multichainFiat.staleAssetCount === 0 &&
+          (!supportsLending || (lendingLoaded && !lendingError))
+      })
+      return
+    }
+
+    if (!storeBalance || zecPrice <= 0) return
+    setPortfolioValueFor(network, effectiveWalletId, effectiveAccountId, {
+      totalUsd: safeBig(storeBalance.total).times(zecPrice).plus(lendingSuppliedUsd).toFixed(),
+      updatedAt: Date.now(),
+      complete: !supportsLending || (lendingLoaded && !lendingError)
+    })
+  }, [
+    assetPriceStatus,
+    assetPrices,
+    effectiveAccountId,
+    effectiveWalletId,
+    lendingError,
+    lendingLoaded,
+    lendingSuppliedUsd,
+    multichainFiat.missingAssetCount,
+    multichainFiat.pricedAssetCount,
+    multichainFiat.staleAssetCount,
+    multichainPortfolio,
+    multichainTotalUsd,
+    network,
+    setPortfolioValueFor,
+    storeBalance,
+    supportsLending,
+    zecPrice
+  ])
+
+  const totalBalanceLoading =
+    !balancesHidden && multichainPortfolioEnabled && portfolioTotalStatus === 'loading'
+  const totalBalanceUnavailable =
+    !balancesHidden && multichainPortfolioEnabled && portfolioTotalStatus === 'unavailable'
+  const totalBalanceApproximate = multichainPortfolioEnabled && portfolioTotalStatus === 'partial'
+  const totalValueLabel = 'Total Assets'
+
+  const openAddressesList = useCallback(() => {
+    if (!effectiveWalletId || !effectiveAccountId) return
+    const search = new URLSearchParams({
+      walletId: effectiveWalletId,
+      accountId: effectiveAccountId
+    })
+    setAddressMenuOpen(false)
+    navigate.navigate(`/addresses-list?${search.toString()}`)
+  }, [effectiveAccountId, effectiveWalletId, navigate])
 
   const addresses = getAccountAddresses(currentAccount, storeBalance, zecPrice)
 
@@ -180,48 +521,177 @@ export function Home() {
     })
   }
 
+  const handleMultichainActivityClick = async (item: ActivityItem) => {
+    setFocusTransactionId(null)
+    await openModal({
+      showCloseButton: true,
+      className: 'max-h-[calc(100dvh-1rem)] overflow-y-auto overscroll-contain',
+      body: () => (
+        <MultichainActivityDetail
+          item={item}
+          network={network}
+          portfolio={multichainPortfolio}
+          accountNetworks={storageV2Account?.networks}
+        />
+      )
+    })
+  }
+
   const handleDAppClick = async () => {
     await openModal({
       title: 'Connected dApps',
       showCloseButton: true,
-      className: 'max-h-[calc(100dvh-1rem)] grid-rows-[auto_minmax(0,1fr)]',
       body: () => <DAppConnectionModal />
     })
+  }
+
+  const handleDAppExecutionModeChange = async (mode: DAppExecutionMode) => {
+    const current = dappExecutionMode.state
+    if (!current || current.mode === mode || dappExecutionMode.updating) return
+    if (mode === 'private' && !current.privateAvailable) {
+      toast.error('Confidential address is unavailable in this wallet build')
+      return
+    }
+
+    let confirmPrivateSetup = false
+    if (mode === 'private' && !current.privateSetupCompleted) {
+      confirmPrivateSetup = await confirm({
+        title: 'Turn on dApp privacy?',
+        message:
+          'Supported connected dApps will switch from your Public address to your Confidential address. Public-only chains keep their current account. Lending will also use its Confidential view.',
+        confirmText: 'Turn on'
+      })
+      if (!confirmPrivateSetup) return
+    }
+
+    const options = confirmPrivateSetup ? { confirmPrivateSetup: true as const } : undefined
+    try {
+      await dappExecutionMode.setMode(mode, options)
+      toast.success(mode === 'private' ? 'dApp privacy is on' : 'dApp privacy is off')
+    } catch (error) {
+      if (
+        error instanceof DAppExecutionModeClientError &&
+        error.code === 'affected-operations-confirmation-required' &&
+        error.impact
+      ) {
+        const count = error.impact.pendingApprovalCount
+        const confirmed = await confirm({
+          title: 'Cancel pending dApp operations?',
+          message: `${count} pending EVM dApp ${count === 1 ? 'operation was' : 'operations were'} prepared for the current address. Switching account mode will reject the pending approval and discard any unsigned preparation. Broadcast transactions will continue to be tracked.`,
+          confirmText: 'Switch & Cancel'
+        })
+        if (!confirmed) return
+        try {
+          await dappExecutionMode.setMode(mode, {
+            ...options,
+            confirmAffectedOperations: true
+          })
+          toast.success(mode === 'private' ? 'dApp privacy is on' : 'dApp privacy is off')
+        } catch (retryError) {
+          toast.error(
+            retryError instanceof Error ? retryError.message : 'Unable to change dApp account mode'
+          )
+        }
+        return
+      }
+      toast.error(error instanceof Error ? error.message : 'Unable to change dApp account mode')
+    }
+  }
+
+  const handleDAppExecutionModeClick = async () => {
+    const mode = await openModal<DAppExecutionMode | undefined>({
+      title: 'dApp address',
+      showCloseButton: true,
+      body: resolve => (
+        <DAppExecutionModeCard
+          connectionSummary={dappExecutionSupport}
+          state={dappExecutionMode.state}
+          loading={dappExecutionMode.loading}
+          connectionsLoading={connectedDAppsLoading}
+          updating={dappExecutionMode.updating}
+          error={dappExecutionMode.error}
+          mainTotalUsd={multichainFiat.mainUsd}
+          privateTotalUsd={multichainFiat.privateUsd}
+          mainAddress={dappAddresses.mainAddress}
+          privateAddress={dappAddresses.privateAddress}
+          balancesLoading={totalBalanceLoading}
+          balancesHidden={balancesHidden}
+          onSelectMode={resolve}
+        />
+      )
+    })
+    if (mode) await handleDAppExecutionModeChange(mode)
   }
 
   const showShieldButton = canShieldTransparentFunds(storeBalance)
 
   return (
-    <div className="page-container">
+    <div className="page-container min-h-0 overflow-hidden">
       <LegacyPoolPrivacyNotice
         open={legacyPoolPrivacyNotice.isOpen}
         onDismiss={legacyPoolPrivacyNotice.dismiss}
       />
       <CopyToast show={showToast} />
-      {isTestnet && (
-        <div className="bg-warning/15 text-warning text-center text-xs font-semibold py-1">
-          TESTNET
-        </div>
-      )}
       {/* Header */}
-      <header className="h-14 flex items-center justify-between px-4">
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => navigate.navigate('/account-list')}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-card"
-        >
-          <span className="text-sm font-medium">{formatAccountName(accountDisplayName, 12)}</span>
-          <Icon icon="lucide:chevron-down" width={10} height={10} />
-        </Button>
-        <div className="flex items-center gap-1">
+      <header className="flex h-14 shrink-0 items-center justify-between border-b border-white/5 px-4">
+        <div className="flex min-w-0 items-center gap-2">
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label="Choose wallet"
+            onClick={() => navigate.navigate('/account-list')}
+            className="rounded-lg bg-white/10 hover:bg-white/15"
+          >
+            <Icon icon="lucide:chevron-down" width={16} height={16} />
+          </Button>
+          <Popover open={addressMenuOpen} onOpenChange={setAddressMenuOpen}>
+            <PopoverTrigger asChild>
+              <Button
+                variant="ghost"
+                size="sm"
+                aria-label="Show account addresses"
+                aria-expanded={addressMenuOpen}
+                disabled={!effectiveWalletId || !effectiveAccountId}
+                className="flex h-8 min-w-0 max-w-[148px] items-center gap-1.5 rounded-lg bg-white/10 px-2.5 py-0 hover:bg-white/15"
+              >
+                <span className="truncate text-sm font-medium">
+                  {formatAccountName(accountDisplayName, 12)}
+                </span>
+                <Icon icon="lucide:copy" width={14} height={14} className="shrink-0" />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent
+              align="start"
+              collisionPadding={16}
+              aria-label="Account address menu"
+              className="w-[calc(100vw-2rem)] max-w-[343px] p-3"
+            >
+              <AccountNetworkAddressSummary
+                networks={storageV2Account?.networks ?? []}
+                loading={accountNetworksLoading}
+                onCopyAddress={address => void copyToClipboard(address)}
+                onViewAll={openAddressesList}
+              />
+            </PopoverContent>
+          </Popover>
+        </div>
+        <div data-testid="home-header-actions" className="flex items-center gap-2">
+          {supportsEvmDAppExecutionMode && effectiveWalletId && effectiveAccountId && (
+            <DAppExecutionModeButton
+              state={dappExecutionMode.state}
+              loading={dappExecutionMode.loading}
+              updating={dappExecutionMode.updating}
+              onClick={() => void handleDAppExecutionModeClick()}
+            />
+          )}
           <Button
             variant="ghost"
             size="icon-sm"
             aria-label="Settings"
             onClick={() => navigate.navigate('/settings')}
+            className="rounded-lg bg-card/60 text-foreground/70 hover:bg-accent hover:text-foreground"
           >
-            <Icon icon="lucide:settings" width={18} height={18} />
+            <Icon icon="lucide:settings" width={18} height={18} className="size-[18px]" />
           </Button>
           <DAppChainIndicator
             connectedDApp={
@@ -239,56 +709,137 @@ export function Home() {
 
       <ExtensionUpdateBanner />
 
-      <div className="flex-1 overflow-y-auto">
+      <div
+        data-testid="home-scroll-container"
+        className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
+      >
         {/* Total Balance */}
-        <div className="px-5 pt-4 pb-3">
+        <div className="px-4 pb-7 pt-6">
           <div className="text-center">
-            <div className="flex flex-col items-center justify-center">
-              <p className="text-[40px] font-bold leading-tight">
-                {formatPrice(walletData.totalUsd, { showSign: true })}
-              </p>
+            <div data-testid="home-total-assets" className="relative mx-auto w-fit">
+              {totalBalanceLoading ? (
+                <div role="status" aria-label="Loading total assets">
+                  <Skeleton className="my-1.5 h-8 w-40" />
+                </div>
+              ) : totalBalanceUnavailable ? (
+                <Tooltip content="Unable to value your assets. Refresh the asset list to retry.">
+                  <button
+                    type="button"
+                    aria-label="Total assets unavailable"
+                    className="rounded-sm text-4xl font-normal leading-tight text-muted focus-visible:outline-2 focus-visible:outline-primary"
+                  >
+                    —
+                  </button>
+                </Tooltip>
+              ) : assetBreakdown && !balancesHidden ? (
+                <Tooltip
+                  side="bottom"
+                  sideOffset={24}
+                  className="max-w-[260px] whitespace-nowrap"
+                  content={
+                    <div className="min-w-36 space-y-1">
+                      {totalBalanceApproximate && (
+                        <p className="max-w-56 whitespace-normal text-xs text-muted">
+                          Some balances or prices are unavailable or out of date.
+                        </p>
+                      )}
+                      <div className="flex justify-between gap-4">
+                        <span>Public</span>
+                        <span className="tabular-nums">
+                          {formatPrice(assetBreakdown.publicUsd, { showSign: true })}
+                        </span>
+                      </div>
+                      <div className="flex justify-between gap-4">
+                        <span>Confidential</span>
+                        <span className="tabular-nums">
+                          {formatPrice(assetBreakdown.confidentialUsd, { showSign: true })}
+                        </span>
+                      </div>
+                      {safeBig(assetBreakdown.lendingUsd).gt(0) && (
+                        <div className="flex justify-between gap-4">
+                          <span>Lending</span>
+                          <span className="tabular-nums">
+                            {formatPrice(assetBreakdown.lendingUsd, { showSign: true })}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  }
+                >
+                  <button
+                    type="button"
+                    aria-label={`${totalBalanceApproximate ? 'Estimated total assets' : 'Total assets'} ${formatPrice(displayedTotalUsd, { showSign: true })}, show Public and Confidential totals`}
+                    className="rounded-sm text-4xl font-normal leading-tight tracking-tight tabular-nums focus-visible:outline-2 focus-visible:outline-primary"
+                  >
+                    {totalBalanceApproximate ? '≈' : ''}
+                    {formatPrice(displayedTotalUsd, { showSign: true })}
+                  </button>
+                </Tooltip>
+              ) : (
+                <p
+                  className="text-4xl font-normal leading-tight tracking-tight tabular-nums"
+                  aria-label={balancesHidden ? 'Total balance hidden' : undefined}
+                >
+                  {balancesHidden ? '••••' : formatPrice(displayedTotalUsd, { showSign: true })}
+                </p>
+              )}
+              <button
+                type="button"
+                aria-label={balancesHidden ? 'Show balances' : 'Hide balances'}
+                aria-pressed={balancesHidden}
+                onClick={() => setBalancesHidden(!balancesHidden)}
+                className="absolute left-full top-1/2 ml-2 flex size-7 -translate-y-1/2 items-center justify-center rounded-md text-muted transition-colors hover:bg-white/5 hover:text-foreground"
+              >
+                <Icon
+                  icon={balancesHidden ? 'lucide:eye-off' : 'lucide:eye'}
+                  width={16}
+                  height={16}
+                />
+              </button>
             </div>
-            <p className="text-sm text-muted mt-1">Total Assets</p>
+            <div className="mt-1 flex items-center justify-center text-sm text-muted">
+              <span>{totalValueLabel}</span>
+            </div>
+            {showShieldButton && (
+              <button
+                onClick={handleShieldFunds}
+                disabled={isShielding}
+                className="mt-3 inline-flex h-8 items-center justify-center gap-1.5 rounded-full border border-primary/20 bg-primary/8 px-3.5 text-xs font-medium text-primary/90 transition-colors hover:border-primary/30 hover:bg-primary/12 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Icon icon="lucide:shield" width={12} height={12} />
+                <span>{isShielding ? 'Shielding...' : 'Shield'}</span>
+              </button>
+            )}
           </div>
         </div>
 
-        {showShieldButton && (
-          <div className="px-5 mb-4 flex justify-center">
-            <button
-              onClick={handleShieldFunds}
-              disabled={isShielding}
-              className="h-8 px-3.5 rounded-full border border-primary/20 bg-primary/8 text-primary/90 hover:bg-primary/12 hover:border-primary/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center justify-center gap-1.5 text-xs font-medium"
-            >
-              <Icon icon="lucide:shield" width={12} height={12} />
-              <span>{isShielding ? 'Shielding...' : 'Shield Funds'}</span>
-            </button>
-          </div>
-        )}
-
         {/* Action Buttons */}
-        <div className="flex justify-center gap-3 px-5 mb-6">
-          <ActionButton
+        <div
+          data-testid="home-actions"
+          data-layout={isTestnet ? 'centered' : 'distributed'}
+          className={
+            isTestnet ? 'mb-7 flex justify-center gap-16 px-4' : 'mb-7 flex justify-between px-4'
+          }
+        >
+          <WalletActionButton
             icon={<Icon icon="lucide:send" width={20} height={20} />}
             label="Send"
             onClick={() => navigate.navigate('/send')}
           />
-          <ActionButton
+          <WalletActionButton
             icon={<Icon icon="lucide:arrow-down" width={20} height={20} />}
             label="Receive"
-            onClick={() => navigate.navigate('/receive')}
+            onClick={openAddressesList}
           />
-          {!isTestnet && (
-            <ActionButton
+          {!isTestnet && supportsLending && (
+            <WalletActionButton
               icon={<Icon icon="lucide:landmark" width={20} height={20} />}
               label="Lending"
-              analyticsOutbound={{ id: 'lending', domain: new URL(ZKNOIR_LENDING_URL).hostname }}
-              disabled={isHardwareWallet}
-              title={isHardwareWallet ? 'Not available with hardware wallets' : undefined}
               onClick={openLendingApp}
             />
           )}
-          {!isTestnet && (
-            <ActionButton
+          {!isTestnet && supportsSwap && (
+            <WalletActionButton
               icon={<Icon icon="lucide:arrow-left-right" width={20} height={20} />}
               label="Swap"
               onClick={() => navigate.navigate('/swap')}
@@ -296,53 +847,46 @@ export function Home() {
           )}
         </div>
 
-        <HomeAdBanner />
-
         {/* Tabs */}
-        <Tabs defaultValue="assets" className="relative w-full">
-          <TabsList className="justify-start px-5 bg-background/80! rounded-none h-auto sticky top-0 z-10">
+        <Tabs
+          value={activeTab}
+          onValueChange={value => {
+            if (value === 'assets' || value === 'lending' || value === 'activity') {
+              setActiveTab(value)
+            }
+          }}
+          className="relative w-full gap-0"
+        >
+          <TabsList className="sticky top-0 z-30 isolate h-12 w-full justify-start rounded-none border-b border-white/8 bg-background! px-4 py-0">
             <TabsTrigger
               value="assets"
-              className="tab-trigger-custom data-[state=active]:text-white text-muted rounded-none py-2 px-1 mr-6 flex-0"
+              className="tab-trigger-custom mr-6 h-full flex-0 rounded-none px-0 py-0 text-sm font-normal text-muted data-[state=active]:text-white"
             >
               Assets
             </TabsTrigger>
-            {!isHardwareWallet && !isTestnet && (
+            {!isTestnet && supportsLending && (
               <TabsTrigger
                 value="lending"
-                className="tab-trigger-custom data-[state=active]:text-white text-muted rounded-none py-2 px-1 mr-6 flex-0"
+                className="tab-trigger-custom mr-6 h-full flex-0 rounded-none px-0 py-0 text-sm font-normal text-muted data-[state=active]:text-white"
               >
                 Lending
               </TabsTrigger>
             )}
             <TabsTrigger
               value="activity"
-              className="tab-trigger-custom data-[state=active]:text-white text-muted rounded-none py-2 px-1 flex-0"
+              className="tab-trigger-custom h-full flex-0 rounded-none px-0 py-0 text-sm font-normal text-muted data-[state=active]:text-white"
             >
               Activity
             </TabsTrigger>
           </TabsList>
-          {isSyncing && (
-            <div className="ml-auto absolute top-3 right-4">
-              <Tooltip
-                content={
-                  <div className="flex flex-col gap-0.5 items-center">
-                    <span className="font-semibold text-xs">Syncing Blockchain</span>
-                    <span className="text-[10px] opacity-80 font-mono">
-                      Height: {formatSyncHeight(currentHeight)} / {formatSyncHeight(latestHeight)}
-                    </span>
-                    <span className="text-[10px] opacity-80 font-mono">ETA: {syncEta}</span>
-                  </div>
-                }
-              >
-                <div className="flex items-center gap-1.5 text-[10px] text-primary bg-primary/10 px-2 py-0.5 rounded-full">
-                  <Icon icon="lucide:refresh-cw" width={10} height={10} className="animate-spin" />
-                  <span className="font-mono">
-                    {latestHeight > 0 && syncProgress > 0 ? `${syncProgress}%` : 'Syncing'}
-                  </span>
-                </div>
-              </Tooltip>
-            </div>
+          {isSyncing && !multichainPortfolioEnabled && (
+            <ZcashSyncProgress
+              syncProgress={syncProgress}
+              currentHeight={currentHeight}
+              latestHeight={latestHeight}
+              etaMs={etaMs}
+              className="absolute right-4 top-3"
+            />
           )}
           {!isSyncing && syncReason === 'sync_stall' && (
             <div className="ml-auto absolute top-3 right-4 max-w-[140px]">
@@ -364,136 +908,171 @@ export function Home() {
               </Tooltip>
             </div>
           )}
-          <TabsContent value="assets" className="px-5 py-4 mt-0">
-            <div className="flex items-center justify-between px-1 py-2 -mx-1">
-              <div className="flex items-center gap-3">
-                <TokenIcon symbol="ZEC" size="lg" />
-                <div>
-                  <p className="font-medium">ZEC</p>
-                  <p className="text-xs text-primary">
-                    {formatPrice(walletData.zec.price, { showSign: true })}
-                  </p>
-                </div>
-              </div>
-              <div className="text-right">
-                <p className="font-medium">
-                  {formatNumber(walletData.zec.balance, { rm: Big.roundDown })}
-                </p>
-                <p className="text-xs text-muted">
-                  {formatPrice(walletData.zec.value, { showSign: true })}
-                </p>
-              </div>
-            </div>
-
-            {/* Address breakdown */}
-            <div className="mt-3 space-y-4 pt-3 border-t border-border">
-              {walletData.addresses.map(addr => (
-                <div
-                  key={addr.type}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() =>
-                    navigate.navigate(
-                      `/send${addr.type === 'transparent' ? '?from=transparent' : ''}`
-                    )
-                  }
-                  onKeyDown={e => {
-                    if (e.key === 'Enter')
-                      navigate.navigate(
-                        `/send${addr.type === 'transparent' ? '?from=transparent' : ''}`
-                      )
-                  }}
-                  className="flex items-center justify-between rounded-lg px-2 py-2 -mx-2 cursor-pointer transition-colors hover:bg-white/5"
-                >
-                  <div className="flex flex-col gap-1 min-w-0">
-                    <div className="flex items-center gap-3">
-                      <span className="text-sm">{formatSortAddress(addr.address)}</span>
-                      <button
-                        type="button"
-                        onClick={e => {
-                          e.stopPropagation()
-                          copyToClipboard(addr.address)
-                        }}
-                        className="text-muted hover:text-white cursor-pointer"
-                        aria-label="Copy address"
-                      >
-                        <Icon icon="lucide:copy" width={13} height={13} />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={e => {
-                          e.stopPropagation()
-                          navigate.navigate(`/receive?type=${addr.type}`)
-                        }}
-                        className="text-muted hover:text-white cursor-pointer"
-                        aria-label="Show receive QR code"
-                      >
-                        <Icon icon="lucide:qr-code" width={14} height={14} />
-                      </button>
+          <TabsContent
+            value="assets"
+            className={multichainPortfolioEnabled ? 'mt-0' : 'px-5 py-4 mt-0'}
+          >
+            {multichainPortfolioEnabled ? (
+              <MultichainPortfolioPanel
+                walletId={effectiveWalletId}
+                accountId={effectiveAccountId}
+                initialModel={multichainPortfolio}
+                prices={assetPrices}
+                priceStatus={assetPriceStatus}
+                balancesHidden={balancesHidden}
+                zcashSyncState={
+                  supportsZcash && isSyncing
+                    ? { syncProgress, currentHeight, latestHeight, etaMs }
+                    : undefined
+                }
+                onModelChange={setMultichainPortfolio}
+                onStatusChange={setPortfolioLoadStatus}
+                onRetryPrices={refreshAssetPrices}
+                onSelectAsset={assetId =>
+                  navigate.navigate(`/asset-detail?assetId=${encodeURIComponent(assetId)}`)
+                }
+                onManageTokens={() => navigate.navigate('/manage-tokens')}
+              />
+            ) : (
+              <>
+                <div className="flex items-center justify-between px-1 py-2 -mx-1">
+                  <div className="flex items-center gap-3">
+                    <TokenIcon symbol="ZEC" nativeChain="zcash" size="lg" />
+                    <div>
+                      <p className="font-medium">ZEC</p>
+                      <p className="text-xs text-primary">
+                        {formatPrice(walletData.zec.price, { showSign: true })}
+                      </p>
                     </div>
-                    <AddressTypeLabel type={addr.type} />
                   </div>
-                  <BalanceWithPending
-                    amount={addr.balance}
-                    pending={addr.pending}
-                    fiatValue={addr.fiatValue}
-                    amountClassName="text-sm font-normal"
-                  />
+                  <div className="text-right">
+                    <p
+                      className="font-medium"
+                      aria-label={balancesHidden ? 'Balance hidden' : undefined}
+                    >
+                      {balancesHidden
+                        ? '••••'
+                        : formatNumber(walletData.zec.balance, { rm: Big.roundDown })}
+                    </p>
+                    <p className="text-xs text-muted">
+                      {balancesHidden
+                        ? '••••'
+                        : formatPrice(walletData.zec.value, { showSign: true })}
+                    </p>
+                  </div>
                 </div>
-              ))}
-            </div>
+
+                {/* Address breakdown */}
+                <div className="mt-3 space-y-4 pt-3 border-t border-border">
+                  {walletData.addresses.map(addr => (
+                    <div
+                      key={addr.type}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => navigate.navigate('/send')}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') navigate.navigate('/send')
+                      }}
+                      className="flex items-center justify-between rounded-lg px-2 py-2 -mx-2 cursor-pointer transition-colors hover:bg-white/5"
+                    >
+                      <div className="flex flex-col gap-1 min-w-0">
+                        <div className="flex items-center gap-3">
+                          <span className="text-sm">{formatSortAddress(addr.address)}</span>
+                          <button
+                            type="button"
+                            onClick={e => {
+                              e.stopPropagation()
+                              copyToClipboard(addr.address)
+                            }}
+                            className="text-muted hover:text-white cursor-pointer"
+                            aria-label="Copy address"
+                          >
+                            <Icon icon="lucide:copy" width={13} height={13} />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={e => {
+                              e.stopPropagation()
+                              openAddressesList()
+                            }}
+                            className="text-muted hover:text-white cursor-pointer"
+                            aria-label="Show receive QR code"
+                          >
+                            <Icon icon="lucide:qr-code" width={14} height={14} />
+                          </button>
+                        </div>
+                        <AddressTypeLabel type={addr.type} />
+                      </div>
+                      {balancesHidden ? (
+                        <span className="font-mono text-sm" aria-label="Balance hidden">
+                          ••••
+                        </span>
+                      ) : (
+                        <BalanceWithPending
+                          amount={addr.balance}
+                          pending={addr.pending}
+                          fiatValue={addr.fiatValue}
+                          amountClassName="text-sm font-normal"
+                        />
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
           </TabsContent>
 
           <TabsContent value="lending" className="px-5 py-4 mt-0">
-            {safeBig(lendingSupplied).gt(0) ? (
-              <div
-                role="button"
-                tabIndex={0}
-                data-analytics-outbound="lending"
-                data-analytics-domain={new URL(ZKNOIR_LENDING_URL).hostname}
-                onClick={openLendingApp}
-                onKeyDown={e => {
-                  if (e.key === 'Enter') openLendingApp()
-                }}
-                className="flex items-center justify-between cursor-pointer hover:bg-white/5 rounded-lg px-1 py-2 -mx-1 transition-colors"
-              >
-                <div className="flex items-center gap-3">
-                  <div className="relative size-10 rounded-full bg-foreground/10 flex items-center justify-center">
-                    <Icon
-                      icon="lucide:landmark"
-                      width={20}
-                      height={20}
-                      className="text-foreground"
-                    />
-                    <div className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-primary/20 flex items-center justify-center">
-                      <TokenIcon symbol="ZEC" size={16} className="shrink-0" />
+            {lendingPositions.length > 0 ? (
+              <div className="space-y-1">
+                {lendingPositions.map(market => (
+                  <div
+                    key={market.id}
+                    role="button"
+                    tabIndex={0}
+                    data-home-lending-position={market.id}
+                    onClick={openLendingApp}
+                    onKeyDown={event => {
+                      if (event.key === 'Enter') openLendingApp()
+                    }}
+                    className="-mx-1 flex cursor-pointer items-center justify-between rounded-lg px-1 py-2 transition-colors hover:bg-white/5"
+                  >
+                    <div className="flex min-w-0 items-center gap-3">
+                      <TokenIcon
+                        assetId={market.destinationAssetId}
+                        symbol={market.symbol}
+                        icon={market.icon}
+                        size="lg"
+                        className="shrink-0"
+                      />
+                      <div className="min-w-0">
+                        <p className="font-medium">
+                          {market.symbol}{' '}
+                          <span className="text-xs font-normal text-muted">Supply</span>
+                        </p>
+                        <p className="text-xs text-primary">RHEA Lending</p>
+                      </div>
+                    </div>
+                    <div className="min-w-0 max-w-[55%] text-right">
+                      <p
+                        className="truncate font-mono text-sm font-medium"
+                        aria-label={balancesHidden ? 'Balance hidden' : undefined}
+                      >
+                        {balancesHidden
+                          ? '••••'
+                          : `${formatDisplayAmount(safeBig(market.supplied))} ${market.symbol}`}
+                      </p>
+                      <p className="truncate text-xs text-muted">
+                        {balancesHidden
+                          ? '••••'
+                          : formatPrice(market.suppliedUsd, { showSign: true })}
+                      </p>
                     </div>
                   </div>
-                  <div>
-                    <p className="font-medium">
-                      ZEC <span className="text-xs text-muted font-normal">Supply</span>
-                    </p>
-                    <p className="text-xs text-primary">Lending</p>
-                  </div>
-                </div>
-                <div className="text-right">
-                  <p className="font-medium">
-                    {formatNumber(lendingSupplied, { rm: Big.roundDown })}
-                  </p>
-                  <p className="text-xs text-muted">
-                    {formatPrice(lendingSuppliedUsd, { showSign: true })}
-                  </p>
-                </div>
+                ))}
               </div>
             ) : lendingLoading ? (
-              <div className="flex flex-col items-center justify-center py-12">
-                <Icon
-                  icon="lucide:loader-2"
-                  width={24}
-                  height={24}
-                  className="text-muted animate-spin"
-                />
-              </div>
+              <ListSkeleton rows={2} label="Loading lending positions" card />
             ) : lendingError && !lendingLoaded ? (
               <div className="flex flex-col items-center justify-center py-12 text-center">
                 <div className="size-12 rounded-full bg-foreground/5 flex items-center justify-center mb-3">
@@ -515,8 +1094,6 @@ export function Home() {
                 </div>
                 <p className="text-sm text-muted mb-4">No lending positions yet</p>
                 <button
-                  data-analytics-outbound="lending"
-                  data-analytics-domain={new URL(ZKNOIR_LENDING_URL).hostname}
                   onClick={openLendingApp}
                   className="px-4 py-2 bg-primary/10 text-primary rounded-lg text-sm font-medium hover:bg-primary/20 transition-colors"
                 >
@@ -526,11 +1103,24 @@ export function Home() {
             )}
           </TabsContent>
 
-          <TabsContent value="activity" className="py-4 mt-0">
-            <TransactionList
-              network={network as 'mainnet' | 'testnet'}
-              onItemClick={handleTransactionClick}
-            />
+          <TabsContent value="activity" className="mt-0">
+            {multichainPortfolioEnabled ? (
+              <MultichainActivityPanel
+                walletId={effectiveWalletId}
+                accountId={effectiveAccountId}
+                network={network}
+                portfolio={multichainPortfolio}
+                accountNetworks={storageV2Account?.networks}
+                accountMode={dappExecutionMode.state?.mode ?? 'main'}
+                focusTransactionId={focusTransactionId}
+                onItemClick={handleMultichainActivityClick}
+              />
+            ) : (
+              <TransactionList
+                network={network as 'mainnet' | 'testnet'}
+                onItemClick={handleTransactionClick}
+              />
+            )}
           </TabsContent>
         </Tabs>
       </div>
@@ -547,43 +1137,5 @@ export function Home() {
       {shieldSheet}
       {speedUpSheet}
     </div>
-  )
-}
-
-interface ActionButtonProps {
-  analyticsOutbound?: { id: string; domain: string }
-  icon: React.ReactNode
-  label: string
-  onClick: () => void
-  active?: boolean
-  disabled?: boolean
-  title?: string
-}
-
-function ActionButton({
-  analyticsOutbound,
-  icon,
-  label,
-  onClick,
-  active,
-  disabled,
-  title
-}: ActionButtonProps) {
-  return (
-    <button
-      data-analytics-outbound={analyticsOutbound?.id}
-      data-analytics-domain={analyticsOutbound?.domain}
-      onClick={onClick}
-      disabled={disabled}
-      title={title}
-      className={`flex flex-col items-center gap-2 ${
-        active ? 'ring-2 ring-primary rounded-xl' : ''
-      } ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
-    >
-      <div className="w-[74px] h-[74px] rounded-2xl bg-card border border-transparent flex flex-col items-center justify-center gap-1.5 text-white transition-colors hover:border-primary">
-        {icon}
-        <span className="text-xs">{label}</span>
-      </div>
-    </button>
   )
 }

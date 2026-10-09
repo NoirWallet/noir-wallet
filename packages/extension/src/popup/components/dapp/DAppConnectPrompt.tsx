@@ -43,6 +43,7 @@ export function DAppConnectPrompt({
         <img
           src={favicon}
           alt={host}
+          crossOrigin="anonymous"
           className="w-8 h-8 rounded-full bg-muted/20"
           onError={e => {
             ;(e.target as HTMLImageElement).src = 'icons/icon128.png'

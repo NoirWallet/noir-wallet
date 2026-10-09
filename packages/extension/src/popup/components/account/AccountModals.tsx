@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import { DatePicker } from '../ui/date-picker'
-import { accountManager } from '@/core/wallet/account-manager'
+import { DEFAULT_NETWORK } from '@/lib/runtime-network'
+import { zcashWalletRuntimeClient } from '@/popup/services/zcash-wallet-runtime-client'
 import dayjs from '@/lib/dayjs'
 import {
   formatBirthdayResyncHint,
@@ -11,6 +12,7 @@ import {
   type BirthdayHeightSource
 } from '@/lib/zcash-birthday'
 import { classifyError } from '@/lib/errors'
+import { toast } from '@/store/toast-store'
 
 interface RenameAccountContentProps {
   walletId: string
@@ -33,10 +35,11 @@ export function RenameAccountContent({
     if (trimmedName && trimmedName !== currentName) {
       setIsSaving(true)
       try {
-        await accountManager.renameAccount(walletId, accountId, trimmedName)
+        await zcashWalletRuntimeClient.renameAccount(walletId, accountId, trimmedName)
         close()
       } catch (e) {
         console.error('Failed to rename account:', e)
+        toast.error(e instanceof Error ? e.message : 'Account rename failed')
         setIsSaving(false)
       }
     }
@@ -69,7 +72,7 @@ export function RenameAccountContent({
 
 type ResyncEditMode = 'height' | 'date'
 
-interface ResyncWalletContentProps {
+interface ResyncZcashContentProps {
   walletId: string
   accountId: string
   birthdayHeight: number
@@ -77,13 +80,13 @@ interface ResyncWalletContentProps {
   close: () => void
 }
 
-export function ResyncWalletContent({
+export function ResyncZcashContent({
   walletId,
   accountId,
   birthdayHeight,
   onConfirm,
   close
-}: ResyncWalletContentProps) {
+}: ResyncZcashContentProps) {
   const [editMode, setEditMode] = useState<ResyncEditMode>('height')
   const [resolvedHeight, setResolvedHeight] = useState(birthdayHeight)
   const [editHeight, setEditHeight] = useState(birthdayHeight > 0 ? birthdayHeight.toString() : '')
@@ -101,7 +104,7 @@ export function ResyncWalletContent({
       let source: BirthdayHeightSource = birthdayHeight > 0 ? 'stored' : 'none'
 
       if (height <= 0) {
-        const resolved = await accountManager.resolveBirthdayHeight(walletId, accountId)
+        const resolved = await zcashWalletRuntimeClient.resolveBirthdayHeight(walletId, accountId)
         height = resolved.height
         source = resolved.source
       }
@@ -128,7 +131,7 @@ export function ResyncWalletContent({
       }
 
       try {
-        const timestamp = await accountManager.getBlockTime(height)
+        const timestamp = await zcashWalletRuntimeClient.getBlockTime(height)
         if (cancelled) return
         setBlockTimestamp(timestamp)
         setSyncDate(getBirthdayDateFromBlockTimestamp(timestamp))
@@ -159,7 +162,7 @@ export function ResyncWalletContent({
           height = resolvedHeight
         } else {
           const timestamp = getUtcDayStartTimestamp(syncDate)
-          height = await accountManager.getBlockByTime(timestamp)
+          height = await zcashWalletRuntimeClient.getBlockByTime(timestamp)
         }
       } else {
         height = parseInt(editHeight, 10)
@@ -177,6 +180,14 @@ export function ResyncWalletContent({
 
   return (
     <div className="space-y-4">
+      <div className="p-3 bg-yellow-500/10 rounded-lg border border-yellow-500/20">
+        <p className="text-xs text-yellow-500">
+          This rebuilds local Zcash data for every account in this wallet. EVM and Bitcoin data are
+          not changed. Use the earliest block/date any Zcash account may have funds; a too-recent
+          start point can miss older balances.
+        </p>
+      </div>
+
       <div>
         <div className="flex gap-3 mb-3">
           <button
@@ -225,11 +236,13 @@ export function ResyncWalletContent({
             <DatePicker
               value={syncDate}
               onChange={setSyncDate}
-              ariaLabel="Wallet birthday date"
+              ariaLabel="Wallet creation date"
+              minDate={dayjs(DEFAULT_NETWORK === 'mainnet' ? '2018-10-01' : '2018-01-01')}
               placeholder="Select wallet creation date"
             />
             <p className="text-xs text-muted mt-1.5">
-              Resyncs all accounts from this date; choose an earlier date if you are unsure.
+              Approximate date when this wallet was first created. The block height will be
+              calculated automatically.
             </p>
           </>
         )}

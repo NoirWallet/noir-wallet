@@ -5,15 +5,9 @@
 
 type StorageArea = 'local' | 'session'
 
-import {
-  readWalletMetadata,
-  writeWalletMetadata,
-  WALLET_STATE_KEY
-} from './wallet-metadata-storage'
-
 interface StorageAdapter {
-  getItem(key: string): Promise<unknown>
-  setItem(key: string, value: unknown): Promise<void>
+  getItem(key: string): Promise<string | null>
+  setItem(key: string, value: string): Promise<void>
   removeItem(key: string): Promise<void>
 }
 
@@ -25,9 +19,9 @@ export function createChromeStorageAdapter(area: StorageArea = 'local'): Storage
   const storage = area === 'local' ? chrome.storage.local : chrome.storage.session
 
   return {
-    getItem: async (key: string): Promise<unknown> => {
+    getItem: async (key: string): Promise<string | null> => {
       if (area === 'local' && key === WALLET_STATE_KEY) {
-        return readWalletMetadata(storage)
+        return (await readWalletMetadata()) as unknown as string | null
       }
       try {
         const result = await storage.get(key)
@@ -38,9 +32,9 @@ export function createChromeStorageAdapter(area: StorageArea = 'local'): Storage
       }
     },
 
-    setItem: async (key: string, value: unknown): Promise<void> => {
+    setItem: async (key: string, value: string): Promise<void> => {
       if (area === 'local' && key === WALLET_STATE_KEY) {
-        await writeWalletMetadata(storage, value)
+        await writeWalletMetadata(value)
         return
       }
       try {
@@ -89,3 +83,8 @@ async function clearOldCacheEntries(storage: chrome.storage.StorageArea): Promis
     console.error('[ChromeStorageAdapter] clearOldCacheEntries error:', error)
   }
 }
+import {
+  WALLET_STATE_KEY,
+  readWalletMetadata,
+  writeWalletMetadata
+} from './wallet-metadata-storage'

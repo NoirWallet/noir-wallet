@@ -2,11 +2,14 @@ import { useState, useEffect } from 'react'
 import { Button } from '../ui/button'
 import WalletIcon from '@/images/wallet-icon.svg'
 import { PasswordInput } from './PasswordInput'
-import { accountManager } from '@/core/wallet/account-manager'
 import { classifyError } from '@/lib/errors'
 import { useNavigate } from '../../provider/Router'
+import { rehydrateWalletStore } from '@/store/wallet-store'
 import { openModal } from '../../provider/ModalManager'
 import { SecureStorage } from '@/core/wallet/secure-storage'
+import { BlockingWalletFailure } from './BlockingWalletFailure'
+import { zcashWalletRuntimeClient } from '@/popup/services/zcash-wallet-runtime-client'
+import { getUnlockFailureMessage } from '@/popup/services/unlock-failure-message'
 
 interface UnlockFormProps {
   onUnlockSuccess?: () => void | Promise<void>
@@ -35,6 +38,7 @@ export function UnlockForm({
   const [isLoading, setIsLoading] = useState(false)
   const [lockRemainingSeconds, setLockRemainingSeconds] = useState(0)
   const [isAccountLocked, setIsAccountLocked] = useState(false)
+  const [walletUpgradeFailed, setWalletUpgradeFailed] = useState(false)
 
   useEffect(() => {
     checkLockStatus()
@@ -85,10 +89,14 @@ export function UnlockForm({
     setError('')
 
     try {
-      const result = await accountManager.unlock(password, {
-        allowMissingCredentialRecovery: true
-      })
+      const result = await zcashWalletRuntimeClient.unlock(password)
+      if (result.upgradeFailed) {
+        setWalletUpgradeFailed(true)
+        return
+      }
       if (result.success) {
+        await rehydrateWalletStore()
+
         if (onUnlockSuccess) {
           await onUnlockSuccess()
         }
@@ -96,20 +104,8 @@ export function UnlockForm({
         setIsAccountLocked(true)
         setLockRemainingSeconds(Math.ceil((result.lockRemainingMs || 0) / 1000))
         setError('Too many failed attempts. Account temporarily locked.')
-      } else if (result.failure === 'credential_missing') {
-        setError(
-          'Wallet credentials are missing from this device. Restore your wallet to continue.'
-        )
-      } else if (result.failure === 'credential_invalid') {
-        setError('Wallet credentials are damaged. Restore your wallet to continue.')
-      } else if (result.failure === 'operation_failed') {
-        setError('Unable to unlock your wallet. Please try again.')
       } else {
-        if (result.remainingAttempts !== undefined && result.remainingAttempts <= 2) {
-          setError(`Incorrect password. ${result.remainingAttempts} attempts remaining.`)
-        } else {
-          setError('Incorrect password')
-        }
+        setError(getUnlockFailureMessage(result))
       }
     } catch (err) {
       setError(classifyError(err).userMessage)
@@ -166,9 +162,21 @@ export function UnlockForm({
     })
 
     if (confirmed) {
-      await accountManager.clearWalletData()
+      await zcashWalletRuntimeClient.reset()
       replace('/onboarding')
     }
+  }
+
+  if (walletUpgradeFailed) {
+    return (
+      <BlockingWalletFailure
+        title="Wallet upgrade failed"
+        description="Noir Wallet could not finish upgrading this wallet. It will stay locked until the upgrade completes."
+        assurance="Your existing wallet data is still stored on this device. Noir Wallet will not open a partially upgraded wallet."
+        isRetrying={isLoading}
+        onRetry={handleUnlock}
+      />
+    )
   }
 
   return (

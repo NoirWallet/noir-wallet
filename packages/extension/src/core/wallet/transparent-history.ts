@@ -9,17 +9,18 @@ import {
 } from '../../lib/zcash-node-rpc.ts'
 import { loadTransparentTxCache, saveTransparentTxCache } from '../../lib/indexed-db.ts'
 import type { AccountData, Network, Transaction } from '../../types/wallet.ts'
-import type { IntentsProgressEntry } from '../../lib/intents-progress.ts'
 import { partitionVerboseTransactions } from './transparent-history-cache.ts'
 import {
   getRequiredConfirmations,
   mergeTransactionUpdate,
   synchronizeInternalTransferConfirmations,
-  type ConfirmationTrust
+  type ConfirmationTrust,
+  type ZcashConfirmation
 } from '../../lib/transaction-status.ts'
 import {
   isDuplicateWasmRow,
   isTransparentReceive,
+  localShieldedSendHashSet,
   localTxHashSet,
   normalizeTxHash
 } from '../../lib/tx-history-dedup.ts'
@@ -322,11 +323,21 @@ export function mergeTransactionsWithWasmHistory(
     if (hash) walletHistoryByHash.set(hash, transaction)
   }
   const refreshedCurrentTransactions = currentTransactions.map(transaction => {
-    if (transaction.type !== 'send' && transaction.type !== 'shield') return transaction
+    if (
+      transaction.type !== 'send' &&
+      transaction.type !== 'shield' &&
+      transaction.type !== 'unshield'
+    ) {
+      return transaction
+    }
 
     const walletHistory = walletHistoryByHash.get(normalizeTxHash(transaction.txHash))
     if (!walletHistory) return transaction
 
+    const confirmation: ZcashConfirmation | undefined =
+      walletHistory.status === 'success' && walletHistory.confirmations != null
+        ? { txHash: walletHistory.txHash, confirmations: walletHistory.confirmations }
+        : undefined
     return mergeTransactionUpdate(
       transaction,
       {
@@ -340,31 +351,26 @@ export function mergeTransactionsWithWasmHistory(
                 .toFixed()
             : transaction.amount
       },
-      walletHistory.status === 'success' && walletHistory.confirmations != null
-        ? { txHash: walletHistory.txHash, confirmations: walletHistory.confirmations }
-        : undefined
+      confirmation
     )
   })
   const currentById = new Map(refreshedCurrentTransactions.map(tx => [tx.id, tx]))
   const reconciledWasmTransactions = wasmTransactions.map(transaction => {
     const current = currentById.get(transaction.id)
-    return current
-      ? mergeTransactionUpdate(
-          current,
-          transaction,
-          transaction.status === 'success' && transaction.confirmations != null
-            ? { txHash: transaction.txHash, confirmations: transaction.confirmations }
-            : undefined
-        )
-      : transaction
+    const confirmation: ZcashConfirmation | undefined =
+      transaction.status === 'success' && transaction.confirmations != null
+        ? { txHash: transaction.txHash, confirmations: transaction.confirmations }
+        : undefined
+    return current ? mergeTransactionUpdate(current, transaction, confirmation) : transaction
   })
   const localHashes = localTxHashSet(refreshedCurrentTransactions)
+  const localShieldedSendHashes = localShieldedSendHashSet(refreshedCurrentTransactions)
   const newWasmTransactions = reconciledWasmTransactions.filter(
-    tx => isTransparentReceive(tx) || !localHashes.has(normalizeTxHash(tx.txHash))
+    tx => !isDuplicateWasmRow(tx, localHashes, localShieldedSendHashes)
   )
   const newWasmHashes = new Set(newWasmTransactions.map(tx => normalizeTxHash(tx.txHash)))
   const preservedTransactions = refreshedCurrentTransactions.filter(tx => {
-    if (isDuplicateWasmRow(tx, localHashes)) return false
+    if (isDuplicateWasmRow(tx, localHashes, localShieldedSendHashes)) return false
     if (!tx.id.startsWith('wasm_')) return true
     return !newWasmHashes.has(normalizeTxHash(tx.txHash))
   })
@@ -374,7 +380,8 @@ export function mergeTransactionsWithWasmHistory(
 
   const transactions = mergeTransactionsWithTransparentReceives(
     mergedWasmTransactions,
-    transparentReceives
+    transparentReceives,
+    localShieldedSendHashes
   )
 
   return {
@@ -385,7 +392,8 @@ export function mergeTransactionsWithWasmHistory(
 
 export function mergeTransactionsWithTransparentReceives(
   existingTransactions: Transaction[],
-  transparentReceives: Transaction[]
+  transparentReceives: Transaction[],
+  localShieldedSendHashes: ReadonlySet<string> = localShieldedSendHashSet(existingTransactions)
 ): Transaction[] {
   if (transparentReceives.length === 0) return existingTransactions
 
@@ -410,48 +418,37 @@ export function mergeTransactionsWithTransparentReceives(
       ...transaction,
       ...(existing.depositAddress ? { depositAddress: existing.depositAddress } : {})
     }
-    return existing.status === 'failed'
-      ? mergeTransactionUpdate(
-          existing,
-          { ...refreshed, id: existing.id },
-          {
-            txHash: transaction.txHash,
-            confirmations: transaction.confirmations ?? 0
-          }
-        )
-      : refreshed
+    if (existing.status !== 'failed') return refreshed
+    return mergeTransactionUpdate(
+      existing,
+      { ...refreshed, id: existing.id },
+      { txHash: transaction.txHash, confirmations: transaction.confirmations ?? 0 }
+    )
   })
   const transparentReceiveHashes = new Set(reconciledReceives.map(tx => normalizeTxHash(tx.txHash)))
   const preservedTransactions = existingTransactions.filter(
     tx => !isTransparentReceive(tx) || !transparentReceiveHashes.has(normalizeTxHash(tx.txHash))
   )
 
-  return [...preservedTransactions, ...reconciledReceives].sort((a, b) => b.timestamp - a.timestamp)
+  const externalReceives = reconciledReceives.filter(
+    tx => !localShieldedSendHashes.has(normalizeTxHash(tx.txHash))
+  )
+
+  return [...preservedTransactions, ...externalReceives].sort((a, b) => b.timestamp - a.timestamp)
 }
 
-export function associateIncomingIntentsTransactions(
-  transactions: Transaction[],
-  progress: IntentsProgressEntry[],
-  accountKey: string
-): Transaction[] {
+export function associateIncomingIntentsTransactions(transactions: Transaction[]): Transaction[] {
   const depositsByHash = new Map<string, string | null>()
-  for (const entry of progress) {
-    if (
-      entry.accountKey !== accountKey ||
-      entry.kind !== 'swap' ||
-      entry.direction !== 'to_zcash'
-    ) {
-      continue
-    }
-    for (const transaction of entry.destinationChainTxHashes ?? []) {
-      const hash = normalizeTxHash(transaction.hash)
-      if (!hash) continue
-      const existing = depositsByHash.get(hash)
-      depositsByHash.set(
-        hash,
-        existing === undefined || existing === entry.depositAddress ? entry.depositAddress : null
-      )
-    }
+  for (const entry of transactions) {
+    if (entry.type !== 'swap' || !entry.depositAddress) continue
+    const hash = entry.destinationTxHash
+    if (!hash) continue
+    const normalized = normalizeTxHash(hash)
+    const existing = depositsByHash.get(normalized)
+    depositsByHash.set(
+      normalized,
+      existing === undefined || existing === entry.depositAddress ? entry.depositAddress : null
+    )
   }
   return transactions.map(transaction => {
     if (transaction.type !== 'receive' || transaction.depositAddress) return transaction

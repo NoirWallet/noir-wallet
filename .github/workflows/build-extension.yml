@@ -2,12 +2,12 @@ name: Build Extension
 
 on:
   push:
-    branches: [main]
+    branches: [v2]
     tags: ['v*']
     paths:
       - 'packages/extension/**'
-      - 'packages/rpc-registry/**'
-      - 'packages/sdk'
+      - 'packages/evm-history-worker/**'
+      - 'packages/web/public/changelog.json'
       - 'package.json'
       - 'pnpm-lock.yaml'
       - 'pnpm-workspace.yaml'
@@ -16,20 +16,20 @@ on:
       - 'tsconfig.base.json'
       - '.npmrc'
       - 'CHANGELOG.md'
-      - 'packages/web/public/changelog.json'
       - 'scripts/extract-changelog.mjs'
       - 'scripts/run-core-tests.mjs'
       - 'scripts/register-test-loader.mjs'
       - 'scripts/typescript-test-loader.mjs'
-      - 'scripts/wasm-package.mjs'
-      - 'wasm-package.lock.json'
+      - 'scripts/lib/wasm-package-integrity.mjs'
+      - 'scripts/sync-multichain-wasm-pkg.mjs'
+      - 'scripts/sync-wasm-pkg.js'
       - '.github/workflows/build-extension.yml'
   pull_request:
-    branches: [main]
+    branches: [v2]
     paths:
       - 'packages/extension/**'
-      - 'packages/rpc-registry/**'
-      - 'packages/sdk'
+      - 'packages/evm-history-worker/**'
+      - 'packages/web/public/changelog.json'
       - 'package.json'
       - 'pnpm-lock.yaml'
       - 'pnpm-workspace.yaml'
@@ -38,13 +38,13 @@ on:
       - 'tsconfig.base.json'
       - '.npmrc'
       - 'CHANGELOG.md'
-      - 'packages/web/public/changelog.json'
       - 'scripts/extract-changelog.mjs'
       - 'scripts/run-core-tests.mjs'
       - 'scripts/register-test-loader.mjs'
       - 'scripts/typescript-test-loader.mjs'
-      - 'scripts/wasm-package.mjs'
-      - 'wasm-package.lock.json'
+      - 'scripts/lib/wasm-package-integrity.mjs'
+      - 'scripts/sync-multichain-wasm-pkg.mjs'
+      - 'scripts/sync-wasm-pkg.js'
       - '.github/workflows/build-extension.yml'
   workflow_dispatch:
 
@@ -92,16 +92,16 @@ jobs:
               exit 1
             fi
 
-            if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
-              echo "::error::Production tag must point to a commit contained in main"
+            if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/v2; then
+              echo "::error::Production tag must point to a commit contained in v2"
               exit 1
             fi
 
             node scripts/extract-changelog.mjs "$VERSION" CHANGELOG.md packages/web/public/changelog.json >/dev/null
             TAG="$GITHUB_REF_NAME"
           else
-            if [ "$GITHUB_REF" != "refs/heads/main" ]; then
-              echo "::error::Preview builds must run from main"
+            if [ "$GITHUB_REF" != "refs/heads/v2" ]; then
+              echo "::error::V2 preview builds must run from v2"
               exit 1
             fi
 
@@ -130,19 +130,15 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      - name: Verify packaged WASM integrity
-        run: pnpm verify-wasm-pkg
+      - name: Type-check EVM history Worker
+        run: pnpm --filter @noir-wallet/evm-history-worker type-check
 
-      - name: Run core tests
+      - name: Run deterministic core tests
         run: pnpm test
 
-      - name: Build mainnet extension for pull request
+      - name: Build extension for pull request
         if: github.event_name == 'pull_request'
         run: pnpm build:extension
-
-      - name: Build testnet extension for pull request
-        if: github.event_name == 'pull_request'
-        run: pnpm build:extension:testnet
 
   build:
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
@@ -165,34 +161,32 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      - name: Build mainnet extension
+      - name: Build extension
         env:
           BUILD_CHANNEL: ${{ needs.prepare.outputs.is_production == 'true' && 'production' || 'beta' }}
+          RELEASE_ALLOWED: ${{ github.event.repository.private == false && github.event.repository.fork == false }}
+          EVM_HISTORY_API_ORIGIN: ${{ vars.EVM_HISTORY_API_ORIGIN }}
+          RHEA_SWAP_ACCESS_TOKEN: ${{ secrets.RHEA_SWAP_ACCESS_TOKEN }}
           GA_API_SECRET: ${{ needs.prepare.outputs.is_production == 'true' && secrets.GA_API_SECRET || '' }}
           CUSTOM_ANALYTICS_PASSWORD: ${{ needs.prepare.outputs.is_production == 'true' && secrets.CUSTOM_ANALYTICS_PASSWORD || '' }}
-        run: pnpm build:extension
-
-      - name: Build testnet extension
-        env:
-          BUILD_CHANNEL: ${{ needs.prepare.outputs.is_production == 'true' && 'production' || 'beta' }}
-        run: pnpm build:extension:testnet
+        run: |
+          if [ "$RELEASE_ALLOWED" != "true" ]; then
+            export BUILD_CHANNEL=development
+            unset RHEA_SWAP_ACCESS_TOKEN GA_API_SECRET CUSTOM_ANALYTICS_PASSWORD
+          fi
+          pnpm build:extension
 
       - name: Prepare release assets
         env:
           TAG: ${{ needs.prepare.outputs.tag }}
         run: |
           mkdir -p release-assets
-          FILE_VERSION="${TAG#v}"
-
-          for f in packages/extension/dist/*.zip packages/extension/dist-testnet/*.zip; do
-            NAME=$(basename "$f")
-            if echo "$NAME" | grep -qi "testnet"; then
-              DEST="noir-wallet-v${FILE_VERSION}-testnet.zip"
-            else
-              DEST="noir-wallet-v${FILE_VERSION}.zip"
-            fi
-            cp "$f" "release-assets/$DEST"
-          done
+          ZIP_FILES=(packages/extension/dist/*.zip)
+          if [ "${#ZIP_FILES[@]}" -ne 1 ] || [ ! -f "${ZIP_FILES[0]}" ]; then
+            echo "::error::Expected exactly one V2 extension ZIP"
+            exit 1
+          fi
+          cp "${ZIP_FILES[0]}" "release-assets/noir-wallet-v${TAG#v}.zip"
           (
             cd release-assets
             sha256sum *.zip > SHA256SUMS
@@ -208,8 +202,9 @@ jobs:
           BASE_SHA=""
 
           if [ "$IS_PRODUCTION" = "true" ]; then
-            BASE_SHA=$(git describe --tags --abbrev=0 "${HEAD_SHA}^" --match 'v[0-9]*' --exclude '*-beta.*' 2>/dev/null || true)
-          elif [ "$GITHUB_EVENT_NAME" = "push" ] && [ -n "$BEFORE_SHA" ] && git merge-base --is-ancestor "$BEFORE_SHA" "$HEAD_SHA" 2>/dev/null; then
+            BASE_SHA=$(git describe --tags --abbrev=0 "${HEAD_SHA}^" --match 'v2.*' --exclude '*-beta.*' 2>/dev/null || true)
+          elif [ "$GITHUB_EVENT_NAME" = "push" ] &&
+            git merge-base --is-ancestor "$BEFORE_SHA" "$HEAD_SHA" 2>/dev/null; then
             BASE_SHA="$BEFORE_SHA"
           else
             BASE_SHA=$(git rev-parse --verify 'HEAD~10^{commit}' 2>/dev/null || true)
@@ -240,7 +235,7 @@ jobs:
         run: |
           node scripts/extract-changelog.mjs \
             "${{ needs.prepare.outputs.version }}" \
-            CHANGELOG.md > release-changelog.md
+            CHANGELOG.md packages/web/public/changelog.json > release-changelog.md
 
       - name: Build release body
         env:
@@ -252,31 +247,25 @@ jobs:
         run: |
           if [ "$IS_PRODUCTION" = "true" ]; then
             TITLE="## Noir Wallet Extension v${{ needs.prepare.outputs.version }}"
-            SOURCE="Production tag \`${TAG}\` from \`main\`"
+            SOURCE="Production tag \`${TAG}\` from \`v2\`"
           else
-            TITLE="## Noir Wallet Extension Preview Build"
+            TITLE="## Noir Wallet Extension V2 Preview"
             SOURCE="Preview from \`${GITHUB_REF_NAME}\`"
           fi
 
           DL_BASE="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
+          ZIP_NAME="noir-wallet-v${TAG#v}.zip"
           {
             echo "$TITLE"
             echo ""
-            echo "| Network | Download |"
+            echo "| Package | Download |"
             echo "|---------|----------|"
-            for f in release-assets/*.zip; do
-              NAME=$(basename "$f")
-              if echo "$NAME" | grep -q "testnet"; then
-                echo "| Testnet | [${NAME}](${DL_BASE}/${NAME}) |"
-              else
-                echo "| Mainnet | [${NAME}](${DL_BASE}/${NAME}) |"
-              fi
-            done
+            echo "| Mainnet + Testnet Mode | [${ZIP_NAME}](${DL_BASE}/${ZIP_NAME}) |"
             echo ""
             echo "**SHA-256**: [SHA256SUMS](${DL_BASE}/SHA256SUMS)"
             echo ""
             echo "**Source**: ${SOURCE}"
-            echo "**Commit**: [\`${SHA_SHORT}\`](https://github.com/${{ github.repository }}/commit/${{ github.sha }})"
+            echo "**Commit**: [\`${SHA_SHORT}\`](https://github.com/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA})"
             echo ""
             if [ "$IS_PRODUCTION" = "true" ]; then
               cat release-changelog.md
@@ -284,9 +273,9 @@ jobs:
             fi
             echo "<details><summary>Commit log (${COMMIT_COUNT} commits)</summary>"
             echo ""
-            echo '```'
+            echo '~~~'
             echo "${COMMIT_LOG}"
-            echo '```'
+            echo '~~~'
             echo "</details>"
           } > release-assets/release-body.md
 

@@ -1,7 +1,11 @@
 import { create } from 'zustand'
 import type { TransactionStep } from '@/popup/hooks/useTransaction'
 import type { SwapStatus } from '@/core/services/intents-api'
-import type { Transaction } from '@/types/wallet'
+import type { CreateAddressBookContactInput } from '@/core/address-book/address-book'
+import type {
+  ConfidentialFundingPhase,
+  ConfidentialFundingProgress
+} from '@/core/services/confidential-funding'
 
 interface ZcashTransactionResult {
   type: 'zcash'
@@ -21,6 +25,7 @@ interface ZcashTransactionResult {
   showTxHash?: boolean
   showTime?: boolean
   extraDetails?: Array<{ label: string; value: string }>
+  saveRecipient?: CreateAddressBookContactInput & { readonly selfTransfer?: boolean }
 }
 
 interface SwapTransactionResult {
@@ -32,29 +37,30 @@ interface SwapTransactionResult {
   amountIn: string
   amountOut: string
   actionName?: string
+  destinationAsset?: string
   destinationChain?: string
-  zcashTxHash?: string
+  originChain?: string
+  originTxHash?: string
+  activityTransactionId?: string
+  zcashAccountKey?: string
+  zcashTransactionId?: string
+  signedOrder?: boolean
+  sourceExecutionMode?: 'main' | 'private'
+  rheaQuoteHandle?: string
+  approvalRequestIdAfterFunding?: string
+  confidentialFunding?: Readonly<{
+    planId: string
+    phase: ConfidentialFundingPhase
+    completed: number
+    total: number
+    stage: ConfidentialFundingProgress['stage']
+    message: string
+  }>
   /** ZEC fee paid for the on-chain leg, when known (e.g. Supply). */
   fee?: string
-  onBack?: () => void
 }
 
 export type TransactionResultData = ZcashTransactionResult | SwapTransactionResult
-
-export function resolveZcashResultView(
-  result: Pick<ZcashTransactionResult, 'step' | 'txHash' | 'timestamp'>,
-  record?: Transaction
-): { step: TransactionStep; txHash?: string; timestamp?: number } {
-  let step = result.step
-  if (record?.status === 'success' || record?.status === 'failed') step = record.status
-  else if (record?.status === 'confirming') step = 'confirming'
-  else if (record?.txHash && (step === 'idle' || step === 'pending')) step = 'submitted'
-  return {
-    step,
-    txHash: record?.txHash || result.txHash,
-    timestamp: record?.timestamp ?? result.timestamp
-  }
-}
 
 interface TransactionResultStore {
   data: TransactionResultData | null
@@ -67,7 +73,19 @@ interface TransactionResultStore {
     transactionId?: string
   ) => void
   updateSwapStatus: (status: SwapStatus) => void
-  updateSwapTxHash: (txHash: string) => void
+  updateSwapOriginTransaction: (
+    chain: string,
+    txHash: string,
+    transaction?: { accountKey: string; transactionId: string }
+  ) => void
+  updateConfidentialFunding: (input: {
+    phase: ConfidentialFundingPhase
+    completed: number
+    total: number
+    stage: ConfidentialFundingProgress['stage']
+    message: string
+    status: SwapStatus
+  }) => void
   clear: () => void
 }
 
@@ -101,11 +119,40 @@ export const useTransactionResultStore = create<TransactionResultStore>()((set, 
     })
   },
 
-  updateSwapTxHash: txHash => {
+  updateSwapOriginTransaction: (chain, txHash, transaction) => {
     const current = get().data
     if (!current || current.type !== 'swap') return
     set({
-      data: { ...current, zcashTxHash: txHash }
+      data: {
+        ...current,
+        originChain: chain,
+        originTxHash: txHash,
+        ...(transaction
+          ? {
+              zcashAccountKey: transaction.accountKey,
+              zcashTransactionId: transaction.transactionId
+            }
+          : {})
+      }
+    })
+  },
+
+  updateConfidentialFunding: input => {
+    const current = get().data
+    if (!current || current.type !== 'swap' || !current.confidentialFunding) return
+    set({
+      data: {
+        ...current,
+        status: input.status,
+        confidentialFunding: {
+          ...current.confidentialFunding,
+          phase: input.phase,
+          completed: input.completed,
+          total: input.total,
+          stage: input.stage,
+          message: input.message
+        }
+      }
     })
   },
 

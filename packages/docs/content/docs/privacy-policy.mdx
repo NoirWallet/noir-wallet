@@ -5,7 +5,7 @@ icon: ScrollText
 ---
 
 Noir Privacy Wallet - Privacy Policy<br />
-Last updated: 8 October 2026
+Last updated: 30 July 2026
 
 This Privacy Policy explains how Ref Labs Ltd., a British Virgin Islands company (registration no. 2100091), with its registered office at Craigmur Chambers, Road Town, Tortola, VG 1110, British Virgin Islands ("Company", "we", "our" or "us"), collects, uses, discloses, stores and protects information in connection with Noir Privacy Wallet, which may also be referred to as Noir Wallet or Noir.
 
@@ -123,9 +123,9 @@ We may automatically collect or receive limited technical and usage information,
 
 (h) information about External Sites or decentralised applications that you connect to or interact with through the App, to the extent necessary to provide the requested functionality, security protections, routing or transaction display.
 
-In production mainnet builds, the Extension sends usage events to Google Analytics and to the Rhea Finance analytics collector. **Settings > Security & Privacy > Share Google Analytics** is on by default. Turning it off stops Google Analytics requests and clears the local Google Analytics session, but the collector continues to receive events. This setting does not delete the random per-install identifier used by the collector.
+Anonymous analytics are enabled by default. You can turn them off at any time in **Settings > Security & Privacy > Share Anonymous Analytics**. When this setting is off, the Extension does not send non-essential analytics events to Google Analytics or the Rhea Finance analytics collector.
 
-Analytics payloads may include a random per-install identifier, event name, internal App page identifier, App version, supported asset symbols, and limited feature, configuration, status, or diagnostic categories. Google Analytics may also receive a session identifier. The collector may receive exact input and output amounts and estimated USD amounts for events that provide them. These payloads do not include real wallet addresses, transaction hashes, connected decentralised application origins, raw error messages, seed phrases, recovery phrases, private keys, spending keys, viewing keys, passwords, or memo contents. Analytics providers may process network information such as your IP address when receiving a request, as described elsewhere in this Privacy Policy and under their own policies.
+When anonymous analytics are enabled, the analytics payload may include a random per-install analytics identifier, event name, internal App page identifier, App version, session identifier, supported asset symbols and limited feature, configuration, status or diagnostic categories. The analytics payload does not include wallet addresses, transaction hashes, exact transaction amounts, connected decentralised application origins, raw error messages, seed phrases, recovery phrases, private keys, spending keys, viewing keys, passwords or memo contents. Analytics providers may process network information such as your IP address when receiving a request, as described elsewhere in this Privacy Policy and under their own policies.
 
 ## 7. Information from Third Parties
 
@@ -195,7 +195,7 @@ We may disclose information as follows:
 
 (a) Service providers. We may share information with service providers that help us provide hosting, infrastructure, analytics, crash reporting, security, compliance, customer support, communications, monitoring, storage, software development, product improvement or similar services.
 
-The Extension sends analytics events to Google LLC through Google Analytics while **Share Google Analytics** is enabled. In production mainnet builds, the Rhea Finance analytics collector receives events regardless of this setting, subject to the fields described in Section 6.
+When **Share Anonymous Analytics** is enabled, anonymous analytics events are sent to Google LLC through Google Analytics and to the Rhea Finance analytics collector. These events are limited as described in Section 6. Turning the setting off stops future non-essential analytics reports from the Extension.
 
 (b) User-directed third-party integrations. When you use Rhea Services, NEAR Intents, ZECFi Integrations, bridges, solvers, relayers, liquidity providers, lending protocols, decentralised applications, RPC providers, indexers, wallets or other third-party services, you may direct the App to share or transmit information needed to provide the requested functionality, including wallet addresses, transaction data, quotes, routes, chain identifiers, amounts, public blockchain data, device/network information or other necessary data.
 
@@ -219,9 +219,9 @@ You may be able to control cookies through browser settings. Disabling cookies o
 
 ## 12. Analytics and Product Improvement
 
-We may use pseudonymous analytics to understand how the App performs, identify bugs, measure reliability, improve user experience and develop new features.
+We may use anonymous analytics to understand how the App performs, identify bugs, measure reliability, improve user experience and develop new features.
 
-You may turn off Google Analytics at any time in **Settings > Security & Privacy > Share Google Analytics**. This stops future Google Analytics requests and clears its local session, but does not stop the Rhea Finance analytics collector, clear its queued events, or delete the random per-install identifier. It does not retroactively delete events already received. Requests required to provide wallet functionality, such as blockchain RPC, indexer, swap, bridge, lending or dApp requests, are not analytics and are not controlled by this setting.
+You may disable non-essential analytics at any time in **Settings > Security & Privacy > Share Anonymous Analytics**. Disabling the setting clears queued analytics events and the Extension's local analytics identifiers, and stops future analytics reports. It does not retroactively delete events already received. Requests required to provide wallet functionality, such as blockchain RPC, indexer, swap, bridge, lending or dApp requests, are not analytics and are not controlled by this setting.
 
 ## 13. Security
 
@@ -251,7 +251,7 @@ Some information may not be accessible, correctable or deletable by us, includin
 
 You may also have choices to:
 
-(a) turn off Google Analytics in **Settings > Security & Privacy > Share Google Analytics**;
+(a) disable non-essential analytics in **Settings > Security & Privacy > Share Anonymous Analytics**;
 
 (b) adjust browser cookie, extension, permission, notification or local storage settings;
 

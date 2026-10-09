@@ -20,7 +20,7 @@ const socialLinks = [
     )
   },
   {
-    href: 'https://t.me/noirprivacy',
+    href: 'https://t.me/noir_announcement',
     label: 'Telegram',
     icon: (
       <svg

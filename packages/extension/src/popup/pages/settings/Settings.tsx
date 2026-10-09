@@ -3,17 +3,13 @@ import { Icon } from '@iconify/react'
 import { PageHeader } from '../../components/common/PageHeader'
 import { useNavigate } from '../../provider/Router'
 import { Button } from '../../components/ui/button'
-import { accountManager } from '@/core/wallet/account-manager'
+import { zcashWalletRuntimeClient } from '@/popup/services/zcash-wallet-runtime-client'
 import { ANALYTICS_EVENTS, PAGE_IDS, sendAnalyticsEvent } from '@/lib/analytics'
 import { Switch } from '@/popup/components/ui/switch'
 import { useSettingsStore } from '@/store/settings-store'
-import {
-  EXTENSION_SIDE_PANEL_PATH,
-  isSidePanelSurface,
-  readStoredExtensionDisplayMode
-} from '@/config/extension-display'
-import { EXTENSION_DISPLAY_MODE_STORAGE_KEY } from '@/config/storage-keys'
-import { SocialLinks } from '@/popup/components/common/SocialLinks'
+import { EXTENSION_SIDE_PANEL_PATH, EXTENSION_DISPLAY_MODE_STORAGE_KEY } from '@/config/extension'
+import { readStoredExtensionDisplayMode } from '@/lib/extension-display-mode'
+import { useActiveAccountNetworks } from '@/popup/hooks/useActiveAccountNetworks'
 
 interface SidePanelOpenApi {
   open(options: { windowId: number }): Promise<void>
@@ -30,7 +26,9 @@ function getErrorMessage(error: unknown): string {
 
 export function Settings() {
   const { navigate } = useNavigate()
-  const isSidePanel = isSidePanelSurface(window.location.search)
+  const { activeAccount } = useActiveAccountNetworks()
+  const isSidePanelSurface =
+    new URLSearchParams(window.location.search).get('surface') === 'side-panel'
   const sidePanelMode = useSettingsStore(state => state.sidePanelMode)
   const isSidePanelModeLoaded = useSettingsStore(state => state.isSidePanelModeLoaded)
   const setSidePanelMode = useSettingsStore(state => state.setSidePanelMode)
@@ -56,7 +54,7 @@ export function Settings() {
 
     const initializeDisplayMode = async () => {
       await loadSidePanelMode()
-      if (isSidePanel) return
+      if (isSidePanelSurface) return
 
       const sidePanel = getSidePanelOpenApi()
       if (!sidePanel) throw new Error('Side panel is not supported by this browser')
@@ -78,16 +76,21 @@ export function Settings() {
       disposed = true
       chrome.storage.onChanged.removeListener(handleStorageChanged)
     }
-  }, [isSidePanel, loadSidePanelMode, syncSidePanelMode])
+  }, [isSidePanelSurface, loadSidePanelMode, syncSidePanelMode])
 
   const menuItems = [
     { label: 'General', action: () => navigate('/general') },
+    { label: 'Address Book', action: () => navigate('/address-book') },
     { label: 'Preferred Explorer', action: () => navigate('/preferred-explorer') },
     { label: 'RPC Endpoint', action: () => navigate('/rpc-endpoint') },
     { label: 'Security & Privacy', action: () => navigate('/security-privacy') },
-    { label: 'Experimental Features', action: () => navigate('/experimental-features') },
+    { label: 'Developer Settings', action: () => navigate('/developer-settings') },
+    { label: 'About', action: () => navigate('/about') },
     { label: 'Help', action: () => navigate('/help') },
-    { label: 'About', action: () => navigate('/about') }
+    ...(activeAccount?.walletSource.kind === 'software' &&
+    activeAccount.networks.some(network => network.chain.family === 'zcash')
+      ? [{ label: 'Zcash voting', action: () => navigate('/voting') }]
+      : [])
   ]
 
   const handleLock = async () => {
@@ -95,8 +98,7 @@ export function Settings() {
       pageId: PAGE_IDS.SETTINGS,
       extra: { reason: 'manual' }
     })
-    await accountManager.lock()
-    chrome.runtime.sendMessage({ type: 'WALLET_LOCKED' }).catch(() => {})
+    await zcashWalletRuntimeClient.lock()
     navigate('/unlock', { replace: true })
   }
 
@@ -104,7 +106,7 @@ export function Settings() {
     if (!isSidePanelModeLoaded) return
 
     const nextSidePanelMode = !sidePanelMode
-    const shouldOpenSidePanel = nextSidePanelMode && !isSidePanel
+    const shouldOpenSidePanel = nextSidePanelMode && !isSidePanelSurface
 
     setIsChangingDisplayMode(true)
     setDisplayModeError(null)
@@ -149,7 +151,7 @@ export function Settings() {
           disabled={
             isChangingDisplayMode ||
             !isSidePanelModeLoaded ||
-            (!sidePanelMode && !isSidePanel && currentWindowId === null)
+            (!sidePanelMode && !isSidePanelSurface && currentWindowId === null)
           }
           onClick={handleDisplayModeChange}
           className="w-full p-4 bg-card rounded-xl hover:bg-white/5 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-wait text-left"
@@ -188,10 +190,7 @@ export function Settings() {
         ))}
       </div>
 
-      <div className="page-footer space-y-3">
-        <div className="flex justify-center">
-          <SocialLinks />
-        </div>
+      <div className="page-footer">
         <Button onClick={handleLock} variant="outline" className="w-full h-[45px]">
           <Icon icon="lucide:lock" width={16} height={16} className="mr-2" />
           Lock Wallet

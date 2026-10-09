@@ -1,6 +1,9 @@
 import { useEffect } from 'react'
 import { LandingPage } from './pages/LandingPage'
 
+const REPOSITORY_URL = 'https://github.com/NoirWallet/noir-wallet'
+const RELEASES_URL = `${REPOSITORY_URL}/releases`
+
 function normalizePath(path: string): string {
   if (path.length > 1 && path.endsWith('/')) {
     return path.slice(0, -1)
@@ -12,20 +15,16 @@ export default function App() {
   const path = normalizePath(window.location.pathname)
   const redirectUrl =
     path === '/github'
-      ? __WALLET_REPOSITORY_URL__
+      ? REPOSITORY_URL
       : path === '/beta' || path === '/beta/versions'
-        ? __WALLET_RELEASES_URL__
+        ? RELEASES_URL
         : null
 
   useEffect(() => {
-    if (redirectUrl) {
-      window.location.replace(redirectUrl)
-    }
+    if (redirectUrl) window.location.replace(redirectUrl)
   }, [redirectUrl])
 
-  if (redirectUrl) {
-    return null
-  }
+  if (redirectUrl) return null
 
   return <LandingPage />
 }

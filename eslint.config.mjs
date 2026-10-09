@@ -2,12 +2,14 @@ import globals from 'globals'
 import tseslint from 'typescript-eslint'
 
 /**
- * Popup only: no-console as warn; types and unused bindings are handled by tsc.
+ * Popup only: keep warning/error diagnostics; types and unused bindings are handled by tsc.
  */
 export default tseslint.config(
   {
     ignores: [
       '**/dist/**',
+      '**/dist-dev/**',
+      '**/e2e-dist/**',
       '**/node_modules/**',
       'packages/extension/src/lib/wasm-pkg/**',
       '**/*.d.ts',
@@ -29,7 +31,7 @@ export default tseslint.config(
       }
     },
     rules: {
-      'no-console': 'warn',
+      'no-console': ['error', { allow: ['warn', 'error'] }],
       'no-undef': 'off'
     }
   }

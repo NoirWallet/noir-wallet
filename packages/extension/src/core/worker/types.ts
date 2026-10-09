@@ -2,7 +2,7 @@
  * RPC Message Types for Zcash Worker
  */
 
-import type { FundingSource, KeySource, Network, ZcashBalance } from '@/types'
+import type { FundingSource, Network, ZcashBalance } from '@/types'
 import type { TransferEstimate, TransferResult } from '@/core/zcash/transfer-result'
 import type {
   BallotDecision,
@@ -10,9 +10,9 @@ import type {
   VotingActionResult,
   VotingDiscovery,
   VotingEligibility,
+  VotingErrorCode,
   VotingProposal,
   VotingRoundPhase,
-  VotingRoundSummary,
   VotingRoundStatus
 } from '@/lib/wasm-pkg/zcash_wallet_wasm'
 
@@ -22,9 +22,9 @@ export type {
   VotingActionResult,
   VotingDiscovery,
   VotingEligibility,
+  VotingErrorCode,
   VotingProposal,
   VotingRoundPhase,
-  VotingRoundSummary,
   VotingRoundStatus
 }
 /**
@@ -42,7 +42,6 @@ interface WalletRouted {
 export interface HardwarePcztPair {
   full: string // base64 serialized full PCZT (kept by the wallet)
   redacted: string // base64 serialized redacted PCZT (sent to the signer)
-  /** Single-receiver address reconstructed by Ledger for transaction review. */
   ledgerDisplayAddress?: string
 }
 
@@ -63,21 +62,54 @@ export interface MaxTransferEstimate {
   feeZats: string
 }
 
+export interface ZcashCredentialCapsule {
+  readonly schemaVersion: 1
+  readonly keyDomainId: string
+  readonly credentialGenerationId: string
+  readonly iv: Uint8Array
+  readonly ciphertext: Uint8Array
+}
+
 export type WasmUnifiedAddresses = {
   sapling_zs?: string
   orchard?: string
   transparent?: string | null
   unified: string
   full_unified?: string
-  address_index?: number | null
 }
 
 export interface RPCSchema {
+  'credential.bind': {
+    request: {
+      walletId: string
+      keyDomainId: string
+      credentialGenerationId: string
+      globalUnlockEpoch: string
+      masterKey: CryptoKey
+      capsule: ZcashCredentialCapsule
+    }
+    response: true
+  }
+  'credential.getState': {
+    request: {
+      walletId: string
+      keyDomainId: string
+      credentialGenerationId: string
+      globalUnlockEpoch: string
+    }
+    response: 'locked' | 'unlocked'
+  }
+  'credential.lockAll': {
+    request: { globalUnlockEpoch: string }
+    response: true
+  }
+
   init: {
     request: {
       walletId: string
       network: Network
       lightwalletdUrl: string
+      compactBlockCdn?: { baseUrl: string } | null
       dbBytes?: Uint8Array
       dbKey?: string
     }
@@ -93,22 +125,12 @@ export interface RPCSchema {
     response: boolean
   }
   'mnemonic.toSeed': {
-    request: { phrase: string; passphrase?: string }
+    request: { phrase: string }
     response: Uint8Array
   }
   'mnemonic.toAddresses': {
     request: { phrase: string; accountIndex: number; network: Network }
     response: WasmUnifiedAddresses & { transparent: string }
-  }
-
-  // Encryption
-  encrypt: {
-    request: { plaintext: string; passphrase: string }
-    response: string
-  }
-  decrypt: {
-    request: { ciphertext: string; passphrase: string }
-    response: string
   }
 
   // Wallet Operations
@@ -119,6 +141,17 @@ export interface RPCSchema {
       birthdayHeight?: number
     }
     response: number // accountId
+  }
+  'wallet.createAccountFromSession': {
+    request: WalletRouted & {
+      accountIndex: number
+      birthdayHeight?: number
+    }
+    response: number
+  }
+  'wallet.getSessionAddresses': {
+    request: WalletRouted & { accountIndex: number; network: Network }
+    response: WasmUnifiedAddresses & { transparent: string }
   }
   'wallet.getAccountIds': {
     request: WalletRouted
@@ -143,10 +176,6 @@ export interface RPCSchema {
   'wallet.getNextShieldedAddress': {
     request: WalletRouted & { accountId: number }
     response: WasmUnifiedAddresses
-  }
-  'wallet.listShieldedAddresses': {
-    request: WalletRouted & { accountId: number }
-    response: WasmUnifiedAddresses[]
   }
   'wallet.getBlockByTime': {
     request: WalletRouted & { timestamp: number }
@@ -246,8 +275,10 @@ export interface RPCSchema {
     request: WalletRouted & {
       network: Network
       lightwalletdUrl: string
+      compactBlockCdn?: { baseUrl: string } | null
       dbKey?: string
       recreateWorker?: boolean
+      resetWallet?: boolean
     }
     response: { generation: number }
   }
@@ -263,10 +294,10 @@ export interface RPCSchema {
     request: WalletRouted & {
       accountName: string
       ufvk: string
-      seedFingerprintHex?: string // 32-byte ZIP-32 seed fingerprint, hex encoded when available
+      seedFingerprintHex: string // 32-byte ZIP-32 seed fingerprint, hex encoded
       accountHdIndex: number
+      keySource: 'keystone' | 'ledger'
       birthdayHeight?: number
-      keySource: Exclude<KeySource, 'software'>
     }
     response: number // accountId
   }
@@ -276,8 +307,9 @@ export interface RPCSchema {
       to: string
       amount: string // zatoshis
       memo?: string
-      fundingSource?: FundingSource
       marginalFeeZats?: number
+      signer?: 'keystone' | 'ledger'
+      fundingSource?: 'shielded' | 'transparent'
     }
     response: HardwarePcztPair
   }
@@ -299,7 +331,67 @@ export interface RPCSchema {
       accountIndex: number
       signatures: LedgerPcztSignatures
     }
-    response: string // base64 serialized redacted PCZT with Ledger signatures
+    response: string
+  }
+
+  // Transactions (unified software-wallet flow)
+  'transaction.send': {
+    request: WalletRouted & {
+      accountId: number
+      accountIndex: number
+      seedPhrase?: string
+      to: string
+      amount: string
+      memo?: string
+      fundingSource?: FundingSource
+      /** ZIP-317 marginal fee per action (zatoshis); defaults to standard. */
+      marginalFeeZats?: number
+    }
+    response: TransferResult
+  }
+
+  'transaction.oneclick_shield': {
+    request: WalletRouted & {
+      accountId: number
+      accountIndex: number
+      seedPhrase?: string
+      marginalFeeZats?: number
+    }
+    response: string // txid
+  }
+
+  // Fee estimation (read-only PCZT simulation, no signing key required)
+  'transaction.estimateFee': {
+    request: WalletRouted & {
+      accountId: number
+      to: string
+      value: string // zatoshis
+      memo?: string
+      fundingSource?: FundingSource
+      marginalFeeZats: number
+      debugRequestId?: string
+    }
+    response: TransferEstimate
+  }
+
+  'transaction.estimateMaxTransfer': {
+    request: WalletRouted & {
+      accountId: number
+      to: string
+      memo?: string
+      fundingSource?: FundingSource
+      marginalFeeZats: number
+      debugRequestId?: string
+    }
+    response: MaxTransferEstimate
+  }
+
+  'transaction.estimateShieldFee': {
+    request: WalletRouted & {
+      accountId: number
+      marginalFeeZats: number
+    }
+    response: string // fee in zatoshis
   }
 
   'voting.discoverRounds': {
@@ -325,9 +417,9 @@ export interface RPCSchema {
   'voting.submitDelegation': {
     request: WalletRouted & {
       accountId: number
-      accountIndex: number
       roundId: string
-      seedPhrase: string
+      credentialGenerationId: string
+      globalUnlockEpoch: string
     }
     response: VotingActionResult
   }
@@ -348,70 +440,12 @@ export interface RPCSchema {
     response: void
   }
 
-  // Transactions (unified software-wallet flow)
-  'transaction.send': {
-    request: WalletRouted & {
-      accountId: number
-      accountIndex: number
-      seedPhrase: string
-      to: string
-      amount: string
-      memo?: string
-      fundingSource?: FundingSource
-      /** ZIP-317 marginal fee per action (zatoshis); defaults to standard. */
-      marginalFeeZats?: number
-    }
-    response: TransferResult
-  }
-
-  'transaction.oneclick_shield': {
-    request: WalletRouted & {
-      accountId: number
-      accountIndex: number
-      seedPhrase: string
-      marginalFeeZats?: number
-    }
-    response: string // txid
-  }
-
-  // Fee estimation (read-only PCZT simulation, no signing key required)
-  'transaction.estimateFee': {
-    request: WalletRouted & {
-      accountId: number
-      to: string
-      value: string // zatoshis
-      memo?: string
-      fundingSource?: FundingSource
-      marginalFeeZats: number
-    }
-    response: TransferEstimate
-  }
-
-  'transaction.estimateMaxTransfer': {
-    request: WalletRouted & {
-      accountId: number
-      to: string
-      memo?: string
-      fundingSource?: FundingSource
-      marginalFeeZats: number
-    }
-    response: MaxTransferEstimate
-  }
-
-  'transaction.estimateShieldFee': {
-    request: WalletRouted & {
-      accountId: number
-      marginalFeeZats: number
-    }
-    response: string // fee in zatoshis
-  }
-
   // Message Signing
   'message.sign': {
     request: {
       walletId: string
       accountIndex: number
-      seedPhrase: string
+      seedPhrase?: string
       message: string
       addressIndex?: number
     }
@@ -426,7 +460,7 @@ export interface RPCSchema {
   'wallet.getPublicKey': {
     request: WalletRouted & {
       accountIndex: number
-      seedPhrase: string
+      seedPhrase?: string
       addressIndex?: number
     }
     response: {

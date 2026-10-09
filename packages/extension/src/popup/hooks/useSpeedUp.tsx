@@ -2,7 +2,7 @@ import { useCallback, useState } from 'react'
 import { useTransaction } from './useTransaction'
 import { useTransactionResultStore } from '@/store/transaction-result-store'
 import { useNavigate } from '../provider/Router'
-import { accountManager } from '@/core/wallet/account-manager'
+import { zcashWalletRuntimeClient } from '@/popup/services/zcash-wallet-runtime-client'
 import { SpeedUpConfirmSheet } from '../components/transaction/SpeedUpConfirmSheet'
 import type { Transaction } from '@/types/wallet'
 import { getTransactionRecoveryAction } from '@/lib/transaction-replacement'
@@ -42,7 +42,7 @@ export function useSpeedUp() {
       setSheetTx(null)
       if (!tx) return
 
-      accountManager.requestSync('transaction')
+      zcashWalletRuntimeClient.requestSync()
 
       const pendingResult = {
         type: 'zcash' as const,
@@ -58,7 +58,7 @@ export function useSpeedUp() {
         to: tx.to,
         amount,
         from: tx.from,
-        fromType: tx.fromType,
+        fromType: 'shielded',
         memo: tx.memo,
         fee,
         marginalFeeZats,

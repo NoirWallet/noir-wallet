@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { accountManager } from '@/core/wallet/account-manager'
+import { zcashWalletRuntimeClient } from '@/popup/services/zcash-wallet-runtime-client'
 import { MARGINAL_FEE_ZATS } from '@/config/fee'
 import type { FundingSource } from '@/types'
 
@@ -62,14 +62,14 @@ export function useFeeEstimate({
       try {
         const feeStr =
           type === 'shield'
-            ? await accountManager.estimateShieldFee(MARGINAL_FEE_ZATS.standard)
-            : await accountManager.estimateTransferFee(
-                to!,
-                amount!,
+            ? await zcashWalletRuntimeClient.estimateShieldFee(MARGINAL_FEE_ZATS.standard)
+            : await zcashWalletRuntimeClient.estimateTransferFee({
+                to: to!,
+                amount: amount!,
                 memo,
-                MARGINAL_FEE_ZATS.standard,
+                marginalFeeZats: MARGINAL_FEE_ZATS.standard,
                 fundingSource
-              )
+              })
 
         if (seq !== requestSeq.current) return
         setState({ feeZats: Number(feeStr), loading: false, error: false })

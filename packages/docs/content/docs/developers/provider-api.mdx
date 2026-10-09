@@ -39,9 +39,6 @@ if (!wallet) throw new Error('Noir Wallet is not installed')
 Account reads do not open approval windows. `connect()` is the exception: it always lets the user
 review the accounts shared with your site.
 
-The `fundingSource` option in `getMaxTransfer()` and `sendTransaction()` requires Noir Wallet
-extension 1.0.27 or later. Omit it on older builds to use shielded funding.
-
 <Accordions type="single">
   <Accordion title="connect() — Request account access" id="connect">
 
@@ -109,7 +106,7 @@ of every authorized account.
 
   </Accordion>
 
-  <Accordion title="getBalance(accountId?) — Read wallet balances" id="getbalanceaccountid">
+  <Accordion title="getBalance(accountId?) — Read spendable balances" id="getbalanceaccountid">
 
 ```ts
 getBalance(accountId?: string): Promise<ZcashBalanceResult>
@@ -139,8 +136,8 @@ All amounts are decimal ZEC strings. `synced: false` marks a zero fallback witho
 data. When the wallet is locked, the top-level balance is zero and `accounts` is empty.
 
 <Callout type="warn">
-  `total` includes pending funds. `available` and `spendable` are currently selectable amounts
-  before transaction-specific fees. Use `getMaxTransfer()` for an exact send limit.
+  `available` and `spendable` exclude pending funds but are not destination-specific post-fee Max
+  values. Use `getMaxTransfer()` for an exact send limit.
 </Callout>
 
 <include cwd lang="ts" meta='title="provider-account-balances.ts"'>
@@ -306,9 +303,8 @@ It returns `null` while the wallet is locked or when there is no active account.
 </Accordions>
 
 <Callout type="warn">
-  Ledger and Keystone accounts can connect to dApps and sign supported Zcash transactions. Identity
-  and arbitrary message-signing methods are not currently supported; rejecting one of these methods
-  does not disconnect the wallet.
+  Identity methods are not supported for Keystone or Ledger accounts. Their Zcash flows sign
+  supported transactions, not arbitrary messages.
 </Callout>
 
 ## Connection lifecycle

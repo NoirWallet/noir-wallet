@@ -2,8 +2,11 @@ import dayjs from './dayjs'
 import Big, { safeBig } from './big'
 import type { AddressType, WalletItem } from '@/types/wallet'
 import { ZEC_DECIMALS } from '@/config/wallet'
-import { getBlockExplorerBaseUrl, getBlockExplorerTransactionPath } from '@/config/block-explorers'
-import { DEFAULT_NETWORK, getNetworkConfig } from '@/config/networks'
+import {
+  getBlockExplorerBaseUrl,
+  getBlockExplorerTransactionPath
+} from './block-explorer-preferences'
+import { DEFAULT_NETWORK, getNetworkConfig } from '@/lib/runtime-network'
 import { detectZcashAddressType } from './zcash-memo'
 
 const subscriptNumbers = [
@@ -35,43 +38,10 @@ export function formatTimestamp(timestamp: string | number | Date, template?: st
   return dayjs(timestamp).format(template || 'YYYY/MM/DD HH:mm')
 }
 
-export function formatDuration(timestamp: number) {
-  if (!dayjs(timestamp).isValid()) return ''
-  const formattedDuration = dayjs.duration(timestamp)
-  const days = Math.floor(formattedDuration.asDays())
-  const hours = Math.floor(formattedDuration.asHours() % 24)
-  const minutes = formattedDuration.minutes()
-  const formattedDays = days ? `${days}d` : ''
-  const formattedHours = hours ? `${hours}h` : ''
-  const formattedMinutes = minutes ? `${minutes}m` : ''
-  if (formattedDays || formattedHours || formattedMinutes)
-    return [formattedDays, formattedHours, formattedMinutes].filter(Boolean).join(' ')
-  else return '1m'
-}
-
-export function formatDurationHumanize(timestamp: number) {
-  if (timestamp < 3600000) {
-    const minutes = safeBig(timestamp / 60000)
-      .round(2)
-      .toNumber()
-    return `${minutes} minute${minutes > 1 ? 's' : ''}`
-  } else if (timestamp < 86400000) {
-    const hours = safeBig(timestamp / 3600000)
-      .round(2)
-      .toNumber()
-    return `${hours} hour${hours > 1 ? 's' : ''}`
-  } else {
-    const days = safeBig(timestamp / 86400000)
-      .round(2)
-      .toNumber()
-    return `${days} day${Number(days) > 1 ? 's' : ''}`
-  }
-}
-
 export function formatSortAddress(address: string | undefined) {
   if (!address) return ''
   if (/[() ]/.test(address)) return address
-  const maxLength = 24
+  const maxLength = 12
   const isLongAddress = address.length > maxLength
   return isLongAddress ? `${address.slice(0, 6)}...${address.slice(-6)}` : address
 }
@@ -122,7 +92,7 @@ export function parseAmount(amount: string | number | undefined, decimals = ZEC_
   }
 }
 
-export function getPriceDecimals(price?: string | number, maxDecimals?: number) {
+function getPriceDecimals(price?: string | number, maxDecimals?: number) {
   if (!price || !Number(price)) return maxDecimals || 15
   const priceNum = Number(price)
 
@@ -145,13 +115,49 @@ interface FormatNumberOptions {
   displayMinimum?: boolean
   maxDigits?: number
   useUnit?: boolean
+  useSubscript?: boolean
+  fallback?: string
 }
 
-export function formatNumber(val: string | number | undefined, options?: FormatNumberOptions) {
-  if (!val || !Number(val)) return '0'
-  const { rm = Big.roundHalfUp, displayMinimum = true, useUnit = false } = options || {}
+export function formatNumber(
+  val: string | number | null | undefined,
+  options?: FormatNumberOptions
+) {
+  const {
+    rm = Big.roundHalfUp,
+    displayMinimum = true,
+    useUnit = false,
+    useSubscript = false,
+    fallback = '0'
+  } = options || {}
+  if (val === null || val === undefined || val === '') return fallback
+  let bigVal: Big
+  try {
+    bigVal = new Big(typeof val === 'string' ? val.replace(/,/g, '') : val)
+  } catch {
+    return fallback
+  }
+  if (bigVal.eq(0)) return '0'
+  const magnitude = bigVal.abs()
 
-  const bigVal = safeBig(val)
+  if ((useUnit && magnitude.gte('1e12')) || (useSubscript && magnitude.lt('1e-18'))) {
+    return bigVal
+      .toExponential(3, rm)
+      .replace(/\.?(0+)(?=e)/, '')
+      .replace('e+', 'e')
+  }
+  if (useUnit) {
+    for (const [divisor, unit] of [
+      ['1000000000', 'B'],
+      ['1000000', 'M'],
+      ['1000', 'K']
+    ] as const) {
+      if (magnitude.gte(divisor)) return `${bigVal.div(divisor).round(1, rm).toFixed()}${unit}`
+    }
+  }
+  if (useSubscript && options?.maxDigits === undefined && magnitude.lt('0.0001')) {
+    return formatNumberWithSubscript(bigVal.toFixed())
+  }
 
   // Use getPriceDecimals for consistent decimal calculation
   let maxDigits = options?.maxDigits
@@ -161,18 +167,6 @@ export function formatNumber(val: string | number | undefined, options?: FormatN
       maxDigits = 0
     } else {
       maxDigits = getPriceDecimals(absVal.toFixed())
-    }
-  }
-
-  if (useUnit) {
-    if (bigVal.gte(1e9)) {
-      return safeBig(bigVal.div(1e9)).round(2).toString() + 'B'
-    }
-    if (bigVal.gte(1e6)) {
-      return safeBig(bigVal.div(1e6)).round(2).toString() + 'M'
-    }
-    if (bigVal.gte(1e5)) {
-      return safeBig(bigVal.div(1e3)).round(1).toString() + 'K'
     }
   }
 
@@ -271,23 +265,33 @@ export function formatChainName(blockchain: string): string {
   const labels: Record<string, string> = {
     near: 'NEAR',
     eth: 'Ethereum',
+    ethereum: 'Ethereum',
+    evm: 'Ethereum',
     arb: 'Arbitrum',
     base: 'Base',
     op: 'Optimism',
-    bsc: 'BSC',
+    bsc: 'BNB Chain',
+    arbitrum: 'Arbitrum',
+    pol: 'Polygon',
+    polygon: 'Polygon',
+    optimism: 'Optimism',
+    avax: 'Avalanche',
+    avalanche: 'Avalanche',
     sol: 'Solana',
+    solana: 'Solana',
     btc: 'Bitcoin',
+    bitcoin: 'Bitcoin',
     bera: 'Berachain',
+    berachain: 'Berachain',
+    gnosis: 'Gnosis',
     monad: 'Monad',
-    xlayer: 'XLayer',
+    plasma: 'Plasma',
+    xlayer: 'X Layer',
     zec: 'Zcash',
     zcash: 'Zcash'
   }
-  return labels[blockchain] || blockchain
-}
-
-export function formatChainIconUrl(chain: string) {
-  return `https://assets.deltatrade.ai/assets/chain/${chain}.svg`
+  const normalizedBlockchain = blockchain.toLowerCase()
+  return labels[normalizedBlockchain] || blockchain
 }
 
 export function formatSymbol(symbol?: string) {
@@ -309,9 +313,13 @@ const explorerUrls: Record<string, string> = {
   arbitrum: 'https://arbiscan.io',
   base: 'https://basescan.org',
   optimism: 'https://optimistic.etherscan.io',
+  polygon: 'https://polygonscan.com',
+  avalanche: 'https://snowtrace.io',
   berachain: 'https://berascan.com',
-  monad: 'https://explorer.monad.xyz',
-  xlayer: 'https://www.oklink.com/xlayer'
+  gnosis: 'https://gnosisscan.io',
+  monad: 'https://monadscan.com',
+  plasma: 'https://plasmascan.to',
+  xlayer: 'https://www.okx.com/web3/explorer/xlayer'
 }
 const explorerPaths: Record<string, Record<string, string>> = {
   near: {
@@ -359,12 +367,32 @@ const explorerPaths: Record<string, Record<string, string>> = {
     account: 'address',
     token: 'token'
   },
+  polygon: {
+    transaction: 'tx',
+    account: 'address',
+    token: 'token'
+  },
+  avalanche: {
+    transaction: 'tx',
+    account: 'address',
+    token: 'token'
+  },
   berachain: {
     transaction: 'tx',
     account: 'address',
     token: 'token'
   },
+  gnosis: {
+    transaction: 'tx',
+    account: 'address',
+    token: 'token'
+  },
   monad: {
+    transaction: 'tx',
+    account: 'address',
+    token: 'token'
+  },
+  plasma: {
     transaction: 'tx',
     account: 'address',
     token: 'token'
@@ -412,7 +440,13 @@ const assetChainMap: Record<string, string> = {
   arb: 'arbitrum',
   base: 'base',
   op: 'optimism',
-  bera: 'berachain'
+  pol: 'polygon',
+  avax: 'avalanche',
+  bera: 'berachain',
+  gnosis: 'gnosis',
+  monad: 'monad',
+  plasma: 'plasma',
+  xlayer: 'xlayer'
 }
 
 /**
@@ -423,6 +457,21 @@ export function getChainFromAssetId(assetId: string): string {
   const parts = assetId.split(':')
   if (parts[0] === '1cs_v1' && parts.length >= 3) {
     return assetChainMap[parts[1]] || parts[1]
+  }
+  if (parts[0] === 'nep245') {
+    const chainId = /^([0-9]+)_/.exec(parts.slice(2).join(':'))?.[1]
+    const byEvmChainId: Record<string, string> = {
+      '10': 'optimism',
+      '56': 'bsc',
+      '100': 'gnosis',
+      '137': 'polygon',
+      '143': 'monad',
+      '196': 'xlayer',
+      '9745': 'plasma',
+      '80094': 'berachain',
+      '43114': 'avalanche'
+    }
+    if (chainId && byEvmChainId[chainId]) return byEvmChainId[chainId]
   }
   if (parts[0] === 'nep141' || parts[0] === 'nep245') {
     const tokenId = parts[1] || ''
@@ -439,9 +488,7 @@ export function formatWalletName(
   allWallets: { id: string; name: string }[]
 ): string {
   const walletIndex = allWallets.findIndex(w => w.id === wallet.id)
-  return wallet.name.match(/^Wallet \d+$/) && wallet.name.length > 15
-    ? `Wallet ${walletIndex + 1}`
-    : wallet.name
+  return formatWalletNameAtIndex(wallet.name, walletIndex)
 }
 
 export function formatWalletBackupName(
@@ -451,13 +498,18 @@ export function formatWalletBackupName(
 ): string {
   const primary = wallet.accounts.find(account => account.derivationIndex === 0)
   if (!primary) return formatWalletName(wallet, allWallets)
-
   const customName = displayNames[`${wallet.id}_${primary.id}`]?.trim()
   return (
     customName ||
     formatSortAddress(primary.addresses.shielded || primary.addresses.transparent) ||
     formatWalletName(wallet, allWallets)
   )
+}
+
+export function formatWalletNameAtIndex(walletName: string, walletIndex: number): string {
+  return walletIndex >= 0 && /^Wallet \d{13,}$/.test(walletName)
+    ? `Wallet ${walletIndex + 1}`
+    : walletName
 }
 
 export function detectAddressType(address: string): AddressType {

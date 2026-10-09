@@ -1,5 +1,5 @@
 import * as crossChainSdk from '@rhea-finance/cross-chain-sdk'
-import { NOIR_LENDING_APP_FEES } from '@/config/near'
+import { NOIR_LENDING_APP_FEES } from '@/config/intents'
 
 export type LendingSdkEnv = 'stg' | 'prd'
 

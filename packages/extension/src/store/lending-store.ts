@@ -11,34 +11,30 @@ import {
   type ApyDetails,
   type LendingSigningMode
 } from '@/core/services/lending-service'
+import { lendingIdentityClient } from '@/popup/services/lending-identity-client'
 import { clearLendingMcaCache } from '@/core/services/lending-mca-cache'
 import { useWalletStore } from './wallet-store'
 import { safeBig } from '@/lib/big'
 import { formatAmount } from '@/lib/format'
-import { ZEC_NEAR_TOKEN_ID } from '@/config/near'
 import { ZEC_DECIMALS } from '@/config/wallet'
 import Big from 'big.js'
 import { DedupPromise } from '@/lib/async-utils'
-import { readLendingHomeCache, writeLendingHomeCache } from '@/core/services/lending-home-cache'
+import {
+  getLendingMarketViews,
+  type LendingMarketView
+} from '@/core/services/lending-market-catalog'
+import {
+  readLendingMarketCache,
+  writeLendingMarketCache
+} from '@/infrastructure/lending/chrome-lending-market-cache'
 
 const ZEC_EXTRA_DECIMALS = 10
-const MCA_CACHE_FRESH_MS = 5 * 60 * 1000
+const LIVE_DATA_REUSE_MS = 60_000
 const refreshDedups = new Map<string, DedupPromise<void>>()
 
-export interface MarketAssetInfo {
-  tokenId: string
-  symbol: string
-  icon?: string
-  price: number
-  apy: ApyDetails
-  totalSupplied: string
-  totalSuppliedUsd: string
-  dailyRewardsUsd: string
-}
-
 interface LendingStore {
-  walletId: string | null
-  accountId: string | null
+  accountScope: string | null
+  refreshGeneration: number
   mcaId: string | null
   publicKey: string | null
   signingMode: LendingSigningMode
@@ -50,8 +46,8 @@ interface LendingStore {
   config: IConfig | null
   isLoadingData: boolean
   dataLoaded: boolean
-  cachedSuppliedZec: string
-  cacheHydrated: boolean
+  lastRefreshedAt: number | null
+  cachedMarketAssets: readonly LendingMarketView[]
 
   unclaimedAmount: {
     amount: string
@@ -64,6 +60,7 @@ interface LendingStore {
   checkMcaStatus: () => Promise<void>
   fetchLendingData: () => Promise<void>
   refreshAll: (options?: { forceMcaCheck?: boolean }) => Promise<void>
+  invalidateMcaStatus: () => void
   reset: () => void
 
   getZecAsset: () => Asset | null
@@ -75,12 +72,12 @@ interface LendingStore {
   getCollateralZec: () => string
   getTotalSuppliedZec: () => string
   hasMca: () => boolean
-  getMarketAssets: () => MarketAssetInfo[]
+  getMarketAssets: () => readonly LendingMarketView[]
   getUserSuppliedUsd: () => string
   getNetApy: () => string
 }
 
-async function withRetry<T>(fn: () => Promise<T>, maxRetries = 1, baseDelayMs = 750): Promise<T> {
+async function withRetry<T>(fn: () => Promise<T>, maxRetries = 3, baseDelayMs = 2000): Promise<T> {
   let lastError: unknown
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
@@ -96,17 +93,9 @@ async function withRetry<T>(fn: () => Promise<T>, maxRetries = 1, baseDelayMs = 
   throw lastError
 }
 
-function formatPortfolioSupplied(portfolioView: Portfolio | null | undefined): string {
-  const raw = safeBig(getSuppliedAmount(portfolioView))
-    .plus(getCollateralAmount(portfolioView))
-    .toFixed()
-  const formatted = formatAmount(raw, ZEC_EXTRA_DECIMALS + ZEC_DECIMALS)
-  return safeBig(formatted).round(ZEC_DECIMALS, Big.roundDown).toFixed()
-}
-
 export const useLendingStore = create<LendingStore>()((set, get) => ({
-  walletId: null,
-  accountId: null,
+  accountScope: null,
+  refreshGeneration: 0,
   mcaId: null,
   publicKey: null,
   signingMode: 'derived' as LendingSigningMode,
@@ -118,8 +107,8 @@ export const useLendingStore = create<LendingStore>()((set, get) => ({
   config: null,
   isLoadingData: false,
   dataLoaded: false,
-  cachedSuppliedZec: '0',
-  cacheHydrated: false,
+  lastRefreshedAt: null,
+  cachedMarketAssets: Object.freeze([]),
 
   unclaimedAmount: {
     amount: '0',
@@ -130,14 +119,28 @@ export const useLendingStore = create<LendingStore>()((set, get) => ({
   error: null,
 
   checkMcaStatus: async () => {
-    set({ isCheckingMca: true, error: null })
     const { currentWalletId, currentAccountId } = useWalletStore.getState()
+    const accountScope = `${currentWalletId || 'none'}:${currentAccountId || 'none'}`
+    const refreshGeneration = get().refreshGeneration
+    set({ isCheckingMca: true, error: null })
 
     try {
-      const result = await withRetry(() =>
-        checkLendingMcaAccount(currentWalletId || undefined, currentAccountId || undefined)
-      )
-      if (get().walletId !== currentWalletId || get().accountId !== currentAccountId) return
+      const result = await withRetry(async () => {
+        return checkLendingMcaAccount(
+          currentWalletId || undefined,
+          currentAccountId || undefined,
+          lendingIdentityClient.getZcashPublicKey
+        )
+      })
+      const active = useWalletStore.getState()
+      if (
+        get().accountScope !== accountScope ||
+        get().refreshGeneration !== refreshGeneration ||
+        active.currentWalletId !== currentWalletId ||
+        active.currentAccountId !== currentAccountId
+      ) {
+        return
+      }
 
       set({
         mcaId: result.mcaId,
@@ -147,70 +150,56 @@ export const useLendingStore = create<LendingStore>()((set, get) => ({
         mcaChecked: true
       })
     } catch (err) {
-      if (get().walletId !== currentWalletId || get().accountId !== currentAccountId) return
+      const active = useWalletStore.getState()
+      if (
+        get().accountScope !== accountScope ||
+        get().refreshGeneration !== refreshGeneration ||
+        active.currentWalletId !== currentWalletId ||
+        active.currentAccountId !== currentAccountId
+      ) {
+        return
+      }
       console.error('[LendingStore] checkMcaStatus failed:', err)
       set({
         isCheckingMca: false,
-        mcaChecked: false,
+        mcaChecked: true,
         error: err instanceof Error ? err.message : 'Failed to check lending account status'
       })
     }
   },
 
   fetchLendingData: async () => {
-    const { mcaId } = get()
-    const { currentWalletId, currentAccountId, currentNetwork } = useWalletStore.getState()
+    const { mcaId, accountScope, refreshGeneration } = get()
 
     set({ isLoadingData: true, error: null })
 
     try {
       const data = await withRetry(() => fetchLendingData(mcaId || undefined))
       const unclaimedAmount = getUnclaimedAmount(data.portfolioView, data.assetsView)
-      const suppliedZec = formatPortfolioSupplied(data.portfolioView)
-
-      if (
-        !currentWalletId ||
-        !currentAccountId ||
-        get().walletId !== currentWalletId ||
-        get().accountId !== currentAccountId
-      ) {
+      const marketAssets = getLendingMarketViews(data.assetsView, data.portfolioView)
+      if (get().accountScope !== accountScope || get().refreshGeneration !== refreshGeneration) {
         return
       }
-
-      console.log('[LendingStore] fetchLendingData result:', {
-        mcaId,
-        portfolioView: data.portfolioView,
-        suppliedKeys: data.portfolioView?.supplied ? Object.keys(data.portfolioView.supplied) : [],
-        collateralKeys: data.portfolioView?.collateral
-          ? Object.keys(data.portfolioView.collateral)
-          : [],
-        suppliedZec: data.portfolioView?.supplied?.[ZEC_NEAR_TOKEN_ID],
-        collateralZec: data.portfolioView?.collateral?.[ZEC_NEAR_TOKEN_ID],
-        unclaimedAmount
-      })
 
       set({
         assetsView: data.assetsView,
         portfolioView: data.portfolioView,
         config: data.config,
         unclaimedAmount,
+        cachedMarketAssets: marketAssets,
         isLoadingData: false,
         dataLoaded: true,
-        cachedSuppliedZec: suppliedZec
+        lastRefreshedAt: Date.now()
       })
-
-      const state = get()
-      void writeLendingHomeCache(currentNetwork, currentWalletId, currentAccountId, {
-        suppliedZec,
-        mcaId: state.mcaId,
-        signingMode: state.signingMode,
-        mcaChecked: state.mcaChecked,
-        updatedAt: Date.now()
-      }).catch(error => {
-        console.warn('[LendingStore] Failed to cache lending summary:', error)
-      })
+      if (accountScope) {
+        await writeLendingMarketCache(accountScope, marketAssets).catch(error => {
+          console.warn('[LendingStore] Failed to persist market cache:', error)
+        })
+      }
     } catch (err) {
-      if (get().walletId !== currentWalletId || get().accountId !== currentAccountId) return
+      if (get().accountScope !== accountScope || get().refreshGeneration !== refreshGeneration) {
+        return
+      }
       console.error('[LendingStore] fetchLendingData failed:', err)
       set({
         isLoadingData: false,
@@ -220,13 +209,13 @@ export const useLendingStore = create<LendingStore>()((set, get) => ({
   },
 
   refreshAll: async (options?: { forceMcaCheck?: boolean }) => {
-    const { currentWalletId, currentAccountId, currentNetwork } = useWalletStore.getState()
-    if (get().walletId !== currentWalletId || get().accountId !== currentAccountId) {
+    const { currentWalletId, currentAccountId } = useWalletStore.getState()
+    const refreshKey = `${currentWalletId || 'none'}:${currentAccountId || 'none'}`
+    if (get().accountScope !== refreshKey) {
       get().reset()
-      set({ walletId: currentWalletId, accountId: currentAccountId })
+      set({ accountScope: refreshKey, isCheckingMca: true })
     }
 
-    const refreshKey = `${currentNetwork}:${currentWalletId || 'none'}:${currentAccountId || 'none'}`
     let refreshDedup = refreshDedups.get(refreshKey)
     if (!refreshDedup) {
       refreshDedup = new DedupPromise<void>()
@@ -234,42 +223,36 @@ export const useLendingStore = create<LendingStore>()((set, get) => ({
     }
 
     await refreshDedup.run(async () => {
-      if (!get().cacheHydrated && currentWalletId && currentAccountId) {
-        try {
-          const cached = await readLendingHomeCache(
-            currentNetwork,
-            currentWalletId,
-            currentAccountId
-          )
-          if (get().walletId !== currentWalletId || get().accountId !== currentAccountId) return
-
-          if (cached) {
-            const mcaCacheIsFresh = Date.now() - cached.updatedAt < MCA_CACHE_FRESH_MS
-            set({
-              cachedSuppliedZec: cached.suppliedZec,
-              mcaId: cached.mcaId,
-              signingMode: cached.signingMode,
-              mcaChecked: cached.mcaChecked && mcaCacheIsFresh && !!cached.mcaId,
-              dataLoaded: true
-            })
-          }
-        } catch (error) {
-          console.warn('[LendingStore] Failed to restore lending summary:', error)
-        } finally {
-          if (get().walletId === currentWalletId && get().accountId === currentAccountId) {
-            set({ cacheHydrated: true })
-          }
+      if (!get().dataLoaded) {
+        const cachedMarkets = await readLendingMarketCache(refreshKey)
+        if (get().accountScope !== refreshKey) return
+        if (cachedMarkets.length > 0) {
+          set({ cachedMarketAssets: cachedMarkets, dataLoaded: true })
         }
       }
-
+      const lastRefreshedAt = get().lastRefreshedAt
+      const canReuseLiveData =
+        !options?.forceMcaCheck &&
+        lastRefreshedAt !== null &&
+        Date.now() - lastRefreshedAt < LIVE_DATA_REUSE_MS
+      if (canReuseLiveData) return
       const shouldCheckMca = !get().mcaChecked || options?.forceMcaCheck
+      let loadedMarketPreview = false
       if (shouldCheckMca) {
         if (options?.forceMcaCheck && currentWalletId && currentAccountId) {
           clearLendingMcaCache(currentWalletId, currentAccountId)
         }
-        await get().checkMcaStatus()
+        const mcaCheck = get().checkMcaStatus()
+        if (!get().dataLoaded) {
+          loadedMarketPreview = true
+          await get().fetchLendingData()
+        }
+        await mcaCheck
       }
-      await get().fetchLendingData()
+      if (get().accountScope !== refreshKey) return
+      if (!loadedMarketPreview || get().mcaId) {
+        await get().fetchLendingData()
+      }
     })
 
     if (!refreshDedup.isPending) {
@@ -277,10 +260,18 @@ export const useLendingStore = create<LendingStore>()((set, get) => ({
     }
   },
 
+  invalidateMcaStatus: () => {
+    const { currentWalletId, currentAccountId } = useWalletStore.getState()
+    if (currentWalletId && currentAccountId) {
+      clearLendingMcaCache(currentWalletId, currentAccountId)
+    }
+    set({ mcaChecked: false })
+  },
+
   reset: () =>
     set({
-      walletId: null,
-      accountId: null,
+      accountScope: null,
+      refreshGeneration: get().refreshGeneration + 1,
       mcaId: null,
       publicKey: null,
       signingMode: 'derived' as LendingSigningMode,
@@ -291,8 +282,8 @@ export const useLendingStore = create<LendingStore>()((set, get) => ({
       config: null,
       isLoadingData: false,
       dataLoaded: false,
-      cachedSuppliedZec: '0',
-      cacheHydrated: false,
+      lastRefreshedAt: null,
+      cachedMarketAssets: Object.freeze([]),
       unclaimedAmount: {
         amount: '0',
         amountUsd: '0',
@@ -312,8 +303,10 @@ export const useLendingStore = create<LendingStore>()((set, get) => ({
   },
 
   getFormattedSupplied: () => {
-    if (!get().portfolioView) return get().cachedSuppliedZec
-    return formatPortfolioSupplied(get().portfolioView)
+    const raw = get().getTotalSuppliedZec()
+    const formatted = formatAmount(raw, ZEC_EXTRA_DECIMALS + ZEC_DECIMALS)
+
+    return safeBig(formatted).round(ZEC_DECIMALS, Big.roundDown).toFixed()
   },
 
   getDailyRewardsUsd: () => {
@@ -348,39 +341,9 @@ export const useLendingStore = create<LendingStore>()((set, get) => ({
   hasMca: () => !!get().mcaId,
 
   getMarketAssets: () => {
-    const assetsView = get().assetsView
-    if (!assetsView) return []
-
-    const zecAsset = assetsView[ZEC_NEAR_TOKEN_ID]
-    if (!zecAsset) return []
-
-    const zecPrice = useWalletStore.getState().zecPrice
-    const apy = getApyDetails(assetsView)
-
-    const suppliedBalance = zecAsset.supplied?.balance || '0'
-    const extraDecimals = ZEC_EXTRA_DECIMALS + ZEC_DECIMALS
-    const totalSupplied = formatAmount(suppliedBalance, extraDecimals)
-    const totalSuppliedUsd = safeBig(totalSupplied).times(zecPrice).toFixed(2)
-
-    const dailyRewardsUsd = safeBig(totalSupplied)
-      .times(apy.totalMinApy)
-      .div(100)
-      .div(365)
-      .times(zecPrice)
-      .toFixed(2)
-
-    return [
-      {
-        tokenId: ZEC_NEAR_TOKEN_ID,
-        symbol: 'ZEC',
-        icon: zecAsset.metadata?.icon,
-        price: zecPrice,
-        apy,
-        totalSupplied,
-        totalSuppliedUsd,
-        dailyRewardsUsd
-      }
-    ]
+    return get().assetsView
+      ? getLendingMarketViews(get().assetsView, get().portfolioView)
+      : get().cachedMarketAssets
   },
 
   getUserSuppliedUsd: () => {

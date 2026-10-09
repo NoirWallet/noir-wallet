@@ -1,8 +1,11 @@
 import { Button } from '../ui/button'
 import { TransactionResult } from './TransactionResult'
-import { formatSortAddress, formatExplorerUrl, formatNumber } from '@/lib/format'
+import { formatSortAddress, formatNumber } from '@/lib/format'
+import { DEFAULT_NETWORK } from '@/lib/runtime-network'
+import { getZcashChainId } from '@/core/chains/registry'
+import { formatChainTransactionExplorerUrl } from '@/popup/services/chain-explorer'
 import Big from '@/lib/big'
-import { useContactsStore } from '@/store/contacts-store'
+import { useAddressBookStore } from '@/store/address-book-store'
 import type { TransactionStep } from '@/popup/hooks/useTransaction'
 import { getStandardTransactionResultCopy } from '@/lib/transaction-status-copy'
 
@@ -13,9 +16,8 @@ export interface StandardTransactionResultProps {
   fromAddress?: string
   toAddress?: string
   txHash?: string
-  error?: string | null
   timestamp?: number
-  confirmed?: boolean
+  error?: string | null
   shield?: boolean
 
   customTitle?: string
@@ -41,10 +43,9 @@ export function StandardTransactionResult({
   fromAddress,
   toAddress,
   txHash,
-  error,
   timestamp,
-  confirmed = false,
-  shield = false,
+  error,
+  shield,
   customTitle,
   customDescription,
   showFrom = false,
@@ -56,21 +57,23 @@ export function StandardTransactionResult({
   onDone,
   onCancel
 }: StandardTransactionResultProps) {
-  const displayStep = step === 'success' && !confirmed ? 'submitted' : step
-  const toContact = useContactsStore(state => (toAddress ? state.getContact(toAddress) : undefined))
-  const baseConfig = getStandardTransactionResultCopy(displayStep, { error, shield })
+  const zcashChainId = getZcashChainId(DEFAULT_NETWORK)
+  const toContact = useAddressBookStore(state =>
+    toAddress ? state.getContact(zcashChainId, toAddress) : undefined
+  )
+  const baseConfig = getStandardTransactionResultCopy(step, { error, shield })
   const title = customTitle || baseConfig.title
   const description = customDescription || baseConfig.description
 
   const footer =
-    displayStep === 'success' ||
-    displayStep === 'submitted' ||
-    displayStep === 'confirming' ||
-    (displayStep === 'pending' && error) ? (
+    step === 'success' ||
+    step === 'submitted' ||
+    step === 'confirming' ||
+    (step === 'pending' && error) ? (
       <Button onClick={onDone} className="w-full h-[45px]">
-        {displayStep === 'success' ? 'Done' : 'Close'}
+        Done
       </Button>
-    ) : displayStep === 'failed' ? (
+    ) : step === 'failed' ? (
       <div className="space-y-3">
         {failureAction && (
           <Button onClick={failureAction.onClick} className="w-full h-[45px]">
@@ -79,7 +82,7 @@ export function StandardTransactionResult({
         )}
         {onCancel && (
           <Button variant="ghost" onClick={onCancel} className="w-full h-[45px]">
-            Close
+            Cancel
           </Button>
         )}
       </div>
@@ -130,20 +133,26 @@ export function StandardTransactionResult({
             </div>
           ))}
 
-          {timestamp != null && showTime && (
-            <div className="flex justify-between items-center py-3 border-b border-white/10">
-              <span className="text-sm text-muted">Time</span>
-              <span className="text-sm font-medium text-muted">
-                {new Date(timestamp).toLocaleString()}
-              </span>
-            </div>
-          )}
+          {(step === 'success' || step === 'submitted' || step === 'confirming') &&
+            showTime &&
+            timestamp && (
+              <div className="flex justify-between items-center py-3 border-b border-white/10">
+                <span className="text-sm text-muted">Time</span>
+                <span className="text-sm font-medium text-muted">
+                  {new Date(timestamp).toLocaleString()}
+                </span>
+              </div>
+            )}
 
-          {showTxHash && txHash && step !== 'idle' && (
+          {showTxHash && txHash && (
             <div className="flex justify-between items-center py-3">
               <span className="text-sm text-muted">Transaction Hash</span>
               <a
-                href={formatExplorerUrl('zcash', txHash)}
+                href={formatChainTransactionExplorerUrl(
+                  getZcashChainId(DEFAULT_NETWORK),
+                  txHash,
+                  DEFAULT_NETWORK
+                )}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-sm font-mono text-primary cursor-pointer hover:underline"

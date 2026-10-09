@@ -6,27 +6,19 @@ import { useOnboardingStore } from '@/store/onboarding-store'
 
 export function CongratulationsPage() {
   const { replace } = useNavigate()
-  const { flowMode, dappRequestId, reset } = useOnboardingStore()
-
-  console.log('[CongratulationsPage] Loaded with state:', {
-    flowMode,
-    dappRequestId,
-    hasDappRequestId: !!dappRequestId
-  })
+  const { flowMode, mode, dappRequestId, reset } = useOnboardingStore()
 
   const handleComplete = async () => {
-    console.log('[CongratulationsPage] handleComplete called, dappRequestId:', dappRequestId)
+    reset()
 
     // If onboarding was triggered by dApp connection, redirect to approval page
     if (dappRequestId) {
-      console.log('[CongratulationsPage] Redirecting to approval page:', dappRequestId)
       // Redirect to approval page where user can manually approve the connection
       replace(`/approval?requestId=${dappRequestId}`)
       return
     }
 
     // Normal onboarding flow
-    reset()
     if (flowMode === 'addWallet') {
       replace('/account-list')
     } else {
@@ -46,7 +38,9 @@ export function CongratulationsPage() {
         <h1 className="text-lg font-semibold text-center mb-3">Congratulations!</h1>
 
         <p className="text-base text-muted text-center leading-relaxed">
-          Your wallet is ready. You can now securely receive, store, and send digital assets.
+          {mode === 'import'
+            ? 'Your wallet is ready. Accounts for every supported network were restored from this recovery phrase.'
+            : 'Your wallet is ready. You can now securely receive, store, and send digital assets.'}
         </p>
       </div>
 

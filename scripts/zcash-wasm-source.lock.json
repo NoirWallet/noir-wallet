@@ -1,0 +1,29 @@
+{
+  "sourceCommit": "9c0e25267645a7ef08cb7248529de51fc9a304ef",
+  "generatedArtifacts": {
+    "package.json": {
+      "bytes": 297,
+      "sha256": "cbef1b5a638bcc7b1b024a6b3ddff0afdf8b1e1307dda1a1d439b4fad22f1497"
+    },
+    "snippets/wasm-bindgen-rayon-38edf6e439f6d70d/src/workerHelpers.js": {
+      "bytes": 4546,
+      "sha256": "6982a7a006a69849d666aaf4ac7ea07a42931f850c31006782b1937fd5704f96"
+    },
+    "zcash_wallet_wasm.d.ts": {
+      "bytes": 49662,
+      "sha256": "ea4a76ce99623c158b5961e3972a1548b40fdda3cd81bca16f523f82dcf42abd"
+    },
+    "zcash_wallet_wasm.js": {
+      "bytes": 152645,
+      "sha256": "de6f3658d0d399a7232984966192dea408937f1a372d284d5bd09ce3b0492340"
+    },
+    "zcash_wallet_wasm_bg.wasm": {
+      "bytes": 66556772,
+      "sha256": "86551e618d57814202d1d94330022c43738959186fc2c2a82fcd7ce9290bcfc9"
+    },
+    "zcash_wallet_wasm_bg.wasm.d.ts": {
+      "bytes": 15654,
+      "sha256": "ce1087b03ba59e2e2a79a5817f24e4bf857bc99b08d39c88fd8ea0e38b70a0d2"
+    }
+  }
+}

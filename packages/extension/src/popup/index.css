@@ -146,9 +146,10 @@ body {
   color: var(--color-foreground);
   /* Chrome Extension popup fixed dimensions */
   width: 375px;
-  height: 600px;
+  height: 100dvh;
+  min-height: 600px;
+  max-height: 632px;
   overflow: hidden;
-  overflow-y: auto;
 }
 
 button {
@@ -157,38 +158,12 @@ button {
 
 #root {
   width: 375px;
-  height: 600px;
+  height: 100dvh;
+  min-height: 600px;
+  max-height: 632px;
   display: flex;
   align-items: center;
   justify-content: center;
-}
-
-.app-layout {
-  width: 100%;
-  height: 100%;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  background-color: var(--color-background);
-}
-
-.app-route-content {
-  flex: 1;
-  min-height: 0;
-  overflow: hidden;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.secret-phrase-backup-banner {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  flex-shrink: 0;
-  padding: 9px 12px;
-  border-bottom: 1px solid color-mix(in srgb, var(--color-warning) 25%, transparent);
-  background: color-mix(in srgb, var(--color-warning) 12%, var(--color-background));
 }
 
 html[data-surface='side-panel'],
@@ -196,6 +171,8 @@ html[data-surface='side-panel'] body,
 html[data-surface='side-panel'] #root {
   width: 100%;
   height: 100%;
+  min-height: 100%;
+  max-height: none;
 }
 
 .page-container {
@@ -214,6 +191,8 @@ html[data-surface='side-panel'] #root {
   #root {
     width: 100vw;
     height: 100vh;
+    min-height: 100vh;
+    max-height: none;
   }
 
   .page-container {
@@ -268,21 +247,40 @@ html[data-surface='side-panel'] #root {
   flex-shrink: 0;
 }
 
-::-webkit-scrollbar {
-  width: 4px;
+* {
+  scrollbar-color: transparent transparent;
+  scrollbar-width: thin;
 }
 
-::-webkit-scrollbar-track {
+*:hover {
+  scrollbar-color: rgba(255, 255, 255, 0.22) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
   background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.2);
-  border-radius: 2px;
+  background: transparent;
+  border-radius: 9999px;
 }
 
-::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.3);
+*:hover::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+*:hover::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.32);
+}
+
+[data-radix-popper-content-wrapper]:has([data-slot='tooltip-content']) {
+  pointer-events: none !important;
 }
 
 /* Custom Tabs with short underline */

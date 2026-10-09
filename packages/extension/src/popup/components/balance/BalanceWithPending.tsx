@@ -6,7 +6,7 @@ import { Tooltip } from '../ui/tooltip'
 import { cn } from '@/lib/utils'
 
 const CONFIRMING_TOOLTIP =
-  'Included in your balance but not currently spendable. Funds unlock after three mined blocks while Activity continues confirming.'
+  'Included in total balance but not yet spendable. Wallet-created funds require 3 confirmations; externally received funds require 10.'
 
 interface BalanceWithPendingProps {
   amount: string
@@ -31,7 +31,7 @@ export function BalanceWithPending({
         {formatNumber(amount, { rm: Big.roundDown })} ZEC
       </p>
       {showPending && (
-        <div className="flex items-center gap-1 text-xs text-warning/90">
+        <div className="flex items-center gap-1 text-xs text-muted">
           <span>{formatNumber(pending!, { rm: Big.roundDown })} ZEC unspendable</span>
           <Tooltip content={CONFIRMING_TOOLTIP} className="max-w-[240px]">
             <span className="inline-flex cursor-default">

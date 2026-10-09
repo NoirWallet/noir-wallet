@@ -9,13 +9,15 @@ import {
   deriveFeeByTier,
   deriveFeeByTierFromEstimate,
   marginalFeeForTier,
-  staticFeeFallbackZats,
-  type FeeTier
-} from '@/config/fee'
+  staticFeeFallbackZats
+} from '@/core/zcash/fee-policy'
+import type { FeeTier } from '@/config/fee'
 import { formatNumber, formatSortAddress } from '@/lib/format'
 import type { Transaction } from '@/types/wallet'
 import { resolveSpeedUpAmount } from '@/lib/transaction-replacement'
 import { safeBig } from '@/lib/big'
+import { useAccountDataStore } from '@/store/account-data-store'
+import { resolveZcashTransferAvailability } from '@/popup/services/transfer-availability'
 
 interface SpeedUpConfirmSheetProps {
   open: boolean
@@ -45,10 +47,19 @@ export function SpeedUpConfirmSheet({
     to: tx?.to,
     memo: tx?.memo,
     feeTier: tier,
-    fundingSource: tx?.fromType,
     enabled: open && !!tx
   })
-  const retryAmount = resolveSpeedUpAmount(tx?.amount ?? '0', maxTransfer.maxAmount)
+  useEffect(() => {
+    if (open && tx?.to) void maxTransfer.request()
+  }, [open, tx?.id, tx?.to, tier])
+  const available = useAccountDataStore(state => state.getCurrentBalance()?.available ?? '0')
+  const spendable = resolveZcashTransferAvailability({
+    availableBalance: available,
+    selectedFeeZats: staticFeeFallbackZats(tier),
+    standardFeeZats: staticFeeFallbackZats('standard'),
+    maximumAmount: maxTransfer.maxAmount
+  }).amount
+  const retryAmount = resolveSpeedUpAmount(tx?.amount ?? '0', spendable)
   const amountAdjusted = !!tx && retryAmount !== tx.amount
   const usesMaxTransfer = !!maxTransfer.maxAmount && safeBig(retryAmount).eq(maxTransfer.maxAmount)
 
@@ -57,7 +68,6 @@ export function SpeedUpConfirmSheet({
     to: tx?.to,
     amount: retryAmount,
     memo: tx?.memo,
-    fundingSource: tx?.fromType,
     enabled: open && !!tx && !maxTransfer.loading && !maxTransfer.error && !usesMaxTransfer
   })
   const feeByTier = usesMaxTransfer
@@ -70,7 +80,7 @@ export function SpeedUpConfirmSheet({
   const selectedFeeZats = feeByTier[tier] ?? staticFeeFallbackZats(tier)
   const selectedFee = safeBig(selectedFeeZats).div(1e8).toFixed()
   const loading = maxTransfer.loading || (!usesMaxTransfer && estimate.loading)
-  const unavailable = maxTransfer.error || !maxTransfer.maxAmount
+  const unavailable = safeBig(spendable).lte(0)
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -84,12 +94,12 @@ export function SpeedUpConfirmSheet({
 
         <div className="flex flex-col items-center pb-4">
           <div className="mb-3">
-            <TokenIcon symbol="ZEC" size="xl" />
+            <TokenIcon symbol="ZEC" nativeChain="zcash" size="xl" />
           </div>
           <p className="text-2xl font-bold">{formatNumber(retryAmount)} ZEC</p>
           {tx?.to && <p className="text-sm text-muted mt-0.5">To {formatSortAddress(tx.to)}</p>}
           {amountAdjusted && (
-            <p className="text-xs text-warning mt-2 px-8 text-center">
+            <p className="text-xs text-muted mt-2 px-8 text-center">
               Amount reduced from {formatNumber(tx.amount)} ZEC to cover the higher network fee.
             </p>
           )}
@@ -105,11 +115,6 @@ export function SpeedUpConfirmSheet({
             feeByTier={feeByTier}
             loading={loading}
           />
-          {maxTransfer.error && (
-            <p className="text-xs text-destructive mt-3 text-center">
-              Unable to estimate the spendable amount. Please wait for sync and try again.
-            </p>
-          )}
         </div>
 
         <div className="p-5 flex gap-3">

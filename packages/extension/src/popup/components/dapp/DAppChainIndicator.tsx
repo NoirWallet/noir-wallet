@@ -1,5 +1,3 @@
-import { ChainIcon } from '../common/ChainIcon'
-
 interface DAppChainIndicatorProps {
   connectedDApp?: { name: string; icon: string } | null
   onClick?: () => void
@@ -8,25 +6,24 @@ interface DAppChainIndicatorProps {
 export function DAppChainIndicator({ connectedDApp, onClick }: DAppChainIndicatorProps) {
   return (
     <button
+      type="button"
+      aria-label="Manage connected dApps"
       onClick={onClick}
-      className="relative flex items-center justify-center w-8 h-8 cursor-pointer hover:opacity-80 transition-opacity"
+      className="relative flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-lg bg-card/60 text-foreground/70 transition-colors hover:bg-accent hover:text-foreground"
     >
       {connectedDApp ? (
-        <div className="w-full h-full rounded-full bg-card flex items-center justify-center relative">
-          <img
-            src={connectedDApp.icon}
-            alt={connectedDApp.name}
-            className="w-5 h-5 rounded-full"
-            crossOrigin="anonymous"
-          />
-        </div>
+        <img
+          src={connectedDApp.icon || 'icons/icon128.png'}
+          alt={connectedDApp.name}
+          className="size-[18px] rounded-md"
+          crossOrigin="anonymous"
+          onError={event => {
+            event.currentTarget.src = 'icons/icon128.png'
+          }}
+        />
       ) : (
-        <div className="w-full h-full rounded-full bg-muted/20 flex items-center justify-center relative">
-          <img src="icons/icon128.png" alt="Noir Wallet" className="w-6 h-6 rounded-full" />
-        </div>
+        <img src="icons/icon128.png" alt="Noir Wallet" className="size-[18px] rounded-md" />
       )}
-
-      <ChainIcon chain="zcash" className="absolute right-0 bottom-0 w-3 h-3" />
     </button>
   )
 }

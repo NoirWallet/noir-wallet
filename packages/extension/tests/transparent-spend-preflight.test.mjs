@@ -1,50 +1,38 @@
-import assert from 'node:assert/strict'
-import { test, describe } from 'node:test'
-import { prepareTransparentSpend } from '../src/core/wallet/transparent-spend-preflight.ts'
+import { expect, test } from '@playwright/test'
+import { mapWasmAccountBalanceToZcashBalance } from '../src/core/wallet/balance-summary.ts'
+import {
+  prepareTransparentSpend,
+  TRANSPARENT_FUNDS_NOT_READY_MESSAGE,
+  usesPendingTransparentFunds
+} from '../src/core/wallet/transparent-spend-preflight.ts'
 
-function balance({ transparent, confirmed, pending }) {
-  return {
-    transparent,
-    shielded: '0',
-    total: transparent,
-    available: confirmed,
-    spendable: confirmed,
-    shieldable: confirmed,
-    shieldedPools: { sapling: '0', orchard: '0', ironwood: '0' },
-    confirmed: { shielded: '0', transparent: confirmed },
-    pending: { shielded: '0', transparent: pending, total: pending }
+const balance = mapWasmAccountBalanceToZcashBalance({
+  unshielded_balance: 3_000_000,
+  unshielded_pending_balance: 2_000_000,
+  unshielded_total_balance: 5_000_000
+})
+
+test('transparent preflight distinguishes confirmed, pending, and insufficient amounts', () => {
+  expect(usesPendingTransparentFunds('0.03', balance)).toBe(false)
+  expect(usesPendingTransparentFunds('0.04', balance)).toBe(true)
+  expect(usesPendingTransparentFunds('0.06', balance)).toBe(false)
+})
+
+test('transparent preflight refreshes UTXOs before checking the current balance', async () => {
+  const calls = []
+  const core = {
+    async syncSessionSetup() {
+      calls.push('refresh')
+    },
+    async getBalance() {
+      calls.push('balance')
+      return balance
+    }
   }
-}
 
-describe('transparent spend preflight', () => {
-  test('refreshes transparent UTXOs before accepting a spend', async () => {
-    const calls = []
-    const freshBalance = balance({ transparent: '1', confirmed: '1', pending: '0' })
-    const result = await prepareTransparentSpend(
-      {
-        syncSessionSetup: async () => calls.push('refresh'),
-        getBalance: async () => {
-          calls.push('balance')
-          return freshBalance
-        }
-      },
-      '0.5'
-    )
-
-    assert.deepStrictEqual(calls, ['refresh', 'balance'])
-    assert.strictEqual(result, freshBalance)
-  })
-
-  test('lets WASM selection decide whether refreshed pending funds are spendable', async () => {
-    const freshBalance = balance({ transparent: '1', confirmed: '0.4', pending: '0.6' })
-    const result = await prepareTransparentSpend(
-      {
-        syncSessionSetup: async () => {},
-        getBalance: async () => freshBalance
-      },
-      '0.5'
-    )
-
-    assert.strictEqual(result, freshBalance)
-  })
+  await expect(prepareTransparentSpend(core, '0.04')).rejects.toThrow(
+    TRANSPARENT_FUNDS_NOT_READY_MESSAGE
+  )
+  expect(calls).toEqual(['refresh', 'balance'])
+  await expect(prepareTransparentSpend(core, '0.03')).resolves.toEqual(balance)
 })

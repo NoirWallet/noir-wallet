@@ -1,0 +1,239 @@
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { Icon } from '@iconify/react'
+import { Buffer } from 'buffer'
+import type { UR } from '@/lib/keystone'
+import { parseKeystoneEthereumSignature } from '@/lib/keystone'
+import { parseTransactionId, type TransactionId } from '@/core/transactions/domain'
+import {
+  evmWalletClient,
+  type EvmExternalSigningRequest,
+  type EvmTransferSubmission
+} from '@/popup/services/evm-wallet-client'
+import { Button } from '@/popup/components/ui/button'
+import { PageHeader } from '@/popup/components/common/PageHeader'
+import { EthereumSignRequestAnimatedQR } from '@/popup/components/hardware/AnimatedQR'
+import { QRScanner } from '@/popup/components/hardware/QRScanner'
+import { CenteredNotice } from '@/popup/components/hardware/CenteredNotice'
+import { useLocation } from '@/popup/provider/Router'
+import { DEFAULT_NETWORK } from '@/lib/runtime-network'
+import { resolveEvmNetworkCatalog } from '@/core/chains/evm-runtime-config'
+import { getActiveChainEndpointSettings } from '@/core/chains/chain-endpoint-settings'
+import { ListSkeleton, Skeleton } from '@/popup/components/ui/skeleton'
+
+type Step = 'loading' | 'show-qr' | 'scan' | 'broadcasting' | 'success' | 'failed' | 'invalid'
+
+function readTransactionId(value: string | null): TransactionId | null {
+  if (!value) return null
+  try {
+    return parseTransactionId(value)
+  } catch {
+    return null
+  }
+}
+
+export function KeystoneEvmSignPage() {
+  const location = useLocation()
+  const transactionId = readTransactionId(new URLSearchParams(location.search).get('tx'))
+  const [step, setStep] = useState<Step>('loading')
+  const [request, setRequest] = useState<EvmExternalSigningRequest | null>(null)
+  const [submission, setSubmission] = useState<EvmTransferSubmission | null>(null)
+  const [scanError, setScanError] = useState<string | null>(null)
+  const [scannerKey, setScannerKey] = useState(0)
+  const started = useRef(false)
+  const terminal = useRef(false)
+  const network = request
+    ? resolveEvmNetworkCatalog(DEFAULT_NETWORK, getActiveChainEndpointSettings()).find(
+        candidate => candidate.chainId === request.chainId
+      )
+    : undefined
+  const networkName = network?.displayName ?? 'EVM network'
+
+  useEffect(() => {
+    if (started.current) return
+    started.current = true
+    if (!transactionId) {
+      setStep('invalid')
+      return
+    }
+    void evmWalletClient
+      .getExternalSigningRequest(transactionId)
+      .then(value => {
+        if (!value || value.expiresAt <= Date.now()) {
+          setStep('invalid')
+          return
+        }
+        setRequest(value)
+        setStep('show-qr')
+      })
+      .catch(() => setStep('invalid'))
+  }, [transactionId])
+
+  const handleScan = useCallback(
+    async (ur: UR) => {
+      if (!transactionId || !request) return
+      let signatureCborBase64: string
+      try {
+        parseKeystoneEthereumSignature(ur)
+        signatureCborBase64 = Buffer.from(ur.cbor).toString('base64')
+      } catch {
+        setScanError('This is not a valid EVM signature from Keystone.')
+        setScannerKey(value => value + 1)
+        return
+      }
+      setScanError(null)
+      setStep('broadcasting')
+      try {
+        const value = await evmWalletClient.submitExternalSignature(
+          transactionId,
+          request.payloadFingerprint,
+          signatureCborBase64
+        )
+        setSubmission(value)
+        terminal.current = true
+        setStep('success')
+      } catch {
+        setStep('failed')
+      }
+    },
+    [request, transactionId]
+  )
+
+  const close = async () => {
+    if (transactionId && !terminal.current) {
+      await evmWalletClient.rejectTransfer(transactionId).catch(() => {})
+    }
+    terminal.current = true
+    window.close()
+  }
+
+  return (
+    <div className="page-container page-container--tab">
+      <PageHeader title="Sign with Keystone" />
+
+      {step === 'loading' && (
+        <div
+          role="status"
+          aria-label="Loading EVM signing request"
+          className="page-content space-y-5"
+        >
+          <Skeleton className="h-24 rounded-xl" />
+          <div className="flex justify-center">
+            <Skeleton className="size-60 rounded-2xl" />
+          </div>
+          <ListSkeleton rows={2} />
+        </div>
+      )}
+
+      {step === 'invalid' && (
+        <CenteredNotice
+          icon="lucide:alert-triangle"
+          iconClass="text-warning"
+          title="Request unavailable"
+          description="This EVM signing request expired, was cancelled, or belongs to another Wallet. Start a new send from Noir Wallet."
+          actionText="Close"
+          onAction={() => void close()}
+        />
+      )}
+
+      {step === 'show-qr' && request && (
+        <>
+          <div className="page-content flex flex-col items-center">
+            <div className="mb-5 w-full rounded-xl border border-border/60 bg-card/60 p-4">
+              <div className="flex items-start gap-3">
+                <div className="rounded-full bg-primary/10 p-2 text-primary">
+                  <Icon icon="lucide:shield-check" width={18} height={18} />
+                </div>
+                <div>
+                  <p className="text-sm font-medium">Approved in Noir Wallet</p>
+                  <p className="mt-1 text-xs font-medium text-foreground">{networkName}</p>
+                  <p className="mt-1 text-xs leading-5 text-muted">
+                    Scan this request with Keystone. Verify the recipient, amount, network, and fee
+                    again on the device before signing.
+                  </p>
+                </div>
+              </div>
+            </div>
+            <div className="rounded-2xl bg-white p-4">
+              <EthereumSignRequestAnimatedQR
+                cborBytes={new Uint8Array(Buffer.from(request.request.value, 'base64'))}
+                size={240}
+              />
+            </div>
+          </div>
+          <div className="page-footer space-y-3">
+            <Button className="h-[45px] w-full" onClick={() => setStep('scan')}>
+              <Icon icon="lucide:camera" width={16} height={16} className="mr-2" />
+              Scan Signature
+            </Button>
+            <Button variant="outline" className="h-[45px] w-full" onClick={() => void close()}>
+              Close
+            </Button>
+          </div>
+        </>
+      )}
+
+      {step === 'scan' && (
+        <>
+          <div className="page-content">
+            <p className="mb-4 text-center text-sm text-muted">
+              Scan the signed <span className="font-mono">eth-signature</span> QR shown by Keystone.
+            </p>
+            <QRScanner key={scannerKey} onScan={handleScan} />
+            {scanError && <p className="mt-3 text-center text-xs text-danger">{scanError}</p>}
+          </div>
+          <div className="page-footer">
+            <Button
+              variant="outline"
+              className="h-[45px] w-full"
+              onClick={() => setStep('show-qr')}
+            >
+              Back to QR Code
+            </Button>
+          </div>
+        </>
+      )}
+
+      {step === 'broadcasting' && (
+        <div className="page-content flex flex-col items-center justify-center">
+          <Icon
+            icon="lucide:loader-2"
+            width={32}
+            height={32}
+            className="mb-4 animate-spin text-primary"
+          />
+          <p className="mb-1 text-sm font-medium">Verifying signed transaction</p>
+          <p className="max-w-[300px] text-center text-xs text-muted">
+            Noir Wallet is recovering the signer and checking every reviewed transaction field
+            before broadcast.
+          </p>
+        </div>
+      )}
+
+      {step === 'success' && submission && (
+        <CenteredNotice
+          icon={submission.status === 'broadcast' ? 'lucide:check-circle-2' : 'lucide:clock-3'}
+          iconClass="text-primary"
+          title={submission.status === 'broadcast' ? 'Transaction sent' : 'Transaction signed'}
+          description={
+            submission.status === 'broadcast'
+              ? `The signed transaction was broadcast on ${networkName} and is now awaiting confirmation.`
+              : 'The signed transaction is saved. Noir Wallet will retry broadcast when the network is available.'
+          }
+          actionText="Done"
+          onAction={() => void close()}
+        />
+      )}
+
+      {step === 'failed' && (
+        <CenteredNotice
+          icon="lucide:x-circle"
+          iconClass="text-danger"
+          title="Signature rejected"
+          description="The signature did not match the approved request or active Keystone Account. Start a new send."
+          actionText="Close"
+          onAction={() => void close()}
+        />
+      )}
+    </div>
+  )
+}

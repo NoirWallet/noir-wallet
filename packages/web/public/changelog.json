@@ -1,35 +1,16 @@
 {
   "schemaVersion": 1,
   "releases": {
-    "1.0.38": {
+    "2.0.0": {
       "changes": [
-        "Verify recovery phrase backups, with reminders for existing wallets and backup checks before removing a wallet.",
-        "Fixed recovery phrase handling during wallet creation and import, and made backup prompts identify the wallet.",
-        "Fixed unlock failures after duplicate wallet removal and prevented deleted wallets from reappearing.",
-        "Preserved hardware wallet names during import and credentials when setup cannot finish.",
-        "Recovered missing confirmed Zcash transactions in Activity and corrected stale transaction statuses.",
-        "Added mainnet compact-block CDN support and another Singapore RPC endpoint.",
-        "Fixed sync errors with RPC servers that return an empty successful response."
-      ]
-    },
-    "1.0.37": {
-      "changes": [
-        "Import Ledger accounts and sign over USB or Bluetooth with configurable account indexes.",
-        "View, rotate, and reuse cached shielded receiving addresses from Receive and Addresses.",
-        "Choose an exact wallet birthday date for faster, more precise restores and rescans.",
-        "Pending funds stay separate from Available and Max while eligible manual transfers remain usable.",
-        "Send warns about CEX shielded-deposit support; Swap verifies external-chain token and network details.",
-        "Cross-chain progress now refreshes reliably after reopening Swap or changing accounts.",
-        "Fixed explicit sends, TEX Max availability, and unnecessary full wallet rescans.",
-        "Improved automatic RPC selection, service error messages, and privacy-safe diagnostic logs."
-      ]
-    },
-    "1.0.36": {
-      "changes": [
-        "See wallet updates and promotions directly from the Home screen.",
-        "New installations now open Noir Wallet in Chrome's side panel by default.",
-        "Open Noir Wallet's GitHub, X, and Telegram links from Settings or About.",
-        "Normal sync now recovers transparent change created by dApp transactions."
+        "Use Zcash, Bitcoin, Ethereum, Solana, NEAR, and supported EVM networks in one multichain Wallet.",
+        "Create or import 12-word and 24-word recovery phrases for every supported chain.",
+        "Send, receive, sign, and track activity across Zcash, Bitcoin, EVM, Solana, and NEAR.",
+        "Switch the whole Wallet between isolated Mainnet and Testnet modes.",
+        "Import and export encrypted EVM and Bitcoin private-key Wallets.",
+        "Manage discovered tokens and view unified balances, prices, activity, Swap, and Lending.",
+        "Improved Bitcoin balances, dApp network switching, RPC reuse, and V1 wallet migration reliability.",
+        "Improved live Swap quotes, Bitcoin address selection, and Zcash account recovery setup."
       ]
     },
     "1.0.35": {

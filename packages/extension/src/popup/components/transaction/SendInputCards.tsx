@@ -1,27 +1,11 @@
 import { Icon } from '@iconify/react'
 import type { ReactNode } from 'react'
-import { safeBig } from '@/lib/big'
 import Big from '@/lib/big'
-import { formatNumber, formatPrice } from '@/lib/format'
+import { formatNumber } from '@/lib/format'
+import { formatSendFiatValue } from './send-input-model'
 import { cn } from '@/lib/utils'
 import { TokenIcon } from '../tokens/TokenIcon'
 import { Input } from '../ui/input'
-
-function fiatValue(amount: string, priceUsd: string | number | null | undefined): string | null {
-  const normalizedAmount = amount.replace(/,/g, '') || '0'
-  const normalizedPrice = String(priceUsd ?? '')
-  const decimalPattern = /^(?:\d+(?:\.\d*)?|\.\d+)$/
-  if (
-    !decimalPattern.test(normalizedAmount) ||
-    !decimalPattern.test(normalizedPrice) ||
-    safeBig(normalizedPrice).lte(0)
-  ) {
-    return null
-  }
-  return formatPrice(safeBig(normalizedAmount).times(normalizedPrice).toFixed(), {
-    showSign: true
-  })
-}
 
 export function SendRecipientInputCard({
   id,
@@ -76,7 +60,7 @@ export function SendAmountInputCard({
   value,
   onChange,
   available,
-  pending,
+  availableLabel = 'Available',
   symbol,
   priceUsd,
   onMax,
@@ -85,15 +69,13 @@ export function SendAmountInputCard({
   maxSelected = false,
   invalid = false,
   title,
-  testId,
-  headerAction,
-  footerAction
+  testId
 }: {
   readonly ariaLabel: string
   readonly value: string
   readonly onChange: (value: string) => void
   readonly available: string
-  readonly pending?: string
+  readonly availableLabel?: 'Available' | 'Balance'
   readonly symbol: string
   readonly priceUsd?: string | number | null
   readonly onMax?: () => void
@@ -103,24 +85,18 @@ export function SendAmountInputCard({
   readonly invalid?: boolean
   readonly title?: string
   readonly testId?: string
-  readonly headerAction?: ReactNode
-  readonly footerAction?: ReactNode
 }) {
-  const amountFiat = fiatValue(value, priceUsd)
-  const availableFiat = fiatValue(available, priceUsd)
-  const hasPending = pending != null && safeBig(pending).gt(0)
+  const amountFiat = formatSendFiatValue(value, priceUsd)
+  const availableFiat = formatSendFiatValue(available, priceUsd)
 
   return (
     <div className="space-y-1.5">
-      <div className="flex min-h-7 items-center justify-between gap-3 px-1">
-        <span className="text-xs font-medium text-foreground/80">Amount</span>
-        {headerAction}
-      </div>
+      <span className="block px-1 text-xs font-medium text-foreground/80">Amount</span>
       <div
         data-testid={testId ?? 'send-amount-card'}
         title={title}
         className={cn(
-          'rounded-2xl border px-4 py-3 transition-colors focus-within:border-white/60',
+          'min-h-[92px] rounded-2xl border px-4 py-3 transition-colors focus-within:border-white/60',
           invalid ? 'border-warning' : 'border-white/35'
         )}
       >
@@ -153,22 +129,15 @@ export function SendAmountInputCard({
             </button>
           )}
         </div>
-        <div className="mt-2.5 grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-end gap-3 text-xs leading-4">
-          <span className="flex min-w-0 items-center gap-2 text-muted">
-            <span className="shrink-0">{amountFiat ? `~${amountFiat}` : '-'}</span>
-            {footerAction}
-          </span>
-          <span className="min-w-0 text-right">
-            <span className="block truncate text-muted">
-              Available <strong className="font-semibold text-foreground">{available}</strong>{' '}
-              {symbol}
-              {availableFiat ? ` (${availableFiat})` : ''}
-            </span>
-            {hasPending && (
-              <span className="mt-0.5 block truncate text-[11px] text-warning/80">
-                {formatNumber(pending!, { rm: Big.roundDown })} {symbol} pending
-              </span>
-            )}
+        <div className="mt-3 flex min-w-0 items-center justify-between gap-3 text-xs leading-4">
+          <span className="shrink-0 text-muted">{amountFiat ? `~${amountFiat}` : '—'}</span>
+          <span className="min-w-0 text-right text-muted">
+            {availableLabel}{' '}
+            <strong className="font-semibold text-foreground">
+              {formatNumber(available, { rm: Big.roundDown, useUnit: true, useSubscript: true })}
+            </strong>{' '}
+            {symbol}
+            {availableFiat ? ` (${availableFiat})` : ''}
           </span>
         </div>
       </div>
@@ -176,27 +145,64 @@ export function SendAmountInputCard({
   )
 }
 
-export function SendAssetHeader({ symbol, networkName }: { symbol: string; networkName: string }) {
+export function SendAssetHeader({
+  assetId,
+  symbol,
+  icon,
+  networkName,
+  nativeChain,
+  blockchain
+}: {
+  readonly assetId?: string
+  readonly symbol: string
+  readonly icon?: string
+  readonly networkName: string
+  readonly nativeChain?: 'zcash' | 'bitcoin' | 'solana' | 'near'
+  readonly blockchain?: string
+}) {
   return (
     <div
       data-testid="send-asset-header"
       className="flex flex-col items-center pb-0.5 pt-0.5 text-center"
     >
-      <TokenIcon symbol={symbol} size={48} />
+      <TokenIcon
+        assetId={assetId}
+        symbol={symbol}
+        icon={icon}
+        nativeChain={nativeChain}
+        blockchain={blockchain}
+        size={48}
+      />
       <p className="mt-2 text-base font-semibold leading-5">{symbol}</p>
       <p className="mt-0.5 text-[11px] leading-4 text-muted">{networkName}</p>
     </div>
   )
 }
 
-export function SendNetworkFeeCard({ children }: { readonly children: ReactNode }) {
+export function SendNetworkFeeCard({
+  label = 'Network fee',
+  loading = false,
+  children
+}: {
+  readonly label?: string
+  readonly loading?: boolean
+  readonly children: ReactNode
+}) {
   return (
     <div
       data-testid="send-network-fee"
       className="flex min-h-12 items-center justify-between gap-4 rounded-xl bg-card/45 px-4 py-3"
     >
-      <span className="shrink-0 text-xs text-muted">Network fee</span>
+      <span className="shrink-0 text-xs text-muted">{label}</span>
       <div className="flex min-w-0 items-center gap-1.5 text-right text-xs font-medium">
+        {loading && (
+          <Icon
+            icon="lucide:loader-circle"
+            width={14}
+            height={14}
+            className="shrink-0 animate-spin text-muted"
+          />
+        )}
         {children}
       </div>
     </div>

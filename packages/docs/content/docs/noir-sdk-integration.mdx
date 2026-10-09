@@ -88,9 +88,7 @@ console.log(balance.shielded)
 console.log(balance.accounts)
 ```
 
-`total` includes pending funds. `available` and `spendable` exclude pending funds but do not account
-for destination-specific fees. Use `getMaxTransfer()` after the recipient, memo, funding source, and
-fee tier are known; a different fee tier selected during approval can change the final maximum.
+`available` excludes pending funds but does not account for destination-specific fees. Use `getMaxTransfer()` after the recipient, memo, funding source, and fee tier are known; a different fee tier during approval can change the final maximum.
 
 ## Send a transaction
 
@@ -106,9 +104,6 @@ ZEC strings.
   shielded funding when the workflow supports it. Keystone cannot send from transparent funds or
   shield them; Ledger supports both through hardware signing.
 </Callout>
-
-`fundingSource` in `getMaxTransfer()` and `sendTransaction()` requires Noir Wallet extension 1.0.27
-or later. Omit it on older builds to use shielded funding.
 
 ## Next steps
 

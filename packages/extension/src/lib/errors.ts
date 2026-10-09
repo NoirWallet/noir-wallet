@@ -15,6 +15,12 @@ const RPC_ENDPOINT_ERROR_PATTERN =
   /gRPC|grpc|StatusCode::|UNAVAILABLE|transport error|connect error|deadline exceeded|fetch.*failed|network.*error|ERR_NETWORK|net::ERR_|ECONNREFUSED|ENOTFOUND|ECONNRESET|rate.?limit|InvalidContentType|invalid content type|MalformedResponse|malformed response|Failed to resolve chain height from network|HTTP\s+(?:408|425|429|5\d{2})\b/i
 const LOCAL_WALLET_RPC_ERROR_PATTERN =
   /Offscreen RPC|Worker RPC|Worker crashed|Worker not initialized|SYNC_BUSY|STALE_WALLET_RPC|WALLET_DIRTY/i
+const WALLET_LOCKED_ERROR_PATTERN = /Wallet is locked|Wallet not unlocked|Wallet locked/i
+
+export function isWalletLockedError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return WALLET_LOCKED_ERROR_PATTERN.test(message)
+}
 
 export function isRpcEndpointError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error)
@@ -31,7 +37,7 @@ const ERROR_MAPPINGS: ErrorMapping[] = [
   },
   {
     pattern: /timeout|timed out|deadline exceeded/i,
-    message: 'Request timed out. The server may be busy — please try again.',
+    message: 'Request timed out.',
     retryable: true
   },
   {
@@ -52,6 +58,34 @@ const ERROR_MAPPINGS: ErrorMapping[] = [
   {
     pattern: /HTTP\s+5\d{2}\b/i,
     message: 'Service is temporarily unavailable. Please try again shortly.',
+    retryable: true
+  },
+  {
+    pattern: /EVM transaction failed simulation/i,
+    message: 'The transaction failed simulation. Check the transaction details and try again.',
+    retryable: false
+  },
+
+  // --- Swap routing ---
+  {
+    pattern: /minimum (?:swap )?amount|amount.*(?:below|less than).*minimum/i,
+    message: 'Amount is below the current minimum for this Swap route.',
+    retryable: false
+  },
+  {
+    pattern: /no liquidity|no (?:swap )?route|route not found|failed to find.*route/i,
+    message: 'No Swap route is available for this asset pair.',
+    retryable: false
+  },
+  {
+    pattern:
+      /token .*not found on chain|token .*not supported by 1click|unsupported (?:destination )?token/i,
+    message: 'This asset is not supported for this Swap route.',
+    retryable: false
+  },
+  {
+    pattern: /1click upstream|swap provider.*unavailable|quote endpoint.*unavailable/i,
+    message: 'The Swap provider is temporarily unavailable. Please try again later.',
     retryable: true
   },
 
@@ -94,6 +128,21 @@ const ERROR_MAPPINGS: ErrorMapping[] = [
 
   // --- Authentication / Account ---
   {
+    pattern: /^Backup words do not match this wallet\./i,
+    message: 'Backup words do not match this wallet. View your secret phrase and try again.',
+    retryable: false
+  },
+  {
+    pattern: /^Unable to verify this wallet backup\./i,
+    message: "Unlock and view this wallet's secret phrase before verifying its backup.",
+    retryable: false
+  },
+  {
+    pattern: /^Wallet changed or (?:was removed|locked)\. Please try again\./i,
+    message: 'Wallet state changed. Please retry the operation.',
+    retryable: true
+  },
+  {
     pattern: /Incorrect password|Current password is incorrect/i,
     message: 'Incorrect password. Please try again.',
     retryable: false
@@ -114,12 +163,12 @@ const ERROR_MAPPINGS: ErrorMapping[] = [
     retryable: false
   },
   {
-    pattern: /Wallet is locked|Wallet not unlocked|Wallet locked/i,
+    pattern: WALLET_LOCKED_ERROR_PATTERN,
     message: 'Wallet is locked. Please unlock and try again.',
     retryable: false
   },
   {
-    pattern: /AccountManager not initialized|Wallet not initialized/i,
+    pattern: /Zcash wallet runtime not initialized|Wallet not initialized/i,
     message: 'Wallet is initializing. Please wait a moment and try again.',
     retryable: true
   },
@@ -166,7 +215,7 @@ const ERROR_MAPPINGS: ErrorMapping[] = [
 
   // --- Transaction ---
   {
-    pattern: /insufficient.*balance|not enough.*fund/i,
+    pattern: /InsufficientFunds|insufficient.*(?:balance|fund)|not enough.*fund/i,
     message: 'Insufficient balance for this transaction.',
     retryable: false
   },
@@ -245,18 +294,6 @@ const ERROR_MAPPINGS: ErrorMapping[] = [
     retryable: false
   },
   {
-    pattern: /LedgerPcztTransparentInputDataError/i,
-    message:
-      'Transparent funds changed or are still syncing. Try again to refresh and rebuild the transaction.',
-    retryable: true
-  },
-  {
-    pattern: /IncorrectDataError|ZcashAppCommandError\/6a80/i,
-    message:
-      'Ledger rejected the transaction data (0x6a80). Rebuild the transaction and try again.',
-    retryable: true
-  },
-  {
     pattern: /Unrecognized QR code|Unexpected QR content/i,
     message: 'Unrecognized QR code format. Please scan a valid Zcash QR code.',
     retryable: false
@@ -310,7 +347,7 @@ export function classifyError(error: unknown): ClassifiedError {
   }
 
   return {
-    userMessage: raw || 'Unknown error',
+    userMessage: 'An unexpected error occurred. Please try again.',
     technicalMessage: raw,
     retryable: true
   }

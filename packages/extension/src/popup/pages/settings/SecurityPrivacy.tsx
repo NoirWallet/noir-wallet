@@ -64,32 +64,30 @@ export function SecurityPrivacy() {
 
         <div>
           <p className="text-xs text-muted mb-2 px-1">Privacy</p>
-          <div>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={analyticsEnabled}
-              aria-label="Share Google Analytics"
-              disabled={!isLoaded || isSaving}
-              onClick={handleAnalyticsToggle}
-              className="w-full p-4 bg-card rounded-xl border border-white/10 hover:bg-white/5 cursor-pointer transition-colors disabled:cursor-wait disabled:opacity-70"
-            >
-              <div className="flex items-start justify-between gap-4 text-left">
-                <div>
-                  <div className="text-sm">Share Google Analytics</div>
-                  <div className="text-xs text-muted mt-1 leading-relaxed">
-                    Share anonymous feature usage with Google Analytics. Noir Wallet service metrics
-                    remain active and may include transaction amounts and estimated USD values for
-                    aggregate volume reporting. They never include wallet addresses, transaction
-                    hashes, dApp domains, recovery phrases, passwords, or private keys.
-                  </div>
-                </div>
-                <div className="pt-0.5">
-                  <Switch checked={analyticsEnabled} />
+          <button
+            type="button"
+            role="switch"
+            aria-checked={analyticsEnabled}
+            aria-label="Share Google Analytics"
+            disabled={!isLoaded || isSaving}
+            onClick={handleAnalyticsToggle}
+            className="w-full p-4 bg-card rounded-xl border border-white/10 hover:bg-white/5 cursor-pointer transition-colors disabled:cursor-wait disabled:opacity-70"
+          >
+            <div className="flex items-start justify-between gap-4 text-left">
+              <div>
+                <div className="text-sm">Share Google Analytics</div>
+                <div className="text-xs text-muted mt-1 leading-relaxed">
+                  Share anonymous feature usage with Google Analytics. Noir Wallet service metrics
+                  remain active and may include transaction amounts and estimated USD values for
+                  aggregate volume reporting. They never include wallet addresses, transaction
+                  hashes, dApp domains, recovery phrases, passwords, or private keys.
                 </div>
               </div>
-            </button>
-          </div>
+              <div className="pt-0.5">
+                <Switch checked={analyticsEnabled} />
+              </div>
+            </div>
+          </button>
         </div>
       </div>
     </div>
