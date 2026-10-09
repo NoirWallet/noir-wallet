@@ -17,8 +17,9 @@ packages/extension/dist-dev/
 
 # Environment files
 .env
-.env.local
-.env.production
+.env.*
+!.env.example
+!.env.test-wallets.example
 
 # Local test-wallet registry and secret fixtures
 packages/extension/.env.test-wallets.local
