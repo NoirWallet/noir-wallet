@@ -308,10 +308,10 @@ The complete operational runbook is in `docs/release-workflow.md`.
 
 - `packages/extension/package.json` is the extension version source of truth.
 - `CHANGELOG.md` is the source of truth for production GitHub Release notes. Before tagging a release, add exactly one non-empty `## [version]` section matching the extension version.
-- Pushing `main` builds mainnet and testnet preview artifacts labeled `v{version}-beta.{YYYYMMDDHHMM}.{sha}`. Public, non-fork repositories also publish these as prereleases.
+- Pushing `main` builds mainnet and testnet preview artifacts labeled `v{version}-beta.{YYYYMMDDHHMM}.{sha}`. The canonical `NoirWallet/noir-wallet` repository and other public, non-fork repositories also publish these as prereleases.
 - Production releases are promoted from an existing `main` commit by pushing the matching `v{version}` tag. The workflow rejects tags that do not match `packages/extension/package.json`, are not contained in `main`, or lack valid developer and user-facing release notes.
 - Preview builds and production tags run the same deterministic core tests before publishing artifacts. Browser verification is a separate local development activity, not an automated release gate.
-- Wallet Releases use the source repository's tags and built-in `GITHUB_TOKEN`, with write permission limited to publication. Private repositories and forks retain Actions artifacts only. The SDK is maintained in this workspace; its versioning and npm publication remain independent of wallet releases.
+- Wallet Releases use the source repository's tags and built-in `GITHUB_TOKEN`, with write permission limited to publication. `NoirWallet/noir-wallet` publishes even while private; forks and other private repositories retain Actions artifacts only. The SDK is maintained in this workspace; its versioning and npm publication remain independent of wallet releases.
 - Chrome Web Store submission is currently manual; the workflow does not contain store credentials or an automated submission step.
 
 ### User-Facing Release Notes
