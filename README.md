@@ -8,7 +8,7 @@ A privacy-focused Zcash and multichain Chrome wallet with a dApp SDK.
 noir-wallet/
 ├── packages/
 │   ├── extension/            # Chrome Extension wallet
-│   ├── sdk/                  # dApp SDK (Git submodule)
+│   ├── sdk/                  # dApp SDK workspace package
 │   │   └── example/          # SDK integration example app
 │   ├── web/                  # Website
 │   ├── docs/                 # User and developer documentation site
@@ -40,11 +40,7 @@ The documentation site's source is `packages/docs/content/docs/`. The top-level 
 
 ## Quick Start
 
-Run commands from the repository root with Node.js 22 and the pnpm version in `package.json`. Initialize the SDK Git submodule before installing dependencies:
-
-```bash
-git submodule update --init packages/sdk
-```
+Run commands from the repository root with Node.js 22 and the pnpm version in `package.json`.
 
 ### Install Dependencies
 
@@ -107,11 +103,14 @@ Build the SDK before checking the whole workspace so its example can resolve the
 pnpm --filter @noir-wallet/sdk build
 pnpm type-check
 pnpm test
+pnpm --filter @noir-wallet/sdk test
+pnpm --filter @noir-wallet/example type-check
+pnpm --filter @noir-wallet/example build
 pnpm --filter @noir-wallet/extension test:logic
 pnpm --filter @noir-wallet/extension test:extension
 ```
 
-`pnpm test` runs the deterministic native core suite used by CI. Add committed core cases as flat `packages/extension/tests/*.core.test.mjs` files; ordinary `*.test.mjs` files remain in the local Playwright logic suite and do not enter CI. The Playwright commands are retained for local logic and real MV3 checks. See [Automated Testing](./AGENTS.md#automated-testing) for the test layout and local build requirements.
+`pnpm test` runs the deterministic wallet core suite used by CI. The SDK's native tests run separately with `pnpm --filter @noir-wallet/sdk test`. Add committed wallet core cases as flat `packages/extension/tests/*.core.test.mjs` files; ordinary `*.test.mjs` files remain in the local Playwright logic suite and do not enter CI. The Playwright commands are retained for local logic and real MV3 checks. See [Automated Testing](./AGENTS.md#automated-testing) for the test layout and local build requirements.
 
 ### Load Extension in Chrome
 
@@ -123,7 +122,7 @@ pnpm --filter @noir-wallet/extension test:extension
 
 ## Example Application
 
-The SDK submodule includes an example application:
+The SDK workspace package includes an example application:
 
 ```bash
 # Start example app

@@ -1,6 +1,6 @@
 # Noir Wallet CI/CD and Release Workflow
 
-This runbook describes the current V2 extension release process. The [Build Extension Workflow](../.github/workflows/build-extension.yml) defines the actual rules. The documentation site's [Documentation Workflow](../.github/workflows/docs.yml) validates documentation only; it does not deploy it. Maintainers submit to the Chrome Web Store manually.
+This runbook describes the current V2 extension release process. The [Build Extension Workflow](../.github/workflows/build-extension.yml) defines the actual rules. The [SDK Workflow](../.github/workflows/sdk.yml) validates the workspace SDK and example on affected pull requests and branch pushes without publishing them. The documentation site's [Documentation Workflow](../.github/workflows/docs.yml) validates documentation only; it does not deploy it. Maintainers submit to the Chrome Web Store manually.
 
 ## Branches and Versions
 
@@ -36,7 +36,7 @@ The public History proxy serves only the existing Ankr History, EVM token discov
 
 The build produces one `noir-wallet-v{tag without the v prefix}.zip`, such as `noir-wallet-v2.0.0.zip` for production. The Workflow uploads the ZIP, `SHA256SUMS`, and Release body as an Actions artifact. A separate `publish` job verifies SHA-256 before creating a Release in the current repository with `GITHUB_TOKEN`; only that job has `contents: write`. Beta is a prerelease and is not marked Latest; production is marked Latest. The Release points to a commit in the wallet repository, does not write to the SDK repository, and does not modify older betas.
 
-Default Workflow permissions are read-only. Only the `publish` job explicitly requests `contents: write`. Checkout and submodule steps use pinned Action SHAs with credential persistence disabled. There is no separate cross-repository publishing token.
+Default Workflow permissions are read-only. Only the `publish` job explicitly requests `contents: write`. Checkout steps use pinned Action SHAs with credential persistence disabled. There is no separate cross-repository publishing token.
 
 ## Routine Previews
 
@@ -74,7 +74,7 @@ Do not move a publicly released tag or reuse a published version number.
 
 ## SDK Example V1/V2 Coexistence
 
-The SDK repository maintains its Example page through its own workflow: `main` serves V1 at the root path and the `/v1/` alias; `v2` serves `/v2/`. Both paths share the same web origin. Before first-connection checks across versions, disconnect the wallet authorization and clear the Example's local state. The wallet extension release Workflow does not deploy or modify the SDK Example.
+The existing public SDK repository continues to host the Example page: `main` serves V1 at the root path and the `/v1/` alias; `v2` serves `/v2/`. Both paths share the same web origin. The example source in this wallet repository is now maintained at `packages/sdk/example/`; its workspace CI builds it but does not deploy it. Before first-connection checks across versions, disconnect the wallet authorization and clear the Example's local state. The wallet extension release Workflow does not deploy or modify the SDK Example.
 
 ## History Proxy Deployment
 

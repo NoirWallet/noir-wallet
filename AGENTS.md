@@ -13,7 +13,7 @@ These rules apply to documentation-only work as well as documentation affected b
 | Project overview and local development, test, and build      | [README.md](./README.md)                                                                                                       |
 | AI work rules, architecture, and development constraints     | `AGENTS.md`; `CLAUDE.md` only directs readers here                                                                             |
 | Published wallet guides and SDK integration/API explanations | Source MDX under [packages/docs/content/docs/](./packages/docs/content/docs/)                                                  |
-| SDK package installation and package-local quick start       | [SDK README](./packages/sdk/README.md) in the independent SDK repository                                                       |
+| SDK package installation and package-local quick start       | [SDK README](./packages/sdk/README.md) in this workspace                                                                       |
 | Module-specific reference material                           | Existing topic documents such as [analytics events](./docs/analytics-events.md) and [error messages](./docs/error-messages.md) |
 | Multichain maintenance reference                             | [Multichain documentation index](./docs/mutil-chain/README.md); runtime registries and capabilities define released behavior   |
 | Task-specific operations and recovery                        | [Release runbook](./docs/release-workflow.md) and existing operational guides under `docs/`                                    |
@@ -130,6 +130,8 @@ Do not create `dist-testnet/`, `e2e-dist-testnet/`, or another extension build r
 ## Automated Testing
 
 Root `pnpm test` runs the extension's deterministic `node:test` core suite through `scripts/run-core-tests.mjs`. The runner discovers flat `tests/*.core.test.mjs` files and uses the package's TypeScript compiler to load source modules. Pull requests and release builds run this suite without a browser, wallet, hardware, or network service.
+
+The SDK and example are workspace packages under `packages/sdk/`. Their dedicated workflow runs SDK type-check and native tests, example type-check and build, and a package dry run. Root `pnpm test` remains the wallet core suite.
 
 The V2 checkout also retains its existing Playwright tools. `test:logic` runs the remaining Node-based Playwright tests; `test:extension`, `test:release:default`, and `test:production-dist` run local browser checks. The last command supplies test-only build values and writes a local `dist/` package that must not be published. These tools are available for focused development verification and are not standard CI or release gates. The older tracked `tests/e2e/` layout has not yet been moved to the ignored `tests/.local/` location; do not add new browser or live tests to the tracked suite.
 
