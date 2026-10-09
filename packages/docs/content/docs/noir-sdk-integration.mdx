@@ -1,0 +1,125 @@
+---
+title: Noir Wallet SDK integration
+description: Install the TypeScript SDK, detect Noir Wallet, request account access, read balances, and send ZEC.
+icon: CodeXml
+---
+
+The SDK is a typed wrapper around the Noir Wallet provider injected into web pages. This guide reflects the current package exports and request types.
+
+## Install the extension
+
+<Tabs items={['Mainnet', 'Testnet']}>
+  <Tab value="Mainnet">
+    Install the production extension from the
+    [official Chrome Web Store](https://chromewebstore.google.com/detail/noir-wallet/mfoghjbpfanobmnoemoepenjjcmfpmdn).
+    Use this build only with real ZEC.
+  </Tab>
+  <Tab value="Testnet">
+    Testnet is distributed through
+    [official GitHub Releases](https://zknoir.com/beta/versions):
+
+    1. Open the release you want to test.
+    2. Download the asset whose filename ends with `-testnet.zip`.
+    3. Unzip the downloaded file.
+    4. Open `chrome://extensions`, enable **Developer mode**, and choose **Load unpacked**.
+    5. Select the extracted extension directory and confirm the installed name is **[Testnet] Noir Wallet**.
+
+  </Tab>
+</Tabs>
+
+<Callout type="warn" title="Use only official testnet packages">
+  Do not install ZIP files shared through messages or third-party mirrors. A mainnet asset does not
+  contain `-testnet` in its filename.
+</Callout>
+
+Mainnet and testnet use different extension IDs and isolated wallet data. `switchNetwork()` is deprecated and always throws; install the appropriate extension build instead.
+
+## Install the SDK
+
+<Tabs items={['pnpm', 'npm', 'yarn']}>
+  <Tab value="pnpm">
+
+```bash
+pnpm add @noir-wallet/sdk
+```
+
+  </Tab>
+  <Tab value="npm">
+
+```bash
+npm install @noir-wallet/sdk
+```
+
+  </Tab>
+  <Tab value="yarn">
+
+```bash
+yarn add @noir-wallet/sdk
+```
+
+  </Tab>
+</Tabs>
+
+## Connect from a user action
+
+Call `getNoirWallet()` in the browser. `wallet.zcash.connect()` opens the wallet authorization flow, so invoke it from a deliberate button click.
+
+<include cwd lang="ts" meta='title="sdk-quick-start.ts"'>
+  ./examples/sdk-quick-start.ts
+</include>
+
+`connect()` returns the primary account's top-level `transparent` and `shielded` addresses. Its `accounts` array contains every account the user authorized for read access.
+
+## Check an existing connection silently
+
+Use `getAccounts()` during application startup. It does not open the wallet and returns `null` when the origin is not connected.
+
+<include cwd lang="ts" meta='title="silent-connection.ts"'>
+  ./examples/silent-connection.ts
+</include>
+
+## Read balances
+
+```ts
+const balance = await wallet.zcash.getBalance()
+
+console.log(balance.available)
+console.log(balance.shielded)
+console.log(balance.accounts)
+```
+
+`total` includes pending funds. `available` and `spendable` exclude pending funds but do not account
+for destination-specific fees. Use `getMaxTransfer()` after the recipient, memo, funding source, and
+fee tier are known; a different fee tier selected during approval can change the final maximum.
+
+## Send a transaction
+
+Call `wallet.zcash.sendTransaction()`. The destination property is `to`, and amounts are decimal
+ZEC strings.
+
+<include cwd lang="ts" meta='title="send-transaction.ts"'>
+  ./examples/send-transaction.ts
+</include>
+
+<Callout type="warn">
+  `fundingSource: "transparent"` exposes and may link the selected transparent UTXOs. Prefer
+  shielded funding when the workflow supports it. Keystone cannot send from transparent funds or
+  shield them; Ledger supports both through hardware signing.
+</Callout>
+
+`fundingSource` in `getMaxTransfer()` and `sendTransaction()` requires Noir Wallet extension 1.0.27
+or later. Omit it on older builds to use shielded funding.
+
+## Next steps
+
+<Cards>
+  <Card title="Provider API" href="/developers/provider-api">
+    Review balances, max transfer, addresses, signatures, shielding, history, and disconnect.
+  </Card>
+  <Card title="Accounts and events" href="/developers/accounts-and-events">
+    Handle authorized account sets and `accountsChanged`.
+  </Card>
+  <Card title="Security" href="/developers/security">
+    Design approvals and validation around the wallet trust boundary.
+  </Card>
+</Cards>

@@ -1,0 +1,27 @@
+{
+  "name": "@noir-wallet/web",
+  "version": "0.1.0",
+  "description": "Noir Wallet website - landing page and beta install guide",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "react": "19.2.3",
+    "react-dom": "19.2.3"
+  },
+  "devDependencies": {
+    "@types/node": "22.19.7",
+    "@types/react": "19.2.9",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "4.7.0",
+    "tailwindcss": "4.1.18",
+    "@tailwindcss/vite": "4.1.18",
+    "typescript": "5.9.3",
+    "vite": "7.3.5"
+  }
+}

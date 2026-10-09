@@ -1,0 +1,344 @@
+import { useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
+import { Icon } from '@iconify/react'
+import { PageHeader } from '../../components/common/PageHeader'
+import { CopyToast, useCopyToClipboard } from '../../components/common/CopyToast'
+import { RenameAccountContent, ResyncWalletContent } from '../../components/account/AccountModals'
+import { RemoveWalletContent } from '../../components/account/RemoveWalletContent'
+import { openModal } from '../../provider/ModalManager'
+import { useNavigate } from '../../provider/Router'
+import { useDialog } from '../../hooks/useDialog'
+import { useWalletStore } from '@/store/wallet-store'
+import { accountManager } from '@/core/wallet/account-manager'
+import { formatAccountName, getAccountDisplayName } from '@/lib/format'
+import { getBirthdayDateFromBlockTimestamp } from '@/lib/zcash-birthday'
+import { isHardwareKeySource } from '@/lib/hardware-capabilities'
+import { classifyError } from '@/lib/errors'
+
+export function AccountDetail() {
+  const { navigate, goBack } = useNavigate()
+  const [searchParams] = useSearchParams()
+  const accountId = searchParams.get('accountId')
+  const walletId = searchParams.get('walletId')
+  const { confirm } = useDialog()
+  const { accountDisplayNames, wallets } = useWalletStore()
+  const { copyToClipboard, showToast } = useCopyToClipboard()
+  const [birthdayDate, setBirthdayDate] = useState<string | null>(null)
+  const [birthdayHeight, setBirthdayHeight] = useState<number | null>(null)
+  const [isRemoving, setIsRemoving] = useState(false)
+
+  const wallet = walletId ? wallets.find(w => w.id === walletId) : null
+  const account = wallet && accountId ? wallet.accounts.find(a => a.id === accountId) : null
+
+  const accountName =
+    walletId && accountId && account
+      ? getAccountDisplayName(walletId, accountId, account.name, accountDisplayNames)
+      : 'Account 1'
+
+  useEffect(() => {
+    let cancelled = false
+    setBirthdayDate(null)
+    setBirthdayHeight(null)
+
+    if (!walletId || !accountId || !account) return
+
+    const load = async () => {
+      let height = account.birthdayHeight || 0
+      let source = height > 0 ? 'stored' : 'none'
+
+      if (height <= 0) {
+        const resolved = await accountManager.resolveBirthdayHeight(walletId, accountId)
+        height = resolved.height
+        source = resolved.source
+      }
+
+      if (cancelled || height <= 0) return
+
+      setBirthdayHeight(height)
+
+      if (source === 'fallback') {
+        setBirthdayDate(null)
+        return
+      }
+
+      try {
+        const timestamp = await accountManager.getBlockTime(height)
+        if (!cancelled) {
+          setBirthdayDate(
+            getBirthdayDateFromBlockTimestamp(timestamp)?.format('MMM D, YYYY') ?? null
+          )
+        }
+      } catch {
+        if (!cancelled) setBirthdayDate(null)
+      }
+    }
+
+    void load()
+
+    return () => {
+      cancelled = true
+    }
+  }, [walletId, accountId, account?.birthdayHeight])
+
+  const handleEditAccountName = async () => {
+    if (!account || !wallet) return
+
+    await openModal({
+      title: 'Edit account name',
+      body: (_resolve, close) => (
+        <RenameAccountContent
+          walletId={wallet.id}
+          accountId={account.id}
+          currentName={accountName}
+          close={close}
+        />
+      )
+    })
+  }
+
+  const isHardwareWallet = isHardwareKeySource(wallet?.keySource)
+
+  const menuItems = [
+    {
+      label: 'Account name',
+      value: formatAccountName(accountName),
+      icon: <Icon icon="lucide:chevron-right" width={16} height={16} />,
+      action: handleEditAccountName
+    },
+    {
+      label: 'Addresses',
+      value: '2 addresses',
+      icon: <Icon icon="lucide:chevron-right" width={16} height={16} />,
+      action: () => navigate(`/addresses-list?accountId=${accountId}&walletId=${walletId}`)
+    },
+    {
+      label: 'Birthday date',
+      isBirthday: true,
+      icon: undefined,
+      action: undefined
+    },
+    // Hardware wallets are watch-only: there is no seed phrase on this device
+    isHardwareWallet
+      ? {
+          label: 'Wallet type',
+          value: `${wallet?.keySource === 'ledger' ? 'Ledger' : 'Keystone'} (hardware)`,
+          icon: undefined,
+          action: undefined
+        }
+      : {
+          label: 'View secret phrase',
+          value: undefined,
+          icon: <Icon icon="lucide:chevron-right" width={16} height={16} />,
+          action: () => navigate(`/view-seed-phrase?accountId=${accountId}&walletId=${walletId}`)
+        }
+  ]
+
+  const { currentWalletId, currentAccountId } = useWalletStore()
+  const isCurrentAccount = walletId === currentWalletId && accountId === currentAccountId
+
+  const handleResyncWallet = async () => {
+    if (!account || !wallet) return
+
+    await openModal({
+      title: 'Resync Wallet',
+      body: (_resolve, close) => (
+        <ResyncWalletContent
+          walletId={wallet.id}
+          accountId={account.id}
+          birthdayHeight={account.birthdayHeight || 0}
+          onConfirm={async (height: number) => {
+            await accountManager.resyncWallet(wallet.id, account.id, height)
+            close()
+            navigate('/')
+          }}
+          close={close}
+        />
+      )
+    })
+  }
+
+  const actionItems = [
+    {
+      label: account?.isPinned ? 'Unpin from top' : 'Pin to top',
+      icon: (
+        <Icon icon={account?.isPinned ? 'lucide:pin-off' : 'lucide:pin'} width={16} height={16} />
+      ),
+      action: () => {
+        if (!account || !wallet) return
+        accountManager.togglePinAccount(wallet.id, account.id)
+      }
+    },
+    {
+      label: account?.isHidden ? 'Show account' : 'Hide account',
+      icon: (
+        <Icon icon={account?.isHidden ? 'lucide:eye' : 'lucide:eye-off'} width={16} height={16} />
+      ),
+      action: () => {
+        if (!account || !wallet) return
+        accountManager.toggleHideAccount(wallet.id, account.id)
+      }
+    },
+    ...(isCurrentAccount
+      ? [
+          {
+            label: 'Resync wallet',
+            icon: <Icon icon="lucide:refresh-cw" width={16} height={16} />,
+            action: handleResyncWallet
+          }
+        ]
+      : []),
+    {
+      label: wallet?.accounts.length === 1 ? 'Remove wallet' : 'Remove account',
+      danger: true,
+      disabled: isRemoving,
+      icon: <Icon icon="lucide:trash-2" width={16} height={16} />,
+      action: async () => {
+        if (!account || !wallet || isRemoving) return
+        const totalAccounts = wallets.reduce((sum, w) => sum + w.accounts.length, 0)
+        if (totalAccounts <= 1) {
+          await confirm({
+            title: 'Cannot remove',
+            message:
+              'This is the only account in the wallet. Create or import another account first.',
+            confirmText: 'OK',
+            variant: 'default'
+          })
+          return
+        }
+        const removesWallet = wallet.accounts.length === 1
+        setIsRemoving(true)
+        try {
+          if (removesWallet && !isHardwareWallet) {
+            const result = await openModal<'removed' | 'backup' | undefined>({
+              title: 'Remove wallet',
+              body: resolve => (
+                <RemoveWalletContent
+                  walletId={wallet.id}
+                  onRemove={async verification => {
+                    await accountManager.removeAccount(wallet.id, account.id, verification)
+                    resolve('removed')
+                  }}
+                  onCancel={() => resolve(undefined)}
+                  onViewBackup={() => resolve('backup')}
+                />
+              )
+            })
+            if (result === 'removed') goBack()
+            if (result === 'backup') {
+              navigate(`/view-seed-phrase?accountId=${account.id}&walletId=${wallet.id}`)
+            }
+            return
+          }
+
+          const ok = await confirm({
+            title: removesWallet ? 'Remove wallet' : 'Remove account',
+            message: removesWallet
+              ? `Remove "${accountName}"? The wallet will also be removed because this is its only account. This cannot be undone.`
+              : `Remove "${accountName}"? This cannot be undone.`,
+            confirmText: 'Remove',
+            variant: 'danger'
+          })
+          if (!ok) return
+          await accountManager.removeAccount(wallet.id, account.id)
+          goBack()
+        } catch (cause) {
+          await confirm({
+            title: 'Failed to remove',
+            message: classifyError(cause).userMessage,
+            confirmText: 'OK',
+            variant: 'default'
+          })
+        } finally {
+          setIsRemoving(false)
+        }
+      }
+    }
+  ]
+
+  return (
+    <div className="page-container">
+      <CopyToast show={showToast} />
+      <PageHeader title="Account details" showBack />
+
+      <div className="page-content">
+        <div className="space-y-3 mb-6">
+          {menuItems.map((item, index) => {
+            const rowClassName =
+              'w-full px-4 py-4 bg-card rounded-2xl transition-colors ' +
+              (item.action ? 'hover:bg-white/5 cursor-pointer' : '')
+
+            const content = (
+              <div className="flex items-center justify-between">
+                <span className="text-base text-white/90">{item.label}</span>
+                <div className="flex items-center gap-2">
+                  {'isBirthday' in item && item.isBirthday ? (
+                    birthdayHeight ? (
+                      <div className="flex items-center gap-1.5">
+                        {birthdayDate && (
+                          <span className="text-base text-white/90">{birthdayDate}</span>
+                        )}
+                        <button
+                          type="button"
+                          onClick={e => {
+                            e.stopPropagation()
+                            void copyToClipboard(String(birthdayHeight))
+                          }}
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-white/5 hover:bg-white/10 text-[11px] text-white/60 font-mono transition-colors cursor-pointer"
+                        >
+                          #{birthdayHeight.toLocaleString()}
+                          <Icon icon="lucide:copy" width={11} height={11} />
+                        </button>
+                      </div>
+                    ) : (
+                      <span className="text-base text-muted">Unknown</span>
+                    )
+                  ) : (
+                    <>
+                      {'value' in item && item.value && (
+                        <span className="text-base font-medium text-white">{item.value}</span>
+                      )}
+                      {item.icon && <div className="text-muted">{item.icon}</div>}
+                    </>
+                  )}
+                </div>
+              </div>
+            )
+
+            if (item.action) {
+              return (
+                <button key={index} onClick={item.action} className={rowClassName}>
+                  {content}
+                </button>
+              )
+            }
+
+            return (
+              <div key={index} className={rowClassName}>
+                {content}
+              </div>
+            )
+          })}
+        </div>
+
+        <div className="pt-4 border-t border-white/10">
+          <p className="text-xs text-muted mb-3">Actions</p>
+          <div className="space-y-2">
+            {actionItems.map((item, index) => (
+              <button
+                key={index}
+                onClick={item.action}
+                disabled={'disabled' in item && item.disabled}
+                className={`w-full flex items-center gap-3 p-4 bg-card rounded-xl hover:bg-white/5 transition-colors cursor-pointer ${'danger' in item && item.danger ? 'text-danger' : ''}`}
+              >
+                <div className={'danger' in item && item.danger ? 'text-danger' : 'text-muted'}>
+                  {item.icon}
+                </div>
+                <span className="text-base">{item.label}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}

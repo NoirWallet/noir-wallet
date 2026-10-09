@@ -1,0 +1,15 @@
+{
+  "title": "Developers",
+  "icon": "CodeXml",
+  "root": true,
+  "pages": [
+    "!index",
+    "---Start building---",
+    "[CodeXml][SDK integration](/noir-sdk-integration)",
+    "---Reference---",
+    "provider-api",
+    "accounts-and-events",
+    "---Best practices---",
+    "security"
+  ]
+}

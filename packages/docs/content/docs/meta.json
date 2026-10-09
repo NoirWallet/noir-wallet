@@ -1,0 +1,14 @@
+{
+  "title": "Noir Wallet",
+  "pages": [
+    "overview",
+    "!get-started",
+    "!noir-wallet-v1-user-guide",
+    "wallet-guide",
+    "!faq",
+    "!noir-sdk-integration",
+    "developers",
+    "---Legal---",
+    "privacy-policy"
+  ]
+}

@@ -1,0 +1,33 @@
+---
+title: Integration security
+description: Design dApp requests around explicit user intent, validated inputs, account scope, and privacy-aware defaults.
+icon: ShieldCheck
+---
+
+## Keep the wallet as the approval boundary
+
+Your application can prepare a request, but the Noir Wallet approval window is where the user confirms it. Do not imitate the wallet approval UI or claim a transaction succeeded before the SDK resolves.
+
+## Validate every input
+
+- Parse amounts as decimal strings without floating-point math.
+- Validate destination addresses for the selected build and workflow.
+- Enforce the Zcash memo byte limit before requesting a transaction.
+- Treat provider errors and cancellations as expected outcomes.
+
+## Respect account scope
+
+Only read data for accounts the origin was authorized to access. Refresh authorization with `getAccounts()` rather than trusting stale local storage.
+
+## Prefer privacy-aware defaults
+
+Default to shielded funding when it fits the product. If a user chooses transparent funding, explain that the selected UTXOs and transaction details are public.
+
+## Never request secrets
+
+A legitimate dApp integration never needs a seed phrase, wallet password, private key, or decrypted wallet database.
+
+<Callout type="warn">
+  Do not log wallet request payloads indiscriminately. Memos, addresses, signatures, and account
+  mappings can be sensitive even when they are not private keys.
+</Callout>

@@ -1,0 +1,49 @@
+{
+  "name": "noir-wallet-monorepo",
+  "version": "0.1.0",
+  "description": "Noir Wallet - Privacy-first multi-chain wallet with native cross-chain transfers and seamless dApp connectivity",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.33.4",
+  "scripts": {
+    "test": "pnpm --filter @noir-wallet/extension --filter @noir-wallet/rpc-registry -r test",
+    "dev": "pnpm dev:extension & pnpm dev:web & pnpm dev:example",
+    "dev:extension": "pnpm --filter @noir-wallet/extension dev",
+    "dev:web": "pnpm --filter @noir-wallet/web dev",
+    "dev:docs": "pnpm --filter @noir-wallet/docs dev",
+    "dev:example": "pnpm --filter @noir-wallet/example dev",
+    "build": "pnpm -r build",
+    "build:extension": "pnpm --filter @noir-wallet/extension build",
+    "build:extension:testnet": "pnpm --filter @noir-wallet/extension build:testnet",
+    "build:web": "pnpm --filter @noir-wallet/web build",
+    "build:docs": "pnpm --filter @noir-wallet/docs build",
+    "sync-wasm-pkg": "node scripts/wasm-package.mjs sync-local",
+    "update-wasm-pkg": "node scripts/wasm-package.mjs update",
+    "update-wasm-pkg:local": "node scripts/wasm-package.mjs update-local",
+    "verify-wasm-pkg": "node scripts/wasm-package.mjs verify",
+    "type-check": "pnpm -r type-check",
+    "knip": "knip --no-config-hints",
+    "lint:eslint": "eslint",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "prepare": "husky",
+    "lint-staged": "lint-staged"
+  },
+  "lint-staged": {
+    "*.{js,jsx,ts,tsx}": [
+      "prettier --write"
+    ],
+    "*.{json,md,css,html}": [
+      "prettier --write"
+    ]
+  },
+  "devDependencies": {
+    "eslint": "10.2.1",
+    "globals": "17.5.0",
+    "husky": "9.1.7",
+    "knip": "6.7.0",
+    "lint-staged": "16.2.7",
+    "prettier": "3.8.0",
+    "typescript-eslint": "8.59.0"
+  }
+}

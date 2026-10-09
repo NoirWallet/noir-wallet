@@ -1,0 +1,163 @@
+import { WALLET_CONFIG } from '../config/wallet.ts'
+import type { Transaction, TransactionStatus, TransactionType } from '../types/wallet.ts'
+import { isTransparentReceive, normalizeTxHash } from './tx-history-dedup.ts'
+
+export interface ConfirmationState {
+  status: TransactionStatus
+  confirmations?: number
+  requiredConfirmations?: number
+}
+
+export type ConfirmationTrust = 'trusted' | 'untrusted'
+
+export interface ZcashConfirmation {
+  txHash: string
+  confirmations: number
+}
+
+export function getRequiredConfirmations(
+  type: TransactionType,
+  trust: ConfirmationTrust = 'untrusted'
+): number {
+  if (type === 'receive' && trust === 'trusted') {
+    return WALLET_CONFIG.MIN_CONFIRMATIONS
+  }
+
+  return type === 'receive' || type === 'withdraw' || type === 'claim'
+    ? WALLET_CONFIG.SPENDABILITY_CONFIRMATIONS
+    : WALLET_CONFIG.MIN_CONFIRMATIONS
+}
+
+export function resolveMinedTransactionStatus(
+  status: string,
+  minedHeight: number | null | undefined,
+  chainTip: number,
+  type: TransactionType,
+  trust: ConfirmationTrust = 'untrusted'
+): ConfirmationState {
+  if (status === 'expired') return { status: 'failed' }
+  if (status !== 'mined') return { status: 'pending' }
+
+  const requiredConfirmations = getRequiredConfirmations(type, trust)
+  if (!minedHeight || minedHeight <= 0 || chainTip <= 0) {
+    return { status: 'confirming', requiredConfirmations }
+  }
+
+  const confirmations = Math.max(0, chainTip - minedHeight + 1)
+  return {
+    status: confirmations >= requiredConfirmations ? 'success' : 'confirming',
+    confirmations,
+    requiredConfirmations
+  }
+}
+
+export function mergeTransactionUpdate(
+  transaction: Transaction,
+  updates: Partial<Transaction>,
+  confirmation?: ZcashConfirmation
+): Transaction {
+  const recoverableType =
+    transaction.type === 'send' || transaction.type === 'shield' || transaction.type === 'receive'
+  const currentHash = normalizeTxHash(transaction.txHash)
+  const updatedHash = normalizeTxHash(updates.txHash)
+  const confirmedHash = normalizeTxHash(confirmation?.txHash)
+  // A local failure can precede mining. Only an explicit confirmation for this
+  // transaction may correct it; an origin confirmation cannot settle Intents.
+  if (
+    transaction.status === 'failed' &&
+    updates.status === 'success' &&
+    recoverableType &&
+    confirmation &&
+    confirmedHash &&
+    (currentHash || updatedHash) === confirmedHash &&
+    (!updatedHash || updatedHash === confirmedHash) &&
+    Number.isSafeInteger(confirmation.confirmations) &&
+    confirmation.confirmations >= getRequiredConfirmations(transaction.type)
+  ) {
+    const { failureReason: _failureReason, ...recovered } = { ...transaction, ...updates }
+    return {
+      ...recovered,
+      status: 'success',
+      confirmations: confirmation.confirmations,
+      requiredConfirmations: getRequiredConfirmations(transaction.type),
+      notified: false
+    }
+  }
+
+  // Pollers may finish out of order. Preserve finality while still accepting
+  // neutral metadata such as destination hashes needed for history deduplication.
+  const nextStatus = updates.status
+  const isTerminal = transaction.status === 'success' || transaction.status === 'failed'
+  const changesTerminalStatus = nextStatus != null && nextStatus !== transaction.status
+
+  if (isTerminal && changesTerminalStatus) {
+    const {
+      status: _ignoredStatus,
+      notified: _ignoredNotified,
+      failureReason: _ignoredFailureReason,
+      memo: _ignoredMemo,
+      ...safeUpdates
+    } = updates
+    return { ...transaction, ...safeUpdates }
+  }
+
+  return { ...transaction, ...updates }
+}
+
+export function synchronizeInternalTransferConfirmations(
+  transactions: Transaction[]
+): Transaction[] {
+  const sendConfirmationsByHash = new Map<string, number>()
+
+  for (const transaction of transactions) {
+    if (
+      transaction.type !== 'send' ||
+      transaction.id.startsWith('wasm_') ||
+      (transaction.status !== 'confirming' && transaction.status !== 'success')
+    ) {
+      continue
+    }
+
+    const txHash = normalizeTxHash(transaction.txHash)
+    if (!txHash) continue
+
+    const confirmations = Math.max(
+      transaction.confirmations ?? 0,
+      transaction.status === 'success' ? getRequiredConfirmations(transaction.type) : 0
+    )
+    if (confirmations <= 0) continue
+
+    sendConfirmationsByHash.set(
+      txHash,
+      Math.max(sendConfirmationsByHash.get(txHash) ?? 0, confirmations)
+    )
+  }
+
+  if (sendConfirmationsByHash.size === 0) return transactions
+
+  return transactions.map(transaction => {
+    const txHash = normalizeTxHash(transaction.txHash)
+    const confirmationHint = sendConfirmationsByHash.get(txHash)
+    if (confirmationHint == null) return transaction
+
+    if (transaction.type === 'send' && !transaction.id.startsWith('wasm_')) {
+      const requiredConfirmations = getRequiredConfirmations(transaction.type)
+      return mergeTransactionUpdate(transaction, {
+        status: confirmationHint >= requiredConfirmations ? 'success' : 'confirming',
+        confirmations: confirmationHint,
+        requiredConfirmations
+      })
+    }
+
+    if (!isTransparentReceive(transaction)) return transaction
+
+    const requiredConfirmations = getRequiredConfirmations('receive', 'trusted')
+    const confirmations = Math.max(transaction.confirmations ?? 0, confirmationHint)
+
+    return mergeTransactionUpdate(transaction, {
+      status: confirmations >= requiredConfirmations ? 'success' : 'confirming',
+      confirmations,
+      requiredConfirmations
+    })
+  })
+}

@@ -1,0 +1,54 @@
+---
+title: Send and receive
+description: Choose transparent or shielded addresses, review available funds, and confirm ZEC transactions.
+icon: Send
+---
+
+## Receive ZEC
+
+Open **Receive** and choose the address appropriate for the sender.
+
+| Address     | On-chain privacy                                  | Use when                                     |
+| ----------- | ------------------------------------------------- | -------------------------------------------- |
+| Shielded    | Amount and address details are protected by Zcash | The sender supports shielded Zcash addresses |
+| Transparent | Transaction details are public                    | Compatibility requires a transparent address |
+
+Copy the full address or let the sender scan the QR code. Verify the beginning and end of the address after pasting.
+
+## Send ZEC
+
+<Steps>
+  <Step>
+    ### Enter the destination
+
+    Paste the recipient address in **Send To** and confirm that the address is on the intended network.
+
+  </Step>
+  <Step>
+    ### Choose the funding source
+
+    Select shielded funds for stronger privacy when available. Transparent funding can reveal and link the selected public UTXOs.
+
+  </Step>
+  <Step>
+    ### Enter the amount
+
+    Available shows confirmed funds for the selected source. Enter a destination before selecting **Max**; its estimate accounts for transaction selection, fees, and dust constraints.
+
+  </Step>
+  <Step>
+    ### Review and approve
+
+    Check the destination, amount, funding source, memo, and fee before broadcasting.
+
+  </Step>
+</Steps>
+
+## Private memos
+
+Zcash shielded transactions can include a private memo. The memo field is disabled for a transparent recipient. Treat a memo as durable transaction data: only include information you intend the recipient to keep.
+
+<Callout type="warn">
+  A transparent transaction exposes public on-chain details. Sending from transparent funds to a
+  shielded address does not hide the transparent source.
+</Callout>

@@ -1,0 +1,33 @@
+---
+title: Lending
+description: Supply assets, withdraw positions, claim results, and understand cross-chain lending progress.
+icon: Landmark
+---
+
+On mainnet, **Lending** on Home opens the external zkNoir lending app in a new tab. The wallet's Lending tab shows positions. Lending is unavailable for hardware-wallet accounts because the integration requires message signing. Terms, rates, availability, and protocol risk can change independently of Noir Wallet.
+
+## Common actions
+
+<Cards>
+  <Card title="Supply">
+    In the lending app, review the quote, fees, and Zcash origin transaction before approval. The
+    wallet records the Zcash deposit and follows cross-chain progress.
+  </Card>
+  <Card title="Withdraw">
+    A successful relay can be an intermediate state while the destination Zcash transaction is still
+    confirming.
+  </Card>
+  <Card title="Claim">Follow Activity until the destination Zcash transaction is confirmed.</Card>
+</Cards>
+
+## Before approving
+
+- Confirm the selected wallet and account.
+- Read the current rate and protocol terms.
+- Check all fees and the expected destination asset.
+- Do not treat an estimated return as guaranteed.
+
+<Callout type="warn" title="Protocol risk">
+  Lending involves third-party smart contracts, market conditions, cross-chain infrastructure, and
+  possible loss of funds. Only supply assets you can afford to expose to those risks.
+</Callout>

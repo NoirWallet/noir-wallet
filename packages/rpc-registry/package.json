@@ -1,0 +1,18 @@
+{
+  "name": "@noir-wallet/rpc-registry",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev --test-scheduled",
+    "test": "node ../../scripts/run-core-tests.mjs",
+    "type-check": "tsc --noEmit",
+    "verify": "pnpm type-check && pnpm test && wrangler deploy --dry-run"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20260904.1",
+    "typescript": "5.9.3",
+    "wrangler": "4.129.0"
+  }
+}

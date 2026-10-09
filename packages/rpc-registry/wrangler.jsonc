@@ -1,0 +1,36 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "noir-rpc-monitor",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-07",
+  "workers_dev": false,
+  "routes": [
+    {
+      "pattern": "rpc.zknoir.com",
+      "custom_domain": true
+    }
+  ],
+  "cache": {
+    "enabled": true
+  },
+  "triggers": {
+    "crons": ["*/5 * * * *"]
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "MONITOR_COORDINATOR",
+        "class_name": "MonitorCoordinator"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["MonitorCoordinator"]
+    }
+  ],
+  "observability": {
+    "enabled": true
+  }
+}

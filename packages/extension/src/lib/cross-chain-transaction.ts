@@ -1,0 +1,54 @@
+import { ZEC_ZCASH_ASSET } from '@/config/near'
+import type { Transaction, TransactionStatus, TransactionType } from '@/types'
+
+export interface CrossChainRoute {
+  destinationAsset?: string
+  destinationChain?: string
+}
+
+/**
+ * Resolves the local activity status after the cross-chain relay finishes.
+ */
+export function getCrossChainCompletionStatus(
+  type: TransactionType,
+  route?: CrossChainRoute
+): TransactionStatus {
+  return type === 'withdraw' || type === 'claim' || (type === 'swap' && isZcashDestination(route))
+    ? 'relay_confirmed'
+    : 'success'
+}
+
+export function isZcashDestination(route?: CrossChainRoute): boolean {
+  if (route?.destinationAsset === ZEC_ZCASH_ASSET) return true
+
+  const destinationChain = route?.destinationChain?.trim().toLowerCase()
+  return destinationChain === 'zec' || destinationChain === 'zcash'
+}
+
+/**
+ * Transactions whose final status is owned by the Intents status API rather
+ * than confirmation of their origin-chain Zcash transaction.
+ */
+export function isIntentsSettledTransaction(
+  type: TransactionType | undefined
+): type is 'supply' | 'swap' {
+  return type === 'supply' || type === 'swap'
+}
+
+/**
+ * Returns whether an interrupted withdraw/claim still needs the Intents relay
+ * monitor before a destination Zcash transaction hash is available.
+ */
+export function needsRelayStatusRecovery(
+  transaction: Pick<Transaction, 'type' | 'status' | 'depositAddress' | 'destinationTxHash'>
+): boolean {
+  if (
+    (transaction.type !== 'withdraw' && transaction.type !== 'claim') ||
+    !transaction.depositAddress ||
+    transaction.destinationTxHash
+  ) {
+    return false
+  }
+
+  return transaction.status === 'pending' || transaction.status === 'relay_confirmed'
+}

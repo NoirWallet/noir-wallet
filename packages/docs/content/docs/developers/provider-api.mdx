@@ -1,0 +1,396 @@
+---
+title: Provider API
+description: Typed reference for the Zcash API exposed by the Noir Wallet SDK.
+icon: Braces
+---
+
+All methods are available on `wallet.zcash`. Detecting the provider does not connect an account or
+open the wallet.
+
+```ts
+import { getNoirWallet } from '@noir-wallet/sdk'
+
+const wallet = getNoirWallet()
+if (!wallet) throw new Error('Noir Wallet is not installed')
+```
+
+<Cards>
+  <Card title="Accounts & balances" href="#account-and-balance-methods" icon="Users">
+    Connect, read addresses, balances, and send limits.
+  </Card>
+  <Card title="Transactions" href="#transactions" icon="Send">
+    Send ZEC, shield funds, and read transaction history.
+  </Card>
+  <Card title="Identity" href="#identity-methods" icon="ShieldCheck">
+    Read public identities and request message signatures.
+  </Card>
+  <Card title="Lifecycle" href="#connection-lifecycle" icon="ArrowLeftRight">
+    Handle account changes, disconnects, and errors.
+  </Card>
+</Cards>
+
+<Callout type="info">
+  Call `getAccounts()` silently during startup. Only call `connect()` after a deliberate user
+  action.
+</Callout>
+
+## Account and balance methods
+
+Account reads do not open approval windows. `connect()` is the exception: it always lets the user
+review the accounts shared with your site.
+
+The `fundingSource` option in `getMaxTransfer()` and `sendTransaction()` requires Noir Wallet
+extension 1.0.27 or later. Omit it on older builds to use shielded funding.
+
+<Accordions type="single">
+  <Accordion title="connect() — Request account access" id="connect">
+
+```ts
+connect(): Promise<ZcashConnectResult>
+```
+
+Opens account approval. The user can authorize one or more accounts. Calling it again reopens the
+selection rather than silently returning the previous connection.
+
+```ts
+type ZcashConnectResult = {
+  transparent: string
+  shielded: string
+  accounts: Array<{
+    id: string
+    label: string
+    walletId: string
+    accountId: string
+    addresses: {
+      transparent: string
+      shielded: string
+    }
+  }>
+}
+```
+
+The top-level addresses belong to the active primary account. Keep `accounts[i].id` when you need
+an account-specific balance; do not construct the ID yourself.
+
+**Rejects when:** the user rejects, selects no account, or has no wallet available.
+
+  </Accordion>
+
+  <Accordion title="getAccounts() — Restore a connection silently" id="getaccounts">
+
+```ts
+getAccounts(): Promise<ZcashConnectResult | null>
+```
+
+Returns the same shape as `connect()` without opening the wallet. It returns `null` when the wallet
+is locked, the origin is disconnected, or the active account is not authorized.
+
+```ts
+const connection = await wallet.zcash.getAccounts()
+
+if (!connection) {
+  // Render a Connect button.
+}
+```
+
+  </Accordion>
+
+  <Accordion title="getAddresses() — Read primary addresses" id="getaddresses">
+
+```ts
+getAddresses(): Promise<{
+  transparent: string
+  shielded: string
+}>
+```
+
+Returns the active authorized account's addresses. Use `getAccounts()` when you need the addresses
+of every authorized account.
+
+  </Accordion>
+
+  <Accordion title="getBalance(accountId?) — Read wallet balances" id="getbalanceaccountid">
+
+```ts
+getBalance(accountId?: string): Promise<ZcashBalanceResult>
+```
+
+With no argument, the top-level balance belongs to the active primary account. Pass an `id` from
+`connect()` or `getAccounts()` to target another authorized account.
+
+```ts
+type ZcashBalanceResult = {
+  transparent: string
+  shielded: string
+  total?: string
+  spendable?: string
+  available?: string
+  accounts: Array<{
+    id: string
+    walletId: string
+    accountId: string
+    balance: Balance
+    synced: boolean
+  }>
+}
+```
+
+All amounts are decimal ZEC strings. `synced: false` marks a zero fallback without current synced
+data. When the wallet is locked, the top-level balance is zero and `accounts` is empty.
+
+<Callout type="warn">
+  `total` includes pending funds. `available` and `spendable` are currently selectable amounts
+  before transaction-specific fees. Use `getMaxTransfer()` for an exact send limit.
+</Callout>
+
+<include cwd lang="ts" meta='title="provider-account-balances.ts"'>
+  ./examples/provider-account-balances.ts
+</include>
+
+  </Accordion>
+
+  <Accordion title="getMaxTransfer(params) — Calculate an exact maximum" id="getmaxtransferparams">
+
+```ts
+getMaxTransfer(params: MaxTransferParams): Promise<{
+  maxAmount: string
+  fee: string
+}>
+```
+
+Calculates send-max without opening approval. The connected wallet must be unlocked.
+
+- `to: string` — destination on the installed network.
+- `memo?: string` — shielded recipients only; at most 512 UTF-8 bytes.
+- `feeTier?: "standard" | "fast"` — defaults to `"standard"`.
+- `fundingSource?: "shielded" | "transparent"` — defaults to `"shielded"`.
+
+```ts
+const estimate = await wallet.zcash.getMaxTransfer({
+  to: recipient,
+  feeTier: 'standard',
+  fundingSource: 'shielded'
+})
+```
+
+Use the same destination, memo, and funding source with `sendTransaction()`. Choosing a different
+fee tier during approval can change the final maximum. A Max estimate does not establish hardware
+signing support: Keystone cannot complete a send from transparent funds.
+
+  </Accordion>
+</Accordions>
+
+## Transactions
+
+Transaction methods operate on the active authorized account. Sending and shielding always require
+the user to approve the action in Noir Wallet.
+
+<Accordions type="single">
+  <Accordion title="sendTransaction(params) — Send ZEC" id="sendtransactionparams">
+
+```ts
+sendTransaction(params: SendTransactionParams): Promise<string>
+```
+
+- `to: string` — required destination on the installed network.
+- `amount: string` — positive decimal ZEC with at most 8 decimal places.
+- `memo?: string` — shielded recipients only; at most 512 UTF-8 bytes.
+- `fundingSource?: "shielded" | "transparent"` — defaults to `"shielded"`.
+
+<include cwd lang="ts" meta='title="send-transaction.ts"'>
+  ./examples/send-transaction.ts
+</include>
+
+The promise resolves to a transaction ID after Noir Wallet has built, broadcast, and recorded the
+transaction locally. The API does not accept `type`, `marginalFeeZats`, or a numeric amount; the
+user selects the fee in the wallet.
+
+<Callout type="warn">
+  Transparent funding exposes and may link selected UTXOs. It is unavailable for Keystone accounts.
+</Callout>
+
+  </Accordion>
+
+  <Accordion title="shieldFunds() — Move transparent funds into the shielded pool" id="shieldfunds">
+
+```ts
+shieldFunds(): Promise<string>
+```
+
+No amount is accepted. Noir Wallet calculates the active account's currently shieldable
+transparent funds, opens approval, and returns the transaction ID after broadcast.
+
+Confirmed funds must meet the wallet's minimum shielding threshold. Pending transparent funds are
+excluded. Ledger completes hardware signing in a separate tab. Keystone cannot sign the transparent
+inputs required to complete a shield transaction.
+
+  </Accordion>
+
+  <Accordion title="getTransactionHistory() — Read local and on-chain history" id="gettransactionhistory">
+
+```ts
+getTransactionHistory(): Promise<Array<{
+  txid: string
+  type: string
+  amount: string
+  status: string
+  timestamp: number
+  memo?: string
+}>>
+```
+
+Returns the active account's newest entries first. `timestamp` is Unix time in milliseconds.
+Lending entries use a `lending_` type prefix, and locally confirming states may be normalized to
+`mined`. A locally pending entry may have an empty `txid`. A locked wallet returns an empty array.
+
+Treat `type` and `status` as display values rather than exhaustive protocol enums.
+
+  </Accordion>
+</Accordions>
+
+## Identity methods
+
+The default signing mode is `current`. Use `derived` for a privacy-preserving identity that is not
+the main transparent address. `legacy_index0` exists for integrations that require the legacy
+BIP-44 index 0 identity.
+
+<Accordions type="single">
+  <Accordion title="getPublicKey(options?) — Read a public identity" id="getpublickeyoptions">
+
+```ts
+getPublicKey(options?: {
+  signingMode?: 'current' | 'derived' | 'legacy_index0'
+}): Promise<{
+  pubkey: string
+  address: string
+  signingMode: 'current' | 'derived' | 'legacy_index0'
+  originAddress?: string
+} | null>
+```
+
+Does not open approval. It returns `null` while the wallet is locked or when no active account is
+available. `originAddress` is present for `derived` identities.
+
+  </Accordion>
+
+  <Accordion title="signMessage(message, options?) — Request a signature" id="signmessagemessage-options">
+
+```ts
+const signed = await wallet.zcash.signMessage('Sign in to Example', {
+  signingMode: 'derived'
+})
+
+console.log(signed.signature)
+console.log(signed.pubkey)
+console.log(signed.address)
+```
+
+Opens signature approval. The message must be non-empty and at most 10,000 characters. The result
+also contains `signingMode` and, for a derived identity, `originAddress`.
+
+  </Accordion>
+
+  <Accordion title="checkLendingMcaAccount() — Inspect a lending identity" id="checklendingmcaaccount">
+
+```ts
+checkLendingMcaAccount(): Promise<{
+  mcaId: string | null
+  publicKey: string | null
+  signingMode: 'derived' | 'legacy' | 'legacy_index0'
+} | null>
+```
+
+It returns `null` while the wallet is locked or when there is no active account.
+
+  </Accordion>
+</Accordions>
+
+<Callout type="warn">
+  Ledger and Keystone accounts can connect to dApps and sign supported Zcash transactions. Identity
+  and arbitrary message-signing methods are not currently supported; rejecting one of these methods
+  does not disconnect the wallet.
+</Callout>
+
+## Connection lifecycle
+
+<Accordions type="single">
+  <Accordion title="accountsChanged — Refresh account-scoped state" id="accountschanged">
+
+```ts
+const handleAccountsChanged = () => {
+  void refreshConnectedState()
+}
+
+wallet.zcash.on('accountsChanged', handleAccountsChanged)
+
+// Component cleanup:
+wallet.zcash.removeListener('accountsChanged', handleAccountsChanged)
+```
+
+After the event, call `getAccounts()` again instead of trusting cached authorization. See
+[Accounts and events](/developers/accounts-and-events) for payload states.
+
+  </Accordion>
+
+  <Accordion title="disconnect() — Revoke this site's authorization" id="disconnect">
+
+```ts
+disconnect(): Promise<void>
+```
+
+Revokes the current origin and emits `accountsChanged` with `null`. It does not lock Noir Wallet or
+affect other connected sites.
+
+  </Accordion>
+
+  <Accordion title="switchNetwork() — Deprecated" id="switchnetworknetwork">
+
+`switchNetwork()` always rejects. Mainnet and testnet are separate Noir Wallet extension builds;
+direct users to install the appropriate build.
+
+  </Accordion>
+</Accordions>
+
+## Errors and advanced usage
+
+<Accordions type="single">
+  <Accordion title="Error handling" id="error-handling">
+
+Provider calls reject with an `Error`. Stable numeric RPC error codes are not currently guaranteed.
+
+```ts
+try {
+  const txid = await wallet.zcash.sendTransaction(params)
+  showSubmittedTransaction(txid)
+} catch (error) {
+  const message = error instanceof Error ? error.message : 'Transaction failed'
+  showTransactionError(message)
+}
+```
+
+Do not retry approval methods automatically after rejection. Silent reads can be retried after the
+user unlocks or reconnects.
+
+  </Accordion>
+
+  <Accordion title="Raw RPC method mapping" id="raw-rpc-mapping">
+
+The typed SDK is recommended. These are the raw method names used internally:
+
+| SDK method                 | Raw method                     |
+| -------------------------- | ------------------------------ |
+| `connect()`                | `zcash_requestAccounts`        |
+| `getAccounts()`            | `zcash_getAccounts`            |
+| `getAddresses()`           | `zcash_getAddresses`           |
+| `getBalance()`             | `zcash_getBalance`             |
+| `getMaxTransfer()`         | `zcash_getMaxTransfer`         |
+| `sendTransaction()`        | `zcash_sendTransaction`        |
+| `shieldFunds()`            | `zcash_shieldFunds`            |
+| `getTransactionHistory()`  | `zcash_getTransactionHistory`  |
+| `getPublicKey()`           | `zcash_getPublicKey`           |
+| `signMessage()`            | `zcash_signMessage`            |
+| `checkLendingMcaAccount()` | `zcash_checkLendingMcaAccount` |
+| `disconnect()`             | `zcash_disconnect`             |
+
+  </Accordion>
+</Accordions>

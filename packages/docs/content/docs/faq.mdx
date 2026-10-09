@@ -1,0 +1,73 @@
+---
+title: Frequently asked questions
+description: Answers about Noir Wallet installation, Zcash addresses, privacy, synchronization, transactions, and dApp connections.
+icon: CircleHelp
+---
+
+## General
+
+### What is Noir Wallet?
+
+Noir Wallet is a self-custodial Chrome extension for Zcash. It supports transparent and shielded balances, private transactions, swaps, lending flows, and dApp connections.
+
+### Does Noir Wallet custody my funds?
+
+No. Wallet credentials are encrypted locally and the recovery phrase controls the wallet. Noir Wallet cannot recover a lost phrase or reverse a blockchain transaction.
+
+### Is a mobile app available?
+
+The current documented product is the Chrome extension. Only install products linked from official Noir Wallet channels.
+
+## Addresses and privacy
+
+### What is the difference between transparent and shielded addresses?
+
+Transparent transactions expose public on-chain details. Zcash shielded transactions protect address and amount information. Use shielded addresses and shielded funding when the other service supports them.
+
+### Does shielding erase transparent history?
+
+No. Shielding moves funds into the shielded pool, but the original transparent transaction remains public.
+
+### Why can Max be lower than Available?
+
+On **Send**, Available shows confirmed funds for the selected funding source. Max estimates what can be sent to the entered destination after transaction selection, fees, and dust constraints. The final amount can change if the fee or destination changes.
+
+## Transactions
+
+### Why is a transaction still pending?
+
+The wallet may still be observing an origin transaction or external relay. Cross-chain swaps and lending actions can also wait for a destination transaction after the origin is complete.
+
+### Can I cancel a transaction?
+
+Noir Wallet cannot cancel a transaction after it has been broadcast to the network.
+
+### Why is my restored wallet still synchronizing?
+
+Restoring requires scanning Zcash history to discover notes and transactions. Keep the browser available until the initial scan catches up. If sync pauses, check the connection; **Resync wallet** is available in account settings.
+
+## dApps
+
+### What can a connected site see?
+
+A connected site can request authorized account addresses and balances. While the wallet is unlocked, it can also request the current account's locally recorded transaction history, including any stored memo. Each transaction or signature still requires a separate wallet approval.
+
+### Does locking the wallet disconnect sites?
+
+No. Locking protects local access; disconnecting removes an origin's authorization. Review connected sites separately.
+
+### How do I connect on testnet?
+
+Install the separate `[Testnet] Noir Wallet` build. Runtime network switching is not supported.
+
+## Security
+
+### Can support recover my seed phrase?
+
+No. Anyone asking for the phrase is attempting to gain control of the wallet.
+
+### What should I do if the phrase was exposed?
+
+Treat the wallet as compromised. On a trusted device, create a new wallet and move remaining funds only after independently verifying the destination.
+
+Still need help? Use the official links on [GitHub](https://zknoir.com/github) or [X](https://x.com/noir_wallet), and never send secrets in a support request.

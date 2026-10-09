@@ -1,0 +1,18 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "exclude": ["exports", "nsExports", "types", "nsTypes", "enumMembers", "duplicates"],
+  "workspaces": {
+    "packages/extension": {
+      "entry": [
+        "src/background/index.ts",
+        "src/content-script/index.ts",
+        "src/content-script/inject-provider.ts",
+        "src/popup/main.tsx",
+        "src/offscreen/offscreen.ts"
+      ],
+      "project": ["src/**/*.ts", "src/**/*.tsx"]
+    }
+  },
+  "ignore": ["packages/extension/src/lib/wasm-pkg/**"],
+  "ignoreDependencies": ["@types/chrome", "tailwindcss", "tw-animate-css"]
+}

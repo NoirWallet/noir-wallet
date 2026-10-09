@@ -1,0 +1,428 @@
+import type { SwapStatusType } from '@/core/services/intents-api'
+import type { Transaction, TransactionStatus, TransactionType } from '@/types'
+import type { TxFailureReason } from '@/types/wallet'
+import { isIntentsSettledTransaction } from '@/lib/cross-chain-transaction'
+import { INTENTS_PROGRESS_STALE_MS } from '@/lib/intents-progress'
+
+export type TransactionStatusTone = 'success' | 'warning' | 'error'
+export type TransactionResultStatus = 'loading' | 'submitted' | 'success' | 'warning' | 'failed'
+
+export const TRANSACTION_PENDING_MESSAGE =
+  'Transaction status is not available yet. Check Activity before trying again.'
+
+export interface StatusNotificationCopy {
+  title: string
+  message: string
+}
+
+export interface TransactionStatusCopy {
+  label: string
+  compactLabel: string
+  description?: string
+  tone: TransactionStatusTone
+}
+
+export interface IntentsStatusCopy extends TransactionStatusCopy {
+  title: string
+  resultStatus: TransactionResultStatus
+  notification?: StatusNotificationCopy
+}
+
+export interface TransactionResultCopy {
+  title: string
+  description: string
+  resultStatus: TransactionResultStatus
+}
+
+interface IntentsStatusCopyOptions {
+  actionName?: string
+  hasDestinationTxHash?: boolean
+  waitsForZcashConfirmations?: boolean
+  destinationConfirmations?: number | null
+  requiredConfirmations?: number
+}
+
+type IntentsCopyContext = Required<
+  Pick<IntentsStatusCopyOptions, 'actionName' | 'hasDestinationTxHash'>
+>
+
+const INTENTS_STATUS_COPY: Record<
+  SwapStatusType,
+  (context: IntentsCopyContext) => IntentsStatusCopy
+> = {
+  KNOWN_DEPOSIT_TX: () => ({
+    title: 'Deposit confirming',
+    label: 'Deposit confirming',
+    compactLabel: 'Deposit confirming',
+    description: 'Deposit transaction detected and waiting for confirmation.',
+    tone: 'warning',
+    resultStatus: 'loading'
+  }),
+  PENDING_DEPOSIT: () => ({
+    title: 'Waiting for deposit confirmation',
+    label: 'Waiting for deposit confirmation',
+    compactLabel: 'Waiting for deposit',
+    description:
+      'Waiting for the deposit transaction to be detected or confirmed. Do not send again.',
+    tone: 'warning',
+    resultStatus: 'loading'
+  }),
+  INCOMPLETE_DEPOSIT: () => ({
+    title: 'Deposit amount too low',
+    label: 'Deposit amount too low',
+    compactLabel: 'Deposit amount too low',
+    description: 'The received amount is below the quoted amount. Wait for the refund status.',
+    tone: 'warning',
+    resultStatus: 'loading'
+  }),
+  PROCESSING: ({ actionName }) => ({
+    title: `${actionName} Processing`,
+    label: 'Processing',
+    compactLabel: 'Processing',
+    description: `Your ${actionName.toLowerCase()} is being processed.`,
+    tone: 'warning',
+    resultStatus: 'loading'
+  }),
+  SUCCESS: ({ actionName }) => {
+    const description = `Your ${actionName.toLowerCase()} completed successfully.`
+    return {
+      title: `${actionName} Complete`,
+      label: 'Success',
+      compactLabel: 'Success',
+      description,
+      tone: 'success',
+      resultStatus: 'success',
+      notification: {
+        title: `${actionName} completed`,
+        message: description
+      }
+    }
+  },
+  REFUNDED: ({ actionName }) => {
+    const description =
+      'The refund transaction has been submitted. The balance may take time to update.'
+    return {
+      title: `${actionName} Refund submitted`,
+      label: 'Refund submitted',
+      compactLabel: 'Refund submitted',
+      description,
+      tone: 'warning',
+      resultStatus: 'warning',
+      notification: {
+        title: `${actionName} refund submitted`,
+        message: description
+      }
+    }
+  },
+  FAILED: ({ actionName }) => {
+    const description = `The ${actionName.toLowerCase()} could not be processed. Check the transaction details.`
+    return {
+      title: `${actionName} Failed`,
+      label: 'Failed',
+      compactLabel: 'Failed',
+      description,
+      tone: 'error',
+      resultStatus: 'failed',
+      notification: {
+        title: `${actionName} Failed`,
+        message: description
+      }
+    }
+  }
+}
+
+export function getIntentsStatusCopy(
+  status: SwapStatusType,
+  options: IntentsStatusCopyOptions = {}
+): IntentsStatusCopy {
+  const actionName = options.actionName || 'Transaction'
+  const hasDestinationTxHash = options.hasDestinationTxHash ?? false
+
+  if (status === 'SUCCESS' && options.waitsForZcashConfirmations) {
+    const requiredConfirmations = options.requiredConfirmations ?? 10
+    const confirmations = options.destinationConfirmations
+    const hasConfirmationCount = confirmations != null
+    const remainingConfirmations = hasConfirmationCount
+      ? Math.max(0, requiredConfirmations - confirmations)
+      : null
+    const label = hasDestinationTxHash
+      ? `${actionName} Confirming${
+          hasConfirmationCount ? ` (${confirmations}/${requiredConfirmations})` : ''
+        }`
+      : `${actionName} Processing`
+    const description = hasDestinationTxHash
+      ? remainingConfirmations == null
+        ? 'Waiting for destination Zcash confirmations.'
+        : `Destination ZEC will be final after ${remainingConfirmations} more block${
+            remainingConfirmations === 1 ? '' : 's'
+          }.`
+      : 'Waiting for the destination Zcash transaction.'
+
+    return {
+      title: label,
+      label,
+      compactLabel: label,
+      description,
+      tone: 'warning',
+      resultStatus: 'loading',
+      notification: {
+        title: `${actionName} Processing`,
+        message: `Your ${actionName.toLowerCase()} relay has confirmed. Waiting for destination Zcash confirmations.`
+      }
+    }
+  }
+
+  return INTENTS_STATUS_COPY[status]({ actionName, hasDestinationTxHash })
+}
+
+export type LocalTransactionStatusKey =
+  | 'replaced'
+  | 'refund_submitted'
+  | 'status_unavailable'
+  | 'preparing'
+  | 'waiting_confirmation'
+  | 'confirming'
+  | 'destination_sent'
+  | 'confirmed'
+  | 'failed'
+  | 'pending'
+
+const LOCAL_TRANSACTION_STATUS_COPY: Record<
+  Exclude<LocalTransactionStatusKey, 'confirming'>,
+  TransactionStatusCopy
+> = {
+  replaced: {
+    label: 'Replaced by speed-up',
+    compactLabel: 'Replaced by speed-up',
+    tone: 'warning'
+  },
+  refund_submitted: {
+    label: 'Refund submitted',
+    compactLabel: 'Refund submitted',
+    tone: 'warning'
+  },
+  status_unavailable: {
+    label: 'Status unavailable',
+    compactLabel: 'Status unavailable',
+    description: 'No status update for over 1 hour',
+    tone: 'warning'
+  },
+  preparing: {
+    label: 'Preparing transaction',
+    compactLabel: 'Preparing transaction',
+    description: 'Preparing and submitting the transaction.',
+    tone: 'warning'
+  },
+  waiting_confirmation: {
+    label: 'Waiting for confirmation',
+    compactLabel: 'Waiting for confirmation',
+    description: 'The transaction was submitted and is waiting for confirmation.',
+    tone: 'warning'
+  },
+  destination_sent: {
+    label: 'Destination sent',
+    compactLabel: 'Destination sent',
+    tone: 'warning'
+  },
+  confirmed: {
+    label: 'Confirmed',
+    compactLabel: 'Confirmed',
+    tone: 'success'
+  },
+  failed: {
+    label: 'Failed',
+    compactLabel: 'Failed',
+    tone: 'error'
+  },
+  pending: {
+    label: 'Pending',
+    compactLabel: 'Pending',
+    description: 'Waiting for the transaction status to update.',
+    tone: 'warning'
+  }
+}
+
+export function getLocalTransactionStatusCopy(
+  key: Exclude<LocalTransactionStatusKey, 'confirming'>
+): TransactionStatusCopy {
+  return LOCAL_TRANSACTION_STATUS_COPY[key]
+}
+
+function getConfirmingStatusCopy(
+  type: TransactionType,
+  confirmations?: number,
+  requiredConfirmations?: number
+): TransactionStatusCopy {
+  const label = formatConfirmingStatus(type, confirmations, requiredConfirmations)
+  return { label, compactLabel: label, tone: 'warning' }
+}
+
+export function formatConfirmingStatus(
+  _type: TransactionType,
+  confirmations?: number,
+  requiredConfirmations?: number
+): string {
+  if (confirmations == null || requiredConfirmations == null) return 'Confirming'
+  return `Confirming (${confirmations}/${requiredConfirmations})`
+}
+
+export function getTransactionStatusCopy(
+  tx: Transaction,
+  now = Date.now()
+): TransactionStatusCopy & { key: LocalTransactionStatusKey } {
+  const hasIntentsDeposit = !!(tx.depositAddress || tx.quoteBinding?.depositAddress)
+  let key: LocalTransactionStatusKey
+
+  if (tx.replacedByTransactionId) {
+    key = 'replaced'
+  } else if (tx.status === 'failed' && tx.memo === 'Refunded') {
+    key = 'refund_submitted'
+  } else if (tx.status === 'pending') {
+    key =
+      hasIntentsDeposit && now - tx.timestamp >= INTENTS_PROGRESS_STALE_MS
+        ? 'status_unavailable'
+        : tx.txHash
+          ? 'waiting_confirmation'
+          : 'preparing'
+  } else if (tx.status === 'confirming' || tx.status === 'relay_confirmed') {
+    return {
+      key: 'confirming',
+      ...getConfirmingStatusCopy(tx.type, tx.confirmations, tx.requiredConfirmations)
+    }
+  } else if (tx.status === 'success') {
+    key =
+      isIntentsSettledTransaction(tx.type) && !tx.destinationTxHash
+        ? 'destination_sent'
+        : 'confirmed'
+  } else {
+    key = 'failed'
+  }
+
+  return { key, ...LOCAL_TRANSACTION_STATUS_COPY[key] }
+}
+
+export function getOnChainStatusCopy(
+  status: TransactionStatus,
+  type: TransactionType,
+  confirmations?: number,
+  requiredConfirmations?: number
+): TransactionStatusCopy & { key: LocalTransactionStatusKey } {
+  if (status === 'confirming' || status === 'relay_confirmed') {
+    return {
+      key: 'confirming',
+      ...getConfirmingStatusCopy(type, confirmations, requiredConfirmations)
+    }
+  }
+  const key: LocalTransactionStatusKey =
+    status === 'success' ? 'confirmed' : status === 'failed' ? 'failed' : 'pending'
+  return { key, ...LOCAL_TRANSACTION_STATUS_COPY[key] }
+}
+
+export function getStandardTransactionResultCopy(
+  step: 'idle' | 'pending' | 'submitted' | 'confirming' | 'success' | 'failed',
+  options: { shield?: boolean; error?: string | null } = {}
+): TransactionResultCopy {
+  const transactionName = options.shield ? 'Shield Transaction' : 'Transaction'
+  switch (step) {
+    case 'idle':
+      return { title: '', description: '', resultStatus: 'loading' }
+    case 'pending':
+      return {
+        title: options.error ? 'Transaction Pending' : 'Building Transaction',
+        description: options.error || '',
+        resultStatus: options.error ? 'warning' : 'loading'
+      }
+    case 'submitted':
+      return {
+        title: options.shield ? 'Shield Submitted' : 'Transaction Submitted',
+        description: '',
+        resultStatus: 'submitted'
+      }
+    case 'confirming':
+      return {
+        title: 'Confirming',
+        description: '',
+        resultStatus: 'submitted'
+      }
+    case 'success':
+      return {
+        title: `${transactionName} Confirmed`,
+        description: '',
+        resultStatus: 'success'
+      }
+    case 'failed':
+      return {
+        title: options.shield ? 'Shielding Failed' : 'Transaction Failed',
+        description: options.error || 'Something went wrong',
+        resultStatus: 'failed'
+      }
+  }
+}
+
+export function getSubmittedTransactionResultCopy(shield = false): TransactionResultCopy {
+  return getStandardTransactionResultCopy('submitted', { shield })
+}
+
+export function getConfirmedTransactionResultCopy(): TransactionResultCopy {
+  return {
+    title: 'Transaction Confirmed',
+    description: 'Your transaction has been confirmed on the blockchain.',
+    resultStatus: 'success'
+  }
+}
+
+export function getConfirmationFailureResultCopy(
+  failureReason?: TxFailureReason
+): TransactionResultCopy {
+  return {
+    title: 'Transaction Failed',
+    description:
+      failureReason === 'expired'
+        ? 'Your transaction expired before it was mined. Resend it with a higher fee.'
+        : 'Your transaction could not be confirmed on the blockchain.',
+    resultStatus: 'failed'
+  }
+}
+
+export function getTransactionToastCopy(
+  status: 'success' | 'failed',
+  amount: string
+): StatusNotificationCopy {
+  if (status === 'success') {
+    return {
+      title: 'Transaction Confirmed',
+      message: `${amount} ZEC transaction has been confirmed.`
+    }
+  }
+  const failed = getConfirmationFailureResultCopy()
+  return { title: failed.title, message: failed.description }
+}
+
+export function getActionFailureNotificationCopy(
+  actionName: string,
+  message: string
+): StatusNotificationCopy {
+  return { title: `${actionName} Failed`, message }
+}
+
+export function getZcashConfirmationNotificationCopy(
+  type: TransactionType | undefined,
+  status: 'success' | 'failed',
+  reason: 'confirmed' | 'expired' | 'timeout'
+): StatusNotificationCopy {
+  const actionName = type === 'shield' ? 'Shielding' : 'Transaction'
+  const action = actionName.toLowerCase()
+  if (status === 'success') {
+    return {
+      title: `${actionName} Confirmed`,
+      message: `Your ZEC ${action} has been confirmed on-chain.`
+    }
+  }
+  return {
+    title: `${actionName} Failed`,
+    message:
+      reason === 'expired'
+        ? `Your ZEC ${action} expired before it was mined. You can speed it up by resending at a higher fee.`
+        : `Your ZEC ${action} could not be confirmed in time.`
+  }
+}

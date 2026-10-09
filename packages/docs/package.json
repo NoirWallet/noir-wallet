@@ -1,0 +1,37 @@
+{
+  "name": "@noir-wallet/docs",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "react-router dev --port 5003",
+    "build": "react-router build",
+    "postbuild": "node scripts/create-static-extras.mjs",
+    "preview": "vite preview --outDir build/client --port 5003",
+    "type-check": "react-router typegen && fumadocs-mdx && tsc --noEmit",
+    "verify": "node scripts/verify-build.mjs"
+  },
+  "dependencies": {
+    "@orama/orama": "3.1.18",
+    "@react-router/node": "8.3.0",
+    "fumadocs-core": "16.13.0",
+    "fumadocs-mdx": "15.2.0",
+    "fumadocs-ui": "16.13.0",
+    "lucide-react": "0.468.0",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "react-router": "8.3.0",
+    "isbot": "5.2.1"
+  },
+  "devDependencies": {
+    "@react-router/dev": "8.3.0",
+    "@tailwindcss/vite": "4.3.3",
+    "@types/node": "22.19.7",
+    "@types/react": "19.2.9",
+    "@types/react-dom": "19.2.3",
+    "tailwindcss": "4.3.3",
+    "typescript": "5.9.3",
+    "vite": "7.3.5",
+    "vite-tsconfig-paths": "5.1.4"
+  }
+}

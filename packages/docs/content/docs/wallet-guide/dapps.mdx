@@ -1,0 +1,30 @@
+---
+title: Connected dApps
+description: Approve account access carefully, understand transaction prompts, and remove site permissions.
+icon: Blocks
+---
+
+Web apps interact with Noir Wallet through the provider injected into the page. A connection request can ask you to authorize one or more wallet accounts for that origin.
+
+## Connection permissions
+
+When a site requests access:
+
+1. Check the site origin shown by Noir Wallet.
+2. Select only the accounts the site needs.
+3. Read every later signing or transaction request independently.
+
+A connection lets the site request authorized account addresses and balances without another prompt. While the wallet is unlocked, it can also request the current account's locally recorded transaction history, including any stored memo. Sending ZEC or signing a message still requires a separate approval.
+
+## Transaction and signing prompts
+
+Never approve from the website alone. Use the Noir Wallet approval window as the source of truth for the requested action, destination, amount, and account.
+
+## Disconnect a site
+
+Open **Connected dApps** from the wallet/site icon at the top right of Home, then select **Disconnect** beside an origin you no longer use. Locking the wallet and disconnecting a site are different actions.
+
+<Callout type="warn">
+  Noir Wallet support will never ask you to paste a recovery phrase into a dApp, support form, or
+  direct message.
+</Callout>

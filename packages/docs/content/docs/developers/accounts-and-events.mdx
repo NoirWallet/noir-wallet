@@ -1,0 +1,63 @@
+---
+title: Accounts and events
+description: Handle the primary account, authorized account arrays, silent reconnects, and provider lifecycle events.
+icon: Users
+---
+
+## Multi-account result
+
+`connect()` and `getAccounts()` return a backward-compatible result:
+
+```ts
+type ZcashConnectResult = {
+  transparent: string
+  shielded: string
+  accounts: Array<{
+    id: string
+    label: string
+    walletId: string
+    accountId: string
+    addresses: {
+      transparent: string
+      shielded: string
+    }
+  }>
+}
+```
+
+The top-level addresses belong to the primary connected account. Use each `accounts[i].id` when requesting an account-specific balance.
+
+```ts
+const connection = await wallet.zcash.getAccounts()
+if (connection) {
+  const selected = connection.accounts[0]
+  const balance = await wallet.zcash.getBalance(selected.id)
+  console.log(balance.available)
+}
+```
+
+## Startup flow
+
+1. Wait until your application is running in the browser.
+2. Call `getNoirWallet()`.
+3. If available, call `getAccounts()` silently.
+4. Only call `connect()` after the user chooses to connect.
+
+## Account changes
+
+Subscribe to `accountsChanged` and refresh account-scoped data when it fires.
+
+```ts
+function handleAccountsChanged() {
+  void refreshConnectedState()
+}
+
+wallet.zcash.on('accountsChanged', handleAccountsChanged)
+
+// During cleanup:
+wallet.zcash.removeListener('accountsChanged', handleAccountsChanged)
+```
+
+The event carries the active account's `{ transparent, shielded }` addresses, `[]` when locked, or
+`null` when disconnected or the active account is unauthorized. After any event, call
+`getAccounts()` again before using cached account data. A locked wallet returns `null` until unlocked.

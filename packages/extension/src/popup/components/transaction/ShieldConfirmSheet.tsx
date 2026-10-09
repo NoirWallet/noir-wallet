@@ -1,0 +1,95 @@
+import { Button } from '../ui/button'
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../ui/dialog'
+import { TokenIcon } from '../tokens/TokenIcon'
+import { FeeTierPicker } from './FeeTierPicker'
+import { useFeeEstimate } from '../../hooks/useFeeEstimate'
+import { useSettingsStore } from '@/store/settings-store'
+import { deriveFeeByTier, marginalFeeForTier } from '@/config/fee'
+import { formatNumber } from '@/lib/format'
+import {
+  hasEnoughTransparentBalanceToShield,
+  MIN_SHIELDING_BALANCE_MESSAGE
+} from '@/core/zcash/shielding'
+import { UnconfirmedTransactionWarning } from './UnconfirmedTransactionWarning'
+
+interface ShieldConfirmSheetProps {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  transparentBalance: number
+  isShielding?: boolean
+  /** Invoked with the selected tier's marginal fee (zatoshis). */
+  onConfirm: (marginalFeeZats: number) => void
+}
+
+/**
+ * Lightweight bottom sheet that confirms shielding transparent funds and lets
+ * the user pick a ZIP-317 fee tier with a live estimate.
+ */
+export function ShieldConfirmSheet({
+  open,
+  onOpenChange,
+  transparentBalance,
+  isShielding,
+  onConfirm
+}: ShieldConfirmSheetProps) {
+  const feeTier = useSettingsStore(state => state.feeTier)
+  const setFeeTier = useSettingsStore(state => state.setFeeTier)
+  const hasEnoughBalance = hasEnoughTransparentBalanceToShield(transparentBalance)
+
+  const estimate = useFeeEstimate({ type: 'shield', enabled: open && hasEnoughBalance })
+  const feeByTier = deriveFeeByTier(estimate.feeZats, estimate.error)
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent position="bottom" showCloseButton={false} className="p-0 gap-0">
+        <DialogHeader className="px-5 pt-5 pb-4">
+          <DialogTitle className="text-center">Shield Funds</DialogTitle>
+          <DialogDescription className="sr-only">
+            Move transparent funds into the private pool
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="flex flex-col items-center pb-4">
+          <div className="mb-3">
+            <TokenIcon symbol="ZEC" size="xl" />
+          </div>
+          <p className="text-2xl font-bold">{formatNumber(transparentBalance)} ZEC</p>
+          <p className="text-sm text-muted mt-0.5 px-8 text-center">
+            Move transparent funds into the private pool for enhanced privacy.
+          </p>
+        </div>
+
+        <div className="mx-5 bg-card rounded-xl p-4">
+          <FeeTierPicker
+            tier={feeTier}
+            onTierChange={setFeeTier}
+            feeByTier={feeByTier}
+            loading={estimate.loading}
+          />
+        </div>
+
+        <UnconfirmedTransactionWarning className="mx-5 mt-3" />
+
+        {!hasEnoughBalance && (
+          <p className="mx-5 mt-3 text-xs text-destructive text-center">
+            {MIN_SHIELDING_BALANCE_MESSAGE}
+          </p>
+        )}
+
+        <div className="p-5 flex gap-3">
+          <Button variant="outline" onClick={() => onOpenChange(false)} className="flex-1 h-[45px]">
+            Cancel
+          </Button>
+          <Button
+            onClick={() => onConfirm(marginalFeeForTier(feeTier))}
+            isLoading={isShielding}
+            disabled={!hasEnoughBalance}
+            className="flex-1 h-[45px]"
+          >
+            Shield Now
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  )
+}

@@ -1,0 +1,108 @@
+{
+  "schemaVersion": 1,
+  "releases": {
+    "1.0.38": {
+      "changes": [
+        "Verify recovery phrase backups, with reminders for existing wallets and backup checks before removing a wallet.",
+        "Fixed recovery phrase handling during wallet creation and import, and made backup prompts identify the wallet.",
+        "Fixed unlock failures after duplicate wallet removal and prevented deleted wallets from reappearing.",
+        "Preserved hardware wallet names during import and credentials when setup cannot finish.",
+        "Recovered missing confirmed Zcash transactions in Activity and corrected stale transaction statuses.",
+        "Added mainnet compact-block CDN support and another Singapore RPC endpoint.",
+        "Fixed sync errors with RPC servers that return an empty successful response."
+      ]
+    },
+    "1.0.37": {
+      "changes": [
+        "Import Ledger accounts and sign over USB or Bluetooth with configurable account indexes.",
+        "View, rotate, and reuse cached shielded receiving addresses from Receive and Addresses.",
+        "Choose an exact wallet birthday date for faster, more precise restores and rescans.",
+        "Pending funds stay separate from Available and Max while eligible manual transfers remain usable.",
+        "Send warns about CEX shielded-deposit support; Swap verifies external-chain token and network details.",
+        "Cross-chain progress now refreshes reliably after reopening Swap or changing accounts.",
+        "Fixed explicit sends, TEX Max availability, and unnecessary full wallet rescans.",
+        "Improved automatic RPC selection, service error messages, and privacy-safe diagnostic logs."
+      ]
+    },
+    "1.0.36": {
+      "changes": [
+        "See wallet updates and promotions directly from the Home screen.",
+        "New installations now open Noir Wallet in Chrome's side panel by default.",
+        "Open Noir Wallet's GitHub, X, and Telegram links from Settings or About.",
+        "Normal sync now recovers transparent change created by dApp transactions."
+      ]
+    },
+    "1.0.35": {
+      "changes": [
+        "Spent TEX temporary outputs no longer reappear in balances or prevent transparent funds from being shielded."
+      ]
+    },
+    "1.0.34": {
+      "changes": [
+        "New wallets automatically start with the fastest available Zcash RPC connection.",
+        "Your selected RPC stays first priority, with automatic fallback when it becomes unavailable.",
+        "Added a Singapore RPC endpoint and improved endpoint health checks."
+      ]
+    },
+    "1.0.33": {
+      "changes": [
+        "Send ZEC to TEX addresses with either funding source and track every step of the transfer.",
+        "Supply, Swap, Withdraw, and Claim show clearer progress while cross-chain settlement completes.",
+        "Open Lending in the zkNoir app with all wallet accounts connected automatically.",
+        "Activity history now stays complete after a shielded receiving address is rotated.",
+        "Spent TEX temporary outputs no longer reappear as transparent balance after transaction expiry.",
+        "Privacy controls clear stale Chrome permissions and let you disable Google Analytics independently.",
+        "Mainnet sync tries your preferred RPC first and automatically falls back to four alternatives.",
+        "In-progress transactions now appear yellow, completed transfers green, and failed transfers red."
+      ]
+    },
+    "1.0.32": {
+      "changes": [
+        "Removed unnecessary browsing history and clipboard-reading permissions while keeping wallet notifications.",
+        "Background syncing pauses while the wallet is closed unless a transaction still needs monitoring.",
+        "Added another mainnet RPC backup after the existing ChainSafe fallback.",
+        "Updated the support contact shown in the wallet terms and privacy documentation."
+      ]
+    },
+    "1.0.31": {
+      "changes": [
+        "Open Noir Wallet from a popup or Chrome side panel, with Settings now available from Home.",
+        "Update reminders now focus on important releases, without another notification after installation.",
+        "Improved Lending reliability when a market data service is temporarily unavailable.",
+        "Fixed transactions failing to build after reopening or restoring a synced wallet.",
+        "Balances now refresh in the background after dApp activity, without opening the wallet to sync manually."
+      ]
+    },
+    "1.0.30": {
+      "changes": [
+        "More reliable wallet syncing with automatic recovery when a Zcash connection is unavailable.",
+        "Lending prices now stay aligned with RHEA’s latest market data.",
+        "Update notifications are less intrusive and open release notes only when you choose to view them."
+      ]
+    },
+    "1.0.29": {
+      "changes": [
+        "Control anonymous analytics in Security & Privacy, with clearer disclosure of data never collected.",
+        "Track incoming and internal transfers, use transparent ZEC in dApps, and improve Shield actions and history.",
+        "Improved dApp and cross-chain recovery, added legacy Orchard privacy guidance, and other wallet fixes."
+      ]
+    },
+    "1.0.28": {
+      "changes": [
+        "Keep Sent and Received activity in sync for the same wallet-created transaction.",
+        "Hide Shield Funds until transparent funds are confirmed and available.",
+        "Improved dApp request reliability when Chrome returns an empty or mismatched wallet response.",
+        "Control anonymous analytics from the new Security & Privacy settings."
+      ]
+    },
+    "1.0.27": {
+      "changes": [
+        "Track incoming funds as they confirm and become spendable.",
+        "Use transparent ZEC balances for supported dApp transactions.",
+        "Fixed Shield history amounts to match the transparent funds actually used.",
+        "Improved wallet import checks and transaction status reliability.",
+        "Privacy guidance for wallets that still hold legacy Orchard funds."
+      ]
+    }
+  }
+}

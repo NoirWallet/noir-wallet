@@ -1,0 +1,52 @@
+---
+title: Security
+description: Protect recovery phrases, local passwords, connected sites, devices, and hardware-wallet workflows.
+icon: LockKeyhole
+---
+
+## Recovery phrase
+
+The recovery phrase controls the wallet. Keep it offline, private, legible, and protected from loss. Noir Wallet cannot recover it for you.
+
+Before removing a software wallet, Noir Wallet asks for two randomly selected words from your saved recovery phrase. If they do not match, use **View secret phrase** to update your backup before trying again. This check does not validate every word in your backup.
+
+If a recovery phrase reminder appears, select **Back up** to view the named wallet's phrase after entering your password. Save the phrase, then confirm the two requested words from your backup. The reminder stays until confirmation succeeds, even when another wallet is selected. Viewing or copying the phrase alone does not complete this check.
+
+## Local password
+
+The password encrypts wallet credentials on this browser profile. It is not a replacement for the recovery phrase and does not protect a device that is already compromised while the wallet is unlocked.
+
+## Auto-lock
+
+Configure a suitable auto-lock period in **Settings > General**. Lock the wallet before sharing the computer or leaving it unattended.
+
+## Connected sites
+
+Review dApp authorizations regularly and remove origins you do not recognize or no longer use. Always confirm the origin in the wallet prompt.
+
+## Hardware wallets
+
+Keystone and Ledger accounts use supported PCZT transaction flows. Message signing and lending identity are unavailable for both. Keystone cannot send from transparent funds or shield them; lending is unavailable for hardware accounts.
+
+## Incident checklist
+
+<Steps>
+  <Step>
+    ### Suspected malicious site
+
+    Disconnect the site, lock the wallet, and close the browser tab.
+
+  </Step>
+  <Step>
+    ### Password exposure
+
+    If the recovery phrase is safe, change the local password on a trusted device.
+
+  </Step>
+  <Step>
+    ### Recovery phrase exposure
+
+    Treat the wallet as compromised. On a trusted environment, create a new wallet and move remaining funds after independently verifying the destination.
+
+  </Step>
+</Steps>

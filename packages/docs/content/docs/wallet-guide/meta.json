@@ -1,0 +1,22 @@
+{
+  "title": "Wallet Guide",
+  "icon": "BookOpen",
+  "root": true,
+  "pages": [
+    "!index",
+    "---Getting started---",
+    "[Rocket][Get started](/get-started)",
+    "install-and-setup",
+    "---Wallet actions---",
+    "send-and-receive",
+    "shielded-funds",
+    "---Features---",
+    "swap",
+    "lending",
+    "dapps",
+    "---Account and security---",
+    "activity",
+    "security",
+    "[CircleHelp][Frequently asked questions](/faq)"
+  ]
+}

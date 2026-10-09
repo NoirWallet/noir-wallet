@@ -1,0 +1,37 @@
+name: Documentation
+
+on:
+  pull_request:
+    paths:
+      - 'packages/docs/**'
+      - 'packages/sdk'
+      - 'packages/sdk/src/**'
+      - 'packages/sdk/README.md'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - '.node-version'
+      - '.github/workflows/docs.yml'
+permissions:
+  contents: read
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          submodules: true
+          persist-credentials: false
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @noir-wallet/docs type-check
+      - run: pnpm --filter @noir-wallet/docs build
+      - run: pnpm --filter @noir-wallet/docs verify

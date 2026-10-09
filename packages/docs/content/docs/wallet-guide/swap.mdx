@@ -1,0 +1,45 @@
+---
+title: Swap
+description: Review swap quotes, fund the quoted deposit, and follow cross-chain settlement.
+icon: ArrowLeftRight
+---
+
+On mainnet, Noir Wallet can route supported swaps through external liquidity and cross-chain services. Availability, price, and settlement time depend on the selected assets and external services.
+
+<Steps>
+  <Step>
+    ### Choose assets and amount
+
+    Select the asset you are paying and the asset you want to receive.
+
+  </Step>
+  <Step>
+    ### Review the quote
+
+    Check the selected destination or refund address before requesting a quote. On **Review Quote**,
+    check the estimated output, minimum received, price impact, slippage, and any ZEC network fee.
+    A quote can change before submission.
+
+  </Step>
+  <Step>
+    ### Fund the quoted deposit
+
+    For a swap from ZEC, approve the wallet's Zcash transaction. For a swap into ZEC, copy or scan
+    the quoted deposit address and send the shown amount and token on the displayed network from
+    the source-chain wallet. An incorrect token or network may prevent a refund. The wallet then
+    monitors the deposit or relay.
+
+  </Step>
+  <Step>
+    ### Follow activity
+
+    Check **Swap progress** or Activity until the destination result reaches its final state. A
+    swap into ZEC can still wait for Zcash confirmations after the relay succeeds.
+
+  </Step>
+</Steps>
+
+<Callout type="warn">
+  Cross-chain swaps depend on public RPC, liquidity, and relay services outside Noir Wallet. A
+  delayed status does not always mean the origin transaction failed.
+</Callout>
