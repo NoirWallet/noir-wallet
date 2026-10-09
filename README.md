@@ -54,6 +54,11 @@ pnpm install
 
 ### Development
 
+For Swap and Confidential Funding development, copy `.env.example` to
+`packages/extension/.env.local` and replace `RHEA_SWAP_ACCESS_TOKEN` with a development
+token. Keep this local file out of Git. Release builds use process environment variables
+instead; see the [release runbook](docs/release-workflow.md).
+
 Start the development servers with hot reload:
 
 ```bash
