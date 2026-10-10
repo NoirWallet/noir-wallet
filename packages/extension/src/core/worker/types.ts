@@ -78,6 +78,7 @@ export interface RPCSchema {
       walletId: string
       network: Network
       lightwalletdUrl: string
+      zeroIndexerOptions?: import('@/config/zero-indexer').ZeroIndexerOptions | null
       dbBytes?: Uint8Array
       dbKey?: string
     }
@@ -240,6 +241,10 @@ export interface RPCSchema {
   }
   'worker.recreate': {
     request: WalletRouted
+    response: boolean
+  }
+  'zeroIndexer.setEnabled': {
+    request: { enabled: boolean }
     response: boolean
   }
   'wallet.reload': {
@@ -461,4 +466,6 @@ export interface RPCResponse<M extends RPCMethod> {
   method: M
   result?: RPCSchema[M]['response']
   error?: string
+  errorType?: 'submission_unknown'
+  txId?: string
 }

@@ -13,6 +13,32 @@ const SUBMISSION_STATUSES = new Set<TransferSubmissionStatus>([
   'not_attempted'
 ])
 
+export class TransactionSubmissionUnknownError extends Error {
+  readonly txId: string
+  readonly txIds: string[]
+
+  constructor(txId: string, diagnosticMessage?: string, txIds: string[] = [txId]) {
+    super(
+      diagnosticMessage ||
+        'Transaction submission could not be confirmed. Check Activity before trying again.'
+    )
+    this.name = 'TransactionSubmissionUnknown'
+    this.txId = txId
+    this.txIds = txIds
+  }
+}
+
+export function isTransactionSubmissionUnknown(
+  error: unknown
+): error is Error & { txId: string; txIds?: string[] } {
+  return (
+    error instanceof Error &&
+    error.name === 'TransactionSubmissionUnknown' &&
+    typeof (error as Error & { txId?: unknown }).txId === 'string' &&
+    (error as Error & { txId: string }).txId.length > 0
+  )
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
 }
@@ -46,7 +72,7 @@ export function parseTransferEstimate(value: unknown): TransferEstimate {
 export function parseTransferResult(value: unknown): TransferResult {
   if (
     !isRecord(value) ||
-    !['success', 'partial', 'failed'].includes(String(value.status)) ||
+    !['success', 'partial', 'failed', 'unknown'].includes(String(value.status)) ||
     !Array.isArray(value.txIds) ||
     value.txIds.length < 1 ||
     !value.txIds.every(txId => typeof txId === 'string' && txId.length > 0) ||
@@ -76,12 +102,17 @@ export function parseTransferResult(value: unknown): TransferResult {
   const submittedCount = value.transactions.filter(
     transaction => transaction.status === 'submitted'
   ).length
+  const unknownCount = value.transactions.filter(
+    transaction => transaction.status === 'unknown'
+  ).length
   const statusValid =
     (value.status === 'success' && submittedCount === value.transactions.length) ||
     (value.status === 'partial' &&
       submittedCount > 0 &&
+      unknownCount === 0 &&
       submittedCount < value.transactions.length) ||
-    (value.status === 'failed' && submittedCount === 0)
+    (value.status === 'failed' && submittedCount === 0 && unknownCount === 0) ||
+    (value.status === 'unknown' && unknownCount > 0)
   if (!statusValid) {
     throw new Error('Transfer result status does not match its submissions')
   }
@@ -95,6 +126,15 @@ export function requireSuccessfulTransfer(result: TransferResult): {
 } {
   if (result.status === 'success') {
     return { txHash: result.finalTxId, txHashes: result.txIds }
+  }
+
+  if (result.status === 'unknown') {
+    const uncertain = result.transactions.find(transaction => transaction.status === 'unknown')
+    throw new TransactionSubmissionUnknownError(
+      uncertain?.txId ?? result.finalTxId,
+      uncertain?.errorMessage,
+      [...result.txIds]
+    )
   }
 
   const submittedTxIds = result.transactions

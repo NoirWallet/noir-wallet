@@ -3,7 +3,6 @@ import { test, describe } from 'node:test'
 import { findExactBlockHeightByTime } from '../src/core/zcash/block-time.ts'
 import { lookupBlockHeightByTime } from '../src/core/zcash/date-block-lookup.ts'
 import { setActiveRpcEndpointPreferences } from '../src/config/rpc-endpoints.ts'
-import { ZERO_INDEXER_TESTNET_URL } from '../src/config/zero-indexer.ts'
 
 const getBlockTime = async height => height * 10
 
@@ -170,7 +169,7 @@ describe('worker-free birthday lookup', () => {
     try {
       for (const [network, activationHeight, expectedUrl] of [
         ['mainnet', 419_200, 'https://zcash-mainnet.chainsafe.dev'],
-        ['testnet', 280_000, ZERO_INDEXER_TESTNET_URL]
+        ['testnet', 280_000, 'https://zcash-wallet-grpc-testnet.deltarpc.com']
       ]) {
         const rpc = blockRpc(activationHeight + 2)
         const urls = []

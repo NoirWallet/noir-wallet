@@ -13,6 +13,7 @@ import { WALLET_CONFIG } from '@/config/wallet'
 import type { Network } from '@/types'
 import { TimeoutError } from '@/lib/async-utils'
 import { getDiagnosticErrorDetails, getDiagnosticRpcMethod } from '@/lib/diagnostic-log'
+import { isTransactionSubmissionUnknown } from '@/core/zcash/transfer-result'
 
 registerOffscreenSyncAbortListener()
 
@@ -1195,6 +1196,19 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         sendResponse({ error: msg, errorType: 'timeout' })
         return
       }
+      if (isTransactionSubmissionUnknown(error)) {
+        if (message.payload?.walletId) {
+          await persistWalletDbAfterTransaction(message.payload.walletId).catch(persistError => {
+            offscreenError(
+              'Failed to persist wallet after uncertain submission',
+              persistError,
+              message.payload.walletId
+            )
+          })
+        }
+        sendResponse({ error: error.message, errorType: 'submission_unknown', txId: error.txId })
+        return
+      }
       if (isWalletNotInitializedError(msg) && walletId && initPayloadsByWallet.has(walletId)) {
         offscreenWarn(
           `Wallet RPC ${method} failed because wallet was uninitialized; reinitializing`,
@@ -1218,6 +1232,25 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
               retryErr
             )
             sendResponse({ error: retryErr.message, errorType: 'timeout' })
+            return
+          }
+          if (isTransactionSubmissionUnknown(retryErr)) {
+            if (message.payload?.walletId) {
+              await persistWalletDbAfterTransaction(message.payload.walletId).catch(
+                persistError => {
+                  offscreenError(
+                    'Failed to persist wallet after uncertain submission',
+                    persistError,
+                    message.payload.walletId
+                  )
+                }
+              )
+            }
+            sendResponse({
+              error: retryErr.message,
+              errorType: 'submission_unknown',
+              txId: retryErr.txId
+            })
             return
           }
           await restoreWalletAfterFailedTransaction(

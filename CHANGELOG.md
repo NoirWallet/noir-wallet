@@ -2,12 +2,19 @@
 
 Developer-oriented release history for Noir Wallet. Concise in-wallet update notes are maintained separately in [packages/web/public/changelog.json](./packages/web/public/changelog.json).
 
-## [1.0.39] - 2026-10-09
+## [1.0.39] - 2026-10-10
+
+### Added
+
+- Add a default-enabled ZeroIndexer toggle under Security & Privacy. Transactions containing Orchard try the configured ZeroIndexer broadcast endpoints in order and fall back to the ordinary wallet RPC if every attempt fails, across software and hardware signing flows.
 
 ### Changed
 
-- Use ZeroIndexer as the fixed default Zcash RPC for mainnet and testnet, including software-wallet, shielding, and hardware PCZT submission through its lightwalletd-compatible gateway.
-- Migrate existing automatic managed RPC preferences to ZeroIndexer once while preserving explicit fixed provider selections. Keep ZeroIndexer outside automatic provider selection and failover.
+- Keep synchronization, compact-block CDN downloads, history, and confirmation queries on their existing providers. Remove ZeroIndexer from the synchronization RPC list.
+
+### Fixed
+
+- Migrate ZeroIndexer synchronization preferences from the earlier beta back to ordinary automatic RPC selection while preserving other explicitly selected providers and the broadcast preference.
 
 ## [1.0.38] - 2026-10-05
 

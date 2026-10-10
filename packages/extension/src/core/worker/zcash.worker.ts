@@ -36,6 +36,7 @@ import { mapWasmAccountBalanceToZcashBalance, zeroZcashBalance } from '../wallet
 import { sanitizeMarginalFeeZats, DEFAULT_EXPIRY_DELTA_BLOCKS } from '../../config/fee'
 import { WALLET_CONFIG } from '../../config/wallet'
 import { NETWORKS } from '../../config/networks'
+import { getZeroIndexerOptions, type ZeroIndexerOptions } from '../../config/zero-indexer'
 import { runWithCommitmentTreeRecovery } from './commitment-tree-recovery'
 import { parseTransferEstimate, parseTransferResult } from '../zcash/transfer-result'
 import { loadVotingState, saveVotingState } from '../../lib/indexed-db'
@@ -172,9 +173,11 @@ interface WalletEntry {
   instance: WebWallet
   network: string
   lightwalletdUrl: string
+  zeroIndexerOptions: ZeroIndexerOptions | null
 }
 
 const wallets = new Map<string, WalletEntry>()
+let latestZeroIndexerEnabled: boolean | null = null
 const walletOperationChains = new Map<string, Promise<void>>()
 const votingSessions = new Map<string, WebVotingSession>()
 
@@ -451,7 +454,7 @@ self.addEventListener('message', async (event: MessageEvent<RPCRequest<any>>) =>
 
     switch (method) {
       case 'init': {
-        const { walletId, network, lightwalletdUrl, dbBytes } =
+        const { walletId, network, lightwalletdUrl, dbBytes, zeroIndexerOptions } =
           payload as RPCSchema['init']['request']
         result = await runForWallet(walletId, async () => {
           workerDiagnosticLog('[Worker] Wallet initialization started', {
@@ -462,12 +465,20 @@ self.addEventListener('message', async (event: MessageEvent<RPCRequest<any>>) =>
           const net = network === 'mainnet' ? 'main' : 'test'
 
           const entry = wallets.get(walletId)
+          const broadcastOptions =
+            latestZeroIndexerEnabled === null
+              ? (zeroIndexerOptions ?? null)
+              : getZeroIndexerOptions(network, latestZeroIndexerEnabled)
           const configUnchanged =
             !!entry && entry.network === network && entry.lightwalletdUrl === lightwalletdUrl
 
           // A blank shell (zero accounts) is never newer than a persisted
           // snapshot; rebuild from dbBytes instead of reusing it.
           if (configUnchanged && !(dbBytes && blankInstances.has(walletId))) {
+            if (JSON.stringify(entry.zeroIndexerOptions) !== JSON.stringify(broadcastOptions)) {
+              entry.instance.set_zero_indexer_options(broadcastOptions)
+              entry.zeroIndexerOptions = broadcastOptions
+            }
             if (dbBytes) {
               workerDiagnosticLog('[Worker] Reusing wallet with newer in-memory state')
             } else {
@@ -489,7 +500,8 @@ self.addEventListener('message', async (event: MessageEvent<RPCRequest<any>>) =>
               lightwalletdUrl,
               dbData,
               WALLET_CONFIG.WASM_CONFIRMATIONS_POLICY,
-              NETWORKS[network].compactBlockCdn
+              NETWORKS[network].compactBlockCdn,
+              broadcastOptions
             )
             if (dbData) {
               try {
@@ -551,7 +563,8 @@ self.addEventListener('message', async (event: MessageEvent<RPCRequest<any>>) =>
                 lightwalletdUrl,
                 null,
                 WALLET_CONFIG.WASM_CONFIRMATIONS_POLICY,
-                NETWORKS[network].compactBlockCdn
+                NETWORKS[network].compactBlockCdn,
+                broadcastOptions
               )
             } else {
               throw e
@@ -570,7 +583,8 @@ self.addEventListener('message', async (event: MessageEvent<RPCRequest<any>>) =>
           wallets.set(walletId, {
             instance: wallet,
             network,
-            lightwalletdUrl
+            lightwalletdUrl,
+            zeroIndexerOptions: broadcastOptions
           })
           // Fresh instance from a consistent snapshot: summary is safe again,
           // but its subtree roots are cold until the first sync op completes
@@ -583,6 +597,24 @@ self.addEventListener('message', async (event: MessageEvent<RPCRequest<any>>) =>
           }
           return restoredFromDb ? true : 'empty'
         })
+        break
+      }
+
+      case 'zeroIndexer.setEnabled': {
+        const { enabled } = payload as RPCSchema['zeroIndexer.setEnabled']['request']
+        if (typeof enabled !== 'boolean') throw new Error('Invalid privacy broadcast preference')
+        latestZeroIndexerEnabled = enabled
+        const walletIds = new Set([...wallets.keys(), ...walletOperationChains.keys()])
+        for (const walletId of walletIds) {
+          await runForWallet(walletId, async () => {
+            const current = wallets.get(walletId)
+            if (!current) return
+            const options = getZeroIndexerOptions(current.network as 'mainnet' | 'testnet', enabled)
+            current.instance.set_zero_indexer_options(options)
+            current.zeroIndexerOptions = options
+          })
+        }
+        result = true
         break
       }
 
@@ -1437,7 +1469,16 @@ self.addEventListener('message', async (event: MessageEvent<RPCRequest<any>>) =>
     const response: RPCResponse<any> = {
       id,
       method,
-      error: errorMessage
+      error: errorMessage,
+      ...(error instanceof Error && error.name === 'TransactionSubmissionUnknown'
+        ? {
+            errorType: 'submission_unknown' as const,
+            txId:
+              typeof (error as Error & { txId?: unknown }).txId === 'string'
+                ? (error as Error & { txId: string }).txId
+                : undefined
+          }
+        : {})
     }
     self.postMessage(response)
   } finally {

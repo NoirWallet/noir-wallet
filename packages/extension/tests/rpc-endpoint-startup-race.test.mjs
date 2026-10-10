@@ -84,7 +84,8 @@ test('a new deliberate RPC choice during registry loading survives startup', asy
         feeTier: 'fast',
         rpcEndpointPreferences: { zcash: 'deltarpc' },
         rpcEndpointModes: { zcash: 'fixed' },
-        zeroIndexerDefaultApplied: true
+        zeroIndexerDefaultApplied: true,
+        zeroIndexerEnabled: false
       },
       version: 0
     })
@@ -95,7 +96,8 @@ test('a new deliberate RPC choice during registry loading survives startup', asy
     assert.equal(rpc.getActiveRpcEndpointMode('zcash'), 'fixed')
     assert.equal(values.get('wallet_settings').state.autoLockMs, 180000)
     assert.equal(values.get('wallet_settings').state.feeTier, 'fast')
-    assert.equal(values.get('wallet_settings').state.zeroIndexerDefaultApplied, true)
+    assert.equal('zeroIndexerDefaultApplied' in values.get('wallet_settings').state, false)
+    assert.equal(values.get('wallet_settings').state.zeroIndexerEnabled, false)
   } finally {
     globalThis.chrome = previousChrome
     globalThis.fetch = previousFetch

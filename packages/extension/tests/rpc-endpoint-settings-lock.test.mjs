@@ -13,8 +13,9 @@ test('concurrent settings writes preserve the latest choice and release the lock
         state: {
           autoLockMs: 60000,
           feeTier: 'normal',
-          rpcEndpointPreferences: { zcash: 'deltarpc' },
-          rpcEndpointModes: { zcash: 'auto' }
+          rpcEndpointPreferences: { zcash: 'zero-indexer' },
+          rpcEndpointModes: { zcash: 'fixed' },
+          zeroIndexerEnabled: false
         },
         version: 0
       }
@@ -109,7 +110,8 @@ test('concurrent settings writes preserve the latest choice and release the lock
         feeTier: 'fast',
         rpcEndpointPreferences: { zcash: 'deltarpc' },
         rpcEndpointModes: { zcash: 'fixed' },
-        zeroIndexerDefaultApplied: true
+        zeroIndexerDefaultApplied: true,
+        zeroIndexerEnabled: true
       },
       version: 0
     }
@@ -117,7 +119,17 @@ test('concurrent settings writes preserve the latest choice and release the lock
     assert.equal(values.get('wallet_settings').state.autoLockMs, 60000)
     releaseLockedRead()
     await Promise.all([migration, userWrite])
-    assert.deepEqual(values.get('wallet_settings'), chosen)
+    const expectedChosen = {
+      ...chosen,
+      state: {
+        autoLockMs: 180000,
+        feeTier: 'fast',
+        rpcEndpointPreferences: { zcash: 'deltarpc' },
+        rpcEndpointModes: { zcash: 'fixed' },
+        zeroIndexerEnabled: false
+      }
+    }
+    assert.deepEqual(values.get('wallet_settings'), expectedChosen)
 
     pauseLockedRead = true
     waitForLockedRead = new Promise(resolve => {
@@ -125,7 +137,7 @@ test('concurrent settings writes preserve the latest choice and release the lock
     })
     rejectNextSettingsSet = true
     const failingWrite = rpc.writePersistedRpcEndpointSettings({
-      preferences: { zcash: 'zero-indexer' },
+      preferences: { zcash: 'deltarpc' },
       modes: { zcash: 'fixed' },
       customRpcEndpoints: { zcash: [] }
     })
@@ -135,11 +147,14 @@ test('concurrent settings writes preserve the latest choice and release the lock
       state: { ...chosen.state, feeTier: 'slow' }
     }
     const subsequentWrite = adapter.setItem('wallet_settings', afterFailure)
-    assert.deepEqual(values.get('wallet_settings'), chosen)
+    assert.deepEqual(values.get('wallet_settings'), expectedChosen)
     releaseLockedRead()
     await assert.rejects(failingWrite, /synthetic storage failure/)
     await subsequentWrite
-    assert.deepEqual(values.get('wallet_settings'), afterFailure)
+    assert.deepEqual(values.get('wallet_settings'), {
+      ...expectedChosen,
+      state: { ...expectedChosen.state, feeTier: 'slow' }
+    })
   } finally {
     globalThis.chrome = previousChrome
     globalThis.fetch = previousFetch
