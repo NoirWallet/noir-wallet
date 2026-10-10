@@ -1,6 +1,32 @@
 # Noir Wallet CI/CD and Release Workflow
 
-This runbook describes the browser extension workflow implemented in [build-extension.yml](../.github/workflows/build-extension.yml). The [documentation workflow](../.github/workflows/docs.yml) verifies the documentation site on relevant pull requests but does not deploy it. The [SDK workflow](../.github/workflows/sdk.yml) checks the SDK package and example from this workspace without publishing them. SDK npm publication, website production deployment, and Chrome Web Store submission are separate manual operations.
+This runbook describes the browser extension workflow implemented in [build-extension.yml](../.github/workflows/build-extension.yml). The [documentation workflow](../.github/workflows/docs.yml) verifies the documentation site on relevant pull requests but does not deploy it. The [SDK workflow](../.github/workflows/sdk.yml) checks the SDK package and example from this workspace without publishing them. Website and voting Worker deployment are described in [Website and Voting Worker](#website-and-voting-worker). SDK npm publication and Chrome Web Store submission remain separate manual operations.
+
+## Website and Voting Worker
+
+The website at `https://www.zknoir.com/` keeps its existing Cloudflare Pages Git integration. It builds and publishes the independent `/frost` page with the rest of the website. The [Website Voting Worker workflow](../.github/workflows/web-vote.yml) deploys only `packages/web-vote/`, independently of Pages and wallet releases. Homepage traffic continues to use Pages; voting API routing is defined in the [Worker configuration](../packages/web-vote/wrangler.jsonc).
+
+### One-Time Deployment Credentials
+
+In the GitHub repository, open **Settings → Secrets and variables → Actions** and add these repository secrets:
+
+| Secret                  | Value                                                                                     |
+| ----------------------- | ----------------------------------------------------------------------------------------- |
+| `CLOUDFLARE_ACCOUNT_ID` | The Cloudflare account containing the website's zone and the voting Worker                |
+| `CLOUDFLARE_API_TOKEN`  | A Cloudflare API token authorized to deploy the Worker and manage its routes in that zone |
+
+Follow [Cloudflare's GitHub Actions authentication guide](https://developers.cloudflare.com/workers/ci-cd/external-cicd/github-actions/) to create a token using the **Edit Cloudflare Workers** template and restrict it to the intended account and website zone. See [Workers permissions](https://developers.cloudflare.com/workers/authorization/workers/) for Worker creation and route permissions. Store the token in Actions secrets, never in source files or frontend build variables. The configured hosts must use Cloudflare-proxied DNS for Worker routes.
+
+### Automatic Deployment and Recovery
+
+- Relevant pushes to `main` verify the Worker, test and build the voting client, then deploy the production Worker. The workflow's path filters define relevant changes.
+- Pull requests run verification without deployment or access to the deployment credentials. Forks do not deploy.
+- Manual runs can deploy from `main`; other branches only verify. Missing credentials fail deployment with a configuration error.
+- Deployment uses the committed Wrangler configuration, including the Durable Object binding and migration. Existing stored votes are preserved; local test votes are not uploaded.
+- Before deployment, the run's commit must still match current `main`. Rerunning an older workflow cannot replace a newer Worker deployment; start a new manual run from current `main` instead.
+- The final step performs an anonymous, read-only request to the production API and validates its response against the client contract. It does not submit a production vote.
+
+After pushing, check **Actions → Website Voting Worker** and the existing Pages deployment status. These are independent deployments; the page may publish before its API is ready. If credential or route setup fails, correct the relevant account, token, or DNS configuration and rerun the workflow from `main`. If the post-deployment API check fails, inspect the route and API response: the deployment may already have succeeded. Do not remove the Durable Object or reset votes to recover a failed deployment. For a code regression, revert the affected change on `main` and let the normal deployment workflow publish the correction. No production deployment is verified merely by a local dry run.
 
 ## Branches and Releases
 
@@ -196,4 +222,4 @@ For an urgent fix, branch from current `main`, add the fix and a regression test
 - [ ] Final acceptance used the production ZIP intended for Chrome Web Store.
 - [ ] Mainnet ZIP was submitted to Chrome Web Store.
 
-Chrome Web Store upload and approval, SDK npm publishing, website production deployment, tag creation, and production release approval remain manual. Do not add unverified secret names or third-party publication actions to the workflow.
+Chrome Web Store upload and approval, SDK npm publishing, tag creation, and production release approval remain manual. Website and voting Worker operations follow [Website and Voting Worker](#website-and-voting-worker). Do not add unverified secret names or third-party publication actions to the workflow.

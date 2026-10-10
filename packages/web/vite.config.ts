@@ -47,6 +47,9 @@ export default defineConfig({
   },
   server: {
     port: 5001,
-    strictPort: true
+    strictPort: true,
+    proxy: {
+      '/api/frost-votes': 'http://127.0.0.1:8788'
+    }
   }
 })

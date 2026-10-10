@@ -14,6 +14,9 @@ noir-wallet/
 │   ├── sdk/                  # dApp SDK
 │   │   └── example/          # SDK integration example app
 │   ├── web/                  # Landing page and installation guide
+│   │   └── tests/            # Website voting contract tests
+│   ├── web-vote/             # Website FROST voting Worker
+│   │   └── tests/            # Voting API and persistence tests
 │   ├── docs/                 # User and developer documentation site
 │   └── zcash-wallet-wasm/    # Separate Rust/WASM repository, if available locally
 ├── docs/                     # Internal references, release and integration guides
@@ -115,9 +118,11 @@ Website builds use `NoirWallet/noir-wallet` for the `/github` and `/beta/version
 pnpm type-check
 ```
 
+This command builds the SDK before checking all workspace packages, so consumers can resolve its exported JavaScript and declaration files on a fresh checkout. The pre-commit hook uses the same command.
+
 ### Core Tests
 
-The root command aggregates the extension and RPC registry core suites:
+The root command aggregates the extension, RPC registry, website voting client, and voting Worker core suites:
 
 ```bash
 pnpm test
@@ -125,6 +130,8 @@ pnpm test
 # Run one package's core suite
 pnpm --filter @noir-wallet/extension test
 pnpm --filter @noir-wallet/rpc-registry test
+pnpm --filter @noir-wallet/web test
+pnpm --filter @noir-wallet/web-vote test
 
 # Run one core regression test
 pnpm --filter @noir-wallet/extension exec node --import ../../scripts/register-test-loader.mjs --test tests/tx-monitor-policy.test.mjs
@@ -172,6 +179,34 @@ pnpm --filter @noir-wallet/rpc-registry dev   # Local API at http://localhost:87
 ```
 
 Set `SLACK_WEBHOOK_URL` as a Worker secret for notifications. Local scheduled runs also probe external RPCs and can send notifications when this secret is configured. Failed deliveries remain pending and are retried on a later scheduled run.
+
+## FROST Community Vote
+
+The website's independent `/frost` page introduces the planned Mobile + Chrome Extension 2-of-2 FROST vault and accepts votes in favor or against, with separate counts. It does not change the landing page. The API is a separate Cloudflare Worker in `packages/web-vote/`; the RPC monitoring Worker is unchanged.
+
+Run both servers from the repository root:
+
+```bash
+pnpm --filter @noir-wallet/web-vote dev
+pnpm dev:web
+```
+
+Open `http://localhost:5001/frost`. Vite proxies `/api/frost-votes` to the local Worker on port 8788. Local votes persist under ignored `output/web-vote/state/`, separately from production.
+
+The API accepts `GET /api/frost-votes` for `{ total, support, oppose, choice }` and `POST /api/frost-votes` to vote. The browser supplies its anonymous UUID in `X-Voter-ID` and the selected `support` or `oppose` option in `X-Vote-Choice`; POST requires a configured website Origin and no request body. Reads without an ID return the counts with `choice: null`. Personalized responses are never cached. A SQLite-backed Durable Object stores hashed browser IDs, their choices, and aggregate counts, with transactional duplicate prevention. Each browser's first successful vote is final; retries, including a different choice, return the existing vote without changing either count. Existing support-only votes migrate to `support` without resetting counts or voter identities.
+
+Identity is scoped to the website origin in one browser, not physical hardware. Clearing browser data, private browsing, another browser, or using another website origin can produce a new identity. This is an informal interest poll and does not establish unique people or resist deliberate vote farming. No wallet connection or device fingerprint is used. If browser storage is unavailable, voting is disabled instead of issuing temporary IDs.
+
+Verify before deployment:
+
+```bash
+pnpm --filter @noir-wallet/web-vote verify
+pnpm --filter @noir-wallet/web type-check
+pnpm build:web
+pnpm test
+```
+
+The website keeps its existing Cloudflare Pages Git deployment. The voting Worker has an independent [GitHub Actions workflow](./.github/workflows/web-vote.yml). See [website and voting Worker deployment](./docs/release-workflow.md#website-and-voting-worker) for one-time credentials setup, triggers, and recovery. The Worker routes, allowed production origins, and Durable Object migration are maintained in [wrangler.jsonc](./packages/web-vote/wrangler.jsonc). Routes cover only the voting API paths; the existing Pages site serves `/frost` and all other pages. Local verification does not confirm production routing or deployment.
 
 ## Release
 

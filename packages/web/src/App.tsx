@@ -1,5 +1,7 @@
-import { useEffect } from 'react'
+import { lazy, Suspense, useEffect } from 'react'
 import { LandingPage } from './pages/LandingPage'
+
+const FrostVotePage = lazy(() => import('./pages/FrostVotePage'))
 
 function normalizePath(path: string): string {
   if (path.length > 1 && path.endsWith('/')) {
@@ -25,6 +27,14 @@ export default function App() {
 
   if (redirectUrl) {
     return null
+  }
+
+  if (path === '/frost') {
+    return (
+      <Suspense fallback={<div className="min-h-screen bg-bg" />}>
+        <FrostVotePage />
+      </Suspense>
+    )
   }
 
   return <LandingPage />

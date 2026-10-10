@@ -1,0 +1,18 @@
+{
+  "name": "@noir-wallet/web-vote",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --env local --port 8788 --persist-to ../../output/web-vote/state",
+    "deploy": "wrangler deploy --env=\"\"",
+    "test": "node ../../scripts/run-core-tests.mjs",
+    "type-check": "tsc --noEmit",
+    "verify": "pnpm type-check && pnpm test && wrangler deploy --dry-run --env=\"\""
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20260904.1",
+    "typescript": "5.9.3",
+    "wrangler": "4.129.0"
+  }
+}

@@ -30,6 +30,7 @@ zcash-wallet-wasm
 packages/docs/.react-router/
 packages/docs/.source/
 packages/rpc-registry/.wrangler/
+packages/web-vote/.wrangler/
 
 # Example extension builds
 packages/example/public/extension/*.zip
