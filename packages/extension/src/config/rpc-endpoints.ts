@@ -10,7 +10,7 @@ import {
   parseCustomRpcEndpoints,
   type CustomRpcEndpoints
 } from './custom-rpc'
-import { ZERO_INDEXER_ENDPOINT, isZeroIndexerEndpoint } from './zero-indexer'
+import { isZeroIndexerEndpoint } from './zero-indexer'
 import { SETTINGS_STORAGE_KEY } from './storage-keys'
 import { withWalletSettingsLock } from '../lib/wallet-settings-storage'
 
@@ -36,23 +36,22 @@ export type RpcEndpointMode = 'auto' | 'fixed'
 export type RpcEndpointModes = Record<RpcEndpointChain, RpcEndpointMode>
 
 export const DEFAULT_RPC_ENDPOINT_PREFERENCES: RpcEndpointPreferences = {
-  zcash: ZERO_INDEXER_ENDPOINT.id
+  zcash: 'deltarpc'
 }
 
 export const AUTOMATIC_RPC_ENDPOINT_ID = 'deltarpc'
 
 export const DEFAULT_RPC_ENDPOINT_MODES: RpcEndpointModes = {
-  zcash: 'fixed'
+  zcash: 'auto'
 }
 
-// Offline fallback; the release's Zero endpoint is retained when a registry is stale.
+// Offline fallback. Managed endpoint additions and removals belong in the registry.
 export const RPC_ENDPOINT_GROUPS: RpcEndpointGroup[] = [
   {
     chain: 'zcash',
     label: 'Zcash',
     iconChain: 'zec',
     options: [
-      ZERO_INDEXER_ENDPOINT,
       {
         id: 'deltarpc',
         label: 'DeltaRPC',
@@ -106,19 +105,16 @@ function cloneRpcEndpointGroups(groups: RpcEndpointGroup[]): RpcEndpointGroup[] 
 }
 
 function setRpcEndpointGroups(groups: RpcEndpointGroup[]): void {
-  managedRpcEndpointGroups = withRequiredRpcEndpoints(groups)
+  managedRpcEndpointGroups = withoutZeroIndexerEndpoints(groups)
   rebuildRpcEndpointOptions()
 }
 
-export function withRequiredRpcEndpoints(groups: RpcEndpointGroup[]): RpcEndpointGroup[] {
+export function withoutZeroIndexerEndpoints(groups: RpcEndpointGroup[]): RpcEndpointGroup[] {
   return cloneRpcEndpointGroups(groups).map(group =>
     group.chain === 'zcash'
       ? {
           ...group,
-          options: [
-            ZERO_INDEXER_ENDPOINT,
-            ...group.options.filter(option => option.id !== ZERO_INDEXER_ENDPOINT.id)
-          ]
+          options: group.options.filter(option => !isZeroIndexerEndpoint(option))
         }
       : group
   )
@@ -169,51 +165,30 @@ export function parseRpcEndpointModes(value: unknown): RpcEndpointModes {
 }
 
 export function setActiveRpcEndpointModes(modes?: Partial<RpcEndpointModes>): void {
-  activeRpcEndpointModes = protectedRpcEndpointModes(
-    activeRpcEndpointPreferences,
-    parseRpcEndpointModes(modes)
-  )
+  activeRpcEndpointModes = parseRpcEndpointModes(modes)
 }
 
 export function getActiveRpcEndpointModes(): RpcEndpointModes {
-  return protectedRpcEndpointModes(activeRpcEndpointPreferences, activeRpcEndpointModes)
+  return { ...activeRpcEndpointModes }
 }
 
 export function getActiveRpcEndpointMode(chain: RpcEndpointChain): RpcEndpointMode {
   return getActiveRpcEndpointModes()[chain]
 }
 
-function protectedRpcEndpointModes(
-  preferences: RpcEndpointPreferences,
-  modes: RpcEndpointModes
-): RpcEndpointModes {
-  const preferred = rpcEndpointOptionsByChain.zcash.find(
-    endpoint => endpoint.id === preferences.zcash
-  )
-  return {
-    ...modes,
-    zcash: preferred && isZeroIndexerEndpoint(preferred) ? 'fixed' : modes.zcash
-  }
-}
-
 export function migrateRpcEndpointDefaults(
   preferences: Partial<RpcEndpointPreferences> | undefined,
   modes: RpcEndpointModes,
-  migrationApplied: boolean | undefined
-): { preferences: RpcEndpointPreferences; modes: RpcEndpointModes; migrationApplied: true } {
-  const migrate = migrationApplied !== true && modes.zcash !== 'fixed'
-  const resolvedPreferences = {
-    ...DEFAULT_RPC_ENDPOINT_PREFERENCES,
-    ...preferences,
-    ...(migrate ? { zcash: ZERO_INDEXER_ENDPOINT.id } : {})
-  }
+  legacyZeroChoice = false
+): { preferences: RpcEndpointPreferences; modes: RpcEndpointModes } {
+  const oldZeroChoice = preferences?.zcash === 'zero-indexer' || legacyZeroChoice
   return {
-    preferences: resolvedPreferences,
-    modes: protectedRpcEndpointModes(resolvedPreferences, {
-      ...modes,
-      ...(migrate ? { zcash: 'fixed' as const } : {})
-    }),
-    migrationApplied: true
+    preferences: {
+      ...DEFAULT_RPC_ENDPOINT_PREFERENCES,
+      ...preferences,
+      ...(oldZeroChoice ? { zcash: AUTOMATIC_RPC_ENDPOINT_ID } : {})
+    },
+    modes: { ...modes, ...(oldZeroChoice ? { zcash: 'auto' as const } : {}) }
   }
 }
 
@@ -249,9 +224,7 @@ export async function selectStartupRpcEndpoint(
   if (persisted) return persisted
 
   return selectPreferredRpcEndpoint(
-    options.filter(
-      endpoint => !isCustomRpcEndpointId(endpoint.id) && !isZeroIndexerEndpoint(endpoint)
-    ),
+    options.filter(endpoint => !isCustomRpcEndpointId(endpoint.id)),
     undefined,
     probe
   )
@@ -264,13 +237,11 @@ export function getNextRpcEndpointOption(
 ): RpcEndpointOption | undefined {
   const options = rpcEndpointOptionsByChain[chain] || []
   const preferred = options.find(option => option.id === preferredEndpointId)
-  if (!preferred || isCustomRpcEndpointId(preferred.id) || isZeroIndexerEndpoint(preferred)) {
+  if (!preferred || isCustomRpcEndpointId(preferred.id)) {
     return undefined
   }
 
-  const managedOptions = options.filter(
-    option => !isCustomRpcEndpointId(option.id) && !isZeroIndexerEndpoint(option)
-  )
+  const managedOptions = options.filter(option => !isCustomRpcEndpointId(option.id))
   const failoverOrder = [
     preferred,
     ...managedOptions.filter(option => option.id !== preferredEndpointId)
@@ -301,10 +272,7 @@ export function getActiveRpcEndpointOption(chain: RpcEndpointChain): RpcEndpoint
   const options = rpcEndpointOptionsByChain[chain] || []
   const selectedOption = options.find(option => option.id === selectedId)
 
-  return selectedOption &&
-    (!isZeroIndexerEndpoint(selectedOption) || isZeroIndexerEndpoint(preferredOption))
-    ? selectedOption
-    : preferredOption
+  return selectedOption || preferredOption
 }
 
 export function getActiveZcashRpcUrl(): string {
@@ -321,7 +289,29 @@ interface StoredRpcPreferences {
   preferences?: Partial<RpcEndpointPreferences>
   modes: RpcEndpointModes
   customRpcEndpoints: CustomRpcEndpoints
-  migrationApplied?: boolean
+  retiredDefaultApplied: boolean
+  legacyZeroChoice: boolean
+}
+
+function isSelectedZeroCustomEndpoint(
+  preferences: Partial<RpcEndpointPreferences> | undefined,
+  rawCustom: unknown
+): boolean {
+  if (!preferences?.zcash) return false
+  if (!rawCustom || typeof rawCustom !== 'object' || Array.isArray(rawCustom)) return false
+  const candidates = (rawCustom as Record<string, unknown>).zcash
+  return (
+    Array.isArray(candidates) &&
+    candidates.some(candidate => {
+      if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return false
+      const endpoint = candidate as Record<string, unknown>
+      return (
+        endpoint.id === preferences?.zcash &&
+        typeof endpoint.url === 'string' &&
+        isZeroIndexerEndpoint(endpoint as { id: string; url: string })
+      )
+    })
+  )
 }
 
 function parseStoredSettings(raw: unknown): Record<string, unknown> | null {
@@ -351,7 +341,8 @@ async function readStoredRpcPreferences(): Promise<StoredRpcPreferences> {
     preferences,
     modes: parseRpcEndpointModes(state?.rpcEndpointModes),
     customRpcEndpoints: parseCustomRpcEndpoints(state?.customRpcEndpoints),
-    migrationApplied: state?.zeroIndexerDefaultApplied === true
+    retiredDefaultApplied: 'zeroIndexerDefaultApplied' in (state ?? {}),
+    legacyZeroChoice: isSelectedZeroCustomEndpoint(preferences, state?.customRpcEndpoints)
   }
 }
 
@@ -360,7 +351,7 @@ function applyAvailableRpcEndpointSettings(stored: StoredRpcPreferences): RpcEnd
   const migrated = migrateRpcEndpointDefaults(
     stored.preferences,
     stored.modes,
-    stored.migrationApplied
+    stored.legacyZeroChoice
   )
   const options = getRpcEndpointOptions('zcash')
   const persistedOption = options.find(option => option.id === migrated.preferences.zcash)
@@ -370,10 +361,10 @@ function applyAvailableRpcEndpointSettings(stored: StoredRpcPreferences): RpcEnd
     ...migrated.preferences,
     zcash: persistedOption?.id || fallbackOption?.id || DEFAULT_RPC_ENDPOINT_PREFERENCES.zcash
   }
-  const modes = protectedRpcEndpointModes(preferences, {
+  const modes: RpcEndpointModes = {
     ...migrated.modes,
     zcash: migrated.modes.zcash === 'fixed' && persistedOption ? 'fixed' : 'auto'
-  })
+  }
   setActiveRpcEndpointPreferences(preferences)
   setActiveRpcEndpointModes(modes)
   return preferences
@@ -395,14 +386,14 @@ async function persistRpcEndpointSettings(
       parsed.state && typeof parsed.state === 'object'
         ? (parsed.state as Record<string, unknown>)
         : {}
+    const { zeroIndexerDefaultApplied: _retired, ...remainingState } = state
     const next = {
       ...parsed,
       state: {
-        ...state,
+        ...remainingState,
         rpcEndpointPreferences: preferences,
         rpcEndpointModes: modes,
-        customRpcEndpoints,
-        zeroIndexerDefaultApplied: true
+        customRpcEndpoints
       }
     }
     await chrome.storage.local.set({
@@ -419,7 +410,7 @@ function haveRpcSettingsChanged(
   return (
     before.preferences?.zcash !== after.preferences?.zcash ||
     before.modes.zcash !== after.modes.zcash ||
-    before.migrationApplied !== after.migrationApplied ||
+    before.legacyZeroChoice !== after.legacyZeroChoice ||
     JSON.stringify(before.customRpcEndpoints) !== JSON.stringify(after.customRpcEndpoints)
   )
 }
@@ -442,6 +433,11 @@ async function loadRegistryGroups(): Promise<ManagedRpcSource> {
     chain => chain.chain === 'zcash' && chain.network === 'mainnet'
   )
   if (!zcash) {
+    setRpcEndpointGroups(RPC_ENDPOINT_GROUPS)
+    return 'local'
+  }
+
+  if (!zcash.endpoints.some(endpoint => !isZeroIndexerEndpoint(endpoint))) {
     setRpcEndpointGroups(RPC_ENDPOINT_GROUPS)
     return 'local'
   }
@@ -493,7 +489,7 @@ export function ensureRpcEndpointPreferencesLoaded(): Promise<RpcEndpointPrefere
       const migrated = migrateRpcEndpointDefaults(
         stored.preferences,
         stored.modes,
-        stored.migrationApplied
+        stored.legacyZeroChoice
       )
 
       const configuredOptions = getRpcEndpointOptions('zcash')
@@ -514,14 +510,14 @@ export function ensureRpcEndpointPreferencesLoaded(): Promise<RpcEndpointPrefere
         ...migrated.preferences,
         zcash: selected.id
       }
-      const modes = protectedRpcEndpointModes(preferences, { ...migrated.modes, zcash: mode })
+      const modes: RpcEndpointModes = { ...migrated.modes, zcash: mode }
       setActiveRpcEndpointPreferences(preferences)
       setActiveRpcEndpointModes(modes)
 
       if (
-        stored.migrationApplied !== true ||
-        (stored.preferences?.zcash === ZERO_INDEXER_ENDPOINT.id &&
-          stored.modes.zcash !== modes.zcash) ||
+        stored.retiredDefaultApplied ||
+        stored.legacyZeroChoice ||
+        stored.preferences?.zcash === 'zero-indexer' ||
         (managedSource !== 'local' &&
           (stored.preferences?.zcash !== selected.id || stored.modes.zcash !== modes.zcash))
       ) {
@@ -560,7 +556,11 @@ if (typeof chrome !== 'undefined' && chrome.storage?.local) {
         preferences: parsed?.state?.rpcEndpointPreferences,
         modes: parseRpcEndpointModes(parsed?.state?.rpcEndpointModes),
         customRpcEndpoints: parseCustomRpcEndpoints(parsed?.state?.customRpcEndpoints),
-        migrationApplied: parsed?.state?.zeroIndexerDefaultApplied === true
+        retiredDefaultApplied: 'zeroIndexerDefaultApplied' in (parsed?.state ?? {}),
+        legacyZeroChoice: isSelectedZeroCustomEndpoint(
+          parsed?.state?.rpcEndpointPreferences,
+          parsed?.state?.customRpcEndpoints
+        )
       })
     } catch {
       /* keep current preferences */
@@ -579,7 +579,7 @@ export async function readPersistedRpcEndpointSettings(): Promise<PersistedRpcEn
   const migrated = migrateRpcEndpointDefaults(
     stored.preferences,
     stored.modes,
-    stored.migrationApplied
+    stored.legacyZeroChoice
   )
   return {
     preferences: migrated.preferences,
@@ -593,10 +593,7 @@ export async function writePersistedRpcEndpointSettings(
 ): Promise<void> {
   const stored = await readStoredRpcPreferences()
   const customRpcEndpoints = parseCustomRpcEndpoints(settings.customRpcEndpoints)
-  const modes = protectedRpcEndpointModes(
-    settings.preferences,
-    parseRpcEndpointModes(settings.modes)
-  )
+  const modes = parseRpcEndpointModes(settings.modes)
   await persistRpcEndpointSettings(stored, settings.preferences, modes, customRpcEndpoints)
   setActiveCustomRpcEndpoints(customRpcEndpoints)
   setActiveRpcEndpointPreferences(settings.preferences)

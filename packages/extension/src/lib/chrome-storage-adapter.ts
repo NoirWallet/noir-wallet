@@ -47,6 +47,34 @@ export function createChromeStorageAdapter(area: StorageArea = 'local'): Storage
       }
       const write = async () => {
         try {
+          if (area === 'local' && key === SETTINGS_STORAGE_KEY) {
+            const current = (await storage.get(key))[key]
+            const parse = (raw: unknown): Record<string, unknown> => {
+              try {
+                const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw
+                return parsed && typeof parsed === 'object'
+                  ? (parsed as Record<string, unknown>)
+                  : {}
+              } catch {
+                return {}
+              }
+            }
+            const incoming = parse(value)
+            const latest = parse(current)
+            const latestState = latest.state as Record<string, unknown> | undefined
+            const incomingState = incoming.state as Record<string, unknown> | undefined
+            if (incomingState) {
+              const { zeroIndexerDefaultApplied: _retired, ...state } = incomingState
+              value = {
+                ...incoming,
+                state: {
+                  ...state,
+                  zeroIndexerEnabled: latestState?.zeroIndexerEnabled !== false
+                }
+              }
+              if (typeof current === 'string') value = JSON.stringify(value)
+            }
+          }
           await storage.set({ [key]: value })
         } catch (error: any) {
           // Handle quota exceeded

@@ -11,7 +11,6 @@ import {
   type RpcEndpointChain,
   type RpcEndpointOption
 } from '@/config/rpc-endpoints'
-import { isZeroIndexerEndpoint } from '@/config/zero-indexer'
 import { createCustomRpcEndpoint, isCustomRpcEndpointId } from '@/config/custom-rpc'
 import { verifyZcashRpcEndpoint } from '@/config/rpc-registry-client'
 import { DEFAULT_NETWORK } from '@/config/networks'
@@ -51,9 +50,7 @@ async function verifyCustomEndpoint(endpoint: { id: string; label: string; url: 
 }
 
 function getDefaultManagedEndpoint(chain: RpcEndpointChain): RpcEndpointOption {
-  const managed = getRpcEndpointOptions(chain).filter(
-    option => !isCustomRpcEndpointId(option.id) && !isZeroIndexerEndpoint(option)
-  )
+  const managed = getRpcEndpointOptions(chain).filter(option => !isCustomRpcEndpointId(option.id))
   const endpoint = managed.find(option => option.id === AUTOMATIC_RPC_ENDPOINT_ID) ?? managed[0]
   if (!endpoint) throw new Error('No managed RPC endpoint is available')
   return endpoint

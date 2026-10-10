@@ -1,15 +1,29 @@
-export const ZERO_INDEXER_ENDPOINT = {
-  id: 'zero-indexer',
-  label: 'ZeroIndexer',
-  url: 'https://tee.unsafe.zec.rocks'
-} as const
-
+export const ZERO_INDEXER_MAINNET_URL = 'https://tee.unsafe.zec.rocks'
 export const ZERO_INDEXER_TESTNET_URL = 'https://tee.testnet.unsafe.zec.rocks'
 
-const zeroIndexerOrigin = new URL(ZERO_INDEXER_ENDPOINT.url).origin
+const zeroIndexerOrigins = new Set([
+  new URL(ZERO_INDEXER_MAINNET_URL).origin,
+  new URL(ZERO_INDEXER_TESTNET_URL).origin
+])
 
 export function isZeroIndexerEndpoint(endpoint: { id: string; url: string }): boolean {
-  return (
-    endpoint.id === ZERO_INDEXER_ENDPOINT.id || new URL(endpoint.url).origin === zeroIndexerOrigin
-  )
+  if (endpoint.id === 'zero-indexer') return true
+  try {
+    return zeroIndexerOrigins.has(new URL(endpoint.url).origin)
+  } catch {
+    return false
+  }
+}
+
+export interface ZeroIndexerOptions {
+  urls: string[]
+  sendTimeoutMs?: number
+}
+
+export function getZeroIndexerOptions(
+  network: 'mainnet' | 'testnet',
+  enabled: boolean
+): ZeroIndexerOptions | null {
+  if (!enabled) return null
+  return { urls: [network === 'mainnet' ? ZERO_INDEXER_MAINNET_URL : ZERO_INDEXER_TESTNET_URL] }
 }

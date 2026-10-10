@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  isTransactionSubmissionUnknown,
   parseTransferEstimate,
   parseTransferResult,
   requireSuccessfulTransfer
@@ -63,6 +64,84 @@ describe('unified transfer results', () => {
     assert.throws(
       () => requireSuccessfulTransfer(result),
       /Wait for wallet sync before retrying.*shield-tx/
+    )
+  })
+
+  it('keeps an uncertain submission pending even when no step was confirmed', () => {
+    const result = parseTransferResult({
+      status: 'unknown',
+      txIds: ['possible-tx'],
+      finalTxId: 'possible-tx',
+      transactions: [{ txId: 'possible-tx', status: 'unknown' }]
+    })
+
+    assert.throws(
+      () => requireSuccessfulTransfer(result),
+      error =>
+        error.name === 'TransactionSubmissionUnknown' &&
+        error.txId === 'possible-tx' &&
+        /Check Activity before trying again/.test(error.message)
+    )
+    assert.throws(
+      () =>
+        parseTransferResult({
+          ...result,
+          status: 'failed'
+        }),
+      /status does not match/
+    )
+  })
+
+  it('retains earlier submitted hashes when a later step is uncertain', () => {
+    const result = parseTransferResult({
+      status: 'unknown',
+      txIds: ['submitted-tx', 'possible-tx'],
+      finalTxId: 'possible-tx',
+      transactions: [
+        { txId: 'submitted-tx', status: 'submitted' },
+        { txId: 'possible-tx', status: 'unknown' }
+      ]
+    })
+    assert.throws(
+      () => requireSuccessfulTransfer(result),
+      error =>
+        error.name === 'TransactionSubmissionUnknown' &&
+        error.txId === 'possible-tx' &&
+        error.txIds.join(',') === 'submitted-tx,possible-tx'
+    )
+  })
+
+  it('preserves the submission cause and accepts a raw WASM error without txIds', () => {
+    const result = parseTransferResult({
+      status: 'unknown',
+      txIds: ['possible-tx'],
+      finalTxId: 'possible-tx',
+      transactions: [
+        {
+          txId: 'possible-tx',
+          status: 'unknown',
+          errorMessage: 'privacy broadcast timed out'
+        }
+      ]
+    })
+    assert.throws(
+      () => requireSuccessfulTransfer(result),
+      error =>
+        isTransactionSubmissionUnknown(error) && error.message === 'privacy broadcast timed out'
+    )
+
+    const rawWasmError = new Error('privacy broadcast timed out')
+    rawWasmError.name = 'TransactionSubmissionUnknown'
+    rawWasmError.txId = 'possible-tx'
+    assert.equal(isTransactionSubmissionUnknown(rawWasmError), true)
+    assert.equal(rawWasmError.txIds, undefined)
+    assert.equal(
+      isTransactionSubmissionUnknown(
+        Object.assign(new Error('missing hash'), {
+          name: 'TransactionSubmissionUnknown'
+        })
+      ),
+      false
     )
   })
 })

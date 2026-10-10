@@ -3,7 +3,7 @@
   "releases": {
     "1.0.39": {
       "changes": [
-        "ZeroIndexer is now the default Zcash connection, with your manually selected RPC provider preserved."
+        "ZeroIndexer broadcasting is enabled by default. Manage it in Security & Privacy; sync keeps your selected RPC."
       ]
     },
     "1.0.38": {

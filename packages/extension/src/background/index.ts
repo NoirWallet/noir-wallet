@@ -48,7 +48,10 @@ import {
 } from './extension-display-mode'
 import { computePassiveSyncDelayMinutes, shouldRequestPeriodicSync } from './passive-sync-policy'
 import { fetchLatestBlockHeight } from '@/config/rpc-registry-client'
-import { requireSuccessfulTransfer } from '@/core/zcash/transfer-result'
+import {
+  isTransactionSubmissionUnknown,
+  requireSuccessfulTransfer
+} from '@/core/zcash/transfer-result'
 import { withTimeout, TimeoutError } from '@/lib/async-utils'
 import { TRANSACTION_PENDING_MESSAGE } from '@/lib/transaction-status-copy'
 import { getFundingSourceUnavailableReason } from '@/lib/funding-source'
@@ -63,6 +66,8 @@ import {
 import { parseDiagnosticLogDraft } from '@/lib/diagnostic-log'
 import { appendDiagnosticLog, getDiagnosticLogSalt } from '@/lib/diagnostic-log-store'
 import { prepareTransparentSpend } from '@/core/wallet/transparent-spend-preflight'
+import { readZeroIndexerEnabled, writeZeroIndexerEnabled } from '@/config/zero-indexer-settings'
+import { applyZeroIndexerEnabled } from '@/core/worker/client'
 
 logger.configureDiagnostics(getDiagnosticLogSalt, appendDiagnosticLog)
 
@@ -71,6 +76,33 @@ export { zcashTxMonitor }
 export const BALANCE_SYNC_ALARM = 'wallet-balance-sync'
 const BALANCE_SYNC_SCHEDULE_STATE_KEY = 'wallet_balance_sync_schedule'
 const RPC_RUNTIME_RELOAD_UI_TIMEOUT_MS = 15_000
+let zeroIndexerUpdateQueue: Promise<void> = Promise.resolve()
+
+function updateZeroIndexerPreference(
+  enabled: boolean
+): Promise<{ enabled: boolean; warning?: string }> {
+  const operation = zeroIndexerUpdateQueue
+    .catch(() => {})
+    .then(async () => {
+      await writeZeroIndexerEnabled(enabled)
+      const current = await readZeroIndexerEnabled()
+      try {
+        await applyZeroIndexerEnabled(current)
+        return { enabled: await readZeroIndexerEnabled() }
+      } catch (error) {
+        logger.error('[Privacy Broadcast] Runtime update failed', undefined, undefined, error)
+        return {
+          enabled: await readZeroIndexerEnabled(),
+          warning: 'Preference saved. It will apply when the wallet reconnects.'
+        }
+      }
+    })
+  zeroIndexerUpdateQueue = operation.then(
+    () => undefined,
+    () => undefined
+  )
+  return operation
+}
 
 async function applyRpcSettingsMutation(
   result: RpcEndpointSettingsMutationResult
@@ -730,6 +762,24 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         syncScheduler.onRequestSync('rpc-change')
         sendResponse({ success: true })
       })
+      .catch(error => sendResponse({ error: error.message }))
+    return true
+  }
+
+  if (message.type === 'GET_ZERO_INDEXER_ENABLED') {
+    readZeroIndexerEnabled()
+      .then(enabled => sendResponse({ success: true, enabled }))
+      .catch(error => sendResponse({ error: error.message }))
+    return true
+  }
+
+  if (message.type === 'SET_ZERO_INDEXER_ENABLED') {
+    if (typeof message.enabled !== 'boolean') {
+      sendResponse({ error: 'Invalid privacy broadcast preference' })
+      return false
+    }
+    updateZeroIndexerPreference(message.enabled)
+      .then(result => sendResponse({ success: true, ...result }))
       .catch(error => sendResponse({ error: error.message }))
     return true
   }
@@ -1434,6 +1484,23 @@ async function ensurePendingTransactionRecord(
   }
 }
 
+async function recordUncertainBroadcast(
+  accountKey: string,
+  transactionId: string,
+  txHash: string,
+  txHashes: string[] = [txHash]
+): Promise<void> {
+  await mutateTransactions(accountKey, transactions => {
+    const pending = applyTransactionBroadcast(transactions, transactionId, txHash, undefined)
+    if (txHashes.length <= 1) return pending
+    return pending.map(transaction =>
+      transaction.id === transactionId
+        ? { ...transaction, chainHashes: txHashes.map(hash => ({ hash, chain: 'Zcash' })) }
+        : transaction
+    )
+  })
+}
+
 /** Prove and broadcast a device-signed PCZT at a safe sync batch boundary. */
 async function handleHardwarePcztFinalize(params: {
   walletId: string
@@ -1460,6 +1527,21 @@ async function handleHardwarePcztFinalize(params: {
     })
     return { success: true, txHash }
   } catch (error) {
+    if (isTransactionSubmissionUnknown(error)) {
+      await recordUncertainBroadcast(
+        buildAccountKey(accountManager.getNetwork(), walletId, accountId),
+        transactionId,
+        error.txId
+      ).catch(recordError => {
+        logger.error(
+          'Hardware uncertain broadcast could not be recorded',
+          walletId,
+          accountId,
+          recordError
+        )
+      })
+      return { success: false, error: TRANSACTION_PENDING_MESSAGE, completionPending: true }
+    }
     if (error instanceof TimeoutError) {
       return { success: false, error: TRANSACTION_PENDING_MESSAGE, completionPending: true }
     }
@@ -1688,6 +1770,29 @@ async function handleBackgroundZcashTx(params: {
       })
     }
   } catch (error: any) {
+    if (isTransactionSubmissionUnknown(error)) {
+      await recordUncertainBroadcast(accountKey, transactionId, error.txId, error.txIds).catch(
+        recordError => {
+          logger.error(
+            `${actionLabel} uncertain broadcast could not be recorded`,
+            walletId,
+            accountId,
+            recordError
+          )
+        }
+      )
+      logger.warn(`${actionLabel} submission outcome pending`, walletId, accountId)
+      chrome.runtime
+        .sendMessage({
+          type: 'ZCASH_TX_COMPLETED',
+          accountKey,
+          transactionId,
+          error: TRANSACTION_PENDING_MESSAGE,
+          completionPending: true
+        })
+        .catch(() => {})
+      return
+    }
     if (!broadcastTxHash) {
       const recorded = await loadTransactions(accountKey)
         .then(records => records.find(record => record.id === transactionId))

@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-test('cold startup migrates legacy Auto once and keeps a later manual Auto choice', async () => {
+test('cold startup migrates beta Zero RPC while preserving privacy preference and unrelated settings', async () => {
   const previousChrome = globalThis.chrome
   const previousFetch = globalThis.fetch
   const previousNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator')
@@ -25,8 +25,10 @@ test('cold startup migrates legacy Auto once and keeps a later manual Auto choic
         state: {
           autoLockMs: 60000,
           feeTier: 'normal',
-          rpcEndpointPreferences: { zcash: 'deltarpc' },
-          rpcEndpointModes: { zcash: 'auto' }
+          rpcEndpointPreferences: { zcash: 'zero-indexer' },
+          rpcEndpointModes: { zcash: 'fixed' },
+          zeroIndexerDefaultApplied: true,
+          zeroIndexerEnabled: false
         },
         version: 0
       }
@@ -96,13 +98,14 @@ test('cold startup migrates legacy Auto once and keeps a later manual Auto choic
     releaseFetch()
     await loading
 
-    assert.equal(rpc.getActiveRpcEndpointOption('zcash').id, 'zero-indexer')
-    assert.equal(rpc.getActiveRpcEndpointMode('zcash'), 'fixed')
-    assert.equal(rpc.getRpcEndpointOptions('zcash')[0].url, 'https://tee.unsafe.zec.rocks')
+    assert.equal(rpc.getActiveRpcEndpointOption('zcash').id, 'deltarpc')
+    assert.equal(rpc.getActiveRpcEndpointMode('zcash'), 'auto')
+    assert.equal(rpc.getRpcEndpointOptions('zcash')[0].url, 'https://rpc.example.com')
     assert.deepEqual(values.get('wallet_settings').state.rpcEndpointPreferences, {
-      zcash: 'zero-indexer'
+      zcash: 'deltarpc'
     })
-    assert.equal(values.get('wallet_settings').state.zeroIndexerDefaultApplied, true)
+    assert.equal(values.get('wallet_settings').state.zeroIndexerEnabled, false)
+    assert.equal('zeroIndexerDefaultApplied' in values.get('wallet_settings').state, false)
     assert.equal(values.get('wallet_settings').state.autoLockMs, 120000)
     assert.equal(values.get('wallet_settings').state.feeTier, 'slow')
 
@@ -123,7 +126,7 @@ test('cold startup migrates legacy Auto once and keeps a later manual Auto choic
     await rpc.syncActiveRpcEndpointPreferencesFromStorage()
     assert.equal(rpc.getActiveRpcEndpointOption('zcash').id, 'deltarpc')
     assert.equal(rpc.getActiveRpcEndpointMode('zcash'), 'auto')
-    assert.equal(values.get('wallet_settings').state.zeroIndexerDefaultApplied, true)
+    assert.equal(values.get('wallet_settings').state.zeroIndexerEnabled, false)
 
     rpc.setActiveRpcEndpointOverride('zcash', 'zero-alias')
     assert.equal(rpc.getActiveRpcEndpointOption('zcash').id, 'deltarpc')
@@ -131,8 +134,8 @@ test('cold startup migrates legacy Auto once and keeps a later manual Auto choic
     rpc.setActiveRpcEndpointPreferences({ zcash: 'zero-alias' })
     rpc.setActiveRpcEndpointModes({ zcash: 'auto' })
     rpc.setActiveRpcEndpointOverride('zcash', 'deltarpc')
-    assert.equal(rpc.getActiveRpcEndpointMode('zcash'), 'fixed')
-    assert.equal(rpc.getActiveRpcEndpointOption('zcash').id, 'zero-alias')
+    assert.equal(rpc.getActiveRpcEndpointMode('zcash'), 'auto')
+    assert.equal(rpc.getActiveRpcEndpointOption('zcash').id, 'deltarpc')
     assert.equal(rpc.getNextRpcEndpointOption('zcash', 'zero-alias', 'zero-alias'), undefined)
   } finally {
     globalThis.chrome = previousChrome

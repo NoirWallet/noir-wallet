@@ -133,8 +133,8 @@ Mainnet and testnet are separate builds selected by `NETWORK_MODE` at build time
 - Testnet builds use `NETWORK_MODE=testnet` and the name `[Testnet] Noir Wallet`.
 - Separate extension IDs isolate Chrome storage, IndexedDB, and runtime state.
 - There is no runtime network switch. `zcash_switchNetwork` and SDK `switchNetwork()` are deprecated and must direct users to install the testnet extension.
-- Mainnet defaults to fixed ZeroIndexer and preserves explicit fixed RPC choices on upgrade; testnet uses its fixed configuration.
-- Keep ZeroIndexer outside automatic provider selection and failover. A selected ZeroIndexer endpoint must not silently switch transaction submission to another provider.
+- Mainnet supports automatic or fixed wallet RPC selection; testnet uses its fixed configuration.
+- ZeroIndexer is a separate, default-enabled broadcast preference under Security & Privacy, never a synchronization RPC. Transactions containing Orchard try its configured endpoints in order, then fall back to the ordinary wallet RPC if every ZeroIndexer attempt fails. Other transactions use the ordinary wallet RPC directly.
 
 Current network endpoints and chain IDs live in `packages/extension/src/config/networks.ts`. Do not duplicate endpoint values in business logic.
 

@@ -62,7 +62,7 @@ const TESTNET = 'testnet'
 
 export const RPC_REGISTRY: RpcRegistryDocument = {
   version: RPC_REGISTRY_SCHEMA_VERSION,
-  updatedAt: '2026-10-09T02:55:00.000Z',
+  updatedAt: '2026-10-10T09:00:51.000Z',
   chains: [
     {
       id: 'zcash-mainnet',
@@ -72,11 +72,6 @@ export const RPC_REGISTRY: RpcRegistryDocument = {
       iconChain: 'zec',
       probe: 'zcash-lightwalletd-grpc-web',
       endpoints: [
-        {
-          id: 'zero-indexer',
-          label: 'ZeroIndexer',
-          url: 'https://tee.unsafe.zec.rocks'
-        },
         {
           id: 'zec-rocks',
           label: 'zec.rocks',

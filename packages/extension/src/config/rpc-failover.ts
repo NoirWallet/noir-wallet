@@ -8,7 +8,6 @@ import {
   type RpcEndpointId
 } from './rpc-endpoints'
 import { probeRpcEndpoint } from './rpc-registry-client'
-import { isZeroIndexerEndpoint } from './zero-indexer'
 
 export const RPC_FAILOVER_STORAGE_KEY = 'rpc_failover_state'
 export const RPC_RECOVERY_COOLDOWN_MS = 5 * 60 * 1000
@@ -138,14 +137,9 @@ function isValidState(value: unknown): value is RpcFailoverState {
   const state = value as Partial<RpcFailoverState>
   const endpoints = getRpcEndpointOptions(RPC_CHAIN)
   const endpointIds = new Set(endpoints.map(option => option.id))
-  const activeEndpoint = endpoints.find(option => option.id === state.activeEndpointId)
-  const preferredEndpoint = endpoints.find(option => option.id === state.preferredEndpointId)
   return (
     endpointIds.has(state.preferredEndpointId as RpcEndpointId) &&
     endpointIds.has(state.activeEndpointId as RpcEndpointId) &&
-    (!activeEndpoint ||
-      !isZeroIndexerEndpoint(activeEndpoint) ||
-      (preferredEndpoint !== undefined && isZeroIndexerEndpoint(preferredEndpoint))) &&
     (state.failedOverAt === null || Number.isFinite(state.failedOverAt)) &&
     (state.recoverAfter === null || Number.isFinite(state.recoverAfter)) &&
     Number.isSafeInteger(state.preferredProbeSuccesses) &&

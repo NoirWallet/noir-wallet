@@ -1,4 +1,5 @@
 import type { RpcEndpointChain, RpcEndpointOption } from './rpc-endpoints'
+import { isZeroIndexerEndpoint } from './zero-indexer'
 
 export type CustomRpcEndpoints = Record<RpcEndpointChain, RpcEndpointOption[]>
 
@@ -59,6 +60,9 @@ export function createCustomRpcEndpoint(
   id = `${CUSTOM_RPC_ID_PREFIX}${crypto.randomUUID()}`
 ): RpcEndpointOption {
   const normalizedUrl = normalizeCustomRpcUrl(url)
+  if (isZeroIndexerEndpoint({ id, url: normalizedUrl })) {
+    throw new Error('This address is reserved for the privacy broadcast service')
+  }
   if (!isCustomRpcEndpointId(id) || id.length > 128 || CONTROL_CHARACTERS.test(id)) {
     throw new Error('Invalid custom RPC ID')
   }

@@ -21,6 +21,9 @@ import { DEFAULT_NETWORK, getNetworkConfig } from '@/config/networks'
 import { DedupPromise, ReadyFlag, TimeoutError } from '@/lib/async-utils'
 import { WALLET_CONFIG } from '@/config/wallet'
 import { isRetryableWalletRpcError, isWalletDirtyError } from '@/core/zcash/wallet-rpc-errors'
+import { getZeroIndexerOptions } from '@/config/zero-indexer'
+import { readZeroIndexerEnabledForWorker } from '@/config/zero-indexer-settings'
+import { TransactionSubmissionUnknownError } from '@/core/zcash/transfer-result'
 
 const { LIGHT, MEDIUM, WASM_HEAVY, TRANSACTION } = WALLET_CONFIG.SYNC.RPC_TIMEOUT_MS
 
@@ -184,7 +187,8 @@ function sleep(ms: number): Promise<void> {
 type OffscreenRpcResponse = {
   result?: unknown
   error?: string
-  errorType?: 'timeout'
+  errorType?: 'timeout' | 'submission_unknown'
+  txId?: string
   retryable?: boolean
   deferred?: boolean
 }
@@ -318,6 +322,9 @@ async function forwardToOffscreen<T = any>(method: string, payload: any): Promis
       }
 
       if (response.errorType === 'timeout') throw new TimeoutError(response.error)
+      if (response.errorType === 'submission_unknown' && response.txId) {
+        throw new TransactionSubmissionUnknownError(response.txId, response.error)
+      }
       throw new Error(response.error)
     }
 
@@ -325,6 +332,10 @@ async function forwardToOffscreen<T = any>(method: string, payload: any): Promis
   }
 
   throw new Error(`Offscreen RPC failed after ${maxAttempts} attempts: ${method}`)
+}
+
+export async function applyZeroIndexerEnabled(enabled: boolean): Promise<void> {
+  await forwardToOffscreen('zeroIndexer.setEnabled', { enabled })
 }
 
 export class ZcashWorkerClient {
@@ -389,13 +400,17 @@ export class ZcashWorkerClient {
 
     // Handle responses
     worker.onmessage = (event: MessageEvent<RPCResponse<any>>) => {
-      const { id, result, error } = event.data
+      const { id, result, error, errorType, txId } = event.data
       const pending = pendingRequests.get(id)
 
       if (pending) {
         pendingRequests.delete(id)
         if (error) {
-          pending.reject(new Error(error))
+          pending.reject(
+            errorType === 'submission_unknown' && txId
+              ? new TransactionSubmissionUnknownError(txId, error)
+              : new Error(error)
+          )
         } else {
           pending.resolve(result)
         }
@@ -556,6 +571,16 @@ export class ZcashWorkerClient {
     method: M,
     payload: RPCSchema[M]['request']
   ): Promise<RPCSchema[M]['response']> {
+    if (method === 'init') {
+      const initPayload = payload as RPCSchema['init']['request']
+      payload = {
+        ...initPayload,
+        zeroIndexerOptions: getZeroIndexerOptions(
+          initPayload.network,
+          await readZeroIndexerEnabledForWorker()
+        )
+      } as RPCSchema[M]['request']
+    }
     if (!worker) {
       this.initWorker()
     }
