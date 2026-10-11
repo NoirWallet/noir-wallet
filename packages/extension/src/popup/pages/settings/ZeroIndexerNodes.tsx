@@ -446,7 +446,7 @@ export function ZeroIndexerNodes() {
             <DialogTitle>Remove Custom Node?</DialogTitle>
             <DialogDescription>
               {status?.mode === 'fixed' && status.selectedEndpointId === deleteTarget?.id
-                ? 'Removing this node returns Broadcast Node to Auto.'
+                ? 'Node selection will return to Auto.'
                 : 'Remove this node from your saved list?'}
             </DialogDescription>
           </DialogHeader>

@@ -165,38 +165,44 @@ export function SecurityPrivacy() {
         <div>
           <p className="text-xs text-muted mb-2 px-1">Privacy</p>
           <div>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={zeroIndexerEnabled}
-              aria-label="ZeroIndexer"
-              disabled={!zeroIndexerLoaded || zeroIndexerSaving}
-              onClick={handleZeroIndexerToggle}
-              className="w-full p-4 mb-3 bg-card rounded-xl border border-white/10 hover:bg-white/5 cursor-pointer transition-colors disabled:cursor-wait disabled:opacity-70"
+            <section
+              aria-label="ZeroIndexer settings"
+              className="mb-3 overflow-hidden rounded-xl border border-white/10 bg-card"
             >
-              <div className="flex items-start justify-between gap-4 text-left">
-                <div>
-                  <div className="text-sm">ZeroIndexer</div>
-                  <div className="text-xs text-muted mt-1 leading-relaxed">
-                    Prefer the privacy broadcast service for transactions.
+              <button
+                type="button"
+                role="switch"
+                aria-checked={zeroIndexerEnabled}
+                aria-label="ZeroIndexer"
+                disabled={!zeroIndexerLoaded || zeroIndexerSaving}
+                onClick={handleZeroIndexerToggle}
+                className="w-full p-4 hover:bg-white/5 cursor-pointer transition-colors disabled:cursor-wait disabled:opacity-70"
+              >
+                <div className="flex items-start justify-between gap-4 text-left">
+                  <div>
+                    <div className="text-sm">ZeroIndexer</div>
+                    <div className="text-xs text-muted mt-1 leading-relaxed">
+                      Prefer the privacy broadcast service for transactions.
+                    </div>
+                  </div>
+                  <div className="pt-0.5">
+                    <Switch checked={zeroIndexerEnabled} />
                   </div>
                 </div>
-                <div className="pt-0.5">
-                  <Switch checked={zeroIndexerEnabled} />
-                </div>
-              </div>
-            </button>
-            <button
-              type="button"
-              onClick={() => navigate('/zero-indexer-nodes')}
-              className="mb-3 flex w-full items-center justify-between gap-3 rounded-xl border border-white/10 bg-card p-4 text-left transition-colors hover:bg-white/5"
-            >
-              <span className="text-sm">Broadcast Node</span>
-              <span className="flex min-w-0 items-center gap-2 text-xs text-muted">
-                <span className="max-w-28 truncate">{broadcastNode}</span>
-                <Icon icon="lucide:chevron-right" width={16} height={16} className="shrink-0" />
-              </span>
-            </button>
+              </button>
+              <button
+                type="button"
+                aria-label="ZeroIndexer nodes"
+                onClick={() => navigate('/zero-indexer-nodes')}
+                className="flex w-full items-center justify-between gap-3 border-t border-white/10 px-4 py-3 text-left transition-colors hover:bg-white/5"
+              >
+                <span className="text-sm">Nodes</span>
+                <span className="flex min-w-0 items-center gap-2 text-xs text-muted">
+                  <span className="max-w-28 truncate">{broadcastNode}</span>
+                  <Icon icon="lucide:chevron-right" width={16} height={16} className="shrink-0" />
+                </span>
+              </button>
+            </section>
             <button
               type="button"
               role="switch"
