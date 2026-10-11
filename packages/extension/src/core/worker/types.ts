@@ -243,8 +243,11 @@ export interface RPCSchema {
     request: WalletRouted
     response: boolean
   }
-  'zeroIndexer.setEnabled': {
-    request: { enabled: boolean }
+  'zeroIndexer.setOptions': {
+    request: {
+      network: Network
+      options: import('@/config/zero-indexer').ZeroIndexerOptions | null
+    }
     response: boolean
   }
   'wallet.reload': {

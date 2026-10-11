@@ -15,8 +15,6 @@ import {
   getRetryableWalletRpcUserMessage
 } from '../src/core/zcash/wallet-rpc-errors'
 import {
-  DEFAULT_RPC_ENDPOINT_MODES,
-  DEFAULT_RPC_ENDPOINT_PREFERENCES,
   getActiveRpcEndpointOption,
   getActiveRpcEndpointMode,
   getNextRpcEndpointOption,
@@ -31,8 +29,6 @@ import {
   setActiveRpcEndpointPreferences,
   withoutZeroIndexerEndpoints
 } from '../src/config/rpc-endpoints'
-import { NETWORKS } from '../src/config/networks'
-import { getZeroIndexerOptions } from '../src/config/zero-indexer'
 import {
   fetchBlockTime,
   fetchLatestBlockHeight,
@@ -317,21 +313,6 @@ test('excludes custom endpoints from automatic fallback', () => {
   assert.equal(getNextRpcEndpointOption('zcash', 'deltarpc', 'chainsafe'), undefined)
 
   setActiveCustomRpcEndpoints()
-})
-
-test('ordinary RPC and privacy broadcast configuration are independent', () => {
-  assert.deepEqual(DEFAULT_RPC_ENDPOINT_PREFERENCES, { zcash: 'deltarpc' })
-  assert.deepEqual(DEFAULT_RPC_ENDPOINT_MODES, { zcash: 'auto' })
-  assert.equal(NETWORKS.mainnet.rpcUrl, 'https://zcash-wallet-grpc-self.deltarpc.com')
-  assert.equal(NETWORKS.testnet.rpcUrl, 'https://zcash-wallet-grpc-testnet.deltarpc.com')
-  assert.notEqual(NETWORKS.mainnet.rpcUrl, NETWORKS.testnet.rpcUrl)
-  assert.deepEqual(getZeroIndexerOptions('mainnet', true), {
-    urls: ['https://tee.unsafe.zec.rocks']
-  })
-  assert.deepEqual(getZeroIndexerOptions('testnet', true), {
-    urls: ['https://tee.testnet.unsafe.zec.rocks']
-  })
-  assert.equal(getZeroIndexerOptions('mainnet', false), null)
 })
 
 test('migrates the old Zero RPC choice and preserves ordinary fixed choices', () => {

@@ -11,6 +11,12 @@ import { Switch } from '@/popup/components/ui/switch'
 import { toast } from '@/store/toast-store'
 import { parseZeroIndexerEnabled } from '@/config/zero-indexer-settings'
 import { SETTINGS_STORAGE_KEY } from '@/config/storage-keys'
+import {
+  parseZeroIndexerNodeStatus,
+  ZERO_INDEXER_NODES_STORAGE_KEY,
+  ZERO_INDEXER_RUNTIME_STORAGE_KEY,
+  type ZeroIndexerNodeStatus
+} from '@/config/zero-indexer-nodes'
 
 export function SecurityPrivacy() {
   const { navigate } = useNavigate()
@@ -18,6 +24,7 @@ export function SecurityPrivacy() {
   const [zeroIndexerEnabled, setZeroIndexerEnabled] = useState(true)
   const [zeroIndexerLoaded, setZeroIndexerLoaded] = useState(false)
   const [zeroIndexerSaving, setZeroIndexerSaving] = useState(false)
+  const [broadcastNode, setBroadcastNode] = useState('Auto')
   const zeroIndexerRevision = useRef(0)
   const [isLoaded, setIsLoaded] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
@@ -32,6 +39,41 @@ export function SecurityPrivacy() {
     })
     return () => {
       active = false
+    }
+  }, [])
+
+  useEffect(() => {
+    let active = true
+    let revision = 0
+    const loadNode = async () => {
+      const currentRevision = ++revision
+      try {
+        const response = await chrome.runtime.sendMessage({ type: 'GET_ZERO_INDEXER_NODES' })
+        if (!active || currentRevision !== revision || !response?.success) return
+        const status: ZeroIndexerNodeStatus = parseZeroIndexerNodeStatus(response.result)
+        const selected = [...status.managedEndpoints, ...status.customEndpoints].find(
+          endpoint => endpoint.id === status.selectedEndpointId
+        )
+        setBroadcastNode(status.mode === 'fixed' ? selected?.label || 'Auto' : 'Auto')
+      } catch {
+        // The node page reports load errors when opened.
+      }
+    }
+    const onChanged = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
+      if (
+        (area === 'local' &&
+          (changes[ZERO_INDEXER_NODES_STORAGE_KEY] || changes[ZERO_INDEXER_RUNTIME_STORAGE_KEY])) ||
+        (area === 'session' && changes[ZERO_INDEXER_RUNTIME_STORAGE_KEY]) ||
+        (area === 'local' && changes[SETTINGS_STORAGE_KEY])
+      ) {
+        void loadNode()
+      }
+    }
+    chrome.storage.onChanged.addListener(onChanged)
+    void loadNode()
+    return () => {
+      active = false
+      chrome.storage.onChanged.removeListener(onChanged)
     }
   }, [])
 
@@ -143,6 +185,17 @@ export function SecurityPrivacy() {
                   <Switch checked={zeroIndexerEnabled} />
                 </div>
               </div>
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate('/zero-indexer-nodes')}
+              className="mb-3 flex w-full items-center justify-between gap-3 rounded-xl border border-white/10 bg-card p-4 text-left transition-colors hover:bg-white/5"
+            >
+              <span className="text-sm">Broadcast Node</span>
+              <span className="flex min-w-0 items-center gap-2 text-xs text-muted">
+                <span className="max-w-28 truncate">{broadcastNode}</span>
+                <Icon icon="lucide:chevron-right" width={16} height={16} className="shrink-0" />
+              </span>
             </button>
             <button
               type="button"

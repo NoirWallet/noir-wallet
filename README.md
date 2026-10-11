@@ -169,7 +169,7 @@ supported by Noir Wallet extension **1.0.27 or later**.
 
 ## RPC Registry Service
 
-`packages/rpc-registry/` is a Cloudflare Worker serving `GET /v1/rpc-endpoints`; add `?scope=multichain` for the full registry. Its scheduled monitor checks RPC availability and sends Slack notifications. The domain, schedule, and Durable Object migration are defined in [wrangler.jsonc](./packages/rpc-registry/wrangler.jsonc).
+`packages/rpc-registry/` is a Cloudflare Worker serving `GET /v1/rpc-endpoints`; add `?scope=multichain` for the full registry. `GET /v1/zero-indexer-endpoints` serves independent Mainnet and Testnet broadcast-node lists maintained in [zero-indexer-registry.ts](./packages/rpc-registry/src/zero-indexer-registry.ts). The extension uses cached or bundled ZeroIndexer nodes when that API is unavailable. Its scheduled monitor checks ordinary RPC availability and sends Slack notifications; ZeroIndexer nodes are excluded from that monitor. The domain, schedule, and Durable Object migration are defined in [wrangler.jsonc](./packages/rpc-registry/wrangler.jsonc).
 
 From the repository root, verify the service without deploying or sending notifications:
 
