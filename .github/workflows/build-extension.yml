@@ -7,6 +7,8 @@ on:
       - 'packages/extension/**'
       - '!packages/extension/tests/**'
       - '!packages/extension/scripts/**'
+      - 'packages/extension/scripts/lib/runtime-module-policy.mjs'
+      - 'packages/extension/scripts/verify-build-surface.mjs'
       - '!packages/extension/**/*.md'
       - '!packages/extension/playwright.config.ts'
       - '!packages/extension/.env.test-wallets.example'
@@ -18,6 +20,10 @@ on:
       - 'LICENSE'
       - 'tsconfig.base.json'
       - '.npmrc'
+      - 'scripts/lib/wasm-package-integrity.mjs'
+      - 'scripts/run-core-tests.mjs'
+      - 'scripts/register-test-loader.mjs'
+      - 'scripts/typescript-test-loader.mjs'
 
 concurrency:
   group: extension-preview-${{ github.event.pull_request.number }}

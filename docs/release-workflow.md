@@ -4,7 +4,7 @@ This runbook covers V2 extension previews and the V2 inputs to the shared releas
 
 ## Branches and Versions
 
-- Feature and fix PRs merge into `v2`. PRs that change extension runtime, WASM, or build inputs run deterministic core tests and build a credential-free development extension. Tests, docs, and scripts alone do not start the wallet preview workflow.
+- Feature and fix PRs merge into `v2`. PRs that change extension runtime, WASM, build inputs, or their test loaders run deterministic core tests and build a credential-free development extension. Tests, docs, and maintenance scripts alone do not start the wallet preview workflow.
 - To prepare a V2 Beta, run **Prepare Extension Release** from the `main` workflow branch with mode `beta` and `source_ref=v2` (or a specific V2 source branch or full commit SHA). The workflow pins the selected source commit, builds it, and packages a Beta artifact. Publishing is controlled by that manual run's `publish_beta` input.
 - The V2 workflow does not publish on `v2` pushes, tags, or workflow dispatch. Production candidates and publication use the separate trusted workflows on `main`; see the [shared release runbook](https://github.com/NoirWallet/noir-wallet/blob/main/docs/release-workflow.md).
 - The production extension has one ZIP with runtime Mainnet/Testnet Mode. `NETWORK_MODE=testnet` is reserved for isolated local test builds, not a second release package.
@@ -31,7 +31,7 @@ The V2 package contains one ZIP for both runtime network modes, `SHA256SUMS`, re
 ## Routine Previews
 
 1. Open a PR against `v2` and confirm the development artifact passes the relevant local checks. Fork PRs receive no release credentials.
-2. After review and merge, select `main` when opening **Prepare Extension Release** in Actions. Choose `beta`, set `source_ref` to `v2` or the exact V2 commit, and decide whether `publish_beta` should publish a GitHub prerelease.
+2. After source review, select `main` when opening **Prepare Extension Release** in Actions. Choose `beta` and set `source_ref` to `v2`, a reviewed but unmerged V2 branch, or its full commit SHA. Decide whether `publish_beta` should publish a GitHub prerelease; merging into `v2` is not required for Beta.
 3. Check Mainnet and Testnet Mode separately in a real isolated MV3 extension. Run browser and external-service checks locally; the workflow does not run them.
 
 There is no need to bump the version for each Beta. The manual run identity and source commit distinguish artifacts of the same version.

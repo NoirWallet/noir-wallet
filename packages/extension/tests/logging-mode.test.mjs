@@ -56,17 +56,6 @@ describe('Build-channel logging', () => {
     assert.match(viteConfigSource, /\.catch\\\(\\s\*console\\\./)
   })
 
-  it('uses version tags as the only production build signal', () => {
-    assert.ok(workflowSource.includes('BUILD_CHANNEL:'))
-    assert.ok(workflowSource.includes("startsWith(github.ref, 'refs/tags/v')"))
-    assert.match(
-      workflowSource,
-      /needs\.prepare\.outputs\.is_production\s*==\s*'true'\s*&&\s*'production'\s*\|\|\s*'beta'/,
-      'version tags must build as production while v2 builds as beta'
-    )
-    assert.ok(!workflowSource.includes("github.ref == 'refs/heads/main' && 'production'"))
-  })
-
   it('uses the deployed EVM history proxy by default in every build channel', () => {
     for (const channel of ['development', 'beta', 'production']) {
       for (const configured of [undefined, '', '  ']) {
@@ -78,7 +67,7 @@ describe('Build-channel logging', () => {
     }
   })
 
-  it('accepts a canonical HTTPS override and local non-production history proxies', () => {
+  it('accepts a canonical HTTPS override and local development history proxies', () => {
     assert.equal(
       resolveHistoryApiOrigin(' https://custom-history.example/ ', 'production'),
       'https://custom-history.example'
@@ -86,6 +75,10 @@ describe('Build-channel logging', () => {
     assert.equal(
       resolveHistoryApiOrigin('http://localhost:8799/', 'development'),
       'http://localhost:8799'
+    )
+    assert.equal(
+      resolveHistoryApiOrigin('https://custom-history.example/', 'beta'),
+      'https://custom-history.example'
     )
   })
 
@@ -102,6 +95,7 @@ describe('Build-channel logging', () => {
       assert.throws(() => resolveHistoryApiOrigin(configured, 'production'))
     }
     assert.throws(() => resolveHistoryApiOrigin('http://history.example', 'development'))
+    assert.throws(() => resolveHistoryApiOrigin('http://localhost:8799', 'beta'))
   })
 
   it('keeps the upstream history key server-side and rate limits the public proxy', () => {
