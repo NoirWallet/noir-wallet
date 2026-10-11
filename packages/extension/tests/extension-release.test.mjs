@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import {
   packageReleaseArtifact,
@@ -21,6 +21,9 @@ import {
 } from '../../../scripts/extension-release-gates.mjs'
 
 const SCRIPT = fileURLToPath(new URL('../../../scripts/extension-release.mjs', import.meta.url))
+const GATE_SCRIPT = fileURLToPath(
+  new URL('../../../scripts/extension-release-gates.mjs', import.meta.url)
+)
 const SOURCE_SHA = 'a'.repeat(40)
 const WORKFLOW_SHA = 'b'.repeat(40)
 const PR_HEAD_SHA = 'c'.repeat(40)
@@ -225,6 +228,49 @@ describe('Extension release artifacts', () => {
     const metadata = verifyReleaseArtifact(output, { mode: 'beta' })
     assert.equal(metadata.artifactLabel, 'v1.0.39-beta.12345.2.aaaaaaa')
     assert.match(readFileSync(env.GITHUB_OUTPUT, 'utf8'), /tag=v1\.0\.39-beta\.12345\.2\.aaaaaaa\n/)
+  })
+
+  it('runs both CLI entry points through a symlinked scripts directory', t => {
+    const { root, source, output, env } = fixture(t)
+    const scriptsLink = path.join(root, 'linked-scripts')
+    symlinkSync(path.dirname(SCRIPT), scriptsLink, 'dir')
+    const packaged = spawnSync(
+      process.execPath,
+      [path.join(scriptsLink, 'extension-release.mjs'), 'package', source, output],
+      { encoding: 'utf8', env: { ...process.env, ...env } }
+    )
+    assert.equal(packaged.status, 0, packaged.stderr)
+    assert.equal(verifyReleaseArtifact(output, { mode: 'preview' }).sourceSha, SOURCE_SHA)
+
+    const rejected = spawnSync(
+      process.execPath,
+      [path.join(scriptsLink, path.basename(GATE_SCRIPT)), 'resolve'],
+      {
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          GITHUB_EVENT_NAME: 'push',
+          GITHUB_REF: 'refs/heads/main'
+        }
+      }
+    )
+    assert.equal(rejected.status, 1)
+    assert.match(rejected.stderr, /Release workflows must be manually run from main/)
+
+    const imported = spawnSync(
+      process.execPath,
+      ['--input-type=module', '-e', 'await import(process.env.GATE_MODULE)'],
+      {
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          GATE_MODULE: pathToFileURL(path.join(scriptsLink, path.basename(GATE_SCRIPT))).href,
+          GITHUB_EVENT_NAME: 'push',
+          GITHUB_REF: 'refs/heads/main'
+        }
+      }
+    )
+    assert.equal(imported.status, 0, imported.stderr)
   })
 })
 

@@ -7,6 +7,7 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   statSync,
   writeFileSync
 } from 'node:fs'
@@ -390,7 +391,16 @@ export function verifyReleaseArtifact(directory, expected = {}) {
   return metadata
 }
 
-const isCli = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+function isCliEntry() {
+  if (!process.argv[1]) return false
+  try {
+    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))
+  } catch {
+    return false
+  }
+}
+
+const isCli = isCliEntry()
 if (isCli) {
   try {
     const [, , command, ...args] = process.argv
