@@ -21,6 +21,11 @@ import { probeRpcEndpoint } from '@/config/rpc-registry-client'
 import { useSettingsStore } from '@/store/settings-store'
 import { toast } from '@/store/toast-store'
 import { ChainIcon } from '../../components/common/ChainIcon'
+import {
+  EndpointLatencyBadge as PingBadge,
+  EndpointSelectionIndicator as SelectionIndicator,
+  type EndpointProbeResult as PingResult
+} from '../../components/common/EndpointStatus'
 import { PageHeader } from '../../components/common/PageHeader'
 import { cn } from '@/lib/utils'
 import { DEFAULT_NETWORK, getNetworkConfig } from '@/config/networks'
@@ -51,8 +56,6 @@ const fixedTestnetEndpointGroups = isFixedTestnetEndpoint
       }
     ]
   : null
-
-type PingResult = { status: 'pending' | 'ok' | 'unreachable'; latencyMs?: number }
 
 interface RpcSettingsResult {
   preferences: RpcEndpointPreferences
@@ -111,45 +114,6 @@ function parseRpcEndpointStatus(value: unknown): RpcEndpointStatus {
 
 function pingKey(chain: RpcEndpointChain, optionId: string): string {
   return `${chain}:${optionId}`
-}
-
-function latencyTone(latencyMs: number): string {
-  if (latencyMs < 200) return 'text-primary'
-  if (latencyMs < 500) return 'text-warning'
-  return 'text-danger'
-}
-
-function PingBadge({ result }: { result?: PingResult }) {
-  if (!result || result.status === 'pending') {
-    return (
-      <Icon icon="lucide:loader-2" width={14} height={14} className="animate-spin text-muted" />
-    )
-  }
-  if (result.status === 'unreachable') return <span className="text-xs text-danger">--</span>
-  return (
-    <span className={cn('text-xs tabular-nums', latencyTone(result.latencyMs!))}>
-      {result.latencyMs} ms
-    </span>
-  )
-}
-
-function SelectionIndicator({ selected, applying }: { selected: boolean; applying: boolean }) {
-  if (applying) {
-    return (
-      <Icon icon="lucide:loader-2" width={16} height={16} className="animate-spin text-primary" />
-    )
-  }
-  return (
-    <span
-      className={cn(
-        'flex size-4 shrink-0 items-center justify-center rounded-full border bg-white/5',
-        selected ? 'border-primary bg-primary/15' : 'border-white/15'
-      )}
-      aria-hidden="true"
-    >
-      {selected && <span className="size-2 rounded-full bg-primary" />}
-    </span>
-  )
 }
 
 export function RpcEndpoint() {

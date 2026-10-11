@@ -9,6 +9,11 @@ import {
 } from '@/config/zero-indexer-nodes'
 import { SETTINGS_STORAGE_KEY } from '@/config/storage-keys'
 import { cn } from '@/lib/utils'
+import { ChainIcon } from '../../components/common/ChainIcon'
+import {
+  EndpointLatencyBadge as PingBadge,
+  EndpointSelectionIndicator as SelectionIndicator
+} from '../../components/common/EndpointStatus'
 import { PageHeader } from '../../components/common/PageHeader'
 import { Button } from '../../components/ui/button'
 import { Input } from '../../components/ui/input'
@@ -42,56 +47,6 @@ function readStatus(response: unknown): { status: ZeroIndexerNodeStatus; warning
     status: parseZeroIndexerNodeStatus(result.result),
     warning: typeof result.warning === 'string' ? result.warning : undefined
   }
-}
-
-function ProbeBadge({ status, latencyMs }: { status?: 'ok' | 'unreachable'; latencyMs?: number }) {
-  if (!status) {
-    return (
-      <Icon
-        icon="lucide:loader-2"
-        width={14}
-        height={14}
-        className="animate-spin text-muted"
-        aria-label="Checking"
-      />
-    )
-  }
-  if (status === 'unreachable') return <span className="text-xs text-danger">Unavailable</span>
-  return (
-    <span
-      className={cn(
-        'text-xs tabular-nums',
-        latencyMs === undefined
-          ? 'text-primary'
-          : latencyMs < 200
-            ? 'text-primary'
-            : latencyMs < 500
-              ? 'text-warning'
-              : 'text-danger'
-      )}
-    >
-      {latencyMs === undefined ? 'Available' : `${latencyMs} ms`}
-    </span>
-  )
-}
-
-function SelectionIndicator({ selected, applying }: { selected: boolean; applying: boolean }) {
-  if (applying) {
-    return (
-      <Icon icon="lucide:loader-2" width={16} height={16} className="animate-spin text-primary" />
-    )
-  }
-  return (
-    <span
-      className={cn(
-        'flex size-4 shrink-0 items-center justify-center rounded-full border',
-        selected ? 'border-primary bg-primary/15' : 'border-white/15 bg-white/5'
-      )}
-      aria-hidden="true"
-    >
-      {selected && <span className="size-2 rounded-full bg-primary" />}
-    </span>
-  )
 }
 
 export function ZeroIndexerNodes() {
@@ -238,7 +193,7 @@ export function ZeroIndexerNodes() {
     return (
       <div
         key={endpoint.id}
-        className={cn('flex min-h-11 items-center', index > 0 && 'border-t border-white/10')}
+        className={cn('flex min-h-11 items-center gap-1', index > 0 && 'border-t border-white/10')}
       >
         <button
           type="button"
@@ -253,13 +208,20 @@ export function ZeroIndexerNodes() {
           className="flex min-w-0 flex-1 items-center justify-between gap-3 px-4 py-3 text-left transition-colors hover:bg-white/5 disabled:cursor-not-allowed"
         >
           <span className="min-w-0 flex-1">
-            <span className="block truncate text-sm text-white">{endpoint.label}</span>
+            <span className="flex items-center gap-2 text-sm text-white">
+              <span className="truncate">{endpoint.label}</span>
+              {custom && (
+                <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">
+                  Custom
+                </span>
+              )}
+            </span>
             <span className="block truncate text-xs text-muted">
               {endpoint.url.replace(/^https:\/\//, '')}
             </span>
           </span>
           <span className="flex shrink-0 items-center gap-3">
-            <ProbeBadge status={probe?.status} latencyMs={probe?.latencyMs} />
+            <PingBadge result={probe} />
             <SelectionIndicator selected={!!selected} applying={applyingKey === endpoint.id} />
           </span>
         </button>
@@ -284,23 +246,19 @@ export function ZeroIndexerNodes() {
       <PageHeader
         title="ZeroIndexer Nodes"
         showBack
-        rightContent={
-          <button
-            type="button"
-            aria-label="Refresh node status"
-            title="Refresh node status"
-            disabled={refreshing}
-            onClick={() => void loadStatus('REFRESH_ZERO_INDEXER_NODES')}
-            className="flex size-7 items-center justify-center rounded-full text-muted hover:bg-content3 hover:text-white disabled:opacity-50"
-          >
+        action={{
+          icon: (
             <Icon
               icon="lucide:refresh-cw"
-              width={16}
-              height={16}
+              width={14}
+              height={14}
               className={cn(refreshing && 'animate-spin')}
             />
-          </button>
-        }
+          ),
+          onClick: () => {
+            if (!refreshing) void loadStatus('REFRESH_ZERO_INDEXER_NODES')
+          }
+        }}
       />
       <div className="page-content space-y-6">
         {loadError && (
@@ -325,7 +283,16 @@ export function ZeroIndexerNodes() {
         ) : (
           <>
             <section className="space-y-3">
-              <h2 className="text-base font-medium text-white">Official Nodes</h2>
+              <div className="flex items-center gap-2">
+                <div className="flex size-6 items-center justify-center overflow-hidden rounded-full bg-white">
+                  <ChainIcon chain="zec" className="size-6" />
+                </div>
+                <div className="min-w-0">
+                  <h2 className="text-base font-medium text-white">
+                    {status.network === 'testnet' ? 'Zcash Testnet' : 'Zcash'}
+                  </h2>
+                </div>
+              </div>
               <div className="overflow-hidden rounded-xl bg-card">
                 <button
                   type="button"
@@ -337,17 +304,30 @@ export function ZeroIndexerNodes() {
                   className="flex min-h-11 w-full items-center justify-between gap-3 px-4 py-3 text-left transition-colors hover:bg-white/5 disabled:cursor-not-allowed"
                 >
                   <span className="min-w-0 flex-1">
-                    <span className="block text-sm text-white">Auto</span>
-                    {preferred && (
-                      <span className="block truncate text-xs text-muted">
-                        Preferred: {preferred.label}
-                      </span>
-                    )}
+                    <span className="flex min-w-0 items-center gap-2 text-sm text-white">
+                      <span>Auto</span>
+                      {status.mode === 'auto' && preferred && (
+                        <span
+                          title={`Preferred: ${preferred.label}`}
+                          className="truncate rounded bg-primary/10 px-1.5 py-0.5 text-[10px] leading-4 text-primary"
+                        >
+                          {preferred.label}
+                        </span>
+                      )}
+                    </span>
+                    <span className="block truncate text-xs text-muted">
+                      Automatically switches when a node is unavailable
+                    </span>
                   </span>
-                  <SelectionIndicator
-                    selected={status.mode === 'auto'}
-                    applying={applyingKey === 'auto'}
-                  />
+                  <span className="flex shrink-0 items-center gap-3">
+                    {status.mode === 'auto' && (
+                      <PingBadge result={preferred ? status.probes[preferred.id] : undefined} />
+                    )}
+                    <SelectionIndicator
+                      selected={status.mode === 'auto'}
+                      applying={applyingKey === 'auto'}
+                    />
+                  </span>
                 </button>
                 {status.managedEndpoints.map((endpoint, index) => renderNode(endpoint, index + 1))}
               </div>
@@ -370,12 +350,16 @@ export function ZeroIndexerNodes() {
                   Add
                 </Button>
               </div>
-              {status.customEndpoints.length > 0 && (
+              {status.customEndpoints.length > 0 ? (
                 <div className="overflow-hidden rounded-xl bg-card">
                   {status.customEndpoints.map((endpoint, index) =>
                     renderNode(endpoint, index, true)
                   )}
                 </div>
+              ) : (
+                <p className="rounded-xl bg-card/45 px-4 py-3 text-xs text-muted">
+                  No custom endpoints saved.
+                </p>
               )}
             </section>
           </>
@@ -445,9 +429,10 @@ export function ZeroIndexerNodes() {
           <Button
             className="h-11 w-full"
             isLoading={applyingKey === 'add'}
+            disabled={!customUrl.trim()}
             onClick={() => void handleAdd()}
           >
-            Add Node
+            Verify & Add
           </Button>
         </DialogContent>
       </Dialog>
