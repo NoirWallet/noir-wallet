@@ -152,6 +152,48 @@ describe('Extension release artifacts', () => {
     assert.throws(() => verifyReleaseArtifact(output), /regular file/)
   })
 
+  it('packages isolated network ZIPs without following wallet checkout ZIP symlinks', async t => {
+    const { root, source, output, env } = fixture(t)
+    const sentinel = path.join(root, 'trusted-script.mjs')
+    const sentinelBytes = 'trusted release tooling'
+    writeFileSync(sentinel, sentinelBytes)
+    const walletZip = path.join(source, 'packages', 'extension', 'dist', 'main.zip')
+    rmSync(walletZip)
+    symlinkSync(sentinel, walletZip)
+
+    const networkBuildDir = path.join(root, 'raw-zips')
+    mkdirSync(path.join(networkBuildDir, 'dist'), { recursive: true })
+    mkdirSync(path.join(networkBuildDir, 'dist-testnet'), { recursive: true })
+    const mainnetBytes = 'isolated mainnet build'
+    const testnetBytes = 'isolated testnet build'
+    writeFileSync(path.join(networkBuildDir, 'dist', 'main.zip'), mainnetBytes)
+    writeFileSync(path.join(networkBuildDir, 'dist-testnet', 'test.zip'), testnetBytes)
+
+    await assert.rejects(
+      packageReleaseArtifact(source, path.join(root, 'default-output'), env),
+      /regular file/
+    )
+    const metadata = await packageReleaseArtifact(source, output, env, networkBuildDir)
+    assert.deepEqual(
+      metadata.assets.map(asset => asset.sha256),
+      [
+        createHash('sha256').update(mainnetBytes).digest('hex'),
+        createHash('sha256').update(testnetBytes).digest('hex')
+      ]
+    )
+    assert.equal(verifyReleaseArtifact(output).sourceSha, SOURCE_SHA)
+
+    const cliOutput = path.join(root, 'cli-artifact')
+    const cli = spawnSync(
+      process.execPath,
+      [SCRIPT, 'package', source, cliOutput, networkBuildDir],
+      { encoding: 'utf8', env: { ...process.env, ...env } }
+    )
+    assert.equal(cli.status, 0, cli.stderr)
+    assert.deepEqual(verifyReleaseArtifact(cliOutput).assets, metadata.assets)
+    assert.equal(readFileSync(sentinel, 'utf8'), sentinelBytes)
+  })
+
   it('requires expected source, version, run, and candidate mode for promotion', async t => {
     const { source, output, env } = fixture(t)
     await packageReleaseArtifact(source, output, env)

@@ -148,10 +148,12 @@ jobs:
         with:
           node-version-file: release-tools/.node-version
           package-manager-cache: false
+      - name: Create isolated ZIP input directory
+        run: mkdir raw-zips
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ needs.build.outputs.artifact_id }}
-          path: wallet/packages/extension
+          path: raw-zips
       - name: Package the exact acceptance artifacts
         id: package
         env:
@@ -159,7 +161,7 @@ jobs:
           SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
           SOURCE_REF: ${{ needs.prepare.outputs.source_ref }}
           WORKFLOW_SHA: ${{ github.sha }}
-        run: node release-tools/scripts/extension-release.mjs package wallet release-assets
+        run: node release-tools/scripts/extension-release.mjs package wallet release-assets raw-zips
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         id: artifact
         with:

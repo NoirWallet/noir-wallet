@@ -199,8 +199,8 @@ function sha256(file) {
   return createHash('sha256').update(readFileSync(file)).digest('hex')
 }
 
-function sourceZip(sourceDir, subdir) {
-  const dir = path.join(sourceDir, 'packages', 'extension', subdir)
+function sourceZip(networkBuildDir, subdir) {
+  const dir = path.join(networkBuildDir, subdir)
   if (!lstatSync(dir).isDirectory()) throw new Error(`${subdir} must be a directory`)
   const zipNames = readdirSync(dir).filter(name => name.endsWith('.zip'))
   if (zipNames.length !== 1)
@@ -271,10 +271,15 @@ function readPackagingInput(sourceDir, env) {
   return input
 }
 
-export async function packageReleaseArtifact(sourceDir, outputDir, env = process.env) {
+export async function packageReleaseArtifact(
+  sourceDir,
+  outputDir,
+  env = process.env,
+  networkBuildDir = path.join(sourceDir, 'packages', 'extension')
+) {
   const input = readPackagingInput(sourceDir, env)
-  const mainnetZip = sourceZip(sourceDir, 'dist')
-  const testnetZip = sourceZip(sourceDir, 'dist-testnet')
+  const mainnetZip = sourceZip(networkBuildDir, 'dist')
+  const testnetZip = sourceZip(networkBuildDir, 'dist-testnet')
   let changelog
   if (input.mode === 'candidate') {
     const changelogFile = path.join(sourceDir, 'CHANGELOG.md')
@@ -404,8 +409,13 @@ const isCli = isCliEntry()
 if (isCli) {
   try {
     const [, , command, ...args] = process.argv
-    if (command === 'package' && args.length === 2) {
-      await packageReleaseArtifact(path.resolve(args[0]), path.resolve(args[1]))
+    if (command === 'package' && (args.length === 2 || args.length === 3)) {
+      await packageReleaseArtifact(
+        path.resolve(args[0]),
+        path.resolve(args[1]),
+        process.env,
+        args[2] === undefined ? undefined : path.resolve(args[2])
+      )
     } else if (command === 'verify' && args.length === 1) {
       const expected = {}
       for (const [name, key] of [
@@ -423,7 +433,7 @@ if (isCli) {
       verifyReleaseArtifact(path.resolve(args[0]), expected)
     } else {
       throw new Error(
-        'Usage: extension-release.mjs package <sourceDir> <outputDir> | verify <artifactDir>'
+        'Usage: extension-release.mjs package <sourceDir> <outputDir> [networkBuildDir] | verify <artifactDir>'
       )
     }
   } catch (error) {
