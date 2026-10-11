@@ -103,14 +103,14 @@ Use the [README quick start](./README.md#quick-start) for dependency installatio
 
 ## Automated Testing
 
-Committed tests use `node:test` and `node:assert/strict`. Each package owns one flat `tests/` directory and its own `test` command. Root `pnpm test` explicitly aggregates the extension, RPC registry, website voting client, and voting Worker core suites; private tooling in the independent WASM checkout is excluded. Shared runner helpers live in `scripts/`, and the source loader uses the tested package's existing TypeScript compiler. No additional test framework is required. Run tests on Node.js 22 or newer after `pnpm install`.
+Committed tests use `node:test` and `node:assert/strict`. Each package owns one flat `tests/` directory and its own `test` command. Root `pnpm test` explicitly aggregates the extension, RPC registry, website signup client, and signup Worker core suites; private tooling in the independent WASM checkout is excluded. Shared runner helpers live in `scripts/`, and the source loader uses the tested package's existing TypeScript compiler. No additional test framework is required. Run tests on Node.js 22 or newer after `pnpm install`.
 
 ```text
 packages/
 ├── extension/tests/              # Wallet core tests
 ├── rpc-registry/tests/           # RPC service core tests
-├── web/tests/                    # Website voting contract tests
-└── web-vote/tests/               # Voting API and persistence tests
+├── web/tests/                    # Website signup contract tests
+└── web-vote/tests/               # Signup API and persistence tests
 scripts/
 ├── run-core-tests.mjs            # Package-scoped native test runner
 ├── register-test-loader.mjs      # Source loader registration

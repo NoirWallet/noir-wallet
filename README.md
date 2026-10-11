@@ -14,9 +14,9 @@ noir-wallet/
 │   ├── sdk/                  # dApp SDK
 │   │   └── example/          # SDK integration example app
 │   ├── web/                  # Landing page and installation guide
-│   │   └── tests/            # Website voting contract tests
-│   ├── web-vote/             # Website FROST voting Worker
-│   │   └── tests/            # Voting API and persistence tests
+│   │   └── tests/            # Website signup contract tests
+│   ├── web-vote/             # Website FROST signup Worker
+│   │   └── tests/            # Signup API and persistence tests
 │   ├── docs/                 # User and developer documentation site
 │   └── zcash-wallet-wasm/    # Separate Rust/WASM repository, if available locally
 ├── docs/                     # Internal references, release and integration guides
@@ -122,7 +122,7 @@ This command builds the SDK before checking all workspace packages, so consumers
 
 ### Core Tests
 
-The root command aggregates the extension, RPC registry, website voting client, and voting Worker core suites:
+The root command aggregates the extension, RPC registry, website signup client, and signup Worker core suites:
 
 ```bash
 pnpm test
@@ -180,9 +180,9 @@ pnpm --filter @noir-wallet/rpc-registry dev   # Local API at http://localhost:87
 
 Set `SLACK_WEBHOOK_URL` as a Worker secret for notifications. Local scheduled runs also probe external RPCs and can send notifications when this secret is configured. Failed deliveries remain pending and are retried on a later scheduled run.
 
-## FROST Community Vote
+## FROST Beta Signup
 
-The website's independent `/frost` page introduces the planned Mobile + Chrome Extension 2-of-2 FROST vault and accepts votes in favor or against, with separate counts. It does not change the landing page. The API is a separate Cloudflare Worker in `packages/web-vote/`; the RPC monitoring Worker is unchanged.
+The website's independent `/frost` page introduces the planned Mobile + Chrome Extension 2-of-2 FROST vault and collects email addresses for Beta interest. Its API is a separate Cloudflare Worker in `packages/web-vote/`.
 
 Run both servers from the repository root:
 
@@ -191,11 +191,11 @@ pnpm --filter @noir-wallet/web-vote dev
 pnpm dev:web
 ```
 
-Open `http://localhost:5001/frost`. Vite proxies `/api/frost-votes` to the local Worker on port 8788. Local votes persist under ignored `output/web-vote/state/`, separately from production.
+Open `http://localhost:5001/frost`. Vite proxies `/api/frost-signups` to the local Worker on port 8788. Local signups persist under ignored `output/web-vote/state/`, separately from production.
 
-The API accepts `GET /api/frost-votes` for `{ total, support, oppose, choice }` and `POST /api/frost-votes` to vote. The browser supplies its anonymous UUID in `X-Voter-ID` and the selected `support` or `oppose` option in `X-Vote-Choice`; POST requires a configured website Origin and no request body. Reads without an ID return the counts with `choice: null`. Personalized responses are never cached. A SQLite-backed Durable Object stores hashed browser IDs, their choices, and aggregate counts, with transactional duplicate prevention. Each browser's first successful vote is final; retries, including a different choice, return the existing vote without changing either count. Existing support-only votes migrate to `support` without resetting counts or voter identities.
+`POST /api/frost-signups` accepts JSON `{ "email": "you@example.com" }` from a configured website Origin and returns `{ "ok": true }`. The API validates the address, trims surrounding whitespace, and lowercases its domain. A SQLite-backed Durable Object stores the email address and first signup time. Duplicate submissions return the same receipt without changing that time or revealing whether the address was already registered. This collects interest; it does not verify email ownership or send invitations.
 
-Identity is scoped to the website origin in one browser, not physical hardware. Clearing browser data, private browsing, another browser, or using another website origin can produce a new identity. This is an informal interest poll and does not establish unique people or resist deliberate vote farming. No wallet connection or device fingerprint is used. If browser storage is unavailable, voting is disabled instead of issuing temporary IDs.
+`GET /api/frost-signups` returns `{ "status": "ok" }` after checking storage readiness. It exposes no addresses or signup counts. The existing Durable Object binding and migration are retained, but signups use a separate named instance; historical vote data is left untouched. The client no longer creates a browser voting identity.
 
 Verify before deployment:
 
@@ -206,7 +206,7 @@ pnpm build:web
 pnpm test
 ```
 
-The website keeps its existing Cloudflare Pages Git deployment. The voting Worker has an independent [GitHub Actions workflow](./.github/workflows/web-vote.yml). See [website and voting Worker deployment](./docs/release-workflow.md#website-and-voting-worker) for one-time credentials setup, triggers, and recovery. The Worker routes, allowed production origins, and Durable Object migration are maintained in [wrangler.jsonc](./packages/web-vote/wrangler.jsonc). Routes cover only the voting API paths; the existing Pages site serves `/frost` and all other pages. Local verification does not confirm production routing or deployment.
+The website keeps its existing Cloudflare Pages Git deployment. The signup Worker has an independent [GitHub Actions workflow](./.github/workflows/web-vote.yml). See [website and signup Worker deployment](./docs/release-workflow.md#website-and-signup-worker) for credentials setup, triggers, and recovery. The Worker routes, allowed production origins, and Durable Object migration are maintained in [wrangler.jsonc](./packages/web-vote/wrangler.jsonc). Routes cover only the signup API paths; the existing Pages site serves `/frost` and all other pages. Local verification does not confirm production routing or deployment.
 
 ## Release
 

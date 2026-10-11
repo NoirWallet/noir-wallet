@@ -1,36 +1,37 @@
 import { DurableObject } from 'cloudflare:workers'
-import { handleVoteRequest } from './api'
-import { VoteStore, type VoteSnapshot, type VoteChoice } from './vote-store'
+import { handleSignupRequest } from './api'
+import { SignupStore } from './signup-store'
 
 interface Env {
   FROST_VOTES: DurableObjectNamespace<FrostVotes>
   ALLOWED_ORIGINS: string
 }
 
+// Preserve the deployed class and binding names while using a separate object for signups.
 export class FrostVotes extends DurableObject<Env> {
-  private readonly votes: VoteStore
+  private readonly signups: SignupStore
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env)
-    this.votes = new VoteStore(ctx.storage)
+    this.signups = new SignupStore(ctx.storage.sql)
   }
 
-  async read(voterHash?: string): Promise<VoteSnapshot> {
-    return this.votes.read(voterHash)
+  async register(email: string, createdAt: number): Promise<void> {
+    this.signups.register(email, createdAt)
   }
 
-  async cast(voterHash: string, choice: VoteChoice): Promise<VoteSnapshot> {
-    return this.votes.cast(voterHash, choice)
+  async ready(): Promise<void> {
+    this.signups.ready()
   }
 }
 
 export default {
   fetch(request, env): Promise<Response> {
-    const id = env.FROST_VOTES.idFromName('frost-v1')
-    const votes = env.FROST_VOTES.get(id)
-    return handleVoteRequest(
+    const id = env.FROST_VOTES.idFromName('frost-early-signup-v1')
+    const signups = env.FROST_VOTES.get(id)
+    return handleSignupRequest(
       request,
-      votes,
+      signups,
       env.ALLOWED_ORIGINS.split(',').map(value => value.trim())
     )
   }
