@@ -16,4 +16,4 @@ When a fix is needed in both versions, open one pull request from each target br
 
 Contributors own self-testing and regression tests for core behavior or defects. Pull-request CI runs core tests, type checking, and mainnet/testnet extension builds. Maintainers review the change and verify affected wallet flows before merging; hardware changes require verification by someone with the device. Documentation and cosmetic changes only need their relevant checks.
 
-Release owners verify candidate builds before tagging and the final production ZIP before Chrome Web Store submission. Follow the [release runbook](./docs/release-workflow.md); CI success alone does not establish browser, hardware, or real-transaction acceptance.
+Release owners review the selected source and verify production candidate ZIPs before manually promoting that exact build. Chrome Web Store submission uses the same accepted mainnet ZIP. Follow the [release runbook](./docs/release-workflow.md); CI success alone does not establish browser, hardware, or real-transaction acceptance.

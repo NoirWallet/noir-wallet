@@ -210,9 +210,9 @@ The website keeps its existing Cloudflare Pages Git deployment. The voting Worke
 
 ## Release
 
-See the [CI/CD and release runbook](./docs/release-workflow.md) for beta builds, production
-tags, GitHub Releases, Chrome Web Store submission, failure recovery, and the migration away
-from the historical `staging` branch.
+See the [CI/CD and release runbook](./docs/release-workflow.md) for PR test artifacts,
+Beta builds from selected branches or commits, production candidate acceptance and promotion,
+Chrome Web Store submission, and failure recovery.
 
 ## License
 

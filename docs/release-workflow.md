@@ -1,6 +1,6 @@
 # Noir Wallet CI/CD and Release Workflow
 
-This runbook describes the browser extension workflow implemented in [build-extension.yml](../.github/workflows/build-extension.yml). The [documentation workflow](../.github/workflows/docs.yml) verifies the documentation site on relevant pull requests but does not deploy it. The [SDK workflow](../.github/workflows/sdk.yml) checks the SDK package and example from this workspace without publishing them. Website and voting Worker deployment are described in [Website and Voting Worker](#website-and-voting-worker). SDK npm publication and Chrome Web Store submission remain separate manual operations.
+This runbook describes extension verification in [build-extension.yml](../.github/workflows/build-extension.yml), manual Beta and production candidate builds in [extension-release.yml](../.github/workflows/extension-release.yml), and promotion in [publish-extension.yml](../.github/workflows/publish-extension.yml). The [documentation workflow](../.github/workflows/docs.yml) verifies the documentation site on relevant pull requests but does not deploy it. The [SDK workflow](../.github/workflows/sdk.yml) checks the SDK package and example from this workspace without publishing them. Website and voting Worker deployment are described in [Website and Voting Worker](#website-and-voting-worker). SDK npm publication and Chrome Web Store submission remain separate manual operations.
 
 ## Website and Voting Worker
 
@@ -30,53 +30,57 @@ After pushing, check **Actions → Website Voting Worker** and the existing Page
 
 ## Branches and Releases
 
-- `main` is the long-lived integration branch and should remain releasable. Submit features and fixes through short-lived pull request branches.
-- Relevant pushes to `main` validate and build beta artifacts. A manual `workflow_dispatch` from `main` can also create a beta preview.
+- `main` is the integration branch. Submit features and fixes through short-lived pull request branches; `v2` is also an extension verification target.
+- Relevant pull requests and pushes targeting `main`, `v2`, or `release/**` validate and build both networks as Actions artifacts. They do not publish GitHub Releases.
+- Manual Beta builds select a repository branch or full commit SHA without requiring a merge to `main`.
+- A temporary `release/{version}` branch holds the reviewed production source. For a partial release or hotfix, start from a verified stable wallet source commit or a real production source tag, and cherry-pick only the intended changes. Historical migration tags are not usable source baselines; see [historical Releases](#historical-releases).
+- Build a production candidate, accept its production ZIPs, then run a separate manual promotion. Promotion publishes those exact bytes and creates `v{version}` on the accepted source commit. Pushing a tag alone does not publish.
 - The canonical `NoirWallet/noir-wallet` repository publishes wallet Releases even while private. Other public, non-fork repositories also publish to themselves. Forks and other private repositories retain Actions build artifacts without publishing Releases.
-- Production is released by pushing a `v{version}` tag that points to a commit already contained in `main`.
-- There is no long-lived `release` branch. Create a temporary `release/{version}` branch only when a version freeze is needed, and remove it after release.
+- Release workflow definitions must run from `main`; the source input selects wallet code independently. Keep the release branch until promotion completes, then merge applicable fixes back to integration branches and remove the temporary branch.
 
 ```mermaid
 flowchart LR
-  A["Feature / Fix PR"] --> B["main"]
-  B --> C["Automatic or manual preview workflow"]
-  C --> D["Beta verification and build artifacts"]
-  D --> E["Same-repository prerelease when eligible"]
-  B --> F["Release preparation PR"]
-  F --> G["Tag vX.Y.Z on main commit"]
-  G --> H["Production validation and tests"]
-  H --> I["Same-repository production Release when eligible"]
-  I --> J["Manual Chrome Web Store submission"]
+  A["Feature / Fix PR"] --> B["Mainnet + testnet test artifacts"]
+  C["Selected branch / commit"] --> D["Manual Beta build"]
+  D --> E["Optional GitHub prerelease"]
+  F["Reviewed release/X.Y.Z source"] --> G["Manual production candidate build"]
+  G --> H["Accept production ZIPs"]
+  H --> I["Manual promotion of same ZIPs"]
+  I --> J["GitHub Release + vX.Y.Z tag"]
+  J --> K["Manual Chrome Web Store submission"]
 ```
 
-### Beta triggers
+### Preview and Beta labels
 
-A push to `main` triggers a beta when extension, workspace build configuration, changelog, WASM lock, test, or workflow paths match the workflow filter. A manual run must use `main`; other branches are rejected. Ignored local UI tools and `output/` are not committed or release triggers.
+Automatic verification runs when extension, workspace build configuration, changelog, WASM lock, test, or workflow paths match the path filters. PR metadata records the tested merge commit plus PR head and base commits. Download the artifact from **Actions → Build Extension**; its retention is seven days. Ignored local UI tools and `output/` are not committed or release triggers.
 
-The workflow generates beta labels; do not create them manually:
+Manual builds generate labels containing the run ID, attempt, and source commit; do not create them manually:
 
 ```text
-v{version}-beta.{UTC timestamp YYYYMMDDHHMM}.{short commit SHA}
+v{version}-beta.{run ID}.{attempt}.{short source SHA}
+v{version}-rc.{run ID}.{attempt}.{short source SHA}
 ```
 
-For example: `v1.0.27-beta.202607221530.a1b2c3d`. A new run on the same `main` ref cancels an unfinished older beta run. Multiple betas can use the same extension version. In forks and private repositories other than `NoirWallet/noir-wallet`, this label identifies the Actions artifact; no Git tag or Release is created.
+Multiple Betas can use the same extension version. Manual runs are queued rather than cancelling an earlier build. Candidate labels identify Actions artifacts only; a candidate does not create a tag or Release. Manual build artifacts are retained for 30 days.
 
-### Production tag validation
+### Manual confirmation and production validation
 
-A pushed tag beginning with `v` enters the production flow only when:
+Both manual workflows require repository write access and must be dispatched from `main`. Candidate construction requires confirmation of the full reviewed source SHA. Publication requires a separate dispatch with the accepted candidate run ID, attempt, and full source SHA. These are maintainer confirmations; the workflows do not enforce a second independent reviewer. GitHub environment required reviewers are not a prerequisite because that feature is unavailable on non-Enterprise private repositories. See [manual workflow permissions](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow) and [environment review availability](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/review-deployments).
 
-1. The tag equals `v` plus the version in `packages/extension/package.json`.
-2. Its commit is contained in `main`.
+Candidate packaging and promotion enforce:
+
+1. The source branch is `release/` plus the numeric version in `packages/extension/package.json`, and its resolved commit matches the manually confirmed full SHA.
+2. The candidate uses production build settings and includes both networks.
 3. `CHANGELOG.md` has exactly one nonempty `## [version]` section for that version.
 4. `packages/web/public/changelog.json` has a matching entry accepted by the wallet's release-notes parser.
 
-Validation fails before building or publishing if any condition is unmet. New workflow runs do not cancel production runs.
+Promotion additionally verifies a successful candidate workflow dispatched from this repository's `main`, the exact run attempt and artifact ID, artifact metadata, both ZIP checksums, and unchanged release branch HEAD. A Beta or PR artifact cannot be promoted. Source code need not be contained in `main`. Existing production tags are never moved, and published assets are never overwritten.
 
 ## Workflow Stages
 
 ### Prepare
 
-Read the extension version, determine the release type, then generate the beta label or validate the production tag, `main` ancestry, developer changelog, and user-facing update notes.
+Resolve the selected branch once to a full source SHA and read its extension version. Candidates additionally confirm the source SHA and matching release branch. Checkout the pinned source for testing and building. The trusted packaging job validates developer changelog and user-facing notes before exposing a candidate for acceptance.
 
 ### Verify
 
@@ -101,23 +105,25 @@ pnpm build:extension
 pnpm build:extension:testnet
 ```
 
-`BUILD_CHANNEL` is `beta` or `production`. Mainnet and testnet use separate output directories and ZIP assets. Pull requests run core tests and both extension builds without publishing or receiving release secrets.
+`BUILD_CHANNEL` is `beta` for PR, push, and Beta builds, or `production` for candidates. Mainnet and testnet use separate output directories and ZIP assets. Pull requests run core tests and both extension builds without publishing or receiving production analytics secrets.
 
-The build job keeps read-only repository permissions. It uploads the two ZIPs, `SHA256SUMS`, and release notes as one Actions artifact, named with the beta label or production tag and run attempt. Artifact retention follows the repository's Actions settings.
+Build jobs keep read-only repository permissions. Manual builds upload the two network ZIPs to a fresh packaging job that executes tooling from the trusted workflow commit, not from the selected wallet source. The final artifact contains both ZIPs, `SHA256SUMS`, `release-metadata.json`, and `release-body.md`. Metadata binds the files to their source commit, build channel, repository, workflow commit, run ID, and attempt. Repository retention policies can shorten the requested retention.
 
-Production mainnet builds require the repository secrets `GA_API_SECRET` and `CUSTOM_ANALYTICS_PASSWORD`. The workflow injects them as process environment variables; a missing value stops the build. Local default builds, beta builds, testnet builds, and local browser verification do not embed these values. For a manual production mainnet build, supply the same environment variables through your shell and set `BUILD_CHANNEL=production`.
+Production mainnet candidate builds require the repository secrets `GA_API_SECRET` and `CUSTOM_ANALYTICS_PASSWORD`. The workflow injects them only into the mainnet build step after the source SHA confirmation; a missing value stops the build. Local default builds, Beta builds, testnet builds, and local browser verification do not embed these values. For a local production mainnet build, supply the same environment variables through your shell and set `BUILD_CHANNEL=production`.
 
 Analytics values embedded in the extension are visible to its users. They must not grant privileged server access or be relied on as confidential authentication. Rotate previously committed values before exposing repository history, and configure the replacements in repository secrets without committing them.
 
 ### Publish
 
-The publish job runs in `NoirWallet/noir-wallet` regardless of visibility, and in other public, non-fork repositories. It downloads the preceding job's exact artifact and checks `SHA256SUMS` before publishing to `github.repository`. Only this job receives `contents: write`; it uses the built-in `GITHUB_TOKEN` and does not publish the SDK. Releases in a private repository are visible only to people with repository access.
+The publish job runs in `NoirWallet/noir-wallet` regardless of visibility, and in other public, non-fork repositories. It downloads the exact artifact ID, validates provenance and checksums, and publishes to `github.repository`. Only publication jobs receive `contents: write`; they use the built-in `GITHUB_TOKEN`. Production promotion executes no wallet source code and performs no build. Releases in a private repository are visible only to people with repository access.
 
 - Beta uses a prerelease and is not marked Latest. Its tag points to the wallet source commit that produced the ZIPs.
-- Production uses the validated, existing `v{version}` tag and is marked Latest. Earlier prereleases remain available.
+- Production creates `v{version}` at the accepted source SHA and is marked Latest. If that tag already exists, it must resolve to the same source commit. Earlier prereleases remain available.
 - Production notes come from the matching `CHANGELOG.md` section. Each Release includes a source commit link, both ZIPs, and `SHA256SUMS`.
 
-Asset names are `noir-wallet-v{release-version}.zip` for mainnet and `noir-wallet-v{release-version}-testnet.zip` for testnet. An existing Release is left unchanged when a run is retried. GitHub's automatically attached source archives now come from the wallet repository at the release tag.
+Production assets are `noir-wallet-v{version}.zip` and `noir-wallet-v{version}-testnet.zip`; candidate artifacts already use these filenames. Beta asset names include the Beta label. A promotion retry skips an existing Release only if its tag and all three published asset digests match the accepted candidate. GitHub's automatically attached source archives come from the wallet repository at the release tag.
+
+### Historical Releases
 
 The SDK is maintained in `packages/sdk/` but keeps its own version and npm publication process. For historical stable wallet Releases migrated from [the former SDK repository](https://github.com/NoirWallet/noir-wallet-sdk/releases), copy the binary assets byte-for-byte and link each original Release in the migration notes. Preserve wallet source commit links where the original notes provide them, pointing old `NoirWallet/noir-wallet` commit URLs to `NoirWallet/noir-wallet-private` with the same SHA; do not infer missing wallet source commits from the SDK Release target. Migration tags in this repository point to its initial commit (`5d7fcf4`); their source archives are not snapshots of the historical wallet source. This workflow does not modify those Releases. The wallet download and repository entry points are [wallet builds](https://zknoir.com/beta/versions) and [wallet source](https://zknoir.com/github). Website builds target `NoirWallet/noir-wallet` by default; see the [website build configuration](../README.md#build).
 
@@ -149,24 +155,24 @@ pnpm update-wasm-pkg:local -- \
 
 ## Beta Procedure
 
-1. Branch from the latest `main`, implement the change, and run relevant local checks.
-2. Submit a pull request and merge it after review.
-3. After all changes intended for the beta are merged, wait for the Build Extension workflow to validate and build.
-4. Download the Actions artifact or, when a Release is published, the prerelease ZIPs, and test the affected wallet flows.
+1. Push the intended branch and open a pull request. Download its **Build Extension** artifact to test before merging.
+2. For a distributable Beta, open **Actions → Prepare Extension Release → Run workflow** with the workflow branch set to `main`.
+3. Select `mode=beta`, set `source_ref` to the intended repository branch or full lowercase 40-character commit SHA, and choose whether `publish_beta` should create a prerelease. Leave `confirm_sha` empty.
+4. Check the resolved source SHA in the run summary. Download its mainnet/testnet artifact or published Beta ZIPs and test the affected flows.
 
-No version bump or manually created tag is required for each beta.
+No merge, version bump, or manually created tag is required for each Beta. Selecting a branch pins its HEAD for that run; later pushes do not change the built source.
 
 ## Production Procedure
 
-### 1. Prepare a release pull request
+### 1. Prepare and review the release source
 
-In a separate branch:
+Create a temporary `release/{version}` branch from the source you intend to ship. For a selective release, use the verified stable source commit or an actual production source tag, then cherry-pick the required fixes. Open a preparation PR for review; merging unrelated integration changes is not required.
 
-1. Set a new version in `packages/extension/package.json`, for example `1.0.27`.
-2. Add exactly one nonempty `## [1.0.27]` section to `CHANGELOG.md`.
+1. Set a new version in `packages/extension/package.json`, for example `1.0.40`, and use branch `release/1.0.40`.
+2. Add exactly one nonempty `## [1.0.40]` section to `CHANGELOG.md`.
 3. Add the matching user-facing update entry in `packages/web/public/changelog.json`, following the [release notes rules](../AGENTS.md#user-facing-release-notes).
 
-Feature code should already have been merged through its own pull request. Before merging the release preparation, run:
+Review the exact diff against the stable baseline and run the relevant local checks:
 
 ```bash
 pnpm test
@@ -174,52 +180,51 @@ pnpm build:extension
 pnpm build:extension:testnet
 ```
 
-### 2. Merge and accept the beta
+### 2. Build and accept the production candidate
 
-Merge the release pull request to `main`. Wait for the Build Extension workflow and validate the generated mainnet and testnet ZIPs before production promotion. See [review responsibilities](../CONTRIBUTING.md#review-and-acceptance).
+Open **Actions → Prepare Extension Release → Run workflow** from `main`. Select `mode=candidate`, set `source_ref=release/1.0.40`, and enter the full reviewed release branch HEAD in `confirm_sha`. `publish_beta` is ignored for candidates.
 
-### 3. Create the production tag
+After all jobs succeed, download the final `noir-wallet-v1.0.40-rc.…` artifact, check `SHA256SUMS`, and validate the production mainnet and testnet ZIPs. Use the actual ZIPs, not a local rebuild or a previous Beta. Keep the run ID, attempt, and full source SHA from the run summary for promotion. See [review responsibilities](../CONTRIBUTING.md#review-and-acceptance).
 
-After acceptance, create an annotated tag from the verified `main` commit:
+### 3. Promote the accepted artifact
 
-```bash
-git switch main
-git pull --ff-only
-git tag -a v1.0.27 -m "Release v1.0.27"
-git push origin v1.0.27
-```
+After acceptance, open **Actions → Publish Accepted Extension → Run workflow** from `main`. Enter the accepted `candidate_run_id`, `candidate_run_attempt`, and `confirm_sha`. This separate action is the production publication confirmation.
 
-Do not tag a feature branch, an unmerged commit, or an outdated local `main`.
+The workflow verifies the candidate's origin and current release branch before creating the GitHub Release and `v1.0.40` tag. It downloads and publishes the accepted ZIPs without rebuilding. Keep the source branch unchanged and present until publication completes.
 
 ### 4. Check publication
 
-For a publishing repository, confirm the Prepare, Verify, Build, and Publish jobs succeeded in GitHub Actions. In the wallet repository's Releases page, check the source tag/commit, Latest status, both ZIP assets, and release notes against the changelog. Download `SHA256SUMS` beside the ZIPs and run `sha256sum --check SHA256SUMS` (or `shasum -a 256 --check SHA256SUMS` on macOS). Forks and private repositories other than `NoirWallet/noir-wallet` produce Actions artifacts only.
+Confirm **Publish Accepted Extension** succeeded. In the wallet repository's Releases page, check the source tag/commit, Latest status, both ZIP assets, and release notes. Download `SHA256SUMS` beside the ZIPs and run `sha256sum --check SHA256SUMS` (or `shasum -a 256 --check SHA256SUMS` on macOS). Compare those hashes with the accepted candidate. Forks and private repositories other than `NoirWallet/noir-wallet` retain build artifacts only.
 
 ### 5. Submit to Chrome Web Store
 
-Store submission is manual. Verify the production **mainnet** ZIP, `noir-wallet-v{version}.zip`, from the GitHub Release, and complete final acceptance on that build. Upload that same ZIP in Chrome Web Store Developer Dashboard, review the version, changed permissions, and release notes, then submit for review or staged rollout under the store configuration. Record the actual publication time after approval. Never upload the `-testnet.zip` asset to the production store listing.
+Store submission is manual. Verify the production **mainnet** ZIP, `noir-wallet-v{version}.zip`, from the GitHub Release matches the accepted candidate. Upload that same ZIP in Chrome Web Store Developer Dashboard, review the version, changed permissions, and release notes, then submit for review or staged rollout under the store configuration. Record the actual publication time after approval. Never upload the `-testnet.zip` asset to the production store listing.
 
 ## Failure Recovery
 
-- **Beta test or build failure:** fix the issue and merge a new commit to `main` to generate a new beta. For a temporary GitHub or external-service failure, rerun the failed workflow. Keep an unusable beta for traceability; the next beta has a unique build label.
-- **Production tag validation failure:** fix version or release-notes errors in a new pull request, merge to `main`, and use the correct new tag. If the tagged commit is not in `main`, merge the intended code through a pull request. Do not move a published tag or overwrite a published version.
-- **Production test, build, or infrastructure failure:** if the tag, commit, version, and release notes are correct and release content has not changed, rerun the failed GitHub Actions job. A publication retry uses the retained build artifact and skips an existing Release. If that artifact expired, rerun the build and publication jobs and verify the new checksums before store submission.
+- **Preview or Beta failure:** fix the selected branch and push again for PR artifacts, or dispatch a new Beta. For transient manual build failures, rerun all jobs so the artifact and publication use one matching run attempt; rerunning only Beta publication will reject artifacts from an older attempt. Keep unusable published Betas for traceability.
+- **Candidate validation or build failure:** correct the release source and notes, review its new SHA, and build a new candidate. For an infrastructure retry, rerun all build jobs and accept the resulting attempt before promotion.
+- **Release branch advanced or was removed:** restore the accepted branch HEAD only if it is still the intended source, or build and accept a new candidate. Promotion rejects a candidate whose branch no longer matches.
+- **Candidate artifact expired:** build and accept a new candidate. Promotion never reconstructs the old package from source.
+- **Publication failure:** retry promotion with the same accepted run, attempt, and SHA while its artifact remains available. A completely published Release with identical asset digests is left unchanged. If a partial or conflicting Release exists, inspect it before recovery; the workflow will not overwrite it automatically.
 - **Incorrect published Release:** stop promoting it and release a new patch version. Do not reuse or move the old tag.
 
-For an urgent fix, branch from current `main`, add the fix and a regression test, update the patch version and changelog, merge through a pull request, validate the beta, and tag the new version. An extension already published in the browser store cannot be rolled back in place; publish a new patch version.
+For an urgent fix, start a new `release/{patch-version}` branch from the verified stable wallet source, apply the fix and regression test, update the version and both release notes, then review, build, accept, and promote it independently of unfinished integration changes. Merge the applicable fix back to `main` and `v2` afterward. An extension already published in the browser store cannot be rolled back in place; publish a new patch version.
 
 ## Pre-Release Checks
 
-- [ ] All intended code is merged to `main`.
+- [ ] The release source and its diff against the stable baseline have been reviewed.
 - [ ] Extension version is new and unpublished.
 - [ ] Changelog has exactly one matching, nonempty version section.
 - [ ] User-facing update notes match the version and visible changes.
-- [ ] The `main` Build Extension workflow succeeded.
-- [ ] Mainnet and testnet beta ZIPs passed acceptance.
-- [ ] Production tag points to the accepted `main` commit.
-- [ ] Production workflow succeeded.
+- [ ] The manual candidate workflow succeeded for the confirmed source SHA.
+- [ ] Mainnet and testnet production candidate ZIPs passed acceptance.
+- [ ] The recorded run ID, attempt, and SHA identify that accepted artifact.
+- [ ] The release branch is unchanged through promotion.
+- [ ] The separate manual promotion succeeded.
+- [ ] Production tag points to the accepted release source commit.
 - [ ] Wallet source tag/commit, both GitHub Release ZIPs, checksums, and release notes were checked.
 - [ ] Final acceptance used the production ZIP intended for Chrome Web Store.
 - [ ] Mainnet ZIP was submitted to Chrome Web Store.
 
-Chrome Web Store upload and approval, SDK npm publishing, tag creation, and production release approval remain manual. Website and voting Worker operations follow [Website and Voting Worker](#website-and-voting-worker). Do not add unverified secret names or third-party publication actions to the workflow.
+Chrome Web Store upload and approval, SDK npm publishing, candidate construction confirmation, and production promotion remain manual. Website and voting Worker operations follow [Website and Voting Worker](#website-and-voting-worker). Do not add unverified secret names or third-party publication actions to the workflow.
