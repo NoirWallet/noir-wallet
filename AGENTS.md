@@ -309,11 +309,13 @@ Run `pnpm verify-wasm-pkg` before committing. Commit `wasm-package.lock.json` an
 The complete operational runbook is in `docs/release-workflow.md`.
 
 - `packages/extension/package.json` is the extension version source of truth.
-- `CHANGELOG.md` is the source of truth for production GitHub Release notes. Before tagging a release, add exactly one non-empty `## [version]` section matching the extension version.
-- Pushing `main` builds mainnet and testnet preview artifacts labeled `v{version}-beta.{YYYYMMDDHHMM}.{sha}`. The canonical `NoirWallet/noir-wallet` repository and other public, non-fork repositories also publish these as prereleases.
-- Production releases are promoted from an existing `main` commit by pushing the matching `v{version}` tag. The workflow rejects tags that do not match `packages/extension/package.json`, are not contained in `main`, or lack valid developer and user-facing release notes.
-- Preview builds and production tags run the same deterministic core tests before publishing artifacts. Browser verification is a separate local development activity, not an automated release gate.
-- Wallet Releases use the source repository's tags and built-in `GITHUB_TOKEN`, with write permission limited to publication. `NoirWallet/noir-wallet` publishes even while private; forks and other private repositories retain Actions artifacts only. The SDK is maintained in this workspace; its versioning and npm publication remain independent of wallet releases.
+- `CHANGELOG.md` is the source of truth for production GitHub Release notes. Before building a production candidate, add exactly one non-empty `## [version]` section matching the extension version.
+- Pull requests targeting `main`, `v2`, and `release/**` produce mainnet and testnet preview artifacts when extension source, WASM, or build dependencies change. Core checks run inside the build job. Documentation, tests, and release tooling alone do not start wallet CI; pushes after merging do not repeat the build.
+- Run `Prepare Extension Release` manually from `main`, selecting a repository branch or full commit SHA for Beta. Production candidates require a reviewed `release/{version}` branch and confirmation of its full source SHA; they use production build settings.
+- Run `Publish Accepted Extension` separately after accepting the candidate ZIPs. It validates the candidate run, attempt, source SHA, current release branch, and checksums, then publishes the same ZIPs and matching `v{version}` tag without rebuilding. The source commit need not be merged to `main`.
+- All build paths run the same deterministic core tests. Browser verification is a separate local development activity, not an automated release gate.
+- PR version labels are maintained during trusted manual build preparation; there is no separate label workflow. See the [contributor guide](./CONTRIBUTING.md#pull-request-targets).
+- Wallet Releases use the source repository's tags and built-in `GITHUB_TOKEN`, with `contents: write` limited to publication. `NoirWallet/noir-wallet` publishes even while private; forks and other private repositories retain Actions artifacts only. The SDK is maintained in this workspace; its versioning and npm publication remain independent of wallet releases.
 - Chrome Web Store submission is currently manual; the workflow does not contain store credentials or an automated submission step.
 
 ### User-Facing Release Notes
@@ -327,7 +329,7 @@ The complete operational runbook is in `docs/release-workflow.md`.
 - Exclude internal refactors, tests, CI changes, dependency updates, and implementation details unless they materially affect users.
 - Keep the copy plain, specific, and user-friendly. The runtime schema currently permits 1–8 bullets of at most 120 characters each so the popup remains readable.
 
-Do not change release behavior based only on this summary; verify `.github/workflows/build-extension.yml` before editing CI.
+Do not change release behavior based only on this summary; verify the three extension workflows and `scripts/extension-release*.mjs` before editing CI.
 
 ## Implementation Rules
 
