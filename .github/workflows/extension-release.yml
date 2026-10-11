@@ -39,6 +39,9 @@ env:
 jobs:
   prepare:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
     outputs:
       source_sha: ${{ steps.source.outputs.source_sha }}
       source_ref: ${{ steps.source.outputs.source_ref }}
@@ -59,6 +62,30 @@ jobs:
           SOURCE_INPUT: ${{ inputs.source_ref }}
           CONFIRM_SHA: ${{ inputs.confirm_sha }}
         run: node scripts/extension-release-gates.mjs resolve
+      - name: Maintain associated PR version labels
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          MATCHING_PRS=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/commits/${SOURCE_SHA}/pulls" \
+            --jq ".[] | select(.state == \"open\" and .head.sha == \"${SOURCE_SHA}\" and .base.repo.full_name == \"${GITHUB_REPOSITORY}\") | [.number, .base.ref] | @tsv")
+
+          while IFS=$'\t' read -r PR_NUMBER BASE_BRANCH; do
+            [ -n "$PR_NUMBER" ] || continue
+            [[ "$PR_NUMBER" =~ ^[0-9]+$ ]]
+            LABEL_ENDPOINT="repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/labels"
+            CURRENT_LABELS=$(gh api "$LABEL_ENDPOINT" --jq '.[].name')
+            if [ "$BASE_BRANCH" = "v2" ]; then
+              if ! printf '%s\n' "$CURRENT_LABELS" | grep -Fxq 'v2'; then
+                gh api --method POST "$LABEL_ENDPOINT" -f 'labels[]=v2' >/dev/null
+              fi
+            elif printf '%s\n' "$CURRENT_LABELS" | grep -Fxq 'v2'; then
+              gh api --method DELETE "$LABEL_ENDPOINT/v2" >/dev/null
+            fi
+          done <<< "$MATCHING_PRS"
       - name: Show source for review
         env:
           SOURCE_SHA: ${{ steps.source.outputs.source_sha }}

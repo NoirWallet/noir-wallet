@@ -261,7 +261,7 @@ if (isCli) {
           request
         })
       )
-    } else if (command === 'check-candidate' || command === 'publication') {
+    } else if (command === 'publication') {
       if (!directory) throw new Error('Candidate artifact directory is required')
       const metadata = verifyReleaseArtifact(directory, {
         mode: 'candidate',
@@ -278,11 +278,9 @@ if (isCli) {
         source_ref: metadata.sourceRef,
         tag: `v${metadata.version}`
       }
-      if (command === 'publication') {
-        outputs.already_published = String(
-          await validatePublicationTarget(metadata, directory, request)
-        )
-      }
+      outputs.already_published = String(
+        await validatePublicationTarget(metadata, directory, request)
+      )
       writeOutputs(outputs)
       if (env.GITHUB_STEP_SUMMARY) {
         appendFileSync(
@@ -293,7 +291,7 @@ if (isCli) {
         )
       }
     } else {
-      throw new Error('Expected resolve, promotion, check-candidate, or publication command')
+      throw new Error('Expected resolve, promotion, or publication command')
     }
   } catch (error) {
     process.stderr.write(

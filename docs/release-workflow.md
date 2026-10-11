@@ -31,7 +31,7 @@ After pushing, check **Actions → Website Voting Worker** and the existing Page
 ## Branches and Releases
 
 - `main` is the integration branch. Submit features and fixes through short-lived pull request branches; `v2` is also an extension verification target.
-- Relevant pull requests and pushes targeting `main`, `v2`, or `release/**` run core checks. Extension source, WASM, or build-dependency changes also build both networks as Actions artifacts. Tests, release tooling, and package documentation alone skip ZIP builds. Automatic verification does not publish GitHub Releases.
+- Pull requests targeting `main`, `v2`, or `release/**` build both networks when extension source, WASM, or build dependencies change. Core checks run inside the same job. Documentation, tests, and release tooling alone do not start wallet CI; merging to `main` does not repeat the build. Automatic builds do not publish GitHub Releases.
 - Manual Beta builds select a repository branch or full commit SHA without requiring a merge to `main`.
 - A temporary `release/{version}` branch holds the reviewed production source. For a partial release or hotfix, start from a verified stable wallet source commit or a real production source tag, and cherry-pick only the intended changes. Historical migration tags are not usable source baselines; see [historical Releases](#historical-releases).
 - Build a production candidate, accept its production ZIPs, then run a separate manual promotion. Promotion publishes those exact bytes and creates `v{version}` on the accepted source commit. Pushing a tag alone does not publish.
@@ -52,7 +52,7 @@ flowchart LR
 
 ### Preview and Beta labels
 
-Automatic verification runs when extension, workspace build configuration, changelog, WASM lock, test, or workflow paths match the path filters. Core checks always run; ZIP builds additionally require changes to extension files outside tests and Markdown documentation, or root build inputs (`package.json`, lockfile, workspace config, Node version, TypeScript config, `.npmrc`, WASM lock, or license). Pushes without a locally available previous commit also build ZIPs. PR metadata records the tested merge commit plus PR head and base commits. Download generated artifacts from **Actions → Build Extension**; their retention is seven days. For a tooling-only PR that needs a real ZIP check, use the manual Beta build with publication disabled. Ignored local UI tools and `output/` are not committed or release triggers.
+Automatic PR builds run when extension files outside tests and Markdown documentation, or root build inputs (`package.json`, lockfile, workspace config, Node version, TypeScript config, `.npmrc`, WASM lock, or license) match the path filters. Verification and both network builds share one job; there is no standalone wallet validation run. PR metadata records the tested merge commit plus PR head and base commits. Download generated artifacts from **Actions → Build Extension**; their retention is seven days. For a tooling-only PR that needs a real ZIP check, use the manual Beta build with publication disabled. Ignored local UI tools and `output/` are not committed or release triggers.
 
 Manual builds generate labels containing the run ID, attempt, and source commit; do not create them manually:
 
@@ -80,11 +80,11 @@ Promotion additionally verifies a successful candidate workflow dispatched from 
 
 ### Prepare
 
-Resolve the selected branch once to a full source SHA and read its extension version. Candidates additionally confirm the source SHA and matching release branch. Checkout the pinned source for testing and building. The trusted packaging job validates developer changelog and user-facing notes before exposing a candidate for acceptance.
+Resolve the selected branch once to a full source SHA and read its extension version. Candidates additionally confirm the source SHA and matching release branch. The same trusted preparation job maintains [associated PR version labels](../CONTRIBUTING.md#pull-request-targets) without executing selected-source code. Checkout the pinned source for testing and building. The trusted packaging job validates developer changelog and user-facing notes before exposing a candidate for acceptance.
 
 ### Verify
 
-Every run executes:
+Every preview, Beta, and candidate build executes:
 
 ```bash
 pnpm install --frozen-lockfile
@@ -105,7 +105,7 @@ pnpm build:extension
 pnpm build:extension:testnet
 ```
 
-`BUILD_CHANNEL` is `beta` for PR, push, and Beta builds, or `production` for candidates. Mainnet and testnet use separate output directories and ZIP assets. Pull requests run core tests and both extension builds without publishing or receiving production analytics secrets.
+`BUILD_CHANNEL` is `beta` for PR and Beta builds, or `production` for candidates. Mainnet and testnet use separate output directories and ZIP assets. Pull requests run core tests and both extension builds without publishing or receiving production analytics secrets.
 
 Build jobs keep read-only repository permissions. Manual builds upload the two network ZIPs to a fresh packaging job that executes tooling from the trusted workflow commit. It downloads ZIPs into a new directory outside the selected wallet checkout and reads only version and release-note data from that checkout. The final artifact contains both ZIPs, `SHA256SUMS`, `release-metadata.json`, and `release-body.md`. Metadata binds the files to their source commit, build channel, repository, workflow commit, run ID, and attempt. Repository retention policies can shorten the requested retention.
 
@@ -115,7 +115,7 @@ Analytics values embedded in the extension are visible to its users. They must n
 
 ### Publish
 
-The publish job runs in `NoirWallet/noir-wallet` regardless of visibility, and in other public, non-fork repositories. It downloads the exact artifact ID, validates provenance and checksums, and publishes to `github.repository`. Only publication jobs receive `contents: write`; they use the built-in `GITHUB_TOKEN`. Production promotion executes no wallet source code and performs no build. Releases in a private repository are visible only to people with repository access.
+The publish job runs in `NoirWallet/noir-wallet` regardless of visibility, and in other public, non-fork repositories. It downloads the exact artifact ID, validates provenance and checksums, and publishes to `github.repository`. Only publication jobs receive `contents: write`; they use the built-in `GITHUB_TOKEN`. Production promotion performs validation and publication in one job, executes no wallet source code, and performs no build. Releases in a private repository are visible only to people with repository access.
 
 - Beta uses a prerelease and is not marked Latest. Its tag points to the wallet source commit that produced the ZIPs.
 - Production creates `v{version}` at the accepted source SHA and is marked Latest. If that tag already exists, it must resolve to the same source commit. Earlier prereleases remain available.

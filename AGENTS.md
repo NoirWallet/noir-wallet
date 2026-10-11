@@ -310,11 +310,12 @@ The complete operational runbook is in `docs/release-workflow.md`.
 
 - `packages/extension/package.json` is the extension version source of truth.
 - `CHANGELOG.md` is the source of truth for production GitHub Release notes. Before building a production candidate, add exactly one non-empty `## [version]` section matching the extension version.
-- Relevant pull requests and pushes to `main`, `v2`, and `release/**` run core checks. Extension source, WASM, or build-dependency changes also produce mainnet and testnet preview artifacts without publication or production analytics credentials; tests and release tooling alone do not trigger ZIP builds.
+- Pull requests targeting `main`, `v2`, and `release/**` produce mainnet and testnet preview artifacts when extension source, WASM, or build dependencies change. Core checks run inside the build job. Documentation, tests, and release tooling alone do not start wallet CI; pushes after merging do not repeat the build.
 - Run `Prepare Extension Release` manually from `main`, selecting a repository branch or full commit SHA for Beta. Production candidates require a reviewed `release/{version}` branch and confirmation of its full source SHA; they use production build settings.
 - Run `Publish Accepted Extension` separately after accepting the candidate ZIPs. It validates the candidate run, attempt, source SHA, current release branch, and checksums, then publishes the same ZIPs and matching `v{version}` tag without rebuilding. The source commit need not be merged to `main`.
 - All build paths run the same deterministic core tests. Browser verification is a separate local development activity, not an automated release gate.
-- Wallet Releases use the source repository's tags and built-in `GITHUB_TOKEN`, with write permission limited to publication. `NoirWallet/noir-wallet` publishes even while private; forks and other private repositories retain Actions artifacts only. The SDK is maintained in this workspace; its versioning and npm publication remain independent of wallet releases.
+- PR version labels are maintained during trusted manual build preparation; there is no separate label workflow. See the [contributor guide](./CONTRIBUTING.md#pull-request-targets).
+- Wallet Releases use the source repository's tags and built-in `GITHUB_TOKEN`, with `contents: write` limited to publication. `NoirWallet/noir-wallet` publishes even while private; forks and other private repositories retain Actions artifacts only. The SDK is maintained in this workspace; its versioning and npm publication remain independent of wallet releases.
 - Chrome Web Store submission is currently manual; the workflow does not contain store credentials or an automated submission step.
 
 ### User-Facing Release Notes
