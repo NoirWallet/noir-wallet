@@ -272,6 +272,106 @@ describe('Extension release artifacts', () => {
     assert.match(readFileSync(env.GITHUB_OUTPUT, 'utf8'), /tag=v1\.0\.39-beta\.12345\.2\.aaaaaaa\n/)
   })
 
+  it('includes the source commit log without treating subjects as markup', async t => {
+    const { source, output, env } = fixture(t, { mode: 'beta' })
+    env.COMMIT_HISTORY = JSON.stringify([
+      { sha: PR_HEAD_SHA, subject: 'fix: <b>restore</b> [history]' }
+    ])
+    await packageReleaseArtifact(source, output, env)
+    const body = readFileSync(path.join(output, 'release-body.md'), 'utf8')
+    assert.match(body, /<summary>Commit log \(1 commits\)<\/summary>/)
+    assert.match(body, /&lt;b&gt;restore&lt;\/b&gt;/)
+    assert.match(body, new RegExp(`/commit/${PR_HEAD_SHA}`))
+    env.COMMIT_HISTORY = JSON.stringify([{ sha: 'bad', subject: 'bad history' }])
+    await assert.rejects(packageReleaseArtifact(source, `${output}-invalid`, env), /SHA/)
+  })
+
+  it('packages V2 as one beta ZIP and rejects development artifacts as beta', async t => {
+    const { source, output, env } = fixture(t, { mode: 'beta', ref: 'v2' })
+    writeFileSync(path.join(source, 'packages', 'extension', 'package.json'), '{"version":"2.0.0"}')
+    rmSync(path.join(source, 'packages', 'extension', 'dist-testnet'), { recursive: true })
+    env.SOURCE_PROFILE = 'multichain'
+    env.BUILD_CHANNEL = 'beta'
+    const metadata = await packageReleaseArtifact(source, output, env)
+    assert.equal(metadata.buildChannel, 'beta')
+    assert.equal(metadata.assets.length, 1)
+    assert.equal(metadata.assets[0].network, 'multichain')
+    assert.equal(metadata.assets[0].name, 'noir-wallet-v2.0.0-beta.12345.2.aaaaaaa.zip')
+    assert.match(readFileSync(path.join(output, 'release-body.md'), 'utf8'), /Mainnet \+ Testnet/)
+    assert.deepEqual(verifyReleaseArtifact(output, { mode: 'beta', version: '2.0.0' }), metadata)
+    env.BUILD_CHANNEL = 'development'
+    await assert.rejects(
+      packageReleaseArtifact(source, `${output}-bad-channel`, env),
+      /Build channel/
+    )
+    env.BUILD_CHANNEL = 'beta'
+    env.SOURCE_PROFILE = 'zcash'
+    await assert.rejects(
+      packageReleaseArtifact(source, `${output}-bad-profile`, env),
+      /Source profile/
+    )
+    writeMetadata(output, { ...metadata, buildChannel: 'development' })
+    assert.throws(() => verifyReleaseArtifact(output), /Build channel/)
+  })
+
+  it('marks V2 PR inspection artifacts as development without accepting them for promotion', async t => {
+    const { source, output, env } = fixture(t, { ref: 'refs/pull/99/merge' })
+    writeFileSync(path.join(source, 'packages', 'extension', 'package.json'), '{"version":"2.0.0"}')
+    env.SOURCE_PROFILE = 'multichain'
+    env.BUILD_CHANNEL = 'development'
+    env.PR_NUMBER = '99'
+    const metadata = await packageReleaseArtifact(source, output, env)
+    assert.equal(metadata.buildChannel, 'development')
+    assert.equal(metadata.assets.length, 1)
+    assert.equal(verifyReleaseArtifact(output).mode, 'preview')
+    assert.throws(() => verifyReleaseArtifact(output, { mode: 'candidate' }), /expected value/)
+  })
+
+  it('keeps the accepted V2 production candidate as one immutable asset', async t => {
+    const { source, output, env } = fixture(t, { mode: 'candidate', ref: 'release/2.0.0' })
+    writeFileSync(path.join(source, 'packages', 'extension', 'package.json'), '{"version":"2.0.0"}')
+    writeFileSync(path.join(source, 'CHANGELOG.md'), '## [2.0.0]\n\n- Multi-chain wallet\n')
+    writeFileSync(
+      path.join(source, 'packages', 'web', 'public', 'changelog.json'),
+      JSON.stringify({
+        schemaVersion: 1,
+        releases: { '2.0.0': { changes: ['Multi-chain wallet'] } }
+      })
+    )
+    rmSync(path.join(source, 'packages', 'extension', 'dist-testnet'), { recursive: true })
+    const metadata = await packageReleaseArtifact(source, output, env)
+    assert.equal(metadata.assets.length, 1)
+    assert.equal(metadata.assets[0].name, 'noir-wallet-v2.0.0.zip')
+    assert.equal(verifyReleaseArtifact(output, { mode: 'candidate' }).buildChannel, 'production')
+    await validateCurrentCandidate(
+      metadata,
+      requestFrom({
+        'branches/release%2F2.0.0': { commit: { sha: SOURCE_SHA } }
+      })
+    )
+    const checksum = createHash('sha256')
+      .update(readFileSync(path.join(output, 'SHA256SUMS')))
+      .digest('hex')
+    assert.equal(
+      await validatePublicationTarget(
+        metadata,
+        output,
+        requestFrom({
+          'git/ref/tags/v2.0.0': { object: { type: 'commit', sha: SOURCE_SHA } },
+          'releases/tags/v2.0.0': {
+            draft: false,
+            prerelease: false,
+            assets: [
+              { name: metadata.assets[0].name, digest: `sha256:${metadata.assets[0].sha256}` },
+              { name: 'SHA256SUMS', digest: `sha256:${checksum}` }
+            ]
+          }
+        })
+      ),
+      true
+    )
+  })
+
   it('runs both CLI entry points through a symlinked scripts directory', t => {
     const { root, source, output, env } = fixture(t)
     const scriptsLink = path.join(root, 'linked-scripts')
@@ -347,6 +447,22 @@ const candidateIdentity = {
 }
 
 describe('Extension release provenance gates', () => {
+  it('selects the V2 source profile from a pinned numeric extension version', async () => {
+    const resolved = await resolveReleaseSource({
+      mode: 'beta',
+      source: 'v2',
+      request: requestFrom({
+        'branches/v2': { commit: { sha: SOURCE_SHA } },
+        [`contents/packages/extension/package.json?ref=${SOURCE_SHA}`]: {
+          encoding: 'base64',
+          content: Buffer.from('{"version":"2.0.0"}').toString('base64')
+        }
+      })
+    })
+    assert.equal(resolved.source_profile, 'multichain')
+    assert.equal(resolved.source_sha, SOURCE_SHA)
+    assert.equal(resolved.version, '2.0.0')
+  })
   it('pins beta sources to a resolved commit and requires a version-matched candidate branch', async () => {
     const packageContent = Buffer.from('{"version":"1.0.39"}').toString('base64')
     const base = {
@@ -364,7 +480,13 @@ describe('Extension release provenance gates', () => {
         source: SOURCE_SHA,
         request: requestFrom(base)
       }),
-      { source_sha: SOURCE_SHA, source_ref: SOURCE_SHA, version: '1.0.39', mode: 'beta' }
+      {
+        source_sha: SOURCE_SHA,
+        source_ref: SOURCE_SHA,
+        version: '1.0.39',
+        mode: 'beta',
+        source_profile: 'zcash'
+      }
     )
     assert.deepEqual(
       await resolveReleaseSource({
@@ -373,7 +495,13 @@ describe('Extension release provenance gates', () => {
         confirmSha: SOURCE_SHA,
         request: requestFrom(base)
       }),
-      { source_sha: SOURCE_SHA, source_ref: 'release/1.0.39', version: '1.0.39', mode: 'candidate' }
+      {
+        source_sha: SOURCE_SHA,
+        source_ref: 'release/1.0.39',
+        version: '1.0.39',
+        mode: 'candidate',
+        source_profile: 'zcash'
+      }
     )
     await assert.rejects(
       resolveReleaseSource({

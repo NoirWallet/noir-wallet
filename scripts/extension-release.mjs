@@ -15,6 +15,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { extractChangelogVersion } from './extract-changelog.mjs'
+import { formatReleaseCommitLog, validateReleaseCommits } from './lib/extension-release-history.mjs'
 
 const MODES = new Set(['preview', 'beta', 'candidate'])
 const SHA = /^[0-9a-f]{40}$/i
@@ -59,6 +60,21 @@ function requireVersion(value) {
     throw new Error('Invalid version')
   }
   return version
+}
+
+export function sourceProfileForVersion(version) {
+  return Number(requireVersion(version).split('.')[0]) >= 2 ? 'multichain' : 'zcash'
+}
+
+function networksForVersion(version) {
+  return sourceProfileForVersion(version) === 'multichain' ? ['multichain'] : ['mainnet', 'testnet']
+}
+
+function buildChannelFor(mode, version) {
+  if (mode === 'candidate') return 'production'
+  return mode === 'preview' && sourceProfileForVersion(version) === 'multichain'
+    ? 'development'
+    : 'beta'
 }
 
 function requireId(value, label) {
@@ -140,7 +156,7 @@ function validateMetadata(value) {
   if (workflowSha !== workflowSha.toLowerCase()) throw new Error('Invalid workflowSha')
   requireId(runId, 'runId')
   requireId(runAttempt, 'runAttempt')
-  if (buildChannel !== (mode === 'candidate' ? 'production' : 'beta')) {
+  if (buildChannel !== buildChannelFor(mode, version)) {
     throw new Error('Build channel does not match release mode')
   }
   if (mode === 'candidate' && sourceRef !== `release/${version}`) {
@@ -162,10 +178,11 @@ function validateMetadata(value) {
   const expectedLabel = artifactLabelFor(value)
   if (artifactLabel !== expectedLabel)
     throw new Error('Artifact label does not match release metadata')
-  if (!Array.isArray(assets) || assets.length !== 2) {
-    throw new Error('Release metadata must contain two assets')
+  const networks = networksForVersion(version)
+  if (!Array.isArray(assets) || assets.length !== networks.length) {
+    throw new Error(`Release metadata must contain ${networks.length} assets`)
   }
-  for (const [index, network] of ['mainnet', 'testnet'].entries()) {
+  for (const [index, network] of networks.entries()) {
     const asset = assets[index]
     if (
       !asset ||
@@ -210,7 +227,7 @@ function sourceZip(networkBuildDir, subdir) {
   return file
 }
 
-function releaseBody(metadata, changelog) {
+function releaseBody(metadata, changelog, commits) {
   const { mode, version, repository, sourceSha, sourceRef, artifactLabel, assets } = metadata
   const tag = mode === 'candidate' ? `v${version}` : artifactLabel
   const download = `https://github.com/${repository}/releases/download/${tag}`
@@ -233,12 +250,13 @@ function releaseBody(metadata, changelog) {
     '| --- | --- |',
     ...assets.map(
       asset =>
-        `| ${asset.network === 'mainnet' ? 'Mainnet' : 'Testnet'} | [${asset.name}](${link(asset.name)}) |`
+        `| ${asset.network === 'multichain' ? 'Mainnet + Testnet' : asset.network === 'mainnet' ? 'Mainnet' : 'Testnet'} | [${asset.name}](${link(asset.name)}) |`
     ),
     '',
     `SHA-256: [SHA256SUMS](${link('SHA256SUMS')})`
   ]
   if (changelog) lines.push('', changelog)
+  if (commits !== undefined) lines.push('', formatReleaseCommitLog(repository, commits))
   return `${lines.join('\n')}\n`
 }
 
@@ -248,10 +266,14 @@ function readPackagingInput(sourceDir, env) {
   regularFile(packageFile, 'Extension package.json')
   const version = requireVersion(JSON.parse(readFileSync(packageFile, 'utf8')).version)
   const mode = env.RELEASE_MODE
+  const sourceProfile = sourceProfileForVersion(version)
+  if (env.SOURCE_PROFILE && env.SOURCE_PROFILE !== sourceProfile) {
+    throw new Error('Source profile does not match extension version')
+  }
   const input = {
     schemaVersion: 1,
     mode,
-    buildChannel: mode === 'candidate' ? 'production' : 'beta',
+    buildChannel: buildChannelFor(mode, version),
     version,
     sourceSha: requireSha(env.SOURCE_SHA, 'SOURCE_SHA'),
     sourceRef: requireRef(env.SOURCE_REF),
@@ -261,6 +283,9 @@ function readPackagingInput(sourceDir, env) {
     runAttempt: requireId(env.GITHUB_RUN_ATTEMPT, 'GITHUB_RUN_ATTEMPT')
   }
   if (!MODES.has(mode)) throw new Error('Invalid RELEASE_MODE')
+  if (env.BUILD_CHANNEL && env.BUILD_CHANNEL !== input.buildChannel) {
+    throw new Error('Build channel does not match release mode and source profile')
+  }
   if (env.PR_NUMBER !== undefined && env.PR_NUMBER !== '')
     input.prNumber = requireId(env.PR_NUMBER, 'PR_NUMBER')
   if (env.PR_HEAD_SHA !== undefined && env.PR_HEAD_SHA !== '')
@@ -278,8 +303,11 @@ export async function packageReleaseArtifact(
   networkBuildDir = path.join(sourceDir, 'packages', 'extension')
 ) {
   const input = readPackagingInput(sourceDir, env)
-  const mainnetZip = sourceZip(networkBuildDir, 'dist')
-  const testnetZip = sourceZip(networkBuildDir, 'dist-testnet')
+  const networks = networksForVersion(input.version)
+  const commits =
+    env.COMMIT_HISTORY === undefined
+      ? undefined
+      : validateReleaseCommits(JSON.parse(env.COMMIT_HISTORY))
   let changelog
   if (input.mode === 'candidate') {
     const changelogFile = path.join(sourceDir, 'CHANGELOG.md')
@@ -291,16 +319,18 @@ export async function packageReleaseArtifact(
       await import('../packages/extension/src/lib/extension-update.ts')
     parseProductReleaseNotesManifest(JSON.parse(readFileSync(notesFile, 'utf8')), input.version)
   }
-  const assets = [
-    { network: 'mainnet', source: mainnetZip },
-    { network: 'testnet', source: testnetZip }
-  ].map(({ network, source }) => ({
-    network,
-    name: assetName(input.mode, input.version, input.artifactLabel, network),
-    sha256: sha256(source),
-    size: statSync(source).size,
-    source
-  }))
+  const assets = networks
+    .map(network => ({
+      network,
+      source: sourceZip(networkBuildDir, network === 'testnet' ? 'dist-testnet' : 'dist')
+    }))
+    .map(({ network, source }) => ({
+      network,
+      name: assetName(input.mode, input.version, input.artifactLabel, network),
+      sha256: sha256(source),
+      size: statSync(source).size,
+      source
+    }))
   const metadata = validateMetadata({
     ...input,
     assets: assets.map(({ network, name, sha256: checksum, size }) => ({
@@ -322,7 +352,7 @@ export async function packageReleaseArtifact(
     path.join(outputDir, 'SHA256SUMS'),
     assets.map(asset => `${asset.sha256}  ${asset.name}\n`).join('')
   )
-  writeFileSync(path.join(outputDir, 'release-body.md'), releaseBody(metadata, changelog))
+  writeFileSync(path.join(outputDir, 'release-body.md'), releaseBody(metadata, changelog, commits))
   writeFileSync(
     path.join(outputDir, 'release-metadata.json'),
     `${JSON.stringify(metadata, null, 2)}\n`

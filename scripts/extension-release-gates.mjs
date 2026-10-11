@@ -2,7 +2,8 @@ import { appendFileSync, readFileSync, realpathSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { verifyReleaseArtifact } from './extension-release.mjs'
+import { sourceProfileForVersion, verifyReleaseArtifact } from './extension-release.mjs'
+import { collectReleaseCommits } from './lib/extension-release-history.mjs'
 
 const candidateWorkflow = '.github/workflows/extension-release.yml'
 const shaPattern = /^[0-9a-f]{40}$/
@@ -67,7 +68,13 @@ export async function resolveReleaseSource({ mode, source, confirmSha, request }
     if (sourceSha !== confirmSha)
       throw new Error('Confirmed candidate commit must match the current release branch HEAD')
   }
-  return { source_sha: sourceSha, source_ref: source, version, mode }
+  return {
+    source_sha: sourceSha,
+    source_ref: source,
+    version,
+    mode,
+    source_profile: sourceProfileForVersion(version)
+  }
 }
 
 export function validateCandidateRun(run, { repository, runId, runAttempt, workflowId }) {
@@ -243,14 +250,18 @@ if (isCli) {
     const request = githubRequest(env.GITHUB_REPOSITORY, env.GH_TOKEN)
     const [command, directory] = process.argv.slice(2)
     if (command === 'resolve') {
-      writeOutputs(
-        await resolveReleaseSource({
-          mode: env.RELEASE_MODE,
-          source: env.SOURCE_INPUT,
-          confirmSha: env.CONFIRM_SHA,
-          request
-        })
-      )
+      const source = await resolveReleaseSource({
+        mode: env.RELEASE_MODE,
+        source: env.SOURCE_INPUT,
+        confirmSha: env.CONFIRM_SHA,
+        request
+      })
+      writeOutputs({
+        ...source,
+        commits_json: JSON.stringify(
+          await collectReleaseCommits({ sourceSha: source.source_sha, request })
+        )
+      })
     } else if (command === 'promotion') {
       writeOutputs(
         await resolvePromotion({

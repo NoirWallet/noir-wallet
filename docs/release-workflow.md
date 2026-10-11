@@ -31,8 +31,9 @@ After pushing, check **Actions → Website Voting Worker** and the existing Page
 ## Branches and Releases
 
 - `main` is the integration branch. Submit features and fixes through short-lived pull request branches; `v2` is also an extension verification target.
-- Pull requests targeting `main`, `v2`, or `release/**` build both networks when extension source, WASM, or build dependencies change. Core checks run inside the same job. Documentation, tests, and release tooling alone do not start wallet CI; merging to `main` does not repeat the build. Automatic builds do not publish GitHub Releases.
+- Pull requests targeting `main`, `v2`, or `release/**` build the selected source's extension packages when extension source, WASM, or build inputs change. Core checks run inside the same job. Documentation, tests, and release tooling alone do not start wallet CI; merging to `main` does not repeat the build. Automatic builds do not publish GitHub Releases.
 - Manual Beta builds select a repository branch or full commit SHA without requiring a merge to `main`.
+- V1 sources use separate mainnet and testnet ZIPs. V2 sources (extension version major 2 or later) use one multichain ZIP with runtime network selection. Both use the trusted manual workflow dispatched from `main`; select `source_ref=v2` for the current V2 source.
 - A temporary `release/{version}` branch holds the reviewed production source. For a partial release or hotfix, start from a verified stable wallet source commit or a real production source tag, and cherry-pick only the intended changes. Historical migration tags are not usable source baselines; see [historical Releases](#historical-releases).
 - Build a production candidate, accept its production ZIPs, then run a separate manual promotion. Promotion publishes those exact bytes and creates `v{version}` on the accepted source commit. Pushing a tag alone does not publish.
 - The canonical `NoirWallet/noir-wallet` repository publishes wallet Releases even while private. Other public, non-fork repositories also publish to themselves. Forks and other private repositories retain Actions build artifacts without publishing Releases.
@@ -40,7 +41,7 @@ After pushing, check **Actions → Website Voting Worker** and the existing Page
 
 ```mermaid
 flowchart LR
-  A["Feature / Fix PR"] --> B["Mainnet + testnet test artifacts"]
+  A["Feature / Fix PR"] --> B["Test artifacts: V1 two ZIPs / V2 one ZIP"]
   C["Selected branch / commit"] --> D["Manual Beta build"]
   D --> E["Optional GitHub prerelease"]
   F["Reviewed release/X.Y.Z source"] --> G["Manual production candidate build"]
@@ -52,7 +53,7 @@ flowchart LR
 
 ### Preview and Beta labels
 
-Automatic PR builds run when extension files outside tests and Markdown documentation, or root build inputs (`package.json`, lockfile, workspace config, Node version, TypeScript config, `.npmrc`, WASM lock, or license) match the path filters. Verification and both network builds share one job; there is no standalone wallet validation run. PR metadata records the tested merge commit plus PR head and base commits. Download generated artifacts from **Actions → Build Extension**; their retention is seven days. For a tooling-only PR that needs a real ZIP check, use the manual Beta build with publication disabled. Ignored local UI tools and `output/` are not committed or release triggers.
+Automatic PR builds run when extension files outside tests and Markdown documentation, or root build inputs (`package.json`, lockfile, workspace config, Node version, TypeScript config, `.npmrc`, WASM lock, or license) match the path filters. Verification and building share one job; there is no standalone wallet validation run. V2 PR artifacts use the credential-free `development` channel and an explicit development artifact name; manual Beta artifacts use `beta`. PR metadata records the tested merge commit plus PR head and base commits. Download generated artifacts from **Actions → Build Extension**; their retention is seven days. For a tooling-only PR that needs a real ZIP check, use the manual Beta build with publication disabled. Ignored local UI tools and `output/` are not committed or release triggers.
 
 Manual builds generate labels containing the run ID, attempt, and source commit; do not create them manually:
 
@@ -70,21 +71,21 @@ Both manual workflows require repository write access and must be dispatched fro
 Candidate packaging and promotion enforce:
 
 1. The source branch is `release/` plus the numeric version in `packages/extension/package.json`, and its resolved commit matches the manually confirmed full SHA.
-2. The candidate uses production build settings and includes both networks.
+2. The candidate uses production build settings and includes the expected packages: separate mainnet/testnet ZIPs for V1 or one multichain ZIP for V2.
 3. `CHANGELOG.md` has exactly one nonempty `## [version]` section for that version.
 4. `packages/web/public/changelog.json` has a matching entry accepted by the wallet's release-notes parser.
 
-Promotion additionally verifies a successful candidate workflow dispatched from this repository's `main`, the exact run attempt and artifact ID, artifact metadata, both ZIP checksums, and unchanged release branch HEAD. A Beta or PR artifact cannot be promoted. Source code need not be contained in `main`. Existing production tags are never moved, and published assets are never overwritten.
+Promotion additionally verifies a successful candidate workflow dispatched from this repository's `main`, the exact run attempt and artifact ID, artifact metadata, every ZIP checksum, and unchanged release branch HEAD. A Beta or PR artifact cannot be promoted. Source code need not be contained in `main`. Existing production tags are never moved, and published assets are never overwritten.
 
 ## Workflow Stages
 
 ### Prepare
 
-Resolve the selected branch once to a full source SHA and read its extension version. Candidates additionally confirm the source SHA and matching release branch. The same trusted preparation job maintains [associated PR version labels](../CONTRIBUTING.md#pull-request-targets) without executing selected-source code. Checkout the pinned source for testing and building. The trusted packaging job validates developer changelog and user-facing notes before exposing a candidate for acceptance.
+Resolve the selected branch once to a full source SHA and read its extension version and build profile. Candidates additionally confirm the source SHA and matching release branch. The same trusted preparation job maintains [associated PR version labels](../CONTRIBUTING.md#pull-request-targets) and reads recent commit history without executing selected-source code. Release notes include a folded commit log with up to 20 non-merge commits from the pinned source's most recent 100 commits, excluding subjects prefixed with `ci`, `fix(ci)`, `chore`, or `test`. Checkout the pinned source for testing and building. The trusted packaging job validates developer changelog and user-facing notes before exposing a candidate for acceptance.
 
 ### Verify
 
-Every preview, Beta, and candidate build executes:
+Every preview, Beta, and candidate build installs the frozen dependencies and runs deterministic core tests. V1 additionally verifies the vendored WASM lock:
 
 ```bash
 pnpm install --frozen-lockfile
@@ -92,22 +93,24 @@ pnpm verify-wasm-pkg
 pnpm test
 ```
 
-`verify-wasm-pkg` checks the vendored WASM provenance metadata, file inventory, sizes, and SHA-256 values against `wasm-package.lock.json`. CI does not build or download WASM; both network builds use the same committed package. Beta and production use the same deterministic core tests. UI, Playwright, and hardware checks are local development activities, not automated release gates.
+`verify-wasm-pkg` checks the V1 vendored WASM provenance metadata, file inventory, sizes, and SHA-256 values against `wasm-package.lock.json`. V2 type-checks its EVM history Worker and verifies both packaged WASM engines through its existing build-surface gate after compilation. CI does not build or download WASM. Beta and production use the selected source's deterministic core tests. UI, Playwright, and hardware checks are local development activities, not automated release gates.
 
 Before promotion, run `pnpm audit --prod` and `pnpm audit` against the frozen lockfile. Review each reported dependency path and affected API against the shipped extension bundles; apply compatible fixes and assess any remaining findings before release.
 
 ### Build
 
-After verification, both networks are built in order:
+After verification, V1 builds both networks in order:
 
 ```bash
 pnpm build:extension
 pnpm build:extension:testnet
 ```
 
-`BUILD_CHANNEL` is `beta` for PR and Beta builds, or `production` for candidates. Mainnet and testnet use separate output directories and ZIP assets. Pull requests run core tests and both extension builds without publishing or receiving production analytics secrets.
+V2 runs only `pnpm build:extension`; that ZIP includes its runtime mainnet/testnet selection. `BUILD_CHANNEL` is `beta` for manual Betas and V1 PRs, `development` for V2 PRs, or `production` for candidates. Pull requests run tests and builds without publishing or receiving build secrets.
 
-Build jobs keep read-only repository permissions. Manual builds upload the two network ZIPs to a fresh packaging job that executes tooling from the trusted workflow commit. It downloads ZIPs into a new directory outside the selected wallet checkout and reads only version and release-note data from that checkout. The final artifact contains both ZIPs, `SHA256SUMS`, `release-metadata.json`, and `release-body.md`. Metadata binds the files to their source commit, build channel, repository, workflow commit, run ID, and attempt. Repository retention policies can shorten the requested retention.
+Build jobs keep read-only repository permissions. Manual builds upload their ZIPs to a fresh packaging job that executes tooling from the trusted workflow commit. It downloads ZIPs into a new directory outside the selected wallet checkout and reads only version and release-note data from that checkout. The final artifact contains the ZIP assets, `SHA256SUMS`, `release-metadata.json`, and `release-body.md`. Metadata binds the files to their source commit, build channel, repository, workflow commit, run ID, and attempt. V2 metadata identifies its single asset as `multichain`. Repository retention policies can shorten the requested retention.
+
+V2 manual Beta and candidate builds require the existing `RHEA_SWAP_ACCESS_TOKEN` repository secret. The optional `EVM_HISTORY_API_ORIGIN` repository variable configures its history API and must satisfy V2's existing HTTPS-origin validation. These values are passed only to the selected V2 build. Missing required inputs fail the build; a development PR artifact cannot be published as Beta or promoted to production.
 
 Production mainnet candidate builds require the repository secrets `GA_API_SECRET` and `CUSTOM_ANALYTICS_PASSWORD`. The workflow injects them only into the mainnet build step after the source SHA confirmation; a missing value stops the build. Local default builds, Beta builds, testnet builds, and local browser verification do not embed these values. For a local production mainnet build, supply the same environment variables through your shell and set `BUILD_CHANNEL=production`.
 
@@ -119,9 +122,9 @@ The publish job runs in `NoirWallet/noir-wallet` regardless of visibility, and i
 
 - Beta uses a prerelease and is not marked Latest. Its tag points to the wallet source commit that produced the ZIPs.
 - Production creates `v{version}` at the accepted source SHA and is marked Latest. If that tag already exists, it must resolve to the same source commit. Earlier prereleases remain available.
-- Production notes come from the matching `CHANGELOG.md` section. Each Release includes a source commit link, both ZIPs, and `SHA256SUMS`.
+- Production notes come from the matching `CHANGELOG.md` section. Each Release includes a source commit link, the ZIPs for its build profile, and `SHA256SUMS`.
 
-Production assets are `noir-wallet-v{version}.zip` and `noir-wallet-v{version}-testnet.zip`; candidate artifacts already use these filenames. Beta asset names include the Beta label. A promotion retry skips an existing Release only if its tag and all three published asset digests match the accepted candidate. GitHub's automatically attached source archives come from the wallet repository at the release tag.
+V1 production assets are `noir-wallet-v{version}.zip` and `noir-wallet-v{version}-testnet.zip`; V2 has only the first asset. Candidate artifacts already use these filenames. Beta asset names include the Beta label. A promotion retry skips an existing Release only if its tag, all ZIP digests, and `SHA256SUMS` match the accepted candidate. GitHub's automatically attached source archives come from the wallet repository at the release tag.
 
 ### Historical Releases
 
@@ -158,7 +161,7 @@ pnpm update-wasm-pkg:local -- \
 1. Push the intended branch and open a pull request. Download its **Build Extension** artifact to test before merging.
 2. For a distributable Beta, open **Actions → Prepare Extension Release → Run workflow** with the workflow branch set to `main`.
 3. Select `mode=beta`, set `source_ref` to the intended repository branch or full lowercase 40-character commit SHA, and choose whether `publish_beta` should create a prerelease. Leave `confirm_sha` empty.
-4. Check the resolved source SHA in the run summary. Download its mainnet/testnet artifact or published Beta ZIPs and test the affected flows.
+4. Check the resolved source SHA in the run summary. Download its artifact or published Beta ZIPs and test the affected flows. For V2 use `source_ref=v2` (or the intended V2 branch/full SHA); keep the workflow branch set to `main`.
 
 No merge, version bump, or manually created tag is required for each Beta. Selecting a branch pins its HEAD for that run; later pushes do not change the built source.
 
@@ -172,7 +175,7 @@ Create a temporary `release/{version}` branch from the source you intend to ship
 2. Add exactly one nonempty `## [1.0.40]` section to `CHANGELOG.md`.
 3. Add the matching user-facing update entry in `packages/web/public/changelog.json`, following the [release notes rules](../AGENTS.md#user-facing-release-notes).
 
-Review the exact diff against the stable baseline and run the relevant local checks:
+Review the exact diff against the stable baseline and run the relevant local checks. For V1:
 
 ```bash
 pnpm test
@@ -180,11 +183,13 @@ pnpm build:extension
 pnpm build:extension:testnet
 ```
 
+For V2, run `pnpm test` and `pnpm build:extension`; there is no separate testnet build. Use the actual V2 version and corresponding `release/{version}` branch in the steps below.
+
 ### 2. Build and accept the production candidate
 
 Open **Actions → Prepare Extension Release → Run workflow** from `main`. Select `mode=candidate`, set `source_ref=release/1.0.40`, and enter the full reviewed release branch HEAD in `confirm_sha`. `publish_beta` is ignored for candidates.
 
-After all jobs succeed, download the final `noir-wallet-v1.0.40-rc.…` artifact, check `SHA256SUMS`, and validate the production mainnet and testnet ZIPs. Use the actual ZIPs, not a local rebuild or a previous Beta. Keep the run ID, attempt, and full source SHA from the run summary for promotion. See [review responsibilities](../CONTRIBUTING.md#review-and-acceptance).
+After all jobs succeed, download the final `noir-wallet-v1.0.40-rc.…` artifact, check `SHA256SUMS`, and validate both V1 network ZIPs or the single V2 multichain ZIP. Use the actual ZIPs, not a local rebuild or a previous Beta. Keep the run ID, attempt, and full source SHA from the run summary for promotion. See [review responsibilities](../CONTRIBUTING.md#review-and-acceptance).
 
 ### 3. Promote the accepted artifact
 
@@ -194,11 +199,11 @@ The workflow verifies the candidate's origin and current release branch before c
 
 ### 4. Check publication
 
-Confirm **Publish Accepted Extension** succeeded. In the wallet repository's Releases page, check the source tag/commit, Latest status, both ZIP assets, and release notes. Download `SHA256SUMS` beside the ZIPs and run `sha256sum --check SHA256SUMS` (or `shasum -a 256 --check SHA256SUMS` on macOS). Compare those hashes with the accepted candidate. Forks and private repositories other than `NoirWallet/noir-wallet` retain build artifacts only.
+Confirm **Publish Accepted Extension** succeeded. In the wallet repository's Releases page, check the source tag/commit, Latest status, the expected ZIP assets, and release notes. Download `SHA256SUMS` beside the ZIPs and run `sha256sum --check SHA256SUMS` (or `shasum -a 256 --check SHA256SUMS` on macOS). Compare those hashes with the accepted candidate. Forks and private repositories other than `NoirWallet/noir-wallet` retain build artifacts only.
 
 ### 5. Submit to Chrome Web Store
 
-Store submission is manual. Verify the production **mainnet** ZIP, `noir-wallet-v{version}.zip`, from the GitHub Release matches the accepted candidate. Upload that same ZIP in Chrome Web Store Developer Dashboard, review the version, changed permissions, and release notes, then submit for review or staged rollout under the store configuration. Record the actual publication time after approval. Never upload the `-testnet.zip` asset to the production store listing.
+Store submission is manual. Verify the production ZIP, `noir-wallet-v{version}.zip` (V1 mainnet or V2 multichain), from the GitHub Release matches the accepted candidate. Upload that same ZIP in Chrome Web Store Developer Dashboard, review the version, changed permissions, and release notes, then submit for review or staged rollout under the store configuration. Record the actual publication time after approval. Never upload the V1 `-testnet.zip` asset to the production store listing.
 
 ## Failure Recovery
 
