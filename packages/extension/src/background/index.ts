@@ -5,7 +5,7 @@ import { dappHandler } from './dapp-handler'
 import { accountManager } from '../core/wallet/account-manager'
 import { UI_CONFIG } from '@/config/ui'
 import { WALLET_CONFIG } from '@/config/wallet'
-import { getNetworkConfig } from '@/config/networks'
+import { DEFAULT_NETWORK, getNetworkConfig } from '@/config/networks'
 import { sanitizeMarginalFeeZats } from '@/config/fee'
 import { safeBig } from '@/lib/big'
 import { closeAllPopupWindows } from './window-manager'
@@ -67,7 +67,14 @@ import { parseDiagnosticLogDraft } from '@/lib/diagnostic-log'
 import { appendDiagnosticLog, getDiagnosticLogSalt } from '@/lib/diagnostic-log-store'
 import { prepareTransparentSpend } from '@/core/wallet/transparent-spend-preflight'
 import { readZeroIndexerEnabled, writeZeroIndexerEnabled } from '@/config/zero-indexer-settings'
-import { applyZeroIndexerEnabled } from '@/core/worker/client'
+import { applyZeroIndexerOptions } from '@/core/worker/client'
+import {
+  addCustomZeroIndexerNode,
+  getZeroIndexerBroadcastOptions,
+  getZeroIndexerNodeStatus,
+  removeCustomZeroIndexerNode,
+  selectZeroIndexerNode
+} from './zero-indexer-node-settings'
 
 logger.configureDiagnostics(getDiagnosticLogSalt, appendDiagnosticLog)
 
@@ -78,30 +85,38 @@ const BALANCE_SYNC_SCHEDULE_STATE_KEY = 'wallet_balance_sync_schedule'
 const RPC_RUNTIME_RELOAD_UI_TIMEOUT_MS = 15_000
 let zeroIndexerUpdateQueue: Promise<void> = Promise.resolve()
 
-function updateZeroIndexerPreference(
-  enabled: boolean
-): Promise<{ enabled: boolean; warning?: string }> {
-  const operation = zeroIndexerUpdateQueue
-    .catch(() => {})
-    .then(async () => {
-      await writeZeroIndexerEnabled(enabled)
-      const current = await readZeroIndexerEnabled()
-      try {
-        await applyZeroIndexerEnabled(current)
-        return { enabled: await readZeroIndexerEnabled() }
-      } catch (error) {
-        logger.error('[Privacy Broadcast] Runtime update failed', undefined, undefined, error)
-        return {
-          enabled: await readZeroIndexerEnabled(),
-          warning: 'Preference saved. It will apply when the wallet reconnects.'
-        }
-      }
-    })
-  zeroIndexerUpdateQueue = operation.then(
+function enqueueZeroIndexerUpdate<T>(operation: () => Promise<T>): Promise<T> {
+  const result = zeroIndexerUpdateQueue.catch(() => {}).then(operation)
+  zeroIndexerUpdateQueue = result.then(
     () => undefined,
     () => undefined
   )
-  return operation
+  return result
+}
+
+async function applyZeroIndexerRuntime(): Promise<{ warning?: string }> {
+  const enabled = await readZeroIndexerEnabled()
+  const options = await getZeroIndexerBroadcastOptions(DEFAULT_NETWORK, enabled)
+  const update = applyZeroIndexerOptions(DEFAULT_NETWORK, options)
+  try {
+    await withTimeout(update, 5_000, 'Privacy broadcast runtime update')
+    return {}
+  } catch {
+    void update.catch(() => {
+      logger.error('[Privacy Broadcast] Runtime configuration update failed')
+    })
+    return { warning: 'Settings saved. They will apply when the wallet is ready.' }
+  }
+}
+
+function updateZeroIndexerPreference(
+  enabled: boolean
+): Promise<{ enabled: boolean; warning?: string }> {
+  return enqueueZeroIndexerUpdate(async () => {
+    await writeZeroIndexerEnabled(enabled)
+    const applied = await applyZeroIndexerRuntime()
+    return { enabled: await readZeroIndexerEnabled(), ...applied }
+  })
 }
 
 async function applyRpcSettingsMutation(
@@ -137,6 +152,16 @@ if (__EXTENSION_UPDATES_ENABLED__) {
 const debugLogsEnabled = typeof __DEBUG_LOGS__ !== 'boolean' || __DEBUG_LOGS__
 
 logger.info('Background service worker started')
+
+void getZeroIndexerNodeStatus()
+  .then(async status => {
+    if (Object.keys(status.probes).length > 0) return
+    await getZeroIndexerNodeStatus(true)
+    await enqueueZeroIndexerUpdate(applyZeroIndexerRuntime)
+  })
+  .catch(() => {
+    logger.warn('[Privacy Broadcast] Node availability refresh failed')
+  })
 
 const LEGACY_EXTENSION_PERMISSIONS = [
   'clipboardRead',
@@ -781,6 +806,61 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     updateZeroIndexerPreference(message.enabled)
       .then(result => sendResponse({ success: true, ...result }))
       .catch(error => sendResponse({ error: error.message }))
+    return true
+  }
+
+  if (message.type === 'GET_ZERO_INDEXER_OPTIONS') {
+    if (message.network !== DEFAULT_NETWORK) {
+      sendResponse({ success: false, error: 'Invalid privacy broadcast network' })
+      return false
+    }
+    readZeroIndexerEnabled()
+      .then(enabled => getZeroIndexerBroadcastOptions(DEFAULT_NETWORK, enabled))
+      .then(options => sendResponse({ success: true, options }))
+      .catch(() =>
+        sendResponse({ success: false, error: 'Could not load privacy broadcast configuration' })
+      )
+    return true
+  }
+
+  if (message.type === 'GET_ZERO_INDEXER_NODES') {
+    getZeroIndexerNodeStatus()
+      .then(result => sendResponse({ success: true, result }))
+      .catch(() => sendResponse({ success: false, error: 'Could not load ZeroIndexer nodes' }))
+    return true
+  }
+
+  if (
+    message.type === 'REFRESH_ZERO_INDEXER_NODES' ||
+    message.type === 'SELECT_ZERO_INDEXER_NODE' ||
+    message.type === 'ADD_CUSTOM_ZERO_INDEXER_NODE' ||
+    message.type === 'REMOVE_CUSTOM_ZERO_INDEXER_NODE'
+  ) {
+    enqueueZeroIndexerUpdate(async () => {
+      switch (message.type) {
+        case 'REFRESH_ZERO_INDEXER_NODES':
+          await getZeroIndexerNodeStatus(true)
+          break
+        case 'SELECT_ZERO_INDEXER_NODE':
+          await selectZeroIndexerNode(message.endpointId)
+          break
+        case 'ADD_CUSTOM_ZERO_INDEXER_NODE':
+          await addCustomZeroIndexerNode(message.label, message.url)
+          break
+        case 'REMOVE_CUSTOM_ZERO_INDEXER_NODE':
+          await removeCustomZeroIndexerNode(message.endpointId)
+          break
+      }
+      const applied = await applyZeroIndexerRuntime()
+      return { result: await getZeroIndexerNodeStatus(), ...applied }
+    })
+      .then(result => sendResponse({ success: true, ...result }))
+      .catch(error =>
+        sendResponse({
+          success: false,
+          error: error instanceof Error ? error.message : 'Could not update ZeroIndexer nodes'
+        })
+      )
     return true
   }
 

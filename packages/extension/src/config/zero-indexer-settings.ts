@@ -25,26 +25,6 @@ export async function readZeroIndexerEnabled(): Promise<boolean> {
   return parseZeroIndexerEnabled(stored[SETTINGS_STORAGE_KEY])
 }
 
-export async function readZeroIndexerEnabledForWorker(): Promise<boolean> {
-  if (chrome.storage?.local) return readZeroIndexerEnabled()
-  if (!chrome.runtime?.sendMessage) {
-    throw new Error('Privacy broadcast preference is unavailable')
-  }
-  const response: unknown = await chrome.runtime.sendMessage({ type: 'GET_ZERO_INDEXER_ENABLED' })
-  if (!response || typeof response !== 'object') {
-    throw new Error('Invalid privacy broadcast preference response')
-  }
-  const result = response as { success?: unknown; enabled?: unknown; error?: unknown }
-  if (result.success !== true || typeof result.enabled !== 'boolean') {
-    throw new Error(
-      typeof result.error === 'string'
-        ? result.error
-        : 'Invalid privacy broadcast preference response'
-    )
-  }
-  return result.enabled
-}
-
 export async function writeZeroIndexerEnabled(enabled: boolean): Promise<void> {
   await withWalletSettingsLock(async () => {
     const stored = await chrome.storage.local.get(SETTINGS_STORAGE_KEY)

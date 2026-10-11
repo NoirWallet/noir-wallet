@@ -21,8 +21,8 @@ import { DEFAULT_NETWORK, getNetworkConfig } from '@/config/networks'
 import { DedupPromise, ReadyFlag, TimeoutError } from '@/lib/async-utils'
 import { WALLET_CONFIG } from '@/config/wallet'
 import { isRetryableWalletRpcError, isWalletDirtyError } from '@/core/zcash/wallet-rpc-errors'
-import { getZeroIndexerOptions } from '@/config/zero-indexer'
-import { readZeroIndexerEnabledForWorker } from '@/config/zero-indexer-settings'
+import type { ZeroIndexerOptions } from '@/config/zero-indexer'
+import { readZeroIndexerOptionsForWorker } from '@/config/zero-indexer-runtime'
 import { TransactionSubmissionUnknownError } from '@/core/zcash/transfer-result'
 
 const { LIGHT, MEDIUM, WASM_HEAVY, TRANSACTION } = WALLET_CONFIG.SYNC.RPC_TIMEOUT_MS
@@ -334,8 +334,14 @@ async function forwardToOffscreen<T = any>(method: string, payload: any): Promis
   throw new Error(`Offscreen RPC failed after ${maxAttempts} attempts: ${method}`)
 }
 
-export async function applyZeroIndexerEnabled(enabled: boolean): Promise<void> {
-  await forwardToOffscreen('zeroIndexer.setEnabled', { enabled })
+export async function applyZeroIndexerOptions(
+  network: Network,
+  options: ZeroIndexerOptions | null
+): Promise<void> {
+  // A future wallet initialization reads persisted options; changing settings
+  // alone must not create a compute document or initialize WASM.
+  if (!(await chrome.offscreen.hasDocument())) return
+  await forwardToOffscreen('zeroIndexer.setOptions', { network, options })
 }
 
 export class ZcashWorkerClient {
@@ -575,10 +581,7 @@ export class ZcashWorkerClient {
       const initPayload = payload as RPCSchema['init']['request']
       payload = {
         ...initPayload,
-        zeroIndexerOptions: getZeroIndexerOptions(
-          initPayload.network,
-          await readZeroIndexerEnabledForWorker()
-        )
+        zeroIndexerOptions: await readZeroIndexerOptionsForWorker(initPayload.network)
       } as RPCSchema[M]['request']
     }
     if (!worker) {

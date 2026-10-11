@@ -36,7 +36,8 @@ import { mapWasmAccountBalanceToZcashBalance, zeroZcashBalance } from '../wallet
 import { sanitizeMarginalFeeZats, DEFAULT_EXPIRY_DELTA_BLOCKS } from '../../config/fee'
 import { WALLET_CONFIG } from '../../config/wallet'
 import { NETWORKS } from '../../config/networks'
-import { getZeroIndexerOptions, type ZeroIndexerOptions } from '../../config/zero-indexer'
+import type { ZeroIndexerOptions } from '../../config/zero-indexer'
+import { parseZeroIndexerRuntimeOptions } from '../../config/zero-indexer-runtime'
 import { runWithCommitmentTreeRecovery } from './commitment-tree-recovery'
 import { parseTransferEstimate, parseTransferResult } from '../zcash/transfer-result'
 import { loadVotingState, saveVotingState } from '../../lib/indexed-db'
@@ -177,7 +178,7 @@ interface WalletEntry {
 }
 
 const wallets = new Map<string, WalletEntry>()
-let latestZeroIndexerEnabled: boolean | null = null
+const latestZeroIndexerOptions = new Map<string, ZeroIndexerOptions | null>()
 const walletOperationChains = new Map<string, Promise<void>>()
 const votingSessions = new Map<string, WebVotingSession>()
 
@@ -465,10 +466,9 @@ self.addEventListener('message', async (event: MessageEvent<RPCRequest<any>>) =>
           const net = network === 'mainnet' ? 'main' : 'test'
 
           const entry = wallets.get(walletId)
-          const broadcastOptions =
-            latestZeroIndexerEnabled === null
-              ? (zeroIndexerOptions ?? null)
-              : getZeroIndexerOptions(network, latestZeroIndexerEnabled)
+          const broadcastOptions = latestZeroIndexerOptions.has(network)
+            ? (latestZeroIndexerOptions.get(network) ?? null)
+            : parseZeroIndexerRuntimeOptions(zeroIndexerOptions ?? null)
           const configUnchanged =
             !!entry && entry.network === network && entry.lightwalletdUrl === lightwalletdUrl
 
@@ -600,16 +600,18 @@ self.addEventListener('message', async (event: MessageEvent<RPCRequest<any>>) =>
         break
       }
 
-      case 'zeroIndexer.setEnabled': {
-        const { enabled } = payload as RPCSchema['zeroIndexer.setEnabled']['request']
-        if (typeof enabled !== 'boolean') throw new Error('Invalid privacy broadcast preference')
-        latestZeroIndexerEnabled = enabled
+      case 'zeroIndexer.setOptions': {
+        const { network, options: rawOptions } =
+          payload as RPCSchema['zeroIndexer.setOptions']['request']
+        if (network !== 'mainnet' && network !== 'testnet')
+          throw new Error('Invalid privacy broadcast network')
+        const options = parseZeroIndexerRuntimeOptions(rawOptions)
+        latestZeroIndexerOptions.set(network, options)
         const walletIds = new Set([...wallets.keys(), ...walletOperationChains.keys()])
         for (const walletId of walletIds) {
           await runForWallet(walletId, async () => {
             const current = wallets.get(walletId)
-            if (!current) return
-            const options = getZeroIndexerOptions(current.network as 'mainnet' | 'testnet', enabled)
+            if (!current || current.network !== network) return
             current.instance.set_zero_indexer_options(options)
             current.zeroIndexerOptions = options
           })

@@ -19,11 +19,3 @@ export interface ZeroIndexerOptions {
   urls: string[]
   sendTimeoutMs?: number
 }
-
-export function getZeroIndexerOptions(
-  network: 'mainnet' | 'testnet',
-  enabled: boolean
-): ZeroIndexerOptions | null {
-  if (!enabled) return null
-  return { urls: [network === 'mainnet' ? ZERO_INDEXER_MAINNET_URL : ZERO_INDEXER_TESTNET_URL] }
-}

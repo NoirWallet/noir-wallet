@@ -3,7 +3,8 @@
   "releases": {
     "1.0.39": {
       "changes": [
-        "ZeroIndexer broadcasting is enabled by default. Manage it in Security & Privacy; sync keeps your selected RPC."
+        "ZeroIndexer broadcasting is enabled by default. Manage it in Security & Privacy; sync keeps your selected RPC.",
+        "Choose ZeroIndexer broadcast nodes, add your own, or use Auto to select among official nodes."
       ]
     },
     "1.0.38": {

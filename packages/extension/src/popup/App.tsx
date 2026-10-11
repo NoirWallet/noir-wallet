@@ -55,6 +55,7 @@ import { General } from './pages/settings/General'
 import { PreferredExplorer } from './pages/settings/PreferredExplorer'
 import { RpcEndpoint } from './pages/settings/RpcEndpoint'
 import { SecurityPrivacy } from './pages/settings/SecurityPrivacy'
+import { ZeroIndexerNodes } from './pages/settings/ZeroIndexerNodes'
 import { Help } from './pages/settings/Help'
 import { ChangePassword } from './pages/settings/ChangePassword'
 import { ExperimentalFeatures } from './pages/settings/ExperimentalFeatures'
@@ -133,6 +134,7 @@ function AppRoutes() {
       <Route path="/preferred-explorer" element={<PreferredExplorer />} />
       <Route path="/rpc-endpoint" element={<RpcEndpoint />} />
       <Route path="/security-privacy" element={<SecurityPrivacy />} />
+      <Route path="/zero-indexer-nodes" element={<ZeroIndexerNodes />} />
       <Route path="/help" element={<Help />} />
       <Route path="/change-password" element={<ChangePassword />} />
       <Route path="/experimental-features" element={<ExperimentalFeatures />} />

@@ -3,11 +3,10 @@ import assert from 'node:assert/strict'
 import {
   parseZeroIndexerEnabled,
   readZeroIndexerEnabled,
-  readZeroIndexerEnabledForWorker,
   writeZeroIndexerEnabled
 } from '../src/config/zero-indexer-settings.ts'
 import { createChromeStorageAdapter } from '../src/lib/chrome-storage-adapter.ts'
-import { getZeroIndexerOptions } from '../src/config/zero-indexer.ts'
+import { readZeroIndexerOptionsForWorker } from '../src/config/zero-indexer-runtime.ts'
 
 test('privacy broadcast defaults on and respects an explicit off preference', () => {
   assert.equal(parseZeroIndexerEnabled(undefined), true)
@@ -22,20 +21,18 @@ test('offscreen init resolves an explicit opt-out through background without sto
     runtime: {
       async sendMessage(message) {
         requests.push(message)
-        return { success: true, enabled: false }
+        return { success: true, options: null }
       }
     }
   }
   try {
-    const enabled = await readZeroIndexerEnabledForWorker()
-    assert.equal(enabled, false)
-    assert.equal(getZeroIndexerOptions('mainnet', enabled), null)
-    assert.deepEqual(requests, [{ type: 'GET_ZERO_INDEXER_ENABLED' }])
+    assert.equal(await readZeroIndexerOptionsForWorker('mainnet'), null)
+    assert.deepEqual(requests, [{ type: 'GET_ZERO_INDEXER_OPTIONS', network: 'mainnet' }])
 
-    globalThis.chrome.runtime.sendMessage = async () => ({ success: true, enabled: 'false' })
-    await assert.rejects(readZeroIndexerEnabledForWorker(), /Invalid privacy broadcast/)
+    globalThis.chrome.runtime.sendMessage = async () => ({ success: true, options: false })
+    await assert.rejects(readZeroIndexerOptionsForWorker('mainnet'), /Invalid privacy broadcast/)
     globalThis.chrome.runtime.sendMessage = async () => ({ error: 'settings unavailable' })
-    await assert.rejects(readZeroIndexerEnabledForWorker(), /settings unavailable/)
+    await assert.rejects(readZeroIndexerOptionsForWorker('mainnet'), /configuration is unavailable/)
   } finally {
     globalThis.chrome = previousChrome
   }

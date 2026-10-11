@@ -7,6 +7,7 @@ Developer-oriented release history for Noir Wallet. Concise in-wallet update not
 ### Added
 
 - Add a default-enabled ZeroIndexer toggle under Security & Privacy. Transactions containing Orchard try the configured ZeroIndexer broadcast endpoints in order and fall back to the ordinary wallet RPC if every attempt fails, across software and hardware signing flows.
+- Add a separate ZeroIndexer node manager with automatic official-node selection, fixed node selection, custom nodes, and read-only network and reachability checks. Keep node choices per network and preserve them when broadcasting is disabled.
 
 ### Changed
 
