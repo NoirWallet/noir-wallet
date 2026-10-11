@@ -30,7 +30,6 @@ const pinnedMultichainRuntime = path.join(
   extensionDir,
   'src/infrastructure/keyring/multichain/pinned-wasm-engine.ts'
 )
-const releaseWorkflow = path.resolve(extensionDir, '../../.github/workflows/build-extension.yml')
 const prettierIgnore = path.resolve(extensionDir, '../../.prettierignore')
 
 function classifyArtifact(relativePath) {
@@ -264,12 +263,11 @@ test.describe('WASM package integrity', () => {
   })
 
   test('checks the pinned Zcash binary at runtime and both packages in release builds', async () => {
-    const [runtime, worker, migrationWorker, buildGate, workflow] = await Promise.all([
+    const [runtime, worker, migrationWorker, buildGate] = await Promise.all([
       readFile(pinnedZcashRuntime, 'utf8'),
       readFile(zcashWorker, 'utf8'),
       readFile(compatibilityWorker, 'utf8'),
-      readFile(buildSurfaceScript, 'utf8'),
-      readFile(releaseWorkflow, 'utf8')
+      readFile(buildSurfaceScript, 'utf8')
     ])
 
     expect(runtime).toContain('manifest.schemaVersion !== 3')
@@ -284,8 +282,6 @@ test.describe('WASM package integrity', () => {
     expect(buildGate).toContain("engine: 'multichain'")
     expect(buildGate).toContain("sourceCommit: 'cbd8ffbb192d67a3bd19eb5a4dcc38669f5e4f7a'")
     expect(buildGate).toContain('verifyWasmPackageIntegrity(directory, manifest)')
-    expect(workflow).toContain("- 'scripts/lib/wasm-package-integrity.mjs'")
-    expect(workflow).toContain("- 'scripts/sync-wasm-pkg.js'")
   })
 
   test('replaces the generated Multichain package through a rollback-capable transaction', async () => {
