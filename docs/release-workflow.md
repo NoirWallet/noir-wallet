@@ -31,7 +31,7 @@ After pushing, check **Actions → Website Voting Worker** and the existing Page
 ## Branches and Releases
 
 - `main` is the integration branch. Submit features and fixes through short-lived pull request branches; `v2` is also an extension verification target.
-- Relevant pull requests and pushes targeting `main`, `v2`, or `release/**` validate and build both networks as Actions artifacts. They do not publish GitHub Releases.
+- Relevant pull requests and pushes targeting `main`, `v2`, or `release/**` run core checks. Extension source, WASM, or build-dependency changes also build both networks as Actions artifacts. Tests, release tooling, and package documentation alone skip ZIP builds. Automatic verification does not publish GitHub Releases.
 - Manual Beta builds select a repository branch or full commit SHA without requiring a merge to `main`.
 - A temporary `release/{version}` branch holds the reviewed production source. For a partial release or hotfix, start from a verified stable wallet source commit or a real production source tag, and cherry-pick only the intended changes. Historical migration tags are not usable source baselines; see [historical Releases](#historical-releases).
 - Build a production candidate, accept its production ZIPs, then run a separate manual promotion. Promotion publishes those exact bytes and creates `v{version}` on the accepted source commit. Pushing a tag alone does not publish.
@@ -52,7 +52,7 @@ flowchart LR
 
 ### Preview and Beta labels
 
-Automatic verification runs when extension, workspace build configuration, changelog, WASM lock, test, or workflow paths match the path filters. PR metadata records the tested merge commit plus PR head and base commits. Download the artifact from **Actions → Build Extension**; its retention is seven days. Ignored local UI tools and `output/` are not committed or release triggers.
+Automatic verification runs when extension, workspace build configuration, changelog, WASM lock, test, or workflow paths match the path filters. Core checks always run; ZIP builds additionally require changes to extension files outside tests and Markdown documentation, or root build inputs (`package.json`, lockfile, workspace config, Node version, TypeScript config, `.npmrc`, WASM lock, or license). Pushes without a locally available previous commit also build ZIPs. PR metadata records the tested merge commit plus PR head and base commits. Download generated artifacts from **Actions → Build Extension**; their retention is seven days. For a tooling-only PR that needs a real ZIP check, use the manual Beta build with publication disabled. Ignored local UI tools and `output/` are not committed or release triggers.
 
 Manual builds generate labels containing the run ID, attempt, and source commit; do not create them manually:
 

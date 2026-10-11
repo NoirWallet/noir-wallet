@@ -310,7 +310,7 @@ The complete operational runbook is in `docs/release-workflow.md`.
 
 - `packages/extension/package.json` is the extension version source of truth.
 - `CHANGELOG.md` is the source of truth for production GitHub Release notes. Before building a production candidate, add exactly one non-empty `## [version]` section matching the extension version.
-- Relevant pull requests and pushes to `main`, `v2`, and `release/**` build mainnet and testnet preview artifacts without publication or production analytics credentials.
+- Relevant pull requests and pushes to `main`, `v2`, and `release/**` run core checks. Extension source, WASM, or build-dependency changes also produce mainnet and testnet preview artifacts without publication or production analytics credentials; tests and release tooling alone do not trigger ZIP builds.
 - Run `Prepare Extension Release` manually from `main`, selecting a repository branch or full commit SHA for Beta. Production candidates require a reviewed `release/{version}` branch and confirmation of its full source SHA; they use production build settings.
 - Run `Publish Accepted Extension` separately after accepting the candidate ZIPs. It validates the candidate run, attempt, source SHA, current release branch, and checksums, then publishes the same ZIPs and matching `v{version}` tag without rebuilding. The source commit need not be merged to `main`.
 - All build paths run the same deterministic core tests. Browser verification is a separate local development activity, not an automated release gate.
