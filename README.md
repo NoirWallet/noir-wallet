@@ -156,9 +156,8 @@ The current V2 extension supports the optional `fundingSource` parameter for SDK
 
 ## Release
 
-See the [CI/CD and release runbook](./docs/release-workflow.md) for beta builds, production
-tags, GitHub Releases, Chrome Web Store submission, failure recovery, and the migration away
-from the historical `staging` branch.
+See the [CI/CD and release runbook](./docs/release-workflow.md) for PR development previews,
+manual Beta builds from the trusted `main` workflow, production promotion, and Chrome Web Store submission.
 
 ## License
 

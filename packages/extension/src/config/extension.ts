@@ -52,7 +52,7 @@ export function resolveHistoryApiOrigin(
     throw new Error('EVM_HISTORY_API_ORIGIN must be an absolute URL')
   }
   const loopbackDevelopmentEndpoint =
-    buildChannel !== 'production' &&
+    buildChannel === 'development' &&
     url.protocol === 'http:' &&
     (url.hostname === '127.0.0.1' || url.hostname === 'localhost')
   if (

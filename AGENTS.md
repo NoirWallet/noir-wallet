@@ -349,11 +349,11 @@ Commit all generated `packages/extension/src/lib/wasm-pkg/**` changes together. 
 The complete operational runbook is in `docs/release-workflow.md`.
 
 - `packages/extension/package.json` is the extension version source of truth.
-- `CHANGELOG.md` is the source of truth for production GitHub Release notes. Before tagging a release, add exactly one non-empty `## [version]` section matching the extension version.
-- Pushing `v2` builds one public V2 prerelease containing Mainnet/Testnet Mode, tagged `v{version}-beta.{YYYYMMDDHHMM}.{sha}`, in `NoirWallet/noir-wallet`.
-- Production releases use a matching `v{version}` tag on a commit contained in `v2`. The workflow rejects version, branch, Changelog, or user release-note mismatches before building.
-- Pull requests, previews, and production tags run deterministic core tests. Browser and live tests are local tools, not release gates.
-- Public, non-fork runs publish through the repository's `GITHUB_TOKEN` with a separate write-scoped job. Private repositories and forks retain build artifacts only. Each release has one ZIP and `SHA256SUMS`.
+- `CHANGELOG.md` is the source of truth for production GitHub Release notes. Before building a production candidate, add exactly one non-empty `## [version]` section matching the extension version.
+- V2 pull requests affecting runtime, WASM, build inputs, or their test loaders produce read-only, credential-free development artifacts. Tests, docs, and maintenance scripts alone do not start the extension preview workflow.
+- Run the trusted manual release workflow from `main` with mode `beta` and `source_ref=v2` (or an exact V2 source ref) to prepare a V2 Beta. The release build requires `RHEA_SWAP_ACCESS_TOKEN`; development PR artifacts are not Beta candidates.
+- A `v2` push or tag does not publish an extension. Production candidate acceptance and publication use the separate trusted workflows on `main`.
+- The extension build verifies both packaged WASM integrity manifests. Browser and live tests are local tools, not release gates. Each V2 release contains one ZIP for runtime Mainnet/Testnet Mode and `SHA256SUMS`.
 - Chrome Web Store submission is currently manual; the workflow does not contain store credentials or an automated submission step.
 
 ### User-Facing Release Notes
@@ -367,7 +367,7 @@ The complete operational runbook is in `docs/release-workflow.md`.
 - Exclude internal refactors, tests, CI changes, dependency updates, and implementation details unless they materially affect users.
 - Keep the copy plain, specific, and user-friendly. The runtime schema currently permits 1–8 bullets of at most 120 characters each so the popup remains readable.
 
-Do not change release behavior based only on this summary; verify `.github/workflows/build-extension.yml` before editing CI.
+Do not change release behavior based only on this summary; verify both the V2 PR workflow and the trusted manual workflow on `main` before editing CI.
 
 ## Implementation Rules
 

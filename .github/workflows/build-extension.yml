@@ -1,37 +1,18 @@
 name: Build Extension
 
 on:
-  push:
-    branches: [v2]
-    tags: ['v*']
-    paths:
-      - 'packages/extension/**'
-      - 'packages/sdk/**'
-      - 'packages/evm-history-worker/**'
-      - 'packages/web/public/changelog.json'
-      - 'package.json'
-      - 'pnpm-lock.yaml'
-      - 'pnpm-workspace.yaml'
-      - '.node-version'
-      - 'LICENSE'
-      - 'tsconfig.base.json'
-      - '.npmrc'
-      - 'CHANGELOG.md'
-      - 'scripts/extract-changelog.mjs'
-      - 'scripts/run-core-tests.mjs'
-      - 'scripts/register-test-loader.mjs'
-      - 'scripts/typescript-test-loader.mjs'
-      - 'scripts/lib/wasm-package-integrity.mjs'
-      - 'scripts/sync-multichain-wasm-pkg.mjs'
-      - 'scripts/sync-wasm-pkg.js'
-      - '.github/workflows/build-extension.yml'
   pull_request:
     branches: [v2]
     paths:
       - 'packages/extension/**'
-      - 'packages/sdk/**'
-      - 'packages/evm-history-worker/**'
-      - 'packages/web/public/changelog.json'
+      - '!packages/extension/tests/**'
+      - '!packages/extension/scripts/**'
+      - 'packages/extension/scripts/lib/runtime-module-policy.mjs'
+      - 'packages/extension/scripts/verify-build-surface.mjs'
+      - '!packages/extension/**/*.md'
+      - '!packages/extension/playwright.config.ts'
+      - '!packages/extension/.env.test-wallets.example'
+      - '!packages/extension/components.json'
       - 'package.json'
       - 'pnpm-lock.yaml'
       - 'pnpm-workspace.yaml'
@@ -39,20 +20,14 @@ on:
       - 'LICENSE'
       - 'tsconfig.base.json'
       - '.npmrc'
-      - 'CHANGELOG.md'
-      - 'scripts/extract-changelog.mjs'
+      - 'scripts/lib/wasm-package-integrity.mjs'
       - 'scripts/run-core-tests.mjs'
       - 'scripts/register-test-loader.mjs'
       - 'scripts/typescript-test-loader.mjs'
-      - 'scripts/lib/wasm-package-integrity.mjs'
-      - 'scripts/sync-multichain-wasm-pkg.mjs'
-      - 'scripts/sync-wasm-pkg.js'
-      - '.github/workflows/build-extension.yml'
-  workflow_dispatch:
 
 concurrency:
-  group: extension-release-${{ github.ref }}
-  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+  group: extension-preview-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -61,287 +36,72 @@ env:
   HUSKY: 0
 
 jobs:
-  prepare:
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    outputs:
-      is_production: ${{ steps.release.outputs.is_production }}
-      tag: ${{ steps.release.outputs.tag }}
-      version: ${{ steps.release.outputs.version }}
-      sha_short: ${{ steps.release.outputs.sha_short }}
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-
-      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
-        with:
-          node-version-file: .node-version
-          package-manager-cache: false
-
-      - name: Resolve and validate release
-        id: release
-        run: |
-          VERSION=$(node -p "require('./packages/extension/package.json').version")
-          SHA_SHORT=$(echo "$GITHUB_SHA" | cut -c1-7)
-          IS_PRODUCTION=${{ startsWith(github.ref, 'refs/tags/v') }}
-
-          if [ "$IS_PRODUCTION" = "true" ]; then
-            EXPECTED_TAG="v${VERSION}"
-            if [ "$GITHUB_REF_NAME" != "$EXPECTED_TAG" ]; then
-              echo "::error::Production tag $GITHUB_REF_NAME must match extension version $EXPECTED_TAG"
-              exit 1
-            fi
-
-            if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/v2; then
-              echo "::error::Production tag must point to a commit contained in v2"
-              exit 1
-            fi
-
-            node scripts/extract-changelog.mjs "$VERSION" CHANGELOG.md packages/web/public/changelog.json >/dev/null
-            TAG="$GITHUB_REF_NAME"
-          else
-            if [ "$GITHUB_REF" != "refs/heads/v2" ]; then
-              echo "::error::V2 preview builds must run from v2"
-              exit 1
-            fi
-
-            TS=$(date -u +%Y%m%d%H%M)
-            TAG="v${VERSION}-beta.${TS}.${SHA_SHORT}"
-          fi
-
-          echo "is_production=$IS_PRODUCTION" >> "$GITHUB_OUTPUT"
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "sha_short=$SHA_SHORT" >> "$GITHUB_OUTPUT"
-
-  verify:
+  preview:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
+          ref: main
+          path: release-tools
           persist-credentials: false
-
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          path: wallet
+          persist-credentials: false
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v5
-
+        with:
+          package_json_file: wallet/package.json
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
-          node-version-file: .node-version
-
+          node-version-file: release-tools/.node-version
+          cache: pnpm
+          cache-dependency-path: wallet/pnpm-lock.yaml
+      - name: Record checked-out commits
+        id: source
+        run: |
+          set -euo pipefail
+          test "$(git -C wallet rev-parse HEAD)" = "$GITHUB_SHA"
+          echo "workflow_sha=$(git -C release-tools rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - run: pnpm install --frozen-lockfile
-
-      - name: Type-check EVM history Worker
+        working-directory: wallet
+      - name: Type-check EVM History Worker
         run: pnpm --filter @noir-wallet/evm-history-worker type-check
-
-      - name: Run deterministic core tests
-        run: pnpm test
-
-      - name: Build extension for pull request
-        if: github.event_name == 'pull_request'
-        run: pnpm build:extension
-
-  build:
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
-    needs: [prepare, verify]
-    runs-on: ubuntu-latest
-    outputs:
-      artifact_id: ${{ steps.artifacts.outputs.artifact-id }}
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-
-      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v5
-
-      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
-        with:
-          node-version-file: .node-version
-
-      - run: pnpm install --frozen-lockfile
-
-      - name: Build extension
+        working-directory: wallet
+      - run: pnpm test
+        working-directory: wallet
+      - name: Build development extension
+        working-directory: wallet
         env:
-          BUILD_CHANNEL: ${{ needs.prepare.outputs.is_production == 'true' && 'production' || 'beta' }}
-          RELEASE_ALLOWED: ${{ github.event.repository.private == false && github.event.repository.fork == false }}
+          BUILD_CHANNEL: development
           EVM_HISTORY_API_ORIGIN: ${{ vars.EVM_HISTORY_API_ORIGIN }}
-          RHEA_SWAP_ACCESS_TOKEN: ${{ secrets.RHEA_SWAP_ACCESS_TOKEN }}
-          GA_API_SECRET: ${{ needs.prepare.outputs.is_production == 'true' && secrets.GA_API_SECRET || '' }}
-          CUSTOM_ANALYTICS_PASSWORD: ${{ needs.prepare.outputs.is_production == 'true' && secrets.CUSTOM_ANALYTICS_PASSWORD || '' }}
+        run: pnpm build:extension
+      - name: Stage the single V2 ZIP
         run: |
-          if [ "$RELEASE_ALLOWED" != "true" ]; then
-            export BUILD_CHANNEL=development
-            unset RHEA_SWAP_ACCESS_TOKEN GA_API_SECRET CUSTOM_ANALYTICS_PASSWORD
-          fi
-          pnpm build:extension
-
-      - name: Prepare release assets
-        env:
-          TAG: ${{ needs.prepare.outputs.tag }}
-        run: |
-          mkdir -p release-assets
-          ZIP_FILES=(packages/extension/dist/*.zip)
-          if [ "${#ZIP_FILES[@]}" -ne 1 ] || [ ! -f "${ZIP_FILES[0]}" ]; then
-            echo "::error::Expected exactly one V2 extension ZIP"
+          set -euo pipefail
+          zips=(wallet/packages/extension/dist/*.zip)
+          if [ "${#zips[@]}" -ne 1 ] || [ ! -f "${zips[0]}" ]; then
+            echo '::error::Expected exactly one V2 extension ZIP'
             exit 1
           fi
-          cp "${ZIP_FILES[0]}" "release-assets/noir-wallet-v${TAG#v}.zip"
-          (
-            cd release-assets
-            sha256sum *.zip > SHA256SUMS
-          )
-
-      - name: Get commit log
-        id: commits
+          mkdir -p raw-zips/dist
+          cp "${zips[0]}" raw-zips/dist/
+      - name: Package development preview
+        id: package
         env:
-          IS_PRODUCTION: ${{ needs.prepare.outputs.is_production }}
-          BEFORE_SHA: ${{ github.event.before }}
-        run: |
-          HEAD_SHA="$GITHUB_SHA"
-          BASE_SHA=""
-
-          if [ "$IS_PRODUCTION" = "true" ]; then
-            BASE_SHA=$(git describe --tags --abbrev=0 "${HEAD_SHA}^" --match 'v2.*' --exclude '*-beta.*' 2>/dev/null || true)
-          elif [ "$GITHUB_EVENT_NAME" = "push" ] &&
-            git merge-base --is-ancestor "$BEFORE_SHA" "$HEAD_SHA" 2>/dev/null; then
-            BASE_SHA="$BEFORE_SHA"
-          else
-            BASE_SHA=$(git rev-parse --verify 'HEAD~10^{commit}' 2>/dev/null || true)
-          fi
-
-          if [ -n "$BASE_SHA" ]; then
-            ALL_LOG=$(git log --oneline --no-merges "${BASE_SHA}..${HEAD_SHA}")
-          else
-            ALL_LOG=$(git log --oneline --no-merges "$HEAD_SHA")
-          fi
-
-          LOG=$(echo "$ALL_LOG" | grep -vE '^[0-9a-f]+ (ci(\(.*\))?:|fix\(ci\):|chore(\(.*\))?:|test(\(.*\))?:)' | head -20 || true)
-          TOTAL=$(echo "$LOG" | grep -c . || true)
-
-          {
-            echo 'log<<GITLOG_EOF'
-            if [ -n "$LOG" ]; then
-              echo "$LOG"
-            else
-              echo "(infrastructure changes only)"
-            fi
-            echo 'GITLOG_EOF'
-          } >> "$GITHUB_OUTPUT"
-          echo "count=$TOTAL" >> "$GITHUB_OUTPUT"
-
-      - name: Extract production changelog
-        if: needs.prepare.outputs.is_production == 'true'
-        run: |
-          node scripts/extract-changelog.mjs \
-            "${{ needs.prepare.outputs.version }}" \
-            CHANGELOG.md packages/web/public/changelog.json > release-changelog.md
-
-      - name: Build release body
-        env:
-          COMMIT_LOG: ${{ steps.commits.outputs.log }}
-          COMMIT_COUNT: ${{ steps.commits.outputs.count }}
-          SHA_SHORT: ${{ needs.prepare.outputs.sha_short }}
-          IS_PRODUCTION: ${{ needs.prepare.outputs.is_production }}
-          TAG: ${{ needs.prepare.outputs.tag }}
-        run: |
-          if [ "$IS_PRODUCTION" = "true" ]; then
-            TITLE="## Noir Wallet Extension v${{ needs.prepare.outputs.version }}"
-            SOURCE="Production tag \`${TAG}\` from \`v2\`"
-          else
-            TITLE="## Noir Wallet Extension V2 Preview"
-            SOURCE="Preview from \`${GITHUB_REF_NAME}\`"
-          fi
-
-          DL_BASE="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
-          ZIP_NAME="noir-wallet-v${TAG#v}.zip"
-          {
-            echo "$TITLE"
-            echo ""
-            echo "| Package | Download |"
-            echo "|---------|----------|"
-            echo "| Mainnet + Testnet Mode | [${ZIP_NAME}](${DL_BASE}/${ZIP_NAME}) |"
-            echo ""
-            echo "**SHA-256**: [SHA256SUMS](${DL_BASE}/SHA256SUMS)"
-            echo ""
-            echo "**Source**: ${SOURCE}"
-            echo "**Commit**: [\`${SHA_SHORT}\`](https://github.com/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA})"
-            echo ""
-            if [ "$IS_PRODUCTION" = "true" ]; then
-              cat release-changelog.md
-              echo ""
-            fi
-            echo "<details><summary>Commit log (${COMMIT_COUNT} commits)</summary>"
-            echo ""
-            echo '~~~'
-            echo "${COMMIT_LOG}"
-            echo '~~~'
-            echo "</details>"
-          } > release-assets/release-body.md
-
-      - name: Upload build artifacts
-        id: artifacts
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+          SOURCE_PROFILE: multichain
+          BUILD_CHANNEL: development
+          RELEASE_MODE: preview
+          SOURCE_SHA: ${{ github.sha }}
+          SOURCE_REF: ${{ github.ref }}
+          WORKFLOW_SHA: ${{ steps.source.outputs.workflow_sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: node release-tools/scripts/extension-release.mjs package wallet release-assets raw-zips
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: noir-wallet-${{ needs.prepare.outputs.tag }}-${{ github.run_attempt }}
+          name: noir-wallet-development-${{ steps.package.outputs.artifact_label }}
           path: release-assets/
+          retention-days: 7
           if-no-files-found: error
           compression-level: 0
-
-  publish:
-    if: >-
-      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
-      github.event.repository.private == false &&
-      github.event.repository.fork == false
-    needs: [prepare, verify, build]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    concurrency:
-      group: extension-release-publication
-      cancel-in-progress: false
-    env:
-      GH_TOKEN: ${{ github.token }}
-      GH_REPO: ${{ github.repository }}
-    steps:
-      - name: Download verified build artifacts
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          artifact-ids: ${{ needs.build.outputs.artifact_id }}
-          path: release-assets
-
-      - name: Verify release checksums
-        working-directory: release-assets
-        run: sha256sum --check SHA256SUMS
-
-      - name: Check release destination
-        id: destination
-        env:
-          TAG: ${{ needs.prepare.outputs.tag }}
-        run: |
-          SKIP="false"
-          if gh release view "$TAG" --repo "$GH_REPO" >/dev/null 2>&1; then
-            echo "::warning::Release $TAG already exists, skipping publication"
-            SKIP="true"
-          fi
-          echo "skip=$SKIP" >> "$GITHUB_OUTPUT"
-
-      - name: Create wallet release
-        if: steps.destination.outputs.skip != 'true'
-        env:
-          IS_PRODUCTION: ${{ needs.prepare.outputs.is_production }}
-          TAG: ${{ needs.prepare.outputs.tag }}
-          TARGET_SHA: ${{ github.sha }}
-        run: |
-          if [ "$IS_PRODUCTION" = "true" ]; then
-            FLAGS=(--latest --verify-tag)
-          else
-            FLAGS=(--prerelease --latest=false --target "$TARGET_SHA")
-          fi
-
-          gh release create "$TAG" \
-            --repo "$GH_REPO" \
-            --title "Noir Wallet $TAG" \
-            --notes-file release-assets/release-body.md \
-            "${FLAGS[@]}" \
-            release-assets/*.zip release-assets/SHA256SUMS
