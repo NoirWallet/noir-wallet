@@ -333,16 +333,9 @@ The multi-account SDK result keeps top-level primary-account fields for compatib
 
 Do not edit or commit nested Rust source as part of the top-level repository.
 
-When a WASM change is already built in the nested repository:
+Follow the [WASM package update procedure](./docs/release-workflow.md#wasm-package-updates) for explicit local builds and dependency-upgrade PRs. V2's two sync commands rebuild their pinned sources and write the complete packages with integrity manifests; they do not copy an existing `pkg/`. Ordinary wallet builds and merges use committed artifacts and do not synchronize WASM or amend commits.
 
-```bash
-git -C packages/zcash-wallet-wasm status --short --branch
-git -C packages/zcash-wallet-wasm switch <wasm-branch>
-git -C packages/zcash-wallet-wasm pull --ff-only
-pnpm sync-wasm-pkg
-```
-
-Commit all generated `packages/extension/src/lib/wasm-pkg/**` changes together. Never ship TypeScript bindings without the matching JavaScript loader and `.wasm` binary.
+Commit the complete updated engine package and its `wasm-integrity.json` together, including Zcash support files when present. Never ship TypeScript bindings without the matching JavaScript loader and `.wasm` binary.
 
 ## Release Workflow
 
