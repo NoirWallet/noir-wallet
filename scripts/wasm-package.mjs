@@ -8,6 +8,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   renameSync,
   rmSync,
   statSync,
@@ -199,11 +200,32 @@ function normalizeRepositoryUrl(url) {
   return url.replace(/\.git$/, '')
 }
 
-function readLocalSource(sourceDir) {
+function readLocalSource(sourceDir, { expectedRef, requireClean = false } = {}) {
   const repositoryDir = path.dirname(sourceDir)
+  if (
+    realpathSync(git(repositoryDir, ['rev-parse', '--show-toplevel'])) !==
+    realpathSync(repositoryDir)
+  ) {
+    throw new Error('Local WASM package must belong to a separate source repository')
+  }
+  if (requireClean && git(repositoryDir, ['status', '--porcelain', '--untracked-files=all'])) {
+    throw new Error('Local WASM source checkout must be clean before adopting a build')
+  }
   const repository = normalizeRepositoryUrl(git(repositoryDir, ['remote', 'get-url', 'origin']))
   const commit = git(repositoryDir, ['rev-parse', 'HEAD'])
+  if (expectedRef) {
+    const expectedCommit = git(repositoryDir, [
+      'rev-parse',
+      '--verify',
+      '--end-of-options',
+      `${expectedRef}^{commit}`
+    ])
+    if (commit !== expectedCommit) {
+      throw new Error(`Local WASM HEAD does not match --ref ${expectedRef}`)
+    }
+  }
   const ref =
+    expectedRef ||
     gitMaybe(repositoryDir, ['describe', '--tags', '--exact-match']) ||
     gitMaybe(repositoryDir, ['symbolic-ref', '--short', 'HEAD']) ||
     commit
@@ -283,11 +305,8 @@ function syncLockedPackage(sourceDir) {
 }
 
 function updateFromLocalSource(sourceDir, options) {
-  const source = readLocalSource(sourceDir)
   const expectedRef = requiredOption(options, 'ref')
-  if (source.ref !== expectedRef) {
-    throw new Error(`Local WASM ref is ${source.ref}; expected ${expectedRef}`)
-  }
+  const source = readLocalSource(sourceDir, { expectedRef, requireClean: true })
   const metadata = {
     ...source,
     target: options.target ?? 'web',
@@ -338,6 +357,7 @@ async function downloadArtifact(url, expectedSha256, destination) {
 }
 
 function parseOptions(args) {
+  if (args[0] === '--') args = args.slice(1)
   const options = {}
   for (let index = 0; index < args.length; index += 1) {
     const key = args[index]
@@ -430,7 +450,11 @@ export async function runCli(args = process.argv.slice(2)) {
   throw new Error('Usage: wasm-package.mjs <verify|sync-local|update-local|update> [options]')
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (
+  process.argv[1] &&
+  existsSync(process.argv[1]) &&
+  realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)
+) {
   runCli().catch(error => {
     console.error(`[wasm-package] ${error instanceof Error ? error.message : String(error)}`)
     process.exitCode = 1

@@ -132,7 +132,7 @@ The SDK is maintained in `packages/sdk/` but keeps its own version and npm publi
 
 ## WASM Package Updates
 
-The separate WASM repository builds its web package into `pkg/`. This repository commits the complete package at `packages/extension/src/lib/wasm-pkg/`. The root `wasm-package.lock.json` records the source commit and ref, build features, release artifact SHA-256, and individual file hashes.
+WASM source and releases are maintained in a separate repository. This wallet repository commits the complete web package at `packages/extension/src/lib/wasm-pkg/`. The root `wasm-package.lock.json` records the source commit and ref, build features, release artifact SHA-256 when available, and individual file hashes. Upstream releases do not automatically update the wallet. Ordinary builds and merges use the committed package without downloading, rebuilding, or synchronizing WASM; merges do not amend commits.
 
 Prefer an immutable published archive with its SHA-256:
 
@@ -146,15 +146,19 @@ pnpm update-wasm-pkg -- \
   --artifact-sha256 <sha256>
 ```
 
-If no artifact is published, build the target ref into the nested checkout's `pkg/` and adopt it explicitly:
+For local WASM builds, check out the desired upstream tag or full commit in the separate repository. Start with a clean source checkout, remove its old generated `pkg/`, and rebuild the complete web release package using that repository's build instructions and the features you will record below. Then adopt it explicitly:
 
 ```bash
 pnpm update-wasm-pkg:local -- \
-  --ref <branch-or-tag> \
+  --ref <tag-or-full-commit-sha> \
   --features <comma-separated-features>
 ```
 
-`pnpm sync-wasm-pkg` restores only the locked package and rejects source commits or `pkg/` hashes that differ from the lock. Run `pnpm verify-wasm-pkg` after an update. Submit the lock file and complete vendored package in the same pull request. Do not create feature-specific `pkg-voting` directories.
+The local importer rejects tracked or untracked source changes and a ref that does not resolve to the checkout's HEAD. It records the full commit and hashes of the imported files; it does not rebuild or prove that an existing `pkg/` came from that commit. Rebuilding after selecting the source ref is the developer's responsibility. Use `--source <checkout>/pkg` when the separate checkout is outside `packages/zcash-wallet-wasm/`.
+
+Develop and test the extension against that package, then submit the lock file, complete generated package, and related extension changes in one PR. Include the upstream version, build features, and verification performed. Never submit only updated TypeScript bindings without their matching loader, binary, and support files. Generated package files are excluded from formatting to preserve their hashes.
+
+`pnpm sync-wasm-pkg` restores only the locked package and rejects source commits or `pkg/` hashes that differ from the lock; it is not an upgrade command. Run `pnpm verify-wasm-pkg` after an update. Both local extension build commands also verify the package before compilation, and CI verifies it without access to the source checkout. Do not create feature-specific `pkg-voting` directories.
 
 ## Beta Procedure
 
