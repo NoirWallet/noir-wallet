@@ -5,6 +5,7 @@ import {
   BITCOIN_MAXIMUM_FEE_TARGET_BLOCKS,
   BITCOIN_MAXIMUM_SELECTION_UTXOS,
   BitcoinTransactionBuildError,
+  bitcoinAccountRootFromPath,
   bitcoinDustSats,
   detectBitcoinAddressType,
   estimateBitcoinVbytes,
@@ -199,6 +200,7 @@ export function selectBitcoinCoins(input: SelectBitcoinCoinsInput): BitcoinCoinS
     )
   }
   const seen = new Set<string>()
+  let accountRoot: string | undefined
   const candidates = input.utxos.map(value => {
     const utxo = parseBitcoinSpendableUtxo(value)
     if (
@@ -208,6 +210,17 @@ export function selectBitcoinCoins(input: SelectBitcoinCoinsInput): BitcoinCoinS
     ) {
       failInvalidBitcoinTransaction('Bitcoin UTXO does not match the selected account')
     }
+    const root = bitcoinAccountRootFromPath(
+      utxo.derivationPath,
+      chainId,
+      addressType,
+      utxo.change,
+      utxo.addressIndex
+    )
+    if (accountRoot !== undefined && accountRoot !== root) {
+      failInvalidBitcoinTransaction('Bitcoin UTXOs belong to different accounts')
+    }
+    accountRoot = root
     const key = `${utxo.transactionId}:${utxo.outputIndex}`
     if (seen.has(key)) failInvalidBitcoinTransaction('Duplicate Bitcoin UTXO')
     seen.add(key)

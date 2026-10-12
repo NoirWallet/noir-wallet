@@ -105,7 +105,8 @@ function state() {
 }
 
 function harness(options = {}) {
-  const stored = state()
+  const stored = options.state ?? state()
+  const activeChainAccount = options.chainAccount ?? chainAccount
   const storageRepository = {
     getActivePointer: async () => ({
       generationId: context.generationId,
@@ -134,7 +135,7 @@ function harness(options = {}) {
           accountIndex: 0
         }
       ],
-      chainAccounts: [chainAccount]
+      chainAccounts: [activeChainAccount]
     })
   }
   const discovery = {
@@ -198,6 +199,65 @@ test('scopes the portfolio balance to the active Bitcoin address', async () => {
     source: {
       status: 'ready',
       balances: [{ totalRaw: '9000', spendableRaw: '9000', availableRaw: '9000', pendingRaw: '0' }]
+    }
+  })
+})
+
+test('aggregates Ledger receive and change balances while retaining software active-address scope', async () => {
+  const root = "m/84'/0'/5'"
+  const ledgerChainAccount = {
+    ...chainAccount,
+    derivation: { scheme: 'bip84', path: `${root}/0/0` }
+  }
+  const ledgerState = {
+    ...state(),
+    chainAccount: ledgerChainAccount,
+    observations: state()
+      .observations.map(observation =>
+        observation.derived.addressType === 'p2wpkh'
+          ? {
+              ...observation,
+              derived: {
+                ...observation.derived,
+                chainId,
+                derivationPath: `${root}/0/${observation.derived.addressIndex}`
+              }
+            }
+          : observation
+      )
+      .concat([
+        {
+          derived: {
+            addressType: 'p2wpkh',
+            chainId,
+            change: true,
+            addressIndex: 0,
+            derivationPath: `${root}/1/0`
+          },
+          utxos: [
+            {
+              transactionId: 'e'.repeat(64),
+              outputIndex: 0,
+              valueRaw: '300',
+              status: { confirmed: true }
+            }
+          ]
+        }
+      ])
+  }
+  const ledger = harness({
+    chainAccount: ledgerChainAccount,
+    state: ledgerState,
+    keyDomainSource: {
+      kind: 'hardware',
+      vendor: 'ledger',
+      firmwareProfile: 'multi-app',
+      capabilities: ['bitcoin']
+    }
+  })
+  await expect(ledger.readCachedActiveSource()).resolves.toMatchObject({
+    source: {
+      balances: [{ totalRaw: '2304', spendableRaw: '2104', availableRaw: '1104' }]
     }
   })
 })

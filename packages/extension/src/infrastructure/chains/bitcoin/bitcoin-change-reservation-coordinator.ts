@@ -1,4 +1,4 @@
-import type { BitcoinSupportedAddressType } from '@/core/chains/bitcoin'
+import type { BitcoinAddressObservation, BitcoinSupportedAddressType } from '@/core/chains/bitcoin'
 import type { TransactionId } from '@/core/transactions/domain'
 import type { BitcoinAddressDerivationPort } from '@/infrastructure/keyring/multichain/bitcoin-derivation-client'
 import { DedupPromise } from '@/lib/async-utils'
@@ -21,6 +21,10 @@ export interface BitcoinChangeReservationCoordinatorOptions {
   readonly discoveryRepository: BitcoinDiscoveryRepository
   readonly reservationRepository: BitcoinChangeReservationRepository
   readonly derivation: BitcoinAddressDerivationPort
+  readonly ensureDiscovered?: (
+    scope: BitcoinChangeReservationScope,
+    addressIndex: number
+  ) => Promise<BitcoinAddressObservation>
   readonly now?: () => number
 }
 
@@ -129,26 +133,57 @@ export class BitcoinChangeReservationCoordinator {
     if (allocation.state === 'abandoned') {
       throw new Error('Abandoned Bitcoin change reservation cannot resume')
     }
-    if (allocation.state !== 'allocating') return allocation
-    if (input.signal?.aborted) throw new Error('Bitcoin change reservation was cancelled')
-    const address = await this.options.derivation.deriveAddress(
-      scope.chainAccount.scope.keyDomainId,
-      {
-        chainId: scope.chainAccount.scope.chainId,
-        addressType: scope.addressType,
-        accountIndex: scope.accountIndex,
-        change: true,
-        addressIndex: allocation.addressIndex
-      },
-      input.signal
-    )
-    if (input.signal?.aborted) throw new Error('Bitcoin change reservation was cancelled')
-    return this.options.reservationRepository.bindAddress({
-      ...scope,
-      transactionId: input.transactionId,
-      address,
-      now: this.now()
-    })
+    if (allocation.state === 'committed') return allocation
+    try {
+      if (input.signal?.aborted) throw new Error('Bitcoin change reservation was cancelled')
+      const observation = await this.options.ensureDiscovered?.(scope, allocation.addressIndex)
+      if (observation && (observation.activity.used || observation.utxos.length > 0)) {
+        throw new Error('Ledger Bitcoin change address is already used')
+      }
+      if (allocation.state === 'reserved') {
+        if (
+          observation &&
+          (allocation.address?.address !== observation.derived.address ||
+            allocation.address.derivationPath !== observation.derived.derivationPath)
+        ) {
+          throw new Error('Ledger Bitcoin change reservation conflicts with discovery')
+        }
+        return allocation
+      }
+      const address = await this.options.derivation.deriveAddress(
+        scope.chainAccount.scope.keyDomainId,
+        {
+          chainId: scope.chainAccount.scope.chainId,
+          addressType: scope.addressType,
+          accountIndex: scope.accountIndex,
+          change: true,
+          addressIndex: allocation.addressIndex
+        },
+        input.signal
+      )
+      if (
+        observation &&
+        (address.address !== observation.derived.address ||
+          address.derivationPath !== observation.derived.derivationPath)
+      ) {
+        throw new Error('Ledger Bitcoin change address conflicts with discovery')
+      }
+      if (input.signal?.aborted) throw new Error('Bitcoin change reservation was cancelled')
+      return this.options.reservationRepository.bindAddress({
+        ...scope,
+        transactionId: input.transactionId,
+        address,
+        now: this.now()
+      })
+    } catch (error) {
+      await this.options.reservationRepository.transition({
+        ...scope,
+        transactionId: input.transactionId,
+        state: 'abandoned',
+        now: this.now()
+      })
+      throw error
+    }
   }
 
   private now(): number {

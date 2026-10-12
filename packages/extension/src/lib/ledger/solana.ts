@@ -8,6 +8,7 @@ import {
 import { SignerSolanaBuilder } from '@ledgerhq/device-signer-kit-solana'
 import { ed25519 } from '@noble/curves/ed25519'
 import { base64ToBytes, bytesToBase64 } from '@/lib/bytes'
+import { validateLedgerSolanaDerivationPath } from '@/core/wallet/ledger-derivation-path'
 import type {
   LedgerSolanaSigningRequest,
   LedgerSolanaSigningResponse
@@ -20,7 +21,7 @@ import { parseSolanaTransactionEnvelope } from '@/infrastructure/chains/solana/s
 import {
   getLedgerDeviceName,
   runLedgerAction,
-  type LedgerTransport,
+  type LedgerSessionOptions,
   withLedgerSession
 } from './device'
 
@@ -38,28 +39,11 @@ export type {
   LedgerSolanaSigningResponse
 } from '@/core/keyring/protocol/ledger-signing'
 
-export interface LedgerSolanaDeviceOptions {
-  readonly transport: LedgerTransport
-  readonly onInteraction?: (interaction: string) => void
-  readonly signal?: AbortSignal
-}
+export type LedgerSolanaDeviceOptions = LedgerSessionOptions
 
 function normalizePath(path: string): string {
   const normalized = path.startsWith('m/') ? path : `m/${path}`
-  const components = normalized.slice(2).split('/')
-  if (
-    components.length < 3 ||
-    components.length > 5 ||
-    components[0] !== "44'" ||
-    components[1] !== "501'" ||
-    components.some(
-      component =>
-        !/^(0|[1-9][0-9]*)'$/.test(component) || Number(component.slice(0, -1)) > 0x7fffffff
-    )
-  ) {
-    throw new Error('Invalid Ledger Solana derivation path')
-  }
-  return normalized
+  return validateLedgerSolanaDerivationPath(normalized)
 }
 
 function readShortVector(bytes: Uint8Array, cursor: { offset: number }): number {
@@ -155,6 +139,40 @@ export async function exportLedgerSolanaAccount(
       deviceName: getLedgerDeviceName(device.deviceModel.model, device.name),
       appVersion
     })
+  })
+}
+
+export async function exportLedgerSolanaAccounts(
+  paths: readonly string[],
+  options: LedgerSolanaDeviceOptions
+): Promise<readonly LedgerSolanaAccountExport[]> {
+  const normalizedPaths = paths.map(normalizePath)
+  if (normalizedPaths.length === 0) return []
+  return withLedgerSession(options, async ({ dmk, sessionId, device }) => {
+    const appVersion = await assertSolanaApp(dmk, sessionId, options.signal)
+    const signer = new SignerSolanaBuilder({ dmk, sessionId }).build()
+    const results: LedgerSolanaAccountExport[] = []
+    for (const path of normalizedPaths) {
+      options.signal?.throwIfAborted()
+      const address = await runLedgerAction(
+        signer.getAddress(path, { checkOnDevice: false }),
+        options.onInteraction,
+        'Export Solana account',
+        options.signal
+      )
+      const publicKey = parseBase58Bytes(address, 32, 'Ledger Solana public key')
+      results.push(
+        Object.freeze({
+          path,
+          publicKey,
+          address: publicKey,
+          deviceModel: device.deviceModel.model,
+          deviceName: getLedgerDeviceName(device.deviceModel.model, device.name),
+          appVersion
+        })
+      )
+    }
+    return results
   })
 }
 

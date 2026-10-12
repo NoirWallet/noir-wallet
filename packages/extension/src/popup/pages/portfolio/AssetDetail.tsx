@@ -581,9 +581,6 @@ export function AssetDetail() {
             <div className="flex items-start justify-between gap-4">
               <div>
                 <h2 className="text-sm font-semibold">Bitcoin account</h2>
-                <p className="mt-0.5 text-[11px] leading-4 text-muted">
-                  Balance and activity use the selected address only.
-                </p>
               </div>
               <button
                 type="button"

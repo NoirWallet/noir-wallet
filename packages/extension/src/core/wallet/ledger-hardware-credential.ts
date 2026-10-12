@@ -9,6 +9,11 @@ import {
   nearImplicitAccountIdFromPublicKey,
   parseNearPublicKey
 } from '@/core/chains/near/identifiers'
+import {
+  validateLedgerEvmDerivationPath,
+  validateLedgerNearDerivationPath,
+  validateLedgerSolanaDerivationPath
+} from './ledger-derivation-path'
 
 export const LEDGER_MULTICHAIN_HARDWARE_CREDENTIAL_SCHEMA_VERSION = 3 as const
 export const LEDGER_CHAIN_FAMILIES = Object.freeze([
@@ -125,7 +130,9 @@ function parseAccount(value: unknown): LedgerPublicAccount {
     return Object.freeze({
       family: 'evm',
       accountIndex,
-      derivationPath: path(value.derivationPath, /^m\/44'\/60'\/[0-9]+'\/0\/[0-9]+$/),
+      derivationPath: validateLedgerEvmDerivationPath(
+        path(value.derivationPath, /^m\/44'\/60'\/.+$/)
+      ),
       publicKey,
       address
     })
@@ -180,12 +187,10 @@ function parseAccount(value: unknown): LedgerPublicAccount {
   if (value.family === 'solana' || value.family === 'near') {
     keys(value, [...common, 'publicKey', 'address'])
     const family = value.family
-    const derivationPath = path(
-      value.derivationPath,
+    const derivationPath =
       family === 'solana'
-        ? /^m\/44'\/501'\/[0-9]+'(?:\/[0-9]+'){0,2}$/
-        : /^m\/44'\/397'\/[0-9]+'\/[0-9]+'\/[0-9]+'$/
-    )
+        ? validateLedgerSolanaDerivationPath(path(value.derivationPath, /^m\/44'\/501'(?:\/.+)?$/))
+        : validateLedgerNearDerivationPath(path(value.derivationPath, /^m\/44'\/397'\/.+$/))
     const publicKey =
       family === 'solana'
         ? parseSolanaPublicKey(value.publicKey)

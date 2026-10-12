@@ -6,11 +6,14 @@ import {
   IndexedDbBitcoinDiscoveryRepository,
   IndexedDbBitcoinInputReservationRepository,
   isActiveBitcoinAddressObservation,
+  isLedgerBitcoinAccountObservation,
   loadActiveBitcoinDiscoveryContext,
   parseBitcoinAddressType,
   type BitcoinInputReservationRepository,
   type BitcoinDiscoveryState
 } from '@/infrastructure/chains/bitcoin'
+import { bitcoinAccountRootFromPath } from '@/infrastructure/chains/bitcoin/bitcoin-transaction-model'
+import { isFixedSingleAddressBitcoinCheckpoint } from '@/infrastructure/chains/bitcoin/bitcoin-discovery-persistence-model'
 import { IndexedDbStorageV2Repository } from '@/infrastructure/persistence/repositories'
 import {
   DEFAULT_BITCOIN_ADDRESS_TYPE,
@@ -41,6 +44,7 @@ export interface BitcoinAddressBalanceCatalog {
   readonly walletId: string
   readonly accountId: string
   readonly accountIndex: number
+  readonly accountDerivationPath: string
   readonly chainId: string
   readonly updatedAt: number
   readonly activeAddressType: BitcoinSupportedAddressType
@@ -56,16 +60,22 @@ function outpointKey(transactionId: string, outputIndex: number): string {
 
 function observationTotals(
   observation: BitcoinDiscoveryState['observations'][number],
-  unavailableOutpoints: ReadonlySet<string>
+  unavailableOutpoints: ReadonlySet<string>,
+  seenOutpoints?: Set<string>
 ) {
   let confirmed = 0n
   let available = 0n
   let pending = 0n
   for (const utxo of observation.utxos) {
+    const outpoint = outpointKey(utxo.transactionId, utxo.outputIndex)
+    if (seenOutpoints?.has(outpoint)) {
+      throw new Error('Ledger Bitcoin balance contains a duplicate outpoint')
+    }
+    seenOutpoints?.add(outpoint)
     const value = BigInt(utxo.valueRaw)
     if (utxo.status.confirmed) {
       confirmed += value
-      if (!unavailableOutpoints.has(outpointKey(utxo.transactionId, utxo.outputIndex))) {
+      if (!unavailableOutpoints.has(outpoint)) {
         available += value
       }
     } else pending += value
@@ -76,15 +86,34 @@ function observationTotals(
 export function projectBitcoinAddressBalanceCatalog(
   state: BitcoinDiscoveryState,
   unavailableOutpoints: ReadonlySet<string> = new Set(),
-  activeAddressType: BitcoinSupportedAddressType = DEFAULT_BITCOIN_ADDRESS_TYPE
+  activeAddressType: BitcoinSupportedAddressType = DEFAULT_BITCOIN_ADDRESS_TYPE,
+  ledgerAccountRoot?: string
 ): BitcoinAddressBalanceCatalog {
+  if (
+    ledgerAccountRoot !== undefined &&
+    bitcoinAccountRootFromPath(
+      state.chainAccount.derivation.path,
+      state.chainAccount.scope.chainId,
+      'p2wpkh',
+      false,
+      0
+    ) !== ledgerAccountRoot
+  ) {
+    throw new Error('Ledger Bitcoin balance scope does not match the active account')
+  }
   let confirmed = 0n
   let available = 0n
   let pending = 0n
+  const seenOutpoints = ledgerAccountRoot === undefined ? undefined : new Set<string>()
   const entries = state.observations
-    .filter(observation => isActiveBitcoinAddressObservation(observation, activeAddressType))
+    .filter(observation =>
+      ledgerAccountRoot === undefined
+        ? isActiveBitcoinAddressObservation(observation, activeAddressType)
+        : observation.derived.addressType === activeAddressType &&
+          isLedgerBitcoinAccountObservation(observation, ledgerAccountRoot)
+    )
     .map(observation => {
-      const totals = observationTotals(observation, unavailableOutpoints)
+      const totals = observationTotals(observation, unavailableOutpoints, seenOutpoints)
       confirmed += totals.confirmed
       available += totals.available
       pending += totals.pending
@@ -110,6 +139,7 @@ export function projectBitcoinAddressBalanceCatalog(
     walletId: state.chainAccount.scope.keyDomainId,
     accountId: state.chainAccount.scope.accountId,
     accountIndex: state.accountIndex,
+    accountDerivationPath: state.chainAccount.derivation.path,
     chainId: state.chainAccount.scope.chainId,
     updatedAt: state.updatedAt,
     activeAddressType,
@@ -162,7 +192,28 @@ export class BitcoinAddressBalancesCoordinator {
         unavailableOutpoints.add(outpointKey(outpoint.transactionId, outpoint.outputIndex))
       }
     }
-    return projectBitcoinAddressBalanceCatalog(state, unavailableOutpoints, activeAddressType)
+    const ledgerRoot =
+      context.keyDomainSource.kind === 'hardware' && context.keyDomainSource.vendor === 'ledger'
+        ? bitcoinAccountRootFromPath(
+            context.chainAccount.derivation.path,
+            context.chainAccount.scope.chainId,
+            'p2wpkh',
+            false,
+            0
+          )
+        : undefined
+    if (
+      ledgerRoot !== undefined &&
+      (isFixedSingleAddressBitcoinCheckpoint(state.checkpoint) ||
+        !bitcoinDiscoveryAddressTypeComplete(state, 'p2wpkh'))
+    )
+      return null
+    return projectBitcoinAddressBalanceCatalog(
+      state,
+      unavailableOutpoints,
+      activeAddressType,
+      ledgerRoot
+    )
   }
 
   async setActive(input: {

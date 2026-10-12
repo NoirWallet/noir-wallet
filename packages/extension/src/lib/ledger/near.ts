@@ -8,12 +8,14 @@ import {
 } from '@ledgerhq/device-management-kit'
 import { ed25519 } from '@noble/curves/ed25519'
 import { base64ToBytes, bytesToBase64 } from '@/lib/bytes'
+import { validateLedgerNearDerivationPath } from '@/core/wallet/ledger-derivation-path'
 import { nearPublicKeyFromImplicitAccountId, parseNearPublicKey } from '@/core/chains/near'
 import type {
   LedgerNearSigningRequest,
   LedgerNearSigningResponse
 } from '@/core/keyring/protocol/ledger-signing'
-import { getLedgerDeviceName, type LedgerTransport, withLedgerSession } from './device'
+import { getLedgerDeviceName, type LedgerSessionOptions, withLedgerSession } from './device'
+import { ledgerNearPathBytes, ledgerNearPublicKeyParameters } from './near-model'
 
 const NEAR_CLA = 0x80
 const GET_PUBLIC_KEY = 4
@@ -38,38 +40,10 @@ export type {
   LedgerNearSigningResponse
 } from '@/core/keyring/protocol/ledger-signing'
 
-export interface LedgerNearDeviceOptions {
-  readonly transport: LedgerTransport
-  readonly onInteraction?: (interaction: string) => void
-  readonly signal?: AbortSignal
-}
-
-function nearPathBytes(path: string): Uint8Array {
-  const normalized = path.startsWith('m/') ? path.slice(2) : path
-  const components = normalized.split('/')
-  if (
-    components.length !== 5 ||
-    components[0] !== "44'" ||
-    components[1] !== "397'" ||
-    components.some(component => !/^(0|[1-9][0-9]*)'$/.test(component))
-  ) {
-    throw new Error('Invalid Ledger NEAR derivation path')
-  }
-  const bytes = new Uint8Array(20)
-  const view = new DataView(bytes.buffer)
-  for (let index = 0; index < components.length; index += 1) {
-    const value = Number(components[index].slice(0, -1))
-    if (!Number.isSafeInteger(value) || value > 0x7fffffff) {
-      throw new Error('Invalid Ledger NEAR derivation path')
-    }
-    view.setUint32(index * 4, value | 0x80000000, false)
-  }
-  return bytes
-}
+export type LedgerNearDeviceOptions = LedgerSessionOptions
 
 function normalizePath(path: string): string {
-  nearPathBytes(path)
-  return path.startsWith('m/') ? path : `m/${path}`
+  return validateLedgerNearDerivationPath(path.startsWith('m/') ? path : `m/${path}`)
 }
 
 async function sendNearApdu(
@@ -92,6 +66,17 @@ async function sendNearApdu(
     throw new Error(`Ledger NEAR app rejected the request (0x${status})`)
   }
   return response.data
+}
+
+async function readNearPublicKey(
+  dmk: DeviceManagementKit,
+  sessionId: DeviceSessionId,
+  path: string,
+  displayAndConfirm: boolean,
+  signal?: AbortSignal
+): Promise<Uint8Array> {
+  const { p1, data } = ledgerNearPublicKeyParameters(path, displayAndConfirm)
+  return sendNearApdu(dmk, sessionId, GET_PUBLIC_KEY, p1, data, signal)
 }
 
 async function assertNearApp(
@@ -124,12 +109,11 @@ export async function exportLedgerNearAccount(
   const normalizedPath = normalizePath(path)
   return withLedgerSession(options, async ({ dmk, sessionId, device }) => {
     const appVersion = await assertNearApp(dmk, sessionId, options.signal)
-    const publicKeyBytes = await sendNearApdu(
+    const publicKeyBytes = await readNearPublicKey(
       dmk,
       sessionId,
-      GET_PUBLIC_KEY,
-      0,
-      nearPathBytes(normalizedPath),
+      normalizedPath,
+      true,
       options.signal
     )
     const publicKey = nearPublicKey(publicKeyBytes)
@@ -141,6 +125,34 @@ export async function exportLedgerNearAccount(
       deviceName: getLedgerDeviceName(device.deviceModel.model, device.name),
       appVersion
     })
+  })
+}
+
+export async function exportLedgerNearAccounts(
+  paths: readonly string[],
+  options: LedgerNearDeviceOptions
+): Promise<readonly LedgerNearAccountExport[]> {
+  const normalizedPaths = paths.map(normalizePath)
+  if (normalizedPaths.length === 0) return []
+  return withLedgerSession(options, async ({ dmk, sessionId, device }) => {
+    const appVersion = await assertNearApp(dmk, sessionId, options.signal)
+    const results: LedgerNearAccountExport[] = []
+    for (const path of normalizedPaths) {
+      options.signal?.throwIfAborted()
+      const publicKeyBytes = await readNearPublicKey(dmk, sessionId, path, false, options.signal)
+      const publicKey = nearPublicKey(publicKeyBytes)
+      results.push(
+        Object.freeze({
+          path,
+          publicKey,
+          address: [...publicKeyBytes].map(byte => byte.toString(16).padStart(2, '0')).join(''),
+          deviceModel: device.deviceModel.model,
+          deviceName: getLedgerDeviceName(device.deviceModel.model, device.name),
+          appVersion
+        })
+      )
+    }
+    return results
   })
 }
 
@@ -166,12 +178,11 @@ export async function signLedgerNearRequest(
   }
   return withLedgerSession(options, async ({ dmk, sessionId }) => {
     await assertNearApp(dmk, sessionId, options.signal)
-    const actualPublicKeyBytes = await sendNearApdu(
+    const actualPublicKeyBytes = await readNearPublicKey(
       dmk,
       sessionId,
-      GET_PUBLIC_KEY,
-      0,
-      nearPathBytes(path),
+      path,
+      false,
       options.signal
     )
     const actualPublicKey = nearPublicKey(actualPublicKeyBytes)
@@ -181,7 +192,7 @@ export async function signLedgerNearRequest(
     // The NEAR app strips the NEP-413 domain prefix before parsing the message.
     const data = isMessage ? payload.subarray(4) : payload
     const allData = new Uint8Array(20 + data.byteLength)
-    allData.set(nearPathBytes(path))
+    allData.set(ledgerNearPathBytes(path))
     allData.set(data, 20)
     let signature: Uint8Array<ArrayBufferLike> = new Uint8Array()
     for (let offset = 0; offset < allData.byteLength; offset += CHUNK_SIZE) {

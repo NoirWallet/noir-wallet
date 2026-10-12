@@ -9,7 +9,10 @@ import type {
 import {
   BITCOIN_FIRST_SLICE_DISCOVERY_TARGETS,
   BITCOIN_HARDWARE_DISCOVERY_TARGETS,
-  BITCOIN_IMPORTED_PRIVATE_KEY_DISCOVERY_TARGETS
+  BITCOIN_IMPORTED_PRIVATE_KEY_DISCOVERY_TARGETS,
+  BITCOIN_DEFAULT_GAP_LIMIT,
+  BITCOIN_DEFAULT_MAXIMUM_ADDRESSES_PER_TARGET,
+  BITCOIN_MAXIMUM_GAP_LIMIT
 } from '@/core/chains/bitcoin'
 import { parseChainId } from '@/core/chains/registry'
 import { DedupPromise } from '@/lib/async-utils'
@@ -20,7 +23,12 @@ import type {
   BitcoinDiscoveryRepository,
   BitcoinDiscoveryState
 } from './bitcoin-discovery-repository'
-import { parseScope } from './bitcoin-discovery-persistence-model'
+import {
+  isFixedSingleAddressBitcoinCheckpoint,
+  parseScope
+} from './bitcoin-discovery-persistence-model'
+import { bitcoinAccountRootFromPath } from './bitcoin-transaction-model'
+import { isLedgerBitcoinAccountObservation } from './bitcoin-spendable-utxos'
 
 export type BitcoinDiscoveryStorageRepository = Pick<
   StorageV2ReadRepository,
@@ -187,6 +195,112 @@ export class BitcoinDiscoveryCoordinator {
     return result
   }
 
+  async ensureLedgerChangeAddress(
+    scope: Pick<ActiveBitcoinDiscoveryContext, 'chainAccount' | 'accountIndex'>,
+    addressIndex: number
+  ): Promise<BitcoinAddressObservation> {
+    const context = await this.loadActiveContext()
+    if (
+      !context ||
+      context.keyDomainSource.kind !== 'hardware' ||
+      context.keyDomainSource.vendor !== 'ledger' ||
+      context.chainAccount.id !== scope.chainAccount.id ||
+      context.accountIndex !== scope.accountIndex ||
+      context.chainAccount.derivation.path !== scope.chainAccount.derivation.path ||
+      context.chainAccount.scope.keyDomainId !== scope.chainAccount.scope.keyDomainId ||
+      context.chainAccount.scope.accountId !== scope.chainAccount.scope.accountId ||
+      context.chainAccount.scope.chainId !== scope.chainAccount.scope.chainId ||
+      !Number.isSafeInteger(addressIndex) ||
+      addressIndex < 0
+    ) {
+      throw new Error('Ledger Bitcoin change scope does not match the active account')
+    }
+    const accountRoot = bitcoinAccountRootFromPath(
+      context.chainAccount.derivation.path,
+      context.chainAccount.scope.chainId,
+      'p2wpkh',
+      false,
+      0
+    )
+    const discoveryScope = {
+      chainAccount: context.chainAccount,
+      accountIndex: context.accountIndex
+    }
+    const key = JSON.stringify([context.chainAccount.id, context.accountIndex])
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const gate = this.scans.get(key) ?? new DedupPromise<BitcoinDiscoveryState | null>()
+      this.scans.set(key, gate)
+      const state = await gate
+        .run(async () => {
+          const cached = await this.options.discoveryRepository.get(discoveryScope)
+          if (!cached) {
+            throw new Error(
+              'Ledger Bitcoin change discovery must complete before reserving an address'
+            )
+          }
+          if (!bitcoinDiscoveryAddressTypeComplete(cached, 'p2wpkh')) {
+            return this.scan(context, 'p2wpkh', false)
+          }
+          const observed = cached.observations.find(
+            item =>
+              item.derived.addressType === 'p2wpkh' &&
+              item.derived.change &&
+              item.derived.addressIndex === addressIndex
+          )
+          if (observed) return cached
+          const changeCursor = cached.checkpoint.cursors.find(
+            cursor => cursor.target.addressType === 'p2wpkh' && cursor.target.change
+          )
+          if (!changeCursor || !changeCursor.complete) {
+            throw new Error(
+              'Ledger Bitcoin change discovery must complete before reserving an address'
+            )
+          }
+          const gapLimit = Math.max(
+            cached.checkpoint.gapLimit,
+            addressIndex - changeCursor.nextAddressIndex + changeCursor.consecutiveUnused + 1
+          )
+          if (
+            gapLimit > BITCOIN_MAXIMUM_GAP_LIMIT ||
+            addressIndex >= cached.checkpoint.maximumAddressesPerTarget
+          ) {
+            throw new Error('Ledger Bitcoin change address exceeds discovery limit')
+          }
+          await this.options.discoveryRepository.extendTargets({
+            ...discoveryScope,
+            checkpoint: Object.freeze({
+              ...cached.checkpoint,
+              gapLimit,
+              cursors: Object.freeze(
+                cached.checkpoint.cursors.map(cursor =>
+                  Object.freeze({
+                    ...cursor,
+                    complete: cursor.consecutiveUnused === gapLimit
+                  })
+                )
+              )
+            }),
+            updatedAt: this.timestamp()
+          })
+          return this.scan(context, 'p2wpkh', false)
+        })
+        .finally(() => {
+          if (!gate.isPending) this.scans.delete(key)
+        })
+      const observation = state?.observations.find(
+        item =>
+          item.derived.addressType === 'p2wpkh' &&
+          item.derived.change &&
+          item.derived.addressIndex === addressIndex
+      )
+      if (observation) {
+        isLedgerBitcoinAccountObservation(observation, accountRoot)
+        return observation
+      }
+    }
+    throw new Error('Ledger Bitcoin change address was not discovered')
+  }
+
   private loadActiveContext(): Promise<ActiveBitcoinDiscoveryContext | null> {
     return loadActiveBitcoinDiscoveryContext(this.options.storageRepository, this.options.chainId)
   }
@@ -208,8 +322,54 @@ export class BitcoinDiscoveryCoordinator {
           ? BITCOIN_IMPORTED_PRIVATE_KEY_DISCOVERY_TARGETS
           : BITCOIN_FIRST_SLICE_DISCOVERY_TARGETS)
     const importedPrivateKey = context.keyDomainSource.kind === 'private-key'
+    const ledgerAccount =
+      context.keyDomainSource.kind === 'hardware' && context.keyDomainSource.vendor === 'ledger'
     let cached = await this.options.discoveryRepository.get(discoveryScope)
+    if (
+      ledgerAccount &&
+      this.options.targets === undefined &&
+      cached &&
+      isFixedSingleAddressBitcoinCheckpoint(cached.checkpoint)
+    ) {
+      const checkpoint = Object.freeze({
+        ...cached.checkpoint,
+        gapLimit: this.options.gapLimit ?? BITCOIN_DEFAULT_GAP_LIMIT,
+        maximumAddressesPerTarget:
+          this.options.maximumAddressesPerTarget ?? BITCOIN_DEFAULT_MAXIMUM_ADDRESSES_PER_TARGET,
+        cursors: Object.freeze(
+          BITCOIN_HARDWARE_DISCOVERY_TARGETS.map(target => {
+            const existing = cached?.checkpoint.cursors.find(
+              cursor =>
+                cursor.target.addressType === target.addressType &&
+                cursor.target.change === target.change
+            )
+            const observation = cached?.observations.find(
+              item =>
+                item.derived.addressType === target.addressType &&
+                item.derived.change === target.change &&
+                item.derived.addressIndex === 0
+            )
+            return Object.freeze({
+              target,
+              nextAddressIndex: existing?.nextAddressIndex ?? 0,
+              consecutiveUnused: observation?.activity.used === false ? 1 : 0,
+              complete:
+                observation?.activity.used === false &&
+                (this.options.gapLimit ?? BITCOIN_DEFAULT_GAP_LIMIT) === 1
+            })
+          })
+        )
+      })
+      await this.options.discoveryRepository.extendTargets({
+        ...discoveryScope,
+        checkpoint,
+        updatedAt: this.timestamp()
+      })
+      cached = await this.options.discoveryRepository.get(discoveryScope)
+      if (!cached) throw new Error('Ledger Bitcoin discovery upgrade was not persisted')
+    }
     const targets =
+      ledgerAccount ||
       this.options.targets !== undefined ||
       cached?.checkpoint.cursors.some(cursor => cursor.target.change)
         ? defaultTargets
@@ -270,7 +430,7 @@ export class BitcoinDiscoveryCoordinator {
         try {
           refreshed = await this.options.refresher.refresh({
             state: cached,
-            mode: 'active',
+            mode: ledgerAccount ? 'full' : 'active',
             addressType
           })
         } catch (error) {
@@ -298,10 +458,15 @@ export class BitcoinDiscoveryCoordinator {
       targets,
       ...(importedPrivateKey ||
       (this.options.targets === undefined &&
+        !ledgerAccount &&
         (cached === null || cached.checkpoint.maximumAddressesPerTarget === 1))
         ? { gapLimit: 1, maximumAddressesPerTarget: 1, fixedAddressCountPerTarget: 1 }
         : {
-            ...(this.options.gapLimit === undefined ? {} : { gapLimit: this.options.gapLimit }),
+            ...(ledgerAccount && cached !== null
+              ? { gapLimit: cached.checkpoint.gapLimit }
+              : this.options.gapLimit === undefined
+                ? {}
+                : { gapLimit: this.options.gapLimit }),
             ...(this.options.maximumAddressesPerTarget === undefined
               ? {}
               : { maximumAddressesPerTarget: this.options.maximumAddressesPerTarget })

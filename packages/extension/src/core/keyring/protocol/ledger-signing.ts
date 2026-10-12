@@ -1,6 +1,7 @@
 import { parseChainId, getBitcoinChainId } from '@/core/chains/registry'
 import { parseAccountId } from '@/core/accounts/domain'
 import { parseKeyDomainId, parseSigningSummary, type SigningSummary } from '@/core/keyring/domain'
+import { validateLedgerEvmDerivationPath } from '@/core/wallet/ledger-derivation-path'
 import {
   assertExactKeys,
   readBoundedString,
@@ -118,11 +119,9 @@ function request(value: unknown, chainId: string): LedgerDeviceSigningRequest {
       throw new Error('Ledger request chain does not match EVM')
     const derivationPath = bounded(item.derivationPath, 'Ledger derivation path', 128)
     const expectedAddress = bounded(item.expectedAddress, 'Ledger address', 42)
-    if (
-      !/^m\/44'\/60'\/(?:0|[1-9][0-9]*)'\/0\/(?:0|[1-9][0-9]*)$/.test(derivationPath) ||
-      !/^0x[0-9a-fA-F]{40}$/.test(expectedAddress)
-    )
+    if (!/^0x[0-9a-fA-F]{40}$/.test(expectedAddress))
       throw new Error('Invalid Ledger EVM account binding')
+    validateLedgerEvmDerivationPath(derivationPath)
     if (item.kind === 'typed-data') {
       const typedData = readRecord(item.typedData, 'Ledger typed data')
       if (JSON.stringify(typedData).length > 1_048_576)

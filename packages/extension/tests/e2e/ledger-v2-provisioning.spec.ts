@@ -4,7 +4,8 @@ import {
   e2eNetworkMode,
   e2eEnabledChainFeatureFlags,
   terminateExtensionServiceWorker,
-  waitForBackgroundWalletInitialization
+  waitForBackgroundWalletInitialization,
+  captureScreenshot
 } from './extension-fixtures'
 import { HDKey } from '@scure/bip32'
 import { ed25519 } from '@noble/curves/ed25519'
@@ -26,14 +27,14 @@ test.skip(
 
 // Registered public, permanently unfunded vectors; device I/O is not simulated.
 const root = HDKey.fromMasterSeed(new Uint8Array(32).fill(5))
-const evmPublic = root.derive("m/44'/60'/7'/0/2").publicKey
+const evmPublic = root.derive("m/44'/60'/0'/7").publicKey
 if (!evmPublic) throw new Error('Public Ledger vector unavailable')
 const evmKey =
   `0x${Buffer.from(secp256k1.ProjectivePoint.fromHex(evmPublic).toRawBytes(false)).toString('hex')}` as Hex
 const evm = {
   family: 'evm' as const,
   accountIndex: 0,
-  derivationPath: "m/44'/60'/7'/0/2",
+  derivationPath: "m/44'/60'/0'/7",
   publicKey: evmKey,
   address: publicKeyToAddress(evmKey)
 }
@@ -71,7 +72,7 @@ const expanded = createLedgerMultichainHardwareCredential({
     {
       family: 'near',
       accountIndex: 0,
-      derivationPath: "m/44'/397'/4'/0'/1'",
+      derivationPath: "m/44'/397'/0'/0'/4'",
       publicKey: `ed25519:${solanaAddress}`,
       address: nearAddress
     }
@@ -85,7 +86,7 @@ const multiAccount = createLedgerMultichainHardwareCredential({
     {
       family: 'solana',
       accountIndex: 1,
-      derivationPath: "m/44'/501'/9'/0'",
+      derivationPath: "m/44'/501'",
       publicKey: secondSolanaAddress,
       address: secondSolanaAddress
     }
@@ -133,6 +134,7 @@ test('Ledger native provisioning preserves one KeyDomain across adding chains, r
   await popup.getByRole('button', { name: 'Bitcoin', exact: true }).click()
   await popup.getByRole('button', { name: 'Solana', exact: true }).click()
   await expect(popup.locator('fieldset button[aria-pressed="true"]')).toHaveCount(3)
+  await captureScreenshot(popup, 'ledger-connect-account-discovery.png')
   const provision = await send(popup, {
     type: 'PROVISION_LEDGER_HARDWARE',
     credential: first,
@@ -173,6 +175,7 @@ test('Ledger native provisioning preserves one KeyDomain across adding chains, r
       .locator('.page-content')
       .evaluate(element => element.scrollHeight <= element.clientHeight + 1)
   ).toBe(true)
+  await popup.locator('summary').filter({ hasText: 'Advanced' }).click()
   await expect(popup.locator('#ledger-account-index')).toBeVisible()
   const badAnchor = { ...first.accountExport.accounts[0], derivationPath: "m/44'/60'/8'/0/2" }
   const rejected = await send(popup, {

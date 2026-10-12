@@ -156,6 +156,10 @@ export class BackgroundBitcoinTransferController {
         addressType,
         recipient: intent.recipient,
         amount: intent.amount,
+        ...(context.keyDomainSource.kind === 'hardware' &&
+        context.keyDomainSource.vendor === 'ledger'
+          ? { ledgerAccount: true }
+          : {}),
         ...(feeRateSatsPerVbyteValue === undefined
           ? { feeTargetBlocks: bitcoinFeeTargetBlocks(feeTier) }
           : { feeRateSatsPerVbyte })

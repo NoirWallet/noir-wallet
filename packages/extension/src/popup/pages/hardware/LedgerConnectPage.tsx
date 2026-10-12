@@ -15,23 +15,41 @@ import {
 import { ledgerHardwareProvisioningClient } from '../../services/hardware-provisioning-client'
 import { exportLedgerWalletAccounts } from '../../services/ledger-account-export'
 import {
-  LEDGER_CHAIN_FAMILIES,
   type LedgerChainFamily,
   type LedgerHardwareCredential,
   type LedgerPublicAccount
 } from '@/core/wallet/hardware-wallet-data'
-import type { LedgerTransport } from '@/lib/ledger/device'
+import {
+  discoverLedger,
+  type LedgerSessionOptions,
+  type LedgerTransport
+} from '@/lib/ledger/device'
+import type { LedgerDerivationMode } from '@/core/wallet/ledger-derivation-path'
+import {
+  loadLedgerAccountCandidates,
+  LEDGER_PATH_MODES,
+  type LedgerAccountCandidate,
+  type LedgerSelectableFamily
+} from '../../services/ledger-account-discovery'
+import {
+  readLedgerAccountPreview,
+  type LedgerAccountPreview
+} from '../../services/ledger-account-preview'
+import { LedgerAccountPicker } from './LedgerAccountPicker'
+import { ledgerBitcoinAppName } from '@/lib/ledger/bitcoin-model'
 import { cn } from '@/lib/utils'
 import { getNewPasswordValidationError, isNewPasswordValid } from '@/core/wallet/password-policy'
 import { useWalletStore } from '@/store/wallet-store'
 import {
-  MAX_ZCASH_ACCOUNT_INDEX,
+  MAX_LEDGER_ACCOUNT_INDEX,
   parseLedgerAccountIndex,
   ledgerCatalogWallets,
   ledgerProvisioningCredential,
   ledgerLogicalAccountIndex,
   ledgerRegisteredFamilies,
-  ledgerCanAddZcashAccount
+  ledgerCanAddZcashAccount,
+  ledgerAvailableFamilies,
+  ledgerSelectedPaths
 } from './ledger-connect-model'
 
 const CHAIN_NAMES: Record<LedgerChainFamily, string> = {
@@ -47,7 +65,9 @@ export function LedgerConnectPage() {
   const [catalog, setCatalog] = useState<AccountNetworksCatalogView | null>(null)
   const [loading, setLoading] = useState(true)
   const [catalogAvailable, setCatalogAvailable] = useState(false)
-  const [step, setStep] = useState<'connect' | 'waiting' | 'configure' | 'success'>('connect')
+  const [step, setStep] = useState<'connect' | 'waiting' | 'accounts' | 'configure' | 'success'>(
+    'connect'
+  )
   const [targetWalletId, setTargetWalletId] = useState('')
   const [targetAccount, setTargetAccount] = useState('0')
   const [existingCredential, setExistingCredential] = useState<
@@ -67,7 +87,22 @@ export function LedgerConnectPage() {
   const [awaitingApp, setAwaitingApp] = useState(false)
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState('')
+  const [pickerFamily, setPickerFamily] = useState<LedgerSelectableFamily>('evm')
+  const [pathMode, setPathMode] = useState<LedgerDerivationMode>('ledger-live')
+  const [pageStart, setPageStart] = useState(0)
+  const [candidates, setCandidates] = useState<readonly LedgerAccountCandidate[]>([])
+  const [picked, setPicked] = useState<LedgerAccountCandidate | null>(null)
+  const [previews, setPreviews] = useState<Readonly<Record<string, LedgerAccountPreview>>>({})
+  const [readingAccounts, setReadingAccounts] = useState(false)
   const abort = useRef<AbortController | null>(null)
+  const previewAbort = useRef<AbortController | null>(null)
+  const selectedAccounts = useRef<readonly LedgerPublicAccount[]>([])
+  const connection = useRef<{
+    device: NonNullable<LedgerSessionOptions['device']>
+    transport: LedgerTransport
+    families: readonly LedgerChainFamily[]
+    pickers: readonly LedgerSelectableFamily[]
+  } | null>(null)
   const appReady = useRef<(() => void) | null>(null)
   const connecting = useRef(false)
   const provisioning = useRef(false)
@@ -79,6 +114,7 @@ export function LedgerConnectPage() {
   const selectedFamilies = families.filter(family => family !== 'zcash' || canAddZcash)
   const parsedDeviceIndex = parseLedgerAccountIndex(deviceIndex)
   const firstWallet = !loading && !catalog?.accounts.length && retainedWalletCount === 0
+  const availableFamilies = ledgerAvailableFamilies(network)
   useEffect(() => {
     let disposed = false
     void accountNetworksClient
@@ -98,6 +134,7 @@ export function LedgerConnectPage() {
     return () => {
       disposed = true
       abort.current?.abort()
+      previewAbort.current?.abort()
       appReady.current?.()
     }
   }, [])
@@ -123,11 +160,188 @@ export function LedgerConnectPage() {
     }
   }, [targetWalletId])
   const cancelConnection = () => {
+    if (provisioning.current) return
     abort.current?.abort()
+    previewAbort.current?.abort()
     appReady.current?.()
     appReady.current = null
     setAwaitingApp(false)
+    setReadingAccounts(false)
+    setExported(null)
+    connection.current = null
+    selectedAccounts.current = []
     setStep('connect')
+  }
+  useEffect(() => {
+    return () => {
+      abort.current?.abort()
+      previewAbort.current?.abort()
+      appReady.current?.()
+      connection.current = null
+      selectedAccounts.current = []
+    }
+  }, [network])
+
+  const prepareApp = (app: string, signal: AbortSignal) => {
+    signal.throwIfAborted()
+    setDeviceMessage(`Open the ${app} app`)
+    setStep('waiting')
+    return new Promise<void>(resolve => {
+      const ready = () => {
+        signal.removeEventListener('abort', ready)
+        appReady.current = null
+        setAwaitingApp(false)
+        resolve()
+      }
+      appReady.current = ready
+      signal.addEventListener('abort', ready, { once: true })
+      setAwaitingApp(true)
+    })
+  }
+
+  const refreshPreviews = (page: readonly LedgerAccountCandidate[]) => {
+    previewAbort.current?.abort()
+    const controller = new AbortController()
+    previewAbort.current = controller
+    setPreviews({})
+    const inspect = async () => {
+      // Read two addresses at a time; device enumeration stays responsive.
+      for (let index = 0; index < page.length; index += 2) {
+        await Promise.all(
+          page.slice(index, index + 2).map(async candidate => {
+            const preview = await readLedgerAccountPreview(
+              candidate.account,
+              network,
+              controller.signal
+            )
+            if (!controller.signal.aborted)
+              setPreviews(current => ({
+                ...current,
+                [candidate.account.derivationPath]: preview
+              }))
+          })
+        )
+        controller.signal.throwIfAborted()
+      }
+    }
+    void inspect().catch(() => {})
+  }
+
+  const readPage = async (
+    family: LedgerSelectableFamily,
+    mode: LedgerDerivationMode,
+    start: number,
+    openApp = false
+  ) => {
+    const current = connection.current
+    const controller = abort.current
+    if (!current || !controller || accountIndex === null || connecting.current) return
+    connecting.current = true
+    setReadingAccounts(true)
+    setError('')
+    setCandidates([])
+    setPicked(null)
+    previewAbort.current?.abort()
+    setPreviews({})
+    setPickerFamily(family)
+    setPathMode(mode)
+    setPageStart(start)
+    try {
+      if (openApp)
+        await prepareApp(
+          family === 'evm'
+            ? 'Ethereum'
+            : family === 'bitcoin'
+              ? ledgerBitcoinAppName(network)
+              : CHAIN_NAMES[family],
+          controller.signal
+        )
+      controller.signal.throwIfAborted()
+      const page = await loadLedgerAccountCandidates({
+        transport: current.transport,
+        device: current.device,
+        signal: controller.signal,
+        family,
+        mode,
+        start,
+        network,
+        logicalAccountIndex: accountIndex,
+        existing: existingCredential,
+        onInteraction: () => setDeviceMessage('Check your Ledger')
+      })
+      controller.signal.throwIfAborted()
+      setCandidates(page)
+      setStep('accounts')
+      refreshPreviews(page)
+    } catch (cause) {
+      if (!controller.signal.aborted) {
+        setError(cause instanceof Error ? cause.message : 'Unable to read Ledger accounts')
+        setStep('accounts')
+      }
+    } finally {
+      connecting.current = false
+      if (!controller.signal.aborted) setReadingAccounts(false)
+    }
+  }
+
+  const confirmAccounts = async () => {
+    const current = connection.current
+    const controller = abort.current
+    if (
+      !current ||
+      !controller ||
+      accountIndex === null ||
+      parsedDeviceIndex === null ||
+      connecting.current
+    )
+      return
+    connecting.current = true
+    setReadingAccounts(true)
+    setError('')
+    previewAbort.current?.abort()
+    try {
+      const result = await exportLedgerWalletAccounts({
+        transport: current.transport,
+        device: current.device,
+        network,
+        families: current.families,
+        deviceAccountIndex: parsedDeviceIndex,
+        accountIndex,
+        derivationPaths: ledgerSelectedPaths(selectedAccounts.current),
+        expectedAccounts: selectedAccounts.current,
+        existing: existingCredential,
+        signal: controller.signal,
+        onStep: (app, confirming) =>
+          setDeviceMessage(
+            confirming ? 'Confirm the account on your Ledger' : `Open the ${app} app`
+          ),
+        prepareApp: app => prepareApp(app, controller.signal)
+      })
+      controller.signal.throwIfAborted()
+      setExported(result)
+      if (!targetWalletId) setWalletName(result.credential.deviceName)
+      setStep('configure')
+    } catch (cause) {
+      if (!controller.signal.aborted) {
+        setError(cause instanceof Error ? cause.message : 'Ledger confirmation failed')
+        setStep(current.pickers.length ? 'accounts' : 'connect')
+      }
+    } finally {
+      connecting.current = false
+      if (!controller.signal.aborted) setReadingAccounts(false)
+    }
+  }
+
+  const continueAccounts = async () => {
+    const current = connection.current
+    if (!picked || !current || connecting.current) return
+    selectedAccounts.current = [
+      ...selectedAccounts.current.filter(account => account.family !== pickerFamily),
+      picked.account
+    ]
+    const next = current.pickers[current.pickers.indexOf(pickerFamily) + 1]
+    if (next) await readPage(next, LEDGER_PATH_MODES[next][0].value, parsedDeviceIndex ?? 0, true)
+    else await confirmAccounts()
   }
   const detect = async (transport: LedgerTransport) => {
     if (
@@ -143,36 +357,23 @@ export function LedgerConnectPage() {
     setBirthdayHeight(undefined)
     const controller = new AbortController()
     abort.current = controller
+    selectedAccounts.current = []
+    setExported(null)
     setError('')
     setDeviceMessage('Select your Ledger in the browser dialog')
     setStep('waiting')
     try {
-      const result = await exportLedgerWalletAccounts({
-        transport,
-        network,
-        families: selectedFamilies,
-        deviceAccountIndex: parsedDeviceIndex,
-        accountIndex,
-        existing: existingCredential,
-        signal: controller.signal,
-        onStep: (app, confirming) =>
-          setDeviceMessage(
-            confirming ? 'Confirm the account on your Ledger' : `Open the ${app} app`
-          ),
-        prepareApp: () =>
-          new Promise<void>(resolve => {
-            appReady.current = () => {
-              appReady.current = null
-              setAwaitingApp(false)
-              resolve()
-            }
-            setAwaitingApp(true)
-          })
-      })
+      const device = await discoverLedger(transport, controller.signal)
       controller.signal.throwIfAborted()
-      setExported(result)
-      if (!targetWalletId) setWalletName(result.credential.deviceName)
-      setStep('configure')
+      const pickers = selectedFamilies.filter(
+        (family): family is LedgerSelectableFamily =>
+          family !== 'zcash' && !registeredFamilies.includes(family)
+      )
+      connection.current = { device, transport, families: selectedFamilies, pickers }
+      connecting.current = false
+      if (pickers[0])
+        await readPage(pickers[0], LEDGER_PATH_MODES[pickers[0]][0].value, parsedDeviceIndex, true)
+      else await confirmAccounts()
     } catch (cause) {
       if (!controller.signal.aborted) {
         setError(cause instanceof Error ? cause.message : 'Ledger connection failed')
@@ -230,8 +431,9 @@ export function LedgerConnectPage() {
     <div className="page-container page-container--tab">
       <PageHeader
         title={targetWalletId ? 'Add Ledger Accounts' : 'Connect Ledger'}
-        showBack={step === 'connect' || step === 'configure'}
-        onBack={step === 'configure' ? () => setStep('connect') : undefined}
+        showBack={step === 'connect' || step === 'configure' || step === 'accounts'}
+        backDisabled={creating}
+        onBack={step === 'configure' || step === 'accounts' ? cancelConnection : undefined}
       />
       {step === 'connect' && (
         <>
@@ -296,7 +498,7 @@ export function LedgerConnectPage() {
                   wallets.length > 0 ? 'max-h-40' : 'max-h-56'
                 )}
               >
-                {LEDGER_CHAIN_FAMILIES.map(family => {
+                {availableFamilies.map(family => {
                   const registered = registeredFamilies.includes(family)
                   const selected = !!registered || selectedFamilies.includes(family)
                   return (
@@ -336,16 +538,17 @@ export function LedgerConnectPage() {
                 })}
               </div>
             </fieldset>
-            <div>
+            <details className="text-sm text-muted">
+              <summary className="cursor-pointer py-1">Advanced</summary>
               <label htmlFor="ledger-account-index" className="mb-2 block text-sm text-muted">
-                Device account index
+                Start account index
               </label>
               <Input
                 id="ledger-account-index"
                 type="number"
                 className="h-[45px]"
                 min={0}
-                max={MAX_ZCASH_ACCOUNT_INDEX}
+                max={MAX_LEDGER_ACCOUNT_INDEX}
                 step={1}
                 inputMode="numeric"
                 value={deviceIndex}
@@ -355,7 +558,7 @@ export function LedgerConnectPage() {
               {parsedDeviceIndex === null && (
                 <p className="mt-2 text-xs text-danger">Enter a valid account index.</p>
               )}
-            </div>
+            </details>
             {error && <p className="text-sm text-danger">{error}</p>}
           </div>
           <div className="page-footer space-y-2">
@@ -388,6 +591,36 @@ export function LedgerConnectPage() {
             >
               Use Bluetooth instead
             </button>
+          </div>
+        </>
+      )}
+      {step === 'accounts' && (
+        <>
+          <LedgerAccountPicker
+            family={pickerFamily}
+            mode={pathMode}
+            start={pageStart}
+            candidates={candidates}
+            selectedPath={picked?.account.derivationPath}
+            previews={previews}
+            busy={readingAccounts}
+            error={error}
+            onSelect={setPicked}
+            onMode={mode => void readPage(pickerFamily, mode, 0)}
+            onPage={start => void readPage(pickerFamily, pathMode, start)}
+            onRetryPreview={() => refreshPreviews(candidates)}
+          />
+          <div className="page-footer space-y-2">
+            <Button
+              className="w-full"
+              disabled={!picked || readingAccounts}
+              onClick={() => void continueAccounts()}
+            >
+              Continue
+            </Button>
+            <Button className="w-full" variant="outline" onClick={cancelConnection}>
+              Cancel
+            </Button>
           </div>
         </>
       )}

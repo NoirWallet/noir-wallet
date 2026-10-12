@@ -24,6 +24,7 @@ import {
 } from '@/infrastructure/chains/bitcoin'
 import { BitcoinMultichainDerivationClient } from '@/infrastructure/keyring/multichain/bitcoin-derivation-client'
 import { BitcoinAddressDerivationRouter } from '@/infrastructure/keyring/bitcoin-address-derivation-router'
+import { bitcoinAccountRootFromPath } from '@/infrastructure/chains/bitcoin/bitcoin-transaction-model'
 import { BitcoinMultichainSigningClient } from '@/infrastructure/keyring/multichain/bitcoin-signing-client'
 import {
   IndexedDbStorageV2Repository,
@@ -119,13 +120,16 @@ function createBackgroundBitcoinRuntime(customRpcUrl?: string): BackgroundBitcoi
   const changeReservations = new BitcoinChangeReservationCoordinator({
     discoveryRepository,
     reservationRepository: new IndexedDbBitcoinChangeReservationRepository(),
-    derivation
+    derivation,
+    ensureDiscovered: (scope, addressIndex) =>
+      discovery.ensureLedgerChangeAddress(scope, addressIndex)
   })
   const preparation = new BitcoinTransferPreparationCoordinator({
     discoveryRepository,
     derivation,
     rpc,
-    inputReservations
+    inputReservations,
+    changeReservations
   })
   const chains = createInitialProductChainRegistry(DEFAULT_NETWORK)
   const assets = createAssetRegistry(
@@ -180,7 +184,13 @@ function createBackgroundBitcoinRuntime(customRpcUrl?: string): BackgroundBitcoi
         throw new Error('Ledger Bitcoin fingerprint is unavailable')
       }
       return Object.freeze({
-        accountPath: derived.derivationPath.replace(/\/0\/0$/, ''),
+        accountPath: bitcoinAccountRootFromPath(
+          derived.derivationPath,
+          context.chainAccount.scope.chainId,
+          'p2wpkh',
+          false,
+          0
+        ),
         masterFingerprintHex: derived.masterFingerprint.slice(2),
         expectedAddress: derived.address,
         network: DEFAULT_NETWORK

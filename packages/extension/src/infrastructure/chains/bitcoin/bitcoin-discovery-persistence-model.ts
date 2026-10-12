@@ -156,9 +156,13 @@ export function parseScope(value: unknown): BitcoinDiscoveryScope {
     throw new Error('Bitcoin discovery scope requires a supported Bitcoin ChainAccount')
   }
   const coinType = chainId === 'bip122:000000000019d6689c085ae165831e93' ? 0 : 1
+  const deviceAccount = new RegExp(`^m/84'/${coinType}'/(0|[1-9][0-9]*)'/0/0$`).exec(
+    chainAccount.derivation.path
+  )
   const isHd =
     chainAccount.derivation.scheme === 'bip84' &&
-    chainAccount.derivation.path === `m/84'/${coinType}'/${accountIndex}'/0/0`
+    deviceAccount !== null &&
+    Number(deviceAccount[1]) <= 0x7fffffff
   const isImported =
     chainAccount.derivation.scheme === 'imported' &&
     chainAccount.derivation.path === 'm' &&

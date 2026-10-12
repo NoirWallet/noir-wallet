@@ -6,13 +6,34 @@ import type {
 import { createLedgerMultichainHardwareCredential } from '@/core/wallet/hardware-wallet-data'
 import type { LedgerChainFamily } from '@/core/wallet/hardware-wallet-data'
 import type { Network } from '@/types'
+import {
+  createBuildAddressGatedChainRegistry,
+  createInitialProductChainRegistry
+} from '@/core/chains/registry'
 
-export const MAX_ZCASH_ACCOUNT_INDEX = 0x7fffffff
+export const MAX_LEDGER_ACCOUNT_INDEX = 0x7fffffff
+
+export function ledgerAvailableFamilies(network: Network): readonly LedgerChainFamily[] {
+  const families = new Set(
+    createBuildAddressGatedChainRegistry(createInitialProductChainRegistry(network))
+      .list()
+      .map(chain => chain.family)
+  )
+  return (['zcash', 'bitcoin', 'evm', 'solana', 'near'] as const).filter(family =>
+    families.has(family)
+  )
+}
+
+export function ledgerSelectedPaths(accounts: readonly LedgerPublicAccount[]) {
+  const paths: Partial<Record<LedgerChainFamily, string>> = {}
+  for (const account of accounts) paths[account.family] = account.derivationPath
+  return paths
+}
 
 export function parseLedgerAccountIndex(value: string): number | null {
   if (!/^(0|[1-9][0-9]*)$/.test(value)) return null
   const index = Number(value)
-  return Number.isSafeInteger(index) && index <= MAX_ZCASH_ACCOUNT_INDEX ? index : null
+  return Number.isSafeInteger(index) && index <= MAX_LEDGER_ACCOUNT_INDEX ? index : null
 }
 
 export function ledgerCatalogWallets(catalog: AccountNetworksCatalogView | null) {

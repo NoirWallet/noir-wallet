@@ -1,15 +1,16 @@
 import { SignerEthBuilder } from '@ledgerhq/device-signer-kit-ethereum'
-import { GetAppAndVersionCommand } from '@ledgerhq/device-management-kit'
+import { GetAppAndVersionCommand, isSuccessCommandResult } from '@ledgerhq/device-management-kit'
 import { hexToBytes, isAddress, keccak256, type Hex } from 'viem'
 import type {
   LedgerEvmSigningRequest,
   LedgerEvmSigningResponse
 } from '@/core/keyring/protocol/ledger-signing'
+import { validateLedgerEvmDerivationPath } from '@/core/wallet/ledger-derivation-path'
 import {
   getLedgerDeviceName,
   runLedgerAction,
   withLedgerSession,
-  type LedgerTransport
+  type LedgerSessionOptions
 } from './device'
 
 export interface LedgerEvmAccountExport {
@@ -26,18 +27,65 @@ export type {
   LedgerEvmSigningResponse
 } from '@/core/keyring/protocol/ledger-signing'
 
-interface LedgerEvmDeviceOptions {
-  readonly transport: LedgerTransport
-  readonly signal?: AbortSignal
-  readonly onInteraction?: (interaction: string) => void
-}
+type LedgerEvmDeviceOptions = LedgerSessionOptions
 
 function normalizePath(path: string): string {
-  const match = /^m\/44'\/60'\/((?:0|[1-9][0-9]*))'\/0\/((?:0|[1-9][0-9]*))$/.exec(path)
-  if (!match || match.slice(1).some(component => Number(component) > 0x7fffffff)) {
-    throw new Error('Unsupported Ledger EVM derivation path')
+  return validateLedgerEvmDerivationPath(path).slice(2)
+}
+
+function validateAccount(account: { readonly address: string; readonly publicKey: string }): {
+  readonly address: string
+  readonly publicKey: string
+} {
+  if (!isAddress(account.address) || !/^(?:0x)?04[0-9a-fA-F]{128}$/.test(account.publicKey)) {
+    throw new Error('Ledger returned an invalid EVM account')
   }
-  return path.slice(2)
+  const rawPublicKey = account.publicKey.replace(/^0x/, '')
+  const derivedAddress = `0x${keccak256(`0x${rawPublicKey.slice(2)}` as Hex).slice(-40)}`
+  if (derivedAddress.toLowerCase() !== account.address.toLowerCase()) {
+    throw new Error('Ledger EVM public key does not match its address')
+  }
+  return {
+    publicKey: `0x${rawPublicKey}`,
+    address: account.address.toLowerCase()
+  }
+}
+
+export async function exportLedgerEvmAccounts(
+  paths: readonly string[],
+  options: LedgerEvmDeviceOptions
+): Promise<readonly LedgerEvmAccountExport[]> {
+  const normalizedPaths = paths.map(path => ({ derivationPath: path, path: normalizePath(path) }))
+  if (normalizedPaths.length === 0) return []
+  return withLedgerSession(options, async ({ dmk, sessionId, device }) => {
+    const app = await dmk.sendCommand({ sessionId, command: new GetAppAndVersionCommand() })
+    if (!isSuccessCommandResult(app) || app.data.name !== 'Ethereum') {
+      throw new Error('Open the Ethereum app on your Ledger device')
+    }
+    const signer = new SignerEthBuilder({ dmk, sessionId }).build()
+    const results: LedgerEvmAccountExport[] = []
+    for (const { derivationPath, path } of normalizedPaths) {
+      options.signal?.throwIfAborted()
+      const account = validateAccount(
+        await runLedgerAction(
+          signer.getAddress(path, { checkOnDevice: false }),
+          options.onInteraction,
+          'evm_get_address',
+          options.signal
+        )
+      )
+      results.push(
+        Object.freeze({
+          derivationPath,
+          ...account,
+          deviceModel: device.deviceModel.model,
+          deviceName: getLedgerDeviceName(device.deviceModel.model, device.name),
+          appVersion: app.data.version
+        })
+      )
+    }
+    return results
+  })
 }
 
 function formatSignature(
@@ -81,19 +129,11 @@ export async function exportLedgerEvmAccount(
       'evm_get_address',
       input.signal
     )
-    if (!isAddress(account.address) || !/^(?:0x)?04[0-9a-fA-F]{128}$/.test(account.publicKey)) {
-      throw new Error('Ledger returned an invalid EVM account')
-    }
-    const rawPublicKey = account.publicKey.replace(/^0x/, '')
-    const derivedAddress = `0x${keccak256(`0x${rawPublicKey.slice(2)}` as Hex).slice(-40)}`
-    if (derivedAddress.toLowerCase() !== account.address.toLowerCase()) {
-      throw new Error('Ledger EVM public key does not match its address')
-    }
+    const verified = validateAccount(account)
     const app = await dmk.sendCommand({ sessionId, command: new GetAppAndVersionCommand() })
     return Object.freeze({
       derivationPath,
-      publicKey: account.publicKey.startsWith('0x') ? account.publicKey : `0x${account.publicKey}`,
-      address: account.address.toLowerCase(),
+      ...verified,
       deviceModel: device.deviceModel.model,
       deviceName: getLedgerDeviceName(device.deviceModel.model, device.name),
       appVersion: app.status === 'SUCCESS' ? app.data.version : 'unknown'

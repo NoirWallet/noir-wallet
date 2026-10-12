@@ -4,7 +4,12 @@ import {
   type LedgerPublicAccount,
   type LedgerChainFamily
 } from '@/core/wallet/hardware-wallet-data'
-import { discoverLedger, exportLedgerAccount, type LedgerTransport } from '@/lib/ledger/device'
+import {
+  discoverLedger,
+  exportLedgerAccount,
+  type LedgerSessionOptions,
+  type LedgerTransport
+} from '@/lib/ledger/device'
 import { exportLedgerEvmAccount } from '@/lib/ledger/evm'
 import { exportLedgerBitcoinAccount } from '@/lib/ledger/bitcoin'
 import { ledgerBitcoinAppName } from '@/lib/ledger/bitcoin-model'
@@ -51,12 +56,15 @@ export async function exportLedgerWalletAccounts(input: {
   readonly families: readonly LedgerChainFamily[]
   readonly deviceAccountIndex: number
   readonly accountIndex: number
+  readonly device?: LedgerSessionOptions['device']
+  readonly derivationPaths?: Partial<Record<LedgerChainFamily, string>>
+  readonly expectedAccounts?: readonly LedgerPublicAccount[]
   readonly existing?: LedgerHardwareCredential
   readonly signal: AbortSignal
   readonly onStep: (app: string, confirming?: boolean) => void
   readonly prepareApp: (app: string) => Promise<void>
 }) {
-  const device = await discoverLedger(input.transport, input.signal)
+  const device = input.device ?? (await discoverLedger(input.transport, input.signal))
   let metadata: { deviceModel: string; deviceName: string } | undefined
   const exportAccount = async (
     family: LedgerChainFamily,
@@ -188,7 +196,17 @@ export async function exportLedgerWalletAccounts(input: {
       )
     )
       continue
-    additions.push(await exportAccount(family))
+    const fresh = await exportAccount(family, input.derivationPaths?.[family])
+    if (!metadata) throw new Error('Ledger device metadata is unavailable')
+    const normalized = createLedgerMultichainHardwareCredential({
+      ...metadata,
+      accounts: [fresh]
+    }).accountExport.accounts[0]
+    const expected = input.expectedAccounts?.find(account => account.family === family)
+    if (expected && ledgerAccountIdentity(normalized) !== ledgerAccountIdentity(expected)) {
+      throw new Error('Ledger account changed. Select the account again.')
+    }
+    additions.push(normalized)
   }
   if (!metadata || (!additions.length && !existing.length))
     throw new Error('Select at least one Ledger chain account')

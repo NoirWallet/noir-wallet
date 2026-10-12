@@ -2,6 +2,7 @@ import type { BitcoinSupportedAddressType } from '@/core/chains/bitcoin'
 import { parseTransactionId, type TransactionId } from '@/core/transactions/domain'
 import type { BitcoinAddressDerivationPort } from '@/infrastructure/keyring/multichain/bitcoin-derivation-client'
 import type { BitcoinChangeReservation } from './bitcoin-change-reservation-model'
+import type { BitcoinChangeReservationCoordinator } from './bitcoin-change-reservation-coordinator'
 import { selectBitcoinCoins, selectBitcoinFeeRate } from './bitcoin-coin-selection'
 import type { BitcoinDiscoveryRpc, BitcoinTransactionRpc } from './bitcoin-esplora-client'
 import {
@@ -25,6 +26,7 @@ import { collectBitcoinSpendableUtxos } from './bitcoin-spendable-utxos'
 import {
   BITCOIN_DEFAULT_FEE_TARGET_BLOCKS,
   BITCOIN_MAXIMUM_FEE_TARGET_BLOCKS,
+  bitcoinAccountRootFromPath,
   parseBitcoinAddress,
   parseBitcoinAddressType,
   parseBitcoinChain,
@@ -52,6 +54,7 @@ export interface BitcoinTransferPreparationCoordinatorOptions {
     BitcoinInputReservationRepository,
     'list' | 'reserve' | 'release'
   >
+  readonly changeReservations?: Pick<BitcoinChangeReservationCoordinator, 'reserve' | 'abandon'>
   readonly now?: () => number
   readonly selectChangeOutputPosition?: (
     transactionId: TransactionId
@@ -66,6 +69,7 @@ export interface PrepareBitcoinTransferFromDiscoveryInput extends BitcoinDiscove
   readonly feeTargetBlocks?: number
   readonly feeRateSatsPerVbyte?: number
   readonly signal?: AbortSignal
+  readonly ledgerAccount?: boolean
 }
 
 export interface PreparedBitcoinTransferPlan {
@@ -85,12 +89,16 @@ function assertNotCancelled(signal?: AbortSignal): void {
 
 function assertDiscoveryComplete(
   cursors: ReturnType<typeof parseCheckpoint>['cursors'],
-  addressType: BitcoinSupportedAddressType
+  addressType: BitcoinSupportedAddressType,
+  ledgerAccount: boolean
 ): void {
   const selected = cursors.filter(cursor => cursor.target.addressType === addressType)
   const receive = selected.find(cursor => !cursor.target.change)
   if (!receive?.complete) {
     throw new Error('Bitcoin receive address discovery must complete before spending')
+  }
+  if (ledgerAccount && !selected.find(cursor => cursor.target.change)?.complete) {
+    throw new Error('Ledger Bitcoin change address discovery must complete before spending')
   }
 }
 
@@ -120,7 +128,7 @@ export class BitcoinTransferPreparationCoordinator {
       !hasExactKeys(
         input,
         ['chainAccount', 'accountIndex', 'transactionId', 'addressType', 'recipient', 'amount'],
-        ['feeTargetBlocks', 'feeRateSatsPerVbyte', 'signal']
+        ['feeTargetBlocks', 'feeRateSatsPerVbyte', 'signal', 'ledgerAccount']
       ) ||
       (input.signal !== undefined && !(input.signal instanceof AbortSignal))
     ) {
@@ -135,6 +143,16 @@ export class BitcoinTransferPreparationCoordinator {
     const addressType = parseBitcoinAddressType(input.addressType)
     const recipient = parseBitcoinAddress(input.recipient, chainId)
     const amount = parseBitcoinTransferAmount(input.amount)
+    const ledgerAccount = input.ledgerAccount === true
+    if (input.ledgerAccount !== undefined && typeof input.ledgerAccount !== 'boolean') {
+      throw new Error('Invalid Ledger Bitcoin account selection')
+    }
+    if (ledgerAccount && addressType !== 'p2wpkh') {
+      throw new Error('Ledger Bitcoin transfer requires Native SegWit')
+    }
+    const ledgerRoot = ledgerAccount
+      ? bitcoinAccountRootFromPath(scope.chainAccount.derivation.path, chainId, 'p2wpkh', false, 0)
+      : undefined
     if (input.feeTargetBlocks !== undefined && input.feeRateSatsPerVbyte !== undefined) {
       throw new Error('Bitcoin fee target and explicit fee rate are mutually exclusive')
     }
@@ -163,7 +181,7 @@ export class BitcoinTransferPreparationCoordinator {
     }
     const checkpoint = parseCheckpoint(state.checkpoint, scope)
     const discoveryUpdatedAt = parseTimestamp(state.updatedAt)
-    assertDiscoveryComplete(checkpoint.cursors, addressType)
+    assertDiscoveryComplete(checkpoint.cursors, addressType, ledgerAccount)
     const observations = state.observations.map(value => parseObservation(value, scope))
     const signer = observations.find(
       observation =>
@@ -190,8 +208,15 @@ export class BitcoinTransferPreparationCoordinator {
       },
       input.signal
     )
+    if (ledgerAccount && derivedSigner.derivationPath !== scope.chainAccount.derivation.path) {
+      throw new Error('Ledger Bitcoin signer path does not match the selected account')
+    }
     if (derivedSigner.address !== signer) {
-      throw new Error('WASM-derived Bitcoin signer does not match discovery')
+      throw new Error(
+        ledgerAccount
+          ? 'Ledger Bitcoin signer does not match discovery'
+          : 'WASM-derived Bitcoin signer does not match discovery'
+      )
     }
     const masterFingerprint = parseBitcoinMasterFingerprint(derivedSigner.masterFingerprint)
 
@@ -219,7 +244,7 @@ export class BitcoinTransferPreparationCoordinator {
           reservation.outpoints.map(outpoint => `${outpoint.transactionId}:${outpoint.outputIndex}`)
         )
     )
-    const utxos = collectBitcoinSpendableUtxos(observations, addressType).filter(
+    const utxos = collectBitcoinSpendableUtxos(observations, addressType, ledgerRoot).filter(
       utxo => !unavailableOutpoints.has(`${utxo.transactionId}:${utxo.outputIndex}`)
     )
     if (utxos.some(utxo => utxo.blockHeight > tipHeight)) {
@@ -252,6 +277,7 @@ export class BitcoinTransferPreparationCoordinator {
     assertNotCancelled(input.signal)
 
     let inputReservation: BitcoinInputReservation | null = null
+    let changeReservation: BitcoinChangeReservation | null = null
     try {
       const reservedInputs = parseBitcoinInputReservation(
         await this.options.inputReservations.reserve({
@@ -275,13 +301,27 @@ export class BitcoinTransferPreparationCoordinator {
         lockTime: tipHeight,
         ...(previousTransactions === undefined ? {} : { previousTransactions })
       } as const
+      if (ledgerAccount && BigInt(selection.changeSats) > 0n) {
+        if (!this.options.changeReservations) {
+          throw new Error('Ledger Bitcoin change reservation is unavailable')
+        }
+        changeReservation = await this.options.changeReservations.reserve({
+          ...scope,
+          addressType,
+          transactionId,
+          signal: input.signal
+        })
+        if (!changeReservation.address || changeReservation.state !== 'reserved') {
+          throw new Error('Ledger Bitcoin change reservation is not ready')
+        }
+      }
       const prepared: PreparedBitcoinPsbt =
         BigInt(selection.changeSats) === 0n
           ? buildBitcoinPsbt(commonBuildInput)
           : buildBitcoinPsbt({
               ...commonBuildInput,
               change: {
-                address: derivedSigner,
+                address: changeReservation?.address ?? derivedSigner,
                 outputPosition: await this.changeOutputPosition(transactionId)
               }
             })
@@ -291,12 +331,24 @@ export class BitcoinTransferPreparationCoordinator {
         feeRate,
         selection,
         inputReservation,
-        changeReservation: null,
+        changeReservation,
         prepared,
         discoveryUpdatedAt
       })
     } catch (error) {
       const cleanup = await Promise.allSettled([
+        ...(changeReservation === null || !this.options.changeReservations
+          ? []
+          : [
+              this.options.changeReservations.abandon(
+                {
+                  chainAccount: changeReservation.chainAccount,
+                  accountIndex: changeReservation.accountIndex,
+                  addressType: changeReservation.addressType
+                },
+                changeReservation.transactionId
+              )
+            ]),
         ...(inputReservation === null
           ? []
           : [

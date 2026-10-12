@@ -58,6 +58,7 @@ export interface BitcoinAddressBalanceCatalogView {
   readonly walletId: KeyDomainId
   readonly accountId: AccountId
   readonly accountIndex: number
+  readonly accountDerivationPath: string
   readonly chainId: string
   readonly updatedAt: number
   readonly activeAddressType: BitcoinSupportedAddressType
@@ -119,7 +120,8 @@ function parseSafeInteger(value: unknown, label: string, maximum: number): numbe
 function parseAddress(
   value: unknown,
   chainId: ChainId,
-  accountIndex: number
+  accountIndex: number,
+  accountDerivationPath: string
 ): BitcoinDerivedAddressBalanceView {
   const address = readRecord(value, 'Bitcoin address balance')
   assertExactKeys(
@@ -158,8 +160,16 @@ function parseAddress(
     'Bitcoin address index',
     BITCOIN_MAXIMUM_ADDRESSES_PER_TARGET - 1
   )
-  const expectedPath = `m/${PURPOSES[addressType]}'/${DEFAULT_NETWORK === 'mainnet' ? 0 : 1}'/${accountIndex}'/${address.change ? 1 : 0}/${addressIndex}`
-  if (address.derivationPath !== expectedPath) {
+  const expectedPath =
+    accountDerivationPath === 'm'
+      ? 'm'
+      : addressType === 'p2wpkh'
+        ? `${accountDerivationPath.slice(0, -4)}/${address.change ? 1 : 0}/${addressIndex}`
+        : `m/${PURPOSES[addressType]}'/${DEFAULT_NETWORK === 'mainnet' ? 0 : 1}'/${accountIndex}'/${address.change ? 1 : 0}/${addressIndex}`
+  if (
+    address.derivationPath !== expectedPath ||
+    (accountDerivationPath === 'm' && (address.change || addressIndex !== 0 || accountIndex !== 0))
+  ) {
     throw new Error('Invalid Bitcoin address derivation path')
   }
   const confirmedRaw = parseRawAmount(address.confirmedRaw, 'Bitcoin confirmed balance')
@@ -213,6 +223,7 @@ function parseResponse(value: unknown): BitcoinAddressBalanceCatalogView | null 
         'walletId',
         'accountId',
         'accountIndex',
+        'accountDerivationPath',
         'chainId',
         'updatedAt',
         'activeAddressType',
@@ -230,14 +241,33 @@ function parseResponse(value: unknown): BitcoinAddressBalanceCatalogView | null 
       'Bitcoin address balances Account index',
       2_147_483_647
     )
+    const coinType = DEFAULT_NETWORK === 'mainnet' ? 0 : 1
+    if (typeof result.accountDerivationPath !== 'string') {
+      throw new Error('Invalid Bitcoin account derivation path')
+    }
+    const accountPathMatch = new RegExp(`^m/84'/${coinType}'/(0|[1-9][0-9]*)'/0/0$`).exec(
+      result.accountDerivationPath
+    )
+    if (
+      result.accountDerivationPath !== 'm' &&
+      (!accountPathMatch || Number(accountPathMatch[1]) > 0x7fffffff)
+    ) {
+      throw new Error('Invalid Bitcoin account derivation path')
+    }
+    const accountDerivationPath = result.accountDerivationPath
     const chainId = parseChainId(getBitcoinNetworkConfig(DEFAULT_NETWORK).chainId).id
     if (result.chainId !== chainId || !Array.isArray(result.addresses)) {
       throw new Error('Invalid Bitcoin address balances scope')
     }
-    if (result.addresses.length > 1) {
+    const accountAddresses = result.activeAddressType === 'p2wpkh' && accountDerivationPath !== 'm'
+    if (
+      result.addresses.length > (accountAddresses ? BITCOIN_MAXIMUM_ADDRESSES_PER_TARGET * 2 : 1)
+    ) {
       throw new Error('Invalid Bitcoin address balances size')
     }
-    const addresses = result.addresses.map(address => parseAddress(address, chainId, accountIndex))
+    const addresses = result.addresses.map(address =>
+      parseAddress(address, chainId, accountIndex, accountDerivationPath)
+    )
     if (
       new Set(addresses.map(address => address.value)).size !== addresses.length ||
       new Set(addresses.map(address => address.derivationPath)).size !== addresses.length
@@ -260,7 +290,8 @@ function parseResponse(value: unknown): BitcoinAddressBalanceCatalogView | null 
     if (
       addresses.some(
         address =>
-          address.addressType !== activeAddressType || address.change || address.addressIndex !== 0
+          address.addressType !== activeAddressType ||
+          (!accountAddresses && (address.change || address.addressIndex !== 0))
       ) ||
       addresses.reduce((sum, address) => sum + BigInt(address.confirmedRaw), 0n) !==
         BigInt(confirmedRaw) ||
@@ -275,6 +306,7 @@ function parseResponse(value: unknown): BitcoinAddressBalanceCatalogView | null 
       walletId,
       accountId,
       accountIndex,
+      accountDerivationPath,
       chainId,
       updatedAt: parseSafeInteger(
         result.updatedAt,

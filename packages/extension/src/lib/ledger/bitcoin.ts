@@ -14,7 +14,7 @@ import {
   getLedgerDeviceName,
   runLedgerAction,
   withLedgerSession,
-  type LedgerTransport
+  type LedgerSessionOptions
 } from './device'
 import {
   assertLedgerBitcoinApp,
@@ -42,11 +42,7 @@ export interface LedgerBitcoinAccountExport {
   readonly appVersion: string
 }
 
-interface LedgerBitcoinDeviceOptions {
-  readonly transport: LedgerTransport
-  readonly signal?: AbortSignal
-  readonly onInteraction?: (interaction: string) => void
-}
+type LedgerBitcoinDeviceOptions = LedgerSessionOptions
 
 function accountPath(network: 'mainnet' | 'testnet', accountIndex: number): string {
   if (!Number.isSafeInteger(accountIndex) || accountIndex < 0 || accountIndex > 0x7fffffff) {
@@ -112,6 +108,66 @@ export async function exportLedgerBitcoinAccount(
       deviceName: getLedgerDeviceName(device.deviceModel.model, device.name),
       appVersion: app.data.version
     })
+  })
+}
+
+export async function exportLedgerBitcoinAccounts(
+  paths: readonly string[],
+  options: LedgerBitcoinDeviceOptions & { readonly network: 'mainnet' | 'testnet' }
+): Promise<readonly LedgerBitcoinAccountExport[]> {
+  if (paths.length === 0) return Object.freeze([])
+  const normalized = paths.map(path => normalizeAccountPath(path, options.network))
+  if (new Set(normalized).size !== normalized.length) {
+    throw new Error('Duplicate Ledger Bitcoin account path')
+  }
+  return withLedgerSession(options, async ({ dmk, sessionId, device }) => {
+    const app = await dmk.sendCommand({ sessionId, command: new GetAppAndVersionCommand() })
+    if (app.status !== 'SUCCESS') throw new Error('Unable to read Ledger Bitcoin App version')
+    assertLedgerBitcoinApp(options.network, app.data.name)
+    const signer = new SignerBtcBuilder({ dmk, sessionId }).build()
+    const fingerprint = await runLedgerAction(
+      signer.getMasterFingerprint({ skipOpenApp: true }),
+      options.onInteraction,
+      'bitcoin_fingerprint',
+      options.signal
+    )
+    if (fingerprint.masterFingerprint.length !== 4) {
+      throw new Error('Invalid Ledger Bitcoin fingerprint')
+    }
+    const masterFingerprintHex = Buffer.from(fingerprint.masterFingerprint).toString('hex')
+    const deviceModel = device.deviceModel.model
+    const deviceName = getLedgerDeviceName(deviceModel, device.name)
+    const accounts: LedgerBitcoinAccountExport[] = []
+    for (let index = 0; index < paths.length; index += 1) {
+      const exported = await runLedgerAction(
+        signer.getExtendedPublicKey(normalized[index], {
+          checkOnDevice: false,
+          skipOpenApp: true
+        }),
+        options.onInteraction,
+        'bitcoin_xpub',
+        options.signal
+      )
+      const derived = deriveLedgerBitcoinAddress(
+        exported.extendedPublicKey,
+        options.network,
+        false,
+        0
+      )
+      accounts.push(
+        Object.freeze({
+          accountPath: paths[index],
+          xpub: exported.extendedPublicKey,
+          masterFingerprintHex,
+          address: derived.address,
+          publicKey: derived.publicKey,
+          deviceModel,
+          deviceName,
+          appVersion: app.data.version
+        })
+      )
+    }
+    return Object.freeze(accounts)
   })
 }
 

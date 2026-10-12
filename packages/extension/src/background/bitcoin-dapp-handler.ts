@@ -21,6 +21,7 @@ import type {
 import type { BitcoinSupportedAddressType } from '@/core/chains/bitcoin'
 import type { BitcoinMultichainDerivationClient } from '@/infrastructure/keyring/multichain/bitcoin-derivation-client'
 import type { BitcoinMultichainSigningClient } from '@/infrastructure/keyring/multichain/bitcoin-signing-client'
+import { bitcoinAccountRootFromPath } from '@/infrastructure/chains/bitcoin/bitcoin-transaction-model'
 import { base64ToBytes, bytesToBase64, bytesToHex, hexToBytes } from '@/lib/bytes'
 import type {
   BackgroundBitcoinTransferController,
@@ -1050,7 +1051,13 @@ export class BackgroundBitcoinDAppHandler {
       throw new Error('Ledger Bitcoin account export does not match the active account')
     }
     return Object.freeze({
-      accountPath: derived.derivationPath.replace(/\/0\/0$/, ''),
+      accountPath: bitcoinAccountRootFromPath(
+        derived.derivationPath,
+        active.context.chainAccount.scope.chainId,
+        'p2wpkh',
+        false,
+        0
+      ),
       masterFingerprintHex: derived.masterFingerprint.slice(2),
       expectedAddress: active.address,
       network: this.options.network.networkMode

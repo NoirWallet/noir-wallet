@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { it } from 'node:test'
 import { secp256k1 } from '@noble/curves/secp256k1'
+import { ed25519 } from '@noble/curves/ed25519'
 import { HDKey } from '@scure/bip32'
 import { publicKeyToAddress } from 'viem/accounts'
 import {
@@ -12,6 +13,8 @@ import {
 } from '../src/core/wallet/hardware-wallet-data.ts'
 import { deriveLedgerBitcoinAddress } from '../src/lib/ledger/bitcoin-model.ts'
 import { parseHardwareCredentialMetadata } from '../src/core/keyring/domain/hardware-credential.ts'
+import { encodeSolanaBase58 } from '../src/infrastructure/chains/solana/solana-rpc-codecs.ts'
+import { nearPublicKeyFromImplicitAccountId } from '../src/core/chains/near/identifiers.ts'
 
 const key = `0x${secp256k1.getPublicKey(new Uint8Array(32).fill(3), false).reduce((hex, byte) => hex + byte.toString(16).padStart(2, '0'), '')}`
 const evm = {
@@ -80,7 +83,54 @@ it('rejects public-key, Bitcoin network, xpub path and duplicate registration ta
   assert.throws(() => create([{ ...bitcoin, network: 'testnet' }]), /path/)
   assert.throws(() => create([{ ...bitcoin, derivationPath: "m/84'/0'/7'" }]), /xpub/)
   assert.throws(() => create([evm, { ...evm, accountIndex: 1 }]), /already registered/)
+  assert.throws(() => create([bitcoin, { ...bitcoin, accountIndex: 1 }]), /already registered/)
   assert.throws(() => create([{ ...bitcoin, masterFingerprintHex: '0'.repeat(64) }]), /fingerprint/)
+})
+
+it('keeps selected device paths in public credentials across supported presets', () => {
+  const edKey = ed25519.getPublicKey(new Uint8Array(32).fill(8))
+  const solanaKey = encodeSolanaBase58(edKey)
+  const nearAddress = Buffer.from(edKey).toString('hex')
+  const nearKey = nearPublicKeyFromImplicitAccountId(nearAddress)
+  const accounts = [
+    { ...evm, accountIndex: 0, derivationPath: "m/44'/60'/0'/0/0" },
+    { ...evm, accountIndex: 1, derivationPath: "m/44'/60'/1'/0/0" },
+    { ...evm, accountIndex: 2, derivationPath: "m/44'/60'/0'/2" },
+    {
+      family: 'solana',
+      accountIndex: 0,
+      derivationPath: "m/44'/501'",
+      publicKey: solanaKey,
+      address: solanaKey
+    },
+    {
+      family: 'solana',
+      accountIndex: 1,
+      derivationPath: "m/44'/501'/1'/0'",
+      publicKey: solanaKey,
+      address: solanaKey
+    },
+    {
+      family: 'near',
+      accountIndex: 0,
+      derivationPath: "m/44'/397'/0'/0'/0'",
+      publicKey: nearKey,
+      address: nearAddress
+    },
+    {
+      family: 'near',
+      accountIndex: 1,
+      derivationPath: "m/44'/397'/1'/0'/1'",
+      publicKey: nearKey,
+      address: nearAddress
+    }
+  ]
+  const credential = createLedgerMultichainHardwareCredential({ ...device, accounts })
+  assert.deepEqual(
+    credential.accountExport.accounts.map(account => account.derivationPath),
+    accounts.map(account => account.derivationPath)
+  )
+  assert.equal(credential.schemaVersion, 3)
 })
 
 it('keeps schema-2 Zcash credentials and their unavailable fingerprint intact during upgrade', () => {

@@ -86,6 +86,21 @@ export class BitcoinAddressDerivationRouter implements BitcoinAddressDerivationP
       if (matches.length !== 1 || matches[0].family !== 'bitcoin') {
         throw new Error('Ledger Bitcoin account export is missing or ambiguous')
       }
+      const activeAccount = context.snapshot.manifest.activeAccount
+      const chainAccounts = context.snapshot.chainAccounts.filter(
+        candidate =>
+          candidate.scope.keyDomainId === keyDomainId &&
+          candidate.scope.accountId === activeAccount?.accountId &&
+          candidate.scope.chainId === input.chainId
+      )
+      if (
+        chainAccounts.length !== 1 ||
+        chainAccounts[0].derivation.scheme !== 'bip84' ||
+        chainAccounts[0].derivation.path !== `${matches[0].derivationPath}/0/0` ||
+        chainAccounts[0].identity.value !== matches[0].address
+      ) {
+        throw new Error('Ledger Bitcoin account export does not match the active account')
+      }
       const derived = deriveLedgerBitcoinAddress(
         matches[0].xpub,
         this.options.network,

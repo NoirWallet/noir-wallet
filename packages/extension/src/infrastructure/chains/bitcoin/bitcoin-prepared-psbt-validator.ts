@@ -206,8 +206,9 @@ export function parsePreparedBitcoinPsbt(value: PreparedBitcoinPsbt): {
           : 86
   const coinType = chainId === BITCOIN_MAINNET_CHAIN_ID ? 0 : 1
   const pathPattern = new RegExp(
-    `^m/${purpose}'/${coinType}'/${accountIndex}'/[01]/(0|[1-9][0-9]{0,9})$`
+    `^m/${purpose}'/${coinType}'/${addressType === 'p2wpkh' ? '(?:0|[1-9][0-9]*)' : accountIndex}'/[01]/(0|[1-9][0-9]{0,9})$`
   )
+  let accountRoot: string | null = null
   for (let inputIndex = 0; inputIndex < psbt.data.inputs.length; inputIndex += 1) {
     const input = psbt.data.inputs[inputIndex]
     if (input.finalScriptSig || input.finalScriptWitness) return failSigned()
@@ -243,6 +244,9 @@ export function parsePreparedBitcoinPsbt(value: PreparedBitcoinPsbt): {
     }
     if (masterFingerprint === null) masterFingerprint = derivation.masterFingerprint
     if (!masterFingerprint.equals(derivation.masterFingerprint)) return failSigned()
+    const inputRoot = derivation.path.split('/').slice(0, 4).join('/')
+    if (accountRoot !== null && accountRoot !== inputRoot) return failSigned()
+    accountRoot = inputRoot
     const network = bitcoinNetwork(chainId)
     const payment =
       addressType === 'p2pkh'
@@ -295,10 +299,9 @@ export function parsePreparedBitcoinPsbt(value: PreparedBitcoinPsbt): {
     const output = psbt.data.outputs[changeOutputIndex]
     const derivation =
       addressType === 'p2tr' ? output.tapBip32Derivation?.[0] : output.bip32Derivation?.[0]
-    const activeAddressPath = `m/${purpose}'/${coinType}'/${accountIndex}'/0/0`
-    const legacyChangePath = new RegExp(
-      `^m/${purpose}'/${coinType}'/${accountIndex}'/1/(0|[1-9][0-9]{0,9})$`
-    )
+    if (!accountRoot) return failSigned()
+    const activeAddressPath = `${accountRoot}/0/0`
+    const legacyChangePath = new RegExp(`^${accountRoot}/1/(0|[1-9][0-9]{0,9})$`)
     if (
       (addressType !== 'p2tr' && output.bip32Derivation?.length !== 1) ||
       (addressType === 'p2tr' &&

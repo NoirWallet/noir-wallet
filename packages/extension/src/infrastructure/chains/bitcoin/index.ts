@@ -209,7 +209,8 @@ export {
 } from './bitcoin-transfer-preparation-coordinator'
 export {
   collectBitcoinSpendableUtxos,
-  isActiveBitcoinAddressObservation
+  isActiveBitcoinAddressObservation,
+  isLedgerBitcoinAccountObservation
 } from './bitcoin-spendable-utxos'
 export {
   BitcoinDiscoveryError,

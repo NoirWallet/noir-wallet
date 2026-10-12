@@ -382,7 +382,7 @@ export class IndexedDbBitcoinDiscoveryRepository implements BitcoinDiscoveryRepo
       if (updatedAt < existing.updatedAt) {
         throw new Error('Bitcoin discovery timestamp cannot move backwards')
       }
-      assertBitcoinDiscoveryTargetExtension(existing.checkpoint, checkpoint)
+      assertBitcoinDiscoveryTargetExtension(existing.checkpoint, checkpoint, existing.observations)
       const storedScan: StoredScanRecord = Object.freeze({
         schemaVersion: 1,
         chainAccountId: scope.chainAccount.id,
