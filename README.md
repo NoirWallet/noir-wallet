@@ -53,7 +53,7 @@ git clone https://github.com/NoirWallet/noir-wallet.git
 cd noir-wallet
 ```
 
-The SDK and its example are included in the clone. The source under `packages/zcash-wallet-wasm/` is a separate checkout, not a Git submodule, and is excluded from this pnpm workspace. Ordinary extension builds use the vendored package at `packages/extension/src/lib/wasm-pkg/` and do not require that source checkout. Updating the vendored package requires access to the WASM source or a published artifact and must follow the [WASM package workflow](./AGENTS.md#wasm-package-workflow). Do not replace the vendored package with an unrelated build.
+The SDK and its example are included in the clone. The source under `packages/zcash-wallet-wasm/` is a separate checkout, not a Git submodule, and is excluded from this pnpm workspace. Ordinary extension builds use the vendored package at `packages/extension/src/lib/wasm-pkg/` and do not require that source checkout. Updating the vendored package requires access to the WASM source or a published artifact and must follow the [WASM package workflow](./docs/release-workflow.md#wasm-package-updates). Do not replace the vendored package with an unrelated build.
 
 No `.env` file or analytics credentials are required for local development, default builds, beta builds, or testnet builds. Production mainnet builds require the process environment variables listed in [`.env.example`](./.env.example); see the [release configuration](./docs/release-workflow.md#workflow-stages). Those values are embedded in the extension and are visible to its users, so they must not grant privileged server access.
 

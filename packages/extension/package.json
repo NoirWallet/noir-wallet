@@ -6,8 +6,8 @@
   "scripts": {
     "dev": "vite --config vite.config.ts",
     "dev:extension": "pnpm run dev",
-    "build": "tsc --noEmit && vite build",
-    "build:testnet": "tsc --noEmit && NETWORK_MODE=testnet vite build",
+    "build": "node ../../scripts/wasm-package.mjs verify && tsc --noEmit && vite build",
+    "build:testnet": "node ../../scripts/wasm-package.mjs verify && tsc --noEmit && NETWORK_MODE=testnet vite build",
     "preview": "vite preview",
     "type-check": "tsc --noEmit",
     "test": "node ../../scripts/run-core-tests.mjs",

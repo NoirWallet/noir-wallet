@@ -275,34 +275,9 @@ The multi-account SDK result keeps top-level primary-account fields for compatib
 
 Do not edit or commit nested Rust source as part of the top-level repository.
 
-The WASM repository always builds its web package into the generic `pkg/` directory. The top-level repository vendors that complete package in `packages/extension/src/lib/wasm-pkg/` and records its source, build settings, artifact checksum, and per-file hashes in `wasm-package.lock.json`.
+Follow the [WASM package update procedure](./docs/release-workflow.md#wasm-package-updates) for local builds, published artifact imports, and dependency-upgrade PRs. Ordinary extension builds and merges use the committed package without synchronizing WASM or amending commits. Local adoption requires a clean source checkout at the selected ref and a fresh build; the importer records commit and file hashes but does not prove source-to-binary correspondence.
 
-To restore the currently locked package from a matching nested checkout:
-
-```bash
-git -C packages/zcash-wallet-wasm status --short --branch
-pnpm sync-wasm-pkg
-```
-
-`sync-wasm-pkg` rejects a nested checkout or `pkg/` output that differs from the lock. To adopt an intentional local build from a new source ref:
-
-```bash
-pnpm update-wasm-pkg:local -- --ref <branch-or-tag> --features <comma-separated-features>
-```
-
-The preferred release path is an immutable HTTPS archive with a published SHA-256:
-
-```bash
-pnpm update-wasm-pkg -- \
-  --repository https://github.com/NoirWallet/zcash-wallet-wasm \
-  --commit <full-commit-sha> \
-  --ref <release-tag> \
-  --features <comma-separated-features> \
-  --artifact-url <https-url> \
-  --artifact-sha256 <sha256>
-```
-
-Run `pnpm verify-wasm-pkg` before committing. Commit `wasm-package.lock.json` and all generated `packages/extension/src/lib/wasm-pkg/**` changes together. Generated package files are excluded from formatting so commit hooks cannot invalidate the locked artifact. Never ship TypeScript bindings without the matching JavaScript loader and `.wasm` binary. Extension CI verifies the vendored package but does not compile or download WASM.
+Commit `wasm-package.lock.json` and the complete generated `packages/extension/src/lib/wasm-pkg/**` package together. Generated files are excluded from formatting so hooks cannot invalidate the locked artifact. Never ship TypeScript bindings without their matching loader, binary, and support files. Local extension builds and CI verify the vendored package without compiling or downloading WASM.
 
 ## Release Workflow
 

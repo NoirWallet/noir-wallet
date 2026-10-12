@@ -1,9 +1,0 @@
-#!/usr/bin/env sh
-
-if node scripts/sync-wasm-pkg.js; then
-  if ! git diff --quiet -- packages/extension/src/lib/wasm-pkg; then
-    git add packages/extension/src/lib/wasm-pkg
-    git commit --amend --no-edit
-    echo "\033[32m✅ wasm-pkg synced from zcash-wallet-wasm and amended into merge commit\033[0m"
-  fi
-fi
