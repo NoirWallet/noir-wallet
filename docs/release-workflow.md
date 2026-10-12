@@ -28,6 +28,21 @@ The public History proxy serves only the existing Ankr History, EVM token discov
 
 The V2 package contains one ZIP for both runtime network modes, `SHA256SUMS`, release metadata, and a Release body. The PR workflow has read-only permissions and only uploads an Actions artifact. The trusted manual workflow packages Beta from the selected source commit and uses a separate write-scoped job when `publish_beta` is selected. Checkout steps use pinned Action SHAs with credential persistence disabled.
 
+## WASM Package Updates
+
+WASM source and releases are maintained separately. V2 commits complete packages for Zcash at `packages/extension/src/lib/wasm-pkg/` and Multichain at `packages/extension/src/infrastructure/generated/wasm/multichain/`. Each contains a `wasm-integrity.json` with source, ABI, build-tool versions, and artifact hashes. Upstream releases do not automatically update the wallet; ordinary builds and merges use these committed packages without rebuilding or synchronizing WASM. Merges do not amend commits.
+
+For an intentional upgrade, select an upstream release and update the relevant engine's source/build/ABI pins and compatibility checks in this wallet repository. Use a clean separate source checkout at the pinned full commit. The explicit local commands rebuild with the checked tool versions and generate the complete package and integrity manifest:
+
+```bash
+pnpm sync-wasm-pkg -- --source <zcash-checkout>
+pnpm sync-multichain-wasm-pkg -- --source <multichain-checkout>
+```
+
+Run only the command for the engine being updated. These commands build fresh output; they do not import an existing `pkg/`. They reject dirty source checkouts, mismatched commits, and mismatched tool versions. Check the sync script for its pinned tools and optional local tool paths before running it.
+
+Develop and test the extension against the generated package, then submit its complete files, integrity manifest, updated pins, and related extension changes in one PR targeting `v2`. Include the upstream version and checks performed. Never submit only TypeScript bindings without their matching loader, binary, and support files. Run the [verification and build commands](#verification-and-build); the build checks both engine manifests without access to the source repositories.
+
 ## Routine Previews
 
 1. Open a PR against `v2` and confirm the development artifact passes the relevant local checks. Fork PRs receive no release credentials.
