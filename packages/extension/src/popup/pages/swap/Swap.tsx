@@ -44,8 +44,8 @@ import { zcashWalletRuntimeClient } from '@/popup/services/zcash-wallet-runtime-
 import {
   openHardwareSignAndWait,
   openHardwareSignTab,
-  openKeystoneBitcoinSignTab,
-  openKeystoneEvmSignTab
+  openHardwareBitcoinSignTab,
+  openHardwareEvmSignTab
 } from '@/lib/hardware-tab'
 import { isSidePanelSurface } from '@/lib/extension-display-mode'
 import { ANALYTICS_EVENTS, PAGE_IDS, sendAnalyticsEvent } from '@/lib/analytics'
@@ -246,6 +246,9 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
   const effectiveAccountId = effectiveAccount?.accountId ?? null
   const isHardwareWallet =
     storageV2Account?.walletSource.kind === 'hardware' || legacyHardwareWallet
+  const isLedgerWallet =
+    storageV2Account?.walletSource.kind === 'hardware' &&
+    storageV2Account.walletSource.hardware.vendor === 'ledger'
   const feeTier = useSettingsStore(state => state.feeTier)
   const setFeeTier = useSettingsStore(state => state.setFeeTier)
   const chainEndpointRuntimeKey = useSettingsStore(state =>
@@ -1658,7 +1661,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
               })
             )
             if (requiredApproval) {
-              if (isHardwareWallet) {
+              if (isHardwareWallet && !isLedgerWallet) {
                 throw new Error('ERC-20 approval Swap routes are not yet supported with Keystone')
               }
               const approvalReview = await measure('evm-prepare-approval', () =>
@@ -1732,7 +1735,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
             walletOwnedSource.family === 'evm' &&
             review.execution.kind === 'evm-signature'
           ) {
-            if (isHardwareWallet) {
+            if (isHardwareWallet && !isLedgerWallet) {
               throw new Error('EVM signature Swap routes are not supported with Keystone')
             }
             const signaturePlan = await measure('rhea-evm-signature-plan', () =>
@@ -1792,7 +1795,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
             walletOwnedSource.family === 'solana' &&
             review.execution.kind === 'solana-transaction'
           ) {
-            if (isHardwareWallet) {
+            if (isHardwareWallet && !isLedgerWallet) {
               throw new Error('Solana Swap routes are not supported with Keystone')
             }
             const solanaReview = await measure('rhea-prepare-solana', () =>
@@ -1811,7 +1814,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
             walletOwnedSource.family === 'near' &&
             review.execution.kind === 'near-transaction-batch'
           ) {
-            if (isHardwareWallet) {
+            if (isHardwareWallet && !isLedgerWallet) {
               throw new Error('NEAR Swap routes are not supported with Keystone')
             }
             const nearReview = await measure('rhea-prepare-near', () =>
@@ -1890,6 +1893,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
       networkFeeTier,
       executionSourceMode,
       isHardwareWallet,
+      isLedgerWallet,
       addRecentRecipientAddress,
       discardPreparedQuoteTransfer,
       swapEventBase,
@@ -2346,8 +2350,8 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
         if (submission.value.status === 'external-signature-required') {
           try {
             await (submission.family === 'bitcoin'
-              ? openKeystoneBitcoinSignTab(submission.value.transactionId)
-              : openKeystoneEvmSignTab(submission.value.transactionId))
+              ? openHardwareBitcoinSignTab(submission.value.transactionId)
+              : openHardwareEvmSignTab(submission.value.transactionId))
           } catch (handoffError) {
             await quoteDepositTransferClient.reject(preparedQuoteTransfer)
             throw handoffError

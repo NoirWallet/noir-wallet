@@ -1,4 +1,4 @@
-import { useEffect, type ReactNode } from 'react'
+import { lazy, Suspense, useEffect, type ReactNode } from 'react'
 import { ToastContainer } from './components/common/ToastContainer'
 import { TestnetModeBanner } from './components/common/TestnetModeBanner'
 import { RouterProvider, Routes, Route, useLocation, useNavigate } from './provider/Router'
@@ -53,7 +53,6 @@ import { Swap } from './pages/swap/Swap'
 // Hardware Wallet Pages (full-tab flows)
 import { KeystoneConnectPage } from './pages/hardware/KeystoneConnectPage'
 import { HardwareConnectPage } from './pages/hardware/HardwareConnectPage'
-import { LedgerConnectPage } from './pages/hardware/LedgerConnectPage'
 import { KeystoneSignPage } from './pages/hardware/KeystoneSignPage'
 import { KeystoneBitcoinSignPage } from './pages/hardware/KeystoneBitcoinSignPage'
 import { KeystoneEvmSignPage } from './pages/hardware/KeystoneEvmSignPage'
@@ -87,6 +86,15 @@ import {
   resolveSolanaFeatureRuntimePolicy
 } from '@/core/chains/feature-runtime-policy'
 import { DEFAULT_NETWORK } from '@/lib/runtime-network'
+
+const LedgerConnectPage = lazy(() =>
+  import('./pages/hardware/LedgerConnectPage').then(module => ({
+    default: module.LedgerConnectPage
+  }))
+)
+const LedgerSignPage = lazy(() =>
+  import('./pages/hardware/LedgerSignPage').then(module => ({ default: module.LedgerSignPage }))
+)
 import { useActiveAccountNetworks } from './hooks/useActiveAccountNetworks'
 
 const multichainSendEnabled =
@@ -250,7 +258,22 @@ function AppRoutes() {
       {/* Hardware Wallet Routes (opened in a full browser tab) */}
       <Route path="/hardware/connect" element={<HardwareConnectPage />} />
       <Route path="/hardware/keystone-connect" element={<KeystoneConnectPage />} />
-      <Route path="/hardware/ledger-connect" element={<LedgerConnectPage />} />
+      <Route
+        path="/hardware/ledger-connect"
+        element={
+          <Suspense fallback={<WalletInitializing />}>
+            <LedgerConnectPage />
+          </Suspense>
+        }
+      />
+      <Route
+        path="/hardware/ledger-sign"
+        element={
+          <Suspense fallback={<WalletInitializing />}>
+            <LedgerSignPage />
+          </Suspense>
+        }
+      />
       <Route path="/hardware/sign" element={<KeystoneSignPage />} />
       <Route path="/hardware/bitcoin-sign" element={<KeystoneBitcoinSignPage />} />
       <Route path="/hardware/evm-sign" element={<KeystoneEvmSignPage />} />

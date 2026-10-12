@@ -12,13 +12,19 @@ export function parseEvmAccountBinding(
   chainAccount: ChainAccount,
   expectedChainId: ChainId
 ): EvmAccountBinding {
-  const path = /^m\/44'\/60'\/0'\/0\/(0|[1-9][0-9]{0,9})$/.exec(chainAccount.derivation.path)
+  const path = /^m\/44'\/60'\/(0|[1-9][0-9]*)'\/0\/(0|[1-9][0-9]*)$/.exec(
+    chainAccount.derivation.path
+  )
   const imported =
     chainAccount.derivation.scheme === 'imported' && chainAccount.derivation.path === 'm'
-  const addressIndex = imported ? 0 : path === null ? Number.NaN : Number(path[1])
+  const accountIndex = imported ? 0 : path === null ? Number.NaN : Number(path[1])
+  const addressIndex = imported ? 0 : path === null ? Number.NaN : Number(path[2])
   if (
     chainAccount.scope.chainId !== expectedChainId ||
     (!imported && chainAccount.derivation.scheme !== 'bip44') ||
+    !Number.isSafeInteger(accountIndex) ||
+    accountIndex < 0 ||
+    accountIndex > MAXIMUM_BIP32_INDEX ||
     !Number.isSafeInteger(addressIndex) ||
     addressIndex < 0 ||
     addressIndex > MAXIMUM_BIP32_INDEX ||

@@ -2,10 +2,11 @@ import {
   parseKeystoneHardwareCredential,
   parseLedgerHardwareCredential,
   type LedgerHardwareCredential,
+  type LedgerPublicAccount,
   type KeystoneHardwareCredential
 } from '@/core/wallet/hardware-wallet-data'
 
-export interface KeystoneHardwareProvisioningView {
+export interface HardwareProvisioningView {
   readonly status: 'committed' | 'already-committed'
   readonly generationId: string
   readonly transactionId?: string
@@ -22,7 +23,7 @@ function readRecord(value: unknown, label: string): Record<string, unknown> {
   return value as Record<string, unknown>
 }
 
-function parseResponse(value: unknown): KeystoneHardwareProvisioningView {
+function parseResponse(value: unknown): HardwareProvisioningView {
   const response = readRecord(value, 'Hardware Wallet provisioning response')
   if (typeof response.error === 'string') throw new Error(response.error)
   if (response.success !== true) throw new Error('Hardware Wallet setup failed')
@@ -54,7 +55,7 @@ export function createKeystoneHardwareProvisioningClient(sendMessage: RuntimeMes
       readonly displayName: string
       readonly password?: string
       readonly birthdayHeight?: number
-    }): Promise<KeystoneHardwareProvisioningView> => {
+    }): Promise<HardwareProvisioningView> => {
       const credential = parseKeystoneHardwareCredential(input.credential)
       const response = await sendMessage({
         type: 'PROVISION_KEYSTONE_HARDWARE',
@@ -85,17 +86,31 @@ export const keystoneHardwareProvisioningClient = Object.freeze({
 })
 
 export const ledgerHardwareProvisioningClient = Object.freeze({
+  getCredential: async (walletId: string): Promise<LedgerHardwareCredential> => {
+    const response = await chrome.runtime.sendMessage({
+      type: 'GET_LEDGER_PROVISIONING_CREDENTIAL',
+      walletId
+    })
+    if (typeof response?.error === 'string') throw new Error(response.error)
+    return parseLedgerHardwareCredential(response?.result)
+  },
   provision: async (input: {
     readonly credential: LedgerHardwareCredential
     readonly displayName: string
     readonly password?: string
     readonly birthdayHeight?: number
-  }): Promise<KeystoneHardwareProvisioningView> => {
+    readonly existingKeyDomainId?: string
+    readonly anchorProof?: LedgerPublicAccount
+  }): Promise<HardwareProvisioningView> => {
     const credential = parseLedgerHardwareCredential(input.credential)
     const response = await chrome.runtime.sendMessage({
       type: 'PROVISION_LEDGER_HARDWARE',
       credential,
       displayName: input.displayName,
+      ...(input.existingKeyDomainId === undefined
+        ? {}
+        : { existingKeyDomainId: input.existingKeyDomainId }),
+      ...(input.anchorProof === undefined ? {} : { anchorProof: input.anchorProof }),
       ...(input.password === undefined ? {} : { password: input.password }),
       ...(input.birthdayHeight === undefined ? {} : { birthdayHeight: input.birthdayHeight })
     })

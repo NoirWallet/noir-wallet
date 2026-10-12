@@ -19,7 +19,7 @@ import {
   parseEvmAccountBinding
 } from '@/infrastructure/chains/evm'
 import { EvmMultichainSigningClient } from '@/infrastructure/keyring/multichain/evm-signing-client'
-import { KeystoneEvmSigningContextResolver } from '@/infrastructure/keyring/keystone-evm-signing-context'
+import { HardwareEvmSigningContextResolver } from '@/infrastructure/keyring/hardware-evm-signing-context'
 import {
   IndexedDbCredentialRepository,
   IndexedDbStorageV2Repository,
@@ -100,7 +100,7 @@ export function createBackgroundEvmTransferController(
   userEvmAssets: readonly AssetDefinitionInput[] = []
 ): BackgroundEvmTransferController {
   const storageRepository = new IndexedDbStorageV2Repository()
-  const externalSigner = new KeystoneEvmSigningContextResolver({
+  const externalSigner = new HardwareEvmSigningContextResolver({
     storageRepository,
     credentialRepository: new IndexedDbCredentialRepository(),
     credentials: credentialSession,

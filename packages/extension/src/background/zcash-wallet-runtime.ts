@@ -3266,11 +3266,22 @@ export class BackgroundZcashWalletRuntime {
     deviceModel?: string
     deviceName?: string
     birthdayHeight?: number
+    existingLedgerWalletId?: string
+    existingLedgerAccountId?: string
     /** Required when creating the very first wallet (onboarding) */
     password?: string
     /** The global Wallet inventory, rather than retained V1 alone, is empty. */
     enforceNewPasswordPolicy?: boolean
   }): Promise<string> {
+    if (
+      (params.existingLedgerWalletId || params.existingLedgerAccountId) &&
+      (params.keySource !== 'ledger' ||
+        !params.existingLedgerWalletId ||
+        !params.existingLedgerAccountId ||
+        !params.existingLedgerWalletId.startsWith('wallet:ledger-v3:'))
+    ) {
+      throw new Error('Ledger Zcash projection requires an existing native Wallet and Account')
+    }
     const name = params.name.trim()
     if (!name) throw new Error('Enter a wallet name')
     await rehydrateWalletStore()
@@ -3303,7 +3314,10 @@ export class BackgroundZcashWalletRuntime {
       }
     }
 
-    const walletId = crypto.randomUUID()
+    const walletId = params.existingLedgerWalletId ?? crypto.randomUUID()
+    if (this.store.getWallet(walletId)) {
+      throw new Error('Ledger Zcash projection conflicts with a retained Wallet')
+    }
     if (params.keySource === 'ledger') {
       await SecureStorage.saveLedgerHardwareCredential(
         walletId,
@@ -3347,7 +3361,7 @@ export class BackgroundZcashWalletRuntime {
       ])
 
       const account: AccountData = {
-        id: crypto.randomUUID(),
+        id: params.existingLedgerAccountId ?? crypto.randomUUID(),
         name,
         addresses,
         derivationIndex: params.accountHdIndex,

@@ -7,7 +7,7 @@ import {
   type EvmFeeSelection
 } from '@/infrastructure/chains/evm'
 import { getOwnExtensionSenderContext } from '@/lib/runtime-message-security'
-import { openKeystoneEvmSignTab } from '@/lib/hardware-tab'
+import { openHardwareEvmSignTab } from '@/lib/hardware-tab'
 import { evmWalletClient } from '@/popup/services/evm-wallet-client'
 import { openModal } from '@/popup/provider/ModalManager'
 import { toast } from '@/store/toast-store'
@@ -208,7 +208,7 @@ export function EvmNonceRecoveryBanner({
           review.review.payloadFingerprint.digestHex
         )
         if (submission.status === 'external-signature-required') {
-          await openKeystoneEvmSignTab(submission.transactionId)
+          await openHardwareEvmSignTab(submission.transactionId)
         } else {
           toast.success(
             submission.status === 'broadcast'

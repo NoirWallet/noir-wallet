@@ -6,7 +6,11 @@ import {
   parseSigningSummary,
   type NearTransactionSummary
 } from '@/core/keyring/domain'
-import { parseSigningCommandId, type SigningCommandId } from '@/core/keyring/ports'
+import {
+  parseSigningCommandId,
+  type SigningCommandId,
+  type SigningExecution
+} from '@/core/keyring/ports'
 import {
   parseTransactionId,
   parseTransactionSegmentId,
@@ -40,6 +44,7 @@ export interface AwaitingApprovalNearTransfer extends PendingTransferBase {
   readonly prepared: PreparedNearTransfer
   readonly signingSummary: NearTransactionSummary
   readonly signingCommandId: SigningCommandId
+  readonly signingExecution?: SigningExecution
   readonly payloadFingerprint: string
   readonly expiresAt: number
 }
@@ -141,12 +146,38 @@ export function parsePendingNearTransfer(value: unknown): PendingNearTransfer {
         'prepared',
         'signingSummary',
         'signingCommandId',
+        ...(Object.prototype.hasOwnProperty.call(record, 'signingExecution')
+          ? ['signingExecution']
+          : []),
         'payloadFingerprint',
         'expiresAt'
       ],
       'Pending NEAR transfer'
     )
     const prepared = parsePreparedNearTransfer(record.prepared)
+    const signingExecution: SigningExecution | undefined =
+      record.signingExecution === undefined
+        ? undefined
+        : (() => {
+            const execution = readRecord(record.signingExecution, 'NEAR signing execution')
+            if (execution.kind === 'internal') {
+              assertExactKeys(execution, ['kind'], 'NEAR signing execution')
+              return { kind: 'internal' as const }
+            }
+            assertExactKeys(execution, ['kind', 'request'], 'NEAR signing execution')
+            const request = readRecord(execution.request, 'NEAR Ledger signing request')
+            assertExactKeys(request, ['encoding', 'value'], 'NEAR Ledger signing request')
+            if (execution.kind !== 'external' || request.encoding !== 'base64') {
+              throw new Error('Invalid pending NEAR Ledger signing request')
+            }
+            return {
+              kind: 'external' as const,
+              request: {
+                encoding: 'base64' as const,
+                value: parseCanonicalBase64(request.value)
+              }
+            }
+          })()
     if (
       typeof record.payloadFingerprint !== 'string' ||
       !/^[0-9a-f]{64}$/.test(record.payloadFingerprint)
@@ -165,6 +196,7 @@ export function parsePendingNearTransfer(value: unknown): PendingNearTransfer {
       signingCommandId: parseSigningCommandId(
         typeof record.signingCommandId === 'string' ? record.signingCommandId : ''
       ),
+      ...(signingExecution === undefined ? {} : { signingExecution }),
       payloadFingerprint: record.payloadFingerprint,
       expiresAt: readTimestamp(record.expiresAt, 'pending NEAR signing expiry')
     })

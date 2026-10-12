@@ -204,7 +204,7 @@ test('selects Keystone signing only from the active authenticated hardware sourc
   })
   await expect(
     harness().controller.getExternalSigningRequest('transaction:bitcoin:fixed')
-  ).rejects.toThrow(/not a Bitcoin-capable Keystone/)
+  ).rejects.toThrow(/not a Bitcoin-capable hardware Wallet/)
 })
 
 test('spends only the selected Bitcoin account type and keeps Keystone on BIP-84', async () => {
@@ -237,7 +237,7 @@ test('spends only the selected Bitcoin account type and keeps Keystone on BIP-84
       undefined,
       'p2tr'
     )
-  ).rejects.toThrow(/Keystone.*Native SegWit/)
+  ).rejects.toThrow(/Hardware Bitcoin transfers support only the Native SegWit account/)
   expect(
     hardware.calls.filter(call => call[0] === 'preparation').map(call => call[1].addressType)
   ).toEqual([])

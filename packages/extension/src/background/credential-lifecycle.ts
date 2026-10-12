@@ -24,6 +24,12 @@ import {
   type KeystoneHardwareProvisioningResult
 } from '@/infrastructure/keyring/keystone-hardware-provisioning-coordinator'
 import {
+  LedgerHardwareProvisioningCoordinator,
+  type LedgerHardwareProvisioningInput,
+  type LedgerHardwareProvisioningResult
+} from '@/infrastructure/keyring/ledger-hardware-provisioning-coordinator'
+import { isNativeHardwareWalletId } from '@/core/wallet/native-hardware-identity'
+import {
   PrivateKeyProvisioningCoordinator,
   type PrivateKeyPreviewInput,
   type PrivateKeyPreviewResult,
@@ -241,6 +247,10 @@ export class CredentialLifecycleCoordinator {
     credentialRepository: this.credentialRepository,
     storageRepository: this.storageRepository
   })
+  private readonly ledgerProvisioning = new LedgerHardwareProvisioningCoordinator({
+    credentialRepository: this.credentialRepository,
+    storageRepository: this.storageRepository
+  })
   private readonly privateKeyProvisioning = new PrivateKeyProvisioningCoordinator({
     credentialRepository: this.credentialRepository,
     storageRepository: this.storageRepository
@@ -415,6 +425,22 @@ export class CredentialLifecycleCoordinator {
     return operation
   }
 
+  provisionLedgerHardware(
+    input: LedgerHardwareProvisioningInput
+  ): Promise<LedgerHardwareProvisioningResult> {
+    const operation = this.synchronizationQueue.then(async () =>
+      this.ledgerProvisioning.provision({
+        ...input,
+        evmChainIds: await this.readPersistedEvmNetworkChainIds()
+      })
+    )
+    this.synchronizationQueue = operation.then(
+      () => undefined,
+      () => undefined
+    )
+    return operation
+  }
+
   previewPrivateKey(input: PrivateKeyPreviewInput): Promise<PrivateKeyPreviewResult> {
     const operation = this.synchronizationQueue.then(async () =>
       this.privateKeyProvisioning.preview({
@@ -441,8 +467,7 @@ export class CredentialLifecycleCoordinator {
     if (snapshot.keyDomains.length === 0) return 'inactive'
     if (
       snapshot.keyDomains.every(
-        keyDomain =>
-          keyDomain.source.kind === 'hardware' && keyDomain.id.startsWith('wallet:keystone-v2:')
+        keyDomain => keyDomain.source.kind === 'hardware' && isNativeHardwareWalletId(keyDomain.id)
       )
     ) {
       return 'native-v2-hardware-only'
@@ -459,8 +484,7 @@ export class CredentialLifecycleCoordinator {
     if (
       snapshot.keyDomains.every(
         keyDomain =>
-          (keyDomain.source.kind === 'hardware' &&
-            keyDomain.id.startsWith('wallet:keystone-v2:')) ||
+          (keyDomain.source.kind === 'hardware' && isNativeHardwareWalletId(keyDomain.id)) ||
           (keyDomain.source.kind === 'private-key' &&
             keyDomain.id.startsWith('wallet:private-key-v2:'))
       )
@@ -484,8 +508,7 @@ export class CredentialLifecycleCoordinator {
         snapshot.keyDomains.some(
           keyDomain =>
             !(
-              (keyDomain.source.kind === 'hardware' &&
-                keyDomain.id.startsWith('wallet:keystone-v2:')) ||
+              (keyDomain.source.kind === 'hardware' && isNativeHardwareWalletId(keyDomain.id)) ||
               (keyDomain.source.kind === 'private-key' &&
                 keyDomain.id.startsWith('wallet:private-key-v2:'))
             )

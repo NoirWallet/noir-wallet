@@ -12,9 +12,14 @@ import {
   unwrapZcashCredentialEnvelope
 } from '@/infrastructure/keyring/credential-envelope-authentication'
 import type { RetainedV1EnvelopeReplacement } from './retained-v1-password-change'
-import { decodeV1EncryptedCredentialEnvelope } from './v1-credential-envelope'
 import {
+  decodeV1EncryptedCredentialEnvelope,
+  parseV1EncryptedCredentialEnvelope
+} from './v1-credential-envelope'
+import {
+  hardwareCredentialEnvelopeEquals,
   hardwareCredentialMatchesMetadata,
+  ledgerMultichainCredentialEquals,
   readHardwareCredentialEnvelope
 } from './hardware-credential-password-change'
 import {
@@ -180,7 +185,10 @@ export class CredentialPasswordChangeRecovery {
   async loadRetainedV1Replacements(
     journal: CredentialTransactionJournal,
     wallets: readonly PasswordChangeWallet[],
-    input: Pick<CredentialPasswordChangeInput, 'currentPassword' | 'newPassword'>
+    input: Pick<
+      CredentialPasswordChangeInput,
+      'currentPassword' | 'newPassword' | 'credentialEnvelopes'
+    >
   ): Promise<RetainedV1EnvelopeReplacement[]> {
     const loaders = wallets.flatMap(wallet => {
       const retainedWallet = wallet.retainedV1
@@ -246,22 +254,47 @@ export class CredentialPasswordChangeRecovery {
             targetSet.manifest.source === 'hardware'
               ? unwrapHardwareCredentialEnvelope
               : unwrapZcashCredentialEnvelope
+          const sourceEnvelope = decodeV1EncryptedCredentialEnvelope(
+            await unwrapWithCandidates(
+              source,
+              [input.currentPassword, input.newPassword],
+              unwrapSource
+            )
+          )
+          const targetEnvelope = decodeV1EncryptedCredentialEnvelope(
+            await unwrapWithCandidates(
+              target,
+              [input.newPassword, input.currentPassword],
+              unwrapTarget
+            )
+          )
+          if (
+            sourceSet.manifest.source === 'hardware' &&
+            sourceSet.manifest.hardware?.vendor === 'ledger' &&
+            sourceSet.manifest.hardware.firmwareProfile === 'multi-app'
+          ) {
+            const retainedEnvelope = parseV1EncryptedCredentialEnvelope(
+              input.credentialEnvelopes[retainedWallet.credentialStorageKey]
+            )
+            if (!hardwareCredentialEnvelopeEquals(retainedEnvelope, targetEnvelope)) {
+              const [activeCredential, retainedCredential] = await Promise.all([
+                readHardwareCredentialEnvelope(sourceEnvelope, input.currentPassword),
+                readHardwareCredentialEnvelope(retainedEnvelope, input.currentPassword)
+              ])
+              if (!ledgerMultichainCredentialEquals(activeCredential, retainedCredential)) {
+                throw new Error('Retained Ledger credential differs from active inventory')
+              }
+            }
+            return Object.freeze({
+              storageKey: retainedWallet.credentialStorageKey,
+              source: retainedEnvelope,
+              target: targetEnvelope
+            })
+          }
           return Object.freeze({
             storageKey: retainedWallet.credentialStorageKey,
-            source: decodeV1EncryptedCredentialEnvelope(
-              await unwrapWithCandidates(
-                source,
-                [input.currentPassword, input.newPassword],
-                unwrapSource
-              )
-            ),
-            target: decodeV1EncryptedCredentialEnvelope(
-              await unwrapWithCandidates(
-                target,
-                [input.newPassword, input.currentPassword],
-                unwrapTarget
-              )
-            )
+            source: sourceEnvelope,
+            target: targetEnvelope
           })
         }
       ]

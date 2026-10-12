@@ -1,3 +1,4 @@
+import '@/lib/buffer-polyfill'
 import { isZcashHardwareKeySource } from '@/core/wallet/hardware-wallet-data'
 import { parseLedgerPcztSignatures } from '@/lib/ledger/signature'
 import { safeBig } from '@/lib/big'
@@ -201,10 +202,7 @@ import {
   provisionPrimarySoftwareWallet,
   type SoftwareWalletProvisioningMode
 } from './software-wallet-provisioning'
-import {
-  provisionKeystoneHardware,
-  provisionLedgerHardware
-} from './keystone-hardware-provisioning'
+import { provisionKeystoneHardware, provisionLedgerHardware } from './hardware-wallet-provisioning'
 import {
   exportPrivateKey,
   importPrivateKeyWallet,
@@ -271,6 +269,15 @@ import {
   NEAR_TRANSACTION_MONITOR_ALARM
 } from './near-transaction-monitor'
 import { hasKeystoneWalletMissingNetworkProjection } from '@/store/wallet-network-projection'
+import {
+  configureLedgerSigningCoordinator,
+  registerLedgerSigningTabLifecycle,
+  getLedgerSigningRequest,
+  submitLedgerSigningResponse,
+  cancelLedgerSigning,
+  cancelAllLedgerSigning
+} from './ledger-signing-coordinator'
+import { readLedgerProvisioningCredential } from './ledger-signing-bridge'
 import type {
   DetectedEvmAssetCoordinator,
   UserEvmAssetCoordinator
@@ -1104,6 +1111,7 @@ async function switchGlobalNetworkMode(target: Network): Promise<{ restartRequir
   if (!(await credentialSession.hasUnlockSession())) {
     throw new Error('Unlock the wallet before switching networks')
   }
+  await cancelAllLedgerSigning('Network mode changed. Review this action again.')
   const hardwareMissingTargetMetadata = hasKeystoneWalletMissingNetworkProjection(
     useWalletStore.getState().wallets,
     target
@@ -1269,6 +1277,28 @@ if (__EXTENSION_UPDATES_ENABLED__) {
 const debugLogsEnabled = typeof __DEBUG_LOGS__ !== 'boolean' || __DEBUG_LOGS__
 let forwardedDiagnosticSequence = 0
 logger.configureDiagnostics(appendDiagnosticLog)
+configureLedgerSigningCoordinator(async scope => {
+  if (networkRestartRequired || !(await credentialSession.hasUnlockSession()))
+    throw new Error('Wallet is locked or restarting')
+  const namespace = parseChainId(scope.chainId).namespace
+  const family =
+    namespace === 'eip155'
+      ? 'evm'
+      : namespace === 'solana'
+        ? 'solana'
+        : namespace === 'near'
+          ? 'near'
+          : namespace === 'bip122'
+            ? 'bitcoin'
+            : null
+  if (!family) throw new Error('Unsupported Ledger chain')
+  await credentialLifecycle.assertActiveAccountSupportsChain(
+    scope.keyDomainId,
+    scope.accountId,
+    family
+  )
+})
+registerLedgerSigningTabLifecycle()
 
 logger.info(`Background service worker started version=${__APP_VERSION__} build=${__BUILD_TIME__}`)
 
@@ -1956,6 +1986,84 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
     return true
   }
 
+  if (
+    [
+      'GET_LEDGER_SIGNING_REQUEST',
+      'SUBMIT_LEDGER_SIGNING_RESPONSE',
+      'CANCEL_LEDGER_SIGNING_REQUEST',
+      'GET_LEDGER_PROVISIONING_CREDENTIAL',
+      'GET_HARDWARE_TRANSFER_VENDOR'
+    ].includes(message.type)
+  ) {
+    if (!isTrustedRuntimeMessageSender(message.type, sender, chrome.runtime.id)) {
+      sendResponse({ error: 'Unauthorized Ledger runtime sender' })
+      return true
+    }
+    try {
+      message = parseTrustedExtensionRuntimeMessage(runtimeMessage)
+    } catch {
+      sendResponse({ error: 'Invalid Ledger runtime message' })
+      return true
+    }
+  }
+  if (
+    message.type === 'GET_LEDGER_SIGNING_REQUEST' ||
+    message.type === 'SUBMIT_LEDGER_SIGNING_RESPONSE' ||
+    message.type === 'CANCEL_LEDGER_SIGNING_REQUEST'
+  ) {
+    if (!isOwnExtensionRouteSender(sender, chrome.runtime.id, '/hardware/ledger-sign')) {
+      sendResponse({ error: 'Unauthorized Ledger signing sender' })
+      return true
+    }
+    const operation =
+      message.type === 'GET_LEDGER_SIGNING_REQUEST'
+        ? getLedgerSigningRequest(message.requestId, sender.tab?.id)
+        : message.type === 'SUBMIT_LEDGER_SIGNING_RESPONSE'
+          ? submitLedgerSigningResponse(message.requestId, message.response, sender.tab?.id)
+          : getLedgerSigningRequest(message.requestId, sender.tab?.id).then(() =>
+              cancelLedgerSigning(message.requestId)
+            )
+    void operation
+      .then(result => sendResponse({ result: result ?? true }))
+      .catch(error =>
+        sendResponse({ error: error instanceof Error ? error.message : 'Ledger signing failed' })
+      )
+    return true
+  }
+  if (message.type === 'GET_LEDGER_PROVISIONING_CREDENTIAL') {
+    if (!isOwnExtensionRouteSender(sender, chrome.runtime.id, '/hardware/ledger-connect')) {
+      sendResponse({ error: 'Unauthorized Ledger setup sender' })
+      return true
+    }
+    void readLedgerProvisioningCredential(message.walletId)
+      .then(result => sendResponse({ result }))
+      .catch(error =>
+        sendResponse({
+          error: error instanceof Error ? error.message : 'Ledger Wallet unavailable'
+        })
+      )
+    return true
+  }
+  if (message.type === 'GET_HARDWARE_TRANSFER_VENDOR') {
+    const operation =
+      message.family === 'evm'
+        ? evmTransferRouter?.getExternalSigningRequest(message.transactionId)
+        : message.family === 'bitcoin'
+          ? bitcoinTransferController?.getExternalSigningRequest(message.transactionId)
+          : undefined
+    if (!operation) {
+      sendResponse({ error: 'Hardware signing unavailable' })
+      return true
+    }
+    void operation
+      .then(result => sendResponse({ result: result?.vendor ?? 'keystone' }))
+      .catch(error =>
+        sendResponse({
+          error: error instanceof Error ? error.message : 'Hardware signing unavailable'
+        })
+      )
+    return true
+  }
   if (message.type === 'WORKER_RPC') {
     if (getOwnExtensionSenderContext(sender, chrome.runtime.id) !== 'extension-page') {
       sendResponse({ error: 'Unauthorized Worker RPC sender' })
@@ -3097,7 +3205,8 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
     if (
       (message.type === 'GET_KEYSTONE_EVM_SIGNING_REQUEST' ||
         message.type === 'SUBMIT_KEYSTONE_EVM_SIGNATURE') &&
-      !isOwnExtensionRouteSender(sender, chrome.runtime.id, '/hardware/evm-sign')
+      !isOwnExtensionRouteSender(sender, chrome.runtime.id, '/hardware/evm-sign') &&
+      !isOwnExtensionRouteSender(sender, chrome.runtime.id, '/hardware/ledger-sign')
     ) {
       sendResponse({ error: createEvmWalletRuntimeError('invalid-request') })
       return true
@@ -3269,7 +3378,8 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
     if (
       (message.type === 'GET_KEYSTONE_BITCOIN_SIGNING_REQUEST' ||
         message.type === 'SUBMIT_KEYSTONE_BITCOIN_SIGNATURE') &&
-      !isOwnExtensionRouteSender(sender, chrome.runtime.id, '/hardware/bitcoin-sign')
+      !isOwnExtensionRouteSender(sender, chrome.runtime.id, '/hardware/bitcoin-sign') &&
+      !isOwnExtensionRouteSender(sender, chrome.runtime.id, '/hardware/ledger-sign')
     ) {
       sendResponse({ error: createBitcoinWalletRuntimeError('invalid-request') })
       return true
@@ -3799,11 +3909,19 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
   }
 
   if (message.type === 'PROVISION_LEDGER_HARDWARE') {
+    if (!isOwnExtensionRouteSender(sender, chrome.runtime.id, '/hardware/ledger-connect')) {
+      sendResponse({ error: 'Unauthorized Ledger setup sender' })
+      return true
+    }
     enqueueWalletSessionTransition(() =>
       provisionLedgerHardware({
         credential: message.credential,
         displayName: message.displayName,
         ...(message.password === undefined ? {} : { password: message.password }),
+        ...(message.existingKeyDomainId === undefined
+          ? {}
+          : { existingKeyDomainId: message.existingKeyDomainId }),
+        ...(message.anchorProof === undefined ? {} : { anchorProof: message.anchorProof }),
         ...(message.birthdayHeight === undefined ? {} : { birthdayHeight: message.birthdayHeight })
       })
     )
@@ -4883,6 +5001,7 @@ async function performWalletLock(): Promise<void> {
 }
 
 async function performWalletLockState(): Promise<void> {
+  await cancelAllLedgerSigning('Wallet was locked. Review this action again.')
   pendingRequestsManager.cancelAll()
   syncScheduler.abortSync()
   await backgroundZcashWalletRuntime.lock()
@@ -4934,6 +5053,7 @@ async function performKeyringRuntimesResetAfterCredentialChange(): Promise<void>
 async function handleAccountSwitched({
   refreshPortfolio = true
 }: { refreshPortfolio?: boolean } = {}): Promise<void> {
+  await cancelAllLedgerSigning('Account changed. Review this action again.')
   try {
     const account = backgroundZcashWalletRuntime.getCurrentAccount()
 
@@ -4973,6 +5093,7 @@ async function handleAccountSwitched({
  */
 async function handleDAppDisconnect(origin: string): Promise<boolean> {
   try {
+    await cancelAllLedgerSigning('dApp authorization changed. Review this action again.')
     await accountContextTransition.runActiveOperation(() => dappHandler.revokePermission(origin))
     return true
   } catch (error: any) {

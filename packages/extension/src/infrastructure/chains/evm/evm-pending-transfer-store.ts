@@ -25,6 +25,7 @@ import {
 import { parsePreparedEvmTransfer, type PreparedEvmTransfer } from './evm-transaction-builder'
 import { serializePreparedEvmUnsignedTransaction } from './evm-signed-transaction'
 import { createKeystoneEthereumSignRequest } from '@/lib/keystone'
+import { bytesToBase64, hexToBytes } from '@/lib/bytes'
 
 const STORAGE_KEY_PREFIX = 'evm_pending_transfer:'
 const REVIEW_GRAPH_STORAGE_KEY_PREFIX = 'evm_pending_review_graph:'
@@ -51,9 +52,10 @@ export interface AwaitingApprovalEvmTransfer extends PendingTransferBase {
 }
 
 export interface EvmExternalSignerBinding {
+  readonly vendor?: 'keystone' | 'ledger'
   readonly requestId: string
   readonly derivationPath: string
-  readonly masterFingerprintHex: string
+  readonly masterFingerprintHex?: string
   readonly address: string
 }
 
@@ -126,9 +128,14 @@ function readCanonicalBase64(value: unknown, label: string): string {
 function parseExternalSigner(value: unknown): EvmExternalSignerBinding | null {
   if (value === null) return null
   const record = readRecord(value, 'Pending EVM external signer')
+  const vendor = record.vendor === 'ledger' ? 'ledger' : 'keystone'
   assertExactKeys(
     record,
-    ['requestId', 'derivationPath', 'masterFingerprintHex', 'address'],
+    vendor === 'ledger'
+      ? ['vendor', 'requestId', 'derivationPath', 'address']
+      : record.vendor === 'keystone'
+        ? ['vendor', 'requestId', 'derivationPath', 'masterFingerprintHex', 'address']
+        : ['requestId', 'derivationPath', 'masterFingerprintHex', 'address'],
     'Pending EVM external signer'
   )
   if (
@@ -138,17 +145,21 @@ function parseExternalSigner(value: unknown): EvmExternalSignerBinding | null {
     ) ||
     typeof record.derivationPath !== 'string' ||
     !/^m(?:\/(?:0|[1-9][0-9]{0,9})'?){2,16}$/.test(record.derivationPath) ||
-    typeof record.masterFingerprintHex !== 'string' ||
-    !/^[0-9a-f]{8}$/.test(record.masterFingerprintHex) ||
+    (vendor === 'keystone' &&
+      (typeof record.masterFingerprintHex !== 'string' ||
+        !/^[0-9a-f]{8}$/.test(record.masterFingerprintHex))) ||
     typeof record.address !== 'string' ||
     !/^0x[0-9a-f]{40}$/.test(record.address)
   ) {
     throw new Error('Invalid pending EVM external signer')
   }
   return Object.freeze({
+    ...(record.vendor === undefined ? {} : { vendor }),
     requestId: record.requestId,
     derivationPath: record.derivationPath,
-    masterFingerprintHex: record.masterFingerprintHex,
+    ...(vendor === 'keystone'
+      ? { masterFingerprintHex: record.masterFingerprintHex as string }
+      : {}),
     address: record.address
   })
 }
@@ -172,17 +183,21 @@ function parseSigningExecution(
   const request = readRecord(record.request, 'Pending EVM external signing request')
   assertExactKeys(request, ['encoding', 'value'], 'Pending EVM external signing request')
   const requestBase64 = readCanonicalBase64(request.value, 'pending EVM signing request')
-  const expected = createKeystoneEthereumSignRequest({
-    requestId: externalSigner.requestId,
-    unsignedTransactionHex: serializePreparedEvmUnsignedTransaction(prepared),
-    chainId: Number(prepared.transaction.chainId),
-    derivationPath: externalSigner.derivationPath,
-    masterFingerprintHex: externalSigner.masterFingerprintHex,
-    address: externalSigner.address
-  })
+  const unsignedTransactionHex = serializePreparedEvmUnsignedTransaction(prepared)
+  const expectedBase64 =
+    externalSigner.vendor === 'ledger'
+      ? bytesToBase64(hexToBytes(unsignedTransactionHex))
+      : createKeystoneEthereumSignRequest({
+          requestId: externalSigner.requestId,
+          unsignedTransactionHex,
+          chainId: Number(prepared.transaction.chainId),
+          derivationPath: externalSigner.derivationPath,
+          masterFingerprintHex: externalSigner.masterFingerprintHex!,
+          address: externalSigner.address
+        }).cborBase64
   if (
     request.encoding !== 'base64' ||
-    requestBase64 !== expected.cborBase64 ||
+    requestBase64 !== expectedBase64 ||
     externalSigner.address !== prepared.from.toLowerCase()
   ) {
     throw new Error('Pending EVM external signing request does not match the prepared transaction')

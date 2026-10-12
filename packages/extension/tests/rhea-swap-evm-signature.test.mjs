@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import { privateKeyToAccount } from 'viem/accounts'
 
 import { RheaSwapEvmSignatureCoordinator } from '../src/background/rhea-swap-evm-signature.ts'
 import { InMemoryTransactionRepository } from '../src/infrastructure/persistence/repositories/in-memory-transaction-repository.ts'
@@ -6,6 +7,29 @@ import { InMemoryTransactionRepository } from '../src/infrastructure/persistence
 const sender = '0x1111111111111111111111111111111111111111'
 const privateSender = '0x2222222222222222222222222222222222222222'
 const fingerprint = 'a'.repeat(64)
+const ledgerAccount = privateKeyToAccount(`0x${'11'.repeat(32)}`)
+const wrongLedgerAccount = privateKeyToAccount(`0x${'22'.repeat(32)}`)
+const ledgerPublicKey = `0x04${'12'.repeat(64)}`
+
+function ledgerTypedData(signingAddress = ledgerAccount.address) {
+  return {
+    domain: { name: 'RHEA', version: '1', chainId: 1, verifyingContract: signingAddress },
+    types: {
+      EIP712Domain: [
+        { name: 'name', type: 'string' },
+        { name: 'version', type: 'string' },
+        { name: 'chainId', type: 'uint256' },
+        { name: 'verifyingContract', type: 'address' }
+      ],
+      Order: [
+        { name: 'maker', type: 'address' },
+        { name: 'amount', type: 'uint256' }
+      ]
+    },
+    primaryType: 'Order',
+    message: { maker: signingAddress, amount: '1000' }
+  }
+}
 
 function binding(signingAddress = sender) {
   return {
@@ -38,10 +62,10 @@ function binding(signingAddress = sender) {
   }
 }
 
-function activeContext() {
+function activeContext(signingAddress = sender, ledger = false) {
   return {
     generationId: 'generation-one',
-    keyDomainSource: { kind: 'mnemonic' },
+    keyDomainSource: ledger ? { kind: 'hardware', vendor: 'ledger' } : { kind: 'mnemonic' },
     chainAccount: {
       id: 'chain-account-one',
       scope: {
@@ -50,7 +74,7 @@ function activeContext() {
         chainId: 'eip155:1'
       },
       derivation: { scheme: 'bip44', path: "m/44'/60'/0'/0/0" },
-      identity: { kind: 'account-identifier', value: sender }
+      identity: { kind: 'account-identifier', value: signingAddress }
     }
   }
 }
@@ -86,7 +110,7 @@ function createHarness(overrides = {}) {
     chainId: 1,
     sender: overrides.sender ?? sender,
     signingScheme: 'eip712',
-    typedDataJson: '{"domain":{},"message":{}}',
+    typedDataJson: overrides.typedDataJson ?? '{"domain":{},"message":{}}',
     approval: null
   }
   const submission = {
@@ -149,12 +173,35 @@ function createHarness(overrides = {}) {
     ...overrides.signer
   }
   let scheduleCount = 0
-  const coordinator = new RheaSwapEvmSignatureCoordinator({
+  let currentContext = activeContext(overrides.sender ?? sender, Boolean(overrides.ledger))
+  const options = {
     service,
     signer,
     pending,
     repository,
-    loadContext: async () => activeContext(),
+    loadContext: async () => currentContext,
+    ...(overrides.ledger
+      ? {
+          ledger: {
+            resolveAccount: async context => {
+              calls.push('resolve-ledger')
+              return {
+                address: context.chainAccount.identity.value,
+                derivationPath: context.chainAccount.derivation.path,
+                publicKey: ledgerPublicKey
+              }
+            },
+            requestSignature: async (request, approval) => {
+              calls.push('sign-ledger')
+              await approval.validate()
+              return {
+                signatureHex: await ledgerAccount.signTypedData(request.typedData)
+              }
+            },
+            ...overrides.ledger
+          }
+        }
+      : {}),
     scheduleMonitoring: async () => {
       scheduleCount += 1
       calls.push('schedule')
@@ -162,15 +209,21 @@ function createHarness(overrides = {}) {
     },
     now: () => now,
     createId: () => 'stable-one'
-  })
+  }
+  const coordinator = new RheaSwapEvmSignatureCoordinator(options)
   return {
     coordinator,
+    options,
+    plan,
     calls,
     preparedPayloads,
     pending,
     repository,
     setNow(value) {
       now = value
+    },
+    setContext(value) {
+      currentContext = value
     }
   }
 }
@@ -309,4 +362,179 @@ test('keeps a signed command recoverable when cancellation races with navigation
   expect(harness.pending.values.size).toBe(1)
   expect(harness.calls).not.toContain('cancel-signature')
   expect(harness.calls).not.toContain('discard')
+})
+
+test('Ledger EIP-712 Swap approval resumes with the original expiry and submits an account-bound signature', async () => {
+  const typedData = ledgerTypedData()
+  const harness = createHarness({
+    sender: ledgerAccount.address,
+    typedDataJson: JSON.stringify(typedData),
+    ledger: {}
+  })
+  const quote = binding(ledgerAccount.address)
+  const review = await harness.coordinator.prepare(quote.quoteHandle, quote)
+  expect(review.summary.schema).toBe('evm.typed-data.v1')
+  expect(review.expiresAt).toBe(quote.expiresAt)
+  expect(harness.pending.values.get(quote.quoteHandle).ledger).toMatchObject({
+    generationId: 'generation-one',
+    derivationPath: "m/44'/60'/0'/0/0",
+    publicKey: ledgerPublicKey
+  })
+
+  const restarted = new RheaSwapEvmSignatureCoordinator(harness.options)
+  harness.setNow(2_000)
+  await expect(restarted.prepare(quote.quoteHandle, quote)).rejects.toThrow('already pending')
+  expect(harness.pending.values.get(quote.quoteHandle).expiresAt).toBe(review.expiresAt)
+  const result = await restarted.confirm(quote.quoteHandle, review.payloadFingerprint)
+  expect(result.submission.orderId).toBe('order-one')
+  expect(harness.calls.filter(call => call === 'sign-ledger')).toHaveLength(1)
+  expect(harness.calls).not.toContain('prepare-signature')
+  expect(harness.pending.values.size).toBe(0)
+})
+
+test('Ledger Swap rejects a changed typed payload or account generation before signing', async () => {
+  const quote = binding(ledgerAccount.address)
+  const harness = createHarness({
+    sender: ledgerAccount.address,
+    typedDataJson: JSON.stringify(ledgerTypedData()),
+    ledger: {}
+  })
+  const review = await harness.coordinator.prepare(quote.quoteHandle, quote)
+  harness.plan.typedDataJson = JSON.stringify({
+    ...ledgerTypedData(),
+    message: {
+      maker: ledgerAccount.address,
+      amount: '2000'
+    }
+  })
+  await expect(
+    harness.coordinator.confirm(quote.quoteHandle, review.payloadFingerprint)
+  ).rejects.toThrow('order changed')
+  expect(harness.calls).not.toContain('sign-ledger')
+
+  harness.plan.typedDataJson = JSON.stringify(ledgerTypedData())
+  harness.setContext({
+    ...activeContext(ledgerAccount.address, true),
+    generationId: 'generation-two'
+  })
+  await expect(
+    harness.coordinator.confirm(quote.quoteHandle, review.payloadFingerprint)
+  ).rejects.toThrow('Account changed')
+  expect(harness.calls).not.toContain('submit-order')
+})
+
+test('Ledger Swap rejects the wrong signer and concurrent confirmation', async () => {
+  let release
+  let started
+  const startedPromise = new Promise(resolve => {
+    started = resolve
+  })
+  const barrier = new Promise(resolve => {
+    release = resolve
+  })
+  const quote = binding(ledgerAccount.address)
+  const harness = createHarness({
+    sender: ledgerAccount.address,
+    typedDataJson: JSON.stringify(ledgerTypedData()),
+    ledger: {
+      async requestSignature(request, approval) {
+        started()
+        await barrier
+        await approval.validate()
+        return { signatureHex: await wrongLedgerAccount.signTypedData(request.typedData) }
+      }
+    }
+  })
+  const review = await harness.coordinator.prepare(quote.quoteHandle, quote)
+  const first = harness.coordinator.confirm(quote.quoteHandle, review.payloadFingerprint)
+  await startedPromise
+  await expect(
+    harness.coordinator.confirm(quote.quoteHandle, review.payloadFingerprint)
+  ).rejects.toThrow('already confirming')
+  release()
+  await expect(first).rejects.toThrow('does not match the approved order')
+  expect(harness.calls).not.toContain('submit-order')
+})
+
+test('Ledger Swap rechecks the quote after device signing and retries a persisted signature after expiry', async () => {
+  const quote = binding(ledgerAccount.address)
+  let changeAfterDevice = true
+  let submissionCount = 0
+  const planReads = []
+  const harness = createHarness({
+    sender: ledgerAccount.address,
+    typedDataJson: JSON.stringify(ledgerTypedData()),
+    ledger: {
+      async requestSignature(request, approval) {
+        await approval.validate()
+        const signatureHex = await ledgerAccount.signTypedData(request.typedData)
+        if (changeAfterDevice)
+          harness.plan.typedDataJson = JSON.stringify({
+            ...ledgerTypedData(),
+            message: { maker: ledgerAccount.address, amount: '2000' }
+          })
+        return { signatureHex }
+      }
+    },
+    service: {
+      async readEvmSignaturePlan(_handle, allowExpired = false) {
+        planReads.push(allowExpired)
+        if (harness.expired && !allowExpired) throw new Error('quote expired')
+        return harness.plan
+      },
+      async submitSignedOrder() {
+        submissionCount += 1
+        if (submissionCount === 1) throw new Error('network unavailable')
+        return {
+          quoteHandle: quote.quoteHandle,
+          executionId: quote.executionId,
+          router: 'one-inch',
+          sourceHash: 'order-one',
+          orderId: 'order-one',
+          statusChainId: '1',
+          reportStatus: 'pending'
+        }
+      }
+    }
+  })
+  const review = await harness.coordinator.prepare(quote.quoteHandle, quote)
+  await expect(
+    harness.coordinator.confirm(quote.quoteHandle, review.payloadFingerprint)
+  ).rejects.toThrow('order changed')
+  expect(submissionCount).toBe(0)
+
+  harness.plan.typedDataJson = JSON.stringify(ledgerTypedData())
+  changeAfterDevice = false
+  await expect(
+    harness.coordinator.confirm(quote.quoteHandle, review.payloadFingerprint)
+  ).rejects.toThrow('network unavailable')
+  expect(harness.pending.values.get(quote.quoteHandle).signature).toMatch(/^0x[0-9a-f]{130}$/)
+  harness.expired = true
+  harness.setNow(review.expiresAt + 1)
+  const restarted = new RheaSwapEvmSignatureCoordinator(harness.options)
+  const result = await restarted.confirm(quote.quoteHandle, review.payloadFingerprint)
+  expect(result.submission.orderId).toBe('order-one')
+  expect(planReads.at(-1)).toBe(true)
+  expect(submissionCount).toBe(2)
+})
+
+test('Ledger Swap rejects unsupported personal schemes and expires restored unsigned approvals', async () => {
+  const quote = binding(ledgerAccount.address)
+  const harness = createHarness({
+    sender: ledgerAccount.address,
+    typedDataJson: JSON.stringify(ledgerTypedData()),
+    ledger: {}
+  })
+  harness.plan.signingScheme = 'personal_sign'
+  await expect(harness.coordinator.prepare(quote.quoteHandle, quote)).rejects.toThrow(
+    'scheme is unsupported'
+  )
+  harness.plan.signingScheme = 'eip712'
+  const review = await harness.coordinator.prepare(quote.quoteHandle, quote)
+  harness.setNow(review.expiresAt)
+  const restarted = new RheaSwapEvmSignatureCoordinator(harness.options)
+  await expect(restarted.confirm(quote.quoteHandle, review.payloadFingerprint)).rejects.toThrow(
+    'unavailable or expired'
+  )
+  expect(harness.calls).not.toContain('sign-ledger')
 })

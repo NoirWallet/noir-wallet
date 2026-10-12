@@ -14,6 +14,11 @@ interface RegisterSolanaWalletStandardOptions {
   readonly chain: string
   readonly request: StandardRequest
   readonly onAccountsChanged: (listener: (accounts: readonly string[]) => void) => void
+  readonly onAccountCapabilitiesChanged?: (
+    listener: (
+      capabilities: readonly { readonly address: string; readonly signMessage: boolean }[]
+    ) => void
+  ) => void
 }
 
 export interface SolanaTransactionOptions {
@@ -181,6 +186,7 @@ function registerWallet(wallet: Readonly<Record<string, unknown>>): void {
 
 export function registerSolanaWalletStandard(options: RegisterSolanaWalletStandardOptions): void {
   let accounts: readonly StandardWalletAccount[] = Object.freeze([])
+  let messageCapabilities = new Map<string, boolean>()
   const changeListeners = new Set<
     (properties: { accounts: readonly StandardWalletAccount[] }) => void
   >()
@@ -192,13 +198,21 @@ export function registerSolanaWalletStandard(options: RegisterSolanaWalletStanda
           address,
           publicKey: decodeBase58(address, 32),
           chains: Object.freeze([options.chain]),
-          features: FEATURES,
+          features:
+            messageCapabilities.get(address) === true
+              ? FEATURES
+              : Object.freeze(FEATURES.filter(feature => feature !== 'solana:signMessage')),
           label: NOIR_WALLET_PROVIDER_NAME
         })
       )
     )
     for (const listener of [...changeListeners]) listener(Object.freeze({ accounts }))
   }
+
+  options.onAccountCapabilitiesChanged?.(capabilities => {
+    messageCapabilities = new Map(capabilities.map(item => [item.address, item.signMessage]))
+    setAccounts(accounts.map(account => account.address))
+  })
 
   const assertInputAccount = (value: unknown): StandardWalletAccount => {
     if (!value || typeof value !== 'object' || !('address' in value)) {
@@ -329,14 +343,19 @@ export function registerSolanaWalletStandard(options: RegisterSolanaWalletStanda
         signMessage: async (...inputs: readonly unknown[]) => {
           if (inputs.length === 0 || inputs.length > 16)
             throw new TypeError('Invalid Solana batch size.')
-          const outputs = []
-          for (const value of inputs) {
+          const messages = inputs.map(value => {
             if (!value || typeof value !== 'object')
               throw new TypeError('Invalid Solana message input.')
-            assertInputAccount(Reflect.get(value, 'account'))
+            const account = assertInputAccount(Reflect.get(value, 'account'))
+            if (!account.features.includes('solana:signMessage'))
+              throw new Error('Message signing is not supported by this account.')
             const message = Reflect.get(value, 'message')
             if (!(message instanceof Uint8Array))
               throw new TypeError('Invalid Solana message input.')
+            return new Uint8Array(message)
+          })
+          const outputs = []
+          for (const message of messages) {
             const result = await options.request('signMessage', [encodeBase64(message)])
             if (
               !result ||

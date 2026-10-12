@@ -4,7 +4,8 @@ import type {
   DerivedBitcoinAddress
 } from '@/core/chains/bitcoin'
 import { parseKeyDomainId, type KeyDomainId } from '@/core/keyring/domain'
-import type { KeystoneHardwareCredential } from '@/core/wallet/hardware-wallet-data'
+import type { StoredHardwareCredential } from '@/core/wallet/hardware-wallet-data'
+import { deriveLedgerBitcoinAddress } from '@/lib/ledger/bitcoin-model'
 import {
   deriveKeystoneBitcoinAccountAddress,
   deriveKeystoneMultiCoinBitcoinAddress
@@ -40,7 +41,7 @@ interface ActiveKeyDomainContext {
 
 interface CachedHardwareCredential {
   readonly generationId: string
-  readonly credential: KeystoneHardwareCredential
+  readonly credential: StoredHardwareCredential
 }
 
 function assertNotCancelled(signal?: AbortSignal): void {
@@ -69,6 +70,50 @@ export class BitcoinAddressDerivationRouter implements BitcoinAddressDerivationP
     assertNotCancelled(signal)
     const credential = await this.loadHardwareCredential(keyDomainId, context)
     assertNotCancelled(signal)
+    if (credential.vendor === 'ledger') {
+      if (credential.firmwareProfile !== 'multi-app' || input.addressType !== 'p2wpkh') {
+        throw new Error('Ledger Bitcoin derivation requires a Native SegWit account')
+      }
+      const matches = credential.accountExport.accounts.filter(
+        account =>
+          account.family === 'bitcoin' &&
+          account.network === this.options.network &&
+          account.accountIndex === input.accountIndex &&
+          new RegExp(
+            `^m/84'/${this.options.network === 'mainnet' ? 0 : 1}'/(?:0|[1-9][0-9]*)'$`
+          ).test(account.derivationPath)
+      )
+      if (matches.length !== 1 || matches[0].family !== 'bitcoin') {
+        throw new Error('Ledger Bitcoin account export is missing or ambiguous')
+      }
+      const derived = deriveLedgerBitcoinAddress(
+        matches[0].xpub,
+        this.options.network,
+        input.change,
+        input.addressIndex
+      )
+      if (
+        !input.change &&
+        input.addressIndex === 0 &&
+        (derived.address !== matches[0].address || derived.publicKey !== matches[0].publicKey)
+      ) {
+        throw new Error('Ledger Bitcoin account export does not match its public key')
+      }
+      return Object.freeze({
+        chainId: input.chainId,
+        addressType: 'p2wpkh' as const,
+        accountIndex: input.accountIndex,
+        change: input.change,
+        addressIndex: input.addressIndex,
+        address: derived.address,
+        addressScheme: 'bitcoin-p2wpkh' as const,
+        derivationScheme: 'bip84' as const,
+        derivationPath: `${matches[0].derivationPath}/${input.change ? 1 : 0}/${input.addressIndex}`,
+        publicKey: derived.publicKey,
+        masterFingerprint: `0x${matches[0].masterFingerprintHex}`,
+        scriptPubKey: derived.scriptPubKey
+      })
+    }
     const accountExport = credential.accountExport
     if (accountExport.protocol === 'crypto-multi-accounts-v1') {
       return deriveKeystoneMultiCoinBitcoinAddress(
@@ -95,7 +140,7 @@ export class BitcoinAddressDerivationRouter implements BitcoinAddressDerivationP
         this.options.network
       )
     }
-    throw new Error('Active Keystone credential has no Bitcoin public account export')
+    throw new Error('Active hardware credential has no Bitcoin public account export')
   }
 
   async deriveAddresses(
@@ -162,7 +207,8 @@ export class BitcoinAddressDerivationRouter implements BitcoinAddressDerivationP
     const source = matches[0].source
     if (
       source.kind === 'hardware' &&
-      (source.vendor !== 'keystone' || !source.capabilities.includes('bitcoin'))
+      ((source.vendor !== 'keystone' && source.vendor !== 'ledger') ||
+        !source.capabilities.includes('bitcoin'))
     ) {
       throw new Error('Active hardware Wallet has no Bitcoin derivation capability')
     }
@@ -176,7 +222,7 @@ export class BitcoinAddressDerivationRouter implements BitcoinAddressDerivationP
   private async loadHardwareCredential(
     keyDomainId: KeyDomainId,
     context: ActiveKeyDomainContext
-  ): Promise<KeystoneHardwareCredential> {
+  ): Promise<StoredHardwareCredential> {
     const cached = this.hardwareCredentials.get(keyDomainId)
     if (cached?.generationId === context.generationId) return cached.credential
     const password = await this.options.credentials.getProvisioningPassword()
@@ -186,8 +232,12 @@ export class BitcoinAddressDerivationRouter implements BitcoinAddressDerivationP
       keyDomainId,
       password
     )
-    if (!credential.capabilities.includes('bitcoin')) {
-      throw new Error('Active Keystone credential has no Bitcoin capability')
+    if (
+      credential.vendor === 'ledger'
+        ? credential.firmwareProfile !== 'multi-app' || !credential.capabilities.includes('bitcoin')
+        : !credential.capabilities.includes('bitcoin')
+    ) {
+      throw new Error('Active hardware credential has no Bitcoin capability')
     }
     this.hardwareCredentials.set(
       keyDomainId,

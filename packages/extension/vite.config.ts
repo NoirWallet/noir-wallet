@@ -18,6 +18,7 @@ import {
   ZCASH_CHAIN_FEATURE_FLAG
 } from './src/config/multichain-feature-flags'
 import { findProhibitedRuntimeModules } from './scripts/lib/runtime-module-policy.mjs'
+import { collectLedgerDependencyNotices } from './scripts/lib/ledger-dependency-notices.mjs'
 import { resolveHistoryApiOrigin } from './src/config/extension'
 
 const require = createRequire(import.meta.url)
@@ -190,13 +191,20 @@ export default defineConfig({
     tailwindcss(),
     crx({ manifest }),
     {
-      name: 'include-project-license',
+      name: 'include-project-and-signing-licenses',
       generateBundle() {
         this.emitFile({
           type: 'asset',
           fileName: 'LICENSE',
           source: readFileSync(path.resolve(__dirname, '../../LICENSE'), 'utf8')
         })
+        for (const notice of collectLedgerDependencyNotices(__dirname)) {
+          this.emitFile({
+            type: 'asset',
+            fileName: notice.fileName,
+            source: notice.source
+          })
+        }
       }
     },
     {

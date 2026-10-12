@@ -168,6 +168,24 @@ function createBackgroundBitcoinRuntime(customRpcUrl?: string): BackgroundBitcoi
     loadActiveContext: () => loadActiveBitcoinDiscoveryContext(storageRepository, network.chainId),
     scanActive: addressType => discovery.scanActive({ addressType }),
     getAddressType,
+    resolveLedgerSigner: async context => {
+      const derived = await derivation.deriveAddress(context.chainAccount.scope.keyDomainId, {
+        chainId: context.chainAccount.scope.chainId,
+        addressType: 'p2wpkh',
+        accountIndex: context.accountIndex,
+        change: false,
+        addressIndex: 0
+      })
+      if (!derived.masterFingerprint || !/^0x[0-9a-f]{8}$/.test(derived.masterFingerprint)) {
+        throw new Error('Ledger Bitcoin fingerprint is unavailable')
+      }
+      return Object.freeze({
+        accountPath: derived.derivationPath.replace(/\/0\/0$/, ''),
+        masterFingerprintHex: derived.masterFingerprint.slice(2),
+        expectedAddress: derived.address,
+        network: DEFAULT_NETWORK
+      })
+    },
     requiredConfirmations: network.requiredConfirmations
   })
   const portfolio = new BitcoinPortfolioCoordinator({

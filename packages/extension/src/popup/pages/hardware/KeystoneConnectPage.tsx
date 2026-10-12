@@ -33,7 +33,7 @@ import keystoneLogo from '@/images/keystone-logo.webp'
 import { classifyError } from '@/lib/errors'
 import { DEFAULT_NETWORK } from '@/lib/runtime-network'
 import { accountNetworksClient } from '../../services/account-networks-client'
-import { keystoneHardwareProvisioningClient } from '../../services/keystone-hardware-provisioning-client'
+import { keystoneHardwareProvisioningClient } from '../../services/hardware-provisioning-client'
 
 type Step = 'networks' | 'guide' | 'scan' | 'configure' | 'success'
 

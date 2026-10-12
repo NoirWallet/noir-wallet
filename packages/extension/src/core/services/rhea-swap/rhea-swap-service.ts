@@ -263,9 +263,12 @@ export class RheaSwapService {
     })
   }
 
-  async readEvmSignaturePlan(quoteHandle: string): Promise<RheaSwapEvmSignaturePlan> {
+  async readEvmSignaturePlan(
+    quoteHandle: string,
+    allowExpired = false
+  ): Promise<RheaSwapEvmSignaturePlan> {
     const record = await this.requireSession(quoteHandle)
-    const build = this.readBuild(record)
+    const build = this.readBuild(record, allowExpired)
     if (build.execution.kind !== 'evm-signature') {
       throw new Error('RHEA Swap build is not an EVM signature order')
     }

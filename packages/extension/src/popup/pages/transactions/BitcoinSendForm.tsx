@@ -28,7 +28,7 @@ import {
   formatPortfolioNetworkName,
   parseDisplayUnitAmount
 } from '@/popup/components/portfolio/portfolio-format'
-import { openKeystoneBitcoinSignTab } from '@/lib/hardware-tab'
+import { openHardwareBitcoinSignTab } from '@/lib/hardware-tab'
 import {
   formatBitcoinInputAddressType,
   isBitcoinBalanceKnown,
@@ -414,7 +414,7 @@ export function BitcoinSendForm({
       setReview(null)
       if (submission.status === 'external-signature-required') {
         try {
-          await openKeystoneBitcoinSignTab(submission.transactionId)
+          await openHardwareBitcoinSignTab(submission.transactionId)
         } catch (handoffError) {
           await bitcoinWalletClient.rejectTransfer(submission.transactionId)
           throw handoffError

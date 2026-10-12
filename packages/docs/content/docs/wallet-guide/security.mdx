@@ -28,7 +28,9 @@ Review dApp authorizations regularly and remove origins you do not recognize or 
 
 ## Hardware wallets
 
-Keystone and Ledger accounts use supported Zcash PCZT transaction flows. Message signing and lending identity are unavailable for both. Keystone cannot send from transparent funds or shield them; lending is unavailable for hardware accounts.
+Keystone and Ledger Zcash accounts use supported PCZT transaction flows. Zcash message signing and lending identity are unavailable for both. Keystone cannot send from transparent funds or shield them; lending is unavailable for hardware accounts.
+
+V2 includes Ledger adapters for EVM, Bitcoin, Solana, and NEAR, pending physical-device acceptance. Only chains exported from the connected device are registered. Solana Ledger accounts offer transaction signing without ordinary message signing. Open `Bitcoin` for Mainnet or `Bitcoin Test` for Testnet; Bitcoin BIP-322 message signing requires App 2.1.3 or newer and shows a zero-value transaction on the device. If a signing prompt expires or the network changes, prepare and approve the request again.
 
 ## Incident checklist
 

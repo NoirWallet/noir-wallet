@@ -42,6 +42,14 @@ import {
   type DAppSessionAccountProposal,
   type DAppSessionAccountSelection
 } from './dapp-session-accounts'
+import { toHex, verifyMessage, verifyTypedData, type Hex } from 'viem'
+import { requestLedgerSignature } from './ledger-signing-coordinator'
+import {
+  digestLedgerPayload,
+  ledgerEvmPersonalSummary,
+  ledgerEvmTypedDataSummary
+} from './ledger-evm-dapp-review'
+import type { LedgerEvmSigningRequest } from '@/lib/ledger/evm'
 
 export interface EvmDAppApprovalPort {
   readonly requestExternalApproval: (
@@ -701,7 +709,15 @@ export class BackgroundEvmDAppHandler {
           })
     })
     const active = await this.requireAuthorizedAccount(origin, parsed.from)
-    this.assertSoftwareSigningAccount(active)
+    if (
+      active.context.keyDomainSource.kind !== 'software' &&
+      !(
+        active.context.keyDomainSource.kind === 'hardware' &&
+        active.context.keyDomainSource.vendor === 'ledger'
+      )
+    ) {
+      this.assertSoftwareSigningAccount(active)
+    }
     const isContractCall = parsed.kind === 'contract-call'
     if (active.executionMode === 'private' && !isContractCall) {
       if (!this.options.privateTransfer || !('assetId' in parsed.intent)) {
@@ -858,7 +874,7 @@ export class BackgroundEvmDAppHandler {
       if (!decision.approved) {
         throw new Eip1193ProviderError(4001, 'User rejected the transaction request.')
       }
-      const submission = await this.options.transferController.approveForDApp(
+      let submission = await this.options.transferController.approveForDApp(
         prepared.graph.root.id,
         prepared.review.payloadFingerprint.digestHex,
         async context => {
@@ -874,6 +890,47 @@ export class BackgroundEvmDAppHandler {
           }
         }
       )
+      if (submission.status === 'external-signature-required') {
+        if (
+          active.context.keyDomainSource.kind !== 'hardware' ||
+          active.context.keyDomainSource.vendor !== 'ledger'
+        ) {
+          throw new Eip1193ProviderError(4200, 'Unsupported external EVM signer')
+        }
+        const external = await transferController.getExternalSigningRequest(prepared.graph.root.id)
+        if (
+          external?.vendor !== 'ledger' ||
+          !external.ledgerRequest ||
+          external.ledgerRequest.kind !== 'transaction'
+        ) {
+          throw new Error('Ledger EVM signing request is unavailable')
+        }
+        const signed = await requestLedgerSignature(external.ledgerRequest, {
+          scope: { ...active.context.chainAccount.scope, chainId: this.chainId },
+          payloadFingerprint: { algorithm: 'sha256', digestHex: external.payloadFingerprint },
+          expiresAt: external.expiresAt,
+          origin,
+          summary: prepared.review.summary,
+          validate: async () => {
+            await this.requireUnchangedExecutionIdentity(origin, active)
+            const current = await transferController.getExternalSigningRequest(
+              prepared.graph.root.id
+            )
+            if (
+              current?.vendor !== 'ledger' ||
+              current.payloadFingerprint !== external.payloadFingerprint ||
+              JSON.stringify(current.ledgerRequest) !== JSON.stringify(external.ledgerRequest)
+            ) {
+              throw new Error('Ledger EVM transaction changed before signing')
+            }
+          }
+        })
+        submission = await transferController.submitExternalSignature(
+          prepared.graph.root.id,
+          external.payloadFingerprint,
+          signed.signatureHex
+        )
+      }
       submitted = true
       await this.options.operationStore.delete(prepared.graph.root.id).catch(() => {})
       const transactionHash = submission.graph.segments.find(segment => segment.role === 'origin')
@@ -897,6 +954,25 @@ export class BackgroundEvmDAppHandler {
   ): Promise<string> {
     const parsed = parsePersonalSignRequest(params)
     const active = await this.requireAuthorizedAccount(origin, parsed.address)
+    if (
+      active.context.keyDomainSource.kind === 'hardware' &&
+      active.context.keyDomainSource.vendor === 'ledger'
+    ) {
+      return this.signLedgerMessage(
+        origin,
+        active,
+        {
+          kind: 'personal-sign',
+          messageHex: toHex(parsed.message),
+          derivationPath: active.context.chainAccount.derivation.path,
+          expectedAddress: active.address
+        },
+        await ledgerEvmPersonalSummary(this.chainId, active.address, parsed.message),
+        parsed.message,
+        { method: 'personal_sign', message: parsed.displayMessage },
+        tabInfo
+      )
+    }
     this.assertSoftwareSigningAccount(active)
     return this.signMessage(
       origin,
@@ -920,6 +996,26 @@ export class BackgroundEvmDAppHandler {
   ): Promise<string> {
     const parsed = parseTypedDataV4Request(params, this.options.network.numericChainId)
     const active = await this.requireAuthorizedAccount(origin, parsed.address)
+    if (
+      active.context.keyDomainSource.kind === 'hardware' &&
+      active.context.keyDomainSource.vendor === 'ledger'
+    ) {
+      const typedData = JSON.parse(parsed.typedDataJson) as Readonly<Record<string, unknown>>
+      return this.signLedgerMessage(
+        origin,
+        active,
+        {
+          kind: 'typed-data',
+          typedData,
+          derivationPath: active.context.chainAccount.derivation.path,
+          expectedAddress: active.address
+        },
+        ledgerEvmTypedDataSummary(this.chainId, active.address, typedData),
+        new TextEncoder().encode(parsed.typedDataJson),
+        { method: 'eth_signTypedData_v4', primaryType: parsed.primaryType },
+        tabInfo
+      )
+    }
     this.assertSoftwareSigningAccount(active)
     return this.signMessage(
       origin,
@@ -984,6 +1080,77 @@ export class BackgroundEvmDAppHandler {
           .catch(() => {})
       }
     }
+  }
+
+  private async signLedgerMessage(
+    origin: string,
+    active: ActiveEvmDAppAccount,
+    request: Extract<LedgerEvmSigningRequest, { kind: 'personal-sign' | 'typed-data' }>,
+    summary: Awaited<ReturnType<typeof ledgerEvmPersonalSummary>>,
+    payload: Uint8Array,
+    display: Readonly<Record<string, unknown>>,
+    tabInfo: EvmDAppTabInfo
+  ): Promise<string> {
+    if (!this.options.transferController)
+      throw new Eip1193ProviderError(4200, 'Ledger EVM signing is unavailable')
+    const binding = await this.options.transferController.getLedgerSignerBinding(
+      active.context.chainAccount
+    )
+    if (
+      binding.derivationPath !== request.derivationPath ||
+      binding.address.toLowerCase() !== active.address
+    ) {
+      throw new Error('Ledger EVM signing account binding changed')
+    }
+    const payloadFingerprint = await digestLedgerPayload(payload)
+    const expiresAt = Date.now() + 10 * 60_000
+    const decision = await this.options.approval.requestExternalApproval(origin, 'evmMessage', {
+      chainName: this.options.network.displayName,
+      executionMode: active.executionMode,
+      review: {
+        summary,
+        payloadFingerprint: { algorithm: 'sha256', digestHex: payloadFingerprint },
+        expiresAt
+      },
+      ...display,
+      ...dappApprovalMetadata(tabInfo)
+    })
+    if (!decision.approved)
+      throw new Eip1193ProviderError(4001, 'User rejected the signature request.')
+    const signed = await requestLedgerSignature(request, {
+      scope: { ...active.context.chainAccount.scope, chainId: this.chainId },
+      payloadFingerprint: { algorithm: 'sha256', digestHex: payloadFingerprint },
+      expiresAt,
+      origin,
+      summary,
+      validate: async () => {
+        await this.requireUnchangedExecutionIdentity(origin, active)
+        const current = await this.options.transferController!.getLedgerSignerBinding(
+          active.context.chainAccount
+        )
+        if (
+          current.derivationPath !== binding.derivationPath ||
+          current.address !== binding.address
+        ) {
+          throw new Error('Ledger EVM account changed before signing')
+        }
+      }
+    })
+    const valid =
+      request.kind === 'personal-sign'
+        ? await verifyMessage({
+            address: active.address as Hex,
+            message: { raw: request.messageHex as Hex },
+            signature: signed.signatureHex as Hex
+          })
+        : await verifyTypedData({
+            ...request.typedData,
+            address: active.address as Hex,
+            signature: signed.signatureHex as Hex
+          } as Parameters<typeof verifyTypedData>[0])
+    if (!valid) throw new Error('Ledger EVM signature does not match the approved request')
+    await this.requireUnchangedExecutionIdentity(origin, active)
+    return signed.signatureHex
   }
 
   private requireMatchingSignature(result: SigningResult, expectedAddress: string): string {

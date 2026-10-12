@@ -62,6 +62,7 @@ import { CredentialPasswordChangeRecovery } from './credential-password-change-r
 import {
   hardwareCredentialEnvelopeEquals,
   hardwareCredentialMatchesMetadata,
+  ledgerMultichainCredentialEquals,
   readHardwareCredentialEnvelope,
   rewrapHardwareCredentialEnvelope
 } from './hardware-credential-password-change'
@@ -177,7 +178,13 @@ export class CredentialPasswordChangeCoordinator {
             await unwrapHardwareCredentialEnvelope(sourceEnvelope, input.currentPassword)
           )
           if (liveEnvelope && !hardwareCredentialEnvelopeEquals(retainedSource, liveEnvelope)) {
-            throw new Error('Hardware source credential differs from retained V1')
+            const [activeCredential, retainedCredential] = await Promise.all([
+              readHardwareCredentialEnvelope(retainedSource, input.currentPassword),
+              readHardwareCredentialEnvelope(liveEnvelope, input.currentPassword)
+            ])
+            if (!ledgerMultichainCredentialEquals(activeCredential, retainedCredential)) {
+              throw new Error('Hardware source credential differs from retained V1')
+            }
           }
           let rewrapped
           if (liveEnvelope) {

@@ -51,7 +51,7 @@ export function isNativeV2CredentialKeyDomain(keyDomain: {
   readonly source: { readonly kind: string }
 }): boolean {
   return (
-    (keyDomain.source.kind === 'hardware' && keyDomain.id.startsWith('wallet:keystone-v2:')) ||
+    (keyDomain.source.kind === 'hardware' && isNativeHardwareWalletId(keyDomain.id)) ||
     (keyDomain.source.kind === 'private-key' && keyDomain.id.startsWith('wallet:private-key-v2:'))
   )
 }
@@ -141,3 +141,4 @@ export class RetainedV1ReconciliationCoordinator {
     })
   }
 }
+import { isNativeHardwareWalletId } from '@/core/wallet/native-hardware-identity'

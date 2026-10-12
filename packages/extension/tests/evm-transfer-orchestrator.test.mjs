@@ -684,6 +684,44 @@ test('hands an exact EIP-1559 request to Keystone and verifies its UUID-bound si
   await expect(testHarness.pendingStore.get(prepared.graph.root.id)).resolves.toBeNull()
 })
 
+test('binds a Ledger EIP-1559 signature to the prepared transaction and sender', async () => {
+  const testHarness = harness()
+  const prepared = await testHarness.orchestrator.prepare({
+    chainAccount: account,
+    intent: { assetId: 'eip155:1/slip44:60', recipient, amountRaw: '123' },
+    signingMode: 'ledger',
+    externalSigner: { derivationPath: "m/44'/60'/0'/0/0", address: from }
+  })
+  await testHarness.orchestrator.approve({
+    scope,
+    transactionId: prepared.graph.root.id,
+    payloadFingerprint: prepared.signing.payloadFingerprint.digestHex
+  })
+  const external = await testHarness.orchestrator.getExternalSigningRequest({
+    scope,
+    transactionId: prepared.graph.root.id
+  })
+  expect(external).toMatchObject({
+    vendor: 'ledger',
+    ledgerRequest: {
+      kind: 'transaction',
+      derivationPath: "m/44'/60'/0'/0/0",
+      expectedAddress: from,
+      unsignedTransactionHex: expect.stringMatching(/^0x02/)
+    }
+  })
+  const decoded = parseTransaction(rawTransaction)
+  const signatureHex = `${decoded.r}${decoded.s.slice(2)}${decoded.yParity.toString(16).padStart(2, '0')}`
+  await expect(
+    testHarness.orchestrator.submitExternalSignature({
+      scope,
+      transactionId: prepared.graph.root.id,
+      payloadFingerprint: prepared.signing.payloadFingerprint.digestHex,
+      signatureCborBase64: signatureHex
+    })
+  ).resolves.toMatchObject({ status: 'broadcast' })
+})
+
 test('fails the graph on a substituted Keystone EVM request ID', async () => {
   const testHarness = harness()
   const prepared = await testHarness.orchestrator.prepare({
@@ -1093,7 +1131,9 @@ test('releases a stale clearing transaction after the pending nonce advances pas
   await testHarness.repository.create(original)
   await testHarness.repository.create(clearing)
 
-  await expect(testHarness.orchestrator.getNonceRecovery({ chainAccount: account })).resolves.toMatchObject({
+  await expect(
+    testHarness.orchestrator.getNonceRecovery({ chainAccount: account })
+  ).resolves.toMatchObject({
     action: 'await-confirmation',
     pendingNonce: '9'
   })
@@ -1102,7 +1142,9 @@ test('releases a stale clearing transaction after the pending nonce advances pas
   })
 
   pendingNonce = '10'
-  await expect(testHarness.orchestrator.getNonceRecovery({ chainAccount: account })).resolves.toBeNull()
+  await expect(
+    testHarness.orchestrator.getNonceRecovery({ chainAccount: account })
+  ).resolves.toBeNull()
   const next = await prepare(testHarness.orchestrator)
   expect(next.signing.summary.fields.nonce).toBe('10')
 })

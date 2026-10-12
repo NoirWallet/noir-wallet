@@ -97,6 +97,7 @@ export interface NoirRuntimeEventMessage {
   readonly chainId: 'zcash' | 'evm' | 'bitcoin' | 'solana' | 'near' | 'multichain'
   readonly eventName:
     | 'accountsChanged'
+    | 'accountCapabilitiesChanged'
     | 'chainChanged'
     | 'networkChanged'
     | 'connect'
@@ -464,7 +465,22 @@ const TRUSTED_RUNTIME_SCHEMAS: Readonly<Record<string, RuntimeMessageSchema>> = 
   },
   PROVISION_LEDGER_HARDWARE: {
     required: { credential: isRecord, displayName: isShortString },
-    optional: { password: isLegacyPasswordString, birthdayHeight: isBirthdayHeight }
+    optional: {
+      password: isLegacyPasswordString,
+      birthdayHeight: isBirthdayHeight,
+      existingKeyDomainId: isShortString,
+      anchorProof: isRecord
+    }
+  },
+  GET_LEDGER_PROVISIONING_CREDENTIAL: { required: { walletId: isShortString } },
+  GET_LEDGER_SIGNING_REQUEST: { required: { requestId: isShortString } },
+  SUBMIT_LEDGER_SIGNING_RESPONSE: { required: { requestId: isShortString, response: isRecord } },
+  CANCEL_LEDGER_SIGNING_REQUEST: { required: { requestId: isShortString } },
+  GET_HARDWARE_TRANSFER_VENDOR: {
+    required: {
+      transactionId: isShortString,
+      family: value => value === 'evm' || value === 'bitcoin'
+    }
   },
   GET_WALLET_SESSION_STATE: {},
   GET_BACKGROUND_INITIALIZATION_STATE: {},
@@ -629,7 +645,9 @@ const TRUSTED_RUNTIME_SCHEMAS: Readonly<Record<string, RuntimeMessageSchema>> = 
     required: {
       transactionId: isShortString,
       payloadFingerprint: isEvmPayloadFingerprint,
-      signatureCborBase64: isCanonicalKeystoneEvmSignatureBase64
+      signatureCborBase64: value =>
+        isCanonicalKeystoneEvmSignatureBase64(value) ||
+        (typeof value === 'string' && /^0x[0-9a-fA-F]{130}$/.test(value))
     }
   },
   REJECT_EVM_TRANSFER: { required: { transactionId: isShortString } },
@@ -828,6 +846,11 @@ const TRUSTED_RUNTIME_CONTEXTS: Readonly<Record<string, readonly OwnExtensionSen
     ROTATE_ZCASH_SHIELDED_ADDRESS: ['extension-page'],
     PROVISION_KEYSTONE_HARDWARE: ['extension-page'],
     PROVISION_LEDGER_HARDWARE: ['extension-page'],
+    GET_LEDGER_PROVISIONING_CREDENTIAL: ['extension-page'],
+    GET_LEDGER_SIGNING_REQUEST: ['extension-page'],
+    SUBMIT_LEDGER_SIGNING_RESPONSE: ['extension-page'],
+    CANCEL_LEDGER_SIGNING_REQUEST: ['extension-page'],
+    GET_HARDWARE_TRANSFER_VENDOR: ['extension-page'],
     GET_WALLET_SESSION_STATE: ['extension-page'],
     GET_BACKGROUND_INITIALIZATION_STATE: ['extension-page'],
     GET_NETWORK_MODE: ['extension-page'],
@@ -1301,6 +1324,7 @@ export function parseNoirRuntimeEventMessage(value: unknown): NoirRuntimeEventMe
       value.chainId !== 'near' &&
       value.chainId !== 'multichain') ||
     (value.eventName !== 'accountsChanged' &&
+      value.eventName !== 'accountCapabilitiesChanged' &&
       value.eventName !== 'chainChanged' &&
       value.eventName !== 'networkChanged' &&
       value.eventName !== 'connect' &&
@@ -1309,6 +1333,8 @@ export function parseNoirRuntimeEventMessage(value: unknown): NoirRuntimeEventMe
   ) {
     throw new Error('Invalid Noir runtime event')
   }
+  if (value.eventName === 'accountCapabilitiesChanged' && value.chainId !== 'solana')
+    throw new Error('Invalid account capability event chain')
 
   return {
     type: 'NOIR_EVENT',

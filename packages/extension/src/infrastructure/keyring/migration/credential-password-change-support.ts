@@ -85,7 +85,7 @@ export function assertPasswordChangeCredentialInventorySupported(
         keyDomain.source.kind === 'software' ||
         (keyDomain.source.kind === 'private-key' &&
           !keyDomain.id.startsWith('wallet:private-key-v2:')) ||
-        (keyDomain.source.kind === 'hardware' && !keyDomain.id.startsWith('wallet:keystone-v2:'))
+        (keyDomain.source.kind === 'hardware' && !isNativeHardwareWalletId(keyDomain.id))
       )
     })
   ) {
@@ -222,3 +222,4 @@ export function workerAccounts(wallet: V1DiscoveredWallet) {
     expectedZcash: account.addresses
   }))
 }
+import { isNativeHardwareWalletId } from '@/core/wallet/native-hardware-identity'

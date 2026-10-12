@@ -163,7 +163,9 @@ function createHarness(overrides = {}) {
           }
         },
         payloadFingerprint: { algorithm: 'sha256', digestHex: fingerprints[index] },
-        execution: { kind: 'internal' },
+        execution: overrides.ledger
+          ? { kind: 'external', request: { encoding: 'base64', value: 'AQ==' } }
+          : { kind: 'internal' },
         expiresAt: 5_000
       }
     },
@@ -213,7 +215,12 @@ function createHarness(overrides = {}) {
     rpc,
     pending: store,
     repository,
-    loadContext: async () => activeContext(),
+    loadContext:
+      overrides.loadContext ??
+      (async () => ({
+        ...activeContext(),
+        ...(overrides.ledger ? { keyDomainSource: { kind: 'hardware', vendor: 'ledger' } } : {})
+      })),
     scheduleMonitoring: async () => calls.push('schedule'),
     now: () => now,
     createId: () => `stable-near-${++id}`
@@ -292,4 +299,50 @@ test('cancels every unsigned NEAR command and discards the quote', async () => {
   expect(harness.calls).toContain('cancel:command-near-1')
   expect(harness.calls).toContain('discard')
   expect(harness.store.values.size).toBe(0)
+})
+
+test('Ledger NEAR review binds the batch and prevents concurrent confirmation', async () => {
+  let changed = false
+  let releaseSigning
+  const signingGate = new Promise(resolve => {
+    releaseSigning = resolve
+  })
+  const harness = createHarness({
+    ledger: true,
+    service: {
+      async readNearTransactionBatchPlan() {
+        harness.calls.push('read-plan')
+        const current = plan()
+        if (changed) current.transactions[1].actions[0].params.deposit = '3'
+        return current
+      }
+    },
+    signer: {
+      async confirm(_keyDomainId, commandId) {
+        const index = Number(commandId.at(-1))
+        harness.calls.push(`confirm:${index}`)
+        await signingGate
+        return {
+          kind: 'signed-payload',
+          payload: { encoding: 'base64', value: index === 0 ? 'AQ==' : 'Ag==' },
+          transactionId: sourceHashes[index]
+        }
+      }
+    }
+  })
+  const review = await harness.coordinator.prepare(binding().quoteHandle, binding())
+  changed = true
+  await expect(
+    harness.coordinator.confirm(binding().quoteHandle, review.payloadFingerprint)
+  ).rejects.toThrow(/changed after Ledger review/)
+  expect(harness.calls).not.toContain('confirm:0')
+
+  changed = false
+  const first = harness.coordinator.confirm(binding().quoteHandle, review.payloadFingerprint)
+  await expect(
+    harness.coordinator.confirm(binding().quoteHandle, review.payloadFingerprint)
+  ).rejects.toThrow(/already in progress/)
+  releaseSigning()
+  await expect(first).resolves.toMatchObject({ graph: { root: { status: 'broadcast' } } })
+  expect(harness.calls.filter(call => call.startsWith('confirm:'))).toHaveLength(2)
 })

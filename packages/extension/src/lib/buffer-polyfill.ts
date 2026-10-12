@@ -1,5 +1,5 @@
 /**
- * @ngraveio/bc-ur and @keystonehq/bc-ur-registry-* read the global Buffer at
+ * Bitcoin and BC-UR dependencies read the global Buffer at
  * runtime; browsers don't provide it. This must run before those modules are
  * evaluated, so import it first (ESM executes imports in declaration order).
  */

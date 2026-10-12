@@ -1,4 +1,10 @@
 import type { HardwareWalletData } from '@/types'
+import {
+  parseLedgerMultichainHardwareCredential,
+  findLedgerPublicAccount,
+  type LedgerMultichainHardwareCredential
+} from './ledger-hardware-credential'
+export * from './ledger-hardware-credential'
 import type {
   KeystoneBitcoinAccountPayload,
   KeystoneHdPublicKey,
@@ -19,7 +25,7 @@ const MAX_METADATA_LENGTH = 256
 export const KEYSTONE_HARDWARE_CREDENTIAL_SCHEMA_VERSION = 2 as const
 export const LEDGER_HARDWARE_CREDENTIAL_SCHEMA_VERSION = 2 as const
 
-export interface LedgerHardwareCredential {
+export interface LedgerZcashHardwareCredential {
   readonly schemaVersion: typeof LEDGER_HARDWARE_CREDENTIAL_SCHEMA_VERSION
   readonly vendor: 'ledger'
   readonly firmwareProfile: 'zcash'
@@ -33,6 +39,10 @@ export interface LedgerHardwareCredential {
   readonly deviceModel: string
   readonly deviceName: string
 }
+
+export type LedgerHardwareCredential =
+  | LedgerZcashHardwareCredential
+  | LedgerMultichainHardwareCredential
 
 export type StoredHardwareCredential = KeystoneHardwareCredential | LedgerHardwareCredential
 
@@ -377,8 +387,8 @@ export function createLedgerHardwareCredential(input: {
   accountHdIndex: number
   deviceModel: string
   deviceName: string
-}): LedgerHardwareCredential {
-  return parseLedgerHardwareCredential({
+}): LedgerZcashHardwareCredential {
+  return parseLedgerZcashHardwareCredential({
     schemaVersion: LEDGER_HARDWARE_CREDENTIAL_SCHEMA_VERSION,
     vendor: 'ledger',
     firmwareProfile: 'zcash',
@@ -395,6 +405,12 @@ export function createLedgerHardwareCredential(input: {
 }
 
 export function parseLedgerHardwareCredential(value: unknown): LedgerHardwareCredential {
+  if (isRecord(value) && value.schemaVersion === 3)
+    return parseLedgerMultichainHardwareCredential(value)
+  return parseLedgerZcashHardwareCredential(value)
+}
+
+function parseLedgerZcashHardwareCredential(value: unknown): LedgerZcashHardwareCredential {
   if (
     !isRecord(value) ||
     !hasExactKeys(value, [
@@ -599,8 +615,22 @@ export function parseStoredHardwareCredential(value: unknown): StoredHardwareCre
 }
 
 export function legacyZcashHardwareWalletData(
-  credential: StoredHardwareCredential
+  credential: StoredHardwareCredential,
+  query?: { readonly accountIndex?: number; readonly network?: 'mainnet' | 'testnet' }
 ): HardwareWalletData | null {
+  if (
+    credential.vendor === 'ledger' &&
+    credential.accountExport.protocol === 'ledger-accounts-v1'
+  ) {
+    const account = findLedgerPublicAccount(credential, { family: 'zcash', ...query })
+    return account
+      ? Object.freeze({
+          ufvk: account.ufvk,
+          accountHdIndex: account.accountHdIndex,
+          seedFingerprintHex: '0'.repeat(64)
+        })
+      : null
+  }
   if (credential.accountExport.protocol !== 'zcash-accounts-v1') return null
   const { ufvk, seedFingerprintHex, accountHdIndex } = credential.accountExport
   return Object.freeze({ ufvk, seedFingerprintHex, accountHdIndex })

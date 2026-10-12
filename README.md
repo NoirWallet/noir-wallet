@@ -107,6 +107,8 @@ Build the SDK before checking the whole workspace so its example can resolve the
 ```bash
 pnpm --filter @noir-wallet/sdk build
 pnpm type-check
+pnpm lint:eslint packages/extension/src
+pnpm knip --workspace @noir-wallet/extension
 pnpm test
 pnpm --filter @noir-wallet/sdk test
 pnpm --filter @noir-wallet/example type-check
@@ -161,4 +163,4 @@ manual Beta builds from the trusted `main` workflow, production promotion, and C
 
 ## License
 
-[MIT](./LICENSE). The bundled Jost and DM Mono fonts carry their own [SIL Open Font License notices](./packages/extension/public/fonts/).
+[MIT](./LICENSE). The bundled Jost and DM Mono fonts carry their own [SIL Open Font License notices](./packages/extension/public/fonts/). Extension builds include original licenses and any supplied notices for Ledger SDKs and their signing libraries under `licenses/`.

@@ -13,7 +13,7 @@ import type { PortfolioReadModel } from '@/core/portfolio'
 import type { AccountNetworkView } from '@/popup/services/account-networks-client'
 import { evmWalletClient } from '@/popup/services/evm-wallet-client'
 import { formatEvmWeiAsGwei } from '@/infrastructure/chains/evm'
-import { openKeystoneEvmSignTab } from '@/lib/hardware-tab'
+import { openHardwareEvmSignTab } from '@/lib/hardware-tab'
 import { openModal } from '@/popup/provider/ModalManager'
 import { bitcoinWalletClient } from '@/popup/services/bitcoin-wallet-client'
 import { formatChainTransactionExplorerUrl } from '@/popup/services/chain-explorer'
@@ -358,7 +358,7 @@ export function MultichainActivityDetail({
       )
       review = null
       if (submission.status === 'external-signature-required') {
-        await openKeystoneEvmSignTab(submission.transactionId)
+        await openHardwareEvmSignTab(submission.transactionId)
         window.close()
         return
       }

@@ -29,6 +29,14 @@ import type {
 import { mapBitcoinWalletRuntimeError } from './bitcoin-wallet-runtime-error'
 import type { BitcoinTransactionRpc } from '@/infrastructure/chains/bitcoin'
 import { networks, Psbt, Transaction } from 'bitcoinjs-lib'
+import { Buffer } from 'buffer'
+import { requestLedgerSignature } from './ledger-signing-coordinator'
+import { ledgerBitcoinMessageSummary, ledgerBitcoinPsbtSummary } from './ledger-bitcoin-dapp-review'
+import { digestLedgerPayload } from './ledger-evm-dapp-review'
+import {
+  verifyLedgerBitcoinBip322Signature,
+  verifyLedgerBitcoinPsbtResponse
+} from '@/lib/ledger/bitcoin-model'
 import type { DAppChainAccountDescriptor } from './dapp-chain-account-catalog'
 import {
   activeDAppSessionAccountMatches,
@@ -532,7 +540,15 @@ export class BackgroundBitcoinDAppHandler {
     const transferController = this.options.transferController
     const parsed = parseBitcoinSendRequest(params)
     const active = await this.requireAuthorizedAccount(origin)
-    this.assertSoftwareSigningAccount(active)
+    if (
+      active.context.keyDomainSource.kind !== 'software' &&
+      !(
+        active.context.keyDomainSource.kind === 'hardware' &&
+        active.context.keyDomainSource.vendor === 'ledger'
+      )
+    ) {
+      this.assertSoftwareSigningAccount(active)
+    }
     let prepared: BackgroundBitcoinTransferReview
     try {
       prepared = await transferController.prepare(
@@ -591,7 +607,7 @@ export class BackgroundBitcoinDAppHandler {
       if (!decision.approved) {
         throw new BitcoinProviderError(4001, 'User rejected the transaction request.')
       }
-      const submission = await this.options.transferController.approveForDApp(
+      let submission = await this.options.transferController.approveForDApp(
         prepared.graph.root.id,
         prepared.review.payloadFingerprint.digestHex,
         async context => {
@@ -608,6 +624,50 @@ export class BackgroundBitcoinDAppHandler {
           }
         }
       )
+      if (submission.status === 'external-signature-required') {
+        if (
+          active.context.keyDomainSource.kind !== 'hardware' ||
+          active.context.keyDomainSource.vendor !== 'ledger'
+        ) {
+          throw new BitcoinProviderError(4200, 'Unsupported external Bitcoin signer')
+        }
+        const external = await transferController.getExternalSigningRequest(prepared.graph.root.id)
+        if (external?.vendor !== 'ledger' || external.ledgerRequest?.kind !== 'psbt') {
+          throw new Error('Ledger Bitcoin signing request is unavailable')
+        }
+        const signed = await requestLedgerSignature(external.ledgerRequest, {
+          scope: {
+            ...active.context.chainAccount.scope,
+            chainId: active.context.chainAccount.scope.chainId
+          },
+          payloadFingerprint: { algorithm: 'sha256', digestHex: external.payloadFingerprint },
+          expiresAt: external.expiresAt,
+          origin,
+          summary: prepared.review.summary,
+          validate: async () => {
+            const current = await this.requireAuthorizedAccount(origin, active.address)
+            const latest = await transferController.getExternalSigningRequest(
+              prepared.graph.root.id
+            )
+            if (
+              !activeAccountsEqual(current, active) ||
+              current.context.generationId !== active.context.generationId ||
+              latest?.vendor !== 'ledger' ||
+              latest.payloadFingerprint !== external.payloadFingerprint ||
+              JSON.stringify(latest.ledgerRequest) !== JSON.stringify(external.ledgerRequest)
+            ) {
+              throw new Error('Ledger Bitcoin transaction changed before signing')
+            }
+          }
+        })
+        if (signed.kind !== 'psbt')
+          throw new Error('Ledger Bitcoin signer returned the wrong response')
+        submission = await transferController.submitExternalSignature(
+          prepared.graph.root.id,
+          external.payloadFingerprint,
+          signed.signedPsbtBase64
+        )
+      }
       submitted = true
       if (submission.status !== 'broadcast') {
         throw new BitcoinProviderError(
@@ -635,6 +695,66 @@ export class BackgroundBitcoinDAppHandler {
   ): Promise<string> {
     const parsed = parseBitcoinMessageRequest(params)
     const active = await this.requireAuthorizedAccount(origin)
+    if (
+      active.context.keyDomainSource.kind === 'hardware' &&
+      active.context.keyDomainSource.vendor === 'ledger'
+    ) {
+      const binding = await this.ledgerBinding(active)
+      const summary = await ledgerBitcoinMessageSummary(
+        active.context.chainAccount.scope.chainId,
+        active.address,
+        parsed.displayMessage
+      )
+      const payloadFingerprint = await digestLedgerPayload(parsed.message)
+      const expiresAt = Date.now() + 10 * 60_000
+      const decision = await this.options.approval.requestExternalApproval(
+        origin,
+        'bitcoinMessage',
+        {
+          chainName: this.options.network.displayName,
+          review: {
+            summary,
+            payloadFingerprint: { algorithm: 'sha256', digestHex: payloadFingerprint },
+            expiresAt
+          },
+          ...dappApprovalMetadata(tabInfo)
+        }
+      )
+      if (!decision.approved)
+        throw new BitcoinProviderError(4001, 'User rejected the signature request.')
+      const response = await requestLedgerSignature(
+        { kind: 'bip322-simple', message: parsed.displayMessage, ...binding },
+        {
+          scope: {
+            ...active.context.chainAccount.scope,
+            chainId: active.context.chainAccount.scope.chainId
+          },
+          payloadFingerprint: { algorithm: 'sha256', digestHex: payloadFingerprint },
+          expiresAt,
+          origin,
+          summary,
+          validate: async () => {
+            await this.requireUnchangedLedgerAccount(origin, active, binding)
+          }
+        }
+      )
+      if (response.kind !== 'bip322-simple')
+        throw new Error('Ledger Bitcoin signer returned the wrong response')
+      if (
+        !verifyLedgerBitcoinBip322Signature({
+          message: parsed.displayMessage,
+          signature: response.signature,
+          address: active.address,
+          publicKey: active.publicKey,
+          masterFingerprintHex: binding.masterFingerprintHex,
+          accountPath: binding.accountPath,
+          network: binding.network
+        })
+      )
+        throw new Error('Ledger BIP322 signature does not match the approved message')
+      await this.requireUnchangedLedgerAccount(origin, active, binding)
+      return response.signature
+    }
     this.assertSoftwareSigningAccount(active)
     const prepared = await this.options.signer.prepare(
       active.context.chainAccount.scope.keyDomainId,
@@ -667,6 +787,81 @@ export class BackgroundBitcoinDAppHandler {
   ): Promise<string> {
     const parsed = parseBitcoinPsbtRequest(params)
     const active = await this.requireAuthorizedAccount(origin)
+    if (
+      active.context.keyDomainSource.kind === 'hardware' &&
+      active.context.keyDomainSource.vendor === 'ledger'
+    ) {
+      const binding = await this.ledgerBinding(active)
+      const network = binding.network === 'mainnet' ? networks.bitcoin : networks.testnet
+      const original = Psbt.fromHex(parsed.psbtHex, { network })
+      const owned: number[] = []
+      const summary = await ledgerBitcoinPsbtSummary({
+        chainId: active.context.chainAccount.scope.chainId,
+        network: binding.network,
+        signer: active.address,
+        psbt: original,
+        ownsInput: async index => {
+          const owns = await this.ledgerOwnsInput(active, binding, original, index)
+          if (owns) owned.push(index)
+          return owns
+        }
+      })
+      const psbtBase64 = original.toBase64()
+      const payloadFingerprint = await digestLedgerPayload(base64ToBytes(psbtBase64))
+      const expiresAt = Date.now() + 10 * 60_000
+      const decision = await this.options.approval.requestExternalApproval(
+        origin,
+        'bitcoinTransaction',
+        {
+          chainName: this.options.network.displayName,
+          review: {
+            summary,
+            payloadFingerprint: { algorithm: 'sha256', digestHex: payloadFingerprint },
+            expiresAt
+          },
+          ...dappApprovalMetadata(tabInfo)
+        }
+      )
+      if (!decision.approved)
+        throw new BitcoinProviderError(4001, 'User rejected the signature request.')
+      const response = await requestLedgerSignature(
+        { kind: 'psbt', psbtBase64, ...binding },
+        {
+          scope: {
+            ...active.context.chainAccount.scope,
+            chainId: active.context.chainAccount.scope.chainId
+          },
+          payloadFingerprint: { algorithm: 'sha256', digestHex: payloadFingerprint },
+          expiresAt,
+          origin,
+          summary,
+          validate: async () => {
+            await this.requireUnchangedLedgerAccount(origin, active, binding)
+          }
+        }
+      )
+      if (response.kind !== 'psbt')
+        throw new Error('Ledger Bitcoin signer returned the wrong response')
+      const signedPsbt = Psbt.fromBase64(response.signedPsbtBase64, { network })
+      const verified = verifyLedgerBitcoinPsbtResponse({
+        original,
+        signed: signedPsbt,
+        ownedIndexes: owned,
+        masterFingerprintHex: binding.masterFingerprintHex,
+        accountPath: binding.accountPath
+      })
+      await this.requireUnchangedLedgerAccount(origin, active, binding)
+      if (!parsed.autoFinalized) return verified.toHex()
+      try {
+        finalizeIncompletePsbtInputs(verified)
+        return verified.toHex()
+      } catch {
+        throw new BitcoinProviderError(
+          -32603,
+          'Noir Wallet signed the owned inputs but could not finalize every PSBT input.'
+        )
+      }
+    }
     this.assertSoftwareSigningAccount(active)
     const prepared = await this.options.signer.prepare(
       active.context.chainAccount.scope.keyDomainId,
@@ -828,5 +1023,101 @@ export class BackgroundBitcoinDAppHandler {
         'Bitcoin dApp signing is not yet available for Keystone Wallets. Use Noir Wallet Send instead.'
       )
     }
+  }
+
+  private async ledgerBinding(active: ActiveBitcoinDAppAccount) {
+    if (active.addressType !== 'p2wpkh')
+      throw new BitcoinProviderError(
+        4200,
+        'Ledger Bitcoin signing requires the Native SegWit account.'
+      )
+    const derived = await this.options.derivation.deriveAddress(
+      active.context.chainAccount.scope.keyDomainId,
+      {
+        chainId: active.context.chainAccount.scope.chainId,
+        addressType: 'p2wpkh',
+        accountIndex: active.context.accountIndex,
+        change: false,
+        addressIndex: 0
+      }
+    )
+    if (
+      derived.address !== active.address ||
+      derived.publicKey !== active.publicKey ||
+      !derived.masterFingerprint ||
+      !/^0x[0-9a-f]{8}$/.test(derived.masterFingerprint)
+    ) {
+      throw new Error('Ledger Bitcoin account export does not match the active account')
+    }
+    return Object.freeze({
+      accountPath: derived.derivationPath.replace(/\/0\/0$/, ''),
+      masterFingerprintHex: derived.masterFingerprint.slice(2),
+      expectedAddress: active.address,
+      network: this.options.network.networkMode
+    })
+  }
+
+  private async requireUnchangedLedgerAccount(
+    origin: string,
+    active: ActiveBitcoinDAppAccount,
+    binding: Awaited<ReturnType<BackgroundBitcoinDAppHandler['ledgerBinding']>>
+  ) {
+    const current = await this.requireAuthorizedAccount(origin, active.address)
+    if (
+      !activeAccountsEqual(current, active) ||
+      current.context.generationId !== active.context.generationId ||
+      JSON.stringify(await this.ledgerBinding(current)) !== JSON.stringify(binding)
+    ) {
+      throw new BitcoinProviderError(
+        4100,
+        'The authorized Ledger Bitcoin account changed before signing.'
+      )
+    }
+  }
+
+  private async ledgerOwnsInput(
+    active: ActiveBitcoinDAppAccount,
+    binding: Awaited<ReturnType<BackgroundBitcoinDAppHandler['ledgerBinding']>>,
+    psbt: Psbt,
+    index: number
+  ): Promise<boolean> {
+    const entries = psbt.data.inputs[index].bip32Derivation ?? []
+    const matched = entries.filter(
+      entry =>
+        Buffer.from(entry.masterFingerprint).toString('hex') === binding.masterFingerprintHex &&
+        entry.path.startsWith(`${binding.accountPath}/`)
+    )
+    if (matched.length === 0) return false
+    if (matched.length !== 1) throw new Error('Ambiguous Ledger Bitcoin PSBT derivation')
+    const match = /^\/([01])\/(0|[1-9][0-9]*)$/.exec(
+      matched[0].path.slice(binding.accountPath.length)
+    )
+    if (!match) throw new Error('Unsupported Ledger Bitcoin PSBT child path')
+    const derived = await this.options.derivation.deriveAddress(
+      active.context.chainAccount.scope.keyDomainId,
+      {
+        chainId: active.context.chainAccount.scope.chainId,
+        addressType: 'p2wpkh',
+        accountIndex: active.context.accountIndex,
+        change: match[1] === '1',
+        addressIndex: Number(match[2])
+      }
+    )
+    let utxo = psbt.data.inputs[index].witnessUtxo
+    if (!utxo && psbt.data.inputs[index].nonWitnessUtxo) {
+      const previous = Transaction.fromBuffer(psbt.data.inputs[index].nonWitnessUtxo)
+      const txInput = psbt.txInputs[index]
+      if (previous.getId() !== Buffer.from(txInput.hash).reverse().toString('hex')) {
+        throw new Error('Ledger Bitcoin PSBT previous transaction mismatch')
+      }
+      utxo = previous.outs[txInput.index]
+    }
+    if (
+      !Buffer.from(matched[0].pubkey).equals(Buffer.from(derived.publicKey.slice(2), 'hex')) ||
+      !utxo?.script.equals(Buffer.from(derived.scriptPubKey?.slice(2) ?? '', 'hex'))
+    ) {
+      throw new Error('Ledger Bitcoin PSBT input does not match its derivation')
+    }
+    return true
   }
 }

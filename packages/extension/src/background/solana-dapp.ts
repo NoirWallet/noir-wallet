@@ -12,6 +12,7 @@ import { IndexedDbStorageV2Repository } from '@/infrastructure/persistence/repos
 
 import { accountContextTransition } from './account-context-transition'
 import { credentialSession } from './credential-session'
+import { solanaLedgerSigningBridge } from './ledger-signing-bridge'
 import { dappHandler } from './dapp-handler'
 import { BackgroundNativeTransferDAppHandler } from './native-transfer-dapp-handler'
 import { BackgroundSolanaDAppHandler } from './solana-dapp-handler'
@@ -51,7 +52,11 @@ export function createBackgroundSolanaDAppHandler(
   return new BackgroundSolanaDAppHandler({
     native,
     network,
-    signer: new SolanaMultichainSigningClient({ credentials: credentialSession, rpc }),
+    signer: new SolanaMultichainSigningClient({
+      credentials: credentialSession,
+      rpc,
+      ledger: solanaLedgerSigningBridge
+    }),
     rpc,
     requestApproval: (origin, action, data) =>
       dappHandler.requestExternalApproval(origin, action, data),
