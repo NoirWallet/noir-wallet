@@ -1,72 +1,44 @@
-import { useEffect, useRef, useState } from 'react'
-import {
-  fetchVoteSnapshot,
-  getVoterId,
-  type VoteSnapshot,
-  type VoteChoice
-} from '../lib/frost-vote'
-
-const votingOptions: { choice: VoteChoice; label: string }[] = [
-  { choice: 'support', label: 'In favor' },
-  { choice: 'oppose', label: 'Against' }
-]
+import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { submitSignup } from '../lib/frost-signup'
 
 export default function FrostVotePage() {
-  const [snapshot, setSnapshot] = useState<VoteSnapshot | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [submitting, setSubmitting] = useState<VoteChoice | null>(null)
-  const [storageError, setStorageError] = useState(false)
+  const [email, setEmail] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [success, setSuccess] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const voterId = useRef<string | null>(null)
   const submission = useRef<AbortController | null>(null)
 
   useEffect(() => {
     document.title = 'FROST Multisig — Noir Wallet'
-    const controller = new AbortController()
-
-    async function load() {
-      try {
-        // A Web Lock keeps first-time identity creation consistent across tabs.
-        voterId.current = navigator.locks
-          ? await navigator.locks.request('noir-frost-voter', () => getVoterId(localStorage))
-          : getVoterId(localStorage)
-      } catch {
-        if (controller.signal.aborted) return
-        setStorageError(true)
-      }
-      if (controller.signal.aborted) return
-      try {
-        const result = await fetchVoteSnapshot('GET', voterId.current, null, controller.signal)
-        if (!controller.signal.aborted) setSnapshot(result)
-      } catch {
-        if (!controller.signal.aborted) setError('Could not load votes. Please try again.')
-      } finally {
-        if (!controller.signal.aborted) setLoading(false)
-      }
-    }
-
-    void load()
     return () => {
-      controller.abort()
       submission.current?.abort()
     }
   }, [])
 
-  async function vote(choice: VoteChoice) {
-    if (!voterId.current || submission.current || snapshot?.choice) return
+  async function signup(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (submission.current) return
     const controller = new AbortController()
     submission.current = controller
-    setSubmitting(choice)
+    setSubmitting(true)
+    setSuccess(false)
     setError(null)
     try {
-      const result = await fetchVoteSnapshot('POST', voterId.current, choice, controller.signal)
-      if (!controller.signal.aborted) setSnapshot(result)
-    } catch {
+      await submitSignup(email, controller.signal)
       if (!controller.signal.aborted) {
-        setError('Your vote could not be confirmed. Please try again; retries count only once.')
+        setSuccess(true)
+        setEmail('')
+      }
+    } catch (reason) {
+      if (!controller.signal.aborted) {
+        setError(
+          reason instanceof Error
+            ? reason.message
+            : 'Your signup could not be confirmed. Please try again.'
+        )
       }
     } finally {
-      if (!controller.signal.aborted) setSubmitting(null)
+      if (!controller.signal.aborted) setSubmitting(false)
       if (submission.current === controller) submission.current = null
     }
   }
@@ -75,7 +47,7 @@ export default function FrostVotePage() {
     <div className="relative isolate min-h-screen overflow-hidden bg-bg">
       <div
         aria-hidden="true"
-        className="pointer-events-none absolute inset-x-0 top-16 -z-10 h-[600px] bg-[radial-gradient(ellipse_at_top,rgba(0,209,138,0.1),transparent_65%)]"
+        className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[600px] bg-[radial-gradient(ellipse_at_top,rgba(0,209,138,0.1),transparent_65%)]"
       />
       <header className="mx-auto flex max-w-[1120px] items-center justify-between px-5 py-6 md:px-8 md:py-8">
         <a href="/" aria-label="Noir Wallet home" className="flex items-center gap-2.5">
@@ -92,7 +64,7 @@ export default function FrostVotePage() {
       <main className="mx-auto max-w-[940px] px-5 pb-10 pt-8 text-center md:px-8 md:pt-14">
         <div className="inline-flex items-center gap-2 rounded-full border border-primary/25 bg-primary/5 px-4 py-2 text-xs tracking-[0.08em] text-primary-light">
           <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-primary" />
-          PLANNED FEATURE · COMMUNITY VOTE
+          PLANNED FROST BETA
         </div>
         <h1 className="mt-6 font-serif text-[42px] leading-[1.1] tracking-tight text-white sm:text-[56px] md:text-[68px]">
           Two devices.
@@ -100,10 +72,10 @@ export default function FrostVotePage() {
           <span className="text-primary-light">One secure vault.</span>
         </h1>
         <p className="mt-5 text-sm font-medium tracking-[0.12em] text-white/80 md:text-base">
-          FROST MULTISIG · 2-OF-2 THRESHOLD SIGNING
+          FROST MULTISIG · 2-OF-3 THRESHOLD SIGNING
         </p>
         <p className="mx-auto mt-4 max-w-[610px] text-sm leading-relaxed text-white/60 md:text-base">
-          NoirWallet plans to bring 2-of-2 threshold signing to Zcash. Your Mobile and Chrome
+          NoirWallet plans to bring 2-of-3 threshold signing to Zcash. Your Mobile and Chrome
           Extension each hold a key share. Start a transaction in Chrome, confirm on your phone.
           Both devices must sign.
         </p>
@@ -125,87 +97,66 @@ export default function FrostVotePage() {
                 strokeLinejoin="round"
               />
             </svg>
-            <span className="text-[10px] tracking-wider text-white/50 sm:text-xs">2 / 2</span>
+            <span className="text-[10px] tracking-wider text-white/50 sm:text-xs">2 / 3</span>
           </div>
           <DeviceCard mobile />
         </div>
-        <p className="mt-5 text-xs tracking-wide text-white/45">
-          Independent key shares. Joint authorization. Your control.
-        </p>
-
         <section
-          aria-labelledby="vote-title"
+          aria-labelledby="signup-title"
           className="mx-auto mt-10 max-w-[660px] rounded-2xl border border-primary/25 bg-card p-6 text-left md:mt-12 md:p-7"
         >
-          <h2 id="vote-title" className="text-lg font-medium text-white">
-            Want FROST in NoirWallet?
+          <h2 id="signup-title" className="text-lg font-medium text-white">
+            Interested in the FROST beta?
           </h2>
-          <p className="mt-1 text-sm text-white/55">Help us shape what comes next.</p>
-          <div className="mt-6 grid grid-cols-2 gap-3">
-            {votingOptions.map(option => (
-              <div
-                key={option.choice}
-                className="rounded-xl border border-white/10 bg-white/[0.02] p-3 text-center sm:p-4"
+          <form className="mt-6" onSubmit={event => void signup(event)}>
+            <label htmlFor="frost-email" className="text-sm font-medium text-white/80">
+              Email
+            </label>
+            <div className="mt-2 flex flex-col gap-3 sm:flex-row">
+              <input
+                id="frost-email"
+                name="email"
+                type="email"
+                autoComplete="email"
+                inputMode="email"
+                required
+                maxLength={254}
+                value={email}
+                disabled={submitting}
+                placeholder="you@example.com"
+                onChange={event => {
+                  setEmail(event.target.value)
+                  setSuccess(false)
+                  setError(null)
+                }}
+                aria-invalid={error === 'Please enter a valid email address.'}
+                aria-describedby={error ? 'signup-error' : undefined}
+                className="min-h-12 min-w-0 flex-1 rounded-xl border border-white/20 bg-bg px-4 py-3 text-sm text-white outline-none placeholder:text-white/35 focus:border-primary disabled:opacity-60"
+              />
+              <button
+                type="submit"
+                disabled={submitting}
+                className="min-h-12 shrink-0 rounded-xl bg-primary px-5 py-3 text-sm font-semibold text-black transition-colors hover:bg-primary-light focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-primary-light disabled:cursor-default disabled:opacity-60"
               >
-                <p className="text-sm font-medium text-white/80">{option.label}</p>
-                <div className="mt-2 min-h-14" aria-live="polite" aria-atomic="true">
-                  {snapshot ? (
-                    <>
-                      <p className="break-all text-3xl font-medium tabular-nums text-white">
-                        {snapshot[option.choice].toLocaleString()}
-                      </p>
-                      <p className="mt-1 text-xs text-white/50">
-                        {snapshot[option.choice] === 1 ? 'vote' : 'votes'}
-                      </p>
-                    </>
-                  ) : (
-                    <p className="pt-2 text-xs text-white/50">
-                      {loading ? 'Loading…' : 'Unavailable'}
-                    </p>
-                  )}
-                </div>
-                <button
-                  type="button"
-                  disabled={
-                    loading || submitting !== null || storageError || Boolean(snapshot?.choice)
-                  }
-                  onClick={() => void vote(option.choice)}
-                  className={`mt-4 min-h-11 w-full rounded-lg px-2 py-2.5 text-sm font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-primary-light disabled:cursor-default disabled:opacity-60 ${option.choice === 'support' ? 'bg-primary text-black hover:bg-primary-light' : 'border border-white/25 text-white hover:bg-white/10'}`}
-                >
-                  {snapshot?.choice === option.choice
-                    ? '✓ Your vote'
-                    : submitting === option.choice
-                      ? 'Submitting…'
-                      : option.choice === 'support'
-                        ? 'Vote in favor'
-                        : 'Vote against'}
-                </button>
-              </div>
-            ))}
-          </div>
-          {snapshot?.choice && (
+                {submitting ? 'Submitting…' : 'Join interest list'}
+              </button>
+            </div>
+          </form>
+          {success && (
             <p role="status" className="mt-3 text-center text-sm text-primary-light">
-              Thanks for sharing your opinion.
+              Thanks for your interest.
             </p>
           )}
           {error && (
-            <p role="alert" className="mt-3 text-center text-xs leading-relaxed text-white/70">
+            <p
+              id="signup-error"
+              role="alert"
+              className="mt-3 text-center text-xs leading-relaxed text-white/70"
+            >
               {error}
             </p>
           )}
-          {storageError && (
-            <p role="alert" className="mt-3 text-center text-xs leading-relaxed text-white/70">
-              Enable browser storage and reload this page to vote.
-            </p>
-          )}
-          <p className="mt-4 text-center text-xs leading-relaxed text-white/40">
-            One vote per browser. No wallet connection required.
-          </p>
         </section>
-
-        <p className="mx-auto mt-6 max-w-[600px] text-xs leading-relaxed text-white/40">
-          Planned feature. Availability and device compatibility will be confirmed before release.
-        </p>
       </main>
     </div>
   )

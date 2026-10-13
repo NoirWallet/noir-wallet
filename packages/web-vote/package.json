@@ -12,7 +12,12 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "5.20260904.1",
+    "@types/node": "22.19.7",
+    "@types/nodemailer": "8.0.2",
     "typescript": "5.9.3",
     "wrangler": "4.129.0"
+  },
+  "dependencies": {
+    "nodemailer": "10.1.0"
   }
 }

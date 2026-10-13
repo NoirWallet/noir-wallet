@@ -1,10 +1,10 @@
 # Noir Wallet CI/CD and Release Workflow
 
-This runbook describes extension verification in [build-extension.yml](../.github/workflows/build-extension.yml), manual Beta and production candidate builds in [extension-release.yml](../.github/workflows/extension-release.yml), and promotion in [publish-extension.yml](../.github/workflows/publish-extension.yml). The [documentation workflow](../.github/workflows/docs.yml) verifies the documentation site on relevant pull requests but does not deploy it. The [SDK workflow](../.github/workflows/sdk.yml) checks the SDK package and example from this workspace without publishing them. Website and voting Worker deployment are described in [Website and Voting Worker](#website-and-voting-worker). SDK npm publication and Chrome Web Store submission remain separate manual operations.
+This runbook describes extension verification in [build-extension.yml](../.github/workflows/build-extension.yml), manual Beta and production candidate builds in [extension-release.yml](../.github/workflows/extension-release.yml), and promotion in [publish-extension.yml](../.github/workflows/publish-extension.yml). The [documentation workflow](../.github/workflows/docs.yml) verifies the documentation site on relevant pull requests but does not deploy it. The [SDK workflow](../.github/workflows/sdk.yml) checks the SDK package and example from this workspace without publishing them. Website and signup Worker deployment are described in [Website and Signup Worker](#website-and-signup-worker). SDK npm publication and Chrome Web Store submission remain separate manual operations.
 
-## Website and Voting Worker
+## Website and Signup Worker
 
-The website at `https://www.zknoir.com/` keeps its existing Cloudflare Pages Git integration. It builds and publishes the independent `/frost` page with the rest of the website. The [Website Voting Worker workflow](../.github/workflows/web-vote.yml) deploys only `packages/web-vote/`, independently of Pages and wallet releases. Homepage traffic continues to use Pages; voting API routing is defined in the [Worker configuration](../packages/web-vote/wrangler.jsonc).
+The website at `https://www.zknoir.com/` keeps its existing Cloudflare Pages Git integration. It builds and publishes the independent `/frost` page with the rest of the website. The [Website Signup Worker workflow](../.github/workflows/web-vote.yml) deploys only `packages/web-vote/`, independently of Pages and wallet releases. Homepage traffic continues to use Pages; signup API routing is defined in the [Worker configuration](../packages/web-vote/wrangler.jsonc).
 
 ### One-Time Deployment Credentials
 
@@ -12,21 +12,60 @@ In the GitHub repository, open **Settings → Secrets and variables → Actions*
 
 | Secret                  | Value                                                                                     |
 | ----------------------- | ----------------------------------------------------------------------------------------- |
-| `CLOUDFLARE_ACCOUNT_ID` | The Cloudflare account containing the website's zone and the voting Worker                |
+| `CLOUDFLARE_ACCOUNT_ID` | The Cloudflare account containing the website's zone and the signup Worker                |
 | `CLOUDFLARE_API_TOKEN`  | A Cloudflare API token authorized to deploy the Worker and manage its routes in that zone |
 
 Follow [Cloudflare's GitHub Actions authentication guide](https://developers.cloudflare.com/workers/ci-cd/external-cicd/github-actions/) to create a token using the **Edit Cloudflare Workers** template and restrict it to the intended account and website zone. See [Workers permissions](https://developers.cloudflare.com/workers/authorization/workers/) for Worker creation and route permissions. Store the token in Actions secrets, never in source files or frontend build variables. The configured hosts must use Cloudflare-proxied DNS for Worker routes.
 
+### Signup Email Configuration
+
+In Cloudflare **Workers & Pages → noir-web-vote → Settings → Variables and Secrets**, configure these runtime **Secrets** before production deployment:
+
+| Secret               | Value                                                                                              |
+| -------------------- | -------------------------------------------------------------------------------------------------- |
+| `SMTP_USER`          | The Google account used for SMTP authentication; use the primary account if the sender is an alias |
+| `SMTP_APP_PASSWORD`  | The account's 16-character Google App Password; grouping spaces are removed                        |
+| `SIGNUP_MAIL_CONFIG` | A JSON object in the format below                                                                  |
+
+The sender is fixed to `support@zknoir.com`; it must be the authenticated mailbox or its verified Gmail send-as alias. The transport uses certificate-verified TLS on port 465. Keep these values in Worker Secrets, outside Actions secrets, Wrangler `vars`, source files, and frontend builds. Production declares them required; the local environment disables sending.
+
+```json
+{
+  "subject": "You're on the list — NoirWallet FROST",
+  "preheader": "Thanks for your interest in FROST.",
+  "title": "Two devices. One secure vault.",
+  "paragraphs": ["Thanks for signing up for updates on our planned FROST vault."],
+  "button": { "text": "Explore FROST", "url": "https://www.zknoir.com/frost" }
+}
+```
+
+`subject`, `title`, and a nonempty `paragraphs` array are required; `preheader` and `button` are optional. Body values are plain text escaped by the HTML template; buttons require an HTTPS URL without credentials. Emails include HTML and a plain-text alternative. Pending jobs use the configuration in effect when processed.
+
+After deploying, check readiness, then submit an email you control that has not already registered and inspect its inbox. Readiness and dry runs do not verify Gmail credentials, sender alias authorization, or inbox delivery. Local development disables sending and does not load SMTP secrets.
+
+For delivery recovery, inspect the private `signup_mail` table using **Durable Objects → noir-web-vote/FrostVotes → Data Studio**, object name `frost-early-signup-v1`:
+
+```sql
+SELECT id, status, attempts, error_code, error_stage, smtp_code, error_name
+FROM signup_mail
+ORDER BY updated_at DESC
+LIMIT 20;
+```
+
+`pending` awaits an alarm, `sending` is in flight, and `sent` means SMTP acceptance, not confirmed inbox delivery. `failed` marks a permanent rejection or exhausted retries. `unknown` marks ambiguous acceptance or an interrupted send; investigate before any resend. Invalid mail configuration leaves jobs pending and schedules another configuration check after at least five minutes, without consuming a send attempt. Do not reset signup records to resend mail. Existing signups are not backfilled, and historical votes remain untouched.
+
+Failure logs contain only bounded diagnostic fields and the outcome, never recipient addresses, credentials, exception messages, or raw SMTP responses. `EAUTH` with SMTP code `535` identifies an authentication rejection; verify the actual Google login account and App Password. `ESOCKET`, `ETLS`, or `ETIMEDOUT` at `CONNECT` identifies connection or TLS setup failure. `WORKER_INTERRUPTED` records a restarted in-flight job. Correct configuration failures without deleting saved signups or mail history. See the [README](../README.md#frost-beta-signup) for signup and retry behavior.
+
 ### Automatic Deployment and Recovery
 
-- Relevant pushes to `main` verify the Worker, test and build the voting client, then deploy the production Worker. The workflow's path filters define relevant changes.
+- Relevant pushes to `main` verify the Worker, test and build the signup client, then deploy the production Worker. The workflow's path filters define relevant changes.
 - Pull requests run verification without deployment or access to the deployment credentials. Forks do not deploy.
 - Manual runs can deploy from `main`; other branches only verify. Missing credentials fail deployment with a configuration error.
-- Deployment uses the committed Wrangler configuration, including the Durable Object binding and migration. Existing stored votes are preserved; local test votes are not uploaded.
+- Deployment uses the committed Wrangler configuration, including the existing Durable Object binding and migration. Signups use a separate named instance from historical votes; neither stored dataset is reset, and local test data is not uploaded.
 - Before deployment, the run's commit must still match current `main`. Rerunning an older workflow cannot replace a newer Worker deployment; start a new manual run from current `main` instead.
-- The final step performs an anonymous, read-only request to the production API and validates its response against the client contract. It does not submit a production vote.
+- The final step performs a read-only health request to the production API and validates its response against the client contract. It does not submit a production signup or read email addresses.
 
-After pushing, check **Actions → Website Voting Worker** and the existing Pages deployment status. These are independent deployments; the page may publish before its API is ready. If credential or route setup fails, correct the relevant account, token, or DNS configuration and rerun the workflow from `main`. If the post-deployment API check fails, inspect the route and API response: the deployment may already have succeeded. Do not remove the Durable Object or reset votes to recover a failed deployment. For a code regression, revert the affected change on `main` and let the normal deployment workflow publish the correction. No production deployment is verified merely by a local dry run.
+After pushing, check **Actions → Website Signup Worker** and the existing Pages deployment status. These are independent deployments; the page may publish before its API is ready. If credential or route setup fails, correct the relevant account, token, or DNS configuration and rerun the workflow from `main`. If the post-deployment API check fails, inspect the route and API response: the deployment may already have succeeded. Do not remove the Durable Object or reset stored data to recover a failed deployment. For a code regression, revert the affected change on `main` and let the normal deployment workflow publish the correction. No production deployment is verified merely by a local dry run.
 
 ## Branches and Releases
 
@@ -236,4 +275,4 @@ For an urgent fix, start a new `release/{patch-version}` branch from the verifie
 - [ ] Final acceptance used the production ZIP intended for Chrome Web Store.
 - [ ] Mainnet ZIP was submitted to Chrome Web Store.
 
-Chrome Web Store upload and approval, SDK npm publishing, candidate construction confirmation, and production promotion remain manual. Website and voting Worker operations follow [Website and Voting Worker](#website-and-voting-worker). Do not add unverified secret names or third-party publication actions to the workflow.
+Chrome Web Store upload and approval, SDK npm publishing, candidate construction confirmation, and production promotion remain manual. Website and signup Worker operations follow [Website and Signup Worker](#website-and-signup-worker). Do not add unverified secret names or third-party publication actions to the workflow.
