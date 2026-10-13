@@ -182,7 +182,7 @@ Set `SLACK_WEBHOOK_URL` as a Worker secret for notifications. Local scheduled ru
 
 ## FROST Beta Signup
 
-The website's independent `/frost` page introduces the planned Mobile + Chrome Extension 2-of-3 FROST vault and collects email addresses for Beta interest. Its API is a separate Cloudflare Worker in `packages/web-vote/`.
+The website's independent `/frost` page introduces the planned 2-of-3 FROST vault: Mobile and Chrome Extension hold the everyday signing shares, with a third share kept offline for recovery together with the remaining device if one is lost. The page collects email addresses for Beta interest. Its API is a separate Cloudflare Worker in `packages/web-vote/`.
 
 Run both servers from the repository root:
 

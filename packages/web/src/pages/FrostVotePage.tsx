@@ -76,30 +76,48 @@ export default function FrostVotePage() {
         </p>
         <p className="mx-auto mt-4 max-w-[610px] text-sm leading-relaxed text-white/60 md:text-base">
           NoirWallet plans to bring 2-of-3 threshold signing to Zcash. Your Mobile and Chrome
-          Extension each hold a key share. Start a transaction in Chrome, confirm on your phone.
-          Both devices must sign.
+          Extension each hold a key share; a third is kept offline for recovery. Start a transaction
+          in Chrome and confirm on your phone. If one device is lost, use the remaining device and
+          your offline backup to recover access. Any two key shares are required to sign.
         </p>
 
-        <div className="mx-auto mt-9 flex max-w-[660px] items-center justify-center gap-2 sm:gap-5 md:mt-11">
-          <DeviceCard mobile={false} />
-          <div className="flex shrink-0 flex-col items-center gap-2 text-primary-light">
-            <svg aria-hidden="true" width="42" height="42" viewBox="0 0 48 48" fill="none">
-              <path
-                d="M24 5 38 11v11c0 10-7 17-14 21C17 39 10 32 10 22V11L24 5Z"
-                stroke="currentColor"
-                strokeWidth="1.5"
-              />
-              <path
-                d="m17 24 5 5 10-11"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-            <span className="text-[10px] tracking-wider text-white/50 sm:text-xs">2 / 3</span>
+        <div className="mx-auto mt-9 max-w-[660px] md:mt-11">
+          <div className="grid grid-cols-3 gap-2 sm:gap-4">
+            <DeviceCard kind="chrome" />
+            <DeviceCard kind="mobile" />
+            <DeviceCard kind="backup" />
           </div>
-          <DeviceCard mobile />
+          <div className="mx-auto mt-6 flex max-w-[420px] items-center gap-4">
+            <span aria-hidden="true" className="h-px flex-1 bg-white/15" />
+            <div className="flex shrink-0 items-center gap-2 text-primary-light">
+              <svg aria-hidden="true" width="24" height="24" viewBox="0 0 48 48" fill="none">
+                <path
+                  d="M24 5 38 11v11c0 10-7 17-14 21C17 39 10 32 10 22V11L24 5Z"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                />
+                <path
+                  d="m17 24 5 5 10-11"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+              <span className="text-xs sm:text-sm">Any 2 of 3</span>
+            </div>
+            <span aria-hidden="true" className="h-px flex-1 bg-white/15" />
+          </div>
+          <div className="mt-5 flex flex-col justify-center gap-3 text-xs sm:flex-row sm:gap-8">
+            <p className="text-white/80">
+              <span className="mb-1 block text-[11px] text-white/45">Everyday signing</span>
+              Chrome + Mobile
+            </p>
+            <p className="text-white/80">
+              <span className="mb-1 block text-[11px] text-white/45">Device recovery</span>
+              Remaining device + Offline backup
+            </p>
+          </div>
         </div>
         <section
           aria-labelledby="signup-title"
@@ -162,18 +180,45 @@ export default function FrostVotePage() {
   )
 }
 
-function DeviceCard({ mobile }: { mobile: boolean }) {
+function DeviceCard({ kind }: { kind: 'chrome' | 'mobile' | 'backup' }) {
+  const backup = kind === 'backup'
   return (
-    <div className="flex min-h-[170px] min-w-0 flex-1 flex-col items-center justify-center rounded-2xl border border-white/10 bg-linear-to-b from-white/5 to-white/[0.02] p-3 sm:min-h-[190px] sm:p-5">
+    <div
+      className={`flex min-h-[190px] min-w-0 flex-col items-center justify-center rounded-2xl border p-2 sm:min-h-[210px] sm:p-5 ${backup ? 'border-dashed border-white/25 bg-white/[0.02]' : 'border-primary/25 bg-linear-to-b from-primary/5 to-white/[0.02]'}`}
+    >
+      <span
+        className={`mb-3 text-[10px] tracking-[0.12em] sm:text-[11px] ${backup ? 'text-white/50' : 'text-primary-light'}`}
+      >
+        {backup ? 'OFFLINE' : 'DAILY'}
+      </span>
       <svg
         aria-hidden="true"
         width="48"
         height="48"
         viewBox="0 0 48 48"
         fill="none"
-        className="text-white/80"
+        className={`h-10 w-10 sm:h-12 sm:w-12 ${backup ? 'text-white/55' : 'text-white/80'}`}
       >
-        {mobile ? (
+        {backup ? (
+          <>
+            <rect
+              x="6"
+              y="7"
+              width="36"
+              height="8"
+              rx="2"
+              stroke="currentColor"
+              strokeWidth="1.5"
+            />
+            <path
+              d="M10 15v25h28V15M20 23h8"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </>
+        ) : kind === 'mobile' ? (
           <>
             <rect
               x="14"
@@ -213,11 +258,13 @@ function DeviceCard({ mobile }: { mobile: boolean }) {
           </>
         )}
       </svg>
-      <p className="mt-3 text-xs font-medium text-white sm:text-base">
-        {mobile ? 'Mobile' : 'Chrome Extension'}
+      <p className="mt-3 flex min-h-8 items-center justify-center text-xs font-medium leading-tight text-white sm:text-base">
+        {backup ? 'Offline Backup' : kind === 'mobile' ? 'Mobile' : 'Chrome Extension'}
       </p>
-      <span className="mt-2 rounded-md bg-primary/10 px-2.5 py-1 text-[10px] tracking-wide text-primary-light sm:text-xs">
-        Key share {mobile ? 'B' : 'A'}
+      <span
+        className={`mt-2 rounded-md px-2 py-1 text-[11px] sm:px-2.5 sm:text-xs ${backup ? 'bg-white/5 text-white/60' : 'bg-primary/10 text-primary-light'}`}
+      >
+        Key share {backup ? 'C' : kind === 'mobile' ? 'B' : 'A'}
       </span>
     </div>
   )
