@@ -17,6 +17,45 @@ In the GitHub repository, open **Settings → Secrets and variables → Actions*
 
 Follow [Cloudflare's GitHub Actions authentication guide](https://developers.cloudflare.com/workers/ci-cd/external-cicd/github-actions/) to create a token using the **Edit Cloudflare Workers** template and restrict it to the intended account and website zone. See [Workers permissions](https://developers.cloudflare.com/workers/authorization/workers/) for Worker creation and route permissions. Store the token in Actions secrets, never in source files or frontend build variables. The configured hosts must use Cloudflare-proxied DNS for Worker routes.
 
+### Signup Email Configuration
+
+In Cloudflare **Workers & Pages → noir-web-vote → Settings → Variables and Secrets**, configure these runtime **Secrets** before production deployment:
+
+| Secret               | Value                                                                                              |
+| -------------------- | -------------------------------------------------------------------------------------------------- |
+| `SMTP_USER`          | The Google account used for SMTP authentication; use the primary account if the sender is an alias |
+| `SMTP_APP_PASSWORD`  | The account's 16-character Google App Password; grouping spaces are removed                        |
+| `SIGNUP_MAIL_CONFIG` | A JSON object in the format below                                                                  |
+
+The sender is fixed to `support@zknoir.com`; it must be the authenticated mailbox or its verified Gmail send-as alias. The transport uses certificate-verified TLS on port 465. Keep these values in Worker Secrets, outside Actions secrets, Wrangler `vars`, source files, and frontend builds. Production declares them required; the local environment disables sending.
+
+```json
+{
+  "subject": "You're on the list — NoirWallet FROST",
+  "preheader": "Thanks for your interest in FROST.",
+  "title": "Two devices. One secure vault.",
+  "paragraphs": ["Thanks for signing up for updates on our planned FROST vault."],
+  "button": { "text": "Explore FROST", "url": "https://www.zknoir.com/frost" }
+}
+```
+
+`subject`, `title`, and a nonempty `paragraphs` array are required; `preheader` and `button` are optional. Body values are plain text escaped by the HTML template; buttons require an HTTPS URL without credentials. Emails include HTML and a plain-text alternative. Pending jobs use the configuration in effect when processed.
+
+After deploying, check readiness, then submit an email you control that has not already registered and inspect its inbox. Readiness and dry runs do not verify Gmail credentials, sender alias authorization, or inbox delivery. For a deliberate local send test, set `MAIL_MODE=enabled` and the three secrets in ignored `packages/web-vote/.dev.vars.local`; this sends real email. Ordinary local checks must keep sending disabled.
+
+For delivery recovery, inspect the private `signup_mail` table using **Durable Objects → noir-web-vote/FrostVotes → Data Studio**, object name `frost-early-signup-v1`:
+
+```sql
+SELECT id, status, attempts, error_code, error_stage, smtp_code, error_name
+FROM signup_mail
+ORDER BY updated_at DESC
+LIMIT 20;
+```
+
+`pending` awaits an alarm, `sending` is in flight, and `sent` means SMTP acceptance, not confirmed inbox delivery. `failed` marks a permanent rejection or exhausted retries. `unknown` marks ambiguous acceptance or an interrupted send; investigate before any resend. Do not reset signup records to resend mail. Existing signups are not backfilled, and historical votes remain untouched.
+
+Failure logs contain only bounded diagnostic fields and the outcome, never recipient addresses, credentials, exception messages, or raw SMTP responses. `EAUTH` with SMTP code `535` identifies an authentication rejection; verify the actual Google login account and App Password. `ESOCKET`, `ETLS`, or `ETIMEDOUT` at `CONNECT` identifies connection or TLS setup failure. `WORKER_INTERRUPTED` records a restarted in-flight job. Correct configuration failures without deleting saved signups or mail history. See the [README](../README.md#frost-beta-signup) for signup and retry behavior.
+
 ### Automatic Deployment and Recovery
 
 - Relevant pushes to `main` verify the Worker, test and build the signup client, then deploy the production Worker. The workflow's path filters define relevant changes.

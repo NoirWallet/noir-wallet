@@ -18,6 +18,9 @@ function createStore(t, setup) {
       const rows = isQuery ? statement.all(...bindings) : []
       if (!isQuery) statement.run(...bindings)
       return {
+        toArray() {
+          return rows
+        },
         one() {
           assert.equal(rows.length, 1)
           return rows[0]

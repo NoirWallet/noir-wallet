@@ -182,7 +182,7 @@ Set `SLACK_WEBHOOK_URL` as a Worker secret for notifications. Local scheduled ru
 
 ## FROST Beta Signup
 
-The website's independent `/frost` page introduces the planned Mobile + Chrome Extension 2-of-2 FROST vault and collects email addresses for Beta interest. Its API is a separate Cloudflare Worker in `packages/web-vote/`.
+The website's independent `/frost` page introduces the planned Mobile + Chrome Extension 2-of-3 FROST vault and collects email addresses for Beta interest. Its API is a separate Cloudflare Worker in `packages/web-vote/`.
 
 Run both servers from the repository root:
 
@@ -193,9 +193,13 @@ pnpm dev:web
 
 Open `http://localhost:5001/frost`. Vite proxies `/api/frost-signups` to the local Worker on port 8788. Local signups persist under ignored `output/web-vote/state/`, separately from production.
 
-`POST /api/frost-signups` accepts JSON `{ "email": "you@example.com" }` from a configured website Origin and returns `{ "ok": true }`. The API validates the address, trims surrounding whitespace, and lowercases its domain. A SQLite-backed Durable Object stores the email address and first signup time. Duplicate submissions return the same receipt without changing that time or revealing whether the address was already registered. This collects interest; it does not verify email ownership or send invitations.
+`POST /api/frost-signups` accepts JSON `{ "email": "you@example.com" }` from a configured website Origin and returns `{ "ok": true }`. The API validates the address, trims surrounding whitespace, and lowercases its domain. A SQLite-backed Durable Object stores the email address and first signup time. Duplicate submissions return the same receipt without changing that time or revealing whether the address was already registered. This collects interest; it does not verify email ownership.
 
-`GET /api/frost-signups` returns `{ "status": "ok" }` after checking storage readiness. It exposes no addresses or signup counts. The existing Durable Object binding and migration are retained, but signups use a separate named instance; historical vote data is left untouched. The client no longer creates a browser voting identity.
+New production signups atomically enqueue a welcome email sent through Gmail SMTP from `NoirWallet <support@zknoir.com>`. Existing signups are not backfilled, and repeated submissions do not enqueue another email. Durable Object alarms process the persistent queue at most once per minute across recipients. Explicit temporary SMTP rejections retry up to three total attempts; ambiguous delivery outcomes remain stopped for investigation. Mail failures do not remove saved signups. See [signup email configuration and recovery](./docs/release-workflow.md#signup-email-configuration).
+
+Production requires valid mail secrets; missing or invalid configuration returns a generic 503 for submissions and readiness checks. `GET /api/frost-signups` otherwise returns `{ "status": "ok" }` after checking storage readiness without contacting Gmail. It exposes no addresses or signup counts. Local development sets `MAIL_MODE=disabled`, storing signups without sending email or requiring mail secrets.
+
+The existing Durable Object binding and migration are retained, but signups use a separate named instance; historical vote data is left untouched. The client no longer creates a browser voting identity.
 
 Verify before deployment:
 

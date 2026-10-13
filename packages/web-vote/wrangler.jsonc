@@ -3,6 +3,8 @@
   "name": "noir-web-vote",
   "main": "src/index.ts",
   "compatibility_date": "2026-09-07",
+  "compatibility_flags": ["nodejs_compat"],
+  "secrets": { "required": ["SMTP_USER", "SMTP_APP_PASSWORD", "SIGNUP_MAIL_CONFIG"] },
   "workers_dev": false,
   "routes": [
     { "pattern": "www.zknoir.com/api/frost-signups*", "zone_name": "zknoir.com" },
@@ -17,7 +19,11 @@
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["FrostVotes"] }],
   "env": {
     "local": {
-      "vars": { "ALLOWED_ORIGINS": "http://localhost:5001,http://127.0.0.1:5001" },
+      "vars": {
+        "ALLOWED_ORIGINS": "http://localhost:5001,http://127.0.0.1:5001",
+        "MAIL_MODE": "disabled"
+      },
+      "secrets": { "required": [] },
       "durable_objects": {
         "bindings": [{ "name": "FROST_VOTES", "class_name": "FrostVotes" }]
       }

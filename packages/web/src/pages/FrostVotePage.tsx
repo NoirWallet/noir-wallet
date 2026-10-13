@@ -72,10 +72,10 @@ export default function FrostVotePage() {
           <span className="text-primary-light">One secure vault.</span>
         </h1>
         <p className="mt-5 text-sm font-medium tracking-[0.12em] text-white/80 md:text-base">
-          FROST MULTISIG · 2-OF-2 THRESHOLD SIGNING
+          FROST MULTISIG · 2-OF-3 THRESHOLD SIGNING
         </p>
         <p className="mx-auto mt-4 max-w-[610px] text-sm leading-relaxed text-white/60 md:text-base">
-          NoirWallet plans to bring 2-of-2 threshold signing to Zcash. Your Mobile and Chrome
+          NoirWallet plans to bring 2-of-3 threshold signing to Zcash. Your Mobile and Chrome
           Extension each hold a key share. Start a transaction in Chrome, confirm on your phone.
           Both devices must sign.
         </p>
@@ -97,7 +97,7 @@ export default function FrostVotePage() {
                 strokeLinejoin="round"
               />
             </svg>
-            <span className="text-[10px] tracking-wider text-white/50 sm:text-xs">2 / 2</span>
+            <span className="text-[10px] tracking-wider text-white/50 sm:text-xs">2 / 3</span>
           </div>
           <DeviceCard mobile />
         </div>
