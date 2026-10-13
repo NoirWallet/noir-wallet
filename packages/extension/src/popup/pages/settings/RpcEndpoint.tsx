@@ -21,6 +21,7 @@ import {
 import { useSettingsStore } from '@/store/settings-store'
 import { toast } from '@/store/toast-store'
 import { ChainIcon } from '../../components/common/ChainIcon'
+import { EndpointLatencyBadge as PingBadge } from '../../components/common/EndpointStatus'
 import { PageHeader } from '../../components/common/PageHeader'
 import { Button } from '../../components/ui/button'
 import { Input } from '../../components/ui/input'
@@ -74,32 +75,6 @@ const fixedTestnetEndpointGroups: readonly RpcEndpointGroup[] | null = isFixedTe
 
 function pingKey(chain: RpcEndpointChain, optionId: string): string {
   return `${chain}:${optionId}`
-}
-
-function latencyTone(latencyMs: number): string {
-  if (latencyMs < 200) return 'text-primary'
-  if (latencyMs < 500) return 'text-warning'
-  return 'text-danger'
-}
-
-function PingBadge({ result }: { result?: PingResult }) {
-  if (!result) return <span className="text-xs text-muted">--</span>
-  if (result.status === 'pending') {
-    return (
-      <Icon icon="lucide:loader-2" width={14} height={14} className="animate-spin text-muted" />
-    )
-  }
-  if (result.status === 'unreachable')
-    return (
-      <span title="RPC unavailable or wrong network" className="text-xs text-danger">
-        Offline
-      </span>
-    )
-  return (
-    <span className={cn('text-xs tabular-nums', latencyTone(result.latencyMs))}>
-      {result.latencyMs} ms
-    </span>
-  )
 }
 
 function CustomRpcSection({

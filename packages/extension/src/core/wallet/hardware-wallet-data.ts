@@ -177,7 +177,7 @@ function parseDerivationPath(value: unknown): string {
   return value
 }
 
-function productChainForPath(path: string): KeystoneProductChain | null {
+export function productChainForPath(path: string): KeystoneProductChain | null {
   if (/^m\/(44|49|84|86)'\/(0|1)'\/[0-9]+'$/.test(path)) return 'bitcoin'
   if (/^m\/44'\/60'\/[0-9]+'(?:\/0\/[0-9]+)?$/.test(path)) return 'evm'
   if (/^m\/44'\/501'\/[0-9]+'(?:\/0')?$/.test(path)) return 'solana'

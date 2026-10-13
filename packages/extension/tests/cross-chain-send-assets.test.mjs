@@ -47,12 +47,13 @@ test('cross-chain Send uses verified asset identities and excludes the source ne
 test('cross-chain Send accepts canonical USDC and rejects same-symbol tokens', () => {
   const usdc = {
     ...eth,
-    assetId: 'nep141:base-usdc.omft.near',
+    assetId: 'nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near',
     rheaChainId: '8453',
     tokenListChainId: 8453,
     blockchain: 'base',
     symbol: 'USDC',
     isNative: false,
+    contractAddress: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
     rheaAddress: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'
   }
   const solanaUsdc = {
@@ -60,6 +61,7 @@ test('cross-chain Send accepts canonical USDC and rejects same-symbol tokens', (
     rheaChainId: 'solana',
     tokenListChainId: 501,
     blockchain: 'sol',
+    contractAddress: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
     rheaAddress: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
   }
   expect(isCrossChainSendDestination(usdc, solanaUsdc, enabledChains)).toBe(true)

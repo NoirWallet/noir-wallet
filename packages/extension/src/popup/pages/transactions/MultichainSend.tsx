@@ -35,6 +35,7 @@ import { usePortfolioUpdates } from '@/popup/hooks/usePortfolioUpdates'
 import { assetPriceClient } from '@/popup/services/asset-price-client'
 import { offerSaveRecipient } from '@/popup/services/save-recipient-prompt'
 import { buildSendAssetSelectionModel, type SendAsset } from './send-asset-order'
+import { isSelectableChainFamily } from '@/popup/services/chain-selection-availability'
 import { SolanaSendForm } from './SolanaSendForm'
 import { SolanaTransactionResult } from './SolanaTransactionResult'
 import type { SolanaTransferSubmission } from '@/popup/services/solana-wallet-client'
@@ -97,7 +98,8 @@ function AssetSelection({
         zecPrice,
         prices,
         selectedNetwork,
-        searchQuery: query
+        searchQuery: query,
+        enabledFlags: __ENABLED_CHAIN_FEATURE_FLAGS__
       }),
     [assets, prices, query, selectedNetwork, zcashTotal, zcashEnabled, zcashNetwork, zecPrice]
   )
@@ -137,13 +139,23 @@ function AssetSelection({
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" className="min-w-[120px]">
-            <DropdownMenuRadioGroup value={selectedNetwork} onValueChange={setSelectedNetwork}>
+            <DropdownMenuRadioGroup
+              value={selectedNetworkOption ? selectedNetwork : 'all'}
+              onValueChange={setSelectedNetwork}
+            >
               <DropdownMenuRadioItem value="all" className="cursor-pointer">
                 <Icon icon="lucide:network" width={16} height={16} className="text-muted" />
                 <span>All Networks</span>
               </DropdownMenuRadioItem>
               {networkOptions.map(option => (
-                <DropdownMenuRadioItem key={option.id} value={option.id} className="cursor-pointer">
+                <DropdownMenuRadioItem
+                  key={option.id}
+                  value={option.id}
+                  disabled={option.disabled}
+                  className={
+                    option.disabled ? 'text-muted data-[disabled]:opacity-100' : 'cursor-pointer'
+                  }
+                >
                   <ChainIcon
                     chain={option.iconAlias}
                     width={16}
@@ -153,7 +165,8 @@ function AssetSelection({
                     alt=""
                     aria-hidden="true"
                   />
-                  <span>{option.label}</span>
+                  <span className="flex-1">{option.label}</span>
+                  {option.disabled && <span className="text-[10px]">Coming soon</span>}
                 </DropdownMenuRadioItem>
               ))}
             </DropdownMenuRadioGroup>
@@ -402,6 +415,7 @@ export function MultichainSend() {
     return model.assets.flatMap(asset => {
       const chain = chainById.get(asset.asset.chainId)
       return chain &&
+        isSelectableChainFamily(chain.chain.family, __ENABLED_CHAIN_FEATURE_FLAGS__) &&
         (chain.chain.family === 'evm' ||
           chain.chain.family === 'bitcoin' ||
           chain.chain.family === 'solana' ||

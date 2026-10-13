@@ -8,6 +8,10 @@ icon: Download
 
 Use the [official Chrome Web Store listing](https://chromewebstore.google.com/detail/noir-wallet/mfoghjbpfanobmnoemoepenjjcmfpmdn). After installation, pin the extension from Chrome's extensions menu.
 
+## V2 Beta access
+
+Enter an unused invite code before setting up or unlocking the wallet. Activation finishes after wallet creation, import, or unlock. If binding fails, select **Retry** or **Use another code** to continue with the existing wallet.
+
 ## Create or restore
 
 <Tabs items={['New wallet', 'Restore wallet']}>
@@ -34,6 +38,12 @@ Zcash wallet history is discovered by scanning the chain. After an import or a l
 - Actions remain unavailable until their prerequisites are ready.
 - Keep the browser open if the wallet indicates that an initial scan is still running.
 - If sync pauses, check the connection. **Resync Zcash** is available in the current account's Zcash settings.
+
+## Transaction broadcasting
+
+**Private broadcast** is enabled by default in **Settings > Security & Privacy**. Open **Broadcast nodes** to select Auto, choose a managed node, or add a custom HTTPS node. Adding a node saves it without selecting it; removing the selected custom node restores Auto. Node selections are saved separately for Mainnet and Testnet and retained while private broadcasting is disabled.
+
+Transactions containing Orchard try the selected ZeroIndexer node, or the ordered managed nodes in Auto. If those attempts fail, the same transaction falls back to the wallet's ordinary RPC. Other transactions, and all transactions when private broadcasting is disabled, use the ordinary RPC directly. These settings do not change the synchronization provider or compact-block CDN. Probe latency describes node reachability, not which node accepted a transaction.
 
 <Callout type="info">
   Locking Noir Wallet protects local access. It does not remove an existing dApp authorization;

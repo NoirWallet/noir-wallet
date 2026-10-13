@@ -1,18 +1,28 @@
 import { RPC_REGISTRY, ZCASH_RPC_REGISTRY } from './registry'
+import { ZERO_INDEXER_REGISTRY } from './zero-indexer-registry'
 
 const REGISTRY_PATH = '/v1/rpc-endpoints'
+const ZERO_INDEXER_PATH = '/v1/zero-indexer-endpoints'
 
 export function handleRegistryRequest(request: Request): Response {
   const url = new URL(request.url)
-  if (request.method === 'OPTIONS' && url.pathname === REGISTRY_PATH) {
+  if (
+    request.method === 'OPTIONS' &&
+    (url.pathname === REGISTRY_PATH || url.pathname === ZERO_INDEXER_PATH)
+  ) {
     return new Response(null, {
       status: 204,
       headers: registryHeaders()
     })
   }
-  if (request.method !== 'GET' || url.pathname !== REGISTRY_PATH) {
+  if (request.method !== 'GET') {
     return new Response('Not Found', { status: 404 })
   }
+
+  if (url.pathname === ZERO_INDEXER_PATH) {
+    return Response.json(ZERO_INDEXER_REGISTRY, { headers: registryHeaders() })
+  }
+  if (url.pathname !== REGISTRY_PATH) return new Response('Not Found', { status: 404 })
 
   const registry =
     url.searchParams.get('scope') === 'multichain' ? RPC_REGISTRY : ZCASH_RPC_REGISTRY

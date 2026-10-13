@@ -4,6 +4,7 @@
 
 import type { FundingSource, Network, ZcashBalance } from '@/types'
 import type { TransferEstimate, TransferResult } from '@/core/zcash/transfer-result'
+import type { ZeroIndexerOptions } from '@/config/zero-indexer'
 import type {
   BallotDecision,
   PreparedVotingRound,
@@ -110,10 +111,16 @@ export interface RPCSchema {
       network: Network
       lightwalletdUrl: string
       compactBlockCdn?: { baseUrl: string } | null
+      zeroIndexerOptions?: ZeroIndexerOptions | null
       dbBytes?: Uint8Array
       dbKey?: string
     }
     response: boolean | 'empty'
+  }
+
+  'zeroIndexer.setOptions': {
+    request: { network: Network; options: ZeroIndexerOptions | null }
+    response: true
   }
 
   'mnemonic.generate': {
@@ -495,4 +502,7 @@ export interface RPCResponse<M extends RPCMethod> {
   method: M
   result?: RPCSchema[M]['response']
   error?: string
+  errorType?: 'timeout' | 'submission_unknown'
+  txId?: string
+  txIds?: string[]
 }

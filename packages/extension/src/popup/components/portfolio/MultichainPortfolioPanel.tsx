@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Icon } from '@iconify/react'
 import type { PortfolioReadModel } from '@/core/portfolio'
 import { PortfolioShell } from './PortfolioShell'
+import { isSelectableChainFamily } from '@/popup/services/chain-selection-availability'
 import type { AssetPriceReadModel } from '@/core/prices'
 import { usePortfolioUpdates } from '@/popup/hooks/usePortfolioUpdates'
 import { ListSkeleton } from '../ui/skeleton'
@@ -206,7 +207,10 @@ export function MultichainPortfolioPanel({
   }, [accountId, walletId])
 
   const visibleModel = isPortfolioModelForScope(model, walletId, accountId) ? model : null
-  const availableChainIds = visibleModel?.chains.map(chain => chain.chain.id) ?? []
+  const availableChainIds =
+    visibleModel?.chains
+      .filter(chain => isSelectableChainFamily(chain.chain.family, __ENABLED_CHAIN_FEATURE_FLAGS__))
+      .map(chain => chain.chain.id) ?? []
   const availableChainIdSet = new Set<string>(availableChainIds)
   const persistedAvailableChainIds = persistedChainSelection?.filter(chainId =>
     availableChainIdSet.has(chainId)

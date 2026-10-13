@@ -12,11 +12,17 @@ import {
   type LedgerPublicAccount
 } from '@/core/wallet/ledger-hardware-credential'
 import {
+  assertRetainedDisabledLedgerAccounts,
+  assertRetainedDisabledLedgerProjections
+} from '@/core/wallet/ledger-feature-policy'
+import {
   IndexedDbCredentialRepository,
   IndexedDbStorageV2Repository
 } from '@/infrastructure/persistence/repositories'
 import { readActiveLedgerHardwareCredential } from '@/infrastructure/keyring/active-hardware-credential-inventory'
+import { parseKeyDomainId } from '@/core/keyring/domain'
 import { getZcashChainId } from '@/core/chains/registry'
+import { areNewHardwareWalletFamiliesEnabled } from '@/core/chains/feature-runtime-policy'
 import { SecureStorage } from '@/core/wallet/secure-storage'
 import { DEFAULT_NETWORK } from '@/lib/runtime-network'
 import type { AccountAddresses } from '@/types'
@@ -111,6 +117,44 @@ async function provisionLedgerMultichain(
       throw new Error('Wallet is locked. Please unlock and try again.')
     }
     password = await credentialSession.getProvisioningPassword()
+  }
+  if (
+    !areNewHardwareWalletFamiliesEnabled(credential.capabilities, __ENABLED_CHAIN_FEATURE_FLAGS__)
+  ) {
+    if (!input.existingKeyDomainId) {
+      throw new Error('Ledger account chain is not enabled in this build')
+    }
+    const storage = new IndexedDbStorageV2Repository()
+    const pointer = await storage.getActivePointer()
+    const snapshot = pointer ? await storage.getSnapshot(pointer.generationId) : null
+    if (
+      !snapshot ||
+      snapshot.manifest.status !== 'verified' ||
+      snapshot.manifest.sourceFingerprint !== pointer?.sourceFingerprint
+    ) {
+      throw new Error('Active Ledger Wallet is unavailable')
+    }
+    const prior = await readActiveLedgerHardwareCredential(
+      new IndexedDbCredentialRepository(),
+      snapshot,
+      parseKeyDomainId(input.existingKeyDomainId),
+      password
+    )
+    if (prior.schemaVersion !== 3) {
+      throw new Error('Ledger account chain is not enabled in this build')
+    }
+    const disabled = assertRetainedDisabledLedgerAccounts(
+      prior.accountExport.accounts,
+      credential.accountExport.accounts,
+      input.anchorProof,
+      __ENABLED_CHAIN_FEATURE_FLAGS__
+    )
+    assertRetainedDisabledLedgerProjections(
+      snapshot,
+      input.existingKeyDomainId,
+      DEFAULT_NETWORK,
+      disabled
+    )
   }
   const zcashAccounts = credential.accountExport.accounts.filter(
     (account): account is Extract<LedgerPublicAccount, { family: 'zcash' }> =>
@@ -311,6 +355,11 @@ export async function provisionHardwareWallet(
       : parseLedgerHardwareCredential(input.credential)
   if (vendor === 'ledger' && credential.schemaVersion === 3) {
     return provisionLedgerMultichain(input, parseLedgerMultichainHardwareCredential(credential))
+  }
+  if (
+    !areNewHardwareWalletFamiliesEnabled(credential.capabilities, __ENABLED_CHAIN_FEATURE_FLAGS__)
+  ) {
+    throw new Error('Hardware Wallet chain is not enabled in this build')
   }
   const birthdayHeight = validateBirthdayHeight(input.birthdayHeight)
   if (credential.accountExport.protocol !== 'zcash-accounts-v1' && birthdayHeight !== undefined) {

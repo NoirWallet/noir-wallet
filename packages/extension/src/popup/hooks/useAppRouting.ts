@@ -14,6 +14,11 @@ import { accountNetworksClient } from '../services/account-networks-client'
 import { hasAttestedCredentialSession } from '@/core/wallet/credential-session-client'
 import { didCredentialSessionEnd } from '@/core/wallet/credential-session-state'
 import { getTransactionToastCopy } from '@/lib/transaction-status-copy'
+import { useBetaInviteActivation } from './useBetaInviteActivation'
+import {
+  canUseRouteBeforeBetaActivation,
+  getPendingBetaInviteReturnRoute
+} from '../services/beta-invite-route-policy'
 
 /**
  * Custom hook for application routing logic
@@ -45,7 +50,34 @@ export function useAppRouting() {
   // Hardware wallet flows (connect/sign) run in a dedicated full tab and must
   // keep their route across init and unlock redirects
   const isHardwareTab = useRef(window.location.hash.includes('/hardware/'))
+  const isActivationDApp = useRef(window.location.hash.includes('from=dapp'))
   const isUpdatePage = useRef(window.location.hash.includes('/update'))
+  const { status: betaInviteStatus } = useBetaInviteActivation()
+  const inviteReturnRoute = useRef(
+    getPendingBetaInviteReturnRoute(
+      location.pathname,
+      location.search,
+      betaInviteStatus.required && betaInviteStatus.state.phase !== 'activated',
+      isDApp.current || isHardwareTab.current
+    )
+  )
+  const restoredInviteRoute = useRef(false)
+
+  useEffect(() => {
+    if (
+      isLoading ||
+      betaInviteStatus.state.phase !== 'activated' ||
+      !inviteReturnRoute.current ||
+      restoredInviteRoute.current ||
+      canUseRouteBeforeBetaActivation(location.pathname)
+    ) {
+      return
+    }
+    restoredInviteRoute.current = true
+    if (`${location.pathname}${location.search}` !== inviteReturnRoute.current) {
+      replace(inviteReturnRoute.current)
+    }
+  }, [betaInviteStatus.state.phase, isLoading, location.pathname, location.search, replace])
 
   const routeToUnlock = useCallback(() => {
     if (!hasAnyWallet || location.pathname === '/unlock') return
@@ -226,7 +258,7 @@ export function useAppRouting() {
 
         // For dApp windows, redirect back to original route
         if (isDApp.current && currentPath !== '/unlock') {
-          redirectParams.set('redirect', currentPath)
+          redirectParams.set('redirect', isActivationDApp.current ? '/' : currentPath)
           if (requestId) {
             redirectParams.set('requestId', requestId)
           }
@@ -234,8 +266,7 @@ export function useAppRouting() {
           // Hardware tabs must return to their flow (with query, e.g. sign request id)
           redirectParams.set('redirect', `${currentPath}${location.search || ''}`)
         } else {
-          // For normal popup, redirect to home
-          redirectParams.set('redirect', '/')
+          redirectParams.set('redirect', inviteReturnRoute.current ?? '/')
         }
 
         replace(`/unlock?${redirectParams.toString()}`)
@@ -254,8 +285,8 @@ export function useAppRouting() {
       await SecureStorage.saveLastActivityTime()
 
       // dApp windows and hardware tabs stay on their route; normal popup goes home
-      if (!isDApp.current && !isHardwareTab.current) {
-        replace('/')
+      if ((!isDApp.current || isActivationDApp.current) && !isHardwareTab.current) {
+        replace(inviteReturnRoute.current ?? '/')
       }
     } catch (error) {
       console.error('[useAppRouting] Initialization error:', error)

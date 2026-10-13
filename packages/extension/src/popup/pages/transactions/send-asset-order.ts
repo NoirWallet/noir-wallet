@@ -6,6 +6,14 @@ import { formatBaseUnitDecimalAmount } from '@/popup/components/portfolio/portfo
 import type { PortfolioReadModel } from '@/core/portfolio'
 import { findAssetPrice, type AssetPriceReadModel } from '@/core/prices'
 import { resolveChainIconAlias } from '@/lib/chain-icon'
+import {
+  DEFAULT_ENABLED_CHAIN_FEATURE_FLAGS,
+  type ChainFeatureFlagValue
+} from '@/config/multichain-feature-flags'
+import {
+  deferredChainChoices,
+  isSelectableChainFamily
+} from '@/popup/services/chain-selection-availability'
 
 export interface SendAsset {
   readonly asset: PortfolioReadModel['assets'][number]
@@ -31,6 +39,7 @@ export interface SendAssetNetworkOption {
   readonly id: string
   readonly label: string
   readonly iconAlias: string
+  readonly disabled?: true
 }
 
 export interface SendAssetOrderCandidate {
@@ -80,14 +89,19 @@ export function buildSendAssetSelectionModel(input: {
   readonly prices: AssetPriceReadModel | null
   readonly selectedNetwork: string
   readonly searchQuery: string
+  readonly enabledFlags?: readonly ChainFeatureFlagValue[]
 }): Readonly<{
   networkOptions: readonly SendAssetNetworkOption[]
   selectedNetworkOption?: SendAssetNetworkOption
   selectedNetworkLabel: string
   orderedRows: readonly SendAssetSelectionRow[]
 }> {
+  const enabledFlags = input.enabledFlags ?? DEFAULT_ENABLED_CHAIN_FEATURE_FLAGS
+  const selectableAssets = input.assets.filter(entry =>
+    isSelectableChainFamily(entry.chain.chain.family, enabledFlags)
+  )
   const networkOptions = new Map<string, Omit<SendAssetNetworkOption, 'id'>>(
-    input.zcashEnabled
+    input.zcashEnabled && isSelectableChainFamily('zcash', enabledFlags)
       ? [
           [
             'zcash',
@@ -99,21 +113,34 @@ export function buildSendAssetSelectionModel(input: {
         ]
       : []
   )
-  for (const entry of input.assets) {
+  for (const entry of selectableAssets) {
     networkOptions.set(entry.chain.chain.id, {
       label: entry.chain.chain.displayName,
       iconAlias: resolveChainIconAlias(entry.chain.chain.family, entry.chain.chain.displayName)
     })
   }
-  const options = [...networkOptions].map(([id, option]) => ({ id, ...option }))
-  const selectedNetworkOption = options.find(option => option.id === input.selectedNetwork)
+  const selectableOptions = [...networkOptions].map(([id, option]) => ({ id, ...option }))
+  const options: readonly SendAssetNetworkOption[] = [
+    ...selectableOptions,
+    ...deferredChainChoices(enabledFlags).map(option => ({
+      id: `coming-soon:${option.family}`,
+      label: option.label,
+      iconAlias: option.iconAlias,
+      disabled: true as const
+    }))
+  ]
+  const selectedNetworkOption = selectableOptions.find(
+    option => option.id === input.selectedNetwork
+  )
+  const selectedNetwork = selectedNetworkOption ? input.selectedNetwork : 'all'
   const query = input.searchQuery.trim().toLowerCase()
   const zcashMatches =
     input.zcashEnabled &&
-    (input.selectedNetwork === 'all' || input.selectedNetwork === 'zcash') &&
+    isSelectableChainFamily('zcash', enabledFlags) &&
+    (selectedNetwork === 'all' || selectedNetwork === 'zcash') &&
     (!query || 'zec'.includes(query) || 'zcash'.includes(query) || 'zcash testnet'.includes(query))
-  const filteredAssets = input.assets.filter(entry => {
-    if (input.selectedNetwork !== 'all' && input.selectedNetwork !== entry.chain.chain.id) {
+  const filteredAssets = selectableAssets.filter(entry => {
+    if (selectedNetwork !== 'all' && selectedNetwork !== entry.chain.chain.id) {
       return false
     }
     if (!query) return true
@@ -149,9 +176,7 @@ export function buildSendAssetSelectionModel(input: {
     networkOptions: Object.freeze(options),
     selectedNetworkOption,
     selectedNetworkLabel:
-      input.selectedNetwork === 'all'
-        ? 'All Networks'
-        : (selectedNetworkOption?.label ?? 'All Networks'),
+      selectedNetwork === 'all' ? 'All Networks' : (selectedNetworkOption?.label ?? 'All Networks'),
     orderedRows
   })
 }

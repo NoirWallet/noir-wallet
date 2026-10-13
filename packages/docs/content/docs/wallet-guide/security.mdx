@@ -30,9 +30,9 @@ Review dApp authorizations regularly and remove origins you do not recognize or 
 
 Keystone and Ledger Zcash accounts use supported PCZT transaction flows. Zcash message signing and lending identity are unavailable for both. Keystone cannot send from transparent funds or shield them; lending is unavailable for hardware accounts.
 
-V2 includes Ledger adapters for EVM, Bitcoin, Solana, and NEAR, pending physical-device acceptance. Only chains exported from the connected device are registered. Solana Ledger accounts offer transaction signing without ordinary message signing. Open `Bitcoin` for Mainnet or `Bitcoin Test` for Testnet; Bitcoin BIP-322 message signing requires App 2.1.3 or newer and shows a zero-value transaction on the device. If a signing prompt expires or the network changes, prepare and approve the request again.
+V2 includes a Ledger EVM adapter, pending physical-device acceptance. Only enabled chains exported from the connected device are registered. If a signing prompt expires or the network changes, prepare and approve the request again.
 
-When importing existing Ledger accounts, open the requested device App and choose the matching address from the account list. Change the derivation preset or load the next page if the address is missing; **Advanced** accepts a starting device index. Confirm the selected accounts on the device before adding them. An unavailable balance lookup does not prevent importing an account. Bitcoin balances are scanned across the account's receive and change addresses after import.
+When importing existing Ledger accounts, open the requested device App and choose the matching address from the account list. Change the derivation preset or load the next page if the address is missing; **Advanced** accepts a starting device index. Confirm the selected accounts on the device before adding them. An unavailable balance lookup does not prevent importing an account.
 
 ## Incident checklist
 

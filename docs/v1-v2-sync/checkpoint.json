@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "sourceRef": "origin/main",
+  "targetRef": "105b35479d0c787cadf54f00c547c9f6ba4f49f3",
+  "reviewedSource": {
+    "sha": "4a0e21a1d448e7bd110aee271a0a6032decd112f",
+    "tag": null
+  },
+  "targetBaselineSha": "105b35479d0c787cadf54f00c547c9f6ba4f49f3",
+  "reportPath": "output/v1-v2-sync/4a0e21a1/decisions.md"
+}

@@ -2,6 +2,10 @@ import { Icon } from '@iconify/react'
 import { resolveChainIconAlias } from '@/lib/chain-icon'
 import { ChainIcon } from './ChainIcon'
 import {
+  deferredChainChoices,
+  selectableChainOptions
+} from '@/popup/services/chain-selection-availability'
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuRadioGroup,
@@ -28,11 +32,12 @@ export function NetworkFilter({
   selectedIds,
   onSelectionChange
 }: NetworkFilterProps) {
-  const availableIds = options.map(option => option.id)
+  const selectableOptions = selectableChainOptions(options, __ENABLED_CHAIN_FEATURE_FLAGS__)
+  const availableIds = selectableOptions.map(option => option.id)
   const selectedIdSet = new Set(selectedIds)
   const normalizedSelectedIds = availableIds.filter(id => selectedIdSet.has(id))
   const selectedId = normalizedSelectedIds.length === 1 ? normalizedSelectedIds[0] : 'all'
-  const selectedOption = options.find(option => option.id === selectedId)
+  const selectedOption = selectableOptions.find(option => option.id === selectedId)
   const label = selectedOption?.displayName ?? 'All Networks'
   const renderOption = (option: NetworkFilterOption) => (
     <DropdownMenuRadioItem key={option.id} value={option.id} className="cursor-pointer py-2">
@@ -71,7 +76,27 @@ export function NetworkFilter({
             <Icon icon="lucide:network" width={16} height={16} className="text-muted" />
             <span className="min-w-0 flex-1 truncate text-sm">All Networks</span>
           </DropdownMenuRadioItem>
-          {options.map(renderOption)}
+          {selectableOptions.map(renderOption)}
+          {deferredChainChoices(__ENABLED_CHAIN_FEATURE_FLAGS__).map(option => (
+            <DropdownMenuRadioItem
+              key={option.family}
+              value={`coming-soon:${option.family}`}
+              disabled
+              className="py-2 text-muted data-[disabled]:opacity-100"
+            >
+              <ChainIcon
+                chain={option.iconAlias}
+                width={16}
+                height={16}
+                className="rounded-[4px]"
+                showTooltip={false}
+                alt=""
+                aria-hidden="true"
+              />
+              <span className="min-w-0 flex-1 truncate text-sm">{option.label}</span>
+              <span className="text-[10px]">Coming soon</span>
+            </DropdownMenuRadioItem>
+          ))}
         </DropdownMenuRadioGroup>
       </DropdownMenuContent>
     </DropdownMenu>

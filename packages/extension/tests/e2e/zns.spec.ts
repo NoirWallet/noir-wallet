@@ -1,9 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { ZNS } from 'zcashname-sdk'
-import { isZnsName, normalizeZnsName } from '../../src/lib/zns'
-
-const TESTNET_URL = 'https://light.zcash.me/zns-testnet'
-const MAINNET_URL = 'https://light.zcash.me/zns-mainnet-test'
+import { getZnsClient, isZnsName, normalizeZnsName } from '../../src/lib/zns'
 
 test.describe('ZNS SDK Integration', () => {
   test.skip(
@@ -12,7 +8,7 @@ test.describe('ZNS SDK Integration', () => {
   )
 
   test('testnet client connects and reports status', async () => {
-    const zns = new ZNS({ url: TESTNET_URL })
+    const zns = getZnsClient('testnet')
     const status = await zns.status()
 
     expect(status).toBeTruthy()
@@ -23,7 +19,7 @@ test.describe('ZNS SDK Integration', () => {
   })
 
   test('mainnet client connects and reports status', async () => {
-    const zns = new ZNS({ url: MAINNET_URL })
+    const zns = getZnsClient('mainnet')
     const status = await zns.status()
 
     expect(status).toBeTruthy()
@@ -32,7 +28,7 @@ test.describe('ZNS SDK Integration', () => {
   })
 
   test('resolveName aliases return the same address for a known name (testnet)', async () => {
-    const zns = new ZNS({ url: TESTNET_URL })
+    const zns = getZnsClient('testnet')
 
     // "zechariah" is a known testnet registration
     const resolved = await Promise.all(
@@ -48,14 +44,14 @@ test.describe('ZNS SDK Integration', () => {
   })
 
   test('resolveName returns null for non-existent name', async () => {
-    const zns = new ZNS({ url: TESTNET_URL })
+    const zns = getZnsClient('testnet')
     const resolved = await zns.resolveName('this_name_definitely_does_not_exist_xyz_123456')
 
     expect(resolved).toBeNull()
   })
 
   test('isValidName validates correctly', async () => {
-    const zns = new ZNS({ url: TESTNET_URL })
+    const zns = getZnsClient('testnet')
 
     expect(zns.isValidName('alice')).toBe(true)
     expect(zns.isValidName('bob123')).toBe(true)
@@ -64,7 +60,7 @@ test.describe('ZNS SDK Integration', () => {
   })
 
   test('isAvailable returns boolean', async () => {
-    const zns = new ZNS({ url: TESTNET_URL })
+    const zns = getZnsClient('testnet')
     const result = await zns.isAvailable('xyzabc99')
 
     expect(typeof result).toBe('boolean')

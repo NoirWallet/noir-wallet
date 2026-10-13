@@ -1,5 +1,7 @@
 import type { V1MetadataDiscovery } from '@/infrastructure/persistence/migrations'
 import type { CredentialRepository, StorageV2Repository } from '@/ports/repositories'
+import { isNativeV2CredentialKeyDomain } from '@/core/wallet/native-hardware-identity'
+export { isNativeV2CredentialKeyDomain } from '@/core/wallet/native-hardware-identity'
 import { reconcileActiveHardwareCredentials } from './hardware-credential-reconciliation'
 import { CredentialRemovalCoordinator } from './credential-removal-coordinator'
 import {
@@ -43,16 +45,6 @@ function assertReconciliationDiscovery(
       wallet.id,
       new Set(wallet.accounts.map(account => account.id))
     ])
-  )
-}
-
-export function isNativeV2CredentialKeyDomain(keyDomain: {
-  readonly id: string
-  readonly source: { readonly kind: string }
-}): boolean {
-  return (
-    (keyDomain.source.kind === 'hardware' && isNativeHardwareWalletId(keyDomain.id)) ||
-    (keyDomain.source.kind === 'private-key' && keyDomain.id.startsWith('wallet:private-key-v2:'))
   )
 }
 
@@ -141,4 +133,3 @@ export class RetainedV1ReconciliationCoordinator {
     })
   }
 }
-import { isNativeHardwareWalletId } from '@/core/wallet/native-hardware-identity'

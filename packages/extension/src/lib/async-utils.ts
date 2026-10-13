@@ -69,6 +69,20 @@ export class DedupPromise<T> {
   }
 }
 
+/** Runs each task after the previous task settles, including after failures. */
+export class SerialTaskQueue {
+  private tail: Promise<void> = Promise.resolve()
+
+  run<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.tail.catch(() => {}).then(operation)
+    this.tail = result.then(
+      () => undefined,
+      () => undefined
+    )
+    return result
+  }
+}
+
 /**
  * Promise-based readiness flag that allows waiting for
  * a condition to be marked as ready.

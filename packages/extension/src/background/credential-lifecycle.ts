@@ -8,7 +8,10 @@ import {
   RetainedV1MigrationCoordinator,
   RetainedV1ReconciliationCoordinator
 } from '@/infrastructure/keyring/migration'
-import { discoverV1Metadata } from '@/infrastructure/persistence/migrations'
+import {
+  discoverV1Metadata,
+  excludeNativeV2HardwareShadows
+} from '@/infrastructure/persistence/migrations'
 import {
   IndexedDbCredentialRepository,
   IndexedDbStorageV2Repository
@@ -29,6 +32,7 @@ import {
   type LedgerHardwareProvisioningResult
 } from '@/infrastructure/keyring/ledger-hardware-provisioning-coordinator'
 import { isNativeHardwareWalletId } from '@/core/wallet/native-hardware-identity'
+import type { ActiveWalletSetMode } from '@/core/wallet/wallet-unlock-path'
 import {
   PrivateKeyProvisioningCoordinator,
   type PrivateKeyPreviewInput,
@@ -125,13 +129,6 @@ export interface ExportWalletPrivateKeyInput {
   readonly binding: Extract<KeyringCommandBinding, { readonly kind: 'credential' }>
   readonly bitcoinAddressType?: 'p2pkh' | 'p2sh-p2wpkh' | 'p2wpkh' | 'p2tr'
 }
-
-export type ActiveWalletSetMode =
-  | 'inactive'
-  | 'native-v2-hardware-only'
-  | 'native-v2-private-key-only'
-  | 'native-v2-mixed'
-  | 'retained-v1-backed'
 
 function chainIdForAddressScheme(
   snapshot: StorageV2Snapshot,
@@ -498,8 +495,13 @@ export class CredentialLifecycleCoordinator {
     password: string
   ): Promise<RetainedV1SynchronizationResult> {
     const local = await chrome.storage.local.get(null)
-    const discovery = discoverV1Metadata(local)
+    let discovery = discoverV1Metadata(local)
     const pointer = await this.storageRepository.getActivePointer()
+    if (pointer && discovery.status === 'ready') {
+      const snapshot = await this.storageRepository.getSnapshot(pointer.generationId)
+      if (!snapshot) throw new Error('Active Storage V2 generation is missing')
+      discovery = excludeNativeV2HardwareShadows(discovery, snapshot)
+    }
     if (discovery.status === 'empty' && pointer) {
       const snapshot = await this.storageRepository.getSnapshot(pointer.generationId)
       if (!snapshot) throw new Error('Active Storage V2 generation is missing')

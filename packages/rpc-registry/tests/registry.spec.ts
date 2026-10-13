@@ -1,6 +1,24 @@
 import { expect, test } from '@playwright/test'
 import { handleRegistryRequest } from '../src/api'
 import { getMonitorTargets, RPC_REGISTRY, ZCASH_RPC_REGISTRY } from '../src/registry'
+import { ZERO_INDEXER_REGISTRY } from '../src/zero-indexer-registry'
+
+test('serves broadcast nodes separately from sync RPC monitoring', async () => {
+  const response = handleRegistryRequest(
+    new Request('https://rpc.zknoir.com/v1/zero-indexer-endpoints')
+  )
+  expect(response.status).toBe(200)
+  await expect(response.json()).resolves.toEqual(ZERO_INDEXER_REGISTRY)
+  expect(ZERO_INDEXER_REGISTRY.networks.mainnet).toHaveLength(1)
+  expect(ZERO_INDEXER_REGISTRY.networks.testnet).toHaveLength(1)
+  const monitoredUrls = new Set(getMonitorTargets(RPC_REGISTRY).map(endpoint => endpoint.url))
+  for (const endpoint of [
+    ...ZERO_INDEXER_REGISTRY.networks.mainnet,
+    ...ZERO_INDEXER_REGISTRY.networks.testnet
+  ]) {
+    expect(monitoredUrls.has(endpoint.url)).toBe(false)
+  }
+})
 
 test('preserves the V1 response and publishes the multi-chain registry on request', async () => {
   const legacy = handleRegistryRequest(new Request('https://rpc.zknoir.com/v1/rpc-endpoints'))

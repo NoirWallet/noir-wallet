@@ -49,6 +49,20 @@ export type LedgerPublicAccount = LedgerAccountBase &
         readonly birthdayHeight?: number
       }
   )
+
+export function ledgerPublicAccountIdentity(account: LedgerPublicAccount): string {
+  return `${account.family}:${account.accountIndex}:${'network' in account ? account.network : ''}`
+}
+
+export function ledgerPublicAccountEquals(
+  left: LedgerPublicAccount,
+  right: LedgerPublicAccount
+): boolean {
+  return (
+    ledgerPublicAccountIdentity(left) === ledgerPublicAccountIdentity(right) &&
+    JSON.stringify(left) === JSON.stringify(right)
+  )
+}
 export interface LedgerMultichainHardwareCredential {
   readonly schemaVersion: typeof LEDGER_MULTICHAIN_HARDWARE_CREDENTIAL_SCHEMA_VERSION
   readonly vendor: 'ledger'

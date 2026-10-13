@@ -9,6 +9,9 @@ import { WalletInitializing } from './components/ui/wallet-initializing'
 import { BlockingWalletFailure } from './components/common/BlockingWalletFailure'
 import { PageHeader } from './components/common/PageHeader'
 import { useAppRouting } from './hooks/useAppRouting'
+import { BetaInviteActivationGate } from './hooks/useBetaInviteActivation'
+import { BetaInviteProtectedRoute } from './components/onboarding/BetaInviteBinding'
+import { canUseRouteBeforeBetaActivation } from './services/beta-invite-route-policy'
 import { usePersistedExtensionContextSync } from './hooks/usePersistedExtensionContextSync'
 import { useAccountDataStore, buildAccountKey } from '@/store/account-data-store'
 import { rehydrateWalletStore, useWalletStore } from '@/store/wallet-store'
@@ -67,6 +70,7 @@ import { PreferredExplorer } from './pages/settings/PreferredExplorer'
 import { RpcEndpoint } from './pages/settings/RpcEndpoint'
 import { ManageTokens } from './pages/settings/ManageTokens'
 import { SecurityPrivacy } from './pages/settings/SecurityPrivacy'
+import { ZeroIndexerNodes } from './pages/settings/ZeroIndexerNodes'
 import { ChangePassword } from './pages/settings/ChangePassword'
 import { About } from './pages/settings/About'
 import { Help } from './pages/settings/Help'
@@ -287,6 +291,7 @@ function AppRoutes() {
         element={evmNetworkSettingsEnabled ? <ManageTokens /> : <Settings />}
       />
       <Route path="/security-privacy" element={<SecurityPrivacy />} />
+      <Route path="/zero-indexer-nodes" element={<ZeroIndexerNodes />} />
       <Route path="/developer-settings" element={<DeveloperSettings />} />
       <Route path="/address-book" element={<AddressBook />} />
       <Route path="/change-password" element={<ChangePassword />} />
@@ -386,7 +391,7 @@ function AppContent() {
     return <WalletInitializing />
   }
 
-  return (
+  const content = (
     <div className="flex h-full min-h-full w-full flex-col bg-background">
       <TestnetModeBanner />
       {!location.pathname.startsWith('/onboarding') &&
@@ -403,6 +408,12 @@ function AppContent() {
         <AppRoutes />
       </div>
     </div>
+  )
+
+  return canUseRouteBeforeBetaActivation(location.pathname) ? (
+    content
+  ) : (
+    <BetaInviteProtectedRoute>{content}</BetaInviteProtectedRoute>
   )
 }
 
@@ -427,7 +438,9 @@ function App() {
     <ModalProvider>
       <RouterProvider initialPath={getInitialPath()}>
         <DialogProvider>
-          <AppContent />
+          <BetaInviteActivationGate>
+            <AppContent />
+          </BetaInviteActivationGate>
           <ToastContainer />
         </DialogProvider>
       </RouterProvider>

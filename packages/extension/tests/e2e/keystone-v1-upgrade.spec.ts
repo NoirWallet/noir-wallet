@@ -152,6 +152,9 @@ test('provisions a Ledger Zcash account into Storage V2 through the real backgro
     const popup = await openExtensionPage(context, extensionId)
     await waitForBackgroundWalletInitialization(popup)
 
+    await popup.goto(`chrome-extension://${extensionId}/index.html#/hardware/ledger-connect`)
+    await popup.reload()
+
     const result = await popup.evaluate(
       async ({ ufvk, password }) => {
         const response = await chrome.runtime.sendMessage({

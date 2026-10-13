@@ -24,6 +24,14 @@ export function ledgerAvailableFamilies(network: Network): readonly LedgerChainF
   )
 }
 
+export function ledgerFamilyChoices(availableFamilies: readonly LedgerChainFamily[]) {
+  const available = new Set(availableFamilies)
+  return (['zcash', 'bitcoin', 'evm', 'solana', 'near'] as const).map(family => ({
+    family,
+    enabled: available.has(family)
+  }))
+}
+
 export function ledgerSelectedPaths(accounts: readonly LedgerPublicAccount[]) {
   const paths: Partial<Record<LedgerChainFamily, string>> = {}
   for (const account of accounts) paths[account.family] = account.derivationPath

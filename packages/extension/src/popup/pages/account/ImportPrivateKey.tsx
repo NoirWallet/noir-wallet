@@ -9,10 +9,7 @@ import {
   detectPrivateKeyImport,
   type PrivateKeyImportChainFamily
 } from '@/core/keyring/application/private-key-import-detection'
-import {
-  resolveNearFeatureRuntimePolicy,
-  resolveSolanaFeatureRuntimePolicy
-} from '@/core/chains/feature-runtime-policy'
+import { privateKeyImportFamilyOptions } from '@/popup/services/private-key-import-options'
 import {
   parsePrivateKeyPreview,
   type PrivateKeyAddressPreview
@@ -45,26 +42,20 @@ const FAMILY_PRESENTATION = Object.freeze({
   }
 } satisfies Record<PrivateKeyImportChainFamily, Record<string, string>>)
 
-const AVAILABLE_FAMILIES = Object.freeze([
-  'eip155',
-  'bip122',
-  ...(resolveSolanaFeatureRuntimePolicy(__ENABLED_CHAIN_FEATURE_FLAGS__).newOperationsEnabled
-    ? (['solana'] as const)
-    : []),
-  ...(resolveNearFeatureRuntimePolicy(__ENABLED_CHAIN_FEATURE_FLAGS__).newOperationsEnabled
-    ? (['near'] as const)
-    : [])
-] satisfies readonly PrivateKeyImportChainFamily[])
+const FAMILY_OPTIONS = privateKeyImportFamilyOptions(__ENABLED_CHAIN_FEATURE_FLAGS__)
+const AVAILABLE_FAMILIES = FAMILY_OPTIONS.filter(option => option.enabled).map(
+  option => option.family
+)
 const AVAILABLE_FAMILY_SET = new Set<PrivateKeyImportChainFamily>(AVAILABLE_FAMILIES)
 const ED25519_IMPORT_ENABLED = AVAILABLE_FAMILIES.some(
   family => family === 'solana' || family === 'near'
 )
 const PRIVATE_KEY_PLACEHOLDER = ED25519_IMPORT_ENABLED
   ? `Paste an ${AVAILABLE_FAMILIES.map(family => FAMILY_PRESENTATION[family].label).join(', ')} key`
-  : 'Paste EVM hex or Bitcoin WIF'
+  : 'Paste an EVM private key'
 const PRIVATE_KEY_PROMPT = ED25519_IMPORT_ENABLED
   ? `Enter a supported ${AVAILABLE_FAMILIES.map(family => FAMILY_PRESENTATION[family].label).join(', ')} private key. `
-  : 'Enter a supported EVM or Bitcoin private key. '
+  : 'Enter a supported EVM private key. '
 
 export function ImportPrivateKey() {
   const { replace } = useNavigate()
@@ -91,6 +82,7 @@ export function ImportPrivateKey() {
   }, [nameEdited, presentation])
 
   const chooseFamily = (family: PrivateKeyImportChainFamily) => {
+    if (!AVAILABLE_FAMILY_SET.has(family)) return
     setFamilyOverride(family)
     setPreview(null)
     setShowFamilyPicker(false)
@@ -98,7 +90,7 @@ export function ImportPrivateKey() {
   }
 
   const previewKey = async () => {
-    if (!chainFamily) return
+    if (!chainFamily || !AVAILABLE_FAMILY_SET.has(chainFamily)) return
     setPreviewing(true)
     setError(null)
     try {
@@ -135,7 +127,7 @@ export function ImportPrivateKey() {
   }
 
   const submit = async () => {
-    if (!chainFamily) return
+    if (!chainFamily || !AVAILABLE_FAMILY_SET.has(chainFamily)) return
     setSubmitting(true)
     setError(null)
     try {
@@ -252,18 +244,20 @@ export function ImportPrivateKey() {
             )}
             {showFamilyPicker && (
               <div className="mt-3 grid grid-cols-2 gap-2 border-t border-border pt-3">
-                {AVAILABLE_FAMILIES.map(family => (
+                {FAMILY_OPTIONS.map(({ family, enabled }) => (
                   <button
                     key={family}
                     type="button"
+                    disabled={!enabled}
                     onClick={() => chooseFamily(family)}
-                    className={`rounded-xl border px-3 py-2.5 text-sm ${
+                    className={`rounded-xl border px-3 py-2.5 text-sm disabled:cursor-default ${
                       chainFamily === family
                         ? 'border-primary/70 bg-primary/10'
                         : 'border-border bg-background'
-                    }`}
+                    } ${enabled ? 'disabled:opacity-50' : 'text-muted disabled:opacity-100'}`}
                   >
                     {FAMILY_PRESENTATION[family].label}
+                    {!enabled && <span className="block text-[10px] text-muted">Coming soon</span>}
                   </button>
                 ))}
               </div>

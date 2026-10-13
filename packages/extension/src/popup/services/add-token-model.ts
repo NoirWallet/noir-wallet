@@ -6,12 +6,18 @@ import {
 import type { UserEvmAssetCandidate } from '@/core/chains/user-assets'
 import type { IntentsManagedAsset } from '@/core/services/intents-managed-assets'
 import type { Network } from '@/types'
+import {
+  DEFAULT_ENABLED_CHAIN_FEATURE_FLAGS,
+  type ChainFeatureFlagValue
+} from '@/config/multichain-feature-flags'
+import { deferredChainChoices, isSelectableChainFamily } from './chain-selection-availability'
 
 export type AddTokenNetwork = Readonly<{
   chainId: string
   displayName: string
   iconChain: string
-  family: 'evm' | 'near' | 'solana'
+  family: 'evm' | 'near' | 'solana' | 'bitcoin'
+  disabled?: true
 }>
 
 export type AddTokenCandidate =
@@ -20,25 +26,30 @@ export type AddTokenCandidate =
 
 export function buildAddTokenNetworks(
   network: Network,
-  evmNetworks: readonly EvmNetworkConfig[]
+  evmNetworks: readonly EvmNetworkConfig[],
+  enabledFlags: readonly ChainFeatureFlagValue[] = DEFAULT_ENABLED_CHAIN_FEATURE_FLAGS
 ): readonly AddTokenNetwork[] {
   const near = getNearNetworkConfig(network)
   const solana = getSolanaNetworkConfig(network)
   return Object.freeze([
-    ...evmNetworks.map(evmNetwork => ({
+    ...(isSelectableChainFamily('evm', enabledFlags) ? evmNetworks : []).map(evmNetwork => ({
       chainId: evmNetwork.chainId,
       displayName: evmNetwork.displayName,
       iconChain: evmNetwork.iconChain,
       family: 'evm' as const
     })),
-    ...(network === 'mainnet'
+    ...(network === 'mainnet' && isSelectableChainFamily('near', enabledFlags)
       ? [
           {
             chainId: near.chainId,
             displayName: near.displayName,
             iconChain: 'near',
             family: 'near' as const
-          },
+          }
+        ]
+      : []),
+    ...(network === 'mainnet' && isSelectableChainFamily('solana', enabledFlags)
+      ? [
           {
             chainId: solana.chainId,
             displayName: solana.displayName,
@@ -46,7 +57,14 @@ export function buildAddTokenNetworks(
             family: 'solana' as const
           }
         ]
-      : [])
+      : []),
+    ...deferredChainChoices(enabledFlags).map(choice => ({
+      chainId: `coming-soon:${choice.family}`,
+      displayName: choice.label,
+      iconChain: choice.iconAlias,
+      family: choice.family,
+      disabled: true as const
+    }))
   ])
 }
 
@@ -54,6 +72,9 @@ export function getAddTokenReferencePresentation(network: AddTokenNetwork | unde
   label: string
   placeholder: string
 }> {
+  if (!network) {
+    return Object.freeze({ label: 'Token address', placeholder: 'Select network' })
+  }
   if (network?.family === 'evm') {
     return Object.freeze({ label: 'EVM contract address', placeholder: '0x…' })
   }

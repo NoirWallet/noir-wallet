@@ -47,10 +47,12 @@ export function getCrossChainSendTokenGroup(token: RheaSwapToken): CrossChainSen
     network => network.chainId === `eip155:${token.rheaChainId}`
   )
   if (evm?.nativeCurrency.symbol === 'ETH' && token.isNative) return 'ETH'
+  const evmContract = token.contractAddress ?? token.rheaAddress
   if (
     evm?.usdcContract &&
     !token.isNative &&
-    token.rheaAddress.toLowerCase() === evm.usdcContract.toLowerCase()
+    /^0x[0-9a-fA-F]{40}$/.test(evmContract) &&
+    evmContract.toLowerCase() === evm.usdcContract.toLowerCase()
   ) {
     return 'USDC'
   }

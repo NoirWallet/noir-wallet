@@ -22,6 +22,8 @@ import {
   type HardwareCredentialMetadata
 } from '@/core/keyring/domain'
 import {
+  ledgerPublicAccountEquals,
+  ledgerPublicAccountIdentity,
   parseLedgerMultichainHardwareCredential,
   type LedgerMultichainHardwareCredential,
   type LedgerPublicAccount
@@ -110,14 +112,10 @@ function metadata(credential: LedgerMultichainHardwareCredential): HardwareCrede
   return { vendor: 'ledger', firmwareProfile: 'multi-app', capabilities: credential.capabilities }
 }
 
-function accountKey(account: LedgerPublicAccount): string {
-  return `${account.family}:${account.accountIndex}:${'network' in account ? account.network : ''}`
-}
-
 function publicInventory(credential: LedgerMultichainHardwareCredential): string {
   return JSON.stringify(
     [...credential.accountExport.accounts].sort((a, b) =>
-      accountKey(a).localeCompare(accountKey(b))
+      ledgerPublicAccountIdentity(a).localeCompare(ledgerPublicAccountIdentity(b))
     )
   )
 }
@@ -187,24 +185,24 @@ function verifyPriorAccounts(
 ): void {
   if (!proof) throw new Error('A fresh Ledger anchor export is required to extend this Wallet')
   const candidate = incoming.accountExport.accounts.find(
-    account => accountKey(account) === accountKey(proof)
+    account => ledgerPublicAccountIdentity(account) === ledgerPublicAccountIdentity(proof)
   )
-  if (!candidate || JSON.stringify(candidate) !== JSON.stringify(proof)) {
+  if (!candidate || !ledgerPublicAccountEquals(candidate, proof)) {
     throw new Error('Ledger anchor proof does not match the submitted account export')
   }
   if (prior.accountExport.protocol === 'ledger-accounts-v1') {
     for (const oldAccount of prior.accountExport.accounts) {
       const current = incoming.accountExport.accounts.find(
-        account => accountKey(account) === accountKey(oldAccount)
+        account => ledgerPublicAccountIdentity(account) === ledgerPublicAccountIdentity(oldAccount)
       )
-      if (!current || JSON.stringify(current) !== JSON.stringify(oldAccount)) {
+      if (!current || !ledgerPublicAccountEquals(current, oldAccount)) {
         throw new Error('Existing Ledger public accounts cannot be removed or changed')
       }
     }
     const oldAnchor = prior.accountExport.accounts.find(
-      account => accountKey(account) === accountKey(proof)
+      account => ledgerPublicAccountIdentity(account) === ledgerPublicAccountIdentity(proof)
     )
-    if (!oldAnchor || JSON.stringify(oldAnchor) !== JSON.stringify(proof)) {
+    if (!oldAnchor || !ledgerPublicAccountEquals(oldAnchor, proof)) {
       throw new Error('Ledger anchor does not match the active credential')
     }
   } else {

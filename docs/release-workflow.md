@@ -24,15 +24,38 @@ pnpm build:extension
 
 PR builds use `BUILD_CHANNEL=development`, receive no release secrets, and upload an explicitly named development artifact for inspection. They are not Beta or production candidates. Manual Beta builds use `BUILD_CHANNEL=beta` and require the release repository's `RHEA_SWAP_ACCESS_TOKEN`; missing values fail the build. Production builds additionally require `GA_API_SECRET` and `CUSTOM_ANALYTICS_PASSWORD`. The repository variable `EVM_HISTORY_API_ORIGIN` may override the default public History proxy origin; it must be a credential-free HTTPS origin without a path or query. The Worker API key stays in a Worker secret and is not passed into the extension build.
 
+The default V2 build enables Zcash and EVM networks. Bitcoin, Solana, and NEAR remain deferred; their chain-selection entries show **Coming soon** and cannot start wallet operations. Use the default feature flags when preparing this Beta. Explicit `ENABLED_CHAIN_FEATURE_FLAGS` values are available for isolated implementation checks and must match their Playwright build profile; they do not change the default release scope.
+
+Beta builds require invite activation before wallet use, including installations upgraded from V1. An unused invite code is checked before wallet setup or unlock, then bound to the first wallet's first available account. Binding prefers its ordinary EVM address; Zcash-only hardware accounts use a transparent receive address. Only a successful bind completes activation. Failed binding preserves the wallet and offers retry or another code; the invite service rejects even same-address repeat binds, so a lost successful response may require a new code.
+
+Activation persists locally for the installation across wallet reset and network changes. Activated wallets do not contact the invite service on each startup; uninstalling or clearing extension storage requires activation again. Production builds disable the gate. For local development verification, set `BETA_INVITE_REQUIRED=1` with `BUILD_CHANNEL=development`; `BUILD_CHANNEL=beta` always enables it. Invite generation is an operator API operation: its management key must never be supplied to an extension build.
+
 The public History proxy serves only the existing Ankr History, EVM token discovery, and icon services. The client selects History adapters across chains; other chains request their own data sources directly. See the [Activity architecture](mutil-chain/architecture/transaction-lifecycle.md#6-local-first-activity-merge) for routing and cache fallback, and the [History proxy deployment](#history-proxy-deployment) for Worker configuration and deployment checks.
 
+Private broadcast uses the separate `/v1/zero-indexer-endpoints` endpoint on `https://rpc.zknoir.com`, maintained in `packages/rpc-registry/src/zero-indexer-registry.ts`. Broadcast nodes are excluded from the scheduled synchronization-RPC monitor. Deploying that registry is separate from publishing the extension; check its response when updating managed nodes. If the registry is unavailable, the extension uses its cache or bundled broadcast nodes. Wallet settings and recovery behavior are documented in the [broadcasting guide](../packages/docs/content/docs/wallet-guide/install-and-setup.mdx#transaction-broadcasting).
+
 The V2 package contains one ZIP for both runtime network modes, `SHA256SUMS`, release metadata, and a Release body. The PR workflow has read-only permissions and only uploads an Actions artifact. The trusted manual workflow packages Beta from the selected source commit and uses a separate write-scoped job when `publish_beta` is selected. Checkout steps use pinned Action SHAs with credential persistence disabled.
+
+## WASM Package Updates
+
+WASM source and releases are maintained separately. V2 commits complete packages for Zcash at `packages/extension/src/lib/wasm-pkg/` and Multichain at `packages/extension/src/infrastructure/generated/wasm/multichain/`. Each contains a `wasm-integrity.json` with source, ABI, build-tool versions, and artifact hashes. Upstream releases do not automatically update the wallet; ordinary builds and merges use these committed packages without rebuilding or synchronizing WASM. Merges do not amend commits.
+
+For an intentional upgrade, select an upstream release and update the relevant engine's source/build/ABI pins and compatibility checks in this wallet repository. Use a clean separate source checkout at the pinned full commit. The explicit local commands rebuild with the checked tool versions and generate the complete package and integrity manifest:
+
+```bash
+pnpm sync-wasm-pkg -- --source <zcash-checkout>
+pnpm sync-multichain-wasm-pkg -- --source <multichain-checkout>
+```
+
+Run only the command for the engine being updated. These commands build fresh output; they do not import an existing `pkg/`. They reject dirty source checkouts, mismatched commits, and mismatched tool versions. Check the sync script for its pinned tools and optional local tool paths before running it.
+
+Develop and test the extension against the generated package, then submit its complete files, integrity manifest, updated pins, and related extension changes in one PR targeting `v2`. Include the upstream version and checks performed. Never submit only TypeScript bindings without their matching loader, binary, and support files. Run the [verification and build commands](#verification-and-build); the build checks both engine manifests without access to the source repositories.
 
 ## Routine Previews
 
 1. Open a PR against `v2` and confirm the development artifact passes the relevant local checks. Fork PRs receive no release credentials.
 2. After source review, select `main` when opening **Prepare Extension Release** in Actions. Choose `beta` and set `source_ref` to `v2`, a reviewed but unmerged V2 branch, or its full commit SHA. Decide whether `publish_beta` should publish a GitHub prerelease; merging into `v2` is not required for Beta.
-3. Check Mainnet and Testnet Mode separately in a real isolated MV3 extension. Run browser and external-service checks locally; the workflow does not run them.
+3. Check Mainnet and Testnet Mode separately in a real isolated MV3 extension. Verify invite activation, unavailable chain selectors, and V1 Golden Profile upgrade compatibility using the same default flags as the Beta. Run browser and external-service checks locally; the workflow does not run them.
 
 There is no need to bump the version for each Beta. The manual run identity and source commit distinguish artifacts of the same version.
 

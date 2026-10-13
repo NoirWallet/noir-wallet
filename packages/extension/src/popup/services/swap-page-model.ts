@@ -14,6 +14,10 @@ import {
 } from '@/popup/services/quote-deposit-transfer-client'
 import type { AdditionalReceiveTargetsView } from '@/popup/services/receive-targets-client'
 import { resolveAccountAvailableRaw } from '@/popup/services/transfer-availability'
+import {
+  filterCrossChainSendDestinations,
+  type CrossChainSendCapabilities
+} from '@/popup/services/cross-chain-send-assets'
 
 export function resolveSwapRefreshChainId(
   token: RheaSwapToken | null,
@@ -170,6 +174,36 @@ export function filterConfidentialFundingSourceTokens(
   })
 }
 
+export function isConfidentialSwapDestinationSupported(token: RheaSwapToken): boolean {
+  return (
+    token.sources?.some(source =>
+      ['nearintents', 'preswap-nearintents'].includes(source.toLowerCase())
+    ) ?? false
+  )
+}
+
+export function filterSwapDestinationTokens(
+  tokens: readonly RheaSwapToken[],
+  confidentiality: 'basic' | undefined
+): readonly RheaSwapToken[] {
+  return confidentiality === 'basic'
+    ? tokens.filter(isConfidentialSwapDestinationSupported)
+    : tokens
+}
+
+export function filterSelectableSwapDestinationTokens(input: {
+  readonly tokens: readonly RheaSwapToken[]
+  readonly confidentiality: 'basic' | undefined
+  readonly crossChainSendRequested: boolean
+  readonly sourceToken: RheaSwapToken | null
+  readonly capabilities: CrossChainSendCapabilities
+}): readonly RheaSwapToken[] {
+  const available = filterSwapDestinationTokens(input.tokens, input.confidentiality)
+  return input.crossChainSendRequested
+    ? filterCrossChainSendDestinations(input.sourceToken, available, input.capabilities)
+    : available
+}
+
 export function resolveLockedWalletSwapSourceToken(input: {
   readonly requestedToken: RheaSwapToken | null
   readonly sourceTokens: readonly RheaSwapToken[]
@@ -200,6 +234,7 @@ export function resolveConfidentialFundingDestinationToken(input: {
   return (
     input.tokens.find(token => {
       if (String(token.rheaChainId) !== input.destinationChain) return false
+      if (!isConfidentialSwapDestinationSupported(token)) return false
       const destination = resolveWalletOwnedQuoteAsset(token, portfolio, input.receiveTargets)
       if (destination?.family !== 'evm') return false
       return input.destinationAsset

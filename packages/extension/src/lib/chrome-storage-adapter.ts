@@ -4,6 +4,7 @@
  */
 
 type StorageArea = 'local' | 'session'
+import { SETTINGS_STORAGE_KEY, withWalletSettingsLock } from './wallet-settings-storage'
 
 interface StorageAdapter {
   getItem(key: string): Promise<string | null>
@@ -37,28 +38,59 @@ export function createChromeStorageAdapter(area: StorageArea = 'local'): Storage
         await writeWalletMetadata(value)
         return
       }
-      try {
-        await storage.set({ [key]: value })
-      } catch (error: any) {
-        // Handle quota exceeded
-        if (error.message?.includes('QUOTA_BYTES')) {
-          console.warn('[ChromeStorageAdapter] Quota exceeded, attempting cleanup...')
-          await clearOldCacheEntries(storage)
+      const write = async () => {
+        try {
+          if (area === 'local' && key === SETTINGS_STORAGE_KEY) {
+            const latest = (await storage.get(key))[key]
+            const parse = (raw: unknown): Record<string, unknown> => {
+              try {
+                const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw
+                return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+                  ? (parsed as Record<string, unknown>)
+                  : {}
+              } catch {
+                return {}
+              }
+            }
+            const incoming = parse(value)
+            const previous = parse(latest)
+            if (incoming.state && typeof incoming.state === 'object') {
+              const state = parse(incoming.state)
+              const previousState = previous.state ? parse(previous.state) : previous
+              value = JSON.stringify({
+                ...incoming,
+                state: { ...state, zeroIndexerEnabled: previousState.zeroIndexerEnabled !== false }
+              })
+            }
+          }
           await storage.set({ [key]: value })
-        } else {
-          console.error('[ChromeStorageAdapter] setItem error:', error)
-          throw error
+        } catch (error: any) {
+          // Handle quota exceeded
+          if (error.message?.includes('QUOTA_BYTES')) {
+            console.warn('[ChromeStorageAdapter] Quota exceeded, attempting cleanup...')
+            await clearOldCacheEntries(storage)
+            await storage.set({ [key]: value })
+          } else {
+            console.error('[ChromeStorageAdapter] setItem error:', error)
+            throw error
+          }
         }
       }
+      if (area === 'local' && key === SETTINGS_STORAGE_KEY) await withWalletSettingsLock(write)
+      else await write()
     },
 
     removeItem: async (key: string): Promise<void> => {
-      try {
-        await storage.remove(key)
-      } catch (error) {
-        console.error('[ChromeStorageAdapter] removeItem error:', error)
-        throw error
+      const remove = async () => {
+        try {
+          await storage.remove(key)
+        } catch (error) {
+          console.error('[ChromeStorageAdapter] removeItem error:', error)
+          throw error
+        }
       }
+      if (area === 'local' && key === SETTINGS_STORAGE_KEY) await withWalletSettingsLock(remove)
+      else await remove()
     }
   }
 }

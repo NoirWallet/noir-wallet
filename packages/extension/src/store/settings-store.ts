@@ -92,6 +92,7 @@ interface SettingsStore {
   blockExplorerPreferences: BlockExplorerPreferences
   rpcEndpointPreferences: RpcEndpointPreferences
   chainEndpointSettings: ChainEndpointSettings
+  zeroIndexerEnabled: boolean
   feeTier: FeeTier
   balancesHidden: boolean
   portfolioViewMode: 'assets' | 'chains'
@@ -123,6 +124,7 @@ export const useSettingsStore = create<SettingsStore>()(
       blockExplorerPreferences: DEFAULT_BLOCK_EXPLORER_PREFERENCES,
       rpcEndpointPreferences: DEFAULT_RPC_ENDPOINT_PREFERENCES,
       chainEndpointSettings: DEFAULT_CHAIN_ENDPOINT_SETTINGS,
+      zeroIndexerEnabled: true,
       feeTier: DEFAULT_FEE_TIER,
       balancesHidden: false,
       portfolioViewMode: 'assets',
@@ -284,6 +286,7 @@ export const useSettingsStore = create<SettingsStore>()(
         return {
           ...current,
           ...value,
+          zeroIndexerEnabled: value.zeroIndexerEnabled !== false,
           balancesHidden:
             typeof value.balancesHidden === 'boolean'
               ? value.balancesHidden
@@ -314,6 +317,7 @@ export const useSettingsStore = create<SettingsStore>()(
         blockExplorerPreferences: state.blockExplorerPreferences,
         rpcEndpointPreferences: state.rpcEndpointPreferences,
         chainEndpointSettings: state.chainEndpointSettings,
+        zeroIndexerEnabled: state.zeroIndexerEnabled,
         feeTier: state.feeTier,
         balancesHidden: state.balancesHidden,
         portfolioViewMode: state.portfolioViewMode,

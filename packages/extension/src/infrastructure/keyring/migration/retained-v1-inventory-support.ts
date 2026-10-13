@@ -1,4 +1,5 @@
 import { parseAccountId } from '@/core/accounts/domain'
+import { isNativeV2CredentialKeyDomain } from '@/core/wallet/native-hardware-identity'
 import { bytesToHex } from '@/lib/bytes'
 import { parseChainId } from '@/core/chains/registry'
 import { parseKeyDomainId } from '@/core/keyring/domain'
@@ -227,7 +228,9 @@ export function inventoryAlreadyMatches(
   const walletsById = new Map(discovery.wallets.map(wallet => [wallet.id, wallet]))
   if (
     snapshot.keyDomains.some(
-      keyDomain => walletsById.get(keyDomain.id)?.displayName !== keyDomain.displayName
+      keyDomain =>
+        !isNativeV2CredentialKeyDomain(keyDomain) &&
+        walletsById.get(keyDomain.id)?.displayName !== keyDomain.displayName
     )
   ) {
     return false
@@ -237,9 +240,14 @@ export function inventoryAlreadyMatches(
       wallet.accounts.map(account => [account.id, account] as const)
     )
   )
+  const nativeKeyDomainIds = new Set(
+    snapshot.keyDomains.filter(isNativeV2CredentialKeyDomain).map(keyDomain => keyDomain.id)
+  )
   if (
     snapshot.accounts.some(
-      account => accountsById.get(account.id)?.displayName !== account.displayName
+      account =>
+        !nativeKeyDomainIds.has(account.keyDomainId) &&
+        accountsById.get(account.id)?.displayName !== account.displayName
     )
   ) {
     return false

@@ -49,6 +49,7 @@ import {
   getVerifiedTokenPresentation,
   type AddTokenCandidate
 } from '@/popup/services/add-token-model'
+import { isSelectableChainFamily } from '@/popup/services/chain-selection-availability'
 
 export function ManageTokens() {
   const settings = useSettingsStore(state => state.chainEndpointSettings)
@@ -69,7 +70,7 @@ export function ManageTokens() {
     )
   }, [networks])
   const addTokenNetworks = useMemo(
-    () => buildAddTokenNetworks(DEFAULT_NETWORK, networks),
+    () => buildAddTokenNetworks(DEFAULT_NETWORK, networks, __ENABLED_CHAIN_FEATURE_FLAGS__),
     [networks]
   )
   const [assets, setAssets] = useState<readonly UserEvmAssetRecord[]>([])
@@ -80,7 +81,9 @@ export function ManageTokens() {
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(false)
   const [addOpen, setAddOpen] = useState(false)
-  const [chainId, setChainId] = useState<string>(networks[0]?.chainId ?? '')
+  const [chainId, setChainId] = useState<string>(
+    addTokenNetworks.find(network => !network.disabled)?.chainId ?? ''
+  )
   const [contractAddress, setContractAddress] = useState('')
   const [candidate, setCandidate] = useState<AddTokenCandidate | null>(null)
   const [inspecting, setInspecting] = useState(false)
@@ -90,7 +93,9 @@ export function ManageTokens() {
   const [visibilityInProgress, setVisibilityInProgress] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedNetworkIds, setSelectedNetworkIds] = useState<readonly string[]>([])
-  const selectedNetwork = addTokenNetworks.find(network => network.chainId === chainId)
+  const selectedNetwork = addTokenNetworks.find(
+    network => network.chainId === chainId && !network.disabled
+  )
   const isEvmNetwork = selectedNetwork?.family === 'evm'
   const referencePresentation = getAddTokenReferencePresentation(selectedNetwork)
   const verifiedToken = getVerifiedTokenPresentation(candidate)
@@ -106,10 +111,21 @@ export function ManageTokens() {
       }),
     [assets, catalogAssets, detectedAssets, networks, protocolAssetIds]
   )
+  const availableManagedAssets = useMemo(
+    () =>
+      managedAssets.filter(asset =>
+        isSelectableChainFamily(
+          chainByChainId.get(asset.chainId)?.family ??
+            (networkByChainId.has(asset.chainId) ? 'evm' : ''),
+          __ENABLED_CHAIN_FEATURE_FLAGS__
+        )
+      ),
+    [chainByChainId, managedAssets, networkByChainId]
+  )
 
   const networkFilterOptions = useMemo(
     () =>
-      Array.from(new Set(managedAssets.map(asset => asset.chainId))).map(assetChainId => {
+      Array.from(new Set(availableManagedAssets.map(asset => asset.chainId))).map(assetChainId => {
         const chain = chainByChainId.get(assetChainId)
         const network = networkByChainId.get(assetChainId)
         return {
@@ -118,7 +134,7 @@ export function ManageTokens() {
           displayName: chain?.displayName ?? network?.displayName ?? assetChainId
         }
       }),
-    [chainByChainId, managedAssets, networkByChainId]
+    [availableManagedAssets, chainByChainId, networkByChainId]
   )
   const selectedNetworkId =
     selectedNetworkIds.length === 1 &&
@@ -126,8 +142,8 @@ export function ManageTokens() {
       ? selectedNetworkIds[0]
       : null
   const filteredManagedAssets = useMemo(
-    () => filterManagedTokenRows(managedAssets, selectedNetworkId, searchQuery),
-    [managedAssets, searchQuery, selectedNetworkId]
+    () => filterManagedTokenRows(availableManagedAssets, selectedNetworkId, searchQuery),
+    [availableManagedAssets, searchQuery, selectedNetworkId]
   )
 
   const load = useCallback(async () => {
@@ -181,7 +197,7 @@ export function ManageTokens() {
     setCandidate(null)
     setInspecting(false)
     setAdding(false)
-    setChainId(networks[0]?.chainId ?? '')
+    setChainId(addTokenNetworks.find(network => !network.disabled)?.chainId ?? '')
   }
 
   const setAddDialogOpen = (open: boolean) => {
@@ -191,7 +207,7 @@ export function ManageTokens() {
   }
 
   const inspect = async () => {
-    if (!chainId || !contractAddress.trim() || inspecting) return
+    if (!selectedNetwork || !contractAddress.trim() || inspecting) return
     setInspecting(true)
     setCandidate(null)
     try {
@@ -372,7 +388,7 @@ export function ManageTokens() {
           </div>
         )}
 
-        {!loading && !loadError && managedAssets.length === 0 && (
+        {!loading && !loadError && availableManagedAssets.length === 0 && (
           <div className="flex min-h-48 flex-col items-center justify-center rounded-2xl border border-dashed border-border/70 px-6 text-center">
             <div className="mb-3 flex size-11 items-center justify-center rounded-full bg-card">
               <Icon icon="lucide:coins" className="size-5 text-muted" />
@@ -383,7 +399,7 @@ export function ManageTokens() {
 
         {!loading &&
           !loadError &&
-          managedAssets.length > 0 &&
+          availableManagedAssets.length > 0 &&
           filteredManagedAssets.length === 0 && (
             <div className="flex min-h-40 flex-col items-center justify-center rounded-2xl border border-dashed border-border/70 px-6 text-center">
               <div className="mb-3 flex size-11 items-center justify-center rounded-full bg-card">
@@ -523,13 +539,21 @@ export function ManageTokens() {
                   }}
                 >
                   {addTokenNetworks.map(network => (
-                    <DropdownMenuRadioItem key={network.chainId} value={network.chainId}>
+                    <DropdownMenuRadioItem
+                      key={network.chainId}
+                      value={network.chainId}
+                      disabled={network.disabled}
+                      className={
+                        network.disabled ? 'text-muted data-[disabled]:opacity-100' : undefined
+                      }
+                    >
                       <ChainIcon
                         chain={network.iconChain}
                         className="size-5 rounded-full bg-white"
                         showTooltip={false}
                       />
-                      <span>{network.displayName}</span>
+                      <span className="flex-1">{network.displayName}</span>
+                      {network.disabled && <span className="text-[10px]">Coming soon</span>}
                     </DropdownMenuRadioItem>
                   ))}
                 </DropdownMenuRadioGroup>
@@ -599,7 +623,7 @@ export function ManageTokens() {
             <Button
               className="h-11 w-full"
               isLoading={inspecting}
-              disabled={!chainId || !contractAddress.trim()}
+              disabled={!selectedNetwork || !contractAddress.trim()}
               onClick={() => void inspect()}
             >
               Verify Token

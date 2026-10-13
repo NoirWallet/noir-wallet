@@ -183,7 +183,8 @@ The published extension contains a global, mutually exclusive Mainnet/Testnet Mo
 
 - Mainnet is the migration default. The persisted `wallet_settings.networkMode` is authoritative after initialization.
 - Switching mode is available only from Developer Settings. It stops sync, cancels unsigned approvals, disconnects dApps, locks the wallet, and reloads the extension before any target-network operation starts.
-- Every chain follows the same global mode. Testnet Mode shows only Zcash Testnet, the released EVM test networks, and Bitcoin Testnet3; Mainnet data is not mixed into its Portfolio, Activity, dApp, RPC, or explorer surface.
+- The default build enables Zcash and EVM; Bitcoin, Solana, and NEAR remain visible as disabled Coming soon choices. Explicit chain feature flags are available for isolated verification profiles.
+- Every enabled chain follows the same global mode. Default Testnet Mode shows Zcash Testnet and the released EVM test networks; explicitly enabled Bitcoin verification profiles use Testnet3. Mainnet data is not mixed into Testnet Portfolio, Activity, dApp, RPC, or explorer surfaces.
 - Zcash WASM databases, account caches, and transactions remain partitioned by network. Public account metadata retains both network projections; secrets are not duplicated.
 - Chain RPC/explorer settings are persisted per global mode.
 - Every released chain supports named custom RPC endpoints. Saved RPC lists live in the optional `chainEndpointSettings.savedRpcEndpoints` field; `overrides` selects the active endpoint. The background validates network identity before saving. A selected custom Zcash endpoint is fixed and does not use registry failover.
@@ -333,16 +334,9 @@ The multi-account SDK result keeps top-level primary-account fields for compatib
 
 Do not edit or commit nested Rust source as part of the top-level repository.
 
-When a WASM change is already built in the nested repository:
+Follow the [WASM package update procedure](./docs/release-workflow.md#wasm-package-updates) for explicit local builds and dependency-upgrade PRs. V2's two sync commands rebuild their pinned sources and write the complete packages with integrity manifests; they do not copy an existing `pkg/`. Ordinary wallet builds and merges use committed artifacts and do not synchronize WASM or amend commits.
 
-```bash
-git -C packages/zcash-wallet-wasm status --short --branch
-git -C packages/zcash-wallet-wasm switch <wasm-branch>
-git -C packages/zcash-wallet-wasm pull --ff-only
-pnpm sync-wasm-pkg
-```
-
-Commit all generated `packages/extension/src/lib/wasm-pkg/**` changes together. Never ship TypeScript bindings without the matching JavaScript loader and `.wasm` binary.
+Commit the complete updated engine package and its `wasm-integrity.json` together, including Zcash support files when present. Never ship TypeScript bindings without the matching JavaScript loader and `.wasm` binary.
 
 ## Release Workflow
 

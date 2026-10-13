@@ -3,14 +3,14 @@
   "releases": {
     "2.0.0": {
       "changes": [
-        "Use Zcash, Bitcoin, Ethereum, Solana, NEAR, and supported EVM networks in one multichain Wallet.",
+        "Use Zcash, Ethereum, and supported EVM networks in one multichain Wallet.",
         "Create or import 12-word and 24-word recovery phrases for every supported chain.",
-        "Send, receive, sign, and track activity across Zcash, Bitcoin, EVM, Solana, and NEAR.",
+        "Activate V2 Beta with an invite code, with retry and code replacement if binding fails.",
         "Switch the whole Wallet between isolated Mainnet and Testnet modes.",
-        "Import and export encrypted EVM and Bitcoin private-key Wallets.",
+        "Import and export encrypted EVM private-key Wallets.",
         "Manage discovered tokens and view unified balances, prices, activity, Swap, and Lending.",
-        "Improved Bitcoin balances, dApp network switching, RPC reuse, and V1 wallet migration reliability.",
-        "Improved live Swap quotes, Bitcoin address selection, and Zcash account recovery setup."
+        "Bitcoin, Solana, and NEAR chain options now show Coming soon.",
+        "Connect Ledger wallets for Zcash and EVM, with reliable unlock after adding chains."
       ]
     },
     "1.0.35": {

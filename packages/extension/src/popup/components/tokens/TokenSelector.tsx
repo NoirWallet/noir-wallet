@@ -19,6 +19,10 @@ import { cn } from '@/lib/utils'
 import { createDebugRequestId, logDebugTiming } from '@/lib/debug-performance'
 import { ChainIcon } from '../common/ChainIcon'
 import {
+  deferredChainChoices,
+  isSelectableSwapBlockchain
+} from '@/popup/services/chain-selection-availability'
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuRadioGroup,
@@ -53,7 +57,13 @@ export function TokenSelector({
   const [fetchedLoading, setFetchedLoading] = useState(providedTokens === undefined)
   const [selectionTraceId] = useState(() => createDebugRequestId('token-selector'))
   const hasProvidedTokens = providedTokens !== undefined
-  const tokens = providedTokens ?? fetchedTokens
+  const tokens = useMemo(
+    () =>
+      (providedTokens ?? fetchedTokens).filter(token =>
+        isSelectableSwapBlockchain(token.blockchain, __ENABLED_CHAIN_FEATURE_FLAGS__)
+      ),
+    [providedTokens, fetchedTokens]
+  )
   const loading = !hasProvidedTokens && fetchedLoading
 
   useEffect(() => {
@@ -176,6 +186,26 @@ export function TokenSelector({
                     aria-hidden="true"
                   />
                   <span>{option.label}</span>
+                </DropdownMenuRadioItem>
+              ))}
+              {deferredChainChoices(__ENABLED_CHAIN_FEATURE_FLAGS__).map(option => (
+                <DropdownMenuRadioItem
+                  key={option.family}
+                  value={`coming-soon:${option.family}`}
+                  disabled
+                  className="text-muted data-[disabled]:opacity-100"
+                >
+                  <ChainIcon
+                    chain={option.iconAlias}
+                    width={16}
+                    height={16}
+                    className="rounded-[4px]"
+                    showTooltip={false}
+                    alt=""
+                    aria-hidden="true"
+                  />
+                  <span className="flex-1">{option.label}</span>
+                  <span className="text-[10px]">Coming soon</span>
                 </DropdownMenuRadioItem>
               ))}
             </DropdownMenuRadioGroup>

@@ -1,7 +1,7 @@
 import manifest from '../../lib/wasm-pkg/wasm-integrity.json'
 
-export const PINNED_ZCASH_ABI_VERSION = 'zcash-wallet-9c0e252-v1'
-export const PINNED_ZCASH_SOURCE_COMMIT = '9c0e25267645a7ef08cb7248529de51fc9a304ef'
+export const PINNED_ZCASH_ABI_VERSION = 'zcash-wallet-7d6921d-v1'
+export const PINNED_ZCASH_SOURCE_COMMIT = '7d6921d51b9fe4f4a13b8886481a9a098d6f1e7f'
 export const PINNED_ZCASH_CAPABILITIES = Object.freeze(
   [
     'account.zcash.derive',
@@ -15,6 +15,7 @@ export const PINNED_ZCASH_CAPABILITIES = Object.freeze(
     'zcash.message.transparent.sign',
     'zcash.pczt',
     'zcash.sync',
+    'zcash.transaction.orchard-zero-indexer-broadcast',
     'zcash.transaction.sign',
     'zcash.voting.shielded'
   ].sort()

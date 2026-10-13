@@ -6,26 +6,29 @@ All notable user-facing changes to Noir Wallet are documented in this file.
 
 ### Added
 
-- Added one multichain Wallet experience for Zcash, Bitcoin, Ethereum, and released EVM networks, with unified Assets, Addresses, Send, Receive, and Activity views.
+- Added one multichain Wallet experience for Zcash, Ethereum, and released EVM networks, with unified Assets, Addresses, Send, Receive, and Activity views.
 - Added 12-word and 24-word recovery phrase creation and import, with all supported account identities derived from either phrase length.
-- Added Bitcoin Native SegWit accounts, transaction signing and broadcasting, confirmation tracking, fee tiers, and discovery of common historical address types.
+- Added invite-code activation for V2 Beta, with binding retries and code replacement that retain the existing wallet.
 - Added EVM native and token balances, transfers, message and transaction signing, dApp permissions, discovered-token management, and network-aware activity.
-- Added encrypted EVM and Bitcoin private-key Wallet import and export without exposing secrets to the popup after provisioning.
+- Added encrypted EVM private-key Wallet import and export without exposing secrets to the popup after provisioning.
+- Added Ledger account provisioning for Zcash and EVM, with accounts retained when adding another chain.
 - Added a global Mainnet/Testnet Mode that keeps account caches, activity, RPC settings, approvals, and Zcash databases isolated between modes.
 
 ### Changed
 
 - Updated Swap and Lending to select from supported multichain assets, restore cached data immediately, and refresh markets in the background.
 - Redesigned Portfolio, asset details, transaction details, account management, recipient selection, and loading states for the V2 multichain interface.
-- Expanded the dApp SDK and example with EVM and Bitcoin providers, network helpers, account switching, and smart-contract testing flows.
+- Expanded the dApp SDK and example with EVM providers, network helpers, account switching, and smart-contract testing flows.
+- Deferred Bitcoin, Solana, and NEAR wallet operations; chain selectors mark them as Coming soon.
 
 ### Fixed
 
 - Fixed dApp network switching after approval when the destination chain's public RPC is temporarily unavailable.
-- Fixed Bitcoin balances remaining stale after a Wallet-to-Wallet transfer by updating spent inputs, change, owned recipient outputs, and confirmation state locally before remote reconciliation.
-- Fixed repeated Bitcoin discovery requests and public indexer rate limits by reusing persisted discovery state and deduplicating refreshes.
 - Fixed repeated EVM activity reloads, empty-result retries, token/icon mismatches, value ordering, and stale price or protocol displays.
-- Fixed stale Swap quotes and fee displays, inconsistent Bitcoin address-type balances, and Zcash account recovery setup failures.
+- Fixed stale Swap quotes and fee displays and Zcash account recovery setup failures.
+- Fixed Confidential Swap offering destination assets unsupported by its route.
+- Fixed SDK example authorization requesting chains unavailable in the installed wallet.
+- Fixed Ledger unlocking after adding Zcash and retained-account provisioning when other chains are disabled.
 - Preserved V1 encrypted credentials, passwords, Zcash data, account metadata, and Golden Profile compatibility during V2 migration.
 
 ## [1.0.35] - 2026-09-07

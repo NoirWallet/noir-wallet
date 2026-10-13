@@ -212,7 +212,7 @@ test.describe('EVM portfolio source reader', () => {
         chainId,
         chainAccount: {
           ...account,
-          derivation: { scheme: 'bip44', path: "m/44'/60'/1'/0/0" }
+          derivation: { scheme: 'bip44', path: "m/44'/60'/01'/0/0" }
         },
         assets,
         rpc: rpc()

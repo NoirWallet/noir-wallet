@@ -167,6 +167,7 @@ export interface RheaSwapToken extends SwapToken {
   readonly tokenListChainId: number
   readonly rheaAddress: string
   readonly isNative: boolean
+  readonly sources: readonly string[]
 }
 
 export interface RheaSwapQuoteRequest {
@@ -465,7 +466,7 @@ export function toRheaSwapToken(item: SwapTokenListItem): RheaSwapToken {
   const quoteAddress = nativeQuoteAddress
     ? nativeQuoteAddress
     : isEvmChain && !item.isNative
-      ? readEvmContractAddress(item.contractAddress)
+      ? readEvmQuoteAddress(item)
       : isRecord(item.raw) && typeof item.raw.address === 'string'
         ? readString(item.raw.address, 'RHEA Swap quote token address')
         : readString(item.address, 'RHEA Swap quote token address')
@@ -481,16 +482,19 @@ export function toRheaSwapToken(item: SwapTokenListItem): RheaSwapToken {
     rheaChainId: item.chain,
     tokenListChainId: item.tokenListChainId,
     rheaAddress: quoteAddress,
-    isNative: item.isNative
+    isNative: item.isNative,
+    sources: Object.freeze(
+      item.sources.map(source => readString(source, 'RHEA Swap token source', 64))
+    )
   })
 }
 
-function readEvmContractAddress(value: string | null): string {
-  const address = readString(value, 'RHEA Swap EVM token contract address')
-  if (!/^0x[0-9a-fA-F]{40}$/.test(address)) {
-    throw new Error('RHEA Swap EVM token contract address is invalid')
+function readEvmQuoteAddress(item: SwapTokenListItem): string {
+  const candidate = item.contractAddress ?? item.address
+  if (typeof candidate !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(candidate)) {
+    throw new Error('RHEA Swap EVM quote token address is invalid')
   }
-  return address.toLowerCase()
+  return candidate.toLowerCase()
 }
 
 export function toRheaSwapExecutionView(build: SwapBuild): RheaSwapExecutionView {

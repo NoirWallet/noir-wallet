@@ -24,6 +24,7 @@ import {
   getExampleChainIconUrl,
   type EvmNetworkExample
 } from './evm-network-catalog'
+import { buildExampleMultichainSessionRequest } from './multichain-session-request'
 
 const NOIR_TEST_BENCH_ABI = [
   {
@@ -128,65 +129,17 @@ export function ProviderSwitcher({
   }, [multichain])
 
   const createMultichainSession = async () => {
-    if (!multichain) return
+    if (!multichain || !wallet) return
     setSessionLoading(true)
     setSessionError(null)
     try {
-      const zcashChainId =
-        networkMode === 'mainnet'
-          ? 'bip122:00040fe8ec8471911baa1db1266ea15d'
-          : 'bip122:05a60a92d99d85997cce3b87616c089f'
-      const bitcoinChainId =
-        networkMode === 'mainnet'
-          ? 'bip122:000000000019d6689c085ae165831e93'
-          : 'bip122:000000000933ea01ad0ee984209779ba'
-      const solanaChainId =
-        networkMode === 'mainnet'
-          ? 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp'
-          : 'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1'
-      const nearChainId = networkMode === 'mainnet' ? 'near:mainnet' : 'near:testnet'
-      const evmChainId = `eip155:${Number.parseInt(selectedEvmNetwork.request.chainId, 16)}`
-      const next = await multichain.createSession({
-        scopes: {
-          [zcashChainId]: {
-            methods: [
-              'zcash_getAccounts',
-              'zcash_getBalance',
-              'zcash_sendTransaction',
-              'zcash_signMessage'
-            ],
-            notifications: ['wallet_sessionChanged', 'accountsChanged']
-          },
-          [evmChainId]: {
-            methods: [
-              'eth_accounts',
-              'eth_sendTransaction',
-              'personal_sign',
-              'eth_signTypedData_v4'
-            ],
-            notifications: ['wallet_sessionChanged', 'accountsChanged', 'chainChanged']
-          },
-          [bitcoinChainId]: {
-            methods: ['getAccounts', 'getBalance', 'sendBitcoin', 'signMessage', 'signPsbt'],
-            notifications: ['wallet_sessionChanged', 'accountsChanged', 'networkChanged']
-          },
-          [solanaChainId]: {
-            methods: [
-              'getAccounts',
-              'signTransaction',
-              'signAllTransactions',
-              'signAndSendTransaction',
-              'signMessage'
-            ],
-            notifications: ['wallet_sessionChanged', 'accountsChanged']
-          },
-          [nearChainId]: {
-            methods: ['getAccounts', 'signTransaction', 'requestSignTransactions', 'signMessage'],
-            notifications: ['wallet_sessionChanged', 'accountsChanged']
-          }
-        },
-        properties: { application: 'Noir Wallet SDK Example V2' }
-      })
+      const next = await multichain.createSession(
+        buildExampleMultichainSessionRequest(
+          wallet,
+          networkMode,
+          selectedEvmNetwork.request.chainId
+        )
+      )
       setSession(next)
     } catch (error) {
       setSessionError(formatError(error))
@@ -489,35 +442,38 @@ export function EvmExample({ navigation }: { navigation: ExampleNavigationProps 
     return () => controller.abort()
   }, [provider])
 
-  const refresh = useCallback(async (current: EvmProvider, syncNavigation = false) => {
-    const [nextChainId, accounts] = await Promise.all([
-      current.request<string>({ method: 'eth_chainId' }),
-      current.request<readonly string[]>({ method: 'eth_accounts' })
-    ])
-    if (syncNavigation) {
-      const selected = getEvmNetworkExample(nextChainId)
-      if (selected) navigation.onSyncEvmNetwork(selected)
-    }
-    const nextAccount = accounts[0] ?? ''
-    setAccounts(accounts)
-    setChainId(nextChainId)
-    setAccount(nextAccount)
-    setNetworkReady(true)
-    setContractAddress(value => {
-      const preset = TEST_BENCH_DEPLOYMENTS[BigInt(nextChainId).toString()]?.NoirTestBench
-      return preset ?? value
-    })
-    setBalance(
-      nextAccount
-        ? formatEther(
-            await current.request<string>({
-              method: 'eth_getBalance',
-              params: [nextAccount, 'latest']
-            })
-          )
-        : ''
-    )
-  }, [navigation.onSyncEvmNetwork])
+  const refresh = useCallback(
+    async (current: EvmProvider, syncNavigation = false) => {
+      const [nextChainId, accounts] = await Promise.all([
+        current.request<string>({ method: 'eth_chainId' }),
+        current.request<readonly string[]>({ method: 'eth_accounts' })
+      ])
+      if (syncNavigation) {
+        const selected = getEvmNetworkExample(nextChainId)
+        if (selected) navigation.onSyncEvmNetwork(selected)
+      }
+      const nextAccount = accounts[0] ?? ''
+      setAccounts(accounts)
+      setChainId(nextChainId)
+      setAccount(nextAccount)
+      setNetworkReady(true)
+      setContractAddress(value => {
+        const preset = TEST_BENCH_DEPLOYMENTS[BigInt(nextChainId).toString()]?.NoirTestBench
+        return preset ?? value
+      })
+      setBalance(
+        nextAccount
+          ? formatEther(
+              await current.request<string>({
+                method: 'eth_getBalance',
+                params: [nextAccount, 'latest']
+              })
+            )
+          : ''
+      )
+    },
+    [navigation.onSyncEvmNetwork]
+  )
 
   useEffect(() => {
     if (!provider) return
@@ -582,7 +538,13 @@ export function EvmExample({ navigation }: { navigation: ExampleNavigationProps 
       }
       return `Switched to ${navigation.selectedEvmNetwork.label}`
     })
-  }, [chainId, navigation.evmSelectionVersion, navigation.selectedEvmNetwork, networkReady, provider])
+  }, [
+    chainId,
+    navigation.evmSelectionVersion,
+    navigation.selectedEvmNetwork,
+    networkReady,
+    provider
+  ])
 
   const connect = () =>
     run(async () => {

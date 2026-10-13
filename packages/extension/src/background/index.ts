@@ -1,5 +1,13 @@
 import '@/lib/buffer-polyfill'
+import { betaInviteActivation } from './beta-invite'
+import { getBetaInviteErrorMessage } from '@/core/wallet/beta-invite'
+import { promptBetaInviteActivation } from './beta-invite-window'
+import {
+  BETA_INVITE_REQUIRED_MESSAGE,
+  resolveUnactivatedBetaDAppRequest
+} from '@/core/dapp/beta-invite-policy'
 import { isZcashHardwareKeySource } from '@/core/wallet/hardware-wallet-data'
+import { resolveWalletUnlockPath } from '@/core/wallet/wallet-unlock-path'
 import { parseLedgerPcztSignatures } from '@/lib/ledger/signature'
 import { safeBig } from '@/lib/big'
 import type { LedgerSigningPayload } from '@/core/worker/types'
@@ -62,7 +70,25 @@ import { initializeExtensionUpdates } from './extension-update'
 import type { SendTransactionParams, TransactionType } from '@/types'
 import { isIntentsSettledTransaction } from '@/lib/cross-chain-transaction'
 import { buildAccountKey, type AccountScope } from '@/core/wallet/account-scope'
-import { forwardKeyringRpcToOffscreen } from '@/core/worker/client'
+import {
+  applyZeroIndexerOptionsToActiveWorker,
+  forwardKeyringRpcToOffscreen
+} from '@/core/worker/client'
+import {
+  addCustomZeroIndexerNode,
+  getZeroIndexerBroadcastOptions,
+  getZeroIndexerNodeStatus,
+  removeCustomZeroIndexerNode,
+  selectZeroIndexerNode
+} from './zero-indexer-node-settings'
+import {
+  readZeroIndexerEnabled,
+  writeZeroIndexerEnabled
+} from '@/infrastructure/chains/zero-indexer-preferences'
+import {
+  isTransactionSubmissionUnknown,
+  requireSuccessfulTransfer
+} from '@/core/zcash/transfer-result'
 import { encodeWorkerRpcError } from '@/core/worker/rpc-errors'
 import { CredentialAuthenticationError } from '@/infrastructure/keyring/credential-envelope-authentication'
 import {
@@ -152,6 +178,7 @@ import { createEvmWalletRuntimeError } from '@/core/chains/evm'
 import { hidePortfolioAssets } from '@/core/portfolio'
 import { mapEvmWalletRuntimeError } from './evm-wallet-runtime-error'
 import {
+  isNewWalletFamilyEnabled,
   resolveBitcoinFeatureRuntimePolicy,
   resolveEvmFeatureRuntimePolicy,
   resolveNearFeatureRuntimePolicy,
@@ -306,8 +333,7 @@ import {
   persistSidePanelMode
 } from './extension-display-mode'
 import { shouldRequestPeriodicSync } from './passive-sync-policy'
-import { requireSuccessfulTransfer } from '@/core/zcash/transfer-result'
-import { TimeoutError, withTimeout } from '@/lib/async-utils'
+import { SerialTaskQueue, TimeoutError, withTimeout } from '@/lib/async-utils'
 import { TRANSACTION_PENDING_MESSAGE } from '@/lib/transaction-status-copy'
 import {
   getPreferredRpcEndpointOption,
@@ -346,9 +372,11 @@ let nearTransactionMonitor: BackgroundNearTransactionMonitor | null = null
 type EnabledPrivateKeyChainFamily = 'eip155' | 'bip122' | 'solana' | 'near'
 
 function resolveEnabledPrivateKeyChainFamily(value: unknown): EnabledPrivateKeyChainFamily {
-  if (value === 'eip155' || value === 'bip122') return value
-  if (value === 'solana' && areSolanaOperationsEnabled()) return value
-  if (value === 'near' && areNearOperationsEnabled()) return value
+  if (
+    (value === 'eip155' || value === 'bip122' || value === 'solana' || value === 'near') &&
+    isNewWalletFamilyEnabled(value, __ENABLED_CHAIN_FEATURE_FLAGS__)
+  )
+    return value
   throw new Error('Private-key chain is not enabled in this build')
 }
 
@@ -857,6 +885,7 @@ async function reloadMultichainRuntime(
     zcash: dappHandler,
     evm: evmDAppHandler,
     bitcoin: bitcoinDAppHandler,
+    bitcoinEnabled: bitcoinFeatureRuntimePolicy.newOperationsEnabled,
     solana: solanaDAppHandler,
     near: nearDAppHandler,
     ...(solanaScope === undefined
@@ -1698,6 +1727,23 @@ const walletCleanupCoordinator = new WalletCleanupCoordinator(
     rheaSwapTransactionMonitor?.removeAccount(walletId, accountId) ?? Promise.resolve()
 )
 
+const zeroIndexerUpdateQueue = new SerialTaskQueue()
+
+function enqueueZeroIndexerUpdate<T>(operation: () => Promise<T>): Promise<T> {
+  return zeroIndexerUpdateQueue.run(operation)
+}
+
+async function applyLatestZeroIndexerRuntime(): Promise<string | undefined> {
+  try {
+    const enabled = await readZeroIndexerEnabled()
+    const options = await getZeroIndexerBroadcastOptions(DEFAULT_NETWORK, enabled)
+    await applyZeroIndexerOptionsToActiveWorker(DEFAULT_NETWORK, options)
+    return undefined
+  } catch {
+    return 'Saved. The active wallet will use this setting after it reconnects.'
+  }
+}
+
 const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListener>[0] = (
   message,
   sender,
@@ -1754,6 +1800,35 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
 
       try {
         const { chainId, request } = parsedMessage
+        if (!(await betaInviteActivation.isActivated())) {
+          const decision = resolveUnactivatedBetaDAppRequest(chainId, request.method)
+          if (decision.kind === 'silent') {
+            respond({ result: decision.result })
+            return
+          }
+          if (decision.kind === 'activate') {
+            try {
+              await promptBetaInviteActivation()
+            } catch {
+              respond({
+                error:
+                  chainId === 'zcash'
+                    ? 'Beta activation was not completed.'
+                    : { code: 4001, message: 'Beta activation was not completed.' }
+              })
+              return
+            }
+          }
+          if (!(await betaInviteActivation.isActivated())) {
+            respond({
+              error:
+                chainId === 'zcash'
+                  ? BETA_INVITE_REQUIRED_MESSAGE
+                  : { code: 4100, message: BETA_INVITE_REQUIRED_MESSAGE }
+            })
+            return
+          }
+        }
         if (
           chainId === 'evm' ||
           chainId === 'bitcoin' ||
@@ -2077,6 +2152,11 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
       return true
     }
 
+    if (rpcMessage.method === 'zeroIndexer.setOptions') {
+      sendResponse({ error: 'Privacy broadcast settings are Background-only' })
+      return true
+    }
+
     if (rpcMessage.method.startsWith('multichain.')) {
       if (!MULTICHAIN_WORKER_RPC_METHODS.has(rpcMessage.method)) {
         sendResponse({ error: 'Unsupported Multichain Worker RPC method' })
@@ -2244,6 +2324,27 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
     message = parseTrustedExtensionRuntimeMessage(runtimeMessage)
   } catch {
     sendResponse({ error: 'Invalid or unsupported runtime message' })
+    return true
+  }
+
+  if (
+    message.type === 'GET_BETA_INVITE_ACTIVATION' ||
+    message.type === 'CHECK_BETA_INVITE_CODE' ||
+    message.type === 'BIND_BETA_INVITE_WALLET'
+  ) {
+    void trustedStorageAccessReady
+      .then(async ready => {
+        if (!ready) throw new Error('Beta activation is unavailable. Please try again.')
+        if (message.type === 'GET_BETA_INVITE_ACTIVATION') return betaInviteActivation.getStatus()
+        if (message.type === 'CHECK_BETA_INVITE_CODE') {
+          return betaInviteActivation.check(message.inviteCode as string)
+        }
+        return betaInviteActivation.bind()
+      })
+      .then(result => sendResponse({ result }))
+      .catch(error => {
+        sendResponse({ error: getBetaInviteErrorMessage(error) })
+      })
     return true
   }
 
@@ -2419,6 +2520,94 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
     sendResponse({
       result: { networkMode: DEFAULT_NETWORK, restartRequired: networkRestartRequired }
     })
+    return true
+  }
+
+  if (message.type === 'GET_ZERO_INDEXER_OPTIONS') {
+    if (
+      getOwnExtensionSenderContext(sender, chrome.runtime.id) !== 'offscreen-document' ||
+      (message.network !== 'mainnet' && message.network !== 'testnet')
+    ) {
+      sendResponse({ success: false, error: 'Invalid privacy broadcast network' })
+      return true
+    }
+    if (message.network !== DEFAULT_NETWORK) {
+      sendResponse({ success: true, options: null })
+      return true
+    }
+    void readZeroIndexerEnabled()
+      .then(enabled => getZeroIndexerBroadcastOptions(DEFAULT_NETWORK, enabled))
+      .then(options => sendResponse({ success: true, options }))
+      .catch(() =>
+        sendResponse({ success: false, error: 'Could not load privacy broadcast configuration' })
+      )
+    return true
+  }
+
+  if (message.type === 'GET_ZERO_INDEXER_ENABLED') {
+    void readZeroIndexerEnabled()
+      .then(enabled => sendResponse({ success: true, enabled }))
+      .catch(() => sendResponse({ success: false, error: 'Could not load privacy preference' }))
+    return true
+  }
+
+  if (message.type === 'SET_ZERO_INDEXER_ENABLED') {
+    if (typeof message.enabled !== 'boolean') {
+      sendResponse({ success: false, error: 'Invalid privacy broadcast preference' })
+      return true
+    }
+    void enqueueZeroIndexerUpdate(async () => {
+      await writeZeroIndexerEnabled(message.enabled)
+      const warning = await applyLatestZeroIndexerRuntime()
+      return { enabled: message.enabled, warning }
+    })
+      .then(({ enabled, warning }) => {
+        sendResponse({ success: true, enabled, ...(warning ? { warning } : {}) })
+      })
+      .catch(error =>
+        sendResponse({
+          success: false,
+          error: error instanceof Error ? error.message : 'Could not save privacy preference'
+        })
+      )
+    return true
+  }
+
+  if (message.type === 'GET_ZERO_INDEXER_NODE_STATUS') {
+    if (message.refresh !== undefined && typeof message.refresh !== 'boolean') {
+      sendResponse({ success: false, error: 'Invalid node refresh request' })
+      return true
+    }
+    void getZeroIndexerNodeStatus(message.refresh === true)
+      .then(status => sendResponse({ success: true, status }))
+      .catch(() => sendResponse({ success: false, error: 'Could not load broadcast nodes' }))
+    return true
+  }
+
+  if (
+    message.type === 'SELECT_ZERO_INDEXER_NODE' ||
+    message.type === 'ADD_CUSTOM_ZERO_INDEXER_NODE' ||
+    message.type === 'REMOVE_CUSTOM_ZERO_INDEXER_NODE'
+  ) {
+    void enqueueZeroIndexerUpdate(async () => {
+      const status =
+        message.type === 'SELECT_ZERO_INDEXER_NODE'
+          ? await selectZeroIndexerNode(message.endpointId)
+          : message.type === 'ADD_CUSTOM_ZERO_INDEXER_NODE'
+            ? await addCustomZeroIndexerNode(message.label, message.url)
+            : await removeCustomZeroIndexerNode(message.endpointId)
+      const warning = await applyLatestZeroIndexerRuntime()
+      return { status, warning }
+    })
+      .then(({ status, warning }) => {
+        sendResponse({ success: true, status, ...(warning ? { warning } : {}) })
+      })
+      .catch(error =>
+        sendResponse({
+          success: false,
+          error: error instanceof Error ? error.message : 'Could not update broadcast nodes'
+        })
+      )
     return true
   }
 
@@ -3107,6 +3296,10 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
   }
 
   if (message.type === 'GET_BITCOIN_ADDRESS_BALANCES') {
+    if (!bitcoinFeatureRuntimePolicy.newOperationsEnabled) {
+      sendResponse({ error: createBitcoinWalletRuntimeError('unavailable') })
+      return true
+    }
     void bitcoinAddressBalancesCoordinator
       .readActive()
       .then(result => sendResponse({ result }))
@@ -3121,6 +3314,10 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
   }
 
   if (message.type === 'SET_ACTIVE_BITCOIN_ADDRESS_TYPE') {
+    if (!bitcoinFeatureRuntimePolicy.newOperationsEnabled) {
+      sendResponse({ error: createBitcoinWalletRuntimeError('unavailable') })
+      return true
+    }
     void accountContextTransition
       .runActiveOperation(async () => {
         const result = await bitcoinAddressBalancesCoordinator.setActive({
@@ -3512,8 +3709,12 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
   }
 
   if (message.type === 'CONNECT_CURRENT_ACCOUNT_TO_DAPP') {
-    walletDAppConnection
-      .connectCurrentAccount(message.origin)
+    Promise.resolve()
+      .then(async () => {
+        if (!(await betaInviteActivation.isActivated()))
+          throw new Error(BETA_INVITE_REQUIRED_MESSAGE)
+        return walletDAppConnection.connectCurrentAccount(message.origin)
+      })
       .then(() => sendResponse({ success: true }))
       .catch(error => sendResponse({ error: error.message }))
     return true
@@ -4258,7 +4459,18 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
             message.transactionId
           )
           const walletCore = await prepareWalletCoreForTx(request.walletId, request.accountId)
-          return walletCore.pcztProveSend(prepared.fullPcztBase64, message.signedPcztBase64)
+          try {
+            return await walletCore.pcztProveSend(prepared.fullPcztBase64, message.signedPcztBase64)
+          } catch (error) {
+            if (isTransactionSubmissionUnknown(error)) {
+              await recordUncertainBroadcast(
+                buildAccountKey(DEFAULT_NETWORK, request.walletId, request.accountId),
+                message.transactionId as string,
+                error.txId
+              ).catch(() => logger.error('Uncertain hardware broadcast could not be recorded'))
+            }
+            throw error
+          }
         })
       })
       .then(txHash => sendResponse({ success: true, txHash }))
@@ -4266,12 +4478,12 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
         sendResponse({
           success: false,
           error:
-            error instanceof TimeoutError
+            error instanceof TimeoutError || isTransactionSubmissionUnknown(error)
               ? TRANSACTION_PENDING_MESSAGE
               : error instanceof Error
                 ? error.message
                 : 'Hardware transaction failed',
-          completionPending: error instanceof TimeoutError,
+          completionPending: error instanceof TimeoutError || isTransactionSubmissionUnknown(error),
           retryable: !consumed
         })
       )
@@ -4321,7 +4533,18 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
             account.derivationIndex,
             signatures
           )
-          return walletCore.pcztProveSend(prepared.fullPcztBase64, signed)
+          try {
+            return await walletCore.pcztProveSend(prepared.fullPcztBase64, signed)
+          } catch (error) {
+            if (isTransactionSubmissionUnknown(error)) {
+              await recordUncertainBroadcast(
+                buildAccountKey(DEFAULT_NETWORK, request.walletId, request.accountId),
+                message.transactionId as string,
+                error.txId
+              ).catch(() => logger.error('Uncertain hardware broadcast could not be recorded'))
+            }
+            throw error
+          }
         })
       })
       .then(txHash => sendResponse({ success: true, txHash }))
@@ -4329,12 +4552,12 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
         sendResponse({
           success: false,
           error:
-            error instanceof TimeoutError
+            error instanceof TimeoutError || isTransactionSubmissionUnknown(error)
               ? TRANSACTION_PENDING_MESSAGE
               : error instanceof Error
                 ? error.message
                 : 'Ledger transaction failed',
-          completionPending: error instanceof TimeoutError,
+          completionPending: error instanceof TimeoutError || isTransactionSubmissionUnknown(error),
           retryable: !consumed
         })
       )
@@ -4796,6 +5019,39 @@ function handleWalletUnlock(password: string): Promise<any> {
   )
 }
 
+function restoreZcashDAppPermissionsAfterUnlock(): void {
+  void backgroundZcashWalletRuntime
+    .waitForAccountReady(15000)
+    .then(() =>
+      accountContextTransition.runActiveOperation(async () => {
+        if (
+          backgroundZcashWalletRuntime.isLocked() ||
+          !(await credentialSession.hasUnlockSession())
+        )
+          return
+
+        await dappHandler.initialize()
+        await dappHandler.restorePermissionsFromStorage()
+
+        const account = await backgroundZcashWalletRuntime.getCurrentAccount()
+        if (account) {
+          await dappHandler.notifyAccountsChanged({
+            transparent: account.addresses.transparent,
+            shielded: account.addresses.shielded
+          })
+        }
+        await evmDAppHandler.notifyAccountsChanged()
+        await bitcoinDAppHandler.notifyAccountsChanged()
+        await solanaDAppHandler?.notifyAccountsChanged()
+        await nearDAppHandler?.notifyAccountsChanged()
+        await multichainSessionDAppHandler?.notifyAllSessionsChanged()
+      })
+    )
+    .catch(err => {
+      console.warn('[Background] Account ready timeout, dApp restore deferred:', err)
+    })
+}
+
 async function performWalletUnlock(password: string): Promise<any> {
   syncScheduler.pauseForTx()
   syncScheduler.abortSync()
@@ -4809,7 +5065,12 @@ async function performWalletUnlock(password: string): Promise<any> {
       ? walletState.getWallet(walletState.currentWalletId)
       : null
     const storageV2SupportsZcash = await credentialLifecycle.activeAccountSupportsChain('zcash')
-    if (!(storageV2SupportsZcash ?? Boolean(activeRetainedV1Wallet))) {
+    const unlockPath = resolveWalletUnlockPath(
+      await credentialLifecycle.getActiveWalletSetMode(),
+      storageV2SupportsZcash,
+      Boolean(activeRetainedV1Wallet)
+    )
+    if (unlockPath.kind === 'native-v2') {
       const attemptStatus = await SecureStorage.getLoginAttempts()
       if (attemptStatus.isLocked) {
         return {
@@ -4820,6 +5081,12 @@ async function performWalletUnlock(password: string): Promise<any> {
         }
       }
       try {
+        if (unlockPath.restoreZcashRuntime) {
+          const restored = await backgroundZcashWalletRuntime.unlock(password, {
+            allowMissingCredentialRecovery: true
+          })
+          if (!restored.success) return restored
+        }
         const descriptor = await credentialSession.unlock(password, Date.now())
         if (!descriptor) throw new Error('No active Wallet credential was found')
         await Promise.all([
@@ -4834,6 +5101,7 @@ async function performWalletUnlock(password: string): Promise<any> {
           nearDAppHandler?.notifyAccountsChanged(),
           multichainSessionDAppHandler?.notifyAllSessionsChanged()
         ])
+        if (unlockPath.restoreZcashRuntime) restoreZcashDAppPermissionsAfterUnlock()
         return { success: true, credentialStatus: 'already-migrated', nativeV2Only: true }
       } catch (error) {
         console.warn(
@@ -4897,38 +5165,7 @@ async function performWalletUnlock(password: string): Promise<any> {
     }
     await synchronizeCurrentSoftwareWalletNetworkMetadata()
 
-    // Best-effort: wait for account restore, but don't block unlock on it
-    // dApp permissions will be restored when account becomes ready
-    void backgroundZcashWalletRuntime
-      .waitForAccountReady(15000)
-      .then(() =>
-        accountContextTransition.runActiveOperation(async () => {
-          if (
-            backgroundZcashWalletRuntime.isLocked() ||
-            !(await credentialSession.hasUnlockSession())
-          )
-            return
-
-          await dappHandler.initialize()
-          await dappHandler.restorePermissionsFromStorage()
-
-          const account = await backgroundZcashWalletRuntime.getCurrentAccount()
-          if (account) {
-            await dappHandler.notifyAccountsChanged({
-              transparent: account.addresses.transparent,
-              shielded: account.addresses.shielded
-            })
-          }
-          await evmDAppHandler.notifyAccountsChanged()
-          await bitcoinDAppHandler.notifyAccountsChanged()
-          await solanaDAppHandler?.notifyAccountsChanged()
-          await nearDAppHandler?.notifyAccountsChanged()
-          await multichainSessionDAppHandler?.notifyAllSessionsChanged()
-        })
-      )
-      .catch(err => {
-        console.warn('[Background] Account ready timeout, dApp restore deferred:', err)
-      })
+    restoreZcashDAppPermissionsAfterUnlock()
 
     await SecureStorage.saveLastActivityTime()
 
@@ -5472,6 +5709,23 @@ async function ensurePendingHardwareTransactionRecord(
   }
 }
 
+async function recordUncertainBroadcast(
+  accountKey: string,
+  transactionId: string,
+  txHash: string,
+  txHashes: string[] = [txHash]
+): Promise<void> {
+  await mutateTransactions(accountKey, transactions => {
+    const pending = applyTransactionBroadcast(transactions, transactionId, txHash, undefined)
+    if (txHashes.length <= 1) return pending
+    return pending.map(transaction =>
+      transaction.id === transactionId
+        ? { ...transaction, chainHashes: txHashes.map(hash => ({ hash, chain: 'Zcash' })) }
+        : transaction
+    )
+  })
+}
+
 /**
  * Build an unsigned PCZT for hardware signing in the background, using
  * the same sync-pause/account-restore coordination as software sends. The caller
@@ -5792,6 +6046,25 @@ async function handleBackgroundZcashTx(params: {
       })
     }
   } catch (error: any) {
+    if (isTransactionSubmissionUnknown(error)) {
+      await recordUncertainBroadcast(accountKey, transactionId, error.txId, error.txIds).catch(() =>
+        logger.error(
+          `${actionLabel} uncertain broadcast could not be recorded`,
+          walletId,
+          accountId
+        )
+      )
+      chrome.runtime
+        .sendMessage({
+          type: 'ZCASH_TX_COMPLETED',
+          accountKey,
+          transactionId,
+          error: TRANSACTION_PENDING_MESSAGE,
+          completionPending: true
+        })
+        .catch(() => {})
+      return
+    }
     if (!broadcastTxHash) {
       const recorded = await loadTransactions(accountKey)
         .then(records => records.find(record => record.id === transactionId))

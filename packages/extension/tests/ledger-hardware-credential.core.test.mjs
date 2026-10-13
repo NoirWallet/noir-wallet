@@ -15,6 +15,12 @@ import { deriveLedgerBitcoinAddress } from '../src/lib/ledger/bitcoin-model.ts'
 import { parseHardwareCredentialMetadata } from '../src/core/keyring/domain/hardware-credential.ts'
 import { encodeSolanaBase58 } from '../src/infrastructure/chains/solana/solana-rpc-codecs.ts'
 import { nearPublicKeyFromImplicitAccountId } from '../src/core/chains/near/identifiers.ts'
+import {
+  assertRetainedDisabledLedgerAccounts,
+  assertRetainedDisabledLedgerProjections
+} from '../src/core/wallet/ledger-feature-policy.ts'
+import { getBitcoinChainId } from '../src/core/chains/registry/index.ts'
+import { getNearNetworkConfig, getSolanaNetworkConfig } from '../src/config/networks.ts'
 
 const key = `0x${secp256k1.getPublicKey(new Uint8Array(32).fill(3), false).reduce((hex, byte) => hex + byte.toString(16).padStart(2, '0'), '')}`
 const evm = {
@@ -131,6 +137,103 @@ it('keeps selected device paths in public credentials across supported presets',
     accounts.map(account => account.derivationPath)
   )
   assert.equal(credential.schemaVersion, 3)
+})
+
+it('retains old disabled Ledger accounts while extending EVM and Zcash only', () => {
+  const edKey = ed25519.getPublicKey(new Uint8Array(32).fill(8))
+  const solanaKey = encodeSolanaBase58(edKey)
+  const nearAddress = Buffer.from(edKey).toString('hex')
+  const solana = {
+    family: 'solana',
+    accountIndex: 0,
+    derivationPath: "m/44'/501'",
+    publicKey: solanaKey,
+    address: solanaKey
+  }
+  const near = {
+    family: 'near',
+    accountIndex: 0,
+    derivationPath: "m/44'/397'/0'/0'/0'",
+    publicKey: nearPublicKeyFromImplicitAccountId(nearAddress),
+    address: nearAddress
+  }
+  const zcash = {
+    family: 'zcash',
+    accountIndex: 0,
+    derivationPath: "m/32'/133'/9'",
+    network: 'mainnet',
+    ufvk: 'uview1public-unfunded-vector',
+    accountHdIndex: 9
+  }
+  const prior = createLedgerMultichainHardwareCredential({
+    ...device,
+    accounts: [bitcoin, solana, near]
+  }).accountExport.accounts
+  const incoming = createLedgerMultichainHardwareCredential({
+    ...device,
+    accounts: [bitcoin, solana, near, evm, zcash]
+  }).accountExport.accounts
+  const enabled = ['chain.zcash', 'chain.evm']
+  const disabled = assertRetainedDisabledLedgerAccounts(prior, incoming, prior[0], enabled)
+  assert.deepEqual(
+    disabled.map(account => account.family),
+    ['bitcoin', 'solana', 'near']
+  )
+  const keyDomainId = 'wallet:ledger-retained'
+  const scope = { keyDomainId, accountId: 'account:ledger-retained' }
+  const snapshot = {
+    accounts: [{ id: scope.accountId, keyDomainId, accountIndex: 0 }],
+    chainAccounts: [
+      getBitcoinChainId('mainnet'),
+      getSolanaNetworkConfig('mainnet').chainId,
+      getNearNetworkConfig('mainnet').chainId
+    ].map(chainId => ({ scope: { ...scope, chainId } }))
+  }
+  assert.doesNotThrow(() =>
+    assertRetainedDisabledLedgerProjections(snapshot, keyDomainId, 'mainnet', disabled)
+  )
+  assert.throws(
+    () =>
+      assertRetainedDisabledLedgerProjections(
+        { ...snapshot, chainAccounts: snapshot.chainAccounts.slice(1) },
+        keyDomainId,
+        'mainnet',
+        disabled
+      ),
+    /not enabled/
+  )
+  assert.throws(
+    () =>
+      assertRetainedDisabledLedgerAccounts(
+        prior,
+        [...incoming, { ...solana, accountIndex: 1, derivationPath: "m/44'/501'/1'/0'" }],
+        prior[0],
+        enabled
+      ),
+    /not enabled/
+  )
+  assert.throws(
+    () =>
+      assertRetainedDisabledLedgerAccounts(
+        prior,
+        incoming.map(account =>
+          account.family === 'bitcoin' ? { ...account, address: 'bc1qchanged' } : account
+        ),
+        prior[0],
+        enabled
+      ),
+    /not enabled/
+  )
+  assert.throws(
+    () =>
+      assertRetainedDisabledLedgerAccounts(
+        prior,
+        incoming.filter(account => account.family !== 'near'),
+        prior[0],
+        enabled
+      ),
+    /not enabled/
+  )
 })
 
 it('keeps schema-2 Zcash credentials and their unavailable fingerprint intact during upgrade', () => {

@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises'
 import { BUILTIN_EVM_NETWORKS } from '../../src/config/networks'
 import {
   captureScreenshot,
+  e2eEnabledChainFeatureFlags,
   expect,
   mockUnknownZcashAccountHistory,
   mockReleaseNotesVersion,
@@ -202,12 +203,14 @@ test('opens Ledger from the hardware selector and validates the account index', 
   await popup.goto(`chrome-extension://${extensionId}/index.html#/hardware/connect`)
   await expect(popup.getByRole('button', { name: 'Ledger' })).toBeVisible()
   await popup.getByRole('button', { name: 'Ledger' }).click()
-  await expect(popup.getByText('Connect Ledger', { exact: true })).toBeVisible()
-  const index = popup.getByLabel('Account index')
+  await expect(popup.getByRole('heading', { name: 'Connect Ledger', exact: true })).toBeVisible()
+  await popup.locator('summary').filter({ hasText: 'Advanced' }).click()
+  const index = popup.getByLabel('Start account index')
   await index.fill('2147483648')
-  await expect(popup.getByRole('button', { name: 'Connect via USB' })).toBeDisabled()
+  await expect(popup.getByRole('button', { name: 'Connect Ledger', exact: true })).toBeDisabled()
   await index.fill('0')
-  await expect(popup.getByRole('button', { name: 'Connect via USB' })).toBeEnabled()
+  await expect(popup.getByRole('button', { name: 'Connect Ledger', exact: true })).toBeEnabled()
+  await popup.locator('summary').filter({ hasText: 'Advanced' }).click()
   await expectNoVerticalOverflow(popup)
 })
 
@@ -232,11 +235,19 @@ test('chooses a network before showing Keystone firmware instructions', async ({
   const continueButton = popup.getByRole('button', { name: 'Continue' })
   await expect(continueButton).toBeDisabled()
   const networkOptions = popup.getByRole('radio')
+  const evmEnabled = e2eEnabledChainFeatureFlags.includes('chain.evm')
+  const bitcoinEnabled = e2eEnabledChainFeatureFlags.includes('chain.bitcoin')
   await expect(networkOptions).toHaveCount(3)
-  await expect(networkOptions.nth(0)).toHaveAccessibleName('Multi-chain')
-  await expect(networkOptions.nth(1)).toHaveAccessibleName('Zcash + BTC')
-  await expect(networkOptions.nth(2)).toHaveAccessibleName('Bitcoin only')
-  for (const option of await networkOptions.all()) await expect(option).toBeEnabled()
+  await expect(networkOptions.nth(0)).toHaveAccessibleName(
+    evmEnabled ? 'Multi-chain' : 'Multi-chain, Coming soon'
+  )
+  await expect(networkOptions.nth(1)).toHaveAccessibleName(bitcoinEnabled ? 'Zcash + BTC' : 'Zcash')
+  await expect(networkOptions.nth(1)).toBeEnabled()
+  await expect(networkOptions.nth(2)).toHaveAccessibleName(
+    bitcoinEnabled ? 'Bitcoin only' : 'Bitcoin only, Coming soon'
+  )
+  if (!evmEnabled) await expect(networkOptions.nth(0)).toBeDisabled()
+  if (!bitcoinEnabled) await expect(networkOptions.nth(2)).toBeDisabled()
   const optionBoxes = await networkOptions.evaluateAll(elements =>
     elements.map(element => {
       const box = element.getBoundingClientRect()
@@ -250,13 +261,10 @@ test('chooses a network before showing Keystone firmware instructions', async ({
       optionBoxes[index - 1].y + optionBoxes[index - 1].height
     )
   }
-  await expect(popup.getByText('EVM, BTC, SOL, TRON, NEAR', { exact: true })).toBeVisible()
-  await expect(popup.getByText('+1', { exact: true })).toBeVisible()
-  await expect(popup.getByText(/supported networks/i)).toHaveCount(0)
   await expect(popup.getByText(/200\+ blockchains|5,500\+ assets/i)).toHaveCount(0)
-  await expect(popup.getByText(/coming soon/i)).toHaveCount(0)
+  if (!bitcoinEnabled) await expect(popup.getByText(/Coming soon/).first()).toBeVisible()
   const chainIcons = popup.locator('[role="radiogroup"] img')
-  await expect(chainIcons).toHaveCount(7)
+  expect(await chainIcons.count()).toBeGreaterThan(0)
   await expect
     .poll(() =>
       chainIcons.evaluateAll(images =>
@@ -268,18 +276,26 @@ test('chooses a network before showing Keystone firmware instructions', async ({
     .toBe(true)
   await captureScreenshot(popup, 'extension-keystone-network-selection.png')
 
-  const multiChain = popup.getByRole('radio', { name: 'Multi-chain', exact: true })
-  await multiChain.click()
-  await expect(multiChain).toHaveAttribute('aria-checked', 'true')
-  await expect(popup.getByText('Multi-Coin firmware', { exact: true })).toBeVisible()
+  const selected = evmEnabled ? networkOptions.nth(0) : networkOptions.nth(1)
+  await selected.click()
+  await expect(selected).toHaveAttribute('aria-checked', 'true')
+  await expect(
+    popup.getByText(evmEnabled ? 'Multi-Coin firmware' : 'Cypherpunk firmware', { exact: true })
+  ).toBeVisible()
   await expect(continueButton).toBeEnabled()
   await captureScreenshot(popup, 'extension-keystone-multicoin-plan.png')
 
   await continueButton.click()
   await expect(popup.getByRole('heading', { name: 'Connect Hardware Wallet' })).toBeVisible()
-  await expect(popup.getByText(/Unlock your Keystone with Multi-Coin firmware/)).toBeVisible()
+  await expect(
+    popup.getByText(
+      evmEnabled
+        ? /Unlock your Keystone with Multi-Coin firmware/
+        : /Unlock your Keystone with Cypherpunk firmware/
+    )
+  ).toBeVisible()
   await popup.getByRole('button', { name: 'Back' }).click()
-  await expect(multiChain).toHaveAttribute('aria-checked', 'true')
+  await expect(selected).toHaveAttribute('aria-checked', 'true')
 })
 
 test('keeps EVM transfer commands closed in the Zcash regression build', async ({ popup }) => {
@@ -441,7 +457,10 @@ test('creates a 12-word phrase with the pinned Multichain WASM at 375x600', asyn
   ])
 })
 
-test('Google Analytics opt-out leaves the custom collector enabled', async ({ context, popup }) => {
+test('verification builds do not upload analytics after Google Analytics opt-out', async ({
+  context,
+  popup
+}) => {
   const googleAnalyticsRequests: string[] = []
   const customCollectorRequests: string[] = []
   await context.route('https://www.google-analytics.com/**', route => {
@@ -487,7 +506,7 @@ test('Google Analytics opt-out leaves the custom collector enabled', async ({ co
   await popup.waitForTimeout(2_500)
 
   expect(googleAnalyticsRequests).toEqual([])
-  expect(customCollectorRequests).toEqual(['https://datareport.rhea.finance/v1/events/common'])
+  expect(customCollectorRequests).toEqual([])
 })
 
 test('restores an evicted wallet from IndexedDB instead of recreating it empty', async ({

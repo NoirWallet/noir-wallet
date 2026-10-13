@@ -13,6 +13,7 @@ import {
   type AccountNetworksCatalogView
 } from '../../services/account-networks-client'
 import { ledgerHardwareProvisioningClient } from '../../services/hardware-provisioning-client'
+import { BetaInviteHardwareDoneButton } from '../../components/onboarding/BetaInviteBinding'
 import { exportLedgerWalletAccounts } from '../../services/ledger-account-export'
 import {
   type LedgerChainFamily,
@@ -49,6 +50,7 @@ import {
   ledgerRegisteredFamilies,
   ledgerCanAddZcashAccount,
   ledgerAvailableFamilies,
+  ledgerFamilyChoices,
   ledgerSelectedPaths
 } from './ledger-connect-model'
 
@@ -111,10 +113,13 @@ export function LedgerConnectPage() {
   const accountIndex = ledgerLogicalAccountIndex(targetAccount, target?.accounts ?? [])
   const registeredFamilies = ledgerRegisteredFamilies(existingCredential, accountIndex, network)
   const canAddZcash = ledgerCanAddZcashAccount(existingCredential, accountIndex, network)
-  const selectedFamilies = families.filter(family => family !== 'zcash' || canAddZcash)
+  const availableFamilies = ledgerAvailableFamilies(network)
+  const selectedFamilies = families.filter(
+    family => availableFamilies.includes(family) && (family !== 'zcash' || canAddZcash)
+  )
   const parsedDeviceIndex = parseLedgerAccountIndex(deviceIndex)
   const firstWallet = !loading && !catalog?.accounts.length && retainedWalletCount === 0
-  const availableFamilies = ledgerAvailableFamilies(network)
+  const familyChoices = ledgerFamilyChoices(availableFamilies)
   useEffect(() => {
     let disposed = false
     void accountNetworksClient
@@ -498,20 +503,23 @@ export function LedgerConnectPage() {
                   wallets.length > 0 ? 'max-h-40' : 'max-h-56'
                 )}
               >
-                {availableFamilies.map(family => {
+                {familyChoices.map(({ family, enabled }) => {
                   const registered = registeredFamilies.includes(family)
-                  const selected = !!registered || selectedFamilies.includes(family)
+                  const selected = enabled && (!!registered || selectedFamilies.includes(family))
                   return (
                     <button
                       key={family}
                       type="button"
-                      disabled={!!registered || (family === 'zcash' && !canAddZcash)}
+                      disabled={!enabled || !!registered || (family === 'zcash' && !canAddZcash)}
                       aria-pressed={selected}
                       className={cn(
-                        'flex h-16 w-full flex-col items-center justify-center gap-1 rounded-xl border px-2 text-center text-sm transition-colors outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/50 disabled:cursor-default disabled:opacity-50',
+                        'flex h-16 w-full flex-col items-center justify-center gap-1 rounded-xl border px-2 text-center text-sm transition-colors outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/50 disabled:cursor-default',
                         selected
                           ? 'border-primary bg-primary/5 text-foreground'
-                          : 'border-border bg-card text-muted hover:text-foreground'
+                          : enabled
+                            ? 'border-border bg-card text-muted hover:text-foreground'
+                            : 'border-border bg-card text-muted',
+                        enabled ? 'disabled:opacity-50' : 'disabled:opacity-100'
                       )}
                       onClick={() =>
                         setFamilies(current =>
@@ -529,8 +537,14 @@ export function LedgerConnectPage() {
                       />
                       <span className="min-w-0">
                         <span className="block font-medium leading-4">{CHAIN_NAMES[family]}</span>
-                        {registered && (
-                          <span className="block text-[10px] leading-3 text-muted">Added</span>
+                        {!enabled ? (
+                          <span className="block text-[10px] leading-3 text-muted">
+                            Coming soon
+                          </span>
+                        ) : (
+                          registered && (
+                            <span className="block text-[10px] leading-3 text-muted">Added</span>
+                          )
                         )}
                       </span>
                     </button>
@@ -720,9 +734,7 @@ export function LedgerConnectPage() {
             <p>Ledger accounts added</p>
           </div>
           <div className="page-footer">
-            <Button className="w-full" onClick={() => window.close()}>
-              Done
-            </Button>
+            <BetaInviteHardwareDoneButton />
           </div>
         </>
       )}

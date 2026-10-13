@@ -33,8 +33,9 @@ The documentation site's source is `packages/docs/content/docs/`. The top-level 
 ## Features
 
 - **Privacy-First**: Zero-knowledge proofs for private transactions with shielded addresses
+- **Private Broadcast**: Optional ZeroIndexer broadcasting with managed or custom nodes, independent of the synchronization RPC
 - **Worker-Based WASM**: Offscreen worker architecture for non-blocking cryptographic operations
-- **Multichain Accounts**: Released EVM and Bitcoin networks follow the wallet's global Mainnet/Testnet Mode; other chains are feature-gated
+- **Multichain Accounts**: Zcash and EVM networks follow the wallet's global Mainnet/Testnet Mode; deferred chains remain feature-gated
 - **dApp Integration**: TypeScript SDK for seamless wallet connection and transaction signing
 - **Optimistic UI**: Instant interface response with background computation for better UX
 
@@ -47,6 +48,8 @@ Run commands from the repository root with Node.js 22 and the pnpm version in `p
 ```bash
 pnpm install
 ```
+
+The SDK and its example are included in the clone. `packages/zcash-wallet-wasm/` is a separate source checkout, excluded from the workspace. Ordinary extension builds use the complete committed WASM packages and do not require that checkout. Intentional upgrades follow the [WASM package update procedure](docs/release-workflow.md#wasm-package-updates).
 
 ### Development
 
