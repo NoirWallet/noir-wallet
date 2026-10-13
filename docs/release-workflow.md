@@ -4,7 +4,7 @@ This runbook describes extension verification in [build-extension.yml](../.githu
 
 ## Website and Signup Worker
 
-The website at `https://www.zknoir.com/` keeps its existing Cloudflare Pages Git integration. It builds and publishes the independent `/frost` page with the rest of the website. The [Website Signup Worker workflow](../.github/workflows/web-vote.yml) deploys only `packages/web-vote/`, independently of Pages and wallet releases. Homepage traffic continues to use Pages; signup API routing is defined in the [Worker configuration](../packages/web-vote/wrangler.jsonc).
+The website at `https://www.zknoir.com/` keeps its existing Cloudflare Pages Git integration. It builds and publishes the independent `/frost` page with the rest of the website. The [Website Signup Worker workflow](../.github/workflows/web-vote.yml) deploys only `packages/web-vote/`, independently of Pages and wallet releases. Homepage traffic continues to use Pages; signup API routing is defined in the [Worker configuration](../packages/web-vote/wrangler.json).
 
 ### One-Time Deployment Credentials
 
@@ -61,7 +61,7 @@ Failure logs contain only bounded diagnostic fields and the outcome, never recip
 - Relevant pushes to `main` verify the Worker, test and build the signup client, then deploy the production Worker. The workflow's path filters define relevant changes.
 - Pull requests run verification without deployment or access to the deployment credentials. Forks do not deploy.
 - Manual runs can deploy from `main`; other branches only verify. Missing credentials fail deployment with a configuration error.
-- Deployment uses the committed Wrangler configuration, including the existing Durable Object binding and migration. Signups use a separate named instance from historical votes; neither stored dataset is reset, and local test data is not uploaded.
+- Deployment uses the committed Wrangler configuration, including runtime caching and the existing Durable Object binding and migration. Signup responses use `Cache-Control: no-store`. Signups use a separate named instance from historical votes; neither stored dataset is reset, and local test data is not uploaded.
 - Before deployment, the run's commit must still match current `main`. Rerunning an older workflow cannot replace a newer Worker deployment; start a new manual run from current `main` instead.
 - The final step performs a read-only health request to the production API and validates its response against the client contract. It does not submit a production signup or read email addresses.
 

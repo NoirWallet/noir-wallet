@@ -169,7 +169,7 @@ supported by Noir Wallet extension **1.0.27 or later**.
 
 ## RPC Registry Service
 
-`packages/rpc-registry/` is a Cloudflare Worker serving `GET /v1/rpc-endpoints`; add `?scope=multichain` for the full registry. `GET /v1/zero-indexer-endpoints` serves independent Mainnet and Testnet broadcast-node lists maintained in [zero-indexer-registry.ts](./packages/rpc-registry/src/zero-indexer-registry.ts). The extension uses cached or bundled ZeroIndexer nodes when that API is unavailable. Its scheduled monitor checks ordinary RPC availability and sends Slack notifications; ZeroIndexer nodes are excluded from that monitor. The domain, schedule, and Durable Object migration are defined in [wrangler.jsonc](./packages/rpc-registry/wrangler.jsonc).
+`packages/rpc-registry/` is a Cloudflare Worker serving `GET /v1/rpc-endpoints`; add `?scope=multichain` for the full registry. `GET /v1/zero-indexer-endpoints` serves independent Mainnet and Testnet broadcast-node lists maintained in [zero-indexer-registry.ts](./packages/rpc-registry/src/zero-indexer-registry.ts). The extension uses cached or bundled ZeroIndexer nodes when that API is unavailable. Its scheduled monitor checks ordinary RPC availability and sends Slack notifications; ZeroIndexer nodes are excluded from that monitor. The domain, schedule, and Durable Object migration are defined in [wrangler.json](./packages/rpc-registry/wrangler.json).
 
 From the repository root, verify the service without deploying or sending notifications:
 
@@ -210,7 +210,7 @@ pnpm build:web
 pnpm test
 ```
 
-The website keeps its existing Cloudflare Pages Git deployment. The signup Worker has an independent [GitHub Actions workflow](./.github/workflows/web-vote.yml). See [website and signup Worker deployment](./docs/release-workflow.md#website-and-signup-worker) for credentials setup, triggers, and recovery. The Worker routes, allowed production origins, and Durable Object migration are maintained in [wrangler.jsonc](./packages/web-vote/wrangler.jsonc). Routes cover only the signup API paths; the existing Pages site serves `/frost` and all other pages. Local verification does not confirm production routing or deployment.
+The website keeps its existing Cloudflare Pages Git deployment. The signup Worker has an independent [GitHub Actions workflow](./.github/workflows/web-vote.yml). See [website and signup Worker deployment](./docs/release-workflow.md#website-and-signup-worker) for credentials setup, triggers, and recovery. The Worker routes, allowed production origins, and Durable Object migration are maintained in [wrangler.json](./packages/web-vote/wrangler.json). Routes cover only the signup API paths; the existing Pages site serves `/frost` and all other pages. Local verification does not confirm production routing or deployment.
 
 ## Release
 

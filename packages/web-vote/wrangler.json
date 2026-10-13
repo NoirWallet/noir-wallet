@@ -6,6 +6,9 @@
   "compatibility_flags": ["nodejs_compat"],
   "secrets": { "required": ["SMTP_USER", "SMTP_APP_PASSWORD", "SIGNUP_MAIL_CONFIG"] },
   "workers_dev": false,
+  "cache": {
+    "enabled": true
+  },
   "routes": [
     { "pattern": "www.zknoir.com/api/frost-signups*", "zone_name": "zknoir.com" },
     { "pattern": "zknoir.com/api/frost-signups*", "zone_name": "zknoir.com" }
