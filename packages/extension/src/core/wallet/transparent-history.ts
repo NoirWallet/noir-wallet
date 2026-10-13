@@ -1,5 +1,6 @@
 import { ZEC_DECIMALS } from '../../config/wallet.ts'
 import { safeBig } from '../../lib/big.ts'
+import { isTransparentZcashAddress } from '../../lib/zcash-memo.ts'
 import {
   getAddressTxids,
   getVerboseTransaction,
@@ -38,12 +39,14 @@ const transparentHistoryCache = new Map<
 async function fetchVerboseTransactions(
   txids: readonly string[],
   baseUrl: string,
-  target: Map<string, VerboseTransaction>
+  target: Map<string, VerboseTransaction>,
+  signal?: AbortSignal
 ): Promise<Set<string>> {
   const failed = new Set<string>()
   await mapWithConcurrency(txids, FETCH_CONCURRENCY, async txid => {
     try {
-      const transaction = await getVerboseTransaction(baseUrl, txid)
+      signal?.throwIfAborted()
+      const transaction = await getVerboseTransaction(baseUrl, txid, signal)
       if (normalizeTxHash(transaction?.txid) !== normalizeTxHash(txid)) {
         failed.add(txid)
         return
@@ -311,6 +314,77 @@ export async function fetchTransparentReceiveTransactions(
   return request
 }
 
+/** Only a single external destination accounting for the sent amount is unambiguous. */
+export function getTransparentSendRecipient(
+  transaction: VerboseTransaction,
+  amount: string,
+  ownedAddresses: ReadonlySet<string>
+): string | undefined {
+  const amountZatoshis = safeBig(amount).times(ZATOSHIS_PER_ZEC.toString())
+  if (amountZatoshis.lte(0) || !amountZatoshis.mod(1).eq(0)) return undefined
+  if (!Array.isArray(transaction.vout)) return undefined
+
+  const destinations = new Map<string, bigint>()
+  for (const output of transaction.vout) {
+    const value = output?.valueZat
+    if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) return undefined
+    if (value === 0) continue
+    const addresses = output.scriptPubKey?.addresses
+    if (
+      !Array.isArray(addresses) ||
+      addresses.length !== 1 ||
+      typeof addresses[0] !== 'string' ||
+      !isTransparentZcashAddress(addresses[0])
+    ) {
+      return undefined
+    }
+    const address = addresses[0]
+    if (ownedAddresses.has(address)) continue
+    destinations.set(address, (destinations.get(address) ?? 0n) + BigInt(value))
+  }
+
+  if (destinations.size !== 1) return undefined
+  const [destination] = destinations
+  if (!destination || destination[1] !== BigInt(amountZatoshis.toFixed(0))) return undefined
+  return destination[0]
+}
+
+export async function fetchMissingTransparentSendRecipients(
+  transactions: readonly Transaction[],
+  ownedAddresses: ReadonlySet<string>,
+  options: { baseUrl: string; cacheKey: string; signal?: AbortSignal }
+): Promise<Map<string, string>> {
+  const candidates = transactions.filter(
+    transaction =>
+      transaction.type === 'send' &&
+      !transaction.to &&
+      /^[0-9a-f]{64}$/.test(normalizeTxHash(transaction.txHash))
+  )
+  const recipients = new Map<string, string>()
+  if (!options.baseUrl || candidates.length === 0) return recipients
+
+  options.signal?.throwIfAborted()
+  const txids = [...new Set(candidates.map(transaction => normalizeTxHash(transaction.txHash)))]
+  const cached = await loadTransparentTxCache(options.cacheKey)
+  const { reusable, txidsToFetch } = partitionVerboseTransactions(txids, cached)
+  await fetchVerboseTransactions(txidsToFetch, options.baseUrl, reusable, options.signal)
+  options.signal?.throwIfAborted()
+  // Retain confirmed bodies with no recoverable recipient too, so shielded sends
+  // and ambiguous outputs do not cause another RPC query on every history refresh.
+  await saveTransparentTxCache(options.cacheKey, reusable).catch(error => {
+    console.warn('[TransparentHistory] Failed to persist recipient transaction cache:', error)
+  })
+
+  for (const transaction of candidates) {
+    const hash = normalizeTxHash(transaction.txHash)
+    const verbose = reusable.get(hash)
+    if (!verbose || normalizeTxHash(verbose.txid) !== hash) continue
+    const recipient = getTransparentSendRecipient(verbose, transaction.amount, ownedAddresses)
+    if (recipient) recipients.set(hash, recipient)
+  }
+  return recipients
+}
+
 export function mergeTransactionsWithWasmHistory(
   currentTransactions: Transaction[],
   wasmTransactions: Transaction[],
@@ -351,7 +425,10 @@ export function mergeTransactionsWithWasmHistory(
     return current
       ? mergeTransactionUpdate(
           current,
-          transaction,
+          {
+            ...transaction,
+            to: transaction.to || (current.type === transaction.type ? current.to : '')
+          },
           transaction.status === 'success' && transaction.confirmations != null
             ? { txHash: transaction.txHash, confirmations: transaction.confirmations }
             : undefined

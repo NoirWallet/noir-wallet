@@ -64,15 +64,19 @@ export async function fetchWithTimeout(
   const { timeoutMs = DEFAULT_TIMEOUT_MS, ...fetchInit } = init || {}
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
+  const signal = fetchInit.signal
+    ? AbortSignal.any([fetchInit.signal, controller.signal])
+    : controller.signal
 
   try {
-    const resp = await fetch(input, { ...fetchInit, signal: controller.signal })
+    const resp = await fetch(input, { ...fetchInit, signal })
     if (!resp.ok) {
       const detail = await readErrorDetail(resp)
       throw new FetchHttpError(resp.status, resp.statusText, detail)
     }
     return resp
   } catch (error) {
+    if (fetchInit.signal?.aborted) throw fetchInit.signal.reason
     if (error instanceof DOMException && error.name === 'AbortError') {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : 'unknown'
       throw new FetchTimeoutError(url, timeoutMs)

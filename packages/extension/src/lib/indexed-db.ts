@@ -635,18 +635,22 @@ export async function deleteTransactions(key: string): Promise<void> {
 }
 
 /**
- * Save recent transparent transaction details used to reconstruct receive history.
+ * Merge transaction bodies used to reconstruct transparent history and recipients.
  */
 export async function saveTransparentTxCache(
   key: string,
   transactions: ReadonlyMap<string, VerboseTransaction>
 ): Promise<void> {
   const db = await getConnection()
-  const value = Object.fromEntries(transactions)
-
   return new Promise((resolve, reject) => {
     const transaction = db.transaction(TRANSPARENT_TRANSACTION_CACHE_STORE_NAME, 'readwrite')
-    transaction.objectStore(TRANSPARENT_TRANSACTION_CACHE_STORE_NAME).put(value, key)
+    const store = transaction.objectStore(TRANSPARENT_TRANSACTION_CACHE_STORE_NAME)
+    const request = store.get(key)
+    request.onsuccess = () => {
+      // Receive and recipient recovery can finish concurrently for the same account.
+      const cached = normalizeTransparentTxCache(request.result)
+      store.put({ ...cached, ...Object.fromEntries(transactions) }, key)
+    }
     transaction.oncomplete = () => resolve()
     transaction.onerror = () => reject(transaction.error)
     transaction.onabort = () =>

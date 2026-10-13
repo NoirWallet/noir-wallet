@@ -242,21 +242,13 @@ export function TransactionDetailContent({
     ? formatSortAddress(localTx.from)
     : (missingFromSource?.label ?? '')
   const fromLabelType = localTx.from ? fromType : missingFromSource?.type
-  const isMissingShieldedRecipient =
-    !localTx.to && localTx.type === 'send' && fromType === 'shielded'
   const isMissingShieldedReceiveTarget = !localTx.to && localTx.type === 'receive'
   const toLabel = localTx.to
     ? formatSortAddress(localTx.to)
-    : isMissingShieldedRecipient
-      ? 'Shielded recipient'
-      : isMissingShieldedReceiveTarget
-        ? 'Shielded Pool'
-        : 'Unavailable'
-  const toLabelType = localTx.to
-    ? toType
-    : isMissingShieldedRecipient || isMissingShieldedReceiveTarget
-      ? 'shielded'
-      : null
+    : isMissingShieldedReceiveTarget
+      ? 'Shielded Pool'
+      : 'Unavailable'
+  const toLabelType = localTx.to ? toType : isMissingShieldedReceiveTarget ? 'shielded' : null
 
   return (
     <div>
