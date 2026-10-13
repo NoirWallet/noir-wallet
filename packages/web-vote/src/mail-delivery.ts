@@ -19,6 +19,28 @@ export async function scheduleNextMail(
   if (next !== null) await ensureMailAlarm(storage, Math.max(next, now() + 1000))
 }
 
+export async function runSignupMailAlarm(
+  store: SignupStore,
+  storage: AlarmStorage,
+  readSettings: () => MailSettings,
+  send: (settings: MailSettings, mail: SignupMail) => Promise<void>,
+  now: () => number = Date.now
+): Promise<void> {
+  const next = store.nextMailTime()
+  if (next === null) return
+  let settings: MailSettings
+  try {
+    settings = readSettings()
+  } catch {
+    // A configuration outage must not consume a job or exhaust platform alarm retries.
+    await ensureMailAlarm(storage, Math.max(next, now() + 300000))
+    console.warn('Signup mail configuration unavailable; delivery deferred')
+    return
+  }
+  await deliverNextSignup(store, settings, mail => send(settings, mail), now)
+  await scheduleNextMail(store, storage, now)
+}
+
 export interface MailDiagnostic {
   code: string
   stage: string

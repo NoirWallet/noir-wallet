@@ -41,7 +41,7 @@ The sender is fixed to `support@zknoir.com`; it must be the authenticated mailbo
 
 `subject`, `title`, and a nonempty `paragraphs` array are required; `preheader` and `button` are optional. Body values are plain text escaped by the HTML template; buttons require an HTTPS URL without credentials. Emails include HTML and a plain-text alternative. Pending jobs use the configuration in effect when processed.
 
-After deploying, check readiness, then submit an email you control that has not already registered and inspect its inbox. Readiness and dry runs do not verify Gmail credentials, sender alias authorization, or inbox delivery. For a deliberate local send test, set `MAIL_MODE=enabled` and the three secrets in ignored `packages/web-vote/.dev.vars.local`; this sends real email. Ordinary local checks must keep sending disabled.
+After deploying, check readiness, then submit an email you control that has not already registered and inspect its inbox. Readiness and dry runs do not verify Gmail credentials, sender alias authorization, or inbox delivery. Local development disables sending and does not load SMTP secrets.
 
 For delivery recovery, inspect the private `signup_mail` table using **Durable Objects → noir-web-vote/FrostVotes → Data Studio**, object name `frost-early-signup-v1`:
 
@@ -52,7 +52,7 @@ ORDER BY updated_at DESC
 LIMIT 20;
 ```
 
-`pending` awaits an alarm, `sending` is in flight, and `sent` means SMTP acceptance, not confirmed inbox delivery. `failed` marks a permanent rejection or exhausted retries. `unknown` marks ambiguous acceptance or an interrupted send; investigate before any resend. Do not reset signup records to resend mail. Existing signups are not backfilled, and historical votes remain untouched.
+`pending` awaits an alarm, `sending` is in flight, and `sent` means SMTP acceptance, not confirmed inbox delivery. `failed` marks a permanent rejection or exhausted retries. `unknown` marks ambiguous acceptance or an interrupted send; investigate before any resend. Invalid mail configuration leaves jobs pending and schedules another configuration check after at least five minutes, without consuming a send attempt. Do not reset signup records to resend mail. Existing signups are not backfilled, and historical votes remain untouched.
 
 Failure logs contain only bounded diagnostic fields and the outcome, never recipient addresses, credentials, exception messages, or raw SMTP responses. `EAUTH` with SMTP code `535` identifies an authentication rejection; verify the actual Google login account and App Password. `ESOCKET`, `ETLS`, or `ETIMEDOUT` at `CONNECT` identifies connection or TLS setup failure. `WORKER_INTERRUPTED` records a restarted in-flight job. Correct configuration failures without deleting saved signups or mail history. See the [README](../README.md#frost-beta-signup) for signup and retry behavior.
 

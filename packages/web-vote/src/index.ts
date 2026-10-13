@@ -2,7 +2,7 @@ import { DurableObject } from 'cloudflare:workers'
 import { handleSignupRequest } from './api'
 import { SignupStore } from './signup-store'
 import { readMailSettings, type MailSecrets } from './signup-mail'
-import { deliverNextSignup, ensureMailAlarm, scheduleNextMail } from './mail-delivery'
+import { ensureMailAlarm, runSignupMailAlarm, scheduleNextMail } from './mail-delivery'
 import { sendGmail } from './gmail-smtp'
 
 interface Env extends MailSecrets {
@@ -43,9 +43,12 @@ export class FrostVotes extends DurableObject<Env> {
 
   async alarm(): Promise<void> {
     if (this.env.MAIL_MODE === 'disabled') return
-    const settings = readMailSettings(this.env)
-    await deliverNextSignup(this.signups, settings, mail => sendGmail(settings, mail))
-    await this.scheduleMail()
+    await runSignupMailAlarm(
+      this.signups,
+      this.ctx.storage,
+      () => readMailSettings(this.env),
+      sendGmail
+    )
   }
 
   private async scheduleMail(): Promise<void> {

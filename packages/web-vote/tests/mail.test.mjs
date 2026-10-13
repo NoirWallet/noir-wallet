@@ -9,6 +9,7 @@ import {
   deliveryOutcome,
   ensureMailAlarm,
   mailDiagnostic,
+  runSignupMailAlarm,
   scheduleNextMail
 } from '../src/mail-delivery.ts'
 import { readMailSettings, renderSignupMail } from '../src/signup-mail.ts'
@@ -163,6 +164,65 @@ test('earlier pending work advances an existing alarm without postponing it', as
   await scheduleNextMail(store, alarms, () => 1000)
   await ensureMailAlarm(alarms, 20000)
   assert.deepEqual(alarms.scheduled, [10000, 2000])
+})
+
+test('invalid configuration keeps pending mail scheduled beyond platform retries and sends once after recovery', async t => {
+  const { store, db } = fixture(t)
+  const alarms = alarmStorage()
+  const warnings = []
+  t.mock.method(console, 'warn', (...args) => warnings.push(args))
+  store.registerWithMail('alice@example.com', 1, 'job-a')
+  await scheduleNextMail(store, alarms, () => 1000)
+  let clock = 2000
+  let sends = 0
+  const send = async (_settings, mail) => {
+    sends++
+    assert.equal(mail.to, 'alice@example.com')
+  }
+  for (let i = 0; i < 8; i++) {
+    alarms.fire()
+    await runSignupMailAlarm(
+      store,
+      alarms,
+      () => readMailSettings({}),
+      send,
+      () => clock
+    )
+    assert.deepEqual(
+      { ...db.prepare('SELECT status,attempts FROM signup_mail').get() },
+      { status: 'pending', attempts: 0 }
+    )
+    assert.equal(sends, 0)
+    assert.ok(alarms.scheduled.at(-1) >= clock + 300000)
+    clock = alarms.scheduled.at(-1)
+  }
+  assert.equal(warnings.length, 8)
+  alarms.fire()
+  await runSignupMailAlarm(
+    store,
+    alarms,
+    () => readMailSettings(secrets),
+    send,
+    () => clock
+  )
+  assert.equal(sends, 1)
+  assert.deepEqual(
+    { ...db.prepare('SELECT status,attempts FROM signup_mail').get() },
+    { status: 'sent', attempts: 1 }
+  )
+  const scheduled = alarms.scheduled.length
+  alarms.fire()
+  await runSignupMailAlarm(
+    store,
+    alarms,
+    () => {
+      throw new Error('should not read')
+    },
+    send,
+    () => clock + 300000
+  )
+  assert.equal(sends, 1)
+  assert.equal(alarms.scheduled.length, scheduled)
 })
 
 test('permanent rejection and ambiguous timeout do not trigger automatic duplicate sends', async t => {
