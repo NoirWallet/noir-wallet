@@ -24,9 +24,8 @@ const historyWorkerSource = readFileSync(
   new URL('../../evm-history-worker/src/index.ts', import.meta.url),
   'utf-8'
 )
-const historyWorkerConfig = readFileSync(
-  new URL('../../evm-history-worker/wrangler.toml', import.meta.url),
-  'utf-8'
+const historyWorkerConfig = JSON.parse(
+  readFileSync(new URL('../../evm-history-worker/wrangler.json', import.meta.url), 'utf-8')
 )
 
 describe('Build-channel logging', () => {
@@ -102,7 +101,9 @@ describe('Build-channel logging', () => {
     assert.ok(historyWorkerSource.includes('ANKR_API_KEYS: string'))
     assert.ok(historyWorkerSource.includes('HISTORY_RATE_LIMITER: RateLimit'))
     assert.ok(historyWorkerSource.includes("request.headers.get('CF-Connecting-IP')"))
-    assert.ok(historyWorkerConfig.includes('[[ratelimits]]'))
+    assert.ok(
+      historyWorkerConfig.ratelimits.some(binding => binding.name === 'HISTORY_RATE_LIMITER')
+    )
     assert.ok(!viteConfigSource.includes('ANKR_API_KEY'))
     assert.ok(!workflowSource.includes('ANKR_API_KEY'))
   })
