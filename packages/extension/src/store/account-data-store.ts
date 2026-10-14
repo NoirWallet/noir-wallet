@@ -17,7 +17,7 @@ import { getTransactionStatusCopy } from '@/lib/transaction-status-copy'
 import { migrateAccountDataState, rehydrateAccountDataState } from '@/lib/account-balance-migration'
 
 const EMPTY_TRANSACTIONS: Transaction[] = []
-const ACCOUNT_DATA_VERSION = 1
+const ACCOUNT_DATA_VERSION = 2
 
 /**
  * Sync state for blockchain synchronization
@@ -420,7 +420,7 @@ export const useAccountDataStore = create<AccountDataStore>()(
       name: 'account_data',
       version: ACCOUNT_DATA_VERSION,
       storage: createChromeStorageAdapter('local') as any,
-      migrate: persisted => migrateAccountDataState(persisted) as any,
+      migrate: (persisted, version) => migrateAccountDataState(persisted, version) as any,
       merge: (persisted, current) => rehydrateAccountDataState(persisted, current) as any,
       partialize: state =>
         ({

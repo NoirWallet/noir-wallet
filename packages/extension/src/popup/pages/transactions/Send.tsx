@@ -55,12 +55,11 @@ import { canShieldTransparentFunds, getShieldableTransparentBalance } from '@/co
 import type { FundingSource } from '@/types'
 import { getFundingSourceUnavailableReason } from '@/lib/funding-source'
 import { isHardwareKeySource } from '@/lib/hardware-capabilities'
-import { getFundingBalance, usesPendingFunds } from '@/lib/funding-balance'
+import { getFundingAmountError, getFundingBalance } from '@/lib/funding-balance'
 import { HardwareSigningPending } from '../../components/hardware/HardwareSigningPending'
 import { toast } from '@/store/toast-store'
 import { classifyError } from '@/lib/errors'
 import { ShieldFundsBanner } from '../../components/transaction/ShieldFundsBanner'
-import { UnconfirmedTransactionWarning } from '../../components/transaction/UnconfirmedTransactionWarning'
 
 export function Send() {
   const { goBack, navigate } = useNavigate()
@@ -169,9 +168,16 @@ export function Send() {
     .toFixed()
   const canSelectMax = !!effectiveToAddress && safeBig(effectiveMaxStr).gt(0)
   const amountBig = safeBig(amount || '0')
-  const amountUsesPending = usesPendingFunds(amount, sourceBalance)
-  const exceedsBalance = amountBig.gt(sourceBalance.total)
-  const isValidAmount = amountBig.gt(0) && !exceedsBalance && !fundingSourceUnavailableReason
+  const amountError = getFundingAmountError(amount, sourceBalance, maxTransfer.maxAmount)
+  const amountErrorCopy =
+    amountError === 'pending'
+      ? 'Wait for pending funds or lower the amount.'
+      : amountError === 'fee'
+        ? 'Lower the amount or select Max to include the network fee.'
+        : amountError === 'insufficient'
+          ? 'Amount exceeds available balance.'
+          : undefined
+  const isValidAmount = amountBig.gt(0) && !amountError && !fundingSourceUnavailableReason
   const selectedFeeZec = maxTransfer.fee && isMaxTransferAmount ? maxTransfer.fee : estimatedFeeZec
 
   useEffect(() => {
@@ -468,12 +474,8 @@ export function Send() {
               setMaxSelected(true)
               setAmount(effectiveMaxStr)
             }}
-            invalid={exceedsBalance}
-            title={
-              exceedsBalance
-                ? `Insufficient balance. Balance: ${sourceBalance.total} ZEC`
-                : undefined
-            }
+            invalid={!!amountError}
+            error={amountErrorCopy}
             headerAction={
               <AddressTypeSwitch
                 type={fundingSource}
@@ -492,12 +494,6 @@ export function Send() {
               </p>
             </div>
           )}
-
-          <UnconfirmedTransactionWarning
-            spendRiskOnly
-            usesPendingFunds={amountUsesPending}
-            fundingSource={fundingSource}
-          />
 
           <SendNetworkFeeCard>
             <FeeTierPicker
@@ -613,13 +609,6 @@ export function Send() {
 
             <NetworkFeeRow tier={feeTier} feeZec={selectedFeeZec} />
           </div>
-
-          <UnconfirmedTransactionWarning
-            className="mx-5 mt-3"
-            spendRiskOnly
-            usesPendingFunds={amountUsesPending}
-            fundingSource={fundingSource}
-          />
 
           {!isExistingContact && (
             <div className="mx-5 mt-3 bg-card rounded-xl p-4">

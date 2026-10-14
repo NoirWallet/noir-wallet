@@ -8,6 +8,10 @@ import {
   rehydrateAccountDataState
 } from '../src/lib/account-balance-migration.ts'
 import { scheduleSpendabilityCatchUp } from '../src/lib/spendability-catch-up.ts'
+import {
+  shouldRequestPeriodicSync,
+  shouldSchedulePassiveSync
+} from '../src/background/passive-sync-policy.ts'
 
 const ZAT = 100_000_000n
 
@@ -154,6 +158,74 @@ describe('available balance contract', () => {
 
     assert.doesNotThrow(() => Object.fromEntries(runtime.balances))
     assert.doesNotThrow(() => Object.fromEntries(runtime.syncStates))
+  })
+
+  test('marks v1 balances stale without changing conservative selectable or pending amounts', () => {
+    const balance = {
+      shielded: '9',
+      transparent: '3',
+      total: '12',
+      spendable: '8',
+      available: '8',
+      shieldable: '2',
+      confirmed: { shielded: '6', transparent: '2' },
+      pending: { shielded: '3', transparent: '1', total: '4' }
+    }
+    const persisted = {
+      balances: {
+        mainnet_walletA_accountA: balance,
+        mainnet_walletB_accountB: { ...balance, total: '13' }
+      },
+      syncStates: {
+        mainnet_walletA: { isSyncing: true, currentHeight: 100, lastSyncTime: 123 },
+        mainnet_walletB: { isSyncing: false, currentHeight: 200, lastSyncTime: 456 }
+      }
+    }
+
+    const migrated = migrateAccountDataState(persisted, 1)
+    const runtime = rehydrateAccountDataState(migrated, {
+      balances: new Map(),
+      syncStates: new Map(),
+      transactionsCache: new Map(),
+      transactionsLoaded: new Set()
+    })
+
+    assert.ok(runtime.balances instanceof Map)
+    assert.ok(runtime.syncStates instanceof Map)
+    assert.deepStrictEqual(runtime.balances.get('mainnet_walletA_accountA'), balance)
+    assert.strictEqual(runtime.balances.get('mainnet_walletB_accountB').total, '13')
+    assert.strictEqual(runtime.syncStates.get('mainnet_walletA').currentHeight, 100)
+    assert.strictEqual(runtime.syncStates.get('mainnet_walletA').isSyncing, false)
+    for (const walletKey of ['mainnet_walletA', 'mainnet_walletB']) {
+      const lastSyncTime = runtime.syncStates.get(walletKey).lastSyncTime
+      assert.strictEqual(lastSyncTime, null)
+      assert.strictEqual(
+        shouldSchedulePassiveSync({
+          now: 500,
+          lastSyncTime,
+          maxAgeMs: 30_000,
+          isSchedulerRunning: false
+        }),
+        true
+      )
+      assert.strictEqual(
+        shouldRequestPeriodicSync({
+          isSchedulerRunning: false,
+          isWalletUiOpen: false,
+          hasPendingTransactions: false,
+          isWalletLocked: false,
+          hasPersistedSnapshot: true,
+          currentHeight: runtime.syncStates.get(walletKey).currentHeight,
+          networkHeight: 201,
+          lastSyncTime,
+          now: 500,
+          minBlockGap: 10,
+          maxStaleMs: 30_000
+        }),
+        true
+      )
+    }
+    assert.strictEqual(migrateAccountDataState(persisted, 2), persisted)
   })
 })
 

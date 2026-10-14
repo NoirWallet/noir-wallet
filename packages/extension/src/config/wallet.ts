@@ -21,10 +21,10 @@ export const WALLET_CONFIG = {
   MIN_CONFIRMATIONS: 3,
   /** Confirmations before an external incoming transaction reaches Activity finality. */
   SPENDABILITY_CONFIRMATIONS: 10,
-  /** Balance queries follow ZIP-315; WASM input selection derives a symmetrical 3/3 policy. */
+  /** Balance queries and WASM input selection use the same confirmation depth. */
   WASM_CONFIRMATIONS_POLICY: {
     trusted: 3,
-    untrusted: 10
+    untrusted: 3
   },
   /** Minimum meaningful balance (10,000 Zatoshis) */
   DUST_THRESHOLD: 0.0001,

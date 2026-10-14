@@ -24,5 +24,25 @@ export function getFundingBalance(
 
 export function usesPendingFunds(amount: string, fundingBalance: FundingBalance): boolean {
   const value = safeBig(amount || '0')
-  return value.gt(fundingBalance.available) && value.lte(fundingBalance.total)
+  return (
+    value.gt(fundingBalance.available) &&
+    safeBig(fundingBalance.pending).gt(0) &&
+    value.lte(safeBig(fundingBalance.available).plus(fundingBalance.pending))
+  )
+}
+
+export type FundingAmountError = 'pending' | 'insufficient' | 'fee'
+
+/** A destination-specific Max can narrow the available balance after fees and selection. */
+export function getFundingAmountError(
+  amount: string,
+  fundingBalance: FundingBalance,
+  maxAmount?: string | null
+): FundingAmountError | null {
+  const value = safeBig(amount || '0')
+  if (value.gt(fundingBalance.available)) {
+    return usesPendingFunds(amount, fundingBalance) ? 'pending' : 'insufficient'
+  }
+  if (maxAmount != null && value.gt(maxAmount)) return 'fee'
+  return null
 }

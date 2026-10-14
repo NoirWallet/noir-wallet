@@ -537,7 +537,11 @@ export class SyncScheduler {
     const measureStartup = ['wallet-change', 'requested', 'rpc-change'].includes(trigger)
     const readinessStartedAt = performance.now()
     try {
-      const hasRestoredAccount = await accountManager.ensureWalletReadyForSync(walletId, accountId)
+      const hasRestoredAccount = await accountManager.ensureWalletReadyForSync(
+        walletId,
+        accountId,
+        trigger === 'wallet-change'
+      )
       if (measureStartup) {
         logger.log(
           `Sync account readiness ${hasRestoredAccount ? 'ready' : 'unavailable'} in ${Math.round(performance.now() - readinessStartedAt)}ms`,

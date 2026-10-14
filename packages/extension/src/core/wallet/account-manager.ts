@@ -328,6 +328,7 @@ export class AccountManager {
   private activeRestoreAbort: AbortController | null = null
   private reloadMutexByWallet = new Map<string, Promise<void>>()
   private activeSyncWalletIds = new Set<string>()
+  private walletRuntimeGeneration = new Map<string, number>()
   private syncPreflightWalletIds = new Map<string, number>()
   private nextSyncPreflightId = 0
   private automaticResyncAttemptedWalletIds = new Set<string>()
@@ -999,6 +1000,10 @@ export class AccountManager {
     }
 
     const task = (async () => {
+      this.walletRuntimeGeneration.set(
+        walletId,
+        (this.walletRuntimeGeneration.get(walletId) ?? 0) + 1
+      )
       logger.log(`[WALLET RELOAD] starting mode=${options.mode}`, walletId)
       this.cancelActiveRestore()
       await this.ensureSingleWalletSyncTarget(walletId)
@@ -1145,19 +1150,39 @@ export class AccountManager {
       const dbKey = `${this.network}_${walletId}`
       logger.log('Initializing wallet core from persisted database', walletId)
 
-      core.initialize(undefined, dbKey).catch(err => {
-        if (err.message?.includes('Unsupported proto version')) {
-          logger.warn(
-            'WASM version incompatible, will re-sync on next unlock',
-            walletId,
-            undefined,
-            err
-          )
-          this.clearPersistedDb(walletId).catch(console.error)
-        } else {
-          logger.error('Background initialization failed', walletId, undefined, err)
-        }
-      })
+      core
+        .initialize(undefined, dbKey)
+        .then(() => {
+          void (async () => {
+            if (!useAccountDataStore.persist.hasHydrated()) {
+              await useAccountDataStore.persist.rehydrate()
+            }
+            if (this.store.currentWalletId !== walletId) return
+            const accountId = this.store.currentAccountId
+            if (!accountId) return
+            await this.refreshCachedBalancesAfterReady(walletId, accountId, core)
+          })().catch(err => {
+            logger.warn(
+              'Cached balance refresh after initialization failed',
+              walletId,
+              undefined,
+              err
+            )
+          })
+        })
+        .catch(err => {
+          if (err.message?.includes('Unsupported proto version')) {
+            logger.warn(
+              'WASM version incompatible, will re-sync on next unlock',
+              walletId,
+              undefined,
+              err
+            )
+            this.clearPersistedDb(walletId).catch(console.error)
+          } else {
+            logger.error('Background initialization failed', walletId, undefined, err)
+          }
+        })
     } else {
       logger.log('No wallet found, pre-initializing WASM for new installation...')
       const tempCore = this.getOrCreateWalletCore('__init__')
@@ -1241,6 +1266,40 @@ export class AccountManager {
     })
 
     return balanceMap
+  }
+
+  private async refreshCachedBalancesAfterReady(
+    walletId: string,
+    accountId: string,
+    core: ZcashWalletCore,
+    duringSyncReadiness = false
+  ): Promise<void> {
+    if (
+      this.loadAllAccountBalances(walletId).size === 0 ||
+      this.activeSyncWalletIds.has(walletId) ||
+      (!duringSyncReadiness && this.isWalletActivelySyncing(walletId))
+    ) {
+      return
+    }
+
+    const preflightId = this.syncPreflightWalletIds.get(walletId)
+    const runtimeGeneration = this.walletRuntimeGeneration.get(walletId) ?? 0
+    const canApply = () =>
+      this.walletCores.get(walletId) === core &&
+      !this.activeSyncWalletIds.has(walletId) &&
+      (this.walletRuntimeGeneration.get(walletId) ?? 0) === runtimeGeneration &&
+      this.syncPreflightWalletIds.get(walletId) === preflightId &&
+      (duringSyncReadiness || !this.isWalletActivelySyncing(walletId))
+
+    await this.withWalletCoreLock(walletId, async () => {
+      if (!canApply()) return
+      if (core.hasAccount()) return
+      const account = this.store.getAccount(walletId, accountId)
+      if (account) await core.restoreFromDB(account.derivationIndex)
+    })
+
+    if (!canApply() || !core.hasAccount()) return
+    await this.refreshBalances(walletId, true, { localOnly: true, canApply })
   }
 
   // Helper to create a wallet item
@@ -1641,6 +1700,25 @@ export class AccountManager {
             storeWalletId,
             unlockAccount.id
           )
+
+          try {
+            const restoredCore = this.walletCores.get(storeWalletId)
+            if (restoredCore && this.currentWalletId === storeWalletId) {
+              await this.refreshCachedBalancesAfterReady(
+                storeWalletId,
+                unlockAccount.id,
+                restoredCore
+              )
+            }
+          } catch (error) {
+            logger.warn(
+              'Cached balance refresh after unlock failed',
+              storeWalletId,
+              undefined,
+              error
+            )
+          }
+          if (signal.aborted) return
 
           const addressesStartedAt = performance.now()
           try {
@@ -2739,6 +2817,10 @@ export class AccountManager {
     const visible = shouldShowSyncPreflight(trigger, state.isSyncing)
     if (visible) {
       const preflightId = ++this.nextSyncPreflightId
+      this.walletRuntimeGeneration.set(
+        walletId,
+        (this.walletRuntimeGeneration.get(walletId) ?? 0) + 1
+      )
       this.syncPreflightWalletIds.set(walletId, preflightId)
       this.updateSyncProgressForWallet(walletId, {
         ...state,
@@ -2868,7 +2950,11 @@ export class AccountManager {
     await clearSyncAbort(walletId).catch(() => {})
   }
 
-  async ensureWalletReadyForSync(walletId: string, accountId: string): Promise<boolean> {
+  async ensureWalletReadyForSync(
+    walletId: string,
+    accountId: string,
+    refreshCachedBalance = false
+  ): Promise<boolean> {
     await this.reloadPersistedWalletIfInterrupted(walletId, accountId)
 
     const dbKey = `${this.network}_${walletId}`
@@ -2888,6 +2974,9 @@ export class AccountManager {
     }
     await this.ensureAllAccountsRegistered(walletId)
     await this.ensureWalletCoreAccount(walletId, accountId)
+    if (refreshCachedBalance) {
+      await this.refreshCachedBalancesAfterReady(walletId, accountId, core, true)
+    }
     return core.hasAccount()
   }
 
@@ -3971,6 +4060,10 @@ export class AccountManager {
     let partialReason: SyncReason | undefined
     let rpcFailureCount = 0
     let automaticResync: { birthdayHeight: number } | null = null
+    this.walletRuntimeGeneration.set(
+      syncWalletId,
+      (this.walletRuntimeGeneration.get(syncWalletId) ?? 0) + 1
+    )
     this.activeSyncWalletIds.add(syncWalletId)
     this.updateSyncProgressForWallet(syncWalletId, {
       isSyncing: preflightVisible,
@@ -5429,17 +5522,22 @@ export class AccountManager {
    * This is much faster than querying each account individually.
    * @param forceUpdate - if true, skip sync completeness check and force update balance cache
    */
-  async refreshBalances(walletId: string, forceUpdate = false): Promise<void> {
+  async refreshBalances(
+    walletId: string,
+    forceUpdate = false,
+    options?: { localOnly: true; canApply: () => boolean }
+  ): Promise<void> {
     const core = this.walletCores.get(walletId)
     if (!core || !core.hasAccount()) {
       return
     }
 
     try {
-      const summaryEntry = await this.getCachedWalletSummary(walletId, core, {
-        force: forceUpdate
-      })
-      const summary = summaryEntry.summary
+      const summary = options?.localOnly
+        ? await core.getWalletSummary()
+        : (await this.getCachedWalletSummary(walletId, core, { force: forceUpdate })).summary
+
+      if (options && !options.canApply()) return
 
       if (!summary?.account_balances) {
         return
@@ -5477,6 +5575,7 @@ export class AccountManager {
       >
 
       await this.assertWasmAccountInvariant(walletId)
+      if (options && !options.canApply()) return
 
       const updatedAccountIds = new Set<string>()
 
@@ -5514,6 +5613,8 @@ export class AccountManager {
         if (!matchedAccount) {
           continue
         }
+
+        if (options && !options.canApply()) return
 
         this.setAccountMapping(walletId, matchedAccount.id, wasmAccountId, Number(derivationIndex))
 
@@ -5554,6 +5655,7 @@ export class AccountManager {
         summary.chain_tip_height != null &&
         summary.fully_scanned_height >= summary.chain_tip_height
       ) {
+        if (options && !options.canApply()) return
         const syncState = this.accountDataStore.getWalletSyncState(this.network, walletId)
         if (!syncState.isSyncing && syncState.syncReason) {
           this.updateSyncProgressForWallet(walletId, {
