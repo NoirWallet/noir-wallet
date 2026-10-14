@@ -1,0 +1,37 @@
+name: Extension Preview Download
+
+on:
+  workflow_run:
+    workflows: [Build Extension]
+    types: [completed]
+
+concurrency:
+  group: extension-preview-comment-${{ github.event.workflow_run.head_repository.id }}-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+  pull-requests: write
+
+jobs:
+  comment:
+    if: github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # This checkout is the trusted default-branch commit, never the PR source.
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+      - name: Update the PR download comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREVIEW_RUN_ID: ${{ github.event.workflow_run.id }}
+          PREVIEW_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+        run: node scripts/extension-preview-comment.mjs
