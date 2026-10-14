@@ -1,11 +1,11 @@
 {
   "schemaVersion": 1,
   "sourceRef": "origin/main",
-  "targetRef": "105b35479d0c787cadf54f00c547c9f6ba4f49f3",
+  "targetRef": "b05b1f7354eb3230999191f887f7633564b41bf5",
   "reviewedSource": {
-    "sha": "4a0e21a1d448e7bd110aee271a0a6032decd112f",
+    "sha": "fb3e8c2e6c2a0b2cf740a95cd7b94adf7e9568ed",
     "tag": null
   },
-  "targetBaselineSha": "105b35479d0c787cadf54f00c547c9f6ba4f49f3",
-  "reportPath": "output/v1-v2-sync/4a0e21a1/decisions.md"
+  "targetBaselineSha": "b05b1f7354eb3230999191f887f7633564b41bf5",
+  "reportPath": "output/v1-v2-sync/fb3e8c2/decisions.md"
 }
