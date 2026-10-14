@@ -7,7 +7,6 @@ import { getFeeTierLabel, type FeeTier } from '@/config/fee'
 import { TokenIcon } from '../tokens/TokenIcon'
 import type { FundingSource } from '@/types'
 import { AddressTypeLabel } from '../account/AddressType'
-import { UnconfirmedTransactionWarning } from '../transaction/UnconfirmedTransactionWarning'
 
 interface SwapReviewViewProps {
   tokenIn: SwapToken
@@ -25,10 +24,9 @@ interface SwapReviewViewProps {
   feeTier?: FeeTier
   /** Estimated fee for the selected tier in ZEC; '—' shown while pending. */
   selectedFeeZec?: string
-  /** Selected amount exceeds the source's displayed balance. */
+  /** Selected amount exceeds the source's available funds or destination-specific Max. */
   insufficient?: boolean
   fundingSource?: FundingSource
-  usesPending?: boolean
 }
 
 export function SwapReviewView({
@@ -46,8 +44,7 @@ export function SwapReviewView({
   feeTier,
   selectedFeeZec,
   insufficient,
-  fundingSource,
-  usesPending
+  fundingSource
 }: SwapReviewViewProps) {
   return (
     <>
@@ -107,15 +104,6 @@ export function SwapReviewView({
             </DetailItem>
           )}
         </div>
-
-        {fundingSource && (
-          <UnconfirmedTransactionWarning
-            className="mt-3"
-            spendRiskOnly
-            usesPendingFunds={usesPending}
-            fundingSource={fundingSource}
-          />
-        )}
 
         {insufficient && (
           <p className="text-warning text-xs mt-3 px-1">

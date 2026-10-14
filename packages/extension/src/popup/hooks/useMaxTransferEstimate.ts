@@ -34,6 +34,8 @@ export function useMaxTransferEstimate({
   const currentWalletId = useWalletStore(state => state.currentWalletId)
   const currentAccountId = useWalletStore(state => state.currentAccountId)
   const currentNetwork = useWalletStore(state => state.currentNetwork)
+  const currentBalance = useAccountDataStore(state => state.getCurrentBalance())
+  const sourceAvailable = currentBalance?.confirmed?.[fundingSource] ?? '0'
   const [state, setState] = useState<MaxTransferEstimateState>({
     maxAmount: null,
     fee: null,
@@ -69,7 +71,7 @@ export function useMaxTransferEstimate({
                 .getState()
                 .getBalance(currentNetwork, requestWalletId, requestAccountId)
             : null
-        const cachedSourceZats = safeBig(cachedBalance?.[fundingSource] ?? '0').mul(1e8)
+        const cachedSourceZats = safeBig(cachedBalance?.confirmed?.[fundingSource] ?? '0').mul(1e8)
         const estimateTotalZats = safeBig(estimate.maxAmountZats).plus(estimate.feeZats)
 
         if (requestWalletId && estimateTotalZats.gt(cachedSourceZats)) {
@@ -107,7 +109,8 @@ export function useMaxTransferEstimate({
     debounceMs,
     currentWalletId,
     currentAccountId,
-    currentNetwork
+    currentNetwork,
+    sourceAvailable
   ])
 
   return state

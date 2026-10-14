@@ -10,7 +10,6 @@ import {
   hasEnoughTransparentBalanceToShield,
   MIN_SHIELDING_BALANCE_MESSAGE
 } from '@/core/zcash/shielding'
-import { UnconfirmedTransactionWarning } from './UnconfirmedTransactionWarning'
 
 interface ShieldConfirmSheetProps {
   open: boolean
@@ -67,8 +66,6 @@ export function ShieldConfirmSheet({
             loading={estimate.loading}
           />
         </div>
-
-        <UnconfirmedTransactionWarning className="mx-5 mt-3" />
 
         {!hasEnoughBalance && (
           <p className="mx-5 mt-3 text-xs text-destructive text-center">

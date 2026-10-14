@@ -22,7 +22,6 @@ import {
   hasEnoughTransparentBalanceToShield,
   MIN_SHIELDING_BALANCE_MESSAGE
 } from '@/core/zcash/shielding'
-import { UnconfirmedTransactionWarning } from '../../components/transaction/UnconfirmedTransactionWarning'
 
 interface BatchAccountOption {
   id: string
@@ -459,8 +458,6 @@ export function ApprovalPage() {
               <p className="text-xs text-muted-foreground">wants to send a transaction</p>
             </div>
 
-            <UnconfirmedTransactionWarning />
-
             <div className="space-y-2">
               <div className="flex items-center gap-2 mb-2">
                 <Icon icon="lucide:coins" className="w-4 h-4 text-muted-foreground/80" />
@@ -582,8 +579,6 @@ export function ApprovalPage() {
                 wants to shield your transparent funds to the private pool
               </p>
             </div>
-
-            <UnconfirmedTransactionWarning />
 
             <div className="space-y-2">
               <div className="flex items-center gap-2 mb-2">

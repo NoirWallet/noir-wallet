@@ -1,6 +1,5 @@
 import { useState, useRef } from 'react'
 import { Icon } from '@iconify/react'
-import { UnconfirmedTransactionWarning } from '../transaction/UnconfirmedTransactionWarning'
 import type { AddressType, FundingSource } from '@/types'
 import { Button } from '../../components/ui/button'
 import { Input } from '../../components/ui/input'
@@ -18,6 +17,7 @@ import {
 } from '@/lib/format'
 import Big from 'big.js'
 import { safeBig } from '@/lib/big'
+import { BalanceHelp } from '../transaction/BalanceHelp'
 
 function AddressInputWithRecent({
   label,
@@ -99,7 +99,6 @@ interface SwapInputViewProps {
   availableBalance: string
   spendableBalance: string
   pendingBalance: string
-  usesPending: boolean
   recipientAddress: string
   refundAddress: string
   slippage: number
@@ -107,6 +106,7 @@ interface SwapInputViewProps {
   areTokensLoading: boolean
   canGetQuote: boolean
   hasInsufficientFunds?: boolean
+  amountError?: string
   recentRefundAddresses?: string[]
   recentRecipientAddresses?: string[]
   /** ZIP-317 fee tier props (only meaningful when isZecToOther). */
@@ -228,7 +228,6 @@ export function SwapInputView({
   availableBalance,
   spendableBalance,
   pendingBalance,
-  usesPending,
   recipientAddress,
   refundAddress,
   slippage,
@@ -236,6 +235,7 @@ export function SwapInputView({
   areTokensLoading,
   canGetQuote,
   hasInsufficientFunds,
+  amountError,
   recentRefundAddresses = [],
   recentRecipientAddresses = [],
   feeTier,
@@ -279,33 +279,33 @@ export function SwapInputView({
           extraHeader={
             isZecToOther ? (
               <div className="min-w-0 text-right">
-                <button
-                  type="button"
-                  onClick={() => (onMaxClick ? onMaxClick() : onAmountInChange(spendableBalance))}
-                  disabled={safeBig(spendableBalance).lte(0)}
-                  className="block min-w-0 truncate text-xs font-medium text-muted transition-colors hover:text-primary disabled:opacity-50"
-                >
-                  Available {formatNumber(availableBalance, { rm: Big.roundDown })} ZEC
-                </button>
+                <div className="flex min-w-0 items-center justify-end gap-1">
+                  <button
+                    type="button"
+                    onClick={() => (onMaxClick ? onMaxClick() : onAmountInChange(spendableBalance))}
+                    disabled={safeBig(spendableBalance).lte(0)}
+                    className="min-w-0 truncate text-xs font-medium text-muted transition-colors hover:text-primary disabled:opacity-50"
+                  >
+                    Available {formatNumber(availableBalance, { rm: Big.roundDown })} ZEC
+                  </button>
+                  <BalanceHelp kind="available" />
+                </div>
                 {safeBig(pendingBalance ?? '0').gt(0) && (
-                  <span className="mt-0.5 block truncate text-[11px] text-warning/80">
-                    {formatNumber(pendingBalance, { rm: Big.roundDown })} ZEC pending
+                  <span className="mt-0.5 flex min-w-0 items-center justify-end gap-1 text-[11px] text-muted">
+                    <span className="truncate">
+                      {formatNumber(pendingBalance, { rm: Big.roundDown })} ZEC pending
+                    </span>
+                    <BalanceHelp kind="pending" />
                   </span>
                 )}
               </div>
             ) : undefined
           }
         />
-        {isZecToOther && (
-          <UnconfirmedTransactionWarning
-            className="mt-2"
-            spendRiskOnly
-            usesPendingFunds={usesPending}
-            fundingSource={fundingSource}
-          />
-        )}
         {hasInsufficientFunds && (
-          <p className="text-warning text-xs mt-2 px-1">Insufficient balance</p>
+          <p className="text-warning text-xs mt-2 px-1" role="alert">
+            {amountError || 'Amount exceeds available balance.'}
+          </p>
         )}
         {!isZecToOther && tokenIn && !isZecToken(tokenIn) && (
           <AddressInputWithRecent

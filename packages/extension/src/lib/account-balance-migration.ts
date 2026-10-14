@@ -93,17 +93,24 @@ export function migrateStoredBalance(value: unknown): ZcashBalance {
   } as ZcashBalance
 }
 
-export function migrateAccountDataState(persisted: unknown): unknown {
+export function migrateAccountDataState(persisted: unknown, version = 0): unknown {
+  if (version >= 2) return persisted
   const state = storedRecord(persisted)
   if (!state) return persisted
 
-  const rawBalances = storedRecord(state.balances) ?? {}
-  const balances = Object.fromEntries(
-    Object.entries(rawBalances).map(([key, balance]) => [key, migrateStoredBalance(balance)])
-  )
-  const rawSyncStates = storedRecord(state.syncStates) ?? {}
+  // v1 balances used a stricter confirmation policy, so their selectable amounts
+  // remain conservative until a fresh wallet summary is available.
+  const balances =
+    version < 1
+      ? Object.fromEntries(
+          storedEntries(state.balances).map(([key, balance]) => [
+            key,
+            migrateStoredBalance(balance)
+          ])
+        )
+      : state.balances
   const syncStates = Object.fromEntries(
-    Object.entries(rawSyncStates).map(([key, syncState]) => [
+    storedEntries(state.syncStates).map(([key, syncState]) => [
       key,
       { ...(storedRecord(syncState) ?? {}), isSyncing: false, lastSyncTime: null }
     ])

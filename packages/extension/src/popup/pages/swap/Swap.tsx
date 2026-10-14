@@ -39,7 +39,7 @@ import { isHardwareKeySource } from '@/lib/hardware-capabilities'
 import { getIntentsStatusCopy } from '@/lib/transaction-status-copy'
 import type { FundingSource } from '@/types'
 import { getFundingSourceUnavailableReason } from '@/lib/funding-source'
-import { getFundingBalance, usesPendingFunds } from '@/lib/funding-balance'
+import { getFundingAmountError, getFundingBalance } from '@/lib/funding-balance'
 import { getMaxSpendableZec } from '@/config/wallet'
 import { sanitizeMemoForRecipient } from '@/lib/zcash-memo'
 import { FundingSourceSelector } from '../../components/transaction/FundingSourceSelector'
@@ -82,7 +82,6 @@ export function Swap() {
 
   const sourceBalance = getFundingBalance(storeBalance, fundingSource)
   const rawSpendable = swap.isZecToOther ? sourceBalance.spendable : '0'
-  const amountUsesPending = swap.isZecToOther && usesPendingFunds(swap.amountIn, sourceBalance)
   const fundingSourceUnavailableReason = getFundingSourceUnavailableReason(
     currentWallet?.keySource,
     fundingSource
@@ -139,12 +138,18 @@ export function Swap() {
   const spendableBalance = swap.isZecToOther ? effectiveSpendable.toFixed() : '0'
   const networkFee = maxTransfer.fee && isMaxTransferAmount ? maxTransfer.fee : estimatedFeeZec
 
-  const hasInsufficientFunds =
-    swap.isZecToOther &&
-    (safeBig(swap.amountIn || '0').gt(sourceBalance.total) ||
-      (!amountUsesPending &&
-        !!maxTransfer.maxAmount &&
-        safeBig(swap.amountIn || '0').gt(maxTransfer.maxAmount)))
+  const amountError = swap.isZecToOther
+    ? getFundingAmountError(swap.amountIn, sourceBalance, maxTransfer.maxAmount)
+    : null
+  const amountErrorCopy =
+    amountError === 'pending'
+      ? 'Wait for pending funds or lower the amount.'
+      : amountError === 'fee'
+        ? 'Lower the amount or select Max to include the network fee.'
+        : amountError === 'insufficient'
+          ? 'Amount exceeds available balance.'
+          : undefined
+  const hasInsufficientFunds = !!amountError
 
   const swapEventBase = useCallback(
     (): TrackOptions => ({
@@ -174,8 +179,8 @@ export function Swap() {
       return
     }
 
-    if (isZecToOther && safeBig(amountIn).gt(sourceBalance.total)) {
-      toast.error('Insufficient balance')
+    if (isZecToOther && amountError) {
+      toast.error(amountErrorCopy || 'Amount exceeds available balance.')
       return
     }
 
@@ -286,7 +291,8 @@ export function Swap() {
   }, [
     swap,
     currentAccount,
-    sourceBalance.total,
+    amountError,
+    amountErrorCopy,
     fundingSourceUnavailableReason,
     swapEventBase,
     maxSelected,
@@ -319,33 +325,31 @@ export function Swap() {
   const handleConfirmSwap = useCallback(async () => {
     if (!swap.depositAddress) return
     if (swap.isZecToOther) {
-      if (safeBig(swap.amountIn || '0').gt(sourceBalance.total)) {
-        toast.error('Insufficient balance')
+      if (amountError) {
+        toast.error(amountErrorCopy || 'Amount exceeds available balance.')
         return
       }
 
-      if (!amountUsesPending) {
-        let exactMax = maxTransfer.maxAmount
-        if (!exactMax) {
-          try {
-            const estimate = await accountManager.estimateMaxTransfer(
-              swap.depositAddress,
-              onChainSwapMemo,
-              marginalFeeForTier(feeTier),
-              fundingSource
-            )
-            exactMax = safeBig(estimate.maxAmountZats).div(1e8).toFixed()
-          } catch {
-            // The transaction builder remains the source of truth if live estimation is unavailable.
-          }
-        }
-        if (exactMax && safeBig(swap.amountIn || '0').gt(exactMax)) {
-          toast.error(
-            'Amount exceeds spendable balance',
-            'Lower the amount or select Max to include the network fee.'
+      let exactMax = maxTransfer.maxAmount
+      if (!exactMax) {
+        try {
+          const estimate = await accountManager.estimateMaxTransfer(
+            swap.depositAddress,
+            onChainSwapMemo,
+            marginalFeeForTier(feeTier),
+            fundingSource
           )
-          return
+          exactMax = safeBig(estimate.maxAmountZats).div(1e8).toFixed()
+        } catch {
+          // The transaction builder remains the source of truth if live estimation is unavailable.
         }
+      }
+      if (exactMax && safeBig(swap.amountIn || '0').gt(exactMax)) {
+        toast.error(
+          'Amount exceeds spendable balance',
+          'Lower the amount or select Max to include the network fee.'
+        )
+        return
       }
 
       const quote = quoteResult?.quoteSuccessResult?.quote
@@ -586,8 +590,8 @@ export function Swap() {
     fundingSource,
     feeTier,
     onChainSwapMemo,
-    sourceBalance.total,
-    amountUsesPending,
+    amountError,
+    amountErrorCopy,
     maxTransfer.maxAmount,
     quoteResult,
     navigateToSwapResult,
@@ -744,7 +748,6 @@ export function Swap() {
           selectedFeeZec={swap.isZecToOther ? networkFee : undefined}
           insufficient={hasInsufficientFunds}
           fundingSource={swap.isZecToOther ? fundingSource : undefined}
-          usesPending={amountUsesPending}
         />
       )
     }
@@ -780,7 +783,6 @@ export function Swap() {
         availableBalance={sourceBalance.available}
         spendableBalance={spendableBalance}
         pendingBalance={sourceBalance.pending}
-        usesPending={amountUsesPending}
         recipientAddress={swap.recipientAddress}
         refundAddress={swap.refundAddress}
         slippage={swap.slippage}
@@ -788,6 +790,7 @@ export function Swap() {
         areTokensLoading={swap.areTokensLoading}
         canGetQuote={swap.canGetQuote}
         hasInsufficientFunds={hasInsufficientFunds}
+        amountError={amountErrorCopy}
         recentRefundAddresses={recentRefund}
         recentRecipientAddresses={recentRecipient}
         feeTier={feeTier}
