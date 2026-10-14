@@ -13,6 +13,7 @@ import { hasPendingZcashTxForWallet } from '../core/wallet/pending-zcash-tx'
 import { recordRpcFailure, recordRpcSuccess } from '@/infrastructure/chains/rpc-failover'
 import { shouldSchedulePassiveSync } from './passive-sync-policy'
 import { isRpcEndpointError } from '@/lib/errors'
+import type { ZcashBalance } from '@/types'
 
 export type SyncStateSnapshot = {
   isSyncing: boolean
@@ -22,6 +23,7 @@ export type SyncStateSnapshot = {
   walletId?: string
   accountId?: string
   etaMs?: number | null
+  balance?: ZcashBalance | null
 }
 
 export const SYNC_KEEPALIVE_ALARM = 'sync-keepalive'
@@ -70,7 +72,10 @@ export class SyncScheduler {
   }
 
   getSyncState(walletId?: string, accountId?: string): SyncStateSnapshot {
-    const key = getWalletSyncKey(walletId)
+    const { currentWalletId, currentAccountId } = useWalletStore.getState()
+    const targetWalletId = walletId ?? currentWalletId
+    const targetAccountId = accountId ?? currentAccountId
+    const key = getWalletSyncKey(targetWalletId ?? undefined)
     const cached = this.syncStates.get(key) || { isSyncing: false, syncProgress: 0 }
     return {
       isSyncing: cached.isSyncing ?? false,
@@ -78,8 +83,19 @@ export class SyncScheduler {
       currentHeight: cached.currentHeight ?? 0,
       latestHeight: cached.latestHeight ?? 0,
       etaMs: cached.etaMs ?? null,
-      walletId,
-      accountId
+      walletId: targetWalletId ?? undefined,
+      accountId: targetAccountId ?? undefined,
+      ...(targetWalletId && targetAccountId
+        ? {
+            balance: useAccountDataStore
+              .getState()
+              .getBalance(
+                backgroundZcashWalletRuntime.getNetwork(),
+                targetWalletId,
+                targetAccountId
+              )
+          }
+        : {})
     }
   }
 
@@ -483,7 +499,11 @@ export class SyncScheduler {
   private async executeSync(walletId: string, accountId: string): Promise<SyncOutcome['status']> {
     this.runningWalletId = walletId
     try {
-      await backgroundZcashWalletRuntime.ensureWalletReadyForSync(walletId, accountId)
+      await backgroundZcashWalletRuntime.ensureWalletReadyForSync(
+        walletId,
+        accountId,
+        this.preflightWalletIds.has(walletId)
+      )
 
       const ready = await backgroundZcashWalletRuntime.waitForWalletReady(
         walletId,

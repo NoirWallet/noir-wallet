@@ -113,6 +113,10 @@ export function mapWasmAccountBalanceToZcashBalance(
       orchard: formatZatoshis(orchardTotal),
       ironwood: formatZatoshis(ironwoodTotal)
     },
+    confirmed: {
+      shielded: formatZatoshis(shieldedConfirmed),
+      transparent: formatZatoshis(transparentConfirmed)
+    },
     pending: {
       shielded: formatZatoshis(shieldedPending),
       transparent: formatZatoshis(transparentPending),
@@ -130,6 +134,7 @@ export function zeroZcashBalance(): ZcashBalance {
     available: formatZatoshisFixed(0n),
     shieldable: '0',
     shieldedPools: { sapling: '0', orchard: '0', ironwood: '0' },
+    confirmed: { shielded: '0', transparent: '0' },
     pending: { shielded: '0', transparent: '0', total: '0' }
   }
 }

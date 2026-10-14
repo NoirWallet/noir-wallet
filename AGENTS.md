@@ -259,7 +259,7 @@ Important persisted store keys include:
 
 - `wallet_state`: wallet metadata and current wallet/account pointers.
 - `wallet_deleted_ids`: durable deletion markers that prevent stale extension contexts from restoring removed wallets. Retained wallet metadata reads, writes, and deletions use the shared Web Lock in `src/lib/wallet-metadata-storage.ts`; persist metadata removal before clearing credentials. `wallet_deleted_records` retains non-secret account IDs until credential and cache cleanup finishes, allowing interrupted deletion to resume.
-- `account_data`: cached balances and sync state. Transaction arrays are persisted separately in IndexedDB.
+- `account_data`: account balance, sync, and portfolio caches. The background owns persisted balances and sync state; extension pages mirror background balances and persist only changed portfolio snapshots for existing accounts. Cache writes merge under a shared Web Lock. Persist account metadata removal before deleting its cache so stale pages cannot restore it. Transaction arrays are persisted separately in IndexedDB.
 - `wallet_settings`: user settings.
 - `swap_preferences`: swap preferences.
 - `seed_<walletId>`: encrypted wallet credential data.

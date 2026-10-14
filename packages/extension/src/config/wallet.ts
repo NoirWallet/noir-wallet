@@ -34,12 +34,12 @@ export const WALLET_CONFIG = {
   MNEMONIC_LENGTH: 24 as MnemonicWordCount,
   /** Minimum block confirmations for outbound transaction finality */
   MIN_CONFIRMATIONS: 3,
-  /** Minimum block confirmations before incoming funds are spendable (ZIP-315) */
+  /** Confirmations before an external incoming transaction reaches Activity finality. */
   SPENDABILITY_CONFIRMATIONS: 10,
-  /** Keep WASM balance queries aligned with the host's trusted/untrusted finality. */
+  /** Balance queries use the same depth as WASM input selection. */
   WASM_CONFIRMATIONS_POLICY: {
     trusted: 3,
-    untrusted: 10
+    untrusted: 3
   },
   /** Minimum meaningful balance (10,000 Zatoshis) */
   DUST_THRESHOLD: 0.0001,

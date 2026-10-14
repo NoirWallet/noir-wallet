@@ -153,6 +153,11 @@ import {
   resolvePortfolioTransferAvailability,
   resolveZcashTransferAvailability
 } from '@/popup/services/transfer-availability'
+import {
+  getFundingBalance,
+  getFundingAmountError,
+  getFundingAmountErrorCopy
+} from '@/core/wallet/funding-balance'
 
 type SwapViewStep = 'input' | 'review' | 'approval-pending'
 const LIVE_QUOTE_DEBOUNCE_MS = 800
@@ -266,6 +271,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
     : undefined
   const getCurrentBalance = useAccountDataStore(state => state.getCurrentBalance)
   const storeBalance = getCurrentBalance()
+  const zcashFundingBalance = getFundingBalance(storeBalance, 'shielded')
 
   const zecPrice = useWalletStore(state => state.zecPrice)
   const swapPreferenceScope = createSwapTokenPreferenceScope(effectiveWalletId, effectiveAccountId)
@@ -1286,14 +1292,20 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
   const spendableBalance = swap.isZecSource ? zcashAvailability.amount : walletSpendableBalance
   const networkFee = maxTransfer.fee && isMaxTransferAmount ? maxTransfer.fee : estimatedFeeZec
 
-  const hasInsufficientFunds = isSwapSourceAmountInsufficient({
-    isZecSource: swap.isZecSource,
-    amount: swap.amountIn,
-    amountRaw: walletAmountRaw,
-    sourceAvailableRaw: walletAvailability?.amountRaw ?? null,
-    sourceSelected: !!swap.tokenIn,
-    zcashAvailable: zcashAvailability.amount
-  })
+  const zcashAmountError = swap.isZecSource
+    ? getFundingAmountError(swap.amountIn, zcashFundingBalance, maxTransfer.maxAmount)
+    : null
+  const zcashAmountErrorCopy = getFundingAmountErrorCopy(zcashAmountError)
+  const hasInsufficientFunds = swap.isZecSource
+    ? zcashAmountError !== null
+    : isSwapSourceAmountInsufficient({
+        isZecSource: swap.isZecSource,
+        amount: swap.amountIn,
+        amountRaw: walletAmountRaw,
+        sourceAvailableRaw: walletAvailability?.amountRaw ?? null,
+        sourceSelected: !!swap.tokenIn,
+        zcashAvailable: zcashAvailability.amount
+      })
   const hasInvalidWalletAmount =
     !!walletOwnedSource &&
     !!swap.amountIn &&
@@ -1326,6 +1338,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
         (lockedAssetFlowRequested && !lockedAssetFlowReady) ||
         (isPrivateFunding && !privateFundingDestinationToken) ||
         hasInvalidWalletAmount ||
+        (swap.isZecSource && zcashAmountError !== null) ||
         (!swap.isZecSource && walletSourcesLoading)
     })
   }, [
@@ -1343,6 +1356,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
     walletActionMode.loading,
     destinationWalletActionMode.loading,
     hasInvalidWalletAmount,
+    zcashAmountError,
     walletSourcesLoading,
     isPrivateFunding,
     privateFundingDestinationToken,
@@ -2972,6 +2986,8 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
         addressType={swap.addressType}
         destinationAddress={resolvedRecipientAddress}
         spendableBalance={spendableBalance}
+        availableBalance={zcashFundingBalance.available}
+        pendingBalance={zcashFundingBalance.pending}
         recipientAddress={swap.recipientAddress}
         slippage={swap.slippage}
         networkFee={networkFee}
@@ -3013,9 +3029,11 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
         }
         hasInsufficientFunds={hasInsufficientFunds}
         insufficientMessage={
-          !swap.isZecSource && swap.tokenIn
-            ? `Insufficient ${swap.tokenIn.symbol} balance`
-            : undefined
+          swap.isZecSource
+            ? zcashAmountErrorCopy
+            : swap.tokenIn
+              ? `Insufficient ${swap.tokenIn.symbol} balance`
+              : undefined
         }
         walletManagedRefundAddress={resolvedRefundAddress || undefined}
         recentRecipientAddresses={recentRecipient}

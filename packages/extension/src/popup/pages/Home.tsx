@@ -317,9 +317,6 @@ export function Home() {
       if (Object.keys(syncPatch).length > 0) {
         store.setWalletSyncStateFor(network, targetWalletId, syncPatch)
       }
-      if (msg.balance && msg.accountId) {
-        store.setBalanceFor(network, targetWalletId, msg.accountId, msg.balance)
-      }
     }
 
     if (supportsZcash && currentWalletId && currentAccountId) {

@@ -46,6 +46,11 @@ import {
   staticFeeFallbackZats
 } from '@/core/zcash/fee-policy'
 import { resolveZcashTransferAvailability } from '@/popup/services/transfer-availability'
+import {
+  getFundingBalance,
+  getFundingAmountError,
+  getFundingAmountErrorCopy
+} from '@/core/wallet/funding-balance'
 import { safeBig } from '@/lib/big'
 import Big from 'big.js'
 import { useZnsResolve } from '../../hooks/useZnsResolve'
@@ -139,7 +144,10 @@ export function Send() {
     standardFeeZats,
     maximumAmount: maxTransfer.maxAmount
   })
-  const reviewInsufficient = safeBig(amount || '0').gt(effectiveMaxStr)
+  const sourceBalance = getFundingBalance(balance, 'shielded')
+  const amountError = getFundingAmountError(amount, sourceBalance, maxTransfer.maxAmount)
+  const amountErrorCopy = getFundingAmountErrorCopy(amountError)
+  const reviewInsufficient = amountError !== null
   const isValidAmount = safeBig(amount || '0').gt(0) && !reviewInsufficient
   const selectedFeeZec = maxTransfer.fee && isMaxTransferAmount ? maxTransfer.fee : estimatedFeeZec
 
@@ -396,7 +404,9 @@ export function Send() {
               setMaxSelected(false)
               setAmount(nextAmount)
             }}
-            available={formatNumber(effectiveMaxStr, { rm: Big.roundDown })}
+            available={sourceBalance.available}
+            pending={sourceBalance.pending}
+            showBalanceHelp
             symbol="ZEC"
             priceUsd={zecPrice}
             maxSelected={maxSelected}
@@ -408,9 +418,7 @@ export function Send() {
               void maxTransfer.request()
             }}
             invalid={reviewInsufficient}
-            title={
-              reviewInsufficient ? `Insufficient balance. Fee: ${selectedFeeZec} ZEC` : undefined
-            }
+            error={amountErrorCopy}
           />
 
           <SendNetworkFeeCard>

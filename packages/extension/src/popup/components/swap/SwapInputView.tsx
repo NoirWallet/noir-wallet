@@ -17,6 +17,8 @@ import { TokenIcon } from '../tokens/TokenIcon'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import { Skeleton } from '../ui/skeleton'
+import { BalanceHelp } from '../transaction/BalanceHelp'
+import { safeBig } from '@/lib/big'
 
 function AddressInputWithRecent({
   label,
@@ -123,6 +125,8 @@ interface SwapInputViewProps {
   addressType: AddressType
   destinationAddress?: string
   spendableBalance: string
+  availableBalance?: string
+  pendingBalance?: string
   recipientAddress: string
   slippage: number
   networkFee?: string
@@ -183,6 +187,8 @@ interface SwapAssetCardProps {
   isAmountLoading?: boolean
   isEstimatedAmount?: boolean
   validationMessage?: string
+  balanceHelp?: boolean
+  pendingBalance?: string
 }
 
 function SwapAssetCardSkeleton({ direction }: { readonly direction: 'From' | 'To' }) {
@@ -275,7 +281,9 @@ function SwapAssetCard({
   isReadOnly = false,
   isAmountLoading = false,
   isEstimatedAmount = false,
-  validationMessage
+  validationMessage,
+  balanceHelp = false,
+  pendingBalance
 }: SwapAssetCardProps) {
   if (tokenSelectDisabled) return <SwapAssetCardSkeleton direction={direction} />
 
@@ -312,29 +320,40 @@ function SwapAssetCard({
           )}
         </div>
         {balance !== undefined && (
-          <button
-            type="button"
-            onClick={onMaxClick}
-            disabled={!onMaxClick || maxLoading}
-            aria-label={`Use maximum balance: ${balance}`}
-            title={onMaxClick ? 'Use maximum balance' : 'Balance'}
-            className="ml-auto flex min-w-0 max-w-[48%] shrink items-center gap-1.5 text-[12px] text-muted transition-colors enabled:hover:text-primary disabled:cursor-default"
-          >
-            <Icon
-              icon={maxLoading ? 'lucide:loader-circle' : 'lucide:wallet-cards'}
-              width={14}
-              height={14}
-              className={maxLoading ? 'shrink-0 animate-spin' : 'shrink-0'}
-            />
-            <span className="truncate font-mono">
-              {formatNumber(balance, { rm: Big.roundDown, useUnit: true, useSubscript: true })}
-            </span>
-          </button>
+          <div className="ml-auto flex min-w-0 max-w-[48%] shrink items-center gap-1">
+            <button
+              type="button"
+              onClick={onMaxClick}
+              disabled={!onMaxClick || maxLoading}
+              aria-label={
+                balanceHelp ? `Available balance: ${balance}` : `Use maximum balance: ${balance}`
+              }
+              title={onMaxClick ? 'Use maximum balance' : 'Balance'}
+              className="flex min-w-0 shrink items-center gap-1.5 text-[12px] text-muted transition-colors enabled:hover:text-primary disabled:cursor-default"
+            >
+              <Icon
+                icon={maxLoading ? 'lucide:loader-circle' : 'lucide:wallet-cards'}
+                width={14}
+                height={14}
+                className={maxLoading ? 'shrink-0 animate-spin' : 'shrink-0'}
+              />
+              <span className="truncate font-mono">
+                {formatNumber(balance, { rm: Big.roundDown, useUnit: true, useSubscript: true })}
+              </span>
+            </button>
+            {balanceHelp && <BalanceHelp kind="available" />}
+          </div>
         )}
       </div>
 
       {validationMessage && (
-        <p className="mt-1 text-right text-xs text-warning">{validationMessage}</p>
+        <p
+          id="swap-source-amount-error"
+          className="mt-1 text-right text-xs text-warning"
+          role="alert"
+        >
+          {validationMessage}
+        </p>
       )}
 
       <div
@@ -399,6 +418,8 @@ function SwapAssetCard({
               onChange={event => onAmountChange?.(event.target.value.replace(/[^0-9.]/g, ''))}
               placeholder="0"
               aria-label={`${direction} amount`}
+              aria-invalid={Boolean(validationMessage) || undefined}
+              aria-describedby={validationMessage ? 'swap-source-amount-error' : undefined}
               className="w-full min-w-0 bg-transparent text-right font-mono text-xl leading-6 outline-none placeholder:text-muted/60"
             />
           )}
@@ -426,6 +447,12 @@ function SwapAssetCard({
           </p>
         </div>
       </div>
+      {pendingBalance != null && safeBig(pendingBalance).gt(0) && (
+        <div className="mt-1 flex items-center justify-end gap-1 text-[11px] text-muted">
+          <span>{formatNumber(pendingBalance, { rm: Big.roundDown })} ZEC pending</span>
+          <BalanceHelp kind="pending" />
+        </div>
+      )}
     </section>
   )
 }
@@ -447,6 +474,8 @@ export function SwapInputView({
   addressType,
   destinationAddress,
   spendableBalance,
+  availableBalance,
+  pendingBalance,
   recipientAddress,
   slippage,
   networkFee,
@@ -531,7 +560,9 @@ export function SwapInputView({
             accountAddress={sourceAddress}
             accountBadge={sourceBadge ?? (isZecSource ? 'Shielded' : undefined)}
             accountAction={sourceAccountAction}
-            balance={spendableBalance}
+            balance={isZecSource ? (availableBalance ?? spendableBalance) : spendableBalance}
+            balanceHelp={isZecSource}
+            pendingBalance={isZecSource ? pendingBalance : undefined}
             onTokenSelect={() => onSelectToken('in')}
             tokenSelectDisabled={sourceAssetsLoading}
             tokenSelectLocked={sourceAssetLocked}
@@ -541,28 +572,25 @@ export function SwapInputView({
             validationMessage={balanceValidationMessage}
           />
 
-          {!hideSwitchAssets && (
-            <Button
-              type="button"
-              onClick={onSwitchTokens}
-              disabled={!canSwitchTokens}
-              aria-label="Switch assets"
-              title={
-                canSwitchTokens
-                  ? 'Switch assets'
-                  : 'The destination asset is not available in this wallet'
-              }
-              className={cn(
-                'absolute left-1/2 z-10 size-9 -translate-x-1/2 rounded-full border-[3px] border-background bg-card p-0 text-foreground hover:bg-popover disabled:opacity-40',
-                balanceValidationMessage ? 'top-[128px]' : 'top-[108px]'
-              )}
-              variant="secondary"
-            >
-              <Icon icon="lucide:arrow-down-up" width={17} height={17} />
-            </Button>
-          )}
+          <div className="relative mt-2">
+            {!hideSwitchAssets && (
+              <Button
+                type="button"
+                onClick={onSwitchTokens}
+                disabled={!canSwitchTokens}
+                aria-label="Switch assets"
+                title={
+                  canSwitchTokens
+                    ? 'Switch assets'
+                    : 'The destination asset is not available in this wallet'
+                }
+                className="absolute -top-6 left-1/2 z-10 size-9 -translate-x-1/2 rounded-full border-[3px] border-background bg-card p-0 text-foreground hover:bg-popover disabled:opacity-40"
+                variant="secondary"
+              >
+                <Icon icon="lucide:arrow-down-up" width={17} height={17} />
+              </Button>
+            )}
 
-          <div className="mt-2">
             <SwapAssetCard
               direction="To"
               token={tokenOut}
