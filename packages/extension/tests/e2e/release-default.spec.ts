@@ -2354,7 +2354,8 @@ test('shows an estimated Home total when one chain fails and cached prices becom
   )
   await expect(popup.getByRole('button', { name: /^Estimated total assets/ })).toBeVisible()
   await expect(popup.getByRole('status', { name: 'Loading total assets' })).toHaveCount(0)
-  await expect(popup.getByTestId('home-total-assets')).toContainText('≈$')
+  await expect(popup.getByTestId('home-total-assets')).toContainText('$')
+  await expect(popup.getByTestId('home-total-assets')).not.toContainText('≈')
   await popup.evaluate(async () => {
     const stored = await chrome.storage.local.get('asset_price_cache_v1')
     const cache = stored.asset_price_cache_v1
