@@ -21,10 +21,7 @@ import { PageHeader } from '@/popup/components/common/PageHeader'
 import { CopyToast, useCopyToClipboard } from '@/popup/components/common/CopyToast'
 import { TokenIcon } from '@/popup/components/tokens/TokenIcon'
 import { Button } from '@/popup/components/ui/button'
-import {
-  formatBaseUnitAmount,
-  formatDisplayTokenAmount
-} from '@/popup/components/portfolio/portfolio-format'
+import { formatDisplayTokenAmount } from '@/popup/components/portfolio/portfolio-format'
 import { getPortfolioAssetUsdValue } from '@/popup/components/portfolio/portfolio-prices'
 import {
   isPortfolioModelForScope,
@@ -52,7 +49,6 @@ import {
   bitcoinAccountTypeDescription
 } from '@/popup/components/bitcoin/BitcoinAccountTypeSelector'
 import { useShieldFunds } from '@/popup/hooks/useShieldFunds'
-import { BalanceWithPending } from '@/popup/components/balance/BalanceWithPending'
 import { resolveEffectiveActiveAccountIdentity } from '@/popup/lib/effective-active-account'
 import { rheaSwapClient } from '@/popup/services/rhea-swap-client'
 import { resolveRheaPrivateTransferToken } from '@/core/services/rhea-swap'
@@ -291,7 +287,6 @@ export function AssetDetail() {
     if (!asset) return null
     return {
       total: formatDisplayTokenAmount(asset.balance.totalRaw, asset.metadata.decimals),
-      available: formatDisplayTokenAmount(asset.balance.availableRaw, asset.metadata.decimals),
       pending: formatDisplayTokenAmount(asset.balance.pendingRaw, asset.metadata.decimals)
     }
   }, [asset])
@@ -490,8 +485,7 @@ export function AssetDetail() {
   const chainAlias = resolveChainIconAlias(chain.chain.family, chain.chain.displayName)
   const contractAddress = asset.asset.kind === 'token' ? asset.asset.reference : null
   const isZcashAsset = chain.chain.family === 'zcash'
-  const showBalanceBreakdown =
-    asset.balance.availableRaw !== asset.balance.totalRaw || asset.balance.pendingRaw !== '0'
+  const hasPendingBalance = asset.balance.pendingRaw !== '0'
   const change = quote?.marketChange ? new Big(quote.marketChange.percent24h) : null
   const formattedChange = quote?.marketChange
     ? formatPercent(quote.marketChange.percent24h, { maxDigits: 2, showPlus: true })
@@ -684,16 +678,6 @@ export function AssetDetail() {
                 <Skeleton className="h-4 w-20" />
               )}
             </div>
-            {showBalanceBreakdown && (
-              <div className="flex items-start justify-between gap-4 text-sm">
-                <span className="text-muted">Available</span>
-                <BalanceWithPending
-                  amount={formatBaseUnitAmount(asset.balance.availableRaw, asset.metadata.decimals)}
-                  pending={formatBaseUnitAmount(asset.balance.pendingRaw, asset.metadata.decimals)}
-                  amountClassName="font-mono text-sm"
-                />
-              </div>
-            )}
           </section>
         )}
 
@@ -724,29 +708,15 @@ export function AssetDetail() {
           )}
         </section>
 
-        {showBalanceBreakdown && !isZcashAsset && (
+        {hasPendingBalance && !isZcashAsset && (
           <section className="space-y-3 border-t border-border py-4" aria-label="Balance breakdown">
             <h2 className="text-sm font-semibold">Balance</h2>
-            {asset.balance.availableRaw !== asset.balance.totalRaw && (
-              <div className="flex items-center justify-between gap-4 text-sm">
-                <span className="text-muted">
-                  {chain.chain.family === 'bitcoin'
-                    ? `${bitcoinCatalog ? bitcoinAccountTypeDescription(bitcoinCatalog.activeAddressType).split(' · ')[0] : 'Bitcoin'} available`
-                    : 'Available'}
-                </span>
-                <span className="font-mono text-sm">
-                  {display.available} {asset.metadata.symbol}
-                </span>
-              </div>
-            )}
-            {asset.balance.pendingRaw !== '0' && (
-              <div className="flex items-center justify-between gap-4 text-sm">
-                <span className="text-muted">Pending</span>
-                <span className="font-mono text-sm">
-                  {display.pending} {asset.metadata.symbol}
-                </span>
-              </div>
-            )}
+            <div className="flex items-center justify-between gap-4 text-sm">
+              <span className="text-muted">Pending</span>
+              <span className="font-mono text-sm">
+                {display.pending} {asset.metadata.symbol}
+              </span>
+            </div>
           </section>
         )}
 

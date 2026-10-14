@@ -3773,10 +3773,6 @@ test('shows Shield on positive transparent ZEC and uses the readable modal backd
   await zecRow.click()
   const zcashBalanceBreakdown = popup.getByLabel('Zcash balance breakdown')
   await expect(zcashBalanceBreakdown).toBeVisible()
-  await expect(zcashBalanceBreakdown.getByText('Available', { exact: true })).toBeVisible()
-  await expect(
-    zcashBalanceBreakdown.getByText('0.01 ZEC unspendable', { exact: true })
-  ).toBeVisible()
   await expect(zcashBalanceBreakdown.getByText('Pending', { exact: true })).toHaveCount(0)
   const shieldButton = popup.getByRole('button', { name: 'Shield transparent ZEC' })
   await expect(shieldButton).toBeVisible()
