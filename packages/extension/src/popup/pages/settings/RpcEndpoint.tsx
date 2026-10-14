@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Icon } from '@iconify/react'
 import { DEFAULT_NETWORK, getNetworkConfig } from '@/lib/runtime-network'
 import {
@@ -143,10 +143,13 @@ function CustomRpcSection({
 }
 
 export function RpcEndpoint() {
-  const settings = useSettingsStore(state => state.chainEndpointSettings)
+  const persistedSettings = useSettingsStore(state => state.chainEndpointSettings)
   const setSettings = useSettingsStore(state => state.setChainEndpointSettings)
   const rpcEndpointPreferences = useSettingsStore(state => state.rpcEndpointPreferences)
   const loadSettings = useSettingsStore(state => state.loadSettings)
+  // Keep background results local so delayed store rehydration cannot replace the editor snapshot.
+  const [currentSettings, setCurrentSettings] = useState<ChainEndpointSettings | null>(null)
+  const settings = currentSettings ?? persistedSettings
   const [editing, setEditing] = useState<RpcChainOption | null>(null)
   const [url, setUrl] = useState('')
   const [customName, setCustomName] = useState('')
@@ -162,7 +165,9 @@ export function RpcEndpoint() {
   const [editingRegistryChain, setEditingRegistryChain] = useState<RpcEndpointChain | null>(null)
   const [pings, setPings] = useState<Record<string, PingResult>>({})
   const [applyingKey, setApplyingKey] = useState<string | null>(null)
+  const [openingChainId, setOpeningChainId] = useState<string | null>(null)
   const [registryVersion, setRegistryVersion] = useState(0)
+  const settingsOperation = useRef(0)
 
   useEffect(() => {
     loadSettings().catch(() => {})
@@ -186,6 +191,13 @@ export function RpcEndpoint() {
       active = false
     }
   }, [loadSettings])
+
+  useEffect(
+    () => () => {
+      settingsOperation.current += 1
+    },
+    []
+  )
 
   const editingRegistryGroup = useMemo(
     () => displayedRpcEndpointGroups.find(group => group.chain === editingRegistryChain) ?? null,
@@ -229,12 +241,14 @@ export function RpcEndpoint() {
 
   const handleZcashSelect = async (chain: RpcEndpointChain, option: RpcEndpointOption) => {
     if (isFixedTestnetEndpoint || applyingKey || saving) return
+    settingsOperation.current += 1
     const key = pingKey(chain, option.id)
     setApplyingKey(key)
     try {
       const saved = await chainEndpointSettingsClient.apply(
         buildRpcSelectionSettings(settings, zcashOption, option.url)
       )
+      setCurrentSettings(saved)
       setSettings(saved)
       toast.success('RPC Saved', `${option.label} is now selected`)
     } catch (error) {
@@ -249,11 +263,13 @@ export function RpcEndpoint() {
 
   const selectZcashAuto = async () => {
     if (isFixedTestnetEndpoint || applyingKey || saving) return
+    settingsOperation.current += 1
     setApplyingKey('zcash:auto')
     try {
       const saved = await chainEndpointSettingsClient.apply(
         buildRpcSelectionSettings(settings, zcashOption)
       )
+      setCurrentSettings(saved)
       setSettings(saved)
       toast.success('Auto RPC Enabled')
     } catch (error) {
@@ -266,7 +282,41 @@ export function RpcEndpoint() {
     }
   }
 
+  const openWithCurrentSettings = async (
+    chainId: string,
+    showEditor: (current: ChainEndpointSettings) => void
+  ) => {
+    if (openingChainId !== null) return
+    const operation = ++settingsOperation.current
+    setOpeningChainId(chainId)
+    try {
+      const current = await chainEndpointSettingsClient.read()
+      if (operation !== settingsOperation.current) return
+      setCurrentSettings(current)
+      showEditor(current)
+    } catch (error) {
+      if (operation !== settingsOperation.current) return
+      toast.error(
+        'RPC Settings Unavailable',
+        error instanceof Error ? error.message : 'Could not load RPC settings'
+      )
+    } finally {
+      if (operation === settingsOperation.current) setOpeningChainId(null)
+    }
+  }
+
+  const openRegistryEditor = (chain: RpcEndpointChain) =>
+    openWithCurrentSettings(chain, () => setEditingRegistryChain(chain))
+
+  const openChainEditor = (option: RpcChainOption) =>
+    openWithCurrentSettings(option.chainId, current => {
+      const refreshed = buildRpcChainOptions(current).find(item => item.chainId === option.chainId)
+      if (refreshed) openEditor(refreshed)
+    })
+
   const openEditor = (option: RpcChainOption, add = false) => {
+    settingsOperation.current += 1
+    setOpeningChainId(null)
     setUrl('')
     setCustomName('')
     setAdding(add)
@@ -275,9 +325,12 @@ export function RpcEndpoint() {
 
   const saveSettings = async (next: ChainEndpointSettings): Promise<boolean> => {
     if (saving) return false
+    settingsOperation.current += 1
+    setOpeningChainId(null)
     setSaving(true)
     try {
       const saved = await chainEndpointSettingsClient.apply(next)
+      setCurrentSettings(saved)
       setSettings(saved)
       return true
     } catch (error) {
@@ -342,7 +395,8 @@ export function RpcEndpoint() {
               key={group.chain}
               type="button"
               aria-label={`Configure ${group.label} RPC`}
-              onClick={() => setEditingRegistryChain(group.chain)}
+              disabled={openingChainId !== null}
+              onClick={() => void openRegistryEditor(group.chain)}
               className="flex w-full min-w-0 items-center gap-3 rounded-xl border border-border/60 bg-card px-3 py-3 text-left transition-colors hover:border-primary/30"
             >
               <div className="flex size-8 shrink-0 items-center justify-center overflow-hidden rounded-full bg-white">
@@ -373,7 +427,8 @@ export function RpcEndpoint() {
                   key={option.chainId}
                   type="button"
                   aria-label={`Configure ${option.label} RPC`}
-                  onClick={() => openEditor(option)}
+                  disabled={openingChainId !== null}
+                  onClick={() => void openChainEditor(option)}
                   className="flex w-full min-w-0 items-center gap-3 rounded-xl border border-border/60 bg-card px-3 py-3 text-left transition-colors hover:border-primary/30"
                 >
                   <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-white">
@@ -406,7 +461,13 @@ export function RpcEndpoint() {
 
       <Dialog
         open={editingRegistryGroup !== null}
-        onOpenChange={open => !open && applyingKey === null && setEditingRegistryChain(null)}
+        onOpenChange={open => {
+          if (!open && applyingKey === null) {
+            settingsOperation.current += 1
+            setOpeningChainId(null)
+            setEditingRegistryChain(null)
+          }
+        }}
       >
         <DialogContent position="bottom" className="max-h-[88vh] overflow-y-auto">
           <DialogHeader>
