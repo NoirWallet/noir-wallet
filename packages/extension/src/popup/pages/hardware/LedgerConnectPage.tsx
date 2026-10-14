@@ -3,6 +3,7 @@ import { Icon } from '@iconify/react'
 import { Button } from '../../components/ui/button'
 import { Input } from '../../components/ui/input'
 import { PageHeader } from '../../components/common/PageHeader'
+import { useNavigate } from '../../provider/Router'
 import { ChainIcon } from '../../components/common/ChainIcon'
 import { PasswordInput } from '../../components/common/PasswordInput'
 import { PasswordStrength } from '../../components/common/PasswordStrength'
@@ -62,6 +63,7 @@ const CHAIN_NAMES: Record<LedgerChainFamily, string> = {
   near: 'NEAR'
 }
 export function LedgerConnectPage() {
+  const { replace } = useNavigate()
   const network = useWalletStore(state => state.currentNetwork)
   const retainedWalletCount = useWalletStore(state => state.wallets.length)
   const [catalog, setCatalog] = useState<AccountNetworksCatalogView | null>(null)
@@ -438,7 +440,11 @@ export function LedgerConnectPage() {
         title={targetWalletId ? 'Add Ledger Accounts' : 'Connect Ledger'}
         showBack={step === 'connect' || step === 'configure' || step === 'accounts'}
         backDisabled={creating}
-        onBack={step === 'configure' || step === 'accounts' ? cancelConnection : undefined}
+        onBack={
+          step === 'configure' || step === 'accounts'
+            ? cancelConnection
+            : () => replace('/hardware/connect')
+        }
       />
       {step === 'connect' && (
         <>

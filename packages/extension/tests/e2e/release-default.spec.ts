@@ -2148,7 +2148,8 @@ test('imports and exports scoped EVM and Bitcoin private-key Wallets across Work
       await expect(addWallet).toBeVisible({ timeout: 30_000 })
     }
     await addWallet.click()
-    await popup.getByRole('button', { name: 'Import Private Key', exact: true }).click()
+    await popup.getByRole('button', { name: 'Import Wallet', exact: true }).click()
+    await popup.getByRole('button', { name: 'Private Key', exact: true }).click()
     await expect(popup.getByRole('heading', { name: 'Import private key' })).toBeVisible()
     const accountCountBeforePreview = await popup.evaluate(async () => {
       const response = await chrome.runtime.sendMessage({ type: 'GET_ACCOUNT_NETWORKS' })

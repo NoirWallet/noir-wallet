@@ -59,7 +59,8 @@ async function openPrivateKeyImport(page: Page): Promise<void> {
   const chooseWallet = page.getByRole('button', { name: 'Choose wallet' })
   if (await chooseWallet.isVisible()) await chooseWallet.click()
   await page.getByRole('button', { name: 'Add Wallet', exact: true }).click()
-  await page.getByRole('button', { name: 'Import Private Key', exact: true }).click()
+  await page.getByRole('button', { name: 'Import Wallet', exact: true }).click()
+  await page.getByRole('button', { name: 'Private Key', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'Import private key' })).toBeVisible()
 }
 

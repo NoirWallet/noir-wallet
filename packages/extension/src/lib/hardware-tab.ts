@@ -9,6 +9,7 @@ import type { QuoteBinding } from '@/types'
 import type { TransactionId } from '@/core/transactions/domain'
 import { launchHardwareSignSurface, type HardwareSignPresentation } from './hardware-sign-launcher'
 import { waitForHardwareSignResult, type HardwareSignResult } from './hardware-sign-result'
+import { hardwareConnectRoute, type HardwareConnectVendor } from './hardware-connect-options'
 
 export type HardwareSignKind = 'send' | 'shield' | 'unshield' | 'swap'
 
@@ -404,9 +405,9 @@ export function isHardwareSignRequestFresh(
   return request.createdAt <= now && now - request.createdAt <= HARDWARE_SIGN_REQUEST_TTL_MS
 }
 
-export function openHardwareConnectTab(): void {
+export function openHardwareConnectTab(vendor?: HardwareConnectVendor): void {
   chrome.tabs
-    .create({ url: chrome.runtime.getURL('index.html#/hardware/connect') })
+    .create({ url: chrome.runtime.getURL(`index.html#${hardwareConnectRoute(vendor)}`) })
     .catch(console.error)
 }
 

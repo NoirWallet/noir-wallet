@@ -3,6 +3,7 @@ import { Icon } from '@iconify/react'
 import { Button } from '../../components/ui/button'
 import { Input } from '../../components/ui/input'
 import { PageHeader } from '../../components/common/PageHeader'
+import { useNavigate } from '../../provider/Router'
 import { PasswordInput } from '../../components/common/PasswordInput'
 import { PasswordStrength } from '../../components/common/PasswordStrength'
 import { QRScanner } from '../../components/hardware/QRScanner'
@@ -64,6 +65,7 @@ const networkBundles = buildKeystoneNetworkBundles(__ENABLED_CHAIN_FEATURE_FLAGS
 
 /** Full-tab Keystone firmware selection and account connection flow. */
 export function KeystoneConnectPage() {
+  const { replace } = useNavigate()
   const [step, setStep] = useState<Step>('networks')
   const [selectedBundleId, setSelectedBundleId] = useState<KeystoneNetworkBundle['id'] | null>(null)
   const [scanError, setScanError] = useState<string | null>(null)
@@ -163,6 +165,7 @@ export function KeystoneConnectPage() {
     if (step === 'configure') setStep('scan')
     else if (step === 'scan') setStep('guide')
     else if (step === 'guide') setStep('networks')
+    else if (step === 'networks') replace('/hardware/connect')
   }
 
   const handleScan = (ur: UR) => {
@@ -270,7 +273,7 @@ export function KeystoneConnectPage() {
               ? 'Connect Hardware Wallet'
               : 'Connect Keystone'
         }
-        showBack={step === 'guide' || step === 'scan' || step === 'configure'}
+        showBack={step !== 'success'}
         onBack={handleBack}
       />
 
