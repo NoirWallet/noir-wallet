@@ -14,6 +14,13 @@ import { toast } from '@/store/toast-store'
 import { formatBaseUnitAmount } from '../portfolio/portfolio-format'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger
+} from '../ui/dropdown-menu'
 import { getEvmNonceRecoveryPresentation } from './evm-nonce-recovery-presentation'
 
 type RecoveryState = NonNullable<Awaited<ReturnType<typeof evmWalletClient.getNonceRecovery>>>
@@ -281,17 +288,33 @@ export function EvmNonceRecoveryBanner({
             <label htmlFor={`nonce-fee-${chainId}`} className="shrink-0 text-xs text-muted">
               Network fee
             </label>
-            <select
-              id={`nonce-fee-${chainId}`}
-              value={feeMode}
-              onChange={event => setFeeMode(event.target.value as typeof feeMode)}
-              disabled={busy}
-              className="h-8 min-w-0 flex-1 rounded border border-border/70 bg-background px-1.5 text-xs"
-            >
-              <option value="fast">Fast</option>
-              <option value="standard">Standard</option>
-              <option value="custom">Custom</option>
-            </select>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  id={`nonce-fee-${chainId}`}
+                  variant="outline"
+                  disabled={busy}
+                  className="h-8 min-w-0 flex-1 justify-between px-2 text-xs"
+                >
+                  {feeMode === 'fast' ? 'Fast' : feeMode === 'standard' ? 'Standard' : 'Custom'}
+                  <Icon icon="lucide:chevron-down" className="size-3.5 text-muted" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent className="min-w-(--radix-dropdown-menu-trigger-width)">
+                <DropdownMenuRadioGroup
+                  value={feeMode}
+                  onValueChange={value => {
+                    if (value === 'fast' || value === 'standard' || value === 'custom') {
+                      setFeeMode(value)
+                    }
+                  }}
+                >
+                  <DropdownMenuRadioItem value="fast">Fast</DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value="standard">Standard</DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value="custom">Custom</DropdownMenuRadioItem>
+                </DropdownMenuRadioGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
             <Button
               size="sm"
               variant="outline"

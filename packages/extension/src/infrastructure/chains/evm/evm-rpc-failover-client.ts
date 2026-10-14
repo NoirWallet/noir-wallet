@@ -20,12 +20,13 @@ type EvmRpc = EvmBalanceRpc & EvmContractRpc & EvmTransactionRpc & EvmBroadcastR
 
 export interface EvmRpcFailoverClientConfig {
   readonly chainId: string
-  readonly endpoints: readonly RpcEndpointOption[]
+  readonly endpoints: readonly RpcEndpointOption[] | (() => readonly RpcEndpointOption[])
   readonly timeoutMs?: number
   readonly maximumResponseBytes?: number
 }
 
 interface EndpointState {
+  readonly key: string
   readonly client: EvmRpc
   attested: boolean
 }
@@ -34,18 +35,16 @@ type FetchImplementation = (input: string, init: RequestInit) => Promise<Respons
 
 function parseEndpoints(
   config: EvmRpcFailoverClientConfig,
-  fetchImplementation: FetchImplementation
+  fetchImplementation: FetchImplementation,
+  previous: ReadonlyMap<string, EndpointState>
 ): EndpointState[] {
-  if (
-    !Array.isArray(config.endpoints) ||
-    config.endpoints.length < 1 ||
-    config.endpoints.length > 5
-  ) {
+  const options = typeof config.endpoints === 'function' ? config.endpoints() : config.endpoints
+  if (!Array.isArray(options) || options.length < 1 || options.length > 5) {
     throw new Error('EVM RPC failover requires one to five endpoints')
   }
   const ids = new Set<string>()
   const urls = new Set<string>()
-  return config.endpoints.map(endpoint => {
+  return options.map(endpoint => {
     if (
       typeof endpoint !== 'object' ||
       endpoint === null ||
@@ -62,7 +61,11 @@ function parseEndpoints(
     const normalizedUrl = new URL(endpoint.url).toString()
     if (urls.has(normalizedUrl)) throw new Error('Duplicate EVM RPC endpoint URL')
     urls.add(normalizedUrl)
+    const key = `${endpoint.id}\0${normalizedUrl}`
+    const existing = previous.get(key)
+    if (existing) return existing
     return {
+      key,
       client: createEvmRpcClient(
         {
           chainId: config.chainId,
@@ -95,8 +98,16 @@ export function createEvmRpcFailoverClient(
   config: EvmRpcFailoverClientConfig,
   fetchImplementation: FetchImplementation = fetch
 ): EvmRpc {
-  const endpoints = parseEndpoints(config, fetchImplementation)
-  let activeIndex = 0
+  let endpointStates = parseEndpoints(config, fetchImplementation, new Map())
+  let activeKey = endpointStates[0].key
+
+  const snapshotEndpoints = (): readonly EndpointState[] => {
+    if (typeof config.endpoints !== 'function') return endpointStates
+    const previous = new Map(endpointStates.map(state => [state.key, state]))
+    const next = parseEndpoints(config, fetchImplementation, previous)
+    endpointStates = next
+    return next
+  }
 
   const run = async <T>(
     operation: (state: EndpointState) => Promise<T>,
@@ -104,6 +115,11 @@ export function createEvmRpcFailoverClient(
     attest = true
   ): Promise<T> => {
     if (signal?.aborted) throw new EvmRpcError('cancelled', 'EVM RPC request was cancelled')
+    const endpoints = snapshotEndpoints()
+    const activeIndex = Math.max(
+      0,
+      endpoints.findIndex(state => state.key === activeKey)
+    )
     let lastRetryableError: EvmRpcError | undefined
     for (let offset = 0; offset < endpoints.length; offset += 1) {
       const index = (activeIndex + offset) % endpoints.length
@@ -114,7 +130,7 @@ export function createEvmRpcFailoverClient(
           state.attested = true
         }
         const result = await operation(state)
-        activeIndex = index
+        activeKey = state.key
         return result
       } catch (error) {
         if (!isRetryableEndpointFailure(error)) throw error

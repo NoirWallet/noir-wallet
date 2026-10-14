@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type { TransactionStep } from '@/popup/hooks/useTransaction'
 import type { SwapStatus } from '@/core/services/intents-api'
+import { mergeSwapProgressStatus } from '@/lib/swap-progress'
 import type { CreateAddressBookContactInput } from '@/core/address-book/address-book'
 import type {
   ConfidentialFundingPhase,
@@ -114,9 +115,8 @@ export const useTransactionResultStore = create<TransactionResultStore>()((set, 
   updateSwapStatus: status => {
     const current = get().data
     if (!current || current.type !== 'swap') return
-    set({
-      data: { ...current, status }
-    })
+    const merged = mergeSwapProgressStatus(current.status, status)
+    if (merged !== current.status) set({ data: { ...current, status: merged } })
   },
 
   updateSwapOriginTransaction: (chain, txHash, transaction) => {

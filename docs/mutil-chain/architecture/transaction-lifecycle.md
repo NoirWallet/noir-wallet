@@ -45,6 +45,8 @@ The usual progression is `created → prepared → approved → signed → broad
 - `failed` requires a structured failure code and time. Timeout is not a failure code because it does not prove transaction failure. `unknown` is reserved for migration of V1 failures without a recorded reason.
 - EVM finality is checked against the RPC `finalized` block, including reverted receipts. A reverted but unfinalized receipt remains `confirming`. One null `eth_getTransactionReceipt` response is not proof of a reorg; the same RPC must also show the original hash as pending through `eth_getTransactionByHash` before old inclusion evidence is cleared. Unknown or still-included results leave the current state unchanged.
 
+EVM preparation adds a 20% gas-limit margin, rounded up, to ERC-20 transfers, contract calls, and native transfers with estimates above 21,000. Plain 21,000-gas native transfers keep that estimate. The padded limit is used consistently for the funding check, signed payload, and maximum fee shown in review. Gas estimation and this reserve cannot guarantee success after arbitrary contract-state changes.
+
 ## 3. Events and Concurrent Updates
 
 Roots and Segments carry a `revision`, `updatedAt`, and `lastEventId`. Event IDs are opaque product IDs, not RPC request IDs. An observation older than the recorded `observedAt` cannot replace newer state. A Segment hash or reference binds its identity; later pollers cannot substitute another transaction. A block change, vanished receipt, or lower confirmation count needs an explicit reorg source.

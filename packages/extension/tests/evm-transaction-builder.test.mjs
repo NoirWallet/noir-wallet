@@ -449,7 +449,7 @@ test.describe('EVM transfer builder', () => {
       assetId: 'eip155:1/slip44:60',
       recipient,
       amountRaw: '0',
-      transaction: { to: recipient, value: '0', input: calldata, gasLimit: '54321' }
+      transaction: { to: recipient, value: '0', input: calldata, gasLimit: '65186' }
     })
     expect(parsePreparedEvmTransfer(structuredClone(prepared))).toEqual(prepared)
     expect(() =>
@@ -559,7 +559,7 @@ test.describe('EVM transfer builder', () => {
       kind: 'erc20-transfer',
       recipient: checksumRecipient,
       amountRaw: '2000000',
-      transaction: { to: usdc, value: '0', input: expectedData, gasLimit: '65000' }
+      transaction: { to: usdc, value: '0', input: expectedData, gasLimit: '78000' }
     })
     expect(parsePreparedEvmTransfer(structuredClone(prepared))).toEqual(prepared)
 

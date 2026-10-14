@@ -2,7 +2,6 @@ import type { RheaSwapService } from '@/core/services/rhea-swap'
 import type { SwapStatus } from '@/core/services/intents-api'
 import {
   parseTransactionEventId,
-  type RheaSwapTransactionBinding,
   type TransactionAccountScope,
   type TransactionGraph,
   type TransactionLifecycleStatus,
@@ -20,6 +19,7 @@ import { transactionRecorder } from './transaction-recorder'
 import { parseAssetId } from '@/core/chains/registry'
 import { parseAccountId } from '@/core/accounts/domain'
 import { parseKeyDomainId } from '@/core/keyring/domain'
+import { getRheaSwapProgressStatus } from '@/lib/swap-progress'
 
 export const RHEA_SWAP_TRANSACTION_MONITOR_ALARM = 'rhea-swap-transaction-monitor-alarm'
 
@@ -328,7 +328,7 @@ export class RheaSwapTransactionMonitor {
         binding.origin.chainId,
         binding.destination.chainId
       ])
-      this.notifyStatus(binding, 'SUCCESS')
+      await this.notifyStatus(graph, 'SUCCESS')
       await this.service.discard(binding.quoteHandle).catch(() => {})
       return true
     }
@@ -360,7 +360,7 @@ export class RheaSwapTransactionMonitor {
       await this.applyGraphSegment(graph.root.scope, graph.root.id, 'relay', 'confirming', {
         externalReference: binding.quoteHandle
       })
-      this.notifyStatus(binding, 'PROCESSING')
+      await this.notifyStatus(graph, 'PROCESSING')
       return false
     }
     if (status === 'completed') {
@@ -375,7 +375,7 @@ export class RheaSwapTransactionMonitor {
         binding.origin.chainId,
         binding.destination.chainId
       ])
-      this.notifyStatus(binding, 'SUCCESS')
+      await this.notifyStatus(graph, 'SUCCESS')
       await this.service.discard(binding.quoteHandle).catch(() => {})
       return true
     }
@@ -388,13 +388,16 @@ export class RheaSwapTransactionMonitor {
       code: status === 'refunded' ? 'refunded' : status === 'expired' ? 'expired' : 'relay-failed',
       occurredAt: Date.now()
     })
-    this.notifyStatus(binding, status === 'refunded' ? 'REFUNDED' : 'FAILED')
+    await this.notifyStatus(graph, status === 'refunded' ? 'REFUNDED' : 'FAILED')
     await this.service.discard(binding.quoteHandle).catch(() => {})
     return true
   }
 
-  private notifyStatus(binding: RheaSwapTransactionBinding, status: SwapStatus['status']): void {
-    const value = Object.freeze({
+  private async notifyStatus(graph: TransactionGraph, status: SwapStatus['status']): Promise<void> {
+    const latest = await this.repository.get(graph.root.scope, graph.root.id)
+    const binding = latest?.root.intent?.protocol
+    if (!latest || binding?.provider !== 'rhea-cross-chain-dex') return
+    const value = getRheaSwapProgressStatus(latest.segments, {
       status,
       originAsset: binding.origin.assetId,
       destinationAsset: binding.destination.assetId

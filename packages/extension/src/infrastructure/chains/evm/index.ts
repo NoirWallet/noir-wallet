@@ -50,7 +50,11 @@ export function createConfiguredEvmRpcClient(
     getActiveChainEndpointSettings(),
     configuredNetwork.chainId
   )?.rpc
-  const endpoints = manuallySelected ? [preferred] : bundled.length > 0 ? bundled : [preferred]
+  const endpoints = manuallySelected
+    ? [preferred]
+    : builtin
+      ? () => getEvmRpcEndpointOptions(network, configuredNetwork.chainId)
+      : [preferred]
   return createEvmRpcFailoverClient({ chainId: configuredNetwork.chainId, endpoints })
 }
 

@@ -7,6 +7,27 @@ import {
   getLifecycleStatusPresentation,
   type TransactionPresentationTone
 } from '@/lib/transaction-status-presentation'
+import { formatBaseUnitAmount } from '@/popup/components/portfolio/portfolio-format'
+
+export function getOnchainResultAction(
+  status: TransactionLifecycleStatus,
+  explorerUrl: string | null
+): 'retry' | 'done' | 'explorer' | 'activity' {
+  if (status === 'signed') return 'retry'
+  if (status === 'final' || status === 'failed') return 'done'
+  return explorerUrl ? 'explorer' : 'activity'
+}
+
+export function getOnchainResultTotal(
+  amountRaw: string,
+  feeRaw: string,
+  decimals: number,
+  showTotal: boolean
+): string | null {
+  return showTotal
+    ? formatBaseUnitAmount((BigInt(amountRaw) + BigInt(feeRaw)).toString(), decimals)
+    : null
+}
 
 export function resolveVisibleTransactionStatus(
   status: TransactionLifecycleStatus

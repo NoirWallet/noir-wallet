@@ -2629,7 +2629,7 @@ test('prepares, signs, broadcasts, monitors, and records a Sepolia transfer in r
     )
   }
   await expect(popup.locator('[data-transaction-status="broadcast"]')).toBeVisible()
-  await expect(popup.getByRole('button', { name: 'View Activity', exact: true })).toBeVisible()
+  await expect(popup.getByRole('link', { name: 'View on Explorer', exact: true })).toBeVisible()
   await expect(popup.locator('[data-result-icon] svg')).toBeVisible()
   await expect(popup.locator('[data-result-icon] svg path')).toHaveCount(1)
   await expectResultContentFits(popup)
@@ -2888,7 +2888,7 @@ test('prepares, signs, broadcasts, monitors, and records a Sepolia transfer in r
   )
 })
 
-test('opens the recorded pending transfer from View Activity in real MV3', async ({
+test('opens the recorded pending transfer on its explorer in real MV3', async ({
   context,
   popup,
   extensionId
@@ -2953,8 +2953,8 @@ test('opens the recorded pending transfer from View Activity in real MV3', async
   await popup.getByRole('button', { name: 'Continue', exact: true }).click()
   await expect(popup.getByRole('dialog', { name: 'Review Send' })).toBeVisible()
   await popup.getByRole('button', { name: 'Send', exact: true }).click()
-  const viewActivity = popup.getByRole('button', { name: 'View Activity', exact: true })
-  await expect(viewActivity).toBeVisible({ timeout: 30_000 })
+  const viewExplorer = popup.getByRole('link', { name: 'View on Explorer', exact: true })
+  await expect(viewExplorer).toBeVisible({ timeout: 30_000 })
   const activity = (await popup.evaluate(() =>
     chrome.runtime.sendMessage({ type: 'GET_ACTIVITY' })
   )) as {
@@ -2966,9 +2966,17 @@ test('opens the recorded pending transfer from View Activity in real MV3', async
   expect(recorded).toBeTruthy()
   if (!recorded) throw new Error('Pending EVM transfer was not recorded')
 
-  await viewActivity.click()
-  await expect(popup.getByRole('tab', { name: 'Activity' })).toHaveAttribute('data-state', 'active')
-  await expect(popup.locator(`[data-activity-detail-id="${recorded.id}"]`)).toBeVisible()
+  const expectedUrl = `${SEPOLIA_EXPLORER_URL}/tx/${transactionHash}`
+  await expect(viewExplorer).toHaveAttribute('href', expectedUrl)
+  await context.route(`${SEPOLIA_EXPLORER_URL}/tx/**`, route =>
+    route.fulfill({ contentType: 'text/html', body: '<title>Transaction explorer</title>' })
+  )
+  const explorerPagePromise = context.waitForEvent('page')
+  await viewExplorer.click()
+  const explorerPage = await explorerPagePromise
+  await explorerPage.waitForURL(expectedUrl)
+  await expect(popup.locator('[data-transaction-status="broadcast"]')).toBeVisible()
+  await explorerPage.close()
 })
 
 test('shows Main and Confidential indexed history together in Activity', async ({
