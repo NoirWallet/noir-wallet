@@ -50,13 +50,15 @@ export interface VerboseTransaction {
 export async function zcashNodeRpc<T>(
   baseUrl: string,
   method: string,
-  params: unknown[] = []
+  params: unknown[] = [],
+  signal?: AbortSignal
 ): Promise<T> {
   const response = await fetchWithTimeout(baseUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
-    timeoutMs: RPC_TIMEOUT_MS
+    timeoutMs: RPC_TIMEOUT_MS,
+    signal
   })
   const json = (await response.json()) as JsonRpcResponse<T>
   if (json.error) {
@@ -81,8 +83,12 @@ export function getAddressTxids(
   return zcashNodeRpc<string[]>(baseUrl, 'getaddresstxids', [query])
 }
 
-export function getVerboseTransaction(baseUrl: string, txid: string): Promise<VerboseTransaction> {
-  return zcashNodeRpc<VerboseTransaction>(baseUrl, 'getrawtransaction', [txid, 1])
+export function getVerboseTransaction(
+  baseUrl: string,
+  txid: string,
+  signal?: AbortSignal
+): Promise<VerboseTransaction> {
+  return zcashNodeRpc<VerboseTransaction>(baseUrl, 'getrawtransaction', [txid, 1], signal)
 }
 
 /** zcashd error code for an unknown txid ("No information available about transaction"). */

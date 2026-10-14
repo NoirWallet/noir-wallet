@@ -53,6 +53,7 @@ import {
 } from './balance-summary'
 import {
   fetchTransparentReceiveTransactions,
+  fetchMissingTransparentSendRecipients,
   mergeTransactionsWithWasmHistory,
   associateIncomingIntentsTransactions
 } from './transparent-history'
@@ -336,6 +337,10 @@ export class AccountManager {
   private accountMappingCache = new Map<string, AccountMappingEntry>()
   private walletSummaryCache = new Map<string, WalletSummaryCacheEntry>()
   private wasmTxHistoryCache = new Map<string, WasmTransactionEntry[]>()
+  private recipientRecoveryByAccount = new Map<
+    string,
+    { operation: DedupPromise<void>; controller: AbortController }
+  >()
   private shieldedReceiveAddressCache = new Map<string, ShieldedReceiveAddress[]>()
   onSyncProgress: ((data: any) => void) | null = null
 
@@ -775,6 +780,16 @@ export class AccountManager {
   }
 
   private clearTransactionHistoryCache(walletId?: string, accountId?: string): void {
+    for (const [key, recovery] of this.recipientRecoveryByAccount) {
+      if (
+        !walletId ||
+        (key.startsWith(`${this.network}_${walletId}_`) &&
+          (!accountId || key === buildAccountKey(this.network, walletId, accountId)))
+      ) {
+        recovery.controller.abort()
+        this.recipientRecoveryByAccount.delete(key)
+      }
+    }
     if (!walletId) {
       this.wasmTxHistoryCache.clear()
       return
@@ -2567,10 +2582,82 @@ export class AccountManager {
           count: newWasmTransactionCount + transparentReceiveTransactions.length
         })
         .catch(() => {})
+      // Publish history before looking up recipients; public RPC latency must not
+      // delay cached Activity rows or wallet settlement.
+      void this.recoverTransactionRecipients(walletId, accountId).catch(error => {
+        logger.warn('transaction recipient recovery failed', walletId, accountId, error)
+      })
       return intentsProgressLoaded
     } catch (error) {
       logger.warn('refreshTransactionHistoryFromWasm failed', walletId, accountId, error)
       return false
+    }
+  }
+
+  private async recoverTransactionRecipients(walletId: string, accountId: string): Promise<void> {
+    const network = this.network
+    const accountKey = buildAccountKey(network, walletId, accountId)
+    let recovery = this.recipientRecoveryByAccount.get(accountKey)
+    if (!recovery) {
+      recovery = { operation: new DedupPromise<void>(), controller: new AbortController() }
+      this.recipientRecoveryByAccount.set(accountKey, recovery)
+    }
+    const signal = recovery.controller.signal
+    try {
+      await recovery.operation.run(async () => {
+        const wallet = this.store.getWallet(walletId)
+        if (!wallet || this.purgingWalletIds.has(walletId)) return
+        const transactions = await loadTransactions(accountKey)
+        const recipients = await fetchMissingTransparentSendRecipients(
+          transactions,
+          new Set(wallet.accounts.map(account => account.addresses.transparent).filter(Boolean)),
+          { baseUrl: getNetworkConfig(network).nodeRpcUrl, cacheKey: accountKey, signal }
+        )
+        if (
+          recipients.size === 0 ||
+          signal.aborted ||
+          this.purgingWalletIds.has(walletId) ||
+          !this.store.getAccount(walletId, accountId)
+        ) {
+          return
+        }
+
+        let changed = false
+        await mutateTransactions(accountKey, currentTransactions => {
+          if (
+            signal.aborted ||
+            this.purgingWalletIds.has(walletId) ||
+            !this.store.getAccount(walletId, accountId)
+          ) {
+            return currentTransactions
+          }
+          return currentTransactions.map(transaction => {
+            if (transaction.type !== 'send' || transaction.to) return transaction
+            const recipient = recipients.get(normalizeTxHash(transaction.txHash))
+            if (!recipient) return transaction
+            changed = true
+            return { ...transaction, to: recipient }
+          })
+        })
+        if (changed) {
+          await chrome.runtime
+            .sendMessage({
+              type: 'TRANSACTION_UPDATED',
+              accountKey,
+              transactionId: 'recipient-recovery'
+            })
+            .catch(() => {})
+        }
+      })
+    } catch (error) {
+      if (!signal.aborted) throw error
+    } finally {
+      if (
+        !recovery.operation.isPending &&
+        this.recipientRecoveryByAccount.get(accountKey) === recovery
+      ) {
+        this.recipientRecoveryByAccount.delete(accountKey)
+      }
     }
   }
 
