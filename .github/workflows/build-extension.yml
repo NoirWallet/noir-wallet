@@ -4,6 +4,7 @@ on:
   pull_request:
     branches: [v2]
     paths:
+      - '.github/workflows/build-extension.yml'
       - 'packages/extension/**'
       - '!packages/extension/tests/**'
       - '!packages/extension/scripts/**'
@@ -73,6 +74,7 @@ jobs:
         working-directory: wallet
         env:
           BUILD_CHANNEL: development
+          BETA_INVITE_REQUIRED: '1'
           EVM_HISTORY_API_ORIGIN: ${{ vars.EVM_HISTORY_API_ORIGIN }}
         run: pnpm build:extension
       - name: Stage the single V2 ZIP
