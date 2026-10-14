@@ -6,10 +6,10 @@
   "scripts": {
     "dev": "EXTENSION_DEV_SERVER=1 vite --config vite.config.ts",
     "dev:extension": "pnpm run dev",
-    "build": "tsc --noEmit && vite build && node scripts/verify-build-surface.mjs",
-    "build:testnet": "tsc --noEmit && NETWORK_MODE=testnet vite build && NETWORK_MODE=testnet node scripts/verify-build-surface.mjs",
+    "build": "pnpm run type-check && vite build && node scripts/verify-build-surface.mjs",
+    "build:testnet": "pnpm run type-check && NETWORK_MODE=testnet vite build && NETWORK_MODE=testnet node scripts/verify-build-surface.mjs",
     "preview": "vite preview",
-    "type-check": "tsc --noEmit",
+    "type-check": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json",
     "test": "node ../../scripts/run-core-tests.mjs",
     "test:logic": "playwright test --project=logic",
     "test:extension": "PLAYWRIGHT_E2E=1 E2E_BUILD_PROFILE=mainnet-zcash-regression ENABLED_CHAIN_FEATURE_FLAGS= pnpm run build && E2E_BUILD_PROFILE=mainnet-zcash-regression ENABLED_CHAIN_FEATURE_FLAGS= playwright test --project=extension --workers=4",

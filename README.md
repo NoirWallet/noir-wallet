@@ -120,6 +120,8 @@ pnpm --filter @noir-wallet/extension test:logic
 pnpm --filter @noir-wallet/extension test:extension
 ```
 
+Extension type checking covers both application code and the Vite/manifest configuration; extension builds run the same checks.
+
 `pnpm test` runs the deterministic wallet core suite used by CI. The SDK's native tests run separately with `pnpm --filter @noir-wallet/sdk test`. Add committed wallet core cases as flat `packages/extension/tests/*.core.test.mjs` files; ordinary `*.test.mjs` files remain in the local Playwright logic suite and do not enter CI. The Playwright commands are retained for local logic and real MV3 checks. See [Automated Testing](./AGENTS.md#automated-testing) for the test layout and local build requirements.
 
 ### Load Extension in Chrome

@@ -1,7 +1,7 @@
-import { defineConfig, loadEnv } from 'vite'
+import { defineConfig, loadEnv, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
-import { crx } from '@crxjs/vite-plugin'
+import { crx, type CrxPlugin } from '@crxjs/vite-plugin'
 import zip from 'vite-plugin-zip-pack'
 import manifest from './manifest.config'
 import path from 'path'
@@ -11,6 +11,7 @@ import { createServer } from 'node:net'
 import { name, version } from './package.json'
 import {
   ALL_CHAIN_FEATURE_FLAGS,
+  EVM_CHAIN_FEATURE_FLAG,
   parseEnabledChainFeatureFlags
 } from './src/config/multichain-feature-flags'
 import { findProhibitedRuntimeModules } from './scripts/lib/runtime-module-policy.mjs'
@@ -248,7 +249,7 @@ export default defineConfig({
         }
         return renderedManifest
       }
-    },
+    } as CrxPlugin,
     ...(!isPlaywrightBuild
       ? [
           zip({
@@ -278,7 +279,7 @@ export default defineConfig({
                 )}\n`
               })
             }
-          }
+          } satisfies Plugin
         ]
       : []),
     {
