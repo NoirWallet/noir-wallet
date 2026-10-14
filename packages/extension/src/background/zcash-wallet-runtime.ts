@@ -92,6 +92,7 @@ import {
 } from '@/core/wallet/balance-summary'
 import {
   fetchTransparentReceiveTransactions,
+  fetchMissingTransparentSendRecipients,
   mergeTransactionsWithWasmHistory,
   associateIncomingIntentsTransactions
 } from '@/core/wallet/transparent-history'
@@ -99,6 +100,7 @@ import { syncJobStore } from '@/lib/sync-job-store'
 import { isSyncOccupyingWallet } from './sync-status-policy'
 import { clearSyncAbort, signalSyncAbort } from '@/lib/sync-abort'
 import { withTimeout, TimeoutError } from '@/lib/async-utils'
+import { TransactionRecipientRecovery } from './transaction-recipient-recovery'
 import { lookupBlockHeightByTime } from '@/core/zcash/date-block-lookup'
 import { fetchBlockTime } from '@/infrastructure/chains/rpc-registry-client'
 import { withRetry, isRpcEndpointError } from '@/lib/errors'
@@ -340,6 +342,37 @@ export class BackgroundZcashWalletRuntime {
   private accountMappingCache = new Map<string, AccountMappingEntry>()
   private walletSummaryCache = new Map<string, WalletSummaryCacheEntry>()
   private wasmTxHistoryCache = new Map<string, WasmTransactionEntry[]>()
+  private readonly recipientRecovery = new TransactionRecipientRecovery({
+    isActive: (network, walletId, accountId) =>
+      !this.isLocked() &&
+      this.network === network &&
+      !this.purgingWalletIds.has(walletId) &&
+      !!this.store.getAccount(walletId, accountId),
+    getOwnedAddresses: walletId =>
+      new Set(
+        this.store
+          .getWallet(walletId)
+          ?.accounts.map(account => account.addresses.transparent)
+          .filter(Boolean)
+      ),
+    load: loadTransactions,
+    lookup: (transactions, ownedAddresses, network, accountKey, signal) =>
+      fetchMissingTransparentSendRecipients(transactions, ownedAddresses, {
+        baseUrl: getNetworkConfig(network).nodeRpcUrl,
+        cacheKey: accountKey,
+        signal
+      }),
+    mutate: mutateTransactions,
+    notify: async accountKey => {
+      await chrome.runtime
+        .sendMessage({
+          type: 'TRANSACTION_UPDATED',
+          accountKey,
+          transactionId: 'recipient-recovery'
+        })
+        .catch(() => {})
+    }
+  })
   onSyncProgress: ((data: any) => void) | null = null
   onSyncRequested: (() => void) | null = null
   onSyncAbortRequested: ((walletId?: string) => void) | null = null
@@ -760,6 +793,7 @@ export class BackgroundZcashWalletRuntime {
   }
 
   private clearTransactionHistoryCache(walletId?: string, accountId?: string): void {
+    this.recipientRecovery.cancel(walletId, accountId)
     if (!walletId) {
       this.wasmTxHistoryCache.clear()
       return
@@ -1112,7 +1146,9 @@ export class BackgroundZcashWalletRuntime {
     // any core is created, so every extension context uses the same endpoint.
     await ensureRpcEndpointPreferencesLoaded().catch(() => {})
 
-    this.network = network || DEFAULT_NETWORK
+    const nextNetwork = network || DEFAULT_NETWORK
+    if (nextNetwork !== this.network) this.clearTransactionHistoryCache()
+    this.network = nextNetwork
     if (this.network === 'mainnet') {
       await ensureRpcFailoverStateLoaded().catch(() => {})
     }
@@ -2577,6 +2613,10 @@ export class BackgroundZcashWalletRuntime {
           count: newWasmTransactionCount + transparentReceiveTransactions.length
         })
         .catch(() => {})
+      // Recipient lookup must not delay publishing restored history.
+      void this.recipientRecovery.recover(this.network, walletId, accountId).catch(() => {
+        logger.warn('transaction recipient recovery failed', walletId, accountId)
+      })
     } catch {
       logger.warn('refreshTransactionHistoryFromWasm failed', walletId, accountId)
     }
@@ -2823,6 +2863,7 @@ export class BackgroundZcashWalletRuntime {
     // Tombstone first: blocks any in-flight sync checkpoint from persisting the
     // wallet DB back after we delete it (the resurrection race on mid-sync delete).
     this.purgingWalletIds.add(walletId)
+    this.recipientRecovery.cancel(walletId)
     this.automaticResyncAttemptedWalletIds.delete(walletId)
     this.spendabilityRecoveryAttemptedWalletIds.delete(walletId)
     this.spendabilityRecoveryByWallet.delete(walletId)
@@ -3440,6 +3481,7 @@ export class BackgroundZcashWalletRuntime {
       if (wasmAccountId !== null) {
         await deleteVotingState(`${this.network}_${walletId}_${wasmAccountId}`)
       }
+      this.recipientRecovery.cancel(walletId, accountId)
       await this.accountDataStore.deleteAccountData(this.network, walletId, accountId)
       this.clearRuntimeCaches(walletId, accountId)
       this.store.removeAccount(walletId, accountId)

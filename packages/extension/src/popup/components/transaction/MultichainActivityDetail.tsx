@@ -39,6 +39,7 @@ import {
   getActivityDetailTitle,
   getActivityRouteTitle,
   getActivityTransferRecipient,
+  getActivityMissingRecipientLabel,
   getActivitySwapSourceMethodLabel,
   getAaveSupplyPresentation,
   canCancelEvmActivity,
@@ -175,6 +176,7 @@ export function MultichainActivityDetail({
     executionAddressModes
   )
   const transferRecipient = getActivityTransferRecipient(visibleItem)
+  const missingRecipientLabel = getActivityMissingRecipientLabel(visibleItem)
   const swapSourceMethod = getActivitySwapSourceMethodLabel(visibleItem, swap?.source?.symbol)
 
   const amount = visibleItem.snapshot?.primaryAmount
@@ -580,6 +582,10 @@ export function MultichainActivityDetail({
             <span className="max-w-[220px] truncate font-mono text-sm" title={transferRecipient}>
               {formatSortAddress(transferRecipient)}
             </span>
+          </DetailRow>
+        ) : !swap && missingRecipientLabel ? (
+          <DetailRow label="To">
+            <span className="text-sm text-muted">{missingRecipientLabel}</span>
           </DetailRow>
         ) : null}
         {visibleItem.snapshot?.evm?.methodSelector && (

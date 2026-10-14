@@ -93,6 +93,8 @@ A V1 status string alone cannot construct a complete graph. Migration also needs
 5. Hexadecimal hash deduplication is case-insensitive for EVM and BIP122. Other namespaces retain native case semantics.
 6. Chains whose standard RPC lacks complete address history require an explicitly integrated trusted indexer. Wallet-originated records must not be described as complete on-chain history.
 
+Zcash history refresh publishes local records before looking up missing send recipients. Recovery accepts only one external transparent destination whose aggregate output value equals the recorded send amount, excluding the wallet's known transparent addresses. Known recipients survive later WASM refreshes; ambiguous or shielded destinations remain unavailable. Confirmed transaction bodies are reused, and concurrent receive-history and recipient-recovery writes merge atomically in the network/Wallet/Account cache. Lock, account removal, wallet purge, and network changes cancel recovery and prevent late recipient writes.
+
 The Popup reads only the current account through trusted `GET_ACTIVITY`. Content scripts cannot specify Account scope or enumerate partitions. `createConfiguredActivityHistorySources` selects adapters; Background uses one aggregation and local fallback path, while each adapter still contacts its configured source:
 
 | Chain / network            | History source                                                                                 |

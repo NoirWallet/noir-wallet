@@ -198,6 +198,15 @@ export function getActivityTransferRecipient(item: ActivityItem): string | undef
   return item.snapshot?.recipient?.address
 }
 
+export function getActivityMissingRecipientLabel(item: ActivityItem): string | null {
+  return item.source === 'zcash-v1' &&
+    item.kind === 'transfer' &&
+    item.snapshot?.direction === 'outgoing' &&
+    !getActivityTransferRecipient(item)
+    ? 'Unavailable'
+    : null
+}
+
 export function getActivitySwapSourceMethodLabel(
   item: ActivityItem,
   sourceSymbol?: string
