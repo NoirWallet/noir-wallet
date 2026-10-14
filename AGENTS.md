@@ -304,7 +304,7 @@ The complete operational runbook is in `docs/release-workflow.md`.
 - Exclude internal refactors, tests, CI changes, dependency updates, and implementation details unless they materially affect users.
 - Keep the copy plain, specific, and user-friendly. The runtime schema currently permits 1–8 bullets of at most 120 characters each so the popup remains readable.
 
-Do not change release behavior based only on this summary; verify the three extension workflows and `scripts/extension-release*.mjs` before editing CI.
+Do not change release behavior based only on this summary; verify the extension workflows, `scripts/extension-release*.mjs`, and affected preview reporting code before editing CI.
 
 ## Implementation Rules
 
