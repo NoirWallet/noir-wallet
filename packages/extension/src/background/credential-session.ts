@@ -66,8 +66,8 @@ export class CredentialSessionCoordinator {
     return this.enqueue(async () => {
       const { softwareCredentials: inventory, hardwareCredentialCount } =
         await credentialLifecycle.getActiveCredentialSessionInventory(password)
-      await chrome.storage.session.remove(CREDENTIAL_SESSION_DESCRIPTOR_KEY)
       if (inventory.length === 0 && hardwareCredentialCount === 0) {
+        await chrome.storage.session.remove(CREDENTIAL_SESSION_DESCRIPTOR_KEY)
         await forwardKeyringRpcToOffscreen<boolean>('session.lock', {}).catch(() => {})
         return null
       }
@@ -87,6 +87,8 @@ export class CredentialSessionCoordinator {
         if (!inventoryMatchesDescriptor(inventory, descriptor)) {
           throw new Error('Credential session inventory mismatch')
         }
+        // Removing a descriptor signals a lock to every open extension page.
+        // Publish a successful renewal by replacing it in one storage operation.
         await chrome.storage.session.set({ [CREDENTIAL_SESSION_DESCRIPTOR_KEY]: descriptor })
         return descriptor
       } catch (error) {
