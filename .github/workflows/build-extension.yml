@@ -57,7 +57,14 @@ jobs:
           BUILD_CHANNEL: development
           BETA_INVITE_REQUIRED: '1'
           EVM_HISTORY_API_ORIGIN: ${{ vars.EVM_HISTORY_API_ORIGIN }}
-        run: pnpm build:extension
+          PR_HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          RHEA_SWAP_ACCESS_TOKEN: ${{ github.event.pull_request.head.repo.full_name == github.repository && secrets.RHEA_SWAP_ACCESS_TOKEN || '' }}
+        run: |
+          if [ "$PR_HEAD_REPOSITORY" = "$GITHUB_REPOSITORY" ] && [ -z "${RHEA_SWAP_ACCESS_TOKEN//[[:space:]]/}" ]; then
+            echo '::error::RHEA_SWAP_ACCESS_TOKEN is required for repository preview builds'
+            exit 1
+          fi
+          pnpm build:extension
       - name: Stage the single V2 ZIP
         run: |
           set -euo pipefail
