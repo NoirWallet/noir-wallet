@@ -16,12 +16,12 @@ permissions:
 
 jobs:
   comment:
+    # Requested events can still carry the static name; the script refetches the run title.
     if: >-
       github.event.workflow_run.event == 'pull_request' &&
       (github.event.action == 'requested' ||
-       github.event.workflow_run.path == '.github/workflows/build-extension.yml') &&
-      (github.event.workflow_run.path != '.github/workflows/build-extension.yml' ||
-       github.event.workflow_run.display_title == 'Requested extension preview')
+       (github.event.workflow_run.path == '.github/workflows/build-extension.yml' &&
+        (github.event.workflow_run.display_title || github.event.workflow_run.name) == 'Requested extension preview'))
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
