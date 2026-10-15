@@ -2,8 +2,8 @@ name: Extension Preview Download
 
 on:
   workflow_run:
-    workflows: [Build Extension]
-    types: [completed]
+    workflows: [Build Extension, Extension Checks]
+    types: [requested, completed]
 
 concurrency:
   group: extension-preview-comment-${{ github.event.workflow_run.head_repository.id }}-${{ github.event.workflow_run.head_branch }}
@@ -11,12 +11,17 @@ concurrency:
 
 permissions:
   contents: read
-  actions: read
+  actions: write
   pull-requests: write
 
 jobs:
   comment:
-    if: github.event.workflow_run.event == 'pull_request'
+    if: >-
+      github.event.workflow_run.event == 'pull_request' &&
+      (github.event.action == 'requested' ||
+       github.event.workflow_run.path == '.github/workflows/build-extension.yml') &&
+      (github.event.workflow_run.path != '.github/workflows/build-extension.yml' ||
+       github.event.workflow_run.display_title == 'Requested extension preview')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -34,4 +39,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PREVIEW_RUN_ID: ${{ github.event.workflow_run.id }}
           PREVIEW_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          PREVIEW_EVENT_ACTION: ${{ github.event.action }}
         run: node scripts/extension-preview-comment.mjs

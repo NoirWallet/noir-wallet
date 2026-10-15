@@ -12,6 +12,7 @@ on:
       - '.node-version'
       - '.npmrc'
       - '.github/workflows/sdk.yml'
+      - 'scripts/ci-validated-scope.mjs'
   push:
     branches: [main, v2]
     paths:
@@ -23,6 +24,7 @@ on:
       - '.node-version'
       - '.npmrc'
       - '.github/workflows/sdk.yml'
+      - 'scripts/ci-validated-scope.mjs'
 
 concurrency:
   group: sdk-${{ github.ref }}
@@ -30,6 +32,7 @@ concurrency:
 
 permissions:
   contents: read
+  actions: read
 
 env:
   HUSKY: 0
@@ -42,17 +45,33 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Check prior validated inputs
+        id: scope
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/ci-validated-scope.mjs sdk
+
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v5
+        if: github.event_name == 'push' || steps.scope.outputs.run == 'true'
 
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        if: github.event_name == 'push' || steps.scope.outputs.run == 'true'
         with:
           node-version-file: .node-version
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
+        if: github.event_name == 'push' || steps.scope.outputs.run == 'true'
       - run: pnpm --filter @noir-wallet/sdk type-check
+        if: github.event_name == 'push' || steps.scope.outputs.run == 'true'
       - run: pnpm --filter @noir-wallet/sdk build
+        if: github.event_name == 'push' || steps.scope.outputs.run == 'true'
       - run: pnpm --filter @noir-wallet/sdk --if-present test
+        if: github.event_name == 'push' || steps.scope.outputs.run == 'true'
       - run: pnpm --filter @noir-wallet/example type-check
+        if: github.event_name == 'push' || steps.scope.outputs.run == 'true'
       - run: pnpm --filter @noir-wallet/example build
+        if: github.event_name == 'push' || steps.scope.outputs.run == 'true'
       - run: pnpm --filter @noir-wallet/sdk pack:dry
+        if: github.event_name == 'push' || steps.scope.outputs.run == 'true'

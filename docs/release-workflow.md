@@ -1,6 +1,8 @@
 # Noir Wallet CI/CD and Release Workflow
 
-This runbook describes extension verification in [build-extension.yml](../.github/workflows/build-extension.yml), manual Beta and production candidate builds in [extension-release.yml](../.github/workflows/extension-release.yml), and promotion in [publish-extension.yml](../.github/workflows/publish-extension.yml). The [documentation workflow](../.github/workflows/docs.yml) verifies the documentation site on relevant pull requests but does not deploy it. The [SDK workflow](../.github/workflows/sdk.yml) checks the SDK package and example from this workspace without publishing them. Website and signup Worker deployment are described in [Website and Signup Worker](#website-and-signup-worker). SDK npm publication and Chrome Web Store submission remain separate manual operations.
+This runbook describes PR checks in [extension-checks.yml](../.github/workflows/extension-checks.yml), requested preview packages in [build-extension.yml](../.github/workflows/build-extension.yml), manual Beta and production candidate builds in [extension-release.yml](../.github/workflows/extension-release.yml), and promotion in [publish-extension.yml](../.github/workflows/publish-extension.yml). The [documentation workflow](../.github/workflows/docs.yml) verifies the documentation site on relevant pull requests but does not deploy it. The [SDK workflow](../.github/workflows/sdk.yml) checks the SDK package and example from this workspace without publishing them. Website and signup Worker deployment are described in [Website and Signup Worker](#website-and-signup-worker). SDK npm publication and Chrome Web Store submission remain separate manual operations.
+
+On repeated PR pushes, SDK and documentation verification reuse a prior successful run only when the target branch commit and relevant inputs are unchanged. A failed, cancelled, or incomparable run performs the checks again.
 
 ## Website and Signup Worker
 
@@ -70,7 +72,7 @@ After pushing, check **Actions → Website Signup Worker** and the existing Page
 ## Branches and Releases
 
 - `main` is the integration branch. Submit features and fixes through short-lived pull request branches; `v2` is also an extension verification target.
-- Pull requests targeting `main`, `v2`, or `release/**` build the selected source's extension packages when extension source, WASM, or build inputs change. Core checks run inside the same job. Documentation, tests, and release tooling alone do not start wallet CI; merging to `main` does not repeat the build. Automatic builds do not publish GitHub Releases.
+- Pull requests targeting `main`, `v2`, or `release/**` run extension checks when extension source, WASM, or build inputs change. Add the `preview` label to request one downloadable package for the current PR head. The trusted reporter removes the label when the request starts; reapply it for another package. Merging to `main` does not repeat the preview build. Automatic builds do not publish GitHub Releases.
 - Manual Beta builds select a repository branch or full commit SHA without requiring a merge to `main`.
 - V1 sources use separate mainnet and testnet ZIPs. V2 sources (extension version major 2 or later) use one multichain ZIP with runtime network selection. Both use the trusted manual workflow dispatched from `main`; select `source_ref=v2` for the current V2 source.
 - A temporary `release/{version}` branch holds the reviewed production source. For a partial release or hotfix, start from a verified stable wallet source commit or a real production source tag, and cherry-pick only the intended changes. Historical migration tags are not usable source baselines; see [historical Releases](#historical-releases).
@@ -80,7 +82,7 @@ After pushing, check **Actions → Website Signup Worker** and the existing Page
 
 ```mermaid
 flowchart LR
-  A["Feature / Fix PR"] --> B["Test artifacts: V1 two ZIPs / V2 one ZIP"]
+  A["Feature / Fix PR"] --> B["Checks; requested preview: V1 two ZIPs / V2 one ZIP"]
   C["Selected branch / commit"] --> D["Manual Beta build"]
   D --> E["Optional GitHub prerelease"]
   F["Reviewed release/X.Y.Z source"] --> G["Manual production candidate build"]
@@ -92,11 +94,11 @@ flowchart LR
 
 ### Preview and Beta labels
 
-Automatic PR builds run when extension files outside tests and Markdown documentation, or root build inputs (`package.json`, lockfile, workspace config, Node version, TypeScript config, `.npmrc`, WASM lock, or license) match the path filters. Verification and building share one job; there is no standalone wallet validation run. V2 PR artifacts use the credential-free `development` channel and an explicit development artifact name; manual Beta artifacts use `beta`. PR metadata records the tested merge commit plus PR head and base commits.
+Automatic PR checks run when extension files outside Markdown documentation, root scripts, or root build inputs (`package.json`, lockfile, workspace config, Node version, TypeScript config, `.npmrc`, WASM lock, or license) match the path filters. Tests and script changes run checks without requesting a ZIP. Adding the `preview` label starts a separate read-only build for the current PR head. V2 PR artifacts use the credential-free `development` channel and an explicit development artifact name; Swap is unavailable because the build omits `RHEA_SWAP_ACCESS_TOKEN`. Full Swap verification uses a trusted **Prepare Extension Release** Beta from `main` with the exact reviewed V2 branch or commit as `source_ref`. Manual Beta artifacts use `beta`. PR metadata records the tested merge commit plus PR head and base commits.
 
-After **Build Extension** completes, [Extension Preview Download](../.github/workflows/extension-preview-comment.yml) updates one bot comment on the corresponding open PR. Successful builds link the V1 Mainnet/Testnet package or the V2 development package, with its PR commit and expiration time. Failed builds replace the previous download with a build-log link. Old commits and superseded attempts cannot overwrite a newer result. Downloads require GitHub sign-in and repository access; artifacts are retained for seven days and remain available under **Actions → Build Extension**. Rerun the build if a package expires.
+[Extension Preview Download](../.github/workflows/extension-preview-comment.yml) updates one bot comment when checks start and when preview builds start or finish. It marks packages as not requested, queued/building, failed, current, or belonging to older commits. Successful builds link the package for the PR head with build and expiration times; package metadata names the tested merge commit. Old commits and superseded attempts cannot overwrite a newer result. The reporter removes the `preview` label when a build is requested; reapply it to request another package. Downloads require GitHub sign-in and repository access, expire after three days, and remain under **Actions → Build Extension**. Only the two newest verified preview artifacts per PR are retained.
 
-The reporting workflow runs only trusted `main` code with `actions: read` and `pull-requests: write`; it reads GitHub metadata without downloading or executing PR artifacts. Wallet builds retain read-only permissions. Merge reporting changes into `main` to enable them for both V1 and V2 PRs, including fork PRs. For a tooling-only PR that needs a real ZIP check, use the manual Beta build with publication disabled. Ignored local UI tools and `output/` are not committed or release triggers.
+The reporting workflow runs only trusted `main` code with `actions: write` for verified preview artifact retention and `pull-requests: write` for the comment and one-shot label. It reads GitHub metadata without downloading or executing PR artifacts. Wallet builds retain read-only permissions. Merge reporting changes into `main` to enable them for both V1 and V2 PRs, including fork PRs. Ignored local UI tools and `output/` are not committed or release triggers.
 
 Manual builds generate labels containing the run ID, attempt, and source commit; do not create them manually:
 
@@ -205,7 +207,7 @@ Develop and test the extension against that package, then submit the lock file, 
 
 ## Beta Procedure
 
-1. Push the intended branch and open a pull request. Download its **Build Extension** artifact to test before merging.
+1. Push the intended branch and open a pull request. Check **Extension Checks** and add the `preview` label when a package is needed before merging; download the resulting **Build Extension** artifact.
 2. For a distributable Beta, open **Actions → Prepare Extension Release → Run workflow** with the workflow branch set to `main`.
 3. Select `mode=beta`, set `source_ref` to the intended repository branch or full lowercase 40-character commit SHA, and choose whether `publish_beta` should create a prerelease. Leave `confirm_sha` empty.
 4. Check the resolved source SHA in the run summary. Download its artifact or published Beta ZIPs and test the affected flows. For V2 use `source_ref=v2` (or the intended V2 branch/full SHA); keep the workflow branch set to `main`.
