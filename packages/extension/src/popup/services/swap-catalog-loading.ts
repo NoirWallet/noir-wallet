@@ -92,6 +92,18 @@ export function findSwapTokenInCatalog(
   )
 }
 
+export function mergeSelectedSwapSourceCatalog(
+  current: readonly RheaSwapToken[],
+  selectorCatalog: readonly RheaSwapToken[],
+  selected: RheaSwapToken
+): readonly RheaSwapToken[] {
+  return mergeTokenCatalogs(
+    current,
+    selectorCatalog.filter(token => token.tokenListChainId === selected.tokenListChainId),
+    [selected]
+  )
+}
+
 export function readCachedTokenCatalogByChain(
   direction: 'from' | 'cross-chain-to',
   chainIds: readonly number[]

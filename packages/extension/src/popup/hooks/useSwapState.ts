@@ -11,6 +11,7 @@ import {
   loadTokenCatalogByChain,
   buildInitialSwapCatalogPlan,
   findSwapTokenInCatalog,
+  mergeSelectedSwapSourceCatalog,
   type SwapInitialCatalogOptions
 } from '@/popup/services/swap-catalog-loading'
 import { estimateSwapOutputFromPrices } from '@/popup/components/swap/swap-estimate'
@@ -347,7 +348,7 @@ export function useSwapState(
   const selectTokenIn = useCallback(
     (token: RheaSwapToken) => {
       setSourceCatalog(previous =>
-        findSwapTokenInCatalog(previous, token) ? previous : mergeTokenCatalogs(previous, [token])
+        mergeSelectedSwapSourceCatalog(previous, selectorSourceCatalog.current, token)
       )
       setTokenIn(token)
       if (preferenceScope) setSavedTokenInId(preferenceScope, token.assetId)

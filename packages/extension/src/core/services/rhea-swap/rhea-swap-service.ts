@@ -170,7 +170,16 @@ export class RheaSwapService {
       const key = token.isNative
         ? `${token.rheaChainId}:native:${token.assetId}`
         : `${token.rheaChainId}:${token.rheaAddress}`
-      if (!unique.has(key)) unique.set(key, token)
+      const previous = unique.get(key)
+      unique.set(
+        key,
+        previous
+          ? Object.freeze({
+              ...previous,
+              sources: Object.freeze([...new Set([...previous.sources, ...token.sources])])
+            })
+          : token
+      )
     }
     return Object.freeze({
       tokens: Object.freeze([...unique.values()]),
