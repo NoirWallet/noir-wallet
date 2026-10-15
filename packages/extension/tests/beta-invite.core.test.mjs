@@ -83,7 +83,11 @@ test('bind requires exact successful response and maps business errors', async (
     await assert.rejects(bindBetaInviteCode('ABC123', '0xaddress', fetchResult(payload)))
   }
   await assert.rejects(
-    bindBetaInviteCode('ABC123', '0xaddress', fetchResult({ code: 2004, message: 'bound' })),
+    bindBetaInviteCode(
+      'ABC123',
+      '0xaddress',
+      fetchResult({ code: 2004, message: 'invite code has already been bound' })
+    ),
     { code: 'used-code' }
   )
   await assert.rejects(
@@ -127,6 +131,122 @@ test('bind requires exact successful response and maps business errors', async (
     inviteBindingErrorMessage(new Error('Enter a valid invite code.')),
     'Enter a valid invite code.'
   )
+})
+
+test('explicit wallet-address confirmation restores access while unknown conflicts stay generic', async () => {
+  await bindBetaInviteCode(
+    'UNUSED',
+    '0xaddress',
+    fetchResult({ code: 2004, message: 'wallet address has already been bound' })
+  )
+  for (const payload of [
+    { code: 2005, message: 'wallet address has already been bound' },
+    { code: '2004', message: 'wallet address has already been bound' },
+    { message: 'wallet address has already been bound' },
+    { code: 0, data: { code: 'UNUSED', bound: false, walletAlreadyBound: true } }
+  ]) {
+    await assert.rejects(bindBetaInviteCode('UNUSED', '0xaddress', fetchResult(payload)))
+  }
+  await assert.rejects(
+    bindBetaInviteCode('UNUSED', '0xaddress', async () =>
+      Response.json(
+        { code: 2004, message: 'wallet address has already been bound' },
+        { status: 500 }
+      )
+    ),
+    { code: 'service-unavailable' }
+  )
+  for (const message of ['bound', undefined, { detail: 'wallet address has already been bound' }]) {
+    await assert.rejects(
+      bindBetaInviteCode('UNUSED', '0xaddress', fetchResult({ code: 2004, message })),
+      { code: 'binding-failed' }
+    )
+  }
+  await assert.rejects(
+    checkBetaInviteCode(
+      'UNUSED',
+      fetchResult({ code: 2004, message: 'wallet address has already been bound' })
+    ),
+    { code: 'service-unavailable' }
+  )
+})
+
+test('address confirmation restores activation after interrupted persistence and survives reinstall', async () => {
+  let state
+  let addressBound = false
+  let persistedSuccessFails = true
+  const target = { walletId: 'wallet', accountId: 'account', walletAddress: '0xexisting' }
+  const binds = []
+  const make = () =>
+    new BetaInviteActivationCoordinator({
+      required: true,
+      readState: async () => state,
+      writeState: async next => {
+        if (next.phase === 'activated' && persistedSuccessFails) {
+          throw new Error('Activation persistence interrupted')
+        }
+        state = structuredClone(next)
+      },
+      checkCode: code =>
+        checkBetaInviteCode(code, fetchResult({ code: 0, data: { exists: true, bound: false } })),
+      bindCode: (code, address) =>
+        bindBetaInviteCode(code, address, async () => {
+          binds.push([code, address])
+          if (addressBound) {
+            return response({ code: 2004, message: 'wallet address has already been bound' })
+          }
+          addressBound = true
+          return response({ code: 0, data: { code, bound: true } })
+        }),
+      resolveTarget: async () => target
+    })
+  await make().check('FIRST')
+  await assert.rejects(make().bind(), /Activation persistence interrupted/)
+  assert.equal(await make().isActivated(), false)
+  persistedSuccessFails = false
+  assert.deepEqual((await make().bind()).state, {
+    phase: 'activated',
+    walletAddress: target.walletAddress
+  })
+  const requestCount = binds.length
+  await make().bind()
+  assert.equal(binds.length, requestCount)
+  state = undefined
+  await make().check('NEW-INSTALLATION')
+  assert.equal((await make().bind()).state.phase, 'activated')
+  assert.deepEqual(binds, [
+    ['FIRST', target.walletAddress],
+    ['FIRST', target.walletAddress],
+    ['NEW-INSTALLATION', target.walletAddress]
+  ])
+})
+
+test('used-code conflicts never activate a wallet even when the code check was unused', async () => {
+  let state
+  const activation = new BetaInviteActivationCoordinator({
+    required: true,
+    readState: async () => state,
+    writeState: async next => {
+      state = structuredClone(next)
+    },
+    checkCode: code =>
+      checkBetaInviteCode(code, fetchResult({ code: 0, data: { exists: true, bound: false } })),
+    bindCode: (code, address) =>
+      bindBetaInviteCode(
+        code,
+        address,
+        fetchResult({ code: 2004, message: 'invite code has already been bound' })
+      ),
+    resolveTarget: async () => ({
+      walletId: 'wallet',
+      accountId: 'account',
+      walletAddress: '0xaddress'
+    })
+  })
+  await activation.check('USED')
+  await assert.rejects(activation.bind(), { code: 'used-code' })
+  assert.equal(await activation.isActivated(), false)
+  assert.equal(state.phase, 'verified')
 })
 
 function coordinator(options = {}) {
