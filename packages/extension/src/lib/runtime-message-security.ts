@@ -462,6 +462,9 @@ const TRUSTED_RUNTIME_SCHEMAS: Readonly<Record<string, RuntimeMessageSchema>> = 
   ROTATE_ZCASH_SHIELDED_ADDRESS: {
     required: { walletId: isShortString, accountId: isShortString }
   },
+  SET_ZCASH_SHIELDED_ADDRESS: {
+    required: { walletId: isShortString, accountId: isShortString, shielded: isShortString }
+  },
   PROVISION_KEYSTONE_HARDWARE: {
     required: { credential: isRecord, displayName: isShortString },
     optional: { password: isLegacyPasswordString, birthdayHeight: isBirthdayHeight }
@@ -859,6 +862,7 @@ const TRUSTED_RUNTIME_CONTEXTS: Readonly<Record<string, readonly OwnExtensionSen
     ESTIMATE_ZCASH_SHIELD_FEE: ['extension-page'],
     WAIT_FOR_ZCASH_ACCOUNT_READY: ['extension-page'],
     ROTATE_ZCASH_SHIELDED_ADDRESS: ['extension-page'],
+    SET_ZCASH_SHIELDED_ADDRESS: ['extension-page'],
     PROVISION_KEYSTONE_HARDWARE: ['extension-page'],
     PROVISION_LEDGER_HARDWARE: ['extension-page'],
     GET_LEDGER_PROVISIONING_CREDENTIAL: ['extension-page'],

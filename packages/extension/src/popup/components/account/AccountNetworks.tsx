@@ -43,7 +43,7 @@ function ConfidentialAddressButton({
       type="button"
       title={address}
       aria-label="Copy EVM Confidential address"
-      className="flex min-w-0 items-center gap-1.5 font-mono text-xs text-primary transition-colors hover:text-primary/80"
+      className="flex w-full min-w-0 items-center gap-1.5 font-mono text-xs text-primary transition-colors hover:text-primary/80"
       onClick={event => {
         event.stopPropagation()
         onCopy(address)
@@ -52,8 +52,10 @@ function ConfidentialAddressButton({
       <span className="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 font-sans text-[10px] font-medium text-primary">
         Confidential
       </span>
-      <span className="whitespace-nowrap">{formatSortAddress(address)}</span>
-      <CopyIcon />
+      <span className="min-w-0 truncate">{formatSortAddress(address)}</span>
+      <span className="ml-auto shrink-0">
+        <CopyIcon />
+      </span>
     </button>
   )
 }
@@ -120,7 +122,7 @@ function AddressButton({
       title={address.value}
       aria-label={`Copy ${displayName ?? network.chain.displayName} ${label} address`}
       className={cn(
-        'flex min-w-0 items-center gap-1 font-mono text-xs transition-colors hover:text-foreground',
+        'flex w-full min-w-0 items-center gap-1 font-mono text-xs transition-colors hover:text-foreground',
         address.preferredForReceive ? 'text-primary' : 'text-muted'
       )}
       onClick={event => {
@@ -139,8 +141,10 @@ function AddressButton({
           {bitcoinType}
         </span>
       )}
-      <span className="whitespace-nowrap">{formatSortAddress(address.value)}</span>
-      <CopyIcon />
+      <span className="min-w-0 truncate">{formatSortAddress(address.value)}</span>
+      <span className="ml-auto shrink-0">
+        <CopyIcon />
+      </span>
     </button>
   )
 }
@@ -167,7 +171,7 @@ export function AccountNetworkAddressSummary({
       ) : displayGroups.length === 0 ? (
         <p className="py-4 text-center text-xs text-muted">No addresses available</p>
       ) : (
-        <div className="space-y-1">
+        <div className="max-h-64 divide-y divide-border/70 overflow-y-auto">
           {displayGroups.map(group => {
             const network = group.networks[0]
             const privateExecutionAddress =
@@ -175,10 +179,7 @@ export function AccountNetworkAddressSummary({
                 ? group.networks.find(item => item.privateExecutionAddress)?.privateExecutionAddress
                 : undefined
             return (
-              <div
-                key={group.id}
-                className="flex min-h-8 min-w-0 items-center justify-between gap-2"
-              >
+              <div key={group.id} className="min-w-0 py-2 first:pt-0 last:pb-0">
                 <div className="flex min-w-0 items-center gap-2">
                   <span className="flex shrink-0 -space-x-1">
                     {group.networks.slice(0, 4).map(item => (
@@ -192,23 +193,13 @@ export function AccountNetworkAddressSummary({
                     ))}
                   </span>
                   <span
-                    className="max-w-[108px] truncate text-[13px] text-foreground"
+                    className="min-w-0 break-words text-[13px] text-foreground"
                     title={group.networks.map(item => item.chain.displayName).join(', ')}
                   >
                     {group.displayName}
                   </span>
                 </div>
-                <div
-                  className={cn(
-                    'flex min-w-0 justify-end',
-                    privateExecutionAddress ||
-                      network.chain.family === 'zcash' ||
-                      network.chain.family === 'bitcoin' ||
-                      network.chain.family === 'near'
-                      ? 'flex-col items-end gap-1 py-1'
-                      : 'items-center gap-2.5'
-                  )}
-                >
+                <div className="mt-1 flex min-w-0 flex-col gap-1 pl-6">
                   {group.addresses.map(address => (
                     <AddressButton
                       key={`${address.scheme}:${address.value}`}

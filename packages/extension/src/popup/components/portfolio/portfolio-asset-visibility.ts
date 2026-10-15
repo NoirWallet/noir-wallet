@@ -11,12 +11,15 @@ const ETHEREUM_CHAIN_IDS = new Set<string>(
 
 export function isAssetVisibleInAssetView(
   chain: PortfolioChainView['chain'],
-  asset: PortfolioAssetView
+  asset: PortfolioAssetView,
+  options: { readonly includeZeroBalanceNativeAssets?: boolean } = {}
 ): boolean {
   if (BigInt(asset.balance.totalRaw) !== 0n) return true
   if (asset.asset.kind !== 'native') return false
+  if (options.includeZeroBalanceNativeAssets) return true
 
   const symbol = asset.metadata.symbol.toUpperCase()
+  if (chain.family === 'zcash' && symbol === 'ZEC') return true
   if (chain.family === 'bitcoin' && symbol === 'BTC') return true
   return ETHEREUM_CHAIN_IDS.has(chain.id) && symbol === 'ETH'
 }

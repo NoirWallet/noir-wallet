@@ -13,6 +13,7 @@ import { isRetryableWalletRpcError } from './wallet-rpc-errors'
 import type {
   BallotDecision,
   HardwarePcztPair,
+  JournalReplayOptions,
   LedgerPcztSignatures,
   WasmUnifiedAddresses,
   VotingActionResult,
@@ -735,8 +736,12 @@ export class ZcashWalletCore {
     return this.client.prepareSyncBatchWithJournal(batchSize, network, journalWalletId, refresh)
   }
 
-  async replayJournalEntries(network: string, journalWalletId: string): Promise<number> {
-    return this.client.replayJournalEntries(network, journalWalletId)
+  async replayJournalEntries(
+    network: string,
+    journalWalletId: string,
+    options?: JournalReplayOptions
+  ): Promise<number> {
+    return this.client.replayJournalEntries(network, journalWalletId, options)
   }
 
   async getLatestHeight(): Promise<number> {

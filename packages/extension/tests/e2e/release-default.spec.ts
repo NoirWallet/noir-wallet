@@ -2896,7 +2896,9 @@ test('renders and switches the released EVM catalog and chain-scoped endpoint se
     timeout: 30_000
   })
 
-  await expect(popup.getByRole('button', { name: 'View ZEC details on Zcash' })).toHaveCount(0)
+  await expect(popup.getByRole('button', { name: 'View ZEC details on Zcash' })).toContainText(
+    '0 ZEC'
+  )
   await expect(popup.getByRole('button', { name: 'View SOL details on Solana' })).toHaveCount(0)
   await expect(popup.getByRole('button', { name: 'View NEAR details on NEAR' })).toHaveCount(0)
   await expect(popup.getByRole('button', { name: 'View BTC details on Bitcoin' })).toHaveCount(1)
@@ -3770,7 +3772,7 @@ test('shows Shield on positive transparent ZEC and uses the readable modal backd
   await popup.goto(`chrome-extension://${extensionId}/index.html`)
   const zecRow = popup.getByRole('button', { name: 'View ZEC details on Zcash' })
   await expect(zecRow).toBeVisible({ timeout: 30_000 })
-  await expect(zecRow).toContainText('0.01 ZEC unspendable')
+  await expect(zecRow.locator('..')).toContainText('0.01 ZEC pending')
   await captureScreenshot(popup, 'REF-13197-noirv2-pending-balance.png')
   await zecRow.click()
   const zcashBalanceBreakdown = popup.getByLabel('Zcash balance breakdown')

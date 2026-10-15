@@ -116,6 +116,7 @@ import type { BirthdayHeightSource } from '@/lib/zcash-birthday'
 import { hasPendingZcashTxForWallet } from '@/core/wallet/pending-zcash-tx'
 import {
   mergeShieldedReceiveAddressHistory,
+  selectShieldedReceiveAddress,
   shieldedReceiveAddress
 } from '@/core/wallet/shielded-address-history'
 import {
@@ -512,7 +513,7 @@ export class BackgroundZcashWalletRuntime {
     if (pending) {
       const journalBatches = await this.getJournalBatchCount(walletId)
       logger.log(`Replaying ${journalBatches} journal entries before persist`, walletId, accountId)
-      await core.replayJournalEntries(network, walletId)
+      await core.replayJournalEntries(network, walletId, { allowAfterAbort: true })
       height = await this.safePostReplaySummary(walletId, accountId, core, height)
       this.clearWalletSummaryCache(walletId)
     } else {
@@ -2130,6 +2131,19 @@ export class BackgroundZcashWalletRuntime {
 
     this.requestSync()
     return updatedAddresses
+  }
+
+  async setShieldedReceiveAddress(
+    walletId: string,
+    accountId: string,
+    shielded: string
+  ): Promise<AccountAddresses> {
+    const account = this.store.getAccount(walletId, accountId)
+    if (!account) throw new Error('Account not found')
+    const addresses = selectShieldedReceiveAddress(account, this.network, shielded)
+    this.store.updateAccountInWallets(walletId, accountId, { addresses })
+    await flushWalletStore()
+    return addresses
   }
 
   private async registerMissingAccount(
@@ -3903,7 +3917,7 @@ export class BackgroundZcashWalletRuntime {
       let latestHeight = 0
       let birthdayHeight = 0
       let fullyScannedHeight = 0
-      let hasPersistedSnapshot = await hasWalletDb(`${syncNetwork}_${syncWalletId}`)
+      const hasPersistedSnapshot = await hasWalletDb(`${syncNetwork}_${syncWalletId}`)
 
       try {
         const wasmProgress = await this.readSyncProgressFromWasm(syncWalletId, core, {
@@ -4103,6 +4117,24 @@ export class BackgroundZcashWalletRuntime {
         })
         await syncJobStore.markFailed(syncWalletId, syncNetwork).catch(() => {})
         return { status: 'failed', error: 'invalid chain height' }
+      }
+
+      // Every journal needs a persisted account/chain-state anchor, even when
+      // the first scan is interrupted before its first periodic checkpoint.
+      if (!hasPersistedSnapshot) {
+        try {
+          await this.persistWalletDbDuringSync(syncWalletId)
+          logger.log('Initial sync snapshot saved', syncWalletId, syncAccountId)
+        } catch (error) {
+          snapshotFailed = true
+          partialReason = 'wallet_state_error'
+          logger.warn(
+            `Initial sync snapshot failed: ${error instanceof Error ? error.message : String(error)}`,
+            syncWalletId,
+            syncAccountId
+          )
+          throw error
+        }
       }
 
       const pendingZcashTxPre = await hasPendingZcashTxForWallet(syncWalletId!)
@@ -4399,6 +4431,7 @@ export class BackgroundZcashWalletRuntime {
             refreshBatch
           )
           batchesSinceRefresh = refreshBatch ? 0 : batchesSinceRefresh + 1
+          if (batchResult) hasScannedBatch = true
           if (isAborted?.()) {
             logger.log('Sync aborted after batch prepare', syncWalletId, syncAccountId)
             aborted = true
@@ -4780,7 +4813,6 @@ export class BackgroundZcashWalletRuntime {
 
         batchCount++
         const previousDisplayHeight = lastDisplayHeight
-        hasScannedBatch = true
         const batchMs = performance.now() - batchT0
 
         try {
@@ -4944,12 +4976,11 @@ export class BackgroundZcashWalletRuntime {
         let persistedOnAbort = false
         if (hasScannedBatch && !snapshotFailed && !flushFailed) {
           try {
-            await Promise.race([
+            await withTimeout(
               this.persistWalletDbDuringSync(syncWalletId),
-              new Promise<never>((_, reject) =>
-                setTimeout(() => reject(new Error('persist timeout on abort')), 30_000)
-              )
-            ])
+              30_000,
+              'persist on abort'
+            )
             await clearJournalEntries(syncNetwork, syncWalletId!).catch(() => {})
             persistedOnAbort = true
             logSyncPersisted(

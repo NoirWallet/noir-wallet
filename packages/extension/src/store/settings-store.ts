@@ -4,7 +4,7 @@ import { WALLET_CONFIG, type AutoLockMs } from '@/config/wallet'
 import { DEFAULT_NETWORK } from '@/lib/runtime-network'
 import type { Network } from '@/types'
 import { DEFAULT_FEE_TIER, type FeeTier } from '@/config/fee'
-import { createChromeStorageAdapter } from '@/lib/chrome-storage-adapter'
+import { createWalletSettingsPersistStorage } from '@/lib/wallet-settings-persist-storage'
 import { applyLendingSdkEnv } from '@/core/services/lending-sdk-init'
 import { setNearRpcUrl } from '@/core/services/lending-service'
 import {
@@ -261,7 +261,7 @@ export const useSettingsStore = create<SettingsStore>()(
     }),
     {
       name: SETTINGS_STORAGE_KEY,
-      storage: createChromeStorageAdapter('local') as any,
+      storage: createWalletSettingsPersistStorage<Partial<SettingsStore>>(),
       merge: (persisted, current) => {
         const value =
           persisted && typeof persisted === 'object' && !Array.isArray(persisted)

@@ -4091,6 +4091,35 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
     return true
   }
 
+  if (message.type === 'SET_ZCASH_SHIELDED_ADDRESS') {
+    accountContextTransition
+      .runActiveOperation(async () => {
+        await assertActiveBackgroundAccountScope(message.walletId, message.accountId)
+        if (!(await credentialSession.hasUnlockSession())) {
+          throw new Error('Wallet is locked. Please unlock and try again.')
+        }
+        const addresses = await backgroundZcashWalletRuntime.setShieldedReceiveAddress(
+          message.walletId,
+          message.accountId,
+          message.shielded
+        )
+        await dappHandler.notifyAccountAddressesChanged({
+          walletId: message.walletId,
+          accountId: message.accountId,
+          accounts: { transparent: addresses.transparent, shielded: addresses.shielded }
+        })
+        return addresses
+      })
+      .then(addresses => sendResponse({ success: true, addresses }))
+      .catch(error =>
+        sendResponse({
+          error:
+            error instanceof Error ? error.message : 'Unable to select shielded receive address'
+        })
+      )
+    return true
+  }
+
   if (message.type === 'PROVISION_KEYSTONE_HARDWARE') {
     enqueueWalletSessionTransition(() =>
       provisionKeystoneHardware({

@@ -173,7 +173,10 @@ export function PortfolioShell({
   )
   const visibleChains = filteredChains
   const assetGroups = useMemo(
-    () => buildPortfolioAssetGroups(visibleChains, prices),
+    () =>
+      buildPortfolioAssetGroups(visibleChains, prices, {
+        includeZeroBalanceNativeAssets: visibleChains.length === 1
+      }),
     [prices, visibleChains]
   )
   const lowValueUsdThreshold = useMemo(
@@ -299,7 +302,7 @@ export function PortfolioShell({
           <StatePanel icon="lucide:layers" title="No networks available" />
         ) : showContent && selectedChainIds.length === 0 ? (
           <StatePanel icon="lucide:network" title="No network selected" />
-        ) : showContent && assetGroups.length === 0 ? (
+        ) : showContent && view === 'assets' && assetGroups.length === 0 ? (
           <StatePanel
             icon="lucide:wallet-cards"
             title={selectedChainIds.length === 1 ? 'No assets on this network' : 'No assets found'}

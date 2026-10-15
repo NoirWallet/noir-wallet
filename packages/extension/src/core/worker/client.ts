@@ -15,7 +15,7 @@
  * - No manual initialize() call required by the consumer
  */
 
-import type { RPCSchema, RPCRequest, RPCResponse, RPCMethod } from './types'
+import type { RPCSchema, RPCRequest, RPCResponse, RPCMethod, JournalReplayOptions } from './types'
 import type { Network } from '@/types'
 import { DEFAULT_NETWORK, getNetworkConfig } from '@/lib/runtime-network'
 import { DedupPromise, ReadyFlag, TimeoutError } from '@/lib/async-utils'
@@ -932,12 +932,17 @@ export class ZcashWorkerClient {
     await this.request('wallet.syncSessionSetup', { walletId: this.wid() })
   }
 
-  async replayJournalEntries(network: string, journalWalletId: string): Promise<number> {
+  async replayJournalEntries(
+    network: string,
+    journalWalletId: string,
+    options?: JournalReplayOptions
+  ): Promise<number> {
     await this.ensureInitialized()
     return this.request('wallet.replayJournalEntries', {
       walletId: this.wid(),
       network,
-      journalWalletId
+      journalWalletId,
+      allowAfterAbort: options?.allowAfterAbort
     })
   }
 

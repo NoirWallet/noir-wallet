@@ -35,6 +35,11 @@ interface WalletRouted {
   walletId: string
 }
 
+export interface JournalReplayOptions {
+  /** Finish applying completed batches before persisting an interrupted sync. */
+  allowAfterAbort?: boolean
+}
+
 /**
  * A PCZT prepared for hardware signing. `full` keeps the prover-only data
  * (witnesses) and stays in the wallet; `redacted` is stripped down for QR
@@ -259,7 +264,7 @@ export interface RPCSchema {
     response: boolean
   }
   'wallet.replayJournalEntries': {
-    request: WalletRouted & { network: string; journalWalletId: string }
+    request: WalletRouted & JournalReplayOptions & { network: string; journalWalletId: string }
     response: number
   }
   'wallet.beginSyncSession': {
