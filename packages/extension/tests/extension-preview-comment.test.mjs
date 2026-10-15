@@ -25,7 +25,7 @@ function fixture({ v2 = false } = {}) {
   const pr = {
     number: 20,
     state: 'open',
-    head: { sha, repo: { id: 9 } },
+    head: { sha, repo: { id: 9, full_name: repository } },
     base: { ref: v2 ? 'v2' : 'main', repo: { full_name: repository } },
     labels: []
   }
@@ -83,8 +83,7 @@ for (const v2 of [false, true]) {
     assert.match(body, /Expires: 2026-10-21T10:05:00 UTC/)
     assert.match(body, /Built: 2026-10-14T10:05:00 UTC/)
     assert.match(body, /\*\*Latest package\*\*/)
-    if (v2) assert.match(body, /Swap is unavailable in this development package/)
-    else assert.doesNotMatch(body, /Swap is unavailable/)
+    assert.doesNotMatch(body, /Swap is unavailable/)
     assert.match(body, new RegExp(`/commit/${sha}`))
   })
 }
@@ -157,9 +156,11 @@ test('finds fork PR associations when the run has no pull_requests entries', asy
   const state = fixture({ v2: true })
   state.run.pull_requests = []
   state.run.head_repository.id = state.pr.head.repo.id = 42
+  state.pr.head.repo.full_name = 'contributor/noir-wallet'
   await state.report()
   assert.ok(state.routes.includes(`commits/${sha}/pulls?per_page=100&page=1`))
   assert.equal(state.writes.length, 1)
+  assert.match(state.writes[0].body.body, /Swap is unavailable in fork previews/)
 })
 
 test('does not let an older run or attempt overwrite a newer comment', async () => {
