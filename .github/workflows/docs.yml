@@ -10,8 +10,10 @@ on:
       - 'pnpm-workspace.yaml'
       - '.node-version'
       - '.github/workflows/docs.yml'
+      - 'scripts/ci-validated-scope.mjs'
 permissions:
   contents: read
+  actions: read
 concurrency:
   group: docs-${{ github.ref }}
   cancel-in-progress: true
@@ -23,13 +25,25 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
+      - name: Check prior validated inputs
+        id: scope
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/ci-validated-scope.mjs docs
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v5
+        if: steps.scope.outputs.run == 'true'
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        if: steps.scope.outputs.run == 'true'
         with:
           node-version-file: .node-version
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+        if: steps.scope.outputs.run == 'true'
       - run: pnpm --filter @noir-wallet/sdk build
+        if: steps.scope.outputs.run == 'true'
       - run: pnpm --filter @noir-wallet/docs type-check
+        if: steps.scope.outputs.run == 'true'
       - run: pnpm --filter @noir-wallet/docs build
+        if: steps.scope.outputs.run == 'true'
       - run: pnpm --filter @noir-wallet/docs verify
+        if: steps.scope.outputs.run == 'true'

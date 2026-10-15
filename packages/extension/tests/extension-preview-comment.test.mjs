@@ -14,6 +14,7 @@ function fixture({ v2 = false } = {}) {
     repository: { full_name: repository },
     head_repository: { id: 9 },
     path: '.github/workflows/build-extension.yml',
+    display_title: 'Requested extension preview',
     event: 'pull_request',
     status: 'completed',
     conclusion: 'success',
@@ -25,7 +26,8 @@ function fixture({ v2 = false } = {}) {
     number: 20,
     state: 'open',
     head: { sha, repo: { id: 9 } },
-    base: { ref: v2 ? 'v2' : 'main', repo: { full_name: repository } }
+    base: { ref: v2 ? 'v2' : 'main', repo: { full_name: repository } },
+    labels: []
   }
   const artifact = {
     id: 300,
@@ -52,12 +54,16 @@ function fixture({ v2 = false } = {}) {
     if (route === `actions/runs/${runId}`) return run
     if (route === 'pulls/20') return ++prReads > 1 && state.currentPr ? state.currentPr : pr
     if (route.startsWith(`actions/runs/${runId}/artifacts?`)) return { artifacts: state.artifacts }
+    if (route.startsWith('actions/artifacts?'))
+      return { artifacts: state.repositoryArtifacts ?? state.artifacts }
+    if (route.startsWith('actions/workflows/build-extension.yml/runs?'))
+      return { workflow_runs: state.buildRuns ?? [run] }
     if (route.startsWith('issues/20/comments?')) return comments
     if (route.startsWith(`commits/${sha}/pulls?`)) return [{ number: 20 }]
     throw new Error(`Unexpected request: ${route}`)
   }
-  state.report = () =>
-    reportExtensionPreview({ repository, runId, runAttempt, request: state.request })
+  state.report = (eventAction = 'completed') =>
+    reportExtensionPreview({ repository, runId, runAttempt, eventAction, request: state.request })
   return state
 }
 
@@ -75,6 +81,10 @@ for (const v2 of [false, true]) {
     assert.match(body, /actions\/runs\/100\/artifacts\/300/)
     assert.match(body, v2 ? /V2 development/ : /V1 Mainnet \+ Testnet/)
     assert.match(body, /Expires: 2026-10-21T10:05:00 UTC/)
+    assert.match(body, /Built: 2026-10-14T10:05:00 UTC/)
+    assert.match(body, /\*\*Latest package\*\*/)
+    if (v2) assert.match(body, /Swap is unavailable in this development package/)
+    else assert.doesNotMatch(body, /Swap is unavailable/)
     assert.match(body, new RegExp(`/commit/${sha}`))
   })
 }
@@ -240,4 +250,116 @@ test('fails closed on malformed API data or a comment write failure', async () =
     }),
     /write denied/
   )
+})
+
+test('clears an older download as soon as checks start on a new commit', async () => {
+  const state = fixture({ v2: true })
+  state.run.path = '.github/workflows/extension-checks.yml'
+  state.run.status = 'in_progress'
+  state.run.conclusion = null
+  state.comments.push(botComment('<!-- noir-extension-preview:99:1 -->\nOld download'))
+  await state.report()
+  assert.match(state.writes[0].body.body, /Preview package: \*\*not requested\*\*/)
+  assert.match(state.writes[0].body.body, /older commits/)
+  assert.doesNotMatch(state.writes[0].body.body, /\/artifacts\//)
+})
+
+test('a checks rerun on the same head does not mislabel its earlier package as old', async () => {
+  const state = fixture({ v2: true })
+  state.run.path = '.github/workflows/extension-checks.yml'
+  state.run.status = 'in_progress'
+  state.run.conclusion = null
+  state.comments.push(
+    botComment(
+      `<!-- noir-extension-preview:99:1 -->\nPR commit: [\`aaaaaaa\`](https://github.com/${repository}/commit/${sha})\n[Download package](https://github.com/${repository}/actions/runs/99/artifacts/299)`
+    )
+  )
+  await state.report()
+  const body = state.writes[0].body.body
+  assert.match(body, /This run has no new package/)
+  assert.doesNotMatch(body, /older commits/)
+})
+
+test('build request shows building and consumes the preview label before completion', async () => {
+  const state = fixture({ v2: true })
+  state.pr.labels.push({ name: 'preview' })
+  state.run.status = 'queued'
+  state.run.conclusion = null
+  await state.report('requested')
+  assert.match(
+    state.writes.find(write => write.method === 'POST').body.body,
+    /Preview package: \*\*building\*\*/
+  )
+  assert.ok(
+    state.writes.some(
+      write => write.route === 'issues/20/labels/preview' && write.method === 'DELETE'
+    )
+  )
+  state.run.status = 'completed'
+  state.run.conclusion = 'success'
+  state.comments.push(botComment(state.writes.find(write => write.method === 'POST').body.body))
+  state.writes.length = 0
+  await state.report()
+  assert.equal(
+    state.writes.some(write => write.method === 'DELETE'),
+    false
+  )
+  assert.ok(
+    state.writes.some(write => write.method === 'PATCH' && /\/artifacts\/300/.test(write.body.body))
+  )
+})
+
+test('an older request or completion never consumes a newer preview request', async () => {
+  const state = fixture({ v2: true })
+  state.pr.labels.push({ name: 'preview' })
+  state.buildRuns = [{ ...state.run, id: 101, pull_requests: [{ number: 20 }] }, state.run]
+  await state.report('requested')
+  assert.equal(state.writes.length, 0)
+  state.writes.length = 0
+  state.run.conclusion = 'failure'
+  await state.report('completed')
+  assert.equal(state.writes.length, 0)
+})
+
+test('a push between request inventory and label removal leaves the new head label intact', async () => {
+  const state = fixture({ v2: true })
+  state.pr.labels.push({ name: 'preview' })
+  state.currentPr = { ...state.pr, head: { ...state.pr.head, sha: 'c'.repeat(40) } }
+  assert.deepEqual(await state.report('requested'), [])
+  assert.equal(state.writes.length, 0)
+})
+
+test('keeps only the two newest verified preview artifacts for this PR', async () => {
+  const state = fixture({ v2: true })
+  const makeArtifact = (id, createdAt, name = state.artifact.name, sourceRun = runId) => ({
+    ...state.artifact,
+    id,
+    name,
+    created_at: createdAt,
+    workflow_run: { id: sourceRun, head_sha: sha }
+  })
+  state.repositoryArtifacts = [
+    makeArtifact(300, '2026-10-14T10:05:00Z'),
+    makeArtifact(301, '2026-10-14T10:04:00Z'),
+    makeArtifact(302, '2026-10-14T10:03:00Z'),
+    makeArtifact(303, '2026-10-14T10:02:00Z', 'noir-wallet-development-v2.0.0-pr.21.bbbbbbb'),
+    makeArtifact(304, '2026-10-14T10:01:00Z', state.artifact.name, 999)
+  ]
+  state.responses.set('actions/runs/999', {
+    ...state.run,
+    id: 999,
+    path: '.github/workflows/docs.yml'
+  })
+  await state.report()
+  assert.deepEqual(
+    state.writes.filter(write => write.method === 'DELETE').map(write => write.route),
+    ['actions/artifacts/302']
+  )
+})
+
+test('ignores another label event before updating the PR', async () => {
+  const state = fixture()
+  state.run.display_title = 'No extension preview requested'
+  assert.deepEqual(await state.report(), [])
+  assert.equal(state.writes.length, 0)
 })
