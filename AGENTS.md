@@ -344,7 +344,7 @@ The complete operational runbook is in `docs/release-workflow.md`.
 
 - `packages/extension/package.json` is the extension version source of truth.
 - `CHANGELOG.md` is the source of truth for production GitHub Release notes. Before building a production candidate, add exactly one non-empty `## [version]` section matching the extension version.
-- V2 pull requests affecting runtime, WASM, build inputs, or their test loaders produce read-only, credential-free development artifacts. Tests, docs, and maintenance scripts alone do not start the extension preview workflow.
+- V2 pull request pushes run read-only core checks. Add the `preview` label to request one credential-free development artifact for the current PR head; the trusted reporter removes the label when the build request starts, so another package requires reapplying it.
 - Run the trusted manual release workflow from `main` with mode `beta` and `source_ref=v2` (or an exact V2 source ref) to prepare a V2 Beta. The release build requires `RHEA_SWAP_ACCESS_TOKEN`; development PR artifacts are not Beta candidates.
 - A `v2` push or tag does not publish an extension. Production candidate acceptance and publication use the separate trusted workflows on `main`.
 - The extension build verifies both packaged WASM integrity manifests. Browser and live tests are local tools, not release gates. Each V2 release contains one ZIP for runtime Mainnet/Testnet Mode and `SHA256SUMS`.

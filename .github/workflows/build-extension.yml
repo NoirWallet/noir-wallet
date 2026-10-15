@@ -1,33 +1,13 @@
 name: Build Extension
+run-name: ${{ github.event.label.name == 'preview' && 'Requested extension preview' || 'No extension preview requested' }}
 
 on:
   pull_request:
     branches: [v2]
-    paths:
-      - '.github/workflows/build-extension.yml'
-      - 'packages/extension/**'
-      - '!packages/extension/tests/**'
-      - '!packages/extension/scripts/**'
-      - 'packages/extension/scripts/lib/runtime-module-policy.mjs'
-      - 'packages/extension/scripts/verify-build-surface.mjs'
-      - '!packages/extension/**/*.md'
-      - '!packages/extension/playwright.config.ts'
-      - '!packages/extension/.env.test-wallets.example'
-      - '!packages/extension/components.json'
-      - 'package.json'
-      - 'pnpm-lock.yaml'
-      - 'pnpm-workspace.yaml'
-      - '.node-version'
-      - 'LICENSE'
-      - 'tsconfig.base.json'
-      - '.npmrc'
-      - 'scripts/lib/wasm-package-integrity.mjs'
-      - 'scripts/run-core-tests.mjs'
-      - 'scripts/register-test-loader.mjs'
-      - 'scripts/typescript-test-loader.mjs'
+    types: [labeled]
 
 concurrency:
-  group: extension-preview-${{ github.event.pull_request.number }}
+  group: extension-preview-build-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 permissions:
@@ -38,6 +18,7 @@ env:
 
 jobs:
   preview:
+    if: github.event.label.name == 'preview'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -104,6 +85,6 @@ jobs:
         with:
           name: noir-wallet-development-${{ steps.package.outputs.artifact_label }}
           path: release-assets/
-          retention-days: 7
+          retention-days: 3
           if-no-files-found: error
           compression-level: 0

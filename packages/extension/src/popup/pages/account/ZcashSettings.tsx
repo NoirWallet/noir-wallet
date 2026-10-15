@@ -395,19 +395,17 @@ export function ZcashSettings() {
             <h2 id="zcash-resync-heading" className="mb-2 text-xs font-medium text-muted">
               Maintenance
             </h2>
-            <div className="rounded-2xl bg-card p-4">
-              <Button
-                type="button"
-                variant="outline"
-                className="h-[45px] w-full"
-                onClick={() =>
-                  void openResyncZcash(wallet.id, account.id, account.birthdayHeight || 0)
-                }
-              >
-                <Icon icon="lucide:refresh-cw" width={17} height={17} />
-                Resync Zcash
-              </Button>
-            </div>
+            <Button
+              type="button"
+              variant="outline"
+              className="h-[45px] w-full"
+              onClick={() =>
+                void openResyncZcash(wallet.id, account.id, account.birthdayHeight || 0)
+              }
+            >
+              <Icon icon="lucide:refresh-cw" width={17} height={17} />
+              Resync Zcash
+            </Button>
           </section>
         )}
       </div>
