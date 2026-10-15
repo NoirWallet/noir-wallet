@@ -42,7 +42,7 @@ function previewArtifact(artifacts, run, prNumber) {
   return matches.length === 1 ? matches[0] : null
 }
 
-function commentBody(repository, run, artifact, previousIsSameHead) {
+function commentBody(repository, run, artifact, previousIsSameHead, forkPreview) {
   const root = `https://github.com/${repository}`
   const build = run.path === workflowPath
   const previousPackage = previousIsSameHead
@@ -70,10 +70,8 @@ function commentBody(repository, run, artifact, previousIsSameHead) {
         ? 'Includes one extension ZIP with runtime Mainnet/Testnet Mode.'
         : 'Includes separate Mainnet and Testnet extension ZIPs.'
     )
-    if (v2)
-      lines.push(
-        `Swap is unavailable in this development package. For full Swap verification, run [Prepare Extension Release](${root}/actions/workflows/extension-release.yml) in Beta mode from \`main\` with this exact source branch or commit.`
-      )
+    if (v2 && forkPreview)
+      lines.push('Swap is unavailable in fork previews because repository secrets are not shared.')
   } else {
     if (!build)
       lines.push(
@@ -198,7 +196,8 @@ export async function reportExtensionPreview({
       (existing?.body.includes('/artifacts/') ||
         existing?.body.includes('This run has no new package'))
     )
-    const body = commentBody(repository, run, artifact, previousIsSameHead)
+    const forkPreview = pr.head.repo.full_name?.toLowerCase() !== repository.toLowerCase()
+    const body = commentBody(repository, run, artifact, previousIsSameHead, forkPreview)
     if (
       existing?.body === body &&
       !consumeLabel &&

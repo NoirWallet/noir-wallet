@@ -45,10 +45,19 @@ jobs:
         if: steps.profile.outputs.source_profile == 'multichain'
         run: pnpm --filter @noir-wallet/evm-history-worker type-check
       - run: pnpm test
-      - run: pnpm build:extension
+      - name: Build extension
         env:
           BUILD_CHANNEL: ${{ steps.profile.outputs.source_profile == 'multichain' && 'development' || 'beta' }}
           EVM_HISTORY_API_ORIGIN: ${{ steps.profile.outputs.source_profile == 'multichain' && vars.EVM_HISTORY_API_ORIGIN || '' }}
+          RHEA_SWAP_ACCESS_TOKEN: ${{ steps.profile.outputs.source_profile == 'multichain' && github.event.pull_request.head.repo.full_name == github.repository && secrets.RHEA_SWAP_ACCESS_TOKEN || '' }}
+          PR_HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          SOURCE_PROFILE: ${{ steps.profile.outputs.source_profile }}
+        run: |
+          if [ "$SOURCE_PROFILE" = multichain ] && [ "$PR_HEAD_REPOSITORY" = "$GITHUB_REPOSITORY" ] && [ -z "${RHEA_SWAP_ACCESS_TOKEN//[[:space:]]/}" ]; then
+            echo '::error::RHEA_SWAP_ACCESS_TOKEN is required for repository preview builds'
+            exit 1
+          fi
+          pnpm build:extension
       - run: pnpm build:extension:testnet
         if: steps.profile.outputs.source_profile == 'zcash'
         env:
