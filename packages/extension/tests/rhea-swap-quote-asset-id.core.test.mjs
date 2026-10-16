@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict'
 import { it } from 'node:test'
-import { serializeQuoteRequest } from '@rhea-finance/cross-chain-aggregation-dex'
+import {
+  normalizeCrossChainToTokenList,
+  normalizeFromTokenList,
+  serializeQuoteRequest
+} from '@rhea-finance/cross-chain-aggregation-dex'
 import {
   parseRheaSwapQuoteRequest,
   toRheaSwapToken,
@@ -15,6 +19,79 @@ import {
   getRheaSwapErrorMessage,
   RheaSwapClientError
 } from '../src/popup/services/rhea-swap-client.ts'
+import {
+  MemoryRheaSwapQuoteSessionStore,
+  RheaSwapService
+} from '../src/core/services/rhea-swap/rhea-swap-service.ts'
+
+const zcashCatalogRow = Object.freeze({
+  assetId: 'zec:mainnet:native',
+  address: 'zec:mainnet:native',
+  symbol: 'ZEC',
+  decimals: 8,
+  platform: 'nearIntents'
+})
+
+it('quotes Zcash catalog aliases in both directions without changing the wallet asset identity', async () => {
+  const legacyRow = { ...zcashCatalogRow, assetId: 'nep141:zec.omft.near', address: 'zec' }
+  const rows = [zcashCatalogRow, legacyRow]
+  const service = new RheaSwapService(
+    {
+      getFromTokens: async () =>
+        normalizeFromTokenList({ native: rows[0], legacy: rows[1] }, 900010),
+      getCrossChainToTokens: async () => normalizeCrossChainToTokenList({ tokens: rows }, 900010)
+    },
+    new MemoryRheaSwapQuoteSessionStore()
+  )
+  for (const direction of ['from', 'cross-chain-to']) {
+    const result = await service.listTokens({ direction, tokenListChainIds: [900010] })
+    assert.deepEqual(result.failedChainIds, [])
+    assert.equal(result.tokens.length, 1)
+    const [token] = result.tokens
+    assert.equal(token.assetId, 'nep141:zec.omft.near')
+    assert.equal(token.rheaAddress, 'zec')
+    assert.equal(token.isNative, true)
+    assert.equal(token.contractAddress, null)
+    const serialized = serializeQuoteRequest(
+      toSdkQuoteRequest(
+        parseRheaSwapQuoteRequest({
+          fromChain: 'zcash',
+          toChain: '42161',
+          tokenIn: { chain: 'zcash', address: token.rheaAddress, isNative: token.isNative },
+          tokenOut: { chain: '42161', address: '0xaf88d065e77c8cc2239327c5edb3a432268e5831' },
+          amountIn: '392010232',
+          slippageBps: 100,
+          sender: 't1sender',
+          recipient: `0x${'2'.repeat(40)}`
+        })
+      )
+    )
+    assert.equal(serialized.tokenIn, 'zec')
+    assert.equal(serialized.tokenOut, '0xaf88d065e77c8cc2239327c5edb3a432268e5831')
+  }
+})
+
+it('normalizes retained Zcash quote addresses for source and destination at the SDK boundary', () => {
+  for (const reverse of [false, true]) {
+    const zcash = { chain: 'zcash', address: 'zec:mainnet:native', isNative: false }
+    const arbitrum = { chain: '42161', address: '0xaf88d065e77c8cc2239327c5edb3a432268e5831' }
+    const tokenIn = reverse ? arbitrum : zcash
+    const tokenOut = reverse ? zcash : arbitrum
+    const request = parseRheaSwapQuoteRequest({
+      fromChain: tokenIn.chain,
+      toChain: tokenOut.chain,
+      tokenIn,
+      tokenOut,
+      amountIn: '392010232',
+      slippageBps: 100,
+      sender: 'test-sender',
+      recipient: 'test-recipient'
+    })
+    const serialized = serializeQuoteRequest(toSdkQuoteRequest(request))
+    assert.equal(reverse ? serialized.tokenOut : serialized.tokenIn, 'zec')
+    assert.equal(zcash.address, 'zec:mainnet:native')
+  }
+})
 
 it('quotes an EVM ERC-20 by its on-chain contract while retaining the catalog asset ID', () => {
   const assetId = 'nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near'
