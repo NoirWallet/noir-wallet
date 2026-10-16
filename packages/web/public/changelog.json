@@ -4,7 +4,12 @@
     "1.0.39": {
       "changes": [
         "ZeroIndexer broadcasting is enabled by default. Manage it in Security & Privacy; sync keeps your selected RPC.",
-        "Choose ZeroIndexer broadcast nodes, add your own, or use Auto to select among official nodes."
+        "Choose ZeroIndexer broadcast nodes, add your own, or use Auto to select among official nodes.",
+        "Available balance and Max now reflect spendable funds after three confirmations and refresh more reliably.",
+        "Fixed missing transparent recipients in Activity and preserved known recipients when history refreshes.",
+        "Fixed missing-chunk errors during concurrent wallet saves and protected saved wallet data when a save fails.",
+        "Resync is suggested only after confirming incomplete or corrupt wallet data; temporary failures can be retried.",
+        "Error messages now include privacy-safe original details to help support identify the cause."
       ]
     },
     "1.0.38": {

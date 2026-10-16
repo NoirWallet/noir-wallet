@@ -2,7 +2,7 @@
 
 Developer-oriented release history for Noir Wallet. Concise in-wallet update notes are maintained separately in [packages/web/public/changelog.json](./packages/web/public/changelog.json).
 
-## [1.0.39] - 2026-10-10
+## [1.0.39] - 2026-10-16
 
 ### Added
 
@@ -12,10 +12,17 @@ Developer-oriented release history for Noir Wallet. Concise in-wallet update not
 ### Changed
 
 - Keep synchronization, compact-block CDN downloads, history, and confirmation queries on their existing providers. Remove ZeroIndexer from the synchronization RPC list.
+- Align Available balance with transaction selection at three confirmations. Activity continues to show external incoming transfers as pending until ten confirmations.
+- Build PR previews automatically and separate production candidate construction from publication of the accepted ZIPs. Verify the committed WASM package during builds and require explicit package updates.
 
 ### Fixed
 
 - Migrate ZeroIndexer synchronization preferences from the earlier beta back to ordinary automatic RPC selection while preserving other explicitly selected providers and the broadcast preference.
+- Refresh spendable balances after wallet reload and catch-up sync, keep Max current when available funds change, and distinguish pending funds, insufficient balance, and fee failures.
+- Recover missing transparent recipients from unambiguous matching transaction outputs, preserve known recipients during history refresh, and avoid labeling unknown recipients as shielded.
+- Read wallet snapshot manifests and chunks in one IndexedDB transaction to prevent concurrent saves from causing false missing-chunk errors. Abort failed writes and retain the previous snapshot when serialization or persistence fails.
+- Retry snapshot integrity checks in a fresh transaction before recommending Resync. Reserve that recovery path for confirmed incomplete or corrupt snapshots rather than transient initialization, balance, or sync failures.
+- Include privacy-redacted original error details with formatted failures so support screenshots retain the actionable cause.
 
 ## [1.0.38] - 2026-10-05
 
