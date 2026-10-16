@@ -12,10 +12,10 @@ import {
 } from '@/lib/ledger/device'
 import { exportLedgerEvmAccount } from '@/lib/ledger/evm'
 import { exportLedgerBitcoinAccount } from '@/lib/ledger/bitcoin'
-import { ledgerBitcoinAppName } from '@/lib/ledger/bitcoin-model'
 import { exportLedgerSolanaAccount } from '@/lib/ledger/solana'
 import { exportLedgerNearAccount } from '@/lib/ledger/near'
 import type { Network } from '@/types'
+import { ledgerAppName } from './ledger-device-status'
 
 export function ledgerCredentialAccounts(
   credential: LedgerHardwareCredential
@@ -61,9 +61,9 @@ export async function exportLedgerWalletAccounts(input: {
   readonly expectedAccounts?: readonly LedgerPublicAccount[]
   readonly existing?: LedgerHardwareCredential
   readonly signal: AbortSignal
-  readonly onStep: (app: string, confirming?: boolean) => void
-  readonly prepareApp: (app: string) => Promise<void>
+  readonly onStep: (app: string, interaction?: string) => void
 }) {
+  input.signal.throwIfAborted()
   const device = input.device ?? (await discoverLedger(input.transport, input.signal))
   let metadata: { deviceModel: string; deviceName: string } | undefined
   const exportAccount = async (
@@ -71,24 +71,14 @@ export async function exportLedgerWalletAccounts(input: {
     path?: string,
     network = input.network
   ): Promise<LedgerPublicAccount> => {
-    const app =
-      family === 'evm'
-        ? 'Ethereum'
-        : family === 'zcash'
-          ? 'Zcash Shielded'
-          : family === 'near'
-            ? 'NEAR'
-            : family === 'solana'
-              ? 'Solana'
-              : ledgerBitcoinAppName(network)
+    const app = ledgerAppName(family, network)
     input.onStep(app)
-    await input.prepareApp(app)
     input.signal.throwIfAborted()
     const options = {
       transport: input.transport,
       device,
       signal: input.signal,
-      onInteraction: () => input.onStep(family, true)
+      onInteraction: (interaction: string) => input.onStep(app, interaction)
     }
     if (family === 'evm') {
       const result = await exportLedgerEvmAccount({

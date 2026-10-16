@@ -110,8 +110,9 @@ async function assertSolanaApp(
     sessionId,
     command: new GetAppAndVersionCommand()
   })
+  signal?.throwIfAborted()
   if (!isSuccessCommandResult(app) || app.data.name !== 'Solana') {
-    throw new Error('Open the Solana app on your Ledger device')
+    throw new Error('Unable to verify the Ledger Solana app')
   }
   return app.data.version
 }
@@ -122,7 +123,6 @@ export async function exportLedgerSolanaAccount(
 ): Promise<LedgerSolanaAccountExport> {
   const normalizedPath = normalizePath(path)
   return withLedgerSession(options, async ({ dmk, sessionId, device }) => {
-    const appVersion = await assertSolanaApp(dmk, sessionId, options.signal)
     const signer = new SignerSolanaBuilder({ dmk, sessionId }).build()
     const address = await runLedgerAction(
       signer.getAddress(normalizedPath, { checkOnDevice: true }),
@@ -130,6 +130,7 @@ export async function exportLedgerSolanaAccount(
       'Export Solana account',
       options.signal
     )
+    const appVersion = await assertSolanaApp(dmk, sessionId, options.signal)
     const publicKey = parseBase58Bytes(address, 32, 'Ledger Solana public key')
     return Object.freeze({
       path: normalizedPath,
@@ -149,9 +150,9 @@ export async function exportLedgerSolanaAccounts(
   const normalizedPaths = paths.map(normalizePath)
   if (normalizedPaths.length === 0) return []
   return withLedgerSession(options, async ({ dmk, sessionId, device }) => {
-    const appVersion = await assertSolanaApp(dmk, sessionId, options.signal)
     const signer = new SignerSolanaBuilder({ dmk, sessionId }).build()
     const results: LedgerSolanaAccountExport[] = []
+    let appVersion: string | undefined
     for (const path of normalizedPaths) {
       options.signal?.throwIfAborted()
       const address = await runLedgerAction(
@@ -160,6 +161,9 @@ export async function exportLedgerSolanaAccounts(
         'Export Solana account',
         options.signal
       )
+      if (appVersion === undefined) {
+        appVersion = await assertSolanaApp(dmk, sessionId, options.signal)
+      }
       const publicKey = parseBase58Bytes(address, 32, 'Ledger Solana public key')
       results.push(
         Object.freeze({
@@ -209,7 +213,6 @@ export async function signLedgerSolanaRequest(
     }
   }
   return withLedgerSession(options, async ({ dmk, sessionId }) => {
-    await assertSolanaApp(dmk, sessionId, options.signal)
     const signer = new SignerSolanaBuilder({ dmk, sessionId }).build()
     const address = await runLedgerAction(
       signer.getAddress(path),
@@ -217,6 +220,7 @@ export async function signLedgerSolanaRequest(
       'Verify Solana account',
       options.signal
     )
+    await assertSolanaApp(dmk, sessionId, options.signal)
     if (address !== expectedPublicKey) {
       throw new Error('Ledger Solana public key does not match the registered account')
     }

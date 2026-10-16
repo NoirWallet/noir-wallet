@@ -38,7 +38,11 @@ import {
   type LedgerAccountPreview
 } from '../../services/ledger-account-preview'
 import { LedgerAccountPicker } from './LedgerAccountPicker'
-import { ledgerBitcoinAppName } from '@/lib/ledger/bitcoin-model'
+import {
+  ledgerAppName,
+  ledgerDeviceStatus,
+  type LedgerDeviceStatus
+} from '../../services/ledger-device-status'
 import { cn } from '@/lib/utils'
 import { getNewPasswordValidationError, isNewPasswordValid } from '@/core/wallet/password-policy'
 import { useWalletStore } from '@/store/wallet-store'
@@ -87,8 +91,10 @@ export function LedgerConnectPage() {
   const [birthdayHeight, setBirthdayHeight] = useState<number | undefined>()
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
-  const [deviceMessage, setDeviceMessage] = useState('Select your Ledger')
-  const [awaitingApp, setAwaitingApp] = useState(false)
+  const [deviceStatus, setDeviceStatus] = useState<LedgerDeviceStatus>({
+    message: 'Select your Ledger',
+    awaitingDevice: false
+  })
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState('')
   const [pickerFamily, setPickerFamily] = useState<LedgerSelectableFamily>('evm')
@@ -107,7 +113,6 @@ export function LedgerConnectPage() {
     families: readonly LedgerChainFamily[]
     pickers: readonly LedgerSelectableFamily[]
   } | null>(null)
-  const appReady = useRef<(() => void) | null>(null)
   const connecting = useRef(false)
   const provisioning = useRef(false)
   const wallets = ledgerCatalogWallets(catalog)
@@ -142,7 +147,6 @@ export function LedgerConnectPage() {
       disposed = true
       abort.current?.abort()
       previewAbort.current?.abort()
-      appReady.current?.()
     }
   }, [])
   useEffect(() => {
@@ -170,10 +174,12 @@ export function LedgerConnectPage() {
     if (provisioning.current) return
     abort.current?.abort()
     previewAbort.current?.abort()
-    appReady.current?.()
-    appReady.current = null
-    setAwaitingApp(false)
+    abort.current = null
+    connecting.current = false
     setReadingAccounts(false)
+    setError('')
+    setCandidates([])
+    setPicked(null)
     setExported(null)
     connection.current = null
     selectedAccounts.current = []
@@ -183,28 +189,10 @@ export function LedgerConnectPage() {
     return () => {
       abort.current?.abort()
       previewAbort.current?.abort()
-      appReady.current?.()
       connection.current = null
       selectedAccounts.current = []
     }
   }, [network])
-
-  const prepareApp = (app: string, signal: AbortSignal) => {
-    signal.throwIfAborted()
-    setDeviceMessage(`Open the ${app} app`)
-    setStep('waiting')
-    return new Promise<void>(resolve => {
-      const ready = () => {
-        signal.removeEventListener('abort', ready)
-        appReady.current = null
-        setAwaitingApp(false)
-        resolve()
-      }
-      appReady.current = ready
-      signal.addEventListener('abort', ready, { once: true })
-      setAwaitingApp(true)
-    })
-  }
 
   const refreshPreviews = (page: readonly LedgerAccountCandidate[]) => {
     previewAbort.current?.abort()
@@ -238,7 +226,7 @@ export function LedgerConnectPage() {
     family: LedgerSelectableFamily,
     mode: LedgerDerivationMode,
     start: number,
-    openApp = false
+    showWaiting = false
   ) => {
     const current = connection.current
     const controller = abort.current
@@ -253,16 +241,10 @@ export function LedgerConnectPage() {
     setPickerFamily(family)
     setPathMode(mode)
     setPageStart(start)
+    const app = ledgerAppName(family, network)
+    setDeviceStatus(ledgerDeviceStatus(app))
+    if (showWaiting) setStep('waiting')
     try {
-      if (openApp)
-        await prepareApp(
-          family === 'evm'
-            ? 'Ethereum'
-            : family === 'bitcoin'
-              ? ledgerBitcoinAppName(network)
-              : CHAIN_NAMES[family],
-          controller.signal
-        )
       controller.signal.throwIfAborted()
       const page = await loadLedgerAccountCandidates({
         transport: current.transport,
@@ -274,7 +256,9 @@ export function LedgerConnectPage() {
         network,
         logicalAccountIndex: accountIndex,
         existing: existingCredential,
-        onInteraction: () => setDeviceMessage('Check your Ledger')
+        onInteraction: interaction => {
+          if (!controller.signal.aborted) setDeviceStatus(ledgerDeviceStatus(app, interaction))
+        }
       })
       controller.signal.throwIfAborted()
       setCandidates(page)
@@ -286,8 +270,10 @@ export function LedgerConnectPage() {
         setStep('accounts')
       }
     } finally {
-      connecting.current = false
-      if (!controller.signal.aborted) setReadingAccounts(false)
+      if (abort.current === controller) {
+        connecting.current = false
+        if (!controller.signal.aborted) setReadingAccounts(false)
+      }
     }
   }
 
@@ -306,6 +292,7 @@ export function LedgerConnectPage() {
     setReadingAccounts(true)
     setError('')
     previewAbort.current?.abort()
+    setStep('waiting')
     try {
       const result = await exportLedgerWalletAccounts({
         transport: current.transport,
@@ -318,11 +305,9 @@ export function LedgerConnectPage() {
         expectedAccounts: selectedAccounts.current,
         existing: existingCredential,
         signal: controller.signal,
-        onStep: (app, confirming) =>
-          setDeviceMessage(
-            confirming ? 'Confirm the account on your Ledger' : `Open the ${app} app`
-          ),
-        prepareApp: app => prepareApp(app, controller.signal)
+        onStep: (app, interaction) => {
+          if (!controller.signal.aborted) setDeviceStatus(ledgerDeviceStatus(app, interaction))
+        }
       })
       controller.signal.throwIfAborted()
       setExported(result)
@@ -334,8 +319,10 @@ export function LedgerConnectPage() {
         setStep(current.pickers.length ? 'accounts' : 'connect')
       }
     } finally {
-      connecting.current = false
-      if (!controller.signal.aborted) setReadingAccounts(false)
+      if (abort.current === controller) {
+        connecting.current = false
+        if (!controller.signal.aborted) setReadingAccounts(false)
+      }
     }
   }
 
@@ -367,7 +354,10 @@ export function LedgerConnectPage() {
     selectedAccounts.current = []
     setExported(null)
     setError('')
-    setDeviceMessage('Select your Ledger in the browser dialog')
+    setDeviceStatus({
+      message: 'Select your Ledger in the browser dialog',
+      awaitingDevice: true
+    })
     setStep('waiting')
     try {
       const device = await discoverLedger(transport, controller.signal)
@@ -377,7 +367,7 @@ export function LedgerConnectPage() {
           family !== 'zcash' && !registeredFamilies.includes(family)
       )
       connection.current = { device, transport, families: selectedFamilies, pickers }
-      connecting.current = false
+      if (abort.current === controller) connecting.current = false
       if (pickers[0])
         await readPage(pickers[0], LEDGER_PATH_MODES[pickers[0]][0].value, parsedDeviceIndex, true)
       else await confirmAccounts()
@@ -387,7 +377,7 @@ export function LedgerConnectPage() {
         setStep('connect')
       }
     } finally {
-      connecting.current = false
+      if (abort.current === controller) connecting.current = false
     }
   }
   const chooseBirthday = async () => {
@@ -624,6 +614,7 @@ export function LedgerConnectPage() {
             selectedPath={picked?.account.derivationPath}
             previews={previews}
             busy={readingAccounts}
+            busyMessage={deviceStatus.message}
             error={error}
             onSelect={setPicked}
             onMode={mode => void readPage(pickerFamily, mode, 0)}
@@ -646,20 +637,19 @@ export function LedgerConnectPage() {
       )}
       {step === 'waiting' && (
         <>
-          <div className="page-content flex flex-col items-center justify-center gap-4 text-center">
+          <div
+            className="page-content flex flex-col items-center justify-center gap-4 text-center"
+            role="status"
+            aria-live="polite"
+          >
             <Icon
-              icon={awaitingApp ? 'lucide:usb' : 'lucide:loader-2'}
+              icon={deviceStatus.awaitingDevice ? 'lucide:usb' : 'lucide:loader-2'}
               width={32}
-              className={awaitingApp ? '' : 'animate-spin text-primary'}
+              className={deviceStatus.awaitingDevice ? 'text-primary' : 'animate-spin text-primary'}
             />
-            <p>{deviceMessage}</p>
+            <p>{deviceStatus.message}</p>
           </div>
           <div className="page-footer space-y-2">
-            {awaitingApp && (
-              <Button className="w-full" onClick={() => appReady.current?.()}>
-                Continue
-              </Button>
-            )}
             <Button className="w-full" variant="outline" onClick={cancelConnection}>
               Cancel
             </Button>

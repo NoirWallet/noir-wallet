@@ -1,6 +1,6 @@
 import { SignerEthBuilder } from '@ledgerhq/device-signer-kit-ethereum'
 import { GetAppAndVersionCommand, isSuccessCommandResult } from '@ledgerhq/device-management-kit'
-import { hexToBytes, isAddress, keccak256, type Hex } from 'viem'
+import { hexToBytes, isAddress, type Hex } from 'viem'
 import type {
   LedgerEvmSigningRequest,
   LedgerEvmSigningResponse
@@ -12,15 +12,13 @@ import {
   withLedgerSession,
   type LedgerSessionOptions
 } from './device'
+import {
+  collectLedgerEvmAccounts,
+  validateLedgerEvmAccount,
+  type LedgerEvmAccountExport
+} from './evm-account-export'
 
-export interface LedgerEvmAccountExport {
-  readonly derivationPath: string
-  readonly publicKey: string
-  readonly address: string
-  readonly deviceModel: string
-  readonly deviceName: string
-  readonly appVersion: string
-}
+export type { LedgerEvmAccountExport } from './evm-account-export'
 
 export type {
   LedgerEvmSigningRequest,
@@ -33,24 +31,6 @@ function normalizePath(path: string): string {
   return validateLedgerEvmDerivationPath(path).slice(2)
 }
 
-function validateAccount(account: { readonly address: string; readonly publicKey: string }): {
-  readonly address: string
-  readonly publicKey: string
-} {
-  if (!isAddress(account.address) || !/^(?:0x)?04[0-9a-fA-F]{128}$/.test(account.publicKey)) {
-    throw new Error('Ledger returned an invalid EVM account')
-  }
-  const rawPublicKey = account.publicKey.replace(/^0x/, '')
-  const derivedAddress = `0x${keccak256(`0x${rawPublicKey.slice(2)}` as Hex).slice(-40)}`
-  if (derivedAddress.toLowerCase() !== account.address.toLowerCase()) {
-    throw new Error('Ledger EVM public key does not match its address')
-  }
-  return {
-    publicKey: `0x${rawPublicKey}`,
-    address: account.address.toLowerCase()
-  }
-}
-
 export async function exportLedgerEvmAccounts(
   paths: readonly string[],
   options: LedgerEvmDeviceOptions
@@ -58,33 +38,24 @@ export async function exportLedgerEvmAccounts(
   const normalizedPaths = paths.map(path => ({ derivationPath: path, path: normalizePath(path) }))
   if (normalizedPaths.length === 0) return []
   return withLedgerSession(options, async ({ dmk, sessionId, device }) => {
-    const app = await dmk.sendCommand({ sessionId, command: new GetAppAndVersionCommand() })
-    if (!isSuccessCommandResult(app) || app.data.name !== 'Ethereum') {
-      throw new Error('Open the Ethereum app on your Ledger device')
-    }
     const signer = new SignerEthBuilder({ dmk, sessionId }).build()
-    const results: LedgerEvmAccountExport[] = []
-    for (const { derivationPath, path } of normalizedPaths) {
-      options.signal?.throwIfAborted()
-      const account = validateAccount(
-        await runLedgerAction(
+    return collectLedgerEvmAccounts({
+      paths: normalizedPaths,
+      readAddress: path =>
+        runLedgerAction(
           signer.getAddress(path, { checkOnDevice: false }),
           options.onInteraction,
           'evm_get_address',
           options.signal
-        )
-      )
-      results.push(
-        Object.freeze({
-          derivationPath,
-          ...account,
-          deviceModel: device.deviceModel.model,
-          deviceName: getLedgerDeviceName(device.deviceModel.model, device.name),
-          appVersion: app.data.version
-        })
-      )
-    }
-    return results
+        ),
+      readApp: async () => {
+        const app = await dmk.sendCommand({ sessionId, command: new GetAppAndVersionCommand() })
+        return isSuccessCommandResult(app) ? app.data : null
+      },
+      deviceModel: device.deviceModel.model,
+      deviceName: getLedgerDeviceName(device.deviceModel.model, device.name),
+      signal: options.signal
+    })
   })
 }
 
@@ -129,14 +100,19 @@ export async function exportLedgerEvmAccount(
       'evm_get_address',
       input.signal
     )
-    const verified = validateAccount(account)
+    const verified = validateLedgerEvmAccount(account)
+    input.signal?.throwIfAborted()
     const app = await dmk.sendCommand({ sessionId, command: new GetAppAndVersionCommand() })
+    input.signal?.throwIfAborted()
+    if (!isSuccessCommandResult(app) || app.data.name !== 'Ethereum') {
+      throw new Error('Unable to verify the Ledger Ethereum app')
+    }
     return Object.freeze({
       derivationPath,
       ...verified,
       deviceModel: device.deviceModel.model,
       deviceName: getLedgerDeviceName(device.deviceModel.model, device.name),
-      appVersion: app.status === 'SUCCESS' ? app.data.version : 'unknown'
+      appVersion: app.data.version
     })
   })
 }

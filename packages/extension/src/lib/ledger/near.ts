@@ -1,10 +1,7 @@
 import {
   Apdu,
-  GetAppAndVersionCommand,
-  isSuccessCommandResult,
   type DeviceManagementKit,
-  type DeviceSessionId,
-  type GetAppAndVersionResponse
+  type DeviceSessionId
 } from '@ledgerhq/device-management-kit'
 import { ed25519 } from '@noble/curves/ed25519'
 import { base64ToBytes, bytesToBase64 } from '@/lib/bytes'
@@ -14,7 +11,12 @@ import type {
   LedgerNearSigningRequest,
   LedgerNearSigningResponse
 } from '@/core/keyring/protocol/ledger-signing'
-import { getLedgerDeviceName, type LedgerSessionOptions, withLedgerSession } from './device'
+import {
+  getLedgerDeviceName,
+  openLedgerApp,
+  type LedgerSessionOptions,
+  withLedgerSession
+} from './device'
 import { ledgerNearPathBytes, ledgerNearPublicKeyParameters } from './near-model'
 
 const NEAR_CLA = 0x80
@@ -82,18 +84,12 @@ async function readNearPublicKey(
 async function assertNearApp(
   dmk: DeviceManagementKit,
   sessionId: DeviceSessionId,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  onInteraction?: (interaction: string) => void
 ): Promise<string> {
-  signal?.throwIfAborted()
-  const app = await dmk.sendCommand<GetAppAndVersionResponse, void, void>({
-    sessionId,
-    command: new GetAppAndVersionCommand()
-  })
-  if (!isSuccessCommandResult(app) || app.data.name !== 'NEAR') {
-    throw new Error('Open the NEAR app on your Ledger device')
-  }
+  const appVersion = await openLedgerApp(dmk, sessionId, 'NEAR', signal, onInteraction)
   await sendNearApdu(dmk, sessionId, GET_VERSION, 0, new Uint8Array(), signal, 0)
-  return app.data.version
+  return appVersion
 }
 
 function nearPublicKey(bytes: Uint8Array): string {
@@ -108,7 +104,7 @@ export async function exportLedgerNearAccount(
 ): Promise<LedgerNearAccountExport> {
   const normalizedPath = normalizePath(path)
   return withLedgerSession(options, async ({ dmk, sessionId, device }) => {
-    const appVersion = await assertNearApp(dmk, sessionId, options.signal)
+    const appVersion = await assertNearApp(dmk, sessionId, options.signal, options.onInteraction)
     const publicKeyBytes = await readNearPublicKey(
       dmk,
       sessionId,
@@ -135,7 +131,7 @@ export async function exportLedgerNearAccounts(
   const normalizedPaths = paths.map(normalizePath)
   if (normalizedPaths.length === 0) return []
   return withLedgerSession(options, async ({ dmk, sessionId, device }) => {
-    const appVersion = await assertNearApp(dmk, sessionId, options.signal)
+    const appVersion = await assertNearApp(dmk, sessionId, options.signal, options.onInteraction)
     const results: LedgerNearAccountExport[] = []
     for (const path of normalizedPaths) {
       options.signal?.throwIfAborted()
@@ -177,7 +173,7 @@ export async function signLedgerNearRequest(
     throw new Error('Ledger NEAR message requires a NEP-413 payload')
   }
   return withLedgerSession(options, async ({ dmk, sessionId }) => {
-    await assertNearApp(dmk, sessionId, options.signal)
+    await assertNearApp(dmk, sessionId, options.signal, options.onInteraction)
     const actualPublicKeyBytes = await readNearPublicKey(
       dmk,
       sessionId,

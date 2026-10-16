@@ -2,6 +2,9 @@ import {
   DeviceActionStatus,
   DeviceManagementKitBuilder,
   DeviceModelId,
+  GetAppAndVersionCommand,
+  OpenAppDeviceAction,
+  isSuccessCommandResult,
   type DeviceManagementKit,
   type DiscoveredDevice,
   type ExecuteDeviceActionReturnType,
@@ -22,6 +25,7 @@ import type { Network } from '@/types'
 import type { LedgerPcztSignatures, LedgerSigningPayload } from '@/core/worker/types'
 import { logger } from '@/lib/logger'
 import { getLedgerAccountPath } from '@/lib/zcash-derivation'
+import { openAndVerifyLedgerApp } from './app-session'
 
 export type LedgerTransport = 'usb' | 'bluetooth'
 
@@ -348,6 +352,33 @@ export async function runLedgerAction<Output, ActionError, Intermediate>(
 }
 
 const runAction = runLedgerAction
+
+export async function openLedgerApp(
+  dmk: DeviceManagementKit,
+  sessionId: string,
+  appName: string,
+  signal?: AbortSignal,
+  onInteraction?: (interaction: string) => void
+): Promise<string> {
+  return openAndVerifyLedgerApp(
+    appName,
+    name =>
+      runLedgerAction(
+        dmk.executeDeviceAction({
+          sessionId,
+          deviceAction: new OpenAppDeviceAction({ input: { appName: name } })
+        }),
+        onInteraction,
+        'open_app',
+        signal
+      ),
+    async () => {
+      const app = await dmk.sendCommand({ sessionId, command: new GetAppAndVersionCommand() })
+      return isSuccessCommandResult(app) ? app.data : null
+    },
+    signal
+  )
+}
 
 export async function discoverLedger(
   transport: LedgerTransport,

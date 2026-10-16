@@ -25,6 +25,7 @@ export function LedgerAccountPicker(props: {
   readonly selectedPath?: string
   readonly previews: Readonly<Record<string, LedgerAccountPreview>>
   readonly busy: boolean
+  readonly busyMessage: string
   readonly error: string
   readonly onMode: (mode: LedgerDerivationMode) => void
   readonly onPage: (start: number) => void
@@ -65,7 +66,7 @@ export function LedgerAccountPicker(props: {
       <div className="space-y-1.5" aria-busy={props.busy}>
         {props.busy && (
           <p role="status" className="py-4 text-sm text-muted">
-            Reading accounts
+            {props.busyMessage}
           </p>
         )}
         {props.candidates.map(candidate => {

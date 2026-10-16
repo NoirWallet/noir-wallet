@@ -3,7 +3,6 @@ import {
   DefaultWallet,
   SignerBtcBuilder
 } from '@ledgerhq/device-signer-kit-bitcoin'
-import { GetAppAndVersionCommand } from '@ledgerhq/device-management-kit'
 import { Buffer } from 'buffer'
 import { Psbt } from 'bitcoinjs-lib'
 import type {
@@ -12,13 +11,14 @@ import type {
 } from '@/core/keyring/protocol/ledger-signing'
 import {
   getLedgerDeviceName,
+  openLedgerApp,
   runLedgerAction,
   withLedgerSession,
   type LedgerSessionOptions
 } from './device'
 import {
-  assertLedgerBitcoinApp,
   deriveLedgerBitcoinAddress,
+  ledgerBitcoinAppName,
   ledgerBip322MessagePsbt,
   mergeLedgerBitcoinPartialSignature,
   networkConfig,
@@ -71,9 +71,13 @@ export async function exportLedgerBitcoinAccount(
   const derivationPath = input.derivationPath ?? accountPath(input.network, input.accountIndex)
   const path = normalizeAccountPath(derivationPath, input.network)
   return withLedgerSession(input, async ({ dmk, sessionId, device }) => {
-    const app = await dmk.sendCommand({ sessionId, command: new GetAppAndVersionCommand() })
-    if (app.status !== 'SUCCESS') throw new Error('Unable to read Ledger Bitcoin App version')
-    assertLedgerBitcoinApp(input.network, app.data.name)
+    const appVersion = await openLedgerApp(
+      dmk,
+      sessionId,
+      ledgerBitcoinAppName(input.network),
+      input.signal,
+      input.onInteraction
+    )
     const signer = new SignerBtcBuilder({ dmk, sessionId }).build()
     const fingerprint = await runLedgerAction(
       signer.getMasterFingerprint({ skipOpenApp: true }),
@@ -106,7 +110,7 @@ export async function exportLedgerBitcoinAccount(
       publicKey: derived.publicKey,
       deviceModel: device.deviceModel.model,
       deviceName: getLedgerDeviceName(device.deviceModel.model, device.name),
-      appVersion: app.data.version
+      appVersion
     })
   })
 }
@@ -121,9 +125,13 @@ export async function exportLedgerBitcoinAccounts(
     throw new Error('Duplicate Ledger Bitcoin account path')
   }
   return withLedgerSession(options, async ({ dmk, sessionId, device }) => {
-    const app = await dmk.sendCommand({ sessionId, command: new GetAppAndVersionCommand() })
-    if (app.status !== 'SUCCESS') throw new Error('Unable to read Ledger Bitcoin App version')
-    assertLedgerBitcoinApp(options.network, app.data.name)
+    const appVersion = await openLedgerApp(
+      dmk,
+      sessionId,
+      ledgerBitcoinAppName(options.network),
+      options.signal,
+      options.onInteraction
+    )
     const signer = new SignerBtcBuilder({ dmk, sessionId }).build()
     const fingerprint = await runLedgerAction(
       signer.getMasterFingerprint({ skipOpenApp: true }),
@@ -163,7 +171,7 @@ export async function exportLedgerBitcoinAccounts(
           publicKey: derived.publicKey,
           deviceModel,
           deviceName,
-          appVersion: app.data.version
+          appVersion
         })
       )
     }
@@ -179,10 +187,14 @@ export async function signLedgerBitcoinRequest(
   if (!/^[0-9a-fA-F]{8}$/.test(request.masterFingerprintHex))
     throw new Error('Invalid Ledger Bitcoin fingerprint')
   return withLedgerSession(options, async ({ dmk, sessionId }) => {
-    const app = await dmk.sendCommand({ sessionId, command: new GetAppAndVersionCommand() })
-    if (app.status !== 'SUCCESS') throw new Error('Unable to read Ledger Bitcoin App version')
-    assertLedgerBitcoinApp(request.network, app.data.name)
-    if (request.kind === 'bip322-simple' && !supportsLedgerBitcoinBip322(app.data.version)) {
+    const appVersion = await openLedgerApp(
+      dmk,
+      sessionId,
+      ledgerBitcoinAppName(request.network),
+      options.signal,
+      options.onInteraction
+    )
+    if (request.kind === 'bip322-simple' && !supportsLedgerBitcoinBip322(appVersion)) {
       throw new Error('Ledger Bitcoin App 2.1.3 or newer is required for BIP322 message signing')
     }
     const signer = new SignerBtcBuilder({ dmk, sessionId }).build()
