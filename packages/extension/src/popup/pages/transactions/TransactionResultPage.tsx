@@ -30,6 +30,8 @@ import { resolveWalletSnapshotRecoveryTarget } from '@/lib/transaction-replaceme
 import { ResyncWalletContent } from '../../components/account/AccountModals'
 import { openModal } from '../../provider/ModalManager'
 import { accountManager } from '@/core/wallet/account-manager'
+import { loadWalletDb } from '@/lib/indexed-db'
+import { isWalletSnapshotIntegrityError } from '@/lib/wallet-snapshot-errors'
 
 const SNAPSHOT_RECOVERY_GUIDANCE =
   'Select the account used for this transaction, then open its details and choose Resync wallet.'
@@ -252,6 +254,16 @@ export function TransactionResultPage() {
           accountId={target.accountId}
           birthdayHeight={target.birthdayHeight}
           onConfirm={async height => {
+            let stillCorrupt = false
+            try {
+              await loadWalletDb(`${target.network}_${target.walletId}`)
+            } catch (error) {
+              if (!isWalletSnapshotIntegrityError(error)) throw error
+              stillCorrupt = true
+            }
+            if (!stillCorrupt) {
+              throw new Error('Wallet data has changed. Close this page and try sending again.')
+            }
             const currentResult = useTransactionResultStore.getState().data
             const currentWallet = useWalletStore.getState()
             const record =

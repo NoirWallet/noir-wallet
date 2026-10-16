@@ -6,6 +6,7 @@
  */
 
 import { redactSensitiveText } from './diagnostic-log'
+import { isWalletSnapshotIntegrityError } from './wallet-snapshot-errors'
 
 interface ErrorMapping {
   pattern: RegExp
@@ -21,12 +22,13 @@ const LOCAL_WALLET_RPC_ERROR_PATTERN =
 export const WALLET_SNAPSHOT_RECOVERY_MESSAGE =
   'Wallet data is incomplete. Resync this wallet before sending again.'
 
+const ORIGINAL_ERROR_SEPARATOR = '\n\nOriginal error: '
+
 export function isWalletSnapshotRecoveryError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error)
-  return (
-    /Missing chunk \d+\/\d+ for key:/.test(message) ||
-    message.includes('Invalid wallet database snapshot:') ||
-    message.includes(WALLET_SNAPSHOT_RECOVERY_MESSAGE)
+  const prefix = `${WALLET_SNAPSHOT_RECOVERY_MESSAGE}${ORIGINAL_ERROR_SEPARATOR}`
+  return isWalletSnapshotIntegrityError(
+    message.startsWith(prefix) ? message.slice(prefix.length) : message
   )
 }
 
@@ -285,7 +287,7 @@ const ERROR_MAPPINGS: ErrorMapping[] = [
 
   // --- Persist / Storage ---
   {
-    pattern: /persist timeout/i,
+    pattern: /persist timeout|Failed to serialize wallet database snapshot:/i,
     message: 'Failed to save wallet data. Please try again.',
     retryable: true
   },
@@ -308,8 +310,6 @@ export interface ClassifiedError {
   technicalMessage: string
   retryable: boolean
 }
-
-const ORIGINAL_ERROR_SEPARATOR = '\n\nOriginal error: '
 
 export function formatErrorMessage(message: string, originalError: string): string {
   const detail = redactSensitiveText(originalError)

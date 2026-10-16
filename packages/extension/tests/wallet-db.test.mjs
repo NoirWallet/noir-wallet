@@ -3,6 +3,7 @@ import { test } from 'node:test'
 import {
   closeConnection,
   deleteWalletDb,
+  hasWalletDb,
   loadWalletDb,
   saveWalletDb
 } from '../src/lib/indexed-db.ts'
@@ -18,6 +19,7 @@ function installDatabase(t) {
   let transactionTail = Promise.resolve()
   let synchronousFailure
   let asynchronousFailure
+  let openFailure
 
   const database = {
     close() {},
@@ -122,8 +124,14 @@ function installDatabase(t) {
 
   globalThis.indexedDB = {
     open() {
-      const request = { result: database, onsuccess: null, onerror: null }
-      setImmediate(() => request.onsuccess?.())
+      const request = { result: database, error: null, onsuccess: null, onerror: null }
+      setImmediate(() => {
+        if (openFailure) {
+          request.error = openFailure
+          openFailure = undefined
+          request.onerror?.()
+        } else request.onsuccess?.()
+      })
       return request
     }
   }
@@ -138,6 +146,10 @@ function installDatabase(t) {
   })
   return {
     records,
+    failOpen(error) {
+      closeConnection()
+      openFailure = error
+    },
     failPut(key, error, synchronous = true) {
       if (synchronous) synchronousFailure = { key, error }
       else asynchronousFailure = { key, error }
@@ -199,10 +211,14 @@ test('an empty serialization cannot overwrite an existing wallet snapshot', asyn
   installDatabase(t)
   await saveWalletDb(walletKey, chunks())
 
-  await assert.rejects(saveWalletDb(walletKey, []), /Invalid wallet database snapshot/)
+  await assert.rejects(saveWalletDb(walletKey, []), /Failed to serialize wallet database snapshot/)
   await assert.rejects(
     saveWalletDb(walletKey, new Uint8Array()),
-    /Invalid wallet database snapshot/
+    /Failed to serialize wallet database snapshot/
+  )
+  await assert.rejects(
+    saveWalletDb(walletKey, [new Uint8Array([9]), new Uint8Array()]),
+    /Failed to serialize wallet database snapshot/
   )
   assert.deepEqual(await loadWalletDb(walletKey), expectedBytes)
 })
@@ -215,6 +231,57 @@ test('a missing chunk rejects without deleting the remaining recovery evidence',
   await assert.rejects(loadWalletDb(walletKey), /Missing chunk 0\/6/)
   assert.equal(records.get(walletKey).chunkCount, 6)
   assert.deepEqual(records.get(`${walletKey}::c::1`), new Uint8Array([2]))
+})
+
+test('a queued replacement can repair an incomplete snapshot before recovery is required', async t => {
+  const { records } = installDatabase(t)
+  await saveWalletDb(walletKey, chunks())
+  records.delete(`${walletKey}::c::0`)
+
+  const [loaded] = await Promise.all([
+    loadWalletDb(walletKey),
+    saveWalletDb(walletKey, expectedBytes)
+  ])
+
+  assert.deepEqual(loaded, expectedBytes)
+})
+
+test('an incompatible snapshot read cannot delete a concurrently saved compatible snapshot', async t => {
+  const { records } = installDatabase(t)
+  records.set(walletKey, { metadata: { version: 0 }, data: expectedBytes })
+
+  const [loaded] = await Promise.all([
+    loadWalletDb(walletKey),
+    saveWalletDb(walletKey, expectedBytes)
+  ])
+
+  assert.equal(loaded, null)
+  assert.deepEqual(await loadWalletDb(walletKey), expectedBytes)
+})
+
+test('storage opening failures are not mistaken for an absent snapshot', async t => {
+  const database = installDatabase(t)
+  for (const lookup of [loadWalletDb, hasWalletDb]) {
+    const error = new DOMException('Storage unavailable', 'UnknownError')
+    database.failOpen(error)
+    await assert.rejects(lookup(walletKey), failure => failure === error)
+  }
+  assert.equal(await loadWalletDb(walletKey), null)
+  assert.equal(await hasWalletDb(walletKey), false)
+})
+
+test('snapshot existence checks propagate read failures and handle malformed entries', async t => {
+  const database = installDatabase(t)
+  await saveWalletDb(walletKey, chunks())
+  assert.equal(await hasWalletDb(walletKey), true)
+  const error = new DOMException('Storage unavailable', 'UnknownError')
+  database.failRead(walletKey, error)
+  await assert.rejects(hasWalletDb(walletKey), failure => failure === error)
+
+  for (const entry of [null, 0, 'invalid', {}, { metadata: { version: 1 }, data: null }]) {
+    database.records.set(walletKey, entry)
+    assert.equal(await hasWalletDb(walletKey), false)
+  }
 })
 
 test('malformed manifests and truncated chunks reject instead of loading incomplete bytes', async t => {

@@ -22,7 +22,10 @@ const failedTransaction = {
 test('snapshot integrity failures require recovery instead of a blind retry', () => {
   for (const raw of [
     'Missing chunk 0/6 for key: mainnet_wallet_a',
-    'Invalid wallet database snapshot: chunk 0 has the wrong size'
+    'Invalid wallet database snapshot: inconsistent chunk manifest',
+    'Invalid wallet database snapshot: invalid chunk 0/6',
+    'Invalid wallet database snapshot: chunk 0/6 size mismatch',
+    'Invalid wallet database snapshot: invalid snapshot bytes'
   ]) {
     const classified = classifyError(raw)
     assert.equal(
@@ -34,10 +37,30 @@ test('snapshot integrity failures require recovery instead of a blind retry', ()
     assert.equal(isWalletSnapshotRecoveryError(raw), true)
     assert.deepEqual(classifyError(classified.userMessage), classified)
   }
+})
 
-  assert.equal(isWalletSnapshotRecoveryError(WALLET_SNAPSHOT_RECOVERY_MESSAGE), true)
-  assert.equal(classifyError(WALLET_SNAPSHOT_RECOVERY_MESSAGE).retryable, false)
-  assert.equal(isWalletSnapshotRecoveryError('Network connection failed'), false)
+test('transient or write-side errors do not recommend deleting scan state', () => {
+  for (const raw of [
+    'Failed to serialize wallet database snapshot: empty snapshot',
+    'Failed to serialize wallet database snapshot: invalid or empty chunk',
+    'Invalid wallet database snapshot: empty snapshot',
+    'Invalid wallet database snapshot: unknown failure',
+    'QuotaExceededError: Storage full',
+    'DataCloneError: Cannot clone snapshot',
+    'persist timeout',
+    'Network connection failed',
+    'WALLET_DIRTY',
+    WALLET_SNAPSHOT_RECOVERY_MESSAGE
+  ]) {
+    assert.equal(isWalletSnapshotRecoveryError(raw), false, raw)
+    const classified = classifyError(raw)
+    assert.equal(classified.retryable, true, raw)
+    assert.equal(isWalletSnapshotRecoveryError(classified.userMessage), false, raw)
+  }
+  assert.match(
+    classifyError('Failed to serialize wallet database snapshot: empty snapshot').userMessage,
+    /^Failed to save wallet data\. Please try again\./
+  )
 })
 
 test('resync target must be uniquely identified by the failed transaction and active network', () => {

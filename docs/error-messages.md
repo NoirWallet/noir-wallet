@@ -91,12 +91,16 @@ When the current wallet entry or its credentials are missing, the unlock page ca
 
 ## Storage
 
-| User message                                                        | Trigger                                  | Retryable |
-| ------------------------------------------------------------------- | ---------------------------------------- | --------- |
-| Wallet data is incomplete. Resync this wallet before sending again. | Missing or invalid wallet snapshot chunk | No        |
-| Failed to save wallet data. Please try again.                       | Wallet data save timeout                 | Yes       |
+| User message                                                        | Trigger                                                        | Retryable |
+| ------------------------------------------------------------------- | -------------------------------------------------------------- | --------- |
+| Wallet data is incomplete. Resync this wallet before sending again. | Persisted snapshot integrity failure confirmed by a fresh read | No        |
+| Failed to save wallet data. Please try again.                       | Wallet data save timeout or invalid/empty serialization        | Yes       |
 
-On a transaction failure caused by an incomplete snapshot, the result page offers the existing Resync confirmation when the transaction record identifies one wallet and account on the active network and has no broadcast hash. If that record cannot identify the affected account, the page directs the user to select it and open its account details. Resync requires an unlocked wallet and a valid start height; it rebuilds the wallet snapshot by scanning from that height. The original storage error remains in diagnostics.
+Snapshot reads validate the manifest, chunk types and sizes, and stored bytes. A missing or invalid chunk, inconsistent manifest, or invalid stored bytes are read again in a new transaction before requiring recovery. Storage availability errors and failed serialization do not imply that the persisted snapshot is corrupt. Failed writes preserve the previous snapshot.
+
+On a transaction failure caused by a confirmed incomplete snapshot, the result page offers the existing Resync confirmation when the transaction record identifies one wallet and account on the active network and has no broadcast hash. Confirmation checks the snapshot again and stops if it is now readable or absent, or if storage is unavailable. If the transaction record cannot identify the affected account, the page directs the user to select it and open its account details. Resync requires an unlocked wallet and a valid start height; it rebuilds the wallet snapshot by scanning from that height. The original storage error remains visible after privacy redaction.
+
+Unavailable balance metadata first reloads a persisted snapshot and starts catch-up sync. If no snapshot is available or metadata remains unavailable after that attempt, the message asks for an extension restart. Paused sync similarly recommends checking the connection and restarting the extension, without assuming scan corruption.
 
 ## ZNS Names
 

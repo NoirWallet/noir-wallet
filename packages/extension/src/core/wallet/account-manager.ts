@@ -75,8 +75,7 @@ import { isHardwareKeySource } from '@/lib/hardware-capabilities'
 import { getWalletsNeedingSecretPhraseBackup } from './secret-phrase-backup'
 import {
   runWithSpendabilityRecovery,
-  runSpendabilitySnapshotRefresh,
-  SPENDABILITY_MANUAL_RESYNC_REQUIRED_MESSAGE
+  runSpendabilitySnapshotRefresh
 } from './spendability-recovery'
 import { lookupBlockHeightByTime } from '../zcash/date-block-lookup'
 import { fetchBlockTime } from '@/config/rpc-registry-client'
@@ -2411,6 +2410,13 @@ export class AccountManager {
 
     const recovery = runSpendabilitySnapshotRefresh({
       hasAttempted: () => this.spendabilityRecoveryAttemptedWalletIds.has(walletId),
+      hasPersistedSnapshot: () => {
+        const wallet = this.store.getWallet(walletId)
+        if (!wallet?.accounts.some(candidate => candidate.id === accountId)) {
+          throw new Error('No wallet data found')
+        }
+        return hasWalletDb(`${this.network}_${walletId}`)
+      },
       markAttempted: () => this.spendabilityRecoveryAttemptedWalletIds.add(walletId),
       clearAttempt: () => this.spendabilityRecoveryAttemptedWalletIds.delete(walletId),
       reloadPersistedSnapshot: async () => {
@@ -2424,9 +2430,6 @@ export class AccountManager {
           accountId
         )
         const dbKey = `${this.network}_${walletId}`
-        if (!(await hasWalletDb(dbKey))) {
-          throw new Error(SPENDABILITY_MANUAL_RESYNC_REQUIRED_MESSAGE)
-        }
         await this.reloadWalletRuntime(walletId, {
           mode: 'spendability',
           dbKey,

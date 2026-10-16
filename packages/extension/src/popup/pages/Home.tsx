@@ -346,7 +346,7 @@ export function Home() {
           )}
           {!isSyncing && syncReason === 'sync_stall' && (
             <div className="ml-auto absolute top-3 right-4 max-w-[140px]">
-              <Tooltip content="Sync paused. Retry later or use Resync from account settings.">
+              <Tooltip content="Sync paused. Check your connection and restart the extension if it persists.">
                 <div className="flex items-center gap-1 text-[10px] text-warning bg-warning/10 px-2 py-0.5 rounded-full">
                   <Icon icon="lucide:alert-triangle" width={10} height={10} />
                   <span>Sync paused</span>
