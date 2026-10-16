@@ -343,7 +343,7 @@ The complete operational runbook is in `docs/release-workflow.md`.
 
 - `packages/extension/package.json` is the extension version source of truth.
 - `CHANGELOG.md` is the source of truth for production GitHub Release notes. Before building a production candidate, add exactly one non-empty `## [version]` section matching the extension version.
-- V2 pull requests affecting runtime, WASM, build inputs, or their test loaders produce read-only, credential-free development artifacts. Tests, docs, and maintenance scripts alone do not start the extension preview workflow.
+- V2 pull requests affecting extension code, tests, WASM, or related build inputs automatically run Extension CI with core tests, type checking, and one development ZIP. New commits cancel older runs; no preview label is needed. Repository PR builds require `RHEA_SWAP_ACCESS_TOKEN` for Swap, while fork previews receive no repository secrets. The trusted reporter on `main` handles preview downloads and retention; see the release runbook.
 - Run the trusted manual release workflow from `main` with mode `beta` and `source_ref=v2` (or an exact V2 source ref) to prepare a V2 Beta. The release build requires `RHEA_SWAP_ACCESS_TOKEN`; development PR artifacts are not Beta candidates.
 - A `v2` push or tag does not publish an extension. Production candidate acceptance and publication use the separate trusted workflows on `main`.
 - The extension build verifies both packaged WASM integrity manifests. Browser and live tests are local tools, not release gates. Each V2 release contains one ZIP for runtime Mainnet/Testnet Mode and `SHA256SUMS`.
@@ -360,7 +360,7 @@ The complete operational runbook is in `docs/release-workflow.md`.
 - Exclude internal refactors, tests, CI changes, dependency updates, and implementation details unless they materially affect users.
 - Keep the copy plain, specific, and user-friendly. The runtime schema currently permits 1–8 bullets of at most 120 characters each so the popup remains readable.
 
-Do not change release behavior based only on this summary; verify both the V2 PR workflow and the trusted manual workflow on `main` before editing CI.
+Do not change release behavior based only on this summary; verify the V2 PR workflow and the trusted manual and reporter workflows on `main` before editing CI.
 
 ## Implementation Rules
 

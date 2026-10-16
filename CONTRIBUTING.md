@@ -12,6 +12,8 @@ Target `main` for V1 maintenance and `v2` for V2 development. Only PRs targeting
 
 When a fix is needed in both versions, open one pull request from each target branch and link them to each other. Use English Conventional Commit titles and describe the behavior and verification relevant to that version.
 
+Pull requests changing extension code, tests, WASM, or related build inputs automatically run **Extension CI** with core tests, type checking, and a development ZIP. No preview label is needed; new commits cancel older runs. Repository V2 previews include the configured Swap access token, while fork previews receive no repository secrets and cannot use Swap. Download the latest package from the PR comment or Actions; see [V2 preview downloads](./docs/release-workflow.md#routine-previews).
+
 For SDK changes, follow the [SDK contribution checks](./packages/sdk/CONTRIBUTING.md). Root `pnpm test` covers the wallet core suite separately.
 
 Maintainers review pull requests and verify affected wallet flows before merging. Browser, hardware, and real transaction checks require the relevant environment or device; report any checks that could not be run.
