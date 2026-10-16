@@ -66,6 +66,8 @@ import {
 import { parseDiagnosticLogDraft } from '@/lib/diagnostic-log'
 import { appendDiagnosticLog, getDiagnosticLogSalt } from '@/lib/diagnostic-log-store'
 import { prepareTransparentSpend } from '@/core/wallet/transparent-spend-preflight'
+import { handleWalletConnectMessage, initializeWalletConnect, walletConnect } from './walletconnect'
+import { isExtensionPageSender } from '@/lib/extension-sender'
 import { readZeroIndexerEnabled, writeZeroIndexerEnabled } from '@/config/zero-indexer-settings'
 import { applyZeroIndexerOptions } from '@/core/worker/client'
 import {
@@ -77,6 +79,7 @@ import {
 } from './zero-indexer-node-settings'
 
 logger.configureDiagnostics(getDiagnosticLogSalt, appendDiagnosticLog)
+initializeWalletConnect()
 
 export { zcashTxMonitor }
 
@@ -464,6 +467,21 @@ chrome.alarms.onAlarm.addListener(alarm => {
 // Don't initialize dappHandler here - wait until wallet unlocked
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (
+    typeof message?.type === 'string' &&
+    message.type.startsWith('WALLETCONNECT_') &&
+    message.type !== 'WALLETCONNECT_UPDATED'
+  ) {
+    handleWalletConnectMessage(message, sender)
+      .then(sendResponse)
+      .catch((error: unknown) =>
+        sendResponse({
+          success: false,
+          error: error instanceof Error ? error.message : 'WalletConnect request failed'
+        })
+      )
+    return true
+  }
   if (message.type === 'GET_DIAGNOSTIC_LOG_SALT') {
     if (sender.id !== chrome.runtime.id) return false
     getDiagnosticLogSalt()
@@ -725,6 +743,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           await accountManager.purgeWalletRemnants(walletId)
         }
         await rehydrateWalletStore()
+        await walletConnect.accountChanged()
       })
       .then(() => sendResponse({ success: true }))
       .catch(error => sendResponse({ error: error.message }))
@@ -775,6 +794,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           .then(() => handleAccountSwitched())
 
     notifyPromise
+      .then(() => walletConnect.accountChanged())
       .then(() => sendResponse({ success: true }))
       .catch(error => sendResponse({ error: error.message }))
     return true
@@ -904,6 +924,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === 'GET_PENDING_REQUEST') {
+    if (!isExtensionPageSender(sender)) {
+      sendResponse({ error: 'Not authorized' })
+      return true
+    }
     const request = pendingRequestsManager.get(message.requestId)
     if (request) {
       sendResponse({ request })
@@ -1327,6 +1351,7 @@ async function handleWalletUnlock(password: string): Promise<any> {
 async function handleWalletLock(): Promise<void> {
   try {
     await accountManager.lock()
+    await walletConnect.accountChanged()
     await dappHandler.notifyAccountsChanged([])
     dappHandler.clearPermissions()
 
@@ -1342,6 +1367,7 @@ async function handleWalletLock(): Promise<void> {
  */
 async function handleAccountSwitched(): Promise<void> {
   try {
+    await walletConnect.accountChanged()
     const account = accountManager.getCurrentAccount()
 
     if (account) {

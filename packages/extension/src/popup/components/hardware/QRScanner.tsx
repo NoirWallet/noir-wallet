@@ -9,7 +9,9 @@ const MAX_SCAN_DIMENSION = 640
 
 interface QRScannerProps {
   /** Called once when a complete (possibly multi-frame) UR has been assembled */
-  onScan: (ur: UR) => void
+  onScan?: (ur: UR) => void
+  /** Plain-text QR mode for full-tab flows outside Keystone signing. */
+  onTextScan?: (text: string) => void
   className?: string
 }
 
@@ -20,13 +22,15 @@ type CameraState = 'starting' | 'active' | 'denied' | 'error'
  * Designed for full-tab pages (camera permission prompts don't survive
  * in popup windows).
  */
-export function QRScanner({ onScan, className }: QRScannerProps) {
+export function QRScanner({ onScan, onTextScan, className }: QRScannerProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const decoderRef = useRef(new URDecoder())
   const completedRef = useRef(false)
   const onScanRef = useRef(onScan)
   onScanRef.current = onScan
+  const onTextScanRef = useRef(onTextScan)
+  onTextScanRef.current = onTextScan
 
   const [cameraState, setCameraState] = useState<CameraState>('starting')
   const [progress, setProgress] = useState(0)
@@ -58,6 +62,11 @@ export function QRScanner({ onScan, className }: QRScannerProps) {
     if (!code?.data) return
 
     const text = code.data.trim()
+    if (onTextScanRef.current) {
+      completedRef.current = true
+      onTextScanRef.current(text)
+      return
+    }
     if (!text.toLowerCase().startsWith('ur:')) {
       setFrameError('Not a Keystone QR code')
       return
@@ -78,7 +87,7 @@ export function QRScanner({ onScan, className }: QRScannerProps) {
     if (decoder.isComplete()) {
       if (decoder.isSuccess()) {
         completedRef.current = true
-        onScanRef.current(decoder.resultUR())
+        onScanRef.current?.(decoder.resultUR())
       } else {
         setFrameError(decoder.resultError() || 'Failed to decode QR sequence')
         decoderRef.current = new URDecoder()
@@ -108,6 +117,8 @@ export function QRScanner({ onScan, className }: QRScannerProps) {
         setCameraState('active')
         timer = setInterval(processFrame, SCAN_INTERVAL_MS)
       } catch (e) {
+        stream?.getTracks().forEach(t => t.stop())
+        if (videoRef.current) videoRef.current.srcObject = null
         if (cancelled) return
         const name = e instanceof DOMException ? e.name : ''
         setCameraState(name === 'NotAllowedError' ? 'denied' : 'error')
@@ -120,6 +131,7 @@ export function QRScanner({ onScan, className }: QRScannerProps) {
       cancelled = true
       if (timer) clearInterval(timer)
       stream?.getTracks().forEach(t => t.stop())
+      if (videoRef.current) videoRef.current.srcObject = null
     }
   }, [processFrame])
 
@@ -132,9 +144,11 @@ export function QRScanner({ onScan, className }: QRScannerProps) {
             {cameraState === 'denied' ? 'Camera access denied' : 'Camera unavailable'}
           </p>
           <p className="text-xs text-muted text-center">
-            {cameraState === 'denied'
-              ? 'Allow camera access for this extension in your browser settings, then reload this page.'
-              : 'Could not start the camera. Make sure another app is not using it.'}
+            {onTextScan
+              ? 'Paste the link below or try scanning again.'
+              : cameraState === 'denied'
+                ? 'Allow camera access for this extension in your browser settings, then reload this page.'
+                : 'Could not start the camera. Make sure another app is not using it.'}
           </p>
         </div>
       </div>

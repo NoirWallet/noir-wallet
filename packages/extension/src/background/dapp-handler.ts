@@ -55,6 +55,8 @@ import { isTransparentZcashAddress } from '@/lib/zcash-memo'
 import { shouldAutoConnectDApp } from '@/config/dapp-matches'
 import { getFundingSourceUnavailableReason } from '@/lib/funding-source'
 import { prepareTransparentSpend } from '@/core/wallet/transparent-spend-preflight'
+import type { WalletConnectAuthorization } from '@/core/walletconnect/controller'
+import { isExtensionPageSender } from '@/lib/extension-sender'
 
 interface DAppRequest {
   method: string
@@ -87,6 +89,7 @@ interface BatchAccountBalance {
 
 export class DAppHandler {
   private permissions: Map<string, DAppPermission> = new Map()
+  private walletConnectAuthorizations = new Map<string, WalletConnectAuthorization>()
   private isReady = false
   private signMessageInFlight = new Map<
     string,
@@ -197,6 +200,21 @@ export class DAppHandler {
         throw new Error(WALLET_BUSY_MESSAGE)
       }
       throw err
+    }
+  }
+
+  async handleWalletConnectRequest(
+    authorization: WalletConnectAuthorization,
+    request: { method: string; params: unknown[] }
+  ): Promise<unknown> {
+    const origin = `walletconnect://${authorization.topic}`
+    this.walletConnectAuthorizations.set(origin, authorization)
+    try {
+      await this.initialize()
+      await this.ensurePermission(origin)
+      return await this.handleRequest({ ...request, origin })
+    } finally {
+      this.walletConnectAuthorizations.delete(origin)
     }
   }
 
@@ -886,6 +904,8 @@ export class DAppHandler {
       throw new Error('User rejected the transaction')
     }
 
+    if (origin.startsWith('walletconnect://')) await this.ensurePermission(origin)
+
     // Hardware wallets sign in a dedicated tab, which records the transaction
     // and reports the result back.
     const wallet = useWalletStore.getState().getWallet(walletId)
@@ -963,6 +983,7 @@ export class DAppHandler {
         }
       })
       transactionId = tx.id
+      if (origin.startsWith('walletconnect://')) await this.ensurePermission(origin)
       const transferResult = await walletCore.sendTransaction(txParams)
       const { txHash: hash, txHashes } = requireSuccessfulTransfer(transferResult)
       broadcastHash = hash
@@ -1190,6 +1211,8 @@ export class DAppHandler {
       throw new Error('User rejected the signature request')
     }
 
+    if (origin.startsWith('walletconnect://')) await this.ensurePermission(origin)
+
     trackEvent(ANALYTICS_EVENTS.DAPP_MESSAGE_SIGNED, {
       pageId: PAGE_IDS.DAPP,
       extra: { origin, signing_mode: options?.signingMode ?? 'current' }
@@ -1204,11 +1227,15 @@ export class DAppHandler {
     }
 
     const walletCore = await accountManager.getWalletCore(walletId, accountId)
+    const sign = async (accountIndex?: number, addressIndex?: number) => {
+      if (origin.startsWith('walletconnect://')) await this.ensurePermission(origin)
+      return walletCore.signMessage(message, accountIndex, addressIndex)
+    }
     const promise = this.resolveSigningResult(
       options?.signingMode,
-      () => walletCore.signMessage(message),
-      accountIndex => walletCore.signMessage(message, accountIndex),
-      () => walletCore.signMessage(message, undefined, 0)
+      () => sign(),
+      accountIndex => sign(accountIndex),
+      () => sign(undefined, 0)
     ).finally(() => {
       if (this.signMessageInFlight.get(dedupKey) === promise) {
         this.signMessageInFlight.delete(dedupKey)
@@ -1486,6 +1513,23 @@ export class DAppHandler {
   }
 
   private async ensurePermission(origin: string): Promise<void> {
+    if (origin.startsWith('walletconnect://')) {
+      const authorization = this.walletConnectAuthorizations.get(origin)
+      const { currentWalletId, currentNetwork } = useWalletStore.getState()
+      const account = accountManager.getCurrentAccount()
+      if (
+        !authorization?.isActive() ||
+        accountManager.isLocked() ||
+        currentNetwork !== 'mainnet' ||
+        currentWalletId !== authorization.walletId ||
+        account?.id !== authorization.accountId ||
+        isHardwareKeySource(useWalletStore.getState().getCurrentWallet()?.keySource)
+      ) {
+        throw new Error('WalletConnect session is no longer authorized. Connect again.')
+      }
+      return
+    }
+
     if (shouldAutoConnectDApp(origin)) {
       await this.authorizeAllWalletAccounts(origin)
       return
@@ -1546,12 +1590,14 @@ export class DAppHandler {
     return new Promise(async resolve => {
       await closeAllPopupWindows()
 
+      const walletConnect = this.walletConnectAuthorizations.get(origin)
       const requestId = pendingRequestsManager.create(
-        origin,
+        walletConnect?.url ?? origin,
         action,
         data,
         capturedWalletId,
-        capturedAccountId
+        capturedAccountId,
+        walletConnect ? { verification: walletConnect.verification ?? 'UNKNOWN' } : undefined
       )
 
       const lastWindow = await chrome.windows.getLastFocused()
@@ -1616,7 +1662,8 @@ export class DAppHandler {
             })
           }
 
-          const messageListener = (msg: any) => {
+          const messageListener = (msg: any, sender: chrome.runtime.MessageSender) => {
+            if (!isExtensionPageSender(sender)) return
             if (msg.type === 'DAPP_APPROVAL_RESULT' && msg.requestId === requestId) {
               finish(msg.success, {
                 marginalFeeZats: msg.marginalFeeZats,
@@ -1629,6 +1676,13 @@ export class DAppHandler {
           chrome.runtime.onMessage.addListener(messageListener)
 
           checkInterval = setInterval(() => {
+            if (
+              origin.startsWith('walletconnect://') &&
+              !this.walletConnectAuthorizations.get(origin)?.isActive()
+            ) {
+              finish(false)
+              return
+            }
             chrome.windows.get(windowId, w => {
               if (chrome.runtime.lastError || !w) {
                 finish(false)

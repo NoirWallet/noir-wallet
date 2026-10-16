@@ -6,6 +6,7 @@ interface PendingRequest {
   walletId: string
   accountId: string
   timestamp: number
+  walletConnect?: { verification: 'VALID' | 'UNKNOWN' }
 }
 
 class PendingRequestsManager {
@@ -16,7 +17,14 @@ class PendingRequestsManager {
    * Captures walletId/accountId at creation time so the correct wallet
    * is used even if the user switches accounts before approval.
    */
-  create(origin: string, action: string, data: any, walletId: string, accountId: string): string {
+  create(
+    origin: string,
+    action: string,
+    data: any,
+    walletId: string,
+    accountId: string,
+    walletConnect?: PendingRequest['walletConnect']
+  ): string {
     const id = crypto.randomUUID()
 
     this.requests.set(id, {
@@ -26,6 +34,7 @@ class PendingRequestsManager {
       data,
       walletId,
       accountId,
+      ...(walletConnect ? { walletConnect } : {}),
       timestamp: Date.now()
     })
 

@@ -47,6 +47,9 @@ export function ApprovalPage() {
   const requestId = searchParams.get('requestId')
 
   const [origin, setOrigin] = useState('Unknown Origin')
+  const [walletConnectVerification, setWalletConnectVerification] = useState<
+    'VALID' | 'UNKNOWN' | null
+  >(null)
   const [action, setAction] = useState('unknown')
   const [data, setData] = useState<any>({})
   const [error, setError] = useState('')
@@ -93,6 +96,11 @@ export function ApprovalPage() {
         setError(response.error)
       } else if (response.request) {
         setOrigin(response.request.origin)
+        if (response.request.walletConnect) {
+          setWalletConnectVerification(
+            response.request.walletConnect.verification === 'VALID' ? 'VALID' : 'UNKNOWN'
+          )
+        }
         setAction(response.request.action)
         setData(response.request.data || {})
         if (response.request.data?.preselectedIds) {
@@ -452,6 +460,12 @@ export function ApprovalPage() {
                 <Icon icon="lucide:send" className="w-8 h-8 text-primary" />
               </div>
               <h2 className="text-xl font-semibold">Sign Transaction</h2>
+              {walletConnectVerification && (
+                <p className="text-xs text-muted">
+                  WalletConnect ·{' '}
+                  {walletConnectVerification === 'VALID' ? 'Verified' : 'Unverified website'}
+                </p>
+              )}
               <p className="text-sm font-medium text-foreground truncate max-w-full" title={origin}>
                 {origin}
               </p>
@@ -536,6 +550,12 @@ export function ApprovalPage() {
                 <Icon icon="lucide:pen-line" className="w-8 h-8 text-primary" />
               </div>
               <h2 className="text-xl font-semibold">Sign Message</h2>
+              {walletConnectVerification && (
+                <p className="text-xs text-muted">
+                  WalletConnect ·{' '}
+                  {walletConnectVerification === 'VALID' ? 'Verified' : 'Unverified website'}
+                </p>
+              )}
               <p className="text-sm font-medium text-foreground truncate max-w-full" title={origin}>
                 {origin}
               </p>

@@ -39,9 +39,10 @@ export function useAppRouting() {
     })()
   )
 
-  // Hardware wallet flows (connect/sign) run in a dedicated full tab and must
-  // keep their route across init and unlock redirects
+  // Camera and hardware flows run in dedicated tabs and must keep their route
+  // across initialization and unlock redirects.
   const isHardwareTab = useRef(window.location.hash.includes('/hardware/'))
+  const isWalletConnectTab = useRef(window.location.hash.startsWith('#/walletconnect'))
   const isUpdatePage = useRef(window.location.hash.includes('/update'))
 
   const routeToUnlock = useCallback(() => {
@@ -177,6 +178,7 @@ export function useAppRouting() {
     if (
       !isDApp.current &&
       !isHardwareTab.current &&
+      !isWalletConnectTab.current &&
       !accountManager.isLocked() &&
       currentAccount &&
       location.pathname === '/unlock'
@@ -190,6 +192,7 @@ export function useAppRouting() {
       isLoading ||
       isDApp.current ||
       isHardwareTab.current ||
+      isWalletConnectTab.current ||
       location.pathname !== '/onboarding' ||
       !currentWalletId ||
       !currentAccountId
@@ -272,8 +275,11 @@ export function useAppRouting() {
           if (requestId) {
             redirectParams.set('requestId', requestId)
           }
-        } else if (isHardwareTab.current && currentPath !== '/unlock') {
-          // Hardware tabs must return to their flow (with query, e.g. sign request id)
+        } else if (
+          (isHardwareTab.current || isWalletConnectTab.current) &&
+          currentPath !== '/unlock'
+        ) {
+          // Full tabs must return to their flow with the original query.
           redirectParams.set('redirect', `${currentPath}${location.search || ''}`)
         } else {
           // For normal popup, redirect to home
@@ -295,8 +301,8 @@ export function useAppRouting() {
       // This ensures activity time is updated even if user closes popup immediately
       await SecureStorage.saveLastActivityTime()
 
-      // dApp windows and hardware tabs stay on their route; normal popup goes home
-      if (!isDApp.current && !isHardwareTab.current) {
+      // Dedicated tabs stay on their route; the normal popup goes home.
+      if (!isDApp.current && !isHardwareTab.current && !isWalletConnectTab.current) {
         replace('/')
       }
     } catch (error) {

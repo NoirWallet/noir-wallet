@@ -14,6 +14,7 @@ import {
 } from '@/config/extension-display'
 import { EXTENSION_DISPLAY_MODE_STORAGE_KEY } from '@/config/storage-keys'
 import { SocialLinks } from '@/popup/components/common/SocialLinks'
+import { DEFAULT_NETWORK } from '@/config/networks'
 
 interface SidePanelOpenApi {
   open(options: { windowId: number }): Promise<void>
@@ -85,6 +86,9 @@ export function Settings() {
     { label: 'Preferred Explorer', action: () => navigate('/preferred-explorer') },
     { label: 'RPC Endpoint', action: () => navigate('/rpc-endpoint') },
     { label: 'Security & Privacy', action: () => navigate('/security-privacy') },
+    ...(DEFAULT_NETWORK === 'mainnet'
+      ? [{ label: 'WalletConnect', action: () => navigate('/walletconnect') }]
+      : []),
     { label: 'Experimental Features', action: () => navigate('/experimental-features') },
     { label: 'Help', action: () => navigate('/help') },
     { label: 'About', action: () => navigate('/about') }

@@ -7,6 +7,8 @@ icon: Braces
 All methods are available on `wallet.zcash`. Detecting the provider does not connect an account or
 open the wallet.
 
+This SDK reference describes the injected provider. WalletConnect uses the separate [wire contract](#walletconnect) below.
+
 ```ts
 import { getNoirWallet } from '@noir-wallet/sdk'
 
@@ -179,6 +181,28 @@ signing support: Keystone cannot complete a send from transparent funds.
 
   </Accordion>
 </Accordions>
+
+## WalletConnect
+
+The mainnet extension accepts WalletConnect v2 pairings through **Settings → WalletConnect**. A session authorizes one selected software account; its shielded and transparent CAIP-10 addresses represent that same account. Account switching, wallet locking, or user disconnect revokes the session. Browser restart or extension reload/update requires a new pairing. Testnet and hardware accounts are unavailable through this transport.
+
+Use namespace `bip122` and chain `bip122:00040fe8ec8471911baa1db1266ea15d`. Request only the methods needed by the app. Every RPC takes a single object as `params`, including `{}` for parameterless reads. These method names and response fields differ from the injected provider:
+
+| Method                         | Parameters                              | Result                                                         |
+| ------------------------------ | --------------------------------------- | -------------------------------------------------------------- |
+| `zcash_getAddress`             | `{type?: "shielded" \| "transparent"}`  | `{account, address, type}`; `account` is CAIP-10               |
+| `zcash_getBalance`             | `{}`                                    | Existing balance response for the session account              |
+| `zcash_getPublicKey`           | `{signingMode?}`                        | `{publicKey, address, signingMode, originAddress?}` or `null`  |
+| `zcash_signMessage`            | `{message, signingMode?}`               | `{signature, publicKey, address, signingMode, originAddress?}` |
+| `zcash_transfer`               | `{to, amount, memo?, fundingSource?}`   | `{txid}` after broadcast and local recording                   |
+| `zcash_checkLendingMcaAccount` | `{}`                                    | `{mcaId, publicKey, signingMode}` or `null`                    |
+| `zcash_getMaxTransfer`         | `{to, memo?, feeTier?, fundingSource?}` | `{maxAmount, fee}`                                             |
+
+`signingMode` accepts `current` (the default), `derived`, or `legacy_index0`, with the same identities as the injected provider. Public identity reads require session permission but do not open another prompt. Message signing and transfers use Noir Wallet's approval window. Do not add a public key to a CAIP account string or assume that a transparent address contains one.
+
+For RHEA, resolve an existing MCA with `zcash_checkLendingMcaAccount` when granted. If unavailable or `null`, query the relevant identities with `zcash_getPublicKey` and resolve the MCA through RHEA. Preserve the resolved signing mode for subsequent `zcash_signMessage` calls. Use `zcash_transfer` for the Zcash funding leg and the business SDK for relay/destination status. These flows must keep using the selected WalletConnect adapter for identity, signatures, and transfers; a local injected provider can belong to a different wallet.
+
+After an interrupted request, inspect the transaction or business state before explicitly creating a new request. Sensitive request IDs are consumed before execution to prevent replay after service worker recovery; automatic retries of signatures or transfers are unsafe.
 
 ## Transactions
 

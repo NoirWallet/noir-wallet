@@ -5,6 +5,7 @@ import { createRequire } from 'node:module'
 
 const require = createRequire(import.meta.url)
 const typescript = require('typescript')
+const Big = require('big.js')
 const ORIGIN = 'https://wallet-app.example'
 
 function loadModule(path, dependencies = {}) {
@@ -24,6 +25,12 @@ function loadModule(path, dependencies = {}) {
   return module.exports
 }
 
+function deferred() {
+  let resolve
+  const promise = new Promise(done => { resolve = done })
+  return { promise, resolve }
+}
+
 function createHarness(t, connection) {
   const previousChrome = globalThis.chrome
   t.after(() => {
@@ -32,6 +39,7 @@ function createHarness(t, connection) {
 
   const stored = new Map([['connectedDApps', [connection]]])
   globalThis.chrome = {
+    runtime: { async sendMessage() {} },
     storage: {
       local: {
         async get(key) {
@@ -73,6 +81,12 @@ function createHarness(t, connection) {
     accountDisplayNames: {},
     getCurrentWallet() {
       return walletState.wallets.find(candidate => candidate.id === walletState.currentWalletId)
+    },
+    getWallet(walletId) {
+      return walletState.wallets.find(candidate => candidate.id === walletId)
+    },
+    getAccount(walletId, accountId) {
+      return walletState.getWallet(walletId)?.accounts.find(a => a.id === accountId)
     }
   }
   const accountManager = {
@@ -96,26 +110,61 @@ function createHarness(t, connection) {
     './shielding': { MIN_SHIELDING_BALANCE_MESSAGE: 'Insufficient balance' },
     '@/lib/errors': { isRpcEndpointError: () => false }
   })
+  const transactions = {
+    added: [],
+    updated: [],
+    async addTransaction(value) {
+      transactions.added.push(value)
+      return { id: 'tx-1' }
+    },
+    async updateTransaction(...args) {
+      transactions.updated.push(args)
+    }
+  }
+  const scheduler = {
+    requestPassiveSync() {},
+    pauseForTx() {},
+    async waitForWalletSyncIdle() { return true },
+    resumeAfterTx() {}
+  }
   const { DAppHandler } = loadModule('../src/background/dapp-handler.ts', {
     '../core/wallet/account-manager': { accountManager },
     '../core/dapp/dapp-manager': { ...managerModule, dappManager },
-    './sync-scheduler': { syncScheduler: { requestPassiveSync() {} } },
+    './sync-scheduler': { syncScheduler: scheduler },
     '@/store/wallet-store': {
       useWalletStore: { getState: () => walletState },
       rehydrateWalletStore: async () => {}
     },
     '@/store/account-data-store': {
-      useAccountDataStore: { getState: () => ({ getBalance: () => balance }) }
+      useAccountDataStore: { getState: () => ({ getBalance: () => balance }) },
+      buildAccountKey: (...parts) => parts.join(':')
     },
     '@/lib/hardware-capabilities': {
-      getHardwareDAppMethodUnavailableReason: () => null
+      getHardwareDAppMethodUnavailableReason: () => null,
+      isHardwareKeySource: () => false
+    },
+    '@/lib/analytics': {
+      trackEvent() {},
+      ANALYTICS_EVENTS: { DAPP_MESSAGE_SIGNED: 'signed' },
+      PAGE_IDS: {}
     },
     '@/config/dapp-matches': loadModule('../src/config/dapp-matches.ts'),
-    '@/config/wallet': { WALLET_CONFIG: { SYNC: { DAPP_BALANCE_SYNC_STALE_MS: 30_000 } } },
+    '@/config/wallet': {
+      WALLET_CONFIG: {
+        NETWORK_FEE: '0.0001',
+        SYNC: { DAPP_BALANCE_SYNC_STALE_MS: 30_000, MAX_BLOCKING_WAIT_MS: 30_000 }
+      }
+    },
+    '@/config/fee': loadModule('../src/config/fee.ts'),
+    '@/lib/big': { safeBig: value => new Big(value ?? '0') },
+    '@/lib/async-utils': { TimeoutError: class TimeoutError extends Error {} },
+    '@/lib/funding-source': { getFundingSourceUnavailableReason: () => undefined },
+    './transaction-recorder': { transactionRecorder: transactions },
+    '@/lib/logger': { logger: { log() {}, warn() {}, error() {} } },
     '@/core/zcash/wallet-rpc-errors': walletRpcErrors
   })
 
-  return { dappManager, handler: new DAppHandler(), walletState, balance }
+  return { dappManager, handler: new DAppHandler(), walletState, balance, accountManager, transactions }
 }
 
 function connection(overrides = {}) {
@@ -273,4 +322,134 @@ test('invalid persisted account references do not authorize a site', async t => 
     handler.handleRequest({ method: 'zcash_getBalance', origin: ORIGIN }),
     /zcash_requestAccounts/
   )
+})
+
+test('WalletConnect cannot inherit injected-origin permissions or read another account', async t => {
+  const { handler, walletState } = createHarness(
+    t,
+    connection({
+      boundWalletId: 'wallet-a',
+      boundAccountId: 'account-a'
+    })
+  )
+  const authorization = {
+    topic: 'remote-session',
+    walletId: 'wallet-a',
+    accountId: 'account-a',
+    url: ORIGIN,
+    name: 'Example',
+    label: 'Account A',
+    addresses: { transparent: 'transparent-a', shielded: 'shielded-a' },
+    isActive: () => true
+  }
+  const result = await handler.handleWalletConnectRequest(authorization, {
+    method: 'zcash_getAddresses',
+    params: []
+  })
+  assert.equal(result.transparent, 'transparent-a')
+  walletState.currentAccountId = 'account-b'
+  await assert.rejects(
+    handler.handleWalletConnectRequest(authorization, {
+      method: 'zcash_getAddresses',
+      params: []
+    }),
+    /no longer authorized/
+  )
+  await assert.rejects(
+    handler.handleRequest({
+      method: 'zcash_getAddresses',
+      origin: 'walletconnect://remote-session'
+    }),
+    /no longer authorized/
+  )
+})
+
+test('WalletConnect signing rechecks revocation after wallet-core readiness', async t => {
+  const { handler, accountManager } = createHarness(t, connection())
+  let active = true
+  let signatures = 0
+  handler.requestUserApproval = async () => ({
+    approved: true,
+    walletId: 'wallet-a',
+    accountId: 'account-a'
+  })
+  accountManager.getWalletCore = async () => {
+    active = false
+    return {
+      async signMessage() {
+        signatures += 1
+        return {}
+      }
+    }
+  }
+  await assert.rejects(
+    handler.handleWalletConnectRequest(
+      {
+        topic: 'remote-session',
+        walletId: 'wallet-a',
+        accountId: 'account-a',
+        url: ORIGIN,
+        name: 'Example',
+        label: 'Account A',
+        addresses: { transparent: 'transparent-a', shielded: 'shielded-a' },
+        isActive: () => active
+      },
+      { method: 'zcash_signMessage', params: ['hello'] }
+    ),
+    /no longer authorized/
+  )
+  assert.equal(signatures, 0)
+})
+
+test('WalletConnect transfer cannot broadcast after authorization is revoked during recording', async t => {
+  const { handler, accountManager, transactions } = createHarness(t, connection())
+  const recordingStarted = deferred()
+  const releaseRecording = deferred()
+  let active = true
+  let broadcasts = 0
+
+  handler.requestUserApprovalWithId = async () => ({
+    approved: true,
+    requestId: 'approved-send',
+    walletId: 'wallet-a',
+    accountId: 'account-a'
+  })
+  accountManager.getWalletCore = async () => ({
+    async sendTransaction() {
+      broadcasts += 1
+      return { txHash: 'unexpected-broadcast' }
+    }
+  })
+  transactions.addTransaction = async value => {
+    transactions.added.push(value)
+    recordingStarted.resolve()
+    await releaseRecording.promise
+    return { id: 'recorded-send' }
+  }
+
+  const pending = handler.handleWalletConnectRequest(
+    {
+      topic: 'remote-session',
+      walletId: 'wallet-a',
+      accountId: 'account-a',
+      url: ORIGIN,
+      name: 'Example',
+      label: 'Account A',
+      addresses: { transparent: 'transparent-a', shielded: 'shielded-a' },
+      isActive: () => active
+    },
+    {
+      method: 'zcash_sendTransaction',
+      params: [{ to: `t1${'a'.repeat(33)}`, amount: '0.1' }]
+    }
+  )
+
+  await recordingStarted.promise
+  active = false
+  releaseRecording.resolve()
+  await assert.rejects(pending, /no longer authorized/)
+  assert.equal(broadcasts, 0)
+  assert.deepEqual(transactions.updated, [
+    ['mainnet:wallet-a:account-a', 'recorded-send', { status: 'failed', notified: true }]
+  ])
 })

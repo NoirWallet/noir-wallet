@@ -65,6 +65,7 @@ import { ViewSeedPhrase } from './pages/settings/ViewSeedPhrase'
 import { UpdatePage } from './pages/Update'
 import { Voting } from './pages/voting/Voting'
 import { VotingRound } from './pages/voting/VotingRound'
+import { WalletConnectPage } from './pages/settings/WalletConnectPage'
 
 import { useOnboardingStore } from '@/store/onboarding-store'
 
@@ -130,6 +131,7 @@ function AppRoutes() {
       <Route path="/hardware/ledger/sign" element={<HardwareSignPage signer="ledger" />} />
 
       <Route path="/settings" element={<Settings />} />
+      <Route path="/walletconnect" element={<WalletConnectPage />} />
       <Route path="/general" element={<General />} />
       <Route path="/preferred-explorer" element={<PreferredExplorer />} />
       <Route path="/rpc-endpoint" element={<RpcEndpoint />} />
@@ -220,6 +222,7 @@ function AppContent() {
     location.pathname === '/import-wallet' ||
     location.pathname.startsWith('/onboarding') ||
     location.pathname.startsWith('/hardware/') ||
+    location.pathname === '/walletconnect' ||
     (location.pathname === '/view-seed-phrase' &&
       new URLSearchParams(location.search).get('backup') === '1')
   const showBackupBanner = !excludedPath && !accountManager.isLocked()
