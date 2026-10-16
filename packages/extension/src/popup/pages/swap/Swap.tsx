@@ -114,7 +114,8 @@ import {
 import { usePortfolioUpdates } from '@/popup/hooks/usePortfolioUpdates'
 import {
   createSwapTokenPreferenceScope,
-  resolveSwapTokenSelection
+  resolveSwapTokenSelection,
+  shouldWaitForSwapDestination
 } from '@/popup/services/swap-token-selection'
 import { useActiveAccountNetworks } from '@/popup/hooks/useActiveAccountNetworks'
 import {
@@ -1004,12 +1005,9 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
       preferredSourceAssetId: preferredSwapSourceAssetId
     })
     if (
-      (swap.areTokensLoading &&
-        savedTokenSelection?.tokenInId &&
-        !swap.sourceTokens.some(token => token.assetId === savedTokenSelection.tokenInId)) ||
-      (swap.destinationTokensLoading &&
-        savedTokenSelection?.tokenOutId &&
-        resolved?.tokenOut?.assetId !== savedTokenSelection.tokenOutId)
+      swap.areTokensLoading &&
+      savedTokenSelection?.tokenInId &&
+      !swap.sourceTokens.some(token => token.assetId === savedTokenSelection.tokenInId)
     )
       return
     if (!resolved) return
@@ -1026,6 +1024,18 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
             (!privateDestinationSelectionRequested || isConfidentialSwapDestinationSupported(token))
         ) ?? null)
       : null
+    if (
+      shouldWaitForSwapDestination({
+        loading: swap.destinationTokensLoading,
+        savedDestinationAssetId: savedTokenSelection?.tokenOutId,
+        resolvedDestinationAssetId: resolved.tokenOut?.assetId
+      })
+    ) {
+      if (tokenIn && (swap.tokenIn?.assetId !== tokenIn.assetId || swap.tokenOut)) {
+        swap.setProvisionalTokenIn(tokenIn)
+      }
+      return
+    }
     if (
       swap.tokenIn?.assetId === resolved.tokenIn.assetId &&
       swap.tokenOut?.assetId === tokenOut?.assetId &&
@@ -1062,6 +1072,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
     swap.tokenOut?.assetId,
     swap.tokens,
     swap.setTokenPair,
+    swap.setProvisionalTokenIn,
     swap.selectTokenIn,
     swap.selectTokenOutForFlow,
     swap.clearTokenOutForFlow,

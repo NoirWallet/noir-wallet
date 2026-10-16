@@ -15,7 +15,10 @@ import {
   type SwapInitialCatalogOptions
 } from '@/popup/services/swap-catalog-loading'
 import { estimateSwapOutputFromPrices } from '@/popup/components/swap/swap-estimate'
-import { getSwapDestinationTokens } from '@/popup/services/swap-token-selection'
+import {
+  getSavedSwapDestinationAssetId,
+  getSwapDestinationTokens
+} from '@/popup/services/swap-token-selection'
 
 export function useSwapState(
   preferenceScope: string | null,
@@ -28,14 +31,22 @@ export function useSwapState(
     sources: readCachedTokenCatalogByChain('from', WALLET_SOURCE_CHAIN_IDS),
     destinations: readCachedTokenCatalogByChain('cross-chain-to', ALL_DESTINATION_CHAIN_IDS)
   }))
-
-  const [tokenIn, setTokenIn] = useState<RheaSwapToken | null>(
-    initialCatalogs.sources?.find(token => token.assetId === initialSelection?.tokenInId) ?? null
+  const initialDestinationAssetId = getSavedSwapDestinationAssetId(
+    initialSelection,
+    options.sourceAssetId ?? initialSelection?.tokenInId
   )
+
+  const initialTokenIn =
+    initialCatalogs.sources?.find(token => token.assetId === initialSelection?.tokenInId) ?? null
+  const initialTokenOut =
+    initialCatalogs.destinations?.find(token => token.assetId === initialDestinationAssetId) ??
+    initialCatalogs.sources?.find(token => token.assetId === initialDestinationAssetId) ??
+    null
+  const [tokenIn, setTokenIn] = useState<RheaSwapToken | null>(initialTokenIn)
   const [tokenOut, setTokenOut] = useState<RheaSwapToken | null>(
-    initialCatalogs.destinations?.find(token => token.assetId === initialSelection?.tokenOutId) ??
-      initialCatalogs.sources?.find(token => token.assetId === initialSelection?.tokenOutId) ??
-      null
+    initialTokenIn && initialTokenOut && initialTokenIn.assetId === initialTokenOut.assetId
+      ? null
+      : initialTokenOut
   )
   const [sourceCatalog, setSourceCatalog] = useState<readonly RheaSwapToken[]>(
     initialCatalogs.sources ?? []
@@ -78,17 +89,31 @@ export function useSwapState(
   }, [preferenceScope])
 
   useEffect(() => {
+    if (preferenceScope && tokenIn && tokenOut && tokenIn.assetId === tokenOut.assetId) {
+      setTokenOut(null)
+    }
+  }, [preferenceScope, tokenIn, tokenOut])
+
+  useEffect(() => {
     let cancelled = false
     const readActiveSelection = () => {
       const scope = activePreferenceScope.current
       return scope ? useSwapPreferences.getState().tokenSelections[scope] : undefined
     }
+    const readSavedDestinationAssetId = () => {
+      const selection = readActiveSelection()
+      return getSavedSwapDestinationAssetId(
+        selection,
+        options.sourceAssetId ?? selection?.tokenInId
+      )
+    }
     async function init() {
       const selection = readActiveSelection()
+      const sourceAssetId = options.sourceAssetId ?? selection?.tokenInId
       const plan = buildInitialSwapCatalogPlan({
         ...options,
-        sourceAssetId: options.sourceAssetId ?? selection?.tokenInId,
-        destinationAssetId: options.destinationAssetId ?? selection?.tokenOutId
+        sourceAssetId,
+        destinationAssetId: options.destinationAssetId ?? readSavedDestinationAssetId()
       })
       const bypassCache = catalogRequestId > 0
       const cachedSources = bypassCache
@@ -111,7 +136,7 @@ export function useSwapState(
           setTokenOut(
             previous =>
               previous ??
-              tokens.find(token => token.assetId === readActiveSelection()?.tokenOutId) ??
+              tokens.find(token => token.assetId === readSavedDestinationAssetId()) ??
               null
           )
         },
@@ -345,6 +370,14 @@ export function useSwapState(
     [preferenceScope, setSavedTokenSelection]
   )
 
+  const setProvisionalTokenIn = useCallback((token: RheaSwapToken) => {
+    setTokenIn(token)
+    setTokenOut(null)
+    setAmountIn('')
+    setAmountOut('')
+    setQuoteError(null)
+  }, [])
+
   const selectTokenIn = useCallback(
     (token: RheaSwapToken) => {
       setSourceCatalog(previous =>
@@ -448,6 +481,7 @@ export function useSwapState(
     retryTokenCatalog,
     resetSwap,
     setTokenPair,
+    setProvisionalTokenIn,
     selectTokenIn,
     selectTokenOut,
     selectTokenOutForFlow,

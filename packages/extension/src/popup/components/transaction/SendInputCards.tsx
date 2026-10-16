@@ -73,6 +73,7 @@ export function SendAmountInputCard({
   error,
   pending,
   showBalanceHelp = false,
+  headerAction,
   title,
   testId
 }: {
@@ -91,6 +92,7 @@ export function SendAmountInputCard({
   readonly error?: string
   readonly pending?: string
   readonly showBalanceHelp?: boolean
+  readonly headerAction?: ReactNode
   readonly title?: string
   readonly testId?: string
 }) {
@@ -99,7 +101,10 @@ export function SendAmountInputCard({
 
   return (
     <div className="space-y-1.5">
-      <span className="block px-1 text-xs font-medium text-foreground/80">Amount</span>
+      <div className="flex items-center justify-between gap-2 px-1">
+        <span className="text-xs font-medium text-foreground/80">Amount</span>
+        {headerAction}
+      </div>
       <div
         data-testid={testId ?? 'send-amount-card'}
         title={title}

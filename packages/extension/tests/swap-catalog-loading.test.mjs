@@ -8,7 +8,7 @@ import {
 test('loads only the current pair chains on entry and reuses source tokens for same-chain swaps', () => {
   expect(buildInitialSwapCatalogPlan({})).toEqual({
     sourceChainIds: [900010],
-    destinationChainIds: [1]
+    destinationChainIds: [900001]
   })
   expect(
     buildInitialSwapCatalogPlan({
@@ -24,10 +24,14 @@ test('loads only the current pair chains on entry and reuses source tokens for s
   ).toEqual({ sourceChainIds: [137], destinationChainIds: [] })
   expect(buildInitialSwapCatalogPlan({ defaultSourceChainId: 'bip122:mainnet' })).toEqual({
     sourceChainIds: [900002],
-    destinationChainIds: [1]
+    destinationChainIds: [900001]
   })
   expect(buildInitialSwapCatalogPlan({ sourceAssetId: 'eip155:42161/native:ETH' })).toEqual({
     sourceChainIds: [42161],
+    destinationChainIds: [900001]
+  })
+  expect(buildInitialSwapCatalogPlan({ sourceAssetId: 'nep141:wrap.near' })).toEqual({
+    sourceChainIds: [900001],
     destinationChainIds: [1]
   })
 })

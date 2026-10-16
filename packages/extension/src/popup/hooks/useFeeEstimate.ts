@@ -50,13 +50,13 @@ export function useFeeEstimate({
   const active = enabled && hasAmount
 
   useEffect(() => {
+    const seq = ++requestSeq.current
     if (!active) {
       setState({ feeZats: null, loading: false, error: false })
       return
     }
 
-    const seq = ++requestSeq.current
-    setState(prev => ({ ...prev, loading: true, error: false }))
+    setState({ feeZats: null, loading: true, error: false })
 
     const timer = setTimeout(async () => {
       try {
@@ -79,7 +79,10 @@ export function useFeeEstimate({
       }
     }, debounceMs)
 
-    return () => clearTimeout(timer)
+    return () => {
+      clearTimeout(timer)
+      requestSeq.current += 1
+    }
   }, [type, to, amount, memo, fundingSource, active, debounceMs])
 
   return state

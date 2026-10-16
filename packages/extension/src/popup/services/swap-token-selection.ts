@@ -38,6 +38,27 @@ export function createSwapTokenPreferenceScope(
   return walletId && accountId ? `${walletId}:${accountId}` : null
 }
 
+export function getSavedSwapDestinationAssetId(
+  selection: SavedSwapTokenSelection | undefined,
+  sourceAssetId: string | null | undefined = selection?.tokenInId
+): string | undefined {
+  return selection?.tokenOutId && selection.tokenOutId !== sourceAssetId
+    ? selection.tokenOutId
+    : undefined
+}
+
+export function shouldWaitForSwapDestination(input: {
+  readonly loading: boolean
+  readonly savedDestinationAssetId?: string | null
+  readonly resolvedDestinationAssetId?: string | null
+}): boolean {
+  return (
+    input.loading &&
+    (!input.savedDestinationAssetId ||
+      input.resolvedDestinationAssetId !== input.savedDestinationAssetId)
+  )
+}
+
 function findDefaultDestination(
   tokenIn: SwapToken,
   tokens: readonly SwapToken[],

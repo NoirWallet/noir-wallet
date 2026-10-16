@@ -61,14 +61,16 @@ export function resolvePortfolioTransferAvailability(input: {
   }
 }
 
-/** Zcash account available already reserves the Standard fee. */
+/** Account available reserves the Standard fee; raw funding balances reserve none. */
 export function resolveZcashTransferAvailability(input: {
   readonly availableBalance: string
   readonly selectedFeeZats: number
   readonly standardFeeZats: number
+  readonly feeAlreadyReservedZats?: number
   readonly maximumAmount?: string | null
 }): Readonly<{ amount: string; fallbackAmount: string }> {
-  const feeDeltaZats = Math.max(0, input.selectedFeeZats - input.standardFeeZats)
+  const reservedFeeZats = input.feeAlreadyReservedZats ?? input.standardFeeZats
+  const feeDeltaZats = Math.max(0, input.selectedFeeZats - reservedFeeZats)
   const fallback = safeBig(input.availableBalance || '0').minus(safeBig(feeDeltaZats).div(1e8))
   const fallbackAmount = (fallback.gt(0) ? fallback : safeBig(0))
     .round(ZEC_DECIMALS, Big.roundDown)

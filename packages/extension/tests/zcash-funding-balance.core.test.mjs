@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import { getFundingBalance, getFundingAmountError } from '../src/core/wallet/funding-balance.ts'
+import {
+  getFundingSourceOptions,
+  getFundingSourceUnavailableReason
+} from '../src/core/wallet/funding-source.ts'
+import { resolveZcashTransferAvailability } from '../src/popup/services/transfer-availability.ts'
 
 const balance = {
   shielded: '2',
@@ -12,6 +17,59 @@ const balance = {
 }
 
 describe('Zcash funding amount validation', () => {
+  test('offers confirmed balances for both sources while keeping Keystone transparent funding disabled', () => {
+    const addresses = { shielded: 'u1test', transparent: 't1test' }
+    const options = getFundingSourceOptions(balance, addresses, 'software')
+    assert.deepEqual(
+      options.map(({ type, available, pending, disabledReason }) => ({
+        type,
+        available,
+        pending,
+        disabledReason
+      })),
+      [
+        { type: 'shielded', available: '1', pending: '0.5', disabledReason: undefined },
+        { type: 'transparent', available: '2.5', pending: '0.5', disabledReason: undefined }
+      ]
+    )
+    assert.equal(getFundingSourceUnavailableReason('ledger', 'transparent'), undefined)
+    assert.equal(getFundingSourceUnavailableReason('keystone', 'shielded'), undefined)
+    assert.ok(getFundingSourceOptions(balance, addresses, 'keystone')[1].disabledReason)
+    assert.ok(
+      getFundingSourceOptions(balance, { shielded: 'u1test' }, 'software')[1].disabledReason
+    )
+  })
+
+  test('reserves the full fee for transparent funds and uses the destination-specific Max when ready', () => {
+    const transparent = getFundingBalance(balance, 'transparent')
+    const estimate = {
+      availableBalance: transparent.available,
+      selectedFeeZats: 60000,
+      standardFeeZats: 15000,
+      feeAlreadyReservedZats: 0
+    }
+    const fallback = resolveZcashTransferAvailability(estimate)
+    assert.equal(fallback.amount, '2.4994')
+    assert.equal(getFundingAmountError('2.5', transparent, fallback.amount), 'fee')
+    assert.equal(getFundingAmountError('2.6', transparent, fallback.amount), 'pending')
+    assert.equal(
+      resolveZcashTransferAvailability({ ...estimate, maximumAmount: '2.4988' }).amount,
+      '2.4988'
+    )
+    assert.equal(
+      resolveZcashTransferAvailability({ ...estimate, availableBalance: '0.0001' }).amount,
+      '0'
+    )
+    assert.equal(
+      resolveZcashTransferAvailability({
+        availableBalance: balance.available,
+        selectedFeeZats: 60000,
+        standardFeeZats: 15000
+      }).amount,
+      '0.99915'
+    )
+  })
+
   test('accepts only selectable funds from the selected source', () => {
     const shielded = getFundingBalance(balance, 'shielded')
     const transparent = getFundingBalance(balance, 'transparent')

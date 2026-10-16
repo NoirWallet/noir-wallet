@@ -49,7 +49,11 @@ export function buildInitialSwapCatalogPlan(options: SwapInitialCatalogOptions) 
     defaultSource ??
     RHEA_SWAP_CHAIN_CATALOG.find(chain => chain.blockchain === 'zec')
   if (!source) throw new Error('Swap source chain is unavailable')
-  const target = destination ?? RHEA_SWAP_CHAIN_CATALOG.find(chain => chain.blockchain === 'eth')
+  const target =
+    destination ??
+    RHEA_SWAP_CHAIN_CATALOG.find(
+      chain => chain.blockchain === (source.blockchain === 'near' ? 'eth' : 'near')
+    )
   return {
     sourceChainIds: [source.tokenListChainId],
     destinationChainIds:
