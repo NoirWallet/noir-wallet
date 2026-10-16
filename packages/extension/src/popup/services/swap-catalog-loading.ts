@@ -1,4 +1,5 @@
 import { RHEA_SWAP_CHAIN_CATALOG, type RheaSwapToken } from '@/core/services/rhea-swap'
+import type { ChainDefinition } from '@/core/chains/registry'
 import { rheaSwapClient } from './rhea-swap-client'
 import { getChainFromAssetId } from '@/lib/format'
 import { createDebugRequestId, logDebugTiming, traceDebugStage } from '@/lib/debug-performance'
@@ -8,6 +9,37 @@ export interface SwapInitialCatalogOptions {
   readonly destinationAssetId?: string | null
   readonly destinationApiChainId?: string | null
   readonly defaultSourceChainId?: string | null
+  readonly savedSourceAssetId?: string | null
+  readonly savedDestinationAssetId?: string | null
+  readonly enabledChains?: readonly ChainDefinition[]
+  readonly enabledChainsError?: boolean
+}
+
+export function getEnabledSwapChains(enabledChains: readonly ChainDefinition[] = []) {
+  const seen = new Set<number>()
+  return enabledChains.flatMap(chain => {
+    if (chain.network.kind !== 'mainnet') return []
+    const match = RHEA_SWAP_CHAIN_CATALOG.find(candidate =>
+      chain.family === 'evm'
+        ? chain.id === `eip155:${candidate.apiChainId}` && candidate.walletFamily === 'evm'
+        : candidate.walletFamily === chain.family
+    )
+    if (!match || seen.has(match.tokenListChainId)) return []
+    seen.add(match.tokenListChainId)
+    return [match]
+  })
+}
+
+export function isSwapAssetOnEnabledChain(
+  assetId: string | null | undefined,
+  enabledChains: readonly ChainDefinition[] | undefined
+): boolean {
+  const chain = assetChain(assetId)
+  return Boolean(
+    chain &&
+    enabledChains &&
+    getEnabledSwapChains(enabledChains).some(enabled => enabled.apiChainId === chain.apiChainId)
+  )
 }
 
 function assetChain(assetId?: string | null) {
@@ -35,25 +67,35 @@ function assetChain(assetId?: string | null) {
 }
 
 export function buildInitialSwapCatalogPlan(options: SwapInitialCatalogOptions) {
-  const destination =
+  const enabled = getEnabledSwapChains(options.enabledChains)
+  const explicitDestination =
     assetChain(options.destinationAssetId) ??
     RHEA_SWAP_CHAIN_CATALOG.find(chain => chain.apiChainId === options.destinationApiChainId)
-  const defaultSource = RHEA_SWAP_CHAIN_CATALOG.find(
-    chain =>
-      options.defaultSourceChainId === `eip155:${chain.apiChainId}` ||
-      (chain.walletFamily === 'bitcoin' && options.defaultSourceChainId?.startsWith('bip122:')) ||
-      options.defaultSourceChainId?.startsWith(`${chain.walletFamily}:`)
+  const preferredAccountChain = options.enabledChains?.find(
+    chain => chain.id === options.defaultSourceChainId
   )
+  const preferredSource = preferredAccountChain
+    ? getEnabledSwapChains([preferredAccountChain])[0]
+    : undefined
   const source =
-    assetChain(options.sourceAssetId) ??
-    defaultSource ??
-    RHEA_SWAP_CHAIN_CATALOG.find(chain => chain.blockchain === 'zec')
-  if (!source) throw new Error('Swap source chain is unavailable')
+    (isSwapAssetOnEnabledChain(options.sourceAssetId, options.enabledChains)
+      ? assetChain(options.sourceAssetId)
+      : undefined) ??
+    enabled.find(
+      chain => chain.apiChainId === assetChain(options.savedSourceAssetId)?.apiChainId
+    ) ??
+    preferredSource ??
+    enabled[0]
+  if (!source) return { sourceChainIds: [], destinationChainIds: [] }
+  const savedDestination =
+    options.savedSourceAssetId &&
+    assetChain(options.savedSourceAssetId)?.apiChainId === source.apiChainId
+      ? assetChain(options.savedDestinationAssetId)
+      : undefined
   const target =
-    destination ??
-    RHEA_SWAP_CHAIN_CATALOG.find(
-      chain => chain.blockchain === (source.blockchain === 'near' ? 'eth' : 'near')
-    )
+    explicitDestination ??
+    savedDestination ??
+    enabled.find(chain => chain.apiChainId !== source.apiChainId)
   return {
     sourceChainIds: [source.tokenListChainId],
     destinationChainIds:
@@ -93,6 +135,18 @@ export function findSwapTokenInCatalog(
 ): RheaSwapToken | undefined {
   return catalog.find(
     candidate => candidate.assetId === token.assetId && candidate.blockchain === token.blockchain
+  )
+}
+
+export function pickProvisionalSwapSource(
+  tokens: readonly RheaSwapToken[],
+  savedAssetId?: string | null
+): RheaSwapToken | null {
+  return (
+    tokens.find(token => token.assetId === savedAssetId) ??
+    tokens.find(token => token.isNative) ??
+    tokens[0] ??
+    null
   )
 }
 

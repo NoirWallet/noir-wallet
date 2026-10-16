@@ -1,5 +1,7 @@
-import { getDefaultToToken, isZecToken, type SwapToken } from '@/core/services/intents-api'
+import type { SwapToken } from '@/core/services/intents-api'
+import type { ChainDefinition } from '@/core/chains/registry'
 import type { SavedSwapTokenSelection } from '@/store/swap-store'
+import { getEnabledSwapChains } from './swap-catalog-loading'
 
 export interface ResolvedSwapTokenSelection {
   readonly tokenIn: SwapToken
@@ -62,22 +64,21 @@ export function shouldWaitForSwapDestination(input: {
 function findDefaultDestination(
   tokenIn: SwapToken,
   tokens: readonly SwapToken[],
-  walletSourceTokens: readonly SwapToken[]
+  walletSourceTokens: readonly SwapToken[],
+  enabledBlockchains: readonly string[]
 ): SwapToken | null {
   const destinations = tokens.filter(token => token.assetId !== tokenIn.assetId)
-  if (!isZecToken(tokenIn)) {
-    const sameChainWalletAsset = walletSourceTokens.find(
-      token =>
-        token.assetId !== tokenIn.assetId &&
-        token.blockchain === tokenIn.blockchain &&
-        destinations.some(
-          destination =>
-            destination.assetId === token.assetId && destination.blockchain === token.blockchain
-        )
+  for (const blockchain of [tokenIn.blockchain, ...enabledBlockchains]) {
+    if (!enabledBlockchains.includes(blockchain)) continue
+    const onChain = destinations.filter(token => token.blockchain === blockchain)
+    if (onChain.length === 0) continue
+    const owned = walletSourceTokens.find(source =>
+      onChain.some(token => token.assetId === source.assetId)
     )
-    if (sameChainWalletAsset) return sameChainWalletAsset
+    if (owned) return onChain.find(token => token.assetId === owned.assetId) ?? null
+    return onChain.find(token => 'isNative' in token && token.isNative === true) ?? onChain[0]
   }
-  return getDefaultToToken(destinations) ?? destinations[0] ?? null
+  return null
 }
 
 export function getSwapDestinationTokens<T extends SwapToken>(
@@ -104,13 +105,25 @@ export function resolveSwapTokenSelection(input: {
   readonly savedSelection?: SavedSwapTokenSelection
   readonly requestedSourceAssetId?: string | null
   readonly preferredSourceAssetId?: string
+  readonly enabledChains?: readonly ChainDefinition[]
 }): ResolvedSwapTokenSelection | null {
-  if (input.walletSourceTokens.length === 0) return null
+  const enabledBlockchains = getEnabledSwapChains(input.enabledChains).map(
+    chain => chain.blockchain
+  )
+  const walletSourceTokens = input.walletSourceTokens.filter(token =>
+    enabledBlockchains.includes(token.blockchain)
+  )
+  const requestedSource = input.tokens.find(
+    token =>
+      token.assetId === input.requestedSourceAssetId &&
+      enabledBlockchains.includes(token.blockchain)
+  )
+  if (!requestedSource && walletSourceTokens.length === 0) return null
   const tokenIn =
-    input.tokens.find(token => token.assetId === input.requestedSourceAssetId) ??
-    input.tokens.find(token => token.assetId === input.savedSelection?.tokenInId) ??
-    input.walletSourceTokens.find(token => token.assetId === input.preferredSourceAssetId) ??
-    input.walletSourceTokens[0]
+    requestedSource ??
+    walletSourceTokens.find(token => token.assetId === input.savedSelection?.tokenInId) ??
+    walletSourceTokens.find(token => token.assetId === input.preferredSourceAssetId) ??
+    walletSourceTokens[0]
   const destinations = getSwapDestinationTokens(
     tokenIn,
     input.sourceTokens ?? input.tokens,
@@ -119,7 +132,9 @@ export function resolveSwapTokenSelection(input: {
   const tokenOut =
     destinations.find(
       token =>
-        token.assetId === input.savedSelection?.tokenOutId && token.assetId !== tokenIn.assetId
-    ) ?? findDefaultDestination(tokenIn, destinations, input.walletSourceTokens)
+        input.savedSelection?.tokenInId === tokenIn.assetId &&
+        token.assetId === input.savedSelection?.tokenOutId &&
+        token.assetId !== tokenIn.assetId
+    ) ?? findDefaultDestination(tokenIn, destinations, walletSourceTokens, enabledBlockchains)
   return Object.freeze({ tokenIn, tokenOut })
 }

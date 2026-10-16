@@ -301,7 +301,8 @@ export function parseHardwareSignRequest(value: unknown): HardwareSignRequest {
   }
   if (
     fundingSource !== undefined &&
-    (kind !== 'send' || (fundingSource !== 'shielded' && fundingSource !== 'transparent'))
+    ((kind !== 'send' && kind !== 'swap') ||
+      (fundingSource !== 'shielded' && fundingSource !== 'transparent'))
   ) {
     throw new Error('Invalid hardware funding source')
   }

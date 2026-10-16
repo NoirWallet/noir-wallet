@@ -11,6 +11,8 @@ import {
   loadTokenCatalogByChain,
   buildInitialSwapCatalogPlan,
   findSwapTokenInCatalog,
+  isSwapAssetOnEnabledChain,
+  pickProvisionalSwapSource,
   mergeSelectedSwapSourceCatalog,
   type SwapInitialCatalogOptions
 } from '@/popup/services/swap-catalog-loading'
@@ -24,6 +26,7 @@ export function useSwapState(
   preferenceScope: string | null,
   options: SwapInitialCatalogOptions = {}
 ) {
+  const enabledChainKey = options.enabledChains?.map(chain => chain.id).join('|')
   const [initialSelection] = useState(() =>
     preferenceScope ? useSwapPreferences.getState().tokenSelections[preferenceScope] : undefined
   )
@@ -31,13 +34,21 @@ export function useSwapState(
     sources: readCachedTokenCatalogByChain('from', WALLET_SOURCE_CHAIN_IDS),
     destinations: readCachedTokenCatalogByChain('cross-chain-to', ALL_DESTINATION_CHAIN_IDS)
   }))
-  const initialDestinationAssetId = getSavedSwapDestinationAssetId(
-    initialSelection,
-    options.sourceAssetId ?? initialSelection?.tokenInId
+  const initialSavedSourceAssetId = isSwapAssetOnEnabledChain(
+    initialSelection?.tokenInId,
+    options.enabledChains
   )
+    ? initialSelection?.tokenInId
+    : undefined
+  const initialDestinationAssetId =
+    !initialSavedSourceAssetId ||
+    (isSwapAssetOnEnabledChain(options.sourceAssetId, options.enabledChains) &&
+      options.sourceAssetId !== initialSavedSourceAssetId)
+      ? undefined
+      : getSavedSwapDestinationAssetId(initialSelection, initialSavedSourceAssetId)
 
   const initialTokenIn =
-    initialCatalogs.sources?.find(token => token.assetId === initialSelection?.tokenInId) ?? null
+    initialCatalogs.sources?.find(token => token.assetId === initialSavedSourceAssetId) ?? null
   const initialTokenOut =
     initialCatalogs.destinations?.find(token => token.assetId === initialDestinationAssetId) ??
     initialCatalogs.sources?.find(token => token.assetId === initialDestinationAssetId) ??
@@ -100,21 +111,50 @@ export function useSwapState(
       const scope = activePreferenceScope.current
       return scope ? useSwapPreferences.getState().tokenSelections[scope] : undefined
     }
+    const readSavedSourceAssetId = () => {
+      const savedId = readActiveSelection()?.tokenInId
+      return isSwapAssetOnEnabledChain(savedId, options.enabledChains) ? savedId : undefined
+    }
     const readSavedDestinationAssetId = () => {
       const selection = readActiveSelection()
-      return getSavedSwapDestinationAssetId(
-        selection,
-        options.sourceAssetId ?? selection?.tokenInId
-      )
+      const savedSourceId = readSavedSourceAssetId()
+      return !savedSourceId ||
+        (isSwapAssetOnEnabledChain(options.sourceAssetId, options.enabledChains) &&
+          options.sourceAssetId !== savedSourceId)
+        ? undefined
+        : getSavedSwapDestinationAssetId(selection, savedSourceId)
     }
     async function init() {
-      const selection = readActiveSelection()
-      const sourceAssetId = options.sourceAssetId ?? selection?.tokenInId
+      if (options.enabledChains === undefined) {
+        setSourceCatalog([])
+        setCrossChainDestinationCatalog([])
+        setCatalogError(options.enabledChainsError === true)
+        setAreTokensLoading(!options.enabledChainsError)
+        setDestinationTokensLoading(!options.enabledChainsError)
+        return
+      }
+      if (
+        tokenIn &&
+        options.enabledChains &&
+        !isSwapAssetOnEnabledChain(tokenIn.assetId, options.enabledChains)
+      ) {
+        setTokenIn(null)
+        setTokenOut(null)
+      }
       const plan = buildInitialSwapCatalogPlan({
         ...options,
-        sourceAssetId,
-        destinationAssetId: options.destinationAssetId ?? readSavedDestinationAssetId()
+        savedSourceAssetId: readSavedSourceAssetId(),
+        savedDestinationAssetId: readSavedDestinationAssetId()
       })
+      if (plan.sourceChainIds.length === 0) {
+        setSourceCatalog([])
+        setCrossChainDestinationCatalog([])
+        setTokenIn(null)
+        setTokenOut(null)
+        setAreTokensLoading(false)
+        setDestinationTokensLoading(false)
+        return
+      }
       const bypassCache = catalogRequestId > 0
       const cachedSources = bypassCache
         ? []
@@ -152,10 +192,7 @@ export function useSwapState(
           tokens => {
             setSourceCatalog(previous => mergeTokenCatalogs(previous, tokens))
             setTokenIn(
-              previous =>
-                previous ??
-                tokens.find(token => token.assetId === readActiveSelection()?.tokenInId) ??
-                null
+              previous => previous ?? pickProvisionalSwapSource(tokens, readSavedSourceAssetId())
             )
           },
           () => cancelled
@@ -166,10 +203,7 @@ export function useSwapState(
         }
         setSourceCatalog(previous => mergeTokenCatalogs(previous, sources))
         setTokenIn(
-          previous =>
-            previous ??
-            sources.find(token => token.assetId === readActiveSelection()?.tokenInId) ??
-            null
+          previous => previous ?? pickProvisionalSwapSource(sources, readSavedSourceAssetId())
         )
         setAreTokensLoading(false)
       } catch {
@@ -197,7 +231,9 @@ export function useSwapState(
     options.sourceAssetId,
     options.destinationAssetId,
     options.destinationApiChainId,
-    options.defaultSourceChainId
+    options.defaultSourceChainId,
+    options.enabledChainsError,
+    enabledChainKey
   ])
 
   const loadSelectorTokens = useCallback(
