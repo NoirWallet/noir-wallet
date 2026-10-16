@@ -204,6 +204,8 @@ For RHEA, resolve an existing MCA with `zcash_checkLendingMcaAccount` when grant
 
 After an interrupted request, inspect the transaction or business state before explicitly creating a new request. Sensitive request IDs are consumed before execution to prevent replay after service worker recovery; automatic retries of signatures or transfers are unsafe.
 
+Wallet operation failures use JSON-RPC server code `-32000` and preserve the wallet's error message. A failed Max estimate on an empty account can report insufficient funds; it does not mean the WalletConnect method is unavailable.
+
 ## Transactions
 
 Transaction methods operate on the active authorized account. Sending and shielding always require

@@ -475,12 +475,13 @@ export class WalletConnectController {
       })
     } catch (error) {
       if (state.expired) return
+      // WalletConnect replaces the reserved -32603 message with "Internal error".
       const code =
         error instanceof WalletConnectError
           ? error.code
           : error instanceof Error && /^User rejected/.test(error.message)
             ? 4001
-            : -32603
+            : -32000
       await client.respondSessionRequest({
         topic: event.topic,
         response: {

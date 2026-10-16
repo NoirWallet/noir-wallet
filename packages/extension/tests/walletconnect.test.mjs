@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { createRequire } from 'node:module'
 import {
   WALLETCONNECT_CHAIN,
   approvedNamespaces,
@@ -469,7 +470,28 @@ test('in-flight authorization becomes inactive as soon as account changes', asyn
   assert.equal(authorization.isActive(), false)
   pending.resolve()
   await until(() => h.calls.respond.length === 1)
-  assert.equal(h.calls.respond[0].response.error.code, -32603)
+  assert.equal(h.calls.respond[0].response.error.code, -32000)
+})
+
+test('wallet failures keep their actionable message through WalletConnect serialization', async () => {
+  const require = createRequire(import.meta.url)
+  const coreRequire = createRequire(require.resolve('@walletconnect/core'))
+  const { formatJsonRpcError } = coreRequire('@walletconnect/jsonrpc-utils')
+  const h = harness({
+    saved: [binding],
+    active: true,
+    requestHandler: async () => {
+      throw new Error('Insufficient funds for the network fee')
+    }
+  })
+  await h.controller.start()
+  h.emit('session_request', request(91))
+  await until(() => h.calls.respond.length === 1)
+  const response = h.calls.respond[0].response
+  assert.equal(
+    formatJsonRpcError(response.id, response.error).error.message,
+    'Insufficient funds for the network fee'
+  )
 })
 
 test('a queued request cannot sign after the selected account changes', async () => {
@@ -625,10 +647,15 @@ test('WalletConnect controls accept extension pages but reject content-script se
       getURL: path => `chrome-extension://extension-id/${path}`
     }
   }
-  t.after(() => { globalThis.chrome = previousChrome })
+  t.after(() => {
+    globalThis.chrome = previousChrome
+  })
 
   const contentScript = { id: 'extension-id', url: 'https://example.com/app' }
-  const extensionPage = { id: 'extension-id', url: 'chrome-extension://extension-id/index.html#/walletconnect' }
+  const extensionPage = {
+    id: 'extension-id',
+    url: 'chrome-extension://extension-id/index.html#/walletconnect'
+  }
   for (const action of ['WALLETCONNECT_GET_STATE', 'WALLETCONNECT_APPROVE']) {
     assert.equal(isExtensionPageSender(contentScript), false, `${action} from a content script`)
     assert.equal(isExtensionPageSender(extensionPage), true, `${action} from an extension page`)
