@@ -20,6 +20,14 @@ import { isZcashDestination } from '@/lib/cross-chain-transaction'
 import { pollingTransactionConfirmations } from '@/lib/zcash-node-rpc'
 import { getNetworkConfig } from '@/config/networks'
 import { WALLET_CONFIG } from '@/config/wallet'
+import { classifyError, isWalletSnapshotRecoveryError } from '@/lib/errors'
+import { resolveWalletSnapshotRecoveryTarget } from '@/lib/transaction-replacement'
+import { ResyncWalletContent } from '../../components/account/AccountModals'
+import { openModal } from '../../provider/ModalManager'
+import { accountManager } from '@/core/wallet/account-manager'
+
+const SNAPSHOT_RECOVERY_GUIDANCE =
+  'Select the account used for this transaction, then open its details and choose Resync wallet.'
 
 export function TransactionResultPage() {
   const { navigate, goBack } = useNavigate()
@@ -27,8 +35,10 @@ export function TransactionResultPage() {
   const { data, returnPath, clear, updateStep, updateSwapStatus } = useTransactionResultStore()
   const dataRef = useRef(data)
   const [destinationConfirmations, setDestinationConfirmations] = useState<number | null>(null)
+  const [recoveryError, setRecoveryError] = useState<string | null>(null)
   const currentNetwork = useWalletStore(state => state.currentNetwork)
   const currentWalletId = useWalletStore(state => state.currentWalletId)
+  const wallets = useWalletStore(state => state.wallets)
   const resultAccountKey = data?.type === 'zcash' ? data.accountKey : undefined
   const resultTransactionId = data?.type === 'zcash' ? data.transactionId : undefined
   const resultTransaction = useAccountDataStore(state => {
@@ -39,6 +49,17 @@ export function TransactionResultPage() {
     data?.type === 'zcash' ? resolveZcashResultView(data, resultTransaction) : undefined
   const resultStep = resultView?.step ?? 'idle'
   const recoveryAction = getTransactionRecoveryAction(resultTransaction)
+  const needsSnapshotRecovery =
+    data?.type === 'zcash' && resultStep === 'failed' && isWalletSnapshotRecoveryError(data.error)
+  const snapshotRecoveryTarget = needsSnapshotRecovery
+    ? resolveWalletSnapshotRecoveryTarget(
+        resultAccountKey,
+        resultTransactionId,
+        resultTransaction,
+        wallets,
+        currentNetwork
+      )
+    : null
   const syncState = useAccountDataStore(state =>
     currentWalletId
       ? state.getWalletSyncState(currentNetwork, currentWalletId)
@@ -211,6 +232,65 @@ export function TransactionResultPage() {
     goBack()
   }
 
+  const handleSnapshotRecovery = () => {
+    const target = snapshotRecoveryTarget
+    if (!target || accountManager.getNetwork() !== target.network) {
+      setRecoveryError(SNAPSHOT_RECOVERY_GUIDANCE)
+      return
+    }
+
+    void openModal({
+      title: 'Resync Wallet',
+      body: (_resolve, close) => (
+        <ResyncWalletContent
+          walletId={target.walletId}
+          accountId={target.accountId}
+          birthdayHeight={target.birthdayHeight}
+          onConfirm={async height => {
+            const currentResult = useTransactionResultStore.getState().data
+            const currentWallet = useWalletStore.getState()
+            const record =
+              resultAccountKey && resultTransactionId
+                ? useAccountDataStore
+                    .getState()
+                    .getTransactions(resultAccountKey)
+                    .find(transaction => transaction.id === resultTransactionId)
+                : undefined
+            const verifiedTarget = resolveWalletSnapshotRecoveryTarget(
+              currentResult?.type === 'zcash' &&
+                currentResult.accountKey === resultAccountKey &&
+                currentResult.transactionId === resultTransactionId &&
+                currentResult.step === 'failed' &&
+                isWalletSnapshotRecoveryError(currentResult.error)
+                ? resultAccountKey
+                : undefined,
+              resultTransactionId,
+              record,
+              currentWallet.wallets,
+              currentWallet.currentNetwork
+            )
+            if (
+              !verifiedTarget ||
+              verifiedTarget.walletId !== target.walletId ||
+              verifiedTarget.accountId !== target.accountId ||
+              verifiedTarget.network !== target.network ||
+              accountManager.getNetwork() !== target.network
+            ) {
+              throw new Error(
+                'Transaction account could not be verified. Resync it from Account details.'
+              )
+            }
+            await accountManager.resyncWallet(target.walletId, target.accountId, height)
+            close()
+            clear()
+            navigate('/')
+          }}
+          close={close}
+        />
+      )
+    })
+  }
+
   const handleSpeedUp = () => {
     if (recoveryAction === 'speed_up' && resultTransaction) {
       requestSpeedUp(resultTransaction)
@@ -235,15 +315,20 @@ export function TransactionResultPage() {
               })
     const isLoadingRecoveryRecord =
       resultStep === 'failed' &&
+      !needsSnapshotRecovery &&
       !!data.accountKey &&
       !!data.transactionId &&
       resultTransaction?.status !== 'failed'
     const failureAction =
       resultStep !== 'failed' || isLoadingRecoveryRecord
         ? undefined
-        : recoveryAction === 'speed_up'
-          ? { label: 'Speed Up', onClick: handleSpeedUp }
-          : { label: 'Try Again', onClick: handleRetry }
+        : needsSnapshotRecovery
+          ? snapshotRecoveryTarget
+            ? { label: 'Resync wallet', onClick: handleSnapshotRecovery }
+            : undefined
+          : recoveryAction === 'speed_up'
+            ? { label: 'Speed Up', onClick: handleSpeedUp }
+            : { label: 'Try Again', onClick: handleRetry }
     const pendingDescription =
       resultStep === 'pending'
         ? data.error ||
@@ -267,7 +352,14 @@ export function TransactionResultPage() {
           timestamp={resultView?.timestamp}
           error={data.error}
           customTitle={recordCopy?.title ?? data.customTitle}
-          customDescription={recordCopy?.description ?? pendingDescription}
+          customDescription={
+            recoveryError ||
+            (needsSnapshotRecovery
+              ? snapshotRecoveryTarget
+                ? classifyError(data.error).userMessage
+                : SNAPSHOT_RECOVERY_GUIDANCE
+              : (recordCopy?.description ?? pendingDescription))
+          }
           showFrom={data.showFrom}
           showTo={data.showTo}
           showTxHash={data.showTxHash}

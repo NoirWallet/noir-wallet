@@ -16,6 +16,18 @@ const RPC_ENDPOINT_ERROR_PATTERN =
 const LOCAL_WALLET_RPC_ERROR_PATTERN =
   /Offscreen RPC|Worker RPC|Worker crashed|Worker not initialized|SYNC_BUSY|STALE_WALLET_RPC|WALLET_DIRTY/i
 
+export const WALLET_SNAPSHOT_RECOVERY_MESSAGE =
+  'Wallet data is incomplete. Resync this wallet before sending again.'
+
+export function isWalletSnapshotRecoveryError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return (
+    /Missing chunk \d+\/\d+ for key:/.test(message) ||
+    message.includes('Invalid wallet database snapshot:') ||
+    message.includes(WALLET_SNAPSHOT_RECOVERY_MESSAGE)
+  )
+}
+
 export function isRpcEndpointError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error)
   if (LOCAL_WALLET_RPC_ERROR_PATTERN.test(message)) return false
@@ -298,6 +310,14 @@ export interface ClassifiedError {
 export function classifyError(error: unknown): ClassifiedError {
   const raw =
     error instanceof Error ? error.message : typeof error === 'string' ? error : String(error)
+
+  if (isWalletSnapshotRecoveryError(raw)) {
+    return {
+      userMessage: WALLET_SNAPSHOT_RECOVERY_MESSAGE,
+      technicalMessage: raw,
+      retryable: false
+    }
+  }
 
   for (const mapping of ERROR_MAPPINGS) {
     if (mapping.pattern.test(raw)) {

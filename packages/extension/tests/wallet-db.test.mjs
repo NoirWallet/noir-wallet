@@ -1,0 +1,258 @@
+import assert from 'node:assert/strict'
+import { test } from 'node:test'
+import {
+  closeConnection,
+  deleteWalletDb,
+  loadWalletDb,
+  saveWalletDb
+} from '../src/lib/indexed-db.ts'
+
+const walletKey = 'mainnet_synthetic-wallet'
+const chunks = () => Array.from({ length: 6 }, (_, index) => new Uint8Array([index + 1]))
+const expectedBytes = new Uint8Array([1, 2, 3, 4, 5, 6])
+
+function installDatabase(t) {
+  const previousIndexedDb = globalThis.indexedDB
+  const previousKeyRange = globalThis.IDBKeyRange
+  const records = new Map()
+  let transactionTail = Promise.resolve()
+  let synchronousFailure
+  let asynchronousFailure
+
+  const database = {
+    close() {},
+    transaction(_store, mode) {
+      const predecessor = transactionTail
+      let release
+      transactionTail = new Promise(resolve => {
+        release = resolve
+      })
+      const operations = []
+      let snapshot
+      let finished = false
+      const transaction = {
+        error: null,
+        oncomplete: null,
+        onerror: null,
+        onabort: null,
+        abort() {
+          if (finished) throw new DOMException('Transaction finished', 'InvalidStateError')
+          finished = true
+          setImmediate(() => {
+            transaction.onabort?.()
+            release()
+          })
+        },
+        objectStore() {
+          return {
+            get(key) {
+              const request = { result: undefined, error: null, onsuccess: null, onerror: null }
+              operations.push(() => {
+                if (asynchronousFailure?.key === key) {
+                  request.error = asynchronousFailure.error
+                  asynchronousFailure = undefined
+                  transaction.error = request.error
+                  request.onerror?.()
+                  if (!finished) transaction.abort()
+                  return
+                }
+                request.result = structuredClone(snapshot.get(key))
+                request.onsuccess?.()
+              })
+              return request
+            },
+            put(value, key) {
+              if (synchronousFailure?.key === key) {
+                const error = synchronousFailure.error
+                synchronousFailure = undefined
+                throw error
+              }
+              const cloned = structuredClone(value)
+              operations.push(() => {
+                if (asynchronousFailure?.key === key) {
+                  transaction.error = asynchronousFailure.error
+                  asynchronousFailure = undefined
+                  transaction.onerror?.()
+                  transaction.abort()
+                  return
+                }
+                snapshot.set(key, cloned)
+              })
+            },
+            delete(key) {
+              operations.push(() => {
+                if (typeof key === 'string') snapshot.delete(key)
+                else {
+                  for (const storedKey of snapshot.keys()) {
+                    if (storedKey >= key.lower && storedKey <= key.upper) snapshot.delete(storedKey)
+                  }
+                }
+              })
+            }
+          }
+        }
+      }
+      const run = () => {
+        if (finished) return
+        snapshot ??= new Map(records)
+        const operation = operations.shift()
+        if (operation) {
+          try {
+            operation()
+          } catch (error) {
+            transaction.error = error
+            transaction.abort()
+          }
+          setImmediate(run)
+          return
+        }
+        finished = true
+        if (mode === 'readwrite') {
+          records.clear()
+          for (const entry of snapshot) records.set(...entry)
+        }
+        transaction.oncomplete?.()
+        release()
+      }
+      // Each transaction sees one committed snapshot; a later writer waits for its readers.
+      void predecessor.then(() => setImmediate(run))
+      return transaction
+    }
+  }
+
+  globalThis.indexedDB = {
+    open() {
+      const request = { result: database, onsuccess: null, onerror: null }
+      setImmediate(() => request.onsuccess?.())
+      return request
+    }
+  }
+  globalThis.IDBKeyRange = { bound: (lower, upper) => ({ lower, upper }) }
+  t.after(async () => {
+    await transactionTail
+    closeConnection()
+    if (previousIndexedDb === undefined) delete globalThis.indexedDB
+    else globalThis.indexedDB = previousIndexedDb
+    if (previousKeyRange === undefined) delete globalThis.IDBKeyRange
+    else globalThis.IDBKeyRange = previousKeyRange
+  })
+  return {
+    records,
+    failPut(key, error, synchronous = true) {
+      if (synchronous) synchronousFailure = { key, error }
+      else asynchronousFailure = { key, error }
+    },
+    failRead(key, error) {
+      asynchronousFailure = { key, error }
+    }
+  }
+}
+
+test('reading a wallet while its snapshot is deleted returns the complete previous snapshot', async t => {
+  installDatabase(t)
+  await saveWalletDb(walletKey, chunks())
+
+  const [loaded] = await Promise.all([loadWalletDb(walletKey), deleteWalletDb(walletKey)])
+
+  assert.deepEqual(loaded, expectedBytes)
+  assert.equal(await loadWalletDb(walletKey), null)
+})
+
+test('reading a wallet while its snapshot shrinks does not mix snapshot generations', async t => {
+  const { records } = installDatabase(t)
+  await saveWalletDb(walletKey, chunks())
+
+  const [loaded] = await Promise.all([
+    loadWalletDb(walletKey),
+    saveWalletDb(walletKey, new Uint8Array([9]))
+  ])
+
+  assert.deepEqual(loaded, expectedBytes)
+  assert.deepEqual(await loadWalletDb(walletKey), new Uint8Array([9]))
+  assert.equal(records.has(`${walletKey}::c::5`), false)
+})
+
+test('a synchronous chunk or manifest write failure preserves the last committed wallet', async t => {
+  const database = installDatabase(t)
+  await saveWalletDb(walletKey, chunks())
+
+  for (const key of [`${walletKey}::c::0`, `${walletKey}::c::1`, walletKey]) {
+    const error = new DOMException('Cannot clone snapshot', 'DataCloneError')
+    database.failPut(key, error)
+
+    await assert.rejects(saveWalletDb(walletKey, chunks()), failure => failure === error)
+    assert.deepEqual(await loadWalletDb(walletKey), expectedBytes)
+  }
+})
+
+test('an asynchronous storage failure rolls back replacement chunks and the manifest', async t => {
+  const database = installDatabase(t)
+  await saveWalletDb(walletKey, chunks())
+  const error = new DOMException('Storage full', 'QuotaExceededError')
+  database.failPut(walletKey, error, false)
+
+  await assert.rejects(saveWalletDb(walletKey, new Uint8Array([9])), failure => failure === error)
+  assert.deepEqual(await loadWalletDb(walletKey), expectedBytes)
+})
+
+test('an empty serialization cannot overwrite an existing wallet snapshot', async t => {
+  installDatabase(t)
+  await saveWalletDb(walletKey, chunks())
+
+  await assert.rejects(saveWalletDb(walletKey, []), /Invalid wallet database snapshot/)
+  await assert.rejects(
+    saveWalletDb(walletKey, new Uint8Array()),
+    /Invalid wallet database snapshot/
+  )
+  assert.deepEqual(await loadWalletDb(walletKey), expectedBytes)
+})
+
+test('a missing chunk rejects without deleting the remaining recovery evidence', async t => {
+  const { records } = installDatabase(t)
+  await saveWalletDb(walletKey, chunks())
+  records.delete(`${walletKey}::c::0`)
+
+  await assert.rejects(loadWalletDb(walletKey), /Missing chunk 0\/6/)
+  assert.equal(records.get(walletKey).chunkCount, 6)
+  assert.deepEqual(records.get(`${walletKey}::c::1`), new Uint8Array([2]))
+})
+
+test('malformed manifests and truncated chunks reject instead of loading incomplete bytes', async t => {
+  const { records } = installDatabase(t)
+  await saveWalletDb(walletKey, chunks())
+  const manifest = records.get(walletKey)
+
+  for (const invalid of [
+    { chunkCount: -1 },
+    { chunkSizes: [6] },
+    { chunkSizes: [1, 1, 1, 1, 1, -1] },
+    { totalBytes: 7 }
+  ]) {
+    records.set(walletKey, { ...manifest, ...invalid })
+    await assert.rejects(loadWalletDb(walletKey), /Invalid wallet database snapshot/)
+  }
+
+  records.set(walletKey, manifest)
+  for (const invalidChunk of [new Uint8Array(), new Uint8Array([1, 2]), null, 'invalid']) {
+    records.set(`${walletKey}::c::0`, invalidChunk)
+    await assert.rejects(loadWalletDb(walletKey), /Invalid wallet database snapshot/)
+  }
+})
+
+test('manifest and chunk read failures reject with their storage error', async t => {
+  const database = installDatabase(t)
+  await saveWalletDb(walletKey, chunks())
+
+  for (const key of [walletKey, `${walletKey}::c::0`]) {
+    const error = new DOMException('Storage unavailable', 'UnknownError')
+    database.failRead(key, error)
+    await assert.rejects(loadWalletDb(walletKey), failure => failure === error)
+  }
+})
+
+test('version-compatible snapshots from before chunking still load', async t => {
+  const { records } = installDatabase(t)
+  records.set(walletKey, { metadata: { version: 1 }, data: expectedBytes })
+
+  assert.deepEqual(await loadWalletDb(walletKey), expectedBytes)
+})

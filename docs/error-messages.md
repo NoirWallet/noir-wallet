@@ -89,9 +89,12 @@ When the current wallet entry or its credentials are missing, the unlock page ca
 
 ## Storage
 
-| User message                                  | Trigger                  | Retryable |
-| --------------------------------------------- | ------------------------ | --------- |
-| Failed to save wallet data. Please try again. | Wallet data save timeout | Yes       |
+| User message                                                        | Trigger                                  | Retryable |
+| ------------------------------------------------------------------- | ---------------------------------------- | --------- |
+| Wallet data is incomplete. Resync this wallet before sending again. | Missing or invalid wallet snapshot chunk | No        |
+| Failed to save wallet data. Please try again.                       | Wallet data save timeout                 | Yes       |
+
+On a transaction failure caused by an incomplete snapshot, the result page offers the existing Resync confirmation when the transaction record identifies one wallet and account on the active network and has no broadcast hash. If that record cannot identify the affected account, the page directs the user to select it and open its account details. Resync requires an unlocked wallet and a valid start height; it rebuilds the wallet snapshot by scanning from that height. The original storage error remains in diagnostics.
 
 ## ZNS Names
 

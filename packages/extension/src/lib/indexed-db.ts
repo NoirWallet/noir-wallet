@@ -198,6 +198,9 @@ export async function saveWalletDb(key: string, data: Uint8Array | Uint8Array[])
   const [network, walletId] = key.split('_')
 
   const chunks = toStorageChunks(Array.isArray(data) ? data : [data])
+  if (chunks.length === 0) {
+    throw new Error('Invalid wallet database snapshot: empty snapshot')
+  }
   const chunkSizes = chunks.map(c => c.byteLength)
   const totalBytes = chunkSizes.reduce((sum, n) => sum + n, 0)
 
@@ -224,11 +227,6 @@ export async function saveWalletDb(key: string, data: Uint8Array | Uint8Array[])
       fn()
     }
 
-    // Drop any stale chunks from a previous (larger) save before rewriting.
-    store.delete(walletDbChunkRange(key))
-    chunks.forEach((chunk, i) => store.put(chunk, walletDbChunkKey(key, i)))
-    store.put(manifest, key)
-
     transaction.oncomplete = () =>
       finish(() => {
         console.log(
@@ -248,59 +246,77 @@ export async function saveWalletDb(key: string, data: Uint8Array | Uint8Array[])
         console.warn(`[IndexedDB] save error for ${key}: ${err.name}: ${err.message}`)
         reject(err)
       })
+
+    try {
+      // Keep replacement and cleanup in one transaction, including synchronous failures.
+      store.delete(walletDbChunkRange(key))
+      chunks.forEach((chunk, i) => store.put(chunk, walletDbChunkKey(key, i)))
+      store.put(manifest, key)
+    } catch (error) {
+      try {
+        transaction.abort()
+      } catch {
+        // An IndexedDB failure may have already aborted the transaction.
+      }
+      finish(() => reject(error))
+    }
   })
 }
 
 /**
  * Reassemble chunked wallet DB bytes into a single contiguous buffer.
  */
-async function loadChunkedWalletDb(
-  db: IDBDatabase,
+function loadChunkedWalletDb(
+  store: IDBObjectStore,
   key: string,
-  manifest: WalletDbChunkManifest
-): Promise<Uint8Array> {
+  manifest: WalletDbChunkManifest,
+  fail: (error: unknown) => void
+): Uint8Array {
   const { chunkCount, chunkSizes, totalBytes } = manifest
-  const merged = new Uint8Array(totalBytes)
-  const offsets: number[] = []
-  let acc = 0
-  for (const size of chunkSizes) {
-    offsets.push(acc)
-    acc += size
+  if (
+    !Number.isSafeInteger(chunkCount) ||
+    chunkCount <= 0 ||
+    !Number.isSafeInteger(totalBytes) ||
+    totalBytes <= 0 ||
+    !Array.isArray(chunkSizes) ||
+    chunkSizes.length !== chunkCount ||
+    chunkSizes.some(size => !Number.isSafeInteger(size) || size <= 0) ||
+    chunkSizes.reduce((sum, size) => sum + size, 0) !== totalBytes
+  ) {
+    throw new Error('Invalid wallet database snapshot: inconsistent chunk manifest')
   }
 
-  if (chunkCount === 0) return merged
-
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction(STORE_NAME, 'readonly')
-    const store = transaction.objectStore(STORE_NAME)
-    let failed = false
-
-    for (let i = 0; i < chunkCount; i++) {
-      const req = store.get(walletDbChunkKey(key, i))
-      req.onsuccess = () => {
-        const chunk = req.result as Uint8Array | undefined
-        if (!chunk) {
-          failed = true
-          reject(new Error(`Missing chunk ${i}/${chunkCount} for key: ${key}`))
-          try {
-            transaction.abort()
-          } catch {
-            /* already settling */
-          }
-          return
+  const merged = new Uint8Array(totalBytes)
+  let offset = 0
+  for (let i = 0; i < chunkCount; i++) {
+    const chunkOffset = offset
+    offset += chunkSizes[i]
+    const request = store.get(walletDbChunkKey(key, i))
+    request.onsuccess = () => {
+      try {
+        const value: unknown = request.result
+        if (value === undefined) {
+          throw new Error(`Missing chunk ${i}/${chunkCount} for key: ${key}`)
         }
-        merged.set(chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk), offsets[i])
+        if (!(value instanceof Uint8Array) && !(value instanceof ArrayBuffer)) {
+          throw new Error(`Invalid wallet database snapshot: invalid chunk ${i}/${chunkCount}`)
+        }
+        const chunk = value instanceof Uint8Array ? value : new Uint8Array(value)
+        if (chunk.byteLength !== chunkSizes[i]) {
+          throw new Error(
+            `Invalid wallet database snapshot: chunk ${i}/${chunkCount} size mismatch`
+          )
+        }
+        merged.set(chunk, chunkOffset)
+      } catch (error) {
+        fail(error)
       }
     }
-
-    transaction.oncomplete = () => resolve(merged)
-    transaction.onerror = () => {
-      if (!failed) reject(transaction.error)
+    request.onerror = () => {
+      fail(request.error || new Error('IndexedDB chunk read failed'))
     }
-    transaction.onabort = () => {
-      if (!failed) reject(transaction.error || new Error('IndexedDB load transaction aborted'))
-    }
-  })
+  }
+  return merged
 }
 
 /**
@@ -315,57 +331,67 @@ export async function loadWalletDb(key: string): Promise<Uint8Array | null> {
       const transaction = db.transaction(STORE_NAME, 'readonly')
       const store = transaction.objectStore(STORE_NAME)
       const request = store.get(key)
+      let loaded: Uint8Array | null = null
+      const fail = (error: unknown) => {
+        try {
+          transaction.abort()
+        } catch {
+          // The transaction may have already settled after a storage failure.
+        }
+        reject(error)
+      }
+
+      transaction.oncomplete = () => resolve(loaded)
+      transaction.onerror = () => reject(transaction.error || new Error('IndexedDB load failed'))
+      transaction.onabort = () =>
+        reject(transaction.error || new Error('IndexedDB load transaction aborted'))
 
       request.onsuccess = () => {
-        const entry = request.result
+        try {
+          const entry = request.result
+          if (!entry) return
 
-        if (!entry) {
-          resolve(null)
-          return
+          // Handle legacy data (direct Uint8Array without metadata)
+          if (entry instanceof Uint8Array || entry.byteLength !== undefined) {
+            console.warn(
+              `[IndexedDB] Legacy data format detected for ${key}. Clearing incompatible data.`
+            )
+            deleteWalletDb(key).catch(console.error)
+            return
+          }
+
+          // Check version compatibility
+          const walletEntry = entry as WalletDbEntry | WalletDbChunkManifest
+          if (!walletEntry.metadata || walletEntry.metadata.version !== WASM_DATA_VERSION) {
+            const storedVersion = walletEntry.metadata?.version ?? 0
+            console.warn(
+              `[IndexedDB] Version mismatch for ${key}: stored=${storedVersion}, expected=${WASM_DATA_VERSION}. Clearing incompatible data.`
+            )
+            deleteWalletDb(key).catch(console.error)
+            return
+          }
+
+          if ('chunked' in walletEntry && walletEntry.chunked) {
+            // Reuse the manifest transaction so concurrent saves cannot replace its chunks.
+            loaded = loadChunkedWalletDb(store, key, walletEntry, fail)
+            return
+          }
+
+          // Legacy single-value format (pre-chunking, still version-compatible)
+          const singleEntry = walletEntry as WalletDbEntry
+          const bytes: unknown = singleEntry.data
+          if (
+            (!(bytes instanceof Uint8Array) && !(bytes instanceof ArrayBuffer)) ||
+            bytes.byteLength === 0
+          ) {
+            throw new Error('Invalid wallet database snapshot: invalid snapshot bytes')
+          }
+          loaded = new Uint8Array(bytes)
+        } catch (error) {
+          fail(error)
         }
-
-        // Handle legacy data (direct Uint8Array without metadata)
-        if (entry instanceof Uint8Array || entry.byteLength !== undefined) {
-          console.warn(
-            `[IndexedDB] Legacy data format detected for ${key}. Clearing incompatible data.`
-          )
-          deleteWalletDb(key).catch(console.error)
-          resolve(null)
-          return
-        }
-
-        // Check version compatibility
-        const walletEntry = entry as WalletDbEntry | WalletDbChunkManifest
-        if (!walletEntry.metadata || walletEntry.metadata.version !== WASM_DATA_VERSION) {
-          const storedVersion = walletEntry.metadata?.version ?? 0
-          console.warn(
-            `[IndexedDB] Version mismatch for ${key}: stored=${storedVersion}, expected=${WASM_DATA_VERSION}. Clearing incompatible data.`
-          )
-          deleteWalletDb(key).catch(console.error)
-          resolve(null)
-          return
-        }
-
-        if ('chunked' in walletEntry && walletEntry.chunked) {
-          loadChunkedWalletDb(db, key, walletEntry)
-            .then(merged => {
-              console.log(
-                `[IndexedDB] Loaded ${merged.byteLength} bytes from ${walletEntry.chunkCount} chunk(s) for key: ${key} (version: ${walletEntry.metadata.version})`
-              )
-              resolve(merged)
-            })
-            .catch(reject)
-          return
-        }
-
-        // Legacy single-value format (pre-chunking, still version-compatible)
-        const singleEntry = walletEntry as WalletDbEntry
-        console.log(
-          `[IndexedDB] Loaded ${singleEntry.data.byteLength} bytes for key: ${key} (version: ${singleEntry.metadata.version})`
-        )
-        resolve(new Uint8Array(singleEntry.data))
       }
-      request.onerror = () => reject(request.error)
+      request.onerror = () => fail(request.error || new Error('IndexedDB manifest read failed'))
     })
   } catch (e) {
     console.warn('[IndexedDB] Failed to load wallet db:', e)
