@@ -5,6 +5,8 @@
  * converted to actionable messages the user can understand.
  */
 
+import { redactSensitiveText } from './diagnostic-log'
+
 interface ErrorMapping {
   pattern: RegExp
   message: string
@@ -307,30 +309,48 @@ export interface ClassifiedError {
   retryable: boolean
 }
 
+const ORIGINAL_ERROR_SEPARATOR = '\n\nOriginal error: '
+
+export function formatErrorMessage(message: string, originalError: string): string {
+  const detail = redactSensitiveText(originalError)
+  return detail && detail !== message ? `${message}${ORIGINAL_ERROR_SEPARATOR}${detail}` : message
+}
+
 export function classifyError(error: unknown): ClassifiedError {
   const raw =
     error instanceof Error ? error.message : typeof error === 'string' ? error : String(error)
 
+  // Errors cross Worker and UI boundaries as strings, sometimes after classification.
+  const previousMessage = [
+    WALLET_SNAPSHOT_RECOVERY_MESSAGE,
+    ...ERROR_MAPPINGS.map(m => m.message)
+  ].find(message => raw === message || raw.startsWith(`${message}${ORIGINAL_ERROR_SEPARATOR}`))
+  const technicalMessage =
+    previousMessage && raw !== previousMessage
+      ? raw.slice(previousMessage.length + ORIGINAL_ERROR_SEPARATOR.length)
+      : raw
+
+  const classify = (message: string, retryable: boolean): ClassifiedError => ({
+    userMessage: formatErrorMessage(message, technicalMessage),
+    technicalMessage,
+    retryable
+  })
+
   if (isWalletSnapshotRecoveryError(raw)) {
-    return {
-      userMessage: WALLET_SNAPSHOT_RECOVERY_MESSAGE,
-      technicalMessage: raw,
-      retryable: false
-    }
+    return classify(WALLET_SNAPSHOT_RECOVERY_MESSAGE, false)
   }
+
+  const previousMapping = ERROR_MAPPINGS.find(mapping => mapping.message === previousMessage)
+  if (previousMapping) return classify(previousMapping.message, previousMapping.retryable)
 
   for (const mapping of ERROR_MAPPINGS) {
     if (mapping.pattern.test(raw)) {
-      return {
-        userMessage: mapping.message,
-        technicalMessage: raw,
-        retryable: mapping.retryable
-      }
+      return classify(mapping.message, mapping.retryable)
     }
   }
 
   return {
-    userMessage: raw || 'Unknown error',
+    userMessage: redactSensitiveText(raw) || 'Unknown error',
     technicalMessage: raw,
     retryable: true
   }

@@ -4,6 +4,8 @@ Shared classification and message mapping are defined in [errors.ts](../packages
 
 The “Retryable” column is the classifier's `retryable` flag. It does not mean every call site retries automatically.
 
+Mapped errors show the user guidance below followed by `Original error: …`, so screenshots retain the underlying reason. Already formatted errors are not appended again; identical and unmapped messages appear once. Error details use the shared credential and recovery-phrase redaction before display. `technicalMessage` retains the original reason for diagnostics. Input validation messages do not receive this suffix.
+
 ## Network
 
 | User message                                                         | Trigger                                     | Retryable |

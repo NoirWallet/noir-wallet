@@ -20,7 +20,12 @@ import { isZcashDestination } from '@/lib/cross-chain-transaction'
 import { pollingTransactionConfirmations } from '@/lib/zcash-node-rpc'
 import { getNetworkConfig } from '@/config/networks'
 import { WALLET_CONFIG } from '@/config/wallet'
-import { classifyError, isWalletSnapshotRecoveryError } from '@/lib/errors'
+import {
+  classifyError,
+  formatErrorMessage,
+  isWalletSnapshotRecoveryError,
+  WALLET_SNAPSHOT_RECOVERY_MESSAGE
+} from '@/lib/errors'
 import { resolveWalletSnapshotRecoveryTarget } from '@/lib/transaction-replacement'
 import { ResyncWalletContent } from '../../components/account/AccountModals'
 import { openModal } from '../../provider/ModalManager'
@@ -353,12 +358,15 @@ export function TransactionResultPage() {
           error={data.error}
           customTitle={recordCopy?.title ?? data.customTitle}
           customDescription={
-            recoveryError ||
-            (needsSnapshotRecovery
-              ? snapshotRecoveryTarget
-                ? classifyError(data.error).userMessage
-                : SNAPSHOT_RECOVERY_GUIDANCE
-              : (recordCopy?.description ?? pendingDescription))
+            needsSnapshotRecovery
+              ? formatErrorMessage(
+                  recoveryError ||
+                    (snapshotRecoveryTarget
+                      ? WALLET_SNAPSHOT_RECOVERY_MESSAGE
+                      : SNAPSHOT_RECOVERY_GUIDANCE),
+                  classifyError(data.error).technicalMessage
+                )
+              : recoveryError || (recordCopy?.description ?? pendingDescription)
           }
           showFrom={data.showFrom}
           showTo={data.showTo}

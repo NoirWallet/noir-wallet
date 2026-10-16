@@ -25,10 +25,14 @@ test('snapshot integrity failures require recovery instead of a blind retry', ()
     'Invalid wallet database snapshot: chunk 0 has the wrong size'
   ]) {
     const classified = classifyError(raw)
-    assert.equal(classified.userMessage, WALLET_SNAPSHOT_RECOVERY_MESSAGE)
+    assert.equal(
+      classified.userMessage,
+      `${WALLET_SNAPSHOT_RECOVERY_MESSAGE}\n\nOriginal error: ${raw}`
+    )
     assert.equal(classified.technicalMessage, raw)
     assert.equal(classified.retryable, false)
     assert.equal(isWalletSnapshotRecoveryError(raw), true)
+    assert.deepEqual(classifyError(classified.userMessage), classified)
   }
 
   assert.equal(isWalletSnapshotRecoveryError(WALLET_SNAPSHOT_RECOVERY_MESSAGE), true)
