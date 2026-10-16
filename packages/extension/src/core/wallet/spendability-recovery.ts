@@ -2,8 +2,8 @@ export const SPENDABILITY_SYNC_IN_PROGRESS_MESSAGE =
   'Wallet sync is still in progress. Please try again when it finishes.'
 export const SPENDABILITY_REPAIR_STARTED_MESSAGE =
   'Wallet balance metadata is being refreshed. Please try again after sync finishes.'
-export const SPENDABILITY_MANUAL_RESYNC_REQUIRED_MESSAGE =
-  'Wallet balance metadata could not be refreshed. Open the account settings and choose Resync wallet.'
+export const SPENDABILITY_RESTART_REQUIRED_MESSAGE =
+  'Wallet balance metadata is still unavailable. Restart the extension and try again.'
 
 interface SpendabilityRecoveryOptions<T> {
   operation: () => Promise<T>
@@ -16,6 +16,7 @@ interface SpendabilityRecoveryOptions<T> {
 
 interface SpendabilitySnapshotRefreshOptions {
   hasAttempted: () => boolean
+  hasPersistedSnapshot: () => Promise<boolean>
   markAttempted: () => void
   clearAttempt: () => void
   reloadPersistedSnapshot: () => Promise<void>
@@ -24,17 +25,18 @@ interface SpendabilitySnapshotRefreshOptions {
 
 /**
  * Reloads the last durable wallet snapshot once without deleting scan state.
- * A persistent metadata failure is escalated to an explicit manual resync.
+ * An unresolved metadata failure asks for a runtime restart without assuming scan corruption.
  */
 export async function runSpendabilitySnapshotRefresh({
   hasAttempted,
+  hasPersistedSnapshot,
   markAttempted,
   clearAttempt,
   reloadPersistedSnapshot,
   startCatchUpSync
 }: SpendabilitySnapshotRefreshOptions): Promise<void> {
-  if (hasAttempted()) {
-    throw new Error(SPENDABILITY_MANUAL_RESYNC_REQUIRED_MESSAGE)
+  if (hasAttempted() || !(await hasPersistedSnapshot())) {
+    throw new Error(SPENDABILITY_RESTART_REQUIRED_MESSAGE)
   }
 
   markAttempted()

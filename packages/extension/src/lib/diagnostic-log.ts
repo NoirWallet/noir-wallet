@@ -271,13 +271,19 @@ async function replaceAsync(
   return result + value.slice(cursor)
 }
 
-export async function sanitizeDiagnosticText(value: string, salt: string): Promise<string> {
+export function redactSensitiveText(value: string): string {
   let sanitized = redactRecoveryPhrases(value)
 
   sanitized = sanitized.replace(
-    /\b(seed(?:\s*phrase)?|mnemonic|password|passphrase|private\s*key|spending\s*key|viewing\s*key|credential|signature|memo|auth(?:orization)?\s*token|access\s*token|refresh\s*token)\s*[:=]\s*(?:\[(?:Redacted|Recovery phrase redacted)\]|"[^"]*"|'[^']*'|[^\r\n,;)}\]]+)/gi,
+    /["']?\b(seed(?:\s*(?:phrase|words))?|recovery\s*phrase|mnemonic|password|passphrase|private\s*key|spending\s*key|viewing\s*key|session\s*key|key\s*material|secret|credential|signature|memo|auth(?:orization)?(?:\s*token)?|access\s*token|refresh\s*token)["']?\s*[:=]\s*(?:\[(?:Redacted|Recovery phrase redacted)\]|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\r\n,;)}\]]+)/gi,
     '$1=[Redacted]'
   )
+  return sanitized
+}
+
+export async function sanitizeDiagnosticText(value: string, salt: string): Promise<string> {
+  let sanitized = redactSensitiveText(value)
+
   sanitized = sanitized.replace(
     /\b(amount|balance|fee|value|usd(?:\s*value)?|transparent|shielded|sapling|orchard|ironwood|unshielded|spendable|available|pending|total)(?:\s+balance)?\s*[:=]\s*-?\d+(?:\.\d+)?/gi,
     '$1=[Redacted]'

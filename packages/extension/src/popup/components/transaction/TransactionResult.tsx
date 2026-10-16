@@ -63,7 +63,11 @@ export function TransactionResult({
         </div>
 
         <h2 className="text-xl font-semibold mb-2 text-center">{title}</h2>
-        {description && <p className="text-sm text-muted mb-5 text-center">{description}</p>}
+        {description && (
+          <p className="w-full text-sm text-muted mb-5 text-center whitespace-pre-wrap break-words">
+            {description}
+          </p>
+        )}
 
         <div className="w-full space-y-4 my-4">{children}</div>
       </div>

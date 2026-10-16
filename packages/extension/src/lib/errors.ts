@@ -5,6 +5,9 @@
  * converted to actionable messages the user can understand.
  */
 
+import { redactSensitiveText } from './diagnostic-log'
+import { isWalletSnapshotIntegrityError } from './wallet-snapshot-errors'
+
 interface ErrorMapping {
   pattern: RegExp
   message: string
@@ -15,6 +18,19 @@ const RPC_ENDPOINT_ERROR_PATTERN =
   /gRPC|grpc|StatusCode::|UNAVAILABLE|transport error|connect error|deadline exceeded|fetch.*failed|network.*error|ERR_NETWORK|net::ERR_|ECONNREFUSED|ENOTFOUND|ECONNRESET|rate.?limit|InvalidContentType|invalid content type|MalformedResponse|malformed response|Failed to resolve chain height from network|HTTP\s+(?:408|425|429|5\d{2})\b/i
 const LOCAL_WALLET_RPC_ERROR_PATTERN =
   /Offscreen RPC|Worker RPC|Worker crashed|Worker not initialized|SYNC_BUSY|STALE_WALLET_RPC|WALLET_DIRTY/i
+
+export const WALLET_SNAPSHOT_RECOVERY_MESSAGE =
+  'Wallet data is incomplete. Resync this wallet before sending again.'
+
+const ORIGINAL_ERROR_SEPARATOR = '\n\nOriginal error: '
+
+export function isWalletSnapshotRecoveryError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  const prefix = `${WALLET_SNAPSHOT_RECOVERY_MESSAGE}${ORIGINAL_ERROR_SEPARATOR}`
+  return isWalletSnapshotIntegrityError(
+    message.startsWith(prefix) ? message.slice(prefix.length) : message
+  )
+}
 
 export function isRpcEndpointError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error)
@@ -271,7 +287,7 @@ const ERROR_MAPPINGS: ErrorMapping[] = [
 
   // --- Persist / Storage ---
   {
-    pattern: /persist timeout/i,
+    pattern: /persist timeout|Failed to serialize wallet database snapshot:/i,
     message: 'Failed to save wallet data. Please try again.',
     retryable: true
   },
@@ -295,22 +311,46 @@ export interface ClassifiedError {
   retryable: boolean
 }
 
+export function formatErrorMessage(message: string, originalError: string): string {
+  const detail = redactSensitiveText(originalError)
+  return detail && detail !== message ? `${message}${ORIGINAL_ERROR_SEPARATOR}${detail}` : message
+}
+
 export function classifyError(error: unknown): ClassifiedError {
   const raw =
     error instanceof Error ? error.message : typeof error === 'string' ? error : String(error)
 
+  // Errors cross Worker and UI boundaries as strings, sometimes after classification.
+  const previousMessage = [
+    WALLET_SNAPSHOT_RECOVERY_MESSAGE,
+    ...ERROR_MAPPINGS.map(m => m.message)
+  ].find(message => raw === message || raw.startsWith(`${message}${ORIGINAL_ERROR_SEPARATOR}`))
+  const technicalMessage =
+    previousMessage && raw !== previousMessage
+      ? raw.slice(previousMessage.length + ORIGINAL_ERROR_SEPARATOR.length)
+      : raw
+
+  const classify = (message: string, retryable: boolean): ClassifiedError => ({
+    userMessage: formatErrorMessage(message, technicalMessage),
+    technicalMessage,
+    retryable
+  })
+
+  if (isWalletSnapshotRecoveryError(raw)) {
+    return classify(WALLET_SNAPSHOT_RECOVERY_MESSAGE, false)
+  }
+
+  const previousMapping = ERROR_MAPPINGS.find(mapping => mapping.message === previousMessage)
+  if (previousMapping) return classify(previousMapping.message, previousMapping.retryable)
+
   for (const mapping of ERROR_MAPPINGS) {
     if (mapping.pattern.test(raw)) {
-      return {
-        userMessage: mapping.message,
-        technicalMessage: raw,
-        retryable: mapping.retryable
-      }
+      return classify(mapping.message, mapping.retryable)
     }
   }
 
   return {
-    userMessage: raw || 'Unknown error',
+    userMessage: redactSensitiveText(raw) || 'Unknown error',
     technicalMessage: raw,
     retryable: true
   }

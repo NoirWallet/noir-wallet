@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  SPENDABILITY_MANUAL_RESYNC_REQUIRED_MESSAGE,
+  SPENDABILITY_RESTART_REQUIRED_MESSAGE,
   SPENDABILITY_REPAIR_STARTED_MESSAGE,
   SPENDABILITY_SYNC_IN_PROGRESS_MESSAGE,
   runSpendabilitySnapshotRefresh,
@@ -118,6 +118,7 @@ describe('spendability metadata recovery', () => {
     let catchUpCalls = 0
     const options = {
       hasAttempted: () => attempted,
+      hasPersistedSnapshot: async () => true,
       markAttempted: () => {
         attempted = true
       },
@@ -133,13 +134,42 @@ describe('spendability metadata recovery', () => {
     }
 
     await runSpendabilitySnapshotRefresh(options)
-    await assert.rejects(
-      runSpendabilitySnapshotRefresh(options),
-      new RegExp(SPENDABILITY_MANUAL_RESYNC_REQUIRED_MESSAGE)
-    )
+    await assert.rejects(runSpendabilitySnapshotRefresh(options), {
+      message: SPENDABILITY_RESTART_REQUIRED_MESSAGE
+    })
 
     assert.equal(reloadCalls, 1)
     assert.equal(catchUpCalls, 1)
+  })
+
+  it('does not reload or sync when there is no persisted snapshot', async () => {
+    let attempted = false
+    let reloadCalls = 0
+    let catchUpCalls = 0
+
+    await assert.rejects(
+      runSpendabilitySnapshotRefresh({
+        hasAttempted: () => attempted,
+        hasPersistedSnapshot: async () => false,
+        markAttempted: () => {
+          attempted = true
+        },
+        clearAttempt: () => {
+          attempted = false
+        },
+        reloadPersistedSnapshot: async () => {
+          reloadCalls += 1
+        },
+        startCatchUpSync: () => {
+          catchUpCalls += 1
+        }
+      }),
+      { message: SPENDABILITY_RESTART_REQUIRED_MESSAGE }
+    )
+
+    assert.equal(attempted, false)
+    assert.equal(reloadCalls, 0)
+    assert.equal(catchUpCalls, 0)
   })
 
   it('allows the snapshot refresh to retry after a transient reload failure', async () => {
@@ -147,6 +177,7 @@ describe('spendability metadata recovery', () => {
     let reloadCalls = 0
     const options = {
       hasAttempted: () => attempted,
+      hasPersistedSnapshot: async () => true,
       markAttempted: () => {
         attempted = true
       },

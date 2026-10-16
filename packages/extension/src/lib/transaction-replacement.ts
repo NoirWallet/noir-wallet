@@ -1,4 +1,4 @@
-import type { Transaction } from '@/types/wallet'
+import type { Network, Transaction, WalletItem } from '@/types/wallet'
 import { safeBig } from '@/lib/big'
 
 export type TransactionRecoveryAction = 'speed_up' | 'retry' | 'none'
@@ -27,6 +27,47 @@ export function getTransactionRecoveryAction(
 ): TransactionRecoveryAction {
   if (!tx || tx.status !== 'failed') return 'none'
   return canSpeedUp(tx) ? 'speed_up' : 'retry'
+}
+
+export function resolveWalletSnapshotRecoveryTarget(
+  accountKey: string | undefined,
+  transactionId: string | undefined,
+  transaction: Transaction | undefined,
+  wallets: WalletItem[],
+  activeNetwork: Network
+): { walletId: string; accountId: string; network: Network; birthdayHeight: number } | null {
+  if (
+    !accountKey ||
+    !transactionId ||
+    !transaction ||
+    transaction.id !== transactionId ||
+    (transaction.status !== 'failed' && transaction.status !== 'pending') ||
+    transaction.txHash ||
+    transaction.network !== activeNetwork
+  ) {
+    return null
+  }
+
+  let target: {
+    walletId: string
+    accountId: string
+    network: Network
+    birthdayHeight: number
+  } | null = null
+  for (const wallet of wallets) {
+    for (const account of wallet.accounts) {
+      if (accountKey === `${transaction.network}_${wallet.id}_${account.id}`) {
+        if (target) return null
+        target = {
+          walletId: wallet.id,
+          accountId: account.id,
+          network: transaction.network,
+          birthdayHeight: account.birthdayHeight || 0
+        }
+      }
+    }
+  }
+  return target
 }
 
 /** Clamp a retry to the amount that remains spendable at its newly selected fee. */
