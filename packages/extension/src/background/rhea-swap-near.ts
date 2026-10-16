@@ -35,6 +35,7 @@ import {
 } from '@/infrastructure/persistence/repositories'
 import type { TransactionRepository } from '@/ports/repositories'
 import { credentialSession } from './credential-session'
+import { nearLedgerSigningBridge } from './ledger-signing-bridge'
 import { encodeNearDAppFunctionArgs, parseNearDAppTransactionBatch } from './near-dapp-codecs'
 import { loadActiveNearTransferContext, type ActiveNearTransferContext } from './near-transfer'
 import { NEAR_TRANSACTION_MONITOR_ALARM } from './near-transaction-monitor'
@@ -68,6 +69,7 @@ type PendingNearExecution = Readonly<{
   graphSuffix: string
   graphCreatedAt: number
   binding: RheaSwapTransactionBinding
+  planFingerprint?: string
 }>
 
 export interface RheaSwapNearPendingStore {
@@ -136,8 +138,10 @@ function parsePending(value: unknown): PendingNearExecution {
   ]
   if (
     record.schemaVersion !== 1 ||
-    Object.keys(record).length !== required.length ||
+    Object.keys(record).length !==
+      required.length + (Object.prototype.hasOwnProperty.call(record, 'planFingerprint') ? 1 : 0) ||
     required.some(key => !Object.prototype.hasOwnProperty.call(record, key)) ||
+    Object.keys(record).some(key => ![...required, 'planFingerprint'].includes(key)) ||
     !record.scope ||
     typeof record.scope !== 'object' ||
     Array.isArray(record.scope) ||
@@ -216,6 +220,10 @@ function parsePending(value: unknown): PendingNearExecution {
   )
   const chainId = readString(record.chainId, 'Stored RHEA Swap NEAR chain', 64)
   if (!chainId.startsWith('near:')) throw new Error('Stored RHEA Swap NEAR chain is invalid')
+  const planFingerprint =
+    record.planFingerprint === undefined
+      ? undefined
+      : parseFingerprint(record.planFingerprint, 'Stored RHEA Swap NEAR plan fingerprint')
   return Object.freeze({
     schemaVersion: 1,
     quoteHandle: readString(record.quoteHandle, 'RHEA Swap quote handle', 160),
@@ -235,7 +243,8 @@ function parsePending(value: unknown): PendingNearExecution {
     expiresAt: record.expiresAt as number,
     graphSuffix: readString(record.graphSuffix, 'RHEA Swap NEAR graph suffix', 80),
     graphCreatedAt: record.graphCreatedAt as number,
-    binding: parseRheaSwapTransactionBinding(record.binding)
+    binding: parseRheaSwapTransactionBinding(record.binding),
+    ...(planFingerprint === undefined ? {} : { planFingerprint })
   })
 }
 
@@ -291,6 +300,7 @@ export interface RheaSwapNearCoordinatorOptions {
 export class RheaSwapNearCoordinator {
   private readonly now: () => number
   private readonly createId: () => string
+  private readonly confirming = new Set<string>()
 
   constructor(private readonly options: RheaSwapNearCoordinatorOptions) {
     this.now = options.now ?? Date.now
@@ -303,7 +313,7 @@ export class RheaSwapNearCoordinator {
   ): Promise<RheaSwapNearTransactionBatchReview> {
     const plan = await this.options.service.readNearTransactionBatchPlan(quoteHandle)
     const binding = parseRheaSwapTransactionBinding(bindingValue)
-    const { context, sender } = await this.loadSoftwareContext()
+    const { context, sender } = await this.loadSupportedContext()
     this.assertBinding(plan, binding, sender)
     const requests = parseNearDAppTransactionBatch([
       {
@@ -352,7 +362,11 @@ export class RheaSwapNearCoordinator {
           })
         })
         if (
-          command.execution.kind !== 'internal' ||
+          (context.keyDomainSource.kind === 'hardware'
+            ? context.keyDomainSource.vendor !== 'ledger' ||
+              command.execution.kind !== 'external' ||
+              command.execution.request.encoding !== 'base64'
+            : command.execution.kind !== 'internal') ||
           command.summary.schema !== 'near.transaction.v1' ||
           command.summary.fields.signerId !== sender ||
           command.summary.fields.receiverId !== request.receiverId
@@ -394,7 +408,10 @@ export class RheaSwapNearCoordinator {
       expiresAt: Math.min(binding.expiresAt, ...prepared.map(command => command.expiresAt)),
       graphSuffix: this.createId(),
       graphCreatedAt: this.now(),
-      binding
+      binding,
+      ...(context.keyDomainSource.kind === 'hardware'
+        ? { planFingerprint: await fingerprintBatch([JSON.stringify(plan.transactions)]) }
+        : {})
     })
     try {
       await this.options.pending.put(pending)
@@ -420,10 +437,25 @@ export class RheaSwapNearCoordinator {
   }
 
   async confirm(quoteHandle: string, fingerprint: string): Promise<RheaSwapSignedOrderResult> {
+    if (this.confirming.has(quoteHandle))
+      throw new Error('RHEA Swap NEAR confirmation is already in progress')
+    this.confirming.add(quoteHandle)
+    try {
+      return await this.confirmOnce(quoteHandle, fingerprint)
+    } finally {
+      this.confirming.delete(quoteHandle)
+    }
+  }
+
+  private async confirmOnce(
+    quoteHandle: string,
+    fingerprint: string
+  ): Promise<RheaSwapSignedOrderResult> {
     let pending = await this.requirePending(quoteHandle, fingerprint)
-    const { context, sender } = await this.loadSoftwareContext()
+    const { context, sender } = await this.loadSupportedContext()
     if (
       sender !== pending.sender ||
+      context.chainAccount.scope.chainId !== pending.chainId ||
       context.chainAccount.scope.keyDomainId !== pending.scope.keyDomainId ||
       context.chainAccount.scope.accountId !== pending.scope.accountId
     ) {
@@ -432,6 +464,12 @@ export class RheaSwapNearCoordinator {
     if (pending.signedTransactions.length < pending.commands.length) {
       const plan = await this.options.service.readNearTransactionBatchPlan(quoteHandle)
       this.assertBinding(plan, pending.binding, sender)
+      if (
+        pending.planFingerprint !== undefined &&
+        (await fingerprintBatch([JSON.stringify(plan.transactions)])) !== pending.planFingerprint
+      ) {
+        throw new Error('RHEA Swap NEAR batch changed after Ledger review')
+      }
       for (
         let index = pending.signedTransactions.length;
         index < pending.commands.length;
@@ -568,17 +606,18 @@ export class RheaSwapNearCoordinator {
     }
   }
 
-  private async loadSoftwareContext(): Promise<{
+  private async loadSupportedContext(): Promise<{
     context: ActiveNearTransferContext
     sender: string
   }> {
     const context = await this.options.loadContext()
     if (
       !context ||
-      context.keyDomainSource.kind === 'hardware' ||
+      (context.keyDomainSource.kind === 'hardware' &&
+        context.keyDomainSource.vendor !== 'ledger') ||
       context.chainAccount.identity.kind !== 'account-identifier'
     ) {
-      throw new Error('RHEA Swap NEAR execution requires an active software Account')
+      throw new Error('RHEA Swap NEAR execution requires an active software or Ledger Account')
     }
     return Object.freeze({
       context,
@@ -675,7 +714,7 @@ export function createBackgroundRheaSwapNearCoordinator(
   const rpc = createConfiguredNearRpcClient({ chainId: network.chainId, rpcUrl: network.rpcUrl })
   return new RheaSwapNearCoordinator({
     service,
-    signer: new NearSigner({ credentials: credentialSession }),
+    signer: new NearSigner({ credentials: credentialSession, ledger: nearLedgerSigningBridge }),
     rpc,
     pending: new ChromeSessionRheaSwapNearStore(),
     repository: new IndexedDbTransactionRepository(),

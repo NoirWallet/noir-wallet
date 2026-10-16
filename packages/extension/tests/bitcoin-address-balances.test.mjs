@@ -56,7 +56,8 @@ test('projects only the active Bitcoin address and excludes other derived balanc
           keyDomainId: 'key-domain:wallet',
           accountId: 'account:0',
           chainId
-        }
+        },
+        derivation: { scheme: 'bip84', path: "m/84'/0'/0'/0/0" }
       },
       accountIndex: 0,
       updatedAt: 123,
@@ -95,7 +96,8 @@ test('projects only the active Bitcoin address and excludes other derived balanc
     {
       ...catalog,
       chainAccount: {
-        scope: { keyDomainId: catalog.walletId, accountId: catalog.accountId, chainId }
+        scope: { keyDomainId: catalog.walletId, accountId: catalog.accountId, chainId },
+        derivation: { scheme: 'bip84', path: "m/84'/0'/0'/0/0" }
       },
       observations: [
         observation('p2wpkh', false, 0, true, [{ valueRaw: '23910', confirmed: true }]),
@@ -112,6 +114,72 @@ test('projects only the active Bitcoin address and excludes other derived balanc
   })
   expect(legacy.addresses).toHaveLength(1)
   expect(legacy.addresses[0]).toMatchObject({ addressType: 'p2pkh', confirmedRaw: '5000' })
+})
+
+test('aggregates Ledger receive and change children under the stored account root', () => {
+  const root = "m/84'/0'/5'"
+  const observations = [
+    observation('p2wpkh', false, 0, true, [
+      { valueRaw: '1000', confirmed: true, transactionId: 'a'.repeat(64) }
+    ]),
+    observation('p2wpkh', false, 1, true, [
+      { valueRaw: '2000', confirmed: true, transactionId: 'b'.repeat(64) }
+    ]),
+    observation('p2wpkh', true, 0, true, [
+      { valueRaw: '3000', confirmed: true, transactionId: 'c'.repeat(64) }
+    ])
+  ].map(item => ({
+    ...item,
+    derived: {
+      ...item.derived,
+      derivationPath: `${root}/${item.derived.change ? 1 : 0}/${item.derived.addressIndex}`
+    }
+  }))
+  const state = {
+    chainAccount: {
+      scope: { keyDomainId: 'key-domain:ledger', accountId: 'account:ledger:0', chainId },
+      derivation: { scheme: 'bip84', path: `${root}/0/0` }
+    },
+    accountIndex: 0,
+    updatedAt: 2_000,
+    observations
+  }
+  const catalog = projectBitcoinAddressBalanceCatalog(state, new Set(), 'p2wpkh', root)
+  expect(catalog.addresses).toHaveLength(3)
+  expect(catalog).toMatchObject({ confirmedRaw: '6000', availableRaw: '6000' })
+  expect(() =>
+    projectBitcoinAddressBalanceCatalog(
+      {
+        ...state,
+        observations: [
+          observations[0],
+          {
+            ...observations[1],
+            utxos: observations[0].utxos
+          }
+        ]
+      },
+      new Set(),
+      'p2wpkh',
+      root
+    )
+  ).toThrow(/duplicate outpoint/)
+  expect(() =>
+    projectBitcoinAddressBalanceCatalog(
+      {
+        ...state,
+        observations: [
+          {
+            ...observations[1],
+            derived: { ...observations[1].derived, derivationPath: "m/84'/0'/6'/0/1" }
+          }
+        ]
+      },
+      new Set(),
+      'p2wpkh',
+      root
+    )
+  ).toThrow(/another account/)
 })
 
 test('persists an address-type switch only after the target scan completes', async () => {

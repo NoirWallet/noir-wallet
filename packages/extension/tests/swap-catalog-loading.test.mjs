@@ -5,31 +5,74 @@ import {
   loadTokenCatalogByChain
 } from '../src/popup/services/swap-catalog-loading.ts'
 
+const zcashChain = {
+  id: 'bip122:00040fe8ec8471911baa1db1266ea15d',
+  family: 'zcash',
+  network: { kind: 'mainnet' }
+}
+const ethereumChain = { id: 'eip155:1', family: 'evm', network: { kind: 'mainnet' } }
+const bitcoinChain = {
+  id: 'bip122:000000000019d6689c085ae165831e93',
+  family: 'bitcoin',
+  network: { kind: 'mainnet' }
+}
+const polygonChain = { id: 'eip155:137', family: 'evm', network: { kind: 'mainnet' } }
+const arbitrumChain = { id: 'eip155:42161', family: 'evm', network: { kind: 'mainnet' } }
+const nearChain = { id: 'near:mainnet', family: 'near', network: { kind: 'mainnet' } }
+
 test('loads only the current pair chains on entry and reuses source tokens for same-chain swaps', () => {
   expect(buildInitialSwapCatalogPlan({})).toEqual({
-    sourceChainIds: [900010],
-    destinationChainIds: [1]
+    sourceChainIds: [],
+    destinationChainIds: []
   })
   expect(
     buildInitialSwapCatalogPlan({
       sourceAssetId: 'nep141:btc.omft.near',
-      destinationAssetId: 'nep141:eth.omft.near'
+      destinationAssetId: 'nep141:eth.omft.near',
+      enabledChains: [bitcoinChain]
     })
   ).toEqual({ sourceChainIds: [900002], destinationChainIds: [1] })
   expect(
     buildInitialSwapCatalogPlan({
       sourceAssetId: 'nep245:v2_1.omni.hot.tg:137_11111111111111111111',
-      destinationApiChainId: '137'
+      destinationApiChainId: '137',
+      enabledChains: [polygonChain]
     })
   ).toEqual({ sourceChainIds: [137], destinationChainIds: [] })
-  expect(buildInitialSwapCatalogPlan({ defaultSourceChainId: 'bip122:mainnet' })).toEqual({
+  expect(
+    buildInitialSwapCatalogPlan({
+      defaultSourceChainId: bitcoinChain.id,
+      enabledChains: [bitcoinChain, ethereumChain]
+    })
+  ).toEqual({
     sourceChainIds: [900002],
     destinationChainIds: [1]
   })
-  expect(buildInitialSwapCatalogPlan({ sourceAssetId: 'eip155:42161/native:ETH' })).toEqual({
+  expect(
+    buildInitialSwapCatalogPlan({
+      sourceAssetId: 'eip155:42161/native:ETH',
+      enabledChains: [arbitrumChain]
+    })
+  ).toEqual({
     sourceChainIds: [42161],
+    destinationChainIds: []
+  })
+  expect(
+    buildInitialSwapCatalogPlan({ sourceAssetId: 'nep141:wrap.near', enabledChains: [nearChain] })
+  ).toEqual({
+    sourceChainIds: [900001],
+    destinationChainIds: []
+  })
+  expect(buildInitialSwapCatalogPlan({ enabledChains: [zcashChain, ethereumChain] })).toEqual({
+    sourceChainIds: [900010],
     destinationChainIds: [1]
   })
+  expect(
+    buildInitialSwapCatalogPlan({
+      sourceAssetId: 'nep141:zec.omft.near',
+      enabledChains: [ethereumChain]
+    })
+  ).toEqual({ sourceChainIds: [1], destinationChainIds: [] })
 })
 
 test('publishes a healthy chain before slow chains finish and stops queued work after cancellation', async () => {

@@ -2,7 +2,14 @@ import { KeyringError } from '@/core/keyring/ports'
 import { parseAccountId, type ChainAccount } from '@/core/accounts/domain'
 import { parseChainId, type AssetRegistry } from '@/core/chains/registry'
 import { parseKeyDomainId } from '@/core/keyring/domain'
-import type { PreparedSigningCommand, SigningCommandId, SigningResult } from '@/core/keyring/ports'
+import type {
+  PreparedSigningCommand,
+  SigningCommandId,
+  SigningExecution,
+  SigningResult
+} from '@/core/keyring/ports'
+import type { LedgerSigningResume } from '@/infrastructure/keyring/multichain/ledger-signing-bridge'
+import type { NearSigningPreparePayload } from '@/infrastructure/keyring/multichain/signing-adapter-near'
 import {
   type NearIntentsTransactionBinding,
   parseTransactionEventId,
@@ -48,7 +55,10 @@ export interface NearTransferSigningPort {
   readonly confirm: (
     keyDomainId: ChainAccount['scope']['keyDomainId'],
     commandId: SigningCommandId,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    origin?: string,
+    execution?: SigningExecution,
+    resume?: LedgerSigningResume<NearSigningPreparePayload>
   ) => Promise<SigningResult>
   readonly cancel: (
     keyDomainId: ChainAccount['scope']['keyDomainId'],
@@ -134,6 +144,21 @@ function isUnrecoverableSigningError(error: unknown): boolean {
       error.code === 'SIGNING_COMMAND_NOT_FOUND' ||
       error.code === 'SIGNING_COMMAND_CANCELLED')
   )
+}
+
+function pendingSigning(pending: AwaitingApprovalNearTransfer): PreparedSigningCommand {
+  return Object.freeze({
+    commandId: pending.signingCommandId,
+    chainId: parseChainId(pending.prepared.chainId).id,
+    operation: 'transaction' as const,
+    summary: pending.signingSummary,
+    payloadFingerprint: Object.freeze({
+      algorithm: 'sha256' as const,
+      digestHex: pending.payloadFingerprint
+    }),
+    execution: pending.signingExecution ?? Object.freeze({ kind: 'internal' as const }),
+    expiresAt: pending.expiresAt
+  })
 }
 
 export class NearTransferOrchestrator {
@@ -280,6 +305,7 @@ export class NearTransferOrchestrator {
       prepared,
       signingSummary: signing.summary,
       signingCommandId: signing.commandId,
+      signingExecution: signing.execution,
       payloadFingerprint: signing.payloadFingerprint.digestHex,
       expiresAt: signing.expiresAt
     })
@@ -322,18 +348,7 @@ export class NearTransferOrchestrator {
     }
     return Object.freeze({
       graph,
-      signing: Object.freeze({
-        commandId: pending.signingCommandId,
-        chainId: parseChainId(pending.prepared.chainId).id,
-        operation: 'transaction' as const,
-        summary: pending.signingSummary,
-        payloadFingerprint: Object.freeze({
-          algorithm: 'sha256' as const,
-          digestHex: pending.payloadFingerprint
-        }),
-        execution: Object.freeze({ kind: 'internal' as const }),
-        expiresAt: pending.expiresAt
-      }),
+      signing: pendingSigning(pending),
       debit: Object.freeze({
         maximumFeeRaw: pending.prepared.maximumFeeYocto,
         storageReserveRaw: pending.prepared.storageReserveYocto
@@ -379,7 +394,21 @@ export class NearTransferOrchestrator {
       signed = await this.signer.confirm(
         pending.scope.keyDomainId,
         pending.signingCommandId,
-        input.signal
+        input.signal,
+        undefined,
+        pending.signingExecution,
+        pending.signingExecution?.kind === 'external'
+          ? {
+              accountId: pending.scope.accountId,
+              payload: {
+                kind: 'near-transaction',
+                chainId: parseChainId(pending.prepared.chainId).id,
+                accountIndex: pending.prepared.transaction.accountIndex,
+                transaction: { ...pending.prepared.transaction }
+              },
+              prepared: pendingSigning(pending)
+            }
+          : undefined
       )
     } catch (error) {
       if (isUnrecoverableSigningError(error)) {
@@ -593,7 +622,7 @@ export class NearTransferOrchestrator {
         operation: 'transaction',
         summary: pending.signingSummary,
         payloadFingerprint: { algorithm: 'sha256', digestHex: pending.payloadFingerprint },
-        execution: { kind: 'internal' },
+        execution: pending.signingExecution ?? { kind: 'internal' },
         expiresAt: pending.expiresAt
       })
       const tokenTransfer = 'kind' in pending.prepared

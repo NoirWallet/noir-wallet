@@ -30,7 +30,7 @@ No. Shielding moves funds into the shielded pool, but the original transparent t
 
 ### Why is my available balance lower than my total balance?
 
-Available reflects the selected source's current usable balance. Max estimates what can be sent to the entered destination after transaction selection, fees, and dust constraints. The final amount can change if the fee or destination changes.
+On Zcash **Send** and **Swap**, Available shows funds you can use from the selected source before this transaction's network fee. Max estimates what can be sent to the entered destination after transaction selection, fees, and dust constraints. The final amount can change if the fee or destination changes. See [Send and receive](/wallet-guide/send-and-receive#enter-the-amount) for the difference between available funds and a transaction's confirmation status.
 
 ## Transactions
 
@@ -44,7 +44,9 @@ Noir Wallet cannot cancel a transaction after it has been broadcast to the netwo
 
 ### Why is my restored wallet still synchronizing?
 
-Restoring requires scanning Zcash history to discover notes and transactions. Keep the browser available until the initial scan catches up. If sync pauses, check the connection; **Resync Zcash** is available in the current account's Zcash settings.
+Restoring requires scanning Zcash history to discover notes and transactions. Keep the browser available until the initial scan catches up. If sync pauses, check the connection.
+
+If local sync data is quarantined because it cannot be recovered, automatic synchronization pauses until you use **Resync Zcash** under **Actions** in the current account's details or in its Zcash settings. Resync rebuilds that wallet's local Zcash scan data and leaves its credentials and other chains' data unchanged.
 
 ## dApps
 

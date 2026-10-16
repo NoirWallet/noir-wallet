@@ -90,7 +90,9 @@ export function parseHardwareCredentialMetadata(value: unknown): HardwareCredent
   }
   if (
     vendor === 'ledger' &&
-    (firmwareProfile !== 'zcash' || capabilities.length !== 1 || capabilities[0] !== 'zcash')
+    ((firmwareProfile !== 'zcash' && firmwareProfile !== 'multi-app') ||
+      (firmwareProfile === 'zcash' && (capabilities.length !== 1 || capabilities[0] !== 'zcash')) ||
+      capabilities.includes('tron'))
   ) {
     throw new Error('Invalid Ledger firmware capability binding')
   }

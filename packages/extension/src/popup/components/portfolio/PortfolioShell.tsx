@@ -12,6 +12,7 @@ import { Skeleton } from '@/popup/components/ui/skeleton'
 import { ChainIcon } from '@/popup/components/common/ChainIcon'
 import { Tooltip } from '@/popup/components/ui/tooltip'
 import { NetworkFilter } from '@/popup/components/common/NetworkFilter'
+import { isSelectableChainFamily } from '@/popup/services/chain-selection-availability'
 import {
   ZcashSyncProgress,
   type ZcashSyncProgressState
@@ -140,9 +141,21 @@ export function PortfolioShell({
   const view = controlledView ?? localView
   const setView = onViewChange ?? setLocalView
   const [localSelectedChainIds, setLocalSelectedChainIds] = useState<readonly string[]>(() =>
-    model.chains.map(chain => chain.chain.id)
+    model.chains
+      .filter(chain => isSelectableChainFamily(chain.chain.family, __ENABLED_CHAIN_FEATURE_FLAGS__))
+      .map(chain => chain.chain.id)
   )
-  const availableChainIds = useMemo(() => model.chains.map(chain => chain.chain.id), [model.chains])
+  const selectableChains = useMemo(
+    () =>
+      model.chains.filter(chain =>
+        isSelectableChainFamily(chain.chain.family, __ENABLED_CHAIN_FEATURE_FLAGS__)
+      ),
+    [model.chains]
+  )
+  const availableChainIds = useMemo(
+    () => selectableChains.map(chain => chain.chain.id),
+    [selectableChains]
+  )
   const availableChainIdSet = useMemo(() => new Set<string>(availableChainIds), [availableChainIds])
   const selectedChainIds = (controlledSelectedChainIds ?? localSelectedChainIds).filter(chainId =>
     availableChainIdSet.has(chainId)
@@ -155,12 +168,15 @@ export function PortfolioShell({
   )
 
   const filteredChains = useMemo(
-    () => model.chains.filter(chain => selectedChainIds.includes(chain.chain.id)),
-    [model.chains, selectedChainIds]
+    () => selectableChains.filter(chain => selectedChainIds.includes(chain.chain.id)),
+    [selectableChains, selectedChainIds]
   )
   const visibleChains = filteredChains
   const assetGroups = useMemo(
-    () => buildPortfolioAssetGroups(visibleChains, prices),
+    () =>
+      buildPortfolioAssetGroups(visibleChains, prices, {
+        includeZeroBalanceNativeAssets: visibleChains.length === 1
+      }),
     [prices, visibleChains]
   )
   const lowValueUsdThreshold = useMemo(
@@ -176,8 +192,8 @@ export function PortfolioShell({
     [prices, visibleChains]
   )
   const sortedNetworkOptions = useMemo(
-    () => sortPortfolioChains(model.chains, prices),
-    [model.chains, prices]
+    () => sortPortfolioChains(selectableChains, prices),
+    [selectableChains, prices]
   )
   const showContent = model.status === 'ready' || model.status === 'partial'
   // Balances arrive from cache before prices resolve; show price/fiat skeletons
@@ -286,7 +302,7 @@ export function PortfolioShell({
           <StatePanel icon="lucide:layers" title="No networks available" />
         ) : showContent && selectedChainIds.length === 0 ? (
           <StatePanel icon="lucide:network" title="No network selected" />
-        ) : showContent && assetGroups.length === 0 ? (
+        ) : showContent && view === 'assets' && assetGroups.length === 0 ? (
           <StatePanel
             icon="lucide:wallet-cards"
             title={selectedChainIds.length === 1 ? 'No assets on this network' : 'No assets found'}

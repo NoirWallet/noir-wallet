@@ -1,7 +1,10 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { ZcashBalance, Transaction, Network, SyncReason } from '@/types'
-import { createChromeStorageAdapter } from '@/lib/chrome-storage-adapter'
+import {
+  createAccountDataPersistence,
+  type AccountDataDeletion
+} from '@/lib/account-data-persistence'
 import { useWalletStore } from './wallet-store'
 import { safeBig } from '@/lib/big'
 import {
@@ -19,10 +22,58 @@ import {
   parseAccountPortfolioValueSnapshot,
   type AccountPortfolioValueSnapshot
 } from '@/core/wallet/account-portfolio-value'
+import {
+  ACCOUNT_DATA_VERSION,
+  migrateAccountDataState
+} from '@/core/wallet/account-balance-migration'
 
 export { buildAccountKey } from '@/core/wallet/account-scope'
 
 const EMPTY_TRANSACTIONS: Transaction[] = []
+const ACCOUNT_DATA_KEY = 'account_data'
+
+// Only the service worker writes balances and sync state; extension documents mirror them.
+const accountDataPersistence = createAccountDataPersistence(
+  typeof document === 'undefined' ? 'background' : 'document',
+  ACCOUNT_DATA_VERSION,
+  {
+    read: async () => (await chrome.storage.local.get(ACCOUNT_DATA_KEY))[ACCOUNT_DATA_KEY] ?? null,
+    write: async snapshot => chrome.storage.local.set({ [ACCOUNT_DATA_KEY]: snapshot }),
+    remove: async () => chrome.storage.local.remove(ACCOUNT_DATA_KEY),
+    withLock: async operation => {
+      if (!navigator.locks) throw new Error('Account data storage coordination is unavailable')
+      return navigator.locks.request('noir-account-data', operation)
+    },
+    migrate: migrateAccountDataState,
+    isAccountActive: async accountKey => {
+      const saved = await chrome.storage.local.get(['wallet_state', 'wallet_deleted_ids'])
+      const raw = saved.wallet_state
+      const walletState = typeof raw === 'string' ? JSON.parse(raw) : raw
+      const wallets = walletState?.state?.wallets
+      const deleted = saved.wallet_deleted_ids
+      if (
+        !Array.isArray(wallets) ||
+        (deleted != null &&
+          (!Array.isArray(deleted) || !deleted.every((id: unknown) => typeof id === 'string')))
+      ) {
+        return false
+      }
+      const deletedIds = new Set<string>(deleted ?? [])
+      return wallets.some(
+        (wallet: { id?: unknown; accounts?: unknown }) =>
+          typeof wallet.id === 'string' &&
+          !deletedIds.has(wallet.id) &&
+          Array.isArray(wallet.accounts) &&
+          wallet.accounts.some(
+            (account: { id?: unknown }) =>
+              typeof account.id === 'string' &&
+              (accountKey === buildAccountKey('mainnet', wallet.id as string, account.id) ||
+                accountKey === buildAccountKey('testnet', wallet.id as string, account.id))
+          )
+      )
+    }
+  }
+)
 
 /**
  * Sync state for blockchain synchronization
@@ -475,7 +526,7 @@ export const useAccountDataStore = create<AccountDataStore>()(
         })
 
         await Promise.all([deleteTransactions(key), deleteTransparentTxCache(key)])
-        await flushAccountDataStore()
+        await flushAccountDataStore({ accountKeys: [key] })
       },
 
       deleteWalletData: async (network, walletId, accountIds) => {
@@ -491,6 +542,7 @@ export const useAccountDataStore = create<AccountDataStore>()(
           const transactionsLoaded = new Set(state.transactionsLoaded)
           for (const accountKey of accountKeys) {
             balances.delete(accountKey)
+            syncStates.delete(accountKey)
             portfolioValues.delete(accountKey)
             transactionsCache.delete(accountKey)
             transactionsLoaded.delete(accountKey)
@@ -510,7 +562,7 @@ export const useAccountDataStore = create<AccountDataStore>()(
             deleteTransparentTxCache(accountKey)
           ])
         )
-        await flushAccountDataStore()
+        await flushAccountDataStore({ accountKeys, syncKeys: [walletKey] })
       },
 
       reset: () => {
@@ -525,7 +577,9 @@ export const useAccountDataStore = create<AccountDataStore>()(
     }),
     {
       name: 'account_data',
-      storage: createChromeStorageAdapter('local') as any,
+      version: ACCOUNT_DATA_VERSION,
+      storage: accountDataPersistence as any,
+      migrate: migrateAccountDataState,
       merge: (persisted, current) => {
         const value =
           persisted && typeof persisted === 'object' && !Array.isArray(persisted)
@@ -560,18 +614,9 @@ export const useAccountDataStore = create<AccountDataStore>()(
   )
 )
 
-export async function flushAccountDataStore(): Promise<void> {
-  const state = useAccountDataStore.getState()
-  await chrome.storage.local.set({
-    account_data: {
-      state: {
-        balances: Object.fromEntries(state.balances),
-        syncStates: Object.fromEntries(state.syncStates),
-        portfolioValues: Object.fromEntries(state.portfolioValues)
-      },
-      version: 0
-    }
-  })
+export async function flushAccountDataStore(deletion?: AccountDataDeletion): Promise<void> {
+  if (deletion) await accountDataPersistence.deleteEntries(deletion)
+  else await accountDataPersistence.awaitWrites()
 }
 
 export async function rehydrateAccountDataStore(): Promise<void> {

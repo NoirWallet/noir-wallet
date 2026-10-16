@@ -21,7 +21,12 @@ import {
   bitcoinDiscoveryAddressTypeComplete,
   loadActiveBitcoinDiscoveryContext
 } from './bitcoin-discovery-coordinator'
-import { isActiveBitcoinAddressObservation } from './bitcoin-spendable-utxos'
+import { isFixedSingleAddressBitcoinCheckpoint } from './bitcoin-discovery-persistence-model'
+import {
+  isActiveBitcoinAddressObservation,
+  isLedgerBitcoinAccountObservation
+} from './bitcoin-spendable-utxos'
+import { bitcoinAccountRootFromPath } from './bitcoin-transaction-model'
 
 export interface ActiveBitcoinPortfolioSource {
   readonly generationId: StorageV2GenerationId
@@ -140,7 +145,7 @@ export class BitcoinPortfolioCoordinator {
       this.createSource(
         context,
         state,
-        state && bitcoinDiscoveryAddressTypeComplete(state, addressType) ? 'ready' : 'loading',
+        this.discoveryComplete(context, state, addressType) ? 'ready' : 'loading',
         addressType
       )
     )
@@ -172,7 +177,7 @@ export class BitcoinPortfolioCoordinator {
         this.createSource(
           context,
           state,
-          bitcoinDiscoveryAddressTypeComplete(state, addressType) ? 'ready' : 'loading',
+          this.discoveryComplete(context, state, addressType) ? 'ready' : 'loading',
           addressType
         )
       )
@@ -238,8 +243,15 @@ export class BitcoinPortfolioCoordinator {
     let spendable = 0n
     let available = 0n
     let pending = 0n
+    const ledgerRoot = this.ledgerAccountRoot(context)
     for (const observation of state.observations) {
-      if (!isActiveBitcoinAddressObservation(observation, addressType)) continue
+      if (
+        ledgerRoot === undefined
+          ? !isActiveBitcoinAddressObservation(observation, addressType)
+          : observation.derived.addressType !== addressType ||
+            !isLedgerBitcoinAccountObservation(observation, ledgerRoot)
+      )
+        continue
       for (const utxo of observation.utxos) {
         const key = outpointKey(utxo.transactionId, utxo.outputIndex)
         if (seen.has(key)) throw new Error('Duplicate Bitcoin Portfolio UTXO')
@@ -281,9 +293,15 @@ export class BitcoinPortfolioCoordinator {
     addressType: BitcoinSupportedAddressType
   ): Promise<boolean> {
     if (!state) return false
+    const ledgerRoot = this.ledgerAccountRoot(context)
     const cachedOutpoints = new Set(
       state.observations
-        .filter(observation => isActiveBitcoinAddressObservation(observation, addressType))
+        .filter(observation =>
+          ledgerRoot === undefined
+            ? isActiveBitcoinAddressObservation(observation, addressType)
+            : observation.derived.addressType === addressType &&
+              isLedgerBitcoinAccountObservation(observation, ledgerRoot)
+        )
         .flatMap(observation =>
           observation.utxos.map(utxo => outpointKey(utxo.transactionId, utxo.outputIndex))
         )
@@ -309,6 +327,32 @@ export class BitcoinPortfolioCoordinator {
     return this.options.getAddressType
       ? this.options.getAddressType(context)
       : Promise.resolve(DEFAULT_BITCOIN_ACCOUNT_TYPE)
+  }
+
+  private ledgerAccountRoot(context: ActiveBitcoinDiscoveryContext): string | undefined {
+    return context.keyDomainSource.kind === 'hardware' &&
+      context.keyDomainSource.vendor === 'ledger'
+      ? bitcoinAccountRootFromPath(
+          context.chainAccount.derivation.path,
+          this.chainId,
+          'p2wpkh',
+          false,
+          0
+        )
+      : undefined
+  }
+
+  private discoveryComplete(
+    context: ActiveBitcoinDiscoveryContext,
+    state: BitcoinDiscoveryState | null,
+    addressType: BitcoinSupportedAddressType
+  ): boolean {
+    return Boolean(
+      state &&
+      bitcoinDiscoveryAddressTypeComplete(state, addressType) &&
+      (this.ledgerAccountRoot(context) === undefined ||
+        !isFixedSingleAddressBitcoinCheckpoint(state.checkpoint))
+    )
   }
 
   private async contextRemainsActive(context: ActiveBitcoinDiscoveryContext): Promise<boolean> {

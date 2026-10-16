@@ -22,6 +22,7 @@ import {
 import type { StorageV2ReadRepository } from '@/ports/repositories'
 
 import { credentialSession } from './credential-session'
+import { nearLedgerSigningBridge } from './ledger-signing-bridge'
 import { NEAR_TRANSACTION_MONITOR_ALARM } from './near-transaction-monitor'
 import {
   BackgroundNearTransferController,
@@ -92,7 +93,10 @@ export function createBackgroundNearTransferController(
   const orchestrator = new NearTransferOrchestrator({
     repository: new IndexedDbTransactionRepository(),
     pendingStore: new ChromeSessionNearPendingTransferStore(),
-    signer: new NearMultichainSigningClient({ credentials: credentialSession }),
+    signer: new NearMultichainSigningClient({
+      credentials: credentialSession,
+      ledger: nearLedgerSigningBridge
+    }),
     rpc: createConfiguredNearRpcClient({ chainId: network.chainId, rpcUrl: network.rpcUrl }),
     assets,
     onPendingBroadcast: () =>

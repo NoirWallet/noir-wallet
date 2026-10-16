@@ -37,6 +37,12 @@ export class RheaSwapClientError extends Error {
 }
 
 export function getRheaSwapErrorMessage(error: unknown): string {
+  if (
+    error instanceof RheaSwapClientError &&
+    /unsupported destination token|destinationtoken.*not supported/i.test(error.message)
+  ) {
+    return 'This destination is unavailable for this swap. Choose another asset.'
+  }
   return error instanceof RheaSwapClientError ? error.message : classifyError(error).userMessage
 }
 

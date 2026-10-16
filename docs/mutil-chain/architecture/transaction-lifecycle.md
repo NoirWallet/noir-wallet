@@ -45,6 +45,8 @@ The usual progression is `created → prepared → approved → signed → broad
 - `failed` requires a structured failure code and time. Timeout is not a failure code because it does not prove transaction failure. `unknown` is reserved for migration of V1 failures without a recorded reason.
 - EVM finality is checked against the RPC `finalized` block, including reverted receipts. A reverted but unfinalized receipt remains `confirming`. One null `eth_getTransactionReceipt` response is not proof of a reorg; the same RPC must also show the original hash as pending through `eth_getTransactionByHash` before old inclusion evidence is cleared. Unknown or still-included results leave the current state unchanged.
 
+EVM preparation adds a 20% gas-limit margin, rounded up, to ERC-20 transfers, contract calls, and native transfers with estimates above 21,000. Plain 21,000-gas native transfers keep that estimate. The padded limit is used consistently for the funding check, signed payload, and maximum fee shown in review. Gas estimation and this reserve cannot guarantee success after arbitrary contract-state changes.
+
 ## 3. Events and Concurrent Updates
 
 Roots and Segments carry a `revision`, `updatedAt`, and `lastEventId`. Event IDs are opaque product IDs, not RPC request IDs. An observation older than the recorded `observedAt` cannot replace newer state. A Segment hash or reference binds its identity; later pollers cannot substitute another transaction. A block change, vanished receipt, or lower confirmation count needs an explicit reorg source.
@@ -92,6 +94,8 @@ A V1 status string alone cannot construct a complete graph. Migration also needs
 4. Source priority is `zcash-v1 > wallet-v2 > rpc`. A Zcash shadow graph cannot displace its V1 display, and incomplete RPC data cannot overwrite an authoritative local wallet record.
 5. Hexadecimal hash deduplication is case-insensitive for EVM and BIP122. Other namespaces retain native case semantics.
 6. Chains whose standard RPC lacks complete address history require an explicitly integrated trusted indexer. Wallet-originated records must not be described as complete on-chain history.
+
+Zcash history refresh publishes local records before looking up missing send recipients. Recovery accepts only one external transparent destination whose aggregate output value equals the recorded send amount, excluding the wallet's known transparent addresses. Known recipients survive later WASM refreshes; ambiguous or shielded destinations remain unavailable. Confirmed transaction bodies are reused, and concurrent receive-history and recipient-recovery writes merge atomically in the network/Wallet/Account cache. Lock, account removal, wallet purge, and network changes cancel recovery and prevent late recipient writes.
 
 The Popup reads only the current account through trusted `GET_ACTIVITY`. Content scripts cannot specify Account scope or enumerate partitions. `createConfiguredActivityHistorySources` selects adapters; Background uses one aggregation and local fallback path, while each adapter still contacts its configured source:
 

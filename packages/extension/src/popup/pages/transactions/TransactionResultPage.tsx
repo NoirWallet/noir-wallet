@@ -39,6 +39,7 @@ import {
   getZcashIntentsOriginStatus
 } from '@/popup/services/transaction-progress'
 import { resolveZcashResultView } from '@/lib/transaction-result-model'
+import { getRheaSwapProgressStatus } from '@/lib/swap-progress'
 
 const RHEA_STATUS_RECHECK_INTERVAL_MS = 15_000
 
@@ -120,7 +121,21 @@ export function TransactionResultPage() {
         .then(model => {
           if (!active) return
           const item = model?.items.find(candidate => candidate.id === activityTransactionId)
-          if (item) setOriginActivity(item)
+          if (!item) return
+          setOriginActivity(item)
+          const current = useTransactionResultStore.getState().data
+          if (
+            current?.type === 'swap' &&
+            current.rheaQuoteHandle &&
+            current.activityTransactionId === item.id
+          ) {
+            updateSwapStatus(
+              getRheaSwapProgressStatus(
+                item.segments,
+                current.status ?? { status: 'PENDING_DEPOSIT' }
+              )
+            )
+          }
         })
         .catch(() => {})
     }
@@ -144,7 +159,7 @@ export function TransactionResultPage() {
       clearInterval(timer)
       chrome.runtime.onMessage.removeListener(listener)
     }
-  }, [activityTransactionId, sourceExecutionMode])
+  }, [activityTransactionId, sourceExecutionMode, updateSwapStatus])
 
   useEffect(() => {
     if (!data && !leavingResultRef.current) {

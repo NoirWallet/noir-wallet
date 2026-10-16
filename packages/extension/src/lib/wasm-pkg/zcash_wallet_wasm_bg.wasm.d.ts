@@ -271,7 +271,8 @@ export const webwallet_new: (
   f: number,
   g: number,
   h: number,
-  i: number
+  i: number,
+  j: number
 ) => void
 export const webwallet_oneclick_pczt_orchard_migration: (
   a: number,
@@ -406,6 +407,7 @@ export const webwallet_prepare_sync_batch_optimized: (a: number, b: number) => n
 export const webwallet_replay_journal_entries: (a: number, b: number, c: number) => number
 export const webwallet_scan_journal_entry: (a: number, b: number, c: number) => number
 export const webwallet_send_authorized_transactions: (a: number, b: number, c: number) => number
+export const webwallet_set_zero_indexer_options: (a: number, b: number, c: number) => void
 export const webwallet_sync: (a: number) => number
 export const webwallet_sync_next_batch: (a: number, b: number) => number
 export const webwallet_sync_next_batch_optimized: (a: number, b: number) => number
@@ -444,11 +446,11 @@ export const rustsecp256k1_v0_10_0_context_create: (a: number) => number
 export const rustsecp256k1_v0_10_0_context_destroy: (a: number) => void
 export const rustsecp256k1_v0_10_0_default_error_callback_fn: (a: number, b: number) => void
 export const rustsecp256k1_v0_10_0_default_illegal_callback_fn: (a: number, b: number) => void
-export const __wasm_bindgen_func_elem_16217: (a: number, b: number, c: number, d: number) => void
-export const __wasm_bindgen_func_elem_16245: (a: number, b: number, c: number, d: number) => void
-export const __wasm_bindgen_func_elem_11471: (a: number, b: number, c: number) => void
-export const __wasm_bindgen_func_elem_16215: (a: number, b: number, c: number) => void
-export const __wasm_bindgen_func_elem_11400: (a: number, b: number) => void
+export const __wasm_bindgen_func_elem_16233: (a: number, b: number, c: number, d: number) => void
+export const __wasm_bindgen_func_elem_16261: (a: number, b: number, c: number, d: number) => void
+export const __wasm_bindgen_func_elem_11483: (a: number, b: number, c: number) => void
+export const __wasm_bindgen_func_elem_16231: (a: number, b: number, c: number) => void
+export const __wasm_bindgen_func_elem_11412: (a: number, b: number) => void
 export const memory: WebAssembly.Memory
 export const __wbindgen_export: (a: number, b: number) => number
 export const __wbindgen_export2: (a: number, b: number, c: number, d: number) => number

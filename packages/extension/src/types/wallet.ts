@@ -108,6 +108,11 @@ export type ZcashBalance = Record<AddressType, string> & {
     orchard: string
     ironwood: string
   }
+  /** Per-source amounts selectable under the current WASM confirmation policy. */
+  confirmed?: {
+    shielded: string
+    transparent: string
+  }
   pending?: {
     shielded: string
     transparent: string

@@ -11,6 +11,7 @@ import type { AccountNetworkView } from '@/popup/services/account-networks-clien
 import { formatChainAddressExplorerUrl } from '@/popup/services/chain-explorer'
 import { ListSkeleton } from '../ui/skeleton'
 import { NetworkFilter } from '../common/NetworkFilter'
+import { isSelectableChainFamily } from '@/popup/services/chain-selection-availability'
 import { MultichainActivityRow } from './MultichainActivityRow'
 import { EvmNonceRecoveryBanner } from './EvmNonceRecoveryBanner'
 import { resolveActivityChainId } from './activity-chain'
@@ -227,16 +228,16 @@ export function MultichainActivityPanel({
   }, [accountId, walletId])
 
   const visibleModel = model?.scope.accountId === accountId ? model : null
-  useEffect(() => {
-    if (!focusTransactionId || !visibleModel || !onItemClick) return
-    const item = visibleModel.items.find(candidate => candidate.id === focusTransactionId)
-    if (!item || focusedTransactionId.current === focusTransactionId) return
-    focusedTransactionId.current = focusTransactionId
-    onItemClick(item)
-  }, [focusTransactionId, onItemClick, visibleModel])
-  const availableChainIds = useMemo(
-    () => accountNetworks.map(entry => entry.chain.id),
+  const selectableAccountNetworks = useMemo(
+    () =>
+      accountNetworks.filter(entry =>
+        isSelectableChainFamily(entry.chain.family, __ENABLED_CHAIN_FEATURE_FLAGS__)
+      ),
     [accountNetworks]
+  )
+  const availableChainIds = useMemo(
+    () => selectableAccountNetworks.map(entry => entry.chain.id),
+    [selectableAccountNetworks]
   )
   const selectedChainIds = useMemo(
     () => resolveAvailableActivityChainSelection(availableChainIds, persistedChainSelection),
@@ -244,7 +245,7 @@ export function MultichainActivityPanel({
   )
   const selectedNetwork =
     selectedChainIds.length === 1
-      ? accountNetworks.find(entry => entry.chain.id === selectedChainIds[0])
+      ? selectableAccountNetworks.find(entry => entry.chain.id === selectedChainIds[0])
       : undefined
   const selectedAddress = selectedNetwork?.addresses.find(address => address.preferredForReceive)
   const selectedHistoryAddress =
@@ -264,6 +265,13 @@ export function MultichainActivityPanel({
       }),
     [filterAssetId, selectedChainIds, visibleModel]
   )
+  useEffect(() => {
+    if (!focusTransactionId || !onItemClick) return
+    const item = visibleItems.find(candidate => candidate.id === focusTransactionId)
+    if (!item || focusedTransactionId.current === focusTransactionId) return
+    focusedTransactionId.current = focusTransactionId
+    onItemClick(item)
+  }, [focusTransactionId, onItemClick, visibleItems])
   const pendingEvmChainKey = useMemo(
     () =>
       [
@@ -352,7 +360,7 @@ export function MultichainActivityPanel({
       <div className="flex items-center justify-between gap-3">
         <NetworkFilter
           ariaLabelPrefix="Filter activity by network"
-          options={accountNetworks.map(entry => entry.chain)}
+          options={selectableAccountNetworks.map(entry => entry.chain)}
           selectedIds={selectedChainIds}
           onSelectionChange={chainIds =>
             setPortfolioChainSelection(

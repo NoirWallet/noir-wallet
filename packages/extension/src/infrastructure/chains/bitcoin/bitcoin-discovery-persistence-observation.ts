@@ -159,7 +159,9 @@ function parseDerivedAddress(value: unknown, scope: BitcoinDiscoveryScope): Deri
   const imported = scope.chainAccount.derivation.scheme === 'imported'
   const expectedPath = imported
     ? 'm'
-    : `m/${profile.purpose}'/${coinType}'/${scope.accountIndex}'/${value.change ? 1 : 0}/${addressIndex}`
+    : value.addressType === 'p2wpkh'
+      ? `${scope.chainAccount.derivation.path.replace(/\/0\/0$/, '')}/${value.change ? 1 : 0}/${addressIndex}`
+      : `m/${profile.purpose}'/${coinType}'/${scope.accountIndex}'/${value.change ? 1 : 0}/${addressIndex}`
   if (
     value.addressScheme !== profile.addressScheme ||
     value.derivationScheme !== (imported ? 'imported' : profile.derivationScheme) ||

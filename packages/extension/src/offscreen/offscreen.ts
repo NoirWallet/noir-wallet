@@ -2,6 +2,9 @@ self.addEventListener('error', e => e.preventDefault())
 self.addEventListener('unhandledrejection', e => e.preventDefault())
 
 import { getOffscreenClient } from '@/core/worker/client'
+import type { RPCSchema } from '@/core/worker/types'
+import { encodeWorkerRpcError } from '@/core/worker/rpc-errors'
+import { isTransactionSubmissionUnknown } from '@/core/zcash/transfer-result'
 import { loadWalletDb, quarantineWalletPersistence, saveWalletDb } from '@/lib/indexed-db'
 import {
   registerOffscreenSyncAbortListener,
@@ -1424,11 +1427,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.method === 'wallet.replayJournalEntries') {
-    const { walletId, network, journalWalletId } = message.payload as {
-      walletId: string
-      network: string
-      journalWalletId: string
-    }
+    const { walletId, network, journalWalletId, allowAfterAbort } =
+      message.payload as RPCSchema['wallet.replayJournalEntries']['request']
     const JOURNAL_REPLAY_CHUNK_SIZE = 5
     ;(async () => {
       try {
@@ -1447,7 +1447,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         const entryData = entries.map(e => e.data)
         let replayed = 0
         for (let i = 0; i < entryData.length; i += JOURNAL_REPLAY_CHUNK_SIZE) {
-          if (isSyncAbortRequested(walletId)) {
+          // Finalization applies only completed journal batches. Keep the abort
+          // flag set for scanning while allowing its recovery snapshot to finish.
+          if (allowAfterAbort !== true && isSyncAbortRequested(walletId)) {
             throw new SyncAbortedError(walletId)
           }
           const chunk = entryData.slice(i, i + JOURNAL_REPLAY_CHUNK_SIZE)
@@ -1641,6 +1643,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         sendResponse({ error: msg, errorType: 'timeout' })
         return
       }
+      if (isTransactionSubmissionUnknown(error)) {
+        if (walletId) {
+          await persistWalletDbAfterTransaction(walletId).catch(persistError => {
+            offscreenError('Failed to persist uncertain transaction', persistError, walletId)
+          })
+        }
+        sendResponse(encodeWorkerRpcError(error))
+        return
+      }
       if (isWalletNotInitializedError(msg) && walletId && initPayloadsByWallet.has(walletId)) {
         offscreenWarn(`RPC ${message.method} failed (${msg}), reinitializing...`, walletId)
         try {
@@ -1650,10 +1661,22 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             message.payload
           )
           trySetupLogForwarding()
+          if (isTransactionMutation(message.method)) {
+            await persistWalletDbAfterTransaction(walletId).catch(persistError => {
+              offscreenError('Failed to persist DB after transaction retry', persistError, walletId)
+            })
+          }
           sendResponse({ result: retryResult })
         } catch (retryErr: any) {
           if (retryErr instanceof TimeoutError) {
             sendResponse({ error: retryErr.message, errorType: 'timeout' })
+            return
+          }
+          if (isTransactionSubmissionUnknown(retryErr)) {
+            await persistWalletDbAfterTransaction(walletId).catch(persistError => {
+              offscreenError('Failed to persist uncertain transaction', persistError, walletId)
+            })
+            sendResponse(encodeWorkerRpcError(retryErr))
             return
           }
           await restoreWalletAfterFailedTransaction(

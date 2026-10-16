@@ -24,6 +24,7 @@ import {
 } from '@/infrastructure/chains/bitcoin'
 import { BitcoinMultichainDerivationClient } from '@/infrastructure/keyring/multichain/bitcoin-derivation-client'
 import { BitcoinAddressDerivationRouter } from '@/infrastructure/keyring/bitcoin-address-derivation-router'
+import { bitcoinAccountRootFromPath } from '@/infrastructure/chains/bitcoin/bitcoin-transaction-model'
 import { BitcoinMultichainSigningClient } from '@/infrastructure/keyring/multichain/bitcoin-signing-client'
 import {
   IndexedDbStorageV2Repository,
@@ -119,13 +120,16 @@ function createBackgroundBitcoinRuntime(customRpcUrl?: string): BackgroundBitcoi
   const changeReservations = new BitcoinChangeReservationCoordinator({
     discoveryRepository,
     reservationRepository: new IndexedDbBitcoinChangeReservationRepository(),
-    derivation
+    derivation,
+    ensureDiscovered: (scope, addressIndex) =>
+      discovery.ensureLedgerChangeAddress(scope, addressIndex)
   })
   const preparation = new BitcoinTransferPreparationCoordinator({
     discoveryRepository,
     derivation,
     rpc,
-    inputReservations
+    inputReservations,
+    changeReservations
   })
   const chains = createInitialProductChainRegistry(DEFAULT_NETWORK)
   const assets = createAssetRegistry(
@@ -168,6 +172,30 @@ function createBackgroundBitcoinRuntime(customRpcUrl?: string): BackgroundBitcoi
     loadActiveContext: () => loadActiveBitcoinDiscoveryContext(storageRepository, network.chainId),
     scanActive: addressType => discovery.scanActive({ addressType }),
     getAddressType,
+    resolveLedgerSigner: async context => {
+      const derived = await derivation.deriveAddress(context.chainAccount.scope.keyDomainId, {
+        chainId: context.chainAccount.scope.chainId,
+        addressType: 'p2wpkh',
+        accountIndex: context.accountIndex,
+        change: false,
+        addressIndex: 0
+      })
+      if (!derived.masterFingerprint || !/^0x[0-9a-f]{8}$/.test(derived.masterFingerprint)) {
+        throw new Error('Ledger Bitcoin fingerprint is unavailable')
+      }
+      return Object.freeze({
+        accountPath: bitcoinAccountRootFromPath(
+          derived.derivationPath,
+          context.chainAccount.scope.chainId,
+          'p2wpkh',
+          false,
+          0
+        ),
+        masterFingerprintHex: derived.masterFingerprint.slice(2),
+        expectedAddress: derived.address,
+        network: DEFAULT_NETWORK
+      })
+    },
     requiredConfirmations: network.requiredConfirmations
   })
   const portfolio = new BitcoinPortfolioCoordinator({

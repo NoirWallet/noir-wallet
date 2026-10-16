@@ -32,7 +32,7 @@ export interface BackgroundEvmTransferControllerOptions {
     chainAccount: ActiveEvmPortfolioContext['chainAccount']
   ) => Promise<{
     readonly derivationPath: string
-    readonly masterFingerprintHex: string
+    readonly masterFingerprintHex?: string
     readonly address: string
   }>
   readonly resolvePrivateExecutionAccount?: (
@@ -87,6 +87,33 @@ export class BackgroundEvmTransferController {
     this.resolveExternalSigner = options.resolveExternalSigner
     this.resolvePrivateExecutionAccount = options.resolvePrivateExecutionAccount
     this.readTokenAllowance = options.readTokenAllowance
+  }
+
+  private async resolveTransactionExternalSigner(
+    chainAccount: ActiveEvmPortfolioContext['chainAccount']
+  ) {
+    const signer = await this.resolveExternalSigner(chainAccount)
+    return {
+      derivationPath: signer.derivationPath,
+      ...(signer.masterFingerprintHex === undefined
+        ? {}
+        : { masterFingerprintHex: signer.masterFingerprintHex }),
+      address: signer.address
+    }
+  }
+
+  async getLedgerSignerBinding(chainAccount: ActiveEvmPortfolioContext['chainAccount']) {
+    return accountContextTransition.runActiveOperation(async () => {
+      const context = await this.requireActiveContext()
+      if (
+        context.keyDomainSource.kind !== 'hardware' ||
+        context.keyDomainSource.vendor !== 'ledger' ||
+        context.chainAccount.id !== chainAccount.id
+      ) {
+        throw new Error('Active EVM account is not an authenticated Ledger account')
+      }
+      return this.resolveExternalSigner(context.chainAccount)
+    })
   }
 
   async getTokenAllowance(
@@ -165,8 +192,11 @@ export class BackgroundEvmTransferController {
             ...(feeSelection === undefined ? {} : { feeSelection }),
             ...(context.keyDomainSource.kind === 'hardware'
               ? {
-                  signingMode: 'keystone' as const,
-                  externalSigner: await this.resolveExternalSigner(context.chainAccount)
+                  signingMode:
+                    context.keyDomainSource.vendor === 'ledger'
+                      ? ('ledger' as const)
+                      : ('keystone' as const),
+                  externalSigner: await this.resolveTransactionExternalSigner(context.chainAccount)
                 }
               : { signingMode: 'internal' as const }),
             ...(nearIntentsBinding === undefined ? {} : { nearIntentsBinding }),
@@ -225,8 +255,11 @@ export class BackgroundEvmTransferController {
               : { executionAccount: selectedExecutionAccount }),
             ...(context.keyDomainSource.kind === 'hardware'
               ? {
-                  signingMode: 'keystone' as const,
-                  externalSigner: await this.resolveExternalSigner(context.chainAccount)
+                  signingMode:
+                    context.keyDomainSource.vendor === 'ledger'
+                      ? ('ledger' as const)
+                      : ('keystone' as const),
+                  externalSigner: await this.resolveTransactionExternalSigner(context.chainAccount)
                 }
               : { signingMode: 'internal' as const })
           })
@@ -256,8 +289,11 @@ export class BackgroundEvmTransferController {
           ...(executionAccount === undefined ? {} : { executionAccount }),
           ...(context.keyDomainSource.kind === 'hardware'
             ? {
-                signingMode: 'keystone' as const,
-                externalSigner: await this.resolveExternalSigner(context.chainAccount)
+                signingMode:
+                  context.keyDomainSource.vendor === 'ledger'
+                    ? ('ledger' as const)
+                    : ('keystone' as const),
+                externalSigner: await this.resolveTransactionExternalSigner(context.chainAccount)
               }
             : { signingMode: 'internal' as const })
         })
@@ -306,8 +342,11 @@ export class BackgroundEvmTransferController {
           ...(feeSelection === undefined ? {} : { feeSelection }),
           ...(context.keyDomainSource.kind === 'hardware'
             ? {
-                signingMode: 'keystone' as const,
-                externalSigner: await this.resolveExternalSigner(context.chainAccount)
+                signingMode:
+                  context.keyDomainSource.vendor === 'ledger'
+                    ? ('ledger' as const)
+                    : ('keystone' as const),
+                externalSigner: await this.resolveTransactionExternalSigner(context.chainAccount)
               }
             : { signingMode: 'internal' as const })
         })
@@ -461,10 +500,11 @@ export class BackgroundEvmTransferController {
     const context = await this.requireActiveContext()
     if (
       context.keyDomainSource.kind !== 'hardware' ||
-      context.keyDomainSource.vendor !== 'keystone' ||
+      (context.keyDomainSource.vendor !== 'keystone' &&
+        context.keyDomainSource.vendor !== 'ledger') ||
       !context.keyDomainSource.capabilities.includes('evm')
     ) {
-      throw new Error('The active Wallet is not an EVM-capable Keystone Wallet')
+      throw new Error('The active Wallet is not an EVM-capable hardware Wallet')
     }
     return context
   }

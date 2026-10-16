@@ -8,6 +8,7 @@ import { findAssetPrice, type AssetPriceReadModel } from '@/core/prices'
 import { resolveChainIconAlias } from '@/lib/chain-icon'
 import { ChainIcon } from '@/popup/components/common/ChainIcon'
 import { TokenIcon } from '@/popup/components/tokens/TokenIcon'
+import { BalanceHelp } from '@/popup/components/transaction/BalanceHelp'
 import { getPortfolioAssetUsdValue } from './portfolio-prices'
 import { formatDisplayAmount } from './portfolio-format'
 import { Skeleton } from '@/popup/components/ui/skeleton'
@@ -53,9 +54,12 @@ function assetPendingAmount(asset: PortfolioAssetView): Big {
 function PendingAssetAmount({ amount, symbol }: { readonly amount: Big; readonly symbol: string }) {
   if (amount.lte(0)) return null
   return (
-    <p className="mt-0.5 truncate font-mono text-[10px] text-muted">
-      {formatDisplayAmount(amount)} {symbol} unspendable
-    </p>
+    <div className="flex min-w-0 items-center justify-end gap-1 px-3 pb-2.5 text-[11px] text-muted">
+      <span className="min-w-0 truncate font-mono" title={`${amount.toFixed()} ${symbol} pending`}>
+        {formatDisplayAmount(amount)} {symbol} pending
+      </span>
+      <BalanceHelp kind="pending" />
+    </div>
   )
 }
 
@@ -153,73 +157,77 @@ function PortfolioAssetBalanceRow({
   const breakdown = calculatePortfolioAccountBalanceBreakdown([entry])
 
   return (
-    <button
-      type="button"
-      aria-label={`View ${entry.asset.metadata.symbol} details on ${entry.chain.chain.displayName}`}
-      onClick={() => onSelectAsset?.(entry.asset.asset.id)}
-      className="flex min-h-14 w-full min-w-0 items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-white/[0.03]"
-    >
-      {leading === 'chain' ? (
-        <ChainIcon
-          chain={chainAlias}
-          width={24}
-          height={24}
-          className="shrink-0 rounded-[6px]"
-          showTooltip={false}
-        />
-      ) : (
-        <TokenIcon
-          assetId={entry.asset.asset.id}
-          symbol={entry.asset.metadata.symbol}
-          icon={entry.asset.metadata.iconUrl}
-          size={32}
-          className="shrink-0"
-        />
-      )}
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-medium">
-          {leading === 'chain' ? entry.chain.chain.displayName : entry.asset.metadata.symbol}
-        </p>
-        {showUnitPrice && (
-          <UnitPrice
-            price={quote?.priceUsd ?? null}
-            percent24h={quote?.marketChange?.percent24h}
-            changeFreshness={quote?.marketChange?.freshness}
-            loading={pricesLoading}
+    <div>
+      <button
+        type="button"
+        aria-label={`View ${entry.asset.metadata.symbol} details on ${entry.chain.chain.displayName}`}
+        onClick={() => onSelectAsset?.(entry.asset.asset.id)}
+        className={cn(
+          'flex min-h-14 w-full min-w-0 items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-white/[0.03]',
+          !balancesHidden && pendingAmount.gt(0) && 'pb-0'
+        )}
+      >
+        {leading === 'chain' ? (
+          <ChainIcon
+            chain={chainAlias}
+            width={24}
+            height={24}
+            className="shrink-0 rounded-[6px]"
+            showTooltip={false}
+          />
+        ) : (
+          <TokenIcon
+            assetId={entry.asset.asset.id}
+            symbol={entry.asset.metadata.symbol}
+            icon={entry.asset.metadata.iconUrl}
+            size={32}
+            className="shrink-0"
           />
         )}
-      </div>
-      <div className="max-w-[132px] shrink-0 text-right">
-        {!balancesHidden && fiat === null && pricesLoading ? (
-          <Skeleton className="ml-auto h-4 w-16" />
-        ) : (
+        <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-medium">
-            {balancesHidden ? '••••' : fiat === null ? '—' : formatPrice(fiat, { showSign: true })}
+            {leading === 'chain' ? entry.chain.chain.displayName : entry.asset.metadata.symbol}
           </p>
-        )}
-        {breakdown && !balancesHidden ? (
-          <>
+          {showUnitPrice && (
+            <UnitPrice
+              price={quote?.priceUsd ?? null}
+              percent24h={quote?.marketChange?.percent24h}
+              changeFreshness={quote?.marketChange?.freshness}
+              loading={pricesLoading}
+            />
+          )}
+        </div>
+        <div className="max-w-[132px] shrink-0 text-right">
+          {!balancesHidden && fiat === null && pricesLoading ? (
+            <Skeleton className="ml-auto h-4 w-16" />
+          ) : (
+            <p className="truncate text-sm font-medium">
+              {balancesHidden
+                ? '••••'
+                : fiat === null
+                  ? '—'
+                  : formatPrice(fiat, { showSign: true })}
+            </p>
+          )}
+          {breakdown && !balancesHidden ? (
             <AccountBalanceTooltip breakdown={breakdown} symbol={entry.asset.metadata.symbol}>
               <p className="mt-0.5 truncate font-mono text-xs text-muted underline decoration-dotted underline-offset-2">
                 {formatDisplayAmount(amount)} {entry.asset.metadata.symbol}
               </p>
             </AccountBalanceTooltip>
-            <PendingAssetAmount amount={pendingAmount} symbol={entry.asset.metadata.symbol} />
-          </>
-        ) : (
-          <>
+          ) : (
             <p className="mt-0.5 truncate font-mono text-xs text-muted">
               {balancesHidden
                 ? '••••'
                 : `${formatDisplayAmount(amount)} ${entry.asset.metadata.symbol}`}
             </p>
-            {!balancesHidden && (
-              <PendingAssetAmount amount={pendingAmount} symbol={entry.asset.metadata.symbol} />
-            )}
-          </>
-        )}
-      </div>
-    </button>
+          )}
+        </div>
+      </button>
+      {!balancesHidden && (
+        <PendingAssetAmount amount={pendingAmount} symbol={entry.asset.metadata.symbol} />
+      )}
+    </div>
   )
 }
 
@@ -262,7 +270,10 @@ export function PortfolioAssetGroupCard({
         onClick={() =>
           directAsset ? onSelectAsset?.(group.entries[0].asset.asset.id) : onToggle?.()
         }
-        className="flex min-h-[68px] w-full min-w-0 items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-white/[0.03]"
+        className={cn(
+          'flex min-h-[68px] w-full min-w-0 items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-white/[0.03]',
+          !balancesHidden && pendingAmount.gt(0) && 'pb-0'
+        )}
       >
         <TokenIcon
           assetId={group.representativeAssetId}
@@ -308,23 +319,15 @@ export function PortfolioAssetGroupCard({
             </p>
           )}
           {breakdown && !balancesHidden ? (
-            <>
-              <AccountBalanceTooltip breakdown={breakdown} symbol={group.symbol}>
-                <p className="mt-0.5 truncate font-mono text-xs text-muted underline decoration-dotted underline-offset-2">
-                  {formatDisplayAmount(totalAmount)} {group.symbol}
-                </p>
-              </AccountBalanceTooltip>
-              <PendingAssetAmount amount={pendingAmount} symbol={group.symbol} />
-            </>
-          ) : (
-            <>
-              <p className="mt-0.5 truncate font-mono text-xs text-muted">
-                {balancesHidden ? '••••' : `${formatDisplayAmount(totalAmount)} ${group.symbol}`}
+            <AccountBalanceTooltip breakdown={breakdown} symbol={group.symbol}>
+              <p className="mt-0.5 truncate font-mono text-xs text-muted underline decoration-dotted underline-offset-2">
+                {formatDisplayAmount(totalAmount)} {group.symbol}
               </p>
-              {!balancesHidden && (
-                <PendingAssetAmount amount={pendingAmount} symbol={group.symbol} />
-              )}
-            </>
+            </AccountBalanceTooltip>
+          ) : (
+            <p className="mt-0.5 truncate font-mono text-xs text-muted">
+              {balancesHidden ? '••••' : `${formatDisplayAmount(totalAmount)} ${group.symbol}`}
+            </p>
           )}
         </div>
         {!directAsset && (
@@ -336,6 +339,7 @@ export function PortfolioAssetGroupCard({
           />
         )}
       </button>
+      {!balancesHidden && <PendingAssetAmount amount={pendingAmount} symbol={group.symbol} />}
       {!directAsset && expanded && (
         <div
           role="region"

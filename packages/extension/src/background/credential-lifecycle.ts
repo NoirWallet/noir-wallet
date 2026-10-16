@@ -8,7 +8,10 @@ import {
   RetainedV1MigrationCoordinator,
   RetainedV1ReconciliationCoordinator
 } from '@/infrastructure/keyring/migration'
-import { discoverV1Metadata } from '@/infrastructure/persistence/migrations'
+import {
+  discoverV1Metadata,
+  excludeNativeV2HardwareShadows
+} from '@/infrastructure/persistence/migrations'
 import {
   IndexedDbCredentialRepository,
   IndexedDbStorageV2Repository
@@ -23,6 +26,13 @@ import {
   type KeystoneHardwareProvisioningInput,
   type KeystoneHardwareProvisioningResult
 } from '@/infrastructure/keyring/keystone-hardware-provisioning-coordinator'
+import {
+  LedgerHardwareProvisioningCoordinator,
+  type LedgerHardwareProvisioningInput,
+  type LedgerHardwareProvisioningResult
+} from '@/infrastructure/keyring/ledger-hardware-provisioning-coordinator'
+import { isNativeHardwareWalletId } from '@/core/wallet/native-hardware-identity'
+import type { ActiveWalletSetMode } from '@/core/wallet/wallet-unlock-path'
 import {
   PrivateKeyProvisioningCoordinator,
   type PrivateKeyPreviewInput,
@@ -119,13 +129,6 @@ export interface ExportWalletPrivateKeyInput {
   readonly binding: Extract<KeyringCommandBinding, { readonly kind: 'credential' }>
   readonly bitcoinAddressType?: 'p2pkh' | 'p2sh-p2wpkh' | 'p2wpkh' | 'p2tr'
 }
-
-export type ActiveWalletSetMode =
-  | 'inactive'
-  | 'native-v2-hardware-only'
-  | 'native-v2-private-key-only'
-  | 'native-v2-mixed'
-  | 'retained-v1-backed'
 
 function chainIdForAddressScheme(
   snapshot: StorageV2Snapshot,
@@ -238,6 +241,10 @@ export class CredentialLifecycleCoordinator {
     storageRepository: this.storageRepository
   })
   private readonly hardwareProvisioning = new KeystoneHardwareProvisioningCoordinator({
+    credentialRepository: this.credentialRepository,
+    storageRepository: this.storageRepository
+  })
+  private readonly ledgerProvisioning = new LedgerHardwareProvisioningCoordinator({
     credentialRepository: this.credentialRepository,
     storageRepository: this.storageRepository
   })
@@ -415,6 +422,22 @@ export class CredentialLifecycleCoordinator {
     return operation
   }
 
+  provisionLedgerHardware(
+    input: LedgerHardwareProvisioningInput
+  ): Promise<LedgerHardwareProvisioningResult> {
+    const operation = this.synchronizationQueue.then(async () =>
+      this.ledgerProvisioning.provision({
+        ...input,
+        evmChainIds: await this.readPersistedEvmNetworkChainIds()
+      })
+    )
+    this.synchronizationQueue = operation.then(
+      () => undefined,
+      () => undefined
+    )
+    return operation
+  }
+
   previewPrivateKey(input: PrivateKeyPreviewInput): Promise<PrivateKeyPreviewResult> {
     const operation = this.synchronizationQueue.then(async () =>
       this.privateKeyProvisioning.preview({
@@ -441,8 +464,7 @@ export class CredentialLifecycleCoordinator {
     if (snapshot.keyDomains.length === 0) return 'inactive'
     if (
       snapshot.keyDomains.every(
-        keyDomain =>
-          keyDomain.source.kind === 'hardware' && keyDomain.id.startsWith('wallet:keystone-v2:')
+        keyDomain => keyDomain.source.kind === 'hardware' && isNativeHardwareWalletId(keyDomain.id)
       )
     ) {
       return 'native-v2-hardware-only'
@@ -459,8 +481,7 @@ export class CredentialLifecycleCoordinator {
     if (
       snapshot.keyDomains.every(
         keyDomain =>
-          (keyDomain.source.kind === 'hardware' &&
-            keyDomain.id.startsWith('wallet:keystone-v2:')) ||
+          (keyDomain.source.kind === 'hardware' && isNativeHardwareWalletId(keyDomain.id)) ||
           (keyDomain.source.kind === 'private-key' &&
             keyDomain.id.startsWith('wallet:private-key-v2:'))
       )
@@ -474,8 +495,13 @@ export class CredentialLifecycleCoordinator {
     password: string
   ): Promise<RetainedV1SynchronizationResult> {
     const local = await chrome.storage.local.get(null)
-    const discovery = discoverV1Metadata(local)
+    let discovery = discoverV1Metadata(local)
     const pointer = await this.storageRepository.getActivePointer()
+    if (pointer && discovery.status === 'ready') {
+      const snapshot = await this.storageRepository.getSnapshot(pointer.generationId)
+      if (!snapshot) throw new Error('Active Storage V2 generation is missing')
+      discovery = excludeNativeV2HardwareShadows(discovery, snapshot)
+    }
     if (discovery.status === 'empty' && pointer) {
       const snapshot = await this.storageRepository.getSnapshot(pointer.generationId)
       if (!snapshot) throw new Error('Active Storage V2 generation is missing')
@@ -484,8 +510,7 @@ export class CredentialLifecycleCoordinator {
         snapshot.keyDomains.some(
           keyDomain =>
             !(
-              (keyDomain.source.kind === 'hardware' &&
-                keyDomain.id.startsWith('wallet:keystone-v2:')) ||
+              (keyDomain.source.kind === 'hardware' && isNativeHardwareWalletId(keyDomain.id)) ||
               (keyDomain.source.kind === 'private-key' &&
                 keyDomain.id.startsWith('wallet:private-key-v2:'))
             )

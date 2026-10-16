@@ -17,6 +17,8 @@ import { NetworkFeeTierPicker } from '../transaction/NetworkFeeTierPicker'
 import { TokenIcon } from '../tokens/TokenIcon'
 import Big from '@/lib/big'
 import { ChainIcon } from '../common/ChainIcon'
+import { AddressTypeLabel } from '../account/AddressType'
+import type { FundingSource } from '@/types/wallet'
 
 interface SwapReviewViewProps {
   tokenIn: SwapToken
@@ -38,6 +40,7 @@ interface SwapReviewViewProps {
   feeLoading?: boolean
   /** Estimated fee for the selected tier in ZEC; '—' shown while pending. */
   selectedFeeZec?: string
+  fundingSource?: FundingSource
   sourceNetworkFee?: { readonly amount: string; readonly symbol: string } | null
   sourceFeeTier?: NetworkFeeTier
   sourceFeeFamily?: 'evm' | 'bitcoin'
@@ -79,6 +82,7 @@ export function SwapReviewView({
   feeByTier,
   feeLoading,
   selectedFeeZec,
+  fundingSource,
   sourceNetworkFee,
   sourceFeeTier,
   sourceFeeFamily,
@@ -100,6 +104,7 @@ export function SwapReviewView({
             token={tokenIn}
             amount={amountIn}
             fiatValue={fromFiat}
+            fundingSource={fundingSource}
             networkLabel={destinationDetails ? formatChainName(tokenIn.blockchain) : undefined}
           />
           <div className="absolute left-1/2 top-[72px] z-10 flex size-8 -translate-x-1/2 items-center justify-center rounded-full border-[3px] border-background bg-card">
@@ -268,6 +273,7 @@ function QuoteAssetRow({
   amount,
   fiatValue,
   networkLabel,
+  fundingSource,
   emphasized = false
 }: {
   label: string
@@ -275,13 +281,17 @@ function QuoteAssetRow({
   amount: string
   fiatValue: string
   networkLabel?: string
+  fundingSource?: FundingSource
   emphasized?: boolean
 }) {
   return (
     <section className="flex h-20 items-center gap-3 rounded-xl bg-card/60 px-4">
       <TokenIcon token={token} size={36} />
       <div className="min-w-0 flex-1">
-        <p className="text-xs text-muted">{label}</p>
+        <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-muted">
+          <span>{label}</span>
+          {fundingSource && <AddressTypeLabel type={fundingSource} />}
+        </div>
         <p className="mt-0.5 font-medium">{formatSymbol(token.symbol)}</p>
         {networkLabel && <p className="text-[11px] text-muted">{networkLabel}</p>}
       </div>

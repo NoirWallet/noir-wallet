@@ -7,6 +7,7 @@ import { createRequire } from 'node:module'
 import { keccak256, type Hex } from 'viem'
 import {
   captureScreenshot,
+  e2eEnabledChainFeatureFlags,
   extensionDir,
   expect,
   mockUnknownZcashAccountHistory,
@@ -34,6 +35,10 @@ import type { ZcashBalance } from '../../src/types'
 
 const TEST_MNEMONIC_12 = `${'abandon '.repeat(11)}about`
 const TEST_PASSWORD = 'release-default-password'
+const TEST_BETA_INVITE_CODE = 'RELEASE-DEFAULT-INVITE'
+const bitcoinEnabled = e2eEnabledChainFeatureFlags.includes('chain.bitcoin')
+const solanaEnabled = e2eEnabledChainFeatureFlags.includes('chain.solana')
+const nearEnabled = e2eEnabledChainFeatureFlags.includes('chain.near')
 const ZCASH_MAINNET_CHAIN_ID = 'bip122:00040fe8ec8471911baa1db1266ea15d'
 const ZCASH_TESTNET_CHAIN_ID = 'bip122:05a60a92d99d85997cce3b87616c089f'
 const BITCOIN_MAINNET_CHAIN_ID = 'bip122:000000000019d6689c085ae165831e93'
@@ -66,11 +71,49 @@ const test = extensionTest.extend<{ readonly offlineRpcRegistry: void }>({
       await context.route('https://rpc.zknoir.com/v1/rpc-endpoints?scope=multichain', route =>
         route.abort()
       )
+      await mockBetaInviteApi(context)
       await use()
     },
     { auto: true }
   ]
 })
+
+async function mockBetaInviteApi(context: BrowserContext): Promise<void> {
+  const path = `/v1/invite-codes/${encodeURIComponent(TEST_BETA_INVITE_CODE)}`
+  await context.route('https://api.zknoir.com/v1/invite-codes/**', async route => {
+    const request = route.request()
+    const url = new URL(request.url())
+    if (url.pathname === `${path}/check` && request.method() === 'GET') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ code: 0, data: { exists: true, bound: false } })
+      })
+      return
+    }
+    if (url.pathname === `${path}/bind` && request.method() === 'POST') {
+      const body = request.postDataJSON() as { wallet_address?: unknown }
+      expect(body.wallet_address).toMatch(/^0x[0-9a-fA-F]{40}$/)
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          code: 0,
+          data: { code: TEST_BETA_INVITE_CODE, bound: true }
+        })
+      })
+      return
+    }
+    await route.fulfill({ status: 404, body: 'Unknown invite request' })
+  })
+}
+
+async function verifyBetaInviteCode(page: Page): Promise<void> {
+  await expect(page.getByRole('heading', { name: 'Enter invite code' })).toBeVisible()
+  await page.getByRole('textbox', { name: 'Invite code' }).fill(TEST_BETA_INVITE_CODE)
+  await page.getByRole('button', { name: 'Continue' }).click()
+  await expect(page.getByRole('heading', { name: 'Enter invite code' })).toHaveCount(0)
+}
 
 async function mockExternalAssetIcons(context: BrowserContext): Promise<void> {
   const fulfillIcon = (route: Route) =>
@@ -464,7 +507,8 @@ interface HistoryProxyRequest {
 }
 
 const historyWorkerRuntimes = new Set<{ dispose(): Promise<void> }>()
-test.afterEach(async () => {
+test.afterEach(async ({ context }) => {
+  await context.unrouteAll({ behavior: 'wait' })
   const runtimes = [...historyWorkerRuntimes]
   historyWorkerRuntimes.clear()
   await Promise.all(runtimes.map(runtime => runtime.dispose()))
@@ -692,6 +736,7 @@ async function mockAssetMarketHistory(context: BrowserContext): Promise<string[]
 }
 
 async function importTestWallet(page: Page): Promise<void> {
+  await verifyBetaInviteCode(page)
   await page.getByRole('button', { name: 'Import wallet' }).click()
   await page.getByRole('radio', { name: '12 words' }).click()
   await page.getByRole('button', { name: 'Continue' }).click()
@@ -1067,6 +1112,14 @@ test('attests custom endpoints for every released chain including Zcash', async 
       }
     ]
   }
+  const disabledEndpointIds = new Set([
+    ...(!bitcoinEnabled ? [BITCOIN_MAINNET_CHAIN_ID] : []),
+    ...(!solanaEnabled ? [SOLANA_NETWORKS.mainnet.chainId] : []),
+    ...(!nearEnabled ? [NEAR_NETWORKS.mainnet.chainId] : [])
+  ])
+  settings.overrides = settings.overrides.filter(
+    override => !disabledEndpointIds.has(override.chainId)
+  )
   const applied = await popup.evaluate(
     value => chrome.runtime.sendMessage({ type: 'APPLY_CHAIN_ENDPOINT_SETTINGS', settings: value }),
     settings
@@ -1105,9 +1158,9 @@ test('attests custom endpoints for every released chain including Zcash', async 
   expect(requests).toEqual(
     expect.arrayContaining([
       'POST /ethereum',
-      'POST /solana',
-      'POST /near',
-      'GET /bitcoin/block-height/0'
+      ...(solanaEnabled ? ['POST /solana'] : []),
+      ...(nearEnabled ? ['POST /near'] : []),
+      ...(bitcoinEnabled ? ['GET /bitcoin/block-height/0'] : [])
     ])
   )
   expect(requests).toContain('POST /zcash/cash.z.wallet.sdk.rpc.CompactTxStreamer/GetLightdInfo')
@@ -1132,13 +1185,14 @@ test('adds, persists, selects and removes custom RPCs through the real popup', a
   await popup.getByRole('button', { name: 'RPC Endpoint', exact: true }).click()
   await expect(popup.getByRole('heading', { name: 'RPC Endpoints' })).toBeVisible()
 
-  for (const [chain, path] of [
+  const releasedRpcChains = [
     ['Arbitrum', 'arbitrum'],
-    ['Bitcoin', 'bitcoin/'],
-    ['Solana', 'solana'],
-    ['NEAR', 'near'],
+    ...(bitcoinEnabled ? [['Bitcoin', 'bitcoin/']] : []),
+    ...(solanaEnabled ? [['Solana', 'solana']] : []),
+    ...(nearEnabled ? [['NEAR', 'near']] : []),
     ['Zcash', 'zcash']
-  ]) {
+  ]
+  for (const [index, [chain, path]] of releasedRpcChains.entries()) {
     const customUrl =
       chain === 'Zcash'
         ? 'https://zcashwebrpc.deltarpc.com'
@@ -1177,7 +1231,7 @@ test('adds, persists, selects and removes custom RPCs through the real popup', a
       const settings = await popup.evaluate(() =>
         chrome.runtime.sendMessage({ type: 'GET_CHAIN_ENDPOINT_SETTINGS' })
       )
-      expect(settings.result.savedRpcEndpoints ?? []).toHaveLength(chain === 'Arbitrum' ? 0 : 4)
+      expect(settings.result.savedRpcEndpoints ?? []).toHaveLength(index)
       await dialog.getByLabel(`${chain} RPC URL`).fill(customUrl)
     }
     await captureScreenshot(popup, `rpc-add-${chain.toLowerCase()}.png`)
@@ -1192,9 +1246,9 @@ test('adds, persists, selects and removes custom RPCs through the real popup', a
   const stored = await popup.evaluate(() =>
     chrome.runtime.sendMessage({ type: 'GET_CHAIN_ENDPOINT_SETTINGS' })
   )
-  expect(stored.result.savedRpcEndpoints).toHaveLength(5)
+  expect(stored.result.savedRpcEndpoints).toHaveLength(releasedRpcChains.length)
   expect(await readPersistedEndpointModes(popup)).toEqual(['mainnet'])
-  for (const chain of ['Arbitrum', 'Bitcoin', 'Solana', 'NEAR', 'Zcash']) {
+  for (const [chain] of releasedRpcChains) {
     await popup.getByRole('button', { name: `Configure ${chain} RPC` }).click()
     const dialog = popup.getByRole('dialog')
     await expect(dialog.getByRole('button', { name: `Use My ${chain} RPC` })).toBeVisible()
@@ -1355,7 +1409,9 @@ test('exposes the released multichain provider surface by default', async ({ con
   await captureScreenshot(page, 'sdk-example-evm.png')
   await page.getByRole('button', { name: 'Bitcoin', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'Bitcoin provider' })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Connect Bitcoin' })).toBeEnabled()
+  if (bitcoinEnabled)
+    await expect(page.getByRole('button', { name: 'Connect Bitcoin' })).toBeEnabled()
+  else await expect(page.getByRole('button', { name: 'Connect Bitcoin' })).toBeDisabled()
   await expect(page.getByRole('button', { name: 'Validate network' })).toBeDisabled()
   await expect(page.getByRole('button', { name: 'Validate chain' })).toBeDisabled()
   await captureScreenshot(page, 'sdk-example-bitcoin.png')
@@ -1478,30 +1534,30 @@ test('exposes the released multichain provider surface by default', async ({ con
   expect(result).toEqual({
     zcashRequestType: 'function',
     hasNoirEthereum: true,
-    hasNoirBitcoin: true,
-    hasNoirSolana: true,
-    hasNoirNear: true,
-    solanaGetAccountsType: 'function',
+    hasNoirBitcoin: bitcoinEnabled,
+    hasNoirSolana: solanaEnabled,
+    hasNoirNear: nearEnabled,
+    solanaGetAccountsType: solanaEnabled ? 'function' : 'undefined',
     solanaTokenBalanceType: 'undefined',
     solanaTokenTransferType: 'undefined',
-    solanaSignTransactionType: 'function',
-    solanaSignAllTransactionsType: 'function',
-    solanaSignAndSendTransactionType: 'function',
-    solanaSignMessageType: 'function',
+    solanaSignTransactionType: solanaEnabled ? 'function' : 'undefined',
+    solanaSignAllTransactionsType: solanaEnabled ? 'function' : 'undefined',
+    solanaSignAndSendTransactionType: solanaEnabled ? 'function' : 'undefined',
+    solanaSignMessageType: solanaEnabled ? 'function' : 'undefined',
     nearTokenBalanceType: 'undefined',
-    nearGetAccountsType: 'function',
+    nearGetAccountsType: nearEnabled ? 'function' : 'undefined',
     nearTokenTransferType: 'undefined',
-    nearRequestSignInType: 'function',
-    nearSignTransactionType: 'function',
-    nearRequestSignTransactionsType: 'function',
-    nearSignMessageType: 'function',
-    nearConnectAnnouncementCount: 1,
-    nearConnectWalletId: 'noir-wallet',
-    nearConnectWalletName: 'Noir Wallet',
-    nearConnectWalletIcon: PROVIDER_ICON_DATA_URL,
-    nearConnectSignInType: 'function',
-    nearConnectSignInWithoutAddKey: true,
-    nearConnectSignAndSendTransaction: true,
+    nearRequestSignInType: nearEnabled ? 'function' : 'undefined',
+    nearSignTransactionType: nearEnabled ? 'function' : 'undefined',
+    nearRequestSignTransactionsType: nearEnabled ? 'function' : 'undefined',
+    nearSignMessageType: nearEnabled ? 'function' : 'undefined',
+    nearConnectAnnouncementCount: nearEnabled ? 1 : 0,
+    nearConnectWalletId: nearEnabled ? 'noir-wallet' : undefined,
+    nearConnectWalletName: nearEnabled ? 'Noir Wallet' : undefined,
+    nearConnectWalletIcon: nearEnabled ? PROVIDER_ICON_DATA_URL : null,
+    nearConnectSignInType: nearEnabled ? 'function' : 'undefined',
+    nearConnectSignInWithoutAddKey: nearEnabled ? true : undefined,
+    nearConnectSignAndSendTransaction: nearEnabled ? true : undefined,
     hasDefaultEthereum: true,
     acceptsLaterWallet: true,
     laterWalletBecameDefault: true,
@@ -1513,6 +1569,10 @@ test('exposes the released multichain provider surface by default', async ({ con
 })
 
 test('creates one CAIP-25 session for every released provider', async ({ context, popup }) => {
+  test.skip(
+    !bitcoinEnabled || !solanaEnabled || !nearEnabled,
+    'Requires an explicit five-chain verification profile'
+  )
   test.skip(
     process.env.APPROVAL_WINDOW_E2E !== '1',
     'Chrome popup windows require an explicit real-browser approval run'
@@ -1851,6 +1911,10 @@ test('connects the SDK example with multi-wallet Zcash, EVM, Bitcoin, Solana, an
   popup
 }) => {
   test.skip(
+    !bitcoinEnabled || !solanaEnabled || !nearEnabled,
+    'Requires an explicit five-chain verification profile'
+  )
+  test.skip(
     process.env.APPROVAL_WINDOW_E2E !== '1',
     'Chrome popup windows require an explicit real-browser approval run'
   )
@@ -2066,6 +2130,7 @@ test('imports and exports scoped EVM and Bitcoin private-key Wallets across Work
   context,
   popup
 }) => {
+  test.skip(!bitcoinEnabled, 'Requires an explicit Bitcoin verification profile')
   test.setTimeout(240_000)
   await mockReleasedEvmRpc(context)
   await mockReleasedBitcoinEsplora(context)
@@ -2083,7 +2148,8 @@ test('imports and exports scoped EVM and Bitcoin private-key Wallets across Work
       await expect(addWallet).toBeVisible({ timeout: 30_000 })
     }
     await addWallet.click()
-    await popup.getByRole('button', { name: 'Import Private Key', exact: true }).click()
+    await popup.getByRole('button', { name: 'Import Wallet', exact: true }).click()
+    await popup.getByRole('button', { name: 'Private Key', exact: true }).click()
     await expect(popup.getByRole('heading', { name: 'Import private key' })).toBeVisible()
     const accountCountBeforePreview = await popup.evaluate(async () => {
       const response = await chrome.runtime.sendMessage({ type: 'GET_ACCOUNT_NETWORKS' })
@@ -2274,6 +2340,7 @@ test('shows an estimated Home total when one chain fails and cached prices becom
   context,
   popup
 }) => {
+  test.skip(!bitcoinEnabled, 'Uses an unavailable Bitcoin RPC to reproduce the partial portfolio')
   test.setTimeout(180_000)
   await context.route('https://**', route => route.abort())
   await mockReleasedEvmRpc(context)
@@ -2288,7 +2355,8 @@ test('shows an estimated Home total when one chain fails and cached prices becom
   )
   await expect(popup.getByRole('button', { name: /^Estimated total assets/ })).toBeVisible()
   await expect(popup.getByRole('status', { name: 'Loading total assets' })).toHaveCount(0)
-  await expect(popup.getByTestId('home-total-assets')).toContainText('≈$')
+  await expect(popup.getByTestId('home-total-assets')).toContainText('$')
+  await expect(popup.getByTestId('home-total-assets')).not.toContainText('≈')
   await popup.evaluate(async () => {
     const stored = await chrome.storage.local.get('asset_price_cache_v1')
     const cache = stored.asset_price_cache_v1
@@ -2767,6 +2835,10 @@ test('renders and switches the released EVM catalog and chain-scoped endpoint se
   popup,
   extensionId
 }) => {
+  test.skip(
+    !bitcoinEnabled || !nearEnabled,
+    'This mixed-chain journey requires explicit Bitcoin and NEAR flags'
+  )
   test.setTimeout(300_000)
   const evmHistoryRequests = await mockEvmHistoryProxy(context, 1_500)
   const portfolioRpcRequests = await mockReleasedEvmRpc(context)
@@ -2824,7 +2896,9 @@ test('renders and switches the released EVM catalog and chain-scoped endpoint se
     timeout: 30_000
   })
 
-  await expect(popup.getByRole('button', { name: 'View ZEC details on Zcash' })).toHaveCount(0)
+  await expect(popup.getByRole('button', { name: 'View ZEC details on Zcash' })).toContainText(
+    '0 ZEC'
+  )
   await expect(popup.getByRole('button', { name: 'View SOL details on Solana' })).toHaveCount(0)
   await expect(popup.getByRole('button', { name: 'View NEAR details on NEAR' })).toHaveCount(0)
   await expect(popup.getByRole('button', { name: 'View BTC details on Bitcoin' })).toHaveCount(1)
@@ -3698,15 +3772,11 @@ test('shows Shield on positive transparent ZEC and uses the readable modal backd
   await popup.goto(`chrome-extension://${extensionId}/index.html`)
   const zecRow = popup.getByRole('button', { name: 'View ZEC details on Zcash' })
   await expect(zecRow).toBeVisible({ timeout: 30_000 })
-  await expect(zecRow).toContainText('0.01 ZEC unspendable')
+  await expect(zecRow.locator('..')).toContainText('0.01 ZEC pending')
   await captureScreenshot(popup, 'REF-13197-noirv2-pending-balance.png')
   await zecRow.click()
   const zcashBalanceBreakdown = popup.getByLabel('Zcash balance breakdown')
   await expect(zcashBalanceBreakdown).toBeVisible()
-  await expect(zcashBalanceBreakdown.getByText('Available', { exact: true })).toBeVisible()
-  await expect(
-    zcashBalanceBreakdown.getByText('0.01 ZEC unspendable', { exact: true })
-  ).toBeVisible()
   await expect(zcashBalanceBreakdown.getByText('Pending', { exact: true })).toHaveCount(0)
   const shieldButton = popup.getByRole('button', { name: 'Shield transparent ZEC' })
   await expect(shieldButton).toBeVisible()
@@ -3932,6 +4002,7 @@ test('automatically manages Intents Tokens on newly released chains', async ({
   context,
   popup
 }) => {
+  test.skip(!solanaEnabled || !nearEnabled, 'Requires explicit Solana and NEAR verification flags')
   test.setTimeout(180_000)
   const unexpectedHistoryProxyRequests: string[] = []
   context.on('request', request => {
@@ -4972,7 +5043,6 @@ test('retains current EVM address history during failed refresh and popup reload
   await mockEvmHistoryProxy(context)
   await mockReleasedEvmRpc(context)
   await mockReleasedBitcoinEsplora(context)
-  await expect(popup.getByRole('button', { name: 'Import wallet' })).toBeVisible()
   await waitForBackgroundWalletInitialization(popup)
   await importTestWallet(popup)
   await seedFreshAssetPrices(popup)
@@ -5071,6 +5141,7 @@ test('retains Bitcoin history when EVM fills the shared window and Bitcoin refre
   context,
   popup
 }) => {
+  test.skip(!bitcoinEnabled, 'Requires an explicit Bitcoin verification profile')
   test.setTimeout(120_000)
   const unexpectedHistoryProxyRequests: string[] = []
   context.on('request', request => {
@@ -5566,6 +5637,10 @@ test('discards old beta History caches and retains current records across worker
 })
 
 test('round-trips the installed package across global modes without mixing network data', async () => {
+  test.skip(
+    !bitcoinEnabled || !solanaEnabled || !nearEnabled,
+    'This mixed-chain journey requires an explicit five-chain verification profile'
+  )
   test.setTimeout(240_000)
   const profileDirectory = await mkdtemp(path.join(tmpdir(), 'noir-network-mode-'))
   let context: BrowserContext | null = null
@@ -5575,6 +5650,7 @@ test('round-trips the installed package across global modes without mixing netwo
       headless: true,
       args: [`--disable-extensions-except=${extensionDir}`, `--load-extension=${extensionDir}`]
     })
+    await mockBetaInviteApi(context)
     await mockExternalAssetIcons(context)
     await mockReleasedEvmRpc(context)
     const initial = await openExtensionPopup(context)
@@ -5766,6 +5842,7 @@ test('round-trips the installed package across global modes without mixing netwo
       headless: true,
       args: [`--disable-extensions-except=${extensionDir}`, `--load-extension=${extensionDir}`]
     })
+    await mockBetaInviteApi(context)
     await context.route('https://provider-release.noir.test/**', serveSdkExample)
     await mockExternalAssetIcons(context)
     await mockReleasedEvmRpc(context, 'testnet')
@@ -5974,6 +6051,7 @@ test('round-trips the installed package across global modes without mixing netwo
       headless: true,
       args: [`--disable-extensions-except=${extensionDir}`, `--load-extension=${extensionDir}`]
     })
+    await mockBetaInviteApi(context)
     const restored = await openExtensionPopup(context)
     expect(restored.extensionId).toBe(initial.extensionId)
     const restoredPopup = restored.popup

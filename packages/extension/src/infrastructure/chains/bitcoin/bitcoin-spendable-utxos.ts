@@ -3,6 +3,7 @@ import {
   BITCOIN_MAXIMUM_MONEY_SATS,
   BITCOIN_MAXIMUM_SELECTION_UTXOS,
   BitcoinTransactionBuildError,
+  bitcoinAccountRootFromPath,
   expectedBitcoinDerivationPath,
   failInvalidBitcoinTransaction,
   parseBitcoinAddress,
@@ -47,14 +48,13 @@ export function parseBitcoinSpendableUtxo(value: BitcoinSpendableUtxo): BitcoinS
   if (typeof value.change !== 'boolean')
     failInvalidBitcoinTransaction('Invalid Bitcoin change branch')
   const address = parseBitcoinAddress(value.address, chainId, addressType)
-  const derivationPath = expectedBitcoinDerivationPath(
-    chainId,
-    addressType,
-    accountIndex,
-    value.change,
-    addressIndex
-  )
-  if (value.derivationPath !== derivationPath) {
+  const derivationPath = value.derivationPath
+  bitcoinAccountRootFromPath(derivationPath, chainId, addressType, value.change, addressIndex)
+  if (
+    addressType !== 'p2wpkh' &&
+    derivationPath !==
+      expectedBitcoinDerivationPath(chainId, addressType, accountIndex, value.change, addressIndex)
+  ) {
     failInvalidBitcoinTransaction('Invalid Bitcoin derivation path')
   }
   if (typeof value.transactionId !== 'string' || !/^[0-9a-f]{64}$/.test(value.transactionId)) {
@@ -119,9 +119,30 @@ export function isActiveBitcoinAddressObservation(
   )
 }
 
+export function isLedgerBitcoinAccountObservation(
+  observation: BitcoinAddressObservation,
+  accountRoot: string
+): boolean {
+  if (observation.derived.addressType !== 'p2wpkh') return false
+  const derived = observation.derived
+  if (
+    bitcoinAccountRootFromPath(
+      derived.derivationPath,
+      derived.chainId,
+      derived.addressType,
+      derived.change,
+      derived.addressIndex
+    ) !== accountRoot
+  ) {
+    failInvalidBitcoinTransaction('Ledger Bitcoin address belongs to another account')
+  }
+  return true
+}
+
 export function collectBitcoinSpendableUtxos(
   observations: readonly BitcoinAddressObservation[],
-  addressType: BitcoinSupportedAddressType
+  addressType: BitcoinSupportedAddressType,
+  ledgerAccountRoot?: string
 ): readonly BitcoinSpendableUtxo[] {
   parseBitcoinAddressType(addressType)
   if (!Array.isArray(observations)) {
@@ -130,7 +151,13 @@ export function collectBitcoinSpendableUtxos(
   const seen = new Set<string>()
   const candidates: BitcoinSpendableUtxo[] = []
   for (const observation of observations) {
-    if (!isActiveBitcoinAddressObservation(observation, addressType)) continue
+    if (
+      ledgerAccountRoot === undefined
+        ? !isActiveBitcoinAddressObservation(observation, addressType)
+        : observation.derived.addressType !== addressType ||
+          !isLedgerBitcoinAccountObservation(observation, ledgerAccountRoot)
+    )
+      continue
     if (!Array.isArray(observation.utxos)) {
       failInvalidBitcoinTransaction('Invalid Bitcoin discovery observation')
     }

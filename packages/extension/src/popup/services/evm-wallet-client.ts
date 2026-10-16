@@ -1,4 +1,6 @@
 import { DEFAULT_NETWORK } from '@/lib/runtime-network'
+import type { LedgerEvmSigningRequest } from '@/lib/ledger/evm'
+import { bytesToBase64, hexToBytes } from '@/lib/bytes'
 import { parseActivityReadModel, type ActivityReadModel } from '@/core/activity'
 import {
   createAssetRegistry,
@@ -108,6 +110,8 @@ export interface EvmContractCallPrepareOptions {
 }
 
 export interface EvmExternalSigningRequest {
+  readonly vendor: 'keystone' | 'ledger'
+  readonly ledgerRequest?: Extract<LedgerEvmSigningRequest, { kind: 'transaction' }>
   readonly transactionId: TransactionId
   readonly chainId: string
   readonly request: { readonly encoding: 'base64'; readonly value: string }
@@ -553,9 +557,22 @@ function parseExternalSigningRequest(
 ): EvmExternalSigningRequest | null {
   if (value === null) return null
   const record = readRecord(value, 'EVM external signing request')
+  const vendor = record.vendor === 'ledger' ? 'ledger' : 'keystone'
   assertExactKeys(
     record,
-    ['transactionId', 'chainId', 'request', 'payloadFingerprint', 'expiresAt'],
+    vendor === 'ledger'
+      ? [
+          'transactionId',
+          'chainId',
+          'request',
+          'payloadFingerprint',
+          'expiresAt',
+          'vendor',
+          'ledgerRequest'
+        ]
+      : record.vendor === 'keystone'
+        ? ['transactionId', 'chainId', 'request', 'payloadFingerprint', 'expiresAt', 'vendor']
+        : ['transactionId', 'chainId', 'request', 'payloadFingerprint', 'expiresAt'],
     'EVM external signing request'
   )
   const request = readRecord(record.request, 'EVM external signing payload')
@@ -573,7 +590,36 @@ function parseExternalSigningRequest(
   if (chainId.namespace !== 'eip155') {
     throw new Error('EVM external signing request has an invalid chain')
   }
+  let ledgerRequest: Extract<LedgerEvmSigningRequest, { kind: 'transaction' }> | undefined
+  if (vendor === 'ledger') {
+    const ledger = readRecord(record.ledgerRequest, 'Ledger EVM signing request')
+    assertExactKeys(
+      ledger,
+      ['kind', 'derivationPath', 'expectedAddress', 'unsignedTransactionHex'],
+      'Ledger EVM signing request'
+    )
+    if (
+      ledger.kind !== 'transaction' ||
+      typeof ledger.derivationPath !== 'string' ||
+      !/^m\/44'\/60'\/(?:0|[1-9][0-9]*)'\/0\/(?:0|[1-9][0-9]*)$/.test(ledger.derivationPath) ||
+      typeof ledger.expectedAddress !== 'string' ||
+      !/^0x[0-9a-fA-F]{40}$/.test(ledger.expectedAddress) ||
+      typeof ledger.unsignedTransactionHex !== 'string' ||
+      !/^0x02(?:[0-9a-fA-F]{2})+$/.test(ledger.unsignedTransactionHex) ||
+      bytesToBase64(hexToBytes(ledger.unsignedTransactionHex)) !== request.value
+    ) {
+      throw new Error('Ledger EVM signing request does not match its transaction')
+    }
+    ledgerRequest = Object.freeze({
+      kind: 'transaction',
+      derivationPath: ledger.derivationPath,
+      expectedAddress: ledger.expectedAddress,
+      unsignedTransactionHex: ledger.unsignedTransactionHex
+    })
+  }
   return Object.freeze({
+    vendor,
+    ...(ledgerRequest ? { ledgerRequest } : {}),
     transactionId: expectedTransactionId,
     chainId: chainId.id,
     request: Object.freeze({
@@ -955,7 +1001,9 @@ export function createEvmWalletClient(sendMessage: EvmRuntimeMessenger): EvmWall
           transactionId: parsedTransactionId,
           payloadFingerprint: parseClientInput(() => parseFingerprint(payloadFingerprint)),
           signatureCborBase64: parseClientInput(() =>
-            parseCanonicalBase64(signatureCborBase64, 'Keystone EVM signature')
+            /^0x[0-9a-f]{130}$/.test(signatureCborBase64)
+              ? signatureCborBase64
+              : parseCanonicalBase64(signatureCborBase64, 'Keystone EVM signature')
           )
         },
         value => parseSubmission(value, parsedTransactionId)

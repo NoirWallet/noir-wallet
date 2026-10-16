@@ -401,14 +401,205 @@ test.describe('Bitcoin active discovery coordinator', () => {
 
     await expect(instance.scanActive()).resolves.toMatchObject({
       checkpoint: {
-        cursors: [
-          { target: { addressType: 'p2wpkh', change: false }, complete: true }
-        ]
+        cursors: [{ target: { addressType: 'p2wpkh', change: false }, complete: true }]
       }
     })
     expect(requests).toEqual([
       expect.objectContaining({ addressType: 'p2wpkh', change: false, addressIndex: 0 })
     ])
+  })
+
+  test('expands a Ledger fixed-address checkpoint into receive and change gap scans', async () => {
+    const root = "m/84'/0'/5'"
+    const ledgerChainAccount = {
+      ...chainAccount,
+      derivation: { scheme: 'bip84', path: `${root}/0/0` }
+    }
+    const first = {
+      derived: {
+        chainId,
+        addressType: 'p2wpkh',
+        accountIndex: 0,
+        change: false,
+        addressIndex: 0,
+        address,
+        addressScheme: 'bitcoin-p2wpkh',
+        derivationScheme: 'bip84',
+        derivationPath: `${root}/0/0`,
+        publicKey: `0x02${'1'.repeat(64)}`
+      },
+      activity: { confirmedTransactionCount: 1, mempoolTransactionCount: 0, used: true },
+      utxos: []
+    }
+    let state = {
+      chainAccount: ledgerChainAccount,
+      accountIndex: 0,
+      checkpoint: {
+        schemaVersion: 1,
+        chainId,
+        accountIndex: 0,
+        gapLimit: 1,
+        maximumAddressesPerTarget: 1,
+        cursors: [
+          {
+            target: { addressType: 'p2wpkh', change: false },
+            nextAddressIndex: 1,
+            consecutiveUnused: 0,
+            complete: true
+          }
+        ]
+      },
+      observations: [first],
+      updatedAt: 1_000
+    }
+    const interruptedState = {
+      ...state,
+      checkpoint: {
+        ...state.checkpoint,
+        cursors: [
+          ...state.checkpoint.cursors,
+          {
+            target: { addressType: 'p2wpkh', change: true },
+            nextAddressIndex: 0,
+            consecutiveUnused: 0,
+            complete: false
+          }
+        ]
+      }
+    }
+    const requests = []
+    const instance = coordinator({
+      targets: undefined,
+      gapLimit: 2,
+      maximumAddressesPerTarget: 1000,
+      storageRepository: storage({
+        getSnapshot: async () => ({
+          ...snapshot,
+          chainAccounts: [ledgerChainAccount],
+          keyDomains: snapshot.keyDomains.map(keyDomain => ({
+            ...keyDomain,
+            source: {
+              kind: 'hardware',
+              vendor: 'ledger',
+              firmwareProfile: 'multi-app',
+              capabilities: ['bitcoin']
+            }
+          }))
+        })
+      }),
+      discoveryRepository: {
+        get: async () => state,
+        extendTargets: async extension => {
+          state = { ...state, checkpoint: extension.checkpoint }
+        },
+        putProgress: async progress => {
+          state = {
+            ...state,
+            checkpoint: progress.checkpoint,
+            observations: [...state.observations, progress.observation]
+          }
+        },
+        putRefresh: async () => {
+          throw new Error('No refresh before gap scan')
+        }
+      },
+      scanner: new BitcoinGapLimitScanner({
+        derivation: {
+          deriveAddress: async (_keyDomainId, input) => {
+            requests.push([input.change, input.addressIndex])
+            return {
+              ...first.derived,
+              ...input,
+              derivationPath: `${root}/${input.change ? 1 : 0}/${input.addressIndex}`
+            }
+          }
+        },
+        rpc: {
+          assertExpectedChain: async () => {},
+          getAddressActivity: async () => ({
+            confirmedTransactionCount: 0,
+            mempoolTransactionCount: 0,
+            used: false
+          }),
+          getAddressUtxos: async () => []
+        }
+      })
+    })
+    const result = await instance.scanActive()
+    expect(result.observations[0]).toEqual(first)
+    expect(result.checkpoint.cursors).toEqual([
+      expect.objectContaining({ complete: true, nextAddressIndex: 3 }),
+      expect.objectContaining({ complete: true, nextAddressIndex: 2 })
+    ])
+    expect(requests).toEqual([
+      [false, 1],
+      [false, 2],
+      [true, 0],
+      [true, 1]
+    ])
+    const change = await instance.ensureLedgerChangeAddress(
+      { chainAccount: ledgerChainAccount, accountIndex: 0 },
+      2
+    )
+    expect(change.derived.derivationPath).toBe(`${root}/1/2`)
+    expect(state.checkpoint.gapLimit).toBe(3)
+    expect(state.checkpoint.cursors.map(cursor => cursor.nextAddressIndex)).toEqual([4, 3])
+    expect(requests.slice(-2)).toEqual([
+      [false, 3],
+      [true, 2]
+    ])
+    await expect(instance.scanActive()).resolves.toMatchObject({
+      checkpoint: { gapLimit: 3, cursors: [{ complete: true }, { complete: true }] }
+    })
+    state = interruptedState
+    requests.length = 0
+    const resumed = await instance.scanActive()
+    expect(resumed.checkpoint.cursors.map(cursor => cursor.nextAddressIndex)).toEqual([3, 2])
+    expect(resumed.observations[0]).toEqual(first)
+    expect(requests).toEqual([
+      [false, 1],
+      [false, 2],
+      [true, 0],
+      [true, 1]
+    ])
+    state = {
+      ...state,
+      checkpoint: {
+        ...state.checkpoint,
+        cursors: [
+          state.checkpoint.cursors[0],
+          {
+            ...state.checkpoint.cursors[1],
+            nextAddressIndex: 120,
+            consecutiveUnused: 2,
+            complete: true
+          }
+        ]
+      },
+      observations: [
+        ...state.observations.filter(item => !item.derived.change),
+        ...Array.from({ length: 120 }, (_, addressIndex) => ({
+          ...first,
+          derived: {
+            ...first.derived,
+            change: true,
+            addressIndex,
+            derivationPath: `${root}/1/${addressIndex}`
+          },
+          activity: {
+            confirmedTransactionCount: addressIndex === 117 ? 1 : 0,
+            mempoolTransactionCount: 0,
+            used: addressIndex === 117
+          }
+        }))
+      ]
+    }
+    const matureChange = await instance.ensureLedgerChangeAddress(
+      { chainAccount: ledgerChainAccount, accountIndex: 0 },
+      120
+    )
+    expect(matureChange.derived.derivationPath).toBe(`${root}/1/120`)
+    expect(state.checkpoint.gapLimit).toBe(3)
   })
 
   test('queries imported private-key address types only when each type becomes active', async () => {
@@ -517,7 +708,7 @@ test.describe('Bitcoin active discovery coordinator', () => {
         getSnapshot: async () => ({
           ...snapshot,
           chainAccounts: [
-            { ...chainAccount, derivation: { scheme: 'bip84', path: "m/84'/0'/1'/0/0" } }
+            { ...chainAccount, derivation: { scheme: 'bip84', path: "m/84'/1'/1'/0/0" } }
           ]
         })
       })

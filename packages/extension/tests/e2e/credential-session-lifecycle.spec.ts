@@ -6,6 +6,7 @@ import {
   expect,
   captureScreenshot,
   extensionDir,
+  e2eEnabledChainFeatureFlags,
   test,
   terminateExtensionServiceWorker,
   waitForBackgroundWalletInitialization
@@ -92,7 +93,16 @@ async function selectRetainedAccountThroughPopup(
   await page.getByRole('button', { name: `Switch to ${target.accountName}` }).click()
   const chooseWallet = page.getByRole('button', { name: 'Choose wallet' })
   const syncConfirmation = page.getByRole('dialog', { name: 'Switch Account' })
-  await expect(chooseWallet.or(syncConfirmation)).toBeVisible()
+  await expect
+    .poll(async () => {
+      if (await syncConfirmation.isVisible()) return true
+      return page.evaluate(async target => {
+        const stored = await chrome.storage.local.get('wallet_state')
+        const { currentWalletId, currentAccountId } = stored.wallet_state.state
+        return currentWalletId === target.walletId && currentAccountId === target.accountId
+      }, target)
+    })
+    .toBe(true)
   if (await syncConfirmation.isVisible()) {
     await syncConfirmation.getByRole('button', { name: 'Switch anyway' }).click()
   }
@@ -242,6 +252,7 @@ test('returns from an active private-key wallet to a retained Zcash wallet', asy
   popup,
   extensionId
 }) => {
+  test.skip(!e2eEnabledChainFeatureFlags.includes('chain.evm'), 'Requires an EVM-enabled profile')
   test.setTimeout(180_000)
   const setup = await prepareUnlockedInventorySession(
     popup,

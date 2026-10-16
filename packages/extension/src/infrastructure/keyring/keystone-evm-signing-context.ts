@@ -134,6 +134,9 @@ export class KeystoneEvmSigningContextResolver {
       keyDomainId,
       password
     )
+    if (credential.vendor !== 'keystone') {
+      throw new Error('Expected a Keystone EVM credential')
+    }
     this.hardwareCredentials.set(keyDomainId, Object.freeze({ generationId, credential }))
     return credential
   }

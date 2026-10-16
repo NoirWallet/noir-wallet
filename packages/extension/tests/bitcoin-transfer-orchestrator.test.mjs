@@ -555,6 +555,45 @@ test('hands a Keystone PSBT off externally and broadcasts only after strict sign
   expect(testHarness.inputReservationCalls.map(call => call[0])).toEqual(['commit'])
 })
 
+test('routes a Ledger Bitcoin PSBT through the same strict finalizer', async () => {
+  const testHarness = harness()
+  const approval = await testHarness.orchestrator.prepare({
+    chainAccount: testHarness.context.chainAccount,
+    transactionId,
+    segmentId,
+    prepared: testHarness.context.prepared,
+    signerAddress: testHarness.context.sender.address,
+    changeReservation: testHarness.context.changeReservation,
+    inputReservation: testHarness.context.inputReservation,
+    requiredConfirmations: 6,
+    signingMode: 'ledger'
+  })
+  await testHarness.orchestrator.approve({
+    scope,
+    transactionId,
+    payloadFingerprint: approval.signing.payloadFingerprint.digestHex
+  })
+  await expect(
+    testHarness.orchestrator.getExternalSigningRequest({ scope, transactionId })
+  ).resolves.toMatchObject({
+    vendor: 'ledger',
+    request: { value: testHarness.context.prepared.psbtBase64 }
+  })
+  const signed = Psbt.fromBase64(testHarness.context.prepared.psbtBase64)
+  signed.signInput(0, {
+    publicKey: testHarness.context.sender.publicKey,
+    sign: hash => Buffer.from(secp256k1.sign(hash, testHarness.context.sender.privateKey))
+  })
+  await expect(
+    testHarness.orchestrator.submitExternalSignature({
+      scope,
+      transactionId,
+      payloadFingerprint: approval.signing.payloadFingerprint.digestHex,
+      signedPsbtBase64: signed.toBase64()
+    })
+  ).resolves.toMatchObject({ status: 'broadcast' })
+})
+
 test('fails a Keystone Bitcoin transfer on tampered, unsigned or mismatched external input', async () => {
   const testHarness = harness()
   const approval = await prepareKeystone(testHarness)

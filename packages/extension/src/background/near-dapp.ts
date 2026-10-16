@@ -10,6 +10,7 @@ import { IndexedDbStorageV2Repository } from '@/infrastructure/persistence/repos
 
 import { accountContextTransition } from './account-context-transition'
 import { credentialSession } from './credential-session'
+import { nearLedgerSigningBridge } from './ledger-signing-bridge'
 import { dappHandler } from './dapp-handler'
 import { BackgroundNativeTransferDAppHandler } from './native-transfer-dapp-handler'
 import { BackgroundNearDAppHandler } from './near-dapp-handler'
@@ -50,7 +51,10 @@ export function createBackgroundNearDAppHandler(
     native,
     network,
     rpc,
-    signer: new NearMultichainSigningClient({ credentials: credentialSession }),
+    signer: new NearMultichainSigningClient({
+      credentials: credentialSession,
+      ledger: nearLedgerSigningBridge
+    }),
     requestApproval: (origin, action, data) =>
       dappHandler.requestExternalApproval(origin, action, data),
     runActiveOperation: operation => accountContextTransition.runActiveOperation(operation),

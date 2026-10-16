@@ -31,7 +31,15 @@ export interface CompactBlockCdnOptions {
   maxConcurrentChunkRequests?: number
 }
 
-export type TransferOverallStatus = 'success' | 'partial' | 'failed'
+/** Runtime broadcast endpoints; supply again when restoring wallet bytes. */
+export interface ZeroIndexerOptions {
+  /** Ordered endpoints used only for transactions containing an Orchard bundle. */
+  urls: string[]
+  /** Positive per-endpoint timeout in milliseconds. Defaults to 30000. */
+  sendTimeoutMs?: number
+}
+
+export type TransferOverallStatus = 'success' | 'partial' | 'unknown' | 'failed'
 export type TransferSubmissionStatus = 'submitted' | 'rejected' | 'unknown' | 'not_attempted'
 
 export interface TransferTransactionResult {
@@ -649,7 +657,8 @@ export class WebWallet {
     lightwalletd_url: string,
     db_bytes?: Uint8Array | null,
     confirmations_policy?: ConfirmationsPolicy | null,
-    compact_block_cdn?: CompactBlockCdnOptions | null
+    compact_block_cdn?: CompactBlockCdnOptions | null,
+    zero_indexer_options?: ZeroIndexerOptions | null
   )
   oneclick_pczt_orchard_migration(
     account_id: number,
@@ -801,7 +810,8 @@ export class WebWallet {
    * Returns true if more scan ranges remain.
    */
   scan_journal_entry(journal_data: Uint8Array): Promise<boolean>
-  send_authorized_transactions(txids: Uint8Array): Promise<void>
+  send_authorized_transactions(txids: Uint8Array): Promise<TransferResult>
+  set_zero_indexer_options(options: ZeroIndexerOptions | null): void
   sync(): Promise<void>
   /**
    * Runs a single batch of the sync process without looping.
@@ -1354,7 +1364,8 @@ export interface InitOutput {
     f: number,
     g: number,
     h: number,
-    i: number
+    i: number,
+    j: number
   ) => void
   readonly webwallet_oneclick_pczt_orchard_migration: (
     a: number,
@@ -1489,6 +1500,7 @@ export interface InitOutput {
   readonly webwallet_replay_journal_entries: (a: number, b: number, c: number) => number
   readonly webwallet_scan_journal_entry: (a: number, b: number, c: number) => number
   readonly webwallet_send_authorized_transactions: (a: number, b: number, c: number) => number
+  readonly webwallet_set_zero_indexer_options: (a: number, b: number, c: number) => void
   readonly webwallet_sync: (a: number) => number
   readonly webwallet_sync_next_batch: (a: number, b: number) => number
   readonly webwallet_sync_next_batch_optimized: (a: number, b: number) => number
@@ -1527,11 +1539,11 @@ export interface InitOutput {
   readonly rustsecp256k1_v0_10_0_context_destroy: (a: number) => void
   readonly rustsecp256k1_v0_10_0_default_error_callback_fn: (a: number, b: number) => void
   readonly rustsecp256k1_v0_10_0_default_illegal_callback_fn: (a: number, b: number) => void
-  readonly __wasm_bindgen_func_elem_16217: (a: number, b: number, c: number, d: number) => void
-  readonly __wasm_bindgen_func_elem_16245: (a: number, b: number, c: number, d: number) => void
-  readonly __wasm_bindgen_func_elem_11471: (a: number, b: number, c: number) => void
-  readonly __wasm_bindgen_func_elem_16215: (a: number, b: number, c: number) => void
-  readonly __wasm_bindgen_func_elem_11400: (a: number, b: number) => void
+  readonly __wasm_bindgen_func_elem_16233: (a: number, b: number, c: number, d: number) => void
+  readonly __wasm_bindgen_func_elem_16261: (a: number, b: number, c: number, d: number) => void
+  readonly __wasm_bindgen_func_elem_11483: (a: number, b: number, c: number) => void
+  readonly __wasm_bindgen_func_elem_16231: (a: number, b: number, c: number) => void
+  readonly __wasm_bindgen_func_elem_11412: (a: number, b: number) => void
   readonly memory: WebAssembly.Memory
   readonly __wbindgen_export: (a: number, b: number) => number
   readonly __wbindgen_export2: (a: number, b: number, c: number, d: number) => number

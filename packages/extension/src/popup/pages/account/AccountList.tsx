@@ -4,6 +4,7 @@ import { Icon } from '@iconify/react'
 import { Button } from '../../components/ui/button'
 import { PageHeader } from '../../components/common/PageHeader'
 import { RenameAccountContent } from '../../components/account/AccountModals'
+import { AddWalletContent, type AddWalletAction } from '../../components/account/AddWalletContent'
 import { Input } from '../../components/ui/input'
 import { openModal } from '../../provider/ModalManager'
 import { zcashWalletRuntimeClient } from '@/popup/services/zcash-wallet-runtime-client'
@@ -268,28 +269,10 @@ export function AccountList() {
   }
 
   const handleAddWallet = async () => {
-    const action = await openModal<'import' | 'private-key' | 'create' | 'hardware'>({
-      title: 'Add Wallet',
-      body: (resolve: (value: any) => void, close: () => void) => (
-        <AddWalletContent
-          onImport={() => {
-            close()
-            resolve('import')
-          }}
-          onPrivateKey={() => {
-            close()
-            resolve('private-key')
-          }}
-          onCreate={() => {
-            close()
-            resolve('create')
-          }}
-          onHardware={() => {
-            close()
-            resolve('hardware')
-          }}
-        />
-      )
+    const action = await openModal<AddWalletAction | undefined>({
+      className:
+        'gap-5 p-5 [&>[data-slot=dialog-close]]:right-5 [&>[data-slot=dialog-close]]:top-5',
+      body: resolve => <AddWalletContent onSelect={resolve} />
     })
 
     if (action === 'import') {
@@ -298,8 +281,8 @@ export function AccountList() {
       navigate('/import-private-key')
     } else if (action === 'create') {
       navigate('/add-wallet')
-    } else if (action === 'hardware') {
-      openHardwareConnectTab()
+    } else if (action === 'ledger' || action === 'keystone') {
+      openHardwareConnectTab(action)
     }
   }
 
@@ -1051,68 +1034,6 @@ function AccountItem({
           </div>
         </div>
       </div>
-    </div>
-  )
-}
-
-interface AddWalletContentProps {
-  onImport: () => void
-  onPrivateKey: () => void
-  onCreate: () => void
-  onHardware: () => void
-}
-
-function AddWalletContent({ onImport, onPrivateKey, onCreate, onHardware }: AddWalletContentProps) {
-  return (
-    <div className="space-y-2">
-      <button
-        onClick={onImport}
-        className="w-full p-4 bg-card rounded-xl hover:bg-white/5 transition-colors cursor-pointer"
-      >
-        <div className="flex items-center justify-between">
-          <div className="flex items-center">
-            <Icon icon="lucide:import" width={16} height={16} className="mr-2" />
-            <span>Import Secret Phrase</span>
-          </div>
-          <Icon icon="lucide:chevron-right" width={16} height={16} className="text-muted" />
-        </div>
-      </button>
-      <button
-        onClick={onPrivateKey}
-        className="w-full p-4 bg-card rounded-xl hover:bg-white/5 transition-colors cursor-pointer"
-      >
-        <div className="flex items-center justify-between">
-          <div className="flex items-center">
-            <Icon icon="lucide:key-round" width={16} height={16} className="mr-2" />
-            <span>Import Private Key</span>
-          </div>
-          <Icon icon="lucide:chevron-right" width={16} height={16} className="text-muted" />
-        </div>
-      </button>
-      <button
-        onClick={onCreate}
-        className="w-full p-4 bg-card rounded-xl hover:bg-white/5 transition-colors cursor-pointer"
-      >
-        <div className="flex items-center justify-between">
-          <div className="flex items-center">
-            <Icon icon="lucide:plus" width={16} height={16} className="mr-2" />
-            <span>Create New Wallet</span>
-          </div>
-          <Icon icon="lucide:chevron-right" width={16} height={16} className="text-muted" />
-        </div>
-      </button>
-      <button
-        onClick={onHardware}
-        className="w-full p-4 bg-card rounded-xl hover:bg-white/5 transition-colors cursor-pointer"
-      >
-        <div className="flex items-center justify-between">
-          <div className="flex items-center">
-            <Icon icon="lucide:shield" width={16} height={16} className="mr-2" />
-            <span>Connect Hardware Wallet</span>
-          </div>
-          <Icon icon="lucide:chevron-right" width={16} height={16} className="text-muted" />
-        </div>
-      </button>
     </div>
   )
 }

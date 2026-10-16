@@ -266,6 +266,24 @@ export function expectedBitcoinDerivationPath(
   return `m/${purpose}'/${coinType}'/${accountIndex}'/${change ? 1 : 0}/${addressIndex}`
 }
 
+export function bitcoinAccountRootFromPath(
+  path: string,
+  chainId: ChainId,
+  addressType: BitcoinSupportedAddressType,
+  change: boolean,
+  addressIndex: number
+): string {
+  const expected = expectedBitcoinDerivationPath(chainId, addressType, 0, change, addressIndex)
+  const prefix = expected.split('/').slice(0, 3).join('/')
+  const match = new RegExp(`^${prefix}/(0|[1-9][0-9]*)'/${change ? 1 : 0}/${addressIndex}$`).exec(
+    path
+  )
+  if (!match || Number(match[1]) > 0x7fffffff) {
+    failInvalidBitcoinTransaction('Invalid Bitcoin derivation path')
+  }
+  return path.split('/').slice(0, 4).join('/')
+}
+
 export function bitcoinDustSats(addressType: BitcoinSupportedAddressType): bigint {
   switch (addressType) {
     case 'p2pkh':

@@ -1,5 +1,9 @@
 import { parseChainAccountId } from '@/core/accounts/domain'
-import type { BitcoinAddressObservation, BitcoinDiscoveryCheckpoint } from '@/core/chains/bitcoin'
+import {
+  BITCOIN_MAXIMUM_GAP_LIMIT,
+  type BitcoinAddressObservation,
+  type BitcoinDiscoveryCheckpoint
+} from '@/core/chains/bitcoin'
 import {
   accountKey,
   hasExactKeys,
@@ -90,8 +94,90 @@ export function assertProgressAdvance(
 
 export function assertBitcoinDiscoveryTargetExtension(
   previous: BitcoinDiscoveryCheckpoint,
-  next: BitcoinDiscoveryCheckpoint
+  next: BitcoinDiscoveryCheckpoint,
+  observations: readonly BitcoinAddressObservation[] = []
 ): void {
+  if (isFixedSingleAddressBitcoinCheckpoint(previous) && next.maximumAddressesPerTarget > 1) {
+    if (
+      previous.chainId !== next.chainId ||
+      previous.accountIndex !== next.accountIndex ||
+      previous.cursors.length < 1 ||
+      previous.cursors.length > 2 ||
+      next.cursors.length !== 2 ||
+      next.maximumAddressesPerTarget < next.gapLimit ||
+      next.cursors.some(
+        (cursor, index) =>
+          cursor.target.addressType !== 'p2wpkh' || cursor.target.change !== (index === 1)
+      )
+    ) {
+      throw new Error('Bitcoin discovery target extension changed its scan policy')
+    }
+    for (let index = 0; index < previous.cursors.length; index += 1) {
+      const cursor = previous.cursors[index]
+      const observation = observations.find(
+        item =>
+          item.derived.addressType === cursor.target.addressType &&
+          item.derived.change === cursor.target.change &&
+          item.derived.addressIndex === 0
+      )
+      const empty = cursor.nextAddressIndex === 0
+      if (empty) {
+        if (
+          observation ||
+          cursor.consecutiveUnused !== 0 ||
+          cursor.complete ||
+          next.cursors[index].nextAddressIndex !== 0 ||
+          next.cursors[index].consecutiveUnused !== 0 ||
+          next.cursors[index].complete
+        ) {
+          throw new Error('Bitcoin discovery target extension changed an existing cursor')
+        }
+        continue
+      }
+      if (
+        cursor.nextAddressIndex !== 1 ||
+        !observation ||
+        next.cursors[index].nextAddressIndex !== 1 ||
+        next.cursors[index].consecutiveUnused !== (observation.activity.used ? 0 : 1) ||
+        next.cursors[index].complete !== (!observation.activity.used && next.gapLimit === 1)
+      ) {
+        throw new Error('Bitcoin discovery target extension changed an existing cursor')
+      }
+    }
+    if (
+      previous.cursors.length === 1 &&
+      (next.cursors[1].nextAddressIndex !== 0 ||
+        next.cursors[1].consecutiveUnused !== 0 ||
+        next.cursors[1].complete)
+    ) {
+      throw new Error('Bitcoin discovery target extension must append an empty cursor')
+    }
+    return
+  }
+  if (
+    next.gapLimit > previous.gapLimit &&
+    previous.maximumAddressesPerTarget > 1 &&
+    previous.cursors.length === 2 &&
+    previous.cursors.every(
+      (cursor, index) =>
+        cursor.target.addressType === 'p2wpkh' && cursor.target.change === (index === 1)
+    ) &&
+    previous.chainId === next.chainId &&
+    previous.accountIndex === next.accountIndex &&
+    previous.maximumAddressesPerTarget === next.maximumAddressesPerTarget &&
+    next.gapLimit <= BITCOIN_MAXIMUM_GAP_LIMIT &&
+    next.cursors.length === previous.cursors.length &&
+    next.cursors.every((cursor, index) => {
+      const prior = previous.cursors[index]
+      return (
+        targetKey(cursor.target) === targetKey(prior.target) &&
+        cursor.nextAddressIndex === prior.nextAddressIndex &&
+        cursor.consecutiveUnused === prior.consecutiveUnused &&
+        cursor.complete === (cursor.consecutiveUnused === next.gapLimit)
+      )
+    })
+  )
+    return
   if (
     previous.chainId !== next.chainId ||
     previous.accountIndex !== next.accountIndex ||

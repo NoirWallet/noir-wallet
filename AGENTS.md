@@ -183,11 +183,12 @@ The published extension contains a global, mutually exclusive Mainnet/Testnet Mo
 
 - Mainnet is the migration default. The persisted `wallet_settings.networkMode` is authoritative after initialization.
 - Switching mode is available only from Developer Settings. It stops sync, cancels unsigned approvals, disconnects dApps, locks the wallet, and reloads the extension before any target-network operation starts.
-- Every chain follows the same global mode. Testnet Mode shows only Zcash Testnet, the released EVM test networks, and Bitcoin Testnet3; Mainnet data is not mixed into its Portfolio, Activity, dApp, RPC, or explorer surface.
+- The default build enables Zcash and EVM; Bitcoin, Solana, and NEAR remain visible as disabled Coming soon choices. Explicit chain feature flags are available for isolated verification profiles.
+- Every enabled chain follows the same global mode. Default Testnet Mode shows Zcash Testnet and the released EVM test networks; explicitly enabled Bitcoin verification profiles use Testnet3. Mainnet data is not mixed into Testnet Portfolio, Activity, dApp, RPC, or explorer surfaces.
 - Zcash WASM databases, account caches, and transactions remain partitioned by network. Public account metadata retains both network projections; secrets are not duplicated.
 - Chain RPC/explorer settings are persisted per global mode.
 - Every released chain supports named custom RPC endpoints. Saved RPC lists live in the optional `chainEndpointSettings.savedRpcEndpoints` field; `overrides` selects the active endpoint. The background validates network identity before saving. A selected custom Zcash endpoint is fixed and does not use registry failover.
-- Managed RPC pools are loaded from `https://rpc.zknoir.com/v1/rpc-endpoints` and cached locally. `src/config/rpc-endpoints.ts` contains one bundled default per chain and network for use when neither the remote registry nor its cache is available; do not duplicate managed pools in the extension. Auto is the default and switches among attested managed endpoints on endpoint failures. A manually selected RPC is fixed. The registry source lives in `packages/rpc-registry/src/registry.ts`; its scheduled monitor currently probes Zcash endpoints only.
+- Managed RPC pools are loaded from `https://rpc.zknoir.com/v1/rpc-endpoints` and cached locally. `src/config/rpc-endpoints.ts` contains one bundled default per chain and network for use when neither the remote registry nor its cache is available; do not duplicate managed pools in the extension. Auto is the default and switches among attested managed endpoints on endpoint failures. EVM Auto clients read the latest pool at the start of each request, including registry updates received after startup; an in-flight request keeps its original pool. A manually selected RPC is fixed. The registry source lives in `packages/rpc-registry/src/registry.ts`; its scheduled monitor currently probes Zcash endpoints only.
 - `NETWORK_MODE=testnet` and `[Testnet] Noir Wallet` remain only for isolated Playwright/live-test build profiles. They are not a second production release package.
 - `zcash_switchNetwork` and SDK `switchNetwork()` remain deprecated; dApps cannot change the wallet's global mode.
 
@@ -258,7 +259,7 @@ Important persisted store keys include:
 
 - `wallet_state`: wallet metadata and current wallet/account pointers.
 - `wallet_deleted_ids`: durable deletion markers that prevent stale extension contexts from restoring removed wallets. Retained wallet metadata reads, writes, and deletions use the shared Web Lock in `src/lib/wallet-metadata-storage.ts`; persist metadata removal before clearing credentials. `wallet_deleted_records` retains non-secret account IDs until credential and cache cleanup finishes, allowing interrupted deletion to resume.
-- `account_data`: cached balances and sync state. Transaction arrays are persisted separately in IndexedDB.
+- `account_data`: account balance, sync, and portfolio caches. The background owns persisted balances and sync state; extension pages mirror background balances and persist only changed portfolio snapshots for existing accounts. Cache writes merge under a shared Web Lock. Persist account metadata removal before deleting its cache so stale pages cannot restore it. Transaction arrays are persisted separately in IndexedDB.
 - `wallet_settings`: user settings.
 - `swap_preferences`: swap preferences.
 - `seed_<walletId>`: encrypted wallet credential data.
@@ -360,7 +361,7 @@ The complete operational runbook is in `docs/release-workflow.md`.
 - Exclude internal refactors, tests, CI changes, dependency updates, and implementation details unless they materially affect users.
 - Keep the copy plain, specific, and user-friendly. The runtime schema currently permits 1–8 bullets of at most 120 characters each so the popup remains readable.
 
-Do not change release behavior based only on this summary; verify the V2 PR workflow and the trusted manual and reporter workflows on `main` before editing CI.
+Do not change release behavior based only on this summary; verify both the V2 PR workflow and the trusted manual workflow on `main` before editing CI.
 
 ## Implementation Rules
 

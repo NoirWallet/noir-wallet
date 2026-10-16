@@ -21,6 +21,14 @@ import {
 import { parseEvmAccountBinding } from '@/infrastructure/chains/evm/evm-account'
 import type { EvmMultichainSigningClient } from '@/infrastructure/keyring/multichain/evm-signing-client'
 import { parseSigningCommandId, type SigningCommandId } from '@/core/keyring/ports'
+import { verifyTypedData, type Hex } from 'viem'
+import type { LedgerEvmSigningRequest, LedgerEvmSigningResponse } from '@/lib/ledger/evm'
+import { DEFAULT_NETWORK } from '@/lib/runtime-network'
+import { HardwareEvmSigningContextResolver } from '@/infrastructure/keyring/hardware-evm-signing-context'
+import { IndexedDbCredentialRepository } from '@/infrastructure/persistence/repositories'
+import { credentialSession } from './credential-session'
+import { digestLedgerPayload, ledgerEvmTypedDataSummary } from './ledger-evm-dapp-review'
+import { requestLedgerSignature, type LedgerSigningBinding } from './ledger-signing-coordinator'
 import type { TransactionRepository } from '@/ports/repositories'
 import {
   IndexedDbStorageV2Repository,
@@ -43,6 +51,13 @@ type PendingSignature = Readonly<{
   graphSuffix: string
   graphCreatedAt: number
   binding: RheaSwapTransactionBinding
+  ledger?: Readonly<{
+    generationId: string
+    chainAccountId: string
+    derivationPath: string
+    publicKey: string
+    typedDataJson: string
+  }>
   signature?: string
 }>
 
@@ -86,7 +101,7 @@ function parsePending(value: unknown): PendingSignature {
     'graphCreatedAt',
     'binding'
   ]
-  const allowed = new Set([...required, 'executionMode', 'signature'])
+  const allowed = new Set([...required, 'executionMode', 'ledger', 'signature'])
   if (
     record.schemaVersion !== 1 ||
     required.some(key => !Object.prototype.hasOwnProperty.call(record, key)) ||
@@ -137,6 +152,28 @@ function parsePending(value: unknown): PendingSignature {
   if (executionMode !== 'main' && executionMode !== 'private') {
     throw new Error('Stored RHEA Swap execution mode is invalid')
   }
+  let ledger: PendingSignature['ledger']
+  if (record.ledger !== undefined) {
+    const value = record.ledger
+    if (
+      executionMode !== 'main' ||
+      !value ||
+      typeof value !== 'object' ||
+      Array.isArray(value) ||
+      Object.keys(value).sort().join(',') !==
+        'chainAccountId,derivationPath,generationId,publicKey,typedDataJson'
+    ) {
+      throw new Error('Stored RHEA Swap Ledger approval is invalid')
+    }
+    const fields = value as Record<string, unknown>
+    ledger = Object.freeze({
+      generationId: readString(fields.generationId, 'Stored RHEA Swap generation', 160),
+      chainAccountId: readString(fields.chainAccountId, 'Stored RHEA Swap ChainAccount', 160),
+      derivationPath: readString(fields.derivationPath, 'Stored RHEA Swap Ledger path', 128),
+      publicKey: readString(fields.publicKey, 'Stored RHEA Swap Ledger public key', 132),
+      typedDataJson: readString(fields.typedDataJson, 'Stored RHEA Swap typed data', 256 * 1024)
+    })
+  }
   return Object.freeze({
     schemaVersion: 1,
     quoteHandle: readString(record.quoteHandle, 'Stored RHEA Swap quote handle', 160),
@@ -157,6 +194,7 @@ function parsePending(value: unknown): PendingSignature {
     graphSuffix: readString(record.graphSuffix, 'Stored RHEA Swap graph suffix', 80),
     graphCreatedAt: record.graphCreatedAt as number,
     binding: parseRheaSwapTransactionBinding(record.binding),
+    ...(ledger === undefined ? {} : { ledger }),
     ...(signature === undefined ? {} : { signature })
   })
 }
@@ -202,6 +240,17 @@ export interface RheaSwapEvmSignatureCoordinatorOptions {
   readonly repository: Pick<TransactionRepository, 'create'>
   readonly loadContext: (chainId: string) => Promise<ActiveEvmPortfolioContext | null>
   readonly scheduleMonitoring: () => Promise<void>
+  readonly ledger?: {
+    readonly resolveAccount: (context: ActiveEvmPortfolioContext) => Promise<{
+      readonly derivationPath: string
+      readonly publicKey: string
+      readonly address: string
+    }>
+    readonly requestSignature: (
+      request: LedgerEvmSigningRequest,
+      binding: LedgerSigningBinding
+    ) => Promise<LedgerEvmSigningResponse>
+  }
   readonly now?: () => number
   readonly createId?: () => string
 }
@@ -209,6 +258,8 @@ export interface RheaSwapEvmSignatureCoordinatorOptions {
 export class RheaSwapEvmSignatureCoordinator {
   private readonly now: () => number
   private readonly createId: () => string
+  private readonly preparing = new Set<string>()
+  private readonly confirming = new Set<string>()
 
   constructor(private readonly options: RheaSwapEvmSignatureCoordinatorOptions) {
     this.now = options.now ?? Date.now
@@ -220,6 +271,20 @@ export class RheaSwapEvmSignatureCoordinator {
     bindingValue: unknown,
     executionModeValue: unknown = 'main'
   ): Promise<RheaSwapEvmSignatureReview> {
+    if (this.preparing.has(quoteHandle)) throw new Error('RHEA Swap signature is already preparing')
+    this.preparing.add(quoteHandle)
+    try {
+      return await this.prepareOnce(quoteHandle, bindingValue, executionModeValue)
+    } finally {
+      this.preparing.delete(quoteHandle)
+    }
+  }
+
+  private async prepareOnce(
+    quoteHandle: string,
+    bindingValue: unknown,
+    executionModeValue: unknown
+  ): Promise<RheaSwapEvmSignatureReview> {
     if (executionModeValue !== 'main' && executionModeValue !== 'private') {
       throw new Error('RHEA Swap execution mode is invalid')
     }
@@ -227,6 +292,63 @@ export class RheaSwapEvmSignatureCoordinator {
     const binding = parseRheaSwapTransactionBinding(bindingValue)
     this.assertBinding(plan, binding)
     const chainId = parseChainId(`eip155:${plan.chainId}`).id
+    const active = await this.options.loadContext(chainId)
+    if (active?.keyDomainSource.kind === 'hardware') {
+      if (active.keyDomainSource.vendor !== 'ledger' || executionModeValue !== 'main') {
+        throw new Error('RHEA Swap signature is unavailable for this hardware Wallet')
+      }
+      if (DEFAULT_NETWORK !== 'mainnet' || !this.options.ledger) {
+        throw new Error('Ledger RHEA Swap signing is available on Mainnet only')
+      }
+      const account = await this.loadLedgerContext(chainId, plan.sender)
+      this.assertLedgerSigningScheme(plan.signingScheme)
+      const typedData = this.parseLedgerTypedData(plan.typedDataJson, plan.chainId)
+      const summary = ledgerEvmTypedDataSummary(chainId, account.binding.address, typedData)
+      const payloadFingerprint = await digestLedgerPayload(
+        new TextEncoder().encode(plan.typedDataJson)
+      )
+      const expiresAt = Math.min(this.now() + 10 * 60_000, binding.expiresAt)
+      if (expiresAt <= this.now()) throw new Error('RHEA Swap signature review is expired')
+      if (await this.options.pending.get(quoteHandle)) {
+        throw new Error('RHEA Swap signature review is already pending')
+      }
+      const pending = parsePending({
+        schemaVersion: 1,
+        quoteHandle: plan.quoteHandle,
+        executionId: plan.executionId,
+        chainId,
+        sender: plan.sender,
+        executionMode: 'main',
+        scope: {
+          keyDomainId: account.context.chainAccount.scope.keyDomainId,
+          accountId: account.context.chainAccount.scope.accountId
+        },
+        commandId: parseSigningCommandId(`ledger:${crypto.randomUUID()}`),
+        payloadFingerprint,
+        expiresAt,
+        signingScheme: plan.signingScheme,
+        graphSuffix: this.createId(),
+        graphCreatedAt: this.now(),
+        binding,
+        ledger: {
+          generationId: account.context.generationId,
+          chainAccountId: account.context.chainAccount.id,
+          derivationPath: account.binding.derivationPath,
+          publicKey: account.binding.publicKey,
+          typedDataJson: plan.typedDataJson
+        }
+      })
+      await this.options.pending.put(pending)
+      return Object.freeze({
+        quoteHandle: plan.quoteHandle,
+        executionId: plan.executionId,
+        chainId,
+        sender: plan.sender,
+        summary,
+        payloadFingerprint,
+        expiresAt
+      })
+    }
     const { context, addressIndex } = await this.loadSoftwareContext(
       chainId,
       plan.sender,
@@ -283,12 +405,24 @@ export class RheaSwapEvmSignatureCoordinator {
   }
 
   async confirm(quoteHandle: string, fingerprint: string): Promise<RheaSwapSignedOrderResult> {
+    if (this.confirming.has(quoteHandle))
+      throw new Error('RHEA Swap signature is already confirming')
+    this.confirming.add(quoteHandle)
+    try {
+      return await this.confirmOnce(quoteHandle, fingerprint)
+    } finally {
+      this.confirming.delete(quoteHandle)
+    }
+  }
+
+  private async confirmOnce(
+    quoteHandle: string,
+    fingerprint: string
+  ): Promise<RheaSwapSignedOrderResult> {
     let pending = await this.requirePending(quoteHandle, fingerprint)
-    const { context } = await this.loadSoftwareContext(
-      pending.chainId,
-      pending.sender,
-      pending.executionMode
-    )
+    const { context } = pending.ledger
+      ? await this.assertLedgerPendingCurrent(pending, Boolean(pending.signature))
+      : await this.loadSoftwareContext(pending.chainId, pending.sender, pending.executionMode)
     if (
       context.chainAccount.scope.keyDomainId !== pending.scope.keyDomainId ||
       context.chainAccount.scope.accountId !== pending.scope.accountId
@@ -299,15 +433,62 @@ export class RheaSwapEvmSignatureCoordinator {
     if (!signature) {
       const plan = await this.options.service.readEvmSignaturePlan(quoteHandle)
       this.assertBinding(plan, pending.binding)
-      const signed = await this.options.signer.confirm(pending.scope.keyDomainId, pending.commandId)
-      if (
-        signed.kind !== 'signature' ||
-        signed.signature.encoding !== 'hex' ||
-        signed.address?.toLowerCase() !== pending.sender.toLowerCase()
-      ) {
-        throw new Error('RHEA Swap signature does not match the active Account')
+      if (pending.ledger) {
+        const ledger = pending.ledger
+        const assertCurrent = async () => {
+          const current = await this.requirePending(quoteHandle, fingerprint)
+          if (current.commandId !== pending.commandId) {
+            throw new Error('RHEA Swap signature review changed')
+          }
+          await this.assertLedgerPendingCurrent(current)
+        }
+        await assertCurrent()
+        const typedData = this.parseLedgerTypedData(ledger.typedDataJson, plan.chainId)
+        const signed = await this.options.ledger!.requestSignature(
+          {
+            kind: 'typed-data',
+            derivationPath: ledger.derivationPath,
+            expectedAddress: pending.sender,
+            typedData
+          },
+          {
+            scope: { ...pending.scope, chainId: pending.chainId },
+            payloadFingerprint: { algorithm: 'sha256', digestHex: pending.payloadFingerprint },
+            expiresAt: pending.expiresAt,
+            summary: ledgerEvmTypedDataSummary(
+              parseChainId(pending.chainId).id,
+              pending.sender,
+              typedData
+            ),
+            validate: assertCurrent
+          }
+        )
+        if (
+          !/^0x[0-9a-fA-F]{130}$/.test(signed.signatureHex) ||
+          !(await verifyTypedData({
+            ...typedData,
+            address: pending.sender as Hex,
+            signature: signed.signatureHex as Hex
+          } as Parameters<typeof verifyTypedData>[0]))
+        ) {
+          throw new Error('Ledger RHEA Swap signature does not match the approved order')
+        }
+        await assertCurrent()
+        signature = signed.signatureHex
+      } else {
+        const signed = await this.options.signer.confirm(
+          pending.scope.keyDomainId,
+          pending.commandId
+        )
+        if (
+          signed.kind !== 'signature' ||
+          signed.signature.encoding !== 'hex' ||
+          signed.address?.toLowerCase() !== pending.sender.toLowerCase()
+        ) {
+          throw new Error('RHEA Swap signature does not match the active Account')
+        }
+        signature = signed.signature.value
       }
-      signature = signed.signature.value
       pending = parsePending({ ...pending, signature })
       await this.options.pending.put(pending)
     }
@@ -359,7 +540,8 @@ export class RheaSwapEvmSignatureCoordinator {
   async cancel(quoteHandle: string): Promise<void> {
     const pending = await this.options.pending.get(quoteHandle)
     if (!pending || pending.signature) return
-    await this.options.signer.cancel(pending.scope.keyDomainId, pending.commandId).catch(() => {})
+    if (!pending.ledger)
+      await this.options.signer.cancel(pending.scope.keyDomainId, pending.commandId).catch(() => {})
     await this.options.pending.delete(quoteHandle)
     await this.options.service.discard(quoteHandle).catch(() => {})
   }
@@ -395,6 +577,105 @@ export class RheaSwapEvmSignatureCoordinator {
     }
   }
 
+  private parseLedgerTypedData(value: string, chainId: number): Readonly<Record<string, unknown>> {
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(value)
+    } catch {
+      throw new Error('RHEA Swap EIP-712 payload is invalid')
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('RHEA Swap EIP-712 payload is invalid')
+    }
+    const typedData = parsed as Record<string, unknown>
+    const domain = typedData.domain
+    const domainChainId =
+      domain && typeof domain === 'object' && !Array.isArray(domain)
+        ? (domain as Record<string, unknown>).chainId
+        : undefined
+    if (
+      !domain ||
+      typeof domain !== 'object' ||
+      Array.isArray(domain) ||
+      (domainChainId !== undefined && String(domainChainId) !== String(chainId))
+    ) {
+      throw new Error('RHEA Swap EIP-712 chain does not match the quote')
+    }
+    return typedData
+  }
+
+  private assertLedgerSigningScheme(value: string | null): void {
+    if (value !== null && !/^(?:eip712|eip-712|eth_signTypedData_v4)$/i.test(value)) {
+      throw new Error('RHEA Swap Ledger signing scheme is unsupported')
+    }
+  }
+
+  private async loadLedgerContext(chainId: string, sender: string) {
+    const context = await this.options.loadContext(chainId)
+    if (
+      !context ||
+      context.keyDomainSource.kind !== 'hardware' ||
+      context.keyDomainSource.vendor !== 'ledger' ||
+      context.chainAccount.scope.chainId !== chainId
+    ) {
+      throw new Error('RHEA Swap requires an active Ledger EVM Account')
+    }
+    const account = parseEvmAccountBinding(context.chainAccount, parseChainId(chainId).id)
+    if (account.address.toLowerCase() !== sender.toLowerCase()) {
+      throw new Error('RHEA Swap signature does not match the active Account')
+    }
+    const binding = await this.options.ledger!.resolveAccount(context)
+    if (
+      binding.address.toLowerCase() !== sender.toLowerCase() ||
+      binding.derivationPath !== context.chainAccount.derivation.path
+    ) {
+      throw new Error('RHEA Swap Ledger account binding changed')
+    }
+    const current = await this.options.loadContext(chainId)
+    if (
+      current?.generationId !== context.generationId ||
+      current.chainAccount.id !== context.chainAccount.id ||
+      current.chainAccount.scope.accountId !== context.chainAccount.scope.accountId
+    ) {
+      throw new Error('RHEA Swap Ledger Account changed before signing')
+    }
+    return { context, binding }
+  }
+
+  private async assertLedgerPendingCurrent(pending: PendingSignature, allowExpired = false) {
+    if (!pending.ledger || DEFAULT_NETWORK !== 'mainnet' || !this.options.ledger) {
+      throw new Error('Ledger RHEA Swap signing is unavailable')
+    }
+    const { context, binding } = await this.loadLedgerContext(pending.chainId, pending.sender)
+    if (
+      context.generationId !== pending.ledger.generationId ||
+      context.chainAccount.id !== pending.ledger.chainAccountId ||
+      context.chainAccount.scope.keyDomainId !== pending.scope.keyDomainId ||
+      context.chainAccount.scope.accountId !== pending.scope.accountId ||
+      binding.derivationPath !== pending.ledger.derivationPath ||
+      binding.publicKey !== pending.ledger.publicKey
+    ) {
+      throw new Error('RHEA Swap Ledger Account changed before signing')
+    }
+    const plan = await this.options.service.readEvmSignaturePlan(pending.quoteHandle, allowExpired)
+    this.assertBinding(plan, pending.binding)
+    this.assertLedgerSigningScheme(plan.signingScheme)
+    if (
+      plan.quoteHandle !== pending.quoteHandle ||
+      plan.executionId !== pending.executionId ||
+      parseChainId(`eip155:${plan.chainId}`).id !== pending.chainId ||
+      plan.sender.toLowerCase() !== pending.sender.toLowerCase() ||
+      plan.signingScheme !== pending.signingScheme ||
+      plan.typedDataJson !== pending.ledger.typedDataJson ||
+      (await digestLedgerPayload(new TextEncoder().encode(plan.typedDataJson))) !==
+        pending.payloadFingerprint
+    ) {
+      throw new Error('RHEA Swap Ledger order changed before signing')
+    }
+    this.parseLedgerTypedData(plan.typedDataJson, plan.chainId)
+    return { context, binding }
+  }
+
   private async loadSoftwareContext(
     chainId: string,
     expectedAddress: string,
@@ -426,12 +707,26 @@ export function createBackgroundRheaSwapEvmSignatureCoordinator(
   signer: EvmMultichainSigningClient
 ): RheaSwapEvmSignatureCoordinator {
   const storage = new IndexedDbStorageV2Repository()
+  const resolver = new HardwareEvmSigningContextResolver({
+    storageRepository: storage,
+    credentialRepository: new IndexedDbCredentialRepository(),
+    credentials: credentialSession,
+    network: DEFAULT_NETWORK
+  })
   return new RheaSwapEvmSignatureCoordinator({
     service,
     signer,
     pending: new ChromeSessionRheaSwapSignatureStore(),
     repository: new IndexedDbTransactionRepository(),
     loadContext: chainId => loadActiveEvmPortfolioContext(storage, chainId),
+    ledger: {
+      resolveAccount: async context => {
+        const binding = await resolver.resolve(context.chainAccount)
+        if (!('publicKey' in binding)) throw new Error('Active EVM Account is not a Ledger export')
+        return binding
+      },
+      requestSignature: requestLedgerSignature
+    },
     scheduleMonitoring: () =>
       chrome.alarms.create(RHEA_SWAP_TRANSACTION_MONITOR_ALARM, { delayInMinutes: 0.1 })
   })

@@ -68,6 +68,7 @@ import {
 } from './bitcoin-signing-summary-validator'
 import { createBitcoinTransferGraph } from './bitcoin-transaction-graph'
 import { parseBitcoinAddress, type PreparedBitcoinPsbt } from './bitcoin-transaction-model'
+import type { LedgerBitcoinSigningRequest } from '@/lib/ledger/bitcoin'
 import {
   broadcastSignedBitcoinTransaction,
   parseBitcoinFinalityConfirmations,
@@ -122,7 +123,7 @@ export interface PrepareBitcoinTransferInput {
   readonly changeReservation: BitcoinChangeReservation | null
   readonly inputReservation: BitcoinInputReservation
   readonly requiredConfirmations: number
-  readonly signingMode?: 'internal' | 'keystone'
+  readonly signingMode?: 'internal' | 'keystone' | 'ledger'
   readonly nearIntentsBinding?: NearIntentsTransactionBinding
   readonly rheaSwapBinding?: RheaSwapTransactionBinding
   readonly signal?: AbortSignal
@@ -161,6 +162,8 @@ export type BitcoinTransferApprovalResult =
   | BitcoinExternalSignatureRequired
 
 export interface BitcoinExternalSigningRequest {
+  readonly vendor?: 'keystone' | 'ledger'
+  readonly ledgerRequest?: LedgerBitcoinSigningRequest
   readonly transactionId: TransactionId
   readonly request: Extract<
     PreparedSigningCommand['execution'],
@@ -345,10 +348,10 @@ export class BitcoinTransferOrchestrator {
     try {
       const expectedFingerprint = await computeBitcoinSigningPayloadFingerprint(input.prepared)
       signing =
-        input.signingMode === 'keystone'
+        input.signingMode === 'keystone' || input.signingMode === 'ledger'
           ? Object.freeze({
               commandId: parseSigningCommandId(
-                `signing-command:keystone-bitcoin:${this.createId()}`
+                `signing-command:${input.signingMode}-bitcoin:${this.createId()}`
               ),
               chainId: input.prepared.chainId,
               operation: 'transaction' as const,
@@ -668,6 +671,9 @@ export class BitcoinTransferOrchestrator {
     return Object.freeze({
       transactionId: pending.transactionId,
       request: pending.signingExecution.request,
+      ...(pending.signingCommandId.startsWith('signing-command:ledger-bitcoin:')
+        ? { vendor: 'ledger' as const }
+        : {}),
       payloadFingerprint: pending.payloadFingerprint,
       expiresAt: pending.expiresAt
     })

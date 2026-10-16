@@ -46,11 +46,7 @@ function MiddleTruncatedAddress({
   readonly className?: string
 }) {
   return (
-    <span
-      className={cn('shrink-0 whitespace-nowrap font-mono', className)}
-      title={value}
-      aria-label={value}
-    >
+    <span className={cn('min-w-0 truncate font-mono', className)} title={value} aria-label={value}>
       {formatSortAddress(value)}
     </span>
   )
@@ -270,7 +266,7 @@ function AddressNetworkGroup({
       className="min-w-0 rounded-xl border border-border bg-card p-3"
       aria-label={displayName}
     >
-      <div className="flex min-w-0 items-start gap-3">
+      <div className="flex min-w-0 items-center gap-3">
         {icon}
         <div className="min-w-0 flex-1">
           {onOpenZcashSettings ? (
@@ -291,25 +287,25 @@ function AddressNetworkGroup({
           ) : (
             <h2 className="truncate text-sm font-medium text-foreground">{displayName}</h2>
           )}
-          <div className="mt-0.5 space-y-0.5">
-            {addresses.map(address => (
-              <AddressRow
-                key={`${address.scheme}:${address.value}`}
-                network={network}
-                address={address}
-                displayName={displayName}
-                onCopy={onCopy}
-                onShowQr={onShowQr}
-              />
-            ))}
-            {privateExecutionAddress && (
-              <ConfidentialAddressRow
-                address={privateExecutionAddress}
-                onCopy={onCopyPrivateExecution}
-              />
-            )}
-          </div>
         </div>
+      </div>
+      <div className="mt-2 space-y-0.5">
+        {addresses.map(address => (
+          <AddressRow
+            key={`${address.scheme}:${address.value}`}
+            network={network}
+            address={address}
+            displayName={displayName}
+            onCopy={onCopy}
+            onShowQr={onShowQr}
+          />
+        ))}
+        {privateExecutionAddress && (
+          <ConfidentialAddressRow
+            address={privateExecutionAddress}
+            onCopy={onCopyPrivateExecution}
+          />
+        )}
       </div>
     </section>
   )

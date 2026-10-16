@@ -191,7 +191,10 @@ function parseDerivedChangeAddress(
         : scope.addressType === 'p2wpkh'
           ? ({ purpose: 84, addressScheme: 'bitcoin-p2wpkh', derivationScheme: 'bip84' } as const)
           : ({ purpose: 86, addressScheme: 'bitcoin-p2tr', derivationScheme: 'bip86' } as const)
-  const derivationPath = `m/${profile.purpose}'/${coinType}'/${scope.accountIndex}'/1/${addressIndex}`
+  const derivationPath =
+    scope.addressType === 'p2wpkh'
+      ? `${scope.chainAccount.derivation.path.replace(/\/0\/0$/, '')}/1/${addressIndex}`
+      : `m/${profile.purpose}'/${coinType}'/${scope.accountIndex}'/1/${addressIndex}`
   const addressScheme = profile.addressScheme
   const derivationScheme = profile.derivationScheme
   if (

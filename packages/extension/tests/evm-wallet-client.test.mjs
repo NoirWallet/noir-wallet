@@ -551,6 +551,7 @@ test.describe('Popup EVM wallet client', () => {
     await expect(client.getExternalSigningRequest(transactionId)).resolves.toEqual({
       transactionId,
       chainId,
+      vendor: 'keystone',
       request: { encoding: 'base64', value: 'AQIDBA==' },
       payloadFingerprint: fingerprint,
       expiresAt: 5_000

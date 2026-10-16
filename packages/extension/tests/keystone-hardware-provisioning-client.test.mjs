@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 import { createMultiAccountsHardwareCredential } from '../src/core/wallet/hardware-wallet-data.ts'
-import { createKeystoneHardwareProvisioningClient } from '../src/popup/services/keystone-hardware-provisioning-client.ts'
+import { createKeystoneHardwareProvisioningClient } from '../src/popup/services/hardware-provisioning-client.ts'
 
 const credential = createMultiAccountsHardwareCredential({
   type: 'multi-accounts',

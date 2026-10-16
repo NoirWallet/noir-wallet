@@ -3,16 +3,18 @@ import { backgroundZcashWalletRuntime } from './zcash-wallet-runtime'
 import { credentialSession } from './credential-session'
 import { logger } from '@/lib/logger'
 import { syncJobStore } from '@/lib/sync-job-store'
+import { getWalletPersistenceQuarantine } from '@/lib/indexed-db'
 import { clearSyncAbort, signalSyncAbort } from '@/lib/sync-abort'
 import { isRetryableWalletRpcError } from '@/core/zcash/wallet-core'
 import { WALLET_CONFIG } from '@/config/wallet'
-import { useWalletStore } from '@/store/wallet-store'
+import { prepareWalletStoreForUse, useWalletStore } from '@/store/wallet-store'
 import { useAccountDataStore } from '@/store/account-data-store'
 import type { SyncOutcome } from './zcash-wallet-runtime'
 import { hasPendingZcashTxForWallet } from '../core/wallet/pending-zcash-tx'
 import { recordRpcFailure, recordRpcSuccess } from '@/infrastructure/chains/rpc-failover'
 import { shouldSchedulePassiveSync } from './passive-sync-policy'
 import { isRpcEndpointError } from '@/lib/errors'
+import type { ZcashBalance } from '@/types'
 
 export type SyncStateSnapshot = {
   isSyncing: boolean
@@ -22,6 +24,7 @@ export type SyncStateSnapshot = {
   walletId?: string
   accountId?: string
   etaMs?: number | null
+  balance?: ZcashBalance | null
 }
 
 export const SYNC_KEEPALIVE_ALARM = 'sync-keepalive'
@@ -70,7 +73,10 @@ export class SyncScheduler {
   }
 
   getSyncState(walletId?: string, accountId?: string): SyncStateSnapshot {
-    const key = getWalletSyncKey(walletId)
+    const { currentWalletId, currentAccountId } = useWalletStore.getState()
+    const targetWalletId = walletId ?? currentWalletId
+    const targetAccountId = accountId ?? currentAccountId
+    const key = getWalletSyncKey(targetWalletId ?? undefined)
     const cached = this.syncStates.get(key) || { isSyncing: false, syncProgress: 0 }
     return {
       isSyncing: cached.isSyncing ?? false,
@@ -78,8 +84,19 @@ export class SyncScheduler {
       currentHeight: cached.currentHeight ?? 0,
       latestHeight: cached.latestHeight ?? 0,
       etaMs: cached.etaMs ?? null,
-      walletId,
-      accountId
+      walletId: targetWalletId ?? undefined,
+      accountId: targetAccountId ?? undefined,
+      ...(targetWalletId && targetAccountId
+        ? {
+            balance: useAccountDataStore
+              .getState()
+              .getBalance(
+                backgroundZcashWalletRuntime.getNetwork(),
+                targetWalletId,
+                targetAccountId
+              )
+          }
+        : {})
     }
   }
 
@@ -370,6 +387,38 @@ export class SyncScheduler {
     return true
   }
 
+  private async blockQuarantinedSync(walletId: string): Promise<boolean> {
+    const network = backgroundZcashWalletRuntime.getNetwork()
+    const quarantine = await getWalletPersistenceQuarantine(`${network}_${walletId}`)
+    if (!quarantine?.snapshotQuarantined && !quarantine?.journalQuarantined) return false
+
+    backgroundZcashWalletRuntime.finishSyncPreflight(walletId)
+    this.preflightWalletIds.delete(walletId)
+    this.syncStates.set(getWalletSyncKey(walletId), {
+      ...(this.syncStates.get(getWalletSyncKey(walletId)) || { syncProgress: 0 }),
+      isSyncing: false,
+      syncProgress: 0,
+      etaMs: null
+    })
+    useAccountDataStore.getState().setWalletSyncStateFor(network, walletId, {
+      isSyncing: false,
+      syncProgress: 0,
+      etaMs: null,
+      syncReason: 'wallet_state_error'
+    })
+    chrome.runtime
+      .sendMessage({
+        type: 'SYNC_PROGRESS',
+        walletId,
+        isSyncing: false,
+        syncProgress: 0,
+        etaMs: null,
+        syncReason: 'wallet_state_error'
+      })
+      .catch(() => {})
+    return true
+  }
+
   async run(): Promise<void> {
     if (this.running) {
       this.pendingRetrigger = true
@@ -383,6 +432,16 @@ export class SyncScheduler {
         if (this.yieldToTxPause()) return
         this.pendingRetrigger = false
 
+        await prepareWalletStoreForUse()
+        const { currentWalletId: scheduledWalletId } = useWalletStore.getState()
+        if (
+          scheduledWalletId &&
+          !this.removedWalletIds.has(scheduledWalletId) &&
+          (await this.blockQuarantinedSync(scheduledWalletId))
+        ) {
+          continue
+        }
+
         await backgroundZcashWalletRuntime.initialize()
         if (this.yieldToTxPause()) return
 
@@ -392,6 +451,7 @@ export class SyncScheduler {
         }
         if (backgroundZcashWalletRuntime.isLocked()) {
           const { currentWalletId, currentAccountId } = useWalletStore.getState()
+          if (currentWalletId && (await this.blockQuarantinedSync(currentWalletId))) continue
           const wallet = currentWalletId
             ? useWalletStore.getState().getWallet(currentWalletId)
             : null
@@ -438,6 +498,7 @@ export class SyncScheduler {
           ) {
             continue
           }
+          if (await this.blockQuarantinedSync(syncTarget)) continue
           const wallet = wallets.find(w => w.id === syncTarget)
           if (wallet && wallet.accounts.length > 0) {
             const accountId =
@@ -483,7 +544,11 @@ export class SyncScheduler {
   private async executeSync(walletId: string, accountId: string): Promise<SyncOutcome['status']> {
     this.runningWalletId = walletId
     try {
-      await backgroundZcashWalletRuntime.ensureWalletReadyForSync(walletId, accountId)
+      await backgroundZcashWalletRuntime.ensureWalletReadyForSync(
+        walletId,
+        accountId,
+        this.preflightWalletIds.has(walletId)
+      )
 
       const ready = await backgroundZcashWalletRuntime.waitForWalletReady(
         walletId,

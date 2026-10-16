@@ -218,7 +218,8 @@ test.describe('quote deposit transfer client', () => {
       ...token('nep141:eth.omft.near', 'eth', 18),
       tokenListChainId: 1,
       rheaChainId: '1',
-      isNative: true
+      isNative: true,
+      sources: ['nearintents']
     }
     const unrelated = {
       ...eth,
@@ -243,6 +244,14 @@ test.describe('quote deposit transfer client', () => {
       resolveConfidentialFundingDestinationToken({ ...input, destinationChain: '56' })
     ).toBeNull()
     expect(resolveConfidentialFundingDestinationToken({ ...input, portfolio: null })).toBeNull()
+    expect(
+      resolveConfidentialFundingDestinationToken({
+        ...input,
+        tokens: [{ ...eth, sources: ['lifi'] }]
+      })
+    ).toBeNull()
+    const { sources: _sources, ...legacyEth } = eth
+    expect(resolveConfidentialFundingDestinationToken({ ...input, tokens: [legacyEth] })).toBeNull()
   })
 
   test('never falls back from a locked BNB transfer to a different wallet asset', () => {

@@ -4,6 +4,7 @@ import { Icon } from '@iconify/react'
 import { Button } from '../../components/ui/button'
 import { PageHeader } from '../../components/common/PageHeader'
 import { ShieldFundsBanner } from '../../components/transaction/ShieldFundsBanner'
+import { FundingSourceSelector } from '../../components/transaction/FundingSourceSelector'
 import { openModal } from '../../provider/ModalManager'
 import { RecipientSelector } from '../../components/transaction/RecipientSelector'
 import {
@@ -28,10 +29,10 @@ import {
 import { useWalletStore } from '@/store/wallet-store'
 import { useAccountDataStore } from '@/store/account-data-store'
 import { useTransactionResultStore } from '@/store/transaction-result-store'
-import { useNavigate } from '../../provider/Router'
+import { useLocation, useNavigate } from '../../provider/Router'
 import { formatNumber, formatPrice, formatSortAddress } from '@/lib/format'
 import { DetailRow } from '../../components/common/DetailRow'
-import { AddressTypeLabel } from '../../components/account/AddressType'
+import { AddressTypeLabel, AddressTypeSwitch } from '../../components/account/AddressType'
 import { TokenIcon } from '../../components/tokens/TokenIcon'
 import { useTransaction } from '../../hooks/useTransaction'
 import { useShieldFunds } from '../../hooks/useShieldFunds'
@@ -46,6 +47,16 @@ import {
   staticFeeFallbackZats
 } from '@/core/zcash/fee-policy'
 import { resolveZcashTransferAvailability } from '@/popup/services/transfer-availability'
+import {
+  getFundingBalance,
+  getFundingAmountError,
+  getFundingAmountErrorCopy
+} from '@/core/wallet/funding-balance'
+import {
+  getFundingSourceOptions,
+  getFundingSourceUnavailableReason
+} from '@/core/wallet/funding-source'
+import type { FundingSource } from '@/types'
 import { safeBig } from '@/lib/big'
 import Big from 'big.js'
 import { useZnsResolve } from '../../hooks/useZnsResolve'
@@ -59,6 +70,10 @@ import { getZcashChainId } from '@/core/chains/registry'
 
 export function Send() {
   const { goBack, navigate } = useNavigate()
+  const location = useLocation()
+  const [selectedFundingSource, setFundingSource] = useState<FundingSource>(() =>
+    new URLSearchParams(location.search).get('from') === 'transparent' ? 'transparent' : 'shielded'
+  )
   const [toAddress, setToAddress] = useState('')
   const [amount, setAmount] = useState('')
   const [maxSelected, setMaxSelected] = useState(false)
@@ -88,6 +103,12 @@ export function Send() {
 
   const currentWallet = useWalletStore(state => state.getCurrentWallet())
   const isHardwareWallet = isZcashHardwareKeySource(currentWallet?.keySource)
+  const fundingSource = getFundingSourceUnavailableReason(
+    currentWallet?.keySource,
+    selectedFundingSource
+  )
+    ? 'shielded'
+    : selectedFundingSource
 
   const { sendTransaction } = useTransaction()
 
@@ -97,7 +118,8 @@ export function Send() {
   const feeTier = useSettingsStore(state => state.feeTier)
   const setFeeTier = useSettingsStore(state => state.setFeeTier)
 
-  const fromAddress = currentAccount?.addresses.shielded || ''
+  const fromAddress = currentAccount?.addresses[fundingSource] || ''
+  const sourceBalance = getFundingBalance(balance, fundingSource)
   const transparentBalance = safeBig(getShieldableTransparentBalance(balance)).toNumber()
 
   const isTransparentRecipient = isTransparentZcashAddress(effectiveToAddress)
@@ -107,7 +129,8 @@ export function Send() {
     to: effectiveToAddress,
     memo: effectiveMemo,
     feeTier,
-    enabled: !!effectiveToAddress
+    fundingSource,
+    enabled: !!effectiveToAddress && !!fromAddress
   })
   const isMaxTransferAmount =
     !!maxTransfer.maxAmount && safeBig(amount || '0').eq(maxTransfer.maxAmount)
@@ -116,6 +139,7 @@ export function Send() {
     to: effectiveToAddress,
     amount,
     memo: effectiveMemo,
+    fundingSource,
     enabled:
       safeBig(amount || '0').gt(0) && !!effectiveToAddress && !maxSelected && !isMaxTransferAmount
   })
@@ -134,13 +158,17 @@ export function Send() {
   const standardFeeZats = feeByTier.standard ?? staticFeeFallbackZats('standard')
   const estimatedFeeZec = safeBig(selectedFeeZats).div(1e8).toFixed()
   const { amount: effectiveMaxStr } = resolveZcashTransferAvailability({
-    availableBalance: balance?.available ?? '0',
+    availableBalance:
+      fundingSource === 'transparent' ? sourceBalance.available : (balance?.available ?? '0'),
     selectedFeeZats,
     standardFeeZats,
+    feeAlreadyReservedZats: fundingSource === 'transparent' ? 0 : undefined,
     maximumAmount: maxTransfer.maxAmount
   })
-  const reviewInsufficient = safeBig(amount || '0').gt(effectiveMaxStr)
-  const isValidAmount = safeBig(amount || '0').gt(0) && !reviewInsufficient
+  const amountError = getFundingAmountError(amount, sourceBalance, effectiveMaxStr)
+  const amountErrorCopy = getFundingAmountErrorCopy(amountError)
+  const reviewInsufficient = amountError !== null
+  const isValidAmount = !!fromAddress && safeBig(amount || '0').gt(0) && !reviewInsufficient
   const selectedFeeZec = maxTransfer.fee && isMaxTransferAmount ? maxTransfer.fee : estimatedFeeZec
 
   useEffect(() => {
@@ -160,7 +188,42 @@ export function Send() {
     setAmount('')
     setMaxSelected(false)
     setMemo('')
+    setFundingSource('shielded')
   }, [currentWalletId, currentAccountId])
+
+  const handleSelectFundingSource = () => {
+    if (!currentAccount) return
+    const scope = getActiveAccountScopeKey()
+    void openModal<FundingSource>({
+      title: 'Funding source',
+      body: resolve => (
+        <FundingSourceSelector
+          options={getFundingSourceOptions(
+            balance,
+            currentAccount.addresses,
+            currentWallet?.keySource
+          )}
+          selectedType={fundingSource}
+          zecPrice={zecPrice}
+          onSelect={source => {
+            if (scope !== getActiveAccountScopeKey()) return
+            if (
+              getFundingSourceUnavailableReason(
+                useWalletStore.getState().getCurrentWallet()?.keySource,
+                source
+              )
+            )
+              return
+            setFundingSource(source)
+            setAmount('')
+            setMaxSelected(false)
+            setShowReview(false)
+            resolve(source)
+          }}
+        />
+      )
+    })
+  }
 
   const handleSelectMyAddress = async () => {
     await openModal<string>({
@@ -208,7 +271,7 @@ export function Send() {
 
     sendAnalyticsEvent(ANALYTICS_EVENTS.SEND_SUBMITTED, {
       ...sendEventBase,
-      extra: { fee_tier: feeTier, hardware: isHardwareWallet }
+      extra: { fee_tier: feeTier, hardware: isHardwareWallet, funding_source: fundingSource }
     })
 
     // Hardware wallets sign via QR codes in a dedicated tab (camera access
@@ -223,6 +286,7 @@ export function Send() {
         accountId: currentAccount.id,
         to: effectiveToAddress,
         amount,
+        fundingSource,
         maxTransfer: maxSelected || isMaxTransferAmount,
         memo: effectiveMemo,
         marginalFeeZats: marginalFeeForTier(feeTier)
@@ -292,7 +356,7 @@ export function Send() {
       to: effectiveToAddress,
       amount,
       from: fromAddress,
-      fromType: 'shielded',
+      fromType: fundingSource,
       memo: effectiveMemo,
       fee: selectedFeeZec,
       marginalFeeZats: marginalFeeForTier(feeTier),
@@ -349,12 +413,14 @@ export function Send() {
     <div className="page-container">
       <PageHeader title="Send" showBack onBack={goBack} />
       <div className="page-content">
-        <ShieldFundsBanner
-          transparentBalance={transparentBalance}
-          action="send"
-          isShielding={isMigrating}
-          onShield={handleMigrateNow}
-        />
+        {fundingSource === 'shielded' && currentWallet?.keySource !== 'keystone' && (
+          <ShieldFundsBanner
+            transparentBalance={transparentBalance}
+            action="send"
+            isShielding={isMigrating}
+            onShield={handleMigrateNow}
+          />
+        )}
 
         <div className="space-y-3">
           <SendAssetHeader
@@ -396,20 +462,28 @@ export function Send() {
               setMaxSelected(false)
               setAmount(nextAmount)
             }}
-            available={formatNumber(effectiveMaxStr, { rm: Big.roundDown })}
+            available={sourceBalance.available}
+            pending={sourceBalance.pending}
+            showBalanceHelp
             symbol="ZEC"
             priceUsd={zecPrice}
             maxSelected={maxSelected}
             maxLoading={maxTransfer.loading}
-            maxDisabled={safeBig(effectiveMaxStr).lte(0)}
+            maxDisabled={!effectiveToAddress || !fromAddress || safeBig(effectiveMaxStr).lte(0)}
             onMax={() => {
               setMaxSelected(true)
               setAmount(effectiveMaxStr)
               void maxTransfer.request()
             }}
             invalid={reviewInsufficient}
-            title={
-              reviewInsufficient ? `Insufficient balance. Fee: ${selectedFeeZec} ZEC` : undefined
+            error={amountErrorCopy}
+            headerAction={
+              <AddressTypeSwitch
+                type={fundingSource}
+                onClick={handleSelectFundingSource}
+                size="md"
+                ariaLabel="Select funding source"
+              />
             }
           />
 
@@ -512,7 +586,7 @@ export function Send() {
           <div className="mx-5 bg-card rounded-xl p-4 space-y-3">
             <DetailRow label="From">
               <div className="flex items-center gap-2">
-                <AddressTypeLabel type="shielded" />
+                <AddressTypeLabel type={fundingSource} />
                 <span className="font-mono text-xs text-muted">
                   {formatSortAddress(fromAddress)}
                 </span>

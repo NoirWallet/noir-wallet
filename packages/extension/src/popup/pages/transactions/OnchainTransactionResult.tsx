@@ -17,6 +17,8 @@ import {
 } from '@/popup/components/portfolio/portfolio-format'
 import {
   getOnchainTransactionFailureLabel,
+  getOnchainResultAction,
+  getOnchainResultTotal,
   getOnchainTransactionStatusPresentation,
   resolveVisibleTransactionStatus
 } from '@/popup/services/onchain-transaction-result'
@@ -134,13 +136,7 @@ export function OnchainTransactionResult({
   const amount = formatBaseUnitAmount(amountRaw, asset.metadata.decimals)
   const fee = formatBaseUnitAmount(feeRaw, feeDecimals)
   const total = useMemo(
-    () =>
-      showTotal
-        ? formatBaseUnitAmount(
-            (BigInt(amountRaw) + BigInt(feeRaw)).toString(),
-            asset.metadata.decimals
-          )
-        : null,
+    () => getOnchainResultTotal(amountRaw, feeRaw, asset.metadata.decimals, showTotal),
     [amountRaw, asset.metadata.decimals, feeRaw, showTotal]
   )
   const transactionHash = activity?.transactionHash ?? segmentEvidence?.transactionHash
@@ -151,10 +147,12 @@ export function OnchainTransactionResult({
     transactionHash && explorerBaseUrl
       ? `${explorerBaseUrl}/${explorerTransactionPath}/${transactionHash}`
       : null
-  const replacementExplorerUrl = replacementTransactionHash
-    ? `${explorerBaseUrl}/${explorerTransactionPath}/${replacementTransactionHash}`
-    : null
+  const replacementExplorerUrl =
+    replacementTransactionHash && explorerBaseUrl
+      ? `${explorerBaseUrl}/${explorerTransactionPath}/${replacementTransactionHash}`
+      : null
   const compactDetails = reconfirming || replacementTransactionHash !== undefined
+  const resultAction = getOnchainResultAction(status, explorerUrl)
 
   const handleResume = async () => {
     setResuming(true)
@@ -182,9 +180,15 @@ export function OnchainTransactionResult({
         className={compactDetails ? 'pb-0 pt-4' : 'py-3'}
         bodyClassName={compactDetails ? 'my-0' : 'my-2'}
         footer={
-          status === 'signed' ? (
+          resultAction === 'retry' ? (
             <Button className="h-[45px] w-full" isLoading={resuming} onClick={handleResume}>
               Retry broadcast
+            </Button>
+          ) : resultAction === 'explorer' && explorerUrl ? (
+            <Button asChild className="h-[45px] w-full">
+              <a href={explorerUrl} target="_blank" rel="noopener noreferrer">
+                View on Explorer
+              </a>
             </Button>
           ) : (
             <Button

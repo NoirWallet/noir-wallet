@@ -6,7 +6,7 @@ import {
   EXTENSION_SIDE_PANEL_PATH
 } from './src/config/extension'
 import {
-  DEFAULT_ENABLED_CHAIN_FEATURE_FLAGS,
+  ALL_CHAIN_FEATURE_FLAGS,
   EVM_CHAIN_FEATURE_FLAG,
   parseEnabledChainFeatureFlags
 } from './src/config/multichain-feature-flags'
@@ -18,7 +18,7 @@ const isTestnet = process.env.NETWORK_MODE === 'testnet'
 const developmentExtensionKey = resolveDevelopmentExtensionKey(process.env)
 const earlyEvmProviderEnabled = parseEnabledChainFeatureFlags(
   process.env.ENABLED_CHAIN_FEATURE_FLAGS,
-  DEFAULT_ENABLED_CHAIN_FEATURE_FLAGS
+  ALL_CHAIN_FEATURE_FLAGS
 ).includes(EVM_CHAIN_FEATURE_FLAG)
 
 export default defineManifest(async env => ({

@@ -9,6 +9,7 @@ import type { QuoteBinding } from '@/types'
 import type { TransactionId } from '@/core/transactions/domain'
 import { launchHardwareSignSurface, type HardwareSignPresentation } from './hardware-sign-launcher'
 import { waitForHardwareSignResult, type HardwareSignResult } from './hardware-sign-result'
+import { hardwareConnectRoute, type HardwareConnectVendor } from './hardware-connect-options'
 
 export type HardwareSignKind = 'send' | 'shield' | 'unshield' | 'swap'
 
@@ -300,7 +301,8 @@ export function parseHardwareSignRequest(value: unknown): HardwareSignRequest {
   }
   if (
     fundingSource !== undefined &&
-    (kind !== 'send' || (fundingSource !== 'shielded' && fundingSource !== 'transparent'))
+    ((kind !== 'send' && kind !== 'swap') ||
+      (fundingSource !== 'shielded' && fundingSource !== 'transparent'))
   ) {
     throw new Error('Invalid hardware funding source')
   }
@@ -404,9 +406,9 @@ export function isHardwareSignRequestFresh(
   return request.createdAt <= now && now - request.createdAt <= HARDWARE_SIGN_REQUEST_TTL_MS
 }
 
-export function openHardwareConnectTab(): void {
+export function openHardwareConnectTab(vendor?: HardwareConnectVendor): void {
   chrome.tabs
-    .create({ url: chrome.runtime.getURL('index.html#/hardware/connect') })
+    .create({ url: chrome.runtime.getURL(`index.html#${hardwareConnectRoute(vendor)}`) })
     .catch(console.error)
 }
 
@@ -527,6 +529,34 @@ export function openKeystoneBitcoinSignTab(transactionId: TransactionId): Promis
       `index.html#/hardware/bitcoin-sign?tx=${encodeURIComponent(transactionId)}`
     )
   })
+}
+
+async function openMultichainHardwareSignTab(
+  transactionId: TransactionId,
+  family: 'evm' | 'bitcoin'
+): Promise<chrome.tabs.Tab> {
+  const response = await chrome.runtime.sendMessage({
+    type: 'GET_HARDWARE_TRANSFER_VENDOR',
+    transactionId,
+    family
+  })
+  if (typeof response?.error === 'string') throw new Error(response.error)
+  if (response?.result === 'ledger')
+    return chrome.tabs.create({
+      url: chrome.runtime.getURL(
+        `index.html#/hardware/ledger-sign?family=${family}&tx=${encodeURIComponent(transactionId)}`
+      )
+    })
+  if (response?.result !== 'keystone') throw new Error('Unsupported hardware signing device')
+  return family === 'evm'
+    ? openKeystoneEvmSignTab(transactionId)
+    : openKeystoneBitcoinSignTab(transactionId)
+}
+export function openHardwareEvmSignTab(transactionId: TransactionId): Promise<chrome.tabs.Tab> {
+  return openMultichainHardwareSignTab(transactionId, 'evm')
+}
+export function openHardwareBitcoinSignTab(transactionId: TransactionId): Promise<chrome.tabs.Tab> {
+  return openMultichainHardwareSignTab(transactionId, 'bitcoin')
 }
 
 export function openKeystoneEvmSignTab(transactionId: TransactionId): Promise<chrome.tabs.Tab> {

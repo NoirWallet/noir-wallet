@@ -5,9 +5,9 @@ import type { DerivedBitcoinAddress } from '@/core/chains/bitcoin'
 import {
   BITCOIN_MAINNET_CHAIN_ID,
   BITCOIN_MAXIMUM_SELECTION_UTXOS,
+  bitcoinAccountRootFromPath,
   bitcoinDustSats,
   estimateBitcoinVbytes,
-  expectedBitcoinDerivationPath,
   failInvalidBitcoinTransaction,
   parseBitcoinAddress,
   parseBitcoinAddressType,
@@ -143,6 +143,7 @@ function parseCoinSelection(value: BitcoinCoinSelection): BitcoinCoinSelection {
     failInvalidBitcoinTransaction('Invalid Bitcoin selected UTXOs')
   }
   const seen = new Set<string>()
+  let accountRoot: string | undefined
   const selectedUtxos = value.selectedUtxos.map(candidate => {
     const utxo = parseBitcoinSpendableUtxo(candidate)
     if (
@@ -152,6 +153,17 @@ function parseCoinSelection(value: BitcoinCoinSelection): BitcoinCoinSelection {
     ) {
       failInvalidBitcoinTransaction('Bitcoin UTXO does not match the selected account')
     }
+    const root = bitcoinAccountRootFromPath(
+      utxo.derivationPath,
+      chainId,
+      addressType,
+      utxo.change,
+      utxo.addressIndex
+    )
+    if (accountRoot !== undefined && accountRoot !== root) {
+      failInvalidBitcoinTransaction('Bitcoin UTXOs belong to different accounts')
+    }
+    accountRoot = root
     const outpoint = `${utxo.transactionId}:${utxo.outputIndex}`
     if (seen.has(outpoint)) failInvalidBitcoinTransaction('Duplicate Bitcoin UTXO')
     seen.add(outpoint)
@@ -229,13 +241,14 @@ function parseChangeAddress(
   if (!change && addressIndex !== 0) {
     failInvalidBitcoinTransaction('Bitcoin change address must be the active receive address')
   }
-  const expectedPath = expectedBitcoinDerivationPath(
+  const selectedRoot = bitcoinAccountRootFromPath(
+    selection.selectedUtxos[0].derivationPath,
     selection.chainId,
     selection.addressType,
-    selection.accountIndex,
-    change,
-    addressIndex
+    selection.selectedUtxos[0].change,
+    selection.selectedUtxos[0].addressIndex
   )
+  const expectedPath = `${selectedRoot}/${change ? 1 : 0}/${addressIndex}`
   const profile =
     selection.addressType === 'p2pkh'
       ? ({ addressScheme: 'bitcoin-p2pkh', derivationScheme: 'bip44' } as const)

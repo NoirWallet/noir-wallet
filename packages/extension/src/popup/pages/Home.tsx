@@ -317,9 +317,6 @@ export function Home() {
       if (Object.keys(syncPatch).length > 0) {
         store.setWalletSyncStateFor(network, targetWalletId, syncPatch)
       }
-      if (msg.balance && msg.accountId) {
-        store.setBalanceFor(network, targetWalletId, msg.accountId, msg.balance)
-      }
     }
 
     if (supportsZcash && currentWalletId && currentAccountId) {
@@ -771,7 +768,6 @@ export function Home() {
                     aria-label={`${totalBalanceApproximate ? 'Estimated total assets' : 'Total assets'} ${formatPrice(displayedTotalUsd, { showSign: true })}, show Public and Confidential totals`}
                     className="rounded-sm text-4xl font-normal leading-tight tracking-tight tabular-nums focus-visible:outline-2 focus-visible:outline-primary"
                   >
-                    {totalBalanceApproximate ? '≈' : ''}
                     {formatPrice(displayedTotalUsd, { showSign: true })}
                   </button>
                 </Tooltip>

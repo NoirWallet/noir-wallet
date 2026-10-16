@@ -1,7 +1,7 @@
-import { defineConfig, loadEnv } from 'vite'
+import { defineConfig, loadEnv, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
-import { crx } from '@crxjs/vite-plugin'
+import { crx, type CrxPlugin } from '@crxjs/vite-plugin'
 import zip from 'vite-plugin-zip-pack'
 import manifest from './manifest.config'
 import path from 'path'
@@ -10,15 +10,14 @@ import { createRequire } from 'node:module'
 import { createServer } from 'node:net'
 import { name, version } from './package.json'
 import {
-  BITCOIN_CHAIN_FEATURE_FLAG,
+  ALL_CHAIN_FEATURE_FLAGS,
   EVM_CHAIN_FEATURE_FLAG,
-  NEAR_CHAIN_FEATURE_FLAG,
-  parseEnabledChainFeatureFlags,
-  SOLANA_CHAIN_FEATURE_FLAG,
-  ZCASH_CHAIN_FEATURE_FLAG
+  parseEnabledChainFeatureFlags
 } from './src/config/multichain-feature-flags'
 import { findProhibitedRuntimeModules } from './scripts/lib/runtime-module-policy.mjs'
+import { collectLedgerDependencyNotices } from './scripts/lib/ledger-dependency-notices.mjs'
 import { resolveHistoryApiOrigin } from './src/config/extension'
+import { resolveBetaInviteRequired } from './src/config/beta-invite'
 
 const require = createRequire(import.meta.url)
 const generatedWasmRoots = [
@@ -35,6 +34,7 @@ if (
 }
 const networkMode = requestedNetworkMode ?? 'mainnet'
 const buildChannel = process.env.BUILD_CHANNEL || 'development'
+const betaInviteRequired = resolveBetaInviteRequired(buildChannel, process.env.BETA_INVITE_REQUIRED)
 const debugLogsEnabled = buildChannel !== 'production'
 const isPlaywrightBuild = process.env.PLAYWRIGHT_E2E === '1'
 const analyticsReportingEnabled =
@@ -68,16 +68,9 @@ if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(e2eBuildProfile)) {
 if (isPlaywrightBuild && !e2eBuildProfile.startsWith(`${networkMode}-`)) {
   throw new Error(`E2E_BUILD_PROFILE ${e2eBuildProfile} does not match NETWORK_MODE ${networkMode}`)
 }
-const addressReleaseableChainFeatureFlags = [
-  ZCASH_CHAIN_FEATURE_FLAG,
-  EVM_CHAIN_FEATURE_FLAG,
-  BITCOIN_CHAIN_FEATURE_FLAG,
-  SOLANA_CHAIN_FEATURE_FLAG,
-  NEAR_CHAIN_FEATURE_FLAG
-]
 const enabledChainFeatureFlags = parseEnabledChainFeatureFlags(
   process.env.ENABLED_CHAIN_FEATURE_FLAGS,
-  addressReleaseableChainFeatureFlags
+  ALL_CHAIN_FEATURE_FLAGS
 )
 const providerIconDataUrl = `data:image/png;base64,${readFileSync(
   path.resolve(__dirname, './public/icons/icon128.png')
@@ -166,6 +159,7 @@ export default defineConfig({
     __APP_VERSION__: JSON.stringify(version),
     __BUILD_TIME__: JSON.stringify(new Date().toISOString()),
     __NETWORK_MODE__: JSON.stringify(networkMode),
+    __BETA_INVITE_REQUIRED__: JSON.stringify(betaInviteRequired),
     __DEBUG_LOGS__: JSON.stringify(debugLogsEnabled),
     __EXTENSION_UPDATES_ENABLED__: JSON.stringify(extensionUpdatesEnabled),
     __MULTICHAIN_CONFORMANCE_RPC_ENABLED__: JSON.stringify(isPlaywrightBuild),
@@ -190,13 +184,20 @@ export default defineConfig({
     tailwindcss(),
     crx({ manifest }),
     {
-      name: 'include-project-license',
+      name: 'include-project-and-signing-licenses',
       generateBundle() {
         this.emitFile({
           type: 'asset',
           fileName: 'LICENSE',
           source: readFileSync(path.resolve(__dirname, '../../LICENSE'), 'utf8')
         })
+        for (const notice of collectLedgerDependencyNotices(__dirname)) {
+          this.emitFile({
+            type: 'asset',
+            fileName: notice.fileName,
+            source: notice.source
+          })
+        }
       }
     },
     {
@@ -248,7 +249,7 @@ export default defineConfig({
         }
         return renderedManifest
       }
-    },
+    } as CrxPlugin,
     ...(!isPlaywrightBuild
       ? [
           zip({
@@ -278,7 +279,7 @@ export default defineConfig({
                 )}\n`
               })
             }
-          }
+          } satisfies Plugin
         ]
       : []),
     {

@@ -245,7 +245,7 @@ function parseSolanaInstruction(
   return { programId, accounts, dataBase64 }
 }
 
-function interpretSolanaInstruction(
+export function interpretSolanaInstruction(
   programId: string,
   accounts: readonly SolanaInstructionAccountSummary[],
   data: Uint8Array

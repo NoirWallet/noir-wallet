@@ -29,6 +29,17 @@ const ETH_USDC = token(
 const BTC = token('nep141:btc.omft.near', 'btc', 'BTC')
 const WNEAR = token('nep141:wrap.near', 'near', 'wNEAR')
 const TOKENS = [ZEC, ETH, ETH_USDC, BTC, WNEAR]
+const zcashChain = {
+  id: 'bip122:00040fe8ec8471911baa1db1266ea15d',
+  family: 'zcash',
+  network: { kind: 'mainnet' }
+}
+const ethereumChain = { id: 'eip155:1', family: 'evm', network: { kind: 'mainnet' } }
+const bitcoinChain = {
+  id: 'bip122:000000000019d6689c085ae165831e93',
+  family: 'bitcoin',
+  network: { kind: 'mainnet' }
+}
 
 test.describe('account-scoped Swap token selection', () => {
   test('does not select a cross-chain destination from the source catalog while its destination catalog is pending', () => {
@@ -37,7 +48,8 @@ test.describe('account-scoped Swap token selection', () => {
       sourceTokens: [ZEC, ETH],
       crossChainDestinationTokens: [],
       walletSourceTokens: [ZEC, ETH],
-      preferredSourceAssetId: ZEC.assetId
+      preferredSourceAssetId: ZEC.assetId,
+      enabledChains: [zcashChain, ethereumChain]
     }
     expect(resolveSwapTokenSelection(input)).toEqual({ tokenIn: ZEC, tokenOut: null })
     expect(
@@ -84,15 +96,16 @@ test.describe('account-scoped Swap token selection', () => {
     expect(createSwapTokenPreferenceScope(null, 'account-1')).toBeNull()
   })
 
-  test('restores an available source for price discovery even when the Wallet does not own it', () => {
+  test('ignores source history that is not available to the current account', () => {
     expect(
       resolveSwapTokenSelection({
         tokens: TOKENS,
         walletSourceTokens: [ETH, ETH_USDC],
         savedSelection: { tokenInId: ZEC.assetId, tokenOutId: BTC.assetId },
-        preferredSourceAssetId: ETH.assetId
+        preferredSourceAssetId: ETH.assetId,
+        enabledChains: [ethereumChain]
       })
-    ).toMatchObject({ tokenIn: ZEC, tokenOut: BTC })
+    ).toMatchObject({ tokenIn: ETH, tokenOut: ETH_USDC })
   })
 
   test('defaults an EVM-only private-key Wallet to its active native asset and same-chain token', () => {
@@ -100,7 +113,8 @@ test.describe('account-scoped Swap token selection', () => {
       resolveSwapTokenSelection({
         tokens: TOKENS,
         walletSourceTokens: [ETH_USDC, ETH],
-        preferredSourceAssetId: ETH.assetId
+        preferredSourceAssetId: ETH.assetId,
+        enabledChains: [ethereumChain]
       })
     ).toMatchObject({ tokenIn: ETH, tokenOut: ETH_USDC })
   })
@@ -112,7 +126,8 @@ test.describe('account-scoped Swap token selection', () => {
         walletSourceTokens: [ZEC, ETH, ETH_USDC],
         savedSelection: { tokenInId: ZEC.assetId, tokenOutId: BTC.assetId },
         requestedSourceAssetId: ETH_USDC.assetId,
-        preferredSourceAssetId: ETH.assetId
+        preferredSourceAssetId: ETH.assetId,
+        enabledChains: [zcashChain, ethereumChain]
       })
     ).toMatchObject({ tokenIn: ETH_USDC })
   })
@@ -123,18 +138,32 @@ test.describe('account-scoped Swap token selection', () => {
         tokens: TOKENS,
         walletSourceTokens: [ZEC],
         savedSelection: { tokenInId: ZEC.assetId, tokenOutId: BTC.assetId },
-        requestedSourceAssetId: ETH_USDC.assetId
+        requestedSourceAssetId: ETH_USDC.assetId,
+        enabledChains: [zcashChain, ethereumChain]
       })
     ).toMatchObject({ tokenIn: ETH_USDC })
   })
 
-  test('keeps a Bitcoin-only private-key Wallet usable with an external destination', () => {
+  test('keeps a Bitcoin-only private-key Wallet usable with a saved external destination', () => {
     expect(
       resolveSwapTokenSelection({
         tokens: TOKENS,
         walletSourceTokens: [BTC],
-        preferredSourceAssetId: BTC.assetId
+        preferredSourceAssetId: BTC.assetId,
+        savedSelection: { tokenInId: BTC.assetId, tokenOutId: WNEAR.assetId },
+        enabledChains: [bitcoinChain]
       })
     ).toMatchObject({ tokenIn: BTC, tokenOut: WNEAR })
+  })
+
+  test('does not accept a source deep link from a network disabled for this account', () => {
+    expect(
+      resolveSwapTokenSelection({
+        tokens: TOKENS,
+        walletSourceTokens: [ETH, ETH_USDC],
+        requestedSourceAssetId: ZEC.assetId,
+        enabledChains: [ethereumChain]
+      })
+    ).toMatchObject({ tokenIn: ETH, tokenOut: ETH_USDC })
   })
 })

@@ -42,6 +42,7 @@ Pages use a header, a scrollable content region with `min-h-0` where needed, and
 - Use the existing Dialog for high-impact confirmation. Show actionable consequences for deletion, reset, permission expansion, and high-risk signing. Never display raw RPC/WASM errors, secrets, or full sensitive values as explanatory copy.
 - Use [ChainIcon](../../../packages/extension/src/popup/components/common/ChainIcon.tsx) for network identity and [TokenIcon](../../../packages/extension/src/popup/components/tokens/TokenIcon.tsx) for assets. Chain icon URLs and aliases belong in the shared icon mapping; do not build a third-party favicon URL from a dApp origin.
 - General account, asset, Send/Receive, Activity, and dApp layouts should remain consistent across chains. Show only enabled chains with complete capabilities. Keep network identity alongside assets when identical symbols can refer to different chains.
+- Asset details show holdings and their balance categories. Show Available within operations such as Send or Swap, scoped to the selected funding source, rather than as a generic asset-detail balance.
 - Mainnet is the default and need not be repeated on routine cards. Keep explicit labels for Testnet and other non-mainnet environments, and for any choice where network changes behavior.
 - Copy should help users complete the task, understand current data, or choose the next action. Put business limits into controls, field validation, confirmation, and failure feedback instead of standing rule text.
 

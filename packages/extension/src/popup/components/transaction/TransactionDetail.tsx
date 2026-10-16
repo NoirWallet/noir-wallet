@@ -26,6 +26,10 @@ import { getZcashChainId } from '@/core/chains/registry'
 import { formatChainTransactionExplorerUrl } from '@/popup/services/chain-explorer'
 import { getLegacyIntentsProgressPresentation } from '@/popup/services/transaction-progress'
 import { getTransactionStatusToneClassName } from '@/lib/transaction-status-presentation'
+import {
+  getMissingZcashTransactionSource,
+  getZcashTransactionRecipient
+} from '@/popup/services/zcash-transaction-parties'
 import { TransactionProgressSteps } from './TransactionProgressSteps'
 
 function formatZcashTransactionExplorerUrl(hash: string): string {
@@ -49,14 +53,6 @@ interface TransactionDetailContentProps {
 const isZcashAddress = (addr: string) => {
   if (!addr) return false
   return addr.startsWith('t') || addr.startsWith('z') || addr.startsWith('u')
-}
-
-function getMissingFromSource(txType: string, fromType?: string) {
-  const isIncoming = txType === 'receive' || txType === 'withdraw' || txType === 'claim'
-  const isShieldedSend =
-    (txType === 'send' || txType === 'shield' || txType === 'unshield') && fromType === 'shielded'
-  if (!isIncoming && !isShieldedSend) return null
-  return { label: 'Shielded Pool', type: 'shielded' as const }
 }
 
 function MemoSection({ memo }: { memo: string }) {
@@ -245,26 +241,14 @@ export function TransactionDetailContent({
   const explorerUrl = localTx.txHash ? formatZcashTransactionExplorerUrl(localTx.txHash) : ''
   const fromType = localTx.fromType
   const toType = detectAddressType(localTx.to)
-  const missingFromSource = localTx.from ? null : getMissingFromSource(localTx.type, fromType)
+  const missingFromSource = localTx.from
+    ? null
+    : getMissingZcashTransactionSource(localTx.type, fromType)
   const fromLabel = localTx.from
     ? formatSortAddress(localTx.from)
     : (missingFromSource?.label ?? '')
   const fromLabelType = localTx.from ? fromType : missingFromSource?.type
-  const isMissingShieldedRecipient =
-    !localTx.to && localTx.type === 'send' && fromType === 'shielded'
-  const isMissingShieldedReceiveTarget = !localTx.to && localTx.type === 'receive'
-  const toLabel = localTx.to
-    ? formatSortAddress(localTx.to)
-    : isMissingShieldedRecipient
-      ? 'Shielded recipient'
-      : isMissingShieldedReceiveTarget
-        ? 'Shielded Pool'
-        : 'Unavailable'
-  const toLabelType = localTx.to
-    ? toType
-    : isMissingShieldedRecipient || isMissingShieldedReceiveTarget
-      ? 'shielded'
-      : null
+  const { label: toLabel, type: toLabelType } = getZcashTransactionRecipient(localTx)
 
   return (
     <div>

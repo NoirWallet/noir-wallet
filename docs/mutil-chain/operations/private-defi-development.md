@@ -103,6 +103,8 @@ recoverable stage requiring renewed login -> needs-auth -> original resumePhase
 
 Only one nonterminal Confidential Funding plan may use a given source asset. A `prepared` plan can be canceled; deleting a signed or broadcast plan is not recovery. A 401/403 response clears the session and moves the plan to `needs-auth`; authorization resumes its prior stage. Timeout and 5xx responses have uncertain outcomes: query status first, then replay the exact frozen payload. Do not requote or sign again. Service Worker startup and alarms resume nonterminal plans.
 
+RHEA transfer and swap results include origin and destination transaction links from persisted graph evidence. The result page recovers these hashes from Activity when a status notification is missed, retains them across partial updates, and does not regress a terminal result on a late processing update.
+
 ## 6. Troubleshooting
 
 Open the Noir Wallet Service Worker inspector from `chrome://extensions`. Relevant log prefixes are `[Confidential Funding]` for batch plans, recovery, status, and balance merging; `[RHEA Swap]` for PEA Swap and Confidential transfers; `[EVM Transfer]` for EVM preparation, signing, and broadcast; and `[EVM Transaction Monitor]` for receipts and Activity finality.

@@ -71,6 +71,8 @@ import {
   createKeystoneEthereumSignRequest,
   parseKeystoneEthereumSignatureCborBase64
 } from '@/lib/keystone'
+import { bytesToBase64, hexToBytes } from '@/lib/bytes'
+import type { LedgerEvmSigningRequest } from '@/lib/ledger/evm'
 
 export interface EvmTransferSigningPort {
   readonly prepare: (
@@ -113,7 +115,7 @@ export interface PrepareEvmTransferInput {
   readonly rheaSwapBinding?: RheaSwapTransactionBinding
   readonly feeSelection?: EvmFeeSelection
   readonly feeTier?: NetworkFeeTier
-  readonly signingMode?: 'internal' | 'keystone'
+  readonly signingMode?: 'internal' | 'keystone' | 'ledger'
   readonly externalSigner?: Omit<EvmExternalSignerBinding, 'requestId'>
   readonly signal?: AbortSignal
   readonly replacementOf?: Readonly<{
@@ -139,7 +141,7 @@ export interface PrepareEvmCancelInput {
   readonly chainAccount: ChainAccount
   readonly originalTransactionId: TransactionId
   readonly executionAccount?: PeaEvmExecutionAccount
-  readonly signingMode?: 'internal' | 'keystone'
+  readonly signingMode?: 'internal' | 'keystone' | 'ledger'
   readonly externalSigner?: Omit<EvmExternalSignerBinding, 'requestId'>
   readonly feeSelection?: EvmFeeSelection
   readonly signal?: AbortSignal
@@ -176,6 +178,8 @@ export interface EvmExternalSignatureRequired {
 export type EvmTransferApprovalResult = EvmTransferSubmission | EvmExternalSignatureRequired
 
 export interface EvmExternalSigningRequest {
+  readonly vendor?: 'keystone' | 'ledger'
+  readonly ledgerRequest?: LedgerEvmSigningRequest
   readonly transactionId: TransactionId
   readonly request: Extract<
     PreparedSigningCommand['execution'],
@@ -437,7 +441,7 @@ export class EvmTransferOrchestrator {
     readonly chainAccount: ChainAccount
     readonly executionAccount?: PeaEvmExecutionAccount
     readonly feeSelection?: EvmFeeSelection
-    readonly signingMode?: 'internal' | 'keystone'
+    readonly signingMode?: 'internal' | 'keystone' | 'ledger'
     readonly externalSigner?: Omit<EvmExternalSignerBinding, 'requestId'>
   }): Promise<PreparedEvmTransferApproval> {
     const state = await this.getNonceRecovery(input)
@@ -575,23 +579,33 @@ export class EvmTransferOrchestrator {
     const expectedFingerprint = await computeEvmSigningPayloadFingerprint(prepared.transaction)
     let externalSigner: EvmExternalSignerBinding | null = null
     const signing =
-      input.signingMode === 'keystone'
+      input.signingMode === 'keystone' || input.signingMode === 'ledger'
         ? await (async (): Promise<PreparedSigningCommand> => {
             if (!input.externalSigner) {
-              throw new Error('Keystone EVM signing requires an authenticated public account')
+              throw new Error('Hardware EVM signing requires an authenticated public account')
             }
             const requestId = this.createExternalRequestId()
-            externalSigner = Object.freeze({ ...input.externalSigner, requestId })
-            const request = createKeystoneEthereumSignRequest({
-              requestId,
-              unsignedTransactionHex: serializePreparedEvmUnsignedTransaction(prepared),
-              chainId: Number(prepared.transaction.chainId),
-              derivationPath: input.externalSigner.derivationPath,
-              masterFingerprintHex: input.externalSigner.masterFingerprintHex,
-              address: input.externalSigner.address
+            externalSigner = Object.freeze({
+              ...input.externalSigner,
+              vendor: input.signingMode === 'ledger' ? 'ledger' : 'keystone',
+              requestId
             })
+            const unsignedTransactionHex = serializePreparedEvmUnsignedTransaction(prepared)
+            const request =
+              input.signingMode === 'ledger'
+                ? null
+                : createKeystoneEthereumSignRequest({
+                    requestId,
+                    unsignedTransactionHex,
+                    chainId: Number(prepared.transaction.chainId),
+                    derivationPath: input.externalSigner.derivationPath,
+                    masterFingerprintHex: input.externalSigner.masterFingerprintHex!,
+                    address: input.externalSigner.address
+                  })
             return Object.freeze({
-              commandId: parseSigningCommandId(`signing-command:keystone-evm:${requestId}`),
+              commandId: parseSigningCommandId(
+                `signing-command:${input.signingMode}-evm:${requestId}`
+              ),
               chainId: prepared.chainId,
               operation: 'transaction' as const,
               summary: await createEvmSigningSummary(prepared),
@@ -603,7 +617,7 @@ export class EvmTransferOrchestrator {
                 kind: 'external' as const,
                 request: Object.freeze({
                   encoding: 'base64' as const,
-                  value: request.cborBase64
+                  value: request?.cborBase64 ?? bytesToBase64(hexToBytes(unsignedTransactionHex))
                 })
               }),
               expiresAt: this.timestamp() + KEYSTONE_EVM_SIGNING_TTL_MS
@@ -1184,6 +1198,17 @@ export class EvmTransferOrchestrator {
     return Object.freeze({
       transactionId: pending.transactionId,
       request: pending.signingExecution.request,
+      ...(pending.externalSigner.vendor === 'ledger' ? { vendor: 'ledger' as const } : {}),
+      ...(pending.externalSigner.vendor === 'ledger'
+        ? {
+            ledgerRequest: Object.freeze({
+              kind: 'transaction' as const,
+              derivationPath: pending.externalSigner.derivationPath,
+              expectedAddress: pending.externalSigner.address,
+              unsignedTransactionHex: serializePreparedEvmUnsignedTransaction(pending.prepared)
+            })
+          }
+        : {}),
       payloadFingerprint: pending.payloadFingerprint,
       expiresAt: pending.expiresAt
     })
@@ -1220,11 +1245,17 @@ export class EvmTransferOrchestrator {
     await this.assertApprovalNonce(pending, currentGraph, input.signal)
     let signed: Awaited<ReturnType<typeof createKeystoneSignedEvmTransaction>>
     try {
-      const response = parseKeystoneEthereumSignatureCborBase64(input.signatureCborBase64)
-      if (response.requestId !== pending.externalSigner.requestId) {
-        throw new Error('Keystone EVM signature request ID does not match')
-      }
-      signed = await createKeystoneSignedEvmTransaction(pending.prepared, response.signatureHex)
+      const signatureHex =
+        pending.externalSigner.vendor === 'ledger'
+          ? input.signatureCborBase64
+          : (() => {
+              const response = parseKeystoneEthereumSignatureCborBase64(input.signatureCborBase64)
+              if (response.requestId !== pending.externalSigner.requestId) {
+                throw new Error('Keystone EVM signature request ID does not match')
+              }
+              return response.signatureHex
+            })()
+      signed = await createKeystoneSignedEvmTransaction(pending.prepared, signatureHex)
     } catch (error) {
       await this.failConsumedSigning(pending)
       throw error

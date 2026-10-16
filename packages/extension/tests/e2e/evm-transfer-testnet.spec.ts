@@ -21,6 +21,7 @@ import {
 
 const TEST_MNEMONIC_24 = `${'abandon '.repeat(23)}art`
 const TEST_PASSWORD = 'evm-testnet-transfer-password'
+const TEST_BETA_INVITE_CODE = 'EVM-TESTNET-INVITE'
 const RECIPIENT = '0x1111111111111111111111111111111111111111'
 const ZEC_TESTNET_ASSET_ID = 'bip122:05a60a92d99d85997cce3b87616c089f/slip44:133'
 const ETH_ASSET_ID = 'eip155:11155111/slip44:60'
@@ -43,6 +44,30 @@ async function expectDAppRequestHeader(
 }
 
 test.beforeEach(async ({ context }) => {
+  await context.route('https://api.zknoir.com/v1/invite-codes/**', async route => {
+    const request = route.request()
+    const action = new URL(request.url()).pathname.split('/').at(-1)
+    expect(new URL(request.url()).pathname).toBe(
+      `/v1/invite-codes/${TEST_BETA_INVITE_CODE}/${action}`
+    )
+    if (action === 'bind') {
+      expect(request.method()).toBe('POST')
+      expect(request.postDataJSON().wallet_address).toMatch(/^0x[0-9a-fA-F]{40}$/)
+    } else {
+      expect(action).toBe('check')
+      expect(request.method()).toBe('GET')
+    }
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        code: 0,
+        data:
+          action === 'bind'
+            ? { code: TEST_BETA_INVITE_CODE, bound: true }
+            : { exists: true, bound: false }
+      })
+    })
+  })
   await context.route(
     url => EVM_HISTORY_PROXY_ORIGINS.has(url.origin) && url.pathname === '/',
     route => {
@@ -78,6 +103,14 @@ async function importTestWallet(
   page: Page,
   zcashHistory: 'imported' | 'new' = 'imported'
 ): Promise<void> {
+  const activation = await page.evaluate(() =>
+    chrome.runtime.sendMessage({ type: 'GET_BETA_INVITE_ACTIVATION' })
+  )
+  if (activation?.result?.required) {
+    await expect(page.getByRole('heading', { name: 'Enter invite code' })).toBeVisible()
+    await page.getByRole('textbox', { name: 'Invite code' }).fill(TEST_BETA_INVITE_CODE)
+    await page.getByRole('button', { name: 'Continue' }).click()
+  }
   await page.getByRole('button', { name: 'Import wallet' }).click()
   await expect(page.getByRole('radio', { name: '24 words' })).toHaveAttribute(
     'aria-checked',
@@ -2596,7 +2629,7 @@ test('prepares, signs, broadcasts, monitors, and records a Sepolia transfer in r
     )
   }
   await expect(popup.locator('[data-transaction-status="broadcast"]')).toBeVisible()
-  await expect(popup.getByRole('button', { name: 'View Activity', exact: true })).toBeVisible()
+  await expect(popup.getByRole('link', { name: 'View on Explorer', exact: true })).toBeVisible()
   await expect(popup.locator('[data-result-icon] svg')).toBeVisible()
   await expect(popup.locator('[data-result-icon] svg path')).toHaveCount(1)
   await expectResultContentFits(popup)
@@ -2855,7 +2888,7 @@ test('prepares, signs, broadcasts, monitors, and records a Sepolia transfer in r
   )
 })
 
-test('opens the recorded pending transfer from View Activity in real MV3', async ({
+test('opens the recorded pending transfer on its explorer in real MV3', async ({
   context,
   popup,
   extensionId
@@ -2920,8 +2953,8 @@ test('opens the recorded pending transfer from View Activity in real MV3', async
   await popup.getByRole('button', { name: 'Continue', exact: true }).click()
   await expect(popup.getByRole('dialog', { name: 'Review Send' })).toBeVisible()
   await popup.getByRole('button', { name: 'Send', exact: true }).click()
-  const viewActivity = popup.getByRole('button', { name: 'View Activity', exact: true })
-  await expect(viewActivity).toBeVisible({ timeout: 30_000 })
+  const viewExplorer = popup.getByRole('link', { name: 'View on Explorer', exact: true })
+  await expect(viewExplorer).toBeVisible({ timeout: 30_000 })
   const activity = (await popup.evaluate(() =>
     chrome.runtime.sendMessage({ type: 'GET_ACTIVITY' })
   )) as {
@@ -2933,9 +2966,17 @@ test('opens the recorded pending transfer from View Activity in real MV3', async
   expect(recorded).toBeTruthy()
   if (!recorded) throw new Error('Pending EVM transfer was not recorded')
 
-  await viewActivity.click()
-  await expect(popup.getByRole('tab', { name: 'Activity' })).toHaveAttribute('data-state', 'active')
-  await expect(popup.locator(`[data-activity-detail-id="${recorded.id}"]`)).toBeVisible()
+  const expectedUrl = `${SEPOLIA_EXPLORER_URL}/tx/${transactionHash}`
+  await expect(viewExplorer).toHaveAttribute('href', expectedUrl)
+  await context.route(`${SEPOLIA_EXPLORER_URL}/tx/**`, route =>
+    route.fulfill({ contentType: 'text/html', body: '<title>Transaction explorer</title>' })
+  )
+  const explorerPagePromise = context.waitForEvent('page')
+  await viewExplorer.click()
+  const explorerPage = await explorerPagePromise
+  await explorerPage.waitForURL(expectedUrl)
+  await expect(popup.locator('[data-transaction-status="broadcast"]')).toBeVisible()
+  await explorerPage.close()
 })
 
 test('shows Main and Confidential indexed history together in Activity', async ({

@@ -43,7 +43,7 @@ test.describe('ZIP-315 confirmation lifecycle', () => {
     expect(WALLET_CONFIG.MIN_CONFIRMATIONS).toBe(3)
   })
 
-  test('SPENDABILITY_CONFIRMATIONS is 10 for incoming funds', () => {
+  test('SPENDABILITY_CONFIRMATIONS preserves incoming Activity finality at 10', () => {
     expect(WALLET_CONFIG.SPENDABILITY_CONFIRMATIONS).toBe(10)
   })
 
@@ -60,7 +60,7 @@ test.describe('ZIP-315 confirmation lifecycle', () => {
     expect(signal).toBe('wait')
   })
 
-  test('confirming transactions use the warning tone', () => {
+  test('confirming transactions use the neutral tone', () => {
     expect(
       getTransactionStatusCopy(
         tx({ status: 'confirming', confirmations: 2, requiredConfirmations: 3 })
@@ -68,7 +68,7 @@ test.describe('ZIP-315 confirmation lifecycle', () => {
     ).toMatchObject({ label: 'Confirming (2/3)', tone: 'neutral' })
   })
 
-  test('9 confirmations still not spendable', () => {
+  test('9 incoming confirmations still wait for Activity finality', () => {
     const signal = decideMonitorSignal({
       lookup: { status: 'confirmed', confirmations: 9 },
       minConfirmations: 10,

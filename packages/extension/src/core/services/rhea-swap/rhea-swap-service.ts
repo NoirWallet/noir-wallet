@@ -170,7 +170,16 @@ export class RheaSwapService {
       const key = token.isNative
         ? `${token.rheaChainId}:native:${token.assetId}`
         : `${token.rheaChainId}:${token.rheaAddress}`
-      if (!unique.has(key)) unique.set(key, token)
+      const previous = unique.get(key)
+      unique.set(
+        key,
+        previous
+          ? Object.freeze({
+              ...previous,
+              sources: Object.freeze([...new Set([...previous.sources, ...token.sources])])
+            })
+          : token
+      )
     }
     return Object.freeze({
       tokens: Object.freeze([...unique.values()]),
@@ -263,9 +272,12 @@ export class RheaSwapService {
     })
   }
 
-  async readEvmSignaturePlan(quoteHandle: string): Promise<RheaSwapEvmSignaturePlan> {
+  async readEvmSignaturePlan(
+    quoteHandle: string,
+    allowExpired = false
+  ): Promise<RheaSwapEvmSignaturePlan> {
     const record = await this.requireSession(quoteHandle)
-    const build = this.readBuild(record)
+    const build = this.readBuild(record, allowExpired)
     if (build.execution.kind !== 'evm-signature') {
       throw new Error('RHEA Swap build is not an EVM signature order')
     }

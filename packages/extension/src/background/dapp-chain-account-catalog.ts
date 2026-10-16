@@ -15,6 +15,7 @@ export interface DAppChainAccountDescriptor {
   readonly label: string
   readonly reference: AccountRef
   readonly address: string
+  readonly messageSigningSupported?: boolean
 }
 
 interface DAppChainAccountAddressContext {
@@ -95,7 +96,13 @@ export async function listDAppChainAccounts(
           {}
         )}`,
         reference,
-        address
+        address,
+        ...(options.family === 'solana'
+          ? {
+              messageSigningSupported:
+                keyDomain.source.kind === 'software' || keyDomain.source.kind === 'private-key'
+            }
+          : {})
       })
     )
   }

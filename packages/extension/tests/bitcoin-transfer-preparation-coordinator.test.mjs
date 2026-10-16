@@ -153,6 +153,7 @@ function harness(options = {}) {
       }
     },
     inputReservations,
+    ...(options.changeReservations ? { changeReservations: options.changeReservations } : {}),
     now: () => 3_000,
     selectChangeOutputPosition: () => options.changeOutputPosition ?? 'last'
   })
@@ -200,6 +201,99 @@ test('prepares a fee-bound PSBT from the active address and returns change to it
     'assert-chain',
     'reserve-inputs'
   ])
+  expect(() => parsePreparedBitcoinPsbt(plan.prepared)).not.toThrow()
+})
+
+test('spends Ledger receive children together and reserves a change child on the device root', async () => {
+  const baseline = context()
+  const root = "m/84'/0'/5'"
+  const second = keyMaterial(7, false, 1)
+  const change = keyMaterial(8, true, 1)
+  const withRoot = derived => ({
+    ...derived,
+    derivationPath: `${root}/${derived.change ? 1 : 0}/${derived.addressIndex}`
+  })
+  const discovery = {
+    ...baseline.state,
+    chainAccount: {
+      ...baseline.chainAccount,
+      derivation: { scheme: 'bip84', path: `${root}/0/0` }
+    },
+    checkpoint: {
+      ...baseline.state.checkpoint,
+      cursors: [
+        { ...baseline.state.checkpoint.cursors[0], nextAddressIndex: 3 },
+        baseline.state.checkpoint.cursors[1]
+      ]
+    },
+    observations: [
+      { ...baseline.state.observations[0], derived: withRoot(baseline.sender.derived) },
+      {
+        derived: withRoot(second.derived),
+        activity: { confirmedTransactionCount: 1, mempoolTransactionCount: 0, used: true },
+        utxos: [
+          {
+            transactionId: 'c'.repeat(64),
+            outputIndex: 0,
+            valueRaw: '100000',
+            status: {
+              confirmed: true,
+              blockHeight: 900,
+              blockHash: 'd'.repeat(64),
+              blockTime: 1_000
+            }
+          }
+        ]
+      },
+      {
+        derived: withRoot(keyMaterial(9, false, 2).derived),
+        activity: { confirmedTransactionCount: 0, mempoolTransactionCount: 0, used: false },
+        utxos: []
+      },
+      {
+        ...baseline.state.observations[2],
+        derived: withRoot(baseline.state.observations[2].derived)
+      }
+    ]
+  }
+  const reservedChange = {
+    schemaVersion: 1,
+    chainAccount: discovery.chainAccount,
+    accountIndex: 0,
+    addressType: 'p2wpkh',
+    transactionId,
+    state: 'reserved',
+    addressIndex: 1,
+    address: { ...withRoot(change.derived), masterFingerprint: '0x01020304' },
+    createdAt: 3_000,
+    updatedAt: 3_000
+  }
+  const changeCalls = []
+  const testHarness = harness({
+    discovery,
+    derivedSigner: { ...withRoot(baseline.sender.derived), masterFingerprint: '0x01020304' },
+    changeReservations: {
+      reserve: async input => {
+        changeCalls.push(input)
+        return reservedChange
+      },
+      abandon: async () => {
+        throw new Error('Successful preparation must not abandon change')
+      }
+    }
+  })
+  const plan = await testHarness.coordinator.prepare({
+    ...prepareInput(testHarness, { mode: 'exact', valueSats: '150000' }),
+    chainAccount: discovery.chainAccount,
+    ledgerAccount: true
+  })
+  expect(plan.selection.selectedUtxos.map(utxo => utxo.derivationPath)).toEqual([
+    `${root}/0/0`,
+    `${root}/0/1`
+  ])
+  expect(plan.changeReservation).toBe(reservedChange)
+  expect(plan.prepared.changeAddress).toBe(change.address)
+  expect(changeCalls).toHaveLength(1)
   expect(() => parsePreparedBitcoinPsbt(plan.prepared)).not.toThrow()
 })
 

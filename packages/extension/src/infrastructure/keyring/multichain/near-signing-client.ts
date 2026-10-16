@@ -6,10 +6,28 @@ import {
   type KeyringCommandPayload,
   parseSigningCommandId,
   type PreparedSigningCommand,
+  type SigningExecution,
   type SigningCommandId,
   type SigningResult
 } from '@/core/keyring/ports'
 import { parseNearAccountId, parseNearBase58, parseNearPublicKey } from '@/core/chains/near'
+import { parseChainId } from '@/core/chains/registry'
+import { ed25519 } from '@noble/curves/ed25519'
+import * as utils from 'near-api-js/lib/utils/index.js'
+import { base64ToBytes } from '@/lib/bytes'
+import type { LedgerNearSigningRequest, LedgerNearSigningResponse } from '@/lib/ledger/near'
+import {
+  buildLedgerNearMessage,
+  buildLedgerNearTransaction,
+  ledgerNearSignedTransaction
+} from './ledger-near-summary'
+import { sha256, decodeBase64 } from './signing-adapter-common'
+import {
+  sameLedgerAccount,
+  type LedgerSigningAccountBinding,
+  type LedgerSigningBridge,
+  type LedgerSigningResume
+} from './ledger-signing-bridge'
 import type { NearSigningPreparePayload } from './signing-adapter-near'
 import {
   assertExactKeys,
@@ -44,6 +62,7 @@ export interface NearSigningCredentialBindingProvider {
 
 export interface NearMultichainSigningClientOptions {
   readonly credentials: NearSigningCredentialBindingProvider
+  readonly ledger?: LedgerSigningBridge<LedgerNearSigningRequest, LedgerNearSigningResponse>
   readonly forward?: BackgroundMultichainForwarder
   readonly now?: () => number
   readonly createCommandId?: () => string
@@ -173,6 +192,17 @@ function parseCancelledSigning(value: unknown): boolean {
 
 export class NearMultichainSigningClient {
   private readonly commandClient: MultichainCommandClient
+  private readonly confirming = new Set<SigningCommandId>()
+  private readonly ledgerPending = new Map<
+    SigningCommandId,
+    {
+      readonly keyDomainId: KeyDomainId
+      readonly accountIndex: number
+      readonly account: LedgerSigningAccountBinding
+      readonly request: LedgerNearSigningRequest
+      readonly prepared: PreparedSigningCommand
+    }
+  >()
 
   constructor(private readonly options: NearMultichainSigningClientOptions) {
     this.commandClient = new MultichainCommandClient(
@@ -193,6 +223,53 @@ export class NearMultichainSigningClient {
     payload: NearSigningPreparePayload,
     signal?: AbortSignal
   ): Promise<PreparedSigningCommand> {
+    if (this.options.ledger) {
+      const account = await this.options.ledger.resolveAccount(
+        keyDomainId,
+        payload.chainId,
+        payload.accountIndex
+      )
+      if (account) {
+        const built =
+          payload.kind === 'near-transaction'
+            ? await buildLedgerNearTransaction(payload, account.publicKey, account.address)
+            : await buildLedgerNearMessage(payload, account.publicKey, account.address)
+        const digestHex =
+          payload.kind === 'near-transaction'
+            ? await sha256(new TextEncoder().encode(JSON.stringify(payload.transaction)))
+            : await sha256(decodeBase64(built.payloadBase64))
+        const commandId = parseSigningCommandId(
+          this.options.createCommandId?.() ?? crypto.randomUUID()
+        )
+        const request: LedgerNearSigningRequest = {
+          kind: payload.kind,
+          chainId: payload.chainId as LedgerNearSigningRequest['chainId'],
+          path: account.path,
+          payloadBase64: built.payloadBase64,
+          expectedPublicKey: account.publicKey
+        }
+        const prepared: PreparedSigningCommand = Object.freeze({
+          commandId,
+          chainId: payload.chainId,
+          operation: payload.kind === 'near-transaction' ? 'transaction' : 'message',
+          summary: built.summary,
+          payloadFingerprint: { algorithm: 'sha256' as const, digestHex },
+          execution: {
+            kind: 'external' as const,
+            request: { encoding: 'base64' as const, value: built.payloadBase64 }
+          },
+          expiresAt: (this.options.now?.() ?? Date.now()) + 120_000
+        })
+        this.ledgerPending.set(commandId, {
+          keyDomainId,
+          accountIndex: payload.accountIndex,
+          account,
+          request,
+          prepared
+        })
+        return prepared
+      }
+    }
     const binding = await this.options.credentials.getCredentialBinding(keyDomainId)
     return this.commandClient.execute(
       {
@@ -208,18 +285,151 @@ export class NearMultichainSigningClient {
   async confirm(
     keyDomainId: KeyDomainId,
     commandId: SigningCommandId,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    origin?: string,
+    execution?: SigningExecution,
+    resume?: LedgerSigningResume<NearSigningPreparePayload>
   ): Promise<SigningResult> {
-    const binding = await this.options.credentials.getCredentialBinding(keyDomainId)
-    return this.commandClient.execute(
-      {
-        operation: 'signing.confirm',
-        binding,
-        payload: { signingCommandId: commandId },
-        signal
-      },
-      parseSignedNearResult
-    )
+    if (this.confirming.has(commandId))
+      throw new Error('NEAR signing command is already confirming')
+    this.confirming.add(commandId)
+    try {
+      if (
+        !this.ledgerPending.has(commandId) &&
+        execution?.kind === 'external' &&
+        resume &&
+        this.options.ledger
+      ) {
+        const { payload, prepared } = resume
+        const account = await this.options.ledger.resolveAccount(
+          keyDomainId,
+          payload.chainId,
+          payload.accountIndex
+        )
+        if (!account || account.accountId !== resume.accountId)
+          throw new Error('Ledger NEAR recovery account changed')
+        const built =
+          payload.kind === 'near-transaction'
+            ? await buildLedgerNearTransaction(payload, account.publicKey, account.address)
+            : await buildLedgerNearMessage(payload, account.publicKey, account.address)
+        const digestHex =
+          payload.kind === 'near-transaction'
+            ? await sha256(new TextEncoder().encode(JSON.stringify(payload.transaction)))
+            : await sha256(decodeBase64(built.payloadBase64))
+        if (
+          prepared.commandId !== commandId ||
+          prepared.chainId !== payload.chainId ||
+          prepared.execution.kind !== 'external' ||
+          prepared.execution.request.encoding !== 'base64' ||
+          prepared.execution.request.value !== built.payloadBase64 ||
+          execution.request.encoding !== 'base64' ||
+          execution.request.value !== built.payloadBase64 ||
+          digestHex !== prepared.payloadFingerprint.digestHex ||
+          JSON.stringify(built.summary) !== JSON.stringify(prepared.summary) ||
+          (this.options.now?.() ?? Date.now()) >= prepared.expiresAt
+        ) {
+          throw new Error('Ledger NEAR recovery binding is invalid or expired')
+        }
+        this.ledgerPending.set(commandId, {
+          keyDomainId,
+          accountIndex: payload.accountIndex,
+          account,
+          prepared,
+          request: {
+            kind: payload.kind,
+            chainId: payload.chainId as LedgerNearSigningRequest['chainId'],
+            path: account.path,
+            expectedPublicKey: account.publicKey,
+            payloadBase64: built.payloadBase64
+          }
+        })
+      }
+      const pending = this.ledgerPending.get(commandId)
+      if (pending) {
+        this.ledgerPending.delete(commandId)
+        if (pending.keyDomainId !== keyDomainId || !this.options.ledger)
+          throw new Error('Ledger signing scope changed')
+        const validate = async () => {
+          if ((this.options.now?.() ?? Date.now()) >= pending.prepared.expiresAt)
+            throw new Error('Ledger signing request expired')
+          const current =
+            (await this.options.ledger?.resolveAccount(
+              keyDomainId,
+              parseChainId(pending.request.chainId).id,
+              pending.accountIndex
+            )) ?? null
+          if (!sameLedgerAccount(pending.account, current))
+            throw new Error('Ledger NEAR account changed')
+        }
+        await validate()
+        const response = await this.options.ledger.requestSignature(pending.request, {
+          scope: {
+            keyDomainId,
+            accountId: pending.account.accountId,
+            chainId: pending.prepared.chainId
+          },
+          payloadFingerprint: pending.prepared.payloadFingerprint,
+          expiresAt: pending.prepared.expiresAt,
+          summary: pending.prepared.summary,
+          validate,
+          ...(origin === undefined ? {} : { origin }),
+          ...(signal === undefined ? {} : { signal })
+        })
+        await validate()
+        if (
+          response.kind !== pending.request.kind ||
+          response.publicKey !== pending.account.publicKey
+        ) {
+          throw new Error('Ledger NEAR response account does not match')
+        }
+        const signature = base64ToBytes(response.signatureBase64)
+        const digest = new Uint8Array(
+          await crypto.subtle.digest(
+            'SHA-256',
+            new Uint8Array(decodeBase64(pending.request.payloadBase64))
+          )
+        )
+        const publicKey = utils.PublicKey.from(pending.account.publicKey).data
+        if (
+          signature.length !== 64 ||
+          !ed25519.verify(signature, digest, publicKey, { zip215: false })
+        ) {
+          throw new Error('Ledger NEAR response signature is invalid')
+        }
+        if (pending.request.kind === 'near-nep413-message') {
+          return {
+            kind: 'signature',
+            signature: { encoding: 'base64', value: response.signatureBase64 },
+            publicKey: pending.account.publicKey,
+            address: pending.account.address
+          }
+        }
+        const signed = await ledgerNearSignedTransaction(
+          pending.request.payloadBase64,
+          response.signatureBase64
+        )
+        return {
+          kind: 'signed-payload',
+          payload: { encoding: 'base64', value: signed.signedTransactionBase64 },
+          transactionId: signed.transactionHash
+        }
+      }
+      if (execution?.kind === 'external') {
+        throw new Error('Ledger NEAR approval session expired; prepare the transfer again')
+      }
+      const binding = await this.options.credentials.getCredentialBinding(keyDomainId)
+      return this.commandClient.execute(
+        {
+          operation: 'signing.confirm',
+          binding,
+          payload: { signingCommandId: commandId },
+          signal
+        },
+        parseSignedNearResult
+      )
+    } finally {
+      this.confirming.delete(commandId)
+    }
   }
 
   async cancel(
@@ -227,6 +437,7 @@ export class NearMultichainSigningClient {
     commandId: SigningCommandId,
     signal?: AbortSignal
   ): Promise<void> {
+    if (this.ledgerPending.delete(commandId)) return
     const binding = await this.options.credentials.getCredentialBinding(keyDomainId)
     await this.commandClient.execute(
       {

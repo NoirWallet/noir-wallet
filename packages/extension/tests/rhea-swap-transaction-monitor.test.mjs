@@ -154,21 +154,27 @@ test('refreshes both affected chains as soon as a RHEA order completes', async (
       status: {
         status: 'SUCCESS',
         originAsset: 'near:mainnet/slip44:397',
-        destinationAsset: 'zcash:mainnet/slip44:133'
+        destinationAsset: 'zcash:mainnet/slip44:133',
+        swapDetails: {
+          originChainTxHashes: sourceHashes.map(hash => ({ hash })),
+          destinationChainTxHashes: [{ hash: destinationHash }]
+        }
       }
     }
   ])
 })
 
-test('persists a destination hash while the RHEA order is still processing', async () => {
+test('retains a processing destination hash when completion omits it', async () => {
+  let orderStatus = 'processing'
+  const notifications = []
   const service = {
     async recordTransactionSubmission() {},
     async reportSubmission() {},
     async getOrderStatus() {
-      return { status: 'processing', destinationHash }
+      return { status: orderStatus, ...(orderStatus === 'processing' ? { destinationHash } : {}) }
     },
     async discard() {
-      throw new Error('A processing order must remain monitored')
+      expect(orderStatus).toBe('completed')
     }
   }
   const repository = new InMemoryTransactionRepository()
@@ -176,7 +182,9 @@ test('persists a destination hash while the RHEA order is still processing', asy
   await repository.create(initial)
   const firstBroadcast = await broadcast(repository, initial, 0, 1_001)
   const fullBroadcast = await broadcast(repository, firstBroadcast, 1, 1_002)
-  const monitor = new RheaSwapTransactionMonitor(service, { notifyStatus: () => {} })
+  const monitor = new RheaSwapTransactionMonitor(service, {
+    notifyStatus: (_handle, status) => notifications.push(status)
+  })
   monitor.repository = repository
 
   await expect(monitor.checkGraph(fullBroadcast)).resolves.toBe(false)
@@ -192,6 +200,14 @@ test('persists a destination hash while the RHEA order is still processing', asy
   expect(repeated.segments.find(segment => segment.role === 'destination').revision).toBe(
     processing.segments.find(segment => segment.role === 'destination').revision
   )
+  orderStatus = 'completed'
+  await expect(monitor.checkGraph(repeated)).resolves.toBe(true)
+  expect(notifications.at(-1)).toMatchObject({
+    status: 'SUCCESS',
+    swapDetails: {
+      destinationChainTxHashes: [{ hash: destinationHash }]
+    }
+  })
 })
 
 test('still reads cross-chain completion when submission reporting fails', async () => {

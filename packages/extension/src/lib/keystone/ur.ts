@@ -7,7 +7,7 @@
  */
 
 // Must come first: installs the global Buffer required by the UR libraries
-import './buffer-polyfill'
+import '../buffer-polyfill'
 import { Buffer } from 'buffer'
 import { UR, UREncoder, URDecoder } from '@ngraveio/bc-ur'
 import { ZcashAccounts, ZcashPCZT } from '@keystonehq/bc-ur-registry-zcash'

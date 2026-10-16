@@ -5,7 +5,11 @@ import {
   parseSigningSummary,
   type SolanaTransactionSummary
 } from '@/core/keyring/domain'
-import { parseSigningCommandId, type SigningCommandId } from '@/core/keyring/ports'
+import {
+  parseSigningCommandId,
+  type SigningCommandId,
+  type SigningExecution
+} from '@/core/keyring/ports'
 import {
   parseTransactionId,
   parseTransactionSegmentId,
@@ -41,6 +45,8 @@ export interface AwaitingApprovalSolanaTransfer extends PendingTransferBase {
   readonly prepared: PreparedSolanaTransfer
   readonly signingSummary: SolanaTransactionSummary
   readonly signingCommandId: SigningCommandId
+  readonly signingExecution?: SigningExecution
+  readonly accountIndex?: number
   readonly payloadFingerprint: string
   readonly expiresAt: number
 }
@@ -120,12 +126,48 @@ export function parsePendingSolanaTransfer(value: unknown): PendingSolanaTransfe
         'prepared',
         'signingSummary',
         'signingCommandId',
+        ...(Object.prototype.hasOwnProperty.call(record, 'signingExecution')
+          ? ['signingExecution']
+          : []),
+        ...(Object.prototype.hasOwnProperty.call(record, 'accountIndex') ? ['accountIndex'] : []),
         'payloadFingerprint',
         'expiresAt'
       ],
       'Pending Solana transfer'
     )
     const prepared = parsePreparedSolanaTransfer(record.prepared)
+    if (
+      record.accountIndex !== undefined &&
+      (!Number.isSafeInteger(record.accountIndex) ||
+        (record.accountIndex as number) < 0 ||
+        (record.accountIndex as number) > 0x7fffffff)
+    ) {
+      throw new Error('Invalid pending Solana account index')
+    }
+    const signingExecution: SigningExecution | undefined =
+      record.signingExecution === undefined
+        ? undefined
+        : (() => {
+            const execution = readRecord(record.signingExecution, 'Solana signing execution')
+            if (execution.kind === 'internal') {
+              assertExactKeys(execution, ['kind'], 'Solana signing execution')
+              return { kind: 'internal' as const }
+            }
+            assertExactKeys(execution, ['kind', 'request'], 'Solana signing execution')
+            const request = readRecord(execution.request, 'Solana Ledger signing request')
+            assertExactKeys(request, ['encoding', 'value'], 'Solana Ledger signing request')
+            if (
+              execution.kind !== 'external' ||
+              request.encoding !== 'base64' ||
+              request.value !== prepared.transactionBase64
+            ) {
+              throw new Error('Invalid pending Solana Ledger signing request')
+            }
+            return {
+              kind: 'external' as const,
+              request: { encoding: 'base64' as const, value: prepared.transactionBase64 }
+            }
+          })()
     if (
       typeof record.payloadFingerprint !== 'string' ||
       !/^[0-9a-f]{64}$/.test(record.payloadFingerprint)
@@ -144,6 +186,8 @@ export function parsePendingSolanaTransfer(value: unknown): PendingSolanaTransfe
       signingCommandId: parseSigningCommandId(
         typeof record.signingCommandId === 'string' ? record.signingCommandId : ''
       ),
+      ...(signingExecution === undefined ? {} : { signingExecution }),
+      ...(record.accountIndex === undefined ? {} : { accountIndex: record.accountIndex as number }),
       payloadFingerprint: record.payloadFingerprint,
       expiresAt: readTimestamp(record.expiresAt, 'pending Solana signing expiry')
     })

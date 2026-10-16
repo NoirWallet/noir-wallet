@@ -10,7 +10,11 @@ On mainnet, Noir Wallet can route supported swaps through external liquidity and
   <Step>
     ### Choose assets and amount
 
-    Select the asset you are paying and the asset you want to receive.
+    Select the asset you are paying and the asset you want to receive. Swap starts with assets
+    available on networks enabled for the current account. A saved pair is restored when its
+    source remains available. You can still choose another supported destination network.
+    For ZEC, select Shielded or Transparent funds when available. Keystone accounts cannot use
+    Transparent ZEC as the funding source.
 
   </Step>
   <Step>
@@ -25,6 +29,7 @@ On mainnet, Noir Wallet can route supported swaps through external liquidity and
     ### Fund the quoted deposit
 
     Approve the wallet's transfer from the selected source account to the quoted deposit address.
+    A ZEC quote uses a transparent refund address.
     Depending on the chain and account, this may require a hardware-signing step. Check the source
     network and token before approval; sending another token or using another network can prevent
     a refund. The wallet then monitors the deposit or relay.

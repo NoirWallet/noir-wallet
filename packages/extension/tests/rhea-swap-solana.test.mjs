@@ -134,7 +134,9 @@ function createHarness(overrides = {}) {
           }
         },
         payloadFingerprint: { algorithm: 'sha256', digestHex: fingerprint },
-        execution: { kind: 'internal' },
+        execution: overrides.ledger
+          ? { kind: 'external', request: { encoding: 'base64', value: plan.transaction } }
+          : { kind: 'internal' },
         expiresAt: 5_000
       }
     },
@@ -168,7 +170,12 @@ function createHarness(overrides = {}) {
     rpc,
     pending: store,
     repository,
-    loadContext: async () => activeContext(),
+    loadContext:
+      overrides.loadContext ??
+      (async () => ({
+        ...activeContext(),
+        ...(overrides.ledger ? { keyDomainSource: { kind: 'hardware', vendor: 'ledger' } } : {})
+      })),
     scheduleMonitoring: async () => calls.push('schedule'),
     now: () => now,
     createId: () => 'stable-solana-one'
@@ -253,4 +260,59 @@ test('rejects metadata that is not bound to the serialized Solana transaction', 
   await expect(harness.coordinator.prepare(binding().quoteHandle, binding())).rejects.toThrow(
     /size does not match/
   )
+})
+
+test('Ledger Solana review binds the exact plan and confirms only once', async () => {
+  let changed = false
+  let releaseSigning
+  const signingGate = new Promise(resolve => {
+    releaseSigning = resolve
+  })
+  const harness = createHarness({
+    ledger: true,
+    service: {
+      async readSolanaTransactionPlan() {
+        harness.calls.push('read-plan')
+        return {
+          quoteHandle: binding().quoteHandle,
+          executionId: binding().executionId,
+          chain: 'solana',
+          transaction: changed ? 'Ag==' : 'AQ==',
+          format: 'base64',
+          metadata: {
+            addressLookupTableAddresses: [],
+            recentBlockhash: null,
+            txValidUntil: null,
+            transactionSize: 1
+          }
+        }
+      }
+    },
+    signer: {
+      async confirm() {
+        harness.calls.push('confirm-signing')
+        await signingGate
+        return {
+          kind: 'signed-payload',
+          payload: { encoding: 'base64', value: 'Ag==' },
+          transactionId: sourceHash
+        }
+      }
+    }
+  })
+  const review = await harness.coordinator.prepare(binding().quoteHandle, binding())
+  changed = true
+  await expect(
+    harness.coordinator.confirm(binding().quoteHandle, review.payloadFingerprint)
+  ).rejects.toThrow(/changed after Ledger review/)
+  expect(harness.calls).not.toContain('confirm-signing')
+
+  changed = false
+  const first = harness.coordinator.confirm(binding().quoteHandle, review.payloadFingerprint)
+  await expect(
+    harness.coordinator.confirm(binding().quoteHandle, review.payloadFingerprint)
+  ).rejects.toThrow(/already in progress/)
+  releaseSigning()
+  await expect(first).resolves.toMatchObject({ graph: { root: { status: 'broadcast' } } })
+  expect(harness.calls.filter(call => call === 'confirm-signing')).toHaveLength(1)
 })

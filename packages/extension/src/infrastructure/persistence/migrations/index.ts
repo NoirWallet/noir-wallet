@@ -19,3 +19,4 @@ export {
   type LegacyWalletDataMigrationResult,
   type LegacyWalletDataMigrationStorage
 } from './legacy-wallet-data-migration'
+export { excludeNativeV2HardwareShadows } from './retained-v1-discovery'

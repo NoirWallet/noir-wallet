@@ -15,7 +15,7 @@
  * - No manual initialize() call required by the consumer
  */
 
-import type { RPCSchema, RPCRequest, RPCResponse, RPCMethod } from './types'
+import type { RPCSchema, RPCRequest, RPCResponse, RPCMethod, JournalReplayOptions } from './types'
 import type { Network } from '@/types'
 import { DEFAULT_NETWORK, getNetworkConfig } from '@/lib/runtime-network'
 import { DedupPromise, ReadyFlag, TimeoutError } from '@/lib/async-utils'
@@ -23,6 +23,8 @@ import { WALLET_CONFIG } from '@/config/wallet'
 import { isRetryableWalletRpcError, isWalletDirtyError } from '@/core/zcash/wallet-rpc-errors'
 import { getOwnExtensionSenderContext } from '@/lib/runtime-message-security'
 import { decodeWorkerRpcError } from './rpc-errors'
+import { readZeroIndexerOptionsForWorker } from '@/infrastructure/chains/zero-indexer-preferences'
+import type { ZeroIndexerOptions } from '@/config/zero-indexer'
 
 const { LIGHT, MEDIUM, WASM_HEAVY, TRANSACTION } = WALLET_CONFIG.SYNC.RPC_TIMEOUT_MS
 
@@ -198,7 +200,9 @@ function sleep(ms: number): Promise<void> {
 type OffscreenRpcResponse = {
   result?: unknown
   error?: string
-  errorType?: 'timeout'
+  errorType?: 'timeout' | 'submission_unknown'
+  txId?: string
+  txIds?: string[]
   retryable?: boolean
   deferred?: boolean
 }
@@ -333,7 +337,12 @@ async function forwardToOffscreen<T = any>(method: string, payload: any): Promis
         continue
       }
 
-      throw decodeWorkerRpcError({ error: response.error, errorType: response.errorType })
+      throw decodeWorkerRpcError({
+        error: response.error,
+        errorType: response.errorType,
+        txId: response.txId,
+        txIds: response.txIds
+      })
     }
 
     return response.result as T
@@ -347,6 +356,14 @@ export function forwardKeyringRpcToOffscreen<T>(
   payload: Readonly<Record<string, unknown>>
 ): Promise<T> {
   return forwardToOffscreen<T>(method, payload)
+}
+
+export async function applyZeroIndexerOptionsToActiveWorker(
+  network: Network,
+  options: ZeroIndexerOptions | null
+): Promise<void> {
+  if (!(await chrome.offscreen.hasDocument())) return
+  await forwardToOffscreen('zeroIndexer.setOptions', { network, options })
 }
 
 export class ZcashWorkerClient {
@@ -419,7 +436,9 @@ export class ZcashWorkerClient {
       if (pending) {
         pendingRequests.delete(id)
         if (error) {
-          pending.reject(new Error(error))
+          pending.reject(
+            decodeWorkerRpcError(event.data as OffscreenRpcResponse & { error: string })
+          )
         } else {
           pending.resolve(result)
         }
@@ -594,6 +613,13 @@ export class ZcashWorkerClient {
     method: M,
     payload: RPCSchema[M]['request']
   ): Promise<RPCSchema[M]['response']> {
+    if (method === 'init') {
+      const initPayload = payload as RPCSchema['init']['request']
+      payload = {
+        ...initPayload,
+        zeroIndexerOptions: await readZeroIndexerOptionsForWorker(initPayload.network)
+      } as RPCSchema[M]['request']
+    }
     if (!worker) {
       this.initWorker()
     }
@@ -906,12 +932,17 @@ export class ZcashWorkerClient {
     await this.request('wallet.syncSessionSetup', { walletId: this.wid() })
   }
 
-  async replayJournalEntries(network: string, journalWalletId: string): Promise<number> {
+  async replayJournalEntries(
+    network: string,
+    journalWalletId: string,
+    options?: JournalReplayOptions
+  ): Promise<number> {
     await this.ensureInitialized()
     return this.request('wallet.replayJournalEntries', {
       walletId: this.wid(),
       network,
-      journalWalletId
+      journalWalletId,
+      allowAfterAbort: options?.allowAfterAbort
     })
   }
 

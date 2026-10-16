@@ -240,3 +240,29 @@ test('keeps abandoned indexes as tombstones and committed reservations terminal'
     /invalid transition/
   )
 })
+
+test('abandons a change index found used during required Ledger discovery', async () => {
+  const repository = reservationRepository()
+  const derivations = []
+  const instance = new BitcoinChangeReservationCoordinator({
+    discoveryRepository: { get: async () => discoveryState() },
+    reservationRepository: repository,
+    derivation: {
+      deriveAddress: async (_keyDomainId, input) => {
+        derivations.push(input)
+        return derivedAddress(input)
+      }
+    },
+    ensureDiscovered: async (_scope, addressIndex) => ({
+      derived: derivedAddress({ ...scope, change: true, addressIndex }),
+      activity: { used: true },
+      utxos: []
+    }),
+    now: () => 3_000
+  })
+  await expect(
+    instance.reserve({ ...scope, transactionId: 'transaction:used-change' })
+  ).rejects.toThrow(/already used/)
+  expect(repository.values.get('transaction:used-change').state).toBe('abandoned')
+  expect(derivations).toHaveLength(0)
+})

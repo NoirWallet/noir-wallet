@@ -4,6 +4,7 @@
 
 import type { FundingSource, Network, ZcashBalance } from '@/types'
 import type { TransferEstimate, TransferResult } from '@/core/zcash/transfer-result'
+import type { ZeroIndexerOptions } from '@/config/zero-indexer'
 import type {
   BallotDecision,
   PreparedVotingRound,
@@ -32,6 +33,11 @@ export type {
  */
 interface WalletRouted {
   walletId: string
+}
+
+export interface JournalReplayOptions {
+  /** Finish applying completed batches before persisting an interrupted sync. */
+  allowAfterAbort?: boolean
 }
 
 /**
@@ -110,10 +116,16 @@ export interface RPCSchema {
       network: Network
       lightwalletdUrl: string
       compactBlockCdn?: { baseUrl: string } | null
+      zeroIndexerOptions?: ZeroIndexerOptions | null
       dbBytes?: Uint8Array
       dbKey?: string
     }
     response: boolean | 'empty'
+  }
+
+  'zeroIndexer.setOptions': {
+    request: { network: Network; options: ZeroIndexerOptions | null }
+    response: true
   }
 
   'mnemonic.generate': {
@@ -252,7 +264,7 @@ export interface RPCSchema {
     response: boolean
   }
   'wallet.replayJournalEntries': {
-    request: WalletRouted & { network: string; journalWalletId: string }
+    request: WalletRouted & JournalReplayOptions & { network: string; journalWalletId: string }
     response: number
   }
   'wallet.beginSyncSession': {
@@ -495,4 +507,7 @@ export interface RPCResponse<M extends RPCMethod> {
   method: M
   result?: RPCSchema[M]['response']
   error?: string
+  errorType?: 'timeout' | 'submission_unknown'
+  txId?: string
+  txIds?: string[]
 }

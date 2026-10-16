@@ -828,6 +828,21 @@ if (solanaProvider) {
   registerSolanaWalletStandard({
     chain: networkMode === 'testnet' ? 'solana:devnet' : 'solana:mainnet',
     request: (method, params = []) => requestProvider('solana', { method, params }),
+    onAccountCapabilitiesChanged: listener => {
+      addProviderListener('solana', 'accountCapabilitiesChanged', value => {
+        if (!Array.isArray(value)) return
+        listener(
+          value.flatMap(item =>
+            item &&
+            typeof item === 'object' &&
+            typeof item.address === 'string' &&
+            typeof item.signMessage === 'boolean'
+              ? [{ address: item.address, signMessage: item.signMessage }]
+              : []
+          )
+        )
+      })
+    },
     onAccountsChanged: listener => {
       addProviderListener('solana', 'accountsChanged', value => {
         listener(Array.isArray(value) ? value.filter(item => typeof item === 'string') : [])

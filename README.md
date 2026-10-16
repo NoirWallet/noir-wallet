@@ -33,8 +33,9 @@ The documentation site's source is `packages/docs/content/docs/`. The top-level 
 ## Features
 
 - **Privacy-First**: Zero-knowledge proofs for private transactions with shielded addresses
+- **Private Broadcast**: Optional ZeroIndexer broadcasting with managed or custom nodes, independent of the synchronization RPC
 - **Worker-Based WASM**: Offscreen worker architecture for non-blocking cryptographic operations
-- **Multichain Accounts**: Released EVM and Bitcoin networks follow the wallet's global Mainnet/Testnet Mode; other chains are feature-gated
+- **Multichain Accounts**: Zcash and EVM networks follow the wallet's global Mainnet/Testnet Mode; deferred chains remain feature-gated
 - **dApp Integration**: TypeScript SDK for seamless wallet connection and transaction signing
 - **Optimistic UI**: Instant interface response with background computation for better UX
 
@@ -47,6 +48,8 @@ Run commands from the repository root with Node.js 22 and the pnpm version in `p
 ```bash
 pnpm install
 ```
+
+The SDK and its example are included in the clone. `packages/zcash-wallet-wasm/` is a separate source checkout, excluded from the workspace. Ordinary extension builds use the complete committed WASM packages and do not require that checkout. Intentional upgrades follow the [WASM package update procedure](docs/release-workflow.md#wasm-package-updates).
 
 ### Development
 
@@ -107,6 +110,8 @@ Build the SDK before checking the whole workspace so its example can resolve the
 ```bash
 pnpm --filter @noir-wallet/sdk build
 pnpm type-check
+pnpm lint:eslint packages/extension/src
+pnpm knip --workspace @noir-wallet/extension
 pnpm test
 pnpm --filter @noir-wallet/sdk test
 pnpm --filter @noir-wallet/example type-check
@@ -114,6 +119,8 @@ pnpm --filter @noir-wallet/example build
 pnpm --filter @noir-wallet/extension test:logic
 pnpm --filter @noir-wallet/extension test:extension
 ```
+
+Extension type checking covers both application code and the Vite/manifest configuration; extension builds run the same checks.
 
 `pnpm test` runs the deterministic wallet core suite used by CI. The SDK's native tests run separately with `pnpm --filter @noir-wallet/sdk test`. Add committed wallet core cases as flat `packages/extension/tests/*.core.test.mjs` files; ordinary `*.test.mjs` files remain in the local Playwright logic suite and do not enter CI. The Playwright commands are retained for local logic and real MV3 checks. See [Automated Testing](./AGENTS.md#automated-testing) for the test layout and local build requirements.
 
@@ -161,4 +168,4 @@ manual Beta builds from the trusted `main` workflow, production promotion, and C
 
 ## License
 
-[MIT](./LICENSE). The bundled Jost and DM Mono fonts carry their own [SIL Open Font License notices](./packages/extension/public/fonts/).
+[MIT](./LICENSE). The bundled Jost and DM Mono fonts carry their own [SIL Open Font License notices](./packages/extension/public/fonts/). Extension builds include original licenses and any supplied notices for Ledger SDKs and their signing libraries under `licenses/`.

@@ -53,8 +53,8 @@ function classifyPersistedEnvelopes(
   let targetCount = 0
   for (const replacement of replacements) {
     const value = parseV1EncryptedCredentialEnvelope(persisted[replacement.storageKey])
-    if (envelopeEquals(value, replacement.source)) sourceCount += 1
-    else if (envelopeEquals(value, replacement.target)) targetCount += 1
+    if (envelopeEquals(value, replacement.target)) targetCount += 1
+    else if (envelopeEquals(value, replacement.source)) sourceCount += 1
     else throw new Error('Retained V1 credential changed outside the password transaction')
   }
   if (sourceCount === replacements.length) return 'source'

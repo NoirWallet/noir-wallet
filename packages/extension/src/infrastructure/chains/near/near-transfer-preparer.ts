@@ -6,6 +6,7 @@ import {
 } from '@/core/chains/near'
 import { parseChainId } from '@/core/chains/registry'
 import type { PreparedSigningCommand } from '@/core/keyring/ports'
+import { buildLedgerNearTransaction } from '@/infrastructure/keyring/multichain/ledger-near-summary'
 
 import type { NearReadRpc } from './near-rpc-types'
 import { encodeNearFunctionArgs } from './near-rpc-codecs'
@@ -676,7 +677,9 @@ export async function assertNearTransferSigningMatchesPrepared(
   if (
     signing.chainId !== prepared.chainId ||
     signing.operation !== 'transaction' ||
-    signing.execution.kind !== 'internal' ||
+    (signing.execution.kind === 'external' &&
+      (signing.execution.request.encoding !== 'base64' ||
+        typeof signing.execution.request.value !== 'string')) ||
     signing.summary.schema !== 'near.transaction.v1' ||
     signing.summary.review.level !== 'standard' ||
     signing.summary.review.issues.length !== 0 ||
@@ -686,6 +689,21 @@ export async function assertNearTransferSigningMatchesPrepared(
     throw new Error('NEAR signing command does not match the prepared transfer')
   }
   const fields = signing.summary.fields
+  if (signing.execution.kind === 'external') {
+    const rebuilt = await buildLedgerNearTransaction(
+      {
+        kind: 'near-transaction',
+        chainId: signing.chainId,
+        accountIndex: prepared.accountIndex,
+        transaction: prepared.transaction as unknown as Record<string, unknown>
+      },
+      prepared.publicKey,
+      prepared.signerId
+    )
+    if (signing.execution.request.value !== rebuilt.payloadBase64) {
+      throw new Error('NEAR Ledger request does not match the prepared transfer')
+    }
+  }
   if (
     fields.signerId !== prepared.signerId ||
     fields.publicKey !== prepared.publicKey ||

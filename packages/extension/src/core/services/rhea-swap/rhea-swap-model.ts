@@ -10,7 +10,10 @@ import type {
 import type { SwapToken } from '@/core/services/intents-api'
 import type { SigningSummary } from '@/core/keyring/domain'
 import type { TransactionGraph } from '@/core/transactions/domain'
-import { getEvmNativeProtocolAssetId } from '@/config/asset-market-assets'
+import {
+  ASSET_PRICE_SOURCE_ASSETS,
+  getEvmNativeProtocolAssetId
+} from '@/config/asset-market-assets'
 import { NOIR_SWAP_REFERRAL } from '@/config/intents'
 
 const RAW_AMOUNT_PATTERN = /^(0|[1-9][0-9]{0,77})$/
@@ -24,6 +27,9 @@ const RHEA_NATIVE_QUOTE_ADDRESSES = Object.freeze(
     ['zcash:nep141:zec.omft.near', 'zec']
   ])
 )
+const RHEA_NATIVE_CATALOG_ALIASES = new Map([
+  ['zcash:zec:mainnet:native', { assetId: ASSET_PRICE_SOURCE_ASSETS.zec, quoteAddress: 'zec' }]
+])
 
 export interface RheaSwapChainDescriptor {
   readonly apiChainId: ChainRef
@@ -167,6 +173,7 @@ export interface RheaSwapToken extends SwapToken {
   readonly tokenListChainId: number
   readonly rheaAddress: string
   readonly isNative: boolean
+  readonly sources: readonly string[]
 }
 
 export interface RheaSwapQuoteRequest {
@@ -435,11 +442,19 @@ export function parseRheaSwapQuoteRequest(value: unknown): RheaSwapQuoteRequest 
 export function toSdkQuoteRequest(value: RheaSwapQuoteRequest): QuoteRequest {
   return Object.freeze({
     ...value,
+    tokenIn: toSdkQuoteAsset(value.tokenIn),
+    tokenOut: toSdkQuoteAsset(value.tokenOut),
     extensions: Object.freeze({ referral: NOIR_SWAP_REFERRAL }),
     quoteWaitingTimeMs: 3_000,
     sameChainTimeoutMs: 500,
     crossChainTimeoutMs: 3_000
   })
+}
+
+function toSdkQuoteAsset(asset: AssetRef): AssetRef {
+  // Retained catalog values must not leak a catalog-only identifier into the quote API.
+  const alias = RHEA_NATIVE_CATALOG_ALIASES.get(`${asset.chain}:${asset.address}`)
+  return alias ? Object.freeze({ ...asset, address: alias.quoteAddress, isNative: true }) : asset
 }
 
 export function toRheaSwapToken(item: SwapTokenListItem): RheaSwapToken {
@@ -456,23 +471,30 @@ export function toRheaSwapToken(item: SwapTokenListItem): RheaSwapToken {
   const updatedAt = item.priceUpdatedAt ?? 0
   const priceUpdatedAt = new Date(updatedAt > 0 ? updatedAt * 1_000 : 0).toISOString()
   const icon = item.logoURI && item.logoURI.startsWith('https://') ? item.logoURI : null
-  const nativeQuoteAddress = RHEA_NATIVE_QUOTE_ADDRESSES.get(`${item.chain}:${item.assetId}`)
+  const catalogAssetId =
+    RHEA_NATIVE_CATALOG_ALIASES.get(`${item.chain}:${item.assetId}`)?.assetId ?? item.assetId
+  const nativeQuoteAddress = RHEA_NATIVE_QUOTE_ADDRESSES.get(`${item.chain}:${catalogAssetId}`)
   const isEvmChain = /^[0-9]+$/.test(descriptor.apiChainId)
-  const assetId =
-    item.isNative && isEvmChain
-      ? (getEvmNativeProtocolAssetId(`eip155:${descriptor.apiChainId}`) ?? item.assetId)
-      : item.assetId
+  const evmNativeAssetId = isEvmChain
+    ? getEvmNativeProtocolAssetId(`eip155:${descriptor.apiChainId}`)
+    : null
+  // NearIntents source rows may identify native EVM assets only by their protocol ID.
+  const isNative =
+    item.isNative ||
+    nativeQuoteAddress !== undefined ||
+    (evmNativeAssetId !== null && catalogAssetId === evmNativeAssetId)
+  const assetId = isNative ? (evmNativeAssetId ?? catalogAssetId) : catalogAssetId
   const quoteAddress = nativeQuoteAddress
     ? nativeQuoteAddress
-    : isEvmChain && !item.isNative
-      ? readEvmContractAddress(item.contractAddress)
+    : isEvmChain && !isNative
+      ? readEvmQuoteAddress(item)
       : isRecord(item.raw) && typeof item.raw.address === 'string'
         ? readString(item.raw.address, 'RHEA Swap quote token address')
         : readString(item.address, 'RHEA Swap quote token address')
   return Object.freeze({
     assetId: readString(assetId, 'RHEA Swap asset ID'),
     blockchain: descriptor.blockchain,
-    contractAddress: item.contractAddress,
+    contractAddress: isNative ? null : item.contractAddress,
     decimals: item.decimals,
     icon,
     price: numericPrice,
@@ -481,16 +503,19 @@ export function toRheaSwapToken(item: SwapTokenListItem): RheaSwapToken {
     rheaChainId: item.chain,
     tokenListChainId: item.tokenListChainId,
     rheaAddress: quoteAddress,
-    isNative: item.isNative
+    isNative,
+    sources: Object.freeze(
+      item.sources.map(source => readString(source, 'RHEA Swap token source', 64))
+    )
   })
 }
 
-function readEvmContractAddress(value: string | null): string {
-  const address = readString(value, 'RHEA Swap EVM token contract address')
-  if (!/^0x[0-9a-fA-F]{40}$/.test(address)) {
-    throw new Error('RHEA Swap EVM token contract address is invalid')
+function readEvmQuoteAddress(item: SwapTokenListItem): string {
+  const candidate = item.contractAddress ?? item.address
+  if (typeof candidate !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(candidate)) {
+    throw new Error('RHEA Swap EVM quote token address is invalid')
   }
-  return address.toLowerCase()
+  return candidate.toLowerCase()
 }
 
 export function toRheaSwapExecutionView(build: SwapBuild): RheaSwapExecutionView {

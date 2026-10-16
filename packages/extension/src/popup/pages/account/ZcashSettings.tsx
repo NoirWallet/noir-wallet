@@ -2,14 +2,12 @@ import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Icon } from '@iconify/react'
 import { AddressTypeLabel } from '../../components/account/AddressType'
-import { ResyncZcashContent } from '../../components/account/AccountModals'
+import { ShieldedAddressHistorySheet } from '../../components/account/ShieldedAddressHistorySheet'
 import { ChainIcon } from '../../components/common/ChainIcon'
 import { CopyToast, useCopyToClipboard } from '../../components/common/CopyToast'
 import { PageHeader } from '../../components/common/PageHeader'
 import { Button } from '../../components/ui/button'
 import { Skeleton } from '../../components/ui/skeleton'
-import { openModal } from '../../provider/ModalManager'
-import { useNavigate } from '../../provider/Router'
 import {
   accountNetworkIconChain,
   accountNetworkLabel
@@ -19,7 +17,7 @@ import {
   type AccountNetworkAddressView,
   type AccountNetworkView
 } from '../../services/account-networks-client'
-import { resyncZcashWallet } from '../../services/zcash-settings-client'
+import { useResyncZcash } from '../../hooks/useResyncZcash'
 import { zcashWalletRuntimeClient } from '@/popup/services/zcash-wallet-runtime-client'
 import { classifyError } from '@/lib/errors'
 import { getAccountDisplayName } from '@/lib/format'
@@ -32,7 +30,7 @@ function privacyLabel(address: AccountNetworkAddressView): 'Shielded' | 'Transpa
 }
 
 export function ZcashSettings() {
-  const { navigate } = useNavigate()
+  const openResyncZcash = useResyncZcash()
   const [searchParams] = useSearchParams()
   const walletId = searchParams.get('walletId')
   const accountId = searchParams.get('accountId')
@@ -48,15 +46,15 @@ export function ZcashSettings() {
   const [softwareWallet, setSoftwareWallet] = useState(false)
   const [isRotatingShielded, setIsRotatingShielded] = useState(false)
   const [rotationError, setRotationError] = useState<string | null>(null)
-  const [showPreviousAddresses, setShowPreviousAddresses] = useState(false)
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [selectingAddress, setSelectingAddress] = useState<string | null>(null)
+  const [historyError, setHistoryError] = useState<string | null>(null)
 
   const wallet = walletId ? wallets.find(candidate => candidate.id === walletId) : null
   const account =
     wallet && accountId ? wallet.accounts.find(candidate => candidate.id === accountId) : null
   const isCurrentAccount = walletId === currentWalletId && accountId === currentAccountId
-  const previousShieldedAddresses = (
-    account?.networkShieldedReceiveAddressHistory?.[DEFAULT_NETWORK] ?? []
-  ).filter(address => address.shielded !== account?.addresses.shielded)
+  const shieldedAddresses = account?.networkShieldedReceiveAddressHistory?.[DEFAULT_NETWORK] ?? []
   const accountName =
     walletId && accountId && account
       ? getAccountDisplayName(walletId, accountId, account.name, accountDisplayNames)
@@ -67,6 +65,8 @@ export function ZcashSettings() {
     setNetwork(null)
     setAddressError(null)
     setRotationError(null)
+    setHistoryOpen(false)
+    setHistoryError(null)
     setActiveAccount(false)
     setSoftwareWallet(false)
     setAddressLoading(Boolean(walletId && accountId))
@@ -177,31 +177,8 @@ export function ZcashSettings() {
     )
   }
 
-  const openResync = async () => {
-    await openModal({
-      title: 'Resync Zcash',
-      body: (_resolve, close) => (
-        <ResyncZcashContent
-          walletId={wallet.id}
-          accountId={account.id}
-          birthdayHeight={account.birthdayHeight || 0}
-          onConfirm={async height => {
-            await resyncZcashWallet({
-              walletId: wallet.id,
-              accountId: account.id,
-              birthdayHeight: height
-            })
-            close()
-            navigate('/')
-          }}
-          close={close}
-        />
-      )
-    })
-  }
-
   const rotateShieldedAddress = async () => {
-    if (!activeAccount || !softwareWallet || isRotatingShielded) return
+    if (!activeAccount || !softwareWallet || isRotatingShielded || selectingAddress) return
     setRotationError(null)
     setIsRotatingShielded(true)
     try {
@@ -226,10 +203,49 @@ export function ZcashSettings() {
     }
   }
 
+  const selectHistoryAddress = async (shielded: string) => {
+    if (!activeAccount || isRotatingShielded || selectingAddress) return
+    setHistoryError(null)
+    setSelectingAddress(shielded)
+    try {
+      const addresses = await zcashWalletRuntimeClient.setShieldedReceiveAddress(
+        wallet.id,
+        account.id,
+        shielded
+      )
+      setNetwork(current =>
+        current
+          ? {
+              ...current,
+              addresses: current.addresses.map(address =>
+                address.privacy === 'shielded' ? { ...address, value: addresses.shielded } : address
+              )
+            }
+          : current
+      )
+      setHistoryOpen(false)
+    } catch (error) {
+      setHistoryError(classifyError(error).userMessage)
+    } finally {
+      setSelectingAddress(null)
+    }
+  }
+
   return (
     <div className="page-container">
       <CopyToast show={showToast} message="Copied" />
       <PageHeader title="Zcash settings" showBack />
+      <ShieldedAddressHistorySheet
+        open={historyOpen}
+        onOpenChange={setHistoryOpen}
+        addresses={shieldedAddresses}
+        current={account.addresses}
+        disabled={!activeAccount || isRotatingShielded}
+        selectingAddress={selectingAddress}
+        error={historyError}
+        onSelect={address => void selectHistoryAddress(address)}
+        onCopy={address => void copyToClipboard(address)}
+      />
 
       <div className="page-content space-y-5 pt-5">
         <section
@@ -261,26 +277,30 @@ export function ZcashSettings() {
             Sync start
           </h2>
           <div className="rounded-2xl bg-card px-4 py-3.5">
-            <div className="flex min-h-8 items-center justify-between gap-3">
-              <span className="text-base text-foreground">Birthday date</span>
-              {birthdayLoading ? (
-                <Skeleton className="h-5 w-28" />
-              ) : birthdayHeight ? (
-                <button
-                  type="button"
-                  aria-label="Copy birthday height"
-                  className="flex items-center gap-2 rounded-lg px-2 py-1 text-right transition-colors hover:bg-foreground/5"
-                  onClick={() => void copyToClipboard(String(birthdayHeight))}
-                >
-                  {birthdayDate && <span className="text-sm text-foreground">{birthdayDate}</span>}
-                  <span className="font-mono text-xs text-muted">
-                    #{birthdayHeight.toLocaleString()}
-                  </span>
-                  <Icon icon="lucide:copy" width={13} height={13} className="text-muted" />
-                </button>
-              ) : (
-                <span className="text-sm text-muted">Unknown</span>
-              )}
+            <div className="min-w-0 space-y-1">
+              <span className="text-sm text-muted">Birthday date</span>
+              <div className="flex min-h-8 min-w-0 items-center justify-between gap-2">
+                {birthdayLoading ? (
+                  <Skeleton className="h-5 w-28" />
+                ) : birthdayHeight ? (
+                  <>
+                    <span className="min-w-0 text-sm text-foreground">
+                      {birthdayDate ?? 'Date unavailable'}
+                    </span>
+                    <button
+                      type="button"
+                      aria-label="Copy birthday height"
+                      className="flex shrink-0 items-center gap-1 rounded-lg px-2 py-1 font-mono text-xs text-muted transition-colors hover:bg-foreground/5"
+                      onClick={() => void copyToClipboard(String(birthdayHeight))}
+                    >
+                      #{birthdayHeight.toLocaleString()}
+                      <Icon icon="lucide:copy" width={13} height={13} />
+                    </button>
+                  </>
+                ) : (
+                  <span className="text-sm text-muted">Unknown</span>
+                )}
+              </div>
             </div>
           </div>
         </section>
@@ -339,7 +359,7 @@ export function ZcashSettings() {
                 variant="outline"
                 className="h-[45px] w-full"
                 isLoading={isRotatingShielded}
-                disabled={!activeAccount || !softwareWallet}
+                disabled={!activeAccount || !softwareWallet || selectingAddress !== null}
                 onClick={() => void rotateShieldedAddress()}
               >
                 <Icon icon="lucide:refresh-cw" width={17} height={17} />
@@ -352,74 +372,42 @@ export function ZcashSettings() {
               )}
             </div>
           )}
-          {previousShieldedAddresses.length > 0 && (
+          {shieldedAddresses.length > 1 && (
             <div className="mt-4">
               <button
                 type="button"
-                aria-expanded={showPreviousAddresses}
-                onClick={() => setShowPreviousAddresses(open => !open)}
+                aria-haspopup="dialog"
+                onClick={() => {
+                  setHistoryError(null)
+                  setHistoryOpen(true)
+                }}
                 className="flex w-full items-center justify-between py-2 text-sm text-muted hover:text-foreground"
               >
-                <span>Previous shielded addresses ({previousShieldedAddresses.length})</span>
-                <Icon
-                  icon={showPreviousAddresses ? 'lucide:chevron-up' : 'lucide:chevron-down'}
-                  width={16}
-                  height={16}
-                />
+                <span>Shielded addresses ({shieldedAddresses.length})</span>
+                <Icon icon="lucide:history" width={16} height={16} />
               </button>
-              {showPreviousAddresses && (
-                <div className="mt-1 space-y-2">
-                  {previousShieldedAddresses.map(address => (
-                    <div key={address.shielded} className="rounded-lg bg-card px-4 py-3">
-                      <div className="flex items-center justify-between gap-3">
-                        <AddressTypeLabel type="shielded" />
-                        <button
-                          type="button"
-                          aria-label="Copy previous shielded address"
-                          title="Copy address"
-                          className="flex size-8 shrink-0 items-center justify-center rounded-lg text-muted hover:text-foreground"
-                          onClick={() => void copyToClipboard(address.shielded)}
-                        >
-                          <Icon icon="lucide:copy" width={17} height={17} />
-                        </button>
-                      </div>
-                      <p className="mt-2 break-all font-mono text-[11px] leading-relaxed text-muted">
-                        {address.shielded}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              )}
             </div>
           )}
         </section>
 
-        <section className="pb-2" aria-labelledby="zcash-resync-heading">
-          <h2 id="zcash-resync-heading" className="mb-2 text-xs font-medium text-muted">
-            Maintenance
-          </h2>
-          <div className="rounded-2xl bg-card p-4">
-            <p className="text-sm leading-relaxed text-muted">
-              Rebuilds only this wallet's local Zcash sync data. EVM and Bitcoin balances and
-              activity are not changed.
-            </p>
-            {isCurrentAccount ? (
-              <Button
-                type="button"
-                variant="outline"
-                className="mt-4 h-[45px] w-full"
-                onClick={openResync}
-              >
-                <Icon icon="lucide:refresh-cw" width={17} height={17} />
-                Resync Zcash
-              </Button>
-            ) : (
-              <p className="mt-3 text-xs text-muted">
-                Switch to this account before resyncing Zcash.
-              </p>
-            )}
-          </div>
-        </section>
+        {isCurrentAccount && (
+          <section className="pb-2" aria-labelledby="zcash-resync-heading">
+            <h2 id="zcash-resync-heading" className="mb-2 text-xs font-medium text-muted">
+              Maintenance
+            </h2>
+            <Button
+              type="button"
+              variant="outline"
+              className="h-[45px] w-full"
+              onClick={() =>
+                void openResyncZcash(wallet.id, account.id, account.birthdayHeight || 0)
+              }
+            >
+              <Icon icon="lucide:refresh-cw" width={17} height={17} />
+              Resync Zcash
+            </Button>
+          </section>
+        )}
       </div>
     </div>
   )

@@ -18,6 +18,9 @@ import {
 } from './evm-rpc-client'
 
 const ETHEREUM_MAINNET_PRIORITY_FEE_FLOOR_WEI = 10_000_000n
+const EVM_SIMPLE_TRANSFER_GAS = 21_000n
+const EVM_DYNAMIC_GAS_MARGIN_BPS = 2_000n
+const BASIS_POINTS = 10_000n
 
 export const EVM_TRANSACTION_ERROR_CODES = Object.freeze([
   'invalid-intent',
@@ -302,6 +305,16 @@ function parseRpcUint64(value: string, label: string): bigint {
     throw new EvmRpcError('invalid-response', `${label} exceeds the supported range`)
   }
   return amount
+}
+
+function gasLimitWithMargin(estimate: bigint, kind: PreparedEvmTransfer['kind']): bigint {
+  if (kind === 'native-transfer' && estimate === EVM_SIMPLE_TRANSFER_GAS) return estimate
+  const limit =
+    (estimate * (BASIS_POINTS + EVM_DYNAMIC_GAS_MARGIN_BPS) + BASIS_POINTS - 1n) / BASIS_POINTS
+  if (limit > MAXIMUM_UINT64) {
+    throw new EvmTransactionError('fee-overflow', 'EVM gas limit exceeds signer limits')
+  }
+  return limit
 }
 
 function parseRpcUint256(value: string, label: string): bigint {
@@ -832,10 +845,11 @@ async function buildPreparedEvmTransaction(
     }
     throw error
   }
-  const gasLimit = parseRpcUint64(gasEstimate, 'EVM gas estimate')
-  if (gasLimit === 0n) {
+  const estimatedGas = parseRpcUint64(gasEstimate, 'EVM gas estimate')
+  if (estimatedGas === 0n) {
     throw new EvmRpcError('invalid-response', 'EVM gas estimate must be positive')
   }
+  const gasLimit = gasLimitWithMargin(estimatedGas, transactionCall.kind)
   const priorityFee = parseRpcUint64(
     await input.rpc.getMaximumPriorityFeePerGas(input.signal),
     'EVM maximum priority fee per gas'

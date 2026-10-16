@@ -5,7 +5,10 @@ import { unwrapHardwareCredentialEnvelope } from './credential-envelope-authenti
 import { readHardwareCredentialEnvelope } from './migration/hardware-credential-password-change'
 import { decodeV1EncryptedCredentialEnvelope } from './migration/v1-credential-envelope'
 import type { KeyDomainId } from '@/core/keyring/domain'
-import type { KeystoneHardwareCredential } from '@/core/wallet/hardware-wallet-data'
+import type {
+  StoredHardwareCredential,
+  LedgerHardwareCredential
+} from '@/core/wallet/hardware-wallet-data'
 import { hardwareCredentialMatchesMetadata } from './migration/hardware-credential-password-change'
 
 export async function readActiveHardwareCredential(
@@ -13,7 +16,7 @@ export async function readActiveHardwareCredential(
   snapshot: StorageV2Snapshot,
   keyDomainId: KeyDomainId,
   password: string
-): Promise<KeystoneHardwareCredential> {
+): Promise<StoredHardwareCredential> {
   const matches = snapshot.keyDomains.filter(keyDomain => keyDomain.id === keyDomainId)
   if (matches.length !== 1 || matches[0].source.kind !== 'hardware') {
     throw new Error('Active hardware KeyDomain is missing or ambiguous')
@@ -30,7 +33,8 @@ export async function readActiveHardwareCredential(
   ) {
     throw new Error(`Active hardware CredentialSet is invalid: ${activation.status}`)
   }
-  const metadata = activation.record.manifest.engines.multichain
+  const engine = activation.record.manifest.engines.multichain ? 'multichain' : 'zcash'
+  const metadata = activation.record.manifest.engines[engine]
   if (!metadata) throw new Error('Active hardware CredentialSet has no Multichain credential')
   const envelope = await repository.getEnvelope(metadata.credentialRef)
   if (
@@ -39,7 +43,7 @@ export async function readActiveHardwareCredential(
     envelope.aad.keyDomainId !== keyDomain.id ||
     envelope.aad.credentialGenerationId !== activation.record.manifest.credentialGenerationId ||
     envelope.aad.credentialRef !== metadata.credentialRef ||
-    envelope.aad.engine !== 'multichain'
+    envelope.aad.engine !== engine
   ) {
     throw new Error('Active hardware credential envelope binding mismatch')
   }
@@ -49,12 +53,20 @@ export async function readActiveHardwareCredential(
   const credential = parseStoredHardwareCredential(
     await readHardwareCredentialEnvelope(legacy, password)
   )
-  if (credential.vendor !== 'keystone') {
-    throw new Error('Expected a Keystone multichain credential')
-  }
   if (!hardwareCredentialMatchesMetadata(credential, keyDomain.source)) {
     throw new Error('Active hardware credential metadata mismatch')
   }
+  return credential
+}
+
+export async function readActiveLedgerHardwareCredential(
+  repository: CredentialRepository,
+  snapshot: StorageV2Snapshot,
+  keyDomainId: KeyDomainId,
+  password: string
+): Promise<LedgerHardwareCredential> {
+  const credential = await readActiveHardwareCredential(repository, snapshot, keyDomainId, password)
+  if (credential.vendor !== 'ledger') throw new Error('Expected a Ledger credential')
   return credential
 }
 

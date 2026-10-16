@@ -34,7 +34,7 @@ export interface NativeTransferDAppApprovalPort {
   readonly broadcastProviderEvent: (
     origin: string,
     chainId: 'solana' | 'near',
-    eventName: 'accountsChanged' | 'networkChanged',
+    eventName: 'accountsChanged' | 'networkChanged' | 'accountCapabilitiesChanged',
     data: unknown
   ) => Promise<void>
   readonly cancelPendingApprovals: (origin: string, chainId: 'solana' | 'near') => number
@@ -250,6 +250,23 @@ export class BackgroundNativeTransferDAppHandler {
       )
       if (!authorization) return Object.freeze([])
       const available = await this.listAvailableAccounts(active)
+      if (this.options.providerId === 'solana') {
+        await this.options.approval
+          .broadcastProviderEvent(
+            origin,
+            'solana',
+            'accountCapabilitiesChanged',
+            available
+              .filter(item =>
+                authorization.accounts.some(account => accountRefsEqual(account, item.reference))
+              )
+              .map(item => ({
+                address: item.address,
+                signMessage: item.messageSigningSupported === true
+              }))
+          )
+          .catch(() => {})
+      }
       return Object.freeze([
         ...new Set(
           available

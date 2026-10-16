@@ -15,6 +15,10 @@ Open **Receive** and choose the address appropriate for the sender.
 
 Copy the full address or let the sender scan the QR code. Verify the beginning and end of the address after pasting.
 
+To reuse an earlier shielded address, open the active account's **Zcash settings** and choose
+**Shielded addresses**. Select an address to make it the default receiving address; **Current**
+marks the selected address. Copying an address does not change the selection.
+
 ## Send ZEC
 
 <Steps>
@@ -27,13 +31,17 @@ Copy the full address or let the sender scan the QR code. Verify the beginning a
   <Step>
     ### Choose the funding source
 
-    Select shielded funds for stronger privacy when available. Transparent funding can reveal and link the selected public UTXOs.
+    Open the **Shielded** or **Transparent** control beside **Amount** to choose the source.
+    The selector shows each source's available and pending funds. Transparent funding can reveal
+    and link the selected public UTXOs; it is unavailable for Keystone accounts.
 
   </Step>
   <Step>
     ### Enter the amount
 
-    Available shows the selected source's current usable balance. Enter a destination before selecting **Max**; its estimate accounts for transaction selection, fees, and dust constraints.
+    On Zcash, Available shows funds you can use from the selected source before this transaction's network fee. Pending funds cannot be used yet. Enter a destination before selecting **Max**; its estimate accounts for transaction selection, fees, and dust constraints.
+
+    Received Zcash funds meet the wallet's confirmation requirement after 3 confirmations. They appear as available once synchronized and eligible for selection. In **Activity**, an external incoming transaction can still show **Confirming** until it reaches 10 confirmations, even when its funds are available. If you do not trust the sender, wait for more confirmations before spending them.
 
   </Step>
   <Step>
@@ -43,6 +51,10 @@ Copy the full address or let the sender scan the QR code. Verify the beginning a
 
   </Step>
 </Steps>
+
+## Send public EVM assets
+
+After a public EVM transfer is submitted, **View on Explorer** opens its transaction in the configured block explorer. The transfer also remains in Activity for local status and recovery.
 
 ## Private memos
 

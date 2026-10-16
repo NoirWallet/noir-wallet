@@ -85,6 +85,7 @@ export interface BackgroundMultichainSessionDAppHandlerOptions {
     | 'getCaip2ChainId'
   >
   readonly bitcoin: SessionHandler
+  readonly bitcoinEnabled?: boolean
   readonly solana: Pick<
     BackgroundSolanaDAppHandler,
     'prepareSessionAccountSelection' | 'resolveSessionAccountSelection' | 'getSessionAccounts'
@@ -252,14 +253,18 @@ export class BackgroundMultichainSessionDAppHandler {
         methods: EVM_SESSION_METHODS,
         notifications: SESSION_NOTIFICATIONS
       })),
-      {
-        family: 'bitcoin',
-        chainId: getBitcoinChainId(options.network),
-        chainName: options.network === 'mainnet' ? 'Bitcoin' : 'Bitcoin Testnet',
-        iconChain: 'btc',
-        methods: BITCOIN_SESSION_METHODS,
-        notifications: SESSION_NOTIFICATIONS
-      },
+      ...(options.bitcoinEnabled !== false
+        ? [
+            {
+              family: 'bitcoin' as const,
+              chainId: getBitcoinChainId(options.network),
+              chainName: options.network === 'mainnet' ? 'Bitcoin' : 'Bitcoin Testnet',
+              iconChain: 'btc',
+              methods: BITCOIN_SESSION_METHODS,
+              notifications: SESSION_NOTIFICATIONS
+            }
+          ]
+        : []),
       ...(options.solana && options.solanaScope
         ? [
             {
@@ -349,6 +354,8 @@ export class BackgroundMultichainSessionDAppHandler {
         proposal = await this.options.evm.prepareSessionAccountSelection(origin, supported)
         break
       case 'bitcoin':
+        if (this.options.bitcoinEnabled === false)
+          throw new Caip25ProviderError(5100, 'Bitcoin is unavailable.')
         proposal = await this.options.bitcoin.prepareSessionAccountSelection(origin)
         break
       case 'solana':
@@ -377,6 +384,8 @@ export class BackgroundMultichainSessionDAppHandler {
       case 'evm':
         return this.options.evm.resolveSessionAccountSelection(prepared.proposal, selectedIds)
       case 'bitcoin':
+        if (this.options.bitcoinEnabled === false)
+          throw new Caip25ProviderError(5100, 'Bitcoin is unavailable.')
         return this.options.bitcoin.resolveSessionAccountSelection(prepared.proposal, selectedIds)
       case 'solana':
         if (!this.options.solana) throw new Caip25ProviderError(5100, 'Solana is unavailable.')
@@ -500,7 +509,9 @@ export class BackgroundMultichainSessionDAppHandler {
       case 'evm':
         return this.options.evm.getSessionAccounts(origin, scope.chainId)
       case 'bitcoin':
-        return this.options.bitcoin.getSessionAccounts(origin)
+        return this.options.bitcoinEnabled === false
+          ? Object.freeze([])
+          : this.options.bitcoin.getSessionAccounts(origin)
       case 'solana':
         return this.options.solana?.getSessionAccounts(origin) ?? Object.freeze([])
       case 'near':

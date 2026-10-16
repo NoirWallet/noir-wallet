@@ -1,4 +1,8 @@
 import { hardwareCredentialMetadataEquals } from '@/core/keyring/domain'
+import { findLedgerPublicAccount } from '@/core/wallet/ledger-hardware-credential'
+import { isNativeHardwareWalletId } from '@/core/wallet/native-hardware-identity'
+import { getZcashChainId } from '@/core/chains/registry'
+import { SecureStorage } from '@/core/wallet/secure-storage'
 import { parseChainAccountVerificationAnchorRef } from '@/core/keyring/application'
 import { unwrapHardwareCredentialEnvelope } from '@/infrastructure/keyring/credential-envelope-authentication'
 import type { V1MetadataDiscovery } from '@/infrastructure/persistence/migrations'
@@ -6,6 +10,7 @@ import type { CredentialRepository, StorageV2Snapshot } from '@/ports/repositori
 import {
   hardwareCredentialMatchesMetadata,
   hardwareCredentialEnvelopeEquals,
+  ledgerMultichainCredentialEquals,
   readHardwareCredentialEnvelope
 } from './hardware-credential-password-change'
 import {
@@ -35,7 +40,7 @@ export async function reconcileActiveHardwareCredentials(
     keyDomain =>
       !(
         options.allowNativeV2Wallets &&
-        keyDomain.id.startsWith('wallet:keystone-v2:') &&
+        isNativeHardwareWalletId(keyDomain.id) &&
         !hardwareWallets.some(wallet => wallet.id === keyDomain.id)
       )
   )
@@ -55,7 +60,7 @@ export async function reconcileActiveHardwareCredentials(
 
   for (const keyDomain of hardwareKeyDomains) {
     const wallet = wallets.get(keyDomain.id)
-    if (!wallet && options.allowNativeV2Wallets && keyDomain.id.startsWith('wallet:keystone-v2:')) {
+    if (!wallet && options.allowNativeV2Wallets && isNativeHardwareWalletId(keyDomain.id)) {
       continue
     }
     if (!wallet && options.allowRemovedWallets) continue
@@ -66,7 +71,10 @@ export async function reconcileActiveHardwareCredentials(
       credentialEnvelopes[wallet.credentialStorageKey]
     )
     const liveCredential = await readHardwareCredentialEnvelope(liveEnvelope, password)
+    const isMultiAppLedger =
+      keyDomain.source.vendor === 'ledger' && keyDomain.source.firmwareProfile === 'multi-app'
     if (
+      !isMultiAppLedger &&
       !hardwareCredentialMatchesMetadata(liveCredential, {
         vendor: keyDomain.source.vendor,
         firmwareProfile: keyDomain.source.firmwareProfile,
@@ -94,13 +102,39 @@ export async function reconcileActiveHardwareCredentials(
         account.accountIndex === retainedAccount?.accountIndex
     )
     const zcashMetadata = activation.record.manifest.engines.zcash
-    if (!retainedAccount || wallet.accounts.length !== 1 || !storedAccount || !zcashMetadata) {
+    if (
+      !retainedAccount ||
+      wallet.accounts.length !== 1 ||
+      !storedAccount ||
+      (!zcashMetadata && !isMultiAppLedger)
+    ) {
       throw new Error('Retained V1 hardware Account metadata mismatch')
     }
-    const anchoredChainAccount = snapshot.chainAccounts.find(
-      account =>
-        account.id === parseChainAccountVerificationAnchorRef(zcashMetadata.verificationAnchorRef)
-    )
+    const anchoredChainAccount = isMultiAppLedger
+      ? snapshot.chainAccounts.find(
+          account =>
+            account.scope.keyDomainId === keyDomain.id &&
+            account.scope.accountId === storedAccount.id &&
+            (account.scope.chainId === getZcashChainId('mainnet') ||
+              account.scope.chainId === getZcashChainId('testnet')) &&
+            snapshot.addresses.some(
+              address =>
+                address.chainAccountId === account.id &&
+                address.scheme === 'zcash-shielded-unified' &&
+                address.value === retainedAccount.addresses.shielded
+            ) &&
+            snapshot.addresses.some(
+              address =>
+                address.chainAccountId === account.id &&
+                address.scheme === 'zcash-transparent-p2pkh' &&
+                address.value === retainedAccount.addresses.transparent
+            )
+        )
+      : snapshot.chainAccounts.find(
+          account =>
+            account.id ===
+            parseChainAccountVerificationAnchorRef(zcashMetadata!.verificationAnchorRef)
+        )
     if (
       !anchoredChainAccount ||
       anchoredChainAccount.scope.keyDomainId !== keyDomain.id ||
@@ -129,7 +163,32 @@ export async function reconcileActiveHardwareCredentials(
       const retainedEnvelope = decodeV1EncryptedCredentialEnvelope(
         await unwrapHardwareCredentialEnvelope(envelope, password)
       )
-      if (!hardwareCredentialEnvelopeEquals(retainedEnvelope, liveEnvelope)) {
+      if (isMultiAppLedger) {
+        const activeCredential = await readHardwareCredentialEnvelope(retainedEnvelope, password)
+        if (activeCredential.vendor !== 'ledger' || activeCredential.schemaVersion !== 3) {
+          throw new Error('Active Ledger multichain credential is invalid')
+        }
+        const zcashAccount = findLedgerPublicAccount(activeCredential, {
+          family: 'zcash',
+          accountIndex: retainedAccount.accountIndex,
+          network:
+            anchoredChainAccount.scope.chainId === getZcashChainId('mainnet')
+              ? 'mainnet'
+              : 'testnet'
+        })
+        if (
+          !zcashAccount ||
+          (liveCredential.accountExport.protocol === 'zcash-accounts-v1'
+            ? liveCredential.accountExport.ufvk !== zcashAccount.ufvk ||
+              liveCredential.accountExport.accountHdIndex !== zcashAccount.accountHdIndex
+            : !ledgerMultichainCredentialEquals(liveCredential, activeCredential))
+        ) {
+          throw new Error('Active Ledger credential differs from retained Zcash Wallet')
+        }
+        if (liveCredential.schemaVersion !== 3) {
+          await SecureStorage.saveLedgerHardwareCredential(wallet.id, activeCredential, password)
+        }
+      } else if (!hardwareCredentialEnvelopeEquals(retainedEnvelope, liveEnvelope)) {
         throw new Error('Active hardware credential differs from retained V1')
       }
     }

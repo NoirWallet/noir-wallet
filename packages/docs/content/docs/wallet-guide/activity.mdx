@@ -13,6 +13,8 @@ Activity combines confirmed on-chain history with locally recorded transactions 
 | Success         | The operation reached its final expected result                                   |
 | Failed          | The tracked operation reported a terminal failure                                 |
 
+Restored Zcash sends can recover a transparent recipient from public transaction outputs. If the recipient cannot be determined, the detail shows **Unavailable**. Open the transaction in the explorer to inspect its public outputs; a shielded source does not prove that the recipient is shielded.
+
 ## Cross-chain operations
 
 Swaps and lending can involve more than one network. The origin transaction may be complete before the full operation reaches its destination. For a withdrawal, claim, or swap into ZEC, a successful relay can still leave the destination Zcash transaction confirming.

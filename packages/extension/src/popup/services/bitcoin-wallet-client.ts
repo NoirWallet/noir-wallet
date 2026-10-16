@@ -1,5 +1,6 @@
 import { getBitcoinNetworkConfig } from '@/config/networks'
 import { DEFAULT_NETWORK } from '@/lib/runtime-network'
+import type { LedgerBitcoinSigningRequest } from '@/lib/ledger/bitcoin'
 import {
   BITCOIN_WALLET_RUNTIME_ERROR_CODES,
   createBitcoinWalletRuntimeError,
@@ -72,6 +73,8 @@ export interface BitcoinExternalSignatureRequired {
 }
 
 export interface BitcoinExternalSigningRequest {
+  readonly vendor: 'keystone' | 'ledger'
+  readonly ledgerRequest?: Extract<LedgerBitcoinSigningRequest, { kind: 'psbt' }>
   readonly transactionId: TransactionId
   readonly request: { readonly encoding: 'base64'; readonly value: string }
   readonly payloadFingerprint: string
@@ -367,9 +370,14 @@ function parseExternalSigningRequest(
 ): BitcoinExternalSigningRequest | null {
   if (value === null) return null
   const record = readRecord(value, 'Bitcoin external signing request')
+  const vendor = record.vendor === 'ledger' ? 'ledger' : 'keystone'
   assertExactKeys(
     record,
-    ['transactionId', 'request', 'payloadFingerprint', 'expiresAt'],
+    vendor === 'ledger'
+      ? ['transactionId', 'request', 'payloadFingerprint', 'expiresAt', 'vendor', 'ledgerRequest']
+      : record.vendor === 'keystone'
+        ? ['transactionId', 'request', 'payloadFingerprint', 'expiresAt', 'vendor']
+        : ['transactionId', 'request', 'payloadFingerprint', 'expiresAt'],
     'Bitcoin external signing request'
   )
   const request = readRecord(record.request, 'Bitcoin external signing payload')
@@ -382,7 +390,44 @@ function parseExternalSigningRequest(
   ) {
     throw new Error('Bitcoin external signing request does not match its transaction')
   }
+  let ledgerRequest: Extract<LedgerBitcoinSigningRequest, { kind: 'psbt' }> | undefined
+  if (vendor === 'ledger') {
+    const ledger = readRecord(record.ledgerRequest, 'Ledger Bitcoin signing request')
+    assertExactKeys(
+      ledger,
+      ['kind', 'psbtBase64', 'accountPath', 'masterFingerprintHex', 'expectedAddress', 'network'],
+      'Ledger Bitcoin signing request'
+    )
+    if (
+      ledger.kind !== 'psbt' ||
+      ledger.psbtBase64 !== request.value ||
+      typeof ledger.accountPath !== 'string' ||
+      !new RegExp(`^m/84'/${DEFAULT_NETWORK === 'mainnet' ? 0 : 1}'/(?:0|[1-9][0-9]*)'$`).test(
+        ledger.accountPath
+      ) ||
+      typeof ledger.masterFingerprintHex !== 'string' ||
+      !/^[0-9a-fA-F]{8}$/.test(ledger.masterFingerprintHex) ||
+      typeof ledger.expectedAddress !== 'string' ||
+      !new RegExp(`^${DEFAULT_NETWORK === 'mainnet' ? 'bc' : 'tb'}1q[ac-hj-np-z02-9]{38}$`).test(
+        ledger.expectedAddress
+      ) ||
+      typeof ledger.network !== 'string' ||
+      ledger.network !== DEFAULT_NETWORK
+    ) {
+      throw new Error('Ledger Bitcoin signing request does not match its transaction')
+    }
+    ledgerRequest = Object.freeze({
+      kind: 'psbt',
+      psbtBase64: ledger.psbtBase64 as string,
+      accountPath: ledger.accountPath,
+      masterFingerprintHex: ledger.masterFingerprintHex,
+      expectedAddress: ledger.expectedAddress,
+      network: ledger.network
+    })
+  }
   return Object.freeze({
+    vendor,
+    ...(ledgerRequest ? { ledgerRequest } : {}),
     transactionId: expectedTransactionId,
     request: Object.freeze({
       encoding: 'base64' as const,

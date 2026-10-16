@@ -20,6 +20,7 @@ import {
 } from '@/infrastructure/persistence/repositories'
 import type { StorageV2ReadRepository } from '@/ports/repositories'
 import { credentialSession } from './credential-session'
+import { solanaLedgerSigningBridge } from './ledger-signing-bridge'
 import { SOLANA_TRANSACTION_MONITOR_ALARM } from './solana-transaction-monitor'
 import {
   BackgroundSolanaTransferController,
@@ -83,7 +84,10 @@ export function createBackgroundSolanaTransferController(
   const orchestrator = new SolanaTransferOrchestrator({
     repository: new IndexedDbTransactionRepository(),
     pendingStore: new ChromeSessionSolanaPendingTransferStore(),
-    signer: new SolanaMultichainSigningClient({ credentials: credentialSession }),
+    signer: new SolanaMultichainSigningClient({
+      credentials: credentialSession,
+      ledger: solanaLedgerSigningBridge
+    }),
     rpc: createConfiguredSolanaRpcClient({ chainId: network.chainId, rpcUrl: network.rpcUrl }),
     assets,
     onPendingBroadcast: () =>

@@ -218,6 +218,47 @@ test('builds, validates, and finalizes a BIP-84 PSBT with explicit change key or
   expect(finalized.feeRateSatsPerVbyte).toBeGreaterThanOrEqual(2)
 })
 
+test('keeps the selected Ledger account root in inputs and change', () => {
+  const source = keyMaterial(1, 'p2wpkh')
+  const change = keyMaterial(2, 'p2wpkh')
+  const recipient = keyMaterial(3, 'p2tr')
+  const root = "m/84'/0'/5'"
+  const selection = selectBitcoinCoins({
+    chainId: MAINNET,
+    accountIndex: 0,
+    addressType: 'p2wpkh',
+    recipient: recipient.address,
+    amount: { mode: 'exact', valueSats: '50000' },
+    feeRateSatsPerVbyte: 2,
+    utxos: [{ ...spendable(source, 'p2wpkh'), derivationPath: `${root}/0/0` }]
+  })
+  const prepared = buildBitcoinPsbt({
+    selection,
+    masterFingerprint: MASTER_FINGERPRINT,
+    lockTime: LOCK_TIME,
+    change: {
+      address: { ...changeAddress(change, 'p2wpkh'), derivationPath: `${root}/1/0` },
+      outputPosition: 'first'
+    }
+  })
+  const psbt = Psbt.fromBase64(prepared.psbtBase64)
+  expect(psbt.data.inputs[0].bip32Derivation[0].path).toBe(`${root}/0/0`)
+  expect(psbt.data.outputs[0].bip32Derivation[0].path).toBe(`${root}/1/0`)
+  psbt.signAllInputs({
+    publicKey: source.publicKey,
+    sign: hash => Buffer.from(secp256k1.sign(hash, source.privateKey))
+  })
+  expect(() => finalizeBitcoinPsbt({ prepared, signedPsbtBase64: psbt.toBase64() })).not.toThrow()
+  expect(() =>
+    buildBitcoinPsbt({
+      selection,
+      masterFingerprint: MASTER_FINGERPRINT,
+      lockTime: LOCK_TIME,
+      change: { address: changeAddress(change, 'p2wpkh'), outputPosition: 'first' }
+    })
+  ).toThrow(/selected account/)
+})
+
 test('builds BIP-86 key-path metadata without requiring change', () => {
   const source = keyMaterial(4, 'p2tr')
   const recipient = keyMaterial(5, 'p2wpkh')

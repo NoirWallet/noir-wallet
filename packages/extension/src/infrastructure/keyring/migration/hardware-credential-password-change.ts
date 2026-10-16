@@ -41,6 +41,19 @@ export function hardwareCredentialEnvelopeEquals(
   )
 }
 
+export function ledgerMultichainCredentialEquals(
+  left: StoredHardwareCredential,
+  right: StoredHardwareCredential
+): boolean {
+  return (
+    left.vendor === 'ledger' &&
+    left.schemaVersion === 3 &&
+    right.vendor === 'ledger' &&
+    right.schemaVersion === 3 &&
+    JSON.stringify(left) === JSON.stringify(right)
+  )
+}
+
 export async function readHardwareCredentialEnvelope(
   envelopeValue: V1EncryptedCredentialEnvelope,
   password: string

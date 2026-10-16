@@ -17,7 +17,7 @@ import {
   formatPortfolioNetworkName,
   parseDisplayUnitAmount
 } from '@/popup/components/portfolio/portfolio-format'
-import { openKeystoneEvmSignTab } from '@/lib/hardware-tab'
+import { openHardwareEvmSignTab } from '@/lib/hardware-tab'
 import { openModal } from '@/popup/provider/ModalManager'
 import { useNavigate } from '@/popup/provider/Router'
 import { RecipientSelector } from '@/popup/components/transaction/RecipientSelector'
@@ -460,7 +460,7 @@ export function EvmSendForm({
       setReview(null)
       if (submission.status === 'external-signature-required') {
         try {
-          await openKeystoneEvmSignTab(submission.transactionId)
+          await openHardwareEvmSignTab(submission.transactionId)
         } catch (handoffError) {
           await evmWalletClient.rejectTransfer(submission.transactionId).catch(() => {})
           throw handoffError

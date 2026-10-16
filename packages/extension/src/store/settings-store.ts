@@ -4,7 +4,7 @@ import { WALLET_CONFIG, type AutoLockMs } from '@/config/wallet'
 import { DEFAULT_NETWORK } from '@/lib/runtime-network'
 import type { Network } from '@/types'
 import { DEFAULT_FEE_TIER, type FeeTier } from '@/config/fee'
-import { createChromeStorageAdapter } from '@/lib/chrome-storage-adapter'
+import { createWalletSettingsPersistStorage } from '@/lib/wallet-settings-persist-storage'
 import { applyLendingSdkEnv } from '@/core/services/lending-sdk-init'
 import { setNearRpcUrl } from '@/core/services/lending-service'
 import {
@@ -92,6 +92,7 @@ interface SettingsStore {
   blockExplorerPreferences: BlockExplorerPreferences
   rpcEndpointPreferences: RpcEndpointPreferences
   chainEndpointSettings: ChainEndpointSettings
+  zeroIndexerEnabled: boolean
   feeTier: FeeTier
   balancesHidden: boolean
   portfolioViewMode: 'assets' | 'chains'
@@ -123,6 +124,7 @@ export const useSettingsStore = create<SettingsStore>()(
       blockExplorerPreferences: DEFAULT_BLOCK_EXPLORER_PREFERENCES,
       rpcEndpointPreferences: DEFAULT_RPC_ENDPOINT_PREFERENCES,
       chainEndpointSettings: DEFAULT_CHAIN_ENDPOINT_SETTINGS,
+      zeroIndexerEnabled: true,
       feeTier: DEFAULT_FEE_TIER,
       balancesHidden: false,
       portfolioViewMode: 'assets',
@@ -259,7 +261,7 @@ export const useSettingsStore = create<SettingsStore>()(
     }),
     {
       name: SETTINGS_STORAGE_KEY,
-      storage: createChromeStorageAdapter('local') as any,
+      storage: createWalletSettingsPersistStorage<Partial<SettingsStore>>(),
       merge: (persisted, current) => {
         const value =
           persisted && typeof persisted === 'object' && !Array.isArray(persisted)
@@ -284,6 +286,7 @@ export const useSettingsStore = create<SettingsStore>()(
         return {
           ...current,
           ...value,
+          zeroIndexerEnabled: value.zeroIndexerEnabled !== false,
           balancesHidden:
             typeof value.balancesHidden === 'boolean'
               ? value.balancesHidden
@@ -314,6 +317,7 @@ export const useSettingsStore = create<SettingsStore>()(
         blockExplorerPreferences: state.blockExplorerPreferences,
         rpcEndpointPreferences: state.rpcEndpointPreferences,
         chainEndpointSettings: state.chainEndpointSettings,
+        zeroIndexerEnabled: state.zeroIndexerEnabled,
         feeTier: state.feeTier,
         balancesHidden: state.balancesHidden,
         portfolioViewMode: state.portfolioViewMode,

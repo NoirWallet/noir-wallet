@@ -6,6 +6,8 @@ import { formatSendFiatValue } from './send-input-model'
 import { cn } from '@/lib/utils'
 import { TokenIcon } from '../tokens/TokenIcon'
 import { Input } from '../ui/input'
+import { BalanceHelp } from './BalanceHelp'
+import { safeBig } from '@/lib/big'
 
 export function SendRecipientInputCard({
   id,
@@ -68,6 +70,10 @@ export function SendAmountInputCard({
   maxLoading = false,
   maxSelected = false,
   invalid = false,
+  error,
+  pending,
+  showBalanceHelp = false,
+  headerAction,
   title,
   testId
 }: {
@@ -83,6 +89,10 @@ export function SendAmountInputCard({
   readonly maxLoading?: boolean
   readonly maxSelected?: boolean
   readonly invalid?: boolean
+  readonly error?: string
+  readonly pending?: string
+  readonly showBalanceHelp?: boolean
+  readonly headerAction?: ReactNode
   readonly title?: string
   readonly testId?: string
 }) {
@@ -91,7 +101,10 @@ export function SendAmountInputCard({
 
   return (
     <div className="space-y-1.5">
-      <span className="block px-1 text-xs font-medium text-foreground/80">Amount</span>
+      <div className="flex items-center justify-between gap-2 px-1">
+        <span className="text-xs font-medium text-foreground/80">Amount</span>
+        {headerAction}
+      </div>
       <div
         data-testid={testId ?? 'send-amount-card'}
         title={title}
@@ -105,6 +118,8 @@ export function SendAmountInputCard({
             aria-label={ariaLabel}
             inputMode="decimal"
             value={value}
+            aria-invalid={invalid || undefined}
+            aria-describedby={error ? `${testId ?? 'send-amount-card'}-error` : undefined}
             onChange={event => onChange(event.target.value)}
             placeholder="0"
             className="min-w-0 flex-1 bg-transparent font-mono text-2xl text-foreground outline-none placeholder:text-muted/45"
@@ -131,16 +146,42 @@ export function SendAmountInputCard({
         </div>
         <div className="mt-3 flex min-w-0 items-center justify-between gap-3 text-xs leading-4">
           <span className="shrink-0 text-muted">{amountFiat ? `~${amountFiat}` : '—'}</span>
-          <span className="min-w-0 text-right text-muted">
-            {availableLabel}{' '}
-            <strong className="font-semibold text-foreground">
-              {formatNumber(available, { rm: Big.roundDown, useUnit: true, useSubscript: true })}
-            </strong>{' '}
-            {symbol}
-            {availableFiat ? ` (${availableFiat})` : ''}
-          </span>
+          <div className="min-w-0 text-right text-muted">
+            <div className="flex min-w-0 items-center justify-end gap-1">
+              <span className="truncate">
+                {availableLabel}{' '}
+                <strong className="font-semibold text-foreground">
+                  {formatNumber(available, {
+                    rm: Big.roundDown,
+                    useUnit: true,
+                    useSubscript: true
+                  })}
+                </strong>{' '}
+                {symbol}
+                {availableFiat ? ` (${availableFiat})` : ''}
+              </span>
+              {showBalanceHelp && <BalanceHelp kind="available" />}
+            </div>
+            {pending != null && safeBig(pending).gt(0) && (
+              <div className="mt-0.5 flex min-w-0 items-center justify-end gap-1 text-[11px]">
+                <span className="truncate">
+                  {formatNumber(pending, { rm: Big.roundDown })} {symbol} pending
+                </span>
+                <BalanceHelp kind="pending" />
+              </div>
+            )}
+          </div>
         </div>
       </div>
+      {error && (
+        <p
+          id={`${testId ?? 'send-amount-card'}-error`}
+          className="px-1 text-xs text-warning"
+          role="alert"
+        >
+          {error}
+        </p>
+      )}
     </div>
   )
 }

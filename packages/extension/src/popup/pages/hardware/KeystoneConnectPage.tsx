@@ -3,6 +3,7 @@ import { Icon } from '@iconify/react'
 import { Button } from '../../components/ui/button'
 import { Input } from '../../components/ui/input'
 import { PageHeader } from '../../components/common/PageHeader'
+import { useNavigate } from '../../provider/Router'
 import { PasswordInput } from '../../components/common/PasswordInput'
 import { PasswordStrength } from '../../components/common/PasswordStrength'
 import { QRScanner } from '../../components/hardware/QRScanner'
@@ -10,7 +11,6 @@ import { SyncOptionsModal } from '../../components/onboarding/SyncOptionsModal'
 import { ChainIcon } from '../../components/common/ChainIcon'
 import { openModal } from '../../provider/ModalManager'
 import {
-  KEYSTONE_PRODUCT_CHAINS_BY_PROFILE,
   parseKeystoneConnectionAccount,
   projectKeystoneBitcoinAccounts,
   projectKeystoneMultiCoinAccounts,
@@ -33,16 +33,15 @@ import keystoneLogo from '@/images/keystone-logo.webp'
 import { classifyError } from '@/lib/errors'
 import { DEFAULT_NETWORK } from '@/lib/runtime-network'
 import { accountNetworksClient } from '../../services/account-networks-client'
-import { keystoneHardwareProvisioningClient } from '../../services/keystone-hardware-provisioning-client'
+import { keystoneHardwareProvisioningClient } from '../../services/hardware-provisioning-client'
+import { BetaInviteHardwareDoneButton } from '../../components/onboarding/BetaInviteBinding'
+import {
+  buildKeystoneNetworkBundles,
+  filterKeystoneMultiAccountsPayload,
+  type KeystoneNetworkBundle
+} from './keystone-chain-selection'
 
 type Step = 'networks' | 'guide' | 'scan' | 'configure' | 'success'
-
-interface KeystoneNetworkBundle {
-  id: 'zcash' | 'multi-chain' | 'bitcoin-only'
-  name: string
-  firmwareDescription: string
-  requestedNetworks: readonly KeystoneChainSelection[]
-}
 
 const chainLabels = Object.freeze({
   zcash: 'ZEC',
@@ -62,29 +61,11 @@ const chainIconAliases = Object.freeze({
   near: 'near'
 }) satisfies Readonly<Record<KeystoneChainSelection, string>>
 
-const networkBundles: readonly KeystoneNetworkBundle[] = Object.freeze([
-  {
-    id: 'multi-chain',
-    name: 'Multi-chain',
-    firmwareDescription: 'Multi-Coin firmware',
-    requestedNetworks: KEYSTONE_PRODUCT_CHAINS_BY_PROFILE['multi-coin']
-  },
-  {
-    id: 'zcash',
-    name: 'Zcash + BTC',
-    firmwareDescription: 'Cypherpunk firmware',
-    requestedNetworks: KEYSTONE_PRODUCT_CHAINS_BY_PROFILE.cypherpunk
-  },
-  {
-    id: 'bitcoin-only',
-    name: 'Bitcoin only',
-    firmwareDescription: 'Bitcoin-Only firmware',
-    requestedNetworks: KEYSTONE_PRODUCT_CHAINS_BY_PROFILE['bitcoin-only']
-  }
-])
+const networkBundles = buildKeystoneNetworkBundles(__ENABLED_CHAIN_FEATURE_FLAGS__)
 
 /** Full-tab Keystone firmware selection and account connection flow. */
 export function KeystoneConnectPage() {
+  const { replace } = useNavigate()
   const [step, setStep] = useState<Step>('networks')
   const [selectedBundleId, setSelectedBundleId] = useState<KeystoneNetworkBundle['id'] | null>(null)
   const [scanError, setScanError] = useState<string | null>(null)
@@ -111,7 +92,9 @@ export function KeystoneConnectPage() {
     retainedV1WalletCount === 0 &&
     !hasStorageV2Wallet
   const selectedBundle = networkBundles.find(bundle => bundle.id === selectedBundleId)
-  const setupPlan = resolveKeystoneSetupPlan(selectedBundle?.requestedNetworks ?? [])
+  const setupPlan = resolveKeystoneSetupPlan(
+    selectedBundle && !selectedBundle.disabled ? selectedBundle.requestedNetworks : []
+  )
   const selectedFirmwareProfile =
     setupPlan.status === 'compatible' ? setupPlan.firmwareProfile : null
   const guideDescription =
@@ -163,9 +146,15 @@ export function KeystoneConnectPage() {
   const projectedAccounts = useMemo(() => {
     if (!connection || connection.firmwareProfile === 'cypherpunk') return []
     return connection.firmwareProfile === 'multi-coin'
-      ? projectKeystoneMultiCoinAccounts(connection.accountExport, DEFAULT_NETWORK)
+      ? projectKeystoneMultiCoinAccounts(
+          filterKeystoneMultiAccountsPayload(
+            connection.accountExport,
+            selectedBundle?.requestedNetworks ?? []
+          ),
+          DEFAULT_NETWORK
+        )
       : projectKeystoneBitcoinAccounts(connection.accountExport, DEFAULT_NETWORK)
-  }, [connection])
+  }, [connection, selectedBundle])
   const projectedAccountIndexes = useMemo(
     () =>
       [...new Set(projectedAccounts.map(account => account.accountIndex))].sort((a, b) => a - b),
@@ -176,6 +165,7 @@ export function KeystoneConnectPage() {
     if (step === 'configure') setStep('scan')
     else if (step === 'scan') setStep('guide')
     else if (step === 'guide') setStep('networks')
+    else if (step === 'networks') replace('/hardware/connect')
   }
 
   const handleScan = (ur: UR) => {
@@ -216,6 +206,7 @@ export function KeystoneConnectPage() {
     !isFirstWallet || (isNewPasswordValid(password) && password === confirmPassword)
   const canCreate =
     !!connection &&
+    (connection.firmwareProfile === 'cypherpunk' || projectedAccounts.length > 0) &&
     !walletInventoryLoading &&
     !walletInventoryError &&
     walletName.trim().length > 0 &&
@@ -243,7 +234,12 @@ export function KeystoneConnectPage() {
       } else {
         const credential =
           connection.firmwareProfile === 'multi-coin'
-            ? createMultiAccountsHardwareCredential(connection.accountExport)
+            ? createMultiAccountsHardwareCredential(
+                filterKeystoneMultiAccountsPayload(
+                  connection.accountExport,
+                  selectedBundle?.requestedNetworks ?? []
+                )
+              )
             : createBitcoinHardwareCredential(connection.accountExport, connection.firmwareProfile)
         await keystoneHardwareProvisioningClient.provision({
           credential,
@@ -277,7 +273,7 @@ export function KeystoneConnectPage() {
               ? 'Connect Hardware Wallet'
               : 'Connect Keystone'
         }
-        showBack={step === 'guide' || step === 'scan' || step === 'configure'}
+        showBack={step !== 'success'}
         onBack={handleBack}
       />
 
@@ -285,11 +281,6 @@ export function KeystoneConnectPage() {
         <>
           <div className="page-content">
             <img src={keystoneLogo} alt="Keystone" className="h-7 w-auto mt-1 mb-5" />
-
-            <p className="text-sm text-muted mb-5">
-              Choose the firmware profile currently active on your Keystone. Zcash requires
-              Cypherpunk firmware; Bitcoin-Only is kept for devices using that dedicated firmware.
-            </p>
 
             <div className="space-y-2" role="radiogroup" aria-label="Keystone networks">
               {networkBundles.map(bundle => (
@@ -522,9 +513,7 @@ export function KeystoneConnectPage() {
             </p>
           </div>
           <div className="page-footer">
-            <Button onClick={() => window.close()} className="w-full h-[45px]">
-              Done
-            </Button>
+            <BetaInviteHardwareDoneButton />
           </div>
         </>
       )}
@@ -546,21 +535,34 @@ function KeystoneNetworkBundleCard({
       type="button"
       role="radio"
       onClick={onSelect}
-      aria-label={bundle.name}
+      disabled={bundle.disabled}
+      aria-label={bundle.disabled ? `${bundle.name}, Coming soon` : bundle.name}
       aria-checked={selected}
-      className={`flex min-h-[86px] w-full items-center gap-3 rounded-xl border p-3 text-left transition-colors ${
+      className={`flex min-h-[86px] w-full items-center gap-3 rounded-xl border p-3 text-left transition-colors disabled:cursor-default disabled:opacity-100 disabled:text-muted disabled:hover:border-border ${
         selected ? 'border-primary bg-primary/5' : 'border-border bg-card hover:border-white/20'
       }`}
     >
       <div className="min-w-0 flex-1">
         <p className="text-sm font-semibold">{bundle.name}</p>
         <p className="mt-0.5 text-xs text-muted">{bundle.firmwareDescription}</p>
-        <p className="mt-0.5 text-[11px] text-muted/80">
-          {bundle.requestedNetworks.map(chain => chainLabels[chain]).join(', ')}
-        </p>
-        <div className="mt-2 flex items-center gap-3">
-          <ChainIconStack chains={bundle.requestedNetworks} />
-        </div>
+        {bundle.disabled ? (
+          <p className="mt-1 text-xs text-muted">Coming soon</p>
+        ) : (
+          <>
+            <p className="mt-0.5 text-[11px] text-muted/80">
+              {bundle.requestedNetworks.map(chain => chainLabels[chain]).join(', ')}
+            </p>
+            <div className="mt-2 flex items-center gap-3">
+              <ChainIconStack chains={bundle.requestedNetworks} />
+            </div>
+            {bundle.comingSoonNetworks.length > 0 && (
+              <p className="mt-2 text-[11px] text-muted/70">
+                {bundle.comingSoonNetworks.map(chain => chainLabels[chain]).join(', ')} · Coming
+                soon
+              </p>
+            )}
+          </>
+        )}
       </div>
       <div
         className={`flex size-5 shrink-0 items-center justify-center rounded-full border ${

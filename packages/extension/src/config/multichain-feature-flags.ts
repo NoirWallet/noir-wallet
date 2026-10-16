@@ -5,12 +5,17 @@ export const EVM_CHAIN_FEATURE_FLAG = 'chain.evm' as const
 export const BITCOIN_CHAIN_FEATURE_FLAG = 'chain.bitcoin' as const
 export const SOLANA_CHAIN_FEATURE_FLAG = 'chain.solana' as const
 export const NEAR_CHAIN_FEATURE_FLAG = 'chain.near' as const
-export const DEFAULT_ENABLED_CHAIN_FEATURE_FLAGS = Object.freeze([
+export const ALL_CHAIN_FEATURE_FLAGS = Object.freeze([
   ZCASH_CHAIN_FEATURE_FLAG,
   EVM_CHAIN_FEATURE_FLAG,
   BITCOIN_CHAIN_FEATURE_FLAG,
   SOLANA_CHAIN_FEATURE_FLAG,
   NEAR_CHAIN_FEATURE_FLAG
+] as const)
+
+export const DEFAULT_ENABLED_CHAIN_FEATURE_FLAGS = Object.freeze([
+  ZCASH_CHAIN_FEATURE_FLAG,
+  EVM_CHAIN_FEATURE_FLAG
 ] as const)
 
 const CHAIN_FEATURE_FLAG_PATTERN = /^chain\.[a-z0-9][a-z0-9.-]*$/

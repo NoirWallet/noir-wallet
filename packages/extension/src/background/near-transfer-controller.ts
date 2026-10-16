@@ -264,7 +264,9 @@ export class BackgroundNearTransferController {
     const context = await this.options.loadActiveContext()
     if (!context) throw new Error('The active Account has no NEAR ChainAccount')
     if (
-      context.keyDomainSource.kind === 'hardware' ||
+      (context.keyDomainSource.kind === 'hardware' &&
+        (context.keyDomainSource.vendor !== 'ledger' ||
+          !context.keyDomainSource.capabilities.includes('near'))) ||
       (context.keyDomainSource.kind === 'private-key' &&
         context.keyDomainSource.chainFamily !== 'near')
     ) {

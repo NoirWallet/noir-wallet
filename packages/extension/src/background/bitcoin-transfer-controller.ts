@@ -50,6 +50,12 @@ export interface BackgroundBitcoinTransferControllerOptions {
     context: ActiveBitcoinDiscoveryContext
   ) => Promise<BitcoinSupportedAddressType>
   readonly requiredConfirmations: number
+  readonly resolveLedgerSigner?: (context: ActiveBitcoinDiscoveryContext) => Promise<{
+    readonly accountPath: string
+    readonly masterFingerprintHex: string
+    readonly expectedAddress: string
+    readonly network: 'mainnet' | 'testnet'
+  }>
   readonly createId?: () => string
 }
 
@@ -134,7 +140,7 @@ export class BackgroundBitcoinTransferController {
           ? ((await this.options.getAddressType?.(context)) ?? DEFAULT_ADDRESS_TYPE)
           : parseBitcoinAddressType(addressTypeValue)
       if (context.keyDomainSource.kind === 'hardware' && addressType !== DEFAULT_ADDRESS_TYPE) {
-        throw new Error('Keystone Bitcoin transfers support only the Native SegWit account')
+        throw new Error('Hardware Bitcoin transfers support only the Native SegWit account')
       }
       const discovery = await this.options.scanActive(addressType)
       if (!discovery) throw new Error('Bitcoin discovery did not complete for the active Account')
@@ -150,6 +156,10 @@ export class BackgroundBitcoinTransferController {
         addressType,
         recipient: intent.recipient,
         amount: intent.amount,
+        ...(context.keyDomainSource.kind === 'hardware' &&
+        context.keyDomainSource.vendor === 'ledger'
+          ? { ledgerAccount: true }
+          : {}),
         ...(feeRateSatsPerVbyteValue === undefined
           ? { feeTargetBlocks: bitcoinFeeTargetBlocks(feeTier) }
           : { feeRateSatsPerVbyte })
@@ -164,7 +174,12 @@ export class BackgroundBitcoinTransferController {
           changeReservation: plan.changeReservation,
           inputReservation: plan.inputReservation,
           requiredConfirmations: this.options.requiredConfirmations,
-          signingMode: context.keyDomainSource.kind === 'hardware' ? 'keystone' : 'internal',
+          signingMode:
+            context.keyDomainSource.kind === 'hardware'
+              ? context.keyDomainSource.vendor === 'ledger'
+                ? 'ledger'
+                : 'keystone'
+              : 'internal',
           ...(nearIntentsBinding === undefined ? {} : { nearIntentsBinding }),
           ...(rheaSwapBinding === undefined ? {} : { rheaSwapBinding })
         })
@@ -210,9 +225,23 @@ export class BackgroundBitcoinTransferController {
     const transactionId = parseTransactionId(transactionIdValue)
     return accountContextTransition.runActiveOperation(async () => {
       const context = await this.requireActiveHardwareContext()
-      return this.options.orchestrator.getExternalSigningRequest({
+      const request = await this.options.orchestrator.getExternalSigningRequest({
         scope: context.chainAccount.scope,
         transactionId
+      })
+      if (!request || request.vendor !== 'ledger') return request
+      if (!this.options.resolveLedgerSigner) throw new Error('Ledger Bitcoin signer is unavailable')
+      if (request.request.encoding !== 'base64' || typeof request.request.value !== 'string') {
+        throw new Error('Invalid Ledger Bitcoin PSBT request')
+      }
+      const signer = await this.options.resolveLedgerSigner(context)
+      return Object.freeze({
+        ...request,
+        ledgerRequest: Object.freeze({
+          kind: 'psbt' as const,
+          psbtBase64: request.request.value,
+          ...signer
+        })
       })
     })
   }
@@ -296,10 +325,11 @@ export class BackgroundBitcoinTransferController {
     const context = await this.requireActiveContext()
     if (
       context.keyDomainSource.kind !== 'hardware' ||
-      context.keyDomainSource.vendor !== 'keystone' ||
+      (context.keyDomainSource.vendor !== 'keystone' &&
+        context.keyDomainSource.vendor !== 'ledger') ||
       !context.keyDomainSource.capabilities.includes('bitcoin')
     ) {
-      throw new Error('The active Wallet is not a Bitcoin-capable Keystone Wallet')
+      throw new Error('The active Wallet is not a Bitcoin-capable hardware Wallet')
     }
     return context
   }

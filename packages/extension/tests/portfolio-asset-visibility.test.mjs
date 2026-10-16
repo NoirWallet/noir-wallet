@@ -33,7 +33,19 @@ test.describe('Portfolio asset-mode visibility', () => {
     ).toBe(false)
   })
 
-  test('keeps only zero-balance native BTC and Ethereum ETH as empty-state actions', () => {
+  test('keeps zero-balance native ZEC, BTC and Ethereum ETH as empty-state actions', () => {
+    expect(
+      isAssetVisibleInAssetView(
+        chain('bip122:zcash-mainnet', 'zcash', 'Zcash'),
+        asset({ symbol: 'ZEC' })
+      )
+    ).toBe(true)
+    expect(
+      isAssetVisibleInAssetView(
+        chain('bip122:zcash-testnet', 'zcash', 'Zcash Testnet'),
+        asset({ symbol: 'ZEC' })
+      )
+    ).toBe(true)
     expect(
       isAssetVisibleInAssetView(
         chain('bip122:mainnet', 'bitcoin', 'Bitcoin'),
@@ -52,5 +64,21 @@ test.describe('Portfolio asset-mode visibility', () => {
         asset({ symbol: 'SOL' })
       )
     ).toBe(false)
+  })
+
+  test('shows a selected network native asset at zero without exposing empty tokens', () => {
+    const arbitrum = chain('eip155:42161', 'evm', 'Arbitrum')
+    const options = { includeZeroBalanceNativeAssets: true }
+    expect(isAssetVisibleInAssetView(arbitrum, asset({ symbol: 'ETH' }), options)).toBe(true)
+    expect(
+      isAssetVisibleInAssetView(arbitrum, asset({ kind: 'token', symbol: 'USDC' }), options)
+    ).toBe(false)
+    expect(isAssetVisibleInAssetView(arbitrum, asset({ kind: 'token', symbol: 'ZEC' }))).toBe(false)
+    expect(
+      isAssetVisibleInAssetView(
+        chain('eip155:11155111', 'evm', 'Ethereum Sepolia'),
+        asset({ symbol: 'ETH' })
+      )
+    ).toBe(true)
   })
 })

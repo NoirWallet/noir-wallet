@@ -308,6 +308,22 @@ export const zcashWalletRuntimeClient = Object.freeze({
     return addresses as AccountAddresses
   },
 
+  async setShieldedReceiveAddress(
+    walletId: string,
+    accountId: string,
+    shielded: string
+  ): Promise<AccountAddresses> {
+    const response = await expectSuccess(
+      { type: 'SET_ZCASH_SHIELDED_ADDRESS', walletId, accountId, shielded },
+      'Unable to select shielded receive address'
+    )
+    const addresses = response.addresses
+    if (typeof addresses !== 'object' || addresses === null || Array.isArray(addresses)) {
+      throw new Error('Wallet Background returned invalid Zcash addresses')
+    }
+    return addresses as AccountAddresses
+  },
+
   requestSync(): void {
     void chrome.runtime.sendMessage({ type: 'BACKGROUND_SYNC' }).catch(() => {})
   },

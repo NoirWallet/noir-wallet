@@ -189,7 +189,8 @@ export function getAvailablePortfolioAssetGroupUsdValue(
 
 export function buildPortfolioAssetGroups(
   chains: readonly PortfolioChainView[],
-  prices: AssetPriceReadModel | null
+  prices: AssetPriceReadModel | null,
+  options: { readonly includeZeroBalanceNativeAssets?: boolean } = {}
 ): readonly PortfolioAssetGroup[] {
   const groups = new Map<
     string,
@@ -203,7 +204,7 @@ export function buildPortfolioAssetGroups(
 
   for (const chain of chains) {
     for (const asset of chain.assets) {
-      if (!isAssetVisibleInAssetView(chain.chain, asset)) continue
+      if (!isAssetVisibleInAssetView(chain.chain, asset, options)) continue
       const bundled = asset.source !== 'user-added'
       const key = `asset:${asset.asset.id}`
       const group = groups.get(key) ?? {

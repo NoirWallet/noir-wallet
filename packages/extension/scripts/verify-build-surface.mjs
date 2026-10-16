@@ -2,6 +2,7 @@ import { readdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import ts from 'typescript'
+import { collectLedgerDependencyNotices } from './lib/ledger-dependency-notices.mjs'
 
 import {
   inspectWasmBindgenPackage,
@@ -38,6 +39,17 @@ const testHarnessFiles = [
 ]
 const extensionDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
+async function verifyBundledLedgerLicenses() {
+  for (const notice of collectLedgerDependencyNotices(extensionDirectory)) {
+    const bundled = await readFile(path.join(outputDirectory, notice.fileName))
+    if (!bundled.equals(notice.source)) {
+      throw new Error(
+        `Bundled dependency notice differs from the installed package: ${notice.fileName}`
+      )
+    }
+  }
+}
+
 async function verifyPackagedWasm({ directory, moduleName, engine, schemaVersion, sourceCommit }) {
   const manifest = JSON.parse(await readFile(path.join(directory, 'wasm-integrity.json'), 'utf8'))
   const [verifiedManifest, inspection] = await Promise.all([
@@ -59,12 +71,13 @@ async function verifyPackagedWasm({ directory, moduleName, engine, schemaVersion
 }
 
 await Promise.all([
+  verifyBundledLedgerLicenses(),
   verifyPackagedWasm({
     directory: path.join(extensionDirectory, 'src/lib/wasm-pkg'),
     moduleName: 'zcash_wallet_wasm',
     engine: 'zcash',
     schemaVersion: 3,
-    sourceCommit: '9c0e25267645a7ef08cb7248529de51fc9a304ef'
+    sourceCommit: '7d6921d51b9fe4f4a13b8886481a9a098d6f1e7f'
   }),
   verifyPackagedWasm({
     directory: path.join(extensionDirectory, 'src/infrastructure/generated/wasm/multichain'),

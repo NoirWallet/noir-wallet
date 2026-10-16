@@ -15,7 +15,7 @@ export function keySourceSupportsChainFamily(
     )
   }
   if (source.vendor === 'ledger') {
-    return family === 'zcash' && source.capabilities.includes('zcash')
+    return family !== 'tron' && source.capabilities.includes(family)
   }
   if (source.vendor !== 'keystone') return false
   if (family === 'zcash') return source.capabilities.includes('zcash')
@@ -36,7 +36,7 @@ export function keySourceSupportsAddressFamily(
     )
   }
   if (source.vendor === 'ledger') {
-    return family === 'zcash' && source.capabilities.includes('zcash')
+    return family !== 'tron' && source.capabilities.includes(family)
   }
   if (source.vendor !== 'keystone') return false
   const capability = family === 'evm' ? 'evm' : family === 'bitcoin' ? 'bitcoin' : family

@@ -12,6 +12,7 @@ import {
   resolveReleasedChainEndpointSettings
 } from '@/core/chains/evm-runtime-config'
 import { getBitcoinChainId, getZcashChainId, parseChainId } from '@/core/chains/registry'
+import { assertDisabledChainEndpointsUnchanged } from '@/core/chains/disabled-chain-endpoint-policy'
 import {
   findBuiltinEvmNetworkConfig,
   getNearNetworkConfig,
@@ -34,6 +35,7 @@ import { IndexedDbTransactionRepository } from '@/infrastructure/persistence/rep
 import { credentialLifecycle } from './credential-lifecycle'
 import { dappManager } from '@/core/dapp/dapp-manager'
 import {
+  resolveBitcoinFeatureRuntimePolicy,
   resolveNearFeatureRuntimePolicy,
   resolveSolanaFeatureRuntimePolicy
 } from '@/core/chains/feature-runtime-policy'
@@ -113,11 +115,19 @@ export class ChainEndpointSettingsCoordinator {
     const nearEnabled = resolveNearFeatureRuntimePolicy(
       __ENABLED_CHAIN_FEATURE_FLAGS__
     ).newOperationsEnabled
+    const bitcoinEnabled = resolveBitcoinFeatureRuntimePolicy(
+      __ENABLED_CHAIN_FEATURE_FLAGS__
+    ).newOperationsEnabled
+    assertDisabledChainEndpointsUnchanged(currentSettings, settings, [
+      ...(!bitcoinEnabled ? [getBitcoinChainId(DEFAULT_NETWORK)] : []),
+      ...(!solanaEnabled ? [solanaNetwork.chainId] : []),
+      ...(!nearEnabled ? [nearNetwork.chainId] : [])
+    ])
     const supportedChainIds = new Set([
       getZcashChainId(DEFAULT_NETWORK),
       getBitcoinChainId(DEFAULT_NETWORK),
-      ...(solanaEnabled ? [solanaNetwork.chainId] : []),
-      ...(nearEnabled ? [nearNetwork.chainId] : []),
+      solanaNetwork.chainId,
+      nearNetwork.chainId,
       ...catalog.map(network => network.chainId)
     ])
     const unsupportedOverride = [...settings.overrides, ...(settings.savedRpcEndpoints ?? [])].find(

@@ -6,7 +6,7 @@ import { Tooltip } from '../ui/tooltip'
 import { cn } from '@/lib/utils'
 
 const CONFIRMING_TOOLTIP =
-  'Included in total balance but not yet spendable. Wallet-created funds require 3 confirmations; externally received funds require 10.'
+  'Included in total balance but not yet spendable. Funds become available after 3 confirmations and wallet synchronization.'
 
 interface BalanceWithPendingProps {
   amount: string

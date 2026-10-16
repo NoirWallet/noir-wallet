@@ -40,6 +40,7 @@ import {
 import type { TransactionRepository } from '@/ports/repositories'
 import { SolanaMultichainSigningClient as SolanaSigner } from '@/infrastructure/keyring/multichain/solana-signing-client'
 import { credentialSession } from './credential-session'
+import { solanaLedgerSigningBridge } from './ledger-signing-bridge'
 import {
   loadActiveSolanaTransferContext,
   type ActiveSolanaTransferContext
@@ -62,6 +63,7 @@ type PendingSolanaExecution = Readonly<{
   graphSuffix: string
   graphCreatedAt: number
   binding: RheaSwapTransactionBinding
+  ledgerTransaction?: string
   signedTransaction?: string
   sourceHash?: string
 }>
@@ -105,7 +107,7 @@ function parsePending(value: unknown): PendingSolanaExecution {
     'graphCreatedAt',
     'binding'
   ]
-  const allowed = new Set([...required, 'signedTransaction', 'sourceHash'])
+  const allowed = new Set([...required, 'ledgerTransaction', 'signedTransaction', 'sourceHash'])
   if (
     record.schemaVersion !== 1 ||
     required.some(key => !Object.prototype.hasOwnProperty.call(record, key)) ||
@@ -135,6 +137,12 @@ function parsePending(value: unknown): PendingSolanaExecution {
   const chainId = readString(record.chainId, 'Solana chain', 64)
   if (!chainId.startsWith('solana:')) throw new Error('Stored RHEA Swap Solana chain is invalid')
   const sender = parseSolanaPublicKey(readString(record.sender, 'Solana sender', 64))
+  const ledgerTransaction =
+    record.ledgerTransaction === undefined
+      ? undefined
+      : readString(record.ledgerTransaction, 'Ledger Solana transaction', 2_464)
+  if (ledgerTransaction !== undefined)
+    parseCanonicalBase64(ledgerTransaction, 1_232, 'Ledger Solana transaction')
   const signedTransaction =
     record.signedTransaction === undefined
       ? undefined
@@ -167,6 +175,7 @@ function parsePending(value: unknown): PendingSolanaExecution {
     graphSuffix: readString(record.graphSuffix, 'RHEA Swap Solana graph suffix', 80),
     graphCreatedAt: record.graphCreatedAt as number,
     binding: parseRheaSwapTransactionBinding(record.binding),
+    ...(ledgerTransaction === undefined ? {} : { ledgerTransaction }),
     ...(signedTransaction === undefined ? {} : { signedTransaction, sourceHash })
   })
 }
@@ -217,6 +226,7 @@ export interface RheaSwapSolanaCoordinatorOptions {
 export class RheaSwapSolanaCoordinator {
   private readonly now: () => number
   private readonly createId: () => string
+  private readonly confirming = new Set<string>()
 
   constructor(private readonly options: RheaSwapSolanaCoordinatorOptions) {
     this.now = options.now ?? Date.now
@@ -229,7 +239,7 @@ export class RheaSwapSolanaCoordinator {
   ): Promise<RheaSwapSolanaTransactionReview> {
     const plan = await this.options.service.readSolanaTransactionPlan(quoteHandle)
     const binding = parseRheaSwapTransactionBinding(bindingValue)
-    const { context, sender } = await this.loadSoftwareContext()
+    const { context, sender } = await this.loadSupportedContext()
     this.assertBinding(plan, binding, sender)
     if (plan.format.toLowerCase() !== 'base64') {
       throw new Error('RHEA Swap Solana transaction format is not supported')
@@ -252,7 +262,12 @@ export class RheaSwapSolanaCoordinator {
       transaction: plan.transaction
     })
     if (
-      prepared.execution.kind !== 'internal' ||
+      (context.keyDomainSource.kind === 'hardware'
+        ? context.keyDomainSource.vendor !== 'ledger' ||
+          prepared.execution.kind !== 'external' ||
+          prepared.execution.request.encoding !== 'base64' ||
+          prepared.execution.request.value !== plan.transaction
+        : prepared.execution.kind !== 'internal') ||
       prepared.summary.schema !== 'solana.transaction.v1' ||
       !prepared.summary.fields.requiredSigners.includes(sender) ||
       (plan.metadata.recentBlockhash !== null &&
@@ -281,7 +296,10 @@ export class RheaSwapSolanaCoordinator {
       expiresAt: Math.min(prepared.expiresAt, binding.expiresAt),
       graphSuffix: this.createId(),
       graphCreatedAt: this.now(),
-      binding
+      binding,
+      ...(context.keyDomainSource.kind === 'hardware'
+        ? { ledgerTransaction: plan.transaction }
+        : {})
     })
     try {
       await this.options.pending.put(pending)
@@ -303,10 +321,25 @@ export class RheaSwapSolanaCoordinator {
   }
 
   async confirm(quoteHandle: string, fingerprint: string): Promise<RheaSwapSignedOrderResult> {
+    if (this.confirming.has(quoteHandle))
+      throw new Error('RHEA Swap Solana confirmation is already in progress')
+    this.confirming.add(quoteHandle)
+    try {
+      return await this.confirmOnce(quoteHandle, fingerprint)
+    } finally {
+      this.confirming.delete(quoteHandle)
+    }
+  }
+
+  private async confirmOnce(
+    quoteHandle: string,
+    fingerprint: string
+  ): Promise<RheaSwapSignedOrderResult> {
     let pending = await this.requirePending(quoteHandle, fingerprint)
-    const { context, sender } = await this.loadSoftwareContext()
+    const { context, sender } = await this.loadSupportedContext()
     if (
       sender !== pending.sender ||
+      context.chainAccount.scope.chainId !== pending.chainId ||
       context.chainAccount.scope.keyDomainId !== pending.scope.keyDomainId ||
       context.chainAccount.scope.accountId !== pending.scope.accountId
     ) {
@@ -315,6 +348,12 @@ export class RheaSwapSolanaCoordinator {
     if (!pending.signedTransaction || !pending.sourceHash) {
       const plan = await this.options.service.readSolanaTransactionPlan(quoteHandle)
       this.assertBinding(plan, pending.binding, sender)
+      if (
+        pending.ledgerTransaction !== undefined &&
+        plan.transaction !== pending.ledgerTransaction
+      ) {
+        throw new Error('RHEA Swap Solana transaction changed after Ledger review')
+      }
       const signed = await this.options.signer.confirm(pending.scope.keyDomainId, pending.commandId)
       if (
         signed.kind !== 'signed-payload' ||
@@ -418,17 +457,18 @@ export class RheaSwapSolanaCoordinator {
     }
   }
 
-  private async loadSoftwareContext(): Promise<{
+  private async loadSupportedContext(): Promise<{
     context: ActiveSolanaTransferContext
     sender: string
   }> {
     const context = await this.options.loadContext()
     if (
       !context ||
-      context.keyDomainSource.kind === 'hardware' ||
+      (context.keyDomainSource.kind === 'hardware' &&
+        context.keyDomainSource.vendor !== 'ledger') ||
       context.chainAccount.identity.kind !== 'account-identifier'
     ) {
-      throw new Error('RHEA Swap Solana execution requires an active software Account')
+      throw new Error('RHEA Swap Solana execution requires an active software or Ledger Account')
     }
     return Object.freeze({
       context,
@@ -523,7 +563,11 @@ export function createBackgroundRheaSwapSolanaCoordinator(
   const rpc = createConfiguredSolanaRpcClient({ chainId: network.chainId, rpcUrl: network.rpcUrl })
   return new RheaSwapSolanaCoordinator({
     service,
-    signer: new SolanaSigner({ credentials: credentialSession, rpc }),
+    signer: new SolanaSigner({
+      credentials: credentialSession,
+      rpc,
+      ledger: solanaLedgerSigningBridge
+    }),
     rpc,
     pending: new ChromeSessionRheaSwapSolanaStore(),
     repository: new IndexedDbTransactionRepository(),

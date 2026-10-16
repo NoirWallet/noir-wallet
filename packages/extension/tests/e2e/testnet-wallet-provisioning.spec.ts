@@ -256,7 +256,8 @@ test('imports 24 words and extends the testnet wallet tree without crossing netw
     .toEqual({ active: true })
 
   await popup.getByRole('button', { name: 'Add Wallet' }).click()
-  await popup.getByRole('button', { name: 'Import Secret Phrase' }).click()
+  await popup.getByRole('button', { name: 'Import Wallet', exact: true }).click()
+  await popup.getByRole('button', { name: 'Secret Recovery Phrase', exact: true }).click()
   await popup.getByRole('radio', { name: '12 words' }).click()
   await popup.getByRole('button', { name: 'Continue' }).click()
   await enterMnemonic(popup, TEST_MNEMONIC_12)

@@ -301,13 +301,7 @@ test.describe('CAIP-2 chain registry', () => {
         SOLANA_CHAIN_FEATURE_FLAG,
         NEAR_CHAIN_FEATURE_FLAG
       ])
-    ).toEqual([
-      ZCASH_CHAIN_FEATURE_FLAG,
-      EVM_CHAIN_FEATURE_FLAG,
-      BITCOIN_CHAIN_FEATURE_FLAG,
-      SOLANA_CHAIN_FEATURE_FLAG,
-      NEAR_CHAIN_FEATURE_FLAG
-    ])
+    ).toEqual([ZCASH_CHAIN_FEATURE_FLAG, EVM_CHAIN_FEATURE_FLAG])
     expect(
       parseEnabledChainFeatureFlags(undefined, [ZCASH_CHAIN_FEATURE_FLAG, 'chain.evm'])
     ).toEqual([ZCASH_CHAIN_FEATURE_FLAG, 'chain.evm'])

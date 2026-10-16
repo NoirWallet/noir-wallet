@@ -11,6 +11,7 @@ import { useWalletStore } from '@/store/wallet-store'
 import { zcashWalletRuntimeClient } from '@/popup/services/zcash-wallet-runtime-client'
 import { formatAccountName, getAccountDisplayName } from '@/lib/format'
 import { toast } from '@/store/toast-store'
+import { useResyncZcash } from '../../hooks/useResyncZcash'
 
 export function AccountDetail() {
   const { navigate, goBack } = useNavigate()
@@ -18,7 +19,8 @@ export function AccountDetail() {
   const accountId = searchParams.get('accountId')
   const walletId = searchParams.get('walletId')
   const { alert, confirm } = useDialog()
-  const { accountDisplayNames, wallets } = useWalletStore()
+  const { accountDisplayNames, wallets, currentWalletId, currentAccountId } = useWalletStore()
+  const openResyncZcash = useResyncZcash()
 
   const wallet = walletId ? wallets.find(w => w.id === walletId) : null
   const account = wallet && accountId ? wallet.accounts.find(a => a.id === accountId) : null
@@ -54,6 +56,7 @@ export function AccountDetail() {
   }
 
   const isHardwareWallet = isZcashHardwareKeySource(wallet?.keySource)
+  const isCurrentAccount = wallet.id === currentWalletId && account.id === currentAccountId
 
   const menuItems = [
     {
@@ -119,6 +122,15 @@ export function AccountDetail() {
         }
       }
     },
+    ...(isCurrentAccount
+      ? [
+          {
+            label: 'Resync Zcash',
+            icon: <Icon icon="lucide:refresh-cw" width={16} height={16} />,
+            action: () => openResyncZcash(wallet.id, account.id, account.birthdayHeight || 0)
+          }
+        ]
+      : []),
     {
       label: 'Remove account',
       danger: true,

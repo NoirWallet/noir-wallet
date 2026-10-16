@@ -18,6 +18,8 @@ These vectors are public and may be swept automatically. Never request or store 
 
 `0x1111111111111111111111111111111111111111` is a deterministic EVM recipient, not a controlled test wallet.
 
+`public-ledger-signing-vectors` uses public 32-byte secp256k1 scalars filled with `03`, BIP-32 master seeds of 64 bytes filled with `03` or 32 bytes filled with `05`, and 32-byte Ed25519 seeds filled with `07` or `08`. These permanently unfunded vectors exercise Ledger public-export validation, isolated MV3 provisioning, PSBT/BIP-322 verification, and Solana/NEAR signature verification. They never stand in for a physical device export or a funded integration wallet.
+
 ## Funded Testnet Slots
 
 | Slot                 | Network                        | Local registry variable                       | Intended use                                                                                                         |

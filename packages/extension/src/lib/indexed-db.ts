@@ -713,34 +713,63 @@ export async function loadTransactions(key: string): Promise<Transaction[]> {
  */
 export async function mutateTransactions(
   key: string,
-  updater: (transactions: Transaction[]) => Transaction[]
+  updater: (transactions: Transaction[]) => Transaction[],
+  signal?: AbortSignal
 ): Promise<Transaction[]> {
+  signal?.throwIfAborted()
   const db = await getConnection()
+  signal?.throwIfAborted()
 
   return new Promise((resolve, reject) => {
     const transaction = db.transaction(TRANSACTIONS_STORE_NAME, 'readwrite')
     const store = transaction.objectStore(TRANSACTIONS_STORE_NAME)
-    const request = store.get(key)
     let updatedTransactions: Transaction[] = []
     let updateError: unknown
-
-    request.onsuccess = () => {
+    const abort = () => {
       try {
-        updatedTransactions = updater(normalizeTransactions(request.result))
-        store.put(updatedTransactions, key)
-      } catch (error) {
-        updateError = error
         transaction.abort()
+      } catch (error) {
+        if (!(error instanceof DOMException && error.name === 'InvalidStateError')) throw error
       }
     }
+    const cleanup = () => signal?.removeEventListener('abort', abort)
 
     transaction.oncomplete = () => {
+      cleanup()
       console.log(`[IndexedDB] Updated ${updatedTransactions.length} transactions for key: ${key}`)
       resolve(updatedTransactions)
     }
-    transaction.onerror = () => reject(transaction.error)
-    transaction.onabort = () =>
-      reject(updateError ?? transaction.error ?? new Error('Transaction update aborted'))
+    transaction.onerror = () => {
+      cleanup()
+      reject(signal?.aborted ? signal.reason : transaction.error)
+    }
+    transaction.onabort = () => {
+      cleanup()
+      reject(
+        signal?.aborted
+          ? signal.reason
+          : (updateError ?? transaction.error ?? new Error('Transaction update aborted'))
+      )
+    }
+    signal?.addEventListener('abort', abort, { once: true })
+    if (signal?.aborted) {
+      abort()
+      return
+    }
+
+    const request = store.get(key)
+
+    request.onsuccess = () => {
+      try {
+        signal?.throwIfAborted()
+        updatedTransactions = updater(normalizeTransactions(request.result))
+        signal?.throwIfAborted()
+        store.put(updatedTransactions, key)
+      } catch (error) {
+        updateError = error
+        abort()
+      }
+    }
   })
 }
 
@@ -765,22 +794,54 @@ export async function deleteTransactions(key: string): Promise<void> {
 }
 
 /**
- * Save recent transparent transaction details used to reconstruct receive history.
+ * Merge transaction bodies used to reconstruct transparent history and recipients.
  */
 export async function saveTransparentTxCache(
   key: string,
-  transactions: ReadonlyMap<string, VerboseTransaction>
+  transactions: ReadonlyMap<string, VerboseTransaction>,
+  signal?: AbortSignal
 ): Promise<void> {
+  signal?.throwIfAborted()
   const db = await getConnection()
-  const value = Object.fromEntries(transactions)
+  signal?.throwIfAborted()
 
   return new Promise((resolve, reject) => {
     const transaction = db.transaction(TRANSPARENT_TRANSACTION_CACHE_STORE_NAME, 'readwrite')
-    transaction.objectStore(TRANSPARENT_TRANSACTION_CACHE_STORE_NAME).put(value, key)
-    transaction.oncomplete = () => resolve()
-    transaction.onerror = () => reject(transaction.error)
-    transaction.onabort = () =>
-      reject(transaction.error || new Error('Transparent transaction cache save aborted'))
+    const store = transaction.objectStore(TRANSPARENT_TRANSACTION_CACHE_STORE_NAME)
+    const abort = () => {
+      try {
+        transaction.abort()
+      } catch (error) {
+        if (!(error instanceof DOMException && error.name === 'InvalidStateError')) throw error
+      }
+    }
+    signal?.addEventListener('abort', abort, { once: true })
+    transaction.oncomplete = () => {
+      signal?.removeEventListener('abort', abort)
+      resolve()
+    }
+    transaction.onerror = () => {
+      signal?.removeEventListener('abort', abort)
+      reject(transaction.error)
+    }
+    transaction.onabort = () => {
+      signal?.removeEventListener('abort', abort)
+      reject(
+        signal?.aborted
+          ? signal.reason
+          : transaction.error || new Error('Transparent transaction cache save aborted')
+      )
+    }
+    if (signal?.aborted) abort()
+    else {
+      const request = store.get(key)
+      request.onsuccess = () => {
+        if (signal?.aborted) return
+        // Receive and recipient recovery may write different bodies concurrently.
+        const cached = normalizeTransparentTxCache(request.result)
+        store.put({ ...cached, ...Object.fromEntries(transactions) }, key)
+      }
+    }
   })
 }
 

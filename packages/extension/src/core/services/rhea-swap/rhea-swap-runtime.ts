@@ -356,7 +356,7 @@ export function parseRheaSwapToken(value: unknown): RheaSwapToken {
       'rheaAddress',
       'isNative'
     ],
-    [],
+    ['sources'],
     'RHEA Swap token'
   )
   const chain = readChainRef(value.rheaChainId, 'RHEA Swap token chain')
@@ -374,7 +374,12 @@ export function parseRheaSwapToken(value: unknown): RheaSwapToken {
     value.price < 0 ||
     typeof value.isNative !== 'boolean' ||
     (value.contractAddress !== null && typeof value.contractAddress !== 'string') ||
-    (value.icon !== null && (typeof value.icon !== 'string' || !value.icon.startsWith('https://')))
+    (value.icon !== null &&
+      (typeof value.icon !== 'string' || !value.icon.startsWith('https://'))) ||
+    (value.sources !== undefined &&
+      (!Array.isArray(value.sources) ||
+        value.sources.length > 32 ||
+        value.sources.some(source => typeof source !== 'string')))
   ) {
     throw new Error('RHEA Swap token metadata is invalid')
   }
@@ -390,7 +395,12 @@ export function parseRheaSwapToken(value: unknown): RheaSwapToken {
     rheaChainId: chain,
     tokenListChainId: descriptor.tokenListChainId,
     rheaAddress: readString(value.rheaAddress, 'RHEA Swap token address'),
-    isNative: value.isNative
+    isNative: value.isNative,
+    sources: Object.freeze(
+      (value.sources ?? []).map((source: unknown) =>
+        readString(source, 'RHEA Swap token source', 64)
+      )
+    )
   })
 }
 

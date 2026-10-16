@@ -52,6 +52,7 @@ export default defineConfig({
         'e2e/keystone-v1-upgrade.spec.ts',
         'e2e/mixed-v1-upgrade.spec.ts',
         'e2e/v1-golden-upgrade.spec.ts',
+        'e2e/ledger-v2-provisioning.spec.ts',
         'e2e/asset-price-live.spec.ts',
         'e2e/storage-migration.spec.ts',
         'e2e/storage-quarantine.spec.ts',

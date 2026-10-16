@@ -238,7 +238,11 @@ export class BackgroundSolanaDAppHandler {
     tabInfo: NativeTransferDAppTabInfo
   ): Promise<string> {
     const active = await this.options.loadAuthorizedAccount(origin)
-    if (active.context.keyDomainSource.kind === 'hardware') {
+    if (
+      active.context.keyDomainSource.kind === 'hardware' &&
+      (active.context.keyDomainSource.vendor !== 'ledger' ||
+        !active.context.keyDomainSource.capabilities.includes('solana'))
+    ) {
       throw new NativeTransferProviderError(
         4200,
         'Solana dApp signing is not available for Keystone Wallets.'
@@ -288,7 +292,12 @@ export class BackgroundSolanaDAppHandler {
             'The active Solana account changed. Review the transaction again.'
           )
         }
-        return this.options.signer.confirm(active.reference.walletId, prepared.commandId)
+        return this.options.signer.confirm(
+          active.reference.walletId,
+          prepared.commandId,
+          undefined,
+          origin
+        )
       })
       confirmed = true
       if (signed.kind !== 'signed-payload' || signed.payload.encoding !== 'base64') {
@@ -344,7 +353,7 @@ export class BackgroundSolanaDAppHandler {
     if (active.context.keyDomainSource.kind === 'hardware') {
       throw new NativeTransferProviderError(
         4200,
-        'Solana dApp signing is not available for Keystone Wallets.'
+        'Solana message signing is not available for this hardware wallet.'
       )
     }
     const prepared = await this.options.signer.prepare(active.reference.walletId, {

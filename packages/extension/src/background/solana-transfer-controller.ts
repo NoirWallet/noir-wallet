@@ -230,7 +230,9 @@ export class BackgroundSolanaTransferController {
     const context = await this.options.loadActiveContext()
     if (!context) throw new Error('The active Account has no Solana ChainAccount')
     if (
-      context.keyDomainSource.kind === 'hardware' ||
+      (context.keyDomainSource.kind === 'hardware' &&
+        (context.keyDomainSource.vendor !== 'ledger' ||
+          !context.keyDomainSource.capabilities.includes('solana'))) ||
       (context.keyDomainSource.kind === 'private-key' &&
         context.keyDomainSource.chainFamily !== 'solana')
     ) {

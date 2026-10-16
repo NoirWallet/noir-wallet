@@ -2,6 +2,8 @@
 
 This runbook covers V2 extension previews and the V2 inputs to the shared release process. [Extension CI](../.github/workflows/extension-ci.yml) checks V2 pull requests and creates development inspection artifacts. Beta and production candidates are prepared by the trusted [manual release workflow on `main`](https://github.com/NoirWallet/noir-wallet/blob/main/.github/workflows/extension-release.yml). The [SDK workflow](../.github/workflows/sdk.yml) validates the SDK and example separately; the [documentation workflow](../.github/workflows/docs.yml) validates documentation without deploying it. Maintainers submit to the Chrome Web Store manually.
 
+On repeated PR pushes, SDK and documentation verification reuse a prior successful run only when the target branch commit and relevant inputs are unchanged. A failed, cancelled, or incomparable run performs the checks again.
+
 ## Branches and Versions
 
 - Feature and fix PRs merge into `v2`. PRs that change extension code, tests, WASM, the EVM history Worker, or related build and test inputs automatically run Extension CI and build a development extension. New commits cancel older runs for the same PR; no preview label is needed. Changes limited to Markdown documentation, SDK source, or unrelated tooling do not start Extension CI.
@@ -11,7 +13,7 @@ This runbook covers V2 extension previews and the V2 inputs to the shared releas
 
 ## Verification and Build
 
-The V2 PR preview runs:
+Extension CI installs dependencies, type-checks the EVM History Worker, runs `pnpm test`, and builds and packages the development extension:
 
 ```bash
 pnpm install --frozen-lockfile
@@ -22,11 +24,19 @@ pnpm build:extension
 
 `pnpm test` runs `packages/extension/tests/*.core.test.mjs` through Node.js's native test runner and the extension package's TypeScript loader. The extension build verifies both packaged Zcash and Multichain WASM integrity manifests and excludes E2E-only files. Existing `test:logic` Playwright logic tests and the `test:extension`, `test:release:default`, and `test:production-dist` browser tools remain available for local verification; they are not CI or release gates. `test:production-dist` uses test analytics/RHEA values and produces a local `dist/` that must not be published. For browser, MV3, storage, hardware, or network changes, maintainers should run the relevant local tools according to risk.
 
-PR builds use `BUILD_CHANNEL=development` and upload an explicitly named development artifact for inspection. Repository PR previews include `RHEA_SWAP_ACCESS_TOKEN` for Swap and fail if it is missing; fork previews receive no repository secrets and cannot use Swap. They are not Beta or production candidates. Manual Beta builds use `BUILD_CHANNEL=beta` and require the release repository's `RHEA_SWAP_ACCESS_TOKEN`; missing values fail the build. Production builds additionally require `GA_API_SECRET` and `CUSTOM_ANALYTICS_PASSWORD`. The repository variable `EVM_HISTORY_API_ORIGIN` may override the default public History proxy origin; it must be a credential-free HTTPS origin without a path or query. The Worker API key stays in a Worker secret and is not passed into the extension build.
+V2 PR builds use `BUILD_CHANNEL=development` with `BETA_INVITE_REQUIRED=1` so their download packages exercise invite activation. Repository PR previews include `RHEA_SWAP_ACCESS_TOKEN` for Swap and fail the build if it is missing. Fork PR previews receive no repository secrets and cannot use Swap. Preview packages are not Beta or production candidates. Manual Beta builds use `BUILD_CHANNEL=beta` and require the release repository's `RHEA_SWAP_ACCESS_TOKEN`; missing values fail the build. Production builds additionally require `GA_API_SECRET` and `CUSTOM_ANALYTICS_PASSWORD`. The repository variable `EVM_HISTORY_API_ORIGIN` may override the default public History proxy origin; it must be a credential-free HTTPS origin without a path or query. The Worker API key stays in a Worker secret and is not passed into the extension build.
+
+The default V2 build enables Zcash and EVM networks. Bitcoin, Solana, and NEAR remain deferred; their chain-selection entries show **Coming soon** and cannot start wallet operations. Use the default feature flags when preparing this Beta. Explicit `ENABLED_CHAIN_FEATURE_FLAGS` values are available for isolated implementation checks and must match their Playwright build profile; they do not change the default release scope.
+
+Beta builds require invite activation before wallet use, including installations upgraded from V1. An unused invite code is checked before wallet setup or unlock, then bound to the first wallet's first available account. Binding prefers its ordinary EVM address; Zcash-only hardware accounts use a transparent receive address. A successful bind completes activation. When the bind response explicitly confirms that the requested wallet address is already bound (`2004`, `wallet address has already been bound`), the extension restores activation for that address and continues. An already-used invite code remains an error, even though the service also uses `2004` for that conflict. Other failures preserve the wallet for retry or another code; `bound=true` on a code check alone never activates an installation.
+
+Activation persists locally for the installation across wallet reset and network changes. Activated wallets do not contact the invite service on each startup; uninstalling or clearing extension storage requires activation again. After checking an unused code and unlocking or setting up the wallet, the server's explicit confirmation of an existing address binding can restore activation, including after a lost successful response. Production builds disable the gate. For local development verification, set `BETA_INVITE_REQUIRED=1` with `BUILD_CHANNEL=development`; `BUILD_CHANNEL=beta` always enables it. Invite generation is an operator API operation: its management key must never be supplied to an extension build.
 
 The public History proxy serves only the existing Ankr History, EVM token discovery, and icon services. The client selects History adapters across chains; other chains request their own data sources directly. See the [Activity architecture](mutil-chain/architecture/transaction-lifecycle.md#6-local-first-activity-merge) for routing and cache fallback, and the [History proxy deployment](#history-proxy-deployment) for Worker configuration and deployment checks.
 
-The V2 package contains one ZIP for both runtime network modes, `SHA256SUMS`, release metadata, and a Release body. Extension CI has read-only permissions and only uploads an Actions artifact with three-day retention. The [trusted preview reporter on `main`](https://github.com/NoirWallet/noir-wallet/blob/main/.github/workflows/extension-preview-comment.yml) supplies the PR download comment and retains only the two newest verified preview artifacts per PR. Its update must merge into `main` before V2 PR comments and retention take effect. The trusted manual workflow packages Beta from the selected source commit and uses a separate write-scoped job when `publish_beta` is selected. Checkout steps use pinned Action SHAs with credential persistence disabled.
+Private broadcast uses the separate `/v1/zero-indexer-endpoints` endpoint on `https://rpc.zknoir.com`, maintained in `packages/rpc-registry/src/zero-indexer-registry.ts`. Broadcast nodes are excluded from the scheduled synchronization-RPC monitor. Deploying that registry is separate from publishing the extension; check its response when updating managed nodes. If the registry is unavailable, the extension uses its cache or bundled broadcast nodes. Wallet settings and recovery behavior are documented in the [broadcasting guide](../packages/docs/content/docs/wallet-guide/install-and-setup.mdx#transaction-broadcasting).
+
+The V2 package contains one ZIP for both runtime network modes, `SHA256SUMS`, release metadata, and a Release body. Extension CI has read-only permissions and only uploads an Actions artifact with three-day retention. The [trusted preview reporter on `main`](https://github.com/NoirWallet/noir-wallet/blob/main/.github/workflows/extension-preview-comment.yml) supplies the PR download comment, marks builds as in progress or ready against the current PR head, and retains only the two newest verified preview artifacts per PR. Package metadata records both the tested PR merge commit and the release-tools commit used for packaging. The trusted manual workflow packages Beta from the selected source commit and uses a separate write-scoped job when `publish_beta` is selected. Checkout steps use pinned Action SHAs with credential persistence disabled.
 
 ## WASM Package Updates
 
@@ -45,9 +55,9 @@ Develop and test the extension against the generated package, then submit its co
 
 ## Routine Previews
 
-1. Open a PR against `v2` and check **Extension CI**. Download the development package from its PR comment or **Actions → Extension CI** after the run succeeds. Downloads require GitHub sign-in and repository access, expire after three days, and are limited to the two newest verified artifacts per PR once the `main` reporter update is merged. Rerun Extension CI for the current PR commit if the package expires. Fork PRs receive no repository secrets.
+1. Open a PR against `v2` and check **Extension CI**. Download the development package from its PR comment or **Actions → Extension CI** after the run succeeds. Downloads require GitHub sign-in and repository access and expire after three days. Rerun Extension CI for the current PR commit if the package expires. Fork PRs receive no repository secrets.
 2. After source review, select `main` when opening **Prepare Extension Release** in Actions. Choose `beta` and set `source_ref` to `v2`, a reviewed but unmerged V2 branch, or its full commit SHA. Decide whether `publish_beta` should publish a GitHub prerelease; merging into `v2` is not required for Beta.
-3. Check Mainnet and Testnet Mode separately in a real isolated MV3 extension. Run browser and external-service checks locally; the workflow does not run them.
+3. Check Mainnet and Testnet Mode separately in a real isolated MV3 extension. Verify invite activation, unavailable chain selectors, and V1 Golden Profile upgrade compatibility using the same default flags as the Beta. Run browser and external-service checks locally; the workflow does not run them.
 
 There is no need to bump the version for each Beta. The manual run identity and source commit distinguish artifacts of the same version.
 
@@ -57,7 +67,7 @@ Production is prepared as a candidate and promoted through the trusted `main` wo
 
 ## Failure Recovery
 
-- PR test/build failure: fix the source and update the PR. An existing development artifact is not a release candidate.
+- PR check/build failure: fix the source and update the PR; Extension CI builds the new commit automatically. An existing development artifact is not a release candidate.
 - Missing Beta build input: configure `RHEA_SWAP_ACCESS_TOKEN` in the trusted release repository and rerun the manual workflow. Do not publish the PR development ZIP as Beta.
 - Incorrect selected source: start a new manual run against the intended V2 branch or full SHA; verify its source commit and checksums before publication.
 - Production candidate or publication failure: follow the recovery procedure in the shared release runbook. Do not move an existing published tag or replace its package.

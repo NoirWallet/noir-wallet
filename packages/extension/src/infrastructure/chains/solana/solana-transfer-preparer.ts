@@ -403,7 +403,9 @@ export async function assertSolanaTransferSigningMatchesPrepared(
   if (
     signing.chainId !== prepared.chainId ||
     signing.operation !== 'transaction' ||
-    signing.execution.kind !== 'internal' ||
+    (signing.execution.kind === 'external' &&
+      (signing.execution.request.encoding !== 'base64' ||
+        signing.execution.request.value !== prepared.transactionBase64)) ||
     signing.summary.schema !== 'solana.transaction.v1' ||
     signing.summary.review.level !== 'standard' ||
     signing.summary.review.issues.length !== 0 ||

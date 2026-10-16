@@ -111,6 +111,7 @@ export async function fetchWithTimeout(
     }
     return resp
   } catch (error) {
+    if (callerSignal?.aborted) throw callerSignal.reason
     if (error instanceof DOMException && error.name === 'AbortError' && controller.signal.aborted) {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : 'unknown'
       throw new FetchTimeoutError(url, timeoutMs)

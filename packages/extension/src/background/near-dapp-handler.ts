@@ -157,7 +157,11 @@ export class BackgroundNearDAppHandler {
   ): Promise<readonly string[]> {
     return this.options.runActiveOperation(async () => {
       const active = await this.options.loadAuthorizedAccount(origin)
-      if (active.context.keyDomainSource.kind === 'hardware') {
+      if (
+        active.context.keyDomainSource.kind === 'hardware' &&
+        (active.context.keyDomainSource.vendor !== 'ledger' ||
+          !active.context.keyDomainSource.capabilities.includes('near'))
+      ) {
         throw new NativeTransferProviderError(
           4200,
           'NEAR dApp signing is not available for Keystone Wallets.'
@@ -245,7 +249,9 @@ export class BackgroundNearDAppHandler {
           }
           const result = await this.options.signer.confirm(
             active.reference.walletId,
-            prepared.commandId
+            prepared.commandId,
+            undefined,
+            origin
           )
           confirmed = true
           if (result.kind !== 'signed-payload' || result.payload.encoding !== 'base64') {
@@ -283,7 +289,11 @@ export class BackgroundNearDAppHandler {
     tabInfo: NativeTransferDAppTabInfo
   ): Promise<Readonly<Record<string, string>>> {
     const active = await this.options.loadAuthorizedAccount(origin)
-    if (active.context.keyDomainSource.kind === 'hardware') {
+    if (
+      active.context.keyDomainSource.kind === 'hardware' &&
+      (active.context.keyDomainSource.vendor !== 'ledger' ||
+        !active.context.keyDomainSource.capabilities.includes('near'))
+    ) {
       throw new NativeTransferProviderError(
         4200,
         'NEAR dApp signing is not available for Keystone Wallets.'
@@ -330,7 +340,12 @@ export class BackgroundNearDAppHandler {
             'The active NEAR account changed. Review the message again.'
           )
         }
-        return this.options.signer.confirm(active.reference.walletId, prepared.commandId)
+        return this.options.signer.confirm(
+          active.reference.walletId,
+          prepared.commandId,
+          undefined,
+          origin
+        )
       })
       confirmed = true
       if (

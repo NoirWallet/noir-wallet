@@ -1,5 +1,5 @@
 import { Icon } from '@iconify/react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { PageHeader } from '../../components/common/PageHeader'
 import { useNavigate } from '../../provider/Router'
 import {
@@ -9,12 +9,25 @@ import {
 } from '@/lib/analytics/preferences'
 import { Switch } from '@/popup/components/ui/switch'
 import { toast } from '@/store/toast-store'
+import { SETTINGS_STORAGE_KEY } from '@/lib/wallet-settings-storage'
+import { parseZeroIndexerEnabled } from '@/config/zero-indexer-settings'
+import { sendZeroIndexerNodeMessage } from '@/popup/services/zero-indexer-node-client'
+import { selectedZeroIndexerNodeLabel } from '@/popup/services/zero-indexer-node-model'
+import {
+  ZERO_INDEXER_NODES_STORAGE_KEY,
+  ZERO_INDEXER_RUNTIME_STORAGE_KEY
+} from '@/config/zero-indexer-nodes'
 
 export function SecurityPrivacy() {
   const { navigate } = useNavigate()
   const [analyticsEnabled, setAnalyticsEnabled] = useState(DEFAULT_GOOGLE_ANALYTICS_ENABLED)
   const [isLoaded, setIsLoaded] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
+  const [zeroIndexerEnabled, setZeroIndexerEnabled] = useState(false)
+  const [zeroIndexerLoaded, setZeroIndexerLoaded] = useState(false)
+  const [zeroIndexerSaving, setZeroIndexerSaving] = useState(false)
+  const [broadcastNode, setBroadcastNode] = useState('Auto')
+  const enabledRevision = useRef(0)
 
   useEffect(() => {
     let active = true
@@ -28,6 +41,79 @@ export function SecurityPrivacy() {
       active = false
     }
   }, [])
+
+  useEffect(() => {
+    let active = true
+    let nodeRevision = 0
+    const loadNode = async () => {
+      const revision = ++nodeRevision
+      try {
+        const { status } = await sendZeroIndexerNodeMessage({
+          type: 'GET_ZERO_INDEXER_NODE_STATUS'
+        })
+        if (active && revision === nodeRevision)
+          setBroadcastNode(selectedZeroIndexerNodeLabel(status))
+      } catch {
+        // The node page provides retry and error feedback.
+      }
+    }
+    const onChanged = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
+      if (area === 'local' && changes[SETTINGS_STORAGE_KEY]) {
+        enabledRevision.current += 1
+        setZeroIndexerEnabled(parseZeroIndexerEnabled(changes[SETTINGS_STORAGE_KEY].newValue))
+      }
+      if (
+        (area === 'local' &&
+          (changes[ZERO_INDEXER_NODES_STORAGE_KEY] || changes[ZERO_INDEXER_RUNTIME_STORAGE_KEY])) ||
+        (area === 'session' && changes[ZERO_INDEXER_RUNTIME_STORAGE_KEY])
+      )
+        void loadNode()
+    }
+    chrome.storage.onChanged.addListener(onChanged)
+    const initialRevision = enabledRevision.current
+    void chrome.runtime
+      .sendMessage({ type: 'GET_ZERO_INDEXER_ENABLED' })
+      .then(response => {
+        if (!active) return
+        if (response?.success && typeof response.enabled === 'boolean') {
+          if (enabledRevision.current === initialRevision) setZeroIndexerEnabled(response.enabled)
+          setZeroIndexerLoaded(true)
+        } else {
+          toast.error('Could not load private broadcast preference')
+        }
+      })
+      .catch(() => {
+        if (active) toast.error('Could not load private broadcast preference')
+      })
+    void loadNode()
+    return () => {
+      active = false
+      chrome.storage.onChanged.removeListener(onChanged)
+    }
+  }, [])
+
+  const handleZeroIndexerToggle = async () => {
+    if (!zeroIndexerLoaded || zeroIndexerSaving) return
+    const revision = enabledRevision.current
+    setZeroIndexerSaving(true)
+    try {
+      const response = await chrome.runtime.sendMessage({
+        type: 'SET_ZERO_INDEXER_ENABLED',
+        enabled: !zeroIndexerEnabled
+      })
+      if (!response?.success || typeof response.enabled !== 'boolean') {
+        throw new Error(response?.error || 'Could not update private broadcast preference')
+      }
+      if (enabledRevision.current === revision) setZeroIndexerEnabled(response.enabled)
+      if (response.warning) toast.error(response.warning)
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : 'Could not update private broadcast preference'
+      )
+    } finally {
+      setZeroIndexerSaving(false)
+    }
+  }
 
   const handleAnalyticsToggle = async () => {
     if (!isLoaded || isSaving) return
@@ -64,6 +150,34 @@ export function SecurityPrivacy() {
 
         <div>
           <p className="text-xs text-muted mb-2 px-1">Privacy</p>
+          <section
+            aria-label="Private broadcast settings"
+            className="mb-3 overflow-hidden rounded-lg border border-white/10 bg-card"
+          >
+            <button
+              type="button"
+              role="switch"
+              aria-checked={zeroIndexerEnabled}
+              aria-label="Private broadcast"
+              disabled={!zeroIndexerLoaded || zeroIndexerSaving}
+              onClick={() => void handleZeroIndexerToggle()}
+              className="flex w-full items-center justify-between gap-4 p-4 text-left transition-colors hover:bg-white/5 disabled:opacity-50"
+            >
+              <span className="text-sm">Private broadcast</span>
+              <Switch checked={zeroIndexerEnabled} />
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate('/zero-indexer-nodes')}
+              className="flex w-full items-center justify-between gap-3 border-t border-white/10 px-4 py-3 text-left transition-colors hover:bg-white/5"
+            >
+              <span className="text-sm">Broadcast nodes</span>
+              <span className="flex min-w-0 items-center gap-2 text-xs text-muted">
+                <span className="max-w-28 truncate">{broadcastNode}</span>
+                <Icon icon="lucide:chevron-right" className="size-4 shrink-0" />
+              </span>
+            </button>
+          </section>
           <button
             type="button"
             role="switch"
