@@ -6,8 +6,7 @@ const shaPattern = /^[0-9a-f]{40}$/
 const positiveId = value => Number.isSafeInteger(value) && value > 0
 const previewName = prNumber =>
   new RegExp(`^noir-wallet-(development-)?v(\\d+)\\.\\d+\\.\\d+-pr\\.${prNumber}\\.[0-9a-f]{7}$`)
-const workflowPath = '.github/workflows/build-extension.yml'
-const checksPath = '.github/workflows/extension-checks.yml'
+const workflowPath = '.github/workflows/extension-ci.yml'
 
 async function pages(request, route, key) {
   const items = []
@@ -42,24 +41,20 @@ function previewArtifact(artifacts, run, prNumber) {
   return matches.length === 1 ? matches[0] : null
 }
 
-function commentBody(repository, run, artifact, previousIsSameHead, forkPreview) {
+function commentBody(repository, run, artifact, forkPreview) {
   const root = `https://github.com/${repository}`
-  const build = run.path === workflowPath
-  const previousPackage = previousIsSameHead
-    ? 'This run has no new package; check earlier build runs for this commit.'
-    : 'Any previous packages belong to older commits.'
   const lines = [
     `<!-- noir-extension-preview:${run.id}:${run.run_attempt} -->`,
     '## Extension test package',
     '',
     `PR commit: [\`${run.head_sha.slice(0, 7)}\`](${root}/commit/${run.head_sha})`,
-    `${build ? 'Build' : 'Checks'}: [${run.id}, attempt ${run.run_attempt}](${root}/actions/runs/${run.id}/attempts/${run.run_attempt})`,
+    `Extension CI: [${run.id}, attempt ${run.run_attempt}](${root}/actions/runs/${run.id}/attempts/${run.run_attempt})`,
     ''
   ]
   if (artifact) {
     const v2 = artifact.name.startsWith('noir-wallet-development-')
     lines.push(
-      '**Latest package**',
+      'Preview package: **ready**',
       '',
       `[Download ${v2 ? 'V2 development' : 'V1 Mainnet + Testnet'} package for PR head ${run.head_sha.slice(0, 7)}](${root}/actions/runs/${run.id}/artifacts/${artifact.id})`,
       '',
@@ -73,15 +68,10 @@ function commentBody(repository, run, artifact, previousIsSameHead, forkPreview)
     if (v2 && forkPreview)
       lines.push('Swap is unavailable in fork previews because repository secrets are not shared.')
   } else {
-    if (!build)
-      lines.push(
-        `Preview package: **not requested** for this commit. Add the \`preview\` label when a download is needed. ${previousPackage}`
-      )
-    else if (run.status !== 'completed')
-      lines.push(`Preview package: **building**. ${previousPackage}`)
+    if (run.status !== 'completed') lines.push('Preview package: **building**.')
     else if (run.conclusion === 'success')
       lines.push(
-        'The preview package is unavailable or expired. Remove and reapply the `preview` label to build it again.'
+        'Preview package: **unavailable or expired**. Re-run Extension CI for this commit.'
       )
     else
       lines.push(
@@ -109,14 +99,13 @@ export async function reportExtensionPreview({
   if (
     run?.id !== runId ||
     run.repository?.full_name?.toLowerCase() !== repository.toLowerCase() ||
-    ![workflowPath, checksPath].includes(run.path) ||
+    run.path !== workflowPath ||
     run.event !== 'pull_request' ||
     !shaPattern.test(run.head_sha) ||
     !positiveId(run.head_repository?.id)
   ) {
     throw new Error('Expected a wallet verification PR run from this repository')
   }
-  if (run.path === workflowPath && run.display_title !== 'Requested extension preview') return []
   if (run.run_attempt !== runAttempt) return []
   if (
     !['requested', 'queued', 'in_progress', 'completed', 'waiting', 'pending'].includes(run.status)
@@ -143,7 +132,7 @@ export async function reportExtensionPreview({
     ? run.pull_requests
     : await pages(request, `commits/${run.head_sha}/pulls`)
   const artifacts =
-    run.path === workflowPath && run.status === 'completed' && run.conclusion === 'success'
+    run.status === 'completed' && run.conclusion === 'success'
       ? await pages(request, `actions/runs/${runId}/artifacts`, 'artifacts')
       : []
   const updated = []
@@ -153,8 +142,7 @@ export async function reportExtensionPreview({
     if (
       pr.number !== number ||
       pr.state !== 'open' ||
-      (pr.head?.sha !== run.head_sha &&
-        !(run.path === workflowPath && run.status === 'completed')) ||
+      pr.head?.sha !== run.head_sha ||
       pr.head.repo?.id !== run.head_repository.id ||
       pr.base?.repo?.full_name?.toLowerCase() !== repository.toLowerCase() ||
       !/^(main|v2|release\/.+)$/.test(pr.base.ref)
@@ -172,38 +160,36 @@ export async function reportExtensionPreview({
       return Number(id) > runId || (Number(id) === runId && Number(attempt) > runAttempt)
     })
     if (newer) continue
-    let consumeLabel = false
-    if (run.path === workflowPath) {
-      const builds = await request(
-        'actions/workflows/build-extension.yml/runs?event=pull_request&per_page=100'
+    // A newer run may exist before its requested-event reporter creates a comment.
+    const runs = await pages(
+      request,
+      `actions/workflows/extension-ci.yml/runs?event=pull_request&head_sha=${run.head_sha}`,
+      'workflow_runs'
+    )
+    let newerRun = false
+    for (const other of runs) {
+      if (
+        other.id <= runId ||
+        other.path !== workflowPath ||
+        other.event !== 'pull_request' ||
+        other.head_repository?.id !== run.head_repository.id ||
+        other.head_sha !== run.head_sha
       )
-      if (!Array.isArray(builds?.workflow_runs)) throw new Error('Invalid preview run inventory')
-      const newerRequest = builds.workflow_runs.some(
-        other =>
-          other.id > runId &&
-          other.head_repository?.id === run.head_repository.id &&
-          other.display_title === 'Requested extension preview' &&
-          other.pull_requests?.some(associatedPr => associatedPr.number === number)
-      )
-      if (newerRequest) continue
-      consumeLabel =
-        eventAction === 'requested' && pr.labels?.some(label => label.name === 'preview')
+        continue
+      const otherPrs = other.pull_requests?.length
+        ? other.pull_requests
+        : await pages(request, `commits/${other.head_sha}/pulls`)
+      if (otherPrs.some(associatedPr => associatedPr.number === number)) {
+        newerRun = true
+        break
+      }
     }
+    if (newerRun) continue
     const artifact = previewArtifact(artifacts, run, number)
     const existing = own[0]
-    const previousIsSameHead = Boolean(
-      existing?.body.includes(`/commit/${run.head_sha})`) &&
-      (existing?.body.includes('/artifacts/') ||
-        existing?.body.includes('This run has no new package'))
-    )
     const forkPreview = pr.head.repo.full_name?.toLowerCase() !== repository.toLowerCase()
-    const body = commentBody(repository, run, artifact, previousIsSameHead, forkPreview)
-    if (
-      existing?.body === body &&
-      !consumeLabel &&
-      !(run.path === workflowPath && run.status === 'completed')
-    )
-      continue
+    const body = commentBody(repository, run, artifact, forkPreview)
+    if (existing?.body === body && run.status !== 'completed') continue
     // A push while inventorying artifacts must not advertise an old commit as current.
     const current = await request(`pulls/${number}`)
     if (
@@ -212,12 +198,6 @@ export async function reportExtensionPreview({
       current.head?.repo?.id !== pr.head.repo.id
     )
       continue
-    if (
-      consumeLabel &&
-      current.head.sha === run.head_sha &&
-      current.labels?.some(label => label.name === 'preview')
-    )
-      await request(`issues/${number}/labels/preview`, { method: 'DELETE' })
     if (current.head.sha === run.head_sha && existing?.body !== body) {
       if (existing) {
         if (!positiveId(existing.id)) throw new Error('Invalid preview comment ID')
@@ -227,11 +207,12 @@ export async function reportExtensionPreview({
       }
       updated.push(number)
     }
-    if (run.path === workflowPath && run.status === 'completed' && eventAction === 'completed') {
+    if (run.status === 'completed' && eventAction === 'completed') {
       if (artifact && current.head.sha === run.head_sha)
         await retainPreviewArtifacts({
           request,
           run,
+          repository,
           prNumber: number,
           headRepositoryId: pr.head.repo.id
         })
@@ -240,7 +221,7 @@ export async function reportExtensionPreview({
   return updated
 }
 
-async function retainPreviewArtifacts({ request, run, prNumber, headRepositoryId }) {
+async function retainPreviewArtifacts({ request, run, repository, prNumber, headRepositoryId }) {
   const all = await pages(request, 'actions/artifacts', 'artifacts')
   const candidates = all.filter(artifact => {
     const match = previewName(prNumber).exec(artifact.name)
@@ -265,8 +246,13 @@ async function retainPreviewArtifacts({ request, run, prNumber, headRepositoryId
       source?.id !== artifact.workflow_run.id ||
       source.path !== workflowPath ||
       source.event !== 'pull_request' ||
+      source.repository?.full_name?.toLowerCase() !== repository.toLowerCase() ||
+      source.status !== 'completed' ||
+      source.conclusion !== 'success' ||
       source.head_repository?.id !== headRepositoryId ||
       source.head_sha !== artifact.workflow_run.head_sha ||
+      !Number.isFinite(Date.parse(source.run_started_at)) ||
+      Date.parse(artifact.created_at) < Date.parse(source.run_started_at) ||
       !Array.isArray(source.pull_requests)
     )
       continue
