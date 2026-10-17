@@ -488,6 +488,65 @@ test.describe('Background Bitcoin dApp handler', () => {
     expect(approvedTransactionId).toBe('transaction:bitcoin:fee-2')
   })
 
+  test('releases a fee replacement prepared after its approval was rejected', async () => {
+    const rejected = []
+    let completePreparation
+    let feeUpdateResult
+    let prepareCount = 0
+    const makeReview = id => ({
+      graph: { root: { id } },
+      review: {
+        chainId: account.chainAccount.scope.chainId,
+        operation: 'transaction',
+        summary: signingSummary('bitcoin-psbt'),
+        payloadFingerprint: { algorithm: 'sha256', digestHex: '44'.repeat(32) },
+        expiresAt: Date.now() + 60_000
+      }
+    })
+    const state = harness({
+      approval: {
+        async requestExternalApproval(_origin, action, _data, options) {
+          if (action === 'bitcoinTransaction') {
+            feeUpdateResult = options.onNetworkFeeTierChange('fast').then(
+              () => null,
+              error => error
+            )
+            return { approved: false, requestId: action }
+          }
+          return { approved: true, requestId: action }
+        },
+        async broadcastProviderEvent() {},
+        cancelPendingApprovals() {
+          return 0
+        }
+      },
+      transferController: {
+        async prepare() {
+          prepareCount += 1
+          if (prepareCount === 1) return makeReview('transaction:bitcoin:original')
+          return new Promise(resolve => {
+            completePreparation = () => resolve(makeReview('transaction:bitcoin:replacement'))
+          })
+        },
+        async reject(transactionId) {
+          rejected.push(transactionId)
+        }
+      }
+    })
+    await state.handler.request({ method: 'requestAccounts' }, 'https://dapp.example', {})
+    await expect(
+      state.handler.request(
+        { method: 'sendBitcoin', params: [address, 42] },
+        'https://dapp.example',
+        {}
+      )
+    ).rejects.toMatchObject({ code: 4001 })
+
+    completePreparation()
+    expect((await feeUpdateResult).message).toBe('Approval request is no longer active')
+    expect(rejected).toContain('transaction:bitcoin:replacement')
+  })
+
   test('passes a standard custom fee rate into Bitcoin transaction preparation', async () => {
     const prepareCalls = []
     const state = harness({

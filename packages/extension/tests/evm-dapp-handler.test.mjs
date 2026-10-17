@@ -1086,6 +1086,74 @@ test.describe('Background EVM dApp handler', () => {
     expect(approvedTransactionId).toBe('transaction:evm:fee-2')
   })
 
+  test('releases a fee replacement prepared after its approval was rejected', async () => {
+    const rejected = []
+    let completePreparation
+    let feeUpdateResult
+    let prepareCount = 0
+    const makeReview = id => ({
+      graph: { root: { id } },
+      review: {
+        chainId: 'eip155:1',
+        operation: 'transaction',
+        summary: { schema: 'evm.transaction.v1' },
+        payloadFingerprint: { algorithm: 'sha256', digestHex: '44'.repeat(32) },
+        expiresAt: Date.now() + 60_000
+      }
+    })
+    const state = harness({
+      approval: {
+        async requestExternalApproval(_origin, action, _data, options) {
+          if (action === 'evmTransaction') {
+            feeUpdateResult = options.onNetworkFeeTierChange('fast').then(
+              () => null,
+              error => error
+            )
+            return { approved: false, requestId: action }
+          }
+          return { approved: true, requestId: action }
+        },
+        async broadcastProviderEvent() {},
+        cancelPendingApprovals() {
+          return 0
+        }
+      },
+      transferController: {
+        async prepare() {
+          prepareCount += 1
+          if (prepareCount === 1) return makeReview('transaction:evm:original')
+          return new Promise(resolve => {
+            completePreparation = () => resolve(makeReview('transaction:evm:replacement'))
+          })
+        },
+        async reject(transactionId) {
+          rejected.push(transactionId)
+        }
+      }
+    })
+    await state.handler.request({ method: 'eth_requestAccounts' }, 'https://dapp.example', {})
+    await expect(
+      state.handler.request(
+        {
+          method: 'eth_sendTransaction',
+          params: [
+            {
+              from: account.chainAccount.identity.value,
+              to: '0x2222222222222222222222222222222222222222',
+              value: '0x1'
+            }
+          ]
+        },
+        'https://dapp.example',
+        {}
+      )
+    ).rejects.toMatchObject({ code: 4001 })
+
+    completePreparation()
+    expect((await feeUpdateResult).message).toBe('Approval request is no longer active')
+    expect(rejected).toEqual(['transaction:evm:original', 'transaction:evm:replacement'])
+  })
+
   test('submits a simulated arbitrary contract call through the transaction approval boundary', async () => {
     const { handler, approvalCalls, preparedContractCalls } = harness()
     await handler.request({ method: 'eth_requestAccounts' }, 'https://dapp.example', {})

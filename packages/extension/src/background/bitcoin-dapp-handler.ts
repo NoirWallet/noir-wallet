@@ -571,40 +571,50 @@ export class BackgroundBitcoinDAppHandler {
       )
     }
     let submitted = false
+    let approvalActive = true
     try {
-      const decision = await this.options.approval.requestExternalApproval(
-        origin,
-        'bitcoinTransaction',
-        {
-          chainName: this.options.network.displayName,
-          review: prepared.review,
-          feeTier: 'standard',
-          feeEditingAvailable: parsed.feeRateSatsPerVbyte === undefined,
-          ...dappApprovalMetadata(tabInfo)
-        },
-        parsed.feeRateSatsPerVbyte === undefined
-          ? {
-              onNetworkFeeTierChange: async feeTier => {
-                await transferController.reject(prepared.graph.root.id)
-                const replacement = await transferController.prepare(
-                  parsed.intent,
-                  undefined,
-                  feeTier,
-                  active.addressType
-                )
-                prepared = replacement
-                return {
-                  chainName: this.options.network.displayName,
-                  review: replacement.review,
-                  feeTier,
-                  feeEditingAvailable: true,
-                  ...dappApprovalMetadata(tabInfo)
-                }
-              },
-              cancelOnNetworkFeeTierChangeError: true
-            }
-          : undefined
-      )
+      let decision: Awaited<ReturnType<typeof this.options.approval.requestExternalApproval>>
+      try {
+        decision = await this.options.approval.requestExternalApproval(
+          origin,
+          'bitcoinTransaction',
+          {
+            chainName: this.options.network.displayName,
+            review: prepared.review,
+            feeTier: 'standard',
+            feeEditingAvailable: parsed.feeRateSatsPerVbyte === undefined,
+            ...dappApprovalMetadata(tabInfo)
+          },
+          parsed.feeRateSatsPerVbyte === undefined
+            ? {
+                onNetworkFeeTierChange: async feeTier => {
+                  await transferController.reject(prepared.graph.root.id)
+                  const replacement = await transferController.prepare(
+                    parsed.intent,
+                    undefined,
+                    feeTier,
+                    active.addressType
+                  )
+                  if (!approvalActive) {
+                    await transferController.reject(replacement.graph.root.id).catch(() => {})
+                    throw new Error('Approval request is no longer active')
+                  }
+                  prepared = replacement
+                  return {
+                    chainName: this.options.network.displayName,
+                    review: replacement.review,
+                    feeTier,
+                    feeEditingAvailable: true,
+                    ...dappApprovalMetadata(tabInfo)
+                  }
+                },
+                cancelOnNetworkFeeTierChangeError: true
+              }
+            : undefined
+        )
+      } finally {
+        approvalActive = false
+      }
       if (!decision.approved) {
         throw new BitcoinProviderError(4001, 'User rejected the transaction request.')
       }

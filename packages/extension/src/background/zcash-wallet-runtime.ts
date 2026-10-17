@@ -1415,9 +1415,9 @@ export class BackgroundZcashWalletRuntime {
     this.store.setCurrentAccount(wallet.id, wallet.accounts[0].id)
     this.store.setCurrentNetwork(this.network)
 
+    await Promise.all([flushWalletStore(), SecureStorage.saveLastActivityTime()])
     this.setSessionPassword(password)
     this.sessionCredentialWalletId = null
-    await Promise.all([flushWalletStore(), SecureStorage.saveLastActivityTime()])
 
     this.startSyncFor(wallet.id)
 
@@ -1737,6 +1737,10 @@ export class BackgroundZcashWalletRuntime {
         isHidden: false
       }
 
+      await SecureStorage.saveLastActivityTime()
+      this.setSessionPassword(password)
+      this.sessionCredentialWalletId = null
+
       // Optimistic Unlock: Do not await WASM heavy operations, allow immediate UI access
       // createAccount runs in background Worker, UI will show cached balance/addresses initially
       const restoreAbort = new AbortController()
@@ -1812,10 +1816,6 @@ export class BackgroundZcashWalletRuntime {
             this.activeRestoreWalletId = null
           }
         })
-
-      this.setSessionPassword(password)
-      this.sessionCredentialWalletId = null
-      await SecureStorage.saveLastActivityTime()
 
       restorePromise
         .then(async () => {

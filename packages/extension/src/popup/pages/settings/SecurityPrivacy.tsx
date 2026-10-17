@@ -191,10 +191,7 @@ export function SecurityPrivacy() {
               <div>
                 <div className="text-sm">Share Google Analytics</div>
                 <div className="text-xs text-muted mt-1 leading-relaxed">
-                  Share anonymous feature usage with Google Analytics. Noir Wallet service metrics
-                  remain active and may include transaction amounts and estimated USD values for
-                  aggregate volume reporting. They never include wallet addresses, transaction
-                  hashes, dApp domains, recovery phrases, passwords, or private keys.
+                  Noir Wallet service metrics continue when this is off.
                 </div>
               </div>
               <div className="pt-0.5">

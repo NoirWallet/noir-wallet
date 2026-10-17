@@ -814,6 +814,7 @@ export class BackgroundEvmDAppHandler {
       throw new Error('The dApp transaction could not be persisted for approval')
     }
     let submitted = false
+    let approvalActive = true
     try {
       await this.requireUnchangedExecutionIdentity(origin, active)
       const approvalData = (review: typeof prepared.review, feeSelection: EvmFeeSelection) => ({
@@ -851,26 +852,42 @@ export class BackgroundEvmDAppHandler {
               'main',
               executionAccount
             )
+        let adopted = false
         try {
-          await persistOperation(replacement.graph.root.id)
-        } catch {
-          await transferController.reject(replacement.graph.root.id).catch(() => {})
-          throw new Error('The dApp transaction could not be persisted for approval')
+          if (!approvalActive) throw new Error('Approval request is no longer active')
+          try {
+            await persistOperation(replacement.graph.root.id)
+          } catch {
+            throw new Error('The dApp transaction could not be persisted for approval')
+          }
+          if (!approvalActive) throw new Error('Approval request is no longer active')
+          await transferController.reject(prepared.graph.root.id).catch(() => {})
+          await this.options.operationStore.delete(prepared.graph.root.id).catch(() => {})
+          if (!approvalActive) throw new Error('Approval request is no longer active')
+          prepared = replacement
+          adopted = true
+          return approvalData(replacement.review, feeSelection)
+        } finally {
+          if (!adopted) {
+            await transferController.reject(replacement.graph.root.id).catch(() => {})
+            await this.options.operationStore.delete(replacement.graph.root.id).catch(() => {})
+          }
         }
-        await transferController.reject(prepared.graph.root.id).catch(() => {})
-        await this.options.operationStore.delete(prepared.graph.root.id).catch(() => {})
-        prepared = replacement
-        return approvalData(replacement.review, feeSelection)
       }
-      const decision = await this.options.approval.requestExternalApproval(
-        origin,
-        'evmTransaction',
-        approvalData(prepared.review, { kind: 'tier', tier: 'standard' }),
-        {
-          onNetworkFeeTierChange: tier => reprepareForFeeSelection({ kind: 'tier', tier }),
-          onEvmFeeSelectionChange: reprepareForFeeSelection
-        }
-      )
+      let decision: Awaited<ReturnType<typeof this.options.approval.requestExternalApproval>>
+      try {
+        decision = await this.options.approval.requestExternalApproval(
+          origin,
+          'evmTransaction',
+          approvalData(prepared.review, { kind: 'tier', tier: 'standard' }),
+          {
+            onNetworkFeeTierChange: tier => reprepareForFeeSelection({ kind: 'tier', tier }),
+            onEvmFeeSelectionChange: reprepareForFeeSelection
+          }
+        )
+      } finally {
+        approvalActive = false
+      }
       if (!decision.approved) {
         throw new Eip1193ProviderError(4001, 'User rejected the transaction request.')
       }
