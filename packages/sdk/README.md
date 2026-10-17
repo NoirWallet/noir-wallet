@@ -4,9 +4,10 @@ Typed TypeScript SDK for connecting web apps to the Noir Wallet browser extensio
 
 - [Integration guide](https://docs.zknoir.com/developers)
 - [Provider API reference](https://docs.zknoir.com/developers/provider-api)
-- [Example dApp](https://github.com/NoirWallet/noir-wallet-sdk/tree/main/example)
+- [Example dApp](https://github.com/NoirWallet/noir-wallet/tree/main/packages/sdk/example)
 - [Install Noir Wallet for mainnet](https://chromewebstore.google.com/detail/noir-wallet/mfoghjbpfanobmnoemoepenjjcmfpmdn)
-- [Download the testnet build](https://github.com/NoirWallet/noir-wallet-sdk/releases)
+- [Download the testnet build](https://zknoir.com/beta/versions)
+- [Report a non-security issue](https://github.com/NoirWallet/noir-wallet/issues)
 
 ## What the SDK does
 
@@ -28,7 +29,7 @@ Mainnet and testnet are separate Noir Wallet extensions:
 | Network | Download                                                                                                  | Use                          |
 | ------- | --------------------------------------------------------------------------------------------------------- | ---------------------------- |
 | Mainnet | [Chrome Web Store](https://chromewebstore.google.com/detail/noir-wallet/mfoghjbpfanobmnoemoepenjjcmfpmdn) | Production apps and real ZEC |
-| Testnet | [GitHub Releases](https://github.com/NoirWallet/noir-wallet-sdk/releases)                                 | Development and test ZEC     |
+| Testnet | [Wallet builds](https://zknoir.com/beta/versions)                                                         | Development and test ZEC     |
 
 To install testnet:
 
@@ -38,7 +39,7 @@ To install testnet:
 4. Open `chrome://extensions`, enable **Developer mode**, and select **Load unpacked**.
 5. Choose the extracted extension directory and confirm the installed name is **[Testnet] Noir Wallet**.
 
-Only install testnet ZIP files published by the `NoirWallet/noir-wallet-sdk` repository. The mainnet asset does not contain `-testnet` in its filename.
+Only install testnet ZIP files published by the `NoirWallet/noir-wallet` repository. The mainnet asset does not contain `-testnet` in its filename.
 
 The builds use different extension IDs and isolated wallet data. The SDK does not switch networks at runtime; `switchNetwork()` is deprecated and always throws.
 
@@ -312,3 +313,7 @@ For parameter definitions, return types, privacy considerations, and provider RP
 - [Provider API reference](https://docs.zknoir.com/developers/provider-api)
 - [Accounts and events](https://docs.zknoir.com/developers/accounts-and-events)
 - [Integration security](https://docs.zknoir.com/developers/security)
+
+## License
+
+The SDK and its example are licensed under [MIT](./LICENSE). The wallet application is licensed separately under [Business Source License 1.1](https://github.com/NoirWallet/noir-wallet/blob/main/LICENSE).

@@ -19,7 +19,7 @@ noir-wallet/
 │   │   └── tests/            # Signup API and persistence tests
 │   ├── docs/                 # User and developer documentation site
 │   └── zcash-wallet-wasm/    # Separate Rust/WASM repository, if available locally
-├── docs/                     # Internal references, release and integration guides
+├── docs/                     # Module references, release and integration guides
 ├── output/                   # Ignored local verification artifacts
 ├── package.json
 └── pnpm-workspace.yaml
@@ -34,7 +34,7 @@ noir-wallet/
 - [Release operations](#release) and [developer release history](./CHANGELOG.md)
 - [Contributing](./CONTRIBUTING.md), [security reporting](./SECURITY.md), and [license](./LICENSE)
 
-The documentation site is maintained in `packages/docs/content/docs/`. The top-level `docs/` directory holds internal references, release procedures, and integration checks.
+The documentation site is maintained in `packages/docs/content/docs/`. The top-level `docs/` directory holds module references, release procedures, and integration checks.
 
 ## Features
 
@@ -220,6 +220,6 @@ Chrome Web Store submission, and failure recovery.
 
 ## License
 
-[MIT](./LICENSE). Extension ZIPs include this license. Bundled Jost and DM Mono fonts use the SIL Open Font License; their [Jost](./packages/extension/public/fonts/jost-OFL.txt) and [DM Mono](./packages/extension/public/fonts/dm-mono-OFL.txt) license texts are included with the fonts.
+Noir Wallet source code is available under [Business Source License 1.1](./LICENSE), with a Change Date of January 1, 2029 and a Change License of Apache License 2.0. The license permits non-production use, including development, testing, research, and security review. Its Additional Use Grant permits end users to run official, unmodified releases for any purpose and other production use for non-commercial purposes. Commercial operation of a wallet fork or incorporation into a commercial wallet product requires a separate license before the Change Date. Extension ZIPs include the license.
 
-The SDK is included under this project's [MIT license](./LICENSE) and retains its [package license](./packages/sdk/LICENSE). The Rust/WASM source is a separate repository; verify its licensing and third-party attribution before redistribution.
+The SDK under `packages/sdk/`, including its example, remains separately licensed under [MIT](./packages/sdk/LICENSE). Bundled Jost and DM Mono fonts retain their [Jost](./packages/extension/public/fonts/jost-OFL.txt) and [DM Mono](./packages/extension/public/fonts/dm-mono-OFL.txt) SIL Open Font License notices, which are included with the fonts in extension ZIPs. Separately distributed WASM packages and other third-party components retain their own licenses; the root license does not replace those terms.

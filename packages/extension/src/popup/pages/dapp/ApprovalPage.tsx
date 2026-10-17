@@ -135,6 +135,7 @@ export function ApprovalPage() {
     }
 
     setIsLoading(true)
+    let resultListener: Parameters<typeof chrome.runtime.onMessage.addListener>[0] | null = null
     try {
       if (isSend || isShield) {
         console.log('[ApprovalPage] Waiting for wallet initialization...')
@@ -160,17 +161,9 @@ export function ApprovalPage() {
         )
         setShowResult(true)
 
-        await chrome.runtime.sendMessage({
-          type: 'DAPP_APPROVAL_RESULT',
-          requestId,
-          success: true,
-          marginalFeeZats: marginalFeeForTier(feeTier),
-          feeZats: feeByTier[feeTier] ?? undefined
-        })
-
-        const resultListener = (msg: any) => {
+        const listener: Parameters<typeof chrome.runtime.onMessage.addListener>[0] = msg => {
           if (msg.type === 'DAPP_TX_RESULT' && msg.requestId === requestId) {
-            chrome.runtime.onMessage.removeListener(resultListener)
+            chrome.runtime.onMessage.removeListener(listener)
             if (msg.success) {
               updateStep('submitted', { txHash: msg.txHash })
             } else if (msg.completionPending === true) {
@@ -180,7 +173,15 @@ export function ApprovalPage() {
             }
           }
         }
-        chrome.runtime.onMessage.addListener(resultListener)
+        resultListener = listener
+        chrome.runtime.onMessage.addListener(listener)
+        await chrome.runtime.sendMessage({
+          type: 'DAPP_APPROVAL_RESULT',
+          requestId,
+          success: true,
+          marginalFeeZats: marginalFeeForTier(feeTier),
+          feeZats: feeByTier[feeTier] ?? undefined
+        })
       } else {
         await chrome.runtime.sendMessage({
           type: 'DAPP_APPROVAL_RESULT',
@@ -191,6 +192,7 @@ export function ApprovalPage() {
         window.close()
       }
     } catch (err) {
+      if (resultListener) chrome.runtime.onMessage.removeListener(resultListener)
       console.error('Failed to send decision:', err)
       setError(classifyError(err).userMessage)
       setIsLoading(false)
