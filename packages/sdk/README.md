@@ -4,10 +4,12 @@ Typed TypeScript SDK for connecting web apps to the Noir Wallet browser extensio
 
 - [Integration guide](https://docs.zknoir.com/developers)
 - [Provider API reference](https://docs.zknoir.com/developers/provider-api)
-- [Example dApp](https://github.com/NoirWallet/noir-wallet-sdk/tree/main/example)
+- [Example dApp](https://github.com/NoirWallet/noir-wallet/tree/v2/packages/sdk/example)
 - [Install Noir Wallet](https://chromewebstore.google.com/detail/noir-wallet/mfoghjbpfanobmnoemoepenjjcmfpmdn)
-- [V2 beta versions](https://zknoir.com/beta/versions)
+- [V2 Beta download instructions](https://github.com/NoirWallet/noir-wallet/blob/v2/docs/release-workflow.md#routine-previews)
 - [Legacy V1 releases](https://github.com/NoirWallet/noir-wallet-sdk/releases)
+- [Questions and bug reports](https://github.com/NoirWallet/noir-wallet/issues)
+- [Private security reports](https://github.com/NoirWallet/noir-wallet/blob/v2/SECURITY.md)
 
 ## What the SDK does
 
@@ -308,3 +310,7 @@ For parameter definitions, return types, privacy considerations, and provider RP
 - [Provider API reference](https://docs.zknoir.com/developers/provider-api)
 - [Accounts and events](https://docs.zknoir.com/developers/accounts-and-events)
 - [Integration security](https://docs.zknoir.com/developers/security)
+
+## License
+
+The SDK and its example are licensed under [MIT](./LICENSE). The wallet application is licensed separately under [Business Source License 1.1](https://github.com/NoirWallet/noir-wallet/blob/v2/LICENSE).

@@ -3477,11 +3477,9 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
         sendResponse({ result })
       })
       .catch(error => {
-        if (debugRequestId) {
-          logger.warn(
-            `[Timing] ${debugRequestId} background-evm-prepare ${error instanceof Error ? error.name : 'UnknownError'} ${Math.round(performance.now() - operationStartedAt)}ms`
-          )
-        }
+        logger.warn(
+          `[EVM Transfer] ${message.type} failed (${error instanceof Error ? error.name : 'UnknownError'})`
+        )
         console.error('[EVM Transfer] Request failed', {
           operation: message.type,
           errorName: error instanceof Error ? error.name : 'UnknownError',
@@ -5270,9 +5268,9 @@ async function performWalletLockState(): Promise<void> {
   await cancelAllLedgerSigning('Wallet was locked. Review this action again.')
   pendingRequestsManager.cancelAll()
   syncScheduler.abortSync()
-  await backgroundZcashWalletRuntime.lock()
 
-  const workerResults = await Promise.allSettled([
+  const [zcashResult, ...workerResults] = await Promise.allSettled([
+    backgroundZcashWalletRuntime.lock(),
     credentialSession.lock(),
     confidentialFundingStore.clearAllSessions(),
     forwardKeyringRpcToOffscreen<boolean>('worker.recreate', { walletId: '__global_lock__' })
@@ -5284,6 +5282,7 @@ async function performWalletLockState(): Promise<void> {
       throw new Error('Unable to confirm that all keyring Workers were locked')
     }
   }
+  if (zcashResult.status === 'rejected') throw zcashResult.reason
 
   await dappHandler.notifyAccountsChanged([])
   await evmDAppHandler.notifyAccountsChanged()
@@ -5297,8 +5296,8 @@ async function performWalletLockState(): Promise<void> {
 async function performKeyringRuntimesResetAfterCredentialChange(): Promise<void> {
   pendingRequestsManager.cancelAll()
   syncScheduler.abortSync()
-  await backgroundZcashWalletRuntime.lock()
-  const results = await Promise.allSettled([
+  const [zcashResult, ...results] = await Promise.allSettled([
+    backgroundZcashWalletRuntime.lock(),
     credentialSession.lock(),
     forwardKeyringRpcToOffscreen<boolean>('worker.recreate', {
       walletId: '__password_change__'
@@ -5310,6 +5309,7 @@ async function performKeyringRuntimesResetAfterCredentialChange(): Promise<void>
       throw new Error('Unable to confirm that all keyring Workers restarted after password change')
     }
   }
+  if (zcashResult.status === 'rejected') throw zcashResult.reason
 }
 
 /**

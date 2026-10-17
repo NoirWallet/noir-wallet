@@ -11,7 +11,7 @@ Event names and page IDs are defined in [constants.ts](../packages/extension/src
 | Encryption   | AES-128-CBC, PKCS#7, Base64; the key and IV use the first 16 bytes of the configured password.                                                                                                                                                                   |
 | Batching     | The background service worker flushes after 2 seconds or at 20 events, keeps at most 200 queued events, retries failed uploads after 15 seconds, and drops the current batch after the third consecutive failure. Collector business rejections are not retried. |
 | Channels     | Google Analytics receives the event name and allowed `params`. The custom collector receives the full filtered payload. Page views use GA `page_view` and collector `show_page`.                                                                                 |
-| User control | **Share Google Analytics** defaults to on. Turning it off stops GA requests and clears the GA session. Collector reporting continues, as does the per-install anonymous identifier.                                                                              |
+| User control | **Share Google Analytics** defaults to on. Turning it off stops GA requests and clears the GA session. Collector reporting, its queued events, and the per-install anonymous identifier remain.                                                                  |
 
 ## Collector Fields And Privacy Boundary
 

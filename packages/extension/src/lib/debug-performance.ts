@@ -1,5 +1,4 @@
-import { logger } from './logger'
-
+const debugLogsEnabled = typeof __DEBUG_LOGS__ !== 'boolean' || __DEBUG_LOGS__
 let nextRequestSequence = 0
 
 export function createDebugRequestId(scope: string): string {
@@ -12,17 +11,19 @@ export function traceDebugStage<T>(
   stage: string,
   operation: () => Promise<T>
 ): Promise<T> {
+  if (!debugLogsEnabled) return operation()
+
   const startedAt = performance.now()
   return operation().then(
     result => {
-      logger.info(
+      console.log(
         `[Timing] ${requestId} ${stage} ok ${Math.round(performance.now() - startedAt)}ms`
       )
       return result
     },
     error => {
       const category = error instanceof Error ? error.name : 'UnknownError'
-      logger.warn(
+      console.log(
         `[Timing] ${requestId} ${stage} ${category} ${Math.round(performance.now() - startedAt)}ms`
       )
       throw error
@@ -31,5 +32,6 @@ export function traceDebugStage<T>(
 }
 
 export function logDebugTiming(requestId: string, stage: string, startedAt: number): void {
-  logger.info(`[Timing] ${requestId} ${stage} ${Math.round(performance.now() - startedAt)}ms`)
+  if (!debugLogsEnabled) return
+  console.log(`[Timing] ${requestId} ${stage} ${Math.round(performance.now() - startedAt)}ms`)
 }

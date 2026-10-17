@@ -453,7 +453,7 @@ export function ApprovalPage() {
         }
         chrome.runtime.onMessage.addListener(resultListener)
       } else {
-        await chrome.runtime.sendMessage({
+        const response = (await chrome.runtime.sendMessage({
           type: 'DAPP_APPROVAL_RESULT',
           requestId,
           success: true,
@@ -461,7 +461,10 @@ export function ApprovalPage() {
             ? { selectedIds }
             : {}),
           ...(isMultichainConnect ? { selectedScopes } : {})
-        })
+        })) as { success?: boolean; error?: string } | undefined
+        if (response?.success !== true) {
+          throw new Error(response?.error || 'The approval could not be completed')
+        }
         window.close()
       }
     } catch (err) {

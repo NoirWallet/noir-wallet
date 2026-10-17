@@ -1957,6 +1957,7 @@ export class DAppHandler {
           const windowId = window.id
 
           let finished = false
+          let feeUpdateInFlight = false
           let checkInterval: ReturnType<typeof setInterval>
           let timeoutId: ReturnType<typeof setTimeout>
           let removeCancellationListener = () => {}
@@ -2012,10 +2013,16 @@ export class DAppHandler {
                 Reflect.get(msg, 'feeTier') === 'fast') &&
               options?.onNetworkFeeTierChange
             ) {
+              if (feeUpdateInFlight) {
+                sendResponse({ error: 'Wait for the network fee update to complete' })
+                return false
+              }
               const feeTier = Reflect.get(msg, 'feeTier') as 'low' | 'standard' | 'fast'
-              void options
-                .onNetworkFeeTierChange(feeTier)
+              feeUpdateInFlight = true
+              void Promise.resolve()
+                .then(() => options.onNetworkFeeTierChange?.(feeTier))
                 .then(updatedData => {
+                  feeUpdateInFlight = false
                   if (finished || !pendingRequestsManager.updateData(requestId, updatedData)) {
                     sendResponse({ error: 'Approval request is no longer active' })
                     return
@@ -2023,6 +2030,7 @@ export class DAppHandler {
                   sendResponse({ data: updatedData })
                 })
                 .catch(error => {
+                  feeUpdateInFlight = false
                   if (options.cancelOnNetworkFeeTierChangeError) {
                     pendingRequestsManager.cancel(requestId)
                   }
@@ -2050,9 +2058,15 @@ export class DAppHandler {
                 })
                 return false
               }
-              void options
-                .onEvmFeeSelectionChange(feeSelection)
+              if (feeUpdateInFlight) {
+                sendResponse({ error: 'Wait for the network fee update to complete' })
+                return false
+              }
+              feeUpdateInFlight = true
+              void Promise.resolve()
+                .then(() => options.onEvmFeeSelectionChange?.(feeSelection))
                 .then(updatedData => {
+                  feeUpdateInFlight = false
                   if (finished || !pendingRequestsManager.updateData(requestId, updatedData)) {
                     sendResponse({ error: 'Approval request is no longer active' })
                     return
@@ -2060,6 +2074,7 @@ export class DAppHandler {
                   sendResponse({ data: updatedData })
                 })
                 .catch(error => {
+                  feeUpdateInFlight = false
                   sendResponse({
                     error: error instanceof Error ? error.message : 'Network fee update failed'
                   })
@@ -2072,6 +2087,10 @@ export class DAppHandler {
               result = parseDAppApprovalResultMessage(msg, requestId)
             } catch {
               return
+            }
+            if (feeUpdateInFlight && result.success) {
+              sendResponse({ error: 'Wait for the network fee update to complete' })
+              return false
             }
             finish(result.success, {
               marginalFeeZats: result.marginalFeeZats,

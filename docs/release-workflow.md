@@ -65,6 +65,8 @@ There is no need to bump the version for each Beta. The manual run identity and 
 
 Production is prepared as a candidate and promoted through the trusted `main` workflows after acceptance. A V2 tag push no longer starts a build or publication. Follow the [shared release runbook](https://github.com/NoirWallet/noir-wallet/blob/main/docs/release-workflow.md) for the current candidate, acceptance, and promotion steps. Confirm the resulting single ZIP and `SHA256SUMS` before submitting that ZIP manually in the Chrome Web Store Developer Dashboard. Do not move a publicly released tag or reuse a published version number.
 
+Retain the candidate metadata, ZIP checksum, and store submission confirmation according to the shared runbook's [store provenance requirements](https://github.com/NoirWallet/noir-wallet/blob/main/docs/release-workflow.md#5-submit-to-chrome-web-store). Repository visibility and branch protection follow its [open-source publication procedure](https://github.com/NoirWallet/noir-wallet/blob/main/docs/release-workflow.md#open-source-publication). A development preview or a matching store version does not prove that the accepted production ZIP was submitted.
+
 ## Failure Recovery
 
 - PR check/build failure: fix the source and update the PR; Extension CI builds the new commit automatically. An existing development artifact is not a release candidate.

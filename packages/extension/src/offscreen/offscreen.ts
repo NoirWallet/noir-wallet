@@ -15,6 +15,7 @@ import {
 import { WALLET_CONFIG } from '@/config/wallet'
 import { TimeoutError } from '@/lib/async-utils'
 import { sanitizeDiagnosticMessage } from '@/lib/diagnostic-log'
+import { logDebugTiming } from '@/lib/debug-performance'
 import type { Network } from '@/types'
 import {
   hasExactRuntimeKeys,
@@ -1609,16 +1610,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     try {
       if (debugRequestId) {
-        offscreenLog(
-          `[Timing] ${debugRequestId} offscreen-dispatch-wait ${Math.round(performance.now() - diagnosticStartedAt)}ms`
-        )
+        logDebugTiming(debugRequestId, 'offscreen-dispatch-wait', diagnosticStartedAt)
       }
       const workerStartedAt = performance.now()
       const result = await zcashWorkerClient.requestToWorker(message.method, message.payload)
       if (debugRequestId) {
-        offscreenLog(
-          `[Timing] ${debugRequestId} offscreen-worker-roundtrip ${Math.round(performance.now() - workerStartedAt)}ms`
-        )
+        logDebugTiming(debugRequestId, 'offscreen-worker-roundtrip', workerStartedAt)
       }
       trySetupLogForwarding()
       if (message.method === 'wallet.reset' && rpcWalletId) {
@@ -1632,8 +1629,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({ result })
     } catch (error: any) {
       if (debugRequestId) {
-        offscreenWarn(
-          `[Timing] ${debugRequestId} offscreen-worker-error ${error instanceof Error ? error.name : 'UnknownError'} ${Math.round(performance.now() - diagnosticStartedAt)}ms`
+        logDebugTiming(
+          debugRequestId,
+          `offscreen-worker-error ${error instanceof Error ? error.name : 'UnknownError'}`,
+          diagnosticStartedAt
         )
       }
       const msg = error?.message || ''

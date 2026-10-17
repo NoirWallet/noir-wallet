@@ -1945,7 +1945,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
       } catch (error) {
         if (requestSequence === quoteRequestSequence.current) {
           logger.warn(
-            `[Timing] ${requestId} failed-stage=${failedStage} category=${error instanceof Error ? error.name : 'UnknownError'}`
+            `[Swap] Preparation failed (stage=${failedStage}, category=${error instanceof Error ? error.name : 'UnknownError'})`
           )
           await discardPreparedQuoteTransfer()
           if (isPrivateFunding) {
