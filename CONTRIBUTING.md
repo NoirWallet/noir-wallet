@@ -6,6 +6,10 @@ Start with the [README quick start](./README.md#quick-start). Keep changes scope
 
 Do not include real user or production recovery phrases, private keys, passwords, wallet exports, or sensitive transaction data in issues, pull requests, test fixtures, or logs. Use published test vectors or synthetic values in fixtures. Report a security vulnerability through the private channel in [SECURITY.md](./SECURITY.md).
 
+## Licensing
+
+Wallet contributions are provided under the [root license](./LICENSE), including its scheduled Apache License 2.0 grant. Contributions under `packages/sdk/` remain under the SDK's [MIT license](./packages/sdk/LICENSE). Preserve notices and licenses for third-party material.
+
 ## Pull Request Targets
 
 Target `main` for V1 maintenance and `v2` for V2 development. Use the `v2` version label only for PRs targeting `v2`; V1 PRs have no version label. Manual Beta or candidate preparation maintains this label for open PRs whose HEAD matches the selected source commit, adding it for `v2` targets and removing it for other targets. Set or adjust it manually at PR creation or retargeting when immediate triage is needed. Other labels such as `bug`, `enhancement`, and `documentation` are unaffected.

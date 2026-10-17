@@ -7,8 +7,10 @@
  * Privacy guarantees (what we NEVER report):
  * - Seed phrases, private keys, passwords, UFVKs
  * - Memo contents, contact names, dApp message bodies
- * - Wallet addresses, transaction hashes, exact amounts, dApp origins
+ * - Wallet addresses, transaction hashes, dApp origins
  * - Any browsing data outside the wallet itself
+ *
+ * The collector may receive exact input, output, and estimated USD amounts.
  *
  * wallet_address semantics:
  * - The collector requires this legacy field, but Noir always fills it with

@@ -252,7 +252,17 @@ Confirm **Publish Accepted Extension** succeeded. In the wallet repository's Rel
 
 ### 5. Submit to Chrome Web Store
 
-Store submission is manual. Verify the production ZIP, `noir-wallet-v{version}.zip` (V1 mainnet or V2 multichain), from the GitHub Release matches the accepted candidate. Upload that same ZIP in Chrome Web Store Developer Dashboard, review the version, changed permissions, and release notes, then submit for review or staged rollout under the store configuration. Record the actual publication time after approval. Never upload the V1 `-testnet.zip` asset to the production store listing.
+Store submission is manual. Verify the production ZIP, `noir-wallet-v{version}.zip` (V1 mainnet or V2 multichain), from the GitHub Release matches the accepted candidate. Upload that same ZIP in Chrome Web Store Developer Dashboard, review the version, changed permissions, and release notes, then submit for review or staged rollout under the store configuration. Never upload the V1 `-testnet.zip` asset to the production store listing.
+
+Record the accepted ZIP checksum, store extension ID, submitted version, and publication time. Where possible, compare the store-served package contents with the accepted ZIP, allowing for Chrome-added metadata. Otherwise retain the Developer Dashboard submission record identifying the uploaded ZIP. A matching version number alone does not establish package correspondence. Historical migration tags remain subject to the [source limitations above](#historical-releases).
+
+## Open-Source Publication
+
+Select and review the exact `main` and `v2` commits before changing repository visibility. Confirm the intended public branches, tags, Releases, and retained Actions logs and artifacts, including material outside the default branch. Complete the wallet's licensing, sensitive-information review, clean-source builds, and applicable wallet acceptance on those commits. Repeat the wallet integration checks when the separately maintained WASM source becomes available.
+
+Review repository collaborators and their roles, and retain only the agreed maintainers' administrative and release access. Keep the default Actions token read-only and automatic pull-request review approval disabled. Untrusted PR builds must receive no release credentials; `contents: write` belongs only in the trusted publication jobs.
+
+Protect `main` and `v2` against direct updates, force pushes, and deletion, with pull-request review required. Select required status checks that actually run for the affected PRs; wallet build path filters intentionally exclude documentation-only changes. If the current private-repository plan does not support branch rules, arrange supported protection before publication or enable and verify it immediately after the approved visibility change. Changing visibility still requires maintainer acceptance of the selected source and access settings. Verify signed-out access to the selected source, documentation, and intended Release downloads after publication.
 
 ## Failure Recovery
 
@@ -272,13 +282,13 @@ For an urgent fix, start a new `release/{patch-version}` branch from the verifie
 - [ ] Changelog has exactly one matching, nonempty version section.
 - [ ] User-facing update notes match the version and visible changes.
 - [ ] The manual candidate workflow succeeded for the confirmed source SHA.
-- [ ] Mainnet and testnet production candidate ZIPs passed acceptance.
+- [ ] The expected production candidate ZIPs for the selected profile passed acceptance: V1 mainnet and testnet, or V2 multichain.
 - [ ] The recorded run ID, attempt, and SHA identify that accepted artifact.
 - [ ] The release branch is unchanged through promotion.
 - [ ] The separate manual promotion succeeded.
 - [ ] Production tag points to the accepted release source commit.
-- [ ] Wallet source tag/commit, both GitHub Release ZIPs, checksums, and release notes were checked.
+- [ ] Wallet source tag/commit, all expected GitHub Release ZIPs, checksums, and release notes were checked.
 - [ ] Final acceptance used the production ZIP intended for Chrome Web Store.
-- [ ] Mainnet ZIP was submitted to Chrome Web Store.
+- [ ] The production ZIP for the selected profile (V1 mainnet or V2 multichain) was submitted to Chrome Web Store.
 
 Chrome Web Store upload and approval, SDK npm publishing, candidate construction confirmation, and production promotion remain manual. Website and signup Worker operations follow [Website and Signup Worker](#website-and-signup-worker). Do not add unverified secret names or third-party publication actions to the workflow.
