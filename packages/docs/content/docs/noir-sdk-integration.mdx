@@ -8,31 +8,17 @@ The SDK is a typed wrapper around the Noir Wallet provider injected into web pag
 
 ## Install the extension
 
-<Tabs items={['Mainnet', 'Testnet']}>
-  <Tab value="Mainnet">
-    Install the production extension from the
-    [official Chrome Web Store](https://chromewebstore.google.com/detail/noir-wallet/mfoghjbpfanobmnoemoepenjjcmfpmdn).
-    Use this build only with real ZEC.
-  </Tab>
-  <Tab value="Testnet">
-    Testnet is distributed through
-    [official GitHub Releases](https://zknoir.com/beta/versions):
+Install the currently published wallet from the
+[Chrome Web Store](https://chromewebstore.google.com/detail/noir-wallet/mfoghjbpfanobmnoemoepenjjcmfpmdn),
+or obtain a V2 beta through the [V2 release workflow](https://github.com/NoirWallet/noir-wallet/blob/v2/docs/release-workflow.md#routine-previews):
 
-    1. Open the release you want to test.
-    2. Download the asset whose filename ends with `-testnet.zip`.
-    3. Unzip the downloaded file.
-    4. Open `chrome://extensions`, enable **Developer mode**, and choose **Load unpacked**.
-    5. Select the extracted extension directory and confirm the installed name is **[Testnet] Noir Wallet**.
+1. Download and unzip the V2 extension ZIP.
+2. Open `chrome://extensions`, enable **Developer mode**, and choose **Load unpacked**.
+3. Select the extracted extension directory.
 
-  </Tab>
-</Tabs>
-
-<Callout type="warn" title="Use only official testnet packages">
-  Do not install ZIP files shared through messages or third-party mirrors. A mainnet asset does not
-  contain `-testnet` in its filename.
-</Callout>
-
-Mainnet and testnet use different extension IDs and isolated wallet data. `switchNetwork()` is deprecated and always throws; install the appropriate extension build instead.
+V2 uses one extension with a global Mainnet/Testnet Mode in Developer Settings. Changing mode locks
+and reloads the wallet. The SDK's `switchNetwork()` method is deprecated and always throws; users
+select the mode in the wallet.
 
 ## Install the SDK
 

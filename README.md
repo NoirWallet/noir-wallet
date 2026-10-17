@@ -19,6 +19,9 @@ noir-wallet/
 └── pnpm-workspace.yaml
 ```
 
+The nested Rust/WASM source checkout is maintained separately. Extension builds use the committed
+generated packages and do not require that source checkout.
+
 ## Documentation
 
 - [Project rules and documentation ownership](./AGENTS.md), including [architecture](./AGENTS.md#architecture)
@@ -28,7 +31,7 @@ noir-wallet/
 - [Analytics events](./docs/analytics-events.md) and [error messages](./docs/error-messages.md)
 - [Release operations](./docs/release-workflow.md) and [developer release history](./CHANGELOG.md)
 
-The documentation site's source is `packages/docs/content/docs/`. The top-level `docs/` directory contains English maintenance references. Internal plans, reviews, and historical project records are retained separately in the private project archive.
+The documentation site's source is `packages/docs/content/docs/`. The top-level `docs/` directory contains English maintenance references.
 
 ## Features
 
@@ -168,4 +171,6 @@ manual Beta builds from the trusted `main` workflow, production promotion, and C
 
 ## License
 
-[MIT](./LICENSE). The bundled Jost and DM Mono fonts carry their own [SIL Open Font License notices](./packages/extension/public/fonts/). Extension builds include original licenses and any supplied notices for Ledger SDKs and their signing libraries under `licenses/`.
+Noir Wallet source code is available under [Business Source License 1.1](./LICENSE), with a Change Date of January 1, 2029 and a Change License of Apache License 2.0. The license permits non-production use, including development, testing, research, and security review. Its Additional Use Grant permits end users to run official, unmodified releases for any purpose and other production use for non-commercial purposes. Commercial operation of a wallet fork or incorporation into a commercial wallet product requires a separate license before the Change Date. Extension ZIPs include the license.
+
+The SDK under `packages/sdk/`, including its example, remains separately licensed under [MIT](./packages/sdk/LICENSE). Extension ZIPs include the [SIL Open Font License notices](./packages/extension/public/fonts/) for Jost and DM Mono, plus original licenses and any supplied notices for Ledger SDKs and their signing libraries under `licenses/`. Separately distributed WASM packages and other third-party components retain their own licenses; the root license does not replace those terms.
