@@ -612,6 +612,21 @@ test('storage read failure is an unlock operation failure and preserves credenti
   assert.deepEqual(local.get(`seed_${walletId}`), ciphertext)
 })
 
+test('failed session persistence does not unlock the wallet in memory', async t => {
+  const { manager, SecureStorage, phraseA } = createHarness(t)
+  await manager.importWallet(phraseA, 'password')
+  manager.setSessionPassword(null)
+  await SecureStorage.clearSessionPassword()
+  SecureStorage.saveSessionPassword = async () => {
+    throw new Error('session storage unavailable')
+  }
+
+  const result = await manager.unlock('password')
+  assert.equal(result.failure, 'operation_failed')
+  assert.equal(manager.isLocked(), true)
+  assert.equal(await SecureStorage.getSessionPassword(), null)
+})
+
 test('wallet state refresh failure is not recorded as an incorrect password', async t => {
   const { manager, SecureStorage, setRehydrate, phraseA } = createHarness(t)
   await manager.importWallet(phraseA, 'password')

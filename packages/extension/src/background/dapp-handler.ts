@@ -885,6 +885,19 @@ export class DAppHandler {
       })
       throw new Error('User rejected the transaction')
     }
+    try {
+      await this.assertApprovedAccountAuthorized(origin, walletId, accountId)
+    } catch (error) {
+      chrome.runtime
+        .sendMessage({
+          type: 'DAPP_TX_RESULT',
+          requestId,
+          success: false,
+          error: error instanceof Error ? error.message : 'Transaction authorization expired'
+        })
+        .catch(() => {})
+      throw error
+    }
 
     // Hardware wallets sign in a dedicated tab, which records the transaction
     // and reports the result back.
@@ -963,6 +976,7 @@ export class DAppHandler {
         }
       })
       transactionId = tx.id
+      await this.assertApprovedAccountAuthorized(origin, walletId, accountId)
       const transferResult = await walletCore.sendTransaction(txParams)
       const { txHash: hash, txHashes } = requireSuccessfulTransfer(transferResult)
       broadcastHash = hash
@@ -1189,6 +1203,7 @@ export class DAppHandler {
       })
       throw new Error('User rejected the signature request')
     }
+    await this.assertApprovedAccountAuthorized(origin, walletId, accountId)
 
     trackEvent(ANALYTICS_EVENTS.DAPP_MESSAGE_SIGNED, {
       pageId: PAGE_IDS.DAPP,
@@ -1204,6 +1219,7 @@ export class DAppHandler {
     }
 
     const walletCore = await accountManager.getWalletCore(walletId, accountId)
+    await this.assertApprovedAccountAuthorized(origin, walletId, accountId)
     const promise = this.resolveSigningResult(
       options?.signingMode,
       () => walletCore.signMessage(message),
@@ -1270,6 +1286,19 @@ export class DAppHandler {
       })
       throw new Error('User rejected the shield request')
     }
+    try {
+      await this.assertApprovedAccountAuthorized(origin, walletId, accountId)
+    } catch (error) {
+      chrome.runtime
+        .sendMessage({
+          type: 'DAPP_TX_RESULT',
+          requestId,
+          success: false,
+          error: error instanceof Error ? error.message : 'Transaction authorization expired'
+        })
+        .catch(() => {})
+      throw error
+    }
 
     const latestBalance = useAccountDataStore
       .getState()
@@ -1333,6 +1362,7 @@ export class DAppHandler {
         }
       })
       transactionId = tx.id
+      await this.assertApprovedAccountAuthorized(origin, walletId, accountId)
       const shieldResult = await walletCore.shieldFunds(sanitizeMarginalFeeZats(marginalFeeZats))
       const { txid } = shieldResult
       broadcastHash = txid
@@ -1513,6 +1543,21 @@ export class DAppHandler {
     }
 
     throw new Error('Not authorized. Call zcash_requestAccounts first.')
+  }
+
+  private async assertApprovedAccountAuthorized(
+    origin: string,
+    walletId: string,
+    accountId: string
+  ): Promise<void> {
+    const authorized = await dappManager.getAuthorizedAccounts(origin)
+    if (
+      accountManager.isLocked() ||
+      !useWalletStore.getState().getAccount(walletId, accountId) ||
+      !authorized.some(account => account.walletId === walletId && account.accountId === accountId)
+    ) {
+      throw new Error('Wallet account or site connection changed. Reconnect and try again.')
+    }
   }
 
   private async requestUserApproval(

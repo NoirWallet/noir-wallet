@@ -31,6 +31,7 @@ function createHarness(t, connection) {
   })
 
   const stored = new Map([['connectedDApps', [connection]]])
+  const runtimeMessages = []
   globalThis.chrome = {
     storage: {
       local: {
@@ -45,6 +46,11 @@ function createHarness(t, connection) {
     tabs: {
       async query() {
         return []
+      }
+    },
+    runtime: {
+      async sendMessage(message) {
+        runtimeMessages.push(message)
       }
     }
   }
@@ -73,6 +79,11 @@ function createHarness(t, connection) {
     accountDisplayNames: {},
     getCurrentWallet() {
       return walletState.wallets.find(candidate => candidate.id === walletState.currentWalletId)
+    },
+    getAccount(walletId, accountId) {
+      return walletState.wallets
+        .find(candidate => candidate.id === walletId)
+        ?.accounts.find(account => account.id === accountId)
     }
   }
   const accountManager = {
@@ -110,12 +121,24 @@ function createHarness(t, connection) {
     '@/lib/hardware-capabilities': {
       getHardwareDAppMethodUnavailableReason: () => null
     },
+    '@/lib/analytics': {
+      ANALYTICS_EVENTS: { DAPP_MESSAGE_SIGNED: 'dapp_message_signed' },
+      PAGE_IDS: { DAPP: 'dapp' },
+      trackEvent() {}
+    },
     '@/config/dapp-matches': loadModule('../src/config/dapp-matches.ts'),
     '@/config/wallet': { WALLET_CONFIG: { SYNC: { DAPP_BALANCE_SYNC_STALE_MS: 30_000 } } },
     '@/core/zcash/wallet-rpc-errors': walletRpcErrors
   })
 
-  return { dappManager, handler: new DAppHandler(), walletState, balance }
+  return {
+    accountManager,
+    dappManager,
+    handler: new DAppHandler(),
+    walletState,
+    balance,
+    runtimeMessages
+  }
 }
 
 function connection(overrides = {}) {
@@ -273,4 +296,117 @@ test('invalid persisted account references do not authorize a site', async t => 
     handler.handleRequest({ method: 'zcash_getBalance', origin: ORIGIN }),
     /zcash_requestAccounts/
   )
+})
+
+test('approval cannot sign after the site connection is revoked', async t => {
+  const { handler, dappManager } = createHarness(
+    t,
+    connection({ boundWalletId: 'wallet-a', boundAccountId: 'account-a' })
+  )
+  await handler.initialize()
+  handler.requestUserApproval = async () => {
+    await dappManager.removeConnection(ORIGIN)
+    return { approved: true, walletId: 'wallet-a', accountId: 'account-a' }
+  }
+
+  await assert.rejects(handler.signMessage(ORIGIN, 'synthetic-message'), /Reconnect and try again/)
+})
+
+test('lock during authorization lookup prevents an approved signature', async t => {
+  const { handler, accountManager, dappManager } = createHarness(
+    t,
+    connection({ boundWalletId: 'wallet-a', boundAccountId: 'account-a' })
+  )
+  await handler.initialize()
+  handler.requestUserApproval = async () => ({
+    approved: true,
+    walletId: 'wallet-a',
+    accountId: 'account-a'
+  })
+  let signalLookup
+  let releaseLookup
+  const lookupStarted = new Promise(resolve => {
+    signalLookup = resolve
+  })
+  const lookupGate = new Promise(resolve => {
+    releaseLookup = resolve
+  })
+  const getAuthorizedAccounts = dappManager.getAuthorizedAccounts.bind(dappManager)
+  dappManager.getAuthorizedAccounts = async origin => {
+    signalLookup()
+    await lookupGate
+    return getAuthorizedAccounts(origin)
+  }
+
+  const signing = handler.signMessage(ORIGIN, 'synthetic-message')
+  await lookupStarted
+  accountManager.isLocked = () => true
+  releaseLookup()
+  await assert.rejects(signing, /Reconnect and try again/)
+})
+
+test('an approved signature stays bound to its captured account after an account switch', async t => {
+  const { handler, accountManager, walletState } = createHarness(
+    t,
+    connection({
+      boundWalletId: 'wallet-a',
+      boundAccountId: 'account-a',
+      authorizedAccounts: [
+        { walletId: 'wallet-a', accountId: 'account-a' },
+        { walletId: 'wallet-a', accountId: 'account-b' }
+      ]
+    })
+  )
+  await handler.initialize()
+  handler.requestUserApproval = async () => {
+    walletState.currentAccountId = 'account-b'
+    return { approved: true, walletId: 'wallet-a', accountId: 'account-a' }
+  }
+  const coreRequests = []
+  accountManager.getWalletCore = async (walletId, accountId) => {
+    coreRequests.push({ walletId, accountId })
+    return {
+      async signMessage() {
+        return {
+          signature: 'synthetic-signature',
+          pubkey: 'synthetic-pubkey',
+          address: 'synthetic'
+        }
+      }
+    }
+  }
+
+  const result = await handler.signMessage(ORIGIN, 'synthetic-message')
+  assert.equal(result.signature, 'synthetic-signature')
+  assert.deepEqual(coreRequests, [{ walletId: 'wallet-a', accountId: 'account-a' }])
+})
+
+test('revoked transaction approval fails without leaving the approval window pending', async t => {
+  const { handler, dappManager, runtimeMessages } = createHarness(
+    t,
+    connection({ boundWalletId: 'wallet-a', boundAccountId: 'account-a' })
+  )
+  await handler.initialize()
+  handler.requestUserApprovalWithId = async () => {
+    await dappManager.removeConnection(ORIGIN)
+    return {
+      approved: true,
+      requestId: 'synthetic-request',
+      walletId: 'wallet-a',
+      accountId: 'account-a'
+    }
+  }
+
+  await assert.rejects(
+    handler.sendTransaction(ORIGIN, { to: `t1${'A'.repeat(33)}`, amount: '1' }),
+    /Reconnect and try again/
+  )
+  assert.deepEqual(runtimeMessages, [
+    {
+      type: 'DAPP_TX_RESULT',
+      requestId: 'synthetic-request',
+      success: false,
+      error: 'Wallet account or site connection changed. Reconnect and try again.'
+    }
+  ])
 })

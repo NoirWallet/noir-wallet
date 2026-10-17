@@ -1617,6 +1617,16 @@ export class AccountManager {
         isHidden: false
       }
 
+      await logger.refreshCache()
+      await SecureStorage.saveLastActivityTime()
+      try {
+        await SecureStorage.saveSessionPassword(password)
+      } catch (error) {
+        await SecureStorage.clearSessionPassword().catch(() => {})
+        throw error
+      }
+      this.setSessionPassword(password)
+
       // Optimistic Unlock: Do not await WASM heavy operations, allow immediate UI access
       // createAccount runs in background Worker, UI will show cached balance/addresses initially
       this.cancelActiveRestore()
@@ -1686,10 +1696,6 @@ export class AccountManager {
             this.activeRestoreAbort = null
           }
         })
-
-      this.setSessionPassword(password)
-      await SecureStorage.saveSessionPassword(password)
-      await SecureStorage.saveLastActivityTime()
 
       restorePromise
         .then(async () => {
@@ -1763,8 +1769,6 @@ export class AccountManager {
             error
           )
         })
-
-      await logger.refreshCache()
 
       return { success: true }
     } catch (error) {
