@@ -10,7 +10,7 @@ const isTestnet = process.env.NETWORK_MODE === 'testnet'
 
 export default defineManifest(async env => ({
   manifest_version: 3,
-  minimum_chrome_version: '120',
+  ...(!isTestnet ? { minimum_chrome_version: '120' } : {}),
   name: isTestnet
     ? '[Testnet] Noir Wallet'
     : env.mode === 'staging'

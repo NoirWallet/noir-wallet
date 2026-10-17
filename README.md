@@ -112,7 +112,7 @@ pnpm build:docs
 
 Website builds use `NoirWallet/noir-wallet` for the `/github` and `/beta/versions` redirects by default. Set `WALLET_REPOSITORY=owner/repo` when building `packages/web` to point both routes at another GitHub repository and its Releases page. The value is validated during the build; see [`.env.example`](./.env.example).
 
-Mainnet builds include WalletConnect. Set the public `VITE_REOWN_PROJECT_ID` build variable to a Reown project you manage when deploying; local builds default to the Zcash adapter demo's project. WalletConnect requires Chrome 120 or later. Pairing keys and session authorization use `chrome.storage.session`: they survive service worker suspension, but require pairing again after browser exit or extension reload/update. See the [connection guide](./packages/docs/content/docs/wallet-guide/dapps.mdx#walletconnect) and [wire contract](./packages/docs/content/docs/developers/provider-api.mdx#walletconnect).
+Mainnet builds include WalletConnect and require Chrome 120 or later; testnet builds do not enable WalletConnect. Set the public `VITE_REOWN_PROJECT_ID` build variable to a Reown project you manage when deploying; local builds default to the Zcash adapter demo's project. Pairing keys and session authorization use `chrome.storage.session`: they survive service worker suspension, but require pairing again after browser exit or extension reload/update. See the [connection guide](./packages/docs/content/docs/wallet-guide/dapps.mdx#walletconnect) and [wire contract](./packages/docs/content/docs/developers/provider-api.mdx#walletconnect).
 
 ### Type Checking
 
