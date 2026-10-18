@@ -61,7 +61,7 @@ test('UI analytics import and forwarding use runtime messaging without storage o
   }
 })
 
-test('trackEvent returns immediately while the collector queues and deduplicates', async () => {
+test('trackEvent returns immediately while the collector queues and deduplicates', async t => {
   const previousChrome = globalThis.chrome
   const previousFetch = globalThis.fetch
   const previousNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator')
@@ -138,7 +138,9 @@ test('trackEvent returns immediately while the collector queues and deduplicates
     }
     assert.equal(trackEvent(ANALYTICS_EVENTS.SEND_SUBMITTED, options), undefined)
     assert.equal(trackEvent(ANALYTICS_EVENTS.SEND_SUBMITTED, options), undefined)
-    await new Promise(resolve => setImmediate(resolve))
+    await t.waitFor(() => assert.equal(storage.analytics_collector_outbox_v1.entries.length, 1), {
+      timeout: 5_000
+    })
     assert.equal(networkRequests, 0)
     assert.equal(storage.analytics_collector_outbox_v1.entries.length, 1)
     assert.equal(storage.analytics_collector_outbox_v1.entries[0].payload.chain, 'evm')
@@ -157,7 +159,7 @@ test('trackEvent returns immediately while the collector queues and deduplicates
     const blockedOptions = { ...options, idempotencyKey: 'blocked-collector-write' }
     trackEvent(ANALYTICS_EVENTS.SEND_SUBMITTED, blockedOptions)
     trackEvent(ANALYTICS_EVENTS.SEND_SUBMITTED, blockedOptions)
-    await new Promise(resolve => setImmediate(resolve))
+    await t.waitFor(() => assert.equal(networkRequests, 1), { timeout: 5_000 })
     assert.equal(networkRequests, 1)
   } finally {
     globalThis.chrome = previousChrome
