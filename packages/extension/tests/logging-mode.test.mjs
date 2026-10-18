@@ -8,7 +8,7 @@ const describe = it.describe
 
 const viteConfigSource = readFileSync(new URL('../vite.config.ts', import.meta.url), 'utf-8')
 const workflowSource = readFileSync(
-  new URL('../../../.github/workflows/build-extension.yml', import.meta.url),
+  new URL('../../../.github/workflows/extension-ci.yml', import.meta.url),
   'utf-8'
 )
 const loggerSource = readFileSync(new URL('../src/lib/logger.ts', import.meta.url), 'utf-8')
@@ -112,12 +112,18 @@ describe('Build-channel logging', () => {
     const entries = []
     const output = []
     const originalInfo = console.info
+    let resolveRecorded
+    const recorded = new Promise(resolve => {
+      resolveRecorded = resolve
+    })
     logger.configureDiagnostics(async entry => {
       entries.push(entry)
+      resolveRecorded()
     })
     console.info = (...args) => output.push(args)
     try {
       logger.info('password=hunter2 address=u1' + 'a'.repeat(70))
+      await recorded
       assert.equal(entries.length, 1)
       assert.doesNotMatch(entries[0].message, /hunter2|u1a{70}/)
       assert.equal(output.length, 1)

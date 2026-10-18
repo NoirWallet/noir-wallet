@@ -11,8 +11,11 @@ const storage = {
   async remove() {}
 }
 globalThis.location = { href: 'chrome-extension://test/index.html', pathname: '/index.html' }
-const originalLocks = globalThis.navigator?.locks
-globalThis.navigator.locks = { request: async (_name, operation) => operation() }
+const originalLocks = Object.getOwnPropertyDescriptor(globalThis.navigator, 'locks')
+Object.defineProperty(globalThis.navigator, 'locks', {
+  configurable: true,
+  value: { request: async (_name, operation) => operation() }
+})
 globalThis.chrome = {
   storage: { local: storage, session: storage, onChanged: { addListener() {} } },
   runtime: {
@@ -32,7 +35,7 @@ const [{ BackgroundZcashWalletRuntime }, { SecureStorage }, { useWalletStore }] 
 
 after(() => {
   if (originalLocks === undefined) delete globalThis.navigator.locks
-  else globalThis.navigator.locks = originalLocks
+  else Object.defineProperty(globalThis.navigator, 'locks', originalLocks)
   delete globalThis.chrome
   delete globalThis.location
 })

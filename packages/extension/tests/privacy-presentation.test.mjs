@@ -96,6 +96,9 @@ test('confidential transfer timing is configured by chain family', () => {
 })
 
 test('Activity details show the outgoing hash before destination settlement', () => {
+  const sourceHash = `0x${'a'.repeat(64)}`
+  const destinationHash = `0x${'b'.repeat(64)}`
+  const outgoingHash = `0x${'c'.repeat(64)}`
   const references = getActivityTransactionReferences({
     snapshot: { sender: { chainId: 'eip155:1', address: '0xsource' } },
     segments: [
@@ -103,13 +106,13 @@ test('Activity details show the outgoing hash before destination settlement', ()
         id: 'destination',
         role: 'destination',
         target: { kind: 'onchain', chainId: 'eip155:42161' },
-        evidence: { transactionHash: '0xdestinationhash' }
+        evidence: { transactionHash: destinationHash }
       },
       {
         id: 'origin',
         role: 'origin',
         target: { kind: 'protocol', provider: 'Confidential Intents' },
-        evidence: { transactionHash: '0xsourcehash' }
+        evidence: { transactionHash: sourceHash }
       }
     ]
   })
@@ -117,13 +120,13 @@ test('Activity details show the outgoing hash before destination settlement', ()
     {
       id: 'origin',
       label: 'Outgoing Hash',
-      hash: '0xsourcehash',
+      hash: sourceHash,
       chainId: null
     },
     {
       id: 'destination',
       label: 'Destination Hash',
-      hash: '0xdestinationhash',
+      hash: destinationHash,
       chainId: 'eip155:42161'
     }
   ])
@@ -135,7 +138,7 @@ test('Activity details show the outgoing hash before destination settlement', ()
           id: 'destination',
           role: 'destination',
           target: { kind: 'onchain', chainId: 'eip155:1' },
-          evidence: { transactionHash: '0xdestinationhash' }
+          evidence: { transactionHash: destinationHash }
         }
       ]
     })
@@ -143,7 +146,7 @@ test('Activity details show the outgoing hash before destination settlement', ()
     {
       id: 'destination',
       label: 'Destination Hash',
-      hash: '0xdestinationhash',
+      hash: destinationHash,
       chainId: 'eip155:1'
     }
   ])
@@ -154,7 +157,7 @@ test('Activity details show the outgoing hash before destination settlement', ()
           id: 'origin',
           role: 'origin',
           target: { kind: 'onchain', chainId: 'eip155:1' },
-          evidence: { transactionHash: '0xoutgoinghash' }
+          evidence: { transactionHash: outgoingHash }
         }
       ]
     })
@@ -162,7 +165,7 @@ test('Activity details show the outgoing hash before destination settlement', ()
     {
       id: 'origin',
       label: 'Transaction Hash',
-      hash: '0xoutgoinghash',
+      hash: outgoingHash,
       chainId: 'eip155:1'
     }
   ])

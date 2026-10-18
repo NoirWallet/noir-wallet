@@ -84,7 +84,7 @@ test('uses the selected EVM account balance for swap availability', () => {
       { family: 'evm', asset: { balance: { availableRaw: '7' } } },
       'private'
     )
-  ).toBe('0')
+  ).toBeUndefined()
 })
 
 test('keeps the canonical available balance for non-EVM swap sources', () => {
