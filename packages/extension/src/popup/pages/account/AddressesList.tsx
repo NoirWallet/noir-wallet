@@ -36,6 +36,7 @@ interface AddressQrTarget {
   readonly network: AccountNetworkView
   readonly address: AccountNetworkAddressView
   readonly displayName?: string
+  readonly confidential?: boolean
 }
 
 function MiddleTruncatedAddress({
@@ -173,10 +174,12 @@ function AddressRow({
 
 function ConfidentialAddressRow({
   address,
-  onCopy
+  onCopy,
+  onShowQr
 }: {
   readonly address: string
   readonly onCopy: (address: string) => void
+  readonly onShowQr: () => void
 }) {
   return (
     <div className="flex min-h-8 min-w-0 items-center gap-2">
@@ -184,15 +187,26 @@ function ConfidentialAddressRow({
         Confidential
       </span>
       <MiddleTruncatedAddress value={address} className="text-sm text-primary" />
-      <button
-        type="button"
-        aria-label="Copy Confidential address"
-        title="Copy Confidential address"
-        className="ml-auto flex size-8 shrink-0 items-center justify-center rounded-lg text-primary transition-colors hover:bg-primary/10"
-        onClick={() => onCopy(address)}
-      >
-        <CopyIcon />
-      </button>
+      <div className="ml-auto flex shrink-0 items-center gap-1">
+        <button
+          type="button"
+          aria-label="Copy Confidential address"
+          title="Copy Confidential address"
+          className="flex size-8 shrink-0 items-center justify-center rounded-lg text-primary transition-colors hover:bg-primary/10"
+          onClick={() => onCopy(address)}
+        >
+          <CopyIcon />
+        </button>
+        <button
+          type="button"
+          aria-label="Show Confidential address QR code"
+          title="Show QR code"
+          className="flex size-8 items-center justify-center rounded-lg text-primary transition-colors hover:bg-primary/10"
+          onClick={onShowQr}
+        >
+          <QrIcon />
+        </button>
+      </div>
     </div>
   )
 }
@@ -304,6 +318,19 @@ function AddressNetworkGroup({
           <ConfidentialAddressRow
             address={privateExecutionAddress}
             onCopy={onCopyPrivateExecution}
+            onShowQr={() =>
+              onShowQr({
+                network,
+                displayName,
+                confidential: true,
+                address: {
+                  value: privateExecutionAddress,
+                  scheme: 'eip55',
+                  privacy: 'transparent',
+                  preferredForReceive: false
+                }
+              })
+            }
           />
         )}
       </div>
@@ -322,7 +349,10 @@ export function AddressesList() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [qrTarget, setQrTarget] = useState<AddressQrTarget | null>(null)
-  const [privateCopyAddress, setPrivateCopyAddress] = useState<string | null>(null)
+  const [privateAddressAction, setPrivateAddressAction] = useState<{
+    readonly address: string
+    readonly qrTarget?: AddressQrTarget
+  } | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -408,9 +438,16 @@ export function AddressesList() {
               <AddressNetworkGroup
                 key={network.chain.id}
                 network={network}
-                onCopy={address => void copyToClipboard(address)}
-                onCopyPrivateExecution={setPrivateCopyAddress}
-                onShowQr={setQrTarget}
+                onCopy={value => void copyToClipboard(value)}
+                onCopyPrivateExecution={address => setPrivateAddressAction({ address })}
+                onShowQr={target =>
+                  target.confidential
+                    ? setPrivateAddressAction({
+                        address: target.address.value,
+                        qrTarget: target
+                      })
+                    : setQrTarget(target)
+                }
                 onOpenZcashSettings={
                   network.chain.family === 'zcash'
                     ? () =>
@@ -437,10 +474,13 @@ export function AddressesList() {
               <DialogHeader className="items-center text-center">
                 <DialogTitle>
                   {qrTarget.displayName ?? accountNetworkLabel(qrTarget.network)}{' '}
-                  {accountNetworkAddressLabel(qrTarget.network, qrTarget.address)} address
+                  {qrTarget.confidential
+                    ? 'Confidential'
+                    : accountNetworkAddressLabel(qrTarget.network, qrTarget.address)}{' '}
+                  address
                 </DialogTitle>
                 <DialogDescription>
-                  {addressPrivacyLabel(qrTarget.address) === 'transparent'
+                  {!qrTarget.confidential && addressPrivacyLabel(qrTarget.address) === 'transparent'
                     ? 'This address and its activity are publicly visible on-chain.'
                     : 'Scan this code to receive funds to this account.'}
                 </DialogDescription>
@@ -474,9 +514,9 @@ export function AddressesList() {
       </Dialog>
 
       <Dialog
-        open={privateCopyAddress !== null}
+        open={privateAddressAction !== null}
         onOpenChange={open => {
-          if (!open) setPrivateCopyAddress(null)
+          if (!open) setPrivateAddressAction(null)
         }}
       >
         <DialogContent position="center" className="max-w-[343px] rounded-2xl p-5">
@@ -484,30 +524,33 @@ export function AddressesList() {
             <div className="mb-1 flex size-10 items-center justify-center rounded-full bg-warning/12 text-warning">
               <Icon icon="lucide:shield-alert" width={21} height={21} />
             </div>
-            <DialogTitle>Copy Confidential address?</DialogTitle>
+            <DialogTitle>
+              {privateAddressAction?.qrTarget ? 'Show' : 'Copy'} Confidential address?
+            </DialogTitle>
             <DialogDescription className="leading-relaxed">
               Direct transfers are not recommended. An on-chain transfer can publicly link the
               funding address to this Confidential address and reduce your privacy.
             </DialogDescription>
           </DialogHeader>
-          {privateCopyAddress && (
+          {privateAddressAction && (
             <p className="break-all rounded-lg bg-card p-2.5 font-mono text-[11px] leading-relaxed text-muted">
-              {privateCopyAddress}
+              {privateAddressAction.address}
             </p>
           )}
           <DialogFooter className="grid grid-cols-2">
-            <Button type="button" variant="secondary" onClick={() => setPrivateCopyAddress(null)}>
+            <Button type="button" variant="secondary" onClick={() => setPrivateAddressAction(null)}>
               Cancel
             </Button>
             <Button
               type="button"
               onClick={() => {
-                if (!privateCopyAddress) return
-                void copyToClipboard(privateCopyAddress)
-                setPrivateCopyAddress(null)
+                if (!privateAddressAction) return
+                if (privateAddressAction.qrTarget) setQrTarget(privateAddressAction.qrTarget)
+                else void copyToClipboard(privateAddressAction.address)
+                setPrivateAddressAction(null)
               }}
             >
-              Copy anyway
+              {privateAddressAction?.qrTarget ? 'Show QR code' : 'Copy anyway'}
             </Button>
           </DialogFooter>
         </DialogContent>

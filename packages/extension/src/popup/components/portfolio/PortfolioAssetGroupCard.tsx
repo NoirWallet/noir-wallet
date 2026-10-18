@@ -1,7 +1,8 @@
 import { Icon } from '@iconify/react'
 import type { ReactNode } from 'react'
 import Big from '@/lib/big'
-import { formatPercent, formatPrice } from '@/lib/format'
+import { formatPercent } from '@/lib/format'
+import { formatFiatAmount, formatTokenPrice } from '@/lib/number-format'
 import { cn } from '@/lib/utils'
 import type { PortfolioAssetView } from '@/core/portfolio'
 import { findAssetPrice, type AssetPriceReadModel } from '@/core/prices'
@@ -55,7 +56,10 @@ function PendingAssetAmount({ amount, symbol }: { readonly amount: Big; readonly
   if (amount.lte(0)) return null
   return (
     <div className="flex min-w-0 items-center justify-end gap-1 px-3 pb-2.5 text-[11px] text-muted">
-      <span className="min-w-0 truncate font-mono" title={`${amount.toFixed()} ${symbol} pending`}>
+      <span
+        className="min-w-0 break-all text-right font-mono"
+        title={`${amount.toFixed()} ${symbol} pending`}
+      >
         {formatDisplayAmount(amount)} {symbol} pending
       </span>
       <BalanceHelp kind="pending" />
@@ -80,14 +84,18 @@ function AccountBalanceTooltip({
         <span className="block space-y-1">
           <span className="flex items-center justify-between gap-3">
             <span>Public</span>
-            <span className="font-mono">
-              {formatDisplayAmount(breakdown.main)} {symbol}
+            <span className="min-w-0 break-all text-right font-mono">
+              <span title={`${breakdown.main.toFixed()} ${symbol}`}>
+                {formatDisplayAmount(breakdown.main)} {symbol}
+              </span>
             </span>
           </span>
           <span className="flex items-center justify-between gap-3">
             <span>Confidential</span>
-            <span className="font-mono">
-              {formatDisplayAmount(breakdown.privateBalance)} {symbol}
+            <span className="min-w-0 break-all text-right font-mono">
+              <span title={`${breakdown.privateBalance.toFixed()} ${symbol}`}>
+                {formatDisplayAmount(breakdown.privateBalance)} {symbol}
+              </span>
             </span>
           </span>
         </span>
@@ -122,7 +130,7 @@ function UnitPrice({
       className="mt-0.5 flex min-w-0 items-center gap-1.5 truncate text-xs text-muted"
     >
       <span className="truncate">
-        {price === null ? '—' : formatPrice(price, { showSign: true })}
+        {price === null ? '—' : formatTokenPrice(price, { showSign: true })}
       </span>
       {change && formattedChange && (
         <span
@@ -201,22 +209,30 @@ function PortfolioAssetBalanceRow({
           {!balancesHidden && fiat === null && pricesLoading ? (
             <Skeleton className="ml-auto h-4 w-16" />
           ) : (
-            <p className="truncate text-sm font-medium">
+            <p className="break-all text-sm font-medium">
               {balancesHidden
                 ? '••••'
                 : fiat === null
                   ? '—'
-                  : formatPrice(fiat, { showSign: true })}
+                  : formatFiatAmount(fiat, { showSign: true })}
             </p>
           )}
           {breakdown && !balancesHidden ? (
             <AccountBalanceTooltip breakdown={breakdown} symbol={entry.asset.metadata.symbol}>
-              <p className="mt-0.5 truncate font-mono text-xs text-muted underline decoration-dotted underline-offset-2">
+              <p
+                className="mt-0.5 break-all font-mono text-xs text-muted underline decoration-dotted underline-offset-2"
+                title={`${amount.toFixed()} ${entry.asset.metadata.symbol}`}
+              >
                 {formatDisplayAmount(amount)} {entry.asset.metadata.symbol}
               </p>
             </AccountBalanceTooltip>
           ) : (
-            <p className="mt-0.5 truncate font-mono text-xs text-muted">
+            <p
+              className="mt-0.5 break-all font-mono text-xs text-muted"
+              title={
+                balancesHidden ? undefined : `${amount.toFixed()} ${entry.asset.metadata.symbol}`
+              }
+            >
               {balancesHidden
                 ? '••••'
                 : `${formatDisplayAmount(amount)} ${entry.asset.metadata.symbol}`}
@@ -310,22 +326,28 @@ export function PortfolioAssetGroupCard({
           {!balancesHidden && fiat === null && pricesLoading ? (
             <Skeleton className="ml-auto h-4 w-16" />
           ) : (
-            <p className="truncate text-sm font-medium">
+            <p className="break-all text-sm font-medium">
               {balancesHidden
                 ? '••••'
                 : fiat === null
                   ? '—'
-                  : formatPrice(fiat, { showSign: true })}
+                  : formatFiatAmount(fiat, { showSign: true })}
             </p>
           )}
           {breakdown && !balancesHidden ? (
             <AccountBalanceTooltip breakdown={breakdown} symbol={group.symbol}>
-              <p className="mt-0.5 truncate font-mono text-xs text-muted underline decoration-dotted underline-offset-2">
+              <p
+                className="mt-0.5 break-all font-mono text-xs text-muted underline decoration-dotted underline-offset-2"
+                title={`${totalAmount.toFixed()} ${group.symbol}`}
+              >
                 {formatDisplayAmount(totalAmount)} {group.symbol}
               </p>
             </AccountBalanceTooltip>
           ) : (
-            <p className="mt-0.5 truncate font-mono text-xs text-muted">
+            <p
+              className="mt-0.5 break-all font-mono text-xs text-muted"
+              title={balancesHidden ? undefined : `${totalAmount.toFixed()} ${group.symbol}`}
+            >
               {balancesHidden ? '••••' : `${formatDisplayAmount(totalAmount)} ${group.symbol}`}
             </p>
           )}

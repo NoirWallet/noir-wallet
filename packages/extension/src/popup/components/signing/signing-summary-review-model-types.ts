@@ -9,6 +9,11 @@ import type {
 export interface SigningSummaryReviewRow {
   readonly label: string
   readonly value: string
+  readonly amount?: {
+    readonly value: string
+    readonly symbol: string
+    readonly profile: 'review' | 'fee'
+  }
   readonly title?: string
   readonly code?: boolean
   readonly breakAll?: boolean

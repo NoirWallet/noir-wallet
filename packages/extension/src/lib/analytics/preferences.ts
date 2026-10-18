@@ -7,6 +7,19 @@ type GoogleAnalyticsPreferenceListener = (enabled: boolean) => void
 const listeners = new Set<GoogleAnalyticsPreferenceListener>()
 let cachedEnabled: boolean | undefined
 let loadPromise: Promise<boolean> | null = null
+let storageListenerRegistered = false
+
+function ensureStorageListener(): void {
+  if (storageListenerRegistered || typeof chrome === 'undefined' || !chrome.storage?.onChanged)
+    return
+  chrome.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName !== 'local') return
+    const change = changes[GOOGLE_ANALYTICS_STORAGE_KEY]
+    if (!change) return
+    updateCachedPreference(parseStoredPreference(change.newValue))
+  })
+  storageListenerRegistered = true
+}
 
 function parseStoredPreference(value: unknown): boolean {
   return typeof value === 'boolean' ? value : DEFAULT_GOOGLE_ANALYTICS_ENABLED
@@ -21,6 +34,7 @@ function updateCachedPreference(enabled: boolean): void {
 }
 
 export async function isGoogleAnalyticsEnabled(): Promise<boolean> {
+  ensureStorageListener()
   if (cachedEnabled !== undefined) return cachedEnabled
   if (loadPromise) return loadPromise
 
@@ -44,6 +58,7 @@ export async function isGoogleAnalyticsEnabled(): Promise<boolean> {
 }
 
 export async function setGoogleAnalyticsEnabled(enabled: boolean): Promise<void> {
+  ensureStorageListener()
   const previous = cachedEnabled
   updateCachedPreference(enabled)
 
@@ -63,15 +78,7 @@ export async function setGoogleAnalyticsEnabled(enabled: boolean): Promise<void>
 export function onGoogleAnalyticsPreferenceChange(
   listener: GoogleAnalyticsPreferenceListener
 ): () => void {
+  ensureStorageListener()
   listeners.add(listener)
   return () => listeners.delete(listener)
-}
-
-if (typeof chrome !== 'undefined' && chrome.storage?.onChanged) {
-  chrome.storage.onChanged.addListener((changes, areaName) => {
-    if (areaName !== 'local') return
-    const change = changes[GOOGLE_ANALYTICS_STORAGE_KEY]
-    if (!change) return
-    updateCachedPreference(parseStoredPreference(change.newValue))
-  })
 }

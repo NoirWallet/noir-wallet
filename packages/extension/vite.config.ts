@@ -158,6 +158,7 @@ export default defineConfig({
   define: {
     __APP_VERSION__: JSON.stringify(version),
     __BUILD_TIME__: JSON.stringify(new Date().toISOString()),
+    __BUILD_CHANNEL__: JSON.stringify(buildChannel),
     __NETWORK_MODE__: JSON.stringify(networkMode),
     __BETA_INVITE_REQUIRED__: JSON.stringify(betaInviteRequired),
     __DEBUG_LOGS__: JSON.stringify(debugLogsEnabled),

@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { parseNearAccountId } from '@/core/chains/near'
 import type { PortfolioAssetView, PortfolioChainView } from '@/core/portfolio'
-import { formatNumber, formatSortAddress } from '@/lib/format'
-import Big from '@/lib/big'
+import { formatSortAddress } from '@/lib/format'
+import { AmountDisplay } from '@/popup/components/common/AmountDisplay'
 import {
   formatBaseUnitAmount,
   formatBaseUnitDecimalAmount,
@@ -41,6 +41,11 @@ import {
 } from '@/popup/services/transfer-maximum'
 import { resolvePortfolioTransferAvailability } from '@/popup/services/transfer-availability'
 import { getNearSendApprovalError, getNearSendPrepareError } from './near-send-validation'
+import {
+  recordSendApprovalFailure,
+  recordSendResult,
+  recordSendSubmission
+} from '@/popup/services/send-transaction-analytics'
 
 export interface NearSendAsset {
   readonly asset: PortfolioAssetView
@@ -267,6 +272,7 @@ export function NearSendForm({
     if (!review) return
     setApproving(true)
     setError(null)
+    recordSendSubmission(review.value.graph, asset.metadata.symbol)
     try {
       const submission = await nearWalletClient.approveTransfer(
         review.value.graph.root.id,
@@ -274,8 +280,10 @@ export function NearSendForm({
       )
       pendingReview.current = null
       setReview(null)
+      recordSendResult(submission.graph, asset.metadata.symbol)
       onSubmitted(submission)
     } catch (approvalError) {
+      recordSendApprovalFailure(review.value.graph, asset.metadata.symbol)
       const current = review
       pendingReview.current = null
       setReview(null)
@@ -406,14 +414,9 @@ export function NearSendForm({
                   blockchain={asset.asset.kind === 'token' ? 'near' : undefined}
                   size="xl"
                 />
-                <p className="mt-3 text-2xl font-bold">
-                  {formatNumber(reviewAmount, {
-                    rm: Big.roundDown,
-                    useUnit: true,
-                    useSubscript: true
-                  })}{' '}
-                  {asset.metadata.symbol}
-                </p>
+                <div className="mt-3 max-w-full text-center text-2xl font-bold">
+                  <AmountDisplay value={reviewAmount} symbol={asset.metadata.symbol} />
+                </div>
                 <p className="mt-1 text-xs text-muted">{networkName}</p>
               </div>
 
@@ -429,12 +432,11 @@ export function NearSendForm({
                   </span>
                 </ReviewLine>
                 <ReviewLine label="Network fee">
-                  {formatNumber(fee, { rm: Big.roundDown, useUnit: true, useSubscript: true })} NEAR
+                  <AmountDisplay value={fee} symbol="NEAR" profile="fee" />
                 </ReviewLine>
                 {asset.asset.kind === 'native' && (
                   <ReviewLine label="Maximum total">
-                    {formatNumber(total, { rm: Big.roundDown, useUnit: true, useSubscript: true })}{' '}
-                    NEAR
+                    <AmountDisplay value={total} symbol="NEAR" />
                   </ReviewLine>
                 )}
               </div>

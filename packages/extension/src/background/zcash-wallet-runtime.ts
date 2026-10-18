@@ -96,7 +96,11 @@ import {
   mergeTransactionsWithWasmHistory,
   associateIncomingIntentsTransactions
 } from '@/core/wallet/transparent-history'
-import { syncJobStore } from '@/lib/sync-job-store'
+import { shouldMarkSyncJobInterrupted, syncJobStore } from '@/lib/sync-job-store'
+import {
+  runSpendabilitySnapshotRefresh,
+  runWithSpendabilityRecovery
+} from '@/core/wallet/spendability-recovery'
 import { isSyncOccupyingWallet } from './sync-status-policy'
 import { clearSyncAbort, signalSyncAbort } from '@/lib/sync-abort'
 import { withTimeout, TimeoutError } from '@/lib/async-utils'
@@ -156,6 +160,7 @@ export type SyncBlocksOptions = {
   force?: boolean
   priority?: 'foreground' | 'background'
   waitForTipAdvance?: boolean
+  maxDurationMs?: number
 }
 
 function mergeAccountAddresses(
@@ -297,7 +302,7 @@ function wasmEntryToTransaction(
     .abs()
     .toFixed(0)
 
-  let timestamp = Date.now()
+  let timestamp = 0
   if (entry.timestamp && Number(entry.timestamp) > 0) {
     timestamp = Number(entry.timestamp) * 1000
   } else if (entry.mined_height && Number(entry.mined_height) > 0) {
@@ -437,6 +442,28 @@ export class BackgroundZcashWalletRuntime {
     return false
   }
 
+  private async isWalletSyncActiveAcrossContexts(walletId: string): Promise<boolean> {
+    if (this.isWalletActivelySyncing(walletId)) return true
+    try {
+      const response = await chrome.runtime.sendMessage({ type: 'GET_SYNC_STATE', walletId })
+      return response?.isActive === true || response?.isSyncing === true
+    } catch {
+      return this.isWalletActivelySyncing(walletId)
+    }
+  }
+
+  private async waitForWalletSyncIdleAcrossContexts(
+    walletId: string,
+    timeoutMs: number
+  ): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs
+    while (Date.now() < deadline) {
+      if (!(await this.isWalletSyncActiveAcrossContexts(walletId))) return true
+      await new Promise(resolve => setTimeout(resolve, 200))
+    }
+    return false
+  }
+
   private async hasPendingJournal(walletId: string): Promise<boolean> {
     try {
       const manifest = await getJournalManifest(this.network, walletId)
@@ -561,7 +588,12 @@ export class BackgroundZcashWalletRuntime {
       await clearJournalEntries(this.network, walletId).catch(() => {})
       logger.log('Snapshot saved before wallet core reset (journal flushed)', walletId)
     } catch (err: any) {
-      logger.warn(`Snapshot before reset failed: ${err?.message || String(err)}`, walletId)
+      logger.warn(
+        `Snapshot before reset failed: ${err?.message || String(err)}`,
+        walletId,
+        undefined,
+        err
+      )
     }
   }
 
@@ -975,7 +1007,7 @@ export class BackgroundZcashWalletRuntime {
   private async reloadWalletRuntime(
     walletId: string,
     options: {
-      mode: 'resync' | 'interrupted' | 'dirty' | 'rpc_switch'
+      mode: 'resync' | 'interrupted' | 'dirty' | 'rpc_switch' | 'spendability'
       dbKey?: string
       recreateWorker?: boolean
       resetWallet?: boolean
@@ -1202,7 +1234,9 @@ export class BackgroundZcashWalletRuntime {
           if (err.message?.includes('Unsupported proto version')) {
             logger.warn(
               'WASM version incompatible; snapshot retained for explicit recovery',
-              walletId
+              walletId,
+              undefined,
+              err
             )
             quarantineWalletPersistence({
               key: dbKey,
@@ -1213,7 +1247,7 @@ export class BackgroundZcashWalletRuntime {
               journal: true
             }).catch(() => {})
           } else {
-            logger.error('Background initialization failed:', walletId)
+            logger.error('Background initialization failed:', walletId, undefined, err)
           }
         })
     } else {
@@ -1221,7 +1255,10 @@ export class BackgroundZcashWalletRuntime {
       const tempCore = this.getOrCreateWalletCore('__init__')
       tempCore.initialize().catch(error => {
         logger.error(
-          `WASM pre-initialization failed for new installation: ${error instanceof Error ? error.message : String(error)}`
+          `WASM pre-initialization failed for new installation: ${error instanceof Error ? error.message : String(error)}`,
+          undefined,
+          undefined,
+          error
         )
       })
     }
@@ -1717,7 +1754,9 @@ export class BackgroundZcashWalletRuntime {
         this.walletCore.ensureInitialized().catch(error => {
           logger.error(
             `Background WASM initialization failed: ${error instanceof Error ? error.message : String(error)}`,
-            this.currentWalletId || undefined
+            this.currentWalletId || undefined,
+            undefined,
+            error
           )
         })
         logger.log(
@@ -1863,11 +1902,13 @@ export class BackgroundZcashWalletRuntime {
           logger.log('Triggering balance sync after unlock', storeWalletId)
           this.requestSync()
         })
-        .catch(() => {
+        .catch(error => {
           if (signal.aborted) return
           logger.error(
             'Background wallet restore failed; keeping authenticated session',
-            storeWalletId
+            storeWalletId,
+            undefined,
+            error
           )
         })
 
@@ -1880,7 +1921,7 @@ export class BackgroundZcashWalletRuntime {
           : {})
       }
     } catch (error) {
-      logger.error('Failed to unlock wallet:', this.currentWalletId || undefined)
+      logger.error('Failed to unlock wallet:', this.currentWalletId || undefined, undefined, error)
       return { success: false, failure: 'operation_failed' }
     }
   }
@@ -2199,9 +2240,16 @@ export class BackgroundZcashWalletRuntime {
     this.sessionCredentialWalletId = null
     this.cancelActiveRestore(undefined, true)
 
-    for (const walletId of this.activeSyncWalletIds) {
+    const syncingWalletIds = [...this.activeSyncWalletIds]
+    for (const walletId of syncingWalletIds) {
       this.abortSyncForWallet(walletId)
       await signalSyncAbort(walletId).catch(() => {})
+    }
+
+    // Let an aborted scan finish its journal/snapshot work before invalidating
+    // the runtime that owns it. A timed-out scan is still force-locked below.
+    for (const walletId of syncingWalletIds) {
+      await this.waitForSyncIdle(walletId, 30_000)
     }
 
     this.clearRuntimeCaches()
@@ -2410,23 +2458,14 @@ export class BackgroundZcashWalletRuntime {
     if (!walletId || !account) throw new Error('No active wallet or account')
     const measure = <T>(stage: string, operation: () => Promise<T>): Promise<T> =>
       debugRequestId ? traceDebugStage(debugRequestId, stage, operation) : operation()
-    const core = await measure('background-get-wallet-core', () =>
-      this.getWalletCore(walletId, account.id)
-    )
-    try {
-      const fee = await measure('background-worker-fee-roundtrip', () =>
+    return this.runSpendabilityEstimate(walletId, account.id, async () => {
+      const core = await measure('background-get-wallet-core', () =>
+        this.getWalletCore(walletId, account.id)
+      )
+      return measure('background-worker-fee-roundtrip', () =>
         core.estimateTransferFee(to, amount, memo, marginalFeeZats, fundingSource, debugRequestId)
       )
-      this.spendabilityRecoveryAttemptedWalletIds.delete(walletId)
-      return fee
-    } catch (error) {
-      if (!isSpendabilityMetadataError(error)) throw error
-
-      await this.recoverSpendabilityMetadata(walletId, account.id)
-      throw new Error(
-        'Wallet balance metadata is being repaired. Please wait for resync to finish.'
-      )
-    }
+    })
   }
 
   /** Estimate the exact maximum payment and fee for the current account. */
@@ -2465,72 +2504,80 @@ export class BackgroundZcashWalletRuntime {
     const network = this.network
     const measure = <T>(stage: string, operation: () => Promise<T>): Promise<T> =>
       debugRequestId ? traceDebugStage(debugRequestId, stage, operation) : operation()
-    const core = await measure('background-get-wallet-core', () =>
-      this.getWalletCore(walletId, accountId)
-    )
-    try {
+    const { estimate, core } = await this.runSpendabilityEstimate(walletId, accountId, async () => {
+      const core = await measure('background-get-wallet-core', () =>
+        this.getWalletCore(walletId, accountId)
+      )
       const estimate = await measure('background-worker-maximum-roundtrip', () =>
         core.estimateMaxTransfer(to, memo, marginalFeeZats, fundingSource, debugRequestId)
       )
-      this.spendabilityRecoveryAttemptedWalletIds.delete(walletId)
+      return { estimate, core }
+    })
 
-      const stillCurrent =
-        this.walletCores.get(walletId) === core &&
-        this.store.currentWalletId === walletId &&
-        this.store.currentAccountId === accountId &&
-        this.network === network &&
-        this.passwordGeneration === passwordGeneration &&
-        (this.walletRuntimeGeneration.get(walletId) ?? 0) === runtimeGeneration
-      if (stillCurrent) {
-        const cached = this.accountDataStore.getBalance(network, walletId, accountId)
-        const confirmedZats = safeBig(cached?.confirmed?.[fundingSource] ?? '0').mul(
-          10 ** ZEC_DECIMALS
-        )
-        const estimatedSourceZats = safeBig(estimate.maxAmountZats).plus(estimate.feeZats)
-        if (estimatedSourceZats.gt(confirmedZats)) {
-          await this.refreshCachedBalancesAfterReady(walletId, accountId, core, false, true).catch(
-            () => {
-              logger.warn('Cached balance refresh after Max estimate failed', walletId, accountId)
-            }
-          )
-        }
-      }
-      return estimate
-    } catch (error) {
-      if (!isSpendabilityMetadataError(error)) throw error
-
-      await this.recoverSpendabilityMetadata(walletId, accountId)
-      throw new Error(
-        'Wallet balance metadata is being repaired. Please wait for resync to finish.'
+    const stillCurrent =
+      this.walletCores.get(walletId) === core &&
+      this.store.currentWalletId === walletId &&
+      this.store.currentAccountId === accountId &&
+      this.network === network &&
+      this.passwordGeneration === passwordGeneration &&
+      (this.walletRuntimeGeneration.get(walletId) ?? 0) === runtimeGeneration
+    if (stillCurrent) {
+      const cached = this.accountDataStore.getBalance(network, walletId, accountId)
+      const confirmedZats = safeBig(cached?.confirmed?.[fundingSource] ?? '0').mul(
+        10 ** ZEC_DECIMALS
       )
+      const estimatedSourceZats = safeBig(estimate.maxAmountZats).plus(estimate.feeZats)
+      if (estimatedSourceZats.gt(confirmedZats)) {
+        await this.refreshCachedBalancesAfterReady(walletId, accountId, core, false, true).catch(
+          () => {
+            logger.warn('Cached balance refresh after Max estimate failed', walletId, accountId)
+          }
+        )
+      }
     }
+    return estimate
+  }
+
+  private async runSpendabilityEstimate<T>(
+    walletId: string,
+    accountId: string,
+    operation: () => Promise<T>
+  ): Promise<T> {
+    const result = await runWithSpendabilityRecovery({
+      operation,
+      isMetadataError: isSpendabilityMetadataError,
+      isSyncing: () => this.isWalletSyncActiveAcrossContexts(walletId),
+      waitForSyncIdle: () => this.waitForWalletSyncIdleAcrossContexts(walletId, 30_000),
+      recover: () => this.recoverSpendabilityMetadata(walletId, accountId)
+    })
+    this.spendabilityRecoveryAttemptedWalletIds.delete(walletId)
+    return result
   }
 
   private async recoverSpendabilityMetadata(walletId: string, accountId: string): Promise<void> {
     const inFlight = this.spendabilityRecoveryByWallet.get(walletId)
     if (inFlight) return inFlight
-    if (this.spendabilityRecoveryAttemptedWalletIds.has(walletId)) return
-
-    const recovery = (async () => {
-      this.spendabilityRecoveryAttemptedWalletIds.add(walletId)
-      const wallet = this.store.getWallet(walletId)
-      if (!wallet) throw new Error('No wallet data found')
-
-      const storedBirthdays = wallet.accounts
-        .map(account => account.birthdayHeight)
-        .filter((height): height is number => Number.isSafeInteger(height) && height > 0)
-      const resolved =
-        storedBirthdays.length > 0
-          ? Math.min(...storedBirthdays)
-          : (await this.resolveBirthdayHeight(walletId, accountId)).height
-
-      logger.warn(
-        `Incomplete spendability metadata detected; resyncing wallet from ${resolved}`,
-        walletId,
-        accountId
-      )
-      await this.resyncZcashWallet(walletId, accountId, resolved, { automatic: true })
-    })()
+    const recovery = runSpendabilitySnapshotRefresh({
+      hasAttempted: () => this.spendabilityRecoveryAttemptedWalletIds.has(walletId),
+      hasPersistedSnapshot: () => {
+        const wallet = this.store.getWallet(walletId)
+        if (!wallet?.accounts.some(account => account.id === accountId)) {
+          throw new Error('No wallet data found')
+        }
+        return hasWalletDb(`${this.network}_${walletId}`)
+      },
+      markAttempted: () => this.spendabilityRecoveryAttemptedWalletIds.add(walletId),
+      clearAttempt: () => this.spendabilityRecoveryAttemptedWalletIds.delete(walletId),
+      reloadPersistedSnapshot: async () => {
+        logger.warn('Reloading persisted snapshot for spendability recovery', walletId, accountId)
+        await this.reloadWalletRuntime(walletId, {
+          mode: 'spendability',
+          dbKey: `${this.network}_${walletId}`,
+          recreateWorker: true
+        })
+      },
+      startCatchUpSync: () => this.startSyncFor(walletId)
+    })
 
     this.spendabilityRecoveryByWallet.set(walletId, recovery)
     try {
@@ -3826,6 +3873,10 @@ export class BackgroundZcashWalletRuntime {
     options?: SyncBlocksOptions
   ): Promise<SyncOutcome> {
     const now = Date.now()
+    const invocationStartedAt = performance.now()
+    const backgroundBudgetReached = () =>
+      options?.maxDurationMs !== undefined &&
+      performance.now() - invocationStartedAt >= options.maxDurationMs
 
     const syncWalletId = targetWalletId || this.store.currentWalletId
     const syncAccountId = targetAccountId || this.store.currentAccountId
@@ -3934,7 +3985,7 @@ export class BackgroundZcashWalletRuntime {
           throw new Error('Failed to resolve chain height from network and wallet summary')
         }
       } catch (e) {
-        logger.warn('Failed to fetch latest height', syncWalletId, syncAccountId)
+        logger.warn('Failed to fetch latest height', syncWalletId, syncAccountId, e)
         this.updateSyncProgressForWallet(syncWalletId, {
           isSyncing: false,
           syncProgress: 0,
@@ -4131,7 +4182,8 @@ export class BackgroundZcashWalletRuntime {
           logger.warn(
             `Initial sync snapshot failed: ${error instanceof Error ? error.message : String(error)}`,
             syncWalletId,
-            syncAccountId
+            syncAccountId,
+            error
           )
           throw error
         }
@@ -4149,7 +4201,7 @@ export class BackgroundZcashWalletRuntime {
         if (shouldCatchUp) {
           const baselineTip = latestHeight
           for (let attempt = 0; attempt < 12 && fullyScannedHeight >= latestHeight; attempt++) {
-            if (isAborted?.()) break
+            if (isAborted?.() || backgroundBudgetReached()) break
             await new Promise(r => setTimeout(r, 5000))
             try {
               latestHeight = await core.getLatestHeight()
@@ -4170,6 +4222,10 @@ export class BackgroundZcashWalletRuntime {
               /* continue with current heights */
             }
           }
+        }
+
+        if (backgroundBudgetReached()) {
+          return { status: 'partial' }
         }
 
         if (!syncNeedsSettlement) {
@@ -4231,7 +4287,8 @@ export class BackgroundZcashWalletRuntime {
             (e as Error)?.message || e
           }`,
           syncWalletId,
-          syncAccountId
+          syncAccountId,
+          e
         )
       }
       let batchesSinceRefresh = 0
@@ -4294,7 +4351,8 @@ export class BackgroundZcashWalletRuntime {
         syncAccountId,
         syncNetwork,
         latestHeight,
-        fullyScannedHeight
+        fullyScannedHeight,
+        options?.maxDurationMs === undefined
       )
 
       logger.log(
@@ -4310,6 +4368,7 @@ export class BackgroundZcashWalletRuntime {
       let aborted = false
       let hasScannedBatch = false
       const startTime = performance.now()
+      let budgetExhausted = false
       let lastPersistBatch = 0
       let consecutiveErrors = 0
       const MAX_CONSECUTIVE_ERRORS = 3
@@ -4345,6 +4404,11 @@ export class BackgroundZcashWalletRuntime {
         if (isAborted?.()) {
           logger.log('Sync aborted during batch', syncWalletId, syncAccountId)
           aborted = true
+          break
+        }
+        if (hasScannedBatch && backgroundBudgetReached()) {
+          budgetExhausted = true
+          logger.info('Background sync budget reached; saving partial progress', syncWalletId)
           break
         }
 
@@ -4453,7 +4517,8 @@ export class BackgroundZcashWalletRuntime {
             logger.warn(
               `Batch RPC timeout (${consecutiveErrors}/${MAX_CONSECUTIVE_ERRORS}), reinitializing worker: ${errMsg}`,
               syncWalletId,
-              syncAccountId
+              syncAccountId,
+              batchErr
             )
             try {
               const dbKey = `${syncNetwork}_${syncWalletId}`
@@ -4485,7 +4550,8 @@ export class BackgroundZcashWalletRuntime {
               logger.error(
                 `Reinit after timeout failed: ${reinitErr?.message}`,
                 syncWalletId,
-                syncAccountId
+                syncAccountId,
+                reinitErr
               )
             }
             await new Promise(r => setTimeout(r, 2000))
@@ -4495,7 +4561,8 @@ export class BackgroundZcashWalletRuntime {
             logger.warn(
               `Batch RPC timeout persists after retries, marking interrupted: ${errMsg}`,
               syncWalletId,
-              syncAccountId
+              syncAccountId,
+              batchErr
             )
             aborted = true
             break
@@ -4525,7 +4592,9 @@ export class BackgroundZcashWalletRuntime {
 
             logger.error(
               'Wallet chain cache conflict remains after automatic recovery',
-              syncWalletId
+              syncWalletId,
+              syncAccountId,
+              batchErr
             )
             partialReason = 'wallet_state_error'
             throw batchErr
@@ -4534,7 +4603,8 @@ export class BackgroundZcashWalletRuntime {
           logger.warn(
             `Batch ${batchCount + 1} failed (${consecutiveErrors}/${MAX_CONSECUTIVE_ERRORS}): ${errMsg}`,
             syncWalletId,
-            syncAccountId
+            syncAccountId,
+            batchErr
           )
 
           const isReorgTruncateFailure =
@@ -4576,7 +4646,12 @@ export class BackgroundZcashWalletRuntime {
               }
               logger.log('Reinitialized after worker loss', syncWalletId, syncAccountId)
             } catch (reinitErr: any) {
-              logger.error(`Reinit failed: ${reinitErr?.message}`, syncWalletId, syncAccountId)
+              logger.error(
+                `Reinit failed: ${reinitErr?.message}`,
+                syncWalletId,
+                syncAccountId,
+                reinitErr
+              )
             }
             await new Promise(r => setTimeout(r, 2000))
             continue
@@ -4586,7 +4661,8 @@ export class BackgroundZcashWalletRuntime {
             logger.error(
               'Too many consecutive batch failures, aborting sync',
               syncWalletId,
-              syncAccountId
+              syncAccountId,
+              batchErr
             )
             partialReason = 'network_error'
             if (isRpcEndpointError(batchErr)) {
@@ -4649,11 +4725,16 @@ export class BackgroundZcashWalletRuntime {
                     aborted = true
                     break
                   }
+                  if (backgroundBudgetReached()) {
+                    budgetExhausted = true
+                    break
+                  }
                   await core.syncNextBatch(batchSize).catch(err => {
                     logger.warn(
                       `syncNextBatch settlement attempt ${attempt + 1} failed: ${err?.message || err}`,
                       syncWalletId,
-                      syncAccountId
+                      syncAccountId,
+                      err
                     )
                     return false
                   })
@@ -4668,7 +4749,7 @@ export class BackgroundZcashWalletRuntime {
                   latestHeight = Math.max(latestHeight, afterSettlement.chainTip)
                   pendingRemaining = this.summaryHasPendingBalance(settlementSummary)
                   if (!pendingRemaining) break
-                  if (attempt + 1 < settlementMaxAttempts) {
+                  if (attempt + 1 < settlementMaxAttempts && !backgroundBudgetReached()) {
                     await new Promise(r => setTimeout(r, settlementIntervalMs))
                   }
                 }
@@ -4929,7 +5010,8 @@ export class BackgroundZcashWalletRuntime {
               logger.warn(
                 `Journal checkpoint failed, journal preserved: ${msg}`,
                 syncWalletId,
-                syncAccountId
+                syncAccountId,
+                checkpointErr
               )
             }
             // Surface scanned-so-far balances in the UI during long syncs
@@ -4965,7 +5047,8 @@ export class BackgroundZcashWalletRuntime {
           logger.warn(
             `Journal flush before persist failed: ${flushMsg}`,
             syncWalletId,
-            syncAccountId
+            syncAccountId,
+            flushErr
           )
         }
       }
@@ -4987,8 +5070,13 @@ export class BackgroundZcashWalletRuntime {
               syncLogPrefix,
               `abort | fully_scanned=${abortHeight} | journal_batches=${journalBatches}`
             )
-          } catch {
-            logger.warn('Snapshot failed on abort, journal preserved', syncWalletId, syncAccountId)
+          } catch (error) {
+            logger.warn(
+              'Snapshot failed on abort, journal preserved',
+              syncWalletId,
+              syncAccountId,
+              error
+            )
           }
         }
         if (hasScannedBatch && !persistedOnAbort) {
@@ -5060,7 +5148,7 @@ export class BackgroundZcashWalletRuntime {
         // Wallet was invalidated by an external tx catch-up (markDirty);
         // this is not a real stall - the next foreground sync will recover
         // automatically. Avoid surfacing "Sync paused" to the user.
-        const reason = dirtyAtEnd ? undefined : (partialReason ?? 'sync_stall')
+        const reason = dirtyAtEnd || budgetExhausted ? undefined : (partialReason ?? 'sync_stall')
 
         // Persist the just-replayed in-memory state so a partial stop (e.g. the
         // chain tip advanced during the final journal replay) resumes from
@@ -5086,7 +5174,8 @@ export class BackgroundZcashWalletRuntime {
             logger.warn(
               `Snapshot failed on partial stop, journal preserved: ${persistErr?.message || String(persistErr)}`,
               syncWalletId,
-              syncAccountId
+              syncAccountId,
+              persistErr
             )
           }
         }
@@ -5105,6 +5194,7 @@ export class BackgroundZcashWalletRuntime {
             lastPersistedHeight: finalHeight,
             status: 'interrupted',
             batchCount,
+            ...(budgetExhausted ? { resumeOnStartup: false } : {}),
             ...(reason ? { reason } : {})
           })
           .catch(() => {})
@@ -5149,6 +5239,7 @@ export class BackgroundZcashWalletRuntime {
 
       const skipFinalPersist = totalRange <= 10 && !needsForcePersist
       let smallSyncPendingJournal = false
+      let finalPersistFailed = false
       if (!snapshotFailed && !flushFailed) {
         if (skipFinalPersist) {
           logger.log('skip final persist for small sync', syncWalletId, syncAccountId)
@@ -5163,10 +5254,12 @@ export class BackgroundZcashWalletRuntime {
               `complete | block ${finalHeight} / ${finalTargetHeight} | journal cleared`
             )
           } catch (e: any) {
+            finalPersistFailed = true
             logger.warn(
               `Final snapshot failed, journal preserved for recovery: ${e?.message || String(e)}`,
               syncWalletId,
-              syncAccountId
+              syncAccountId,
+              e
             )
           }
         }
@@ -5177,27 +5270,28 @@ export class BackgroundZcashWalletRuntime {
         )
       }
 
-      if (skipFinalPersist && smallSyncPendingJournal) {
+      if (
+        shouldMarkSyncJobInterrupted({
+          snapshotFailed,
+          flushFailed,
+          finalPersistFailed,
+          skippedFinalPersist: skipFinalPersist,
+          hasPendingJournal: smallSyncPendingJournal,
+          hasPendingBalanceSettlement: summaryPendingAtEnd || pendingSettlementUnresolved
+        })
+      ) {
         await syncJobStore.markInterrupted(syncWalletId, syncNetwork, finalHeight).catch(() => {})
-        logger.log(
-          'Small sync at tip with pending journal; job left interrupted for replay',
-          syncWalletId,
-          syncAccountId
-        )
-      } else if (!snapshotFailed) {
-        if (summaryPendingAtEnd || pendingSettlementUnresolved) {
-          await syncJobStore.markInterrupted(syncWalletId, syncNetwork, finalHeight).catch(() => {})
-        } else {
-          await syncJobStore
-            .markCompleted(syncWalletId, syncNetwork, finalHeight, finalTargetHeight)
-            .catch(() => {})
-        }
       } else {
-        await syncJobStore.markInterrupted(syncWalletId, syncNetwork, finalHeight).catch(() => {})
+        await syncJobStore
+          .markCompleted(syncWalletId, syncNetwork, finalHeight, finalTargetHeight)
+          .catch(() => {})
       }
 
       const outcomeStatus =
-        skipFinalPersist && smallSyncPendingJournal
+        snapshotFailed ||
+        flushFailed ||
+        finalPersistFailed ||
+        (skipFinalPersist && smallSyncPendingJournal)
           ? 'partial'
           : summaryPendingAtEnd || pendingSettlementUnresolved
             ? 'partial'
@@ -5231,7 +5325,7 @@ export class BackgroundZcashWalletRuntime {
         logger.warn('Current sync stopped for automatic wallet resync', syncWalletId, syncAccountId)
         return { status: 'aborted' }
       }
-      logger.error('Failed:', syncWalletId, syncAccountId)
+      logger.error('Failed:', syncWalletId, syncAccountId, e)
       if (!snapshotFailed && partialReason !== 'wallet_state_error') {
         try {
           await this.persistWalletDbDuringSync(syncWalletId)
@@ -5268,7 +5362,12 @@ export class BackgroundZcashWalletRuntime {
           )
         } catch (resyncError) {
           const message = resyncError instanceof Error ? resyncError.message : String(resyncError)
-          logger.error(`Automatic wallet resync failed: ${message}`, syncWalletId, syncAccountId)
+          logger.error(
+            `Automatic wallet resync failed: ${message}`,
+            syncWalletId,
+            syncAccountId,
+            resyncError
+          )
           await syncJobStore.markFailed(syncWalletId, syncNetwork).catch(() => {})
           this.updateSyncProgressForWallet(syncWalletId, {
             isSyncing: false,

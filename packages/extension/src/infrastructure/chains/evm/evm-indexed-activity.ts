@@ -5,6 +5,7 @@ import { EvmRpcError } from './evm-rpc-client'
 import { isErc20ApproveCalldata } from './evm-contract-call-classification'
 
 export const EVM_HISTORY_LIMIT = 200
+export const EVM_ACTIVITY_ITEM_LIMIT = 2_000
 
 export interface TrackedErc20Asset {
   readonly assetId: string
@@ -16,6 +17,7 @@ export interface ReadEvmAddressActivityInput {
   readonly scope: ActivityScope
   readonly address: string
   readonly fromBlock?: number
+  readonly historyPageCount?: number
   readonly signal?: AbortSignal
 }
 
@@ -37,6 +39,9 @@ export interface EvmActivityHistorySource {
   readonly readAddressActivity: (
     input: ReadEvmAddressActivityInput
   ) => Promise<readonly ActivityItem[]>
+  readonly readAddressActivityWithMetadata?: (
+    input: ReadEvmAddressActivityInput
+  ) => Promise<{ readonly items: readonly ActivityItem[]; readonly hasMore: boolean }>
   readonly findConfirmedReplacement: (
     input: FindEvmConfirmedReplacementInput
   ) => Promise<EvmConfirmedReplacement | null>
@@ -69,6 +74,18 @@ export interface IndexedTokenTransfer {
   readonly nonce?: string
   readonly timestamp: number
   readonly assetId: ReturnType<typeof parseAssetId>['id']
+}
+
+export function isZeroValueEvmTokenActivity(item: ActivityItem): boolean {
+  const amount = item.snapshot?.primaryAmount
+  return (
+    item.source === 'rpc' &&
+    item.id.startsWith('rpc:evm:') &&
+    item.kind === 'transfer' &&
+    amount?.amountRaw === '0' &&
+    amount.assetId.startsWith('eip155:') &&
+    amount.assetId.includes('/erc20:')
+  )
 }
 
 function directionFor(address: string, from: string, to: string | undefined) {
@@ -222,11 +239,13 @@ export function mapEvmIndexedActivity(input: {
   readonly normalTransactions: readonly IndexedTransaction[]
   readonly tokenTransfers: readonly IndexedTokenTransfer[]
   readonly sourcePartial: boolean
+  readonly itemLimit?: number
 }): readonly ActivityItem[] {
   const chain = parseChainId(input.chainId)
   const nativeAssetId = parseAssetId(input.nativeAssetId)
   const tokenTransfersByHash = new Map<string, IndexedTokenTransfer[]>()
   for (const transfer of input.tokenTransfers) {
+    if (transfer.amountRaw === '0') continue
     const group = tokenTransfersByHash.get(transfer.transactionHash) ?? []
     group.push(transfer)
     tokenTransfersByHash.set(transfer.transactionHash, group)
@@ -280,6 +299,6 @@ export function mapEvmIndexedActivity(input: {
           right.createdAt - left.createdAt ||
           left.id.localeCompare(right.id)
       )
-      .slice(0, EVM_HISTORY_LIMIT)
+      .slice(0, input.itemLimit ?? EVM_HISTORY_LIMIT)
   )
 }

@@ -249,11 +249,12 @@ export function KeystoneConnectPage() {
       }
       sendAnalyticsEvent(ANALYTICS_EVENTS.HW_CONNECTED, {
         pageId: PAGE_IDS.HARDWARE_CONNECT,
-        extra: { is_existing_wallet: isExistingWallet }
+        extra: { is_existing_wallet: isExistingWallet, hardware: 'keystone' }
       })
       sendAnalyticsEvent(ANALYTICS_EVENTS.WALLET_CREATED, {
         pageId: PAGE_IDS.HARDWARE_CONNECT,
-        params: { method: 'hardware' }
+        params: { method: 'hardware' },
+        extra: { hardware: 'keystone' }
       })
       setStep('success')
     } catch (e) {

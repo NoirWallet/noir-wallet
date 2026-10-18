@@ -50,4 +50,5 @@ export interface ActivityReadModel {
   readonly scope: ActivityScope
   readonly items: readonly ActivityItem[]
   readonly partialItemCount: number
+  readonly hasMore?: boolean
 }

@@ -8,6 +8,7 @@
 
 import type { Transaction } from '@/types'
 import type { VerboseTransaction } from './zcash-node-rpc.ts'
+import { isWalletSnapshotIntegrityError } from './wallet-snapshot-errors'
 import {
   WALLET_PERSISTENCE_QUARANTINE_STORE_NAME,
   createWalletPersistenceQuarantineRecord,
@@ -135,7 +136,9 @@ function walletDbChunkRange(key: string): IDBKeyRange {
 function toStorageChunks(sources: Uint8Array[]): Uint8Array[] {
   const chunks: Uint8Array[] = []
   for (const src of sources) {
-    if (src.byteLength === 0) continue
+    if (!(src instanceof Uint8Array) || src.byteLength === 0) {
+      throw new Error('Failed to serialize wallet database snapshot: invalid or empty chunk')
+    }
     if (src.byteLength <= DB_CHUNK_SIZE) {
       chunks.push(src)
       continue
@@ -152,11 +155,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function getByteLength(value: unknown): number | null {
-  if (!value || typeof value !== 'object') return null
-  const byteLength = (value as { byteLength?: unknown }).byteLength
-  return typeof byteLength === 'number' && Number.isSafeInteger(byteLength) && byteLength >= 0
-    ? byteLength
-    : null
+  return value instanceof Uint8Array || value instanceof ArrayBuffer ? value.byteLength : null
 }
 
 export function inspectWalletDbEntry(entry: unknown): WalletDbInspection {
@@ -183,15 +182,15 @@ export function inspectWalletDbEntry(entry: unknown): WalletDbInspection {
     const validManifest =
       typeof chunkCount === 'number' &&
       Number.isSafeInteger(chunkCount) &&
-      chunkCount >= 0 &&
+      chunkCount > 0 &&
       Array.isArray(chunkSizes) &&
       chunkSizes.length === chunkCount &&
       chunkSizes.every(
-        size => typeof size === 'number' && Number.isSafeInteger(size) && size >= 0
+        size => typeof size === 'number' && Number.isSafeInteger(size) && size > 0
       ) &&
       typeof totalBytes === 'number' &&
       Number.isSafeInteger(totalBytes) &&
-      totalBytes >= 0 &&
+      totalBytes > 0 &&
       chunkSizes.reduce((sum, size) => sum + size, 0) === totalBytes
     return validManifest
       ? {
@@ -204,7 +203,7 @@ export function inspectWalletDbEntry(entry: unknown): WalletDbInspection {
   }
 
   const totalBytes = getByteLength(entry.data)
-  return totalBytes === null
+  return totalBytes === null || totalBytes === 0
     ? { status: 'incompatible', reason: 'invalid-entry' }
     : {
         status: 'compatible',
@@ -300,6 +299,10 @@ async function getConnection(): Promise<IDBDatabase> {
  * @param data - Wallet database bytes, or an array of streamed chunks
  */
 export async function saveWalletDb(key: string, data: Uint8Array | Uint8Array[]): Promise<void> {
+  const chunks = toStorageChunks(Array.isArray(data) ? data : [data])
+  if (chunks.length === 0) {
+    throw new Error('Failed to serialize wallet database snapshot: empty snapshot')
+  }
   const existing = await inspectWalletDb(key)
   if (existing.status === 'quarantined') {
     throw new Error(`Cannot overwrite quarantined wallet snapshot: ${key}`)
@@ -317,7 +320,6 @@ export async function saveWalletDb(key: string, data: Uint8Array | Uint8Array[])
   // Extract network and walletId from key (format: "network_walletId")
   const [network, walletId] = key.split('_')
 
-  const chunks = toStorageChunks(Array.isArray(data) ? data : [data])
   const chunkSizes = chunks.map(c => c.byteLength)
   const totalBytes = chunkSizes.reduce((sum, n) => sum + n, 0)
 
@@ -335,19 +337,18 @@ export async function saveWalletDb(key: string, data: Uint8Array | Uint8Array[])
   }
 
   return new Promise((resolve, reject) => {
-    const transaction = db.transaction(STORE_NAME, 'readwrite')
+    const transaction = db.transaction(
+      [STORE_NAME, WALLET_PERSISTENCE_QUARANTINE_STORE_NAME],
+      'readwrite'
+    )
     const store = transaction.objectStore(STORE_NAME)
     let settled = false
+    let validationError: Error | null = null
     const finish = (fn: () => void) => {
       if (settled) return
       settled = true
       fn()
     }
-
-    // Drop any stale chunks from a previous (larger) save before rewriting.
-    store.delete(walletDbChunkRange(key))
-    chunks.forEach((chunk, i) => store.put(chunk, walletDbChunkKey(key, i)))
-    store.put(manifest, key)
 
     transaction.oncomplete = () =>
       finish(() => {
@@ -358,69 +359,101 @@ export async function saveWalletDb(key: string, data: Uint8Array | Uint8Array[])
       })
     transaction.onabort = () =>
       finish(() => {
-        const err = transaction.error || new Error('IndexedDB transaction aborted')
+        const err =
+          validationError || transaction.error || new Error('IndexedDB transaction aborted')
         console.warn(`[IndexedDB] save aborted for ${key}: ${err.name}: ${err.message}`)
         reject(err)
       })
     transaction.onerror = () =>
       finish(() => {
-        const err = transaction.error || new Error('IndexedDB transaction error')
+        const err = validationError || transaction.error || new Error('IndexedDB transaction error')
         console.warn(`[IndexedDB] save error for ${key}: ${err.name}: ${err.message}`)
         reject(err)
       })
+
+    const abortWith = (error: unknown) => {
+      validationError = error instanceof Error ? error : new Error('Invalid wallet snapshot state')
+      try {
+        transaction.abort()
+      } catch {
+        // The storage failure may have already aborted the transaction.
+      }
+    }
+
+    const quarantineRequest = transaction
+      .objectStore(WALLET_PERSISTENCE_QUARANTINE_STORE_NAME)
+      .get(key)
+    quarantineRequest.onsuccess = () => {
+      try {
+        const quarantine =
+          quarantineRequest.result === undefined
+            ? null
+            : parseWalletPersistenceQuarantineRecord(quarantineRequest.result)
+        if (quarantine?.snapshotQuarantined || quarantine?.journalQuarantined) {
+          throw new Error(`Cannot overwrite quarantined wallet snapshot: ${key}`)
+        }
+
+        const currentRequest = store.get(key)
+        currentRequest.onsuccess = () => {
+          try {
+            const current = inspectWalletDbEntry(currentRequest.result)
+            if (current.status === 'incompatible') {
+              throw new IncompatibleWalletDbError(key, current)
+            }
+            // Keep validation and replacement in one transaction across contexts.
+            store.delete(walletDbChunkRange(key))
+            chunks.forEach((chunk, i) => store.put(chunk, walletDbChunkKey(key, i)))
+            store.put(manifest, key)
+          } catch (error) {
+            abortWith(error)
+          }
+        }
+      } catch (error) {
+        abortWith(error)
+      }
+    }
   })
 }
 
 /**
  * Reassemble chunked wallet DB bytes into a single contiguous buffer.
  */
-async function loadChunkedWalletDb(
-  db: IDBDatabase,
+function loadChunkedWalletDb(
+  store: IDBObjectStore,
   key: string,
-  manifest: WalletDbChunkManifest
-): Promise<Uint8Array> {
+  manifest: WalletDbChunkManifest,
+  fail: (error: unknown) => void
+): Uint8Array {
   const { chunkCount, chunkSizes, totalBytes } = manifest
   const merged = new Uint8Array(totalBytes)
-  const offsets: number[] = []
-  let acc = 0
-  for (const size of chunkSizes) {
-    offsets.push(acc)
-    acc += size
-  }
-
-  if (chunkCount === 0) return merged
-
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction(STORE_NAME, 'readonly')
-    const store = transaction.objectStore(STORE_NAME)
-    let failed = false
-
-    for (let i = 0; i < chunkCount; i++) {
-      const req = store.get(walletDbChunkKey(key, i))
-      req.onsuccess = () => {
-        const chunk = req.result as Uint8Array | undefined
-        if (!chunk) {
-          failed = true
-          reject(new Error(`Missing chunk ${i}/${chunkCount} for key: ${key}`))
-          try {
-            transaction.abort()
-          } catch {
-            /* already settling */
-          }
-          return
+  let offset = 0
+  for (let i = 0; i < chunkCount; i++) {
+    const chunkOffset = offset
+    offset += chunkSizes[i]
+    const request = store.get(walletDbChunkKey(key, i))
+    request.onsuccess = () => {
+      try {
+        const value: unknown = request.result
+        if (value === undefined) {
+          throw new Error(`Missing chunk ${i}/${chunkCount} for key: ${key}`)
         }
-        merged.set(chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk), offsets[i])
+        if (!(value instanceof Uint8Array) && !(value instanceof ArrayBuffer)) {
+          throw new Error(`Invalid wallet database snapshot: invalid chunk ${i}/${chunkCount}`)
+        }
+        const chunk = value instanceof Uint8Array ? value : new Uint8Array(value)
+        if (chunk.byteLength !== chunkSizes[i]) {
+          throw new Error(
+            `Invalid wallet database snapshot: chunk ${i}/${chunkCount} size mismatch`
+          )
+        }
+        merged.set(chunk, chunkOffset)
+      } catch (error) {
+        fail(error)
       }
     }
-
-    transaction.oncomplete = () => resolve(merged)
-    transaction.onerror = () => {
-      if (!failed) reject(transaction.error)
-    }
-    transaction.onabort = () => {
-      if (!failed) reject(transaction.error || new Error('IndexedDB load transaction aborted'))
-    }
-  })
+    request.onerror = () => fail(request.error || new Error('IndexedDB chunk read failed'))
+  }
+  return merged
 }
 
 function readWalletDbEntry(db: IDBDatabase, key: string): Promise<unknown> {
@@ -529,45 +562,78 @@ export async function inspectWalletDb(key: string): Promise<WalletDbInspection> 
  */
 export async function loadWalletDb(key: string): Promise<Uint8Array | null> {
   try {
-    const db = await getConnection()
-    const quarantine = await readWalletPersistenceQuarantine(db, key)
-    if (quarantine?.snapshotQuarantined) {
-      console.warn(
-        `[IndexedDB] Wallet snapshot ${key} is quarantined and will not be loaded automatically.`
-      )
-      return null
-    }
-    const entry = await readWalletDbEntry(db, key)
-    const inspection = inspectWalletDbEntry(entry)
-
-    if (inspection.status !== 'compatible') {
-      reportIncompatibleWalletDb(key, inspection)
-      if (inspection.status === 'incompatible') {
-        throw new IncompatibleWalletDbError(key, inspection)
-      }
-      return null
-    }
-
-    const walletEntry = entry as WalletDbEntry | WalletDbChunkManifest
-    if (inspection.format === 'chunked') {
-      const manifest = walletEntry as WalletDbChunkManifest
-      const merged = await loadChunkedWalletDb(db, key, manifest)
-      console.log(
-        `[IndexedDB] Loaded ${merged.byteLength} bytes from ${manifest.chunkCount} chunk(s) for key: ${key} (version: ${manifest.metadata.version})`
-      )
-      return merged
-    }
-
-    const singleEntry = walletEntry as WalletDbEntry
-    console.log(
-      `[IndexedDB] Loaded ${singleEntry.data.byteLength} bytes for key: ${key} (version: ${singleEntry.metadata.version})`
-    )
-    return new Uint8Array(singleEntry.data)
-  } catch (e) {
-    if (e instanceof IncompatibleWalletDbError) throw e
-    console.warn('[IndexedDB] Failed to load wallet db:', e)
-    return null
+    return await readWalletDb(key)
+  } catch (error) {
+    if (!isWalletSnapshotIntegrityError(error)) throw error
+    // Confirm corruption against a fresh snapshot before requiring a rescan.
+    return readWalletDb(key)
   }
+}
+
+async function readWalletDb(key: string): Promise<Uint8Array | null> {
+  const db = await getConnection()
+  return new Promise((resolve, reject) => {
+    // The manifest, bytes and quarantine decision must describe one committed snapshot.
+    const transaction = db.transaction(
+      [STORE_NAME, WALLET_PERSISTENCE_QUARANTINE_STORE_NAME],
+      'readonly'
+    )
+    const store = transaction.objectStore(STORE_NAME)
+    let loaded: Uint8Array | null = null
+    let quarantined = false
+    const fail = (error: unknown) => {
+      try {
+        transaction.abort()
+      } catch {
+        // A failed read may have already ended the transaction.
+      }
+      reject(error)
+    }
+    transaction.oncomplete = () => resolve(loaded)
+    transaction.onerror = () => reject(transaction.error || new Error('IndexedDB load failed'))
+    transaction.onabort = () =>
+      reject(transaction.error || new Error('IndexedDB load transaction aborted'))
+
+    const quarantineRequest = transaction
+      .objectStore(WALLET_PERSISTENCE_QUARANTINE_STORE_NAME)
+      .get(key)
+    quarantineRequest.onsuccess = () => {
+      try {
+        quarantined =
+          quarantineRequest.result === undefined
+            ? false
+            : parseWalletPersistenceQuarantineRecord(quarantineRequest.result).snapshotQuarantined
+      } catch (error) {
+        fail(error)
+      }
+    }
+    quarantineRequest.onerror = () => fail(quarantineRequest.error)
+
+    const request = store.get(key)
+    request.onsuccess = () => {
+      if (quarantined) return
+      try {
+        const entry: unknown = request.result
+        const inspection = inspectWalletDbEntry(entry)
+        if (inspection.status !== 'compatible') {
+          reportIncompatibleWalletDb(key, inspection)
+          if (inspection.status === 'incompatible') {
+            throw new IncompatibleWalletDbError(key, inspection)
+          }
+          return
+        }
+        const walletEntry = entry as WalletDbEntry | WalletDbChunkManifest
+        if (inspection.format === 'chunked') {
+          loaded = loadChunkedWalletDb(store, key, walletEntry as WalletDbChunkManifest, fail)
+        } else {
+          loaded = new Uint8Array((walletEntry as WalletDbEntry).data)
+        }
+      } catch (error) {
+        fail(error)
+      }
+    }
+    request.onerror = () => fail(request.error || new Error('IndexedDB manifest read failed'))
+  })
 }
 
 /**

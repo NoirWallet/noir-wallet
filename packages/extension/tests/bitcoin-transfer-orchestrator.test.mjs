@@ -21,6 +21,7 @@ import {
   selectBitcoinCoins
 } from '../src/infrastructure/chains/bitcoin/index.ts'
 import { InMemoryTransactionRepository } from '../src/infrastructure/persistence/repositories/index.ts'
+import { reportBackgroundSendBroadcast } from '../src/background/analytics/send-broadcast.ts'
 
 initEccLib(secp256k1)
 
@@ -673,12 +674,19 @@ test('keeps the immutable Near Intents graph while broadcasting the Bitcoin orig
 
 test('retains one finalized raw transaction across an ambiguous broadcast and resumes exactly', async () => {
   let pendingSchedules = 0
+  const analytics = []
   const testHarness = harness({
     broadcastThrows: true,
     broadcastKnown: false,
     onPendingBroadcast: () => {
       pendingSchedules += 1
-    }
+    },
+    onBroadcastAccepted: (input, recovered) =>
+      recovered &&
+      reportBackgroundSendBroadcast(input.graph, (name, options) => {
+        analytics.push({ name, options })
+        return new Promise(() => {})
+      })
   })
   const approval = await prepare(testHarness)
   const pending = await testHarness.orchestrator.approve({
@@ -690,6 +698,7 @@ test('retains one finalized raw transaction across an ambiguous broadcast and re
     status: 'signed-pending-broadcast',
     graph: { root: { status: 'signed' } }
   })
+  expect(analytics).toHaveLength(0)
   await expect(testHarness.pendingStore.get(transactionId)).resolves.toMatchObject({
     phase: 'signed',
     transactionHash: testHarness.context.prepared.unsignedTransactionId
@@ -702,6 +711,8 @@ test('retains one finalized raw transaction across an ambiguous broadcast and re
   await expect(
     testHarness.orchestrator.resumeBroadcast({ scope, transactionId })
   ).resolves.toMatchObject({ status: 'broadcast', graph: { root: { status: 'broadcast' } } })
+  expect(analytics).toHaveLength(1)
+  expect(analytics[0].options.idempotencyKey).toBe(`send-broadcast:${transactionId}`)
   expect(testHarness.reservationCalls.map(call => call[0])).toEqual(['commit'])
   expect(testHarness.inputReservationCalls.map(call => call[0])).toEqual(['commit'])
   await expect(testHarness.pendingStore.get(transactionId)).resolves.toBeNull()

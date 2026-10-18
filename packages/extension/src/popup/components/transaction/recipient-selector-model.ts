@@ -1,4 +1,5 @@
 import type { AddressBookContact } from '@/core/address-book/address-book'
+import { isGeneratedWalletTimestampName } from '@/lib/format'
 import type {
   AccountNetworkAddressView,
   AccountNetworksCatalogView
@@ -75,7 +76,9 @@ export function buildMyAccountRecipientGroups(
         key: `${account.walletId}:${account.accountId}`,
         walletId: account.walletId,
         accountId: account.accountId,
-        walletDisplayName: account.walletDisplayName,
+        walletDisplayName: isGeneratedWalletTimestampName(account.walletDisplayName)
+          ? ''
+          : account.walletDisplayName,
         accountDisplayName: account.accountDisplayName,
         active: account.active,
         addresses: Object.freeze(addresses)

@@ -13,7 +13,16 @@ import {
   getStandardTransactionResultCopy,
   getSubmittedTransactionResultCopy
 } from '@/lib/transaction-status-copy'
-import { getTransactionRecoveryAction } from '@/lib/transaction-replacement'
+import {
+  getTransactionRecoveryAction,
+  resolveWalletSnapshotRecoveryTarget
+} from '@/lib/transaction-replacement'
+import { isWalletSnapshotRecoveryError } from '@/lib/errors'
+import { isWalletSnapshotIntegrityError } from '@/lib/wallet-snapshot-errors'
+import { inspectWalletDb, loadTransactions, loadWalletDb } from '@/lib/indexed-db'
+import { openModal } from '@/popup/provider/ModalManager'
+import { ResyncZcashContent } from '@/popup/components/account/AccountModals'
+import { resyncZcashWallet } from '@/popup/services/zcash-settings-client'
 import { useSpeedUp } from '@/popup/hooks/useSpeedUp'
 import { isTransactionStatusUpdatedMessage } from '@/types/transaction-messages'
 import { isZcashDestination } from '@/lib/cross-chain-transaction'
@@ -56,6 +65,7 @@ export function TransactionResultPage() {
   const [originActivity, setOriginActivity] = useState<ActivityItem | null>(null)
   const currentNetwork = useWalletStore(state => state.currentNetwork)
   const currentWalletId = useWalletStore(state => state.currentWalletId)
+  const wallets = useWalletStore(state => state.wallets)
   const resultAccountKey = data?.type === 'zcash' ? data.accountKey : undefined
   const resultTransactionId = data?.type === 'zcash' ? data.transactionId : undefined
   const resultTransaction = useAccountDataStore(state => {
@@ -76,6 +86,16 @@ export function TransactionResultPage() {
   const activityTransactionId = data?.type === 'swap' ? data.activityTransactionId : undefined
   const sourceExecutionMode = data?.type === 'swap' ? (data.sourceExecutionMode ?? 'main') : 'main'
   const recoveryAction = getTransactionRecoveryAction(resultTransaction)
+  const snapshotRecoveryTarget =
+    data?.type === 'zcash' && resultStep === 'failed' && isWalletSnapshotRecoveryError(data.error)
+      ? resolveWalletSnapshotRecoveryTarget(
+          resultAccountKey,
+          resultTransactionId,
+          resultTransaction,
+          wallets,
+          currentNetwork
+        )
+      : null
   const syncState = useAccountDataStore(state =>
     currentWalletId
       ? state.getWalletSyncState(currentNetwork, currentWalletId)
@@ -431,6 +451,76 @@ export function TransactionResultPage() {
     }
   }
 
+  const handleSnapshotRecovery = () => {
+    const target = snapshotRecoveryTarget
+    if (!target || target.walletId !== currentWalletId) return
+    void openModal<void>({
+      title: 'Resync Zcash',
+      body: resolve => (
+        <ResyncZcashContent
+          walletId={target.walletId}
+          accountId={target.accountId}
+          birthdayHeight={target.birthdayHeight}
+          onConfirm={async height => {
+            const key = `${target.network}_${target.walletId}`
+            const inspection = await inspectWalletDb(key)
+            let stillNeedsRecovery =
+              inspection.status === 'incompatible' || inspection.status === 'quarantined'
+            if (!stillNeedsRecovery) {
+              try {
+                await loadWalletDb(key)
+              } catch (error) {
+                if (!isWalletSnapshotIntegrityError(error)) throw error
+                stillNeedsRecovery = true
+              }
+            }
+            if (!stillNeedsRecovery) {
+              throw new Error('Wallet data has changed. Close this page and try sending again.')
+            }
+            const currentResult = useTransactionResultStore.getState().data
+            const active = useWalletStore.getState()
+            const transactions = resultAccountKey ? await loadTransactions(resultAccountKey) : []
+            const transaction = transactions.find(record => record.id === resultTransactionId)
+            const verifiedTarget = resolveWalletSnapshotRecoveryTarget(
+              currentResult?.type === 'zcash' &&
+                currentResult.accountKey === resultAccountKey &&
+                currentResult.transactionId === resultTransactionId &&
+                currentResult.step === 'failed' &&
+                isWalletSnapshotRecoveryError(currentResult.error)
+                ? resultAccountKey
+                : undefined,
+              resultTransactionId,
+              transaction,
+              active.wallets,
+              active.currentNetwork
+            )
+            if (
+              !verifiedTarget ||
+              verifiedTarget.walletId !== target.walletId ||
+              verifiedTarget.accountId !== target.accountId ||
+              verifiedTarget.network !== target.network ||
+              active.currentWalletId !== target.walletId
+            ) {
+              throw new Error(
+                'Transaction account could not be verified. Resync it from Account details.'
+              )
+            }
+            await resyncZcashWallet({
+              walletId: target.walletId,
+              accountId: target.accountId,
+              birthdayHeight: height
+            })
+            resolve()
+            leavingResultRef.current = true
+            clear()
+            navigate('/', { replace: true })
+          }}
+          close={() => resolve()}
+        />
+      )
+    })
+  }
+
   const handleCancel = () => {
     leavingResultRef.current = true
     clear()
@@ -484,9 +574,11 @@ export function TransactionResultPage() {
     const failureAction =
       resultStep !== 'failed' || isLoadingRecoveryRecord
         ? undefined
-        : recoveryAction === 'speed_up'
-          ? { label: 'Speed Up', onClick: handleSpeedUp }
-          : { label: 'Try Again', onClick: handleRetry }
+        : snapshotRecoveryTarget
+          ? { label: 'Resync Zcash', onClick: handleSnapshotRecovery }
+          : recoveryAction === 'speed_up'
+            ? { label: 'Speed Up', onClick: handleSpeedUp }
+            : { label: 'Try Again', onClick: handleRetry }
     const pendingDescription =
       resultStep === 'pending'
         ? data.error ||

@@ -181,7 +181,8 @@ function filterItemsForChain(
 
 function mergeBoundedActivityItems(
   previous: readonly ActivityItem[],
-  fresh: readonly ActivityItem[]
+  fresh: readonly ActivityItem[],
+  limit = ACTIVITY_HISTORY_CACHE_ITEM_LIMIT
 ): readonly ActivityItem[] {
   const cacheKey = (item: ActivityItem) => {
     const chainIds = [
@@ -203,7 +204,7 @@ function mergeBoundedActivityItems(
           right.createdAt - left.createdAt ||
           left.id.localeCompare(right.id)
       )
-      .slice(0, ACTIVITY_HISTORY_CACHE_ITEM_LIMIT)
+      .slice(0, limit)
   )
 }
 
@@ -292,7 +293,9 @@ export function createBackgroundActivityCoordinator(
     scope: ActivityScope,
     accountMode: 'main' | 'private' | 'all',
     chainIds: ReadonlySet<string>,
-    fallbackItems: readonly ActivityItem[]
+    fallbackItems: readonly ActivityItem[],
+    historyPageCount = 1,
+    hasMoreKeys: ReadonlySet<string> = new Set()
   ): Promise<readonly ActivityItem[]> => {
     if (evmHistorySources.length === 0) return Object.freeze([])
     const addresses = await resolveEvmExecutionAddresses(
@@ -302,6 +305,7 @@ export function createBackgroundActivityCoordinator(
       accountMode !== 'main'
     )
     if (!addresses) {
+      if (historyPageCount > 1) throw new Error('EVM history address is unavailable')
       return Object.freeze(
         fallbackItems.filter(item =>
           [...chainIds].some(chainId => activityItemIncludesChain(item, chainId))
@@ -316,9 +320,12 @@ export function createBackgroundActivityCoordinator(
         ? [Object.freeze({ address: addresses.privateAddress, accountMode: 'private' as const })]
         : [])
     ]
-    const batchEntries = evmHistorySources.filter(
-      entry => chainIds.has(entry.chainId) && evmBatchHistory?.chainIds.has(entry.chainId)
-    )
+    const batchEntries =
+      historyPageCount > 1
+        ? []
+        : evmHistorySources.filter(
+            entry => chainIds.has(entry.chainId) && evmBatchHistory?.chainIds.has(entry.chainId)
+          )
     const batchResults = await Promise.allSettled(
       selectedAddresses.map(async selected => ({
         selected,
@@ -331,7 +338,12 @@ export function createBackgroundActivityCoordinator(
         )
       }))
     )
-    const items: ActivityItem[] = []
+    const items: ActivityItem[] =
+      historyPageCount > 1
+        ? fallbackItems.filter(item =>
+            [...chainIds].some(chainId => activityItemIncludesChain(item, chainId))
+          )
+        : []
     for (let index = 0; index < batchResults.length; index++) {
       const result = batchResults[index]
       const selected = selectedAddresses[index]
@@ -359,16 +371,32 @@ export function createBackgroundActivityCoordinator(
       }
     }
     const targets = evmHistorySources.flatMap(entry =>
-      chainIds.has(entry.chainId) && !evmBatchHistory?.chainIds.has(entry.chainId)
-        ? selectedAddresses.map(address => Object.freeze({ ...entry, ...address }))
+      chainIds.has(entry.chainId) &&
+      (historyPageCount > 1 || !evmBatchHistory?.chainIds.has(entry.chainId))
+        ? selectedAddresses
+            .filter(
+              selected =>
+                historyPageCount === 1 || hasMoreKeys.has(`${entry.chainId}:${selected.address}`)
+            )
+            .map(address => Object.freeze({ ...entry, ...address }))
         : []
     )
+    if (historyPageCount > 1) {
+      const requestedKeys = [...hasMoreKeys].filter(key =>
+        [...chainIds].some(chainId => key.startsWith(`${chainId}:`))
+      )
+      if (targets.length !== requestedKeys.length) {
+        throw new Error('EVM history address is unavailable')
+      }
+    }
 
     const MAX_CONCURRENCY = 3
     for (let i = 0; i < targets.length; i += MAX_CONCURRENCY) {
       const batch = targets.slice(i, i + MAX_CONCURRENCY)
       const results = await Promise.allSettled(
-        batch.map(({ source, address }) => source.readAddressActivity({ scope, address }))
+        batch.map(({ source, address }) =>
+          source.readAddressActivity({ scope, address, historyPageCount })
+        )
       )
       for (let j = 0; j < results.length; j++) {
         const r = results[j]
@@ -381,6 +409,7 @@ export function createBackgroundActivityCoordinator(
             )
           }
         } else {
+          if (historyPageCount > 1) throw r.reason
           items.push(
             ...filterItemsForChain(fallbackItems, batch[j].chainId).filter(item =>
               batch[j].accountMode === 'private'
@@ -403,7 +432,9 @@ export function createBackgroundActivityCoordinator(
         )
       )
     }
-    return Object.freeze(items)
+    return historyPageCount > 1
+      ? mergeBoundedActivityItems([], items, 10_000)
+      : Object.freeze(items)
   }
 
   const loadCachedEvmItems = async (
@@ -412,8 +443,15 @@ export function createBackgroundActivityCoordinator(
   ): Promise<{
     readonly items: readonly ActivityItem[]
     readonly retryAfterByChainId: Readonly<Record<string, number>>
+    readonly hasMoreByChainId: ReadonlySet<string>
+    readonly hasMoreKeys: ReadonlySet<string>
   }> => {
-    const empty = { items: Object.freeze([]), retryAfterByChainId: Object.freeze({}) }
+    const empty = {
+      items: Object.freeze([]),
+      retryAfterByChainId: Object.freeze({}),
+      hasMoreByChainId: new Set<string>(),
+      hasMoreKeys: new Set<string>()
+    }
     if (evmHistorySources.length === 0) return empty
     const account = await resolveEvmMainAddress(storageRepository, scope)
     if (!account) return empty
@@ -421,11 +459,17 @@ export function createBackgroundActivityCoordinator(
     const records = await listEvmHistoryCacheByScope(scope)
     const items: ActivityItem[] = []
     const retryAfterByChainId: Record<string, number> = {}
+    const hasMoreByChainId = new Set<string>()
+    const hasMoreKeys = new Set<string>()
     for (const record of records) {
       if (!supportedChains.has(record.chainId)) continue
       const mode = record.address === account.main ? 'main' : 'private'
       if (mode === 'private' && !account.software) continue
       if (accountMode !== 'all' && mode !== accountMode) continue
+      if (record.hasMore) {
+        hasMoreByChainId.add(record.chainId)
+        hasMoreKeys.add(`${record.chainId}:${record.address}`)
+      }
       retryAfterByChainId[record.chainId] = Math.min(
         retryAfterByChainId[record.chainId] ?? Number.MAX_SAFE_INTEGER,
         record.retryAfter
@@ -434,7 +478,12 @@ export function createBackgroundActivityCoordinator(
         items.push(mode === 'private' ? Object.freeze({ ...item, accountMode: 'private' }) : item)
       }
     }
-    return Object.freeze({ items: Object.freeze(items), retryAfterByChainId })
+    return Object.freeze({
+      items: Object.freeze(items),
+      retryAfterByChainId,
+      hasMoreByChainId,
+      hasMoreKeys
+    })
   }
 
   const loadSolanaItems = async (
@@ -499,7 +548,8 @@ export function createBackgroundActivityCoordinator(
   const loadSupplementalItems = async (
     scope: ActivityScope,
     accountMode: 'main' | 'private' | 'all',
-    chainIds?: readonly string[]
+    chainIds?: readonly string[],
+    historyPageCount = 1
   ): Promise<readonly ActivityItem[]> => {
     const addressType = await accountPreferences.get({
       network: DEFAULT_NETWORK,
@@ -512,10 +562,17 @@ export function createBackgroundActivityCoordinator(
       (): {
         readonly items: readonly ActivityItem[]
         readonly retryAfterByChainId: Readonly<Record<string, number>>
-      } => ({ items: [], retryAfterByChainId: {} })
+        readonly hasMoreByChainId: ReadonlySet<string>
+        readonly hasMoreKeys: ReadonlySet<string>
+      } => ({
+        items: [],
+        retryAfterByChainId: {},
+        hasMoreByChainId: new Set<string>(),
+        hasMoreKeys: new Set<string>()
+      })
     )
     const activeItems = activeCache?.items ?? []
-    const cachedItems = mergeBoundedActivityItems(activeItems, cachedEvm.items)
+    const cachedItems = mergeBoundedActivityItems(activeItems, cachedEvm.items, 10_000)
     const currentTime = Date.now()
     const supportedChainIds = Object.freeze([
       ...(bitcoinHistory ? [bitcoinNetwork.chainId] : []),
@@ -526,6 +583,9 @@ export function createBackgroundActivityCoordinator(
     const requestedChainIdSet = chainIds ? new Set(chainIds) : null
     const staleChainIds = supportedChainIds.filter(chainId => {
       if (requestedChainIdSet && !requestedChainIdSet.has(chainId)) return false
+      if (historyPageCount > 1) {
+        return chainId.startsWith('eip155:') && cachedEvm.hasMoreByChainId.has(chainId)
+      }
       const refreshedAt = activeCache?.refreshedAtByChainId[chainId]
       if (chainId.startsWith('eip155:')) {
         const retryAfter = cachedEvm.retryAfterByChainId[chainId]
@@ -547,9 +607,17 @@ export function createBackgroundActivityCoordinator(
     })
     if (staleChainIds.length === 0) return cachedItems
     const staleChainIdSet = new Set<string>(staleChainIds)
-    const refreshKey = `${scope.keyDomainId}:${scope.accountId}:${cachePartition}:${accountMode}:${[...staleChainIds].sort().join(',')}`
+    const refreshScopeKey = `${scope.keyDomainId}:${scope.accountId}:${cachePartition}:`
+    const refreshKey = `${refreshScopeKey}${accountMode}:${[...staleChainIds].sort().join(',')}:${historyPageCount}`
     const existingRefresh = supplementalRefreshes.get(refreshKey)
     if (existingRefresh) return existingRefresh
+    const priorRefreshes = [...supplementalRefreshes]
+      .filter(([key]) => key.startsWith(refreshScopeKey))
+      .map(([, work]) => work)
+    if (priorRefreshes.length > 0) {
+      await Promise.allSettled(priorRefreshes)
+      return loadSupplementalItems(scope, accountMode, chainIds, historyPageCount)
+    }
 
     const refresh = (async () => {
       const cachedBitcoinItems = filterItemsForChain(activeItems, bitcoinNetwork.chainId)
@@ -559,7 +627,14 @@ export function createBackgroundActivityCoordinator(
         staleChainIdSet.has(bitcoinNetwork.chainId)
           ? loadBitcoinItems(scope, cachedBitcoinItems, addressType)
           : Object.freeze([]),
-        loadEvmItems(scope, accountMode, staleChainIdSet, cachedEvm.items),
+        loadEvmItems(
+          scope,
+          accountMode,
+          staleChainIdSet,
+          cachedEvm.items,
+          historyPageCount,
+          cachedEvm.hasMoreKeys
+        ),
         staleChainIdSet.has(solanaNetwork.chainId)
           ? loadSolanaItems(scope, cachedSolanaItems)
           : Object.freeze([]),
@@ -581,10 +656,12 @@ export function createBackgroundActivityCoordinator(
         .catch(() => {})
         .then(async () => {
           const latest = await historyCache.read(scope, cachePartition).catch(() => activeCache)
-          const retainedItems = mergeBoundedActivityItems(cachedItems, latest?.items ?? []).filter(
-            item => !staleChainIds.some(chainId => activityItemIncludesChain(item, chainId))
-          )
-          committedItems = mergeBoundedActivityItems(retainedItems, refreshedItems)
+          const retainedItems = mergeBoundedActivityItems(
+            cachedItems,
+            latest?.items ?? [],
+            10_000
+          ).filter(item => !staleChainIds.some(chainId => activityItemIncludesChain(item, chainId)))
+          committedItems = mergeBoundedActivityItems(retainedItems, refreshedItems, 10_000)
           const retainedNonEvmItems = (latest?.items ?? activeItems).filter(
             item => !staleChainIds.some(chainId => activityItemIncludesChain(item, chainId))
           )
@@ -631,7 +708,16 @@ export function createBackgroundActivityCoordinator(
     const partition = bitcoinActivityCachePartition(addressType)
     const snapshot = await historyCache.read(scope, partition).catch(() => null)
     const evm = await loadCachedEvmItems(scope, accountMode).catch(() => ({ items: [] }))
-    return mergeBoundedActivityItems(snapshot?.items ?? [], evm.items)
+    return mergeBoundedActivityItems(snapshot?.items ?? [], evm.items, 10_000)
+  }
+
+  const loadSupplementalHasMore = async (
+    scope: ActivityScope,
+    accountMode: 'main' | 'private' | 'all',
+    chainIds?: readonly string[]
+  ): Promise<boolean> => {
+    const cached = await loadCachedEvmItems(scope, accountMode)
+    return [...cached.hasMoreByChainId].some(chainId => !chainIds || chainIds.includes(chainId))
   }
 
   const filterLocalGraphs = async (
@@ -676,6 +762,7 @@ export function createBackgroundActivityCoordinator(
       loadTransactions(buildAccountKey(DEFAULT_NETWORK, scope.keyDomainId, scope.accountId)),
     loadSupplementalItems,
     loadCachedSupplementalItems,
+    loadSupplementalHasMore,
     ...(evmHistorySources.length > 0
       ? {
           loadPrivateExecutionAddresses: async (

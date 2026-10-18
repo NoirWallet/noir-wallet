@@ -191,8 +191,11 @@ function parseStoredRecord(value: unknown): RheaSwapQuoteSessionRecord {
       'reportStatus'
     ]
     if (
-      keys.length !== expected.length ||
+      (keys.length !== expected.length &&
+        !(keys.length === expected.length + 1 && keys.includes('disposeAfterReport'))) ||
       expected.some(key => !keys.includes(key)) ||
+      (value.submission.disposeAfterReport !== undefined &&
+        typeof value.submission.disposeAfterReport !== 'boolean') ||
       (value.submission.orderId !== null && typeof value.submission.orderId !== 'string') ||
       (value.submission.statusChainId !== null &&
         typeof value.submission.statusChainId !== 'string') ||
@@ -222,7 +225,10 @@ function parseStoredRecord(value: unknown): RheaSwapQuoteSessionRecord {
               32
             ),
       reportRequest: parseStoredReportRequest(value.submission.reportRequest),
-      reportStatus: value.submission.reportStatus
+      reportStatus: value.submission.reportStatus,
+      ...(value.submission.disposeAfterReport === undefined
+        ? {}
+        : { disposeAfterReport: value.submission.disposeAfterReport })
     })
   }
   return Object.freeze({
@@ -242,6 +248,29 @@ export class ChromeRheaSwapQuoteStore implements RheaSwapQuoteSessionStore {
     const key = this.key(quoteHandle)
     const stored = await chrome.storage.local.get(key)
     return stored[key] === undefined ? null : parseStoredRecord(stored[key])
+  }
+
+  async listUnreported(): Promise<readonly string[]> {
+    const stored = await chrome.storage.local.get(null)
+    const handles: string[] = []
+    for (const [key, value] of Object.entries(stored)) {
+      if (!key.startsWith(RECORD_PREFIX)) continue
+      try {
+        const record = parseStoredRecord(value)
+        if (record.submission && record.submission.reportStatus !== 'reported') {
+          handles.push(record.quoteHandle)
+        }
+      } catch {
+        console.warn('[RHEA Swap Monitor] Invalid persisted quote session', { key })
+      }
+    }
+    return handles
+  }
+
+  async clear(): Promise<void> {
+    const stored = await chrome.storage.local.get(null)
+    const keys = Object.keys(stored).filter(key => key.startsWith(RECORD_PREFIX))
+    if (keys.length > 0) await chrome.storage.local.remove(keys)
   }
 
   async put(record: RheaSwapQuoteSessionRecord): Promise<void> {

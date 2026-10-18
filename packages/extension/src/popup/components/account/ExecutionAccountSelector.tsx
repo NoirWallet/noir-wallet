@@ -2,7 +2,8 @@ import { Icon } from '@iconify/react'
 import type { ReactNode } from 'react'
 
 import type { DAppExecutionMode } from '@/core/dapp/dapp-execution-mode'
-import { formatNumber, formatSortAddress } from '@/lib/format'
+import { formatSortAddress } from '@/lib/format'
+import { formatTokenQuantity } from '@/lib/number-format'
 import Big from '@/lib/big'
 import { cn } from '@/lib/utils'
 import { Tooltip } from '@/popup/components/ui/tooltip'
@@ -306,24 +307,20 @@ export function ExecutionAccountSelectorDialog({
                 detail={
                   option.balance !== undefined && (
                     <span className="max-w-[38%] shrink-0 text-right">
-                      <span className="block truncate font-mono text-[11px] text-muted">
-                        {formatNumber(option.balance, {
-                          rm: Big.roundDown,
-                          useUnit: true,
-                          useSubscript: true
-                        })}{' '}
-                        {symbol}
+                      <span
+                        className="block break-all font-mono text-[11px] text-muted"
+                        title={option.balance}
+                      >
+                        {formatTokenQuantity(option.balance)} {symbol}
                       </span>
                       {option.mode === 'private' &&
                         privateUnavailableBalance !== undefined &&
                         Big(privateUnavailableBalance).gt(0) && (
-                          <span className="mt-0.5 block truncate text-[10px] text-muted">
-                            {formatNumber(privateUnavailableBalance, {
-                              rm: Big.roundDown,
-                              useUnit: true,
-                              useSubscript: true
-                            })}{' '}
-                            {symbol} unavailable
+                          <span
+                            className="mt-0.5 block break-all text-[10px] text-muted"
+                            title={privateUnavailableBalance}
+                          >
+                            {formatTokenQuantity(privateUnavailableBalance)} {symbol} unavailable
                           </span>
                         )}
                     </span>

@@ -103,7 +103,10 @@ export interface EvmTransferOrchestratorOptions {
   readonly createId?: () => string
   readonly createExternalRequestId?: () => string
   readonly onPendingBroadcast?: () => Promise<void> | void
-  readonly onBroadcastAccepted?: (graph: TransactionGraph) => Promise<void> | void
+  readonly onBroadcastAccepted?: (
+    graph: TransactionGraph,
+    recovered: boolean
+  ) => Promise<void> | void
   readonly onMonitoringRequired?: () => Promise<void> | void
 }
 
@@ -227,7 +230,10 @@ export class EvmTransferOrchestrator {
   private readonly createId: () => string
   private readonly createExternalRequestId: () => string
   private readonly onPendingBroadcast?: () => Promise<void> | void
-  private readonly onBroadcastAccepted?: (graph: TransactionGraph) => Promise<void> | void
+  private readonly onBroadcastAccepted?: (
+    graph: TransactionGraph,
+    recovered: boolean
+  ) => Promise<void> | void
   private readonly onMonitoringRequired?: () => Promise<void> | void
   private readonly senderApprovalTails = new Map<string, Promise<void>>()
   private readonly senderPreparationTails = new Map<string, Promise<void>>()
@@ -1325,7 +1331,9 @@ export class EvmTransferOrchestrator {
       await this.markOriginalReplacementBroadcast(graph, pending.transactionHash).catch(() => {})
     }
     await Promise.all([
-      Promise.resolve(this.onBroadcastAccepted?.(graph)).catch(() => {}),
+      Promise.resolve(this.onBroadcastAccepted?.(graph, currentGraph === undefined)).catch(
+        () => {}
+      ),
       Promise.resolve(this.onMonitoringRequired?.()).catch(() => {})
     ])
     return Object.freeze({ status: 'broadcast', graph })

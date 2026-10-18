@@ -23,7 +23,10 @@ import { zcashWalletRuntimeClient } from '@/popup/services/zcash-wallet-runtime-
 import { rheaSwapClient } from '@/popup/services/rhea-swap-client'
 import { useWalletStore } from '@/store/wallet-store'
 import { buildAccountKey, useAccountDataStore } from '@/store/account-data-store'
-import { ANALYTICS_EVENTS, PAGE_IDS, sendAnalyticsEvent } from '@/lib/analytics'
+import {
+  recordHardwareOperationOutcome,
+  recordHardwareSignFailure
+} from '@/popup/services/hardware-transaction-analytics'
 import { safeBig } from '@/lib/big'
 import { MARGINAL_FEE_ZATS } from '@/config/fee'
 import { staticFeeFallbackZats } from '@/core/zcash/fee-policy'
@@ -185,12 +188,8 @@ export function KeystoneSignPage() {
         } else {
           setError(classifyError(e).userMessage)
         }
-        sendAnalyticsEvent(ANALYTICS_EVENTS.HW_SIGN_FAILED, {
-          pageId: PAGE_IDS.HARDWARE_SIGN,
-          inputAmount: req.amount,
-          inputSymbol: 'ZEC',
-          extra: { error: (raw || 'build_failed').slice(0, 200), kind: req.kind, phase: 'build' }
-        })
+        recordHardwareSignFailure(req.kind, 'build')
+        recordHardwareOperationOutcome(req, requestId, 'failed')
         setStep('failed')
       }
     },
@@ -397,16 +396,7 @@ export function KeystoneSignPage() {
           console.error('[HardwareSign] Failed to report result to the origin surface:', cause)
         }
       }
-      sendAnalyticsEvent(ANALYTICS_EVENTS.SEND_SUCCEEDED, {
-        pageId: PAGE_IDS.HARDWARE_SIGN,
-        hasTransaction: 1,
-        inputAmount: sentAmount,
-        inputSymbol: 'ZEC',
-        params: { amount: sentAmount, hardware: true },
-        extra: { tx_hash: hash, kind: request.kind }
-      })
-
-      reportDappResult(request, { success: true, txHash: hash })
+      recordHardwareOperationOutcome(request, requestId, 'broadcast', transactionId ?? undefined)
       setTxHash(hash)
       setStep('success')
       if (request.reportToOrigin && originResultPublished) {
@@ -435,12 +425,8 @@ export function KeystoneSignPage() {
         return
       }
       const classified = classifyError(e)
-      sendAnalyticsEvent(ANALYTICS_EVENTS.HW_SIGN_FAILED, {
-        pageId: PAGE_IDS.HARDWARE_SIGN,
-        inputAmount: sentAmount,
-        inputSymbol: 'ZEC',
-        extra: { error: classified.technicalMessage.slice(0, 200), kind: request.kind }
-      })
+      recordHardwareSignFailure(request.kind, 'broadcast')
+      recordHardwareOperationOutcome(request, requestId, 'failed')
       reportDappResult(request, { success: false, error: classified.technicalMessage })
       setError(classified.userMessage)
       setStep('failed')
@@ -486,6 +472,8 @@ export function KeystoneSignPage() {
       }
       setError(classifyError(cause).userMessage)
       setRetryable(true)
+      recordHardwareSignFailure(request.kind, 'sign')
+      recordHardwareOperationOutcome(request, requestId, 'failed')
       setStep('failed')
     }
   }

@@ -2,7 +2,7 @@ import { Icon } from '@iconify/react'
 
 import type { DAppExecutionMode, DAppExecutionModeState } from '@/core/dapp/dapp-execution-mode'
 import type { DAppPrivateExecutionSupportSummary } from '@/core/dapp/dapp-manager'
-import { formatPrice } from '@/lib/format'
+import { formatFiatAmount } from '@/lib/number-format'
 import { cn } from '@/lib/utils'
 import {
   ExecutionAccountOptionRow,
@@ -121,12 +121,12 @@ export function DAppExecutionModeCard({
                         data-testid={`${mode}-address-total`}
                         className="max-w-[30%] shrink-0 truncate text-right font-mono text-[11px] leading-4 text-muted"
                         title={
-                          balancesHidden ? undefined : formatPrice(totalUsd, { showSign: true })
+                          balancesHidden
+                            ? undefined
+                            : formatFiatAmount(totalUsd, { showSign: true })
                         }
                       >
-                        {balancesHidden
-                          ? '••••'
-                          : formatPrice(totalUsd, { showSign: true, useUnit: true })}
+                        {balancesHidden ? '••••' : formatFiatAmount(totalUsd, { showSign: true })}
                       </span>
                     )
                   ) : (

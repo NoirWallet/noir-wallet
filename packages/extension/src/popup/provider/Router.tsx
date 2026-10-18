@@ -16,6 +16,7 @@ import type { ReactNode } from 'react'
 import type { NavigateOptions } from 'react-router-dom'
 import { SecureStorage } from '@/core/wallet/secure-storage'
 import { sendAnalyticsPageView } from '@/lib/analytics'
+import { useAnalyticsEngagement } from '@/popup/hooks/useAnalyticsEngagement'
 
 export { useLocation }
 
@@ -74,6 +75,7 @@ export function useNavigate() {
  * Does NOT track activity for system redirects (unlock, onboarding)
  */
 function RouteActivityTracker() {
+  useAnalyticsEngagement()
   const location = useLocation()
   const isInitialMount = useRef(true)
   const lastTrackedPath = useRef<string | null>(null)

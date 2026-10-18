@@ -1,3 +1,7 @@
+import { transactionBroadcasted } from '@/core/transactions/transaction-analytics'
+import { IndexedDbTransactionRepository } from '@/infrastructure/persistence/repositories'
+import { ANALYTICS_EVENTS } from '../lib/analytics/constants'
+import { emitDAppEvent, observeDAppRequest, type DAppAnalyticsSink } from './dapp-analytics'
 import type { BitcoinNetworkConfig } from '@/config/networks'
 import type { AccountRef, DAppManager } from '@/core/dapp/dapp-manager'
 import {
@@ -70,6 +74,7 @@ export interface BitcoinDAppApprovalPort {
 }
 
 export interface BackgroundBitcoinDAppHandlerOptions {
+  readonly analytics?: DAppAnalyticsSink
   readonly network: BitcoinNetworkConfig
   readonly manager: Pick<
     DAppManager,
@@ -182,6 +187,16 @@ export class BackgroundBitcoinDAppHandler {
     origin: string,
     tabInfo: BitcoinDAppTabInfo
   ): Promise<unknown> {
+    return observeDAppRequest(this.options.analytics, 'bitcoin', request.method, () =>
+      this.handleRequest(request, origin, tabInfo)
+    )
+  }
+
+  private async handleRequest(
+    request: BitcoinDAppRequest,
+    origin: string,
+    tabInfo: BitcoinDAppTabInfo
+  ): Promise<unknown> {
     switch (request.method) {
       case 'connect': {
         const [address] = await this.requestAccounts(origin, tabInfo, request.params, true)
@@ -237,6 +252,7 @@ export class BackgroundBitcoinDAppHandler {
             .broadcastProviderEvent(origin, 'bitcoin', 'accountsChanged', [])
             .catch(() => {})
         })
+        emitDAppEvent(this.options.analytics, 'bitcoin', ANALYTICS_EVENTS.DAPP_DISCONNECTED)
         return null
     }
   }
@@ -498,6 +514,9 @@ export class BackgroundBitcoinDAppHandler {
         chosen.map(item => item.reference),
         current.reference
       )
+      emitDAppEvent(this.options.analytics, 'bitcoin', ANALYTICS_EVENTS.DAPP_CONNECTED, {
+        extra: { account_count: chosen.length, source: 'approval' }
+      })
       return Object.freeze([...new Set(chosen.map(item => item.address))])
     })
   }
@@ -691,7 +710,40 @@ export class BackgroundBitcoinDAppHandler {
       if (!transactionHash || !/^[0-9a-f]{64}$/.test(transactionHash)) {
         throw new Error('Approved Bitcoin transfer is missing its transaction hash')
       }
+      if (transactionBroadcasted(submission.graph)) {
+        emitDAppEvent(this.options.analytics, 'bitcoin', ANALYTICS_EVENTS.DAPP_TRANSACTION_SENT, {
+          hasTransaction: 1,
+          idempotencyKey: `dapp:bitcoin:broadcast:${prepared.graph.root.id}`,
+          extra: { hardware: active.context.keyDomainSource.kind === 'hardware' }
+        })
+      }
       return transactionHash
+    } catch (error) {
+      if (
+        !(
+          typeof error === 'object' &&
+          error !== null &&
+          (Reflect.get(error, 'code') === 4001 || Reflect.get(error, 'code') === 4900)
+        )
+      ) {
+        void new IndexedDbTransactionRepository()
+          .get(prepared.graph.root.scope, prepared.graph.root.id)
+          .then(graph => {
+            if (graph && !transactionBroadcasted(graph) && graph.root.status !== 'signed') {
+              emitDAppEvent(
+                this.options.analytics,
+                'bitcoin',
+                ANALYTICS_EVENTS.DAPP_TRANSACTION_FAILED,
+                {
+                  hasTransaction: 0,
+                  idempotencyKey: `dapp:bitcoin:failed:${prepared.graph.root.id}`
+                }
+              )
+            }
+          })
+          .catch(() => {})
+      }
+      throw error
     } finally {
       if (!submitted) {
         await this.options.transferController.reject(prepared.graph.root.id).catch(() => {})
@@ -975,6 +1027,10 @@ export class BackgroundBitcoinDAppHandler {
     if (transactionId !== transaction.getId()) {
       throw new Error('Bitcoin RPC returned a mismatched transaction ID')
     }
+    emitDAppEvent(this.options.analytics, 'bitcoin', ANALYTICS_EVENTS.DAPP_TRANSACTION_SENT, {
+      hasTransaction: 1,
+      idempotencyKey: `dapp:bitcoin:broadcast:${transactionId}`
+    })
     return transactionId
   }
 

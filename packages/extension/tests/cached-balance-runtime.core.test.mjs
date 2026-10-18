@@ -3,6 +3,10 @@ import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { test } from 'node:test'
 import { mapWasmAccountBalanceToZcashBalance } from '../src/core/wallet/balance-summary.ts'
+import {
+  runSpendabilitySnapshotRefresh,
+  runWithSpendabilityRecovery
+} from '../src/core/wallet/spendability-recovery.ts'
 import { safeBig } from '../src/lib/big.ts'
 
 const require = createRequire(import.meta.url)
@@ -78,6 +82,10 @@ function createRuntime() {
       }
     },
     '@/core/wallet/balance-summary': { mapWasmAccountBalanceToZcashBalance },
+    '@/core/wallet/spendability-recovery': {
+      runSpendabilitySnapshotRefresh,
+      runWithSpendabilityRecovery
+    },
     '@/lib/big': { safeBig },
     '@/config/wallet': { ZEC_DECIMALS: 8 },
     './sync-status-policy': {

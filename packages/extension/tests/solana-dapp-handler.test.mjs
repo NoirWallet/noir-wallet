@@ -8,6 +8,7 @@ const transaction = 'AQ=='
 
 function harness({ approved = true, hardware = false } = {}) {
   const calls = []
+  const analyticsEvents = []
   const active = {
     context: {
       chainAccount: {
@@ -86,6 +87,7 @@ function harness({ approved = true, hardware = false } = {}) {
     }
   }
   const handler = new BackgroundSolanaDAppHandler({
+    analytics: (name, options) => analyticsEvents.push({ name, options }),
     native,
     network: { chainId, displayName: 'Solana Devnet' },
     signer,
@@ -97,7 +99,7 @@ function harness({ approved = true, hardware = false } = {}) {
     },
     runActiveOperation: operation => operation()
   })
-  return { handler, calls }
+  return { handler, calls, analyticsEvents, signer, rpc }
 }
 
 test('signs and broadcasts an authorized serialized Solana transaction', async () => {
@@ -223,4 +225,76 @@ test('rejects malformed transactions and hardware signing before preparation', a
     )
   ).rejects.toMatchObject({ code: 4200 })
   expect(hardware.calls).toEqual([])
+})
+
+test('analytics separates signed bytes, rejected requests, broadcast and confirmation failures', async () => {
+  const signedOnly = harness()
+  await signedOnly.handler.request(
+    { method: 'signTransaction', params: [transaction] },
+    'https://dapp.example',
+    {}
+  )
+  expect(signedOnly.analyticsEvents).toEqual([])
+  const rejected = harness({ approved: false })
+  await expect(
+    rejected.handler.request(
+      { method: 'signAndSendTransaction', params: [transaction] },
+      'https://dapp.example',
+      {}
+    )
+  ).rejects.toMatchObject({ code: 4001 })
+  expect(rejected.analyticsEvents.map(event => event.name)).toEqual(['dapp_request_rejected'])
+  const failed = harness()
+  failed.signer.confirm = async () => {
+    throw new Error('private signing failure')
+  }
+  await expect(
+    failed.handler.request(
+      { method: 'signAndSendTransaction', params: [transaction] },
+      'https://dapp.example',
+      {}
+    )
+  ).rejects.toThrow()
+  expect(failed.analyticsEvents.map(event => event.name)).toEqual(['dapp_transaction_failed'])
+  const sent = harness()
+  await sent.handler.request(
+    { method: 'signAndSendTransaction', params: [transaction] },
+    'https://dapp.example',
+    {}
+  )
+  expect(sent.analyticsEvents.map(event => event.name)).toEqual(['dapp_transaction_sent'])
+  const confirmationFailed = harness()
+  confirmationFailed.rpc.getSignatureStatus = async () => ({ status: 'failed' })
+  await expect(
+    confirmationFailed.handler.request(
+      { method: 'signAndSendTransaction', params: [transaction, { commitment: 'confirmed' }] },
+      'https://dapp.example',
+      {}
+    )
+  ).rejects.toThrow()
+  expect(confirmationFailed.analyticsEvents.map(event => event.name)).toEqual([
+    'dapp_transaction_sent'
+  ])
+  const broadcastFailed = harness()
+  broadcastFailed.rpc.broadcastSignedTransaction = async () => {
+    throw new Error('RPC failed')
+  }
+  await expect(
+    broadcastFailed.handler.request(
+      { method: 'signAndSendTransaction', params: [transaction] },
+      'https://dapp.example',
+      {}
+    )
+  ).rejects.toThrow()
+  expect(broadcastFailed.analyticsEvents.map(event => event.name)).toEqual([
+    'dapp_transaction_failed'
+  ])
+  expect(sent.analyticsEvents[0].options).toMatchObject({
+    chain: 'solana',
+    pageId: 'noir_dapp',
+    hasTransaction: 1
+  })
+  expect(JSON.stringify([...failed.analyticsEvents, ...sent.analyticsEvents])).not.toMatch(
+    /private signing|dapp.example/
+  )
 })

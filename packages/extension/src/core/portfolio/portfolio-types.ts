@@ -37,6 +37,8 @@ export interface PortfolioBalanceSnapshot {
   readonly shieldableRaw?: string
   readonly shieldedRaw?: string
   readonly transparentRaw?: string
+  readonly shieldedPendingRaw?: string
+  readonly transparentPendingRaw?: string
   readonly mainRaw?: string
   readonly privateRaw?: string
   readonly privateOnchainRaw?: string
@@ -59,6 +61,8 @@ export interface PortfolioBalanceView {
   readonly shieldableRaw?: string
   readonly shieldedRaw?: string
   readonly transparentRaw?: string
+  readonly shieldedPendingRaw?: string
+  readonly transparentPendingRaw?: string
   readonly mainRaw?: string
   readonly privateRaw?: string
   readonly privateOnchainRaw?: string

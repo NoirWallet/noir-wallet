@@ -5,6 +5,7 @@ import { parseAssetId } from '@/core/chains/registry'
 import { readBoundedResponseText } from '@/lib/fetch-utils'
 import {
   mapEvmIndexedActivity,
+  EVM_ACTIVITY_ITEM_LIMIT,
   type EvmConfirmedReplacement,
   type FindEvmConfirmedReplacementInput,
   type IndexedTokenTransfer,
@@ -28,10 +29,15 @@ export interface EvmAnkrHistoryTarget {
   readonly scope: ActivityScope
   readonly address: string
   readonly fromBlock?: number
+  readonly historyPageCount?: number
 }
 
 export type EvmAnkrHistoryResult =
-  | { readonly items: readonly ActivityItem[]; readonly partial: boolean }
+  | {
+      readonly items: readonly ActivityItem[]
+      readonly partial: boolean
+      readonly hasMore?: boolean
+    }
   | { readonly incomplete: true; readonly retrySingleChain: boolean }
   | { readonly error: unknown }
 
@@ -151,14 +157,19 @@ function parsePage(
 ): {
   readonly items: readonly unknown[]
   readonly partial: boolean
+  readonly nextPageToken?: string
 } {
   const result = record(value, 'result')
   if (!Array.isArray(result[field]) || result[field].length > limit) invalid(field)
   const next = result.nextPageToken
-  if (next !== undefined && (typeof next !== 'string' || next.length > 512)) {
+  if (next !== undefined && (typeof next !== 'string' || next.length === 0 || next.length > 512)) {
     invalid('page token')
   }
-  return Object.freeze({ items: result[field] as unknown[], partial: !!next })
+  return Object.freeze({
+    items: result[field] as unknown[],
+    partial: !!next,
+    ...(next ? { nextPageToken: next as string } : {})
+  })
 }
 
 function parseOrigin(value: string): string {
@@ -269,6 +280,15 @@ export function createEvmAnkrHistoryClient(
     if (requested.size !== targets.length || targets.length > 16)
       throw new Error('Invalid Ankr history batch')
     const firstAddress = address(targets[0].address, 'wallet address')
+    const historyPageCount = targets[0].historyPageCount ?? 1
+    if (
+      !Number.isSafeInteger(historyPageCount) ||
+      historyPageCount < 1 ||
+      historyPageCount > 10 ||
+      (historyPageCount > 1 && targets.length !== 1)
+    ) {
+      throw new Error('Invalid Ankr history page count')
+    }
     for (const target of targets) {
       if (
         !byChainId.has(target.chainId) ||
@@ -282,6 +302,9 @@ export function createEvmAnkrHistoryClient(
       ) {
         throw new Error('Invalid Ankr history start block')
       }
+      if ((target.historyPageCount ?? 1) !== historyPageCount) {
+        throw new Error('Ankr history batch must share one page count')
+      }
     }
     const blockchains = targets.map(target => getEvmAnkrHistoryBlockchain(target.chainId)!)
     const fromBlock = targets.every(target => target.fromBlock !== undefined)
@@ -292,25 +315,53 @@ export function createEvmAnkrHistoryClient(
       descOrder: true,
       ...(fromBlock === undefined ? {} : { fromBlock })
     }
+    async function readPages(
+      method: 'ankr_getTransactionsByAddress' | 'ankr_getTokenTransfers',
+      field: 'transactions' | 'transfers',
+      pageSize: number,
+      requestedAddress: string | string[]
+    ): Promise<{
+      readonly items: readonly unknown[]
+      readonly partial: boolean
+      readonly failed: boolean
+    }> {
+      const items: unknown[] = []
+      const seenTokens = new Set<string>()
+      let pageToken: string | undefined
+      for (let page = 0; page < historyPageCount; page++) {
+        let result: ReturnType<typeof parsePage>
+        try {
+          result = parsePage(
+            await request(
+              method,
+              {
+                ...common,
+                address: requestedAddress,
+                pageSize,
+                ...(pageToken ? { pageToken } : {})
+              },
+              signal
+            ),
+            field,
+            pageSize
+          )
+        } catch (error) {
+          if (page === 0) throw error
+          return { items, partial: true, failed: true }
+        }
+        items.push(...result.items)
+        pageToken = result.nextPageToken
+        if (!pageToken) return { items, partial: false, failed: false }
+        if (seenTokens.has(pageToken)) {
+          throw new EvmRpcError('invalid-response', 'Ankr history repeated a page token')
+        }
+        seenTokens.add(pageToken)
+      }
+      return { items, partial: true, failed: false }
+    }
     const [native, tokens] = await Promise.allSettled([
-      request(
-        'ankr_getTransactionsByAddress',
-        {
-          ...common,
-          address: firstAddress,
-          pageSize: TX_PAGE_SIZE
-        },
-        signal
-      ).then(value => parsePage(value, 'transactions', TX_PAGE_SIZE)),
-      request(
-        'ankr_getTokenTransfers',
-        {
-          ...common,
-          address: [firstAddress],
-          pageSize: TOKEN_PAGE_SIZE
-        },
-        signal
-      ).then(value => parsePage(value, 'transfers', TOKEN_PAGE_SIZE))
+      readPages('ankr_getTransactionsByAddress', 'transactions', TX_PAGE_SIZE, firstAddress),
+      readPages('ankr_getTokenTransfers', 'transfers', TOKEN_PAGE_SIZE, [firstAddress])
     ])
     const output = new Map<string, EvmAnkrHistoryResult>()
     if (signal?.aborted) {
@@ -324,6 +375,20 @@ export function createEvmAnkrHistoryClient(
     if (native.status === 'rejected' && tokens.status === 'rejected') {
       for (const target of targets) output.set(target.chainId, { error: native.reason })
       return output
+    }
+    if (historyPageCount > 1) {
+      const failure =
+        native.status === 'rejected'
+          ? native.reason
+          : tokens.status === 'rejected'
+            ? tokens.reason
+            : native.value.failed || tokens.value.failed
+              ? new EvmRpcError('network-unavailable', 'EVM history page is unavailable')
+              : null
+      if (failure) {
+        output.set(targets[0].chainId, { error: failure })
+        return output
+      }
     }
     const expected = new Set(blockchains)
     for (const page of [native, tokens]) {
@@ -340,7 +405,11 @@ export function createEvmAnkrHistoryClient(
         return output
       }
     }
-    const branchFailed = native.status === 'rejected' || tokens.status === 'rejected'
+    const branchFailed =
+      native.status === 'rejected' ||
+      tokens.status === 'rejected' ||
+      (native.status === 'fulfilled' && native.value.failed) ||
+      (tokens.status === 'fulfilled' && tokens.value.failed)
     const pageTruncated =
       (native.status === 'fulfilled' && native.value.partial) ||
       (tokens.status === 'fulfilled' && tokens.value.partial)
@@ -368,7 +437,8 @@ export function createEvmAnkrHistoryClient(
           nativeAssetId: chain.nativeAssetId,
           normalTransactions,
           tokenTransfers,
-          sourcePartial: partial
+          sourcePartial: partial,
+          itemLimit: historyPageCount > 1 ? EVM_ACTIVITY_ITEM_LIMIT : undefined
         })
         if (items.length === 0 && partial) {
           output.set(target.chainId, {
@@ -376,7 +446,14 @@ export function createEvmAnkrHistoryClient(
             retrySingleChain: pageTruncated && !branchFailed
           })
         } else {
-          output.set(target.chainId, { items, partial })
+          output.set(target.chainId, {
+            items,
+            partial,
+            hasMore:
+              historyPageCount > 1 && items.length >= EVM_ACTIVITY_ITEM_LIMIT
+                ? false
+                : pageTruncated || branchFailed || items.length >= 200
+          })
         }
       } catch (error) {
         output.set(target.chainId, { error })

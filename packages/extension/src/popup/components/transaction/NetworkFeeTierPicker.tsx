@@ -10,8 +10,7 @@ import { openModal } from '@/popup/provider/ModalManager'
 import { Button } from '@/popup/components/ui/button'
 import { Input } from '@/popup/components/ui/input'
 import { NetworkFeeTierSelector } from './NetworkFeeTierSelector'
-import Big from '@/lib/big'
-import { formatNumber } from '@/lib/format'
+import { AmountDisplay } from '@/popup/components/common/AmountDisplay'
 
 interface NetworkFeeTierPickerProps {
   readonly chainFamily: 'bitcoin' | 'evm'
@@ -55,22 +54,15 @@ export function NetworkFeeTierPicker({
   }
 
   return (
-    <button
-      type="button"
-      onClick={handleEdit}
-      disabled={disabled}
-      className="flex flex-col items-end gap-0.5 text-right transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-60"
-    >
-      <span className="whitespace-nowrap font-mono">
-        {formatNumber(amount, {
-          rm: Big.roundDown,
-          useUnit: true,
-          useSubscript: true,
-          fallback: '—'
-        })}{' '}
-        {symbol}
-      </span>
-      <span className="inline-flex items-center gap-1 text-[10px] text-muted">
+    <div className="flex min-w-0 flex-col items-end gap-0.5 text-right">
+      <AmountDisplay value={amount} symbol={symbol} profile="fee" />
+      <button
+        type="button"
+        onClick={handleEdit}
+        disabled={disabled}
+        className="inline-flex items-center gap-1 text-[10px] text-muted transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-60"
+        aria-label="Edit network fee"
+      >
         <span>{selection?.kind === 'custom' ? 'Custom' : getNetworkFeeTierLabel(tier)}</span>
         <Icon
           icon={disabled ? 'lucide:loader-2' : 'lucide:pencil'}
@@ -78,8 +70,8 @@ export function NetworkFeeTierPicker({
           width={12}
           height={12}
         />
-      </span>
-    </button>
+      </button>
+    </div>
   )
 }
 

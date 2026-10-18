@@ -12,7 +12,8 @@ function createHarness({
   executionKind = 'evm-signature',
   approved = true,
   network = EVM_NETWORKS.mainnet,
-  tokenContract
+  tokenContract,
+  analytics
 } = {}) {
   const calls = {
     approvals: [],
@@ -149,6 +150,7 @@ function createHarness({
     }
   }
   const coordinator = new EvmDAppPrivateTransferCoordinator({
+    analytics,
     network,
     service,
     signatureCoordinator: {
@@ -363,6 +365,30 @@ test.describe('EVM dApp Private transfer coordinator', () => {
     await expect(h.coordinator.send(h.input)).resolves.toBe(DESTINATION_HASH)
     expect(h.calls.quotes).toHaveLength(1)
     expect(h.calls.confirmed).toHaveLength(1)
+  })
+
+  test('reports only observed terminal private failures without waiting for analytics', async () => {
+    const events = []
+    const analytics = (name, options) => {
+      events.push({ name, options })
+      return new Promise(() => {})
+    }
+    const pending = createHarness({ analytics })
+    pending.calls.status = 'processing'
+    await expect(pending.coordinator.send(pending.input)).rejects.toMatchObject({ code: -32000 })
+    const rejected = createHarness({ analytics, approved: false })
+    await expect(rejected.coordinator.send(rejected.input)).rejects.toMatchObject({ code: 4001 })
+    expect(events).toEqual([])
+    for (const status of ['failed', 'refunded', 'expired']) {
+      const h = createHarness({ analytics })
+      h.calls.status = status
+      await expect(h.coordinator.send(h.input)).rejects.toThrow(status)
+    }
+    expect(events.map(event => event.name)).toEqual(Array(3).fill('dapp_transaction_failed'))
+    expect(events[0].options).toMatchObject({ chain: 'evm', extra: { funding_source: 'private' } })
+    expect(JSON.stringify(events)).not.toMatch(
+      /private.example|1111111111111111111111111111111111111111|1000/
+    )
   })
 
   test('retains the request fingerprint after an ambiguous signing response', async () => {

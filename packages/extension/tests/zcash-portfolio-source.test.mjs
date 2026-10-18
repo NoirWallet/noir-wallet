@@ -64,6 +64,8 @@ test.describe('Zcash Portfolio source', () => {
           shieldableRaw: '20000000',
           shieldedRaw: '125000000',
           transparentRaw: '25000000',
+          shieldedPendingRaw: '5000000',
+          transparentPendingRaw: '1000000',
           updatedAt: 2_000
         }
       ]
@@ -90,27 +92,16 @@ test.describe('Zcash Portfolio source', () => {
     })
   })
 
-  test('keeps the bundled ZEC asset visible while its balance is loading or unavailable', () => {
+  test('does not turn an unknown ZEC balance into a confirmed zero', () => {
     expect(read({ balance: null, status: 'loading' })).toMatchObject({
       status: 'loading',
-      balances: [
-        {
-          assetId: `${chainId}/slip44:133`,
-          totalRaw: '0',
-          spendableRaw: '0',
-          availableRaw: '0',
-          pendingRaw: '0',
-          shieldableRaw: '0',
-          shieldedRaw: '0',
-          transparentRaw: '0'
-        }
-      ]
+      balances: []
     })
     expect(
       read({ balance: null, status: 'error', errorCode: 'network-unavailable' })
     ).toMatchObject({
       status: 'error',
-      balances: [{ assetId: `${chainId}/slip44:133`, totalRaw: '0' }],
+      balances: [],
       errorCode: 'network-unavailable'
     })
     expect(() => read({ balance: null, status: 'ready' })).toThrow(/requires a balance/i)

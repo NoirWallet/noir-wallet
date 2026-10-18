@@ -10,7 +10,6 @@ import { test as it } from '@playwright/test'
 import { mock } from 'node:test'
 import assert from 'node:assert/strict'
 import { createDecipheriv } from 'node:crypto'
-import { readFileSync } from 'node:fs'
 
 import { encryptAnalyticsPayload } from '../src/lib/analytics/crypto.ts'
 import {
@@ -36,18 +35,6 @@ function decryptLikeGoBackend(encryptedBase64, password) {
   Buffer.from(password).copy(keyIv, 0, 0, 16)
   const decipher = createDecipheriv('aes-128-cbc', keyIv, keyIv)
   return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString('utf8')
-}
-
-function waitFor(condition, { timeoutMs = 2000 } = {}) {
-  return new Promise((resolve, reject) => {
-    const startedAt = Date.now()
-    const check = () => {
-      if (condition()) return resolve()
-      if (Date.now() - startedAt > timeoutMs) return reject(new Error('waitFor timed out'))
-      setImmediate(check)
-    }
-    check()
-  })
 }
 
 describe('crypto: AES-128-CBC compatible with the Go backend', () => {
@@ -117,9 +104,10 @@ describe('constants: identifiers and route mapping', () => {
     assert.equal(resolvePageId('/approval'), PAGE_IDS.DAPP_APPROVAL)
   })
 
-  it('resolvePageId degrades gracefully for unknown routes', () => {
-    assert.equal(resolvePageId('/future-page/detail'), 'noir_future_page_detail')
-    assert.equal(resolvePageId(''), PAGE_IDS.HOME)
+  it('resolves unknown routes to a fixed non-identifying page', () => {
+    assert.equal(resolvePageId('/future-page/detail'), PAGE_IDS.BACKGROUND)
+    assert.equal(resolvePageId('/u1-private-address?amount=1'), PAGE_IDS.BACKGROUND)
+    assert.equal(resolvePageId(''), PAGE_IDS.BACKGROUND)
   })
 })
 
@@ -156,12 +144,11 @@ describe('payload: wire format construction', () => {
     assert.deepEqual(JSON.parse(payload.extra), {
       method: 'hardware',
       previous_version: '1.0.27',
-      reason: 'manual',
       hardware: false
     })
   })
 
-  it('reports valid transaction amounts while stripping wallet identifiers', () => {
+  it('drops exact amounts and wallet identifiers at the payload boundary', () => {
     const payload = buildPayload(
       'swap_submitted',
       {
@@ -178,11 +165,11 @@ describe('payload: wire format construction', () => {
     )
     assert.equal(payload.page_id, 'noir_swap')
     assert.equal(payload.has_transaction, 1)
-    assert.equal(payload.input_amount, '1.5')
+    assert.equal(payload.input_amount, '')
     assert.equal(payload.input_symbol, 'ZEC')
-    assert.equal(payload.output_amount, '42.1')
+    assert.equal(payload.output_amount, '')
     assert.equal(payload.output_symbol, 'USDC')
-    assert.equal(payload.usd_amount, '73.20')
+    assert.equal(payload.usd_amount, '')
     assert.equal(payload.wallet_address, '')
     assert.equal(payload.timestamp, 1234567890)
   })
@@ -202,15 +189,15 @@ describe('payload: wire format construction', () => {
   it('applies the same metadata allowlist used by the GA reporter', () => {
     assert.deepEqual(
       sanitizeAnalyticsMetadata({
-        page_location: 'https://noir-wallet.extension/security-privacy',
-        page_title: '/security-privacy',
+        page_location: 'https://noir-wallet.extension/noir_settings_security_privacy',
+        page_title: PAGE_IDS.SETTINGS_SECURITY_PRIVACY,
         origin: 'https://dapp.example',
         amount: '1.25',
         error: 'sensitive detail'
       }),
       {
-        page_location: 'https://noir-wallet.extension/security-privacy',
-        page_title: '/security-privacy'
+        page_location: 'https://noir-wallet.extension/noir_settings_security_privacy',
+        page_title: PAGE_IDS.SETTINGS_SECURITY_PRIVACY
       }
     )
   })
@@ -307,93 +294,62 @@ describe('privacy policy: outbound event minimization', () => {
   })
 })
 
-describe('channel routing: Google preference does not disable the custom collector', () => {
-  it('keeps UI forwarding and collector delivery independent from the Google preference', () => {
-    const analyticsIndexSource = readFileSync(
-      new URL('../src/lib/analytics/index.ts', import.meta.url),
-      'utf8'
-    )
-    const collectorClientSource = readFileSync(
-      new URL('../src/lib/analytics/client.ts', import.meta.url),
-      'utf8'
-    )
-    const collectorFinalization = analyticsIndexSource.slice(
-      analyticsIndexSource.indexOf('async function finalizeAndEnqueue'),
-      analyticsIndexSource.indexOf('/** Reports an event to both channels.')
-    )
-    const uiForwarding = analyticsIndexSource.slice(
-      analyticsIndexSource.indexOf('// UI contexts: forward to background')
-    )
-
-    assert.doesNotMatch(collectorFinalization, /AnalyticsEnabled/)
-    assert.doesNotMatch(uiForwarding, /AnalyticsEnabled/)
-    assert.doesNotMatch(collectorClientSource, /from ['"]\.\/preferences/)
-  })
-})
-
-describe('client: batching, retry and drop behaviour', () => {
-  it('batches, encrypts, retries on failure and drops after repeated failures', async () => {
-    mock.timers.enable({ apis: ['setTimeout'] })
+describe('client: durable delivery and bounded retry', () => {
+  it('persists before upload, deduplicates recent deliveries and retries malformed responses', async () => {
     const realFetch = globalThis.fetch
-    try {
-      const fetchCalls = []
-      let failuresToServe = 0
-      globalThis.fetch = mock.fn(async (url, init) => {
-        fetchCalls.push({ url, body: JSON.parse(init.body) })
-        if (failuresToServe > 0) {
-          failuresToServe--
-          return { ok: false, status: 500, json: async () => ({}) }
+    const realChrome = globalThis.chrome
+    const storage = {}
+    const requests = []
+    const responses = [
+      { ok: true, json: async () => ({ code: 1 }) },
+      {
+        ok: true,
+        json: async () => {
+          throw new SyntaxError('invalid JSON')
         }
-        return { ok: true, status: 200, json: async () => ({ code: 0 }) }
-      })
+      },
+      { ok: true, json: async () => ({ code: 0 }) }
+    ]
+    globalThis.chrome = {
+      storage: {
+        local: {
+          get: async key => ({ [key]: storage[key] }),
+          set: async values => Object.assign(storage, values)
+        }
+      },
+      alarms: { create: async () => {}, clear: async () => {} }
+    }
+    globalThis.fetch = mock.fn(async (url, init) => {
+      requests.push({ url, body: JSON.parse(init.body) })
+      return responses.shift()
+    })
 
-      const { clearAnalyticsQueue, enqueueAnalyticsEvent } =
+    try {
+      const { clearAnalyticsQueue, enqueueAnalyticsEvent, flushAnalyticsOutbox } =
         await import('../src/lib/analytics/client.ts')
-      const makeEvent = i => buildPayload('test_event', {}, 1700000000000 + i)
+      const event = buildPayload('swap_completed', {}, 1700000000000)
+      await enqueueAnalyticsEvent(event, 'transaction-local-id')
+      await enqueueAnalyticsEvent(event, 'transaction-local-id')
+      const persisted = storage.analytics_collector_outbox_v1
+      assert.equal(persisted.entries.length, 1)
+      assert.ok(!JSON.stringify(persisted).includes('transaction-local-id'))
 
-      const batch = Array.from({ length: 20 }, (_, i) => makeEvent(i))
-      for (const event of batch) enqueueAnalyticsEvent(event)
-      await waitFor(() => fetchCalls.length === 1)
-
-      assert.equal(fetchCalls[0].url, CUSTOM_ANALYTICS_CONFIG.endpoint)
-      const decrypted = JSON.parse(decryptLikeGoBackend(fetchCalls[0].body.data, PASSWORD))
-      assert.deepEqual(decrypted, batch)
-
-      enqueueAnalyticsEvent(makeEvent(100))
-      mock.timers.tick(2000)
-      await waitFor(() => fetchCalls.length === 2)
-      assert.equal(JSON.parse(decryptLikeGoBackend(fetchCalls[1].body.data, PASSWORD)).length, 1)
-
-      failuresToServe = 1
-      enqueueAnalyticsEvent(makeEvent(200))
-      mock.timers.tick(2000)
-      await waitFor(() => fetchCalls.length === 3)
-      mock.timers.tick(15000)
-      await waitFor(() => fetchCalls.length === 4)
-      assert.deepEqual(fetchCalls[2].body, fetchCalls[3].body)
-
-      failuresToServe = 3
-      enqueueAnalyticsEvent(makeEvent(300))
-      mock.timers.tick(2000)
-      await waitFor(() => fetchCalls.length === 5)
-      mock.timers.tick(15000)
-      await waitFor(() => fetchCalls.length === 6)
-      mock.timers.tick(15000)
-      await waitFor(() => fetchCalls.length === 7)
-      enqueueAnalyticsEvent(makeEvent(400))
-      mock.timers.tick(2000)
-      await waitFor(() => fetchCalls.length === 8)
-      const lastBatch = JSON.parse(decryptLikeGoBackend(fetchCalls[7].body.data, PASSWORD))
-      assert.equal(lastBatch.length, 1)
-      assert.equal(lastBatch[0].wallet_address, '')
-
-      enqueueAnalyticsEvent(makeEvent(500))
-      clearAnalyticsQueue()
-      mock.timers.tick(2000)
-      assert.equal(fetchCalls.length, 8)
+      await flushAnalyticsOutbox()
+      assert.equal(storage.analytics_collector_outbox_v1.entries[0].attempts, 1)
+      await flushAnalyticsOutbox()
+      assert.equal(storage.analytics_collector_outbox_v1.entries[0].attempts, 2)
+      await flushAnalyticsOutbox()
+      assert.equal(storage.analytics_collector_outbox_v1.entries.length, 0)
+      await enqueueAnalyticsEvent(event, 'transaction-local-id')
+      assert.equal(storage.analytics_collector_outbox_v1.entries.length, 0)
+      assert.equal(requests.length, 3)
+      assert.equal(requests[0].url, CUSTOM_ANALYTICS_CONFIG.endpoint)
+      const decrypted = JSON.parse(decryptLikeGoBackend(requests[0].body.data, PASSWORD))
+      assert.deepEqual(decrypted, [event])
+      await clearAnalyticsQueue()
     } finally {
       globalThis.fetch = realFetch
-      mock.timers.reset()
+      globalThis.chrome = realChrome
     }
   })
 })

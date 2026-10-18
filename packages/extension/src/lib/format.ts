@@ -8,30 +8,12 @@ import {
 } from './block-explorer-preferences'
 import { DEFAULT_NETWORK, getNetworkConfig } from '@/lib/runtime-network'
 import { detectZcashAddressType } from './zcash-memo'
-
-const subscriptNumbers = [
-  '₀',
-  '₁',
-  '₂',
-  '₃',
-  '₄',
-  '₅',
-  '₆',
-  '₇',
-  '₈',
-  '₉',
-  '₁₀',
-  '₁₁',
-  '₁₂',
-  '₁₃',
-  '₁₄',
-  '₁₅',
-  '₁₆',
-  '₁₇',
-  '₁₈',
-  '₁₉',
-  '₂₀'
-]
+import {
+  formatDecimalAmount,
+  formatFiatAmount,
+  formatPercentage,
+  formatTokenQuantity
+} from './number-format'
 
 export function formatTimestamp(timestamp: string | number | Date, template?: string) {
   if (!dayjs(timestamp).isValid()) return ''
@@ -92,30 +74,10 @@ export function parseAmount(amount: string | number | undefined, decimals = ZEC_
   }
 }
 
-function getPriceDecimals(price?: string | number, maxDecimals?: number) {
-  if (!price || !Number(price)) return maxDecimals || 15
-  const priceNum = Number(price)
-
-  let decimals: number
-  if (priceNum >= 10) {
-    decimals = 2
-  } else if (priceNum >= 1) {
-    decimals = 3
-  } else {
-    const match = priceNum.toFixed(20).match(/^0\.0*/)
-    const leadingZeros = match ? match[0].length - 2 : 0
-    decimals = leadingZeros + 4
-  }
-
-  return maxDecimals ? Math.min(decimals, maxDecimals) : Math.min(decimals, 18)
-}
-
 interface FormatNumberOptions {
   rm?: Big.RoundingMode
   displayMinimum?: boolean
   maxDigits?: number
-  useUnit?: boolean
-  useSubscript?: boolean
   fallback?: string
 }
 
@@ -123,121 +85,23 @@ export function formatNumber(
   val: string | number | null | undefined,
   options?: FormatNumberOptions
 ) {
-  const {
-    rm = Big.roundHalfUp,
-    displayMinimum = true,
-    useUnit = false,
-    useSubscript = false,
-    fallback = '0'
-  } = options || {}
-  if (val === null || val === undefined || val === '') return fallback
-  let bigVal: Big
-  try {
-    bigVal = new Big(typeof val === 'string' ? val.replace(/,/g, '') : val)
-  } catch {
-    return fallback
+  if (options?.maxDigits !== undefined) {
+    return formatDecimalAmount(val, {
+      maximumFractionDigits: options.maxDigits,
+      roundingMode: options.rm,
+      displayMinimum: options.displayMinimum,
+      fallback: options.fallback
+    })
   }
-  if (bigVal.eq(0)) return '0'
-  const magnitude = bigVal.abs()
-
-  if ((useUnit && magnitude.gte('1e12')) || (useSubscript && magnitude.lt('1e-18'))) {
-    return bigVal
-      .toExponential(3, rm)
-      .replace(/\.?(0+)(?=e)/, '')
-      .replace('e+', 'e')
-  }
-  if (useUnit) {
-    for (const [divisor, unit] of [
-      ['1000000000', 'B'],
-      ['1000000', 'M'],
-      ['1000', 'K']
-    ] as const) {
-      if (magnitude.gte(divisor)) return `${bigVal.div(divisor).round(1, rm).toFixed()}${unit}`
-    }
-  }
-  if (useSubscript && options?.maxDigits === undefined && magnitude.lt('0.0001')) {
-    return formatNumberWithSubscript(bigVal.toFixed())
-  }
-
-  // Use getPriceDecimals for consistent decimal calculation
-  let maxDigits = options?.maxDigits
-  if (maxDigits === undefined) {
-    const absVal = bigVal.abs()
-    if (absVal.eq(0)) {
-      maxDigits = 0
-    } else {
-      maxDigits = getPriceDecimals(absVal.toFixed())
-    }
-  }
-
-  const min = safeBig(10).pow(-maxDigits)
-  const roundedVal = bigVal.round(maxDigits, rm)
-
-  if (displayMinimum && roundedVal.abs().lt(min)) {
-    const formattedMin = new Intl.NumberFormat('en-US', {
-      style: 'decimal',
-      maximumFractionDigits: maxDigits
-    }).format(min.toNumber())
-
-    return `< ${roundedVal.lt(0) ? '-' : ''}${formattedMin}`
-  }
-
-  const formattedValue = new Intl.NumberFormat('en-US', {
-    style: 'decimal',
-    maximumFractionDigits: maxDigits
-  }).format(roundedVal.toNumber())
-
-  return formattedValue
-}
-
-export function formatNumberWithSubscript(value: string | number): string {
-  const bigVal = safeBig(value)
-  if (bigVal.eq(0)) return '0'
-
-  const isNegative = bigVal.lt(0)
-  const strVal = bigVal.abs().toFixed()
-  const parts = strVal.split('.')
-  if (parts.length <= 1) return isNegative ? '-' + strVal : strVal
-
-  const leadingZeros = parts[1].match(/^0+/)?.[0]?.length || 0
-  const absVal = bigVal.abs()
-
-  let maxDigits
-  if (absVal.eq(0)) {
-    maxDigits = 0
-  } else {
-    maxDigits = getPriceDecimals(absVal.toFixed())
-  }
-
-  if (leadingZeros > 3 && leadingZeros <= 20) {
-    const remainingDigits = parts[1]?.slice(leadingZeros)
-    // When using subscript, display a fixed 5 digits since subscript already compresses the length
-    const digitsToShow = maxDigits - leadingZeros
-    const MathMax = Math.max(1, digitsToShow)
-    const truncatedDigits = remainingDigits?.slice(0, MathMax).replace(/0+$/, '')
-    const subscriptNumber = subscriptNumbers[leadingZeros]
-    parts[1] = '0' + subscriptNumber + truncatedDigits
-  } else {
-    parts[1] = parts[1]?.slice(0, maxDigits).replace(/0+$/, '')
-  }
-
-  const result = parts[1] ? parts.join('.') : parts[0]
-  return isNegative ? '-' + result : result
+  const display = formatTokenQuantity(val)
+  return display === '—' ? (options?.fallback ?? display) : display
 }
 
 export function formatPrice(
   price: string | number | undefined,
   options?: FormatNumberOptions & { showSign?: boolean }
 ) {
-  const bigPrice = safeBig(price)
-  const formattedPrice = bigPrice.eq(0)
-    ? '0'
-    : bigPrice.abs().lt(1)
-      ? formatNumberWithSubscript(price || 0)
-      : formatNumber(price, options)
-  const prefix = options?.showSign ? '$' : ''
-  if (formattedPrice.startsWith('-')) return '-' + prefix + formattedPrice?.slice(1)
-  return prefix + formattedPrice
+  return formatFiatAmount(price, options)
 }
 
 export function formatPercent(
@@ -250,15 +114,7 @@ export function formatPercent(
     displayMinimum?: boolean
   }
 ) {
-  const _val = isNaN(Number(val)) ? 0 : Number(val)
-  const symbol = options?.showPlus && _val > 0 ? '+' : ''
-  const value = safeBig(_val)
-    .times(10 ** (options?.decimals || 0))
-    .round(options?.maxDigits ?? 2, options?.rm)
-  if (options?.displayMinimum && value.abs().gt(0) && value.abs().lt(1)) {
-    return `< ${value.lt(0) ? '-' : ''}1%`
-  }
-  return symbol + value.toString() + '%'
+  return formatPercentage(val, options)
 }
 
 export function formatChainName(blockchain: string): string {
@@ -507,9 +363,13 @@ export function formatWalletBackupName(
 }
 
 export function formatWalletNameAtIndex(walletName: string, walletIndex: number): string {
-  return walletIndex >= 0 && /^Wallet \d{13,}$/.test(walletName)
+  return walletIndex >= 0 && isGeneratedWalletTimestampName(walletName)
     ? `Wallet ${walletIndex + 1}`
     : walletName
+}
+
+export function isGeneratedWalletTimestampName(walletName: string): boolean {
+  return /^Wallet \d{13,}$/.test(walletName)
 }
 
 export function detectAddressType(address: string): AddressType {

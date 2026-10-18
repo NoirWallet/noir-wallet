@@ -1,3 +1,4 @@
+import { ANALYTICS_EVENTS, sendAnalyticsEvent } from '@/lib/analytics'
 import { useEffect, useMemo, useState } from 'react'
 import { Icon } from '@iconify/react'
 import { PageHeader } from '../../components/common/PageHeader'
@@ -152,6 +153,11 @@ export function ImportPrivateKey() {
             : 'Private-key Wallet import failed'
         )
       }
+      sendAnalyticsEvent(ANALYTICS_EVENTS.WALLET_CREATED, {
+        chain:
+          chainFamily === 'eip155' ? 'evm' : chainFamily === 'bip122' ? 'bitcoin' : chainFamily,
+        params: { method: 'private_key' }
+      })
       setPrivateKey('')
       replace('/')
     } catch (reason) {

@@ -18,6 +18,7 @@ import {
   parsePendingEvmTransfer
 } from '../src/infrastructure/chains/evm/index.ts'
 import { InMemoryTransactionRepository } from '../src/infrastructure/persistence/repositories/index.ts'
+import { reportBackgroundSendBroadcast } from '../src/background/analytics/send-broadcast.ts'
 
 const chainId = parseChainId('eip155:1').id
 const chains = createEvmBitcoinChainRegistry('mainnet')
@@ -191,6 +192,7 @@ function harness(options = {}) {
     createExternalRequestId:
       options.createExternalRequestId ?? (() => '9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d'),
     onPendingBroadcast: options.onPendingBroadcast,
+    onBroadcastAccepted: options.onBroadcastAccepted,
     onMonitoringRequired: options.onMonitoringRequired
   })
   return { orchestrator, repository, pendingStore, session, calls }
@@ -961,6 +963,7 @@ test('recovers an approved command after a service worker interruption before si
 test('keeps one signed raw transaction for exact rebroadcast after an ambiguous RPC failure', async () => {
   let known = false
   let pendingSchedules = 0
+  const analytics = []
   const testHarness = harness({
     rpc: rpc({
       broadcastRawTransaction: async () => {
@@ -970,7 +973,13 @@ test('keeps one signed raw transaction for exact rebroadcast after an ambiguous 
     }),
     onPendingBroadcast: () => {
       pendingSchedules += 1
-    }
+    },
+    onBroadcastAccepted: (graph, recovered) =>
+      recovered &&
+      reportBackgroundSendBroadcast(graph, (name, options) => {
+        analytics.push({ name, options })
+        return new Promise(() => {})
+      })
   })
   const prepared = await prepare(testHarness.orchestrator)
   const pending = await testHarness.orchestrator.approve({
@@ -979,6 +988,7 @@ test('keeps one signed raw transaction for exact rebroadcast after an ambiguous 
     payloadFingerprint: prepared.signing.payloadFingerprint.digestHex
   })
   expect(pending.status).toBe('signed-pending-broadcast')
+  expect(analytics).toHaveLength(0)
   expect(pending.graph.root.status).toBe('signed')
   expect(pending.graph.segments[0].evidence).toMatchObject({
     transactionHash,
@@ -997,6 +1007,8 @@ test('keeps one signed raw transaction for exact rebroadcast after an ambiguous 
     transactionId: prepared.graph.root.id
   })
   expect(recovered.status).toBe('broadcast')
+  expect(analytics).toHaveLength(1)
+  expect(analytics[0].options.idempotencyKey).toBe(`send-broadcast:${prepared.graph.root.id}`)
   expect(recovered.graph.root.status).toBe('broadcast')
   await expect(testHarness.pendingStore.get(prepared.graph.root.id)).resolves.toBeNull()
 })

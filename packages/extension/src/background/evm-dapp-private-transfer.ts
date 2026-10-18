@@ -1,3 +1,5 @@
+import { ANALYTICS_EVENTS } from '@/lib/analytics/constants'
+import { emitDAppEvent, type DAppAnalyticsSink } from './dapp-analytics'
 import type { EvmNetworkConfig } from '@/config/networks'
 import { Eip1193ProviderError } from '@/core/dapp/eip1193'
 import {
@@ -110,6 +112,7 @@ export class ChromeSessionEvmDAppPrivateTransferStore implements PrivateTransfer
 }
 
 export interface EvmDAppPrivateTransferCoordinatorOptions {
+  readonly analytics?: DAppAnalyticsSink
   readonly network: EvmNetworkConfig
   readonly service: Pick<
     RheaSwapService,
@@ -475,6 +478,11 @@ export class EvmDAppPrivateTransferCoordinator implements EvmDAppPrivateTransfer
         status &&
         (status.status === 'failed' || status.status === 'refunded' || status.status === 'expired')
       ) {
+        emitDAppEvent(this.options.analytics, 'evm', ANALYTICS_EVENTS.DAPP_TRANSACTION_FAILED, {
+          hasTransaction: 1,
+          idempotencyKey: `dapp:evm:private-failed:${submission.quoteHandle}`,
+          extra: { funding_source: 'private' }
+        })
         await this.store.delete(submission.fingerprint)
         throw new Eip1193ProviderError(
           -32000,

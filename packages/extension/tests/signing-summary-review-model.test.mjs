@@ -151,23 +151,35 @@ const baseSummaries = [
 
 test('formats EVM approval amounts and addresses without changing the signing summary', () => {
   const original = baseSummaries.find(item => item.schema === 'evm.transaction.v1')
-  const input = { ...original, fields: { ...original.fields, valueWei: '2000000000000000', maximumFeeWei: '27019822240488' } }
+  const input = {
+    ...original,
+    fields: { ...original.fields, valueWei: '2000000000000000', maximumFeeWei: '27019822240488' }
+  }
   const before = JSON.stringify(input)
   const model = buildSigningSummaryReviewModel(input, {
     nativeCurrency: { symbol: 'ETH', decimals: 18 },
     directContract: true
   })
   const rows = model.sections[0].rows
-  expect(rows.find(row => row.label === 'From')).toMatchObject({ value: '0x1111...111111', title: input.fields.from })
+  expect(rows.find(row => row.label === 'From')).toMatchObject({
+    value: '0x1111...111111',
+    title: input.fields.from
+  })
   expect(rows.find(row => row.label === 'Value')).toMatchObject({ value: '0.002 ETH' })
   expect(rows.find(row => row.label === 'Value').title).toBeUndefined()
-  expect(rows.find(row => row.label === 'Maximum fee')).toMatchObject({ value: '0.0₄2701 ETH' })
+  expect(rows.find(row => row.label === 'Maximum fee')).toMatchObject({
+    value: '0.00002702 ETH',
+    amount: { value: '0.000027019822240488', symbol: 'ETH', profile: 'fee' }
+  })
   expect(rows.find(row => row.label === 'Maximum fee').title).toBeUndefined()
   expect(rows.find(row => row.label === 'Execution').value).toBe('Public on-chain')
   expect(JSON.stringify(input)).toBe(before)
-  const tiny = buildSigningSummaryReviewModel(original, { nativeCurrency: { symbol: 'BNB', decimals: 18 } })
+  const tiny = buildSigningSummaryReviewModel(original, {
+    nativeCurrency: { symbol: 'BNB', decimals: 18 }
+  })
   expect(tiny.sections[0].rows.find(row => row.label === 'Value')).toMatchObject({
-    value: '0.0₁₇1 BNB'
+    value: '<0.00000001 BNB',
+    amount: { value: '0.000000000000000001', symbol: 'BNB', profile: 'review' }
   })
 })
 

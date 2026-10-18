@@ -22,6 +22,7 @@ import type { StorageV2ReadRepository } from '@/ports/repositories'
 import { credentialSession } from './credential-session'
 import { solanaLedgerSigningBridge } from './ledger-signing-bridge'
 import { SOLANA_TRANSACTION_MONITOR_ALARM } from './solana-transaction-monitor'
+import { reportBackgroundSendBroadcast } from './analytics/send-broadcast'
 import {
   BackgroundSolanaTransferController,
   type ActiveSolanaTransferContext
@@ -92,8 +93,10 @@ export function createBackgroundSolanaTransferController(
     assets,
     onPendingBroadcast: () =>
       chrome.alarms.create(SOLANA_TRANSACTION_MONITOR_ALARM, { delayInMinutes: 0.1 }),
-    onMonitoringRequired: () =>
-      chrome.alarms.create(SOLANA_TRANSACTION_MONITOR_ALARM, { delayInMinutes: 0.1 })
+    onMonitoringRequired: (graph, recovered) => {
+      if (recovered) reportBackgroundSendBroadcast(graph)
+      return chrome.alarms.create(SOLANA_TRANSACTION_MONITOR_ALARM, { delayInMinutes: 0.1 })
+    }
   })
   return new BackgroundSolanaTransferController({
     orchestrator,

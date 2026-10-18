@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Icon } from '@iconify/react'
-import { formatDisplayTokenAmount } from '@/popup/components/portfolio/portfolio-format'
+import { formatBaseUnitAmount } from '@/popup/components/portfolio/portfolio-format'
 import { SendAmountInputCard } from '@/popup/components/transaction/SendInputCards'
-import Big from '@/lib/big'
-import { formatNumber, formatSortAddress } from '@/lib/format'
+import { formatSortAddress } from '@/lib/format'
+import { formatTokenQuantity } from '@/lib/number-format'
+import { ExecutionAccountBadge } from '@/popup/components/account/ExecutionAccountSelector'
 import { TokenIcon } from '@/popup/components/tokens/TokenIcon'
 import { Button } from '@/popup/components/ui/button'
 import type { PortfolioAssetView, PortfolioChainView } from '@/core/portfolio'
@@ -47,18 +48,20 @@ function TransferAccountRow({
   balance,
   address
 }: TransferAccountRowProps) {
-  const privateAccount = account === 'private'
   return (
-    <div className="flex min-h-16 items-center gap-3 rounded-xl border border-border/70 bg-card/55 px-3.5 py-3">
+    <div className="flex min-h-16 flex-wrap items-center gap-3 rounded-xl border border-border/70 bg-card/55 px-3.5 py-3">
       <TokenIcon assetId={assetId} symbol={symbol} icon={icon} blockchain={blockchain} size={36} />
-      <div className="min-w-0 flex-1">
-        <p className="text-sm font-medium">{privateAccount ? 'Confidential' : 'Public'}</p>
+      <div className="min-w-[7rem] flex-1">
+        <ExecutionAccountBadge mode={account === 'private' ? 'private' : 'main'} />
         <p className="mt-0.5 truncate font-mono text-[11px] text-muted" title={address}>
           {formatSortAddress(address)}
         </p>
       </div>
-      <p className="max-w-[42%] truncate font-mono text-sm">
-        {formatNumber(balance, { rm: Big.roundDown, useUnit: true, useSubscript: true })} {symbol}
+      <p
+        className="ml-auto max-w-full break-all text-right font-mono text-sm"
+        title={`${balance} ${symbol}`}
+      >
+        {formatTokenQuantity(balance)} {symbol}
       </p>
     </div>
   )
@@ -120,8 +123,8 @@ export function PrivateBalanceTransferDialog({
     setMaxSelected(false)
   }, [defaultDirection, open])
 
-  const mainBalance = formatDisplayTokenAmount(mainBalanceRaw, decimals)
-  const privateBalance = formatDisplayTokenAmount(privateBalanceRaw, decimals)
+  const mainBalance = formatBaseUnitAmount(mainBalanceRaw, decimals)
+  const privateBalance = formatBaseUnitAmount(privateBalanceRaw, decimals)
   const mainToPrivate = direction === 'main-to-private'
   const source = resolvePrivateBalanceTransferSource({
     direction,

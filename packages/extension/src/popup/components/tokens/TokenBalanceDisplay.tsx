@@ -1,5 +1,4 @@
-import Big from 'big.js'
-import { formatNumber, formatPrice } from '@/lib/format'
+import { formatFiatAmount, formatTokenQuantity } from '@/lib/number-format'
 import { cn } from '@/lib/utils'
 import { calculateTokenFiatValue, parseTokenBalanceDecimal } from './token-balance-format'
 
@@ -23,19 +22,16 @@ export function TokenBalanceDisplay({
 
   return (
     <div className={cn('min-w-0 text-right', className)}>
-      <p className="truncate font-mono text-sm">
+      <p className="break-all font-mono text-sm" title={parsedAmount?.toFixed()}>
         {parsedAmount === null
           ? unavailablePriceLabel
-          : formatNumber(parsedAmount.toFixed(), { maxDigits: 6, rm: Big.roundDown })}{' '}
+          : formatTokenQuantity(parsedAmount.toFixed())}{' '}
         {symbol}
       </p>
-      <p className="truncate text-xs text-muted">
+      <p className="break-all text-xs text-muted">
         {fiatValue === null
           ? unavailablePriceLabel
-          : `${approximateFiat ? '≈' : ''}${formatPrice(fiatValue, {
-              showSign: true,
-              maxDigits: 2
-            })}`}
+          : `${approximateFiat ? '≈' : ''}${formatFiatAmount(fiatValue, { showSign: true })}`}
       </p>
     </div>
   )

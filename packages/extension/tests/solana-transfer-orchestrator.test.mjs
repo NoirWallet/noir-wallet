@@ -14,6 +14,7 @@ import {
   SolanaTransferOrchestrator
 } from '../src/infrastructure/chains/solana/index.ts'
 import { InMemoryTransactionRepository } from '../src/infrastructure/persistence/repositories/index.ts'
+import { reportBackgroundSendBroadcast } from '../src/background/analytics/send-broadcast.ts'
 
 const chainId = parseChainId('solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1').id
 const sender = 'HAgk14JpMQLgt6rVgv7cBQFJWFto5Dqxi472uT3DKpqk'
@@ -229,6 +230,7 @@ test('prepares, approves, signs and broadcasts a native Solana transfer', async 
 test('persists a signed transaction before broadcast and resumes without signing again', async () => {
   let allowBroadcast = false
   let pendingBroadcastCalls = 0
+  const analytics = []
   const testRpc = rpc({
     broadcastSignedTransaction: async transactionBase64 => {
       if (!allowBroadcast) throw new Error('response lost')
@@ -239,7 +241,13 @@ test('persists a signed transaction before broadcast and resumes without signing
     rpc: testRpc,
     onPendingBroadcast: () => {
       pendingBroadcastCalls += 1
-    }
+    },
+    onMonitoringRequired: (graph, recovered) =>
+      recovered &&
+      reportBackgroundSendBroadcast(graph, (name, options) => {
+        analytics.push({ name, options })
+        return new Promise(() => {})
+      })
   })
   const approval = await prepare(orchestrator)
   const first = await orchestrator.approve({
@@ -248,6 +256,7 @@ test('persists a signed transaction before broadcast and resumes without signing
     payloadFingerprint: approval.signing.payloadFingerprint.digestHex
   })
   expect(first.status).toBe('signed-pending-broadcast')
+  expect(analytics).toHaveLength(0)
   expect((await pendingStore.get(approval.graph.root.id)).phase).toBe('signed')
 
   allowBroadcast = true
@@ -256,6 +265,8 @@ test('persists a signed transaction before broadcast and resumes without signing
     transactionId: approval.graph.root.id
   })
   expect(resumed.status).toBe('broadcast')
+  expect(analytics).toHaveLength(1)
+  expect(analytics[0].options.idempotencyKey).toBe(`send-broadcast:${approval.graph.root.id}`)
   expect(calls.filter(call => call[0] === 'confirm')).toHaveLength(1)
   expect(pendingBroadcastCalls).toBe(1)
 })

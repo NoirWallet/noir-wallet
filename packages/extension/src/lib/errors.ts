@@ -4,6 +4,18 @@
  * Raw errors from WASM/gRPC/Worker are matched against patterns and
  * converted to actionable messages the user can understand.
  */
+import { isWalletSnapshotIntegrityError } from './wallet-snapshot-errors'
+
+export const WALLET_SNAPSHOT_RECOVERY_MESSAGE =
+  'Wallet data needs to be resynced before sending again.'
+
+export function isWalletSnapshotRecoveryError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  const prefix = `${WALLET_SNAPSHOT_RECOVERY_MESSAGE}\n\nOriginal error: `
+  return isWalletSnapshotIntegrityError(
+    message.startsWith(prefix) ? message.slice(prefix.length) : message
+  )
+}
 
 interface ErrorMapping {
   pattern: RegExp
@@ -335,6 +347,14 @@ export interface ClassifiedError {
 export function classifyError(error: unknown): ClassifiedError {
   const raw =
     error instanceof Error ? error.message : typeof error === 'string' ? error : String(error)
+
+  if (isWalletSnapshotRecoveryError(error)) {
+    return {
+      userMessage: WALLET_SNAPSHOT_RECOVERY_MESSAGE,
+      technicalMessage: raw,
+      retryable: false
+    }
+  }
 
   for (const mapping of ERROR_MAPPINGS) {
     if (mapping.pattern.test(raw)) {

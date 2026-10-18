@@ -21,7 +21,7 @@ import { useAccountDataStore, buildAccountKey } from '@/store/account-data-store
 import { EVM_GAS_FUNDING_APPROVAL_TIMEOUT_MS, pendingRequestsManager } from './pending-requests'
 import { sleep } from '@/lib/utils'
 import { logger } from '@/lib/logger'
-import { ANALYTICS_EVENTS, PAGE_IDS, trackEvent } from '@/lib/analytics'
+import { ANALYTICS_EVENTS, PAGE_IDS, trackEvent } from '@/background/analytics/reporter'
 import { transactionRecorder } from './transaction-recorder'
 import { zcashTxMonitor, computeExpiryHeight } from './zcash-tx-monitor'
 import { catchUpAfterOnChainTx } from './tx-sync'
@@ -398,7 +398,6 @@ export class DAppHandler {
     if (!isConnected) {
       trackEvent(ANALYTICS_EVENTS.DAPP_CONNECTED, {
         pageId: PAGE_IDS.DAPP,
-        params: { origin },
         extra: { account_count: chosen.length }
       })
     }
@@ -719,7 +718,7 @@ export class DAppHandler {
     if (!approved) {
       trackEvent(ANALYTICS_EVENTS.DAPP_REQUEST_REJECTED, {
         pageId: PAGE_IDS.DAPP,
-        extra: { origin, method: 'connect' }
+        extra: { method: 'connect' }
       })
       throw new Error('User rejected the request')
     }
@@ -1028,7 +1027,7 @@ export class DAppHandler {
     if (!approved) {
       trackEvent(ANALYTICS_EVENTS.DAPP_REQUEST_REJECTED, {
         pageId: PAGE_IDS.DAPP,
-        extra: { origin, method: 'sendTransaction' }
+        extra: { method: 'sendTransaction' }
       })
       throw new Error('User rejected the transaction')
     }
@@ -1164,10 +1163,8 @@ export class DAppHandler {
         trackEvent(ANALYTICS_EVENTS.DAPP_TRANSACTION_SENT, {
           pageId: PAGE_IDS.DAPP,
           hasTransaction: 1,
-          inputAmount: params.amount,
           inputSymbol: 'ZEC',
-          params: { origin },
-          extra: { tx_hash: hash, funding_source: fundingSource }
+          extra: { funding_source: fundingSource }
         })
         return hash
       } catch (err: any) {
@@ -1203,9 +1200,8 @@ export class DAppHandler {
         const userMessage = getRetryableWalletRpcUserMessage(rawMessage)
         trackEvent(ANALYTICS_EVENTS.DAPP_TRANSACTION_FAILED, {
           pageId: PAGE_IDS.DAPP,
-          inputAmount: params.amount,
           inputSymbol: 'ZEC',
-          extra: { origin, funding_source: fundingSource, error: String(userMessage).slice(0, 200) }
+          extra: { funding_source: fundingSource }
         })
         chrome.runtime
           .sendMessage({
@@ -1281,18 +1277,15 @@ export class DAppHandler {
           trackEvent(ANALYTICS_EVENTS.DAPP_TRANSACTION_SENT, {
             pageId: PAGE_IDS.DAPP,
             hasTransaction: 1,
-            inputAmount: params.amount,
             inputSymbol: 'ZEC',
-            params: { origin, amount: params.amount, hardware: true },
-            extra: { tx_hash: result.txHash }
+            extra: { hardware: true }
           })
           resolve(result.txHash)
         } else {
           trackEvent(ANALYTICS_EVENTS.DAPP_TRANSACTION_FAILED, {
             pageId: PAGE_IDS.DAPP,
-            inputAmount: params.amount,
             inputSymbol: 'ZEC',
-            extra: { origin, hardware: true, error: result.error?.slice(0, 200) }
+            extra: { hardware: true }
           })
           reject(new Error(result.error || 'Transaction failed'))
         }
@@ -1361,7 +1354,7 @@ export class DAppHandler {
     if (!approved) {
       trackEvent(ANALYTICS_EVENTS.DAPP_REQUEST_REJECTED, {
         pageId: PAGE_IDS.DAPP,
-        extra: { origin, method: 'signMessage' }
+        extra: { method: 'signMessage' }
       })
       throw new Error('User rejected the signature request')
     }
@@ -1392,7 +1385,7 @@ export class DAppHandler {
       const result = await promise
       trackEvent(ANALYTICS_EVENTS.DAPP_MESSAGE_SIGNED, {
         pageId: PAGE_IDS.DAPP,
-        extra: { origin, signing_mode: mode }
+        extra: { signing_mode: mode }
       })
       return result
     })
@@ -1450,7 +1443,7 @@ export class DAppHandler {
     if (!approved) {
       trackEvent(ANALYTICS_EVENTS.DAPP_REQUEST_REJECTED, {
         pageId: PAGE_IDS.DAPP,
-        extra: { origin, method: 'shieldFunds' }
+        extra: { method: 'shieldFunds' }
       })
       throw new Error('User rejected the shield request')
     }
@@ -2132,7 +2125,7 @@ export class DAppHandler {
     this.permissions.delete(origin)
     this.cancelPendingApprovals(origin, 'zcash')
     await this.broadcastEvent(origin, 'accountsChanged', null).catch(() => {})
-    this.trackDisconnected(origin)
+    this.trackDisconnected()
   }
 
   async revokeAllPermissions(origin: string): Promise<void> {
@@ -2144,13 +2137,12 @@ export class DAppHandler {
       this.broadcastEvent(origin, 'accountsChanged', [], 'evm'),
       this.broadcastEvent(origin, 'accountsChanged', [], 'bitcoin')
     ])
-    this.trackDisconnected(origin)
+    this.trackDisconnected()
   }
 
-  private trackDisconnected(origin: string): void {
+  private trackDisconnected(): void {
     trackEvent(ANALYTICS_EVENTS.DAPP_DISCONNECTED, {
-      pageId: PAGE_IDS.DAPP,
-      extra: { origin }
+      pageId: PAGE_IDS.DAPP
     })
   }
 
@@ -2197,7 +2189,6 @@ export class DAppHandler {
 
     trackEvent(ANALYTICS_EVENTS.DAPP_CONNECTED, {
       pageId: PAGE_IDS.DAPP,
-      params: { origin },
       extra: { source: 'wallet_prompt' }
     })
   }

@@ -42,6 +42,37 @@ export function isSwapAssetOnEnabledChain(
   )
 }
 
+export function canReverseSwapPair(
+  tokenIn: RheaSwapToken | null,
+  tokenOut: RheaSwapToken | null,
+  enabledChains: readonly ChainDefinition[] | undefined
+): boolean {
+  return Boolean(tokenIn && tokenOut && isSwapAssetOnEnabledChain(tokenOut.assetId, enabledChains))
+}
+
+export async function loadReversedSwapPair(input: {
+  readonly tokenIn: RheaSwapToken
+  readonly tokenOut: RheaSwapToken
+  readonly isCancelled: () => boolean
+  readonly loadSources: () => Promise<readonly RheaSwapToken[]>
+  readonly loadDestinations: () => Promise<readonly RheaSwapToken[]>
+}): Promise<{ tokenIn: RheaSwapToken; tokenOut: RheaSwapToken } | null> {
+  const [sources, crossChainDestinations] = await Promise.all([
+    input.loadSources(),
+    input.tokenIn.rheaChainId === input.tokenOut.rheaChainId
+      ? Promise.resolve([])
+      : input.loadDestinations()
+  ])
+  const destinations =
+    input.tokenIn.rheaChainId === input.tokenOut.rheaChainId ? sources : crossChainDestinations
+  if (input.isCancelled()) return null
+  const tokenIn = findSwapTokenInCatalog(sources, input.tokenOut)
+  const tokenOut = findSwapTokenInCatalog(destinations, input.tokenIn)
+  if (!tokenIn || !tokenOut)
+    throw new Error('This pair is unavailable in the reverse direction. Try another asset.')
+  return { tokenIn, tokenOut }
+}
+
 function assetChain(assetId?: string | null) {
   if (!assetId) return undefined
   const numericChain =

@@ -1,5 +1,6 @@
 import type { ActivityItem, ActivityScope } from '@/core/activity'
 import { EvmRpcError } from './evm-rpc-client'
+import { isZeroValueEvmTokenActivity } from './evm-indexed-activity'
 import {
   indexedDbEvmHistoryCache,
   type EvmHistoryCacheRecord,
@@ -19,7 +20,7 @@ import type {
 const DEFAULT_SUCCESS_TTL_MS = 5 * 60_000
 const DEFAULT_PENDING_TTL_MS = 30_000
 const DEFAULT_FAILURE_BACKOFF_MS = 60_000
-const MAX_ITEMS = 50
+const MAX_ITEMS = 2_000
 const REORG_OVERLAP_BLOCKS = 12
 const debugLogsEnabled = typeof __DEBUG_LOGS__ !== 'boolean' || __DEBUG_LOGS__
 
@@ -70,6 +71,7 @@ function normalizeItems(
 ): readonly ActivityItem[] {
   const byId = new Map<string, ActivityItem>()
   for (const item of fresh) {
+    if (isZeroValueEvmTokenActivity(item)) continue
     if (!byId.has(item.id)) byId.set(item.id, item)
   }
   return rescopeItems(
@@ -132,6 +134,9 @@ function successfulRecord(input: {
   readonly previous: EvmHistoryCacheRecord | null
   readonly fresh: readonly ActivityItem[]
   readonly partial: boolean
+  readonly hasMore?: boolean
+  readonly fullScan?: boolean
+  readonly historyPageCount?: number
   readonly successTtlMs: number
   readonly pendingTtlMs: number
 }): EvmHistoryCacheRecord {
@@ -146,6 +151,19 @@ function successfulRecord(input: {
     retryAfter:
       input.attemptedAt +
       (input.partial || hasPendingItems(items) ? input.pendingTtlMs : input.successTtlMs),
+    hasMore:
+      (input.historyPageCount ?? 1) > 1
+        ? (input.hasMore ?? false)
+        : (input.previous?.historyPageCount ?? 1) > 1
+          ? (input.previous?.hasMore ?? false)
+          : input.fullScan
+            ? (input.hasMore ?? false)
+            : (input.previous?.hasMore ?? false) || (input.hasMore ?? false),
+    historyPageCount: Math.max(input.historyPageCount ?? 1, input.previous?.historyPageCount ?? 1),
+    historySyncAt:
+      (input.historyPageCount ?? 1) > 1 || (input.previous?.historyPageCount ?? 1) <= 1
+        ? input.attemptedAt
+        : (input.previous?.historySyncAt ?? input.previous?.successfulSyncAt ?? null),
     items
   })
 }
@@ -166,7 +184,10 @@ function failedRecord(input: {
     lastAttemptAt: input.attemptedAt,
     successfulSyncAt: input.previous?.successfulSyncAt ?? null,
     retryAfter: input.attemptedAt + input.failureBackoffMs,
-    items: rescopeItems(input.previous?.items ?? [], input.scope)
+    hasMore: input.previous?.hasMore ?? false,
+    historyPageCount: input.previous?.historyPageCount ?? 1,
+    historySyncAt: input.previous?.historySyncAt ?? input.previous?.successfulSyncAt ?? null,
+    items: normalizeItems(input.previous?.items ?? [], input.scope)
   })
 }
 
@@ -195,6 +216,7 @@ export function createCachedEvmActivityHistorySource(
     'failure backoff'
   )
   const pending = new Map<string, Promise<readonly ActivityItem[]>>()
+  const addressQueue = new Map<string, Promise<void>>()
 
   async function persist(record: EvmHistoryCacheRecord): Promise<void> {
     try {
@@ -211,26 +233,40 @@ export function createCachedEvmActivityHistorySource(
     input: ReadEvmAddressActivityInput,
     previous: EvmHistoryCacheRecord | null
   ): Promise<readonly ActivityItem[]> {
-    const key = JSON.stringify([input.scope.keyDomainId, input.scope.accountId, address])
+    const addressKey = JSON.stringify([input.scope.keyDomainId, input.scope.accountId, address])
+    const key = JSON.stringify([addressKey, input.historyPageCount ?? 1])
     const existing = input.signal ? undefined : pending.get(key)
     if (existing) return existing
 
+    const predecessor = addressQueue.get(addressKey)
     const work = (async () => {
+      if (predecessor) await predecessor
+      const latestPrevious = predecessor
+        ? await cache.read(options.chainId, address, input.scope).catch(() => previous)
+        : previous
       const attemptedAt = now()
       try {
-        const fresh = await options.source.readAddressActivity({
+        const sourceInput = {
           ...input,
           address,
-          fromBlock: incrementalStartBlock(previous)
-        })
+          fromBlock:
+            (input.historyPageCount ?? 1) > 1 ? undefined : incrementalStartBlock(latestPrevious)
+        }
+        const result = options.source.readAddressActivityWithMetadata
+          ? await options.source.readAddressActivityWithMetadata(sourceInput)
+          : { items: await options.source.readAddressActivity(sourceInput), hasMore: false }
+        const fresh = result.items
         const record = successfulRecord({
           chainId: options.chainId,
           address,
           scope: input.scope,
           attemptedAt,
-          previous,
+          previous: latestPrevious,
           fresh,
           partial: fresh.some(item => item.completeness === 'partial'),
+          hasMore: result.hasMore,
+          fullScan: sourceInput.fromBlock === undefined,
+          historyPageCount: input.historyPageCount,
           successTtlMs,
           pendingTtlMs
         })
@@ -245,7 +281,7 @@ export function createCachedEvmActivityHistorySource(
               address,
               scope: input.scope,
               attemptedAt,
-              previous,
+              previous: latestPrevious,
               failureBackoffMs
             })
           )
@@ -254,6 +290,14 @@ export function createCachedEvmActivityHistorySource(
       }
     })().finally(() => {
       if (pending.get(key) === work) pending.delete(key)
+    })
+    const tail = work.then(
+      () => {},
+      () => {}
+    )
+    addressQueue.set(addressKey, tail)
+    void tail.then(() => {
+      if (addressQueue.get(addressKey) === tail) addressQueue.delete(addressKey)
     })
     if (!input.signal) pending.set(key, work)
     return work
@@ -281,13 +325,14 @@ export function createCachedEvmActivityHistorySource(
         logInfo(
           `[EVM History] cache hit chain=${options.chainId} items=${items.length} successful=${cached.successfulSyncAt !== null}`
         )
-        if (currentTime >= retryAfter) {
+        if (currentTime >= retryAfter || (input.historyPageCount ?? 1) > 1) {
           try {
             return await refresh(address, input, cached)
           } catch (error) {
             logWarning(
               `[EVM History] refresh failed chain=${options.chainId} error=${error instanceof Error ? error.name : 'UnknownError'}`
             )
+            if ((input.historyPageCount ?? 1) > 1) throw error
           }
         }
         return items
@@ -482,6 +527,9 @@ export function createCachedEvmAnkrHistoryBatchSource(options: {
               previous,
               fresh: result.items,
               partial: result.partial,
+              hasMore: result.hasMore,
+              fullScan: target.fromBlock === undefined,
+              historyPageCount: 1,
               successTtlMs: DEFAULT_SUCCESS_TTL_MS,
               pendingTtlMs: DEFAULT_PENDING_TTL_MS
             })

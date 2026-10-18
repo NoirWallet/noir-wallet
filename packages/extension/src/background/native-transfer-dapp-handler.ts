@@ -1,3 +1,5 @@
+import { ANALYTICS_EVENTS } from '../lib/analytics/constants'
+import { emitDAppEvent, observeDAppRequest, type DAppAnalyticsSink } from './dapp-analytics'
 import type { Account, ChainAccount } from '@/core/accounts/domain'
 import type { AccountRef, DAppManager } from '@/core/dapp/dapp-manager'
 import {
@@ -41,6 +43,7 @@ export interface NativeTransferDAppApprovalPort {
 }
 
 export interface BackgroundNativeTransferDAppHandlerOptions {
+  readonly analytics?: DAppAnalyticsSink
   readonly providerId: 'solana' | 'near'
   readonly familyName: 'Solana' | 'NEAR'
   readonly chainId: string
@@ -101,6 +104,16 @@ export class BackgroundNativeTransferDAppHandler {
     origin: string,
     tabInfo: NativeTransferDAppTabInfo
   ): Promise<unknown> {
+    return observeDAppRequest(this.options.analytics, this.options.providerId, request.method, () =>
+      this.handleRequest(request, origin, tabInfo)
+    )
+  }
+
+  private async handleRequest(
+    request: NativeTransferDAppRequest,
+    origin: string,
+    tabInfo: NativeTransferDAppTabInfo
+  ): Promise<unknown> {
     switch (request.method) {
       case 'connect': {
         const account = await this.authorizeAccount(origin, tabInfo, request.params, true)
@@ -124,6 +137,11 @@ export class BackgroundNativeTransferDAppHandler {
             .broadcastProviderEvent(origin, this.options.providerId, 'accountsChanged', [])
             .catch(() => {})
         })
+        emitDAppEvent(
+          this.options.analytics,
+          this.options.providerId,
+          ANALYTICS_EVENTS.DAPP_DISCONNECTED
+        )
         return null
     }
   }
@@ -347,6 +365,12 @@ export class BackgroundNativeTransferDAppHandler {
         this.options.chainId,
         chosen.map(item => item.reference),
         current.reference
+      )
+      emitDAppEvent(
+        this.options.analytics,
+        this.options.providerId,
+        ANALYTICS_EVENTS.DAPP_CONNECTED,
+        { extra: { account_count: chosen.length, source: 'approval' } }
       )
       return current
     })

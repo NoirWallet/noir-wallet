@@ -44,6 +44,7 @@ function harness(overrides = {}) {
   } = overrides
   let authorization = null
   const approvalCalls = []
+  const analyticsEvents = []
   const events = []
   const cancelledApprovalChains = []
   const rejectedTransfers = []
@@ -192,6 +193,7 @@ function harness(overrides = {}) {
     ...transferControllerOverrides
   }
   const options = {
+    analytics: (name, options) => analyticsEvents.push({ name, options }),
     network: EVM_NETWORKS.mainnet,
     manager,
     approval,
@@ -236,6 +238,7 @@ function harness(overrides = {}) {
   }
   return {
     handler: new BackgroundEvmDAppHandler(options),
+    analyticsEvents,
     approvalCalls,
     events,
     cancelledApprovalChains,
@@ -253,6 +256,53 @@ function harness(overrides = {}) {
 }
 
 test.describe('Background EVM dApp handler', () => {
+  test('records approved connections once, message signatures, and disconnect without private data', async () => {
+    const state = harness()
+    const origin = 'https://private-dapp.example'
+    await state.handler.request({ method: 'eth_requestAccounts' }, origin, {})
+    await state.handler.request({ method: 'eth_requestAccounts' }, origin, {})
+    await state.handler.request(
+      { method: 'personal_sign', params: ['0x48656c6c6f', account.chainAccount.identity.value] },
+      origin,
+      {}
+    )
+    await state.handler.request(
+      { method: 'wallet_revokePermissions', params: [{ eth_accounts: {} }] },
+      origin,
+      {}
+    )
+    expect(state.analyticsEvents.map(event => event.name)).toEqual([
+      'dapp_connected',
+      'dapp_message_signed',
+      'dapp_disconnected'
+    ])
+    expect(state.analyticsEvents[0].options).toMatchObject({
+      chain: 'evm',
+      pageId: 'noir_dapp',
+      extra: { account_count: 1, source: 'approval' }
+    })
+    expect(JSON.stringify(state.analyticsEvents)).not.toContain(origin)
+    expect(JSON.stringify(state.analyticsEvents)).not.toContain(account.chainAccount.identity.value)
+    expect(JSON.stringify(state.analyticsEvents)).not.toContain('48656c6c6f')
+  })
+
+  test('rejected EVM approval reports rejection without a connection or transaction success', async () => {
+    const state = harness({
+      approval: {
+        requestExternalApproval: async () => ({ approved: false, requestId: 'rejected' })
+      }
+    })
+    await expect(
+      state.handler.request({ method: 'eth_requestAccounts' }, 'https://dapp.example', {})
+    ).rejects.toMatchObject({ code: 4001 })
+    expect(state.analyticsEvents).toEqual([
+      {
+        name: 'dapp_request_rejected',
+        options: { chain: 'evm', pageId: 'noir_dapp', extra: { method: 'connect' } }
+      }
+    ])
+  })
+
   test('wallet-side Connect adds the active account to an existing EVM grant and broadcasts it', async () => {
     let activeContext = account
     const state = harness({ loadActiveContext: async () => activeContext })

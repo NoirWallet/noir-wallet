@@ -1,3 +1,5 @@
+import { ANALYTICS_EVENTS } from '../lib/analytics/constants'
+import { emitDAppEvent, observeDAppRequest, type DAppAnalyticsSink } from './dapp-analytics'
 import type { KeyDomainId } from '@/core/keyring/domain'
 import {
   NativeTransferProviderError,
@@ -51,6 +53,7 @@ export interface AuthorizedSolanaDAppAccount {
 }
 
 export interface BackgroundSolanaDAppHandlerOptions {
+  readonly analytics?: DAppAnalyticsSink
   readonly native: Pick<
     BackgroundNativeTransferDAppHandler,
     | 'request'
@@ -180,6 +183,27 @@ export class BackgroundSolanaDAppHandler {
     origin: string,
     tabInfo: NativeTransferDAppTabInfo
   ): Promise<unknown> {
+    if (
+      ![
+        'signMessage',
+        'signTransaction',
+        'signAllTransactions',
+        'requestSignTransactions',
+        'signAndSendTransaction',
+        'signAndSendTransactions'
+      ].includes(request.method)
+    )
+      return this.handleRequest(request, origin, tabInfo)
+    return observeDAppRequest(this.options.analytics, 'solana', request.method, () =>
+      this.handleRequest(request, origin, tabInfo)
+    )
+  }
+
+  private async handleRequest(
+    request: SolanaDAppRequest,
+    origin: string,
+    tabInfo: NativeTransferDAppTabInfo
+  ): Promise<unknown> {
     if (request.method === 'signTransaction' || request.method === 'signAndSendTransaction') {
       const parsed = parseTransactionParameter(
         request.params,
@@ -255,6 +279,8 @@ export class BackgroundSolanaDAppHandler {
       transaction
     })
     let confirmed = false
+    let approved = false
+    let broadcasted = false
     try {
       if (
         prepared.summary.schema !== 'solana.transaction.v1' ||
@@ -279,6 +305,7 @@ export class BackgroundSolanaDAppHandler {
       if (!decision.approved) {
         throw new NativeTransferProviderError(4001, 'User rejected the transaction request.')
       }
+      approved = true
       const signed = await this.options.runActiveOperation(async () => {
         const current = await this.options.loadAuthorizedAccount(origin)
         if (
@@ -310,8 +337,23 @@ export class BackgroundSolanaDAppHandler {
         undefined,
         broadcastOptions
       )
+      broadcasted = true
+      emitDAppEvent(this.options.analytics, 'solana', ANALYTICS_EVENTS.DAPP_TRANSACTION_SENT, {
+        hasTransaction: 1,
+        idempotencyKey: `dapp:solana:broadcast:${signature}`
+      })
       if (commitment) await this.waitForCommitment(signature, commitment)
       return signature
+    } catch (error) {
+      if (
+        broadcast &&
+        approved &&
+        !broadcasted &&
+        !(error && typeof error === 'object' && Reflect.get(error, 'code') === 4001)
+      ) {
+        emitDAppEvent(this.options.analytics, 'solana', ANALYTICS_EVENTS.DAPP_TRANSACTION_FAILED)
+      }
+      throw error
     } finally {
       if (!confirmed) {
         await this.options.signer

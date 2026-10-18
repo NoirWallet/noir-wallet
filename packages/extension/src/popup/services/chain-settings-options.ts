@@ -10,6 +10,7 @@ import {
   getBlockExplorerBaseUrl,
   getBlockExplorerTransactionPath
 } from '@/lib/block-explorer-preferences'
+import { BLOCK_EXPLORER_GROUPS } from '@/config/block-explorers'
 import {
   resolveBitcoinFeatureRuntimePolicy,
   resolveEvmFeatureRuntimePolicy,
@@ -49,6 +50,12 @@ export interface ExplorerChainOption {
   readonly iconChain: string
   readonly defaultUrl: string
   readonly defaultTransactionPath: string
+  readonly presets?: readonly {
+    readonly id: string
+    readonly label: string
+    readonly baseUrl: string
+    readonly transactionPath: string
+  }[]
 }
 
 export function buildZcashRpcChainOption(groups: readonly RpcEndpointGroup[]): RpcChainOption {
@@ -172,7 +179,10 @@ export function buildExplorerChainOptions(
       defaultUrl:
         DEFAULT_NETWORK === 'mainnet' ? getBlockExplorerBaseUrl('zcash') : zcash.explorerUrl,
       defaultTransactionPath:
-        DEFAULT_NETWORK === 'mainnet' ? getBlockExplorerTransactionPath('zcash') : 'tx'
+        DEFAULT_NETWORK === 'mainnet' ? getBlockExplorerTransactionPath('zcash') : 'tx',
+      ...(DEFAULT_NETWORK === 'mainnet'
+        ? { presets: BLOCK_EXPLORER_GROUPS.find(group => group.chain === 'zcash')?.options }
+        : {})
     }),
     ...(bitcoinEnabled
       ? [

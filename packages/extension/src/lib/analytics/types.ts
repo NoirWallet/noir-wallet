@@ -4,7 +4,7 @@
  * The JSON array of these payloads is AES-128-CBC encrypted before upload.
  */
 export interface AnalyticsEventPayload {
-  chain: string
+  chain: import('./constants.ts').AnalyticsChain
   event_name: string
   extra: string
   has_transaction: 0 | 1
@@ -23,32 +23,33 @@ export interface AnalyticsEventPayload {
 
 /** Call-site options for tracking an event (all fields optional). */
 export interface TrackOptions {
+  /** Controlled chain family; defaults to Zcash for legacy call sites. */
+  chain?: import('./constants.ts').AnalyticsChain
+  /** Scoped to the event name; used locally for channel deduplication and never uploaded. */
+  idempotencyKey?: string
   /** Filtered by the event-specific allowlist before leaving the extension */
   params?: Record<string, unknown>
   /** Filtered by the event-specific allowlist before leaving the extension */
   extra?: Record<string, unknown>
   /** Defaults to the current popup page, or `noir_background` in the SW */
   pageId?: string
-  /** 1 when the event involves a broadcast transaction */
+  /** Transaction-related context; the event name determines its lifecycle stage */
   hasTransaction?: 0 | 1
-  /** Exact amounts are discarded by the outbound analytics policy. */
-  inputAmount?: string
   inputSymbol?: string
-  inputTokenCode?: string
-  /** Exact amounts are discarded by the outbound analytics policy. */
-  outputAmount?: string
   outputSymbol?: string
-  outputTokenCode?: string
-  /** Exact fiat amounts are discarded by the outbound analytics policy. */
-  usdAmount?: string
-  /** Internal payload compatibility only; outbound policy always pseudonymizes it. */
-  walletAddress?: string
 }
 
 export type AnalyticsMessage =
-  | { type: 'ANALYTICS_EVENT'; name: string; options?: TrackOptions; timestamp?: number }
+  | {
+      type: 'ANALYTICS_EVENT'
+      name: string
+      options?: TrackOptions
+      timestamp?: number
+      engagementTimeMsec?: number
+    }
   | {
       type: 'ANALYTICS_PAGE_VIEW'
       page: string
       timestamp?: number
+      engagementTimeMsec?: number
     }

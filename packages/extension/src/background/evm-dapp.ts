@@ -1,3 +1,4 @@
+import { trackEvent } from '@/background/analytics/reporter'
 import { DEFAULT_NETWORK } from '@/lib/runtime-network'
 import { getEvmNetworkConfig, type EvmNetworkConfig } from '@/config/networks'
 import {
@@ -57,6 +58,7 @@ export function createBackgroundEvmDAppHandler(
   const privateTransfer =
     transferController && rhea && network.networkMode === 'mainnet'
       ? new EvmDAppPrivateTransferCoordinator({
+          analytics: trackEvent,
           network,
           service: rhea.service,
           signatureCoordinator: rhea.signatureCoordinator,
@@ -66,6 +68,7 @@ export function createBackgroundEvmDAppHandler(
         })
       : undefined
   return new BackgroundEvmDAppHandler({
+    analytics: trackEvent,
     network,
     manager: dappManager,
     approval: dappHandler,

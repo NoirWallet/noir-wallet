@@ -60,6 +60,7 @@ interface LendingStore {
   checkMcaStatus: () => Promise<void>
   fetchLendingData: () => Promise<void>
   refreshAll: (options?: { forceMcaCheck?: boolean }) => Promise<void>
+  hydrateMarketCache: () => Promise<void>
   invalidateMcaStatus: () => void
   reset: () => void
 
@@ -258,6 +259,28 @@ export const useLendingStore = create<LendingStore>()((set, get) => ({
     if (!refreshDedup.isPending) {
       refreshDedups.delete(refreshKey)
     }
+  },
+
+  hydrateMarketCache: async () => {
+    const { currentWalletId, currentAccountId } = useWalletStore.getState()
+    if (!currentWalletId || !currentAccountId) return
+    const scope = `${currentWalletId}:${currentAccountId}`
+    if (get().accountScope !== null && get().accountScope !== scope) return
+    if (get().accountScope === null) set({ accountScope: scope })
+    const generation = get().refreshGeneration
+    const markets = await readLendingMarketCache(scope)
+    const active = useWalletStore.getState()
+    if (
+      markets.length === 0 ||
+      get().accountScope !== scope ||
+      get().refreshGeneration !== generation ||
+      get().lastRefreshedAt !== null ||
+      active.currentWalletId !== currentWalletId ||
+      active.currentAccountId !== currentAccountId
+    ) {
+      return
+    }
+    set({ cachedMarketAssets: markets, dataLoaded: true })
   },
 
   invalidateMcaStatus: () => {

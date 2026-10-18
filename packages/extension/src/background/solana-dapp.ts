@@ -1,3 +1,4 @@
+import { trackEvent } from '@/background/analytics/reporter'
 import { DEFAULT_NETWORK } from '@/lib/runtime-network'
 import { resolveSolanaRuntimeNetworkConfig } from '@/core/chains/solana-near-runtime-config'
 import type { ChainEndpointSettings } from '@/core/chains/chain-endpoint-settings'
@@ -25,6 +26,7 @@ export function createBackgroundSolanaDAppHandler(
   const network = resolveSolanaRuntimeNetworkConfig(DEFAULT_NETWORK, endpointSettings)
   const storageRepository = new IndexedDbStorageV2Repository()
   const native = new BackgroundNativeTransferDAppHandler({
+    analytics: trackEvent,
     providerId: 'solana',
     familyName: 'Solana',
     chainId: network.chainId,
@@ -50,6 +52,7 @@ export function createBackgroundSolanaDAppHandler(
   })
   const rpc = createConfiguredSolanaRpcClient({ chainId: network.chainId, rpcUrl: network.rpcUrl })
   return new BackgroundSolanaDAppHandler({
+    analytics: trackEvent,
     native,
     network,
     signer: new SolanaMultichainSigningClient({

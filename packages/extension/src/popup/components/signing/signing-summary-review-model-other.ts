@@ -22,8 +22,8 @@ import {
   type SigningSummaryReviewRow
 } from './signing-summary-review-model-types'
 import { formatEvmWeiAsGwei } from '@/infrastructure/chains/evm'
-import { formatAmount, formatNumber, formatSortAddress } from '@/lib/format'
-import Big from '@/lib/big'
+import { formatAmount, formatSortAddress } from '@/lib/format'
+import { formatFeeAmount, formatReviewAmount } from '@/lib/number-format'
 
 export interface EvmReviewPresentationOptions {
   readonly nativeCurrency?: { readonly symbol: string; readonly decimals: number }
@@ -208,16 +208,14 @@ export function evmTransactionReview(
   const currency = options.nativeCurrency
   const amountRow = (label: string, raw: string) => {
     if (!currency) return reviewRow(label, `${raw} wei`, { code: true })
+    const value = formatAmount(raw, currency.decimals)
+    const profile = label === 'Maximum fee' ? 'fee' : 'review'
     return reviewRow(
       label,
-      `${formatNumber(formatAmount(raw, currency.decimals), {
-        rm: Big.roundDown,
-        useUnit: true,
-        useSubscript: true,
-        fallback: '—'
-      })} ${currency.symbol}`,
+      `${profile === 'fee' ? formatFeeAmount(value) : formatReviewAmount(value).display} ${currency.symbol}`,
       {
-        code: true
+        code: true,
+        amount: { value, symbol: currency.symbol, profile }
       }
     )
   }

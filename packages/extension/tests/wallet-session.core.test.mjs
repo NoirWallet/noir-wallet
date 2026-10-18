@@ -140,8 +140,15 @@ const compiledLockFunctions = lockDeclarations
   )
   .join('\n')
 
-function lockHarness({ zcashFails = false, workerFails = false, sessionFails = false } = {}) {
+function lockHarness({
+  zcashFails = false,
+  workerFails = false,
+  sessionFails = false,
+  drain
+} = {}) {
   const state = {
+    syncPaused: false,
+    syncDrained: false,
     ledgerSigningCancelled: false,
     zcashLocked: false,
     sessionLocked: false,
@@ -155,7 +162,20 @@ function lockHarness({ zcashFails = false, workerFails = false, sessionFails = f
       state.ledgerSigningCancelled = true
     },
     pendingRequestsManager: { cancelAll() {} },
-    syncScheduler: { abortSync() {} },
+    syncScheduler: {
+      abortSync() {},
+      pauseForTx() {
+        state.syncPaused = true
+      },
+      resumeAfterTx() {
+        state.syncPaused = false
+      },
+      async waitForActiveSyncIdle() {
+        await drain
+        state.syncDrained = true
+        return true
+      }
+    },
     backgroundZcashWalletRuntime: {
       async lock() {
         if (zcashFails) throw zcashError
@@ -198,6 +218,25 @@ function lockHarness({ zcashFails = false, workerFails = false, sessionFails = f
   )(...Object.values(dependencies))
   return { functions, state, zcashError }
 }
+
+test('wallet lock drains active sync before recreating workers when Zcash cleanup fails', async () => {
+  let releaseDrain
+  const drain = new Promise(resolve => {
+    releaseDrain = resolve
+  })
+  const { functions, state, zcashError } = lockHarness({ zcashFails: true, drain })
+  const result = functions.performWalletLockState()
+  const rejected = assert.rejects(result, error => error === zcashError)
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(state.syncPaused, true)
+  assert.equal(state.workerRecreateAttempted, false)
+  releaseDrain()
+  await rejected
+  assert.equal(state.syncDrained, true)
+  assert.equal(state.sessionLocked, true)
+  assert.equal(state.workerRecreated, true)
+  assert.equal(state.syncPaused, false)
+})
 
 for (const functionName of lockFunctionNames) {
   test(`${functionName} still locks the multichain session when Zcash cleanup fails`, async () => {

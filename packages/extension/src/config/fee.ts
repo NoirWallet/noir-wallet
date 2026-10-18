@@ -21,9 +21,9 @@ export const DEFAULT_FEE_TIER: FeeTier = 'standard'
 /**
  * Expiry delta (blocks) for one-click sends/shields.
  *
- * A short expiry makes a transaction "land fast or fail fast": if not mined
- * within this many blocks it is evicted from the mempool (ZIP-203) instead of
- * lingering ~50 minutes under librustzcash's 40-block default.
+ * The baseline keeps a transaction "land fast or fail fast" when the wallet
+ * is current. One-click builders extend it by the gap between the wallet's
+ * chain tip and the live node tip, up to the 40-block default.
  *
  * The floor is set by zcashd's DoS guard, not by block spacing: AcceptToMemoryPool
  * rejects "expiring soon" txs whose expiry is within TX_EXPIRING_SOON_THRESHOLD (3)

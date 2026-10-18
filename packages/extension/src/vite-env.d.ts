@@ -2,6 +2,7 @@
 
 declare const __APP_VERSION__: string
 declare const __BUILD_TIME__: string
+declare const __BUILD_CHANNEL__: string
 declare const __NETWORK_MODE__: string
 declare const __BETA_INVITE_REQUIRED__: boolean
 declare const __DEBUG_LOGS__: boolean

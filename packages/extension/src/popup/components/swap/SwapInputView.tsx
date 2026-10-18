@@ -1,15 +1,9 @@
 import { useRef, useState, type ReactNode } from 'react'
 import { Icon } from '@iconify/react'
-import Big from 'big.js'
 import type { AddressType } from '@/types'
 import type { SwapToken } from '@/core/services/intents-api'
-import {
-  formatChainName,
-  formatNumber,
-  formatPrice,
-  formatSortAddress,
-  formatSymbol
-} from '@/lib/format'
+import { formatChainName, formatSortAddress, formatSymbol } from '@/lib/format'
+import { formatFeeAmount, formatFiatAmount, formatTokenQuantity } from '@/lib/number-format'
 import { cn } from '@/lib/utils'
 import { AddressTypeSwitch } from '../account/AddressType'
 import { ExecutionAccountBadge } from '../account/ExecutionAccountSelector'
@@ -116,6 +110,7 @@ interface SwapInputViewProps {
   requiresRecipientAddress: boolean
   canUseWalletDestination: boolean
   canSwitchTokens: boolean
+  switchingTokens?: boolean
   amountIn: string
   estimatedOut: string
   isEstimatedOut: boolean
@@ -337,8 +332,8 @@ function SwapAssetCard({
                 height={14}
                 className={maxLoading ? 'shrink-0 animate-spin' : 'shrink-0'}
               />
-              <span className="truncate font-mono">
-                {formatNumber(balance, { rm: Big.roundDown, useUnit: true, useSubscript: true })}
+              <span className="break-all text-right font-mono" title={balance}>
+                {formatTokenQuantity(balance)}
               </span>
             </button>
             {balanceHelp && <BalanceHelp kind="available" />}
@@ -388,8 +383,9 @@ function SwapAssetCard({
             <p
               aria-live="polite"
               aria-label={isEstimatedAmount && amount ? `Estimated output: ${amount}` : undefined}
+              title={amount || undefined}
               className={cn(
-                'truncate font-mono text-xl leading-6',
+                'break-all font-mono text-xl leading-6',
                 isEstimatedAmount && 'text-muted'
               )}
             >
@@ -404,7 +400,7 @@ function SwapAssetCard({
               ) : amount ? (
                 <>
                   {isEstimatedAmount && <span aria-hidden="true">≈ </span>}
-                  {formatNumber(amount, { useUnit: true })}
+                  {formatTokenQuantity(amount)}
                 </>
               ) : (
                 '—'
@@ -436,11 +432,12 @@ function SwapAssetCard({
                   />
                 )}
                 <span>
-                  Estimated{fiatValue ? ` · ≈${formatPrice(fiatValue, { showSign: true })}` : ''}
+                  Estimated
+                  {fiatValue ? ` · ≈${formatFiatAmount(fiatValue, { showSign: true })}` : ''}
                 </span>
               </span>
             ) : fiatValue ? (
-              formatPrice(fiatValue, { showSign: true })
+              formatFiatAmount(fiatValue, { showSign: true })
             ) : (
               '—'
             )}
@@ -449,7 +446,9 @@ function SwapAssetCard({
       </div>
       {pendingBalance != null && safeBig(pendingBalance).gt(0) && (
         <div className="mt-1 flex items-center justify-end gap-1 text-[11px] text-muted">
-          <span>{formatNumber(pendingBalance, { rm: Big.roundDown })} ZEC pending</span>
+          <span title={`${pendingBalance} ZEC pending`}>
+            {formatTokenQuantity(pendingBalance)} ZEC pending
+          </span>
           <BalanceHelp kind="pending" />
         </div>
       )}
@@ -465,6 +464,7 @@ export function SwapInputView({
   requiresRecipientAddress,
   canUseWalletDestination,
   canSwitchTokens,
+  switchingTokens = false,
   amountIn,
   estimatedOut,
   isEstimatedOut,
@@ -579,15 +579,23 @@ export function SwapInputView({
                 onClick={onSwitchTokens}
                 disabled={!canSwitchTokens}
                 aria-label="Switch assets"
+                aria-busy={switchingTokens}
                 title={
-                  canSwitchTokens
-                    ? 'Switch assets'
-                    : 'The destination asset is not available in this wallet'
+                  switchingTokens
+                    ? 'Switching assets'
+                    : canSwitchTokens
+                      ? 'Switch assets'
+                      : 'The destination asset is not available in this wallet'
                 }
                 className="absolute -top-6 left-1/2 z-10 size-9 -translate-x-1/2 rounded-full border-[3px] border-background bg-card p-0 text-foreground hover:bg-popover disabled:opacity-40"
                 variant="secondary"
               >
-                <Icon icon="lucide:arrow-down-up" width={17} height={17} />
+                <Icon
+                  icon={switchingTokens ? 'lucide:loader-circle' : 'lucide:arrow-down-up'}
+                  className={switchingTokens ? 'animate-spin' : undefined}
+                  width={17}
+                  height={17}
+                />
               </Button>
             )}
 
@@ -630,7 +638,7 @@ export function SwapInputView({
           </div>
         )}
 
-        {!hideReceiveAddress && (
+        {!hideReceiveAddress && tokenOut && (
           <div className="mt-5">
             {destinationAssetsLoading ? (
               <ReceiveAddressSkeleton />
@@ -740,9 +748,9 @@ export function SwapInputView({
                   }
                 >
                   {networkFee && isZecSource
-                    ? `${feeIsApproximate ? '≈ ' : ''}${networkFee} ZEC`
+                    ? `${feeIsApproximate ? '≈ ' : ''}${formatFeeAmount(networkFee)} ZEC`
                     : quoteFeeUsd !== null && quoteFeeUsd !== undefined
-                      ? `≈ ${formatPrice(quoteFeeUsd, { showSign: true })}`
+                      ? `≈ ${formatFiatAmount(quoteFeeUsd, { showSign: true })}`
                       : '—'}
                 </span>
               )}
@@ -763,7 +771,7 @@ export function SwapInputView({
               <div className="flex items-center justify-between text-sm">
                 <span className="text-muted">Rate</span>
                 <span className="text-right">
-                  1 {formatSymbol(tokenIn?.symbol) || '—'} = {formatNumber(rate)}{' '}
+                  1 {formatSymbol(tokenIn?.symbol) || '—'} = {formatTokenQuantity(rate)}{' '}
                   {formatSymbol(tokenOut?.symbol) || '—'}
                 </span>
               </div>

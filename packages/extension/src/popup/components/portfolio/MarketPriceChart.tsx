@@ -1,7 +1,8 @@
 import { useCallback, useId, useMemo, useRef, useState } from 'react'
 import { Icon } from '@iconify/react'
 import type { AssetMarketHistoryPoint, AssetMarketHistoryRange } from '@/core/prices'
-import { formatPrice, formatTimestamp } from '@/lib/format'
+import { formatTimestamp } from '@/lib/format'
+import { formatTokenPrice } from '@/lib/number-format'
 import { cn } from '@/lib/utils'
 import { Skeleton } from '@/popup/components/ui/skeleton'
 import {
@@ -102,7 +103,9 @@ export function MarketPriceChart({
           ) : (
             <>
               <p className="text-[26px] font-medium leading-none tracking-tight tabular-nums">
-                {active ? formatPrice(active.priceUsd, { showSign: true }) : (priceLabel ?? '—')}
+                {active
+                  ? formatTokenPrice(active.priceUsd, { showSign: true })
+                  : (priceLabel ?? '—')}
               </p>
               <div className="mt-1.5 flex items-center gap-1.5 text-xs">
                 {active ? (

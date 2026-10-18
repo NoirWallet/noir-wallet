@@ -12,14 +12,18 @@ import {
   IndexedDbStorageV2Repository,
   IndexedDbTransactionRepository
 } from '@/infrastructure/persistence/repositories'
-import type { TransactionRepository } from '@/ports/repositories'
 import { loadTransactions } from '@/lib/indexed-db'
-import { getCrossChainCompletionStatus } from '@/lib/cross-chain-transaction'
 import { transactionRecorder } from './transaction-recorder'
 import { parseAssetId } from '@/core/chains/registry'
+import { resolveRheaSwapCanonicalAssetId } from '@/core/services/rhea-swap'
+import { isAccountScopeForNetwork, type AccountScope } from '@/core/wallet/account-scope'
+import type { Transaction } from '@/types'
 import { parseAccountId } from '@/core/accounts/domain'
 import { parseKeyDomainId } from '@/core/keyring/domain'
 import { getRheaSwapProgressStatus } from '@/lib/swap-progress'
+import { DedupPromise, SerialTaskQueue } from '@/lib/async-utils'
+import { ANALYTICS_EVENTS, trackEvent } from '@/background/analytics/reporter'
+import { transactionAnalyticsFamily } from '@/core/transactions/transaction-analytics'
 
 export const RHEA_SWAP_TRANSACTION_MONITOR_ALARM = 'rhea-swap-transaction-monitor-alarm'
 
@@ -35,6 +39,7 @@ export interface PendingRheaSwapTransaction {
   readonly isCrossChain: boolean
   readonly destinationAsset?: string
   readonly destinationChain?: string
+  readonly settled?: boolean
 }
 
 export interface RheaSwapPortfolioRefreshRequest {
@@ -45,9 +50,16 @@ export interface RheaSwapPortfolioRefreshRequest {
 export interface RheaSwapTransactionMonitorOptions {
   readonly refreshPortfolio?: (request: RheaSwapPortfolioRefreshRequest) => Promise<void>
   readonly notifyStatus?: (quoteHandle: string, status: SwapStatus) => void
+  readonly loadZcashAccountScopes?: () => readonly AccountScope[]
+  readonly loadZcashTransactions?: (accountKey: string) => Promise<readonly Transaction[]>
+  readonly updateZcashTransaction?: (
+    accountKey: string,
+    transactionId: string,
+    updates: Partial<Transaction>
+  ) => Promise<void>
 }
 
-function parsePending(value: unknown): PendingRheaSwapTransaction {
+function parsePending(value: unknown, allowLegacyAsset = false): PendingRheaSwapTransaction {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error('Invalid pending RHEA Swap transaction')
   }
@@ -60,12 +72,13 @@ function parsePending(value: unknown): PendingRheaSwapTransaction {
     'transactionId',
     'isCrossChain'
   ]
-  const optional = ['destinationAsset', 'destinationChain']
+  const optional = ['destinationAsset', 'destinationChain', 'settled']
   const allowed = new Set([...required, ...optional])
   if (
     required.some(key => !Object.prototype.hasOwnProperty.call(record, key)) ||
     Object.keys(record).some(key => !allowed.has(key)) ||
-    typeof record.isCrossChain !== 'boolean'
+    typeof record.isCrossChain !== 'boolean' ||
+    (record.settled !== undefined && typeof record.settled !== 'boolean')
   ) {
     throw new Error('Invalid pending RHEA Swap transaction fields')
   }
@@ -82,25 +95,53 @@ function parsePending(value: unknown): PendingRheaSwapTransaction {
     }
     return candidate
   }
+  const accountKey = read('accountKey')
+  const walletId = parseKeyDomainId(read('walletId'))
+  const accountId = parseAccountId(read('accountId'))
+  if (!isAccountScopeForNetwork({ accountKey, walletId, accountId }, 'mainnet')) {
+    throw new Error('RHEA Swap monitor account scope does not match Mainnet')
+  }
+  const destinationAsset =
+    record.destinationAsset === undefined
+      ? null
+      : resolveMonitorDestinationAsset(read('destinationAsset'))
+  if (record.destinationAsset !== undefined && !destinationAsset && !allowLegacyAsset) {
+    throw new Error('Invalid pending RHEA Swap destination asset')
+  }
   return Object.freeze({
     quoteHandle: read('quoteHandle', 160),
-    accountKey: read('accountKey'),
-    walletId: parseKeyDomainId(read('walletId')),
-    accountId: parseAccountId(read('accountId')),
+    accountKey,
+    walletId,
+    accountId,
     transactionId: read('transactionId'),
     isCrossChain: record.isCrossChain,
-    ...(record.destinationAsset === undefined
-      ? {}
-      : { destinationAsset: parseAssetId(read('destinationAsset')).id }),
+    ...(destinationAsset ? { destinationAsset } : {}),
     ...(record.destinationChain === undefined
       ? {}
-      : { destinationChain: read('destinationChain', 64) })
+      : { destinationChain: read('destinationChain', 64) }),
+    ...(record.settled === undefined ? {} : { settled: record.settled })
   })
+}
+
+function resolveMonitorDestinationAsset(value: string) {
+  const mapped = resolveRheaSwapCanonicalAssetId(value, 'mainnet')
+  if (mapped) return mapped
+  try {
+    const parsed = parseAssetId(value)
+    return /^rhea:[1-9][0-9]*$/.test(parsed.chainId) && parsed.namespace === 'rhea'
+      ? parsed.id
+      : null
+  } catch {
+    return null
+  }
 }
 
 export class RheaSwapTransactionMonitor {
   private readonly pending = new Map<string, PendingRheaSwapTransaction>()
-  private readonly repository: TransactionRepository = new IndexedDbTransactionRepository()
+  private readonly pendingQueue = new SerialTaskQueue()
+  private readonly checkDedup = new Map<string, DedupPromise<void>>()
+  private loaded = false
+  private readonly repository = new IndexedDbTransactionRepository()
   private readonly storageRepository = new IndexedDbStorageV2Repository()
 
   constructor(
@@ -109,58 +150,232 @@ export class RheaSwapTransactionMonitor {
   ) {}
 
   async init(): Promise<void> {
-    await this.load()
+    await this.pendingQueue.run(async () => {
+      await this.load()
+      await this.restorePendingZcashSwapsLoaded()
+    })
     const graphPending = await this.pollGraphs()
-    this.schedule(graphPending)
+    const reportPending = await this.retryReports()
+    this.schedule(graphPending || reportPending)
   }
 
   async add(value: unknown): Promise<void> {
     const transaction = parsePending(value)
-    this.pending.set(transaction.quoteHandle, transaction)
-    await this.save()
-    this.schedule(false)
+    await this.pendingQueue.run(async () => {
+      await this.load()
+      const existing = this.pending.get(transaction.quoteHandle)
+      if (
+        existing &&
+        (existing.accountKey !== transaction.accountKey ||
+          existing.transactionId !== transaction.transactionId)
+      ) {
+        throw new Error('RHEA Swap quote is already monitored for another transaction')
+      }
+      this.pending.set(transaction.quoteHandle, existing?.settled ? existing : transaction)
+      try {
+        await this.save()
+      } catch (error) {
+        if (existing) this.pending.set(transaction.quoteHandle, existing)
+        else this.pending.delete(transaction.quoteHandle)
+        throw error
+      }
+      this.schedule(false)
+    })
   }
 
   async handleAlarm(): Promise<void> {
-    await this.load()
-    await Promise.allSettled([...this.pending.values()].map(value => this.check(value)))
+    const pending = await this.pendingQueue.run(async () => {
+      await this.load()
+      await this.restorePendingZcashSwapsLoaded()
+      return [...this.pending.values()]
+    })
+    await Promise.allSettled(pending.map(value => this.check(value)))
     const graphPending = await this.pollGraphs()
-    this.schedule(graphPending)
+    const reportPending = await this.retryReports()
+    this.schedule(graphPending || reportPending)
   }
 
   async recheckNow(): Promise<boolean> {
-    await this.load()
-    await Promise.allSettled([...this.pending.values()].map(value => this.check(value)))
+    const pending = await this.pendingQueue.run(async () => {
+      await this.load()
+      await this.restorePendingZcashSwapsLoaded()
+      return [...this.pending.values()]
+    })
+    await Promise.allSettled(pending.map(value => this.check(value)))
     const graphPending = await this.pollGraphs()
-    this.schedule(graphPending)
-    return this.pending.size > 0 || graphPending
+    const reportPending = await this.retryReports()
+    this.schedule(graphPending || reportPending)
+    return this.pending.size > 0 || graphPending || reportPending
   }
 
-  async removeAccount(walletId: string, accountId?: string): Promise<void> {
-    await this.load()
-    for (const [quoteHandle, value] of this.pending) {
-      if (
-        value.walletId === walletId &&
-        (accountId === undefined || value.accountId === accountId)
-      ) {
-        this.pending.delete(quoteHandle)
-      }
+  async removeAccounts(walletId: string, accountIds: readonly string[]): Promise<void> {
+    const keyDomainId = parseKeyDomainId(walletId)
+    const accounts = [...new Set(accountIds.map(parseAccountId))]
+    if (accounts.length === 0) throw new Error('No RHEA Swap Accounts to remove')
+    const graphHandles = new Set<string>()
+    for (const accountId of accounts) {
+      const handles = await this.repository.listRheaSwapQuoteHandlesByAccountScope({
+        keyDomainId,
+        accountId
+      })
+      for (const handle of handles) graphHandles.add(handle)
     }
-    await this.save()
-    this.schedule(false)
+    await this.pendingQueue.run(async () => {
+      await this.load()
+      const quoteHandles = new Set(graphHandles)
+      const removedEntries = new Map<string, PendingRheaSwapTransaction>()
+      for (const [quoteHandle, value] of this.pending) {
+        if (value.walletId === walletId && accounts.includes(value.accountId)) {
+          quoteHandles.add(quoteHandle)
+          removedEntries.set(quoteHandle, value)
+        }
+      }
+      await Promise.all([...quoteHandles].map(quoteHandle => this.service.discard(quoteHandle)))
+      for (const quoteHandle of removedEntries.keys()) this.pending.delete(quoteHandle)
+      try {
+        await this.save()
+      } catch (error) {
+        for (const [quoteHandle, value] of removedEntries) this.pending.set(quoteHandle, value)
+        throw error
+      }
+      this.schedule(false)
+    })
   }
 
   async clear(): Promise<void> {
-    this.pending.clear()
-    await this.save()
-    this.schedule(false)
+    await this.pendingQueue.run(async () => {
+      await this.service.clearSessions()
+      const previous = new Map(this.pending)
+      this.pending.clear()
+      try {
+        await this.save()
+      } catch (error) {
+        for (const [handle, value] of previous) this.pending.set(handle, value)
+        throw error
+      }
+      this.loaded = true
+      this.schedule(false)
+    })
+  }
+
+  async restorePendingZcashSwaps(
+    scopes = this.options.loadZcashAccountScopes?.() ?? []
+  ): Promise<number> {
+    return this.pendingQueue.run(async () => {
+      await this.load()
+      return this.restorePendingZcashSwapsLoaded(scopes)
+    })
+  }
+
+  private async restorePendingZcashSwapsLoaded(
+    scopes = this.options.loadZcashAccountScopes?.() ?? []
+  ): Promise<number> {
+    let restored = 0
+    const restoredHandles: string[] = []
+    for (const scope of scopes) {
+      if (!isAccountScopeForNetwork(scope, 'mainnet')) continue
+      let transactions: readonly Transaction[]
+      try {
+        transactions = await this.readZcashTransactions(scope.accountKey)
+      } catch {
+        continue
+      }
+      for (const transaction of transactions) {
+        const binding = transaction.quoteBinding
+        if (
+          transaction.type !== 'swap' ||
+          (transaction.status !== 'pending' && transaction.status !== 'confirming') ||
+          !transaction.txHash ||
+          binding?.provider !== 'rhea-cross-chain-dex' ||
+          !binding.quoteHandle ||
+          typeof binding.isCrossChain !== 'boolean' ||
+          this.pending.has(binding.quoteHandle)
+        ) {
+          continue
+        }
+        if (!(await this.service.canRecoverTransactionSubmission(binding.quoteHandle))) continue
+        try {
+          const destinationAsset = binding.destinationAsset
+            ? resolveMonitorDestinationAsset(binding.destinationAsset)
+            : null
+          const pending = parsePending({
+            quoteHandle: binding.quoteHandle,
+            accountKey: scope.accountKey,
+            walletId: scope.walletId,
+            accountId: scope.accountId,
+            transactionId: transaction.id,
+            isCrossChain: binding.isCrossChain,
+            ...(destinationAsset ? { destinationAsset } : {}),
+            ...(binding.destinationChain ? { destinationChain: binding.destinationChain } : {})
+          })
+          this.pending.set(pending.quoteHandle, pending)
+          restored += 1
+          restoredHandles.push(pending.quoteHandle)
+        } catch {
+          // An incomplete legacy binding cannot be assigned to an order safely.
+        }
+      }
+    }
+    if (restored > 0) {
+      try {
+        await this.save()
+      } catch (error) {
+        for (const handle of restoredHandles) this.pending.delete(handle)
+        throw error
+      }
+      this.schedule(false)
+    }
+    return restored
+  }
+
+  private readZcashTransactions(accountKey: string): Promise<readonly Transaction[]> {
+    return this.options.loadZcashTransactions?.(accountKey) ?? loadTransactions(accountKey)
   }
 
   private async check(value: PendingRheaSwapTransaction): Promise<void> {
+    let dedup = this.checkDedup.get(value.quoteHandle)
+    if (!dedup) {
+      dedup = new DedupPromise<void>()
+      this.checkDedup.set(value.quoteHandle, dedup)
+    }
+    try {
+      await dedup.run(() => this.checkPending(value))
+    } finally {
+      if (!dedup.isPending) this.checkDedup.delete(value.quoteHandle)
+    }
+  }
+
+  private async checkPending(value: PendingRheaSwapTransaction): Promise<void> {
+    const transactions = await this.readZcashTransactions(value.accountKey)
+    const transaction = transactions.find(candidate => candidate.id === value.transactionId)
+    if (
+      !transaction?.txHash ||
+      transaction.type !== 'swap' ||
+      transaction.quoteBinding?.provider !== 'rhea-cross-chain-dex' ||
+      transaction.quoteBinding.quoteHandle !== value.quoteHandle
+    ) {
+      await this.finish(value)
+      return
+    }
+    if (!(await this.service.canRecoverTransactionSubmission(value.quoteHandle))) {
+      console.warn('[RHEA Swap Monitor] Recovery session is unavailable', {
+        transactionId: value.transactionId
+      })
+      await this.finish(value)
+      return
+    }
+    await this.service.recordTransactionSubmission(value.quoteHandle, transaction.txHash)
+    let reported = false
     try {
       await this.service.reportSubmission(value.quoteHandle)
+      reported = true
     } catch {
-      if (!value.isCrossChain) return
+      // Order observation and local finality do not depend on report delivery.
+    }
+    if (!this.pending.has(value.quoteHandle)) return
+    if (value.settled || transaction.status === 'success' || transaction.status === 'failed') {
+      if (reported) await this.finish(value)
+      return
     }
 
     let status:
@@ -178,23 +393,23 @@ export class RheaSwapTransactionMonitor {
       destinationHash = observation.destinationHash
     } catch (error) {
       if (value.isCrossChain) return
-      const transactions = await loadTransactions(value.accountKey)
-      const transaction = transactions.find(candidate => candidate.id === value.transactionId)
       if (!transaction?.confirmations || transaction.confirmations <= 0) return
       status = 'completed'
     }
 
     if (status === 'pending' || status === 'processing' || status === 'unknown') {
+      if (!this.pending.has(value.quoteHandle)) return
       if (destinationHash) {
-        await transactionRecorder.updateTransaction(value.accountKey, value.transactionId, {
+        await this.updateZcashTransaction(value.accountKey, value.transactionId, {
           destinationTxHash: destinationHash
         })
       }
       return
     }
+    if (!this.pending.has(value.quoteHandle)) return
     if (status === 'completed') {
-      await transactionRecorder.updateTransaction(value.accountKey, value.transactionId, {
-        status: getCrossChainCompletionStatus('swap', value),
+      await this.updateZcashTransaction(value.accountKey, value.transactionId, {
+        status: 'success',
         ...(destinationHash ? { destinationTxHash: destinationHash } : {}),
         notified: true
       })
@@ -203,29 +418,82 @@ export class RheaSwapTransactionMonitor {
         value.destinationAsset ? [parseAssetId(value.destinationAsset).chainId] : []
       )
     } else {
-      await transactionRecorder.updateTransaction(value.accountKey, value.transactionId, {
+      await this.updateZcashTransaction(value.accountKey, value.transactionId, {
         status: 'failed',
         ...(destinationHash ? { destinationTxHash: destinationHash } : {}),
         memo: status === 'refunded' ? 'Refunded' : undefined,
         notified: true
       })
     }
-    await this.service.discard(value.quoteHandle).catch(() => {})
-    this.pending.delete(value.quoteHandle)
-    await this.save()
+    trackEvent(ANALYTICS_EVENTS.SWAP_COMPLETED, {
+      chain: 'zcash',
+      hasTransaction: 1,
+      idempotencyKey: `rhea-completed:${value.quoteHandle}`,
+      extra: {
+        status: status === 'completed' ? 'SUCCESS' : status === 'refunded' ? 'REFUNDED' : 'FAILED',
+        action: 'Swap'
+      }
+    })
+    if (reported) {
+      await this.finish(value)
+    } else {
+      await this.pendingQueue.run(async () => {
+        if (!this.pending.has(value.quoteHandle)) return
+        const previous = this.pending.get(value.quoteHandle)!
+        this.pending.set(value.quoteHandle, Object.freeze({ ...value, settled: true }))
+        try {
+          await this.save()
+        } catch (error) {
+          this.pending.set(value.quoteHandle, previous)
+          throw error
+        }
+      })
+    }
+  }
+
+  private async finish(value: PendingRheaSwapTransaction): Promise<void> {
+    const removed = await this.pendingQueue.run(async () => {
+      if (!this.pending.has(value.quoteHandle)) return false
+      const previous = this.pending.get(value.quoteHandle)!
+      this.pending.delete(value.quoteHandle)
+      try {
+        await this.save()
+      } catch (error) {
+        this.pending.set(value.quoteHandle, previous)
+        throw error
+      }
+      return true
+    })
+    if (removed) await this.service.discard(value.quoteHandle).catch(() => {})
+  }
+
+  private updateZcashTransaction(
+    accountKey: string,
+    transactionId: string,
+    updates: Partial<Transaction>
+  ): Promise<void> {
+    return (
+      this.options.updateZcashTransaction?.(accountKey, transactionId, updates) ??
+      transactionRecorder.updateTransaction(accountKey, transactionId, updates)
+    )
   }
 
   private async load(): Promise<void> {
+    if (this.loaded) return
     const stored = (await chrome.storage.local.get(STORAGE_KEY))[STORAGE_KEY]
-    if (stored === undefined) return
+    if (stored === undefined) {
+      this.loaded = true
+      return
+    }
     if (!Array.isArray(stored) || stored.length > 128) {
       throw new Error('Invalid persisted RHEA Swap monitor state')
     }
     this.pending.clear()
     for (const value of stored) {
-      const parsed = parsePending(value)
+      const parsed = parsePending(value, true)
       this.pending.set(parsed.quoteHandle, parsed)
     }
+    this.loaded = true
   }
 
   private async save(): Promise<void> {
@@ -308,8 +576,8 @@ export class RheaSwapTransactionMonitor {
     }
     try {
       await this.service.reportSubmission(binding.quoteHandle)
-    } catch (error) {
-      if (!binding.isCrossChain) throw error
+    } catch {
+      // A persisted submission retries independently of graph finality.
     }
 
     if (!binding.isCrossChain) {
@@ -329,7 +597,7 @@ export class RheaSwapTransactionMonitor {
         binding.destination.chainId
       ])
       await this.notifyStatus(graph, 'SUCCESS')
-      await this.service.discard(binding.quoteHandle).catch(() => {})
+      await this.service.retireReportedSubmission(binding.quoteHandle)
       return true
     }
 
@@ -376,7 +644,7 @@ export class RheaSwapTransactionMonitor {
         binding.destination.chainId
       ])
       await this.notifyStatus(graph, 'SUCCESS')
-      await this.service.discard(binding.quoteHandle).catch(() => {})
+      await this.service.retireReportedSubmission(binding.quoteHandle)
       return true
     }
     if (status === 'refunded') {
@@ -389,7 +657,7 @@ export class RheaSwapTransactionMonitor {
       occurredAt: Date.now()
     })
     await this.notifyStatus(graph, status === 'refunded' ? 'REFUNDED' : 'FAILED')
-    await this.service.discard(binding.quoteHandle).catch(() => {})
+    await this.service.retireReportedSubmission(binding.quoteHandle)
     return true
   }
 
@@ -397,6 +665,29 @@ export class RheaSwapTransactionMonitor {
     const latest = await this.repository.get(graph.root.scope, graph.root.id)
     const binding = latest?.root.intent?.protocol
     if (!latest || binding?.provider !== 'rhea-cross-chain-dex') return
+    if (
+      (status === 'SUCCESS' || status === 'FAILED' || status === 'REFUNDED') &&
+      graph.root.status !== 'final' &&
+      graph.root.status !== 'failed'
+    ) {
+      const chain = transactionAnalyticsFamily(binding.origin.chainId)
+      if (chain) {
+        const transfer = binding.userAction === 'transfer'
+        trackEvent(
+          transfer
+            ? status === 'SUCCESS'
+              ? ANALYTICS_EVENTS.SEND_SUCCEEDED
+              : ANALYTICS_EVENTS.SEND_FAILED
+            : ANALYTICS_EVENTS.SWAP_COMPLETED,
+          {
+            chain,
+            hasTransaction: 1,
+            idempotencyKey: `rhea-terminal:${binding.quoteHandle}`,
+            extra: transfer ? { kind: 'transfer' } : { status, action: 'Swap', sourceFamily: chain }
+          }
+        )
+      }
+    }
     const value = getRheaSwapProgressStatus(latest.segments, {
       status,
       originAsset: binding.origin.assetId,
@@ -472,6 +763,15 @@ export class RheaSwapTransactionMonitor {
       })
     } catch (error) {
       console.warn('[RHEA Swap Monitor] Portfolio refresh after completion failed:', error)
+    }
+  }
+
+  private async retryReports(): Promise<boolean> {
+    try {
+      return await this.service.retryPendingReports()
+    } catch (error) {
+      console.warn('[RHEA Swap Monitor] Could not inspect pending reports:', error)
+      return true
     }
   }
 

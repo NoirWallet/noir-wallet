@@ -234,6 +234,43 @@ export class IndexedDbTransactionRepository implements TransactionRepository {
     )
   }
 
+  async listRheaSwapQuoteHandlesByAccountScope(
+    scopeValue: TransactionAccountScope
+  ): Promise<readonly string[]> {
+    const scope = parseTransactionRepositoryScope(scopeValue)
+    return runWithTransactionV2Database(this.databaseName, database =>
+      runTransaction(
+        database,
+        [TRANSACTION_V2_DATABASE_STORES.graphs],
+        'readonly',
+        async transaction => {
+          const values = await requestResult<unknown[]>(
+            transaction
+              .objectStore(TRANSACTION_V2_DATABASE_STORES.graphs)
+              .index(TRANSACTION_V2_DATABASE_INDEXES.graphsByAccount)
+              .getAll(
+                IDBKeyRange.only(transactionScopeKey(scope)),
+                TRANSACTION_REPOSITORY_LIMITS.recordsPerAccount + 1
+              )
+          )
+          if (values.length > TRANSACTION_REPOSITORY_LIMITS.recordsPerAccount) {
+            throw new Error('Transaction repository Account capacity is corrupted')
+          }
+          const handles = new Set<string>()
+          for (const value of values) {
+            const graph = parseStoredTransactionGraphRecord(value).graph
+            if (!transactionGraphMatchesScope(graph, scope)) {
+              throw new Error('Persisted transaction Account index mismatch')
+            }
+            const binding = graph.root.intent?.protocol
+            if (binding?.provider === 'rhea-cross-chain-dex') handles.add(binding.quoteHandle)
+          }
+          return Object.freeze([...handles])
+        }
+      )
+    )
+  }
+
   async applySegmentEvent(
     inputValue: ApplyTransactionSegmentEventInput
   ): Promise<TransactionMutationResult> {

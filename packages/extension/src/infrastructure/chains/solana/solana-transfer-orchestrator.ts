@@ -73,7 +73,10 @@ export interface SolanaTransferOrchestratorOptions {
   readonly now?: () => number
   readonly createId?: () => string
   readonly onPendingBroadcast?: () => Promise<void> | void
-  readonly onMonitoringRequired?: () => Promise<void> | void
+  readonly onMonitoringRequired?: (
+    graph: TransactionGraph,
+    recovered: boolean
+  ) => Promise<void> | void
 }
 
 interface PrepareSolanaTransferBaseInput {
@@ -168,7 +171,10 @@ export class SolanaTransferOrchestrator {
   private readonly now: () => number
   private readonly createId: () => string
   private readonly onPendingBroadcast?: () => Promise<void> | void
-  private readonly onMonitoringRequired?: () => Promise<void> | void
+  private readonly onMonitoringRequired?: (
+    graph: TransactionGraph,
+    recovered: boolean
+  ) => Promise<void> | void
 
   constructor(options: SolanaTransferOrchestratorOptions) {
     this.repository = options.repository
@@ -526,7 +532,9 @@ export class SolanaTransferOrchestrator {
       transactionHash: pending.transactionHash
     })
     await this.pendingStore.delete(pending.transactionId)
-    await Promise.resolve(this.onMonitoringRequired?.()).catch(() => {})
+    await Promise.resolve(this.onMonitoringRequired?.(graph, currentGraph === undefined)).catch(
+      () => {}
+    )
     return Object.freeze({ status: 'broadcast', graph })
   }
 

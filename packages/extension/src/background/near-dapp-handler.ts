@@ -1,3 +1,5 @@
+import { ANALYTICS_EVENTS } from '../lib/analytics/constants'
+import { emitDAppEvent, observeDAppRequest, type DAppAnalyticsSink } from './dapp-analytics'
 import type { KeyDomainId } from '@/core/keyring/domain'
 import {
   NativeTransferProviderError,
@@ -50,6 +52,7 @@ export interface AuthorizedNearDAppAccount {
 }
 
 export interface BackgroundNearDAppHandlerOptions {
+  readonly analytics?: DAppAnalyticsSink
   readonly native: Pick<
     BackgroundNativeTransferDAppHandler,
     | 'request'
@@ -84,6 +87,27 @@ export class BackgroundNearDAppHandler {
   constructor(private readonly options: BackgroundNearDAppHandlerOptions) {}
 
   async request(
+    request: NearDAppRequest,
+    origin: string,
+    tabInfo: NativeTransferDAppTabInfo
+  ): Promise<unknown> {
+    if (
+      ![
+        'signMessage',
+        'signTransaction',
+        'signAllTransactions',
+        'requestSignTransactions',
+        'signAndSendTransaction',
+        'signAndSendTransactions'
+      ].includes(request.method)
+    )
+      return this.handleRequest(request, origin, tabInfo)
+    return observeDAppRequest(this.options.analytics, 'near', request.method, () =>
+      this.handleRequest(request, origin, tabInfo)
+    )
+  }
+
+  private async handleRequest(
     request: NearDAppRequest,
     origin: string,
     tabInfo: NativeTransferDAppTabInfo
@@ -153,7 +177,8 @@ export class BackgroundNearDAppHandler {
   private async signTransactions(
     requests: readonly NearTransactionRequest[],
     origin: string,
-    tabInfo: NativeTransferDAppTabInfo
+    tabInfo: NativeTransferDAppTabInfo,
+    broadcast = false
   ): Promise<readonly string[]> {
     return this.options.runActiveOperation(async () => {
       const active = await this.options.loadAuthorizedAccount(origin)
@@ -219,6 +244,7 @@ export class BackgroundNearDAppHandler {
           transaction
         })
         let confirmed = false
+        let approved = false
         try {
           if (
             prepared.summary.schema !== 'near.transaction.v1' ||
@@ -240,6 +266,7 @@ export class BackgroundNearDAppHandler {
           if (!decision.approved) {
             throw new NativeTransferProviderError(4001, 'User rejected the transaction request.')
           }
+          approved = true
           const current = await this.options.loadAuthorizedAccount(origin)
           if (!sameAccount(current, active)) {
             throw new NativeTransferProviderError(
@@ -258,6 +285,15 @@ export class BackgroundNearDAppHandler {
             throw new Error('NEAR signer returned an invalid transaction result')
           }
           signed.push(result.payload.value)
+        } catch (error) {
+          if (
+            broadcast &&
+            approved &&
+            !(error && typeof error === 'object' && Reflect.get(error, 'code') === 4001)
+          ) {
+            emitDAppEvent(this.options.analytics, 'near', ANALYTICS_EVENTS.DAPP_TRANSACTION_FAILED)
+          }
+          throw error
         } finally {
           if (!confirmed) {
             await this.options.signer
@@ -275,10 +311,21 @@ export class BackgroundNearDAppHandler {
     origin: string,
     tabInfo: NativeTransferDAppTabInfo
   ): Promise<readonly Readonly<Record<string, unknown>>[]> {
-    const signed = await this.signTransactions(requests, origin, tabInfo)
+    const signed = await this.signTransactions(requests, origin, tabInfo, true)
     const results: Readonly<Record<string, unknown>>[] = []
     for (const transaction of signed) {
-      results.push(await this.options.rpc.broadcastSignedTransactionAndWait(transaction))
+      let result: Readonly<Record<string, unknown>>
+      try {
+        result = await this.options.rpc.broadcastSignedTransactionAndWait(transaction)
+      } catch (error) {
+        emitDAppEvent(this.options.analytics, 'near', ANALYTICS_EVENTS.DAPP_TRANSACTION_FAILED)
+        throw error
+      }
+      results.push(result)
+      emitDAppEvent(this.options.analytics, 'near', ANALYTICS_EVENTS.DAPP_TRANSACTION_SENT, {
+        hasTransaction: 1,
+        idempotencyKey: `dapp:near:broadcast:${String((result.transaction as { hash?: unknown } | undefined)?.hash ?? (await signedPayloadDigest(transaction)))}`
+      })
     }
     return Object.freeze(results)
   }
@@ -369,4 +416,9 @@ export class BackgroundNearDAppHandler {
       }
     }
   }
+}
+
+async function signedPayloadDigest(payload: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(payload))
+  return Array.from(new Uint8Array(digest), value => value.toString(16).padStart(2, '0')).join('')
 }

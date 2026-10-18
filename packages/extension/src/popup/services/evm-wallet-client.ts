@@ -55,11 +55,13 @@ export type EvmWalletClientErrorCode = EvmWalletRuntimeErrorCode | 'invalid-resp
 
 export class EvmWalletClientError extends Error {
   readonly code: EvmWalletClientErrorCode
+  readonly shortfallRaw?: string
 
-  constructor(code: EvmWalletClientErrorCode, message: string) {
+  constructor(code: EvmWalletClientErrorCode, message: string, shortfallRaw?: string) {
     super(message)
     this.name = 'EvmWalletClientError'
     this.code = code
+    this.shortfallRaw = shortfallRaw
   }
 }
 
@@ -130,7 +132,7 @@ export interface EvmWalletClient {
   readonly getActivity: (
     action: 'read' | 'refresh',
     executionMode?: 'main' | 'private' | 'all',
-    options?: { readonly chainIds?: readonly string[] }
+    options?: { readonly chainIds?: readonly string[]; readonly historyPageCount?: number }
   ) => Promise<ActivityReadModel | null>
   readonly prepareTransfer: (
     intent: EvmTransferIntent,
@@ -299,7 +301,12 @@ const runtimeErrorCodes = new Set<EvmWalletRuntimeErrorCode>(EVM_WALLET_RUNTIME_
 
 function parseRuntimeError(value: unknown): EvmWalletClientError {
   const error = readRecord(value, 'EVM runtime error')
-  assertExactKeys(error, ['code', 'message'], 'EVM runtime error')
+  const hasShortfall = Object.prototype.hasOwnProperty.call(error, 'shortfallRaw')
+  assertExactKeys(
+    error,
+    hasShortfall ? ['code', 'message', 'shortfallRaw'] : ['code', 'message'],
+    'EVM runtime error'
+  )
   if (
     typeof error.code !== 'string' ||
     !runtimeErrorCodes.has(error.code as EvmWalletRuntimeErrorCode) ||
@@ -313,7 +320,19 @@ function parseRuntimeError(value: unknown): EvmWalletClientError {
   if (error.message !== canonical.message) {
     throw new EvmWalletClientError('invalid-response', 'Invalid EVM runtime error')
   }
-  return new EvmWalletClientError(canonical.code, canonical.message)
+  if (
+    hasShortfall &&
+    (canonical.code !== 'insufficient-funds' ||
+      typeof error.shortfallRaw !== 'string' ||
+      !/^[1-9][0-9]{0,77}$/.test(error.shortfallRaw))
+  ) {
+    throw new EvmWalletClientError('invalid-response', 'Invalid EVM runtime error')
+  }
+  return new EvmWalletClientError(
+    canonical.code,
+    canonical.message,
+    hasShortfall ? (error.shortfallRaw as string) : undefined
+  )
 }
 
 function parseRuntimeResult<T>(value: unknown, parseResult: (result: unknown) => T): T {
@@ -717,7 +736,7 @@ export function createEvmWalletClient(sendMessage: EvmRuntimeMessenger): EvmWall
     getActivity: async (
       action: 'read' | 'refresh',
       executionMode: 'main' | 'private' | 'all' = 'all',
-      options: { readonly chainIds?: readonly string[] } = {}
+      options: { readonly chainIds?: readonly string[]; readonly historyPageCount?: number } = {}
     ) => {
       const requestedChainIds = options.chainIds
       const chainIds =
@@ -733,12 +752,20 @@ export function createEvmWalletClient(sendMessage: EvmRuntimeMessenger): EvmWall
               }
               return Object.freeze(normalized)
             })
+      const historyPageCount = options.historyPageCount
+      if (
+        historyPageCount !== undefined &&
+        (!Number.isSafeInteger(historyPageCount) || historyPageCount < 1 || historyPageCount > 10)
+      ) {
+        throw new EvmWalletClientError('invalid-response', 'Invalid Activity history page count')
+      }
       return send(
         {
           type: 'GET_ACTIVITY',
           action,
           executionMode,
-          ...(chainIds === undefined ? {} : { chainIds })
+          ...(chainIds === undefined ? {} : { chainIds }),
+          ...(historyPageCount === undefined ? {} : { historyPageCount })
         },
         value => (value === null ? null : parseActivityReadModel(value))
       )

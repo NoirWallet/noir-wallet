@@ -46,6 +46,23 @@ Pages use a header, a scrollable content region with `min-h-0` where needed, and
 - Mainnet is the default and need not be repeated on routine cards. Keep explicit labels for Testnet and other non-mainnet environments, and for any choice where network changes behavior.
 - Copy should help users complete the task, understand current data, or choose the next action. Put business limits into controls, field validation, confirmation, and failure feedback instead of standing rule text.
 
+## Numeric Display
+
+Use the contextual profiles in [number-format.ts](../../../packages/extension/src/lib/number-format.ts). Display strings are never arithmetic or transaction inputs. Keep base-unit values and asset decimals authoritative; Max fills the exact spendable value and must not copy a shortened balance label.
+
+| Surface                               | Display profile                                                                                                                                                                                                 |
+| ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Holdings and Activity quantities      | Preserve and group all integer digits. At or above 1,000, show at most 2 fraction digits; at or above 1, show at most 4. Below 1, keep 4 significant digits with an 8-fraction-digit cap. Truncate toward zero. |
+| Transaction review and detail amounts | Show at most 8 fraction digits. Mark an omitted fraction with an ellipsis and provide tap-to-expand access to the full amount and copying of the ungrouped exact value.                                         |
+| Fiat valuations                       | Show 2 fraction digits, rounded half up. Nonzero magnitudes below one cent use a minimum-value indicator.                                                                                                       |
+| Token unit prices                     | At or above 1, show 2 fraction digits. Below 1, keep 4 significant digits. Only unit prices may compact long fractional zero runs with a subscript count; retain the complete price for inspection.             |
+| Network fees                          | Keep 4 significant digits with at most 12 fraction digits, preserve all integer digits, and round up. Provide access to the exact fee.                                                                          |
+| Percentages                           | Show at most 2 fraction digits, with a minimum-value indicator for smaller nonzero magnitudes. Retain the direction of signed changes.                                                                          |
+
+Do not use K/M/B or scientific notation for wallet quantities. Remove insignificant fractional zeroes except in fiat valuations and unit prices at or above 1. A nonzero magnitude below a profile's precision uses `<` and the minimum shown unit; retain its direction separately from the magnitude. Unknown or invalid data displays `—`; only an observed zero displays zero.
+
+Use a separate amount line or move the asset symbol when the full integer is too wide. Expanded exact values may wrap. Do not conceal integer digits with CSS truncation. Copy controls copy the complete ungrouped decimal value without display prefixes, ellipses, or threshold indicators. The shared [AmountDisplay](../../../packages/extension/src/popup/components/common/AmountDisplay.tsx) supports inspection of shortened review and fee values.
+
 ## Figma To Code
 
 Inspect a target Figma screen's structure and screenshot before implementing it. Keep the original design intact and place experimental changes in a `CODEX REVIEW` section. Map designs to the production tokens, Jost/DM Mono, and the target 375px viewport; the older 344 x 588 canvas is not a production acceptance size.

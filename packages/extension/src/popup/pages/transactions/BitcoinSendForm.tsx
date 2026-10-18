@@ -4,8 +4,8 @@ import {
   parseSupportedBitcoinAddress,
   type BitcoinSupportedAddressType
 } from '@/core/chains/bitcoin'
-import { formatNumber, formatSortAddress } from '@/lib/format'
-import Big from '@/lib/big'
+import { formatSortAddress } from '@/lib/format'
+import { AmountDisplay } from '@/popup/components/common/AmountDisplay'
 import { Button } from '@/popup/components/ui/button'
 import {
   Dialog,
@@ -29,6 +29,11 @@ import {
   parseDisplayUnitAmount
 } from '@/popup/components/portfolio/portfolio-format'
 import { openHardwareBitcoinSignTab } from '@/lib/hardware-tab'
+import {
+  recordSendApprovalFailure,
+  recordSendResult,
+  recordSendSubmission
+} from '@/popup/services/send-transaction-analytics'
 import {
   formatBitcoinInputAddressType,
   isBitcoinBalanceKnown,
@@ -373,7 +378,7 @@ export function BitcoinSendForm({
 
       pendingReview.current = replacement
       setFeeTier(nextFeeTier)
-      setAmount(formatBaseUnitAmount(recipientOutputs[0].amountSats, 8))
+      setAmount(formatBaseUnitDecimalAmount(recipientOutputs[0].amountSats, 8))
       setReview({
         recipient: current.recipient,
         amountRaw: recipientOutputs[0].amountSats,
@@ -405,6 +410,7 @@ export function BitcoinSendForm({
     if (!review) return
     setApproving(true)
     setError(null)
+    recordSendSubmission(review.value.graph, selection.asset.metadata.symbol)
     try {
       const submission = await bitcoinWalletClient.approveTransfer(
         review.value.graph.root.id,
@@ -422,8 +428,10 @@ export function BitcoinSendForm({
         window.close()
         return
       }
+      recordSendResult(submission.graph, selection.asset.metadata.symbol)
       onSubmitted(submission)
     } catch (approveError) {
+      recordSendApprovalFailure(review.value.graph, selection.asset.metadata.symbol)
       const current = review
       pendingReview.current = null
       setReview(null)
@@ -559,14 +567,9 @@ export function BitcoinSendForm({
             <>
               <div className="flex flex-col items-center pb-4">
                 <TokenIcon symbol="BTC" nativeChain="bitcoin" size="xl" />
-                <p className="mt-3 max-w-full px-5 text-center text-2xl font-bold">
-                  {formatNumber(reviewAmount, {
-                    rm: Big.roundDown,
-                    useUnit: true,
-                    useSubscript: true
-                  })}{' '}
-                  BTC
-                </p>
+                <div className="mt-3 max-w-full px-5 text-center text-2xl font-bold">
+                  <AmountDisplay value={reviewAmount} symbol="BTC" />
+                </div>
                 <p className="mt-1 text-xs text-muted">{formatPortfolioNetworkName(chain)}</p>
               </div>
 
@@ -594,8 +597,7 @@ export function BitcoinSendForm({
                   />
                 </ReviewLine>
                 <ReviewLine label="Total">
-                  {formatNumber(total, { rm: Big.roundDown, useUnit: true, useSubscript: true })}{' '}
-                  BTC
+                  <AmountDisplay value={total} symbol="BTC" />
                 </ReviewLine>
                 <ReviewLine label="Address type">
                   {formatBitcoinInputAddressType(summary.fields.inputs)}

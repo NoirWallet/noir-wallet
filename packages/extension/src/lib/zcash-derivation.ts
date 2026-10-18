@@ -21,3 +21,15 @@ export function getTransparentAddressPath(
 ): string {
   return `m/44'/${coinType(network)}'/${accountIndex}'/0/${addressIndex}`
 }
+
+export function getStoredTransparentAddressPath(
+  network: Network,
+  accountIndex: number,
+  addresses: unknown
+): string | null {
+  if (typeof addresses !== 'object' || addresses === null) return null
+  const index = Reflect.get(addresses, 'transparentAddressIndex')
+  return Number.isSafeInteger(index) && index >= 0 && index <= MAX_ZCASH_ACCOUNT_INDEX
+    ? getTransparentAddressPath(network, accountIndex, index)
+    : null
+}

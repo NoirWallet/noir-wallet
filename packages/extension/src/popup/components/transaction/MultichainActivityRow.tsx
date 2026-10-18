@@ -151,6 +151,11 @@ function SwapActivityRow({
         <p className="whitespace-nowrap font-mono text-sm font-medium">
           {presentation.source ? `−${presentation.source.formatted} ${sourceSymbol}` : '—'}
         </p>
+        {presentation.destination && (
+          <p className="whitespace-nowrap font-mono text-[11px] text-muted">
+            Expected +{presentation.destination.formatted} {destinationSymbol}
+          </p>
+        )}
         {showStatus && (
           <p className={cn('text-[11px]', getTransactionStatusToneClassName(status.tone))}>
             {status.label}

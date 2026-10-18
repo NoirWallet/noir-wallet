@@ -16,6 +16,7 @@ export type EvmWalletRuntimeErrorCode = (typeof EVM_WALLET_RUNTIME_ERROR_CODES)[
 export interface EvmWalletRuntimeError {
   readonly code: EvmWalletRuntimeErrorCode
   readonly message: string
+  readonly shortfallRaw?: string
 }
 
 export type EvmWalletRuntimeResponse<T> =

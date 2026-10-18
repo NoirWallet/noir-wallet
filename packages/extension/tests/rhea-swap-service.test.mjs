@@ -444,6 +444,33 @@ test('quote and build remain bound across a session-store reload', async () => {
       return { status: 'completed', toHash: `0x${'AB'.repeat(32)}` }
     }
   }
+  const resetSessions = new MemoryRheaSwapQuoteSessionStore()
+  let quoteStarted
+  const started = new Promise(resolve => {
+    quoteStarted = resolve
+  })
+  let finishQuote
+  const quoteGate = new Promise(resolve => {
+    finishQuote = resolve
+  })
+  const resetService = new RheaSwapService(
+    {
+      async quote() {
+        quoteStarted()
+        await quoteGate
+        return quote
+      }
+    },
+    resetSessions,
+    { createHandle: () => 'reset-overlap' }
+  )
+  const oldQuote = resetService.quote(confidentialQuoteRequest)
+  await started
+  await resetService.clearSessions()
+  finishQuote()
+  await expect(oldQuote).rejects.toThrow('session was cleared')
+  expect(await resetSessions.get('rhea-quote:reset-overlap')).toBeNull()
+
   const replacedRecipientService = new RheaSwapService(
     {
       async quote() {
@@ -647,6 +674,26 @@ test('EVM plan accepts only an exact ERC-20 approval followed by its bound swap 
     sender,
     approval: { spender, amountRaw: amount.toString() }
   })
+
+  let submittedOrders = 0
+  const submissionService = new RheaSwapService(
+    {
+      async submitOrderRaw() {
+        submittedOrders += 1
+        await Promise.resolve()
+        return { orderId: 'order-evm', router: 'odos', chainId: 1 }
+      }
+    },
+    sessions,
+    { now: () => 2_000 }
+  )
+  const signature = `0x${'11'.repeat(65)}`
+  const submissions = await Promise.all([
+    submissionService.submitSignedOrder('rhea-quote:evm', signature, 'eip712'),
+    submissionService.submitSignedOrder('rhea-quote:evm', signature, 'eip712')
+  ])
+  expect(submittedOrders).toBe(1)
+  expect(submissions[0]).toEqual(submissions[1])
 
   await sessions.put({
     ...(await sessions.get('rhea-quote:evm')),

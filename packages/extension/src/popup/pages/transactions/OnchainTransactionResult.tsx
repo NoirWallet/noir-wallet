@@ -2,9 +2,9 @@ import { useEffect, useMemo, useState } from 'react'
 import { Icon } from '@iconify/react'
 import type { PortfolioAssetView, PortfolioChainView } from '@/core/portfolio'
 import type { TransactionGraph, TransactionId } from '@/core/transactions/domain'
-import { formatNumber, formatSortAddress } from '@/lib/format'
+import { formatSortAddress } from '@/lib/format'
 import { getTransactionStatusToneClassName } from '@/lib/transaction-status-presentation'
-import Big from '@/lib/big'
+import { AmountDisplay } from '@/popup/components/common/AmountDisplay'
 import { Button } from '@/popup/components/ui/button'
 import { PageHeader } from '@/popup/components/common/PageHeader'
 import { TokenIcon } from '@/popup/components/tokens/TokenIcon'
@@ -212,10 +212,9 @@ export function OnchainTransactionResult({
               icon={asset.metadata.iconUrl}
               size="sm"
             />
-            <p className="flex min-w-0 flex-wrap items-baseline justify-center gap-x-1 text-center text-xl font-semibold leading-tight">
-              <span className="min-w-0 break-all">{amount}</span>
-              <span className="shrink-0">{asset.metadata.symbol}</span>
-            </p>
+            <div className="min-w-0 text-center text-xl font-semibold leading-tight">
+              <AmountDisplay value={amount} symbol={asset.metadata.symbol} />
+            </div>
           </div>
 
           <div className="divide-y divide-border/60 border-y border-border/60">
@@ -266,13 +265,11 @@ export function OnchainTransactionResult({
               </DetailLine>
             )}
             <DetailLine label={feeLabel}>
-              {formatNumber(fee, { rm: Big.roundDown, useUnit: true, useSubscript: true })}{' '}
-              {feeSymbol}
+              <AmountDisplay value={fee} symbol={feeSymbol} profile="fee" />
             </DetailLine>
             {total && (
               <DetailLine label={totalLabel}>
-                {formatNumber(total, { rm: Big.roundDown, useUnit: true, useSubscript: true })}{' '}
-                {asset.metadata.symbol}
+                <AmountDisplay value={total} symbol={asset.metadata.symbol} />
               </DetailLine>
             )}
           </div>

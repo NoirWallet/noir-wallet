@@ -2,8 +2,7 @@ import type { ReactNode } from 'react'
 
 import { Button } from '@/popup/components/ui/button'
 import { TokenIcon } from '@/popup/components/tokens/TokenIcon'
-import Big from '@/lib/big'
-import { formatNumber } from '@/lib/format'
+import { AmountDisplay } from '@/popup/components/common/AmountDisplay'
 
 export interface TransactionReviewAsset {
   readonly assetId?: string
@@ -24,7 +23,6 @@ interface TransactionReviewViewProps {
   readonly showTitle?: boolean
   readonly asset: TransactionReviewAsset
   readonly amount: string
-  readonly exactAmount?: boolean
   readonly network: string
   readonly rows: readonly TransactionReviewRow[]
   readonly notice?: ReactNode
@@ -43,7 +41,6 @@ export function TransactionReviewView({
   showTitle = true,
   asset,
   amount,
-  exactAmount = false,
   network,
   rows,
   notice,
@@ -73,14 +70,9 @@ export function TransactionReviewView({
             nativeChain={asset.nativeChain}
             size="xl"
           />
-          <p className="mt-3 flex max-w-full min-w-0 flex-wrap items-baseline justify-center gap-x-1 text-center text-xl font-bold leading-tight">
-            <span className="min-w-0 break-all">
-              {exactAmount
-                ? amount
-                : formatNumber(amount, { rm: Big.roundDown, useUnit: true, useSubscript: true })}
-            </span>
-            <span className="shrink-0">{asset.symbol}</span>
-          </p>
+          <div className="mt-3 max-w-full min-w-0 text-center text-xl font-bold leading-tight">
+            <AmountDisplay value={amount} symbol={asset.symbol} />
+          </div>
           <p className="mt-1 text-xs text-muted">{network}</p>
         </div>
 

@@ -60,6 +60,8 @@ export function parsePortfolioBalanceSnapshot(value: unknown): PortfolioBalanceS
         'shieldableRaw',
         'shieldedRaw',
         'transparentRaw',
+        'shieldedPendingRaw',
+        'transparentPendingRaw',
         'mainRaw',
         'privateRaw',
         'privateOnchainRaw',
@@ -87,6 +89,14 @@ export function parsePortfolioBalanceSnapshot(value: unknown): PortfolioBalanceS
     value.transparentRaw === undefined
       ? undefined
       : parseRawAmount(value.transparentRaw, 'transparentRaw')
+  const shieldedPendingRaw =
+    value.shieldedPendingRaw === undefined
+      ? undefined
+      : parseRawAmount(value.shieldedPendingRaw, 'shieldedPendingRaw')
+  const transparentPendingRaw =
+    value.transparentPendingRaw === undefined
+      ? undefined
+      : parseRawAmount(value.transparentPendingRaw, 'transparentPendingRaw')
   const mainRaw = value.mainRaw === undefined ? undefined : parseRawAmount(value.mainRaw, 'mainRaw')
   const privateRaw =
     value.privateRaw === undefined ? undefined : parseRawAmount(value.privateRaw, 'privateRaw')
@@ -107,6 +117,12 @@ export function parsePortfolioBalanceSnapshot(value: unknown): PortfolioBalanceS
     (shieldableRaw !== undefined && BigInt(shieldableRaw) > total) ||
     (shieldedRaw !== undefined && BigInt(shieldedRaw) > total) ||
     (transparentRaw !== undefined && BigInt(transparentRaw) > total) ||
+    (shieldedPendingRaw !== undefined &&
+      shieldedRaw !== undefined &&
+      BigInt(shieldedPendingRaw) > BigInt(shieldedRaw)) ||
+    (transparentPendingRaw !== undefined &&
+      transparentRaw !== undefined &&
+      BigInt(transparentPendingRaw) > BigInt(transparentRaw)) ||
     (mainRaw === undefined) !== (privateRaw === undefined) ||
     (mainRaw !== undefined &&
       privateRaw !== undefined &&
@@ -128,6 +144,8 @@ export function parsePortfolioBalanceSnapshot(value: unknown): PortfolioBalanceS
     ...(shieldableRaw === undefined ? {} : { shieldableRaw }),
     ...(shieldedRaw === undefined ? {} : { shieldedRaw }),
     ...(transparentRaw === undefined ? {} : { transparentRaw }),
+    ...(shieldedPendingRaw === undefined ? {} : { shieldedPendingRaw }),
+    ...(transparentPendingRaw === undefined ? {} : { transparentPendingRaw }),
     ...(mainRaw === undefined ? {} : { mainRaw }),
     ...(privateRaw === undefined ? {} : { privateRaw }),
     ...(privateOnchainRaw === undefined ? {} : { privateOnchainRaw }),

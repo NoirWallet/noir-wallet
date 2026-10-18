@@ -27,6 +27,14 @@ export interface PortfolioAccountBalanceBreakdown {
   readonly privateBalance: Big
 }
 
+export function getPortfolioChainBalanceStatus(
+  chain: PortfolioChainView
+): 'ready' | 'loading' | 'updating' | 'unavailable' {
+  if (chain.errorCodes.length > 0 || chain.status === 'error') return 'unavailable'
+  if (chain.status === 'ready') return 'ready'
+  return chain.assets.length === 0 ? 'loading' : 'updating'
+}
+
 export function getPortfolioAssetGroupUnitQuote(
   group: PortfolioAssetGroup,
   prices: AssetPriceReadModel | null

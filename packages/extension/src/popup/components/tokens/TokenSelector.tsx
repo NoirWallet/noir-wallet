@@ -5,7 +5,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { Icon } from '@iconify/react'
 import { Input } from '../ui/input'
 import type { SwapToken } from '@/core/services/intents-api'
-import { formatChainName, formatNumber, formatSymbol } from '@/lib/format'
+import { formatChainName, formatSymbol } from '@/lib/format'
 import { TokenIcon } from './TokenIcon'
 import { TokenBalanceDisplay } from './TokenBalanceDisplay'
 import { sortTokensByBalanceValue } from './token-balance-order'
@@ -236,8 +236,6 @@ export function TokenSelector({
             )}
             {visibleTokens.map(token => {
               const balance = balances?.get(token.assetId)
-              const formattedBalance =
-                balance === undefined ? null : formatNumber(balance, { maxDigits: 6 })
               const symbol = formatSymbol(token.symbol)
               const chainName = formatChainName(token.blockchain)
               return (
@@ -245,7 +243,7 @@ export function TokenSelector({
                   key={`${token.blockchain}-${token.symbol}-${token.assetId}`}
                   onClick={() => onSelect(token)}
                   aria-pressed={selectedToken?.assetId === token.assetId}
-                  aria-label={`${symbol} on ${chainName}${formattedBalance === null ? '' : `, balance ${formattedBalance} ${symbol}`}`}
+                  aria-label={`${symbol} on ${chainName}${balance === undefined ? '' : `, balance ${balance} ${symbol}`}`}
                   className={cn(
                     'flex min-h-[55px] w-full items-center justify-between gap-3 rounded-lg px-3 py-2.5 transition-colors hover:bg-card',
                     selectedToken?.assetId === token.assetId && 'bg-primary/[0.08]'
@@ -258,7 +256,7 @@ export function TokenSelector({
                       <p className="truncate text-xs text-muted">{chainName}</p>
                     </div>
                   </div>
-                  <div className="min-w-0">
+                  <div className="min-w-0 max-w-[55%]">
                     {balance !== undefined && (
                       <TokenBalanceDisplay
                         amount={balance}

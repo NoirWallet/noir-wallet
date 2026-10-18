@@ -1,19 +1,17 @@
 import { useMemo, useState } from 'react'
 import { Icon } from '@iconify/react'
-import { findChainEndpointOverride, withChainExplorer } from '@/core/chains/chain-endpoint-settings'
+import {
+  findChainEndpointOverride,
+  withChainExplorer,
+  type CustomChainExplorer
+} from '@/core/chains/chain-endpoint-settings'
 import { useSettingsStore } from '@/store/settings-store'
 import { toast } from '@/store/toast-store'
 import { ChainIcon } from '../../components/common/ChainIcon'
 import { PageHeader } from '../../components/common/PageHeader'
 import { Button } from '../../components/ui/button'
 import { Input } from '../../components/ui/input'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle
-} from '../../components/ui/dialog'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../components/ui/dialog'
 import { chainEndpointSettingsClient } from '../../services/chain-endpoint-settings-client'
 import {
   buildExplorerChainOptions,
@@ -36,27 +34,14 @@ export function PreferredExplorer() {
     setEditing(option)
   }
 
-  const apply = async (custom: boolean) => {
+  const apply = async (explorer?: CustomChainExplorer) => {
     if (!editing || saving) return
     setSaving(true)
     try {
-      const next = withChainExplorer(
-        settings,
-        editing.chainId,
-        custom
-          ? {
-              label: `Custom ${editing.label} Explorer`,
-              baseUrl: url.trim(),
-              transactionPath: transactionPath.trim()
-            }
-          : undefined
-      )
+      const next = withChainExplorer(settings, editing.chainId, explorer)
       const saved = await chainEndpointSettingsClient.apply(next)
       setSettings(saved)
-      toast.success(
-        custom ? 'Custom Explorer Saved' : 'Default Explorer Restored',
-        `${editing.label} transaction links were updated.`
-      )
+      toast.success('Explorer updated')
       setEditing(null)
     } catch (error) {
       toast.error(
@@ -97,7 +82,7 @@ export function PreferredExplorer() {
                   <span className="truncate text-sm font-medium">{option.label}</span>
                   {custom && (
                     <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">
-                      Custom
+                      {custom.label}
                     </span>
                   )}
                 </div>
@@ -117,10 +102,43 @@ export function PreferredExplorer() {
         <DialogContent position="bottom">
           <DialogHeader>
             <DialogTitle>{editing?.label} Explorer</DialogTitle>
-            <DialogDescription>
-              Transaction links use Base URL / Transaction path / Hash.
-            </DialogDescription>
           </DialogHeader>
+          {editing?.presets && (
+            <div className="space-y-1" aria-label="Explorer presets">
+              {editing.presets.map(preset => {
+                const current = findChainEndpointOverride(settings, editing.chainId)?.explorer
+                const matchesDefault =
+                  editing.defaultUrl === preset.baseUrl &&
+                  editing.defaultTransactionPath === preset.transactionPath
+                const selected = current
+                  ? current.baseUrl === preset.baseUrl &&
+                    current.transactionPath === preset.transactionPath
+                  : matchesDefault
+                return (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    className="flex w-full items-center justify-between rounded-md px-3 py-2 text-left text-sm hover:bg-card"
+                    disabled={saving}
+                    onClick={() =>
+                      void apply(
+                        matchesDefault
+                          ? undefined
+                          : {
+                              label: preset.label,
+                              baseUrl: preset.baseUrl,
+                              transactionPath: preset.transactionPath
+                            }
+                      )
+                    }
+                  >
+                    <span>{preset.label}</span>
+                    {selected && <Icon icon="lucide:check" width={16} height={16} />}
+                  </button>
+                )
+              })}
+            </div>
+          )}
           <Input
             aria-label={`${editing?.label ?? ''} explorer URL`}
             type="url"
@@ -145,7 +163,7 @@ export function PreferredExplorer() {
                 !editing.defaultUrl ||
                 !findChainEndpointOverride(settings, editing.chainId)?.explorer
               }
-              onClick={() => void apply(false)}
+              onClick={() => void apply()}
             >
               Use Default
             </Button>
@@ -153,7 +171,13 @@ export function PreferredExplorer() {
               className="h-11"
               isLoading={saving}
               disabled={!url.trim() || !transactionPath.trim()}
-              onClick={() => void apply(true)}
+              onClick={() =>
+                void apply({
+                  label: `Custom ${editing!.label} Explorer`,
+                  baseUrl: url.trim(),
+                  transactionPath: transactionPath.trim()
+                })
+              }
             >
               Save Explorer
             </Button>

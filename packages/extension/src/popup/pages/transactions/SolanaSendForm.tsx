@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { PortfolioAssetView, PortfolioChainView } from '@/core/portfolio'
 import { parseSolanaPublicKey } from '@/core/chains/solana'
-import { formatNumber, formatSortAddress } from '@/lib/format'
-import Big from '@/lib/big'
+import { formatSortAddress } from '@/lib/format'
+import { AmountDisplay } from '@/popup/components/common/AmountDisplay'
 import { Button } from '@/popup/components/ui/button'
 import {
   Dialog,
@@ -41,6 +41,11 @@ import {
 } from '@/popup/services/transfer-maximum'
 import { resolvePortfolioTransferAvailability } from '@/popup/services/transfer-availability'
 import { getSolanaSendApprovalError, getSolanaSendPrepareError } from './solana-send-validation'
+import {
+  recordSendApprovalFailure,
+  recordSendResult,
+  recordSendSubmission
+} from '@/popup/services/send-transaction-analytics'
 
 export interface SolanaSendAsset {
   readonly asset: PortfolioAssetView
@@ -281,6 +286,7 @@ export function SolanaSendForm({
     if (!review) return
     setApproving(true)
     setError(null)
+    recordSendSubmission(review.value.graph, asset.metadata.symbol)
     try {
       const submission = await solanaWalletClient.approveTransfer(
         review.value.graph.root.id,
@@ -288,8 +294,10 @@ export function SolanaSendForm({
       )
       pendingReview.current = null
       setReview(null)
+      recordSendResult(submission.graph, asset.metadata.symbol)
       onSubmitted(submission)
     } catch (approvalError) {
+      recordSendApprovalFailure(review.value.graph, asset.metadata.symbol)
       const current = review
       pendingReview.current = null
       setReview(null)
@@ -420,14 +428,9 @@ export function SolanaSendForm({
                   blockchain={asset.asset.kind === 'token' ? 'solana' : undefined}
                   size="xl"
                 />
-                <p className="mt-3 text-2xl font-bold">
-                  {formatNumber(reviewAmount, {
-                    rm: Big.roundDown,
-                    useUnit: true,
-                    useSubscript: true
-                  })}{' '}
-                  {asset.metadata.symbol}
-                </p>
+                <div className="mt-3 max-w-full text-center text-2xl font-bold">
+                  <AmountDisplay value={reviewAmount} symbol={asset.metadata.symbol} />
+                </div>
                 <p className="mt-1 text-xs text-muted">{networkName}</p>
               </div>
 
@@ -443,12 +446,11 @@ export function SolanaSendForm({
                   </span>
                 </ReviewLine>
                 <ReviewLine label="Network fee">
-                  {formatNumber(fee, { rm: Big.roundDown, useUnit: true, useSubscript: true })} SOL
+                  <AmountDisplay value={fee} symbol="SOL" profile="fee" />
                 </ReviewLine>
                 {asset.asset.kind === 'native' && (
                   <ReviewLine label="Total">
-                    {formatNumber(total, { rm: Big.roundDown, useUnit: true, useSubscript: true })}{' '}
-                    SOL
+                    <AmountDisplay value={total} symbol="SOL" />
                   </ReviewLine>
                 )}
               </div>

@@ -104,13 +104,16 @@ export interface BitcoinTransferOrchestratorOptions {
   readonly now?: () => number
   readonly createId?: () => string
   readonly onPendingBroadcast?: () => Promise<void> | void
-  readonly onBroadcastAccepted?: (input: {
-    readonly scope: TransactionAccountScope
-    readonly transactionId: string
-    readonly rawTransactionHex: string
-    readonly spentOutpoints: readonly BitcoinInputOutpoint[]
-    readonly graph: TransactionGraph
-  }) => Promise<void> | void
+  readonly onBroadcastAccepted?: (
+    input: {
+      readonly scope: TransactionAccountScope
+      readonly transactionId: string
+      readonly rawTransactionHex: string
+      readonly spentOutpoints: readonly BitcoinInputOutpoint[]
+      readonly graph: TransactionGraph
+    },
+    recovered: boolean
+  ) => Promise<void> | void
   readonly onMonitoringRequired?: () => Promise<void> | void
 }
 
@@ -812,13 +815,16 @@ export class BitcoinTransferOrchestrator {
     await this.pendingStore.delete(pending.transactionId)
     await Promise.all([
       Promise.resolve(
-        this.onBroadcastAccepted?.({
-          scope: pending.scope,
-          transactionId: pending.transactionHash,
-          rawTransactionHex: pending.rawTransactionHex,
-          spentOutpoints: pending.inputReservation.outpoints,
-          graph
-        })
+        this.onBroadcastAccepted?.(
+          {
+            scope: pending.scope,
+            transactionId: pending.transactionHash,
+            rawTransactionHex: pending.rawTransactionHex,
+            spentOutpoints: pending.inputReservation.outpoints,
+            graph
+          },
+          currentGraph === undefined
+        )
       ).catch(() => {}),
       Promise.resolve(this.onMonitoringRequired?.()).catch(() => {})
     ])

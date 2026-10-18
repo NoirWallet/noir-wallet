@@ -5,7 +5,7 @@ import { FeeTierPicker } from './FeeTierPicker'
 import { useFeeEstimate } from '../../hooks/useFeeEstimate'
 import { useSettingsStore } from '@/store/settings-store'
 import { deriveFeeByTier, marginalFeeForTier } from '@/core/zcash/fee-policy'
-import { formatNumber } from '@/lib/format'
+import { AmountDisplay } from '../common/AmountDisplay'
 import {
   hasEnoughTransparentBalanceToShield,
   MIN_SHIELDING_BALANCE_MESSAGE
@@ -52,7 +52,9 @@ export function ShieldConfirmSheet({
           <div className="mb-3">
             <TokenIcon symbol="ZEC" nativeChain="zcash" size="xl" />
           </div>
-          <p className="text-2xl font-bold">{formatNumber(transparentBalance)} ZEC</p>
+          <div className="max-w-full text-center text-2xl font-bold">
+            <AmountDisplay value={transparentBalance} symbol="ZEC" />
+          </div>
           <p className="text-sm text-muted mt-0.5 px-8 text-center">
             Move transparent funds into the private pool for enhanced privacy.
           </p>
