@@ -44,6 +44,20 @@ The documentation site is maintained in `packages/docs/content/docs/`. The top-l
 - **dApp Integration**: TypeScript SDK for seamless wallet connection and transaction signing
 - **Optimistic UI**: Instant interface response with background computation for better UX
 
+## WASM Component Audit
+
+BlockSec's [June 9, 2026 audit report](https://github.com/blocksecteam/audit-reports/blob/main/rust/blocksec_noirwallet_zcash_wallet_wasm_signed_20260609.pdf) covers the separate `zcash-wallet-wasm` component: the Rust/WASM bindings under `src` and specified project modifications to `librustzcash`.
+
+| Report revision            | WASM source commit                         |
+| -------------------------- | ------------------------------------------ |
+| Version 1 — initial review | `4511c41c1cb0f963e739f493df7843d821f7af6d` |
+| Version 2 — fix review     | `6493a7cab79c44afdb2014eef7036692cb955d87` |
+| Version 3 — fix review     | `e24eae7fc72e367be0bd99adafc05b5ce006645c` |
+
+The later review rounds covered fixes for reported issues. New Version 2 functionality and Version 3 library upgrades and SDK integration were excluded. The report does not cover this browser extension or the full upstream dependency codebase; see the report's scope and host-application assumptions.
+
+The extension's [bundled WASM package](./packages/extension/src/lib/wasm-pkg/) is identified by [wasm-package.lock.json](./wasm-package.lock.json), which records its source commit, ref, and artifact/file hashes. The currently recorded source commit differs from the report revisions above, so the report must not be treated as an audit of the current package or extension. The hashes support package integrity checks; they do not prove source-to-binary correspondence.
+
 ## Quick Start
 
 Run commands from the repository root. Use the Node.js version in [`.node-version`](./.node-version) and the pnpm version declared in `package.json` to match CI. Node.js 22 or newer is supported:
