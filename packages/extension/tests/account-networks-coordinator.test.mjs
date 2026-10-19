@@ -162,6 +162,47 @@ function repository(value = snapshot()) {
 }
 
 test.describe('Account networks coordinator', () => {
+  test('uses the selected Zcash receive address after rotation and history selection without changing identity', async () => {
+    const stored = snapshot()
+    const before = structuredClone(stored)
+    let selected = { transparent: 'tmtransparentfixture', shielded: 'utest1rotatedfixture' }
+    const scopes = []
+    const coordinator = new AccountNetworksCoordinator({
+      repository: repository(stored),
+      chains,
+      getZcashShieldedReceiveAddress(scope) {
+        scopes.push(scope)
+        return selected.shielded
+      }
+    })
+    const readZcash = async () =>
+      (await coordinator.readCatalog()).accounts[0].networks.find(
+        network => network.chainId === zcashChainId
+      )
+    expect((await readZcash()).addresses[0].value).toBe(selected.shielded)
+    selected = { ...selected, shielded: 'utest1shieldedfixture' }
+    expect((await readZcash()).addresses[0].value).toBe(selected.shielded)
+    expect((await readZcash()).addresses[1].value).toBe(selected.transparent)
+    expect(scopes).toEqual(
+      Array.from({ length: 3 }, () => ({ keyDomainId: walletId, accountId, chainId: zcashChainId }))
+    )
+    expect(stored).toEqual(before)
+  })
+
+  test('keeps persisted Zcash addresses when no selection exists for that account and network', async () => {
+    const coordinator = new AccountNetworksCoordinator({
+      repository: repository(),
+      chains,
+      getZcashShieldedReceiveAddress: () => null
+    })
+    const catalog = await coordinator.readCatalog()
+    const zcash = catalog.accounts[0].networks.find(network => network.chainId === zcashChainId)
+    expect(zcash.addresses.map(address => address.value)).toEqual([
+      'utest1shieldedfixture',
+      'tmtransparentfixture'
+    ])
+  })
+
   test('returns enabled address metadata and derives software Bitcoin and Private Execution addresses', async () => {
     const derivationRequests = []
     const peaDerivationRequests = []

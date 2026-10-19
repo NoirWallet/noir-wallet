@@ -31,6 +31,8 @@ import {
 } from '../../services/account-networks-client'
 import { cn } from '@/lib/utils'
 import { formatSortAddress } from '@/lib/format'
+import { DEFAULT_NETWORK } from '@/lib/runtime-network'
+import { useWalletStore } from '@/store/wallet-store'
 
 interface AddressQrTarget {
   readonly network: AccountNetworkView
@@ -344,6 +346,11 @@ export function AddressesList() {
   const [searchParams] = useSearchParams()
   const walletId = searchParams.get('walletId')
   const accountId = searchParams.get('accountId')
+  const shieldedReceiveAddress = useWalletStore(state =>
+    walletId && accountId
+      ? state.getAccount(walletId, accountId)?.networkAddresses?.[DEFAULT_NETWORK]?.shielded
+      : undefined
+  )
   const [networkQuery, setNetworkQuery] = useState('')
   const [networks, setNetworks] = useState<readonly AccountNetworkView[]>([])
   const [loading, setLoading] = useState(true)
@@ -357,6 +364,8 @@ export function AddressesList() {
   useEffect(() => {
     let cancelled = false
     setNetworks([])
+    setQrTarget(null)
+    setPrivateAddressAction(null)
     setError(null)
     setLoading(Boolean(walletId && accountId))
 
@@ -388,7 +397,7 @@ export function AddressesList() {
     return () => {
       cancelled = true
     }
-  }, [walletId, accountId])
+  }, [walletId, accountId, shieldedReceiveAddress])
 
   const filteredNetworks = useMemo(() => {
     const query = networkQuery.trim().toLowerCase()

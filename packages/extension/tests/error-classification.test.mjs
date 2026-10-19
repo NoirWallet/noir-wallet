@@ -52,6 +52,10 @@ test.describe('Error classification', () => {
   })
 
   test('distinguishes actionable Swap route failures', () => {
+    expect(classifyError(new Error('RHEA Swap quote expired'))).toMatchObject({
+      userMessage: 'Swap quote expired. Get a new quote and review it again.',
+      retryable: false
+    })
     expect(classifyError(new Error('Token ABC not found on chain 1'))).toMatchObject({
       userMessage: 'This asset is not supported for this Swap route.',
       retryable: false

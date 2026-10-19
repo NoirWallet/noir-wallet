@@ -8,6 +8,7 @@ The shared classifier and exact user-facing messages are defined in [errors.ts](
 
 | User message                                                                    | Matched cause                                                                                                                                         | Retryable |
 | ------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
+| Swap quote expired. Get a new quote and review it again.                        | RHEA quote expired before the Zcash transfer or PCZT prove-and-send operation                                                                         | No        |
 | Network connection failed. Please check your internet and try again.            | gRPC or transport failure                                                                                                                             | Yes       |
 | Request timed out.                                                              | Request or deadline timeout                                                                                                                           | Yes       |
 | Network error. Please check your internet connection.                           | Fetch or browser network failure                                                                                                                      | Yes       |

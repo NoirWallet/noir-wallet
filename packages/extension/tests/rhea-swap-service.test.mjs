@@ -510,6 +510,23 @@ test('quote and build remain bound across a session-store reload', async () => {
   const review = await service.prepare(quoteView.quoteHandle)
   expect(review.execution).toMatchObject({ kind: 'zcash-transfer', target: 't1deposit' })
   expect((await service.readPreparedBuild(quoteView.quoteHandle)).executionId).toBe('execution-1')
+  const depositTransfer = { executionId: 'execution-1', to: 't1deposit', amountZats: '100000000' }
+  await expect(
+    service.readZcashTransferDeadline(quoteView.quoteHandle, depositTransfer)
+  ).resolves.toBe(31_000)
+  for (const altered of [
+    { executionId: 'another-execution' },
+    { to: 't1anotherdeposit' },
+    { amountZats: '100000001' }
+  ]) {
+    await expect(
+      service.readZcashTransferDeadline(quoteView.quoteHandle, { ...depositTransfer, ...altered })
+    ).rejects.toThrow(/does not match/)
+  }
+  now = 31_000
+  await expect(
+    service.readZcashTransferDeadline(quoteView.quoteHandle, depositTransfer)
+  ).rejects.toThrow(/expired/)
   now = 40_000
   const submission = await service.recordTransactionSubmission(quoteView.quoteHandle, 'source-hash')
   expect(submission).toMatchObject({

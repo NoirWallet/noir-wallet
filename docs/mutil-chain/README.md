@@ -21,6 +21,8 @@ Chain availability comes from the product registry, enabled feature flags, and r
 - `packages/extension/src/core/activity/` and `src/infrastructure/activity/`: Activity projections, aggregation, and supplemental history.
 - `packages/extension/src/config/`: bundled values, parsing, and simple accessors. Managed RPC pools belong to the remote registry.
 
+The Background account-network catalog keeps Storage V2's Zcash identity unchanged and projects the current shielded receive selection from retained wallet metadata for the same wallet, account, and network. Rotation and selection of a historical address use that same selection; the Addresses page refreshes when it changes.
+
 The public dApp API belongs to the independent [SDK](../../packages/sdk/README.md) and [published provider guide](../../packages/docs/content/docs/developers/provider-api.mdx). Internal plans and historical review records are kept outside this public reference.
 
 ## Ledger Hardware

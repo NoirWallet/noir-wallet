@@ -84,7 +84,10 @@ export function MarketPriceChart({
     <div>
       <div
         ref={surfaceRef}
-        className="relative h-[148px] touch-none overflow-hidden"
+        className={cn(
+          'relative touch-none overflow-hidden',
+          !loading && !chart ? 'h-14' : 'h-[148px]'
+        )}
         aria-live="polite"
         onPointerMove={event => {
           if (chart) updateActiveFromPointer(event.clientX)
@@ -192,11 +195,7 @@ export function MarketPriceChart({
               </>
             )}
           </>
-        ) : (
-          <div className="absolute inset-x-0 bottom-0 flex h-[92px] items-center justify-center rounded-xl bg-card/45 text-xs text-muted">
-            Price history unavailable
-          </div>
-        )}
+        ) : null}
       </div>
 
       <div className="mt-2 grid grid-cols-6 gap-1" aria-label="Price history range">

@@ -535,10 +535,7 @@ export function SwapInputView({
         <span className="flex size-12 items-center justify-center rounded-full bg-warning/10 text-warning">
           <Icon icon="lucide:cloud-off" width={24} height={24} />
         </span>
-        <h2 className="mt-4 text-base font-semibold">Swap is temporarily unavailable</h2>
-        <p className="mt-2 text-sm leading-5 text-muted">
-          We couldn&apos;t load the available assets. Check your connection and try again.
-        </p>
+        <h2 className="mt-4 text-base font-semibold">Unable to load assets</h2>
         <Button onClick={onRetryTokenCatalog} className="mt-5 min-w-28">
           Retry
         </Button>

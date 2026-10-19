@@ -19,6 +19,29 @@ import {
 import type { TransactionGraph } from '@/core/transactions/domain'
 import { DEFAULT_REQUEST_TIMEOUT_MS } from '@/config/extension'
 import { RHEA_SWAP_TRANSACTION_MONITOR_ALARM } from './rhea-swap-transaction-monitor'
+import type { QuoteBinding } from '@/types/wallet'
+import { safeBig } from '@/lib/big'
+
+export async function readRheaZcashTransferDeadline(
+  binding: QuoteBinding | undefined,
+  to: string | undefined,
+  amount: string | undefined
+): Promise<number | undefined> {
+  if (binding?.provider !== 'rhea-cross-chain-dex') return undefined
+  const service = createBackgroundRheaSwapService()
+  if (!service || !binding.quoteHandle || !binding.executionId || !to || !amount) {
+    throw new Error('RHEA Swap quote is unavailable. Get a new quote and review it again.')
+  }
+  const amountZats = safeBig(amount).times(1e8)
+  if (!amountZats.gt(0) || !amountZats.eq(amountZats.round(0, 0))) {
+    throw new Error('Invalid RHEA Swap transfer amount')
+  }
+  return service.readZcashTransferDeadline(binding.quoteHandle, {
+    executionId: binding.executionId,
+    to,
+    amountZats: amountZats.toFixed(0)
+  })
+}
 
 const RECORD_PREFIX = 'rhea_swap_quote:'
 const MAXIMUM_RECORDS = 16

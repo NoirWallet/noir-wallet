@@ -1,4 +1,5 @@
 import { getBitcoinNetworkConfig } from '@/config/networks'
+import { parseAccountId } from '@/core/accounts/domain'
 import { DEFAULT_NETWORK } from '@/lib/runtime-network'
 import type { LedgerBitcoinSigningRequest } from '@/lib/ledger/bitcoin'
 import {
@@ -8,7 +9,7 @@ import {
   type BitcoinSupportedAddressType
 } from '@/core/chains/bitcoin'
 import { parseChainId } from '@/core/chains/registry'
-import { parseSigningSummary, type SigningSummary } from '@/core/keyring/domain'
+import { parseKeyDomainId, parseSigningSummary, type SigningSummary } from '@/core/keyring/domain'
 import {
   getTransactionProtocolIntentKind,
   parseTransactionGraph,
@@ -76,6 +77,9 @@ export interface BitcoinExternalSigningRequest {
   readonly vendor: 'keystone' | 'ledger'
   readonly ledgerRequest?: Extract<LedgerBitcoinSigningRequest, { kind: 'psbt' }>
   readonly transactionId: TransactionId
+  readonly scope: { readonly keyDomainId: string; readonly accountId: string }
+  readonly chainId: string
+  readonly summary: SigningSummary
   readonly request: { readonly encoding: 'base64'; readonly value: string }
   readonly payloadFingerprint: string
   readonly expiresAt: number
@@ -374,10 +378,37 @@ function parseExternalSigningRequest(
   assertExactKeys(
     record,
     vendor === 'ledger'
-      ? ['transactionId', 'request', 'payloadFingerprint', 'expiresAt', 'vendor', 'ledgerRequest']
+      ? [
+          'transactionId',
+          'scope',
+          'chainId',
+          'summary',
+          'request',
+          'payloadFingerprint',
+          'expiresAt',
+          'vendor',
+          'ledgerRequest'
+        ]
       : record.vendor === 'keystone'
-        ? ['transactionId', 'request', 'payloadFingerprint', 'expiresAt', 'vendor']
-        : ['transactionId', 'request', 'payloadFingerprint', 'expiresAt'],
+        ? [
+            'transactionId',
+            'scope',
+            'chainId',
+            'summary',
+            'request',
+            'payloadFingerprint',
+            'expiresAt',
+            'vendor'
+          ]
+        : [
+            'transactionId',
+            'scope',
+            'chainId',
+            'summary',
+            'request',
+            'payloadFingerprint',
+            'expiresAt'
+          ],
     'Bitcoin external signing request'
   )
   const request = readRecord(record.request, 'Bitcoin external signing payload')
@@ -390,6 +421,18 @@ function parseExternalSigningRequest(
   ) {
     throw new Error('Bitcoin external signing request does not match its transaction')
   }
+  if (record.chainId !== chainId) {
+    throw new Error('Bitcoin external signing request has an invalid chain')
+  }
+  const scope = readRecord(record.scope, 'Bitcoin external signing scope')
+  assertExactKeys(scope, ['keyDomainId', 'accountId'], 'Bitcoin external signing scope')
+  const keyDomainId = parseKeyDomainId(scope.keyDomainId)
+  const accountId = parseAccountId(scope.accountId)
+  const summary = parseSigningSummary(record.summary, {
+    family: 'bitcoin',
+    chainId,
+    operation: 'transaction'
+  })
   let ledgerRequest: Extract<LedgerBitcoinSigningRequest, { kind: 'psbt' }> | undefined
   if (vendor === 'ledger') {
     const ledger = readRecord(record.ledgerRequest, 'Ledger Bitcoin signing request')
@@ -429,6 +472,9 @@ function parseExternalSigningRequest(
     vendor,
     ...(ledgerRequest ? { ledgerRequest } : {}),
     transactionId: expectedTransactionId,
+    scope: Object.freeze({ keyDomainId, accountId }),
+    chainId,
+    summary,
     request: Object.freeze({
       encoding: 'base64' as const,
       value: parseCanonicalBase64(request.value, 'Bitcoin PSBT signing payload')

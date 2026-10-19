@@ -1,4 +1,7 @@
-import { getAssetMarketMappings } from '@/core/prices/asset-market-mappings'
+import {
+  getAssetMarketMappings,
+  getAssetProtocolSourceMappings
+} from '@/core/prices/asset-market-mappings'
 import {
   createAssetRegistry,
   createInitialProductChainRegistry,
@@ -10,6 +13,7 @@ import type { Network } from '@/types'
 const PRODUCT_NETWORKS = Object.freeze(['mainnet', 'testnet'] as const satisfies readonly Network[])
 const bundledAssetIds = new Set<string>()
 const bundledMarketAssetIds = new Map<string, MarketAssetId>()
+const protocolMarketAssetIds = new Map<string, MarketAssetId>()
 
 for (const network of PRODUCT_NETWORKS) {
   const bundledAssets = createAssetRegistry(
@@ -20,6 +24,10 @@ for (const network of PRODUCT_NETWORKS) {
   for (const mapping of getAssetMarketMappings(network, bundledAssets)) {
     bundledMarketAssetIds.set(mapping.assetId, mapping.marketAssetId)
   }
+  for (const mapping of getAssetProtocolSourceMappings(network, bundledAssets)) {
+    const marketAssetId = bundledMarketAssetIds.get(mapping.assetId)
+    if (marketAssetId) protocolMarketAssetIds.set(mapping.protocolAssetId, marketAssetId)
+  }
 }
 
 export function isBundledWalletAsset(assetId: string): boolean {
@@ -27,5 +35,5 @@ export function isBundledWalletAsset(assetId: string): boolean {
 }
 
 export function findBundledWalletMarketAssetId(assetId: string): MarketAssetId | null {
-  return bundledMarketAssetIds.get(assetId) ?? null
+  return bundledMarketAssetIds.get(assetId) ?? protocolMarketAssetIds.get(assetId) ?? null
 }

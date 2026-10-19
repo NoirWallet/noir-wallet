@@ -32,7 +32,7 @@ import {
   type RheaSwapToken
 } from './rhea-swap-model'
 import { readRheaDestinationHash } from './rhea-order-status'
-import { isRheaSwapQuoteFresh } from './rhea-swap-quote-validity'
+import { getRheaSwapQuoteDeadline, isRheaSwapQuoteFresh } from './rhea-swap-quote-validity'
 import { DedupPromise, SerialTaskQueue } from '@/lib/async-utils'
 
 const MAXIMUM_SESSION_RECORDS = 16
@@ -263,6 +263,24 @@ export class RheaSwapService {
     const build = normalizeBuild(record.build.raw, record.build.executionId, record.build.request)
     this.assertBuildMatchesQuote(build, quote)
     return build
+  }
+
+  async readZcashTransferDeadline(
+    quoteHandle: string,
+    transfer: { readonly executionId: string; readonly to: string; readonly amountZats: string }
+  ): Promise<number> {
+    const record = await this.requireSession(quoteHandle)
+    const build = this.readBuild(record)
+    if (
+      build.execution.kind !== 'zcash-transfer' ||
+      build.fromChain !== 'zcash' ||
+      build.executionId !== transfer.executionId ||
+      build.execution.depositAddress !== transfer.to ||
+      build.execution.amount !== transfer.amountZats
+    ) {
+      throw new Error('RHEA Swap transfer does not match its prepared quote')
+    }
+    return getRheaSwapQuoteDeadline(record)
   }
 
   async readEvmTransactionPlan(quoteHandle: string): Promise<RheaSwapEvmTransactionPlan> {

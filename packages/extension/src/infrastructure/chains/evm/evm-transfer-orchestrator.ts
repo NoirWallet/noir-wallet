@@ -4,7 +4,7 @@ import { parseAccountId } from '@/core/accounts/domain'
 import type { Network } from '@/types'
 import type { AssetRegistry } from '@/core/chains/registry'
 import type { ChainId } from '@/core/chains/domain'
-import { parseKeyDomainId } from '@/core/keyring/domain'
+import { parseKeyDomainId, type SigningSummary } from '@/core/keyring/domain'
 import {
   parseSigningCommandId,
   type PreparedSigningCommand,
@@ -184,6 +184,8 @@ export interface EvmExternalSigningRequest {
   readonly vendor?: 'keystone' | 'ledger'
   readonly ledgerRequest?: LedgerEvmSigningRequest
   readonly transactionId: TransactionId
+  readonly scope: TransactionAccountScope
+  readonly summary: SigningSummary
   readonly request: Extract<
     PreparedSigningCommand['execution'],
     { readonly kind: 'external' }
@@ -1203,6 +1205,8 @@ export class EvmTransferOrchestrator {
     }
     return Object.freeze({
       transactionId: pending.transactionId,
+      scope: pending.scope,
+      summary: pending.signingSummary,
       request: pending.signingExecution.request,
       ...(pending.externalSigner.vendor === 'ledger' ? { vendor: 'ledger' as const } : {}),
       ...(pending.externalSigner.vendor === 'ledger'

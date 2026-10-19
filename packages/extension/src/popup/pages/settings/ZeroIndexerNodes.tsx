@@ -15,6 +15,7 @@ import {
 import { PageHeader } from '../../components/common/PageHeader'
 import { Button } from '../../components/ui/button'
 import { Input } from '../../components/ui/input'
+import { ListSkeleton } from '../../components/ui/skeleton'
 import {
   Dialog,
   DialogContent,
@@ -238,11 +239,7 @@ export function ZeroIndexerNodes() {
               Retry
             </Button>
           ) : (
-            <Icon
-              icon="lucide:loader-2"
-              aria-label="Loading nodes"
-              className="size-4 animate-spin text-muted"
-            />
+            <ListSkeleton rows={4} label="Loading broadcast nodes" card />
           )
         ) : (
           <>

@@ -3,6 +3,7 @@ import type { BrowserContext, Page, Route } from '@playwright/test'
 import { networks, payments } from 'bitcoinjs-lib'
 import { Buffer } from 'buffer'
 import { keccak256, parseTransaction, type Hex } from 'viem'
+import { DEFAULT_HISTORY_API_ORIGIN } from '../../src/config/extension'
 import { NEAR_NETWORKS } from '../../src/config/networks'
 import {
   captureScreenshot,
@@ -53,6 +54,7 @@ const EVM_HISTORY_URLS = [
   'https://polygon.blockscout.com/api/**',
   'https://gnosis.blockscout.com/api/**'
 ] as const
+const EVM_HISTORY_PROXY_ORIGINS = new Set([DEFAULT_HISTORY_API_ORIGIN, 'https://evm-history.test'])
 const MEMPOOL_URL = 'https://mempool.space/api/**'
 const BLOCKSTREAM_URL = 'https://blockstream.info/api/**'
 const EMZY_URL = 'https://mempool.emzy.de/api/**'
@@ -274,6 +276,22 @@ async function mockEvmNetwork(
   const broadcastRawTransactions: string[] = []
   const broadcastValues: bigint[] = []
   const addressBalances = new Map<string, bigint>()
+  await context.route(
+    url => EVM_HISTORY_PROXY_ORIGINS.has(url.origin) && url.pathname === '/',
+    route => {
+      const request = route.request().postDataJSON() as { id: number | string; method: string }
+      expect(['ankr_getTransactionsByAddress', 'ankr_getTokenTransfers']).toContain(request.method)
+      return route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: request.id,
+          result:
+            request.method === 'ankr_getTokenTransfers' ? { transfers: [] } : { transactions: [] }
+        })
+      })
+    }
+  )
   for (const url of EVM_HISTORY_URLS) {
     await context.route(url, route =>
       route.fulfill({
@@ -755,7 +773,7 @@ async function mockProtocolApis(
     }
   ].map(token => ({
     ...token,
-    address: token.assetId,
+    address: token.contractAddress ?? token.assetId,
     chainId: rheaTokenListChainIds[token.blockchain],
     isNative: token.contractAddress === null,
     priceUpdatedAt
@@ -1488,7 +1506,7 @@ test('shows a page-level retry state when RHEA token catalogs are unavailable', 
   await captureScreenshot(popup, 'protocol-rhea-catalog-skeleton.png')
 
   const unavailableHeading = popup.getByRole('heading', {
-    name: 'Swap is temporarily unavailable'
+    name: 'Unable to load assets'
   })
   await expect(unavailableHeading).toBeVisible({ timeout: 30_000 })
   await expect(popup.getByRole('button', { name: 'From asset' })).toHaveCount(0)
@@ -1529,9 +1547,7 @@ test('loads live RHEA source and destination catalogs in the real MV3 popup', as
   const fromAsset = popup.getByRole('button', { name: 'From asset' })
   await expect(fromAsset).toBeEnabled({ timeout: 60_000 })
   const entryDurationMs = Date.now() - entryStartedAt
-  await expect(popup.getByRole('heading', { name: 'Swap is temporarily unavailable' })).toHaveCount(
-    0
-  )
+  await expect(popup.getByRole('heading', { name: 'Unable to load assets' })).toHaveCount(0)
   console.info('RHEA initial catalog pair', {
     source: await fromAsset.innerText(),
     destination: await popup.getByRole('button', { name: 'To asset' }).innerText()
@@ -1805,7 +1821,7 @@ test('reviews a funded Private EVM send before broadcasting through Intents', as
   await popup.getByRole('button', { name: 'Continue', exact: true }).click()
 
   await expect(popup.getByRole('heading', { name: 'Transfer', exact: true })).toBeVisible()
-  await expect(popup.getByRole('button', { name: 'Confirm', exact: true })).toBeVisible({
+  await expect(popup.getByRole('button', { name: 'Confirm', exact: true })).toBeEnabled({
     timeout: 30_000
   })
   await expect(popup.getByText('Recipient', { exact: true })).toBeVisible()
@@ -1827,7 +1843,7 @@ test('reviews a funded Private EVM send before broadcasting through Intents', as
   await captureScreenshot(popup, 'private-send-confidential-review-route.png')
   await popup.getByRole('button', { name: 'Confirm', exact: true }).click()
   await expect.poll(evmNetwork.getBroadcastCount, { timeout: 30_000 }).toBe(1)
-  await expect(popup.locator('[data-result-icon]')).toBeVisible()
+  await expect(popup.getByRole('region', { name: 'Transaction progress' })).toBeVisible()
 })
 
 test('keeps transfer input free of warnings while route readiness is pending', async ({
@@ -1914,9 +1930,11 @@ for (const direction of ['main-to-private', 'private-to-main'] as const) {
     )
     await sheet.getByLabel('Transfer amount').fill('0.002976040456329')
     await sheet.getByRole('button', { name: 'Max', exact: true }).click()
-    await expect(sheet.getByLabel('Transfer amount')).toHaveValue('0.002526040456329')
+    await expect(sheet.getByLabel('Transfer amount')).toHaveValue('0.002301040456329', {
+      timeout: 30_000
+    })
     await expect(sheet.getByTestId('private-balance-transfer-amount')).toContainText(
-      'Available 0.002526 ETH'
+      'Available 0.002301 ETH'
     )
     await expectNoOverflow(popup)
     await captureScreenshot(popup, `transfer-native-max-${direction}-available.png`)
@@ -1924,10 +1942,10 @@ for (const direction of ['main-to-private', 'private-to-main'] as const) {
     await expect(popup.getByRole('button', { name: 'Confirm', exact: true })).toBeEnabled({
       timeout: 60_000
     })
-    await expect(popup.getByText('0.00045 ETH', { exact: true })).toBeVisible()
-    expect(api.getQuoteRequests().at(-1)?.amount).toBe('2526040456329000')
+    await expect(popup.getByText('0.00054 ETH', { exact: true })).toBeVisible()
+    expect(api.getQuoteRequests().at(-1)?.amount).toBe('2301040456329000')
     await captureScreenshot(popup, `transfer-native-max-${direction}-review.png`)
-    await popup.getByRole('button', { name: /0\.00045 ETH.*Standard/i }).click()
+    await popup.getByRole('button', { name: 'Edit network fee' }).click()
     await popup
       .getByRole('dialog', { name: 'Network Fee' })
       .getByRole('radio', { name: /Fast/ })
@@ -1935,8 +1953,8 @@ for (const direction of ['main-to-private', 'private-to-main'] as const) {
     await expect(popup.getByRole('button', { name: 'Confirm', exact: true })).toBeEnabled({
       timeout: 60_000
     })
-    await expect(popup.getByText('0.0006 ETH', { exact: true })).toBeVisible({ timeout: 60_000 })
-    expect(api.getQuoteRequests().at(-1)?.amount).toBe('2376040456329000')
+    await expect(popup.getByText('0.00072 ETH', { exact: true })).toBeVisible({ timeout: 60_000 })
+    expect(api.getQuoteRequests().at(-1)?.amount).toBe('2076040456329000')
     expect(rpc.getBroadcastCount()).toBe(0)
     await captureScreenshot(popup, `transfer-native-max-${direction}-fast.png`)
   })
@@ -2041,14 +2059,14 @@ for (const sourceMode of ['main', 'private'] as const) {
         .getByRole('radio', { name: /Confidential account/ })
         .click()
     }
-    const amount = sourceMode === 'main' ? '0.002913040456329' : '0.002526040456329'
+    const amount = sourceMode === 'main' ? '0.002897290456329' : '0.002301040456329'
     await expect(popup.getByRole('button', { name: 'Max', exact: true })).toBeEnabled({
       timeout: 30_000
     })
     await popup.getByRole('button', { name: 'Max', exact: true }).click()
-    await expect(popup.getByLabel('ETH amount')).toHaveValue(amount)
+    await expect(popup.getByLabel('ETH amount')).toHaveValue(amount, { timeout: 30_000 })
     await expect(popup.getByTestId('send-amount-card')).toContainText(
-      sourceMode === 'main' ? 'Available 0.002913 ETH' : 'Available 0.002526 ETH'
+      sourceMode === 'main' ? 'Available 0.002897 ETH' : 'Available 0.002301 ETH'
     )
     await expect(popup.getByRole('button', { name: 'Continue', exact: true })).toBeEnabled({
       timeout: 30_000
@@ -2073,8 +2091,8 @@ for (const sourceMode of ['main', 'private'] as const) {
       await popup.getByRole('button', { name: 'Confirm', exact: true }).click()
       await expect
         .poll(() => rpc.getBroadcastValues().at(-1), { timeout: 30_000 })
-        .toBe(2_526_040_456_329_000n)
-      await expect(popup.locator('[data-result-icon]')).toBeVisible()
+        .toBe(2_301_040_456_329_000n)
+      await expect(popup.getByRole('region', { name: 'Transaction progress' })).toBeVisible()
       await captureScreenshot(popup, 'send-native-max-private-result.png')
     }
   })
@@ -2089,6 +2107,19 @@ test('reviews and submits Main to Confidential from the unified transfer sheet',
   const evmNetwork = await mockEvmNetwork(context, { allowBroadcast: true })
   await mockBitcoinNetwork(context)
   await mockProtocolApis(context, { orderStatus: 'pending' })
+  let releasePreparation: () => void = () => {}
+  let preparationFails = true
+  const preparationPending = new Promise<void>(resolve => {
+    releasePreparation = resolve
+  })
+  await context.route(BUILD_SWAP_URL, async route => {
+    await preparationPending
+    if (preparationFails) {
+      await route.fulfill({ status: 502, body: 'Unavailable' })
+      return
+    }
+    await route.fallback()
+  })
 
   await waitForBackgroundWalletInitialization(popup)
   await importTestWallet(popup)
@@ -2119,6 +2150,31 @@ test('reviews and submits Main to Confidential from the unified transfer sheet',
   })
   await transferDialog.getByRole('button', { name: 'Review transfer' }).click()
 
+  try {
+    await expect(popup.getByRole('button', { name: 'Confirm', exact: true })).toBeDisabled({
+      timeout: 30_000
+    })
+    await expect(popup.getByText('0.01 ETH', { exact: true })).toBeVisible()
+    await expect(popup.getByText('Network fee', { exact: true })).toBeVisible()
+    await expect(popup.getByText('Preparing transfer', { exact: true })).toHaveCount(0)
+    expect(evmNetwork.getBroadcastCount()).toBe(0)
+    await expectNoOverflow(popup)
+    await captureScreenshot(popup, 'balance-transfer-main-to-confidential-preparing.png')
+  } finally {
+    releasePreparation()
+  }
+  await expect(popup.getByRole('alert')).toBeVisible({ timeout: 30_000 })
+  await expect(popup.getByRole('button', { name: 'Confirm', exact: true })).toBeDisabled()
+  expect(evmNetwork.getBroadcastCount()).toBe(0)
+  await expect(popup.getByRole('button', { name: 'Retry', exact: true })).toBeInViewport({
+    ratio: 1
+  })
+  await captureScreenshot(popup, 'balance-transfer-main-to-confidential-preparation-error.png')
+  preparationFails = false
+  await popup.getByRole('button', { name: 'Retry', exact: true }).click()
+  await expect(popup.getByRole('button', { name: 'Confirm', exact: true })).toBeEnabled({
+    timeout: 30_000
+  })
   await expect(popup.getByRole('button', { name: 'Confirm', exact: true })).toBeVisible({
     timeout: 30_000
   })
@@ -2134,7 +2190,9 @@ test('reviews and submits Main to Confidential from the unified transfer sheet',
   await expect(popup.getByText('Confidential', { exact: true })).toBeVisible()
   await expect(popup.getByText('Price Impact', { exact: true })).toHaveCount(0)
   await expect(popup.getByText('Slippage Tolerance', { exact: true })).toHaveCount(0)
-  await expect(popup.getByRole('button', { name: 'Confirm' })).toBeEnabled()
+  await expect(popup.getByRole('button', { name: 'Confirm' })).toBeEnabled({
+    timeout: 30_000
+  })
   expect(evmNetwork.getBroadcastCount()).toBe(0)
   await expectNoOverflow(popup)
   await captureScreenshot(popup, 'balance-transfer-main-to-confidential-review.png')
@@ -2142,7 +2200,7 @@ test('reviews and submits Main to Confidential from the unified transfer sheet',
   await popup.getByRole('button', { name: 'Confirm' }).click()
   await expect.poll(() => evmNetwork.getBroadcastCount(), { timeout: 30_000 }).toBeGreaterThan(0)
   await expect(popup.getByRole('heading', { name: 'Transfer', exact: true })).toBeVisible()
-  await expect(popup.locator('[data-result-icon]')).toBeVisible()
+  await expect(popup.getByRole('region', { name: 'Transaction progress' })).toBeVisible()
   await expect(popup.getByRole('heading', { name: 'Confirming transfer' })).toHaveCount(0)
   await expectNoOverflow(popup)
   await captureScreenshot(popup, 'balance-transfer-main-to-confidential-progress.png')
@@ -2206,7 +2264,9 @@ test('reviews and submits Confidential to Main from the unified transfer sheet',
   await expect(popup.getByText('Public', { exact: true })).toBeVisible()
   await expect(popup.getByText('Price Impact', { exact: true })).toHaveCount(0)
   await expect(popup.getByText('Slippage Tolerance', { exact: true })).toHaveCount(0)
-  await expect(popup.getByRole('button', { name: 'Confirm' })).toBeEnabled()
+  await expect(popup.getByRole('button', { name: 'Confirm' })).toBeEnabled({
+    timeout: 30_000
+  })
   expect(evmNetwork.getBroadcastCount()).toBe(0)
   await expectNoOverflow(popup)
   await captureScreenshot(popup, 'balance-transfer-confidential-to-main-review.png')
@@ -2214,7 +2274,7 @@ test('reviews and submits Confidential to Main from the unified transfer sheet',
   await popup.getByRole('button', { name: 'Confirm' }).click()
   await expect.poll(() => evmNetwork.getBroadcastCount(), { timeout: 30_000 }).toBeGreaterThan(0)
   await expect(popup.getByRole('heading', { name: 'Transfer', exact: true })).toBeVisible()
-  await expect(popup.locator('[data-result-icon]')).toBeVisible()
+  await expect(popup.getByRole('region', { name: 'Transaction progress' })).toBeVisible()
   await expect(popup.getByRole('heading', { name: 'Confirming transfer' })).toHaveCount(0)
   await expect(popup.getByText('Refund', { exact: true })).toHaveCount(0)
   const transferActivity = (await popup.evaluate(() =>
@@ -2523,19 +2583,21 @@ for (const sourceMode of ['main', 'private'] as const) {
     }
     await expect(popup.getByRole('button', { name: 'To asset' })).toContainText('USDC')
     await popup.getByRole('button', { name: /^Use maximum balance:/ }).click()
-    await expect(popup.getByRole('textbox', { name: 'From amount' })).toHaveValue('0.99955')
+    await expect(popup.getByRole('textbox', { name: 'From amount' })).toHaveValue('0.999325', {
+      timeout: 30_000
+    })
     await expect(popup.getByRole('button', { name: 'Swap', exact: true })).toBeEnabled()
     await popup.getByRole('button', { name: 'Swap', exact: true }).click()
     await expect(popup.getByRole('heading', { name: 'Review Swap', exact: true })).toBeVisible({
       timeout: 60_000
     })
-    await expect(popup.getByText('0.00045 ETH', { exact: true })).toBeVisible()
-    expect(api.getQuoteRequests().at(-1)?.amount).toBe('999550000000000000')
+    await expect(popup.getByText('0.00054 ETH', { exact: true })).toBeVisible()
+    expect(api.getQuoteRequests().at(-1)?.amount).toBe('999325000000000000')
     expect(rpc.getContractGasEstimateCount()).toBeGreaterThanOrEqual(2)
     expect(rpc.getBroadcastCount()).toBe(0)
     await expectNoOverflow(popup)
     await captureScreenshot(popup, `swap-native-max-${sourceMode}-contract-gas.png`)
-    await popup.getByRole('button', { name: /0\.00045 ETH.*Standard/i }).click()
+    await popup.getByRole('button', { name: 'Edit network fee' }).click()
     await popup
       .getByRole('dialog', { name: 'Network Fee' })
       .getByRole('radio', { name: /Fast/ })
@@ -2543,8 +2605,8 @@ for (const sourceMode of ['main', 'private'] as const) {
     await expect(popup.getByRole('heading', { name: 'Review Swap', exact: true })).toBeVisible({
       timeout: 60_000
     })
-    await expect(popup.getByText('0.0006 ETH', { exact: true })).toBeVisible({ timeout: 60_000 })
-    expect(api.getQuoteRequests().at(-1)?.amount).toBe('999400000000000000')
+    await expect(popup.getByText('0.00072 ETH', { exact: true })).toBeVisible({ timeout: 60_000 })
+    expect(api.getQuoteRequests().at(-1)?.amount).toBe('999100000000000000')
     expect(rpc.getBroadcastCount()).toBe(0)
     await captureScreenshot(popup, `swap-native-max-${sourceMode}-fast-gas.png`)
   })
@@ -2577,7 +2639,7 @@ test('recalculates ETH Swap Max when the source balance changes', async ({
   }
   const amount = popup.getByRole('textbox', { name: 'From amount' })
   await popup.getByRole('button', { name: /^Use maximum balance:/ }).click()
-  await expect(amount).toHaveValue('0.99955')
+  await expect(amount).toHaveValue('0.999325', { timeout: 30_000 })
 
   const mainAddress = await popup.evaluate(async () => {
     const response = await chrome.runtime.sendMessage({ type: 'GET_ACCOUNT_NETWORKS' })
@@ -2603,7 +2665,7 @@ test('recalculates ETH Swap Max when the source balance changes', async ({
     if (response?.error) throw new Error('Portfolio refresh failed')
   })
 
-  await expect(amount).toHaveValue('0.79955', { timeout: 30_000 })
+  await expect(amount).toHaveValue('0.799325', { timeout: 30_000 })
   await expect(popup.getByText('Insufficient ETH balance', { exact: true })).toHaveCount(0)
   await expect(popup.getByRole('button', { name: 'Swap', exact: true })).toBeEnabled()
   expect(rpc.getBroadcastCount()).toBe(0)
@@ -3162,6 +3224,9 @@ test('shows Swap asset icons, sent amount, and route clearly in Activity', async
   await waitForBackgroundWalletInitialization(popup)
   await importTestWallet(popup)
   await popup.goto(`chrome-extension://${extensionId}/index.html`)
+  await expect(popup.getByRole('button', { name: 'View USDC details on Ethereum' })).toBeVisible({
+    timeout: 30_000
+  })
 
   await popup.getByRole('button', { name: 'Swap', exact: true }).click()
   await expect(popup.getByRole('status', { name: 'Loading additional networks' })).toHaveCount(0, {
@@ -3204,7 +3269,7 @@ test('shows Swap asset icons, sent amount, and route clearly in Activity', async
   const swapRowLeft = await row.evaluate(element => element.getBoundingClientRect().left)
   expect(tokenPositions[0] - swapRowLeft).toBe(20)
   expect(tokenPositions[1] - tokenPositions[0]).toBeLessThan(30)
-  await expect(row).toContainText('Source submitted')
+  await expect(row).toContainText(/Source submitted|Waiting for Intents/)
   await expectNoOverflow(popup)
   await captureScreenshot(popup, 'swap-activity-route-row.png')
 
@@ -3215,7 +3280,9 @@ test('shows Swap asset icons, sent amount, and route clearly in Activity', async
   await expect(popup.getByText('Route', { exact: true })).toBeVisible()
   await expect(popup.getByText('From network', { exact: true })).toHaveCount(0)
   await expect(popup.getByText('To network', { exact: true })).toHaveCount(0)
-  await expect(popup.locator('[data-activity-status-value]')).toHaveText('Source submitted')
+  await expect(popup.locator('[data-activity-status-value]')).toHaveText(
+    /^(Source submitted|Waiting for Intents)$/
+  )
   await expect(popup.getByText('To', { exact: true })).toBeVisible()
   await expect(popup.getByTitle(/^0x[0-9a-fA-F]{40}$/).first()).toBeVisible()
   await expect(popup.getByTitle('0x4444444444444444444444444444444444444444')).toHaveCount(0)
@@ -3501,11 +3568,21 @@ test('prepares and rejects wallet-owned EVM Swap reviews in real MV3', async ({
   expect(liveQuote?.recipient).toMatch(/^0x[0-9a-f]{40}$/i)
   const quoteCountBeforeReview = protocolApis.getQuoteRequests().length
   await popup.evaluate(() => {
-    const staleNow = Date.now() + 30 * 60_000 + 1
+    const target = window as typeof window & { restoreQuoteClock?: () => void }
+    const realNow = Date.now
+    const staleNow = realNow() + 30 * 60_000 + 1
+    target.restoreQuoteClock = () => {
+      Date.now = realNow
+      delete target.restoreQuoteClock
+    }
     Date.now = () => staleNow
   })
   await popup.getByRole('button', { name: 'Swap', exact: true }).click()
   await expect.poll(() => protocolApis.getQuoteRequests().length).toBe(quoteCountBeforeReview + 1)
+  // Keep the replacement quote on the background's clock; review still requires confirmation.
+  await popup.evaluate(() => {
+    ;(window as typeof window & { restoreQuoteClock?: () => void }).restoreQuoteClock?.()
+  })
   await expect(popup.getByRole('heading', { name: 'Review Swap' })).toBeVisible({
     timeout: 60_000
   })
@@ -3567,16 +3644,21 @@ test('waits for ERC-20 approval confirmation before preparing the Swap call', as
   await waitForBackgroundWalletInitialization(popup)
   await importTestWallet(popup)
   await popup.goto(`chrome-extension://${extensionId}/index.html`)
+  await expect(popup.getByRole('button', { name: 'View USDC details on Ethereum' })).toBeVisible({
+    timeout: 30_000
+  })
   await popup.getByRole('button', { name: 'Swap', exact: true }).click()
   await popup.getByRole('button', { name: 'From asset' }).click()
   await popup.getByPlaceholder('Search tokens').fill('USDC')
   await popup
     .getByRole('dialog', { name: 'SELECT ASSET' })
-    .getByRole('button', { name: /^USDC on Ethereum/ })
+    .getByRole('button', { name: 'USDC on Ethereum, balance 10 USDC' })
     .click()
+  await expect(popup.getByRole('button', { name: 'From asset' })).toContainText('USDC')
   await popup.getByRole('button', { name: 'To asset' }).click()
   await popup.getByPlaceholder('Search tokens').fill('USDC')
   await popup.getByRole('button', { name: /USDC.*Polygon/i }).click()
+  await expect(popup.getByRole('button', { name: 'From asset' })).toContainText('USDC')
   await popup.locator('input[placeholder="0"]').fill('2')
   await expect(popup.getByRole('button', { name: 'Swap', exact: true })).toBeEnabled({
     timeout: 60_000
@@ -3629,7 +3711,7 @@ test('renders RHEA multi-asset lending positions on Home', async ({ context, pop
       timeout: 30_000
     }
   )
-  await expect(popup.getByText('$3,750', { exact: true }).first()).toBeVisible()
+  await expect(popup.getByText('$3,750.00', { exact: true }).first()).toBeVisible()
   await expectNoOverflow(popup)
   await captureScreenshot(popup, 'protocol-wallet-home-lending-multichain-positions.png')
 })
@@ -3702,7 +3784,7 @@ test('uses the active Polygon wallet source and POL fees in Swap', async ({ cont
   await popup.getByRole('button', { name: /ZEC.*Zcash/i }).click()
   const swapAmountInput = popup.locator('input[placeholder="0"]')
   await popup.getByRole('button', { name: /^Use maximum balance:/ }).click()
-  await expect(swapAmountInput).toHaveValue('0.999937')
+  await expect(swapAmountInput).toHaveValue('0.9999055', { timeout: 30_000 })
   await expectNoOverflow(popup)
   const submitSwap = popup.getByRole('button', { name: 'Swap', exact: true })
   await expect(submitSwap).toBeEnabled({ timeout: 60_000 })
@@ -3710,8 +3792,12 @@ test('uses the active Polygon wallet source and POL fees in Swap', async ({ cont
   await expect(popup.getByRole('heading', { name: 'Review Swap' })).toBeVisible({
     timeout: 60_000
   })
-  await expect(popup.getByText('0.9999', { exact: true })).toBeVisible()
-  await expect(popup.getByText('0.0₄63 POL', { exact: true })).toBeVisible()
+  await expect(popup.getByRole('button', { name: 'Show full amount' }).first()).toHaveText(
+    '0.9999055'
+  )
+  await expect(popup.getByRole('button', { name: 'Show full POL amount' })).toHaveText(
+    '0.0000756 POL'
+  )
   for (const alt of ['POL', 'Polygon', 'ZEC', 'Zcash']) {
     await expect
       .poll(() =>

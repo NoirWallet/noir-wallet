@@ -57,6 +57,7 @@ export function useSwapState(
     initialCatalogs.sources?.find(token => token.assetId === initialDestinationAssetId) ??
     null
   const [tokenIn, setTokenIn] = useState<RheaSwapToken | null>(initialTokenIn)
+  const [selectedSourceAssetId, setSelectedSourceAssetId] = useState<string | null>(null)
   const [tokenOut, setTokenOut] = useState<RheaSwapToken | null>(
     initialTokenIn && initialTokenOut && initialTokenIn.assetId === initialTokenOut.assetId
       ? null
@@ -100,6 +101,7 @@ export function useSwapState(
     switchingTokens.current = false
     setIsSwitchingTokens(false)
     setTokenIn(null)
+    setSelectedSourceAssetId(null)
     setTokenOut(null)
     setAmountIn('')
     setAmountOut('')
@@ -148,6 +150,7 @@ export function useSwapState(
         !isSwapAssetOnEnabledChain(tokenIn.assetId, options.enabledChains)
       ) {
         setTokenIn(null)
+        setSelectedSourceAssetId(null)
         setTokenOut(null)
       }
       const plan = buildInitialSwapCatalogPlan({
@@ -383,6 +386,7 @@ export function useSwapState(
       })
       if (!pair) return
       setTokenIn(pair.tokenIn)
+      setSelectedSourceAssetId(pair.tokenIn.assetId)
       setTokenOut(pair.tokenOut)
       if (preferenceScope)
         setSavedTokenSelection(preferenceScope, {
@@ -440,6 +444,7 @@ export function useSwapState(
         mergeSelectedSwapSourceCatalog(previous, selectorSourceCatalog.current, token)
       )
       setTokenIn(token)
+      setSelectedSourceAssetId(token.assetId)
       if (preferenceScope) setSavedTokenInId(preferenceScope, token.assetId)
       setAmountOut('')
       setQuoteError(null)
@@ -498,6 +503,7 @@ export function useSwapState(
   return {
     // State
     tokenIn,
+    selectedSourceAssetId,
     tokenOut,
     tokens,
     sourceTokens: sourceCatalog,

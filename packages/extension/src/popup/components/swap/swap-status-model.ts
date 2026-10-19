@@ -44,10 +44,13 @@ export function getSwapTransactionReference(
 
 export function getSwapResultAction(
   status: TransactionResultStatus,
-  needsAuthorization: boolean
+  needsAuthorization: boolean,
+  hasConfidentialFunding = false
 ): 'continue' | 'view-activity' | 'done' {
   if (needsAuthorization) return 'continue'
-  return status === 'success' || status === 'failed' ? 'done' : 'view-activity'
+  return status === 'success' || (status === 'failed' && hasConfidentialFunding)
+    ? 'done'
+    : 'view-activity'
 }
 
 export function getSwapActionLabels(actionName?: string): {

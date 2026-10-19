@@ -246,7 +246,7 @@ export function TransactionDetailContent({
     ? formatSortAddress(localTx.from)
     : (missingFromSource?.label ?? '')
   const fromLabelType = localTx.from ? fromType : missingFromSource?.type
-  const { label: toLabel, type: toLabelType } = getZcashTransactionRecipient(localTx)
+  const recipient = getZcashTransactionRecipient(localTx)
 
   return (
     <div>
@@ -278,13 +278,6 @@ export function TransactionDetailContent({
             {visibleStatusCopy.label}
           </span>
         </DetailRow>
-        {!intentsProgress && transactionStatusCopy.key === 'status_unavailable' && (
-          <DetailRow label="Last Update">
-            <span className="max-w-[190px] text-right text-muted">
-              {transactionStatusCopy.description}
-            </span>
-          </DetailRow>
-        )}
         {intentsProgress && (
           <>
             <DetailRow label="Route">
@@ -324,19 +317,21 @@ export function TransactionDetailContent({
               fromLabelType && <AddressTypeLabel type={fromLabelType} />}
           </div>
         </DetailRow>
-        <DetailRow label="To">
-          <div className="flex flex-col items-end gap-0.5">
-            {toContact?.znsName && (
-              <span className="text-xs text-primary">{toContact.znsName}</span>
-            )}
-            <div className="flex items-center gap-2">
-              <span className={localTx.to ? '' : 'text-muted'}>{toLabel}</span>
-              {((localTx.to && isZcashAddress(localTx.to)) || toLabelType) && (
-                <AddressTypeLabel type={toLabelType ?? toType} />
+        {recipient && (
+          <DetailRow label="To">
+            <div className="flex flex-col items-end gap-0.5">
+              {toContact?.znsName && (
+                <span className="text-xs text-primary">{toContact.znsName}</span>
               )}
+              <div className="flex items-center gap-2">
+                <span className={localTx.to ? '' : 'text-muted'}>{recipient.label}</span>
+                {((localTx.to && isZcashAddress(localTx.to)) || recipient.type) && (
+                  <AddressTypeLabel type={recipient.type ?? toType} />
+                )}
+              </div>
             </div>
-          </div>
-        </DetailRow>
+          </DetailRow>
+        )}
         {localTx.fee && safeBig(localTx.fee).gt(0) && (
           <DetailRow label="Fee">
             <AmountDisplay value={localTx.fee} symbol="ZEC" profile="fee" />

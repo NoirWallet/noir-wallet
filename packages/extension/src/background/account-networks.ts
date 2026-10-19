@@ -61,6 +61,11 @@ export interface AccountNetworksCatalog {
 export interface AccountNetworksCoordinatorOptions {
   readonly repository: AccountNetworksRepository
   readonly chains: AddressGatedChainRegistry
+  readonly getZcashShieldedReceiveAddress?: (scope: {
+    readonly keyDomainId: KeyDomainId
+    readonly accountId: AccountId
+    readonly chainId: string
+  }) => string | null
   readonly bitcoinDerivation?: BitcoinAddressDerivationPort
   readonly evmPeaDerivation?: Readonly<{
     deriveGlobalPea(
@@ -125,6 +130,11 @@ export class AccountNetworksCoordinator {
                 }
                 seenChains.add(chain.id)
 
+                // Rotation changes the receive selection, not the immutable account identity.
+                const selectedShielded =
+                  chain.family === 'zcash'
+                    ? this.options.getZcashShieldedReceiveAddress?.(chainAccount.scope)
+                    : null
                 let addresses: readonly AccountNetworkAddressSummary[] = snapshot.addresses
                   .filter(
                     address =>
@@ -139,7 +149,12 @@ export class AccountNetworksCoordinator {
                   )
                   .map(address =>
                     Object.freeze({
-                      value: address.value,
+                      value:
+                        selectedShielded &&
+                        address.scheme === 'zcash-shielded-unified' &&
+                        address.preferredForReceive
+                          ? selectedShielded
+                          : address.value,
                       scheme: address.scheme,
                       privacy: address.privacy,
                       preferredForReceive: address.preferredForReceive
@@ -289,7 +304,8 @@ export class AccountNetworksCoordinator {
 export function createBackgroundAccountNetworksCoordinator(
   customEvmNetworks: readonly EvmNetworkConfig[] = [],
   bitcoinDerivation?: BitcoinAddressDerivationPort,
-  evmPeaDerivation?: AccountNetworksCoordinatorOptions['evmPeaDerivation']
+  evmPeaDerivation?: AccountNetworksCoordinatorOptions['evmPeaDerivation'],
+  getZcashShieldedReceiveAddress?: AccountNetworksCoordinatorOptions['getZcashShieldedReceiveAddress']
 ): AccountNetworksCoordinator {
   return new AccountNetworksCoordinator({
     repository: new IndexedDbStorageV2Repository(),
@@ -297,6 +313,7 @@ export function createBackgroundAccountNetworksCoordinator(
       createInitialProductChainRegistry(DEFAULT_NETWORK, customEvmNetworks)
     ),
     bitcoinDerivation,
-    evmPeaDerivation
+    evmPeaDerivation,
+    getZcashShieldedReceiveAddress
   })
 }

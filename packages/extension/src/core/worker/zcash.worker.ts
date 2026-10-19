@@ -52,6 +52,7 @@ import { serializeDiagnosticArgs } from '../../lib/diagnostic-log'
 import { traceDebugStage } from '../../lib/debug-performance'
 import { loadVotingState, saveVotingState } from '../../lib/indexed-db'
 import { validateVotingDecisions } from '../../lib/voting'
+import { assertRheaSwapSubmissionDeadline } from '../services/rhea-swap/rhea-swap-quote-validity'
 
 /**
  * Prepare a freshly-created PCZT for hardware signing.
@@ -1341,9 +1342,10 @@ self.addEventListener('message', async (event: MessageEvent<RPCRequest<any>>) =>
         break
       }
       case 'pczt.proveSend': {
-        const { walletId, fullBase64, signedBase64 } =
+        const { walletId, fullBase64, signedBase64, submissionDeadline } =
           payload as RPCSchema['pczt.proveSend']['request']
         result = await runForWallet(walletId, async () => {
+          assertRheaSwapSubmissionDeadline(submissionDeadline)
           const w = getWallet(walletId)
           const full = Pczt.from_bytes(base64ToBytes(fullBase64))
           const signed = Pczt.from_bytes(base64ToBytes(signedBase64))
@@ -1407,7 +1409,8 @@ self.addEventListener('message', async (event: MessageEvent<RPCRequest<any>>) =>
           amount,
           memo,
           fundingSource = 'shielded',
-          marginalFeeZats
+          marginalFeeZats,
+          submissionDeadline
         } = payload as RPCSchema['transaction.send']['request']
         result = await runForWallet(walletId, async () => {
           const w = getWallet(walletId)
@@ -1417,6 +1420,7 @@ self.addEventListener('message', async (event: MessageEvent<RPCRequest<any>>) =>
 
           return runWithFreshCommitmentTrees(walletId, w, async () => {
             const expiryDeltaBlocks = await getOneClickExpiryDeltaBlocks(walletId, w)
+            assertRheaSwapSubmissionDeadline(submissionDeadline)
             const usk = mnemonic_to_spending_key(
               walletNetwork,
               resolvedSeedPhrase,

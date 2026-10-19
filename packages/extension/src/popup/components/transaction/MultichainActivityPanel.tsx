@@ -52,13 +52,11 @@ const EMPTY_ACCOUNT_NETWORKS: readonly AccountNetworkView[] = []
 function EmptyState({
   icon,
   title,
-  description,
   onRetry,
   compact = false
 }: {
   readonly icon: string
   readonly title: string
-  readonly description?: string
   readonly onRetry?: () => void
   readonly compact?: boolean
 }) {
@@ -83,16 +81,6 @@ function EmptyState({
         />
       </div>
       <p className="text-sm font-medium">{title}</p>
-      {description && (
-        <p
-          className={cn(
-            'mt-1 max-w-[260px] text-xs text-muted',
-            compact ? 'leading-4' : 'leading-5'
-          )}
-        >
-          {description}
-        </p>
-      )}
       {onRetry && (
         <Button variant="outline" size="sm" className="mt-4" onClick={onRetry}>
           Retry
@@ -488,7 +476,6 @@ export function MultichainActivityPanel({
         <EmptyState
           icon="lucide:wifi-off"
           title="Unable to load activity"
-          description="Your local transaction records are safe. Try loading this account again."
           onRetry={() => void load()}
           compact={compact}
         />

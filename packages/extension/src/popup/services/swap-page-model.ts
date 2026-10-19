@@ -32,7 +32,10 @@ export function resolveSwapRefreshChainId(
   )?.chain.id
 }
 
-export { isRheaSwapQuoteFresh } from '@/core/services/rhea-swap/rhea-swap-quote-validity'
+export {
+  getRheaSwapQuoteDeadline,
+  isRheaSwapQuoteFresh
+} from '@/core/services/rhea-swap/rhea-swap-quote-validity'
 
 export function resolveSwapReviewAction(input: {
   readonly isZecSource: boolean

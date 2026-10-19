@@ -14,14 +14,12 @@ export function getMissingZcashTransactionSource(
 export function getZcashTransactionRecipient(transaction: Pick<Transaction, 'type' | 'to'>): {
   label: string
   type: AddressType | null
-} {
+} | null {
   if (transaction.to) {
     return {
       label: formatSortAddress(transaction.to),
       type: detectAddressType(transaction.to)
     }
   }
-  return transaction.type === 'receive'
-    ? { label: 'Shielded Pool', type: 'shielded' }
-    : { label: 'Unavailable', type: null }
+  return transaction.type === 'receive' ? { label: 'Shielded Pool', type: 'shielded' } : null
 }

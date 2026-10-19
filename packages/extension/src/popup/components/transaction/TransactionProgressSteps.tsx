@@ -15,15 +15,20 @@ export function TransactionProgressSteps({
   referenceByStepId
 }: TransactionProgressStepsProps) {
   return (
-    <section aria-label="Transaction progress" className={cn('w-full', className)}>
+    <section
+      aria-label="Transaction progress"
+      aria-live="polite"
+      className={cn('w-full', className)}
+    >
       <h3 className="mb-3 text-sm font-medium">Transaction progress</h3>
-      <div className="space-y-2">
+      <ol className="space-y-2">
         {steps.map((step, index) => (
-          <div
+          <li
             key={step.id}
             className="flex gap-3"
             data-progress-step={step.id}
             data-progress-state={step.state}
+            aria-current={step.state === 'active' ? 'step' : undefined}
           >
             <div className="relative flex w-5 shrink-0 justify-center">
               {index < steps.length - 1 && (
@@ -39,29 +44,37 @@ export function TransactionProgressSteps({
                       : step.state === 'warning'
                         ? 'border-warning text-warning'
                         : step.state === 'active'
-                          ? 'border-foreground/60 text-foreground/80'
+                          ? 'border-transparent text-primary'
                           : 'border-muted text-muted'
                 )}
               >
-                <Icon
-                  icon={
-                    step.state === 'complete'
-                      ? 'lucide:check'
-                      : step.state === 'failed'
-                        ? 'lucide:x'
-                        : step.state === 'warning'
-                          ? 'lucide:triangle-alert'
-                          : 'lucide:clock-3'
-                  }
-                  width={11}
-                  height={11}
-                />
+                {step.state !== 'pending' && (
+                  <Icon
+                    icon={
+                      step.state === 'complete'
+                        ? 'lucide:check'
+                        : step.state === 'failed'
+                          ? 'lucide:x'
+                          : step.state === 'warning'
+                            ? 'lucide:triangle-alert'
+                            : 'lucide:loader-circle'
+                    }
+                    width={step.state === 'active' ? 20 : 12}
+                    height={step.state === 'active' ? 20 : 12}
+                    className={step.state === 'active' ? 'animate-spin' : undefined}
+                    aria-hidden="true"
+                  />
+                )}
               </span>
             </div>
             <div className="min-w-0 flex-1 pb-3">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <p className="text-xs font-medium">{step.label}</p>
+                  <p
+                    className={cn('text-xs font-medium', step.state === 'pending' && 'text-muted')}
+                  >
+                    {step.label}
+                  </p>
                   {step.detail && <p className="mt-0.5 text-[11px] text-muted">{step.detail}</p>}
                   {referenceByStepId?.get(step.id) && (
                     <div className="mt-1.5 text-xs">{referenceByStepId.get(step.id)}</div>
@@ -87,9 +100,9 @@ export function TransactionProgressSteps({
                 </span>
               </div>
             </div>
-          </div>
+          </li>
         ))}
-      </div>
+      </ol>
     </section>
   )
 }

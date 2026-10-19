@@ -48,7 +48,6 @@ import {
   getActivityDetailTitle,
   getActivityRouteTitle,
   getActivityTransferRecipient,
-  getActivityMissingRecipientLabel,
   getActivitySwapSourceMethodLabel,
   getAaveSupplyPresentation,
   canCancelEvmActivity,
@@ -233,7 +232,6 @@ export function MultichainActivityDetail({
     executionAddressModes
   )
   const transferRecipient = getActivityTransferRecipient(visibleItem)
-  const missingRecipientLabel = getActivityMissingRecipientLabel(visibleItem)
   const swapSourceMethod = getActivitySwapSourceMethodLabel(visibleItem, swap?.source?.symbol)
 
   const amount = visibleItem.snapshot?.primaryAmount
@@ -539,7 +537,7 @@ export function MultichainActivityDetail({
                 symbol={swap.source.symbol}
               />
             ) : (
-              'Amount unavailable'
+              '—'
             )}
           </div>
           {swap.destination && (
@@ -555,7 +553,7 @@ export function MultichainActivityDetail({
                   symbol={swap.destination.symbol}
                 />
               ) : (
-                'Amount unavailable'
+                '—'
               )}
             </div>
           )}
@@ -595,25 +593,8 @@ export function MultichainActivityDetail({
           ) : interaction ? (
             <p className="text-sm text-muted">{primaryNetworkName}</p>
           ) : (
-            <p className="max-w-full break-all font-mono text-3xl font-bold">Amount unavailable</p>
+            <p className="max-w-full break-all font-mono text-3xl font-bold">—</p>
           )}
-        </div>
-      )}
-
-      {visibleItem.completeness === 'partial' && (
-        <div className="mb-4 flex items-start gap-2 rounded-lg border border-border/70 bg-card/50 px-3 py-2 text-xs text-muted">
-          <Icon icon="lucide:info" width={14} height={14} className="mt-0.5 shrink-0" />
-          <span>Some details are unavailable for this transaction.</span>
-        </div>
-      )}
-
-      {visibleItem.reconfirming === true && (
-        <div
-          role="status"
-          className="mb-4 flex items-start gap-2 rounded-lg border border-border bg-card/45 px-3 py-2 text-xs text-muted"
-        >
-          <Icon icon="lucide:refresh-cw" width={14} height={14} className="mt-0.5 shrink-0" />
-          <span>Rechecking confirmations after a chain reorganization.</span>
         </div>
       )}
 
@@ -715,10 +696,6 @@ export function MultichainActivityDetail({
             <span className="max-w-[220px] truncate font-mono text-sm" title={transferRecipient}>
               {formatSortAddress(transferRecipient)}
             </span>
-          </DetailRow>
-        ) : !swap && missingRecipientLabel ? (
-          <DetailRow label="To">
-            <span className="text-sm text-muted">{missingRecipientLabel}</span>
           </DetailRow>
         ) : null}
         {visibleItem.snapshot?.evm?.methodSelector && (

@@ -228,12 +228,6 @@ export function TokenSelector({
           )
         ) : (
           <>
-            {filteredTokens.length > MAX_RENDERED_TOKENS && (
-              <p className="px-3 pb-2 text-xs text-muted">
-                Showing the first {MAX_RENDERED_TOKENS} of {filteredTokens.length} assets. Search or
-                filter by network to narrow the list.
-              </p>
-            )}
             {visibleTokens.map(token => {
               const balance = balances?.get(token.assetId)
               const symbol = formatSymbol(token.symbol)

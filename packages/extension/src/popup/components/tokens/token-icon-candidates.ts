@@ -1,10 +1,8 @@
-import {
-  formatConfiguredChainIconUrl,
-  formatNativeTokenIconUrl,
-  formatTrustWalletTokenIconUrl
-} from '@/config/icons'
+import { formatNativeTokenIconUrl, formatTrustWalletTokenIconUrl } from '@/config/icons'
 import { parseAssetId } from '@/core/chains/registry'
 import type { SwapToken } from '@/core/services/intents-api'
+import { MARKET_ASSETS } from '@/config/asset-market-assets'
+import { findBundledWalletMarketAssetId } from './token-display-policy'
 
 interface TokenIconCandidateInput {
   readonly token?: Pick<SwapToken, 'blockchain' | 'contractAddress' | 'icon' | 'coingeckoIcon'>
@@ -68,6 +66,12 @@ export function getTokenIconCandidates({
   nativeChain,
   bundledIcon
 }: TokenIconCandidateInput): readonly string[] {
+  // Keep native ETH identical across catalogs and L2s; the badge identifies its chain.
+  if (assetId && findBundledWalletMarketAssetId(assetId) === MARKET_ASSETS.eth) {
+    return Object.freeze(
+      [formatNativeTokenIconUrl('eth')].filter((candidate): candidate is string => !!candidate)
+    )
+  }
   const parsedAsset = parseIconAsset(assetId)
   const assetBlockchain = blockchain ?? parsedAsset?.chainFamily
   const nativeBlockchain = token && token.contractAddress == null ? token.blockchain : undefined
@@ -90,9 +94,6 @@ export function getTokenIconCandidates({
     coinGeckoIcon,
     trustWalletTokenIcon,
     assetTokenIcon,
-    nativeChain ? formatConfiguredChainIconUrl(nativeChain) : undefined,
-    nativeBlockchain ? formatConfiguredChainIconUrl(nativeBlockchain) : undefined,
-    nativeAssetBlockchain ? formatConfiguredChainIconUrl(nativeAssetBlockchain) : undefined,
     nativeChain ? formatNativeTokenIconUrl(nativeChain) : undefined,
     nativeBlockchain ? formatNativeTokenIconUrl(nativeBlockchain) : undefined,
     nativeAssetBlockchain ? formatNativeTokenIconUrl(nativeAssetBlockchain) : undefined

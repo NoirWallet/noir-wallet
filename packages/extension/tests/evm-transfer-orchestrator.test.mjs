@@ -659,12 +659,17 @@ test('hands an exact EIP-1559 request to Keystone and verifies its UUID-bound si
     transactionId: prepared.graph.root.id
   })
   await expect(
+    testHarness.orchestrator.getPendingApproval({ scope, transactionId: prepared.graph.root.id })
+  ).resolves.toBeNull()
+  await expect(
     testHarness.orchestrator.getExternalSigningRequest({
       scope,
       transactionId: prepared.graph.root.id
     })
   ).resolves.toEqual({
     transactionId: prepared.graph.root.id,
+    scope,
+    summary: prepared.signing.summary,
     request: prepared.signing.execution.request,
     payloadFingerprint: prepared.signing.payloadFingerprint.digestHex,
     expiresAt: prepared.signing.expiresAt
@@ -705,6 +710,8 @@ test('binds a Ledger EIP-1559 signature to the prepared transaction and sender',
   })
   expect(external).toMatchObject({
     vendor: 'ledger',
+    scope,
+    summary: prepared.signing.summary,
     ledgerRequest: {
       kind: 'transaction',
       derivationPath: "m/44'/60'/0'/0/0",
@@ -712,6 +719,9 @@ test('binds a Ledger EIP-1559 signature to the prepared transaction and sender',
       unsignedTransactionHex: expect.stringMatching(/^0x02/)
     }
   })
+  await expect(
+    testHarness.orchestrator.getPendingApproval({ scope, transactionId: prepared.graph.root.id })
+  ).resolves.toBeNull()
   const decoded = parseTransaction(rawTransaction)
   const signatureHex = `${decoded.r}${decoded.s.slice(2)}${decoded.yParity.toString(16).padStart(2, '0')}`
   await expect(

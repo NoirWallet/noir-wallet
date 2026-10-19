@@ -143,7 +143,8 @@ export function SwapStatusDisplay({
   const txStatus: TransactionStatus = statusCopy.resultStatus
   const resultAction = getSwapResultAction(
     txStatus,
-    confidentialFunding?.phase === 'needs-auth' && onResumeConfidentialFunding !== undefined
+    confidentialFunding?.phase === 'needs-auth' && onResumeConfidentialFunding !== undefined,
+    !!confidentialFunding
   )
 
   const labels = getSwapActionLabels(actionName)
@@ -152,6 +153,7 @@ export function SwapStatusDisplay({
   return (
     <TransactionResult
       status={txStatus}
+      showStatus={!!confidentialFunding}
       title={confidentialFunding ? statusCopy.title : progress.title}
       description={confidentialFunding ? statusCopy.description : progress.description}
       footer={

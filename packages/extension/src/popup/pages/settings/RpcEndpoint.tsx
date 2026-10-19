@@ -21,6 +21,7 @@ import {
 import { useSettingsStore } from '@/store/settings-store'
 import { toast } from '@/store/toast-store'
 import { ChainIcon } from '../../components/common/ChainIcon'
+import { EndpointOption } from '../../components/common/EndpointOption'
 import { EndpointLatencyBadge as PingBadge } from '../../components/common/EndpointStatus'
 import { PageHeader } from '../../components/common/PageHeader'
 import { Button } from '../../components/ui/button'
@@ -633,40 +634,19 @@ export function RpcEndpoint() {
                   {editing.presets.map(preset => {
                     const selected = isSameRpcUrl(editingRpc?.url ?? '', preset.url)
                     return (
-                      <button
+                      <EndpointOption
                         key={preset.id}
-                        type="button"
-                        aria-label={`Use ${preset.label} RPC`}
-                        aria-pressed={selected}
+                        label={preset.label}
+                        url={preset.url}
+                        ariaLabel={`Use ${preset.label} RPC`}
+                        selected={selected}
                         disabled={saving}
                         onClick={() => void apply(preset.url)}
-                        className={cn(
-                          'flex w-full min-w-0 items-center gap-3 rounded-xl border bg-card px-3 py-2.5 text-left transition-colors',
-                          selected
-                            ? 'border-primary/50 bg-primary/5'
-                            : 'border-border/60 hover:border-primary/30'
-                        )}
                       >
-                        <div className="min-w-0 flex-1">
-                          <p className="text-sm font-medium">{preset.label}</p>
-                          <p className="truncate font-mono text-[11px] text-muted">
-                            {preset.url.replace(/^https?:\/\//, '')}
-                          </p>
-                        </div>
                         <PingBadge
                           result={pings[rpcProbeKey({ option: editing, url: preset.url })]}
                         />
-                        <span
-                          className={cn(
-                            'flex size-5 shrink-0 items-center justify-center rounded-full border',
-                            selected
-                              ? 'border-primary bg-primary text-primary-foreground'
-                              : 'border-border text-transparent'
-                          )}
-                        >
-                          <Icon icon="lucide:check" className="size-3" />
-                        </span>
-                      </button>
+                      </EndpointOption>
                     )
                   })}
                 </div>

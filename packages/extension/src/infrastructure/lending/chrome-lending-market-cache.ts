@@ -4,13 +4,13 @@ import {
 } from '@/core/services/lending-market-catalog'
 import { LENDING_MARKET_CACHE_STORAGE_KEY } from '@/config/extension'
 
-const CACHE_VERSION = 2
+const CACHE_VERSION = 3
 const MAX_ENTRIES = 100
 const MAX_MARKETS_PER_ENTRY = 256
 const MAX_AGE_MS = 30 * 60 * 1000
 const MAX_CLOCK_SKEW_MS = 5 * 60 * 1000
-const UNSIGNED_DECIMAL_PATTERN = /^(?:0|[1-9][0-9]{0,77})(?:\.[0-9]{1,36})?$/
-const SIGNED_DECIMAL_PATTERN = /^-?(?:0|[1-9][0-9]{0,77})(?:\.[0-9]{1,36})?$/
+const UNSIGNED_DECIMAL_PATTERN = /^(?:0|[1-9][0-9]{0,77})(?:\.[0-9]{1,512})?$/
+const SIGNED_DECIMAL_PATTERN = /^-?(?:0|[1-9][0-9]{0,77})(?:\.[0-9]{1,512})?$/
 
 interface LendingMarketCacheEntry {
   readonly cachedAt: number

@@ -1,5 +1,15 @@
 export const RHEA_SWAP_MAX_QUOTE_AGE_MS = 30_000
 
+export function assertRheaSwapSubmissionDeadline(
+  deadline: number | undefined,
+  now = Date.now()
+): void {
+  if (deadline === undefined) return
+  if (!Number.isSafeInteger(deadline) || !Number.isSafeInteger(now) || now < 0 || now >= deadline) {
+    throw new Error('RHEA Swap quote expired. Get a new quote and review it again.')
+  }
+}
+
 export function getRheaSwapQuoteDeadline(quote: {
   readonly receivedAt: number
   readonly expiresAt: number | null

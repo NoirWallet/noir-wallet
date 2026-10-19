@@ -295,9 +295,7 @@ export function ZcashSettings() {
                   <Skeleton className="h-5 w-28" />
                 ) : birthdayHeight ? (
                   <>
-                    <span className="min-w-0 text-sm text-foreground">
-                      {birthdayDate ?? 'Date unavailable'}
-                    </span>
+                    <span className="min-w-0 text-sm text-foreground">{birthdayDate ?? '—'}</span>
                     <button
                       type="button"
                       aria-label="Copy birthday height"

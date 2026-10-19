@@ -1,4 +1,5 @@
 import { DEFAULT_NETWORK } from '@/lib/runtime-network'
+import { parseAccountId } from '@/core/accounts/domain'
 import type { LedgerEvmSigningRequest } from '@/lib/ledger/evm'
 import { bytesToBase64, hexToBytes } from '@/lib/bytes'
 import { parseActivityReadModel, type ActivityReadModel } from '@/core/activity'
@@ -16,7 +17,7 @@ import {
   createEvmWalletRuntimeError,
   type EvmWalletRuntimeErrorCode
 } from '@/core/chains/evm'
-import { parseSigningSummary, type SigningSummary } from '@/core/keyring/domain'
+import { parseKeyDomainId, parseSigningSummary, type SigningSummary } from '@/core/keyring/domain'
 import { parsePortfolioReadModel, type PortfolioReadModel } from '@/core/portfolio'
 import {
   getTransactionProtocolIntentKind,
@@ -115,6 +116,8 @@ export interface EvmExternalSigningRequest {
   readonly vendor: 'keystone' | 'ledger'
   readonly ledgerRequest?: Extract<LedgerEvmSigningRequest, { kind: 'transaction' }>
   readonly transactionId: TransactionId
+  readonly scope: { readonly keyDomainId: string; readonly accountId: string }
+  readonly summary: SigningSummary
   readonly chainId: string
   readonly request: { readonly encoding: 'base64'; readonly value: string }
   readonly payloadFingerprint: string
@@ -583,6 +586,8 @@ function parseExternalSigningRequest(
       ? [
           'transactionId',
           'chainId',
+          'scope',
+          'summary',
           'request',
           'payloadFingerprint',
           'expiresAt',
@@ -590,8 +595,25 @@ function parseExternalSigningRequest(
           'ledgerRequest'
         ]
       : record.vendor === 'keystone'
-        ? ['transactionId', 'chainId', 'request', 'payloadFingerprint', 'expiresAt', 'vendor']
-        : ['transactionId', 'chainId', 'request', 'payloadFingerprint', 'expiresAt'],
+        ? [
+            'transactionId',
+            'chainId',
+            'scope',
+            'summary',
+            'request',
+            'payloadFingerprint',
+            'expiresAt',
+            'vendor'
+          ]
+        : [
+            'transactionId',
+            'chainId',
+            'scope',
+            'summary',
+            'request',
+            'payloadFingerprint',
+            'expiresAt'
+          ],
     'EVM external signing request'
   )
   const request = readRecord(record.request, 'EVM external signing payload')
@@ -609,6 +631,15 @@ function parseExternalSigningRequest(
   if (chainId.namespace !== 'eip155') {
     throw new Error('EVM external signing request has an invalid chain')
   }
+  const scope = readRecord(record.scope, 'EVM external signing scope')
+  assertExactKeys(scope, ['keyDomainId', 'accountId'], 'EVM external signing scope')
+  const keyDomainId = parseKeyDomainId(scope.keyDomainId)
+  const accountId = parseAccountId(scope.accountId)
+  const summary = parseSigningSummary(record.summary, {
+    family: 'evm',
+    chainId: chainId.id,
+    operation: 'transaction'
+  })
   let ledgerRequest: Extract<LedgerEvmSigningRequest, { kind: 'transaction' }> | undefined
   if (vendor === 'ledger') {
     const ledger = readRecord(record.ledgerRequest, 'Ledger EVM signing request')
@@ -640,6 +671,8 @@ function parseExternalSigningRequest(
     vendor,
     ...(ledgerRequest ? { ledgerRequest } : {}),
     transactionId: expectedTransactionId,
+    scope: Object.freeze({ keyDomainId, accountId }),
+    summary,
     chainId: chainId.id,
     request: Object.freeze({
       encoding: 'base64' as const,

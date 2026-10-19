@@ -80,6 +80,11 @@ const ERROR_MAPPINGS: ErrorMapping[] = [
 
   // --- Swap routing ---
   {
+    pattern: /RHEA Swap quote expired/i,
+    message: 'Swap quote expired. Get a new quote and review it again.',
+    retryable: false
+  },
+  {
     pattern: /minimum (?:swap )?amount|amount.*(?:below|less than).*minimum/i,
     message: 'Amount is below the current minimum for this Swap route.',
     retryable: false

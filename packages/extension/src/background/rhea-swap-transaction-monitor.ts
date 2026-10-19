@@ -150,13 +150,20 @@ export class RheaSwapTransactionMonitor {
   ) {}
 
   async init(): Promise<void> {
-    await this.pendingQueue.run(async () => {
-      await this.load()
-      await this.restorePendingZcashSwapsLoaded()
-    })
-    const graphPending = await this.pollGraphs()
-    const reportPending = await this.retryReports()
-    this.schedule(graphPending || reportPending)
+    let graphPending = false
+    let reportPending = false
+    let failed = true
+    try {
+      await this.pendingQueue.run(async () => {
+        await this.load()
+        await this.restorePendingZcashSwapsLoaded()
+      })
+      graphPending = await this.pollGraphs()
+      reportPending = await this.retryReports()
+      failed = false
+    } finally {
+      await this.schedule(failed || graphPending || reportPending)
+    }
   }
 
   async add(value: unknown): Promise<void> {
@@ -179,20 +186,27 @@ export class RheaSwapTransactionMonitor {
         else this.pending.delete(transaction.quoteHandle)
         throw error
       }
-      this.schedule(false)
+      await this.schedule(false)
     })
   }
 
   async handleAlarm(): Promise<void> {
-    const pending = await this.pendingQueue.run(async () => {
-      await this.load()
-      await this.restorePendingZcashSwapsLoaded()
-      return [...this.pending.values()]
-    })
-    await Promise.allSettled(pending.map(value => this.check(value)))
-    const graphPending = await this.pollGraphs()
-    const reportPending = await this.retryReports()
-    this.schedule(graphPending || reportPending)
+    let graphPending = false
+    let reportPending = false
+    let failed = true
+    try {
+      const pending = await this.pendingQueue.run(async () => {
+        await this.load()
+        await this.restorePendingZcashSwapsLoaded()
+        return [...this.pending.values()]
+      })
+      await Promise.allSettled(pending.map(value => this.check(value)))
+      graphPending = await this.pollGraphs()
+      reportPending = await this.retryReports()
+      failed = false
+    } finally {
+      await this.schedule(failed || graphPending || reportPending)
+    }
   }
 
   async recheckNow(): Promise<boolean> {
@@ -204,7 +218,7 @@ export class RheaSwapTransactionMonitor {
     await Promise.allSettled(pending.map(value => this.check(value)))
     const graphPending = await this.pollGraphs()
     const reportPending = await this.retryReports()
-    this.schedule(graphPending || reportPending)
+    await this.schedule(graphPending || reportPending)
     return this.pending.size > 0 || graphPending || reportPending
   }
 
@@ -238,7 +252,7 @@ export class RheaSwapTransactionMonitor {
         for (const [quoteHandle, value] of removedEntries) this.pending.set(quoteHandle, value)
         throw error
       }
-      this.schedule(false)
+      await this.schedule(false)
     })
   }
 
@@ -254,7 +268,7 @@ export class RheaSwapTransactionMonitor {
         throw error
       }
       this.loaded = true
-      this.schedule(false)
+      await this.schedule(false)
     })
   }
 
@@ -323,7 +337,7 @@ export class RheaSwapTransactionMonitor {
         for (const handle of restoredHandles) this.pending.delete(handle)
         throw error
       }
-      this.schedule(false)
+      await this.schedule(false)
     }
     return restored
   }
@@ -775,13 +789,48 @@ export class RheaSwapTransactionMonitor {
     }
   }
 
-  private schedule(graphPending: boolean): void {
+  private async schedule(graphPending: boolean): Promise<void> {
     if (this.pending.size === 0 && !graphPending) {
-      void chrome.alarms.clear(RHEA_SWAP_TRANSACTION_MONITOR_ALARM)
+      await chrome.alarms.clear(RHEA_SWAP_TRANSACTION_MONITOR_ALARM)
       return
     }
-    chrome.alarms.create(RHEA_SWAP_TRANSACTION_MONITOR_ALARM, {
-      delayInMinutes: POLL_DELAY_MINUTES
-    })
+    await scheduleRheaSwapTransactionMonitorRetry()
+  }
+}
+
+export async function scheduleRheaSwapTransactionMonitorRetry(): Promise<void> {
+  await chrome.alarms.create(RHEA_SWAP_TRANSACTION_MONITOR_ALARM, {
+    delayInMinutes: POLL_DELAY_MINUTES
+  })
+}
+
+export async function recoverSignedRheaSwaps(
+  recoveries: readonly { name: string; recover: () => Promise<unknown> }[]
+): Promise<boolean> {
+  const results = await Promise.allSettled(
+    recoveries.map(({ recover }) => Promise.resolve().then(recover))
+  )
+  let failed = false
+  results.forEach((result, index) => {
+    if (result.status === 'rejected') {
+      failed = true
+      console.warn(
+        `[RHEA Swap Monitor] ${recoveries[index].name} signed recovery failed:`,
+        result.reason
+      )
+    }
+  })
+  return failed
+}
+
+export async function recoverSignedRheaSwapsAndPoll(
+  recoveries: readonly { name: string; recover: () => Promise<unknown> }[],
+  monitor: Pick<RheaSwapTransactionMonitor, 'handleAlarm'> | null | undefined
+): Promise<void> {
+  const recoveryFailed = await recoverSignedRheaSwaps(recoveries)
+  try {
+    await monitor?.handleAlarm()
+  } finally {
+    if (recoveryFailed) await scheduleRheaSwapTransactionMonitorRetry()
   }
 }

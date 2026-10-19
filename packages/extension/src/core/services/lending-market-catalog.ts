@@ -1,13 +1,12 @@
 import {
   getFarmDetailsOfAsset,
+  type Asset,
   type IAssetsView,
   type Portfolio
 } from '@rhea-finance/cross-chain-sdk'
 import { ZEC_NEAR_ASSET, ZEC_NEAR_TOKEN_ID } from '@/config/intents'
 import { safeBig } from '@/lib/big'
 import { formatAmount } from '@/lib/format'
-
-const LENDING_BALANCE_EXTRA_DECIMALS = 10
 
 export type LendingMarketId = string
 
@@ -67,6 +66,23 @@ export function normalizeLendingMarketSymbol(symbol: string): string {
   return trimmed
 }
 
+export function getLendingBalanceDecimals(asset: Asset | null | undefined): number | null {
+  const baseDecimals = asset?.metadata?.decimals
+  const extraDecimals = asset?.config?.extra_decimals
+  if (
+    typeof baseDecimals !== 'number' ||
+    typeof extraDecimals !== 'number' ||
+    !Number.isInteger(baseDecimals) ||
+    !Number.isInteger(extraDecimals) ||
+    baseDecimals < 0 ||
+    extraDecimals < 0 ||
+    baseDecimals + extraDecimals > 255
+  ) {
+    return null
+  }
+  return baseDecimals + extraDecimals
+}
+
 export function getLendingMarketViews(
   assetsView: IAssetsView | null,
   portfolioView: Portfolio | null | undefined
@@ -76,10 +92,11 @@ export function getLendingMarketViews(
   return Object.freeze(
     Object.entries(assetsView).flatMap(([tokenId, asset]) => {
       const metadata = asset?.metadata
+      const totalDecimals = getLendingBalanceDecimals(asset)
       if (
         !asset ||
         !metadata ||
-        !Number.isInteger(metadata.decimals) ||
+        totalDecimals === null ||
         typeof metadata.symbol !== 'string' ||
         metadata.symbol.length === 0 ||
         typeof metadata.name !== 'string' ||
@@ -88,7 +105,6 @@ export function getLendingMarketViews(
         return []
       }
 
-      const totalDecimals = metadata.decimals + LENDING_BALANCE_EXTRA_DECIMALS
       const totalSupplied = formatAmount(asset.supplied?.balance || '0', totalDecimals)
       const suppliedRaw = safeBig(portfolioView?.supplied?.[tokenId]?.balance || '0')
         .plus(portfolioView?.collateral?.[tokenId]?.balance || '0')
@@ -124,9 +140,9 @@ export function getLendingMarketViews(
           priceUsd: normalizedPriceUsd,
           supplyApy,
           totalSupplied,
-          totalSuppliedUsd: safeBig(totalSupplied).times(normalizedPriceUsd).toFixed(2),
+          totalSuppliedUsd: safeBig(totalSupplied).times(normalizedPriceUsd).toFixed(),
           supplied,
-          suppliedUsd: safeBig(supplied).times(normalizedPriceUsd).toFixed(2)
+          suppliedUsd: safeBig(supplied).times(normalizedPriceUsd).toFixed()
         })
       ]
     })

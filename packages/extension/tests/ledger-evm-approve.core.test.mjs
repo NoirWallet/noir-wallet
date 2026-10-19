@@ -15,6 +15,7 @@ import {
   EvmTransferOrchestrator
 } from '../src/infrastructure/chains/evm/index.ts'
 import { parseEvmAccountBinding } from '../src/infrastructure/chains/evm/evm-account.ts'
+import { loadLedgerSigningView } from '../src/popup/services/ledger-signing-view.ts'
 import { HardwareEvmSigningContextResolver } from '../src/infrastructure/keyring/hardware-evm-signing-context.ts'
 import { LedgerHardwareProvisioningCoordinator } from '../src/infrastructure/keyring/ledger-hardware-provisioning-coordinator.ts'
 import {
@@ -187,6 +188,31 @@ async function signatureFor(unsignedTransactionHex, signer = ledgerAccount) {
   const parsed = parseTransaction(signed)
   return `${parsed.r}${parsed.s.slice(2)}${parsed.yParity.toString(16).padStart(2, '0')}`
 }
+
+it('loads an approved Ledger EVM review from its external signing request', async t => {
+  const { controller } = await fixture()
+  const { transactionId, fingerprint, request } = await prepareApproval(controller)
+  const originalChrome = globalThis.chrome
+  t.mock.method(Date, 'now', () => 1_000)
+  const messages = []
+  globalThis.chrome = {
+    runtime: {
+      sendMessage: async message => {
+        messages.push(message)
+        return { result: request }
+      }
+    }
+  }
+  try {
+    const view = await loadLedgerSigningView({ family: 'evm', transactionId })
+    assert.deepEqual(messages, [{ type: 'GET_KEYSTONE_EVM_SIGNING_REQUEST', transactionId }])
+    assert.deepEqual(view.scope, { ...request.scope, chainId })
+    assert.deepEqual(view.summary, request.summary)
+    assert.equal(view.payloadFingerprint.digestHex, fingerprint)
+  } finally {
+    globalThis.chrome = originalChrome
+  }
+})
 
 it('accepts only canonical bounded EVM BIP-44 hardware paths', () => {
   const chainAccount = {

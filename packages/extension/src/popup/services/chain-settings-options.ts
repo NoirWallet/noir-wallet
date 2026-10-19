@@ -174,7 +174,7 @@ export function buildExplorerChainOptions(
   return Object.freeze([
     Object.freeze({
       chainId: getZcashChainId(DEFAULT_NETWORK),
-      label: 'Zcash',
+      label: DEFAULT_NETWORK === 'testnet' ? 'Zcash Testnet' : 'Zcash',
       iconChain: 'zec',
       defaultUrl:
         DEFAULT_NETWORK === 'mainnet' ? getBlockExplorerBaseUrl('zcash') : zcash.explorerUrl,

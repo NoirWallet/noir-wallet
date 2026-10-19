@@ -532,9 +532,15 @@ test('hands a Keystone PSBT off externally and broadcasts only after strict sign
     graph: { root: { status: 'approved' } }
   })
   await expect(
+    testHarness.orchestrator.getPendingApproval({ scope, transactionId })
+  ).resolves.toBeNull()
+  await expect(
     testHarness.orchestrator.getExternalSigningRequest({ scope, transactionId })
   ).resolves.toMatchObject({
     transactionId,
+    scope,
+    chainId,
+    summary: approval.signing.summary,
     request: { encoding: 'base64', value: testHarness.context.prepared.psbtBase64 }
   })
 
@@ -578,8 +584,14 @@ test('routes a Ledger Bitcoin PSBT through the same strict finalizer', async () 
     testHarness.orchestrator.getExternalSigningRequest({ scope, transactionId })
   ).resolves.toMatchObject({
     vendor: 'ledger',
+    scope,
+    chainId,
+    summary: approval.signing.summary,
     request: { value: testHarness.context.prepared.psbtBase64 }
   })
+  await expect(
+    testHarness.orchestrator.getPendingApproval({ scope, transactionId })
+  ).resolves.toBeNull()
   const signed = Psbt.fromBase64(testHarness.context.prepared.psbtBase64)
   signed.signInput(0, {
     publicKey: testHarness.context.sender.publicKey,

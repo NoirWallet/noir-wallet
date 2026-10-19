@@ -7,11 +7,16 @@ import {
 } from '../src/core/transactions/domain/index.ts'
 import { IndexedDbTransactionRepository } from '../src/infrastructure/persistence/repositories/indexed-db-transaction-repository.ts'
 import { createStoredTransactionGraphRecord } from '../src/infrastructure/persistence/repositories/indexed-db-transaction-database.ts'
-import { RheaSwapTransactionMonitor } from '../src/background/rhea-swap-transaction-monitor.ts'
+import {
+  RHEA_SWAP_TRANSACTION_MONITOR_ALARM,
+  RheaSwapTransactionMonitor,
+  recoverSignedRheaSwapsAndPoll
+} from '../src/background/rhea-swap-transaction-monitor.ts'
 import { ChromeRheaSwapQuoteStore } from '../src/background/rhea-swap.ts'
 import { resolveRheaSwapCanonicalAssetId } from '../src/core/services/rhea-swap/rhea-swap-asset-identity.ts'
 import {
   getRheaSwapQuoteDeadline,
+  assertRheaSwapSubmissionDeadline,
   isRheaSwapQuoteFresh
 } from '../src/core/services/rhea-swap/rhea-swap-quote-validity.ts'
 import { resolveRheaSwapDestinationIdentity } from '../src/popup/services/quote-deposit-transfer-client.ts'
@@ -69,6 +74,136 @@ function transaction() {
   }
 }
 
+it('re-arms the one-shot monitor alarm after a transient graph scope failure', async () => {
+  storage()
+  const scheduled = []
+  const cleared = []
+  chrome.alarms.create = (name, options) => scheduled.push({ name, options })
+  chrome.alarms.clear = name => cleared.push(name)
+  let unavailable = true
+  const monitor = new RheaSwapTransactionMonitor({
+    async retryPendingReports() {
+      return false
+    }
+  })
+  monitor.storageRepository = {
+    async getActivePointer() {
+      if (unavailable) throw new Error('Storage V2 temporarily unavailable')
+      return null
+    }
+  }
+
+  await assert.rejects(monitor.handleAlarm(), /Storage V2 temporarily unavailable/)
+  assert.deepEqual(
+    scheduled.map(item => item.name),
+    [RHEA_SWAP_TRANSACTION_MONITOR_ALARM]
+  )
+  assert.equal(scheduled[0].options.delayInMinutes > 0, true)
+
+  unavailable = false
+  await monitor.handleAlarm()
+  assert.deepEqual(cleared, [RHEA_SWAP_TRANSACTION_MONITOR_ALARM])
+})
+
+it('schedules a retry when the initial persisted monitor load fails', async () => {
+  storage()
+  const scheduled = []
+  chrome.alarms.create = name => scheduled.push(name)
+  const get = chrome.storage.local.get
+  let unavailable = true
+  chrome.storage.local.get = async key => {
+    if (unavailable) throw new Error('Monitor storage temporarily unavailable')
+    return get(key)
+  }
+  const monitor = new RheaSwapTransactionMonitor({
+    async retryPendingReports() {
+      return false
+    }
+  })
+  monitor.storageRepository = {
+    async getActivePointer() {
+      return null
+    }
+  }
+
+  await assert.rejects(monitor.init(), /Monitor storage temporarily unavailable/)
+  assert.deepEqual(scheduled, [RHEA_SWAP_TRANSACTION_MONITOR_ALARM])
+
+  unavailable = false
+  await monitor.handleAlarm()
+  assert.equal(monitor.loaded, true)
+})
+
+it('polls after one signed recovery fails and still attempts the other chains', async () => {
+  storage()
+  const calls = []
+  const warnings = []
+  const scheduled = []
+  const cleared = []
+  let resolveClearStarted
+  const clearStarted = new Promise(resolve => {
+    resolveClearStarted = resolve
+  })
+  let resolveClear
+  chrome.alarms.create = (name, options) => scheduled.push({ name, options })
+  chrome.alarms.clear = name => {
+    cleared.push(name)
+    resolveClearStarted()
+    return new Promise(resolve => {
+      resolveClear = resolve
+    })
+  }
+  const originalWarn = console.warn
+  console.warn = (...args) => warnings.push(args)
+  try {
+    const recovery = recoverSignedRheaSwapsAndPoll(
+      [
+        {
+          name: 'EVM',
+          async recover() {
+            calls.push('evm')
+            throw new Error('EVM storage unavailable')
+          }
+        },
+        {
+          name: 'Solana',
+          async recover() {
+            calls.push('solana')
+          }
+        },
+        {
+          name: 'NEAR',
+          async recover() {
+            calls.push('near')
+          }
+        }
+      ],
+      {
+        async handleAlarm() {
+          calls.push('monitor')
+          await chrome.alarms.clear(RHEA_SWAP_TRANSACTION_MONITOR_ALARM)
+        }
+      }
+    )
+    await clearStarted
+    assert.deepEqual(scheduled, [])
+    resolveClear()
+    await recovery
+  } finally {
+    resolveClear?.()
+    console.warn = originalWarn
+  }
+  assert.deepEqual(calls, ['evm', 'solana', 'near', 'monitor'])
+  assert.equal(warnings.length, 1)
+  assert.match(warnings[0][0], /EVM signed recovery failed/)
+  assert.deepEqual(cleared, [RHEA_SWAP_TRANSACTION_MONITOR_ALARM])
+  assert.deepEqual(
+    scheduled.map(item => item.name),
+    [RHEA_SWAP_TRANSACTION_MONITOR_ALARM]
+  )
+  assert.equal(scheduled[0].options.delayInMinutes > 0, true)
+})
+
 it('maps supported RHEA destinations to wallet asset identities', () => {
   assert.equal(resolveRheaSwapCanonicalAssetId(protocolUsdc), canonicalUsdc)
   assert.equal(
@@ -101,6 +236,19 @@ it('uses the earlier of the SDK age limit and provider expiration', () => {
   assert.equal(isRheaSwapQuoteFresh({ receivedAt: 1_000, expiresAt: null }, 31_001), false)
   assert.equal(isRheaSwapQuoteFresh({ receivedAt: 1_000, expiresAt: null }, 999), false)
   assert.equal(isRheaSwapQuoteFresh({ receivedAt: Number.NaN, expiresAt: null }, 1_000), false)
+})
+
+it('rejects expired Zcash submissions after signing or queued wallet work', () => {
+  assert.doesNotThrow(() => assertRheaSwapSubmissionDeadline(undefined, 31_000))
+  assert.doesNotThrow(() => assertRheaSwapSubmissionDeadline(31_000, 30_999))
+  for (const [deadline, now] of [
+    [31_000, 31_000],
+    [31_000, 31_001],
+    [NaN, 1_000],
+    [Infinity, 1_000]
+  ]) {
+    assert.throws(() => assertRheaSwapSubmissionDeadline(deadline, now), /quote expired/)
+  }
 })
 
 it('restores a Zcash swap monitor from its persisted transaction and scope', async () => {

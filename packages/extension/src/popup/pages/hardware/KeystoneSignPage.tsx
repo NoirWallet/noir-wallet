@@ -6,6 +6,8 @@ import { AnimatedQR } from '../../components/hardware/AnimatedQR'
 import { QRScanner } from '../../components/hardware/QRScanner'
 import { CenteredNotice } from '../../components/hardware/CenteredNotice'
 import { HardwareTransactionSummary } from '../../components/hardware/HardwareTransactionSummary'
+import { HardwareSigningProgress } from '../../components/hardware/HardwareSigningProgress'
+import { Skeleton } from '../../components/ui/skeleton'
 import { StandardTransactionResult } from '../../components/transaction/StandardTransactionResult'
 import { useLocation } from '../../provider/Router'
 import { parseSignedPczt, type UR } from '@/lib/keystone'
@@ -504,14 +506,29 @@ export function KeystoneSignPage() {
       )}
 
       {step === 'building' && (
-        <div className="page-content flex flex-col items-center justify-center">
-          <Icon
-            icon="lucide:loader-2"
-            width={32}
-            height={32}
-            className="animate-spin text-primary mb-4"
-          />
-          <p className="text-sm text-muted">Building transaction...</p>
+        <div className="page-content space-y-5 pt-5">
+          <HardwareSigningProgress title="Building transaction">
+            {request ? (
+              <HardwareTransactionSummary
+                request={request}
+                amountPending={request.maxTransfer === true && !builtAmount}
+              />
+            ) : (
+              <div className="space-y-4">
+                <div className="flex flex-col items-center gap-3 py-4">
+                  <Skeleton className="size-12 rounded-full" />
+                  <Skeleton className="h-8 w-32" />
+                </div>
+                <div className="space-y-3 rounded-lg bg-card p-4">
+                  <Skeleton className="h-4 w-full" />
+                  <Skeleton className="h-4 w-3/4" />
+                </div>
+              </div>
+            )}
+            <div className="flex justify-center pt-2">
+              <Skeleton className="size-52 rounded-lg" />
+            </div>
+          </HardwareSigningProgress>
         </div>
       )}
 
@@ -609,18 +626,15 @@ export function KeystoneSignPage() {
         </>
       )}
 
-      {step === 'broadcasting' && (
-        <div className="page-content flex flex-col items-center justify-center">
-          <Icon
-            icon="lucide:loader-2"
-            width={32}
-            height={32}
-            className="animate-spin text-primary mb-4"
-          />
-          <p className="text-sm font-medium mb-1">Finalizing transaction</p>
-          <p className="text-xs text-muted text-center">
-            Generating the zero-knowledge proof and broadcasting. This can take a minute.
-          </p>
+      {step === 'broadcasting' && request && (
+        <div className="page-content space-y-5 pt-5">
+          <HardwareSigningProgress title="Finalizing transaction">
+            <HardwareTransactionSummary
+              request={{ ...request, amount: builtAmount ?? request.amount }}
+              feeZec={feeZec}
+              ledgerDisplayAddress={ledgerDisplayAddress ?? undefined}
+            />
+          </HardwareSigningProgress>
         </div>
       )}
 

@@ -145,10 +145,13 @@ import {
   createBackgroundAssetMarketHistoryService,
   createBackgroundAssetPriceService
 } from './asset-prices'
-import { createBackgroundRheaSwapService } from './rhea-swap'
+import { createBackgroundRheaSwapService, readRheaZcashTransferDeadline } from './rhea-swap'
 import {
   RHEA_SWAP_TRANSACTION_MONITOR_ALARM,
-  RheaSwapTransactionMonitor
+  RheaSwapTransactionMonitor,
+  recoverSignedRheaSwaps,
+  recoverSignedRheaSwapsAndPoll,
+  scheduleRheaSwapTransactionMonitorRetry
 } from './rhea-swap-transaction-monitor'
 import { createBackgroundRheaSwapEvmSignatureCoordinator } from './rhea-swap-evm-signature'
 import {
@@ -807,7 +810,14 @@ async function reloadMultichainRuntime(
   accountNetworksCoordinator = createBackgroundAccountNetworksCoordinator(
     customEvmNetworks,
     networkSwitchBitcoinDerivation,
-    accountNetworksPeaDerivation
+    accountNetworksPeaDerivation,
+    scope => {
+      if (scope.chainId !== getZcashChainId(DEFAULT_NETWORK)) return null
+      return (
+        useWalletStore.getState().getAccount(scope.keyDomainId, scope.accountId)
+          ?.networkAddresses?.[DEFAULT_NETWORK]?.shielded || null
+      )
+    }
   )
   const evmTransferRuntime =
     evmFeatureRuntimePolicy.newOperationsEnabled && hasBackgroundEvmTransferCapability(activeEvm)
@@ -1395,6 +1405,23 @@ const multichainStartupReady = runtimeNetworkReady.then(async () => {
   await scheduleMultichainRuntimeReload()
 })
 
+function rheaSignedRecoveryJobs() {
+  return [
+    {
+      name: 'EVM',
+      recover: () => rheaSwapEvmSignatureCoordinator?.recoverSigned() ?? Promise.resolve(0)
+    },
+    {
+      name: 'Solana',
+      recover: () => rheaSwapSolanaCoordinator?.recoverSigned() ?? Promise.resolve(0)
+    },
+    {
+      name: 'NEAR',
+      recover: () => rheaSwapNearCoordinator?.recoverSigned() ?? Promise.resolve(0)
+    }
+  ]
+}
+
 const backgroundNetworkServicesReady = multichainStartupReady
   .then(async () => {
     await Promise.all([
@@ -1402,13 +1429,15 @@ const backgroundNetworkServicesReady = multichainStartupReady
         ? transactionMonitor.init()
         : chrome.alarms.clear('transaction-monitor-alarm').then(() => undefined),
       zcashTxMonitor.init(),
-      rheaSwapTransactionMonitor?.init() ?? Promise.resolve()
+      rheaSwapTransactionMonitor?.init().catch(error => {
+        console.warn('[RHEA Swap Monitor] Startup poll failed:', error)
+      }) ?? Promise.resolve()
     ])
-    await Promise.all([
-      rheaSwapEvmSignatureCoordinator?.recoverSigned() ?? Promise.resolve(0),
-      rheaSwapSolanaCoordinator?.recoverSigned() ?? Promise.resolve(0),
-      rheaSwapNearCoordinator?.recoverSigned() ?? Promise.resolve(0)
-    ])
+    if (await recoverSignedRheaSwaps(rheaSignedRecoveryJobs())) {
+      await scheduleRheaSwapTransactionMonitorRetry().catch(error => {
+        console.warn('[RHEA Swap Monitor] Could not schedule signed recovery retry:', error)
+      })
+    }
     void refreshIntentsProtocolAssets().catch(error => {
       console.warn('[Intents assets] Protocol token catalog is unavailable', error)
     })
@@ -1713,15 +1742,12 @@ chrome.alarms.onAlarm.addListener(alarm => {
         })
       }
       if (alarm.name === RHEA_SWAP_TRANSACTION_MONITOR_ALARM) {
-        void Promise.all([
-          rheaSwapEvmSignatureCoordinator?.recoverSigned() ?? Promise.resolve(0),
-          rheaSwapSolanaCoordinator?.recoverSigned() ?? Promise.resolve(0),
-          rheaSwapNearCoordinator?.recoverSigned() ?? Promise.resolve(0)
-        ])
-          .then(() => rheaSwapTransactionMonitor?.handleAlarm())
-          .catch(error => {
-            console.warn('[RHEA Swap Monitor] Poll failed:', error)
-          })
+        void recoverSignedRheaSwapsAndPoll(
+          rheaSignedRecoveryJobs(),
+          rheaSwapTransactionMonitor
+        ).catch(error => {
+          console.warn('[RHEA Swap Monitor] Poll failed:', error)
+        })
       }
       if (alarm.name === CONFIDENTIAL_FUNDING_MONITOR_ALARM) {
         confidentialFundingCoordinator?.resumeAll().catch(error => {
@@ -4616,7 +4642,16 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
           )
           const walletCore = await prepareWalletCoreForTx(request.walletId, request.accountId)
           try {
-            return await walletCore.pcztProveSend(prepared.fullPcztBase64, message.signedPcztBase64)
+            const deadline = await readRheaZcashTransferDeadline(
+              request.quoteBinding,
+              request.to,
+              request.amount
+            )
+            return await walletCore.pcztProveSend(
+              prepared.fullPcztBase64,
+              message.signedPcztBase64,
+              deadline
+            )
           } catch (error) {
             if (isTransactionSubmissionUnknown(error)) {
               await recordUncertainBroadcast(
@@ -4690,7 +4725,12 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
             signatures
           )
           try {
-            return await walletCore.pcztProveSend(prepared.fullPcztBase64, signed)
+            const deadline = await readRheaZcashTransferDeadline(
+              request.quoteBinding,
+              request.to,
+              request.amount
+            )
+            return await walletCore.pcztProveSend(prepared.fullPcztBase64, signed, deadline)
           } catch (error) {
             if (isTransactionSubmissionUnknown(error)) {
               await recordUncertainBroadcast(
@@ -6103,7 +6143,15 @@ async function handleBackgroundZcashTx(params: {
           onChainAmount = shieldResult.amount
         }
       } else {
-        const transferResult = await walletCore.sendTransaction({ ...sendParams!, marginalFeeZats })
+        const submissionDeadline = await readRheaZcashTransferDeadline(
+          pendingRecord.quoteBinding,
+          sendParams!.to,
+          sendParams!.amount
+        )
+        const transferResult = await walletCore.sendTransaction(
+          { ...sendParams!, marginalFeeZats },
+          submissionDeadline
+        )
         const successfulTransfer = requireSuccessfulTransfer(transferResult)
         txid = successfulTransfer.txHash
         txHashes = successfulTransfer.txHashes
