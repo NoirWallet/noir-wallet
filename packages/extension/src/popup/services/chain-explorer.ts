@@ -3,6 +3,7 @@ import {
   getNearNetworkConfig,
   getSolanaNetworkConfig
 } from '@/config/networks'
+import { CHAIN_BLOCK_EXPLORER_ALTERNATIVES } from '@/config/block-explorers'
 import {
   getBlockExplorerBaseUrl,
   getBlockExplorerTransactionPath
@@ -15,10 +16,13 @@ import { resolveEvmNetworkCatalog } from '@/core/chains/evm-runtime-config'
 import { getNetworkConfig } from '@/lib/runtime-network'
 import { getBitcoinChainId, getZcashChainId } from '@/core/chains/registry'
 import type { Network } from '@/types'
+import { isSameExplorer } from './explorer-settings-model'
 
 export interface ChainExplorerTarget {
   readonly baseUrl: string
   readonly transactionPath: string
+  readonly addressPath?: string
+  readonly tokenPath?: string
 }
 
 export function resolveChainExplorerTarget(
@@ -27,10 +31,19 @@ export function resolveChainExplorerTarget(
 ): ChainExplorerTarget | null {
   const settings = getActiveChainEndpointSettings()
   const custom = findChainEndpointOverride(settings, chainId)?.explorer
+  const solana = getSolanaNetworkConfig(network === 'mainnet' ? 'mainnet' : 'devnet')
   if (custom) {
+    const preset = CHAIN_BLOCK_EXPLORER_ALTERNATIVES[chainId]?.find(explorer =>
+      isSameExplorer(explorer, custom)
+    )
     return Object.freeze({
-      baseUrl: custom.baseUrl,
-      transactionPath: custom.transactionPath
+      baseUrl:
+        preset && chainId === solana.chainId && network === 'testnet'
+          ? `${custom.baseUrl}?cluster=devnet`
+          : custom.baseUrl,
+      transactionPath: custom.transactionPath,
+      ...(preset?.addressPath ? { addressPath: preset.addressPath } : {}),
+      ...(preset && chainId.startsWith('eip155:') ? { tokenPath: 'token' } : {})
     })
   }
   if (chainId === getZcashChainId(network)) {
@@ -47,9 +60,12 @@ export function resolveChainExplorerTarget(
       transactionPath: 'tx'
     })
   }
-  const solana = getSolanaNetworkConfig(network === 'mainnet' ? 'mainnet' : 'devnet')
   if (chainId === solana.chainId) {
-    return Object.freeze({ baseUrl: 'https://solscan.io', transactionPath: 'tx' })
+    return Object.freeze({
+      baseUrl: solana.explorerUrl,
+      transactionPath: 'tx',
+      addressPath: 'account'
+    })
   }
   const near = getNearNetworkConfig(network)
   if (chainId === near.chainId) {
@@ -57,8 +73,14 @@ export function resolveChainExplorerTarget(
   }
   const evm = resolveEvmNetworkCatalog(network, settings).find(config => config.chainId === chainId)
   return evm?.explorerUrl
-    ? Object.freeze({ baseUrl: evm.explorerUrl, transactionPath: 'tx' })
+    ? Object.freeze({ baseUrl: evm.explorerUrl, transactionPath: 'tx', tokenPath: 'token' })
     : null
+}
+
+function explorerLink(target: ChainExplorerTarget, path: string, identifier: string): string {
+  const url = new URL(target.baseUrl)
+  url.pathname = `${url.pathname.replace(/\/+$/, '')}/${path}/${encodeURIComponent(identifier)}`
+  return url.toString()
 }
 
 export function formatChainTransactionExplorerUrl(
@@ -66,18 +88,8 @@ export function formatChainTransactionExplorerUrl(
   transactionHash: string,
   network: Network
 ): string {
-  const custom = findChainEndpointOverride(getActiveChainEndpointSettings(), chainId)?.explorer
-  if (custom) {
-    return `${custom.baseUrl}/${custom.transactionPath}/${encodeURIComponent(transactionHash)}`
-  }
-  const solana = getSolanaNetworkConfig(network === 'mainnet' ? 'mainnet' : 'devnet')
-  if (chainId === solana.chainId) {
-    const cluster = network === 'mainnet' ? '' : '?cluster=devnet'
-    return `https://solscan.io/tx/${encodeURIComponent(transactionHash)}${cluster}`
-  }
   const target = resolveChainExplorerTarget(chainId, network)
-  if (!target) return ''
-  return `${target.baseUrl}/${target.transactionPath}/${encodeURIComponent(transactionHash)}`
+  return target ? explorerLink(target, target.transactionPath, transactionHash) : ''
 }
 
 export function formatChainAddressExplorerUrl(
@@ -85,20 +97,8 @@ export function formatChainAddressExplorerUrl(
   address: string,
   network: Network
 ): string {
-  const custom = findChainEndpointOverride(getActiveChainEndpointSettings(), chainId)?.explorer
-  if (custom) return `${custom.baseUrl}/address/${encodeURIComponent(address)}`
-  const solana = getSolanaNetworkConfig(network === 'mainnet' ? 'mainnet' : 'devnet')
-  if (chainId === solana.chainId) {
-    const cluster = network === 'mainnet' ? '' : '?cluster=devnet'
-    return `https://solscan.io/account/${encodeURIComponent(address)}${cluster}`
-  }
-  const near = getNearNetworkConfig(network)
-  if (chainId === near.chainId) {
-    return `${near.explorerUrl}/address/${encodeURIComponent(address)}`
-  }
   const target = resolveChainExplorerTarget(chainId, network)
-  if (!target) return ''
-  return `${target.baseUrl}/address/${encodeURIComponent(address)}`
+  return target ? explorerLink(target, target.addressPath ?? 'address', address) : ''
 }
 
 export function formatChainAssetExplorerUrl(
@@ -106,12 +106,9 @@ export function formatChainAssetExplorerUrl(
   asset: Readonly<{ kind: 'native' | 'token'; namespace: string; reference: string }>,
   network: Network
 ): string {
-  const custom = findChainEndpointOverride(getActiveChainEndpointSettings(), chainId)?.explorer
-  if (custom) return custom.baseUrl
   const target = resolveChainExplorerTarget(chainId, network)
   if (!target) return ''
-  if (asset.kind === 'token' && asset.namespace === 'erc20') {
-    return `${target.baseUrl}/token/${encodeURIComponent(asset.reference)}`
-  }
-  return target.baseUrl
+  return target.tokenPath && asset.kind === 'token' && asset.namespace === 'erc20'
+    ? explorerLink(target, target.tokenPath, asset.reference)
+    : target.baseUrl
 }

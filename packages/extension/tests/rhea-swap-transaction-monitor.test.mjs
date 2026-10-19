@@ -93,8 +93,8 @@ test('waits for every NEAR origin before reporting the final batch hash', async 
       calls.push('status')
       return { status: 'pending' }
     },
-    async discard() {
-      calls.push('discard')
+    async retireReportedSubmission() {
+      calls.push('retire')
     }
   }
   const repository = new InMemoryTransactionRepository()
@@ -122,7 +122,7 @@ test('refreshes both affected chains as soon as a RHEA order completes', async (
     async getOrderStatus() {
       return { status: 'completed', destinationHash }
     },
-    async discard() {}
+    async retireReportedSubmission() {}
   }
   const repository = new InMemoryTransactionRepository()
   const initial = graph()
@@ -173,7 +173,7 @@ test('retains a processing destination hash when completion omits it', async () 
     async getOrderStatus() {
       return { status: orderStatus, ...(orderStatus === 'processing' ? { destinationHash } : {}) }
     },
-    async discard() {
+    async retireReportedSubmission() {
       expect(orderStatus).toBe('completed')
     }
   }
@@ -224,8 +224,8 @@ test('still reads cross-chain completion when submission reporting fails', async
       calls.push('status')
       return { status: 'completed' }
     },
-    async discard() {
-      calls.push('discard')
+    async retireReportedSubmission() {
+      calls.push('retire')
     }
   }
   const repository = new InMemoryTransactionRepository()
@@ -237,5 +237,5 @@ test('still reads cross-chain completion when submission reporting fails', async
   monitor.repository = repository
 
   await expect(monitor.checkGraph(fullBroadcast)).resolves.toBe(true)
-  expect(calls).toEqual(['record', 'report', 'status', 'discard'])
+  expect(calls).toEqual(['record', 'report', 'status', 'retire'])
 })

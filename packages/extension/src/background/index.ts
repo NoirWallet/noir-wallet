@@ -1,3 +1,8 @@
+import {
+  initializeAnalyticsReporting,
+  handleAnalyticsAlarm,
+  ANALYTICS_OUTBOX_ALARM
+} from '@/background/analytics/reporter'
 import '@/lib/buffer-polyfill'
 import { betaInviteActivation } from './beta-invite'
 import { getBetaInviteErrorMessage } from '@/core/wallet/beta-invite'
@@ -12,8 +17,15 @@ import { parseLedgerPcztSignatures } from '@/lib/ledger/signature'
 import { safeBig } from '@/lib/big'
 import type { LedgerSigningPayload } from '@/core/worker/types'
 import '@/core/services/lending-sdk-init'
-import { ANALYTICS_EVENTS, handleAnalyticsMessage, trackEvent } from '@/lib/analytics'
-import type { TrackOptions } from '@/lib/analytics/types'
+import {
+  ANALYTICS_EVENTS,
+  handleAnalyticsMessage,
+  trackEvent
+} from '@/background/analytics/reporter'
+import {
+  projectZcashOperationEvent,
+  type ZcashOperationAnalyticsContext
+} from '@/lib/analytics/operations'
 import { dappHandler } from './dapp-handler'
 import { evmDAppOperationStore } from './evm-dapp-operation-store'
 import { backgroundZcashWalletRuntime } from './zcash-wallet-runtime'
@@ -39,7 +51,7 @@ import { logger } from '@/lib/logger'
 import { appendDiagnosticLog, exportDiagnosticLogs } from '@/lib/diagnostic-log-store'
 import { parseDiagnosticLogDraft, sanitizeDiagnosticMessage } from '@/lib/diagnostic-log'
 import { logDebugTiming, traceDebugStage } from '@/lib/debug-performance'
-import { loadTransactions, mutateTransactions } from '@/lib/indexed-db'
+import { hasWalletDb, loadTransactions, mutateTransactions } from '@/lib/indexed-db'
 import {
   useWalletStore,
   prepareWalletStoreForUse,
@@ -47,6 +59,7 @@ import {
   waitForHydration
 } from '@/store/wallet-store'
 import { transactionRecorder } from './transaction-recorder'
+import { useAccountDataStore } from '@/store/account-data-store'
 import { syncScheduler, SYNC_KEEPALIVE_ALARM } from './sync-scheduler'
 import { refreshAfterOnChainBroadcast } from './tx-sync'
 import { getRetryableWalletRpcUserMessage } from '@/core/zcash/wallet-rpc-errors'
@@ -132,10 +145,13 @@ import {
   createBackgroundAssetMarketHistoryService,
   createBackgroundAssetPriceService
 } from './asset-prices'
-import { createBackgroundRheaSwapService } from './rhea-swap'
+import { createBackgroundRheaSwapService, readRheaZcashTransferDeadline } from './rhea-swap'
 import {
   RHEA_SWAP_TRANSACTION_MONITOR_ALARM,
-  RheaSwapTransactionMonitor
+  RheaSwapTransactionMonitor,
+  recoverSignedRheaSwaps,
+  recoverSignedRheaSwapsAndPoll,
+  scheduleRheaSwapTransactionMonitorRetry
 } from './rhea-swap-transaction-monitor'
 import { createBackgroundRheaSwapEvmSignatureCoordinator } from './rhea-swap-evm-signature'
 import {
@@ -332,7 +348,8 @@ import {
   initializeExtensionDisplayMode,
   persistSidePanelMode
 } from './extension-display-mode'
-import { shouldRequestPeriodicSync } from './passive-sync-policy'
+import { computePassiveSyncDelayMinutes, shouldRequestPeriodicSync } from './passive-sync-policy'
+import { fetchLatestBlockHeight } from '@/infrastructure/chains/rpc-registry-client'
 import { SerialTaskQueue, TimeoutError, withTimeout } from '@/lib/async-utils'
 import { TRANSACTION_PENDING_MESSAGE } from '@/lib/transaction-status-copy'
 import {
@@ -401,6 +418,7 @@ let assetMarketHistoryService = createBackgroundAssetMarketHistoryService()
 const rheaSwapService = DEFAULT_NETWORK === 'mainnet' ? createBackgroundRheaSwapService() : null
 const rheaSwapTransactionMonitor = rheaSwapService
   ? new RheaSwapTransactionMonitor(rheaSwapService, {
+      loadZcashAccountScopes: getZcashAccountScopes,
       refreshPortfolio: async ({ scope, chainIds }) => {
         const model = await portfolioCoordinator?.refreshActive(chainIds)
         if (
@@ -792,7 +810,14 @@ async function reloadMultichainRuntime(
   accountNetworksCoordinator = createBackgroundAccountNetworksCoordinator(
     customEvmNetworks,
     networkSwitchBitcoinDerivation,
-    accountNetworksPeaDerivation
+    accountNetworksPeaDerivation,
+    scope => {
+      if (scope.chainId !== getZcashChainId(DEFAULT_NETWORK)) return null
+      return (
+        useWalletStore.getState().getAccount(scope.keyDomainId, scope.accountId)
+          ?.networkAddresses?.[DEFAULT_NETWORK]?.shielded || null
+      )
+    }
   )
   const evmTransferRuntime =
     evmFeatureRuntimePolicy.newOperationsEnabled && hasBackgroundEvmTransferCapability(activeEvm)
@@ -878,6 +903,7 @@ async function reloadMultichainRuntime(
     ? resolveNearRuntimeNetworkConfig(DEFAULT_NETWORK, settings)
     : undefined
   multichainSessionDAppHandler = new BackgroundMultichainSessionDAppHandler({
+    analytics: trackEvent,
     network: DEFAULT_NETWORK,
     evmNetworks: catalog,
     manager: dappManager,
@@ -1298,6 +1324,7 @@ const backgroundAutoLock = new AutoLockCoordinator({
 export { zcashTxMonitor }
 
 export const BALANCE_SYNC_ALARM = 'wallet-balance-sync'
+const BALANCE_SYNC_SCHEDULE_STATE_KEY = 'wallet-balance-sync-schedule'
 
 if (__EXTENSION_UPDATES_ENABLED__) {
   initializeExtensionUpdates()
@@ -1378,6 +1405,23 @@ const multichainStartupReady = runtimeNetworkReady.then(async () => {
   await scheduleMultichainRuntimeReload()
 })
 
+function rheaSignedRecoveryJobs() {
+  return [
+    {
+      name: 'EVM',
+      recover: () => rheaSwapEvmSignatureCoordinator?.recoverSigned() ?? Promise.resolve(0)
+    },
+    {
+      name: 'Solana',
+      recover: () => rheaSwapSolanaCoordinator?.recoverSigned() ?? Promise.resolve(0)
+    },
+    {
+      name: 'NEAR',
+      recover: () => rheaSwapNearCoordinator?.recoverSigned() ?? Promise.resolve(0)
+    }
+  ]
+}
+
 const backgroundNetworkServicesReady = multichainStartupReady
   .then(async () => {
     await Promise.all([
@@ -1385,13 +1429,15 @@ const backgroundNetworkServicesReady = multichainStartupReady
         ? transactionMonitor.init()
         : chrome.alarms.clear('transaction-monitor-alarm').then(() => undefined),
       zcashTxMonitor.init(),
-      rheaSwapTransactionMonitor?.init() ?? Promise.resolve()
+      rheaSwapTransactionMonitor?.init().catch(error => {
+        console.warn('[RHEA Swap Monitor] Startup poll failed:', error)
+      }) ?? Promise.resolve()
     ])
-    await Promise.all([
-      rheaSwapEvmSignatureCoordinator?.recoverSigned() ?? Promise.resolve(0),
-      rheaSwapSolanaCoordinator?.recoverSigned() ?? Promise.resolve(0),
-      rheaSwapNearCoordinator?.recoverSigned() ?? Promise.resolve(0)
-    ])
+    if (await recoverSignedRheaSwaps(rheaSignedRecoveryJobs())) {
+      await scheduleRheaSwapTransactionMonitorRetry().catch(error => {
+        console.warn('[RHEA Swap Monitor] Could not schedule signed recovery retry:', error)
+      })
+    }
     void refreshIntentsProtocolAssets().catch(error => {
       console.warn('[Intents assets] Protocol token catalog is unavailable', error)
     })
@@ -1402,13 +1448,37 @@ const backgroundNetworkServicesReady = multichainStartupReady
     throw error
   })
 
+async function scheduleNextBalanceSyncAlarm(
+  probeFailed: boolean,
+  preserveFailureCount = false
+): Promise<void> {
+  const stored = await chrome.storage.session.get(BALANCE_SYNC_SCHEDULE_STATE_KEY)
+  const previous = Number(stored[BALANCE_SYNC_SCHEDULE_STATE_KEY]?.failureCount ?? 0)
+  const failureCount = probeFailed ? Math.min(previous + 1, 8) : preserveFailureCount ? previous : 0
+  const delayInMinutes = computePassiveSyncDelayMinutes({
+    baseMinutes: WALLET_CONFIG.SYNC.BACKGROUND_POLL_MINUTES,
+    jitterMinutes: WALLET_CONFIG.SYNC.BACKGROUND_POLL_JITTER_MINUTES,
+    maxMinutes: WALLET_CONFIG.SYNC.BACKGROUND_POLL_MAX_BACKOFF_MINUTES,
+    failureCount,
+    randomUnit: Math.random()
+  })
+  await chrome.storage.session.set({ [BALANCE_SYNC_SCHEDULE_STATE_KEY]: { failureCount } })
+  await chrome.alarms.clear(BALANCE_SYNC_ALARM)
+  chrome.alarms.create(BALANCE_SYNC_ALARM, { delayInMinutes })
+}
+
+syncScheduler.onPassiveSyncOutcome = status => {
+  void scheduleNextBalanceSyncAlarm(status === 'failed' || status === 'skipped').catch(error => {
+    console.warn('[Background] Failed to schedule next balance sync after scan:', error)
+  })
+}
+
 async function ensureBalanceSyncAlarm(): Promise<void> {
   const existing = await chrome.alarms.get(BALANCE_SYNC_ALARM)
-  if (existing?.periodInMinutes === WALLET_CONFIG.SYNC.BACKGROUND_POLL_MINUTES) return
-
-  chrome.alarms.create(BALANCE_SYNC_ALARM, {
-    periodInMinutes: WALLET_CONFIG.SYNC.BACKGROUND_POLL_MINUTES
-  })
+  if (existing && existing.periodInMinutes === undefined && existing.scheduledTime > Date.now()) {
+    return
+  }
+  await scheduleNextBalanceSyncAlarm(false)
 }
 
 ensureBalanceSyncAlarm().catch(error => {
@@ -1466,25 +1536,29 @@ async function performSilentWasmInitialization(): Promise<void> {
 }
 
 async function restoreStuckWithdrawMonitors(): Promise<void> {
-  const { wallets, currentNetwork } = useWalletStore.getState()
-  const accountScopes: AccountScope[] = []
-  for (const wallet of wallets) {
-    for (const account of wallet.accounts) {
-      accountScopes.push({
-        accountKey: `${currentNetwork}_${wallet.id}_${account.id}`,
-        walletId: wallet.id,
-        accountId: account.id
-      })
-    }
-  }
+  const accountScopes = getZcashAccountScopes()
   if (accountScopes.length > 0) {
     await Promise.all([
       DEFAULT_NETWORK === 'mainnet'
         ? transactionMonitor.restorePendingWithdrawals(accountScopes)
         : Promise.resolve(),
-      zcashTxMonitor.restoreStuckWithdrawals(accountScopes)
+      zcashTxMonitor.restoreStuckWithdrawals(accountScopes),
+      backgroundNetworkServicesReady.then(() =>
+        rheaSwapTransactionMonitor?.restorePendingZcashSwaps(accountScopes)
+      )
     ])
   }
+}
+
+function getZcashAccountScopes(): AccountScope[] {
+  const { wallets, currentNetwork } = useWalletStore.getState()
+  return wallets.flatMap(wallet =>
+    wallet.accounts.map(account => ({
+      accountKey: `${currentNetwork}_${wallet.id}_${account.id}`,
+      walletId: wallet.id,
+      accountId: account.id
+    }))
+  )
 }
 
 // ============================================
@@ -1507,7 +1581,9 @@ chrome.runtime.onInstalled.addListener(details => {
 
 // Service Worker activation - ensure WASM is ready
 chrome.runtime.onStartup.addListener(() => {
-  silentInitializeWasm().catch(console.warn)
+  silentInitializeWasm()
+    .then(() => handlePeriodicBalanceSyncAlarm())
+    .catch(console.warn)
 })
 
 async function checkOffscreenHealth(): Promise<void> {
@@ -1525,37 +1601,68 @@ async function checkOffscreenHealth(): Promise<void> {
   }
 }
 
-async function requestPeriodicBalanceSync(): Promise<void> {
-  if (syncScheduler.isRunning()) return
+async function requestPeriodicBalanceSync(): Promise<'scheduled' | 'skipped' | 'probe-failed'> {
+  if (syncScheduler.isRunning()) return 'skipped'
+  await Promise.all([rehydrateWalletStore(), useAccountDataStore.persist.rehydrate()])
+  const { currentWalletId, currentNetwork } = useWalletStore.getState()
+  if (!currentWalletId) return 'skipped'
 
-  const [isWalletUiOpen, hasPendingCrossChainTransaction, hasPendingZcashTransaction] =
+  const syncState = useAccountDataStore
+    .getState()
+    .getWalletSyncState(currentNetwork, currentWalletId)
+  const hasUnlockSession = await credentialSession.hasUnlockSession()
+  const [isWalletUiOpen, hasPendingCrossChainTransaction, hasPendingZcashTransaction, snapshot] =
     await Promise.all([
       isWalletUiContextOpen(),
       transactionMonitor.hasPendingTransactions(),
-      zcashTxMonitor.hasPendingTransactions()
+      zcashTxMonitor.hasPendingTransactions(),
+      hasWalletDb(`${currentNetwork}_${currentWalletId}`)
     ])
-
-  // An explicit UI or transaction flow may have started a sync while the
-  // activity checks were reading extension contexts and persisted monitors.
+  const hasPendingTransactions = hasPendingCrossChainTransaction || hasPendingZcashTransaction
+  let networkHeight: number | null = null
+  if (!isWalletUiOpen && !hasPendingTransactions) {
+    try {
+      networkHeight = await fetchLatestBlockHeight(getNetworkConfig(currentNetwork).rpcUrl)
+    } catch {
+      return 'probe-failed'
+    }
+  }
   if (
     !shouldRequestPeriodicSync({
       isSchedulerRunning: syncScheduler.isRunning(),
       isWalletUiOpen,
-      hasPendingTransactions: hasPendingCrossChainTransaction || hasPendingZcashTransaction
+      hasPendingTransactions,
+      isWalletLocked: backgroundZcashWalletRuntime.isLocked() && !hasUnlockSession,
+      hasPersistedSnapshot: snapshot,
+      currentHeight: syncState.currentHeight,
+      networkHeight,
+      lastSyncTime: syncState.lastSyncTime,
+      now: Date.now(),
+      minBlockGap: WALLET_CONFIG.SYNC.BACKGROUND_MIN_GAP_BLOCKS,
+      maxStaleMs: WALLET_CONFIG.SYNC.BACKGROUND_MAX_STALE_MS
     })
   ) {
-    return
+    return 'skipped'
   }
 
-  // An alarm can wake a fresh MV3 service worker before Zustand's async
-  // hydration finishes. Re-read the persisted wallet selection first so the
-  // scheduler does not silently skip because currentWalletId is still null.
-  await rehydrateWalletStore()
+  return syncScheduler.requestPassiveSync(0) ? 'scheduled' : 'skipped'
+}
 
-  if (backgroundZcashWalletRuntime.isLocked() && !(await credentialSession.hasUnlockSession()))
-    return
-
-  syncScheduler.requestPassiveSync(WALLET_CONFIG.SYNC.BACKGROUND_POLL_MINUTES * 60 * 1000)
+async function handlePeriodicBalanceSyncAlarm(): Promise<void> {
+  let probeFailed = false
+  let syncScheduled = false
+  try {
+    const result = await requestPeriodicBalanceSync()
+    probeFailed = result === 'probe-failed'
+    syncScheduled = result === 'scheduled'
+  } catch (error) {
+    probeFailed = true
+    console.warn('[Background] Periodic balance sync request failed:', error)
+  } finally {
+    await scheduleNextBalanceSyncAlarm(probeFailed, syncScheduled).catch(error => {
+      console.warn('[Background] Failed to schedule next balance sync probe:', error)
+    })
+  }
 }
 
 async function isWalletUiContextOpen(): Promise<boolean> {
@@ -1576,7 +1683,13 @@ async function isWalletUiContextOpen(): Promise<boolean> {
   }
 }
 
+void trustedStorageAccessReady.then(() => initializeAnalyticsReporting()).catch(() => {})
+
 chrome.alarms.onAlarm.addListener(alarm => {
+  if (alarm.name === ANALYTICS_OUTBOX_ALARM) {
+    void handleAnalyticsAlarm(alarm.name).catch(() => {})
+    return
+  }
   if (alarm.name === NETWORK_MODE_RESTART_ALARM) {
     void chrome.alarms.clear(NETWORK_MODE_RESTART_ALARM).finally(() => chrome.runtime.reload())
     return
@@ -1629,15 +1742,12 @@ chrome.alarms.onAlarm.addListener(alarm => {
         })
       }
       if (alarm.name === RHEA_SWAP_TRANSACTION_MONITOR_ALARM) {
-        void Promise.all([
-          rheaSwapEvmSignatureCoordinator?.recoverSigned() ?? Promise.resolve(0),
-          rheaSwapSolanaCoordinator?.recoverSigned() ?? Promise.resolve(0),
-          rheaSwapNearCoordinator?.recoverSigned() ?? Promise.resolve(0)
-        ])
-          .then(() => rheaSwapTransactionMonitor?.handleAlarm())
-          .catch(error => {
-            console.warn('[RHEA Swap Monitor] Poll failed:', error)
-          })
+        void recoverSignedRheaSwapsAndPoll(
+          rheaSignedRecoveryJobs(),
+          rheaSwapTransactionMonitor
+        ).catch(error => {
+          console.warn('[RHEA Swap Monitor] Poll failed:', error)
+        })
       }
       if (alarm.name === CONFIDENTIAL_FUNDING_MONITOR_ALARM) {
         confidentialFundingCoordinator?.resumeAll().catch(error => {
@@ -1645,9 +1755,7 @@ chrome.alarms.onAlarm.addListener(alarm => {
         })
       }
       if (alarm.name === BALANCE_SYNC_ALARM) {
-        requestPeriodicBalanceSync().catch(error => {
-          console.warn('[Background] Periodic balance sync request failed:', error)
-        })
+        void handlePeriodicBalanceSyncAlarm()
       }
       if (alarm.name === SYNC_KEEPALIVE_ALARM) {
         if (syncScheduler.isRunning()) {
@@ -1723,8 +1831,8 @@ const walletCleanupCoordinator = new WalletCleanupCoordinator(
     await nearTransferController?.clearPendingTransfers()
     await rheaSwapTransactionMonitor?.clear()
   },
-  (walletId, accountId) =>
-    rheaSwapTransactionMonitor?.removeAccount(walletId, accountId) ?? Promise.resolve()
+  (walletId, accountIds) =>
+    rheaSwapTransactionMonitor?.removeAccounts(walletId, accountIds) ?? Promise.resolve()
 )
 
 const zeroIndexerUpdateQueue = new SerialTaskQueue()
@@ -2354,20 +2462,23 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
   }
 
   if (message.type === 'WORKER_LOG') {
-    void appendDiagnosticLog({
-      source: 'worker',
-      level:
-        message.level === 'error'
-          ? 'error'
-          : message.level === 'warn'
-            ? 'warn'
-            : message.level === 'info'
-              ? 'info'
-              : 'debug',
-      message: String(message.message),
-      timestamp: Date.now(),
-      sequence: forwardedDiagnosticSequence++
-    }).catch(() => {})
+    void appendDiagnosticLog(
+      {
+        source: 'worker',
+        level:
+          message.level === 'error'
+            ? 'error'
+            : message.level === 'warn'
+              ? 'warn'
+              : message.level === 'info'
+                ? 'info'
+                : 'debug',
+        message: String(message.message),
+        timestamp: Date.now(),
+        sequence: forwardedDiagnosticSequence++
+      },
+      { walletId: message.walletId }
+    ).catch(() => {})
     if (!debugLogsEnabled) return false
     if (message.walletId || message.level === 'error' || message.level === 'warn') {
       const rawLevel = message.level as string
@@ -2384,13 +2495,16 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
 
   if (message.type === 'FORWARD_WALLET_LOG') {
     const { level, walletId, message: logMessage } = message.payload
-    void appendDiagnosticLog({
-      source: 'offscreen',
-      level: level === 'error' ? 'error' : level === 'warn' ? 'warn' : 'debug',
-      message: logMessage,
-      timestamp: Date.now(),
-      sequence: forwardedDiagnosticSequence++
-    }).catch(() => {})
+    void appendDiagnosticLog(
+      {
+        source: 'offscreen',
+        level: level === 'error' ? 'error' : level === 'warn' ? 'warn' : 'debug',
+        message: logMessage,
+        timestamp: Date.now(),
+        sequence: forwardedDiagnosticSequence++
+      },
+      { walletId }
+    ).catch(() => {})
     if (!debugLogsEnabled) return false
     const prefix = logger.getPrefix(walletId)
     const consoleMethod = console[level as 'log'] || console.log
@@ -2986,7 +3100,8 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
       .readActive({
         includeSupplemental: message.action !== 'read',
         accountMode: message.executionMode ?? 'all',
-        chainIds: Array.isArray(message.chainIds) ? message.chainIds : undefined
+        chainIds: Array.isArray(message.chainIds) ? message.chainIds : undefined,
+        historyPageCount: message.historyPageCount
       })
       .then(result => sendResponse({ result }))
       .catch(error => {
@@ -3474,6 +3589,13 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
         if (debugRequestId) {
           logDebugTiming(debugRequestId, 'background-evm-prepare', operationStartedAt)
         }
+        if (
+          ['APPROVE_EVM_TRANSFER', 'SUBMIT_KEYSTONE_EVM_SIGNATURE', 'RESUME_EVM_TRANSFER'].includes(
+            message.type
+          )
+        ) {
+          void chrome.alarms.create(EVM_TRANSACTION_MONITOR_ALARM, { when: Date.now() + 100 })
+        }
         sendResponse({ result })
       })
       .catch(error => {
@@ -3521,7 +3643,18 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
               ? solanaTransferController.reject(message.transactionId)
               : solanaTransferController.resumeBroadcast(message.transactionId)
     void operation
-      .then(result => sendResponse({ result }))
+      .then(result => {
+        if (
+          [
+            'APPROVE_SOLANA_TRANSFER',
+            'SUBMIT_KEYSTONE_SOLANA_SIGNATURE',
+            'RESUME_SOLANA_TRANSFER'
+          ].includes(message.type)
+        ) {
+          void chrome.alarms.create(SOLANA_TRANSACTION_MONITOR_ALARM, { when: Date.now() + 100 })
+        }
+        sendResponse({ result })
+      })
       .catch(error => sendResponse({ error: mapSolanaWalletRuntimeError(error) }))
     return true
   }
@@ -3552,7 +3685,18 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
               ? nearTransferController.reject(message.transactionId)
               : nearTransferController.resumeBroadcast(message.transactionId)
     void operation
-      .then(result => sendResponse({ result }))
+      .then(result => {
+        if (
+          [
+            'APPROVE_NEAR_TRANSFER',
+            'SUBMIT_KEYSTONE_NEAR_SIGNATURE',
+            'RESUME_NEAR_TRANSFER'
+          ].includes(message.type)
+        ) {
+          void chrome.alarms.create(NEAR_TRANSACTION_MONITOR_ALARM, { when: Date.now() + 100 })
+        }
+        sendResponse({ result })
+      })
       .catch(error => sendResponse({ error: mapNearWalletRuntimeError(error) }))
     return true
   }
@@ -3605,7 +3749,18 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
                   ? bitcoinTransferController.reject(message.transactionId)
                   : bitcoinTransferController.resumeBroadcast(message.transactionId)
     void operation
-      .then(result => sendResponse({ result }))
+      .then(result => {
+        if (
+          [
+            'APPROVE_BITCOIN_TRANSFER',
+            'SUBMIT_KEYSTONE_BITCOIN_SIGNATURE',
+            'RESUME_BITCOIN_TRANSFER'
+          ].includes(message.type)
+        ) {
+          void chrome.alarms.create(BITCOIN_TRANSACTION_MONITOR_ALARM, { when: Date.now() + 100 })
+        }
+        sendResponse({ result })
+      })
       .catch(error => {
         sendResponse({ error: mapBitcoinWalletRuntimeError(error) })
       })
@@ -4487,7 +4642,16 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
           )
           const walletCore = await prepareWalletCoreForTx(request.walletId, request.accountId)
           try {
-            return await walletCore.pcztProveSend(prepared.fullPcztBase64, message.signedPcztBase64)
+            const deadline = await readRheaZcashTransferDeadline(
+              request.quoteBinding,
+              request.to,
+              request.amount
+            )
+            return await walletCore.pcztProveSend(
+              prepared.fullPcztBase64,
+              message.signedPcztBase64,
+              deadline
+            )
           } catch (error) {
             if (isTransactionSubmissionUnknown(error)) {
               await recordUncertainBroadcast(
@@ -4561,7 +4725,12 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
             signatures
           )
           try {
-            return await walletCore.pcztProveSend(prepared.fullPcztBase64, signed)
+            const deadline = await readRheaZcashTransferDeadline(
+              request.quoteBinding,
+              request.to,
+              request.amount
+            )
+            return await walletCore.pcztProveSend(prepared.fullPcztBase64, signed, deadline)
           } catch (error) {
             if (isTransactionSubmissionUnknown(error)) {
               await recordUncertainBroadcast(
@@ -5086,6 +5255,9 @@ async function performWalletUnlock(password: string): Promise<any> {
     await rehydrateWalletStore()
     await backgroundZcashWalletRuntime.initialize()
     await backgroundZcashWalletRuntime.lock()
+    if (!(await syncScheduler.waitForActiveSyncIdle(30_000))) {
+      throw new Error('Wallet sync is still stopping. Please try unlocking again.')
+    }
 
     const walletState = useWalletStore.getState()
     const activeRetainedV1Wallet = walletState.currentWalletId
@@ -5257,40 +5429,49 @@ function handleWalletCreated(
  * Preserves dApp connections (EIP-1193 standard: lock ≠ disconnect)
  */
 function handleWalletLock(): Promise<void> {
-  return enqueueWalletSessionTransition(performWalletLock)
-}
-
-async function performWalletLock(): Promise<void> {
-  await accountContextTransition.runActiveOperation(performWalletLockState)
+  return enqueueWalletSessionTransition(async () => {
+    await accountContextTransition.runActiveOperation(performWalletLockState)
+  })
 }
 
 async function performWalletLockState(): Promise<void> {
-  await cancelAllLedgerSigning('Wallet was locked. Review this action again.')
-  pendingRequestsManager.cancelAll()
-  syncScheduler.abortSync()
+  syncScheduler.pauseForTx()
+  try {
+    await cancelAllLedgerSigning('Wallet was locked. Review this action again.')
+    pendingRequestsManager.cancelAll()
+    syncScheduler.abortSync()
 
-  const [zcashResult, ...workerResults] = await Promise.allSettled([
-    backgroundZcashWalletRuntime.lock(),
-    credentialSession.lock(),
-    confidentialFundingStore.clearAllSessions(),
-    forwardKeyringRpcToOffscreen<boolean>('worker.recreate', { walletId: '__global_lock__' })
-  ])
-  const workerFailure = workerResults.find(result => result.status === 'rejected')
-  if (workerFailure) {
-    const offscreenAlive = await chrome.offscreen?.hasDocument?.().catch(() => true)
-    if (offscreenAlive !== false) {
-      throw new Error('Unable to confirm that all keyring Workers were locked')
+    // Account restoration can still be in scheduler preflight after the scan
+    // itself stops. Drain it before recreating workers, even if Zcash cleanup fails.
+    const [zcashResult] = await Promise.allSettled([
+      backgroundZcashWalletRuntime.lock(),
+      syncScheduler.waitForActiveSyncIdle(30_000)
+    ])
+
+    const workerResults = await Promise.allSettled([
+      credentialSession.lock(),
+      confidentialFundingStore.clearAllSessions(),
+      forwardKeyringRpcToOffscreen<boolean>('worker.recreate', { walletId: '__global_lock__' })
+    ])
+    const workerFailure = workerResults.find(result => result.status === 'rejected')
+    if (workerFailure) {
+      const offscreenAlive = await chrome.offscreen?.hasDocument?.().catch(() => true)
+      if (offscreenAlive !== false) {
+        throw new Error('Unable to confirm that all keyring Workers were locked')
+      }
     }
-  }
-  if (zcashResult.status === 'rejected') throw zcashResult.reason
+    if (zcashResult.status === 'rejected') throw zcashResult.reason
 
-  await dappHandler.notifyAccountsChanged([])
-  await evmDAppHandler.notifyAccountsChanged()
-  await bitcoinDAppHandler.notifyAccountsChanged()
-  await solanaDAppHandler?.notifyAccountsChanged()
-  await nearDAppHandler?.notifyAccountsChanged()
-  await multichainSessionDAppHandler?.notifyAllSessionsChanged()
-  dappHandler.clearPermissions()
+    await dappHandler.notifyAccountsChanged([])
+    await evmDAppHandler.notifyAccountsChanged()
+    await bitcoinDAppHandler.notifyAccountsChanged()
+    await solanaDAppHandler?.notifyAccountsChanged()
+    await nearDAppHandler?.notifyAccountsChanged()
+    await multichainSessionDAppHandler?.notifyAllSessionsChanged()
+    dappHandler.clearPermissions()
+  } finally {
+    syncScheduler.resumeAfterTx()
+  }
 }
 
 async function performKeyringRuntimesResetAfterCredentialChange(): Promise<void> {
@@ -5596,8 +5777,6 @@ async function handleImportPrivateKeyWallet(input: {
   syncScheduler.pauseForTx()
   try {
     syncScheduler.abortSync()
-    const syncIdle = await syncScheduler.waitForActiveSyncIdle(30_000)
-    if (!syncIdle) throw new Error('Wallet sync did not stop before private-key import')
     const result = await importPrivateKeyWallet(input)
     await synchronizeNativeActiveAccount(result.keyDomainId, result.accountId)
     return result
@@ -5906,10 +6085,7 @@ async function handleBackgroundZcashTx(params: {
     originChain?: string
     destinationChain?: string
   }
-  analytics?: {
-    onSuccess?: { name: string; options: TrackOptions }
-    onFail?: { name: string; options: TrackOptions }
-  }
+  analytics?: ZcashOperationAnalyticsContext
 }): Promise<void> {
   const {
     action,
@@ -5967,7 +6143,15 @@ async function handleBackgroundZcashTx(params: {
           onChainAmount = shieldResult.amount
         }
       } else {
-        const transferResult = await walletCore.sendTransaction({ ...sendParams!, marginalFeeZats })
+        const submissionDeadline = await readRheaZcashTransferDeadline(
+          pendingRecord.quoteBinding,
+          sendParams!.to,
+          sendParams!.amount
+        )
+        const transferResult = await walletCore.sendTransaction(
+          { ...sendParams!, marginalFeeZats },
+          submissionDeadline
+        )
         const successfulTransfer = requireSuccessfulTransfer(transferResult)
         txid = successfulTransfer.txHash
         txHashes = successfulTransfer.txHashes
@@ -6045,14 +6229,24 @@ async function handleBackgroundZcashTx(params: {
         logger.warn(`${actionLabel} post-broadcast relay monitoring deferred`, walletId, accountId)
       }
 
-      if (analytics?.onSuccess) {
-        trackEvent(analytics.onSuccess.name, {
-          ...analytics.onSuccess.options,
-          extra: {
-            ...analytics.onSuccess.options.extra,
-            tx_hash: txid
-          }
-        })
+      if (
+        txType === 'swap' &&
+        rheaSwapTransactionMonitor &&
+        pendingRecord.quoteBinding?.provider === 'rhea-cross-chain-dex'
+      ) {
+        void chrome.alarms
+          .create(RHEA_SWAP_TRANSACTION_MONITOR_ALARM, { delayInMinutes: 0.1 })
+          .catch(() => {})
+      }
+
+      if (analytics) {
+        const event = projectZcashOperationEvent(
+          action === 'shield' ? 'shield' : txType === 'swap' ? 'swap' : 'send',
+          'broadcast',
+          analytics,
+          `zcash:${accountKey}:${transactionId}:broadcast`
+        )
+        trackEvent(event.name, event.options)
       }
 
       chrome.runtime
@@ -6128,14 +6322,14 @@ async function handleBackgroundZcashTx(params: {
     const rawMessage = error?.message || `${actionLabel} failed`
     const userMessage = getRetryableWalletRpcUserMessage(rawMessage)
 
-    if (analytics?.onFail) {
-      trackEvent(analytics.onFail.name, {
-        ...analytics.onFail.options,
-        extra: {
-          ...analytics.onFail.options.extra,
-          error: rawMessage.slice(0, 200)
-        }
-      })
+    if (analytics) {
+      const event = projectZcashOperationEvent(
+        action === 'shield' ? 'shield' : txType === 'swap' ? 'swap' : 'send',
+        'failed',
+        analytics,
+        `zcash:${accountKey}:${transactionId}:failed`
+      )
+      trackEvent(event.name, event.options)
     }
 
     try {

@@ -39,6 +39,7 @@ import { BackgroundBitcoinTransferController } from './bitcoin-transfer-controll
 import { getBitcoinAccountPreferences } from './bitcoin-account-preferences'
 import { credentialSession } from './credential-session'
 import { recordRheaSwapGraphBroadcast } from './rhea-swap'
+import { reportBackgroundSendBroadcast } from './analytics/send-broadcast'
 
 export { BackgroundBitcoinTransferController } from './bitcoin-transfer-controller'
 export type {
@@ -151,7 +152,8 @@ function createBackgroundBitcoinRuntime(customRpcUrl?: string): BackgroundBitcoi
     changeReservations,
     inputReservations,
     onPendingBroadcast: scheduleMonitor,
-    onBroadcastAccepted: async input => {
+    onBroadcastAccepted: async (input, recovered) => {
+      if (recovered) reportBackgroundSendBroadcast(input.graph)
       const result = await balanceUpdater.applyBroadcast(input)
       if (result.errors > 0) {
         logger.warn(

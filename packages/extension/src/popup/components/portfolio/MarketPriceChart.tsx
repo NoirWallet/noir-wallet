@@ -1,7 +1,8 @@
 import { useCallback, useId, useMemo, useRef, useState } from 'react'
 import { Icon } from '@iconify/react'
 import type { AssetMarketHistoryPoint, AssetMarketHistoryRange } from '@/core/prices'
-import { formatPrice, formatTimestamp } from '@/lib/format'
+import { formatTimestamp } from '@/lib/format'
+import { formatTokenPrice } from '@/lib/number-format'
 import { cn } from '@/lib/utils'
 import { Skeleton } from '@/popup/components/ui/skeleton'
 import {
@@ -83,7 +84,10 @@ export function MarketPriceChart({
     <div>
       <div
         ref={surfaceRef}
-        className="relative h-[148px] touch-none overflow-hidden"
+        className={cn(
+          'relative touch-none overflow-hidden',
+          !loading && !chart ? 'h-14' : 'h-[148px]'
+        )}
         aria-live="polite"
         onPointerMove={event => {
           if (chart) updateActiveFromPointer(event.clientX)
@@ -102,7 +106,9 @@ export function MarketPriceChart({
           ) : (
             <>
               <p className="text-[26px] font-medium leading-none tracking-tight tabular-nums">
-                {active ? formatPrice(active.priceUsd, { showSign: true }) : (priceLabel ?? '—')}
+                {active
+                  ? formatTokenPrice(active.priceUsd, { showSign: true })
+                  : (priceLabel ?? '—')}
               </p>
               <div className="mt-1.5 flex items-center gap-1.5 text-xs">
                 {active ? (
@@ -189,11 +195,7 @@ export function MarketPriceChart({
               </>
             )}
           </>
-        ) : (
-          <div className="absolute inset-x-0 bottom-0 flex h-[92px] items-center justify-center rounded-xl bg-card/45 text-xs text-muted">
-            Price history unavailable
-          </div>
-        )}
+        ) : null}
       </div>
 
       <div className="mt-2 grid grid-cols-6 gap-1" aria-label="Price history range">

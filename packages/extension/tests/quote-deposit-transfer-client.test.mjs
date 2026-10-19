@@ -444,7 +444,7 @@ test.describe('quote deposit transfer client', () => {
     }
   })
 
-  test('derives the EVM native maximum from the live signing fee and always rejects the preflight', async () => {
+  test('reserves 25% of the EVM fee cap beyond the live signing fee and rejects the preflight', async () => {
     const calls = []
     const source = {
       family: 'evm',
@@ -496,7 +496,7 @@ test.describe('quote deposit transfer client', () => {
         feeTier: 'fast'
       })
     ).resolves.toEqual({
-      amountRaw: '79000',
+      amountRaw: '73750',
       networkFeeRaw: '21000',
       networkFeeSymbol: 'POL',
       networkFeeDecimals: 18
@@ -604,7 +604,7 @@ test.describe('quote deposit transfer client', () => {
     }
     await expect(
       client.estimateMaximum({ source, depositAddress: 'recipient' })
-    ).resolves.toMatchObject({ amountRaw: '300' })
+    ).resolves.toMatchObject({ amountRaw: '125' })
   })
 
   for (const mode of ['main', 'private']) {
@@ -657,7 +657,7 @@ test.describe('quote deposit transfer client', () => {
         feeTier: 'fast'
       }
       await expect(client.estimateMaximum(input)).resolves.toMatchObject({
-        amountRaw: '699900',
+        amountRaw: '624900',
         networkFeeRaw: '300000'
       })
       expect(calls).toEqual([
@@ -726,7 +726,7 @@ test.describe('quote deposit transfer client', () => {
           data: '0x'
         }
       })
-    ).resolves.toMatchObject({ amountRaw: '936900' })
+    ).resolves.toMatchObject({ amountRaw: '921150' })
     expect(calls).toEqual([
       {
         assetId: EVM_ASSET_ID,

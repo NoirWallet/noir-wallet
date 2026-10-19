@@ -7,12 +7,25 @@ export interface ActivityTransactionReference {
   readonly chainId: string | null
 }
 
+export function isActivityTransactionHash(hash: string, chainId: string | null): boolean {
+  if (chainId?.startsWith('eip155:')) return /^0x[0-9a-fA-F]{64}$/.test(hash)
+  if (chainId?.startsWith('bip122:')) return /^[0-9a-fA-F]{64}$/.test(hash)
+  return hash.length > 0 && !/^0x[0-9a-fA-F]{8}$/.test(hash)
+}
+
 export function getActivityTransactionReferences(
   item: ActivityItem
 ): readonly ActivityTransactionReference[] {
   const roleOrder = { origin: 0, relay: 1, destination: 2, refund: 3 } as const
   const hashedSegments = item.segments
-    .filter(segment => segment.evidence?.transactionHash)
+    .filter(
+      segment =>
+        segment.evidence?.transactionHash &&
+        isActivityTransactionHash(
+          segment.evidence.transactionHash,
+          segment.target.kind === 'onchain' ? segment.target.chainId : null
+        )
+    )
     .sort((left, right) => roleOrder[left.role] - roleOrder[right.role])
   return hashedSegments.flatMap(segment => {
     const hash = segment.evidence?.transactionHash

@@ -16,6 +16,10 @@ import type {
   RheaSwapToken
 } from '@/core/services/rhea-swap'
 import {
+  getRheaSwapQuoteDeadline,
+  resolveRheaSwapCanonicalAssetId
+} from '@/core/services/rhea-swap'
+import {
   getAssetProtocolSourceMappings,
   type AssetProtocolSourceMapping
 } from '@/core/prices/asset-market-mappings'
@@ -26,6 +30,7 @@ import {
   createAssetRegistry,
   createInitialProductChainRegistry,
   getBundledInitialProductAssetDefinitions,
+  parseAssetId,
   parseChainId
 } from '@/core/chains/registry'
 import type {
@@ -172,7 +177,7 @@ export function createRheaSwapBinding(input: {
     sourceTarget,
     sender: input.source.refundAddress,
     originAmountRaw: input.review.amountIn,
-    expiresAt: input.quote.expiresAt ?? input.quote.receivedAt + 30_000,
+    expiresAt: getRheaSwapQuoteDeadline(input.quote),
     // Confidential settlement still crosses the Intents boundary when the
     // source and destination assets are on the same chain.
     isCrossChain: input.review.isCrossChain || input.confidentiality === 'basic',
@@ -205,6 +210,13 @@ export function resolveRheaSwapDestinationIdentity(
     return Object.freeze({
       chainId: mapped.asset.asset.chainId,
       assetId: mapped.asset.asset.id
+    })
+  }
+  const canonicalAssetId = resolveRheaSwapCanonicalAssetId(token.assetId, DEFAULT_NETWORK)
+  if (canonicalAssetId) {
+    return Object.freeze({
+      chainId: parseAssetId(canonicalAssetId).chainId,
+      assetId: canonicalAssetId
     })
   }
   const chainId = parseChainId(`rhea:${token.tokenListChainId}`).id
@@ -644,7 +656,11 @@ export function createQuoteDepositTransferClient(options: {
             throw new Error('The EVM maximum estimate has an invalid signing summary')
           }
           const feeRaw = BigInt(summary.fields.maximumFeeWei)
-          const amountRaw = isNative ? availableRaw - feeRaw - additionalValueRaw : availableRaw
+          // Max needs room for a fresh RHEA quote and EVM fee calculation before signing.
+          const feeHeadroomRaw = (feeRaw + 3n) / 4n
+          const amountRaw = isNative
+            ? availableRaw - feeRaw - feeHeadroomRaw - additionalValueRaw
+            : availableRaw
           if (amountRaw <= 0n) {
             throw new Error('The source wallet balance does not cover the network fee')
           }

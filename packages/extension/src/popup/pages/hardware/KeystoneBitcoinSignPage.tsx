@@ -14,6 +14,8 @@ import { PageHeader } from '@/popup/components/common/PageHeader'
 import { BitcoinPsbtAnimatedQR } from '@/popup/components/hardware/AnimatedQR'
 import { QRScanner } from '@/popup/components/hardware/QRScanner'
 import { CenteredNotice } from '@/popup/components/hardware/CenteredNotice'
+import { HardwareSigningProgress } from '@/popup/components/hardware/HardwareSigningProgress'
+import { DetailRow } from '@/popup/components/common/DetailRow'
 import { useLocation } from '@/popup/provider/Router'
 import { ListSkeleton, Skeleton } from '@/popup/components/ui/skeleton'
 
@@ -181,19 +183,18 @@ export function KeystoneBitcoinSignPage() {
         </>
       )}
 
-      {step === 'broadcasting' && (
-        <div className="page-content flex flex-col items-center justify-center">
-          <Icon
-            icon="lucide:loader-2"
-            width={32}
-            height={32}
-            className="mb-4 animate-spin text-primary"
-          />
-          <p className="mb-1 text-sm font-medium">Verifying signed transaction</p>
-          <p className="max-w-[300px] text-center text-xs text-muted">
-            Noir Wallet is checking every input, output, signature, fee, and transaction ID before
-            broadcast.
-          </p>
+      {step === 'broadcasting' && request && (
+        <div className="page-content space-y-5 pt-5">
+          <HardwareSigningProgress title="Verifying signed transaction">
+            <div className="space-y-3 rounded-lg bg-card p-4">
+              <DetailRow label="Signature">
+                <span className="text-sm">Received from Keystone</span>
+              </DetailRow>
+              <DetailRow label="Asset">
+                <span className="text-sm">Bitcoin</span>
+              </DetailRow>
+            </div>
+          </HardwareSigningProgress>
         </div>
       )}
 

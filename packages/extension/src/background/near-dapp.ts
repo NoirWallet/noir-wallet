@@ -1,3 +1,4 @@
+import { trackEvent } from '@/background/analytics/reporter'
 import type { ChainEndpointSettings } from '@/core/chains/chain-endpoint-settings'
 import { DEFAULT_NETWORK } from '@/lib/runtime-network'
 import { resolveNearRuntimeNetworkConfig } from '@/core/chains/solana-near-runtime-config'
@@ -23,6 +24,7 @@ export function createBackgroundNearDAppHandler(
   const network = resolveNearRuntimeNetworkConfig(DEFAULT_NETWORK, endpointSettings)
   const storageRepository = new IndexedDbStorageV2Repository()
   const native = new BackgroundNativeTransferDAppHandler({
+    analytics: trackEvent,
     providerId: 'near',
     familyName: 'NEAR',
     chainId: network.chainId,
@@ -48,6 +50,7 @@ export function createBackgroundNearDAppHandler(
   })
   const rpc = createConfiguredNearRpcClient({ chainId: network.chainId, rpcUrl: network.rpcUrl })
   return new BackgroundNearDAppHandler({
+    analytics: trackEvent,
     native,
     network,
     rpc,

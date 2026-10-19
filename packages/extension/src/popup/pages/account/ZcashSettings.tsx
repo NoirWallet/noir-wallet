@@ -24,6 +24,7 @@ import { getAccountDisplayName } from '@/lib/format'
 import { getBirthdayDateFromBlockTimestamp } from '@/lib/zcash-birthday'
 import { useWalletStore } from '@/store/wallet-store'
 import { DEFAULT_NETWORK } from '@/lib/runtime-network'
+import { getStoredTransparentAddressPath, getZip32AccountPath } from '@/lib/zcash-derivation'
 
 function privacyLabel(address: AccountNetworkAddressView): 'Shielded' | 'Transparent' {
   return address.privacy === 'transparent' ? 'Transparent' : 'Shielded'
@@ -44,6 +45,7 @@ export function ZcashSettings() {
   const [birthdayLoading, setBirthdayLoading] = useState(true)
   const [activeAccount, setActiveAccount] = useState(false)
   const [softwareWallet, setSoftwareWallet] = useState(false)
+  const [canRotateShielded, setCanRotateShielded] = useState(false)
   const [isRotatingShielded, setIsRotatingShielded] = useState(false)
   const [rotationError, setRotationError] = useState<string | null>(null)
   const [historyOpen, setHistoryOpen] = useState(false)
@@ -59,6 +61,9 @@ export function ZcashSettings() {
     walletId && accountId && account
       ? getAccountDisplayName(walletId, accountId, account.name, accountDisplayNames)
       : ''
+  const transparentDerivationPath = account
+    ? getStoredTransparentAddressPath(DEFAULT_NETWORK, account.derivationIndex, account.addresses)
+    : null
 
   useEffect(() => {
     let cancelled = false
@@ -69,6 +74,7 @@ export function ZcashSettings() {
     setHistoryError(null)
     setActiveAccount(false)
     setSoftwareWallet(false)
+    setCanRotateShielded(false)
     setAddressLoading(Boolean(walletId && accountId))
 
     if (!walletId || !accountId) {
@@ -97,6 +103,11 @@ export function ZcashSettings() {
         setNetwork(zcashNetwork)
         setActiveAccount(entry.active)
         setSoftwareWallet(entry.walletSource.kind === 'software')
+        setCanRotateShielded(
+          entry.walletSource.kind === 'software' ||
+            (entry.walletSource.kind === 'hardware' &&
+              entry.walletSource.hardware.capabilities.includes('zcash'))
+        )
       })
       .catch(() => {
         if (!cancelled) setAddressError('Unable to load Zcash addresses for this account.')
@@ -178,7 +189,7 @@ export function ZcashSettings() {
   }
 
   const rotateShieldedAddress = async () => {
-    if (!activeAccount || !softwareWallet || isRotatingShielded || selectingAddress) return
+    if (!activeAccount || !canRotateShielded || isRotatingShielded || selectingAddress) return
     setRotationError(null)
     setIsRotatingShielded(true)
     try {
@@ -284,9 +295,7 @@ export function ZcashSettings() {
                   <Skeleton className="h-5 w-28" />
                 ) : birthdayHeight ? (
                   <>
-                    <span className="min-w-0 text-sm text-foreground">
-                      {birthdayDate ?? 'Date unavailable'}
-                    </span>
+                    <span className="min-w-0 text-sm text-foreground">{birthdayDate ?? '—'}</span>
                     <button
                       type="button"
                       aria-label="Copy birthday height"
@@ -359,7 +368,7 @@ export function ZcashSettings() {
                 variant="outline"
                 className="h-[45px] w-full"
                 isLoading={isRotatingShielded}
-                disabled={!activeAccount || !softwareWallet || selectingAddress !== null}
+                disabled={!activeAccount || !canRotateShielded || selectingAddress !== null}
                 onClick={() => void rotateShieldedAddress()}
               >
                 <Icon icon="lucide:refresh-cw" width={17} height={17} />
@@ -389,6 +398,48 @@ export function ZcashSettings() {
             </div>
           )}
         </section>
+
+        {softwareWallet && (
+          <section aria-labelledby="zcash-paths-heading">
+            <h2 id="zcash-paths-heading" className="mb-2 text-xs font-medium text-muted">
+              Derivation paths
+            </h2>
+            <div className="space-y-2">
+              <button
+                type="button"
+                className="flex w-full items-center justify-between gap-3 rounded-md bg-card px-4 py-3 text-left"
+                onClick={() =>
+                  void copyToClipboard(
+                    getZip32AccountPath(DEFAULT_NETWORK, account.derivationIndex)
+                  )
+                }
+                aria-label="Copy Zcash account derivation path"
+              >
+                <span className="min-w-0">
+                  <span className="block text-xs text-muted">Account</span>
+                  <span className="break-all font-mono text-xs">
+                    {getZip32AccountPath(DEFAULT_NETWORK, account.derivationIndex)}
+                  </span>
+                </span>
+                <Icon icon="lucide:copy" width={15} height={15} className="shrink-0 text-muted" />
+              </button>
+              {transparentDerivationPath && (
+                <button
+                  type="button"
+                  className="flex w-full items-center justify-between gap-3 rounded-md bg-card px-4 py-3 text-left"
+                  onClick={() => void copyToClipboard(transparentDerivationPath)}
+                  aria-label="Copy Zcash transparent address derivation path"
+                >
+                  <span className="min-w-0">
+                    <span className="block text-xs text-muted">Transparent address</span>
+                    <span className="break-all font-mono text-xs">{transparentDerivationPath}</span>
+                  </span>
+                  <Icon icon="lucide:copy" width={15} height={15} className="shrink-0 text-muted" />
+                </button>
+              )}
+            </div>
+          </section>
+        )}
 
         {isCurrentAccount && (
           <section className="pb-2" aria-labelledby="zcash-resync-heading">

@@ -10,5 +10,9 @@ test('pending invite activation preserves a normal window deep link and its quer
   assert.equal(getPendingBetaInviteReturnRoute('/send', '?assetId=zec', false, false), null)
   assert.equal(getPendingBetaInviteReturnRoute('/send', '?assetId=zec', true, true), null)
   assert.equal(getPendingBetaInviteReturnRoute('/onboarding', '?from=dapp', true, false), null)
+  assert.equal(
+    getPendingBetaInviteReturnRoute('/onboarding/congratulations', '', true, false),
+    null
+  )
   assert.equal(getPendingBetaInviteReturnRoute('/unlock', '?redirect=%2Fsend', true, false), null)
 })

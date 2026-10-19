@@ -31,6 +31,7 @@ import { NEAR_INTENTS_TRANSACTION_MONITOR_ALARM } from './near-intents-transacti
 import { BackgroundEvmTransferController } from './evm-transfer-controller'
 import { BackgroundEvmTransferRouter } from './evm-transfer-router'
 import { recordRheaSwapGraphBroadcast } from './rhea-swap'
+import { reportBackgroundSendBroadcast } from './analytics/send-broadcast'
 import { readEvmTokenAllowance } from '@/infrastructure/chains/evm/evm-token-allowance'
 
 export { BackgroundEvmTransferController } from './evm-transfer-controller'
@@ -77,7 +78,10 @@ export function createBackgroundEvmTransferOrchestrator(
     assets,
     networkMode: DEFAULT_NETWORK,
     onPendingBroadcast: scheduleMonitor,
-    onBroadcastAccepted: recordRheaSwapGraphBroadcast,
+    onBroadcastAccepted: (graph, recovered) => {
+      if (recovered) reportBackgroundSendBroadcast(graph)
+      return recordRheaSwapGraphBroadcast(graph)
+    },
     onMonitoringRequired: scheduleMonitor
   })
 }

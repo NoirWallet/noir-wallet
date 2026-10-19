@@ -16,6 +16,8 @@ import {
   parseRheaSwapQuoteRequest
 } from '@/core/services/rhea-swap/rhea-swap-model'
 import { parseRheaSwapTransactionBinding } from '@/core/transactions/domain'
+import { isZcashOperationAnalyticsContext } from './analytics/operations'
+import { isDiagnosticContextId } from './diagnostic-log'
 
 export interface RuntimeMessageSenderLike {
   readonly id?: string
@@ -321,7 +323,15 @@ const isForwardWalletLogPayload: RuntimeFieldValidator = value =>
   isShortString(value.message)
 const isDiagnosticLogDraft: RuntimeFieldValidator = value =>
   isRuntimeRecord(value) &&
-  hasExactRuntimeKeys(value, ['source', 'level', 'message', 'timestamp', 'sequence']) &&
+  hasExactRuntimeKeys(value, [
+    'source',
+    'level',
+    'message',
+    'timestamp',
+    'sequence',
+    ...(Object.prototype.hasOwnProperty.call(value, 'contextId') ? ['contextId'] : [])
+  ]) &&
+  (value.contextId === undefined || isDiagnosticContextId(value.contextId)) &&
   (value.source === 'background' ||
     value.source === 'popup' ||
     value.source === 'offscreen' ||
@@ -359,11 +369,20 @@ const TRUSTED_RUNTIME_SCHEMAS: Readonly<Record<string, RuntimeMessageSchema>> = 
   EXPORT_DIAGNOSTIC_LOGS: {},
   ANALYTICS_EVENT: {
     required: { name: isShortString },
-    optional: { options: isRecord, timestamp: isFiniteNumber }
+    optional: {
+      options: isRecord,
+      timestamp: isFiniteNumber,
+      engagementTimeMsec: value =>
+        isFiniteNumber(value) && Number(value) >= 0 && Number(value) <= 3_600_000
+    }
   },
   ANALYTICS_PAGE_VIEW: {
     required: { page: isShortString },
-    optional: { timestamp: isFiniteNumber }
+    optional: {
+      timestamp: isFiniteNumber,
+      engagementTimeMsec: value =>
+        isFiniteNumber(value) && Number(value) >= 0 && Number(value) <= 3_600_000
+    }
   },
   WALLET_UNLOCK: { required: { password: isLegacyPasswordString } },
   GET_BETA_INVITE_ACTIVATION: {},
@@ -507,7 +526,9 @@ const TRUSTED_RUNTIME_SCHEMAS: Readonly<Record<string, RuntimeMessageSchema>> = 
     optional: {
       action: isPortfolioAction,
       executionMode: value => value === 'all' || isDAppExecutionMode(value),
-      chainIds: isChainIdArray
+      chainIds: isChainIdArray,
+      historyPageCount: value =>
+        typeof value === 'number' && Number.isSafeInteger(value) && value >= 1 && value <= 10
     }
   },
   GET_BITCOIN_ACTIVITY: { optional: { action: isPortfolioAction } },
@@ -775,7 +796,7 @@ const TRUSTED_RUNTIME_SCHEMAS: Readonly<Record<string, RuntimeMessageSchema>> = 
       sendParams: isRecord,
       marginalFeeZats: isFiniteNumber,
       monitorParams: isRecord,
-      analytics: isRecord
+      analytics: isZcashOperationAnalyticsContext
     }
   },
   HW_PCZT_BUILD: {

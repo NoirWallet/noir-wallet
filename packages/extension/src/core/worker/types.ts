@@ -330,7 +330,11 @@ export interface RPCSchema {
     response: HardwarePcztPair
   }
   'pczt.proveSend': {
-    request: WalletRouted & { fullBase64: string; signedBase64: string }
+    request: WalletRouted & {
+      fullBase64: string
+      signedBase64: string
+      submissionDeadline?: number
+    }
     response: string // txid
   }
   'pczt.ledgerPayload': {
@@ -356,6 +360,7 @@ export interface RPCSchema {
       amount: string
       memo?: string
       fundingSource?: FundingSource
+      submissionDeadline?: number
       /** ZIP-317 marginal fee per action (zatoshis); defaults to standard. */
       marginalFeeZats?: number
     }

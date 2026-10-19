@@ -3,6 +3,7 @@ import { Icon } from '@iconify/react'
 import type { SigningSummary } from '@/core/keyring/domain'
 import { cn } from '@/lib/utils'
 import { CopyToast, useCopyToClipboard } from '@/popup/components/common/CopyToast'
+import { AmountDisplay } from '@/popup/components/common/AmountDisplay'
 import { ApprovalWindowLayout } from '@/popup/components/dapp/ApprovalWindowLayout'
 import {
   ApprovalContextCard,
@@ -65,7 +66,15 @@ function ReviewValue({
       )}
       title={row.title ?? row.value}
     >
-      {row.value}
+      {row.amount ? (
+        <AmountDisplay
+          value={row.amount.value}
+          symbol={row.amount.symbol}
+          profile={row.amount.profile}
+        />
+      ) : (
+        row.value
+      )}
       {showPrivateAccount && (
         <span
           aria-label="Confidential execution account"

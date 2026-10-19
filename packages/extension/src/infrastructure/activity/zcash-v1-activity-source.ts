@@ -1,13 +1,6 @@
 import type { ActivityItem, ActivityScope, ActivitySegment } from '@/core/activity'
-import {
-  createAssetId,
-  createAssetRegistry,
-  createInitialProductChainRegistry,
-  getBundledInitialProductAssetDefinitions,
-  parseAssetId,
-  parseChainId
-} from '@/core/chains/registry'
-import type { AssetId, ChainId } from '@/core/chains/domain'
+import { createAssetId, parseAssetId, parseChainId } from '@/core/chains/registry'
+import type { ChainId } from '@/core/chains/domain'
 import {
   getBitcoinChainId,
   getZcashChainId
@@ -18,61 +11,12 @@ import type {
   TransactionLifecycleStatus
 } from '@/core/transactions/domain'
 import { getEvmNetworkConfig, getEvmNetworkConfigs } from '@/config/networks'
-import { getAssetProtocolSourceMappings } from '@/core/prices/asset-market-mappings'
-import { DEFAULT_NETWORK } from '@/lib/runtime-network'
-import { resolveIntentsEvmChainId } from '@/core/services/intents-evm-assets'
+import { resolveRheaSwapCanonicalAssetId } from '@/core/services/rhea-swap/rhea-swap-asset-identity'
 import type { Transaction, TransactionType } from '@/types'
 import { getZcashIntentsOriginStatus } from '@/lib/cross-chain-transaction'
 
 const ZCASH_DECIMALS = 8
 const RAW_AMOUNT_PATTERN = /^(?:0|[1-9][0-9]{0,77})$/
-const EVM_NEP141_TOKEN_PATTERN = /^nep141:([a-z0-9]+)-(0x[0-9a-fA-F]{40})\.omft\.near$/
-const activityChains = createInitialProductChainRegistry(DEFAULT_NETWORK)
-const activityAssets = createAssetRegistry(
-  activityChains,
-  getBundledInitialProductAssetDefinitions(DEFAULT_NETWORK)
-)
-const activityAssetIdByProtocolId = new Map(
-  getAssetProtocolSourceMappings(DEFAULT_NETWORK, activityAssets).map(mapping => [
-    mapping.protocolAssetId,
-    parseAssetId(mapping.assetId).id
-  ])
-)
-
-function resolveCounterAssetId(value: string): AssetId | null {
-  try {
-    return parseAssetId(value).id
-  } catch {
-    // V1 quote bindings persist protocol asset IDs, not only CAIP-19 IDs.
-  }
-
-  const mapped = activityAssetIdByProtocolId.get(value)
-  if (mapped) return mapped
-
-  const evmToken = EVM_NEP141_TOKEN_PATTERN.exec(value)
-  if (evmToken) {
-    const chainId = resolveIntentsEvmChainId(evmToken[1], getEvmNetworkConfigs(DEFAULT_NETWORK))
-    if (chainId) {
-      return createAssetId(parseChainId(chainId).id, 'erc20', evmToken[2].toLowerCase())
-    }
-  }
-
-  if (value.startsWith('nep141:')) {
-    const contractId = value.slice('nep141:'.length)
-    if (contractId.endsWith('.omft.near')) return null
-    try {
-      return createAssetId(
-        parseChainId('near:mainnet').id,
-        'nep141',
-        contractId.replace(/_/g, '%5F')
-      )
-    } catch {
-      return null
-    }
-  }
-  return null
-}
-
 function decimalToRaw(value: string): string {
   if (typeof value !== 'string' || !/^(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$/.test(value)) {
     throw new Error('Invalid Zcash V1 Activity amount')
@@ -230,7 +174,10 @@ function crossChainSegments(
     !destinationHashes.has(transaction.destinationTxHash.toLowerCase())
   ) {
     const destinationAssetId = transaction.quoteBinding?.destinationAsset
-      ? resolveCounterAssetId(transaction.quoteBinding.destinationAsset)
+      ? resolveRheaSwapCanonicalAssetId(
+          transaction.quoteBinding.destinationAsset,
+          transaction.network
+        )
       : null
     const destinationChainId =
       transaction.type === 'withdraw' || transaction.type === 'claim'
@@ -270,6 +217,29 @@ function crossChainSegments(
     )
     index += 1
   }
+  if (transaction.type === 'swap' && destinationHashes.size === 0) {
+    const destinationAssetId = transaction.quoteBinding?.destinationAsset
+      ? resolveRheaSwapCanonicalAssetId(
+          transaction.quoteBinding.destinationAsset,
+          transaction.network
+        )
+      : null
+    const destinationChainId = destinationAssetId
+      ? parseAssetId(destinationAssetId).chainId
+      : transaction.quoteBinding?.destinationChain
+        ? externalChainId(transaction.quoteBinding.destinationChain, transaction)
+        : null
+    if (destinationChainId) {
+      segments.push(
+        Object.freeze({
+          id: `${transaction.id}:destination:0`,
+          role: 'destination' as const,
+          target: Object.freeze({ kind: 'onchain' as const, chainId: destinationChainId }),
+          status: transaction.status === 'success' ? ('final' as const) : ('created' as const)
+        })
+      )
+    }
+  }
   return Object.freeze(segments)
 }
 
@@ -282,10 +252,19 @@ export function mapZcashV1TransactionToActivityItem(
   const status = mapStatus(transaction)
   const transactionHash = transaction.destinationTxHash || transaction.txHash
   const crossChain = isCrossChain(transaction.type)
-  const failureCode = crossChain ? crossChainFailure(transaction) : undefined
+  const failureCode = crossChain
+    ? crossChainFailure(transaction)
+    : transaction.status === 'failed'
+      ? transaction.failureReason === 'expired'
+        ? 'expired'
+        : 'unknown'
+      : undefined
   const relayReference = transaction.depositAddress || transaction.quoteBinding?.depositAddress
   const counterAssetId = transaction.quoteBinding?.destinationAsset
-    ? resolveCounterAssetId(transaction.quoteBinding.destinationAsset)
+    ? resolveRheaSwapCanonicalAssetId(
+        transaction.quoteBinding.destinationAsset,
+        transaction.network
+      )
     : null
   const counterAmount =
     counterAssetId &&
@@ -294,6 +273,18 @@ export function mapZcashV1TransactionToActivityItem(
       ? Object.freeze({
           assetId: counterAssetId,
           amountRaw: transaction.quoteBinding.expectedAmountOut
+        })
+      : undefined
+  const finalRecipientChainId = counterAssetId
+    ? parseAssetId(counterAssetId).chainId
+    : transaction.quoteBinding?.destinationChain
+      ? externalChainId(transaction.quoteBinding.destinationChain, transaction)
+      : null
+  const finalRecipient =
+    transaction.type === 'swap' && transaction.quoteBinding?.recipient && finalRecipientChainId
+      ? Object.freeze({
+          chainId: finalRecipientChainId,
+          address: transaction.quoteBinding.recipient
         })
       : undefined
   const segments = crossChain
@@ -317,7 +308,7 @@ export function mapZcashV1TransactionToActivityItem(
                 })
               }
             : {}),
-          ...(transaction.status === 'failed' ? { failureCode: 'unknown' as const } : {})
+          ...(failureCode ? { failureCode } : {})
         })
       ])
   return Object.freeze({
@@ -345,19 +336,21 @@ export function mapZcashV1TransactionToActivityItem(
             })
           }
         : {}),
-      ...(transaction.to
-        ? {
-            recipient: Object.freeze({
-              chainId,
-              address: transaction.to
-            })
-          }
-        : {})
+      ...(finalRecipient
+        ? { recipient: finalRecipient }
+        : !crossChain && transaction.to
+          ? {
+              recipient: Object.freeze({
+                chainId,
+                address: transaction.to
+              })
+            }
+          : {})
     }),
     segments,
     completeness: crossChain && !relayReference ? 'partial' : 'complete',
     createdAt: transaction.timestamp,
     updatedAt: transaction.timestamp,
-    ...(transaction.status === 'failed' ? { failureCode: failureCode ?? ('unknown' as const) } : {})
+    ...(failureCode ? { failureCode } : {})
   })
 }

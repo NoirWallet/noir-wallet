@@ -8,8 +8,6 @@ import { zcashWalletRuntimeClient } from '@/popup/services/zcash-wallet-runtime-
 import { toast } from '@/store/toast-store'
 import { needsUnlock } from '@/lib/lock-utils'
 import { SecureStorage } from '@/core/wallet/secure-storage'
-import { sleep } from '@/lib/utils'
-import { ANALYTICS_EVENTS, sendAnalyticsEvent } from '@/lib/analytics'
 import { accountNetworksClient } from '../services/account-networks-client'
 import { hasAttestedCredentialSession } from '@/core/wallet/credential-session-client'
 import { didCredentialSessionEnd } from '@/core/wallet/credential-session-state'
@@ -92,7 +90,6 @@ export function useAppRouting() {
   // Auto-lock handler
   const handleAutoLock = useCallback(async () => {
     if (hasAnyWallet && (await hasAttestedCredentialSession().catch(() => false))) {
-      sendAnalyticsEvent(ANALYTICS_EVENTS.WALLET_LOCKED, { extra: { reason: 'auto' } })
       await zcashWalletRuntimeClient.lock()
       routeToUnlock()
     }
@@ -203,8 +200,6 @@ export function useAppRouting() {
    * Handles both normal popup and dApp-triggered windows
    */
   const checkWalletStatus = async () => {
-    const startTime = Date.now()
-    const minLoadingDuration = isDApp.current ? 500 : 1000
     let initializationPhase: 'upgrade' | 'startup' = 'upgrade'
 
     setIsLoading(true)
@@ -292,11 +287,6 @@ export function useAppRouting() {
       console.error('[useAppRouting] Initialization error:', error)
       setInitializationFailure(initializationPhase)
     } finally {
-      const elapsed = Date.now() - startTime
-      const remainingTime = Math.max(0, minLoadingDuration - elapsed)
-      if (remainingTime > 0) {
-        await sleep(remainingTime)
-      }
       setIsLoading(false)
     }
   }

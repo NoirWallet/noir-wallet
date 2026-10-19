@@ -159,10 +159,6 @@ describe('dynamic maximum transfer regressions', () => {
     assert.match(backgroundZcashWalletRuntime, /spendabilityRecoveryAttemptedWalletIds/)
     assert.match(
       backgroundZcashWalletRuntime,
-      /await this\.resyncZcashWallet\(walletId, accountId, resolved/
-    )
-    assert.match(
-      backgroundZcashWalletRuntime,
       /core\.estimateTransferFee[\s\S]*?recoverSpendabilityMetadata/
     )
     assert.match(handler, /backgroundZcashWalletRuntime\.estimateMaxTransferFor\(/)

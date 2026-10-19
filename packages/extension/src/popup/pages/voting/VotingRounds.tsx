@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Icon } from '@iconify/react'
 import { Button } from '@/popup/components/ui/button'
 import { PageHeader } from '@/popup/components/common/PageHeader'
+import { ListSkeleton } from '@/popup/components/ui/skeleton'
 import { useNavigate } from '@/popup/provider/Router'
 import { zcashWalletRuntimeClient } from '@/popup/services/zcash-wallet-runtime-client'
 import {
@@ -53,9 +54,10 @@ export function VotingRounds() {
 
   return (
     <div className="page-container">
-      <PageHeader title="Zcash voting" showBack />
-      <div className="page-content space-y-3">
-        <div className="flex items-center justify-end">
+      <PageHeader
+        title="Zcash voting"
+        showBack
+        rightContent={
           <Button
             variant="ghost"
             size="icon"
@@ -70,13 +72,15 @@ export function VotingRounds() {
               className={loading ? 'animate-spin' : ''}
             />
           </Button>
-        </div>
+        }
+      />
+      <div className="page-content space-y-3">
         {error && (
           <p role="alert" className="text-sm text-danger">
             {error}
           </p>
         )}
-        {loading && !discovery && <p className="text-sm text-muted">Loading rounds…</p>}
+        {loading && !discovery && <ListSkeleton rows={3} label="Loading voting rounds" card />}
         {discovery?.accepted.length === 0 && (
           <p className="text-sm text-muted">No voting rounds are available.</p>
         )}

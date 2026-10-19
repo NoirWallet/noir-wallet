@@ -1,4 +1,34 @@
-import Big from '@/lib/big'
+import Big, { safeBig } from '@/lib/big'
+
+interface SwapAmountValuesInput {
+  readonly amountIn: string
+  readonly amountOut: string
+  readonly tokenInPrice: number | null | undefined
+  readonly tokenOutPrice: number | null | undefined
+}
+
+export function getSwapAmountValues(input: SwapAmountValuesInput) {
+  return {
+    rate:
+      input.amountIn && input.amountOut && safeBig(input.amountIn).gt(0)
+        ? safeBig(input.amountOut).div(input.amountIn).toFixed()
+        : '...',
+    fromFiat: safeBig(input.amountIn || '0')
+      .times(input.tokenInPrice || 0)
+      .toFixed(2),
+    toFiat: safeBig(input.amountOut || '0')
+      .times(input.tokenOutPrice || 0)
+      .toFixed(2)
+  }
+}
+
+export function calculateSwapPriceImpact(input: SwapAmountValuesInput): number {
+  const inputValue = safeBig(input.amountIn || '0').times(input.tokenInPrice || 0)
+  const outputValue = safeBig(input.amountOut || '0').times(input.tokenOutPrice || 0)
+  if (inputValue.lte(0) || outputValue.lte(0)) return 0
+  const impact = new Big(1).minus(outputValue.div(inputValue)).times(100)
+  return impact.gt(0) ? impact.toNumber() : 0
+}
 
 export function estimateSwapOutputFromPrices({
   amountIn,

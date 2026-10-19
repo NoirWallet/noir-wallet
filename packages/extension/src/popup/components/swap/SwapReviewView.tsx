@@ -1,22 +1,16 @@
 import { Icon } from '@iconify/react'
 import { Button } from '../ui/button'
 import type { SwapToken } from '@/core/services/intents-api'
-import {
-  formatAmount,
-  formatChainName,
-  formatNumber,
-  formatPrice,
-  formatSortAddress,
-  formatSymbol
-} from '@/lib/format'
+import { formatAmount, formatChainName, formatSortAddress, formatSymbol } from '@/lib/format'
+import { formatFiatAmount } from '@/lib/number-format'
 import type { FeeTier } from '@/config/fee'
 import type { NetworkFeeTier } from '@/core/transactions/domain'
 import { FeeTierPicker } from '../transaction/FeeTierPicker'
 import { NetworkFeeTierPicker } from '../transaction/NetworkFeeTierPicker'
 
 import { TokenIcon } from '../tokens/TokenIcon'
-import Big from '@/lib/big'
 import { ChainIcon } from '../common/ChainIcon'
+import { AmountDisplay } from '../common/AmountDisplay'
 import { AddressTypeLabel } from '../account/AddressType'
 import type { FundingSource } from '@/types/wallet'
 
@@ -140,14 +134,10 @@ export function SwapReviewView({
           </DetailItem>
 
           <DetailItem label="Minimum Received">
-            <span>
-              {formatNumber(formatAmount(minAmountOut, tokenOut.decimals), {
-                rm: Big.roundDown,
-                useUnit: true,
-                useSubscript: true
-              })}{' '}
-              {formatSymbol(tokenOut.symbol)}
-            </span>
+            <AmountDisplay
+              value={formatAmount(minAmountOut, tokenOut.decimals)}
+              symbol={formatSymbol(tokenOut.symbol)}
+            />
           </DetailItem>
 
           <DetailItem label="Slippage Tolerance">
@@ -182,14 +172,11 @@ export function SwapReviewView({
             </DetailItem>
           ) : sourceNetworkFee ? (
             <DetailItem label="Network Fee">
-              <span className="whitespace-nowrap font-mono">
-                {formatNumber(sourceNetworkFee.amount, {
-                  rm: Big.roundDown,
-                  useUnit: true,
-                  useSubscript: true
-                })}{' '}
-                {sourceNetworkFee.symbol}
-              </span>
+              <AmountDisplay
+                value={sourceNetworkFee.amount}
+                symbol={sourceNetworkFee.symbol}
+                profile="fee"
+              />
             </DetailItem>
           ) : null}
 
@@ -224,14 +211,10 @@ export function SwapReviewView({
                 <span>Approve {formatSymbol(approvalDetails.symbol)}</span>
               </DetailItem>
               <DetailItem label="Approval Amount">
-                <span>
-                  {formatNumber(approvalDetails.amount, {
-                    rm: Big.roundDown,
-                    useUnit: true,
-                    useSubscript: true
-                  })}{' '}
-                  {formatSymbol(approvalDetails.symbol)}
-                </span>
+                <AmountDisplay
+                  value={approvalDetails.amount}
+                  symbol={formatSymbol(approvalDetails.symbol)}
+                />
               </DetailItem>
               <DetailItem label="Approval Spender">
                 <span title={approvalDetails.spender} className="font-mono text-xs">
@@ -296,10 +279,12 @@ function QuoteAssetRow({
         {networkLabel && <p className="text-[11px] text-muted">{networkLabel}</p>}
       </div>
       <div className="min-w-0 max-w-[52%] text-right">
-        <p className={`truncate font-mono text-lg ${emphasized ? 'text-primary' : ''}`}>
-          {formatNumber(amount, { rm: Big.roundDown, useUnit: true, useSubscript: true })}
+        <div className={`font-mono text-lg ${emphasized ? 'text-primary' : ''}`}>
+          <AmountDisplay value={amount} />
+        </div>
+        <p className="truncate text-xs text-muted">
+          {formatFiatAmount(fiatValue, { showSign: true })}
         </p>
-        <p className="truncate text-xs text-muted">{formatPrice(fiatValue, { showSign: true })}</p>
       </div>
     </section>
   )

@@ -212,7 +212,6 @@ const LOCAL_TRANSACTION_STATUS_COPY: Record<
   status_unavailable: {
     label: 'Status unavailable',
     compactLabel: 'Status unavailable',
-    description: 'No status update for over 1 hour',
     tone: 'warning'
   },
   preparing: {

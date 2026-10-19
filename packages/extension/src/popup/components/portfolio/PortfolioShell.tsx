@@ -1,11 +1,11 @@
 import { useMemo, useState } from 'react'
 import { Icon } from '@iconify/react'
 import Big from '@/lib/big'
-import { formatPrice } from '@/lib/format'
+import { formatFiatAmount } from '@/lib/number-format'
 import { cn } from '@/lib/utils'
 import tokenViewIcon from '@/images/portfolio-token-view.svg'
 import chainViewIcon from '@/images/portfolio-chain-view.svg'
-import type { PortfolioReadModel } from '@/core/portfolio'
+import type { PortfolioChainView, PortfolioReadModel } from '@/core/portfolio'
 import type { AssetPriceReadModel } from '@/core/prices'
 import { resolveChainIconAlias } from '@/lib/chain-icon'
 import { Skeleton } from '@/popup/components/ui/skeleton'
@@ -22,6 +22,7 @@ import { PortfolioAssetGroupCard, PortfolioChainAssetRow } from './PortfolioAsse
 import {
   buildPortfolioAssetGroups,
   getPortfolioChainUsdValue,
+  getPortfolioChainBalanceStatus,
   partitionPortfolioAssetGroups,
   partitionPortfolioAssets,
   sortPortfolioAssets,
@@ -88,6 +89,31 @@ function LoadingPanel() {
         </div>
       ))}
       <span className="sr-only">Loading balances from enabled networks.</span>
+    </div>
+  )
+}
+
+function UnloadedChainBalance({ chain }: { readonly chain: PortfolioChainView }) {
+  const unavailable = getPortfolioChainBalanceStatus(chain) === 'unavailable'
+  return (
+    <div
+      role="status"
+      aria-label={`${chain.chain.displayName} balance ${unavailable ? 'unavailable' : 'loading'}`}
+      className="flex min-h-16 items-center gap-3 rounded-xl bg-card/60 px-3 py-3"
+    >
+      <ChainIcon
+        chain={resolveChainIconAlias(chain.chain.family, chain.chain.displayName)}
+        width={32}
+        height={32}
+        showTooltip={false}
+      />
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-medium">{chain.chain.displayName}</p>
+        <p className="mt-0.5 text-xs text-muted">
+          {unavailable ? 'Balance unavailable' : 'Loading balance'}
+        </p>
+      </div>
+      {unavailable ? <span className="text-muted">—</span> : <Skeleton className="h-4 w-16" />}
     </div>
   )
 }
@@ -196,6 +222,11 @@ export function PortfolioShell({
     [selectableChains, prices]
   )
   const showContent = model.status === 'ready' || model.status === 'partial'
+  const unloadedChains = visibleChains.filter(
+    chain => chain.assets.length === 0 && getPortfolioChainBalanceStatus(chain) !== 'ready'
+  )
+  const zcashChain = visibleChains.find(chain => chain.chain.family === 'zcash')
+  const zcashBalanceStatus = zcashChain ? getPortfolioChainBalanceStatus(zcashChain) : 'ready'
   // Balances arrive from cache before prices resolve; show price/fiat skeletons
   // instead of a bare em dash until the first price model lands.
   const pricesLoading = priceStatus === 'loading'
@@ -227,8 +258,29 @@ export function PortfolioShell({
           onSelectionChange={setSelectedChainIds}
         />
 
-        <div role="group" aria-label="Portfolio view" className="flex items-center gap-2.5">
+        <div role="group" aria-label="Portfolio view" className="flex items-center gap-1.5">
           {zcashSyncState && <ZcashSyncProgress {...zcashSyncState} />}
+          {!zcashSyncState && zcashBalanceStatus !== 'ready' && (
+            <span
+              role="status"
+              aria-label={`Zcash balance ${zcashBalanceStatus}`}
+              className="inline-flex h-5 shrink-0 items-center gap-1 whitespace-nowrap rounded-full bg-white/5 px-2 text-[10px] text-muted"
+            >
+              <Icon
+                icon={
+                  zcashBalanceStatus === 'unavailable' ? 'lucide:wifi-off' : 'lucide:refresh-cw'
+                }
+                width={10}
+                height={10}
+                className={zcashBalanceStatus === 'unavailable' ? undefined : 'animate-spin'}
+              />
+              {zcashBalanceStatus === 'unavailable'
+                ? 'ZEC unavailable'
+                : zcashBalanceStatus === 'loading'
+                  ? 'Loading ZEC'
+                  : 'Updating ZEC'}
+            </span>
+          )}
           {refreshing && (
             <span role="status" aria-label="Portfolio data is syncing" className="sr-only">
               Syncing portfolio
@@ -302,7 +354,10 @@ export function PortfolioShell({
           <StatePanel icon="lucide:layers" title="No networks available" />
         ) : showContent && selectedChainIds.length === 0 ? (
           <StatePanel icon="lucide:network" title="No network selected" />
-        ) : showContent && view === 'assets' && assetGroups.length === 0 ? (
+        ) : showContent &&
+          view === 'assets' &&
+          assetGroups.length === 0 &&
+          unloadedChains.length === 0 ? (
           <StatePanel
             icon="lucide:wallet-cards"
             title={selectedChainIds.length === 1 ? 'No assets on this network' : 'No assets found'}
@@ -310,6 +365,9 @@ export function PortfolioShell({
         ) : view === 'assets' ? (
           <div className="space-y-2 px-4 pb-2">
             {primaryAssetGroups.map(group => renderAssetGroup(group, 'assets:all'))}
+            {unloadedChains.map(chain => (
+              <UnloadedChainBalance key={chain.chain.id} chain={chain} />
+            ))}
             {lowValueAssetGroups.length > 0 && (
               <section className="overflow-hidden rounded-xl border border-border/60 bg-card/40">
                 <button
@@ -382,7 +440,11 @@ export function PortfolioShell({
                     <span className="min-w-0 flex-1 truncate text-sm font-medium">
                       {chain.chain.displayName}
                     </span>
-                    {!balancesHidden && chainFiat === null && pricesLoading ? (
+                    {!balancesHidden &&
+                    chain.assets.length === 0 &&
+                    getPortfolioChainBalanceStatus(chain) === 'loading' ? (
+                      <Skeleton className="h-3 w-14" />
+                    ) : !balancesHidden && chainFiat === null && pricesLoading ? (
                       <Skeleton className="h-3 w-14" />
                     ) : (
                       <span className="font-mono text-xs text-muted">
@@ -390,7 +452,7 @@ export function PortfolioShell({
                           ? '••••'
                           : chainFiat === null
                             ? '—'
-                            : formatPrice(chainFiat, { showSign: true })}
+                            : formatFiatAmount(chainFiat, { showSign: true })}
                       </span>
                     )}
                     <Icon
@@ -400,6 +462,11 @@ export function PortfolioShell({
                       className={cn('text-muted transition-transform', expanded && 'rotate-180')}
                     />
                   </button>
+                  {expanded &&
+                    chain.assets.length === 0 &&
+                    getPortfolioChainBalanceStatus(chain) !== 'ready' && (
+                      <UnloadedChainBalance chain={chain} />
+                    )}
                   {expanded && chain.assets.length > 0 && (
                     <div
                       role="region"

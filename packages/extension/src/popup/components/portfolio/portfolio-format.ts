@@ -1,61 +1,18 @@
 import type { PortfolioChainView } from '@/core/portfolio'
 import Big from '@/lib/big'
-import { formatNumberWithSubscript } from '@/lib/format'
+import { formatTokenQuantity } from '@/lib/number-format'
 
 const RAW_AMOUNT_PATTERN = /^(0|[1-9][0-9]*)$/
 const DISPLAY_AMOUNT_PATTERN = /^(?:0|[1-9][0-9]*)(?:\.[0-9]*)?$/
-
-// Fixed significant fraction digits kept for sub-1 balances (added on top of the
-// leading zeros), so 0.00586768… renders as 0.005868 instead of overflowing.
-const DISPLAY_SIGNIFICANT_FRACTION_DIGITS = 4
 
 function groupWholeUnits(value: string): string {
   return value.replace(/\B(?=(\d{3})+(?!\d))/g, ',')
 }
 
-function trimTrailingZeros(value: string): string {
-  return value.includes('.') ? value.replace(/0+$/, '').replace(/\.$/, '') : value
-}
-
-/**
- * Compact, width-bounded rendering of an already-decimal balance for display
- * surfaces (portfolio rows, asset detail). Transaction/review screens keep full
- * precision via {@link formatBaseUnitAmount}; this one adapts the shown fraction
- * to the magnitude so a value never overflows the row:
- * - ≥ 1,000,000 collapses to compact `M`/`B`
- * - ≥ 1,000 shows 2 fraction digits, ≥ 1 shows 4
- * - < 1 shows the leading zeros plus 4 significant digits, compacting four or
- *   more leading zeros into a subscript count
- * Rounding is exact (Big), never float, so large 18-decimal balances stay precise.
- */
+/** Portfolio and Activity share the summary quantity profile. */
 export function formatDisplayAmount(value: Big): string {
   if (value.lt(0)) throw new Error('Invalid display amount')
-  if (value.eq(0)) return '0'
-
-  if (value.gte(1_000_000_000)) {
-    return `${trimTrailingZeros(value.div(1_000_000_000).round(2, Big.roundHalfUp).toFixed(2))}B`
-  }
-  if (value.gte(1_000_000)) {
-    return `${trimTrailingZeros(value.div(1_000_000).round(2, Big.roundHalfUp).toFixed(2))}M`
-  }
-
-  let maximumFractionDigits: number
-  if (value.gte(1_000)) {
-    maximumFractionDigits = 2
-  } else if (value.gte(1)) {
-    maximumFractionDigits = 4
-  } else {
-    const fraction = value.toFixed().split('.')[1] ?? ''
-    const leadingZeros = fraction.match(/^0*/)?.[0].length ?? 0
-    if (leadingZeros > 3) return formatNumberWithSubscript(value.toFixed())
-    maximumFractionDigits = leadingZeros + DISPLAY_SIGNIFICANT_FRACTION_DIGITS
-  }
-
-  const fixed = value.round(maximumFractionDigits, Big.roundHalfUp).toFixed(maximumFractionDigits)
-  const [whole, fraction = ''] = fixed.split('.')
-  const trimmedFraction = fraction.replace(/0+$/, '')
-  const grouped = groupWholeUnits(whole)
-  return trimmedFraction ? `${grouped}.${trimmedFraction}` : grouped
+  return formatTokenQuantity(value.toFixed())
 }
 
 /** Base-unit convenience wrapper around {@link formatDisplayAmount}. */
@@ -71,17 +28,9 @@ export function formatDisplayTokenAmount(rawAmount: string, decimals: number): s
   return formatDisplayAmount(new Big(rawAmount).div(new Big(10).pow(decimals)))
 }
 
-/** Keeps compact portfolio formatting while avoiding subscript notation in transaction history. */
+/** Activity uses the same quantity profile as holdings. */
 export function formatActivityTokenAmount(rawAmount: string, decimals: number): string {
-  const compact = formatDisplayTokenAmount(rawAmount, decimals)
-  if (!/[₀-₉]/u.test(compact)) return compact
-
-  const value = new Big(rawAmount).div(new Big(10).pow(decimals))
-  const exact = value.toFixed()
-  if (exact.length <= 10) return exact
-
-  const [coefficient, exponent] = value.toExponential(3).split('e')
-  return `${trimTrailingZeros(coefficient)}e${exponent}`
+  return formatDisplayTokenAmount(rawAmount, decimals)
 }
 
 export function formatNetworkDisplayName(displayName: string, networkName: string): string {

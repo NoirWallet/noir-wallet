@@ -1,6 +1,6 @@
 export function canUseRouteBeforeBetaActivation(pathname: string): boolean {
   return (
-    (pathname.startsWith('/onboarding') && pathname !== '/onboarding/congratulations') ||
+    pathname.startsWith('/onboarding') ||
     pathname === '/unlock' ||
     pathname === '/terms-of-use' ||
     pathname === '/hardware/connect' ||

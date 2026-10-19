@@ -1,7 +1,6 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from 'react'
 import { isZecToken } from '@/core/services/intents-api'
 import { type RheaSwapToken } from '@/core/services/rhea-swap'
-import { safeBig } from '@/lib/big'
 import { useSwapPreferences } from '@/store/swap-store'
 import {
   WALLET_SOURCE_CHAIN_IDS,
@@ -14,9 +13,13 @@ import {
   isSwapAssetOnEnabledChain,
   pickProvisionalSwapSource,
   mergeSelectedSwapSourceCatalog,
+  loadReversedSwapPair,
   type SwapInitialCatalogOptions
 } from '@/popup/services/swap-catalog-loading'
-import { estimateSwapOutputFromPrices } from '@/popup/components/swap/swap-estimate'
+import {
+  estimateSwapOutputFromPrices,
+  getSwapAmountValues
+} from '@/popup/components/swap/swap-estimate'
 import {
   getSavedSwapDestinationAssetId,
   getSwapDestinationTokens
@@ -54,6 +57,7 @@ export function useSwapState(
     initialCatalogs.sources?.find(token => token.assetId === initialDestinationAssetId) ??
     null
   const [tokenIn, setTokenIn] = useState<RheaSwapToken | null>(initialTokenIn)
+  const [selectedSourceAssetId, setSelectedSourceAssetId] = useState<string | null>(null)
   const [tokenOut, setTokenOut] = useState<RheaSwapToken | null>(
     initialTokenIn && initialTokenOut && initialTokenIn.assetId === initialTokenOut.assetId
       ? null
@@ -74,6 +78,9 @@ export function useSwapState(
   const [quoteError, setQuoteError] = useState<string | null>(null)
   const [catalogError, setCatalogError] = useState(false)
   const [catalogRequestId, setCatalogRequestId] = useState(0)
+  const [isSwitchingTokens, setIsSwitchingTokens] = useState(false)
+  const switchRequestSequence = useRef(0)
+  const switchingTokens = useRef(false)
 
   const addressType = useSwapPreferences(state => state.addressType)
   const slippage = useSwapPreferences(state => state.slippage)
@@ -90,7 +97,11 @@ export function useSwapState(
   useEffect(() => {
     if (activePreferenceScope.current === preferenceScope) return
     activePreferenceScope.current = preferenceScope
+    switchRequestSequence.current += 1
+    switchingTokens.current = false
+    setIsSwitchingTokens(false)
     setTokenIn(null)
+    setSelectedSourceAssetId(null)
     setTokenOut(null)
     setAmountIn('')
     setAmountOut('')
@@ -139,6 +150,7 @@ export function useSwapState(
         !isSwapAssetOnEnabledChain(tokenIn.assetId, options.enabledChains)
       ) {
         setTokenIn(null)
+        setSelectedSourceAssetId(null)
         setTokenOut(null)
       }
       const plan = buildInitialSwapCatalogPlan({
@@ -307,11 +319,6 @@ export function useSwapState(
   // Derived state
   const isZecSource = isZecToken(tokenIn)
 
-  const rate = useMemo(() => {
-    if (!amountIn || !amountOut || safeBig(amountIn).lte(0)) return '...'
-    return safeBig(amountOut).div(amountIn).toFixed()
-  }, [amountIn, amountOut])
-
   const provisionalAmountOut = useMemo(
     () =>
       estimateSwapOutputFromPrices({
@@ -323,16 +330,17 @@ export function useSwapState(
   )
   const displayOut = amountOut || (quoteError ? '' : provisionalAmountOut)
   const isEstimatedOut = amountOut === '' && displayOut !== ''
-  const fromFiat = amountIn
-    ? safeBig(amountIn)
-        .times(tokenIn?.price || 0)
-        .toFixed(2)
-    : '0.00'
-  const toFiat = displayOut
-    ? safeBig(displayOut)
-        .times(tokenOut?.price || 0)
-        .toFixed(2)
-    : '0.00'
+  const {
+    rate: displayRate,
+    fromFiat,
+    toFiat
+  } = getSwapAmountValues({
+    amountIn,
+    amountOut: displayOut,
+    tokenInPrice: tokenIn?.price,
+    tokenOutPrice: tokenOut?.price
+  })
+  const rate = amountOut ? displayRate : '...'
 
   // Actions
   const activePair = useRef({ tokenIn, tokenOut })
@@ -340,46 +348,62 @@ export function useSwapState(
   useEffect(
     () => () => {
       activePair.current = { tokenIn: null, tokenOut: null }
+      switchRequestSequence.current += 1
     },
     []
   )
   const switchTokens = useCallback(async () => {
-    if (!tokenIn || !tokenOut) return
-    if (tokenIn.rheaChainId !== tokenOut.rheaChainId) {
+    if (!tokenIn || !tokenOut || switchingTokens.current) return
+    const sequence = ++switchRequestSequence.current
+    switchingTokens.current = true
+    setIsSwitchingTokens(true)
+    try {
       const isCancelled = () =>
-        activePair.current.tokenIn !== tokenIn || activePair.current.tokenOut !== tokenOut
-      const [reverseSources, reverseDestinations] = await Promise.all([
-        loadTokenCatalogByChain(
-          'from',
-          [tokenOut.tokenListChainId],
-          false,
-          tokens => setSourceCatalog(previous => mergeTokenCatalogs(previous, tokens)),
-          isCancelled
-        ),
-        loadTokenCatalogByChain(
-          'cross-chain-to',
-          [tokenIn.tokenListChainId],
-          false,
-          tokens =>
-            setCrossChainDestinationCatalog(previous => mergeTokenCatalogs(previous, tokens)),
-          isCancelled
-        )
-      ])
-      if (!reverseSources.some(token => token.assetId === tokenOut.assetId)) return
-      if (!reverseDestinations.some(token => token.assetId === tokenIn.assetId)) return
-      if (activePair.current.tokenIn !== tokenIn || activePair.current.tokenOut !== tokenOut) return
+        sequence !== switchRequestSequence.current ||
+        activePair.current.tokenIn !== tokenIn ||
+        activePair.current.tokenOut !== tokenOut
+      const pair = await loadReversedSwapPair({
+        tokenIn,
+        tokenOut,
+        isCancelled,
+        loadSources: () =>
+          loadTokenCatalogByChain(
+            'from',
+            [tokenOut.tokenListChainId],
+            false,
+            tokens => setSourceCatalog(previous => mergeTokenCatalogs(previous, tokens)),
+            isCancelled
+          ),
+        loadDestinations: () =>
+          loadTokenCatalogByChain(
+            'cross-chain-to',
+            [tokenIn.tokenListChainId],
+            false,
+            tokens =>
+              setCrossChainDestinationCatalog(previous => mergeTokenCatalogs(previous, tokens)),
+            isCancelled
+          )
+      })
+      if (!pair) return
+      setTokenIn(pair.tokenIn)
+      setSelectedSourceAssetId(pair.tokenIn.assetId)
+      setTokenOut(pair.tokenOut)
+      if (preferenceScope)
+        setSavedTokenSelection(preferenceScope, {
+          tokenInId: pair.tokenIn.assetId,
+          tokenOutId: pair.tokenOut.assetId
+        })
+
+      setAmountIn('')
+      setAmountOut('')
+      setQuoteError(null)
+    } finally {
+      if (sequence === switchRequestSequence.current) {
+        switchingTokens.current = false
+        setIsSwitchingTokens(false)
+      }
     }
-    const temp = tokenIn
-    setTokenIn(tokenOut)
-    if (preferenceScope && tokenOut) setSavedTokenInId(preferenceScope, tokenOut.assetId)
-
-    setTokenOut(temp)
-    if (preferenceScope && temp) setSavedTokenOutId(preferenceScope, temp.assetId)
-
-    setAmountIn('')
-    setAmountOut('')
-    setQuoteError(null)
-  }, [preferenceScope, tokenIn, tokenOut, setSavedTokenInId, setSavedTokenOutId])
+  }, [preferenceScope, tokenIn, tokenOut, setSavedTokenSelection])
 
   const resetSwap = useCallback(() => {
     setAmountIn('')
@@ -420,6 +444,7 @@ export function useSwapState(
         mergeSelectedSwapSourceCatalog(previous, selectorSourceCatalog.current, token)
       )
       setTokenIn(token)
+      setSelectedSourceAssetId(token.assetId)
       if (preferenceScope) setSavedTokenInId(preferenceScope, token.assetId)
       setAmountOut('')
       setQuoteError(null)
@@ -478,6 +503,7 @@ export function useSwapState(
   return {
     // State
     tokenIn,
+    selectedSourceAssetId,
     tokenOut,
     tokens,
     sourceTokens: sourceCatalog,
@@ -494,6 +520,7 @@ export function useSwapState(
     catalogError,
     areTokensLoading,
     destinationTokensLoading,
+    isSwitchingTokens,
 
     // Derived
     isZecSource,

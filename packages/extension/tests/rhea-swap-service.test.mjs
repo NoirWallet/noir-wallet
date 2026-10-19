@@ -444,6 +444,33 @@ test('quote and build remain bound across a session-store reload', async () => {
       return { status: 'completed', toHash: `0x${'AB'.repeat(32)}` }
     }
   }
+  const resetSessions = new MemoryRheaSwapQuoteSessionStore()
+  let quoteStarted
+  const started = new Promise(resolve => {
+    quoteStarted = resolve
+  })
+  let finishQuote
+  const quoteGate = new Promise(resolve => {
+    finishQuote = resolve
+  })
+  const resetService = new RheaSwapService(
+    {
+      async quote() {
+        quoteStarted()
+        await quoteGate
+        return quote
+      }
+    },
+    resetSessions,
+    { createHandle: () => 'reset-overlap' }
+  )
+  const oldQuote = resetService.quote(confidentialQuoteRequest)
+  await started
+  await resetService.clearSessions()
+  finishQuote()
+  await expect(oldQuote).rejects.toThrow('session was cleared')
+  expect(await resetSessions.get('rhea-quote:reset-overlap')).toBeNull()
+
   const replacedRecipientService = new RheaSwapService(
     {
       async quote() {
@@ -483,6 +510,23 @@ test('quote and build remain bound across a session-store reload', async () => {
   const review = await service.prepare(quoteView.quoteHandle)
   expect(review.execution).toMatchObject({ kind: 'zcash-transfer', target: 't1deposit' })
   expect((await service.readPreparedBuild(quoteView.quoteHandle)).executionId).toBe('execution-1')
+  const depositTransfer = { executionId: 'execution-1', to: 't1deposit', amountZats: '100000000' }
+  await expect(
+    service.readZcashTransferDeadline(quoteView.quoteHandle, depositTransfer)
+  ).resolves.toBe(31_000)
+  for (const altered of [
+    { executionId: 'another-execution' },
+    { to: 't1anotherdeposit' },
+    { amountZats: '100000001' }
+  ]) {
+    await expect(
+      service.readZcashTransferDeadline(quoteView.quoteHandle, { ...depositTransfer, ...altered })
+    ).rejects.toThrow(/does not match/)
+  }
+  now = 31_000
+  await expect(
+    service.readZcashTransferDeadline(quoteView.quoteHandle, depositTransfer)
+  ).rejects.toThrow(/expired/)
   now = 40_000
   const submission = await service.recordTransactionSubmission(quoteView.quoteHandle, 'source-hash')
   expect(submission).toMatchObject({
@@ -647,6 +691,26 @@ test('EVM plan accepts only an exact ERC-20 approval followed by its bound swap 
     sender,
     approval: { spender, amountRaw: amount.toString() }
   })
+
+  let submittedOrders = 0
+  const submissionService = new RheaSwapService(
+    {
+      async submitOrderRaw() {
+        submittedOrders += 1
+        await Promise.resolve()
+        return { orderId: 'order-evm', router: 'odos', chainId: 1 }
+      }
+    },
+    sessions,
+    { now: () => 2_000 }
+  )
+  const signature = `0x${'11'.repeat(65)}`
+  const submissions = await Promise.all([
+    submissionService.submitSignedOrder('rhea-quote:evm', signature, 'eip712'),
+    submissionService.submitSignedOrder('rhea-quote:evm', signature, 'eip712')
+  ])
+  expect(submittedOrders).toBe(1)
+  expect(submissions[0]).toEqual(submissions[1])
 
   await sessions.put({
     ...(await sessions.get('rhea-quote:evm')),

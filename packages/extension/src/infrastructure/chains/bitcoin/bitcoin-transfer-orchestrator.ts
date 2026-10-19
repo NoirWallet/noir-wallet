@@ -3,7 +3,7 @@ import { Buffer } from 'buffer'
 import type { ChainAccount } from '@/core/accounts/domain'
 import { parseAccountId } from '@/core/accounts/domain'
 import type { AssetRegistry } from '@/core/chains/registry'
-import { parseKeyDomainId } from '@/core/keyring/domain'
+import { parseKeyDomainId, type SigningSummary } from '@/core/keyring/domain'
 import {
   parseSigningCommandId,
   type PreparedSigningCommand,
@@ -104,13 +104,16 @@ export interface BitcoinTransferOrchestratorOptions {
   readonly now?: () => number
   readonly createId?: () => string
   readonly onPendingBroadcast?: () => Promise<void> | void
-  readonly onBroadcastAccepted?: (input: {
-    readonly scope: TransactionAccountScope
-    readonly transactionId: string
-    readonly rawTransactionHex: string
-    readonly spentOutpoints: readonly BitcoinInputOutpoint[]
-    readonly graph: TransactionGraph
-  }) => Promise<void> | void
+  readonly onBroadcastAccepted?: (
+    input: {
+      readonly scope: TransactionAccountScope
+      readonly transactionId: string
+      readonly rawTransactionHex: string
+      readonly spentOutpoints: readonly BitcoinInputOutpoint[]
+      readonly graph: TransactionGraph
+    },
+    recovered: boolean
+  ) => Promise<void> | void
   readonly onMonitoringRequired?: () => Promise<void> | void
 }
 
@@ -165,6 +168,9 @@ export interface BitcoinExternalSigningRequest {
   readonly vendor?: 'keystone' | 'ledger'
   readonly ledgerRequest?: LedgerBitcoinSigningRequest
   readonly transactionId: TransactionId
+  readonly scope: TransactionAccountScope
+  readonly chainId: string
+  readonly summary: SigningSummary
   readonly request: Extract<
     PreparedSigningCommand['execution'],
     { readonly kind: 'external' }
@@ -670,6 +676,9 @@ export class BitcoinTransferOrchestrator {
     }
     return Object.freeze({
       transactionId: pending.transactionId,
+      scope: pending.scope,
+      chainId: pending.prepared.chainId,
+      summary: pending.signingSummary,
       request: pending.signingExecution.request,
       ...(pending.signingCommandId.startsWith('signing-command:ledger-bitcoin:')
         ? { vendor: 'ledger' as const }
@@ -812,13 +821,16 @@ export class BitcoinTransferOrchestrator {
     await this.pendingStore.delete(pending.transactionId)
     await Promise.all([
       Promise.resolve(
-        this.onBroadcastAccepted?.({
-          scope: pending.scope,
-          transactionId: pending.transactionHash,
-          rawTransactionHex: pending.rawTransactionHex,
-          spentOutpoints: pending.inputReservation.outpoints,
-          graph
-        })
+        this.onBroadcastAccepted?.(
+          {
+            scope: pending.scope,
+            transactionId: pending.transactionHash,
+            rawTransactionHex: pending.rawTransactionHex,
+            spentOutpoints: pending.inputReservation.outpoints,
+            graph
+          },
+          currentGraph === undefined
+        )
       ).catch(() => {}),
       Promise.resolve(this.onMonitoringRequired?.()).catch(() => {})
     ])

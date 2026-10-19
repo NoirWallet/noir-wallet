@@ -1,14 +1,9 @@
 import { useState, useEffect } from 'react'
 import { TokenIcon } from '../tokens/TokenIcon'
 import { Button } from '../ui/button'
-import {
-  formatExplorerUrl,
-  formatNumber,
-  formatSortAddress,
-  formatAmount,
-  detectAddressType
-} from '@/lib/format'
-import Big, { safeBig } from '@/lib/big'
+import { formatExplorerUrl, formatSortAddress, formatAmount, detectAddressType } from '@/lib/format'
+import { safeBig } from '@/lib/big'
+import { AmountDisplay } from '@/popup/components/common/AmountDisplay'
 import { AddressTypeLabel } from '@/popup/components/account/AddressType'
 
 import { DetailRow } from '@/popup/components/common/DetailRow'
@@ -178,10 +173,9 @@ export function TransactionDetailContent({
               badgeType={isIncoming ? 'receive' : 'send'}
             />
           </div>
-          <p className="text-3xl font-bold">
-            {isIncoming ? '+' : '-'}
-            {zecAmount}
-          </p>
+          <div className="max-w-full text-center text-3xl font-bold">
+            <AmountDisplay value={zecAmount} prefix={isIncoming ? '+' : '-'} />
+          </div>
         </div>
         <div className="space-y-4 mb-6">
           <DetailRow label="Date">{dateStr}</DetailRow>
@@ -207,7 +201,11 @@ export function TransactionDetailContent({
           )}
           {wasmTx.fee_zatoshis != null && wasmTx.fee_zatoshis > 0 && (
             <DetailRow label="Fee">
-              {formatAmount(wasmTx.fee_zatoshis.toString(), ZEC_DECIMALS)} ZEC
+              <AmountDisplay
+                value={formatAmount(wasmTx.fee_zatoshis.toString(), ZEC_DECIMALS)}
+                symbol="ZEC"
+                profile="fee"
+              />
             </DetailRow>
           )}
           {wasmTx.memo && <MemoSection memo={wasmTx.memo} />}
@@ -248,7 +246,7 @@ export function TransactionDetailContent({
     ? formatSortAddress(localTx.from)
     : (missingFromSource?.label ?? '')
   const fromLabelType = localTx.from ? fromType : missingFromSource?.type
-  const { label: toLabel, type: toLabelType } = getZcashTransactionRecipient(localTx)
+  const recipient = getZcashTransactionRecipient(localTx)
 
   return (
     <div>
@@ -268,10 +266,9 @@ export function TransactionDetailContent({
             badgeType={isIncoming ? 'receive' : 'send'}
           />
         </div>
-        <p className="text-3xl font-bold">
-          {isIncoming ? '+' : '-'}
-          {formatNumber(localTx.amount, { rm: Big.roundDown })}
-        </p>
+        <div className="max-w-full text-center text-3xl font-bold">
+          <AmountDisplay value={localTx.amount} prefix={isIncoming ? '+' : '-'} />
+        </div>
       </div>
 
       <div className="space-y-4 mb-6">
@@ -281,18 +278,20 @@ export function TransactionDetailContent({
             {visibleStatusCopy.label}
           </span>
         </DetailRow>
-        {!intentsProgress && transactionStatusCopy.key === 'status_unavailable' && (
-          <DetailRow label="Last Update">
-            <span className="max-w-[190px] text-right text-muted">
-              {transactionStatusCopy.description}
-            </span>
-          </DetailRow>
-        )}
         {intentsProgress && (
           <>
             <DetailRow label="Route">
-              {formatNumber(intentsProgress.amountIn)} {intentsProgress.tokenInSymbol} →{' '}
-              {formatNumber(intentsProgress.amountOut)} {intentsProgress.tokenOutSymbol}
+              <span className="inline-flex max-w-full flex-wrap items-center justify-end gap-1">
+                <AmountDisplay
+                  value={intentsProgress.amountIn}
+                  symbol={intentsProgress.tokenInSymbol}
+                />
+                <span>→</span>
+                <AmountDisplay
+                  value={intentsProgress.amountOut}
+                  symbol={intentsProgress.tokenOutSymbol}
+                />
+              </span>
             </DetailRow>
             <DetailRow label="Updated">
               {new Date(intentsProgress.lastStatusChangeAt).toLocaleString()}
@@ -318,21 +317,25 @@ export function TransactionDetailContent({
               fromLabelType && <AddressTypeLabel type={fromLabelType} />}
           </div>
         </DetailRow>
-        <DetailRow label="To">
-          <div className="flex flex-col items-end gap-0.5">
-            {toContact?.znsName && (
-              <span className="text-xs text-primary">{toContact.znsName}</span>
-            )}
-            <div className="flex items-center gap-2">
-              <span className={localTx.to ? '' : 'text-muted'}>{toLabel}</span>
-              {((localTx.to && isZcashAddress(localTx.to)) || toLabelType) && (
-                <AddressTypeLabel type={toLabelType ?? toType} />
+        {recipient && (
+          <DetailRow label="To">
+            <div className="flex flex-col items-end gap-0.5">
+              {toContact?.znsName && (
+                <span className="text-xs text-primary">{toContact.znsName}</span>
               )}
+              <div className="flex items-center gap-2">
+                <span className={localTx.to ? '' : 'text-muted'}>{recipient.label}</span>
+                {((localTx.to && isZcashAddress(localTx.to)) || recipient.type) && (
+                  <AddressTypeLabel type={recipient.type ?? toType} />
+                )}
+              </div>
             </div>
-          </div>
-        </DetailRow>
+          </DetailRow>
+        )}
         {localTx.fee && safeBig(localTx.fee).gt(0) && (
-          <DetailRow label="Fee">{formatNumber(localTx.fee, { rm: Big.roundDown })} ZEC</DetailRow>
+          <DetailRow label="Fee">
+            <AmountDisplay value={localTx.fee} symbol="ZEC" profile="fee" />
+          </DetailRow>
         )}
         {chainHashes.length > 0
           ? chainHashes.map((chainHash, index) => {

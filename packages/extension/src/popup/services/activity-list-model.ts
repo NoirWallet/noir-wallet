@@ -1,5 +1,18 @@
-import type { ActivityItem } from '@/core/activity'
+import type { ActivityItem, ActivityReadModel } from '@/core/activity'
 import { resolveActivityChainId } from '@/popup/components/transaction/activity-chain'
+
+export function isActivityModelForScope(
+  model: ActivityReadModel | null | undefined,
+  walletId: string | null,
+  accountId: string | null
+): model is ActivityReadModel {
+  return Boolean(
+    walletId &&
+    accountId &&
+    model?.scope.keyDomainId === walletId &&
+    model.scope.accountId === accountId
+  )
+}
 
 export function resolveAvailableActivityChainSelection(
   availableChainIds: readonly string[],

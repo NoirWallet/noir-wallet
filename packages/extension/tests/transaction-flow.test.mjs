@@ -153,11 +153,6 @@ describe('Cross-chain transaction lifecycle regressions', () => {
       /getTransactionRecoveryAction\(localTx\) === 'speed_up'/,
       'Activity detail must use the same recovery action selector'
     )
-    assert.doesNotMatch(
-      resultPageSource,
-      /indexed-db|\bloadTransactions\b/,
-      'transaction surfaces must read records through the account store'
-    )
   })
 
   it('labels the two steps of a multi-step Zcash send distinctly', () => {

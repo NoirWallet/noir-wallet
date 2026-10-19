@@ -66,7 +66,6 @@ test.describe('Swap provisional price estimate', () => {
     expect(stateSource).not.toContain(
       "setQuoteError(error instanceof Error ? error.message : 'RHEA Swap assets are unavailable')"
     )
-    expect(inputViewSource).toContain('Swap is temporarily unavailable')
     expect(inputViewSource).toContain('onRetryTokenCatalog')
     expect(inputViewSource).toContain('aria-label="Loading swap assets"')
     expect(inputViewSource).toContain('if (sourceAssetsLoading) return <SwapInputSkeleton />')

@@ -1,9 +1,9 @@
 import { useState, useCallback, useRef } from 'react'
 import { buildAccountKey } from '@/store/account-data-store'
-import { useWalletStore } from '@/store/wallet-store'
+import { rehydrateWalletStore, useWalletStore } from '@/store/wallet-store'
 import { zcashWalletRuntimeClient } from '@/popup/services/zcash-wallet-runtime-client'
 import type { AddressType, TransactionType, Transaction, QuoteBinding } from '@/types/wallet'
-import type { TrackOptions } from '@/lib/analytics/types'
+import type { ZcashOperationAnalyticsContext } from '@/lib/analytics/operations'
 import { WALLET_CONFIG } from '@/config/wallet'
 import { MARGINAL_FEE_ZATS } from '@/config/fee'
 import { sanitizeMarginalFeeZats } from '@/core/zcash/fee-policy'
@@ -18,10 +18,7 @@ import { useAccountDataStore } from '@/store/account-data-store'
 
 export type TransactionStep = 'idle' | 'pending' | 'submitted' | 'confirming' | 'success' | 'failed'
 
-export interface TxAnalyticsSpec {
-  onSuccess?: { name: string; options: TrackOptions }
-  onFail?: { name: string; options: TrackOptions }
-}
+export type TxAnalyticsSpec = ZcashOperationAnalyticsContext
 
 export interface SendTransactionParams {
   to: string
@@ -35,6 +32,8 @@ export interface SendTransactionParams {
   marginalFeeZats?: number
   /** Expired transaction being retried by this send. */
   replacesTransactionId?: string
+  /** Require this exact account to remain active until the send is dispatched. */
+  expectedAccountKey?: string
   displayTo?: string
   quoteBinding?: QuoteBinding
   monitorParams?: {
@@ -46,7 +45,7 @@ export interface SendTransactionParams {
     originChain?: string
     destinationChain?: string
   }
-  /** Analytics events to fire from background when tx broadcast succeeds/fails. */
+  /** Context for the background-owned operation outcome event. */
   analytics?: TxAnalyticsSpec
   onCreated?: (transaction: Transaction, accountKey: string) => void
 }
@@ -67,6 +66,13 @@ export interface UseTransactionReturn {
   currentTx: Transaction | null
   sendTransaction: (params: SendTransactionParams) => Promise<TransactionResult>
   reset: () => void
+}
+
+function getActiveAccountKey(): string | null {
+  const { currentNetwork, currentWalletId, currentAccountId } = useWalletStore.getState()
+  return currentWalletId && currentAccountId
+    ? buildAccountKey(currentNetwork, currentWalletId, currentAccountId)
+    : null
 }
 
 function waitForZcashTxCompleted(
@@ -151,6 +157,7 @@ export function useTransaction(): UseTransactionReturn {
         fee: explicitFee,
         marginalFeeZats,
         replacesTransactionId,
+        expectedAccountKey,
         displayTo,
         quoteBinding,
         monitorParams,
@@ -174,8 +181,26 @@ export function useTransaction(): UseTransactionReturn {
       setStep('pending')
       setError(null)
 
-      const capturedWalletId = currentWalletId
-      const capturedAccountId = currentAccountId
+      if (expectedAccountKey) {
+        if (getActiveAccountKey() !== expectedAccountKey) {
+          const errorMessage = 'Account changed. Reopen Speed Up.'
+          setError(errorMessage)
+          setStep('failed')
+          return { step: 'failed', error: errorMessage }
+        }
+        try {
+          await rehydrateWalletStore()
+        } catch {
+          const errorMessage = 'Unable to verify the active account. Please try again.'
+          setError(errorMessage)
+          setStep('failed')
+          return { step: 'failed', error: errorMessage }
+        }
+      }
+      const activeAtStart = expectedAccountKey ? useWalletStore.getState() : null
+      const capturedNetwork = activeAtStart?.currentNetwork ?? network
+      const capturedWalletId = activeAtStart?.currentWalletId ?? currentWalletId
+      const capturedAccountId = activeAtStart?.currentAccountId ?? currentAccountId
       if (!capturedWalletId || !capturedAccountId) {
         const errorMessage = 'No active account selected'
         setError(errorMessage)
@@ -183,7 +208,13 @@ export function useTransaction(): UseTransactionReturn {
         return { step: 'failed', error: errorMessage }
       }
 
-      const accountKey = buildAccountKey(network, capturedWalletId, capturedAccountId)
+      const accountKey = buildAccountKey(capturedNetwork, capturedWalletId, capturedAccountId)
+      if (expectedAccountKey && accountKey !== expectedAccountKey) {
+        const errorMessage = 'Account changed. Reopen Speed Up.'
+        setError(errorMessage)
+        setStep('failed')
+        return { step: 'failed', error: errorMessage }
+      }
       let tx: Transaction | undefined
       let hash: string | undefined
       try {
@@ -201,7 +232,7 @@ export function useTransaction(): UseTransactionReturn {
             memo,
             fee,
             timestamp: Date.now(),
-            network,
+            network: capturedNetwork,
             notified: false,
             ...(replacesTransactionId ? { replacesTransactionId } : {}),
             ...(quoteBinding ? { quoteBinding } : {}),
@@ -221,6 +252,15 @@ export function useTransaction(): UseTransactionReturn {
 
         const recordedTx = response.transaction
         tx = recordedTx
+        if (expectedAccountKey) {
+          if (getActiveAccountKey() !== expectedAccountKey) {
+            throw new Error('Account changed. Reopen Speed Up.')
+          }
+          await rehydrateWalletStore()
+          if (getActiveAccountKey() !== expectedAccountKey) {
+            throw new Error('Account changed. Reopen Speed Up.')
+          }
+        }
         currentTxRef.current = recordedTx
         onCreated?.(recordedTx, accountKey)
 
@@ -318,7 +358,12 @@ export function useTransaction(): UseTransactionReturn {
           }
         }
         console.error('Transaction failed:', err)
-        const errorMessage = classifyError(err).userMessage
+        const errorMessage =
+          expectedAccountKey &&
+          err instanceof Error &&
+          err.message === 'Account changed. Reopen Speed Up.'
+            ? err.message
+            : classifyError(err).userMessage
 
         if (tx)
           await chrome.runtime

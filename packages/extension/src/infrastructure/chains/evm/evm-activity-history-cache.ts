@@ -1,10 +1,11 @@
 import { parseActivityReadModel, type ActivityItem, type ActivityScope } from '@/core/activity'
 import { parseChainId } from '@/core/chains/registry'
+import { isZeroValueEvmTokenActivity } from './evm-indexed-activity'
 
 const DB_NAME = 'noir-wallet-evm-history-cache'
 const DB_VERSION = 2
 const STORE_NAME = 'records'
-const MAX_ITEMS = 200
+const MAX_ITEMS = 2_000
 
 export interface EvmHistoryCacheRecord {
   readonly schemaVersion: 1
@@ -14,6 +15,9 @@ export interface EvmHistoryCacheRecord {
   readonly lastAttemptAt: number
   readonly successfulSyncAt: number | null
   readonly retryAfter: number
+  readonly hasMore?: boolean
+  readonly historyPageCount?: number
+  readonly historySyncAt?: number | null
   readonly items: readonly ActivityItem[]
 }
 
@@ -70,8 +74,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return prototype === Object.prototype || prototype === null
 }
 
-function hasExactKeys(value: Record<string, unknown>, required: readonly string[]): boolean {
-  const allowed = new Set(required)
+function hasExactKeys(
+  value: Record<string, unknown>,
+  required: readonly string[],
+  optional: readonly string[] = []
+): boolean {
+  const allowed = new Set([...required, ...optional])
   return (
     required.every(key => Object.prototype.hasOwnProperty.call(value, key)) &&
     Object.keys(value).every(key => allowed.has(key))
@@ -116,21 +124,25 @@ function parseItems(
       throw new Error('EVM history cache item does not match its chain')
     }
   }
-  return model.items
+  return Object.freeze(model.items.filter(item => !isZeroValueEvmTokenActivity(item)))
 }
 
 function parseCurrentRecord(value: Record<string, unknown>): EvmHistoryCacheRecord {
   if (
-    !hasExactKeys(value, [
-      'schemaVersion',
-      'chainId',
-      'address',
-      'scope',
-      'lastAttemptAt',
-      'successfulSyncAt',
-      'retryAfter',
-      'items'
-    ]) ||
+    !hasExactKeys(
+      value,
+      [
+        'schemaVersion',
+        'chainId',
+        'address',
+        'scope',
+        'lastAttemptAt',
+        'successfulSyncAt',
+        'retryAfter',
+        'items'
+      ],
+      ['hasMore', 'historyPageCount', 'historySyncAt']
+    ) ||
     value.schemaVersion !== 1
   ) {
     throw new Error('Invalid EVM history cache record')
@@ -145,8 +157,31 @@ function parseCurrentRecord(value: Record<string, unknown>): EvmHistoryCacheReco
       ? null
       : parseTimestamp(value.successfulSyncAt, 'successful sync')
   const retryAfter = parseTimestamp(value.retryAfter, 'retry time')
+  if (value.hasMore !== undefined && typeof value.hasMore !== 'boolean') {
+    throw new Error('Invalid EVM history cache pagination state')
+  }
+  if (
+    value.historyPageCount !== undefined &&
+    (typeof value.historyPageCount !== 'number' ||
+      !Number.isSafeInteger(value.historyPageCount) ||
+      value.historyPageCount < 1 ||
+      value.historyPageCount > 10)
+  ) {
+    throw new Error('Invalid EVM history cache page count')
+  }
+  const historySyncAt =
+    value.historySyncAt === undefined || value.historySyncAt === null
+      ? value.historySyncAt
+      : parseTimestamp(value.historySyncAt, 'history sync')
   if (successfulSyncAt !== null && successfulSyncAt > lastAttemptAt) {
     throw new Error('EVM history cache successful sync exceeds its last attempt')
+  }
+  if (
+    historySyncAt !== undefined &&
+    historySyncAt !== null &&
+    (successfulSyncAt === null || historySyncAt > successfulSyncAt)
+  ) {
+    throw new Error('EVM history cache history sync exceeds its successful sync')
   }
   if (retryAfter < lastAttemptAt) {
     throw new Error('EVM history cache retry time precedes its last attempt')
@@ -164,6 +199,9 @@ function parseCurrentRecord(value: Record<string, unknown>): EvmHistoryCacheReco
     lastAttemptAt,
     successfulSyncAt,
     retryAfter,
+    ...(value.hasMore === undefined ? {} : { hasMore: value.hasMore }),
+    ...(value.historyPageCount === undefined ? {} : { historyPageCount: value.historyPageCount }),
+    ...(historySyncAt === undefined ? {} : { historySyncAt }),
     items: parseItems(value.items, parsed.scope, chainId)
   })
 }
@@ -308,36 +346,60 @@ async function writeRecord(record: EvmHistoryCacheRecord): Promise<void> {
     const store = transaction.objectStore(STORE_NAME)
     const key = scopedCacheKey(parsed.scope, parsed.chainId, parsed.address)
     const current = parseCacheRecord(await requestResult(store.get(key)))
-    if (
-      current &&
-      (current.scope.keyDomainId !== parsed.scope.keyDomainId ||
-        current.scope.accountId !== parsed.scope.accountId ||
-        current.chainId !== parsed.chainId ||
-        current.address !== parsed.address)
-    ) {
-      throw new Error('EVM history cache key does not match its record')
-    }
-    const byId = new Map((current?.items ?? []).map(item => [item.id, item] as const))
-    for (const item of parsed.items) {
-      const previous = byId.get(item.id)
-      if (!previous || item.updatedAt >= previous.updatedAt) byId.set(item.id, item)
-    }
-    const newest = current && current.lastAttemptAt > parsed.lastAttemptAt ? current : parsed
-    store.put(
-      parseCurrentRecord({
-        ...newest,
-        items: [...byId.values()]
-          .sort(
-            (left, right) => right.updatedAt - left.updatedAt || left.id.localeCompare(right.id)
-          )
-          .slice(0, MAX_ITEMS)
-      }),
-      key
-    )
+    store.put(mergeEvmHistoryCacheRecords(current, parsed), key)
     await completion
   } finally {
     database.close()
   }
+}
+
+export function mergeEvmHistoryCacheRecords(
+  current: EvmHistoryCacheRecord | null,
+  incoming: EvmHistoryCacheRecord
+): EvmHistoryCacheRecord {
+  if (!current) return incoming
+  if (
+    current.scope.keyDomainId !== incoming.scope.keyDomainId ||
+    current.scope.accountId !== incoming.scope.accountId ||
+    current.chainId !== incoming.chainId ||
+    current.address !== incoming.address
+  ) {
+    throw new Error('EVM history cache key does not match its record')
+  }
+  const byId = new Map(current.items.map(item => [item.id, item] as const))
+  for (const item of incoming.items) {
+    const previous = byId.get(item.id)
+    if (!previous || item.updatedAt >= previous.updatedAt) byId.set(item.id, item)
+  }
+  const newest = current.lastAttemptAt > incoming.lastAttemptAt ? current : incoming
+  const currentDepth = current.historyPageCount ?? 1
+  const incomingDepth = incoming.historyPageCount ?? 1
+  const currentHistorySyncAt = current.historySyncAt ?? current.successfulSyncAt ?? -1
+  const incomingHistorySyncAt = incoming.historySyncAt ?? incoming.successfulSyncAt ?? -1
+  const currentScanSucceeded = currentHistorySyncAt === current.lastAttemptAt
+  const incomingScanSucceeded = incomingHistorySyncAt === incoming.lastAttemptAt
+  let pagination = newest
+  if (currentDepth !== incomingDepth) {
+    pagination = currentDepth > incomingDepth ? current : incoming
+  } else if (currentHistorySyncAt !== incomingHistorySyncAt) {
+    pagination = currentHistorySyncAt > incomingHistorySyncAt ? current : incoming
+  } else if (currentScanSucceeded !== incomingScanSucceeded) {
+    pagination = currentScanSucceeded ? current : incoming
+  }
+  const latestSuccessfulSyncAt = Math.max(
+    current.successfulSyncAt ?? -1,
+    incoming.successfulSyncAt ?? -1
+  )
+  return parseCurrentRecord({
+    ...newest,
+    successfulSyncAt: latestSuccessfulSyncAt < 0 ? null : latestSuccessfulSyncAt,
+    hasMore: pagination.hasMore,
+    historyPageCount: pagination.historyPageCount,
+    historySyncAt: pagination.historySyncAt ?? pagination.successfulSyncAt,
+    items: [...byId.values()]
+      .sort((left, right) => right.updatedAt - left.updatedAt || left.id.localeCompare(right.id))
+      .slice(0, MAX_ITEMS)
+  })
 }
 
 export const indexedDbEvmHistoryCache: EvmHistoryCacheRepository = Object.freeze({

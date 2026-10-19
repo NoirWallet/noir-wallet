@@ -11,7 +11,6 @@ import { zcashWalletRuntimeClient } from '@/popup/services/zcash-wallet-runtime-
 import { useNavigate } from '../../provider/Router'
 import { useDialog } from '../../hooks/useDialog'
 import { openHardwareConnectTab } from '@/lib/hardware-tab'
-import { ANALYTICS_EVENTS, PAGE_IDS, sendAnalyticsEvent } from '@/lib/analytics'
 
 import {
   DropdownMenu,
@@ -216,10 +215,6 @@ export function AccountList() {
 
       await zcashWalletRuntimeClient.switchAccount(walletId, accountId)
       await loadWallets()
-      sendAnalyticsEvent(ANALYTICS_EVENTS.ACCOUNT_SWITCHED, {
-        pageId: PAGE_IDS.ACCOUNT_LIST,
-        extra: { cross_wallet: Boolean(isCrossWalletSwitch) }
-      })
       replace('/')
     } catch (error) {
       console.error('Failed to switch account:', error)
@@ -249,10 +244,6 @@ export function AccountList() {
     try {
       await zcashWalletRuntimeClient.switchAccount(walletId, accountId)
       await loadWallets()
-      sendAnalyticsEvent(ANALYTICS_EVENTS.ACCOUNT_SWITCHED, {
-        pageId: PAGE_IDS.ACCOUNT_LIST,
-        extra: { cross_wallet: true }
-      })
       replace('/')
     } catch (error) {
       if (isWalletLockedError(error)) {

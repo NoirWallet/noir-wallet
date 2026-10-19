@@ -32,6 +32,8 @@ import {
   type RheaSwapToken
 } from './rhea-swap-model'
 import { readRheaDestinationHash } from './rhea-order-status'
+import { getRheaSwapQuoteDeadline, isRheaSwapQuoteFresh } from './rhea-swap-quote-validity'
+import { DedupPromise, SerialTaskQueue } from '@/lib/async-utils'
 
 const MAXIMUM_SESSION_RECORDS = 16
 
@@ -100,6 +102,7 @@ export interface RheaSwapQuoteSessionRecord {
     statusChainId: string | null
     reportRequest: SwapReportRequestRaw
     reportStatus: 'pending' | 'reported' | 'failed'
+    disposeAfterReport?: boolean
   }>
 }
 
@@ -107,6 +110,8 @@ export interface RheaSwapQuoteSessionStore {
   readonly get: (quoteHandle: string) => Promise<RheaSwapQuoteSessionRecord | null>
   readonly put: (record: RheaSwapQuoteSessionRecord) => Promise<void>
   readonly delete: (quoteHandle: string) => Promise<void>
+  readonly listUnreported: () => Promise<readonly string[]>
+  readonly clear: () => Promise<void>
 }
 
 export interface RheaSwapProtocolClient extends Pick<
@@ -128,6 +133,10 @@ export interface RheaSwapCatalogResult {
 export class RheaSwapService {
   private readonly now: () => number
   private readonly createHandle: () => string
+  private readonly reportDedup = new Map<string, DedupPromise<RheaSwapSubmissionView>>()
+  private readonly sessionQueues = new Map<string, { queue: SerialTaskQueue; active: number }>()
+  private clearingSessions = false
+  private sessionEpoch = 0
 
   constructor(
     private readonly client: RheaSwapProtocolClient,
@@ -188,6 +197,8 @@ export class RheaSwapService {
   }
 
   async quote(value: unknown, signal?: AbortSignal): Promise<RheaSwapQuoteView> {
+    if (this.clearingSessions) throw new Error('RHEA Swap sessions are being cleared')
+    const epoch = this.sessionEpoch
     const request = toSdkQuoteRequest(parseRheaSwapQuoteRequest(value))
     const quote = await this.client.quote(request, { signal })
     this.assertQuoteMatchesRequest(quote, request)
@@ -200,11 +211,22 @@ export class RheaSwapService {
       receivedAt: quote.receivedAt,
       expiresAt: quote.expiresAt ?? null
     })
-    await this.sessions.put(record)
-    return this.toQuoteView(record, quote)
+    return this.runSessionOperation(quoteHandle, async () => {
+      if (epoch !== this.sessionEpoch) throw new Error('RHEA Swap session was cleared')
+      await this.sessions.put(record)
+      return this.toQuoteView(record, quote)
+    })
   }
 
   async prepare(quoteHandle: string, signal?: AbortSignal): Promise<RheaSwapReviewView> {
+    const handle = this.parseQuoteHandle(quoteHandle)
+    return this.runSessionOperation(handle, () => this.prepareOnce(handle, signal))
+  }
+
+  private async prepareOnce(
+    quoteHandle: string,
+    signal?: AbortSignal
+  ): Promise<RheaSwapReviewView> {
     const record = await this.requireSession(quoteHandle)
     const quote = normalizeQuote(record.request, record.quoteRaw, record.receivedAt)
     this.assertQuoteFresh(record, quote)
@@ -241,6 +263,24 @@ export class RheaSwapService {
     const build = normalizeBuild(record.build.raw, record.build.executionId, record.build.request)
     this.assertBuildMatchesQuote(build, quote)
     return build
+  }
+
+  async readZcashTransferDeadline(
+    quoteHandle: string,
+    transfer: { readonly executionId: string; readonly to: string; readonly amountZats: string }
+  ): Promise<number> {
+    const record = await this.requireSession(quoteHandle)
+    const build = this.readBuild(record)
+    if (
+      build.execution.kind !== 'zcash-transfer' ||
+      build.fromChain !== 'zcash' ||
+      build.executionId !== transfer.executionId ||
+      build.execution.depositAddress !== transfer.to ||
+      build.execution.amount !== transfer.amountZats
+    ) {
+      throw new Error('RHEA Swap transfer does not match its prepared quote')
+    }
+    return getRheaSwapQuoteDeadline(record)
   }
 
   async readEvmTransactionPlan(quoteHandle: string): Promise<RheaSwapEvmTransactionPlan> {
@@ -411,6 +451,16 @@ export class RheaSwapService {
     sourceHashValue: string
   ): Promise<RheaSwapSubmissionView> {
     const sourceHash = this.parseSourceHash(sourceHashValue)
+    const handle = this.parseQuoteHandle(quoteHandle)
+    return this.runSessionOperation(handle, () =>
+      this.recordTransactionSubmissionOnce(handle, sourceHash)
+    )
+  }
+
+  private async recordTransactionSubmissionOnce(
+    quoteHandle: string,
+    sourceHash: string
+  ): Promise<RheaSwapSubmissionView> {
     const record = await this.requireSession(quoteHandle)
     const build = this.readBuild(record, true)
     if (build.execution.kind === 'evm-signature') {
@@ -436,6 +486,18 @@ export class RheaSwapService {
       signingSchemeValue === undefined
         ? undefined
         : this.parseBoundedString(signingSchemeValue, 'RHEA Swap signing scheme', 64)
+    const handle = this.parseQuoteHandle(quoteHandle)
+    return this.runSessionOperation(handle, () =>
+      this.submitSignedOrderOnce(handle, signature, signingScheme, signal)
+    )
+  }
+
+  private async submitSignedOrderOnce(
+    quoteHandle: string,
+    signature: string,
+    signingScheme: string | undefined,
+    signal: AbortSignal | undefined
+  ): Promise<RheaSwapSubmissionView> {
     const record = await this.requireSession(quoteHandle)
     if (record.submission) return this.toSubmissionView(record)
     const build = this.readBuild(record, true)
@@ -469,6 +531,60 @@ export class RheaSwapService {
     quoteHandle: string,
     signal?: AbortSignal
   ): Promise<RheaSwapSubmissionView> {
+    const handle = this.parseQuoteHandle(quoteHandle)
+    let dedup = this.reportDedup.get(handle)
+    if (!dedup) {
+      dedup = new DedupPromise<RheaSwapSubmissionView>()
+      this.reportDedup.set(handle, dedup)
+    }
+    try {
+      return await dedup.run(() =>
+        this.runSessionOperation(handle, () => this.reportSubmissionOnce(handle, signal))
+      )
+    } finally {
+      if (!dedup.isPending) this.reportDedup.delete(handle)
+    }
+  }
+
+  async canRecoverTransactionSubmission(quoteHandle: string): Promise<boolean> {
+    const record = await this.sessions.get(this.parseQuoteHandle(quoteHandle))
+    if (!record?.build) return false
+    try {
+      this.readBuild(record, true)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  async retryPendingReports(): Promise<boolean> {
+    const handles = await this.sessions.listUnreported()
+    const outcomes = await Promise.allSettled(handles.map(handle => this.reportSubmission(handle)))
+    return outcomes.some(outcome => outcome.status === 'rejected')
+  }
+
+  async retireReportedSubmission(quoteHandle: string): Promise<void> {
+    const handle = this.parseQuoteHandle(quoteHandle)
+    await this.runSessionOperation(handle, async () => {
+      const record = await this.requireSession(handle)
+      if (!record.submission) return
+      if (record.submission.reportStatus === 'reported') {
+        await this.sessions.delete(handle)
+        return
+      }
+      await this.sessions.put(
+        Object.freeze({
+          ...record,
+          submission: Object.freeze({ ...record.submission, disposeAfterReport: true })
+        })
+      )
+    })
+  }
+
+  private async reportSubmissionOnce(
+    quoteHandle: string,
+    signal?: AbortSignal
+  ): Promise<RheaSwapSubmissionView> {
     const record = await this.requireSession(quoteHandle)
     if (!record.submission) throw new Error('RHEA Swap has not been submitted')
     if (record.submission.reportStatus === 'reported') return this.toSubmissionView(record)
@@ -478,7 +594,8 @@ export class RheaSwapService {
         ...record,
         submission: Object.freeze({ ...record.submission, reportStatus: 'reported' as const })
       })
-      await this.sessions.put(updated)
+      if (updated.submission.disposeAfterReport) await this.sessions.delete(quoteHandle)
+      else await this.sessions.put(updated)
       return this.toSubmissionView(updated)
     } catch (error) {
       await this.sessions
@@ -519,7 +636,37 @@ export class RheaSwapService {
   }
 
   discard(quoteHandle: string): Promise<void> {
-    return this.sessions.delete(this.parseQuoteHandle(quoteHandle))
+    const handle = this.parseQuoteHandle(quoteHandle)
+    return this.runSessionOperation(handle, () => this.sessions.delete(handle))
+  }
+
+  async clearSessions(): Promise<void> {
+    this.clearingSessions = true
+    this.sessionEpoch += 1
+    try {
+      await Promise.all(
+        [...this.sessionQueues.values()].map(state => state.queue.run(async () => {}))
+      )
+      await this.sessions.clear()
+    } finally {
+      this.clearingSessions = false
+    }
+  }
+
+  private async runSessionOperation<T>(handle: string, operation: () => Promise<T>): Promise<T> {
+    if (this.clearingSessions) throw new Error('RHEA Swap sessions are being cleared')
+    let state = this.sessionQueues.get(handle)
+    if (!state) {
+      state = { queue: new SerialTaskQueue(), active: 0 }
+      this.sessionQueues.set(handle, state)
+    }
+    state.active += 1
+    try {
+      return await state.queue.run(operation)
+    } finally {
+      state.active -= 1
+      if (state.active === 0) this.sessionQueues.delete(handle)
+    }
   }
 
   private readTokens(
@@ -703,8 +850,12 @@ export class RheaSwapService {
   }
 
   private assertQuoteFresh(record: RheaSwapQuoteSessionRecord, quote: Quote): void {
-    const expiresAt = record.expiresAt ?? quote.expiresAt
-    if (expiresAt !== undefined && expiresAt !== null && expiresAt <= this.now()) {
+    if (
+      !isRheaSwapQuoteFresh(
+        { receivedAt: record.receivedAt, expiresAt: record.expiresAt ?? quote.expiresAt ?? null },
+        this.now()
+      )
+    ) {
       throw new Error('RHEA Swap quote expired')
     }
   }
@@ -763,6 +914,16 @@ export class MemoryRheaSwapQuoteSessionStore implements RheaSwapQuoteSessionStor
 
   async get(quoteHandle: string): Promise<RheaSwapQuoteSessionRecord | null> {
     return this.records.get(quoteHandle) ?? null
+  }
+
+  async listUnreported(): Promise<readonly string[]> {
+    return [...this.records.values()]
+      .filter(record => record.submission && record.submission.reportStatus !== 'reported')
+      .map(record => record.quoteHandle)
+  }
+
+  async clear(): Promise<void> {
+    this.records.clear()
   }
 
   async put(record: RheaSwapQuoteSessionRecord): Promise<void> {

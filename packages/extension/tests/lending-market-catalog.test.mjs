@@ -22,6 +22,7 @@ test('builds every SDK market and user position with lending balance precision',
   const assets = {
     'eth.bridge.near': {
       metadata: { name: 'Ether', symbol: 'ETH', decimals: 18, icon: 'eth.svg' },
+      config: { extra_decimals: 10 },
       price: { usd: '2500' },
       supplied: { balance: '420000000000000000000000000000' },
       supply_apr: '0',
@@ -29,6 +30,7 @@ test('builds every SDK market and user position with lending balance precision',
     },
     '6b175474e89094c44da98b954eedeac495271d0f.factory.bridge.near': {
       metadata: { name: 'Dai Stablecoin', symbol: 'DAI', decimals: 18, icon: null },
+      config: { extra_decimals: 10 },
       price: { usd: '1' },
       supplied: { balance: '10000000000000000000000000000' },
       supply_apr: '0',
@@ -51,9 +53,9 @@ test('builds every SDK market and user position with lending balance precision',
     id: 'eth.bridge.near',
     symbol: 'ETH',
     totalSupplied: '42',
-    totalSuppliedUsd: '105000.00',
+    totalSuppliedUsd: '105000',
     supplied: '1.5',
-    suppliedUsd: '3750.00'
+    suppliedUsd: '3750'
   })
   expect(
     getLendingMarket(markets, '6b175474e89094c44da98b954eedeac495271d0f.factory.bridge.near')

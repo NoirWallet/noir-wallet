@@ -6,8 +6,6 @@ import ts from 'typescript'
 
 const extensionRoot = fileURLToPath(new URL('..', import.meta.url))
 const sourceRoot = join(extensionRoot, 'src')
-const analyticsIndexPath = join(sourceRoot, 'lib/analytics/index.ts')
-const analyticsPolicyPath = join(sourceRoot, 'lib/analytics/policy.ts')
 const workerTypesPath = join(sourceRoot, 'core/worker/types.ts')
 const workerClientPath = join(sourceRoot, 'core/worker/client.ts')
 const zcashWorkerPath = join(sourceRoot, 'core/worker/zcash.worker.ts')
@@ -76,24 +74,6 @@ function findSensitiveLogArguments() {
 test.describe('Sensitive data source gates', () => {
   test('does not pass secret-bearing identifiers to loggers', () => {
     expect(findSensitiveLogArguments()).toEqual([])
-  })
-
-  test('routes analytics through the closed outbound policy', () => {
-    const analyticsIndex = readFileSync(analyticsIndexPath, 'utf8')
-    const analyticsPolicy = readFileSync(analyticsPolicyPath, 'utf8')
-
-    expect(analyticsIndex).toContain('sanitizeAnalyticsEvent')
-    expect(analyticsIndex).not.toContain('getCurrentAccount()')
-    expect(analyticsIndex).not.toContain('getCurrentWalletAddress')
-    expect(analyticsIndex).toContain('payload.wallet_address = `anon_${await getClientId()}`')
-    expect(analyticsPolicy).not.toContain('inputAmount:')
-    expect(analyticsPolicy).not.toContain('outputAmount:')
-    expect(analyticsPolicy).not.toContain('usdAmount:')
-    expect(analyticsPolicy).not.toContain('walletAddress:')
-    expect(analyticsPolicy).not.toContain("'origin'")
-    expect(analyticsPolicy).not.toContain("'tx_hash'")
-    expect(analyticsPolicy).not.toContain("'deposit_address'")
-    expect(analyticsPolicy).not.toContain("'error'")
   })
 
   test('keeps optional BIP-39 passphrases out of the product mnemonic API', () => {

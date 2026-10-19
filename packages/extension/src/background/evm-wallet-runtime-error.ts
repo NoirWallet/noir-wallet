@@ -3,7 +3,10 @@ import { EvmRpcError, EvmTransactionError } from '@/infrastructure/chains/evm'
 
 export function mapEvmWalletRuntimeError(error: unknown): EvmWalletRuntimeError {
   if (error instanceof EvmTransactionError && error.code === 'insufficient-funds') {
-    return createEvmWalletRuntimeError('insufficient-funds')
+    const canonical = createEvmWalletRuntimeError('insufficient-funds')
+    return error.insufficientFunds && BigInt(error.insufficientFunds.maximumGasCostRaw) > 0n
+      ? Object.freeze({ ...canonical, shortfallRaw: error.insufficientFunds.shortfallRaw })
+      : canonical
   }
   if (error instanceof EvmTransactionError && error.code === 'invalid-intent') {
     return createEvmWalletRuntimeError('invalid-request')

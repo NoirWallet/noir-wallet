@@ -1,3 +1,7 @@
+import { transactionBroadcasted } from '@/core/transactions/transaction-analytics'
+import { IndexedDbTransactionRepository } from '@/infrastructure/persistence/repositories'
+import { ANALYTICS_EVENTS } from '../lib/analytics/constants'
+import { emitDAppEvent, observeDAppRequest, type DAppAnalyticsSink } from './dapp-analytics'
 import type { EvmNetworkConfig } from '@/config/networks'
 import {
   EvmRpcError,
@@ -75,6 +79,7 @@ export interface EvmDAppApprovalPort {
 }
 
 export interface BackgroundEvmDAppHandlerOptions {
+  readonly analytics?: DAppAnalyticsSink
   readonly network: EvmNetworkConfig
   readonly manager: Pick<
     DAppManager,
@@ -207,6 +212,16 @@ export class BackgroundEvmDAppHandler {
     origin: string,
     tabInfo: EvmDAppTabInfo
   ): Promise<unknown> {
+    return observeDAppRequest(this.options.analytics, 'evm', request.method, () =>
+      this.handleRequest(request, origin, tabInfo)
+    )
+  }
+
+  private async handleRequest(
+    request: EvmDAppRequest,
+    origin: string,
+    tabInfo: EvmDAppTabInfo
+  ): Promise<unknown> {
     const params = Array.isArray(request.params) ? request.params : undefined
     if (request.method === 'eth_getCode') return this.getCode(params)
     if (request.method === 'eth_call' && params !== undefined) return this.call(params, origin)
@@ -263,6 +278,7 @@ export class BackgroundEvmDAppHandler {
             .broadcastProviderEvent(origin, 'evm', 'accountsChanged', [])
             .catch(() => {})
         })
+        emitDAppEvent(this.options.analytics, 'evm', ANALYTICS_EVENTS.DAPP_DISCONNECTED)
         return null
       case 'wallet_addEthereumChain': {
         const requested = parseEip1193ChainRequest(params, {
@@ -314,6 +330,9 @@ export class BackgroundEvmDAppHandler {
     await this.options.manager.addEvmAuthorizedAccount(origin, this.chainId, active.reference)
     const accounts = await this.getAccounts(origin)
     await this.options.approval.broadcastProviderEvent(origin, 'evm', 'accountsChanged', accounts)
+    emitDAppEvent(this.options.analytics, 'evm', ANALYTICS_EVENTS.DAPP_CONNECTED, {
+      extra: { account_count: accounts.length, source: 'wallet' }
+    })
   }
 
   async notifyChainChanged(numericChainId: number): Promise<void> {
@@ -598,6 +617,9 @@ export class BackgroundEvmDAppHandler {
         chosen.map(item => item.reference),
         current.reference
       )
+      emitDAppEvent(this.options.analytics, 'evm', ANALYTICS_EVENTS.DAPP_CONNECTED, {
+        extra: { account_count: chosen.length, source: 'approval' }
+      })
       return Object.freeze([...new Set(chosen.map(item => item.address))])
     })
   }
@@ -726,7 +748,7 @@ export class BackgroundEvmDAppHandler {
           'Confidential asset transfers are unavailable on this network.'
         )
       }
-      return this.options.privateTransfer.send({
+      const destinationHash = await this.options.privateTransfer.send({
         origin,
         chainId: this.chainId,
         account: Object.freeze({
@@ -742,6 +764,12 @@ export class BackgroundEvmDAppHandler {
           await this.requireUnchangedExecutionIdentity(origin, active)
         }
       })
+      emitDAppEvent(this.options.analytics, 'evm', ANALYTICS_EVENTS.DAPP_TRANSACTION_SENT, {
+        hasTransaction: 1,
+        idempotencyKey: `dapp:evm:private:${destinationHash}`,
+        extra: { funding_source: 'private' }
+      })
+      return destinationHash
     }
     const executionAccount =
       active.executionMode === 'private'
@@ -955,7 +983,38 @@ export class BackgroundEvmDAppHandler {
       if (!transactionHash || !/^0x[0-9a-fA-F]{64}$/.test(transactionHash)) {
         throw new Error('Approved EVM transfer is missing its signed transaction hash')
       }
+      if (submission.status === 'broadcast' && transactionBroadcasted(submission.graph)) {
+        emitDAppEvent(this.options.analytics, 'evm', ANALYTICS_EVENTS.DAPP_TRANSACTION_SENT, {
+          hasTransaction: 1,
+          idempotencyKey: `dapp:evm:broadcast:${prepared.graph.root.id}`,
+          extra: {
+            funding_source:
+              'executionMode' in active && active.executionMode === 'private' ? 'private' : 'main',
+            hardware: active.context.keyDomainSource.kind === 'hardware'
+          }
+        })
+      }
       return transactionHash.toLowerCase()
+    } catch (error) {
+      if (!(typeof error === 'object' && error !== null && Reflect.get(error, 'code') === 4001)) {
+        void new IndexedDbTransactionRepository()
+          .get(prepared.graph.root.scope, prepared.graph.root.id)
+          .then(graph => {
+            if (graph && !transactionBroadcasted(graph) && graph.root.status !== 'signed') {
+              emitDAppEvent(
+                this.options.analytics,
+                'evm',
+                ANALYTICS_EVENTS.DAPP_TRANSACTION_FAILED,
+                {
+                  hasTransaction: 0,
+                  idempotencyKey: `dapp:evm:failed:${prepared.graph.root.id}`
+                }
+              )
+            }
+          })
+          .catch(() => {})
+      }
+      throw error
     } finally {
       if (!submitted) {
         await this.options.transferController.reject(prepared.graph.root.id).catch(() => {})

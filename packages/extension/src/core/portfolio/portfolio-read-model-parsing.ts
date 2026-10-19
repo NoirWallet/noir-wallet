@@ -108,6 +108,8 @@ function parseBalanceView(value: unknown): PortfolioBalanceView {
       'shieldableRaw',
       'shieldedRaw',
       'transparentRaw',
+      'shieldedPendingRaw',
+      'transparentPendingRaw',
       'mainRaw',
       'privateRaw',
       'privateOnchainRaw',
@@ -159,6 +161,22 @@ function parseBalanceView(value: unknown): PortfolioBalanceView {
     ...(record.transparentRaw === undefined
       ? {}
       : { transparentRaw: readRawAmount(record.transparentRaw, 'Portfolio transparent balance') }),
+    ...(record.shieldedPendingRaw === undefined
+      ? {}
+      : {
+          shieldedPendingRaw: readRawAmount(
+            record.shieldedPendingRaw,
+            'Portfolio shielded pending balance'
+          )
+        }),
+    ...(record.transparentPendingRaw === undefined
+      ? {}
+      : {
+          transparentPendingRaw: readRawAmount(
+            record.transparentPendingRaw,
+            'Portfolio transparent pending balance'
+          )
+        }),
     ...(mainRaw === undefined ? {} : { mainRaw }),
     ...(privateRaw === undefined ? {} : { privateRaw }),
     ...(privateOnchainRaw === undefined ? {} : { privateOnchainRaw }),

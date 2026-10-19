@@ -55,28 +55,45 @@ export function readZcashPortfolioSource(input: ReadZcashPortfolioInput): Portfo
     throw new Error('Ready Zcash Portfolio source requires a balance')
   }
 
-  const balances = [
-    {
-      assetId: asset.asset.id,
-      totalRaw: toZatoshis(input.balance?.total ?? '0', 'Zcash total balance'),
-      spendableRaw: toZatoshis(
-        input.balance?.spendable ?? input.balance?.shielded ?? '0',
-        'Zcash spendable balance'
-      ),
-      availableRaw: toZatoshis(
-        input.balance?.available ?? input.balance?.spendable ?? input.balance?.shielded ?? '0',
-        'Zcash available balance'
-      ),
-      pendingRaw: toZatoshis(input.balance?.pending?.total ?? '0', 'Zcash pending balance'),
-      shieldableRaw: toZatoshis(
-        input.balance?.shieldable ?? input.balance?.transparent ?? '0',
-        'Zcash shieldable balance'
-      ),
-      shieldedRaw: toZatoshis(input.balance?.shielded ?? '0', 'Zcash shielded balance'),
-      transparentRaw: toZatoshis(input.balance?.transparent ?? '0', 'Zcash transparent balance'),
-      updatedAt: input.updatedAt
-    }
-  ]
+  const balances =
+    input.balance === null
+      ? []
+      : [
+          {
+            assetId: asset.asset.id,
+            totalRaw: toZatoshis(input.balance?.total ?? '0', 'Zcash total balance'),
+            spendableRaw: toZatoshis(
+              input.balance?.spendable ?? input.balance?.shielded ?? '0',
+              'Zcash spendable balance'
+            ),
+            availableRaw: toZatoshis(
+              input.balance?.available ??
+                input.balance?.spendable ??
+                input.balance?.shielded ??
+                '0',
+              'Zcash available balance'
+            ),
+            pendingRaw: toZatoshis(input.balance?.pending?.total ?? '0', 'Zcash pending balance'),
+            shieldableRaw: toZatoshis(
+              input.balance?.shieldable ?? input.balance?.transparent ?? '0',
+              'Zcash shieldable balance'
+            ),
+            shieldedRaw: toZatoshis(input.balance?.shielded ?? '0', 'Zcash shielded balance'),
+            transparentRaw: toZatoshis(
+              input.balance?.transparent ?? '0',
+              'Zcash transparent balance'
+            ),
+            shieldedPendingRaw: toZatoshis(
+              input.balance?.pending?.shielded ?? '0',
+              'Zcash shielded pending balance'
+            ),
+            transparentPendingRaw: toZatoshis(
+              input.balance?.pending?.transparent ?? '0',
+              'Zcash transparent pending balance'
+            ),
+            updatedAt: input.updatedAt
+          }
+        ]
   const state = parsePortfolioSourceState({
     status: input.status,
     balances,

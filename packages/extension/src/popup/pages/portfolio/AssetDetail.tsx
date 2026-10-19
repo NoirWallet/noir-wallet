@@ -11,9 +11,11 @@ import {
   type AssetMarketHistoryReadModel,
   type AssetPriceReadModel
 } from '@/core/prices'
-import { formatPercent, formatPrice } from '@/lib/format'
+import { formatPercent } from '@/lib/format'
+import { formatFiatAmount, formatTokenPrice } from '@/lib/number-format'
 import { resolveChainIconAlias } from '@/lib/chain-icon'
 import { cn } from '@/lib/utils'
+import { getZcashPrivacyBalanceDisplay } from './asset-detail-balance'
 import { getChainEndpointRuntimeKey } from '@/core/chains/chain-endpoint-settings'
 import { useWalletStore } from '@/store/wallet-store'
 import { useSettingsStore } from '@/store/settings-store'
@@ -21,7 +23,10 @@ import { PageHeader } from '@/popup/components/common/PageHeader'
 import { CopyToast, useCopyToClipboard } from '@/popup/components/common/CopyToast'
 import { TokenIcon } from '@/popup/components/tokens/TokenIcon'
 import { Button } from '@/popup/components/ui/button'
-import { formatDisplayTokenAmount } from '@/popup/components/portfolio/portfolio-format'
+import {
+  formatBaseUnitAmount,
+  formatDisplayTokenAmount
+} from '@/popup/components/portfolio/portfolio-format'
 import { getPortfolioAssetUsdValue } from '@/popup/components/portfolio/portfolio-prices'
 import {
   isPortfolioModelForScope,
@@ -292,13 +297,7 @@ export function AssetDetail() {
   }, [asset])
   const zcashDisplay = useMemo(() => {
     if (chain?.chain.family !== 'zcash' || !asset) return null
-    return {
-      shielded: formatDisplayTokenAmount(asset.balance.shieldedRaw ?? '0', asset.metadata.decimals),
-      transparent: formatDisplayTokenAmount(
-        asset.balance.transparentRaw ?? '0',
-        asset.metadata.decimals
-      )
-    }
+    return getZcashPrivacyBalanceDisplay(asset.balance, asset.metadata.decimals)
   }, [asset, chain?.chain.family])
   const accountDisplay = useMemo(() => {
     if (!asset || asset.balance.mainRaw === undefined || asset.balance.privateRaw === undefined) {
@@ -525,14 +524,17 @@ export function AssetDetail() {
               size="xl"
             />
           </div>
-          <p className="mt-4 font-mono text-[28px] font-medium leading-none">
+          <p
+            className="mt-4 max-w-full break-all font-mono text-[28px] font-medium leading-tight"
+            title={`${formatBaseUnitAmount(asset.balance.totalRaw, asset.metadata.decimals)} ${asset.metadata.symbol}`}
+          >
             {display.total} {asset.metadata.symbol}
           </p>
           {priceStatus === 'loading' && fiatValue === null ? (
             <Skeleton className="mt-2 h-4 w-20" />
           ) : (
             <p className="mt-1.5 text-sm text-muted">
-              {fiatValue === null ? '—' : formatPrice(fiatValue, { showSign: true })}
+              {fiatValue === null ? '—' : formatFiatAmount(fiatValue, { showSign: true })}
             </p>
           )}
           {isZcashAsset && BigInt(asset.balance.shieldableRaw ?? '0') > 0n && (
@@ -627,13 +629,19 @@ export function AssetDetail() {
             </div>
             <div className="flex items-center justify-between gap-4 text-sm">
               <span className="text-muted">Total</span>
-              <span className="font-mono text-sm">
+              <span
+                className="min-w-0 break-all text-right font-mono text-sm"
+                title={`${formatBaseUnitAmount(asset.balance.totalRaw, asset.metadata.decimals)} ${asset.metadata.symbol}`}
+              >
                 {accountDisplay.total} {asset.metadata.symbol}
               </span>
             </div>
             <div className="flex items-center justify-between gap-4 text-sm">
               <span>Public</span>
-              <span className="font-mono text-sm">
+              <span
+                className="min-w-0 break-all text-right font-mono text-sm"
+                title={`${formatBaseUnitAmount(asset.balance.mainRaw ?? '0', asset.metadata.decimals)} ${asset.metadata.symbol}`}
+              >
                 {accountDisplay.main} {asset.metadata.symbol}
               </span>
             </div>
@@ -641,14 +649,20 @@ export function AssetDetail() {
               <span className="flex items-baseline gap-2">
                 <span>Confidential</span>
               </span>
-              <span className="font-mono text-sm">
+              <span
+                className="min-w-0 break-all text-right font-mono text-sm"
+                title={`${formatBaseUnitAmount(asset.balance.privateOnchainRaw ?? asset.balance.privateRaw ?? '0', asset.metadata.decimals)} ${asset.metadata.symbol}`}
+              >
                 {accountDisplay.privateOnchain} {asset.metadata.symbol}
               </span>
             </div>
             {BigInt(asset.balance.confidentialRaw ?? '0') > 0n && (
               <div className="flex items-center justify-between gap-4 text-sm text-muted">
                 <span>Confidential (unavailable on-chain)</span>
-                <span className="font-mono text-sm">
+                <span
+                  className="min-w-0 break-all text-right font-mono text-sm"
+                  title={`${formatBaseUnitAmount(asset.balance.confidentialRaw ?? '0', asset.metadata.decimals)} ${asset.metadata.symbol}`}
+                >
                   {accountDisplay.confidential} {asset.metadata.symbol}
                 </span>
               </div>
@@ -665,7 +679,17 @@ export function AssetDetail() {
             <div className="flex items-center justify-between gap-4 text-sm">
               <span className="text-muted">Shielded</span>
               {zcashDisplay ? (
-                <span className="font-mono text-sm">{zcashDisplay.shielded} ZEC</span>
+                <span
+                  className="min-w-0 break-all text-right font-mono text-sm"
+                  title={`${formatBaseUnitAmount(asset.balance.shieldedRaw ?? '0', asset.metadata.decimals)} ZEC`}
+                >
+                  <span className="block">{zcashDisplay.shielded} ZEC</span>
+                  {zcashDisplay.shieldedPending && (
+                    <span className="block text-xs text-muted">
+                      {zcashDisplay.shieldedPending} ZEC pending
+                    </span>
+                  )}
+                </span>
               ) : (
                 <Skeleton className="h-4 w-20" />
               )}
@@ -673,7 +697,17 @@ export function AssetDetail() {
             <div className="flex items-center justify-between gap-4 text-sm">
               <span className="text-muted">Transparent</span>
               {zcashDisplay ? (
-                <span className="font-mono text-sm">{zcashDisplay.transparent} ZEC</span>
+                <span
+                  className="min-w-0 break-all text-right font-mono text-sm"
+                  title={`${formatBaseUnitAmount(asset.balance.transparentRaw ?? '0', asset.metadata.decimals)} ZEC`}
+                >
+                  <span className="block">{zcashDisplay.transparent} ZEC</span>
+                  {zcashDisplay.transparentPending && (
+                    <span className="block text-xs text-muted">
+                      {zcashDisplay.transparentPending} ZEC pending
+                    </span>
+                  )}
+                </span>
               ) : (
                 <Skeleton className="h-4 w-20" />
               )}
@@ -687,7 +721,7 @@ export function AssetDetail() {
             range={historyRange}
             loading={historyStatus === 'loading'}
             priceLoading={priceStatus === 'loading'}
-            priceLabel={quote ? formatPrice(quote.priceUsd, { showSign: true }) : null}
+            priceLabel={quote ? formatTokenPrice(quote.priceUsd, { showSign: true }) : null}
             changeLabel={formattedChange}
             changeDirection={change?.gt(0) ? 'positive' : change?.lt(0) ? 'negative' : 'neutral'}
             delayed={
@@ -713,7 +747,10 @@ export function AssetDetail() {
             <h2 className="text-sm font-semibold">Balance</h2>
             <div className="flex items-center justify-between gap-4 text-sm">
               <span className="text-muted">Pending</span>
-              <span className="font-mono text-sm">
+              <span
+                className="min-w-0 break-all text-right font-mono text-sm"
+                title={`${formatBaseUnitAmount(asset.balance.pendingRaw, asset.metadata.decimals)} ${asset.metadata.symbol}`}
+              >
                 {display.pending} {asset.metadata.symbol}
               </span>
             </div>

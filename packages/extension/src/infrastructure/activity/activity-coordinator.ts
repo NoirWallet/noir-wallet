@@ -18,8 +18,14 @@ export interface ActivityCoordinatorOptions {
   readonly loadSupplementalItems?: (
     scope: ActivityScope,
     accountMode: 'main' | 'private' | 'all',
-    chainIds?: readonly string[]
+    chainIds?: readonly string[],
+    historyPageCount?: number
   ) => Promise<readonly ActivityItem[]>
+  readonly loadSupplementalHasMore?: (
+    scope: ActivityScope,
+    accountMode: 'main' | 'private' | 'all',
+    chainIds?: readonly string[]
+  ) => Promise<boolean>
   readonly loadCachedSupplementalItems?: (
     scope: ActivityScope,
     accountMode: 'main' | 'private' | 'all'
@@ -38,6 +44,7 @@ export interface ActivityReadOptions {
   readonly includeSupplemental?: boolean
   readonly accountMode?: 'main' | 'private' | 'all'
   readonly chainIds?: readonly string[]
+  readonly historyPageCount?: number
 }
 
 export class ActivityCoordinator {
@@ -56,6 +63,9 @@ export class ActivityCoordinator {
       ? await this.options.filterLocalGraphs(scope, storedLocalGraphs)
       : storedLocalGraphs
     const privateExecutionAddresses = await this.loadPrivateExecutionAddresses(scope, localGraphs)
+    const hasMore = await this.options
+      .loadSupplementalHasMore?.(scope, accountMode, options.chainIds)
+      .catch(() => false)
     return buildActivityReadModel({
       scope,
       localGraphs,
@@ -66,7 +76,8 @@ export class ActivityCoordinator {
         ...supplementalItems
       ]),
       privateExecutionAddresses,
-      limit: 200
+      limit: 2_000,
+      hasMore
     })
   }
 
@@ -77,8 +88,14 @@ export class ActivityCoordinator {
   ): Promise<readonly ActivityItem[]> {
     if (options.includeSupplemental !== false && this.options.loadSupplementalItems) {
       try {
-        return await this.options.loadSupplementalItems(scope, accountMode, options.chainIds)
+        return await this.options.loadSupplementalItems(
+          scope,
+          accountMode,
+          options.chainIds,
+          options.historyPageCount
+        )
       } catch (error) {
+        if ((options.historyPageCount ?? 1) > 1) throw error
         console.warn(
           '[Activity] Supplemental refresh failed:',
           error instanceof Error ? error.name : 'UnknownError'

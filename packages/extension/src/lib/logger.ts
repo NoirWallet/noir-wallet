@@ -1,12 +1,17 @@
 import { formatWalletLogPrefix } from './log-format'
 import type { DiagnosticLogDraft, DiagnosticLogLevel, DiagnosticLogSource } from './diagnostic-log'
-import { sanitizeDiagnosticMessage } from './diagnostic-log'
+import { sanitizeDiagnosticMessage, serializeDiagnosticArgs } from './diagnostic-log'
+import { formatDiagnosticContext } from './diagnostic-log-store'
 
 const isServiceWorker =
   typeof self !== 'undefined' &&
   'ServiceWorkerGlobalScope' in self &&
   self instanceof (self as any).ServiceWorkerGlobalScope
 const debugLogsEnabled = typeof __DEBUG_LOGS__ !== 'boolean' || __DEBUG_LOGS__
+const diagnosticContextId =
+  typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `context-${Date.now()}`
 const diagnosticSource: DiagnosticLogSource = isServiceWorker
   ? 'background'
   : typeof location !== 'undefined' && location.pathname.includes('/offscreen/')
@@ -28,45 +33,55 @@ class WalletLogger {
     this.diagnosticWriter = write
   }
 
-  private persist(level: DiagnosticLogLevel, message: string): void {
+  private persist(
+    level: DiagnosticLogLevel,
+    message: string,
+    walletId?: string,
+    accountId?: string,
+    error?: unknown
+  ): void {
     if (!this.diagnosticWriter && typeof chrome === 'undefined') return
     const entry = {
       source: diagnosticSource,
       level,
-      message: sanitizeDiagnosticMessage(message),
+      message: serializeDiagnosticArgs(error === undefined ? [message] : [message, error]),
       timestamp: Date.now(),
+      contextId: diagnosticContextId,
       sequence: this.diagnosticSequence++
     }
-    void (
-      this.diagnosticWriter
-        ? this.diagnosticWriter(entry)
-        : chrome.runtime.sendMessage({ type: 'APPEND_DIAGNOSTIC_LOG', entry })
-    ).catch(() => {})
+    void formatDiagnosticContext(walletId, accountId)
+      .then(context => {
+        entry.message = [entry.message, context].filter(Boolean).join(' ')
+        return this.diagnosticWriter
+          ? this.diagnosticWriter(entry)
+          : chrome.runtime.sendMessage({ type: 'APPEND_DIAGNOSTIC_LOG', entry })
+      })
+      .catch(() => {})
   }
 
-  log(msg: string, walletId?: string, accountId?: string): void {
-    this.persist('debug', msg)
+  log(msg: string, walletId?: string, accountId?: string, error?: unknown): void {
+    this.persist('debug', msg, walletId, accountId, error)
     if (!debugLogsEnabled) return
     const prefix = this.getPrefix(walletId, accountId)
     console.log(prefix, sanitizeDiagnosticMessage(msg))
   }
 
-  info(msg: string, walletId?: string, accountId?: string): void {
-    this.persist('info', msg)
+  info(msg: string, walletId?: string, accountId?: string, error?: unknown): void {
+    this.persist('info', msg, walletId, accountId, error)
     if (!debugLogsEnabled) return
     const prefix = this.getPrefix(walletId, accountId)
     console.info(prefix, sanitizeDiagnosticMessage(msg))
   }
 
-  warn(msg: string, walletId?: string, accountId?: string): void {
-    this.persist('warn', msg)
+  warn(msg: string, walletId?: string, accountId?: string, error?: unknown): void {
+    this.persist('warn', msg, walletId, accountId, error)
     if (!debugLogsEnabled) return
     const prefix = this.getPrefix(walletId, accountId)
     console.warn(prefix, sanitizeDiagnosticMessage(msg))
   }
 
-  error(msg: string, walletId?: string, accountId?: string): void {
-    this.persist('error', msg)
+  error(msg: string, walletId?: string, accountId?: string, error?: unknown): void {
+    this.persist('error', msg, walletId, accountId, error)
     if (!debugLogsEnabled) return
     const prefix = this.getPrefix(walletId, accountId)
     if (isServiceWorker) {

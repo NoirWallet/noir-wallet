@@ -154,9 +154,11 @@ export function RecipientSelector({
                         Current
                       </span>
                     )}
-                    <p className="ml-auto max-w-[42%] truncate text-xs text-muted">
-                      {group.walletDisplayName}
-                    </p>
+                    {group.walletDisplayName && (
+                      <p className="ml-auto max-w-[42%] truncate text-xs text-muted">
+                        {group.walletDisplayName}
+                      </p>
+                    )}
                   </div>
                   <div className="space-y-2">
                     {group.addresses.map(address => {

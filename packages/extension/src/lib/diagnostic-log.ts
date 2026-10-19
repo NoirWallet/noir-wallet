@@ -1,7 +1,120 @@
+import { wordlist } from '@scure/bip39/wordlists/english'
+
+const MAX_DEPTH = 4
+const recoveryWords = new Set(wordlist)
+const nativeStackGetter = Object.getOwnPropertyDescriptor(new Error(), 'stack')?.get
+
 export const DIAGNOSTIC_LOG_MAX_ENTRIES = 500
 export const DIAGNOSTIC_LOG_MAX_AGE_MS = 24 * 60 * 60 * 1000
 export const DIAGNOSTIC_LOG_MAX_ENTRY_BYTES = 2 * 1024
 export const DIAGNOSTIC_LOG_MAX_TOTAL_BYTES = 512 * 1024
+
+export function isDiagnosticContextId(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|context-\d+)$/.test(value)
+  )
+}
+
+export function getDiagnosticErrorDetails(error: unknown): unknown {
+  return projectError(error, new WeakSet(), 0)
+}
+
+function projectError(error: unknown, seen: WeakSet<object>, depth: number): unknown {
+  if (error === null || error === undefined) return error
+  if (typeof error !== 'object') {
+    return typeof error === 'string' || typeof error === 'number' || typeof error === 'boolean'
+      ? error
+      : '[Non-standard error]'
+  }
+  if (seen.has(error)) return '[Circular error]'
+  if (depth >= MAX_DEPTH) return '[Error cause truncated]'
+  seen.add(error)
+
+  try {
+    const fields: Record<string, unknown> = {}
+    for (const key of [
+      'name',
+      'message',
+      'code',
+      'status',
+      'statusCode',
+      'type',
+      'retryable',
+      'details',
+      'stack',
+      'cause'
+    ]) {
+      let owner: object | null = error
+      let descriptor: PropertyDescriptor | undefined
+      for (let level = 0; owner && level < MAX_DEPTH; level += 1) {
+        descriptor = Object.getOwnPropertyDescriptor(owner, key)
+        if (descriptor) break
+        owner = Object.getPrototypeOf(owner)
+      }
+      if (!descriptor) continue
+      let value: unknown
+      if ('value' in descriptor) {
+        value = descriptor.value
+      } else if (
+        key === 'stack' &&
+        error instanceof Error &&
+        nativeStackGetter &&
+        descriptor.get === nativeStackGetter
+      ) {
+        // V8 exposes its lazy native stack through a shared accessor. Custom
+        // accessors stay excluded, just like other error payload properties.
+        value = nativeStackGetter.call(error)
+      } else {
+        continue
+      }
+      if (key === 'cause') {
+        fields.cause = projectError(value, seen, depth + 1)
+      } else if (
+        typeof value === 'string' ||
+        typeof value === 'number' ||
+        typeof value === 'boolean'
+      ) {
+        fields[key] = value
+      }
+    }
+    return Object.keys(fields).length ? fields : '[Non-standard error without diagnostic fields]'
+  } catch {
+    return '[Unserializable error]'
+  } finally {
+    seen.delete(error)
+  }
+}
+
+function redactRecoveryPhrases(value: string): string {
+  const ranges: Array<{ start: number; end: number }> = []
+  let start = 0
+  let end = 0
+  let count = 0
+  const finish = () => {
+    if (count >= 12) ranges.push({ start, end })
+    count = 0
+  }
+  for (const match of value.matchAll(/\b[a-z]+\b/gi)) {
+    const index = match.index ?? 0
+    if (!recoveryWords.has(match[0].toLowerCase())) {
+      finish()
+      continue
+    }
+    if (count && !/^\s+$/.test(value.slice(end, index))) finish()
+    if (!count) start = index
+    end = index + match[0].length
+    count += 1
+  }
+  finish()
+  let result = ''
+  let cursor = 0
+  for (const range of ranges) {
+    result += value.slice(cursor, range.start) + '[Recovery phrase redacted]'
+    cursor = range.end
+  }
+  return result + value.slice(cursor)
+}
 
 export type DiagnosticLogLevel = 'debug' | 'info' | 'warn' | 'error'
 export type DiagnosticLogSource = 'background' | 'popup' | 'offscreen' | 'worker'
@@ -12,6 +125,7 @@ export interface DiagnosticLogDraft {
   message: string
   timestamp: number
   sequence: number
+  contextId?: string
 }
 
 export interface DiagnosticLogEntry extends DiagnosticLogDraft {
@@ -21,7 +135,7 @@ export interface DiagnosticLogEntry extends DiagnosticLogDraft {
 
 const encoder = new TextEncoder()
 const SECRET_KEY =
-  /mnemonic|seed|password|passphrase|private.?key|spending.?key|viewing.?key|secret|credential|signature|memo|token|auth/i
+  /mnemonic|seed|password|passphrase|private.?key|spending.?key|viewing.?key|ufvk|ciphertext|key.?material|secret|credential|signature|memo|token|auth/i
 const PRIVATE_KEY = /amount|balance|value|fee|price|usd/i
 const IDENTIFIER_KEY =
   /address|wallet.?id|account.?id|transaction.?id|tx.?hash|txid|request.?id|origin|domain|hostname|endpoint/i
@@ -44,15 +158,18 @@ export function truncateDiagnosticText(value: string, maxBytes: number): string 
 }
 
 function redactText(input: string): string {
+  input = redactRecoveryPhrases(input)
   const redacted = input
     .replace(
       /["']?\b(seed(?:\s*phrase)?|mnemonic)\b["']?\s*[:=]\s*["']?((?:[a-z]{2,}\s+){11,23}[a-z]{2,})["']?/gi,
       '$1=[Recovery phrase redacted]'
     )
     .replace(
-      /["']?\b(seed(?:\s*phrase)?|mnemonic|password|passphrase|private\s*key|spending\s*key|viewing\s*key|credential|signature|memo|auth(?:orization)?\s*token|access\s*token|refresh\s*token)\b["']?\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s,;)}\]]+)/gi,
+      /["']?\b(seed(?:\s*phrase)?|mnemonic|password|passphrase|private[\s_-]*key|spending[\s_-]*key|viewing[\s_-]*key|ufvk|ciphertext|key[\s_-]*material|credential|signature|memo|auth(?:orization)?[\s_-]*token|access[\s_-]*token|refresh[\s_-]*token)\b["']?\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s,;)}\]]+)/gi,
       '$1=[Redacted]'
     )
+    .replace(/\bBearer\s+[A-Za-z0-9._~+\/-]+=*/gi, 'Bearer [Redacted]')
+    .replace(/\buview1[a-z0-9]+\b/gi, '[Viewing key redacted]')
     .replace(
       /["']?\b(amount|balance|fee|price|value|usd(?:\s*value)?|transparent|shielded|sapling|orchard|spendable|available|pending|total)(?:\s+balance)?\b["']?\s*[:=]\s*["']?-?\d+(?:\.\d+)?/gi,
       '$1=[Redacted]'
@@ -90,8 +207,7 @@ function serialize(value: unknown, depth = 0, key = ''): unknown {
   if (typeof value === 'number') return PRIVATE_KEY.test(key) ? '[Redacted]' : value
   if (typeof value === 'bigint') return '[Redacted]'
   if (typeof value === 'boolean' || value === null) return value
-  if (value instanceof Error)
-    return { name: redactText(value.name), message: redactText(value.message) }
+  if (value instanceof Error) return serialize(getDiagnosticErrorDetails(value), depth, key)
   if (value instanceof Date)
     return Number.isNaN(value.getTime()) ? '[Invalid Date]' : value.toISOString()
   if (typeof URL !== 'undefined' && value instanceof URL) return '[Redacted URL]'
@@ -172,6 +288,7 @@ export function parseDiagnosticLogDraft(value: unknown): DiagnosticLogDraft | nu
     !['debug', 'info', 'warn', 'error'].includes(draft.level ?? '') ||
     typeof draft.message !== 'string' ||
     !Number.isFinite(draft.timestamp) ||
+    (draft.contextId !== undefined && !isDiagnosticContextId(draft.contextId)) ||
     !Number.isSafeInteger(draft.sequence) ||
     (draft.sequence ?? -1) < 0
   )
@@ -181,6 +298,7 @@ export function parseDiagnosticLogDraft(value: unknown): DiagnosticLogDraft | nu
     level: draft.level as DiagnosticLogLevel,
     message: truncateDiagnosticText(draft.message, DIAGNOSTIC_LOG_MAX_ENTRY_BYTES),
     timestamp: draft.timestamp as number,
-    sequence: draft.sequence as number
+    sequence: draft.sequence as number,
+    ...(draft.contextId ? { contextId: draft.contextId } : {})
   }
 }

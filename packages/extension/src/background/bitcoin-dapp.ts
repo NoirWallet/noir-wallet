@@ -1,3 +1,4 @@
+import { trackEvent } from '@/background/analytics/reporter'
 import { getBitcoinNetworkConfig } from '@/config/networks'
 import { DEFAULT_NETWORK } from '@/lib/runtime-network'
 import { dappManager } from '@/core/dapp/dapp-manager'
@@ -30,6 +31,7 @@ export function createBackgroundBitcoinDAppHandler(
   const storageRepository = new IndexedDbStorageV2Repository()
   const accountPreferences = getBitcoinAccountPreferences()
   return new BackgroundBitcoinDAppHandler({
+    analytics: trackEvent,
     network,
     manager: dappManager,
     approval: dappHandler,

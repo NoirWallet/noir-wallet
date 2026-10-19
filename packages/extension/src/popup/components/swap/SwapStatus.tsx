@@ -1,8 +1,8 @@
 import { Button } from '../ui/button'
 import type { SwapStatus } from '@/core/services/intents-api'
-import { formatNumber, formatSortAddress } from '@/lib/format'
+import { formatSortAddress } from '@/lib/format'
 import { TransactionResult, type TransactionStatus } from '../transaction/TransactionResult'
-import Big from '@/lib/big'
+import { AmountDisplay } from '../common/AmountDisplay'
 import { isZcashDestination } from '@/lib/cross-chain-transaction'
 import { WALLET_CONFIG } from '@/config/wallet'
 import { getIntentsStatusCopy } from '@/lib/transaction-status-copy'
@@ -143,7 +143,8 @@ export function SwapStatusDisplay({
   const txStatus: TransactionStatus = statusCopy.resultStatus
   const resultAction = getSwapResultAction(
     txStatus,
-    confidentialFunding?.phase === 'needs-auth' && onResumeConfidentialFunding !== undefined
+    confidentialFunding?.phase === 'needs-auth' && onResumeConfidentialFunding !== undefined,
+    !!confidentialFunding
   )
 
   const labels = getSwapActionLabels(actionName)
@@ -152,6 +153,7 @@ export function SwapStatusDisplay({
   return (
     <TransactionResult
       status={txStatus}
+      showStatus={!!confidentialFunding}
       title={confidentialFunding ? statusCopy.title : progress.title}
       description={confidentialFunding ? statusCopy.description : progress.description}
       footer={
@@ -176,25 +178,29 @@ export function SwapStatusDisplay({
     >
       <div className="w-full space-y-3">
         <TransactionProgressSteps steps={progress.steps} className="pb-2" />
-        <div className="flex justify-between items-center py-3 border-b border-white/10">
+        <div className="flex min-w-0 items-center justify-between gap-3 border-b border-white/10 py-3">
           <span className="text-sm text-muted">{labels.sendLabel}</span>
-          <span className="text-sm font-medium">
-            {formatNumber(amountIn)} {tokenInSymbol}
-          </span>
+          <AmountDisplay value={amountIn} symbol={tokenInSymbol} className="text-sm font-medium" />
         </div>
-        <div className="flex justify-between items-center py-3 border-b border-white/10">
+        <div className="flex min-w-0 items-center justify-between gap-3 border-b border-white/10 py-3">
           <span className="text-sm text-muted">{labels.receiveLabel}</span>
-          <span className="text-sm font-medium">
-            {formatNumber(amountOut)} {tokenOutSymbol}
-          </span>
+          <AmountDisplay
+            value={amountOut}
+            symbol={tokenOutSymbol}
+            className="text-sm font-medium"
+          />
         </div>
 
         {showFee && (
-          <div className="flex justify-between items-center py-3 border-b border-white/10">
+          <div className="flex min-w-0 items-center justify-between gap-3 border-b border-white/10 py-3">
             <span className="text-sm text-muted">Fee</span>
-            <span className="text-sm font-medium">
-              ≈ {formatNumber(fee, { rm: Big.roundDown, useUnit: true, useSubscript: true })} ZEC
-            </span>
+            <AmountDisplay
+              value={fee}
+              symbol="ZEC"
+              prefix="≈ "
+              profile="fee"
+              className="text-sm font-medium"
+            />
           </div>
         )}
 

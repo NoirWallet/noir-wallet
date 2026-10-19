@@ -12,6 +12,7 @@ import { evmWalletClient } from '@/popup/services/evm-wallet-client'
 import { openModal } from '@/popup/provider/ModalManager'
 import { toast } from '@/store/toast-store'
 import { formatBaseUnitAmount } from '../portfolio/portfolio-format'
+import { AmountDisplay } from '../common/AmountDisplay'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import {
@@ -178,19 +179,31 @@ export function EvmNonceRecoveryBanner({
               <div className="flex justify-between gap-3">
                 <span className="text-muted">Maximum network fee</span>
                 <span className="font-mono">
-                  {formatBaseUnitAmount(summary.fields.maximumFeeWei, feeDecimals)} {feeSymbol}
+                  <AmountDisplay
+                    value={formatBaseUnitAmount(summary.fields.maximumFeeWei, feeDecimals)}
+                    symbol={feeSymbol}
+                    profile="fee"
+                  />
                 </span>
               </div>
               <div className="flex justify-between gap-3">
                 <span className="text-muted">Max fee per gas</span>
                 <span className="font-mono">
-                  {formatEvmWeiAsGwei(summary.fields.maxFeePerGasWei ?? '0')} GWEI
+                  <AmountDisplay
+                    value={formatEvmWeiAsGwei(summary.fields.maxFeePerGasWei ?? '0')}
+                    symbol="GWEI"
+                    profile="fee"
+                  />
                 </span>
               </div>
               <div className="flex justify-between gap-3">
                 <span className="text-muted">Priority fee</span>
                 <span className="font-mono">
-                  {formatEvmWeiAsGwei(summary.fields.maxPriorityFeePerGasWei ?? '0')} GWEI
+                  <AmountDisplay
+                    value={formatEvmWeiAsGwei(summary.fields.maxPriorityFeePerGasWei ?? '0')}
+                    symbol="GWEI"
+                    profile="fee"
+                  />
                 </span>
               </div>
             </div>

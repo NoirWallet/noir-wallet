@@ -20,12 +20,8 @@ export function isForegroundWallet(walletId: string): boolean {
   return fg === walletId
 }
 
-// Records an 'interrupted' sync job so the next foreground sync reloads the
-// wallet from the persisted DB (reloadPersistedWalletIfInterrupted) and
-// catches up with the missed on-chain tx. Intentionally does NOT mark the
-// wallet dirty: an idle wallet's in-memory state is consistent (just behind
-// the chain tip), and marking it dirty would fail every read until the next
-// sync runs.
+// Persist the catch-up request before scheduling work so a service-worker
+// restart can still resume it from the wallet snapshot.
 export async function markWalletNeedsCatchUp(walletId: string, accountId?: string): Promise<void> {
   const network = backgroundZcashWalletRuntime.getNetwork()
   const wallet = useWalletStore.getState().getWallet(walletId)
@@ -34,13 +30,12 @@ export async function markWalletNeedsCatchUp(walletId: string, accountId?: strin
 
   const scannedHeight = backgroundZcashWalletRuntime.getWalletScannedHeight(walletId)
 
-  await syncJobStore
-    .upsert(walletId, network, {
-      accountId: resolvedAccountId || '',
-      status: 'interrupted',
-      ...(scannedHeight > 0 ? { lastPersistedHeight: scannedHeight } : {})
-    })
-    .catch(() => {})
+  await syncJobStore.upsert(walletId, network, {
+    accountId: resolvedAccountId || '',
+    status: 'interrupted',
+    resumeOnStartup: true,
+    ...(scannedHeight > 0 ? { lastPersistedHeight: scannedHeight } : {})
+  })
 
   logger.log(
     'Marked wallet for catch-up on next foreground sync',
@@ -55,30 +50,10 @@ export async function refreshAfterOnChainBroadcast(walletId: string): Promise<vo
 }
 
 export async function catchUpAfterOnChainTx(walletId: string, accountId: string): Promise<boolean> {
-  syncScheduler.abortAllSyncsForTx()
-  const idle = await syncScheduler.waitForActiveSyncIdle(30_000)
-  if (!idle) {
-    logger.warn('Tx catch-up skipped: sync still active', walletId, accountId)
-    await markWalletNeedsCatchUp(walletId, accountId)
-    backgroundZcashWalletRuntime.requestSync()
-    return false
-  }
-
-  const ready = await backgroundZcashWalletRuntime.prepareForTxCatchUp(walletId, accountId)
-  if (!ready) {
-    logger.warn('Tx catch-up skipped: wallet core not ready', walletId, accountId)
-    await markWalletNeedsCatchUp(walletId, accountId)
-    backgroundZcashWalletRuntime.requestSync()
-    return false
-  }
-
-  const outcome = await backgroundZcashWalletRuntime.syncBlocks(() => false, walletId, accountId, {
-    waitForTipAdvance: true,
-    force: true
-  })
-
-  if (outcome.status === 'skipped' || outcome.status === 'failed' || outcome.status === 'partial') {
-    logger.warn(`Tx catch-up sync ${outcome.status}, scheduling retry`, walletId, accountId)
+  await markWalletNeedsCatchUp(walletId, accountId)
+  const status = await syncScheduler.runTransactionCatchUp(walletId, accountId)
+  if (status !== 'completed') {
+    logger.warn(`Tx catch-up sync ${status}, scheduling retry`, walletId, accountId)
     await markWalletNeedsCatchUp(walletId, accountId)
     backgroundZcashWalletRuntime.requestSync()
   }
@@ -87,7 +62,7 @@ export async function catchUpAfterOnChainTx(walletId: string, accountId: string)
   await backgroundZcashWalletRuntime
     .refreshTransactionHistoryFromWasm(walletId, accountId)
     .catch(() => {})
-  return outcome.status === 'completed'
+  return status === 'completed'
 }
 
 export async function finalizeTxCatchUp(accountKey: string): Promise<boolean> {

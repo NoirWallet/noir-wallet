@@ -1013,9 +1013,18 @@ export class ZcashWorkerClient {
     return this.request('pczt.shieldCreate', { accountId, marginalFeeZats, walletId: this.wid() })
   }
 
-  async pcztProveSend(fullBase64: string, signedBase64: string): Promise<string> {
+  async pcztProveSend(
+    fullBase64: string,
+    signedBase64: string,
+    submissionDeadline?: number
+  ): Promise<string> {
     await this.ensureInitialized()
-    return this.request('pczt.proveSend', { fullBase64, signedBase64, walletId: this.wid() })
+    return this.request('pczt.proveSend', {
+      fullBase64,
+      signedBase64,
+      walletId: this.wid(),
+      ...(submissionDeadline === undefined ? {} : { submissionDeadline })
+    })
   }
 
   async pcztLedgerPayload(redactedBase64: string, accountIndex: number) {

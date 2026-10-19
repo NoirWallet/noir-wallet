@@ -1,7 +1,6 @@
 import { Icon } from '@iconify/react'
 import type { ReactNode } from 'react'
-import Big from '@/lib/big'
-import { formatNumber } from '@/lib/format'
+import { formatTokenQuantity } from '@/lib/number-format'
 import { formatSendFiatValue } from './send-input-model'
 import { cn } from '@/lib/utils'
 import { TokenIcon } from '../tokens/TokenIcon'
@@ -148,14 +147,10 @@ export function SendAmountInputCard({
           <span className="shrink-0 text-muted">{amountFiat ? `~${amountFiat}` : '—'}</span>
           <div className="min-w-0 text-right text-muted">
             <div className="flex min-w-0 items-center justify-end gap-1">
-              <span className="truncate">
+              <span className="min-w-0 break-all" title={available}>
                 {availableLabel}{' '}
                 <strong className="font-semibold text-foreground">
-                  {formatNumber(available, {
-                    rm: Big.roundDown,
-                    useUnit: true,
-                    useSubscript: true
-                  })}
+                  {formatTokenQuantity(available)}
                 </strong>{' '}
                 {symbol}
                 {availableFiat ? ` (${availableFiat})` : ''}
@@ -164,8 +159,8 @@ export function SendAmountInputCard({
             </div>
             {pending != null && safeBig(pending).gt(0) && (
               <div className="mt-0.5 flex min-w-0 items-center justify-end gap-1 text-[11px]">
-                <span className="truncate">
-                  {formatNumber(pending, { rm: Big.roundDown })} {symbol} pending
+                <span className="min-w-0 break-all" title={pending}>
+                  {formatTokenQuantity(pending)} {symbol} pending
                 </span>
                 <BalanceHelp kind="pending" />
               </div>

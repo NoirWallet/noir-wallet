@@ -4,7 +4,7 @@ import { zcashTxMonitor } from './zcash-tx-monitor'
 import { formatChainName } from '@/lib/format'
 import { loadTransactions } from '@/lib/indexed-db'
 import { safeBig } from '@/lib/big'
-import { ANALYTICS_EVENTS, trackEvent } from '@/lib/analytics'
+import { ANALYTICS_EVENTS, trackEvent } from '@/background/analytics/reporter'
 import {
   getCrossChainCompletionStatus,
   isZcashDestination,
@@ -359,6 +359,17 @@ export class TransactionMonitor {
       return
     }
 
+    trackEvent(ANALYTICS_EVENTS.SWAP_COMPLETED, {
+      chain: 'zcash',
+      hasTransaction: 1,
+      idempotencyKey: `intents-terminal:${pendingTx.accountKey}:${pendingTx.transactionId}:${status.status}`,
+      inputSymbol: pendingTx.tokenInSymbol,
+      outputSymbol: pendingTx.tokenOutSymbol,
+      extra: {
+        status: status.status,
+        action: pendingTx.actionName || 'Swap'
+      }
+    })
     const currentEntry = this.pendingTransactions.get(pendingTx.depositAddress)
     this.pendingTransactions.delete(pendingTx.depositAddress)
     try {
@@ -369,19 +380,6 @@ export class TransactionMonitor {
       throw error
     }
     this.notifyProgressUpdated(pendingTx.accountKey)
-
-    trackEvent(ANALYTICS_EVENTS.SWAP_COMPLETED, {
-      hasTransaction: 1,
-      inputAmount: pendingTx.amountIn,
-      inputSymbol: pendingTx.tokenInSymbol,
-      outputAmount: status.swapDetails?.amountOutFormatted || pendingTx.amountOut,
-      outputSymbol: pendingTx.tokenOutSymbol,
-      extra: {
-        status: status.status,
-        action: pendingTx.actionName || 'Swap',
-        deposit_address: pendingTx.depositAddress
-      }
-    })
 
     this.notifyCompletion(pendingTx, status)
 

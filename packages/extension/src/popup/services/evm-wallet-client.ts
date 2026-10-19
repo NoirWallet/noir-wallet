@@ -1,4 +1,5 @@
 import { DEFAULT_NETWORK } from '@/lib/runtime-network'
+import { parseAccountId } from '@/core/accounts/domain'
 import type { LedgerEvmSigningRequest } from '@/lib/ledger/evm'
 import { bytesToBase64, hexToBytes } from '@/lib/bytes'
 import { parseActivityReadModel, type ActivityReadModel } from '@/core/activity'
@@ -16,7 +17,7 @@ import {
   createEvmWalletRuntimeError,
   type EvmWalletRuntimeErrorCode
 } from '@/core/chains/evm'
-import { parseSigningSummary, type SigningSummary } from '@/core/keyring/domain'
+import { parseKeyDomainId, parseSigningSummary, type SigningSummary } from '@/core/keyring/domain'
 import { parsePortfolioReadModel, type PortfolioReadModel } from '@/core/portfolio'
 import {
   getTransactionProtocolIntentKind,
@@ -55,11 +56,13 @@ export type EvmWalletClientErrorCode = EvmWalletRuntimeErrorCode | 'invalid-resp
 
 export class EvmWalletClientError extends Error {
   readonly code: EvmWalletClientErrorCode
+  readonly shortfallRaw?: string
 
-  constructor(code: EvmWalletClientErrorCode, message: string) {
+  constructor(code: EvmWalletClientErrorCode, message: string, shortfallRaw?: string) {
     super(message)
     this.name = 'EvmWalletClientError'
     this.code = code
+    this.shortfallRaw = shortfallRaw
   }
 }
 
@@ -113,6 +116,8 @@ export interface EvmExternalSigningRequest {
   readonly vendor: 'keystone' | 'ledger'
   readonly ledgerRequest?: Extract<LedgerEvmSigningRequest, { kind: 'transaction' }>
   readonly transactionId: TransactionId
+  readonly scope: { readonly keyDomainId: string; readonly accountId: string }
+  readonly summary: SigningSummary
   readonly chainId: string
   readonly request: { readonly encoding: 'base64'; readonly value: string }
   readonly payloadFingerprint: string
@@ -130,7 +135,7 @@ export interface EvmWalletClient {
   readonly getActivity: (
     action: 'read' | 'refresh',
     executionMode?: 'main' | 'private' | 'all',
-    options?: { readonly chainIds?: readonly string[] }
+    options?: { readonly chainIds?: readonly string[]; readonly historyPageCount?: number }
   ) => Promise<ActivityReadModel | null>
   readonly prepareTransfer: (
     intent: EvmTransferIntent,
@@ -299,7 +304,12 @@ const runtimeErrorCodes = new Set<EvmWalletRuntimeErrorCode>(EVM_WALLET_RUNTIME_
 
 function parseRuntimeError(value: unknown): EvmWalletClientError {
   const error = readRecord(value, 'EVM runtime error')
-  assertExactKeys(error, ['code', 'message'], 'EVM runtime error')
+  const hasShortfall = Object.prototype.hasOwnProperty.call(error, 'shortfallRaw')
+  assertExactKeys(
+    error,
+    hasShortfall ? ['code', 'message', 'shortfallRaw'] : ['code', 'message'],
+    'EVM runtime error'
+  )
   if (
     typeof error.code !== 'string' ||
     !runtimeErrorCodes.has(error.code as EvmWalletRuntimeErrorCode) ||
@@ -313,7 +323,19 @@ function parseRuntimeError(value: unknown): EvmWalletClientError {
   if (error.message !== canonical.message) {
     throw new EvmWalletClientError('invalid-response', 'Invalid EVM runtime error')
   }
-  return new EvmWalletClientError(canonical.code, canonical.message)
+  if (
+    hasShortfall &&
+    (canonical.code !== 'insufficient-funds' ||
+      typeof error.shortfallRaw !== 'string' ||
+      !/^[1-9][0-9]{0,77}$/.test(error.shortfallRaw))
+  ) {
+    throw new EvmWalletClientError('invalid-response', 'Invalid EVM runtime error')
+  }
+  return new EvmWalletClientError(
+    canonical.code,
+    canonical.message,
+    hasShortfall ? (error.shortfallRaw as string) : undefined
+  )
 }
 
 function parseRuntimeResult<T>(value: unknown, parseResult: (result: unknown) => T): T {
@@ -564,6 +586,8 @@ function parseExternalSigningRequest(
       ? [
           'transactionId',
           'chainId',
+          'scope',
+          'summary',
           'request',
           'payloadFingerprint',
           'expiresAt',
@@ -571,8 +595,25 @@ function parseExternalSigningRequest(
           'ledgerRequest'
         ]
       : record.vendor === 'keystone'
-        ? ['transactionId', 'chainId', 'request', 'payloadFingerprint', 'expiresAt', 'vendor']
-        : ['transactionId', 'chainId', 'request', 'payloadFingerprint', 'expiresAt'],
+        ? [
+            'transactionId',
+            'chainId',
+            'scope',
+            'summary',
+            'request',
+            'payloadFingerprint',
+            'expiresAt',
+            'vendor'
+          ]
+        : [
+            'transactionId',
+            'chainId',
+            'scope',
+            'summary',
+            'request',
+            'payloadFingerprint',
+            'expiresAt'
+          ],
     'EVM external signing request'
   )
   const request = readRecord(record.request, 'EVM external signing payload')
@@ -590,6 +631,15 @@ function parseExternalSigningRequest(
   if (chainId.namespace !== 'eip155') {
     throw new Error('EVM external signing request has an invalid chain')
   }
+  const scope = readRecord(record.scope, 'EVM external signing scope')
+  assertExactKeys(scope, ['keyDomainId', 'accountId'], 'EVM external signing scope')
+  const keyDomainId = parseKeyDomainId(scope.keyDomainId)
+  const accountId = parseAccountId(scope.accountId)
+  const summary = parseSigningSummary(record.summary, {
+    family: 'evm',
+    chainId: chainId.id,
+    operation: 'transaction'
+  })
   let ledgerRequest: Extract<LedgerEvmSigningRequest, { kind: 'transaction' }> | undefined
   if (vendor === 'ledger') {
     const ledger = readRecord(record.ledgerRequest, 'Ledger EVM signing request')
@@ -621,6 +671,8 @@ function parseExternalSigningRequest(
     vendor,
     ...(ledgerRequest ? { ledgerRequest } : {}),
     transactionId: expectedTransactionId,
+    scope: Object.freeze({ keyDomainId, accountId }),
+    summary,
     chainId: chainId.id,
     request: Object.freeze({
       encoding: 'base64' as const,
@@ -717,7 +769,7 @@ export function createEvmWalletClient(sendMessage: EvmRuntimeMessenger): EvmWall
     getActivity: async (
       action: 'read' | 'refresh',
       executionMode: 'main' | 'private' | 'all' = 'all',
-      options: { readonly chainIds?: readonly string[] } = {}
+      options: { readonly chainIds?: readonly string[]; readonly historyPageCount?: number } = {}
     ) => {
       const requestedChainIds = options.chainIds
       const chainIds =
@@ -733,12 +785,20 @@ export function createEvmWalletClient(sendMessage: EvmRuntimeMessenger): EvmWall
               }
               return Object.freeze(normalized)
             })
+      const historyPageCount = options.historyPageCount
+      if (
+        historyPageCount !== undefined &&
+        (!Number.isSafeInteger(historyPageCount) || historyPageCount < 1 || historyPageCount > 10)
+      ) {
+        throw new EvmWalletClientError('invalid-response', 'Invalid Activity history page count')
+      }
       return send(
         {
           type: 'GET_ACTIVITY',
           action,
           executionMode,
-          ...(chainIds === undefined ? {} : { chainIds })
+          ...(chainIds === undefined ? {} : { chainIds }),
+          ...(historyPageCount === undefined ? {} : { historyPageCount })
         },
         value => (value === null ? null : parseActivityReadModel(value))
       )

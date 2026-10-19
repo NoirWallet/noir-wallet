@@ -1,113 +1,67 @@
-/**
- * Unified analytics API — dual-channel reporting:
- * 1. Google Analytics 4 (Measurement Protocol) — event name + params
- * 2. Custom collector (encrypted transport) — privacy-filtered event context
- *
- * UI contexts (popup, approval window, tabs) call `sendAnalytics*`, which
- * forwards through chrome.runtime messaging; the background service worker
- * performs the actual network reporting via `track*`.
- */
+/** UI analytics API. Reporting and delivery run in the background service worker. */
 
-import { ANALYTICS_EVENTS, PAGE_IDS, resolvePageId } from './constants'
-import { buildPayload } from './payload'
-import { enqueueAnalyticsEvent } from './client'
-import { getClientId, sendGaEvent, stopGoogleAnalyticsReporting } from './ga'
-import { isGoogleAnalyticsEnabled, onGoogleAnalyticsPreferenceChange } from './preferences'
+import {
+  ANALYTICS_EVENTS,
+  PAGE_IDS,
+  resolveAnalyticsChain,
+  resolvePageId,
+  type AnalyticsEventName
+} from './constants'
 import { sanitizeAnalyticsEvent } from './policy'
-import type { AnalyticsEventPayload, AnalyticsMessage, TrackOptions } from './types'
+import type { AnalyticsMessage, TrackOptions } from './types'
 
-export { ANALYTICS_EVENTS, PAGE_IDS, resolvePageId }
+export { ANALYTICS_EVENTS, PAGE_IDS, resolveAnalyticsChain, resolvePageId }
+export type { AnalyticsChain, AnalyticsEventName } from './constants'
 export type { AnalyticsMessage, TrackOptions }
 
 /** Last page seen by this UI context; default for events without a pageId. */
 let currentPageId: string | null = null
+let takeUiEngagement: (() => number) | null = null
 
-onGoogleAnalyticsPreferenceChange(enabled => {
-  if (!enabled) {
-    void stopGoogleAnalyticsReporting()
-  }
-})
-
-void isGoogleAnalyticsEnabled().then(enabled => {
-  if (!enabled) {
-    void stopGoogleAnalyticsReporting()
-  }
-})
-
-// ============================================================
-// Background context: performs the actual reporting
-// ============================================================
-
-async function finalizeAndEnqueue(payload: AnalyticsEventPayload): Promise<void> {
-  payload.wallet_address = `anon_${await getClientId()}`
-  enqueueAnalyticsEvent(payload)
-}
-
-/** Reports an event to both channels. Background service worker only. */
-export function trackEvent(name: string, options: TrackOptions = {}, timestamp?: number): void {
-  try {
-    const event = sanitizeAnalyticsEvent(name, options)
-    if (!event) return
-    void sendGaEvent(event.name, event.options.params)
-    const payload = buildPayload(event.name, event.options, timestamp)
-    void finalizeAndEnqueue(payload).catch(() => {})
-  } catch {
-    // Analytics must never break wallet flows
+export function registerAnalyticsEngagementProvider(provider: () => number): () => void {
+  takeUiEngagement = provider
+  return () => {
+    if (takeUiEngagement === provider) takeUiEngagement = null
   }
 }
 
-/** Reports a page view: GA `page_view` + custom `show_page`. */
-export function trackPageView(page: string, timestamp?: number): void {
-  try {
-    const pageId = resolvePageId(page)
-    void sendGaEvent('page_view', {
-      page_location: `https://noir-wallet.extension${page}`,
-      page_title: page
-    })
-    void finalizeAndEnqueue(buildPayload(ANALYTICS_EVENTS.SHOW_PAGE, { pageId }, timestamp)).catch(
-      () => {}
-    )
-  } catch {
-    // Analytics must never break wallet flows
-  }
+function takeBoundedUiEngagement(): number {
+  return Math.min(3_600_000, Math.max(0, Math.floor(takeUiEngagement?.() ?? 0)))
 }
-
-/** Routes ANALYTICS_* runtime messages to the reporters. Background only. */
-export function handleAnalyticsMessage(message: AnalyticsMessage): void {
-  if (message.type === 'ANALYTICS_EVENT') {
-    trackEvent(message.name, message.options ?? {}, message.timestamp)
-  } else if (message.type === 'ANALYTICS_PAGE_VIEW') {
-    trackPageView(message.page, message.timestamp)
-  }
-}
-
-// ============================================================
-// UI contexts: forward to background via runtime messaging
-// ============================================================
 
 /** Tracks an event from popup/approval/tab contexts. */
-export function sendAnalyticsEvent(name: string, options: TrackOptions = {}): void {
-  const event = sanitizeAnalyticsEvent(name, {
-    ...options,
-    pageId: options.pageId ?? currentPageId ?? PAGE_IDS.HOME
-  })
-  if (!event) return
-  const message: AnalyticsMessage = {
-    type: 'ANALYTICS_EVENT',
-    name: event.name,
-    options: event.options,
-    timestamp: Date.now()
+export function sendAnalyticsEvent(name: AnalyticsEventName, options: TrackOptions = {}): void {
+  try {
+    const event = sanitizeAnalyticsEvent(name, {
+      ...options,
+      pageId: options.pageId ?? currentPageId ?? PAGE_IDS.HOME
+    })
+    if (!event) return
+    const message: AnalyticsMessage = {
+      type: 'ANALYTICS_EVENT',
+      name: event.name,
+      engagementTimeMsec: takeBoundedUiEngagement(),
+      options: event.options,
+      timestamp: Date.now()
+    }
+    void chrome.runtime.sendMessage(message).catch(() => {})
+  } catch {
+    // Analytics messaging must not affect the caller.
   }
-  chrome.runtime.sendMessage(message).catch(() => {})
 }
 
 /** Tracks a page view from popup/approval/tab contexts. */
 export function sendAnalyticsPageView(page: string): void {
-  currentPageId = resolvePageId(page)
-  const message: AnalyticsMessage = {
-    type: 'ANALYTICS_PAGE_VIEW',
-    page,
-    timestamp: Date.now()
+  try {
+    currentPageId = resolvePageId(page)
+    const message: AnalyticsMessage = {
+      type: 'ANALYTICS_PAGE_VIEW',
+      engagementTimeMsec: takeBoundedUiEngagement(),
+      page,
+      timestamp: Date.now()
+    }
+    void chrome.runtime.sendMessage(message).catch(() => {})
+  } catch {
+    // Analytics messaging must not affect the caller.
   }
-  chrome.runtime.sendMessage(message).catch(() => {})
 }

@@ -3,7 +3,7 @@ import { backgroundZcashWalletRuntime } from './zcash-wallet-runtime'
 import { credentialSession } from './credential-session'
 import { logger } from '@/lib/logger'
 import { syncJobStore } from '@/lib/sync-job-store'
-import { getWalletPersistenceQuarantine } from '@/lib/indexed-db'
+import { getWalletPersistenceQuarantine, hasWalletDb } from '@/lib/indexed-db'
 import { clearSyncAbort, signalSyncAbort } from '@/lib/sync-abort'
 import { isRetryableWalletRpcError } from '@/core/zcash/wallet-core'
 import { WALLET_CONFIG } from '@/config/wallet'
@@ -12,7 +12,7 @@ import { useAccountDataStore } from '@/store/account-data-store'
 import type { SyncOutcome } from './zcash-wallet-runtime'
 import { hasPendingZcashTxForWallet } from '../core/wallet/pending-zcash-tx'
 import { recordRpcFailure, recordRpcSuccess } from '@/infrastructure/chains/rpc-failover'
-import { shouldSchedulePassiveSync } from './passive-sync-policy'
+import { shouldResumeInterruptedSync, shouldSchedulePassiveSync } from './passive-sync-policy'
 import { isRpcEndpointError } from '@/lib/errors'
 import type { ZcashBalance } from '@/types'
 
@@ -38,17 +38,23 @@ function sleep(ms: number): Promise<void> {
 }
 
 export class SyncScheduler {
+  onPassiveSyncOutcome?: (status: SyncOutcome['status']) => void
   private syncStates = new Map<string, SyncStateSnapshot>()
   private syncAbortFlags = new Map<string, boolean>()
   private cancelledPreflightWalletIds = new Set<string>()
   private preflightWalletIds = new Set<string>()
-  private activeSyncPromises = new Map<string, Promise<void>>()
+  private activeSyncPromises = new Map<string, Promise<SyncOutcome['status']>>()
+  private transactionCatchUps = new Map<
+    string,
+    { promise: Promise<SyncOutcome['status']>; rerunRequested: boolean }
+  >()
   private running = false
   private pendingRetrigger = false
   private foregroundWalletId: string | null = null
   private runningWalletId: string | null = null
   private removedWalletIds = new Set<string>()
   private txPauseDepth = 0
+  private pendingPassiveRun = false
 
   constructor() {
     backgroundZcashWalletRuntime.onSyncRequested = () => this.onRequestSync()
@@ -247,6 +253,7 @@ export class SyncScheduler {
   }
 
   onAccountSwitched(walletId: string): void {
+    this.pendingPassiveRun = false
     if (this.foregroundWalletId && this.foregroundWalletId !== walletId) {
       backgroundZcashWalletRuntime.finishSyncPreflight(this.foregroundWalletId)
     }
@@ -271,6 +278,7 @@ export class SyncScheduler {
   }
 
   onRequestSync(): void {
+    this.pendingPassiveRun = false
     const { currentWalletId } = useWalletStore.getState()
     if (currentWalletId) {
       this.foregroundWalletId = currentWalletId
@@ -298,6 +306,7 @@ export class SyncScheduler {
     }
 
     this.foregroundWalletId = currentWalletId
+    this.pendingPassiveRun = true
     this.scheduleRun()
     return true
   }
@@ -338,7 +347,15 @@ export class SyncScheduler {
     if (remaining.length === 0) return
 
     const staleMs = 24 * 60 * 60 * 1000
-    const activeJobs = remaining.filter(j => Date.now() - j.updatedAt < staleMs)
+    const now = Date.now()
+    const activeJobs = remaining.filter(j =>
+      shouldResumeInterruptedSync({
+        now,
+        updatedAt: j.updatedAt,
+        maxAgeMs: staleMs,
+        resumeOnStartup: j.resumeOnStartup
+      })
+    )
     if (activeJobs.length === 0) return
 
     const { currentWalletId } = useWalletStore.getState()
@@ -445,11 +462,14 @@ export class SyncScheduler {
         await backgroundZcashWalletRuntime.initialize()
         if (this.yieldToTxPause()) return
 
-        if (!(await credentialSession.hasUnlockSession())) {
+        const passiveRun = this.pendingPassiveRun
+        this.pendingPassiveRun = false
+        const hasUnlockSession = await credentialSession.hasUnlockSession()
+        if (!hasUnlockSession) {
           if (!backgroundZcashWalletRuntime.isLocked()) await backgroundZcashWalletRuntime.lock()
-          return
+          if (!passiveRun) return
         }
-        if (backgroundZcashWalletRuntime.isLocked()) {
+        if (hasUnlockSession && backgroundZcashWalletRuntime.isLocked()) {
           const { currentWalletId, currentAccountId } = useWalletStore.getState()
           if (currentWalletId && (await this.blockQuarantinedSync(currentWalletId))) continue
           const wallet = currentWalletId
@@ -473,6 +493,14 @@ export class SyncScheduler {
         const { currentWalletId, currentAccountId, wallets } = useWalletStore.getState()
         const fgWalletId = this.foregroundWalletId || currentWalletId
         const syncTarget = fgWalletId && !this.removedWalletIds.has(fgWalletId) ? fgWalletId : null
+
+        if (
+          syncTarget &&
+          !hasUnlockSession &&
+          !(await hasWalletDb(`${backgroundZcashWalletRuntime.getNetwork()}_${syncTarget}`))
+        ) {
+          return
+        }
 
         if (syncTarget && this.cancelledPreflightWalletIds.has(syncTarget)) continue
 
@@ -508,7 +536,8 @@ export class SyncScheduler {
 
             this.abortNonCurrentSyncs(syncTarget)
             logger.log(`Sync foreground: ${logger.getWalletLabel(syncTarget)}`)
-            await this.runSyncForWallet(syncTarget, accountId)
+            const status = await this.runSyncForWallet(syncTarget, accountId, passiveRun)
+            if (passiveRun) this.onPassiveSyncOutcome?.(status)
           }
         }
       } while (this.pendingRetrigger)
@@ -522,26 +551,72 @@ export class SyncScheduler {
     }
   }
 
-  private async runSyncForWallet(walletId: string, accountId: string): Promise<void> {
+  async runTransactionCatchUp(walletId: string, accountId: string): Promise<SyncOutcome['status']> {
+    if (this.removedWalletIds.has(walletId) || this.txPauseDepth > 0) return 'skipped'
+    const key = getWalletSyncKey(walletId)
+    const existing = this.transactionCatchUps.get(key)
+    if (existing) {
+      existing.rerunRequested = true
+      return existing.promise
+    }
+    const entry = {
+      promise: Promise.resolve('skipped' as SyncOutcome['status']),
+      rerunRequested: false
+    }
+    const catchUp = (async () => {
+      // An in-flight scan may have started before confirmation; run once more
+      // after it finishes so the confirmed transaction is included.
+      await this.activeSyncPromises.get(key)?.catch(() => {})
+      let status: SyncOutcome['status'] = 'skipped'
+      do {
+        entry.rerunRequested = false
+        if (this.removedWalletIds.has(walletId) || this.txPauseDepth > 0) return 'skipped'
+        status = await this.runSyncForWallet(walletId, accountId, false, true)
+      } while (entry.rerunRequested)
+      return status
+    })()
+    entry.promise = catchUp
+    this.transactionCatchUps.set(key, entry)
+    try {
+      return await catchUp
+    } finally {
+      if (this.transactionCatchUps.get(key) === entry) this.transactionCatchUps.delete(key)
+    }
+  }
+
+  private async runSyncForWallet(
+    walletId: string,
+    accountId: string,
+    passive = false,
+    transaction = false
+  ): Promise<SyncOutcome['status']> {
     const key = getWalletSyncKey(walletId)
     if (this.activeSyncPromises.has(key)) {
-      await this.activeSyncPromises.get(key)
-      return
+      return this.activeSyncPromises.get(key)!
     }
 
     this.syncAbortFlags.set(key, false)
-    clearSyncAbort(walletId).catch(() => {})
-    const promise = this.executeSync(walletId, accountId)
-      .then(() => undefined)
-      .finally(() => {
-        this.activeSyncPromises.delete(key)
-      })
+    const promise = (async () => {
+      await clearSyncAbort(walletId).catch(() => {})
+      if (this.syncAbortFlags.get(key)) {
+        await signalSyncAbort(walletId).catch(() => {})
+        return 'aborted' as const
+      }
+      return this.executeSync(walletId, accountId, passive, transaction)
+    })().finally(() => {
+      this.activeSyncPromises.delete(key)
+    })
 
     this.activeSyncPromises.set(key, promise)
-    await promise
+    return promise
   }
 
-  private async executeSync(walletId: string, accountId: string): Promise<SyncOutcome['status']> {
+  private async executeSync(
+    walletId: string,
+    accountId: string,
+    passive: boolean,
+    transaction: boolean
+  ): Promise<SyncOutcome['status']> {
     this.runningWalletId = walletId
     try {
       await backgroundZcashWalletRuntime.ensureWalletReadyForSync(
@@ -567,8 +642,9 @@ export class SyncScheduler {
         accountId,
         {
           force: true,
-          priority: 'foreground',
-          waitForTipAdvance: pendingOnChainTx
+          priority: passive ? 'background' : 'foreground',
+          waitForTipAdvance: pendingOnChainTx || transaction,
+          ...(passive ? { maxDurationMs: WALLET_CONFIG.SYNC.BACKGROUND_SYNC_BUDGET_MS } : {})
         }
       )
 
@@ -589,11 +665,16 @@ export class SyncScheduler {
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error)
       if (isRetryableWalletRpcError(msg)) {
-        logger.warn(`Sync skipped (retryable): ${msg}`, walletId, accountId)
+        logger.warn(`Sync skipped (retryable): ${msg}`, walletId, accountId, error)
         return 'skipped'
       }
       if (isRpcEndpointError(error)) {
-        logger.warn(`Sync RPC failed before returning an outcome: ${msg}`, walletId, accountId)
+        logger.warn(
+          `Sync RPC failed before returning an outcome: ${msg}`,
+          walletId,
+          accountId,
+          error
+        )
         await this.handleRpcEndpointHealth({
           status: 'failed',
           error: msg,
@@ -602,7 +683,7 @@ export class SyncScheduler {
         })
         return 'failed'
       }
-      logger.error(`Sync failed:`, walletId, accountId)
+      logger.error('Sync failed:', walletId, accountId, error)
       return 'failed'
     } finally {
       if (this.runningWalletId === walletId) {
@@ -635,7 +716,7 @@ export class SyncScheduler {
       this.pendingRetrigger = true
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      logger.error(`[RPC FAILOVER] runtime reload failed: ${message}`)
+      logger.error(`[RPC FAILOVER] runtime reload failed: ${message}`, undefined, undefined, error)
     }
   }
 }

@@ -5,6 +5,7 @@ import { RouterProvider, Routes, Route, useLocation, useNavigate } from './provi
 import { SecretPhraseBackupBanner } from './components/common/SecretPhraseBackupBanner'
 import { ModalProvider } from './provider/ModalManager'
 import { DialogProvider } from './hooks/useDialog'
+import { RouteLoadingSkeleton } from './components/common/RouteLoadingSkeleton'
 import { WalletInitializing } from './components/ui/wallet-initializing'
 import { BlockingWalletFailure } from './components/common/BlockingWalletFailure'
 import { PageHeader } from './components/common/PageHeader'
@@ -167,7 +168,7 @@ function ZcashCapabilityEntry({
     if (!loading && !supportsZcash) replace(fallbackPath)
   }, [fallbackPath, loading, replace, supportsZcash])
 
-  if (loading) return <WalletInitializing />
+  if (loading) return <RouteLoadingSkeleton title="Send" variant="form" />
   if (!supportsZcash) return null
   return children
 }
@@ -183,7 +184,7 @@ function VotingCapabilityEntry({ children }: { children: ReactNode }) {
     if (!loading && !supportsVoting) replace('/')
   }, [loading, replace, supportsVoting])
 
-  if (loading) return <WalletInitializing />
+  if (loading) return <RouteLoadingSkeleton title="Zcash voting" />
   if (!supportsVoting) return null
   return children
 }
@@ -265,7 +266,7 @@ function AppRoutes() {
       <Route
         path="/hardware/ledger-connect"
         element={
-          <Suspense fallback={<WalletInitializing />}>
+          <Suspense fallback={<RouteLoadingSkeleton title="Connect Ledger" variant="form" />}>
             <LedgerConnectPage />
           </Suspense>
         }
@@ -273,7 +274,7 @@ function AppRoutes() {
       <Route
         path="/hardware/ledger-sign"
         element={
-          <Suspense fallback={<WalletInitializing />}>
+          <Suspense fallback={<RouteLoadingSkeleton title="Ledger signing" variant="form" />}>
             <LedgerSignPage />
           </Suspense>
         }

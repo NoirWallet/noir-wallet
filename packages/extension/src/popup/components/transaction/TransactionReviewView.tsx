@@ -2,8 +2,8 @@ import type { ReactNode } from 'react'
 
 import { Button } from '@/popup/components/ui/button'
 import { TokenIcon } from '@/popup/components/tokens/TokenIcon'
-import Big from '@/lib/big'
-import { formatNumber } from '@/lib/format'
+import { AmountDisplay } from '@/popup/components/common/AmountDisplay'
+import { Skeleton } from '@/popup/components/ui/skeleton'
 
 export interface TransactionReviewAsset {
   readonly assetId?: string
@@ -22,15 +22,15 @@ interface TransactionReviewViewProps {
   readonly title: string
   readonly titleId?: string
   readonly showTitle?: boolean
-  readonly asset: TransactionReviewAsset
+  readonly asset: TransactionReviewAsset | null
   readonly amount: string
-  readonly exactAmount?: boolean
   readonly network: string
   readonly rows: readonly TransactionReviewRow[]
   readonly notice?: ReactNode
   readonly error?: ReactNode
   readonly confirmLabel: string
   readonly confirming?: boolean
+  readonly preparing?: boolean
   readonly confirmDisabled?: boolean
   readonly cancelDisabled?: boolean
   readonly onCancel: () => void
@@ -43,20 +43,20 @@ export function TransactionReviewView({
   showTitle = true,
   asset,
   amount,
-  exactAmount = false,
   network,
   rows,
   notice,
   error,
   confirmLabel,
   confirming = false,
+  preparing = false,
   confirmDisabled = false,
   cancelDisabled = false,
   onCancel,
   onConfirm
 }: TransactionReviewViewProps) {
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div className="flex min-h-0 flex-1 flex-col" aria-busy={preparing || confirming}>
       <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-4 pt-5">
         {showTitle && (
           <h2 id={titleId} className="text-center text-base font-semibold">
@@ -65,23 +65,30 @@ export function TransactionReviewView({
         )}
 
         <div className="flex flex-col items-center pb-4 pt-4">
-          <TokenIcon
-            assetId={asset.assetId}
-            symbol={asset.symbol}
-            icon={asset.icon}
-            blockchain={asset.blockchain}
-            nativeChain={asset.nativeChain}
-            size="xl"
-          />
-          <p className="mt-3 flex max-w-full min-w-0 flex-wrap items-baseline justify-center gap-x-1 text-center text-xl font-bold leading-tight">
-            <span className="min-w-0 break-all">
-              {exactAmount
-                ? amount
-                : formatNumber(amount, { rm: Big.roundDown, useUnit: true, useSubscript: true })}
-            </span>
-            <span className="shrink-0">{asset.symbol}</span>
-          </p>
-          <p className="mt-1 text-xs text-muted">{network}</p>
+          {asset ? (
+            <TokenIcon
+              assetId={asset.assetId}
+              symbol={asset.symbol}
+              icon={asset.icon}
+              blockchain={asset.blockchain}
+              nativeChain={asset.nativeChain}
+              size="xl"
+            />
+          ) : (
+            <Skeleton className="size-16 rounded-full" />
+          )}
+          <div className="mt-3 max-w-full min-w-0 text-center text-xl font-bold leading-tight">
+            {amount && asset ? (
+              <AmountDisplay value={amount} symbol={asset.symbol} />
+            ) : (
+              <Skeleton className="h-7 w-36" />
+            )}
+          </div>
+          {network ? (
+            <p className="mt-1 text-xs text-muted">{network}</p>
+          ) : (
+            <Skeleton className="mt-2 h-3 w-20" />
+          )}
         </div>
 
         {notice}
@@ -112,7 +119,7 @@ export function TransactionReviewView({
         </Button>
         <Button
           className="h-[45px] flex-1"
-          disabled={confirmDisabled}
+          disabled={confirmDisabled || preparing}
           isLoading={confirming}
           onClick={onConfirm}
         >

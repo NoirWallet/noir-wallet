@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useBetaInviteActivation } from './useBetaInviteActivation'
 import { inviteBindingErrorMessage } from '../services/beta-invite-error'
 
-export function useBetaInviteBinding() {
+export function useBetaInviteBinding(enabled = true) {
   const { status, verificationRevision, editingCode, bind, changeCode } = useBetaInviteActivation()
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
@@ -29,12 +29,12 @@ export function useBetaInviteBinding() {
   }, [bind])
 
   useEffect(() => {
-    if (!status.required || status.state.phase !== 'verified' || editingCode) return
+    if (!enabled || !status.required || status.state.phase !== 'verified' || editingCode) return
     const attemptKey = `${status.state.inviteCode}:${verificationRevision}`
     if (lastAttempt.current === attemptKey) return
     lastAttempt.current = attemptKey
     void activate()
-  }, [status, verificationRevision, editingCode, activate])
+  }, [enabled, status, verificationRevision, editingCode, activate])
 
   return { status, changeCode, error, busy, activate }
 }

@@ -162,7 +162,9 @@ export function getActivitySwapPresentation(
       : item.snapshot?.recipient?.chainId
   const sourceChain = sourceChainId ? chainMetadata.get(sourceChainId) : undefined
   const destinationChain = destinationChainId ? chainMetadata.get(destinationChainId) : undefined
-  const recipientAddress = item.snapshot?.protocol?.destination.recipient
+  const recipientAddress =
+    item.snapshot?.protocol?.destination.recipient ??
+    (item.source === 'zcash-v1' ? item.snapshot?.recipient?.address : undefined)
   const senderAddress = item.snapshot?.sender?.address
   const sourceAccountMode = senderAddress
     ? executionAddressModes.get(senderAddress.toLowerCase())
@@ -196,15 +198,6 @@ export function getActivityTransferRecipient(item: ActivityItem): string | undef
     return protocol.destination.recipient
   }
   return item.snapshot?.recipient?.address
-}
-
-export function getActivityMissingRecipientLabel(item: ActivityItem): string | null {
-  return item.source === 'zcash-v1' &&
-    item.kind === 'transfer' &&
-    item.snapshot?.direction === 'outgoing' &&
-    !getActivityTransferRecipient(item)
-    ? 'Unavailable'
-    : null
 }
 
 export function getActivitySwapSourceMethodLabel(
@@ -723,8 +716,12 @@ export function getActivityRowTextPresentation(
 
 export function getActivityFailureLabel(
   failureCode: TransactionFailureCode,
-  evidence?: TransactionSegmentEvidence
+  evidence?: TransactionSegmentEvidence,
+  source?: ActivityItem['source']
 ): string {
+  if (failureCode === 'expired' && source === 'zcash-v1') {
+    return 'Expired before it was mined'
+  }
   if (failureCode === 'dropped' && evidence?.replacementTransactionHash) {
     return 'Replaced by a confirmed transaction'
   }

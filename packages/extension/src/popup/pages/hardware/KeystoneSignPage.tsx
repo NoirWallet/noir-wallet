@@ -6,6 +6,8 @@ import { AnimatedQR } from '../../components/hardware/AnimatedQR'
 import { QRScanner } from '../../components/hardware/QRScanner'
 import { CenteredNotice } from '../../components/hardware/CenteredNotice'
 import { HardwareTransactionSummary } from '../../components/hardware/HardwareTransactionSummary'
+import { HardwareSigningProgress } from '../../components/hardware/HardwareSigningProgress'
+import { Skeleton } from '../../components/ui/skeleton'
 import { StandardTransactionResult } from '../../components/transaction/StandardTransactionResult'
 import { useLocation } from '../../provider/Router'
 import { parseSignedPczt, type UR } from '@/lib/keystone'
@@ -23,7 +25,10 @@ import { zcashWalletRuntimeClient } from '@/popup/services/zcash-wallet-runtime-
 import { rheaSwapClient } from '@/popup/services/rhea-swap-client'
 import { useWalletStore } from '@/store/wallet-store'
 import { buildAccountKey, useAccountDataStore } from '@/store/account-data-store'
-import { ANALYTICS_EVENTS, PAGE_IDS, sendAnalyticsEvent } from '@/lib/analytics'
+import {
+  recordHardwareOperationOutcome,
+  recordHardwareSignFailure
+} from '@/popup/services/hardware-transaction-analytics'
 import { safeBig } from '@/lib/big'
 import { MARGINAL_FEE_ZATS } from '@/config/fee'
 import { staticFeeFallbackZats } from '@/core/zcash/fee-policy'
@@ -185,12 +190,8 @@ export function KeystoneSignPage() {
         } else {
           setError(classifyError(e).userMessage)
         }
-        sendAnalyticsEvent(ANALYTICS_EVENTS.HW_SIGN_FAILED, {
-          pageId: PAGE_IDS.HARDWARE_SIGN,
-          inputAmount: req.amount,
-          inputSymbol: 'ZEC',
-          extra: { error: (raw || 'build_failed').slice(0, 200), kind: req.kind, phase: 'build' }
-        })
+        recordHardwareSignFailure(req.kind, 'build')
+        recordHardwareOperationOutcome(req, requestId, 'failed')
         setStep('failed')
       }
     },
@@ -397,16 +398,7 @@ export function KeystoneSignPage() {
           console.error('[HardwareSign] Failed to report result to the origin surface:', cause)
         }
       }
-      sendAnalyticsEvent(ANALYTICS_EVENTS.SEND_SUCCEEDED, {
-        pageId: PAGE_IDS.HARDWARE_SIGN,
-        hasTransaction: 1,
-        inputAmount: sentAmount,
-        inputSymbol: 'ZEC',
-        params: { amount: sentAmount, hardware: true },
-        extra: { tx_hash: hash, kind: request.kind }
-      })
-
-      reportDappResult(request, { success: true, txHash: hash })
+      recordHardwareOperationOutcome(request, requestId, 'broadcast', transactionId ?? undefined)
       setTxHash(hash)
       setStep('success')
       if (request.reportToOrigin && originResultPublished) {
@@ -435,12 +427,8 @@ export function KeystoneSignPage() {
         return
       }
       const classified = classifyError(e)
-      sendAnalyticsEvent(ANALYTICS_EVENTS.HW_SIGN_FAILED, {
-        pageId: PAGE_IDS.HARDWARE_SIGN,
-        inputAmount: sentAmount,
-        inputSymbol: 'ZEC',
-        extra: { error: classified.technicalMessage.slice(0, 200), kind: request.kind }
-      })
+      recordHardwareSignFailure(request.kind, 'broadcast')
+      recordHardwareOperationOutcome(request, requestId, 'failed')
       reportDappResult(request, { success: false, error: classified.technicalMessage })
       setError(classified.userMessage)
       setStep('failed')
@@ -486,6 +474,8 @@ export function KeystoneSignPage() {
       }
       setError(classifyError(cause).userMessage)
       setRetryable(true)
+      recordHardwareSignFailure(request.kind, 'sign')
+      recordHardwareOperationOutcome(request, requestId, 'failed')
       setStep('failed')
     }
   }
@@ -516,14 +506,29 @@ export function KeystoneSignPage() {
       )}
 
       {step === 'building' && (
-        <div className="page-content flex flex-col items-center justify-center">
-          <Icon
-            icon="lucide:loader-2"
-            width={32}
-            height={32}
-            className="animate-spin text-primary mb-4"
-          />
-          <p className="text-sm text-muted">Building transaction...</p>
+        <div className="page-content space-y-5 pt-5">
+          <HardwareSigningProgress title="Building transaction">
+            {request ? (
+              <HardwareTransactionSummary
+                request={request}
+                amountPending={request.maxTransfer === true && !builtAmount}
+              />
+            ) : (
+              <div className="space-y-4">
+                <div className="flex flex-col items-center gap-3 py-4">
+                  <Skeleton className="size-12 rounded-full" />
+                  <Skeleton className="h-8 w-32" />
+                </div>
+                <div className="space-y-3 rounded-lg bg-card p-4">
+                  <Skeleton className="h-4 w-full" />
+                  <Skeleton className="h-4 w-3/4" />
+                </div>
+              </div>
+            )}
+            <div className="flex justify-center pt-2">
+              <Skeleton className="size-52 rounded-lg" />
+            </div>
+          </HardwareSigningProgress>
         </div>
       )}
 
@@ -621,18 +626,15 @@ export function KeystoneSignPage() {
         </>
       )}
 
-      {step === 'broadcasting' && (
-        <div className="page-content flex flex-col items-center justify-center">
-          <Icon
-            icon="lucide:loader-2"
-            width={32}
-            height={32}
-            className="animate-spin text-primary mb-4"
-          />
-          <p className="text-sm font-medium mb-1">Finalizing transaction</p>
-          <p className="text-xs text-muted text-center">
-            Generating the zero-knowledge proof and broadcasting. This can take a minute.
-          </p>
+      {step === 'broadcasting' && request && (
+        <div className="page-content space-y-5 pt-5">
+          <HardwareSigningProgress title="Finalizing transaction">
+            <HardwareTransactionSummary
+              request={{ ...request, amount: builtAmount ?? request.amount }}
+              feeZec={feeZec}
+              ledgerDisplayAddress={ledgerDisplayAddress ?? undefined}
+            />
+          </HardwareSigningProgress>
         </div>
       )}
 

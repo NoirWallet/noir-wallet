@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
-import { Icon } from '@iconify/react'
 import { Button } from '../ui/button'
-import { BetaInviteLayout } from './BetaInviteLayout'
+import { PageHeader } from '../common/PageHeader'
+import { ListSkeleton } from '../ui/skeleton'
 import { useBetaInviteBinding } from '../../hooks/useBetaInviteBinding'
 
 export function BetaInviteBindingView({
@@ -16,11 +16,20 @@ export function BetaInviteBindingView({
   onChangeCode: () => void
 }) {
   return (
-    <BetaInviteLayout
-      title="Activating wallet"
-      footer={
-        error && (
-          <>
+    <div className="page-container">
+      <PageHeader />
+      <div className="page-content space-y-4">
+        <ListSkeleton rows={3} card label="Loading wallet" />
+        {!error && (
+          <p role="status" className="text-sm text-muted">
+            Activating wallet...
+          </p>
+        )}
+        {error && (
+          <div className="space-y-3">
+            <p role="alert" className="text-sm text-destructive">
+              {error}
+            </p>
             <Button onClick={onRetry} isLoading={busy} className="h-[45px] w-full">
               Retry
             </Button>
@@ -32,31 +41,10 @@ export function BetaInviteBindingView({
             >
               Use another code
             </button>
-          </>
-        )
-      }
-    >
-      {!error && (
-        <div
-          role="status"
-          aria-label="Activating wallet"
-          className="flex justify-center py-2 text-primary"
-        >
-          <Icon
-            icon="lucide:loader-circle"
-            className="animate-spin"
-            width={26}
-            height={26}
-            aria-hidden="true"
-          />
-        </div>
-      )}
-      {error && (
-        <p role="alert" className="text-center text-xs text-destructive">
-          {error}
-        </p>
-      )}
-    </BetaInviteLayout>
+          </div>
+        )}
+      </div>
+    </div>
   )
 }
 

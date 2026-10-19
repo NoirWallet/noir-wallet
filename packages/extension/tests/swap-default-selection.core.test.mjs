@@ -10,6 +10,7 @@ import {
   resolveSwapTokenSelection,
   shouldWaitForSwapDestination
 } from '../src/popup/services/swap-token-selection.ts'
+import { buildWalletSwapSourceBalances } from '../src/popup/services/swap-page-model.ts'
 
 const zcashChain = {
   id: 'bip122:00040fe8ec8471911baa1db1266ea15d',
@@ -108,6 +109,45 @@ it('uses a distinct same-chain token for a single EVM-enabled account', () => {
     }),
     { tokenIn: eth, tokenOut: usdc }
   )
+})
+
+it('keeps a newly selected source while the page still has an older wallet source list', () => {
+  const input = {
+    tokens: [zec, eth, usdc],
+    sourceTokens: [zec, eth, usdc],
+    crossChainDestinationTokens: [zec, eth],
+    walletSourceTokens: [zec],
+    savedSelection: { tokenInId: zec.assetId, tokenOutId: eth.assetId },
+    selectedSourceAssetId: usdc.assetId,
+    enabledChains: [zcashChain, ethereumChain]
+  }
+  assert.equal(resolveSwapTokenSelection(input)?.tokenIn.assetId, usdc.assetId)
+  assert.equal(
+    buildWalletSwapSourceBalances({
+      tokens: [usdc],
+      portfolio: null,
+      receiveTargets: null,
+      zcashAvailable: '0',
+      evmExecutionMode: 'main'
+    }).has(usdc.assetId),
+    false
+  )
+  assert.equal(
+    resolveSwapTokenSelection({ ...input, enabledChains: [zcashChain] })?.tokenIn.assetId,
+    zec.assetId
+  )
+})
+
+it('keeps a reversed source while wallet-owned assets are still loading', () => {
+  const selection = resolveSwapTokenSelection({
+    tokens: [zec, eth],
+    sourceTokens: [zec, eth],
+    crossChainDestinationTokens: [zec, eth],
+    walletSourceTokens: [zec],
+    selectedSourceAssetId: eth.assetId,
+    enabledChains: [zcashChain, ethereumChain]
+  })
+  assert.deepEqual(selection, { tokenIn: eth, tokenOut: zec })
 })
 
 it('drops a source history from a disabled chain but preserves an external destination chosen manually', () => {

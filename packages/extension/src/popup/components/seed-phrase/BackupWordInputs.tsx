@@ -1,4 +1,5 @@
 import { Input } from '../ui/input'
+import { Skeleton } from '../ui/skeleton'
 import type { useWalletBackupVerification } from '@/popup/hooks/useWalletBackupVerification'
 
 export function BackupWordInputs({
@@ -7,7 +8,16 @@ export function BackupWordInputs({
   verification: ReturnType<typeof useWalletBackupVerification>
 }) {
   if (verification.isPreparing)
-    return <p className="text-sm text-muted">Preparing backup check...</p>
+    return (
+      <div role="status" aria-label="Preparing backup check" className="space-y-4">
+        {Array.from({ length: 2 }, (_, index) => (
+          <div key={index} className="space-y-2">
+            <Skeleton className="h-4 w-16" />
+            <Skeleton className="h-[46px] w-full rounded-lg" />
+          </div>
+        ))}
+      </div>
+    )
   if (!verification.wordIndices) {
     return verification.error ? (
       <p role="alert" className="text-sm text-danger">

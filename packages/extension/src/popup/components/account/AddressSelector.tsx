@@ -49,9 +49,9 @@ export function AddressSelectorModal({
   const zecPrice = useWalletStore(state => state.zecPrice)
   const addresses = useAddressOptions()
 
-  const handleCopy = (e: React.MouseEvent, address: string) => {
+  const handleCopy = (e: React.MouseEvent, address: AddressOption) => {
     e.stopPropagation()
-    copyToClipboard(address)
+    copyToClipboard(address.address)
   }
 
   return (
@@ -91,7 +91,7 @@ export function AddressSelectorModal({
               </div>
               {showCopy && (
                 <button
-                  onClick={e => handleCopy(e, address.address)}
+                  onClick={e => handleCopy(e, address)}
                   className="absolute top-4 right-4 text-muted hover:text-white transition-colors"
                 >
                   <Icon icon="lucide:copy" width={16} height={16} />

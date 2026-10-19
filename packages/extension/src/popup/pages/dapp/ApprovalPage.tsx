@@ -7,7 +7,8 @@ import { useTransactionResultStore } from '@/store/transaction-result-store'
 import { zcashWalletRuntimeClient } from '@/popup/services/zcash-wallet-runtime-client'
 import { Icon } from '@iconify/react'
 import { AddressTypeLabel } from '@/popup/components/account/AddressType'
-import { formatAccountName, formatNumber, getAccountDisplayName } from '@/lib/format'
+import { formatAccountName, getAccountDisplayName } from '@/lib/format'
+import { AmountDisplay } from '@/popup/components/common/AmountDisplay'
 import { StandardTransactionResult } from '../../components/transaction/StandardTransactionResult'
 import { FeeTierPicker } from '../../components/transaction/FeeTierPicker'
 import { useFeeEstimate } from '../../hooks/useFeeEstimate'
@@ -583,8 +584,7 @@ export function ApprovalPage() {
       /^\d+$/.test(availableRaw) &&
       /^\d+$/.test(maximumGasCostRaw) &&
       /^0x[0-9a-fA-F]{40}$/.test(privateAddress)
-    const formatGas = (raw: string) =>
-      new Big(raw).div(new Big(10).pow(decimals)).toFixed(Math.min(decimals, 8))
+    const formatGas = (raw: string) => new Big(raw).div(new Big(10).pow(decimals)).toFixed()
     const suggestedOutputRaw = valid
       ? calculateSuggestedPrivateGasFundingRaw(shortfallRaw, maximumGasCostRaw)
       : null
@@ -651,25 +651,32 @@ export function ApprovalPage() {
                 <div className="flex justify-between gap-3">
                   <span className="text-muted">Current Gas</span>
                   <span className="font-mono">
-                    {formatGas(availableRaw)} {symbol}
+                    <AmountDisplay value={formatGas(availableRaw)} symbol={symbol} />
                   </span>
                 </div>
                 <div className="flex justify-between gap-3">
                   <span className="text-muted">Maximum Gas</span>
                   <span className="font-mono">
-                    {formatGas(maximumGasCostRaw)} {symbol}
+                    <AmountDisplay
+                      value={formatGas(maximumGasCostRaw)}
+                      symbol={symbol}
+                      profile="fee"
+                    />
                   </span>
                 </div>
                 <div className="flex justify-between gap-3 font-medium">
                   <span>Minimum</span>
                   <span className="font-mono text-primary">
-                    {formatGas(shortfallRaw)} {symbol}
+                    <AmountDisplay value={formatGas(shortfallRaw)} symbol={symbol} />
                   </span>
                 </div>
                 <div className="flex justify-between gap-3 font-medium">
                   <span>Suggested</span>
                   <span className="font-mono text-primary">
-                    {suggestedOutputRaw ? formatGas(suggestedOutputRaw) : '—'} {symbol}
+                    <AmountDisplay
+                      value={suggestedOutputRaw ? formatGas(suggestedOutputRaw) : null}
+                      symbol={symbol}
+                    />
                   </span>
                 </div>
               </div>
@@ -1230,7 +1237,7 @@ export function ApprovalPage() {
                 <div className="grid grid-cols-[88px_minmax(0,1fr)] gap-3">
                   <span className="text-xs text-muted">Amount</span>
                   <span className="text-right font-mono text-xs text-foreground/90">
-                    {formatNumber(data.amount, { rm: Big.roundDown })} ZEC
+                    <AmountDisplay value={data.amount} symbol="ZEC" />
                   </span>
                 </div>
                 <div className="grid grid-cols-[88px_minmax(0,1fr)] gap-3">
@@ -1316,7 +1323,7 @@ export function ApprovalPage() {
                 <div className="grid grid-cols-[88px_minmax(0,1fr)] gap-3">
                   <span className="text-xs text-muted">Amount</span>
                   <span className="text-right font-mono text-xs text-foreground/90">
-                    {formatNumber(data.amount, { rm: Big.roundDown })} ZEC
+                    <AmountDisplay value={data.amount} symbol="ZEC" />
                   </span>
                 </div>
                 <div className="grid grid-cols-[88px_minmax(0,1fr)] gap-3">
@@ -1485,7 +1492,10 @@ export function ApprovalPage() {
                   <div className="flex justify-between gap-3">
                     <span className="text-muted">Amount</span>
                     <span className="font-mono font-medium">
-                      {formatAsset(evmPrivateTransfer.amountRaw)} {evmPrivateTransfer.asset.symbol}
+                      <AmountDisplay
+                        value={formatAsset(evmPrivateTransfer.amountRaw)}
+                        symbol={evmPrivateTransfer.asset.symbol}
+                      />
                     </span>
                   </div>
                   <div className="flex justify-between gap-3">
@@ -1507,8 +1517,10 @@ export function ApprovalPage() {
                   <div className="flex justify-between gap-3">
                     <span className="text-muted">Minimum received</span>
                     <span className="font-mono">
-                      {formatAsset(evmPrivateTransfer.minimumOutputRaw)}{' '}
-                      {evmPrivateTransfer.asset.symbol}
+                      <AmountDisplay
+                        value={formatAsset(evmPrivateTransfer.minimumOutputRaw)}
+                        symbol={evmPrivateTransfer.asset.symbol}
+                      />
                     </span>
                   </div>
                 </div>

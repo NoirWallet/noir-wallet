@@ -4,6 +4,8 @@
  * Runs in a separate thread to handle heavy WASM operations.
  */
 
+import './wasm-worker-runtime-setup'
+
 self.addEventListener('error', e => e.preventDefault())
 self.addEventListener('unhandledrejection', e => e.preventDefault())
 
@@ -36,6 +38,7 @@ import type { Network } from '../../types'
 import { bytesToBase64, base64ToBytes, hexToBytes } from '../../lib/bytes'
 import { mapWasmAccountBalanceToZcashBalance, zeroZcashBalance } from '../wallet/balance-summary'
 import { DEFAULT_EXPIRY_DELTA_BLOCKS } from '../../config/fee'
+import { resolveOneClickExpiryDeltaBlocks } from '../zcash/transaction-expiry'
 import { sanitizeMarginalFeeZats } from '../zcash/fee-policy'
 import { WALLET_CONFIG } from '../../config/wallet'
 import { runWithCommitmentTreeRecovery } from './commitment-tree-recovery'
@@ -49,6 +52,7 @@ import { serializeDiagnosticArgs } from '../../lib/diagnostic-log'
 import { traceDebugStage } from '../../lib/debug-performance'
 import { loadVotingState, saveVotingState } from '../../lib/indexed-db'
 import { validateVotingDecisions } from '../../lib/voting'
+import { assertRheaSwapSubmissionDeadline } from '../services/rhea-swap/rhea-swap-quote-validity'
 
 /**
  * Prepare a freshly-created PCZT for hardware signing.
@@ -284,6 +288,16 @@ async function getSummaryOrCached(
     lastSummaryCache.set(walletId, plain)
   }
   return plain
+}
+
+async function getOneClickExpiryDeltaBlocks(walletId: string, wallet: WebWallet): Promise<number> {
+  const summary = await getSummaryOrCached(walletId, wallet)
+  const networkTip = Number(await wallet.get_latest_block())
+  return resolveOneClickExpiryDeltaBlocks(
+    summary?.chain_tip_height ?? 0,
+    networkTip,
+    DEFAULT_EXPIRY_DELTA_BLOCKS
+  )
 }
 
 function getWalletNet(walletId: string): 'main' | 'test' {
@@ -1328,9 +1342,10 @@ self.addEventListener('message', async (event: MessageEvent<RPCRequest<any>>) =>
         break
       }
       case 'pczt.proveSend': {
-        const { walletId, fullBase64, signedBase64 } =
+        const { walletId, fullBase64, signedBase64, submissionDeadline } =
           payload as RPCSchema['pczt.proveSend']['request']
         result = await runForWallet(walletId, async () => {
+          assertRheaSwapSubmissionDeadline(submissionDeadline)
           const w = getWallet(walletId)
           const full = Pczt.from_bytes(base64ToBytes(fullBase64))
           const signed = Pczt.from_bytes(base64ToBytes(signedBase64))
@@ -1394,7 +1409,8 @@ self.addEventListener('message', async (event: MessageEvent<RPCRequest<any>>) =>
           amount,
           memo,
           fundingSource = 'shielded',
-          marginalFeeZats
+          marginalFeeZats,
+          submissionDeadline
         } = payload as RPCSchema['transaction.send']['request']
         result = await runForWallet(walletId, async () => {
           const w = getWallet(walletId)
@@ -1403,6 +1419,8 @@ self.addEventListener('message', async (event: MessageEvent<RPCRequest<any>>) =>
           const memoBytes = memo ? new TextEncoder().encode(memo) : undefined
 
           return runWithFreshCommitmentTrees(walletId, w, async () => {
+            const expiryDeltaBlocks = await getOneClickExpiryDeltaBlocks(walletId, w)
+            assertRheaSwapSubmissionDeadline(submissionDeadline)
             const usk = mnemonic_to_spending_key(
               walletNetwork,
               resolvedSeedPhrase,
@@ -1419,7 +1437,7 @@ self.addEventListener('message', async (event: MessageEvent<RPCRequest<any>>) =>
                 fundingSource,
                 memoBytes,
                 BigInt(sanitizeMarginalFeeZats(marginalFeeZats)),
-                DEFAULT_EXPIRY_DELTA_BLOCKS
+                expiryDeltaBlocks
               )
               return parseTransferResult(transfer)
             } finally {
@@ -1443,6 +1461,7 @@ self.addEventListener('message', async (event: MessageEvent<RPCRequest<any>>) =>
           const resolvedSeedPhrase = resolveWalletMnemonic(walletId, seedPhrase)
 
           return runWithFreshCommitmentTrees(walletId, w, async () => {
+            const expiryDeltaBlocks = await getOneClickExpiryDeltaBlocks(walletId, w)
             const usk = mnemonic_to_spending_key(
               walletNetwork,
               resolvedSeedPhrase,
@@ -1459,7 +1478,7 @@ self.addEventListener('message', async (event: MessageEvent<RPCRequest<any>>) =>
                 seedFp,
                 saplingKey,
                 BigInt(sanitizeMarginalFeeZats(marginalFeeZats)),
-                DEFAULT_EXPIRY_DELTA_BLOCKS
+                expiryDeltaBlocks
               )
 
               console.log('[Worker] One-click shield successful, txid:', txid)

@@ -1,3 +1,5 @@
+import { ANALYTICS_EVENTS } from '../lib/analytics/constants'
+import { emitDAppEvent, observeDAppRequest, type DAppAnalyticsSink } from './dapp-analytics'
 import type { EvmNetworkConfig } from '@/config/networks'
 import { getBitcoinChainId, getZcashChainId, parseChainId } from '@/core/chains/registry'
 import {
@@ -63,6 +65,7 @@ type SessionHandler = Pick<
 >
 
 export interface BackgroundMultichainSessionDAppHandlerOptions {
+  readonly analytics?: DAppAnalyticsSink
   readonly network: Network
   readonly evmNetworks: readonly EvmNetworkConfig[]
   readonly manager: Pick<DAppManager, 'getAllConnections' | 'getCaip25Session' | 'setCaip25Session'>
@@ -296,7 +299,9 @@ export class BackgroundMultichainSessionDAppHandler {
   ): Promise<unknown> {
     switch (request.method) {
       case 'wallet_createSession':
-        return this.createSession(request.params, origin, tabInfo)
+        return observeDAppRequest(this.options.analytics, 'zcash', request.method, () =>
+          this.createSession(request.params, origin, tabInfo)
+        )
       case 'wallet_getSession':
         parseCaip25NoParams(request.params)
         return this.getSession(origin)
@@ -474,6 +479,15 @@ export class BackgroundMultichainSessionDAppHandler {
     const session = await this.getSession(origin)
     if (!session) throw new Caip25ProviderError(-32603, 'The session could not be persisted.')
     await this.notifySessionChanged(origin)
+    for (const item of prepared) {
+      const selected = selections[prepared.indexOf(item)]
+      emitDAppEvent(
+        this.options.analytics,
+        item.supported.family,
+        ANALYTICS_EVENTS.DAPP_CONNECTED,
+        { extra: { account_count: selected.authorization.accounts.length, source: 'session' } }
+      )
+    }
     return session
   }
 

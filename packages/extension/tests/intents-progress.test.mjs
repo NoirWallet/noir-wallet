@@ -129,12 +129,15 @@ test.describe('Intents user-facing status copy', () => {
     ).toBe('loading')
   })
 
-  test('keeps Activity available until the transfer reaches a terminal result', () => {
+  test('opens Activity for a failed swap while preserving confidential funding actions', () => {
     expect(getSwapResultAction(getIntentsStatusCopy('PENDING_DEPOSIT').resultStatus, false)).toBe(
       'view-activity'
     )
     expect(getSwapResultAction(getIntentsStatusCopy('SUCCESS').resultStatus, false)).toBe('done')
-    expect(getSwapResultAction(getIntentsStatusCopy('FAILED').resultStatus, false)).toBe('done')
+    expect(getSwapResultAction(getIntentsStatusCopy('FAILED').resultStatus, false)).toBe(
+      'view-activity'
+    )
+    expect(getSwapResultAction('failed', false, true)).toBe('done')
     expect(getSwapResultAction('loading', true)).toBe('continue')
   })
 

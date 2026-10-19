@@ -69,7 +69,7 @@ describe('zkNoir application integration', () => {
     assert.doesNotMatch(homeSource, /navigate\.navigate\('\/lending'\)/)
     assert.match(homeSource, /safeBig\(walletUsd\)\.plus\(lendingSuppliedUsd\)/)
     assert.match(homeSource, /<TabsContent value="lending"/)
-    assert.match(homeSource, /formatPrice\(market\.suppliedUsd/)
+    assert.match(homeSource, /formatFiatAmount\(market\.suppliedUsd/)
     assert.doesNotMatch(appSource, /pages\/lending/)
     assert.doesNotMatch(appSource, /path="\/(?:lending|supply|withdraw)"/)
   })

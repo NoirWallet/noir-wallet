@@ -20,6 +20,7 @@ import { ZEC_DECIMALS } from '@/config/wallet'
 import Big from 'big.js'
 import { DedupPromise } from '@/lib/async-utils'
 import {
+  getLendingBalanceDecimals,
   getLendingMarketViews,
   type LendingMarketView
 } from '@/core/services/lending-market-catalog'
@@ -28,7 +29,6 @@ import {
   writeLendingMarketCache
 } from '@/infrastructure/lending/chrome-lending-market-cache'
 
-const ZEC_EXTRA_DECIMALS = 10
 const LIVE_DATA_REUSE_MS = 60_000
 const refreshDedups = new Map<string, DedupPromise<void>>()
 
@@ -60,6 +60,7 @@ interface LendingStore {
   checkMcaStatus: () => Promise<void>
   fetchLendingData: () => Promise<void>
   refreshAll: (options?: { forceMcaCheck?: boolean }) => Promise<void>
+  hydrateMarketCache: () => Promise<void>
   invalidateMcaStatus: () => void
   reset: () => void
 
@@ -260,6 +261,28 @@ export const useLendingStore = create<LendingStore>()((set, get) => ({
     }
   },
 
+  hydrateMarketCache: async () => {
+    const { currentWalletId, currentAccountId } = useWalletStore.getState()
+    if (!currentWalletId || !currentAccountId) return
+    const scope = `${currentWalletId}:${currentAccountId}`
+    if (get().accountScope !== null && get().accountScope !== scope) return
+    if (get().accountScope === null) set({ accountScope: scope })
+    const generation = get().refreshGeneration
+    const markets = await readLendingMarketCache(scope)
+    const active = useWalletStore.getState()
+    if (
+      markets.length === 0 ||
+      get().accountScope !== scope ||
+      get().refreshGeneration !== generation ||
+      get().lastRefreshedAt !== null ||
+      active.currentWalletId !== currentWalletId ||
+      active.currentAccountId !== currentAccountId
+    ) {
+      return
+    }
+    set({ cachedMarketAssets: markets, dataLoaded: true })
+  },
+
   invalidateMcaStatus: () => {
     const { currentWalletId, currentAccountId } = useWalletStore.getState()
     if (currentWalletId && currentAccountId) {
@@ -303,8 +326,10 @@ export const useLendingStore = create<LendingStore>()((set, get) => ({
   },
 
   getFormattedSupplied: () => {
+    const decimals = getLendingBalanceDecimals(get().getZecAsset())
+    if (decimals === null) return '0'
     const raw = get().getTotalSuppliedZec()
-    const formatted = formatAmount(raw, ZEC_EXTRA_DECIMALS + ZEC_DECIMALS)
+    const formatted = formatAmount(raw, decimals)
 
     return safeBig(formatted).round(ZEC_DECIMALS, Big.roundDown).toFixed()
   },
@@ -318,7 +343,7 @@ export const useLendingStore = create<LendingStore>()((set, get) => ({
       .div(100)
       .div(365)
       .times(zecPrice)
-      .toFixed(10)
+      .toFixed()
   },
 
   getSuppliedZec: () => {
@@ -349,7 +374,7 @@ export const useLendingStore = create<LendingStore>()((set, get) => ({
   getUserSuppliedUsd: () => {
     const supplied = get().getFormattedSupplied()
     const zecPrice = useWalletStore.getState().zecPrice
-    return safeBig(supplied).times(zecPrice).toFixed(2)
+    return safeBig(supplied).times(zecPrice).toFixed()
   },
 
   getNetApy: () => {

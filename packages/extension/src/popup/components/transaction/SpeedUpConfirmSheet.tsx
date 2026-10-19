@@ -12,10 +12,12 @@ import {
   staticFeeFallbackZats
 } from '@/core/zcash/fee-policy'
 import type { FeeTier } from '@/config/fee'
-import { formatNumber, formatSortAddress } from '@/lib/format'
+import { formatSortAddress } from '@/lib/format'
+import { AmountDisplay } from '../common/AmountDisplay'
 import type { Transaction } from '@/types/wallet'
 import { resolveSpeedUpAmount } from '@/lib/transaction-replacement'
 import { safeBig } from '@/lib/big'
+import { getFundingBalance } from '@/core/wallet/funding-balance'
 import { useAccountDataStore } from '@/store/account-data-store'
 import { resolveZcashTransferAvailability } from '@/popup/services/transfer-availability'
 
@@ -38,6 +40,7 @@ export function SpeedUpConfirmSheet({
   onConfirm
 }: SpeedUpConfirmSheetProps) {
   const [tier, setTier] = useState<FeeTier>('fast')
+  const fundingSource = tx?.fromType ?? 'shielded'
 
   useEffect(() => {
     if (open) setTier('fast')
@@ -47,17 +50,20 @@ export function SpeedUpConfirmSheet({
     to: tx?.to,
     memo: tx?.memo,
     feeTier: tier,
+    fundingSource,
     enabled: open && !!tx
   })
   useEffect(() => {
     if (open && tx?.to) void maxTransfer.request()
   }, [open, tx?.id, tx?.to, tier])
-  const available = useAccountDataStore(state => state.getCurrentBalance()?.available ?? '0')
+  const balance = useAccountDataStore(state => state.getCurrentBalance())
+  const available = getFundingBalance(balance, fundingSource).available
   const spendable = resolveZcashTransferAvailability({
     availableBalance: available,
     selectedFeeZats: staticFeeFallbackZats(tier),
     standardFeeZats: staticFeeFallbackZats('standard'),
-    maximumAmount: maxTransfer.maxAmount
+    maximumAmount: maxTransfer.maxAmount,
+    feeAlreadyReservedZats: fundingSource === 'transparent' ? 0 : undefined
   }).amount
   const retryAmount = resolveSpeedUpAmount(tx?.amount ?? '0', spendable)
   const amountAdjusted = !!tx && retryAmount !== tx.amount
@@ -68,6 +74,7 @@ export function SpeedUpConfirmSheet({
     to: tx?.to,
     amount: retryAmount,
     memo: tx?.memo,
+    fundingSource,
     enabled: open && !!tx && !maxTransfer.loading && !maxTransfer.error && !usesMaxTransfer
   })
   const feeByTier = usesMaxTransfer
@@ -96,16 +103,16 @@ export function SpeedUpConfirmSheet({
           <div className="mb-3">
             <TokenIcon symbol="ZEC" nativeChain="zcash" size="xl" />
           </div>
-          <p className="text-2xl font-bold">{formatNumber(retryAmount)} ZEC</p>
+          <div className="max-w-full text-center text-2xl font-bold">
+            <AmountDisplay value={retryAmount} symbol="ZEC" />
+          </div>
           {tx?.to && <p className="text-sm text-muted mt-0.5">To {formatSortAddress(tx.to)}</p>}
           {amountAdjusted && (
-            <p className="text-xs text-muted mt-2 px-8 text-center">
-              Amount reduced from {formatNumber(tx.amount)} ZEC to cover the higher network fee.
-            </p>
+            <div className="text-xs text-muted mt-2 px-8 text-center">
+              Amount reduced from <AmountDisplay value={tx.amount} symbol="ZEC" /> to cover the
+              higher network fee.
+            </div>
           )}
-          <p className="text-xs text-muted mt-2 px-8 text-center">
-            Resends as a new transaction at a higher fee. The expired one is never charged.
-          </p>
         </div>
 
         <div className="mx-5 bg-card rounded-xl p-4">

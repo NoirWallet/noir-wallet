@@ -1,11 +1,38 @@
-import { useCallback, useState } from 'react'
+import { ANALYTICS_EVENTS, sendAnalyticsEvent } from '@/lib/analytics'
+import { useCallback, useRef, useState } from 'react'
 import { useTransaction } from './useTransaction'
 import { useTransactionResultStore } from '@/store/transaction-result-store'
 import { useNavigate } from '../provider/Router'
 import { zcashWalletRuntimeClient } from '@/popup/services/zcash-wallet-runtime-client'
 import { SpeedUpConfirmSheet } from '../components/transaction/SpeedUpConfirmSheet'
-import type { Transaction } from '@/types/wallet'
-import { getTransactionRecoveryAction } from '@/lib/transaction-replacement'
+import type { Network, Transaction } from '@/types/wallet'
+import {
+  getSpeedUpConfirmationError,
+  getTransactionRecoveryAction
+} from '@/lib/transaction-replacement'
+import { buildAccountKey } from '@/store/account-data-store'
+import { rehydrateWalletStore, useWalletStore } from '@/store/wallet-store'
+import { loadTransactions } from '@/lib/indexed-db'
+import { toast } from '@/store/toast-store'
+
+interface SpeedUpSelection {
+  tx: Transaction
+  network: Network
+  walletId: string
+  accountId: string
+  accountKey: string
+}
+
+function getActiveAccountScope(): Omit<SpeedUpSelection, 'tx'> | null {
+  const { currentNetwork, currentWalletId, currentAccountId } = useWalletStore.getState()
+  if (!currentWalletId || !currentAccountId) return null
+  return {
+    network: currentNetwork,
+    walletId: currentWalletId,
+    accountId: currentAccountId,
+    accountKey: buildAccountKey(currentNetwork, currentWalletId, currentAccountId)
+  }
+}
 
 /**
  * Drives the Speed Up flow: a confirm sheet (default Fast tier) plus the resend.
@@ -22,10 +49,15 @@ export function useSpeedUp() {
   const { sendTransaction } = useTransaction()
   const { setResult, updateStep } = useTransactionResultStore()
   const { navigate } = useNavigate()
-  const [sheetTx, setSheetTx] = useState<Transaction | null>(null)
+  const [selection, setSelection] = useState<SpeedUpSelection | null>(null)
+  const confirmingRef = useRef(false)
 
   const requestSpeedUp = useCallback((tx: Transaction) => {
-    if (getTransactionRecoveryAction(tx) === 'speed_up') setSheetTx(tx)
+    const scope = getActiveAccountScope()
+    if (scope && tx.network === scope.network && getTransactionRecoveryAction(tx) === 'speed_up') {
+      confirmingRef.current = false
+      setSelection({ tx: { ...tx }, ...scope })
+    }
   }, [])
 
   const executeSpeedUp = useCallback(
@@ -38,8 +70,40 @@ export function useSpeedUp() {
       fee: string
       marginalFeeZats: number
     }) => {
-      const tx = sheetTx
-      setSheetTx(null)
+      if (confirmingRef.current) return
+      confirmingRef.current = true
+      const opened = selection
+      setSelection(null)
+      if (!opened) return
+      if (getActiveAccountScope()?.accountKey !== opened.accountKey) {
+        toast.error('Account changed. Reopen Speed Up.')
+        return
+      }
+
+      let transactions: Transaction[]
+      try {
+        transactions = await loadTransactions(opened.accountKey)
+        await rehydrateWalletStore()
+      } catch {
+        toast.error('Unable to verify this transaction')
+        return
+      }
+      const active = getActiveAccountScope()
+      const confirmationError = getSpeedUpConfirmationError(
+        opened.tx,
+        transactions,
+        opened.accountKey,
+        active?.accountKey ?? null
+      )
+      if (confirmationError) {
+        toast.error(
+          confirmationError === 'account_changed'
+            ? 'Account changed. Reopen Speed Up.'
+            : 'This transaction is no longer eligible for Speed Up'
+        )
+        return
+      }
+      const tx = transactions.find(transaction => transaction.id === opened.tx.id)
       if (!tx) return
 
       zcashWalletRuntimeClient.requestSync()
@@ -54,15 +118,23 @@ export function useSpeedUp() {
       setResult(pendingResult, '/')
       navigate('/transaction-result')
 
+      const eventOptions = {
+        chain: 'zcash' as const,
+        inputSymbol: 'ZEC',
+        extra: { funding_source: tx.fromType ?? 'shielded', kind: 'send' }
+      }
+      sendAnalyticsEvent(ANALYTICS_EVENTS.SEND_SUBMITTED, eventOptions)
       const result = await sendTransaction({
         to: tx.to,
         amount,
         from: tx.from,
-        fromType: 'shielded',
+        fromType: tx.fromType ?? 'shielded',
         memo: tx.memo,
         fee,
         marginalFeeZats,
         replacesTransactionId: tx.id,
+        expectedAccountKey: opened.accountKey,
+        analytics: { fundingSource: tx.fromType ?? 'shielded' },
         onCreated: (transaction, accountKey) => {
           if (useTransactionResultStore.getState().data !== pendingResult) return
           updateStep('pending', {
@@ -90,14 +162,14 @@ export function useSpeedUp() {
         }
       }
     },
-    [sheetTx, sendTransaction, setResult, updateStep, navigate]
+    [selection, sendTransaction, setResult, updateStep, navigate]
   )
 
   const speedUpSheet = (
     <SpeedUpConfirmSheet
-      open={!!sheetTx}
-      onOpenChange={open => !open && setSheetTx(null)}
-      tx={sheetTx}
+      open={!!selection}
+      onOpenChange={open => !open && setSelection(null)}
+      tx={selection?.tx ?? null}
       onConfirm={executeSpeedUp}
     />
   )

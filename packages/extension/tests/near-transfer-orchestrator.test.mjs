@@ -12,6 +12,7 @@ import {
   NearTransferOrchestrator
 } from '../src/infrastructure/chains/near/index.ts'
 import { InMemoryTransactionRepository } from '../src/infrastructure/persistence/repositories/index.ts'
+import { reportBackgroundSendBroadcast } from '../src/background/analytics/send-broadcast.ts'
 
 const chainId = parseChainId('near:testnet').id
 const signerId = '00'.repeat(32)
@@ -200,6 +201,7 @@ test('prepares, approves, signs and broadcasts a native NEAR transfer', async ()
 test('persists signed bytes before broadcast and resumes without signing twice', async () => {
   let allowBroadcast = false
   let pendingBroadcastCalls = 0
+  const analytics = []
   const testRpc = rpc({
     broadcastSignedTransaction: async () => {
       if (!allowBroadcast) throw new Error('response lost')
@@ -210,7 +212,13 @@ test('persists signed bytes before broadcast and resumes without signing twice',
     rpc: testRpc,
     onPendingBroadcast: () => {
       pendingBroadcastCalls += 1
-    }
+    },
+    onMonitoringRequired: (graph, recovered) =>
+      recovered &&
+      reportBackgroundSendBroadcast(graph, (name, options) => {
+        analytics.push({ name, options })
+        return new Promise(() => {})
+      })
   })
   const approval = await prepare(orchestrator)
   const first = await orchestrator.approve({
@@ -219,6 +227,7 @@ test('persists signed bytes before broadcast and resumes without signing twice',
     payloadFingerprint: approval.signing.payloadFingerprint.digestHex
   })
   expect(first.status).toBe('signed-pending-broadcast')
+  expect(analytics).toHaveLength(0)
   expect((await pendingStore.get(approval.graph.root.id)).phase).toBe('signed')
 
   allowBroadcast = true
@@ -227,6 +236,8 @@ test('persists signed bytes before broadcast and resumes without signing twice',
     transactionId: approval.graph.root.id
   })
   expect(resumed.status).toBe('broadcast')
+  expect(analytics).toHaveLength(1)
+  expect(analytics[0].options.idempotencyKey).toBe(`send-broadcast:${approval.graph.root.id}`)
   expect(calls.filter(call => call[0] === 'confirm')).toHaveLength(1)
   expect(pendingBroadcastCalls).toBe(1)
 })

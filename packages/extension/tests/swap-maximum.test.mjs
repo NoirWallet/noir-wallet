@@ -1,5 +1,8 @@
 import { expect, test } from '@playwright/test'
-import { resolveSwapMaximumAdjustment } from '../src/popup/services/swap-maximum.ts'
+import {
+  resolveEvmSwapMaximumInsufficientFundsAdjustment,
+  resolveSwapMaximumAdjustment
+} from '../src/popup/services/swap-maximum.ts'
 import { EvmWalletClientError } from '../src/popup/services/evm-wallet-client.ts'
 import {
   buildLiveSwapQuoteRequest,
@@ -42,16 +45,79 @@ test('quotes a smaller real native amount before estimating Max or a changed fee
   full.review.amountIn = '1000000'
   await expect(resolveSwapMaximumAdjustment(full, dependencies)).resolves.toEqual({
     amount: '0.5',
-    adjustmentCount: 1
+    adjustmentCount: 0
   })
   await expect(
     resolveSwapMaximumAdjustment(input({ refreshFees: true }), dependencies)
-  ).resolves.toEqual({ amount: '0.25', adjustmentCount: 1 })
+  ).resolves.toEqual({ amount: '0.25', adjustmentCount: 0 })
 })
 
-test('uses the authoritative native contract plan and converges without rounding or repeated preparation', async () => {
+test('uses the half-balance fee probe to reach a buffered near-full Max', async () => {
+  const source = input().source
+  const prepare = amountRaw => ({
+    quoteHandle: amountRaw,
+    amountIn: amountRaw,
+    execution: { kind: 'evm-transaction', target: '0xcontract' }
+  })
+  const dependencies = {
+    getEvmTransactionPlan: async () => ({ approval: null, transaction: {} }),
+    estimateMaximum: async () => ({ amountRaw: '875000', networkFeeRaw: '100000' })
+  }
+  const full = input({ source, currentAmount: '1', review: prepare('1000000') })
+  const probe = await resolveSwapMaximumAdjustment(full, dependencies)
+  expect(probe).toEqual({ amount: '0.5', adjustmentCount: 0 })
+
+  const nearFull = await resolveSwapMaximumAdjustment(
+    input({ source, currentAmount: probe.amount, review: prepare('500000'), adjustmentCount: 0 }),
+    dependencies
+  )
+  expect(nearFull).toEqual({ amount: '0.875', adjustmentCount: 1 })
+  await expect(
+    resolveSwapMaximumAdjustment(
+      input({
+        source,
+        currentAmount: nearFull.amount,
+        review: prepare('875000'),
+        adjustmentCount: 1
+      }),
+      dependencies
+    )
+  ).resolves.toBeNull()
+})
+
+test('fee-tier refresh restarts an existing Max adjustment at the fee probe', async () => {
+  const dependencies = {
+    getEvmTransactionPlan: async () => ({ approval: null, transaction: {} }),
+    estimateMaximum: async () => ({ amountRaw: '825000', networkFeeRaw: '140000' })
+  }
+  for (const previousAdjustments of [1, 2]) {
+    const refreshed = await resolveSwapMaximumAdjustment(
+      input({
+        currentAmount: '0.875',
+        review: { ...input().review, amountIn: '875000' },
+        refreshFees: true,
+        adjustmentCount: previousAdjustments
+      }),
+      dependencies
+    )
+    expect(refreshed).toEqual({ amount: '0.5', adjustmentCount: 0 })
+    await expect(
+      resolveSwapMaximumAdjustment(
+        input({
+          currentAmount: refreshed.amount,
+          review: { ...input().review, amountIn: '500000' },
+          feeTier: 'fast',
+          adjustmentCount: refreshed.adjustmentCount
+        }),
+        dependencies
+      )
+    ).resolves.toEqual({ amount: '0.825', adjustmentCount: 1 })
+  }
+})
+
+test('uses the authoritative native contract plan and only adjusts an unaffordable quote', async () => {
   const calls = []
-  const transaction = { chainId: 1, to: '0xcontract', data: '0x1234', value: '500000', from: null }
+  const transaction = { chainId: 1, to: '0xcontract', data: '0x1234', value: '999990', from: null }
   const dependencies = {
     getEvmTransactionPlan: async handle => {
       calls.push(handle)
@@ -59,28 +125,64 @@ test('uses the authoritative native contract plan and converges without rounding
     },
     estimateMaximum: async request => {
       calls.push(request)
-      return { amountRaw: '999937' }
+      return { amountRaw: '999937', networkFeeRaw: '50' }
     }
   }
-  const request = input({ executionMode: 'private' })
+  const review = {
+    quoteHandle: 'quote-1',
+    amountIn: '999990',
+    execution: { kind: 'evm-transaction', target: '0xcontract' }
+  }
+  const request = input({ executionMode: 'private', currentAmount: '0.99999', review })
   await expect(resolveSwapMaximumAdjustment(request, dependencies)).resolves.toEqual({
     amount: '0.999937',
     adjustmentCount: 1
   })
   expect(calls[1]).toMatchObject({
     evmTransaction: transaction,
-    quotedAmountRaw: '500000',
+    quotedAmountRaw: '999990',
     executionMode: 'private'
   })
   await expect(
     resolveSwapMaximumAdjustment(
-      input({ currentAmount: '0.999937', adjustmentCount: 1 }),
+      input({
+        currentAmount: '0.999937',
+        adjustmentCount: 1,
+        review: { ...review, amountIn: '999937' }
+      }),
       dependencies
     )
   ).resolves.toBeNull()
   await expect(
-    resolveSwapMaximumAdjustment(input({ adjustmentCount: 3 }), dependencies)
+    resolveSwapMaximumAdjustment(input({ ...request, adjustmentCount: 4 }), dependencies)
   ).rejects.toThrow('maximum spendable')
+})
+
+test('accepts the buffered native quote when a later fee increases by less than the headroom', async () => {
+  const amounts = ['850000', '841000', '890000']
+  const fees = ['100000', '110000', '80000']
+  const dependencies = {
+    getEvmTransactionPlan: async () => ({ approval: null, transaction: {} }),
+    estimateMaximum: async () => ({
+      amountRaw: amounts.shift(),
+      networkFeeRaw: fees.shift()
+    })
+  }
+  const initial = input({
+    currentAmount: '0.9',
+    review: { ...input().review, amountIn: '900000' }
+  })
+  await expect(resolveSwapMaximumAdjustment(initial, dependencies)).resolves.toEqual({
+    amount: '0.85',
+    adjustmentCount: 1
+  })
+  const buffered = input({
+    currentAmount: '0.85',
+    adjustmentCount: 1,
+    review: { ...input().review, amountIn: '850000' }
+  })
+  await expect(resolveSwapMaximumAdjustment(buffered, dependencies)).resolves.toBeNull()
+  await expect(resolveSwapMaximumAdjustment(buffered, dependencies)).resolves.toBeNull()
 })
 
 test('does not deduct native gas from a token balance or invent transaction gas for signature orders', async () => {
@@ -105,7 +207,9 @@ test('rejects a token approval on a native route and falls back when simulation 
   }
   await expect(resolveSwapMaximumAdjustment(input(), dependencies)).rejects.toThrow('native Swap')
   dependencies.getEvmTransactionPlan = async () => ({ approval: null, transaction: {} })
-  await expect(resolveSwapMaximumAdjustment(input(), dependencies)).resolves.toEqual({
+  await expect(
+    resolveSwapMaximumAdjustment(input({ currentAmount: '0.97' }), dependencies)
+  ).resolves.toEqual({
     amount: '0.95',
     adjustmentCount: 1
   })
@@ -117,7 +221,7 @@ test('rejects a token approval on a native route and falls back when simulation 
   )
 })
 
-test('re-quotes smaller exact calls when gas consumes more than half the balance, with a bound', async () => {
+test('re-quotes a bounded smaller exact call when fee details are unavailable', async () => {
   const dependencies = {
     getEvmTransactionPlan: async () => ({ approval: null, transaction: {} }),
     estimateMaximum: async () => {
@@ -126,10 +230,33 @@ test('re-quotes smaller exact calls when gas consumes more than half the balance
   }
   await expect(
     resolveSwapMaximumAdjustment(input({ adjustmentCount: 1 }), dependencies)
-  ).resolves.toEqual({ amount: '0.25', adjustmentCount: 2 })
+  ).resolves.toEqual({ amount: '0.375', adjustmentCount: 2 })
   await expect(
-    resolveSwapMaximumAdjustment(input({ adjustmentCount: 3 }), dependencies)
+    resolveSwapMaximumAdjustment(input({ adjustmentCount: 4 }), dependencies)
   ).rejects.toThrow('maximum spendable')
+})
+
+test('re-quotes by twice the reported wei shortfall after a final EVM fee change', () => {
+  const source = input().source
+  source.asset.metadata.decimals = 18
+  source.asset.balance.availableRaw = '1000000000000000000'
+  const error = new EvmWalletClientError(
+    'insufficient-funds',
+    'The EVM balance is insufficient',
+    '43863666000'
+  )
+  expect(
+    resolveEvmSwapMaximumInsufficientFundsAdjustment(
+      { source, currentAmount: '0.999875', adjustmentCount: 1 },
+      error
+    )
+  ).toEqual({ amount: '0.999874912272668', adjustmentCount: 2 })
+  expect(
+    resolveEvmSwapMaximumInsufficientFundsAdjustment(
+      { source, currentAmount: '0.999875', adjustmentCount: 1 },
+      new Error('RPC failed')
+    )
+  ).toBeNull()
 })
 
 test('continues Max review only for the requested new quote, not an old amount or account', () => {

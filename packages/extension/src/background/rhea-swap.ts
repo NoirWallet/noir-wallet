@@ -19,6 +19,29 @@ import {
 import type { TransactionGraph } from '@/core/transactions/domain'
 import { DEFAULT_REQUEST_TIMEOUT_MS } from '@/config/extension'
 import { RHEA_SWAP_TRANSACTION_MONITOR_ALARM } from './rhea-swap-transaction-monitor'
+import type { QuoteBinding } from '@/types/wallet'
+import { safeBig } from '@/lib/big'
+
+export async function readRheaZcashTransferDeadline(
+  binding: QuoteBinding | undefined,
+  to: string | undefined,
+  amount: string | undefined
+): Promise<number | undefined> {
+  if (binding?.provider !== 'rhea-cross-chain-dex') return undefined
+  const service = createBackgroundRheaSwapService()
+  if (!service || !binding.quoteHandle || !binding.executionId || !to || !amount) {
+    throw new Error('RHEA Swap quote is unavailable. Get a new quote and review it again.')
+  }
+  const amountZats = safeBig(amount).times(1e8)
+  if (!amountZats.gt(0) || !amountZats.eq(amountZats.round(0, 0))) {
+    throw new Error('Invalid RHEA Swap transfer amount')
+  }
+  return service.readZcashTransferDeadline(binding.quoteHandle, {
+    executionId: binding.executionId,
+    to,
+    amountZats: amountZats.toFixed(0)
+  })
+}
 
 const RECORD_PREFIX = 'rhea_swap_quote:'
 const MAXIMUM_RECORDS = 16
@@ -191,8 +214,11 @@ function parseStoredRecord(value: unknown): RheaSwapQuoteSessionRecord {
       'reportStatus'
     ]
     if (
-      keys.length !== expected.length ||
+      (keys.length !== expected.length &&
+        !(keys.length === expected.length + 1 && keys.includes('disposeAfterReport'))) ||
       expected.some(key => !keys.includes(key)) ||
+      (value.submission.disposeAfterReport !== undefined &&
+        typeof value.submission.disposeAfterReport !== 'boolean') ||
       (value.submission.orderId !== null && typeof value.submission.orderId !== 'string') ||
       (value.submission.statusChainId !== null &&
         typeof value.submission.statusChainId !== 'string') ||
@@ -222,7 +248,10 @@ function parseStoredRecord(value: unknown): RheaSwapQuoteSessionRecord {
               32
             ),
       reportRequest: parseStoredReportRequest(value.submission.reportRequest),
-      reportStatus: value.submission.reportStatus
+      reportStatus: value.submission.reportStatus,
+      ...(value.submission.disposeAfterReport === undefined
+        ? {}
+        : { disposeAfterReport: value.submission.disposeAfterReport })
     })
   }
   return Object.freeze({
@@ -242,6 +271,29 @@ export class ChromeRheaSwapQuoteStore implements RheaSwapQuoteSessionStore {
     const key = this.key(quoteHandle)
     const stored = await chrome.storage.local.get(key)
     return stored[key] === undefined ? null : parseStoredRecord(stored[key])
+  }
+
+  async listUnreported(): Promise<readonly string[]> {
+    const stored = await chrome.storage.local.get(null)
+    const handles: string[] = []
+    for (const [key, value] of Object.entries(stored)) {
+      if (!key.startsWith(RECORD_PREFIX)) continue
+      try {
+        const record = parseStoredRecord(value)
+        if (record.submission && record.submission.reportStatus !== 'reported') {
+          handles.push(record.quoteHandle)
+        }
+      } catch {
+        console.warn('[RHEA Swap Monitor] Invalid persisted quote session', { key })
+      }
+    }
+    return handles
+  }
+
+  async clear(): Promise<void> {
+    const stored = await chrome.storage.local.get(null)
+    const keys = Object.keys(stored).filter(key => key.startsWith(RECORD_PREFIX))
+    if (keys.length > 0) await chrome.storage.local.remove(keys)
   }
 
   async put(record: RheaSwapQuoteSessionRecord): Promise<void> {

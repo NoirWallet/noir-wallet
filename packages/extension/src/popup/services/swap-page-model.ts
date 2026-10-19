@@ -1,6 +1,6 @@
 import type { PortfolioReadModel } from '@/core/portfolio'
 import { isZecToken } from '@/core/services/intents-api'
-import type { RheaSwapQuoteView, RheaSwapToken } from '@/core/services/rhea-swap'
+import type { RheaSwapToken } from '@/core/services/rhea-swap'
 import { safeBig } from '@/lib/big'
 import { parseAmount } from '@/lib/format'
 import {
@@ -32,9 +32,10 @@ export function resolveSwapRefreshChainId(
   )?.chain.id
 }
 
-export function isRheaSwapQuoteFresh(quote: RheaSwapQuoteView, now = Date.now()): boolean {
-  return quote.expiresAt === null || quote.expiresAt > now
-}
+export {
+  getRheaSwapQuoteDeadline,
+  isRheaSwapQuoteFresh
+} from '@/core/services/rhea-swap/rhea-swap-quote-validity'
 
 export function resolveSwapReviewAction(input: {
   readonly isZecSource: boolean
@@ -131,7 +132,25 @@ export function resolveWalletSwapSourceAvailableRaw(
   evmExecutionMode: 'main' | 'private'
 ): string | undefined {
   if (source.family !== 'evm') return source.asset.balance.availableRaw
+  if (
+    evmExecutionMode === 'private' &&
+    source.asset.balance.privateOnchainRaw === undefined &&
+    source.asset.balance.privateRaw === undefined
+  )
+    return undefined
   return resolveAccountAvailableRaw(source.asset.balance, evmExecutionMode)
+}
+
+export function resolveSwapSelectorBalanceMode(input: {
+  readonly purpose: 'in' | 'out'
+  readonly sourceMode: 'main' | 'private'
+  readonly destinationMode: 'main' | 'private'
+  readonly isPrivateFunding: boolean
+  readonly externalRecipient: boolean
+}): 'main' | 'private' | null {
+  if (input.purpose === 'in') return input.isPrivateFunding ? 'main' : input.sourceMode
+  if (input.externalRecipient) return null
+  return input.isPrivateFunding ? 'private' : input.destinationMode
 }
 
 export function isSwapSourceAmountInsufficient(input: {

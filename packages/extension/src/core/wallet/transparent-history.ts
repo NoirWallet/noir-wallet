@@ -442,11 +442,15 @@ export function mergeTransactionsWithWasmHistory(
           current,
           {
             ...transaction,
+            timestamp: transaction.timestamp > 0 ? transaction.timestamp : current.timestamp,
             to: transaction.to || (current.type === transaction.type ? current.to : '')
           },
           confirmation
         )
-      : transaction
+      : {
+          ...transaction,
+          timestamp: transaction.timestamp > 0 ? transaction.timestamp : Date.now()
+        }
   })
   const localHashes = localTxHashSet(refreshedCurrentTransactions)
   const localShieldedSendHashes = localShieldedSendHashSet(refreshedCurrentTransactions)

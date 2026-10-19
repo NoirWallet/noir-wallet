@@ -1,3 +1,4 @@
+import { ANALYTICS_EVENTS, sendAnalyticsEvent } from '@/lib/analytics'
 import { useEffect, useRef, useState } from 'react'
 import { Icon } from '@iconify/react'
 import { Button } from '../../components/ui/button'
@@ -414,6 +415,17 @@ export function LedgerConnectPage() {
           : {}),
         ...(firstWallet ? { password } : {})
       })
+      sendAnalyticsEvent(ANALYTICS_EVENTS.HW_CONNECTED, {
+        chain: selectedFamilies[0] ?? 'zcash',
+        extra: { is_existing_wallet: Boolean(targetWalletId), hardware: 'ledger' }
+      })
+      if (!targetWalletId) {
+        sendAnalyticsEvent(ANALYTICS_EVENTS.WALLET_CREATED, {
+          chain: selectedFamilies[0] ?? 'zcash',
+          params: { method: 'hardware' },
+          extra: { hardware: 'ledger' }
+        })
+      }
       setPassword('')
       setConfirmPassword('')
       setStep('success')

@@ -477,10 +477,7 @@ test.describe('Unified active Portfolio coordinator', () => {
       )
     ).toMatchObject({
       status: 'partial',
-      assets: [
-        { metadata: { symbol: 'ZEC' }, balance: { totalRaw: '0' } },
-        { metadata: { symbol: 'BTC' }, balance: { totalRaw: '100000' } }
-      ]
+      assets: [{ metadata: { symbol: 'BTC' }, balance: { totalRaw: '100000' } }]
     })
   })
 
@@ -593,7 +590,7 @@ test.describe('Unified active Portfolio coordinator', () => {
     expect(cachedModel).toMatchObject({
       status: 'partial',
       chains: [
-        { chain: { family: 'zcash' }, status: 'partial' },
+        { chain: { family: 'zcash' }, status: 'loading', assets: [] },
         { chain: { family: 'evm' }, status: 'partial' },
         { chain: { family: 'bitcoin' }, status: 'loading' }
       ]
@@ -604,7 +601,7 @@ test.describe('Unified active Portfolio coordinator', () => {
     expect(refreshingModel).toMatchObject({
       status: 'partial',
       chains: [
-        { chain: { family: 'zcash' }, status: 'partial' },
+        { chain: { family: 'zcash' }, status: 'loading', assets: [] },
         { chain: { family: 'evm' }, status: 'ready' },
         { chain: { family: 'bitcoin' }, status: 'loading' }
       ]
@@ -615,7 +612,7 @@ test.describe('Unified active Portfolio coordinator', () => {
     await expect(coordinator.readCachedActive()).resolves.toMatchObject({
       status: 'partial',
       chains: [
-        { chain: { family: 'zcash' }, status: 'partial' },
+        { chain: { family: 'zcash' }, status: 'loading', assets: [] },
         { chain: { family: 'evm' }, status: 'partial' },
         {
           chain: { family: 'bitcoin' },

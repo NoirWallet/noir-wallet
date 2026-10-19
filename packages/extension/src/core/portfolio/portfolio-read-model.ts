@@ -64,6 +64,8 @@ function aggregateAssetBalances(balances: readonly NormalizedBalance[]): Portfol
   let shieldableRaw = first.balance.shieldableRaw
   let shieldedRaw = first.balance.shieldedRaw
   let transparentRaw = first.balance.transparentRaw
+  let shieldedPendingRaw = first.balance.shieldedPendingRaw
+  let transparentPendingRaw = first.balance.transparentPendingRaw
   let mainRaw = first.balance.mainRaw
   let privateRaw = first.balance.privateRaw
   let updatedAt = first.balance.updatedAt
@@ -83,6 +85,15 @@ function aggregateAssetBalances(balances: readonly NormalizedBalance[]): Portfol
     }
     if (transparentRaw !== undefined || item.balance.transparentRaw !== undefined) {
       transparentRaw = addRaw(transparentRaw ?? '0', item.balance.transparentRaw ?? '0')
+    }
+    if (shieldedPendingRaw !== undefined || item.balance.shieldedPendingRaw !== undefined) {
+      shieldedPendingRaw = addRaw(shieldedPendingRaw ?? '0', item.balance.shieldedPendingRaw ?? '0')
+    }
+    if (transparentPendingRaw !== undefined || item.balance.transparentPendingRaw !== undefined) {
+      transparentPendingRaw = addRaw(
+        transparentPendingRaw ?? '0',
+        item.balance.transparentPendingRaw ?? '0'
+      )
     }
     const hasAccountBreakdown = mainRaw !== undefined && privateRaw !== undefined
     const itemHasAccountBreakdown =
@@ -116,6 +127,8 @@ function aggregateAssetBalances(balances: readonly NormalizedBalance[]): Portfol
       ...(shieldableRaw === undefined ? {} : { shieldableRaw }),
       ...(shieldedRaw === undefined ? {} : { shieldedRaw }),
       ...(transparentRaw === undefined ? {} : { transparentRaw }),
+      ...(shieldedPendingRaw === undefined ? {} : { shieldedPendingRaw }),
+      ...(transparentPendingRaw === undefined ? {} : { transparentPendingRaw }),
       ...(mainRaw === undefined ? {} : { mainRaw }),
       ...(privateRaw === undefined ? {} : { privateRaw })
     }),

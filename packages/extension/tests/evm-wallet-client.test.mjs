@@ -531,6 +531,8 @@ test.describe('Popup EVM wallet client', () => {
         result: {
           transactionId,
           chainId,
+          scope: graph().root.scope,
+          summary: summary(),
           request: { encoding: 'base64', value: 'AQIDBA==' },
           payloadFingerprint: fingerprint,
           expiresAt: 5_000
@@ -551,6 +553,8 @@ test.describe('Popup EVM wallet client', () => {
     await expect(client.getExternalSigningRequest(transactionId)).resolves.toEqual({
       transactionId,
       chainId,
+      scope: graph().root.scope,
+      summary: summary(),
       vendor: 'keystone',
       request: { encoding: 'base64', value: 'AQIDBA==' },
       payloadFingerprint: fingerprint,
@@ -576,12 +580,28 @@ test.describe('Popup EVM wallet client', () => {
       result: {
         transactionId: 'transaction:evm:other',
         chainId,
+        scope: graph().root.scope,
+        summary: summary(),
         request: { encoding: 'base64', value: 'AQIDBA==' },
         payloadFingerprint: fingerprint,
         expiresAt: 5_000
       }
     }))
     await expect(substituted.getExternalSigningRequest(transactionId)).rejects.toMatchObject({
+      code: 'invalid-response'
+    })
+    const wrongSummary = createEvmWalletClient(async () => ({
+      result: {
+        transactionId,
+        chainId,
+        scope: graph().root.scope,
+        summary: { ...summary(), chainId: 'eip155:8453' },
+        request: { encoding: 'base64', value: 'AQIDBA==' },
+        payloadFingerprint: fingerprint,
+        expiresAt: 5_000
+      }
+    }))
+    await expect(wrongSummary.getExternalSigningRequest(transactionId)).rejects.toMatchObject({
       code: 'invalid-response'
     })
 
@@ -649,6 +669,29 @@ test.describe('Popup EVM wallet client', () => {
         code: 'unavailable'
       })
     )
+
+    const insufficient = createEvmWalletClient(async () => ({
+      error: {
+        code: 'insufficient-funds',
+        message: 'The EVM balance is insufficient',
+        shortfallRaw: '43863666000'
+      }
+    }))
+    await expect(insufficient.resumeTransfer(transactionId)).rejects.toMatchObject({
+      code: 'insufficient-funds',
+      shortfallRaw: '43863666000'
+    })
+
+    const invalidShortfall = createEvmWalletClient(async () => ({
+      error: {
+        code: 'insufficient-funds',
+        message: 'The EVM balance is insufficient',
+        shortfallRaw: '-1'
+      }
+    }))
+    await expect(invalidShortfall.resumeTransfer(transactionId)).rejects.toMatchObject({
+      code: 'invalid-response'
+    })
 
     const forged = createEvmWalletClient(async () => ({
       error: { code: 'unavailable', message: 'EVM wallet support is unavailable', detail: 'x' }

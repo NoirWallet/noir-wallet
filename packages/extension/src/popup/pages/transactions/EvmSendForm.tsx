@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Icon } from '@iconify/react'
 import type { PortfolioAssetView, PortfolioChainView, PortfolioReadModel } from '@/core/portfolio'
-import { formatNumber, formatSortAddress } from '@/lib/format'
-import Big from '@/lib/big'
+import { formatSortAddress } from '@/lib/format'
+import { AmountDisplay } from '@/popup/components/common/AmountDisplay'
 import { resolveChainIconAlias } from '@/lib/chain-icon'
 import { Button } from '@/popup/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/popup/components/ui/dialog'
@@ -64,6 +64,11 @@ import {
 } from '@/popup/components/account/ExecutionAccountSelector'
 import { TransactionReviewView } from '@/popup/components/transaction/TransactionReviewView'
 import { PrivateBalanceTransferDialog } from '@/popup/components/portfolio/PrivateBalanceTransferDialog'
+import {
+  recordSendApprovalFailure,
+  recordSendResult,
+  recordSendSubmission
+} from '@/popup/services/send-transaction-analytics'
 
 export interface EvmSendAsset {
   readonly asset: PortfolioAssetView
@@ -451,6 +456,7 @@ export function EvmSendForm({
     if (!review) return
     setApproving(true)
     setError(null)
+    recordSendSubmission(review.value.graph, selection.asset.metadata.symbol, sourceMode)
     try {
       const submission = await evmWalletClient.approveTransfer(
         review.value.graph.root.id,
@@ -468,8 +474,10 @@ export function EvmSendForm({
         window.close()
         return
       }
+      recordSendResult(submission.graph, selection.asset.metadata.symbol, sourceMode)
       onSubmitted(submission)
     } catch (approveError) {
+      recordSendApprovalFailure(review.value.graph, selection.asset.metadata.symbol, sourceMode)
       setError(getEvmSendPrepareError(approveError, sourceMode))
     } finally {
       setApproving(false)
@@ -623,7 +631,6 @@ export function EvmSendForm({
                 icon: asset.metadata.iconUrl
               }}
               amount={review.amount}
-              exactAmount
               network={evmSendNetworkLabel(chain)}
               notice={
                 summary.review.level === 'caution' && !bundledAsset ? (
@@ -683,7 +690,11 @@ export function EvmSendForm({
                   label: 'Max fee per gas',
                   content: (
                     <span className="font-mono">
-                      {formatEvmWeiAsGwei(summary.fields.maxFeePerGasWei ?? '0')} GWEI
+                      <AmountDisplay
+                        value={formatEvmWeiAsGwei(summary.fields.maxFeePerGasWei ?? '0')}
+                        symbol="GWEI"
+                        profile="fee"
+                      />
                     </span>
                   )
                 },
@@ -691,7 +702,11 @@ export function EvmSendForm({
                   label: 'Priority fee per gas',
                   content: (
                     <span className="font-mono">
-                      {formatEvmWeiAsGwei(summary.fields.maxPriorityFeePerGasWei ?? '0')} GWEI
+                      <AmountDisplay
+                        value={formatEvmWeiAsGwei(summary.fields.maxPriorityFeePerGasWei ?? '0')}
+                        symbol="GWEI"
+                        profile="fee"
+                      />
                     </span>
                   )
                 },
@@ -699,7 +714,7 @@ export function EvmSendForm({
                   ? [
                       {
                         label: 'Maximum total',
-                        content: `${formatNumber(maximumTotal, { rm: Big.roundDown, useUnit: true, useSubscript: true })} ${nativeSymbol}`
+                        content: <AmountDisplay value={maximumTotal} symbol={nativeSymbol} />
                       }
                     ]
                   : []),

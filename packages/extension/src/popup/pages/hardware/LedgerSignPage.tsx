@@ -3,6 +3,7 @@ import { Icon } from '@iconify/react'
 import { PageHeader } from '../../components/common/PageHeader'
 import { Button } from '../../components/ui/button'
 import { SigningSummaryReview } from '../../components/signing/SigningSummaryReview'
+import { Skeleton } from '../../components/ui/skeleton'
 import {
   loadLedgerSigningView,
   signLedgerDeviceRequest,
@@ -132,36 +133,58 @@ export function LedgerSignPage() {
   return (
     <div className="page-container page-container--tab">
       <PageHeader title="Sign with Ledger" />
-      <div className="page-content flex flex-col items-center justify-center gap-4 text-center">
-        {(step === 'loading' || step === 'signing') && (
-          <Icon icon="lucide:loader-2" width={32} className="animate-spin text-primary" />
-        )}
-        {step === 'loading' && <p>Loading request</p>}
-        {step === 'device' && view && (
-          <>
-            <Icon icon="lucide:usb" width={32} />
-            <p>Open the {ledgerRequestDeviceApp(view.request)} app</p>
-            {view.request.kind === 'bip322-simple' && (
-              <p className="text-sm text-muted">
-                Your Ledger will display a zero-amount transaction for this message signature.
-              </p>
-            )}
-          </>
-        )}
-        {step === 'signing' && <p>{interaction}</p>}
-        {step === 'success' && (
-          <>
-            <Icon icon="lucide:check-circle-2" width={32} className="text-primary" />
-            <p>Signature submitted</p>
-          </>
-        )}
-        {step === 'error' && (
-          <>
-            <Icon icon="lucide:alert-triangle" width={32} className="text-warning" />
-            <p className="text-sm text-danger">{error}</p>
-          </>
-        )}
-      </div>
+      {step === 'loading' ? (
+        <div
+          role="status"
+          aria-label="Loading signing request"
+          className="page-content space-y-5 pt-5"
+        >
+          <div className="flex flex-col items-center gap-3">
+            <Skeleton className="size-12 rounded-full" />
+            <Skeleton className="h-5 w-36" />
+            <Skeleton className="h-3 w-24" />
+          </div>
+          <div className="space-y-4 rounded-lg bg-card p-4">
+            <Skeleton className="h-4 w-24" />
+            <Skeleton className="h-4 w-full" />
+            <Skeleton className="h-4 w-3/4" />
+          </div>
+          <div className="space-y-4 rounded-lg bg-card p-4">
+            <Skeleton className="h-4 w-28" />
+            <Skeleton className="h-4 w-full" />
+          </div>
+        </div>
+      ) : (
+        <div className="page-content flex flex-col items-center justify-center gap-4 text-center">
+          {step === 'signing' && (
+            <Icon icon="lucide:loader-2" width={32} className="animate-spin text-primary" />
+          )}
+          {step === 'device' && view && (
+            <>
+              <Icon icon="lucide:usb" width={32} />
+              <p>Open the {ledgerRequestDeviceApp(view.request)} app</p>
+              {view.request.kind === 'bip322-simple' && (
+                <p className="text-sm text-muted">
+                  Your Ledger will display a zero-amount transaction for this message signature.
+                </p>
+              )}
+            </>
+          )}
+          {step === 'signing' && <p>{interaction}</p>}
+          {step === 'success' && (
+            <>
+              <Icon icon="lucide:check-circle-2" width={32} className="text-primary" />
+              <p>Signature submitted</p>
+            </>
+          )}
+          {step === 'error' && (
+            <>
+              <Icon icon="lucide:alert-triangle" width={32} className="text-warning" />
+              <p className="text-sm text-danger">{error}</p>
+            </>
+          )}
+        </div>
+      )}
       <div className="page-footer space-y-2">
         {step === 'device' && (
           <>

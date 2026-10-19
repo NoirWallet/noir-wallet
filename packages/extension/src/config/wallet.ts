@@ -103,8 +103,13 @@ export const WALLET_CONFIG = {
     SESSION_SETUP_REFRESH_EVERY_N_BATCHES: 20,
     /** Home balance polling interval (ms) */
     BALANCE_POLL_MS: 1 * 60 * 1000,
-    /** Periodic balance sync eligibility check interval (minutes) */
-    BACKGROUND_POLL_MINUTES: 1,
+    /** Base interval for background chain-tip probes (minutes) */
+    BACKGROUND_POLL_MINUTES: 30,
+    BACKGROUND_POLL_JITTER_MINUTES: 5,
+    BACKGROUND_POLL_MAX_BACKOFF_MINUTES: 120,
+    BACKGROUND_MIN_GAP_BLOCKS: 10,
+    BACKGROUND_MAX_STALE_MS: 60 * 60 * 1000,
+    BACKGROUND_SYNC_BUDGET_MS: 90 * 1000,
     /** Minimum age of cached wallet state before a dApp balance read requests a sync */
     DAPP_BALANCE_SYNC_STALE_MS: 30 * 1000,
     /** Max wait for stuck sync reset and tx pre-flight sync idle (ms) */

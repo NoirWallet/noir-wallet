@@ -5,6 +5,7 @@ import { getFeeTierLabel, type FeeTier } from '@/config/fee'
 import { staticFeeFallbackZats } from '@/core/zcash/fee-policy'
 import { openModal } from '../../provider/ModalManager'
 import { safeBig } from '@/lib/big'
+import { AmountDisplay } from '../common/AmountDisplay'
 
 interface FeeTierPickerProps {
   tier: FeeTier
@@ -93,35 +94,42 @@ export function FeeTierPicker({
     return (
       <div>
         <label className="block text-sm text-muted mb-2">Network Fee</label>
-        <button
-          type="button"
-          onClick={handleEdit}
-          className="w-full h-[54px] bg-card rounded-xl px-4 flex items-center justify-between hover:opacity-90 transition-opacity"
-        >
-          <span className="flex items-baseline gap-1.5">
-            <span className="text-sm">≈ {selectedFeeZec} ZEC</span>
-            <span className="text-xs text-muted">({getFeeTierLabel(tier)})</span>
+        <div className="flex h-[54px] w-full items-center justify-between rounded-xl bg-card px-4">
+          <span className="flex min-w-0 items-baseline gap-1.5 text-sm">
+            ≈ <AmountDisplay value={selectedFeeZec} symbol="ZEC" profile="fee" />
           </span>
-          <span className="size-3.5 inline-flex items-center justify-center [&_svg]:size-3.5">
-            {trailingIcon}
-          </span>
-        </button>
+          <button
+            type="button"
+            onClick={handleEdit}
+            className="inline-flex items-center gap-1 text-xs text-muted hover:text-foreground"
+            aria-label="Edit network fee"
+          >
+            <span>({getFeeTierLabel(tier)})</span>
+            <span className="size-3.5 inline-flex items-center justify-center [&_svg]:size-3.5">
+              {trailingIcon}
+            </span>
+          </button>
+        </div>
       </div>
     )
   }
 
   const inlineTrigger = (
-    <button
-      type="button"
-      onClick={handleEdit}
-      className="flex items-center gap-1.5 hover:opacity-80 transition-opacity"
-    >
-      <span className="text-sm">≈ {selectedFeeZec} ZEC</span>
-      <span className="text-xs text-muted">({getFeeTierLabel(tier)})</span>
-      <span className="size-3 inline-flex items-center justify-center [&_svg]:size-3">
-        {trailingIcon}
-      </span>
-    </button>
+    <span className="inline-flex min-w-0 items-center gap-1.5">
+      <span className="text-sm">≈</span>
+      <AmountDisplay value={selectedFeeZec} symbol="ZEC" profile="fee" className="text-sm" />
+      <button
+        type="button"
+        onClick={handleEdit}
+        className="inline-flex items-center gap-1 text-xs text-muted hover:text-foreground"
+        aria-label="Edit network fee"
+      >
+        <span>({getFeeTierLabel(tier)})</span>
+        <span className="size-3 inline-flex items-center justify-center [&_svg]:size-3">
+          {trailingIcon}
+        </span>
+      </button>
+    </span>
   )
 
   if (hideLabel) return inlineTrigger

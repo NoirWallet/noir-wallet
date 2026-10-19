@@ -22,6 +22,7 @@ import { buildActivityPresentationCatalog } from '@/popup/services/activity-pres
 import {
   filterActivityItems,
   groupActivityItemsByDate,
+  isActivityModelForScope,
   resolveAvailableActivityChainSelection
 } from '@/popup/services/activity-list-model'
 import { buildActivityExecutionAddressModes } from './multichain-activity-presentation'
@@ -44,17 +45,18 @@ interface MultichainActivityPanelProps {
 
 const PENDING_EVM_RECHECK_INTERVAL_MS = 3_000
 const PENDING_ACTIVITY_REFRESH_INTERVAL_MS = 60_000
+const ACTIVITY_DISPLAY_PAGE_SIZE = 50
+const MAX_HISTORY_PAGE_COUNT = 10
+const EMPTY_ACCOUNT_NETWORKS: readonly AccountNetworkView[] = []
 
 function EmptyState({
   icon,
   title,
-  description,
   onRetry,
   compact = false
 }: {
   readonly icon: string
   readonly title: string
-  readonly description?: string
   readonly onRetry?: () => void
   readonly compact?: boolean
 }) {
@@ -79,16 +81,6 @@ function EmptyState({
         />
       </div>
       <p className="text-sm font-medium">{title}</p>
-      {description && (
-        <p
-          className={cn(
-            'mt-1 max-w-[260px] text-xs text-muted',
-            compact ? 'leading-4' : 'leading-5'
-          )}
-        >
-          {description}
-        </p>
-      )}
       {onRetry && (
         <Button variant="outline" size="sm" className="mt-4" onClick={onRetry}>
           Retry
@@ -104,7 +96,7 @@ export function MultichainActivityPanel({
   network,
   initialModel = null,
   portfolio = null,
-  accountNetworks = [],
+  accountNetworks = EMPTY_ACCOUNT_NETWORKS,
   onItemClick,
   filterAssetId,
   showToolbar = true,
@@ -114,12 +106,18 @@ export function MultichainActivityPanel({
   focusTransactionId
 }: MultichainActivityPanelProps) {
   const requestSequence = useRef(0)
+  const olderRequestSequence = useRef(0)
   const focusedTransactionId = useRef<string | null>(null)
-  const scopedInitialModel = initialModel?.scope.accountId === accountId ? initialModel : null
+  const scopedInitialModel = isActivityModelForScope(initialModel, walletId, accountId)
+    ? initialModel
+    : null
   const [model, setModel] = useState<ActivityReadModel | null>(scopedInitialModel)
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>(
     scopedInitialModel ? 'ready' : 'loading'
   )
+  const [visibleLimit, setVisibleLimit] = useState(ACTIVITY_DISPLAY_PAGE_SIZE)
+  const [olderStatus, setOlderStatus] = useState<'ready' | 'loading' | 'error'>('ready')
+  const historyPageCount = useRef(1)
   const scopeKey = JSON.stringify([walletId ?? '', accountId ?? ''])
   const persistedChainSelection = useSettingsStore(
     state => state.portfolioChainSelectionByAccount[scopeKey]
@@ -140,14 +138,38 @@ export function MultichainActivityPanel({
     [accountNetworks]
   )
 
+  const selectableAccountNetworks = useMemo(
+    () =>
+      accountNetworks.filter(entry =>
+        isSelectableChainFamily(entry.chain.family, __ENABLED_CHAIN_FEATURE_FLAGS__)
+      ),
+    [accountNetworks]
+  )
+  const availableChainIds = useMemo(
+    () => selectableAccountNetworks.map(entry => entry.chain.id),
+    [selectableAccountNetworks]
+  )
+  const selectedChainIds = useMemo(
+    () => resolveAvailableActivityChainSelection(availableChainIds, persistedChainSelection),
+    [availableChainIds, persistedChainSelection]
+  )
+  const selectedChainKey = selectedChainIds.join(',')
+
   const load = useCallback(async () => {
     const request = ++requestSequence.current
+    olderRequestSequence.current += 1
+    setOlderStatus('ready')
     setStatus('loading')
+    const chainIds = selectedChainKey ? selectedChainKey.split(',') : undefined
     let localModelAvailable = false
     try {
-      const local = await evmWalletClient.getActivity('read', 'all')
+      const local = await evmWalletClient.getActivity(
+        'read',
+        'all',
+        chainIds ? { chainIds } : undefined
+      )
       if (request !== requestSequence.current) return
-      if (local) {
+      if (isActivityModelForScope(local, walletId, accountId)) {
         localModelAvailable = true
         setModel(local)
         if (local.items.length > 0) setStatus('ready')
@@ -160,10 +182,10 @@ export function MultichainActivityPanel({
       const refreshed = await evmWalletClient.getActivity(
         'refresh',
         'all',
-        filteredChainId ? { chainIds: [filteredChainId] } : undefined
+        filteredChainId ? { chainIds: [filteredChainId] } : chainIds ? { chainIds } : undefined
       )
       if (request !== requestSequence.current) return
-      if (!refreshed) {
+      if (!isActivityModelForScope(refreshed, walletId, accountId)) {
         setStatus(localModelAvailable ? 'ready' : 'error')
         return
       }
@@ -173,10 +195,13 @@ export function MultichainActivityPanel({
       if (request !== requestSequence.current) return
       setStatus(localModelAvailable ? 'ready' : 'error')
     }
-  }, [filteredChainId])
+  }, [accountId, filteredChainId, selectedChainKey, walletId])
 
   useEffect(() => {
-    const retainedModel = initialModel?.scope.accountId === accountId ? initialModel : null
+    const retainedModel = isActivityModelForScope(initialModel, walletId, accountId)
+      ? initialModel
+      : null
+    setOlderStatus('ready')
     setModel(retainedModel)
     if (!walletId || !accountId) {
       setStatus('ready')
@@ -190,8 +215,9 @@ export function MultichainActivityPanel({
     void load()
     return () => {
       requestSequence.current += 1
+      olderRequestSequence.current += 1
     }
-  }, [walletId, accountId, initialModel, load])
+  }, [walletId, accountId, network, initialModel, load])
 
   useEffect(() => {
     if (!walletId || !accountId) return
@@ -212,7 +238,7 @@ export function MultichainActivityPanel({
       void evmWalletClient
         .getActivity('read', 'all')
         .then(next => {
-          if (!cancelled && next?.scope.accountId === accountId) {
+          if (!cancelled && isActivityModelForScope(next, walletId, accountId)) {
             setModel(next)
             setStatus('ready')
           }
@@ -225,28 +251,19 @@ export function MultichainActivityPanel({
       cancelled = true
       chrome.runtime.onMessage.removeListener(listener)
     }
-  }, [accountId, walletId])
+  }, [accountId, network, walletId])
 
-  const visibleModel = model?.scope.accountId === accountId ? model : null
-  const selectableAccountNetworks = useMemo(
-    () =>
-      accountNetworks.filter(entry =>
-        isSelectableChainFamily(entry.chain.family, __ENABLED_CHAIN_FEATURE_FLAGS__)
-      ),
-    [accountNetworks]
-  )
-  const availableChainIds = useMemo(
-    () => selectableAccountNetworks.map(entry => entry.chain.id),
-    [selectableAccountNetworks]
-  )
-  const selectedChainIds = useMemo(
-    () => resolveAvailableActivityChainSelection(availableChainIds, persistedChainSelection),
-    [availableChainIds, persistedChainSelection]
-  )
+  const visibleModel = isActivityModelForScope(model, walletId, accountId) ? model : null
   const selectedNetwork =
     selectedChainIds.length === 1
       ? selectableAccountNetworks.find(entry => entry.chain.id === selectedChainIds[0])
       : undefined
+  useEffect(() => {
+    historyPageCount.current = 1
+    setVisibleLimit(ACTIVITY_DISPLAY_PAGE_SIZE)
+    setOlderStatus('ready')
+    olderRequestSequence.current += 1
+  }, [walletId, accountId, network, selectedChainKey, filterAssetId])
   const selectedAddress = selectedNetwork?.addresses.find(address => address.preferredForReceive)
   const selectedHistoryAddress =
     accountMode === 'private' && selectedNetwork?.privateExecutionAddress
@@ -309,7 +326,7 @@ export function MultichainActivityPanel({
           shouldRefreshSupplemental ? { chainIds: pendingEvmChainKey.split(',') } : undefined
         )
         if (shouldRefreshSupplemental) lastSupplementalRefreshAt = currentTime
-        if (active && refreshed?.scope.accountId === accountId) setModel(refreshed)
+        if (active && isActivityModelForScope(refreshed, walletId, accountId)) setModel(refreshed)
       } catch {
         // Keep the last valid Activity model and retry while it still contains pending EVM items.
       } finally {
@@ -323,11 +340,46 @@ export function MultichainActivityPanel({
       active = false
       if (timer !== undefined) clearTimeout(timer)
     }
-  }, [accountId, pendingEvmChainKey, walletId])
+  }, [accountId, network, pendingEvmChainKey, walletId])
   const displayedItems = useMemo(
-    () => (maxItems === undefined ? visibleItems : visibleItems.slice(0, maxItems)),
-    [maxItems, visibleItems]
+    () => visibleItems.slice(0, maxItems ?? visibleLimit),
+    [maxItems, visibleItems, visibleLimit]
   )
+  const canLoadOlder =
+    maxItems === undefined &&
+    (visibleItems.length > visibleLimit ||
+      (visibleModel?.hasMore === true && historyPageCount.current < MAX_HISTORY_PAGE_COUNT))
+  const loadOlder = async () => {
+    if (olderStatus === 'loading') return
+    if (visibleItems.length > visibleLimit) {
+      setVisibleLimit(limit => limit + ACTIVITY_DISPLAY_PAGE_SIZE)
+      return
+    }
+    const request = ++olderRequestSequence.current
+    const refreshRequest = requestSequence.current
+    const nextPageCount = historyPageCount.current + 1
+    setOlderStatus('loading')
+    try {
+      const next = await evmWalletClient.getActivity('refresh', 'all', {
+        ...(selectedChainIds.length > 0 ? { chainIds: selectedChainIds } : {}),
+        historyPageCount: nextPageCount
+      })
+      if (request !== olderRequestSequence.current || refreshRequest !== requestSequence.current)
+        return
+      if (!isActivityModelForScope(next, walletId, accountId))
+        throw new Error('Activity is unavailable')
+      historyPageCount.current = nextPageCount
+      setModel(next)
+      setVisibleLimit(limit => limit + ACTIVITY_DISPLAY_PAGE_SIZE)
+      setOlderStatus('ready')
+    } catch {
+      if (request === olderRequestSequence.current) setOlderStatus('error')
+    } finally {
+      if (request === olderRequestSequence.current) {
+        setOlderStatus(current => (current === 'loading' ? 'ready' : current))
+      }
+    }
+  }
   const groups = useMemo(() => groupActivityItemsByDate(displayedItems), [displayedItems])
   const recoveryChainIds = selectedChainIds.filter(
     chainId =>
@@ -388,6 +440,24 @@ export function MultichainActivityPanel({
     </div>
   ) : null
 
+  const olderControl = canLoadOlder ? (
+    <div className="px-5 pb-4 text-center">
+      {olderStatus === 'error' && (
+        <p role="alert" className="mb-2 text-xs text-destructive">
+          Could not load older activity. Try again.
+        </p>
+      )}
+      <Button
+        variant="outline"
+        size="sm"
+        disabled={olderStatus === 'loading'}
+        onClick={() => void loadOlder()}
+      >
+        {olderStatus === 'loading' ? 'Loading…' : 'Load more'}
+      </Button>
+    </div>
+  ) : null
+
   if (status === 'loading' && (!visibleModel || visibleItems.length === 0)) {
     return (
       <section aria-label="Multichain activity" className="min-h-0">
@@ -406,7 +476,6 @@ export function MultichainActivityPanel({
         <EmptyState
           icon="lucide:wifi-off"
           title="Unable to load activity"
-          description="Your local transaction records are safe. Try loading this account again."
           onRetry={() => void load()}
           compact={compact}
         />
@@ -425,6 +494,7 @@ export function MultichainActivityPanel({
           title={filterAssetId ? 'No activity for this asset' : 'No activity yet'}
           compact={compact}
         />
+        {olderControl}
         {fullHistoryLink}
       </section>
     )
@@ -463,6 +533,7 @@ export function MultichainActivityPanel({
           </section>
         ))}
       </div>
+      {olderControl}
       {fullHistoryLink}
     </section>
   )

@@ -93,7 +93,7 @@ test.describe('cached EVM history source', () => {
     expect(cache.writes()).toBe(0)
   })
 
-  test('trims an oversized current chain cache when its remote source is unavailable', async () => {
+  test('retains more than 50 cached chain items when its remote source is unavailable', async () => {
     const cachedItems = Array.from({ length: 75 }, (_, index) =>
       activityItem({
         id: `rpc:evm:legacy-${index}`,
@@ -117,11 +117,11 @@ test.describe('cached EVM history source', () => {
     })
 
     const result = await cachedOnly.readAddressActivity({ scope, address })
-    expect(result).toHaveLength(50)
+    expect(result).toHaveLength(75)
     expect(result[0].updatedAt).toBe(74)
-    expect(result.at(-1).updatedAt).toBe(25)
-    expect(cache.record().items).toHaveLength(50)
-    expect(cache.writes()).toBe(1)
+    expect(result.at(-1).updatedAt).toBe(0)
+    expect(cache.record().items).toHaveLength(75)
+    expect(cache.writes()).toBe(0)
   })
 
   test('persists a successful empty result across a Service Worker source rebuild', async () => {
@@ -192,7 +192,7 @@ test.describe('cached EVM history source', () => {
     })
   })
 
-  test('refreshes from a reorg overlap and merges new items into a 50-item window', async () => {
+  test('refreshes from a reorg overlap without discarding older items', async () => {
     const previous = Array.from({ length: 50 }, (_, index) =>
       activityItem({
         id: `rpc:evm:cached-${index}`,
@@ -245,9 +245,9 @@ test.describe('cached EVM history source', () => {
 
     const result = await cachedSource.readAddressActivity({ scope, address })
     expect(refreshInput.fromBlock).toBe(137)
-    expect(result).toHaveLength(50)
+    expect(result).toHaveLength(51)
     expect(result[0].id).toBe('rpc:evm:fresh')
-    expect(result.some(item => item.id === 'rpc:evm:cached-0')).toBe(false)
+    expect(result.some(item => item.id === 'rpc:evm:cached-0')).toBe(true)
   })
 
   test('persists failure backoff without representing a failed request as a successful empty history', async () => {

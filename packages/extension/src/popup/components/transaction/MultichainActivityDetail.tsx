@@ -3,12 +3,14 @@ import { Icon } from '@iconify/react'
 import { mapTransactionGraphToActivityItem, type ActivityItem } from '@/core/activity'
 import { getBitcoinNetworkConfig } from '@/config/networks'
 import { parseTransactionId } from '@/core/transactions/domain'
-import { formatNumber, formatSortAddress } from '@/lib/format'
-import Big from '@/lib/big'
+import { getZcashChainId } from '@/core/chains/registry'
+import { formatSortAddress } from '@/lib/format'
+import { loadTransactions } from '@/lib/indexed-db'
+import { getTransactionRecoveryAction } from '@/lib/transaction-replacement'
 import { cn } from '@/lib/utils'
 import { getOwnExtensionSenderContext } from '@/lib/runtime-message-security'
 import { getTransactionStatusToneClassName } from '@/lib/transaction-status-presentation'
-import type { Network } from '@/types'
+import type { Network, Transaction } from '@/types'
 import type { PortfolioReadModel } from '@/core/portfolio'
 import type { AccountNetworkView } from '@/popup/services/account-networks-client'
 import { evmWalletClient } from '@/popup/services/evm-wallet-client'
@@ -18,6 +20,8 @@ import { openModal } from '@/popup/provider/ModalManager'
 import { bitcoinWalletClient } from '@/popup/services/bitcoin-wallet-client'
 import { formatChainTransactionExplorerUrl } from '@/popup/services/chain-explorer'
 import { useSettingsStore } from '@/store/settings-store'
+import { useWalletStore } from '@/store/wallet-store'
+import { buildAccountKey } from '@/store/account-data-store'
 import { useUserEvmAssets } from '@/popup/hooks/useUserEvmAssets'
 import { buildActivityPresentationCatalog } from '@/popup/services/activity-presentation-catalog'
 import {
@@ -26,6 +30,8 @@ import {
 } from '@/popup/services/confidential-funding-client'
 import { toast } from '@/store/toast-store'
 import { DetailRow } from '../common/DetailRow'
+import { AmountDisplay } from '../common/AmountDisplay'
+import { CopyToast, useCopyToClipboard } from '../common/CopyToast'
 import { ChainIcon } from '../common/ChainIcon'
 import { formatBaseUnitAmount } from '../portfolio/portfolio-format'
 import { TokenIcon } from '../tokens/TokenIcon'
@@ -34,12 +40,14 @@ import { ActivityInteractionIcon } from './ActivityInteractionIcon'
 import { TransactionProgressSteps } from './TransactionProgressSteps'
 import { getActivityInteractionPresentation } from './activity-interaction-adapters'
 import { resolveActivityChainId } from './activity-chain'
-import { getActivityTransactionReferences } from '@/popup/services/activity-transaction-references'
+import {
+  getActivityTransactionReferences,
+  isActivityTransactionHash
+} from '@/popup/services/activity-transaction-references'
 import {
   getActivityDetailTitle,
   getActivityRouteTitle,
   getActivityTransferRecipient,
-  getActivityMissingRecipientLabel,
   getActivitySwapSourceMethodLabel,
   getAaveSupplyPresentation,
   canCancelEvmActivity,
@@ -53,12 +61,15 @@ import {
   isActivityRecoveryTransition
 } from './multichain-activity-presentation'
 import { ActivityRouteTokenIcons } from './ActivityRouteTokenIcons'
+import { resolveScopedZcashActivityTransaction } from '@/popup/services/zcash-activity-detail'
 
 interface MultichainActivityDetailProps {
   readonly item: ActivityItem
   readonly network: Network
   readonly portfolio?: PortfolioReadModel | null
   readonly accountNetworks?: readonly AccountNetworkView[]
+  readonly onSpeedUp?: (transaction: Transaction) => void
+  readonly onClose?: () => void
 }
 
 function TransactionReference({
@@ -113,7 +124,9 @@ export function MultichainActivityDetail({
   item,
   network,
   portfolio,
-  accountNetworks = []
+  accountNetworks = [],
+  onSpeedUp,
+  onClose
 }: MultichainActivityDetailProps) {
   const [visibleItem, setVisibleItem] = useState(item)
   const [retrying, setRetrying] = useState(false)
@@ -121,8 +134,51 @@ export function MultichainActivityDetail({
   const [privateFundingNeedsAuth, setPrivateFundingNeedsAuth] = useState(false)
   const [resumingPrivateFunding, setResumingPrivateFunding] = useState(false)
   const [cancelling, setCancelling] = useState(false)
+  const [zcashRecord, setZcashRecord] = useState<Transaction | null>(null)
+  const { copyToClipboard, showToast } = useCopyToClipboard()
   const endpointSettings = useSettingsStore(state => state.chainEndpointSettings)
   const userEvmAssets = useUserEvmAssets()
+  const currentWalletId = useWalletStore(state => state.currentWalletId)
+  const currentAccountId = useWalletStore(state => state.currentAccountId)
+  const currentNetwork = useWalletStore(state => state.currentNetwork)
+  const scopedZcashRecord =
+    item.scope.keyDomainId === currentWalletId &&
+    item.scope.accountId === currentAccountId &&
+    currentNetwork === network &&
+    zcashRecord?.id === item.id
+      ? zcashRecord
+      : null
+
+  useEffect(() => {
+    let cancelled = false
+    setZcashRecord(null)
+    if (
+      item.source !== 'zcash-v1' ||
+      !currentWalletId ||
+      !currentAccountId ||
+      item.scope.keyDomainId !== currentWalletId ||
+      item.scope.accountId !== currentAccountId ||
+      network !== currentNetwork
+    ) {
+      return
+    }
+    void loadTransactions(buildAccountKey(network, currentWalletId, currentAccountId))
+      .then(transactions => {
+        if (!cancelled) {
+          setZcashRecord(
+            resolveScopedZcashActivityTransaction(item, transactions, {
+              walletId: currentWalletId,
+              accountId: currentAccountId,
+              network
+            })
+          )
+        }
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [currentAccountId, currentNetwork, currentWalletId, item, network])
 
   useEffect(() => {
     setVisibleItem(current => (item.updatedAt >= current.updatedAt ? item : current))
@@ -176,7 +232,6 @@ export function MultichainActivityDetail({
     executionAddressModes
   )
   const transferRecipient = getActivityTransferRecipient(visibleItem)
-  const missingRecipientLabel = getActivityMissingRecipientLabel(visibleItem)
   const swapSourceMethod = getActivitySwapSourceMethodLabel(visibleItem, swap?.source?.symbol)
 
   const amount = visibleItem.snapshot?.primaryAmount
@@ -187,6 +242,15 @@ export function MultichainActivityDetail({
     amount && displayMetadata
       ? formatBaseUnitAmount(amount.amountRaw, displayMetadata.decimals)
       : null
+  const swapSourceAmount = visibleItem.snapshot?.primaryAmount
+  const swapDestinationAmount = visibleItem.snapshot?.counterAmount
+  const swapSourceDecimals = swapSourceAmount
+    ? (assetMetadata.get(swapSourceAmount.assetId)?.metadata ?? swapSourceAmount.metadata)?.decimals
+    : undefined
+  const swapDestinationDecimals = swapDestinationAmount
+    ? (assetMetadata.get(swapDestinationAmount.assetId)?.metadata ?? swapDestinationAmount.metadata)
+        ?.decimals
+    : undefined
   const direction = visibleItem.snapshot?.direction
   const isIncoming = visibleItem.kind === 'receive' || direction === 'incoming'
   const sign = isIncoming ? '+' : direction === 'outgoing' ? '−' : ''
@@ -272,6 +336,29 @@ export function MultichainActivityDetail({
     }
   }
 
+  const handleSpeedUp = async () => {
+    if (!onSpeedUp || !currentWalletId || !currentAccountId || network !== currentNetwork) return
+    try {
+      const transactions = await loadTransactions(
+        buildAccountKey(network, currentWalletId, currentAccountId)
+      )
+      const current = useWalletStore.getState()
+      const transaction = resolveScopedZcashActivityTransaction(visibleItem, transactions, {
+        walletId: current.currentWalletId,
+        accountId: current.currentAccountId,
+        network: current.currentNetwork
+      })
+      if (getTransactionRecoveryAction(transaction ?? undefined) !== 'speed_up' || !transaction) {
+        toast.error('This transaction is no longer eligible for Speed Up')
+        return
+      }
+      onClose?.()
+      onSpeedUp(transaction)
+    } catch {
+      toast.error('Unable to load this transaction')
+    }
+  }
+
   const handleResumePrivateFunding = async () => {
     if (!privateFundingPlanId || resumingPrivateFunding) return
     setResumingPrivateFunding(true)
@@ -320,22 +407,33 @@ export function MultichainActivityDetail({
               <div className="flex justify-between gap-3 py-1">
                 <span className="text-muted">Maximum network fee</span>
                 <span className="font-mono">
-                  {formatBaseUnitAmount(
-                    summary.fields.maximumFeeWei,
-                    feeAsset?.metadata.decimals ?? 18
-                  )}
+                  <AmountDisplay
+                    value={formatBaseUnitAmount(
+                      summary.fields.maximumFeeWei,
+                      feeAsset?.metadata.decimals ?? 18
+                    )}
+                    profile="fee"
+                  />
                 </span>
               </div>
               <div className="flex justify-between gap-3 py-1">
                 <span className="text-muted">Max fee per gas</span>
                 <span className="font-mono">
-                  {formatEvmWeiAsGwei(summary.fields.maxFeePerGasWei ?? '0')} GWEI
+                  <AmountDisplay
+                    value={formatEvmWeiAsGwei(summary.fields.maxFeePerGasWei ?? '0')}
+                    symbol="GWEI"
+                    profile="fee"
+                  />
                 </span>
               </div>
               <div className="flex justify-between gap-3 py-1">
                 <span className="text-muted">Priority fee per gas</span>
                 <span className="font-mono">
-                  {formatEvmWeiAsGwei(summary.fields.maxPriorityFeePerGasWei ?? '0')} GWEI
+                  <AmountDisplay
+                    value={formatEvmWeiAsGwei(summary.fields.maxPriorityFeePerGasWei ?? '0')}
+                    symbol="GWEI"
+                    profile="fee"
+                  />
                 </span>
               </div>
             </div>
@@ -378,9 +476,13 @@ export function MultichainActivityDetail({
   if (isCrossChain) {
     for (const segment of visibleItem.segments) {
       const reference = transactionReferences.find(candidate => candidate.id === segment.id)
-      const replacementHash = segment.evidence?.replacementTransactionHash
-      if (!reference && !replacementHash) continue
+      const unverifiedReplacementHash = segment.evidence?.replacementTransactionHash
       const chainId = segment.target.kind === 'onchain' ? segment.target.chainId : null
+      const replacementHash =
+        unverifiedReplacementHash && isActivityTransactionHash(unverifiedReplacementHash, chainId)
+          ? unverifiedReplacementHash
+          : undefined
+      if (!reference && !replacementHash) continue
       progressReferences.set(
         segment.id,
         <div className="space-y-1">
@@ -427,9 +529,34 @@ export function MultichainActivityDetail({
       {swap ? (
         <div className="flex flex-col items-center py-7 text-center" data-activity-swap-detail>
           <ActivityRouteTokenIcons route={swap} size="detail" />
-          <p className="mt-4 max-w-full break-all font-mono text-3xl font-bold">
-            {swap.source ? `−${swap.source.formatted} ${swap.source.symbol}` : 'Amount unavailable'}
-          </p>
+          <div className="mt-4 max-w-full break-all font-mono text-3xl font-bold">
+            {swap.source && swapSourceAmount && swapSourceDecimals !== undefined ? (
+              <AmountDisplay
+                value={formatBaseUnitAmount(swapSourceAmount.amountRaw, swapSourceDecimals)}
+                prefix="−"
+                symbol={swap.source.symbol}
+              />
+            ) : (
+              '—'
+            )}
+          </div>
+          {swap.destination && (
+            <div className="mt-1 max-w-full break-all font-mono text-sm text-muted">
+              Expected{' '}
+              {swapDestinationAmount && swapDestinationDecimals !== undefined ? (
+                <AmountDisplay
+                  value={formatBaseUnitAmount(
+                    swapDestinationAmount.amountRaw,
+                    swapDestinationDecimals
+                  )}
+                  prefix="+"
+                  symbol={swap.destination.symbol}
+                />
+              ) : (
+                '—'
+              )}
+            </div>
+          )}
         </div>
       ) : (
         <div className="flex flex-col items-center py-8 text-center">
@@ -460,37 +587,14 @@ export function MultichainActivityDetail({
             )}
           </div>
           {formattedAmount !== null ? (
-            <p className="max-w-full break-all font-mono text-3xl font-bold">
-              {displayedSign}
-              {formatNumber(formattedAmount, {
-                rm: Big.roundDown,
-                useUnit: true,
-                useSubscript: true
-              })}{' '}
-              {symbol}
-            </p>
+            <div className="max-w-full break-all font-mono text-3xl font-bold">
+              <AmountDisplay value={formattedAmount} prefix={displayedSign} symbol={symbol} />
+            </div>
           ) : interaction ? (
             <p className="text-sm text-muted">{primaryNetworkName}</p>
           ) : (
-            <p className="max-w-full break-all font-mono text-3xl font-bold">Amount unavailable</p>
+            <p className="max-w-full break-all font-mono text-3xl font-bold">—</p>
           )}
-        </div>
-      )}
-
-      {visibleItem.completeness === 'partial' && (
-        <div className="mb-4 flex items-start gap-2 rounded-lg border border-border/70 bg-card/50 px-3 py-2 text-xs text-muted">
-          <Icon icon="lucide:info" width={14} height={14} className="mt-0.5 shrink-0" />
-          <span>Some details are unavailable for this transaction.</span>
-        </div>
-      )}
-
-      {visibleItem.reconfirming === true && (
-        <div
-          role="status"
-          className="mb-4 flex items-start gap-2 rounded-lg border border-border bg-card/45 px-3 py-2 text-xs text-muted"
-        >
-          <Icon icon="lucide:refresh-cw" width={14} height={14} className="mt-0.5 shrink-0" />
-          <span>Rechecking confirmations after a chain reorganization.</span>
         </div>
       )}
 
@@ -570,11 +674,21 @@ export function MultichainActivityDetail({
         )}
         {swap?.recipientAddress ? (
           <DetailRow label="To">
-            <span
-              className="max-w-[220px] truncate font-mono text-sm"
-              title={swap.recipientAddress}
-            >
-              {formatSortAddress(swap.recipientAddress)}
+            <span className="flex min-w-0 max-w-[220px] items-center gap-1.5">
+              <span className="min-w-0 truncate font-mono text-sm" title={swap.recipientAddress}>
+                {formatSortAddress(swap.recipientAddress)}
+              </span>
+              <button
+                type="button"
+                aria-label="Copy recipient address"
+                title="Copy recipient address"
+                className="shrink-0 text-muted hover:text-foreground"
+                onClick={() => {
+                  if (swap.recipientAddress) void copyToClipboard(swap.recipientAddress)
+                }}
+              >
+                <Icon icon="lucide:copy" width={14} height={14} />
+              </button>
             </span>
           </DetailRow>
         ) : visibleItem.kind !== 'shield' && !swap && transferRecipient ? (
@@ -583,13 +697,9 @@ export function MultichainActivityDetail({
               {formatSortAddress(transferRecipient)}
             </span>
           </DetailRow>
-        ) : !swap && missingRecipientLabel ? (
-          <DetailRow label="To">
-            <span className="text-sm text-muted">{missingRecipientLabel}</span>
-          </DetailRow>
         ) : null}
         {visibleItem.snapshot?.evm?.methodSelector && (
-          <DetailRow label={swap ? 'Source transaction' : 'Method'}>
+          <DetailRow label="Method">
             {swapSourceMethod ? (
               <span className="text-right text-sm" title={visibleItem.snapshot.evm.methodSelector}>
                 {swapSourceMethod}
@@ -608,14 +718,22 @@ export function MultichainActivityDetail({
         )}
         {fee && feeAsset && (
           <DetailRow label="Network fee">
-            <span className="font-mono text-sm">
-              {formatNumber(formatBaseUnitAmount(fee.amountRaw, feeAsset.metadata.decimals), {
-                rm: Big.roundDown,
-                useUnit: true,
-                useSubscript: true
-              })}{' '}
-              {feeAsset.metadata.symbol}
-            </span>
+            <AmountDisplay
+              value={formatBaseUnitAmount(fee.amountRaw, feeAsset.metadata.decimals)}
+              symbol={feeAsset.metadata.symbol}
+              profile="fee"
+              className="text-sm"
+            />
+          </DetailRow>
+        )}
+        {visibleItem.source === 'zcash-v1' && scopedZcashRecord?.fee && !fee && (
+          <DetailRow label="Network fee">
+            <AmountDisplay
+              value={scopedZcashRecord.fee}
+              symbol="ZEC"
+              profile="fee"
+              className="text-sm"
+            />
           </DetailRow>
         )}
         {!isCrossChain &&
@@ -633,9 +751,14 @@ export function MultichainActivityDetail({
           ))}
         {visibleItem.segments.flatMap(segment => {
           if (isCrossChain) return []
-          const replacementTransactionHash = segment.evidence?.replacementTransactionHash
+          const unverifiedReplacementHash = segment.evidence?.replacementTransactionHash
           const segmentChainId =
             segment.target.kind === 'onchain' ? segment.target.chainId : undefined
+          const replacementTransactionHash =
+            unverifiedReplacementHash &&
+            isActivityTransactionHash(unverifiedReplacementHash, segmentChainId ?? null)
+              ? unverifiedReplacementHash
+              : undefined
           const replacementUrl =
             segmentChainId && replacementTransactionHash
               ? formatChainTransactionExplorerUrl(
@@ -653,6 +776,18 @@ export function MultichainActivityDetail({
             ) : null
           ]
         })}
+        {visibleItem.source === 'zcash-v1' && scopedZcashRecord?.replacedByTxHash && (
+          <DetailRow label="Replacement Hash">
+            <TransactionReference
+              value={scopedZcashRecord.replacedByTxHash}
+              url={formatChainTransactionExplorerUrl(
+                getZcashChainId(network),
+                scopedZcashRecord.replacedByTxHash,
+                network
+              )}
+            />
+          </DetailRow>
+        )}
         {visibleItem.failureCode && (
           <DetailRow label="Reason">
             <span
@@ -661,11 +796,26 @@ export function MultichainActivityDetail({
                 getTransactionStatusToneClassName(status.tone)
               )}
             >
-              {getActivityFailureLabel(visibleItem.failureCode, primaryOnchainSegment?.evidence)}
+              {getActivityFailureLabel(
+                visibleItem.failureCode,
+                primaryOnchainSegment?.evidence,
+                visibleItem.source
+              )}
             </span>
           </DetailRow>
         )}
       </div>
+      {visibleItem.source === 'zcash-v1' && scopedZcashRecord?.memo && (
+        <div className="mb-6 space-y-2">
+          <span className="text-sm text-muted">Memo</span>
+          <div className="max-h-40 overflow-y-auto rounded-md border border-border/50 bg-card/30 px-3 py-2.5">
+            <p className="whitespace-pre-wrap wrap-break-word font-mono text-xs leading-5 text-foreground/80 select-text">
+              {scopedZcashRecord.memo}
+            </p>
+          </div>
+        </div>
+      )}
+      <CopyToast show={showToast} message="Address copied" />
 
       {isCrossChain && (
         <TransactionProgressSteps
@@ -700,6 +850,11 @@ export function MultichainActivityDetail({
           onClick={handleRetryBroadcast}
         >
           Retry broadcast
+        </Button>
+      )}
+      {onSpeedUp && getTransactionRecoveryAction(scopedZcashRecord ?? undefined) === 'speed_up' && (
+        <Button className="mt-4 h-[45px] w-full" onClick={() => void handleSpeedUp()}>
+          Speed Up
         </Button>
       )}
       {cancelAvailable && (

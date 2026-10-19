@@ -59,6 +59,8 @@ test('relay failure does not imply the source transfer failed', () => {
     originTxHash: '0xsource'
   })
   expect(progress.steps.map(step => step.state)).toEqual(['complete', 'failed', 'pending'])
+  expect(progress.steps[1].detail).toBe(progress.description)
+  expect(progress.steps[1].detail).toContain('Check the transaction details.')
 })
 
 test('an insufficient deposit warns while a refund remains pending', () => {

@@ -17,10 +17,7 @@ test('falls back to the native asset icon when the Swap provider has no icon', (
         icon: null
       }
     })
-  ).toEqual([
-    'https://assets.zknoir.com/chain/bitcoin.svg',
-    'https://assets-cdn.trustwallet.com/blockchains/bitcoin/info/logo.png'
-  ])
+  ).toEqual(['https://assets-cdn.trustwallet.com/blockchains/bitcoin/info/logo.png'])
 
   expect(
     getTokenIconCandidates({
@@ -30,10 +27,7 @@ test('falls back to the native asset icon when the Swap provider has no icon', (
         icon: null
       }
     })
-  ).toEqual([
-    'https://assets.zknoir.com/chain/avalanche.svg',
-    'https://assets-cdn.trustwallet.com/blockchains/avalanchec/info/logo.png'
-  ])
+  ).toEqual(['https://assets-cdn.trustwallet.com/blockchains/avalanchec/info/logo.png'])
 
   expect(
     getTokenIconCandidates({
@@ -42,10 +36,7 @@ test('falls back to the native asset icon when the Swap provider has no icon', (
         icon: null
       }
     })
-  ).toEqual([
-    'https://assets.zknoir.com/chain/bitcoin.svg',
-    'https://assets-cdn.trustwallet.com/blockchains/bitcoin/info/logo.png'
-  ])
+  ).toEqual(['https://assets-cdn.trustwallet.com/blockchains/bitcoin/info/logo.png'])
 })
 
 test('keeps provider, Trust Wallet, and CoinGecko fallbacks in order', () => {
@@ -59,7 +50,6 @@ test('keeps provider, Trust Wallet, and CoinGecko fallbacks in order', () => {
     })
   ).toEqual([
     'https://tokens.example/btc.png',
-    'https://assets.zknoir.com/chain/bitcoin.svg',
     'https://assets-cdn.trustwallet.com/blockchains/bitcoin/info/logo.png'
   ])
 
@@ -111,20 +101,14 @@ test('derives native and discovered token fallbacks from canonical wallet asset 
       assetId: 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp/slip44:501',
       blockchain: 'solana'
     })
-  ).toEqual([
-    'https://assets.zknoir.com/chain/solana.svg',
-    'https://assets-cdn.trustwallet.com/blockchains/solana/info/logo.png'
-  ])
+  ).toEqual(['https://assets-cdn.trustwallet.com/blockchains/solana/info/logo.png'])
 
   expect(
     getTokenIconCandidates({
       assetId: 'near:mainnet/slip44:397',
       blockchain: 'near'
     })
-  ).toEqual([
-    'https://assets.zknoir.com/chain/near.svg',
-    'https://assets-cdn.trustwallet.com/blockchains/near/info/logo.png'
-  ])
+  ).toEqual(['https://assets-cdn.trustwallet.com/blockchains/near/info/logo.png'])
 
   expect(
     getTokenIconCandidates({

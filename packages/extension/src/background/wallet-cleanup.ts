@@ -104,9 +104,9 @@ export class WalletCleanupCoordinator {
       refreshPortfolio?: boolean
     }) => Promise<void>,
     private readonly clearPendingMultichainTransfers: () => Promise<void> = async () => {},
-    private readonly removePendingCrossChainAccount: (
+    private readonly removePendingCrossChainAccounts: (
       walletId: string,
-      accountId?: string
+      accountIds: readonly string[]
     ) => Promise<void> = async () => {}
   ) {}
 
@@ -218,7 +218,10 @@ export class WalletCleanupCoordinator {
           await Promise.all([
             transactionMonitor.removeAccount(walletId),
             zcashTxMonitor.removeAccount(walletId),
-            this.removePendingCrossChainAccount(walletId),
+            this.removePendingCrossChainAccounts(
+              walletId,
+              wallet.accounts.map(item => item.id)
+            ),
             dappHandler.removeAccountReferences(walletId)
           ])
         } else {
@@ -226,7 +229,7 @@ export class WalletCleanupCoordinator {
           await Promise.all([
             transactionMonitor.removeAccount(walletId, accountId),
             zcashTxMonitor.removeAccount(walletId, accountId),
-            this.removePendingCrossChainAccount(walletId, accountId),
+            this.removePendingCrossChainAccounts(walletId, [accountId]),
             dappHandler.removeAccountReferences(walletId, accountId)
           ])
         }
@@ -265,7 +268,10 @@ export class WalletCleanupCoordinator {
           await Promise.all([
             transactionMonitor.removeAccount(walletId),
             zcashTxMonitor.removeAccount(walletId),
-            this.removePendingCrossChainAccount(walletId),
+            this.removePendingCrossChainAccounts(
+              walletId,
+              wallet.accounts.map(item => item.id)
+            ),
             dappHandler.removeAccountReferences(walletId)
           ])
           await Promise.all(
@@ -477,11 +483,11 @@ export class WalletCleanupCoordinator {
           await commitWalletMetadataDeletion(walletId, accountIds)
           await this.credentialRemoval.removeWallet(walletId)
           committed = true
+          await this.removePendingCrossChainAccounts(walletId, accountIds)
           const cleanup = await Promise.allSettled([
             transactionMonitor.removeAccount(walletId),
             zcashTxMonitor.removeAccount(walletId),
             dappHandler.removeAccountReferences(walletId),
-            this.removePendingCrossChainAccount(walletId),
             ...accountIds.map(accountId => this.removeMultichainAccountData(walletId, accountId))
           ])
           const cleanupIncomplete = cleanup.some(result => result.status === 'rejected')

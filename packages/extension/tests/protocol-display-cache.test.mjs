@@ -112,7 +112,7 @@ test('validates and freezes the persisted Swap token catalog', () => {
 test('materializes bounded dynamic Lending market snapshots', () => {
   const parsed = parseLendingMarketCacheState(
     {
-      version: 2,
+      version: 3,
       entries: {
         'wallet:account': { cachedAt: NOW, markets: [lendingMarket()] }
       }
@@ -129,7 +129,7 @@ test('materializes bounded dynamic Lending market snapshots', () => {
   expect(() =>
     parseLendingMarketCacheState(
       {
-        version: 2,
+        version: 3,
         entries: {
           'wallet:account': {
             cachedAt: NOW,

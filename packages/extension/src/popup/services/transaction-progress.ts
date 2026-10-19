@@ -118,8 +118,9 @@ export function getIntentsProgressPresentation({
     {
       id: 'intents',
       label: 'Intents processing',
-      detail:
-        relayState === 'active' && status !== 'PROCESSING'
+      detail: relayFailed
+        ? copy.description
+        : relayState === 'active' && status !== 'PROCESSING'
           ? 'Waiting for required confirmations and deposit recognition'
           : undefined,
       state: relayState,

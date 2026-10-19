@@ -19,14 +19,9 @@ import { useDAppConnection } from '../hooks/useDAppConnection'
 import { useLocation, useNavigate } from '../provider/Router'
 import { useWalletStore } from '@/store/wallet-store'
 import { buildAccountKey, useAccountDataStore } from '@/store/account-data-store'
-import {
-  formatPrice,
-  formatNumber,
-  formatSortAddress,
-  formatAccountName,
-  getAccountDisplayName
-} from '@/lib/format'
-import Big, { safeBig } from '@/lib/big'
+import { formatSortAddress, formatAccountName, getAccountDisplayName } from '@/lib/format'
+import { formatFiatAmount, formatTokenPrice, formatTokenQuantity } from '@/lib/number-format'
+import { safeBig } from '@/lib/big'
 import { getAccountAddresses } from '@/core/wallet/account-addresses'
 import { AddressTypeLabel } from '../components/account/AddressType'
 import { useShieldFunds } from '../hooks/useShieldFunds'
@@ -51,7 +46,7 @@ import {
   resolveBitcoinFeatureRuntimePolicy,
   resolveEvmFeatureRuntimePolicy
 } from '@/core/chains/feature-runtime-policy'
-import { resolveHomeDefaultTab } from '../services/home-navigation'
+import { clearHomeTransactionFocus, resolveHomeDefaultTab } from '../services/home-navigation'
 import { assetPriceClient } from '../services/asset-price-client'
 import { parseAssetId } from '@/core/chains/registry'
 import type { AssetPriceReadModel } from '@/core/prices'
@@ -125,6 +120,10 @@ export function Home() {
   const [focusTransactionId, setFocusTransactionId] = useState<string | null>(() =>
     new URLSearchParams(location.search).get('transactionId')
   )
+  useEffect(() => {
+    const cleanPath = clearHomeTransactionFocus(location.search)
+    if (cleanPath !== null) navigate.replace(cleanPath)
+  }, [location.search, navigate])
   const balancesHidden = useSettingsStore(state => state.balancesHidden)
   const setBalancesHidden = useSettingsStore(state => state.setBalancesHidden)
   const { activeAccount: storageV2Account, loading: accountNetworksLoading } =
@@ -341,6 +340,7 @@ export function Home() {
   const {
     getMarketAssets,
     refreshAll: refreshLending,
+    hydrateMarketCache: hydrateLendingCache,
     reset: resetLending,
     accountScope: lendingAccountScope,
     dataLoaded: lendingLoaded,
@@ -358,8 +358,8 @@ export function Home() {
       resetLending()
       return
     }
-    if (activeTab !== 'lending') return
     let cancelled = false
+    void hydrateLendingCache().catch(() => {})
     void hasAttestedCredentialSession()
       .then(active => {
         if (active && !cancelled) return refreshLending()
@@ -369,12 +369,12 @@ export function Home() {
       cancelled = true
     }
   }, [
-    activeTab,
     currentAccountId,
     currentWalletId,
     effectiveWalletId,
     effectiveAccountId,
     lendingAccountScope,
+    hydrateLendingCache,
     refreshLending,
     resetLending,
     supportsLending
@@ -523,12 +523,17 @@ export function Home() {
     await openModal({
       showCloseButton: true,
       className: 'max-h-[calc(100dvh-1rem)] overflow-y-auto overscroll-contain',
-      body: () => (
+      body: (resolve: (value: unknown) => void, close: () => void) => (
         <MultichainActivityDetail
           item={item}
           network={network}
           portfolio={multichainPortfolio}
           accountNetworks={storageV2Account?.networks}
+          onSpeedUp={requestSpeedUp}
+          onClose={() => {
+            close()
+            resolve(undefined)
+          }}
         />
       )
     })
@@ -743,20 +748,20 @@ export function Home() {
                       <div className="flex justify-between gap-4">
                         <span>Public</span>
                         <span className="tabular-nums">
-                          {formatPrice(assetBreakdown.publicUsd, { showSign: true })}
+                          {formatFiatAmount(assetBreakdown.publicUsd, { showSign: true })}
                         </span>
                       </div>
                       <div className="flex justify-between gap-4">
                         <span>Confidential</span>
                         <span className="tabular-nums">
-                          {formatPrice(assetBreakdown.confidentialUsd, { showSign: true })}
+                          {formatFiatAmount(assetBreakdown.confidentialUsd, { showSign: true })}
                         </span>
                       </div>
                       {safeBig(assetBreakdown.lendingUsd).gt(0) && (
                         <div className="flex justify-between gap-4">
                           <span>Lending</span>
                           <span className="tabular-nums">
-                            {formatPrice(assetBreakdown.lendingUsd, { showSign: true })}
+                            {formatFiatAmount(assetBreakdown.lendingUsd, { showSign: true })}
                           </span>
                         </div>
                       )}
@@ -765,18 +770,20 @@ export function Home() {
                 >
                   <button
                     type="button"
-                    aria-label={`${totalBalanceApproximate ? 'Estimated total assets' : 'Total assets'} ${formatPrice(displayedTotalUsd, { showSign: true })}, show Public and Confidential totals`}
-                    className="rounded-sm text-4xl font-normal leading-tight tracking-tight tabular-nums focus-visible:outline-2 focus-visible:outline-primary"
+                    aria-label={`${totalBalanceApproximate ? 'Estimated total assets' : 'Total assets'} ${formatFiatAmount(displayedTotalUsd, { showSign: true })}, show Public and Confidential totals`}
+                    className="max-w-[calc(100vw-5rem)] break-all rounded-sm text-4xl font-normal leading-tight tracking-tight tabular-nums focus-visible:outline-2 focus-visible:outline-primary"
                   >
-                    {formatPrice(displayedTotalUsd, { showSign: true })}
+                    {formatFiatAmount(displayedTotalUsd, { showSign: true })}
                   </button>
                 </Tooltip>
               ) : (
                 <p
-                  className="text-4xl font-normal leading-tight tracking-tight tabular-nums"
+                  className="max-w-[calc(100vw-5rem)] break-all text-4xl font-normal leading-tight tracking-tight tabular-nums"
                   aria-label={balancesHidden ? 'Total balance hidden' : undefined}
                 >
-                  {balancesHidden ? '••••' : formatPrice(displayedTotalUsd, { showSign: true })}
+                  {balancesHidden
+                    ? '••••'
+                    : formatFiatAmount(displayedTotalUsd, { showSign: true })}
                 </p>
               )}
               <button
@@ -937,23 +944,22 @@ export function Home() {
                     <div>
                       <p className="font-medium">ZEC</p>
                       <p className="text-xs text-primary">
-                        {formatPrice(walletData.zec.price, { showSign: true })}
+                        {formatTokenPrice(walletData.zec.price, { showSign: true })}
                       </p>
                     </div>
                   </div>
                   <div className="text-right">
                     <p
-                      className="font-medium"
+                      className="max-w-[175px] break-all font-medium"
                       aria-label={balancesHidden ? 'Balance hidden' : undefined}
+                      title={balancesHidden ? undefined : `${walletData.zec.balance} ZEC`}
                     >
-                      {balancesHidden
-                        ? '••••'
-                        : formatNumber(walletData.zec.balance, { rm: Big.roundDown })}
+                      {balancesHidden ? '••••' : formatTokenQuantity(walletData.zec.balance)}
                     </p>
                     <p className="text-xs text-muted">
                       {balancesHidden
                         ? '••••'
-                        : formatPrice(walletData.zec.value, { showSign: true })}
+                        : formatFiatAmount(walletData.zec.value, { showSign: true })}
                     </p>
                   </div>
                 </div>
@@ -1051,17 +1057,18 @@ export function Home() {
                     </div>
                     <div className="min-w-0 max-w-[55%] text-right">
                       <p
-                        className="truncate font-mono text-sm font-medium"
+                        className="break-all font-mono text-sm font-medium"
                         aria-label={balancesHidden ? 'Balance hidden' : undefined}
+                        title={balancesHidden ? undefined : `${market.supplied} ${market.symbol}`}
                       >
                         {balancesHidden
                           ? '••••'
                           : `${formatDisplayAmount(safeBig(market.supplied))} ${market.symbol}`}
                       </p>
-                      <p className="truncate text-xs text-muted">
+                      <p className="break-all text-xs text-muted">
                         {balancesHidden
                           ? '••••'
-                          : formatPrice(market.suppliedUsd, { showSign: true })}
+                          : formatFiatAmount(market.suppliedUsd, { showSign: true })}
                       </p>
                     </div>
                   </div>

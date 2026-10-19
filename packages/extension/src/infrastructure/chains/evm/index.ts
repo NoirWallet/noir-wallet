@@ -87,28 +87,21 @@ export function createConfiguredEvmActivityHistorySource(
     const ankr = createEvmAnkrHistoryClient(evmHistoryApiOrigin, [
       { chainId: config.chainId, nativeAssetId, trackedErc20Assets }
     ])
+    const readAddressActivityWithMetadata = async (input: ReadEvmAddressActivityInput) => {
+      const result = (
+        await ankr.readAddressActivities([{ chainId: config.chainId, ...input }], input.signal)
+      ).get(config.chainId)
+      if (!result || 'error' in result || 'incomplete' in result) {
+        throw result && 'error' in result ? result.error : new Error('Missing Ankr history result')
+      }
+      return { items: result.items, hasMore: result.hasMore ?? false }
+    }
     return createCachedEvmActivityHistorySource({
       chainId: config.chainId,
       source: Object.freeze({
-        readAddressActivity: async (input: ReadEvmAddressActivityInput) => {
-          const result = (
-            await ankr.readAddressActivities(
-              [
-                {
-                  chainId: config.chainId,
-                  ...input
-                }
-              ],
-              input.signal
-            )
-          ).get(config.chainId)
-          if (!result || 'error' in result || 'incomplete' in result) {
-            throw result && 'error' in result
-              ? result.error
-              : new Error('Missing Ankr history result')
-          }
-          return result.items
-        },
+        readAddressActivity: async (input: ReadEvmAddressActivityInput) =>
+          (await readAddressActivityWithMetadata(input)).items,
+        readAddressActivityWithMetadata,
         findConfirmedReplacement: (input: FindEvmConfirmedReplacementInput) =>
           ankr.findConfirmedReplacement(config.chainId, input)
       })

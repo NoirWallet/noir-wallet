@@ -26,8 +26,8 @@ import { ACTIVITY_SOURCES } from './activity-types'
 import { identifyAaveSupplyMethod, isAaveSupplyRecipient } from './aave-v3-ethereum'
 
 export const ACTIVITY_READ_LIMITS = Object.freeze({
-  sourceItems: 500,
-  resultItems: 200
+  sourceItems: 10_200,
+  resultItems: 2_000
 })
 
 const SOURCE_PRIORITY: Readonly<Record<ActivitySource, number>> = Object.freeze({
@@ -457,7 +457,7 @@ function parseActivityItem(value: unknown, scope: ActivityScope): ActivityItem {
 export function parseActivityReadModel(value: unknown): ActivityReadModel {
   if (
     !isRecord(value) ||
-    !hasExactKeys(value, ['scope', 'items', 'partialItemCount']) ||
+    !hasExactKeys(value, ['scope', 'items', 'partialItemCount'], ['hasMore']) ||
     !Array.isArray(value.items) ||
     value.items.length > ACTIVITY_READ_LIMITS.resultItems
   ) {
@@ -475,7 +475,15 @@ export function parseActivityReadModel(value: unknown): ActivityReadModel {
   if (new Set(items.map(item => `${item.source}:${item.id}`)).size !== items.length) {
     throw new Error('Duplicate Activity item ID')
   }
-  return Object.freeze({ scope, items, partialItemCount })
+  if (value.hasMore !== undefined && typeof value.hasMore !== 'boolean') {
+    throw new Error('Invalid Activity pagination state')
+  }
+  return Object.freeze({
+    scope,
+    items,
+    partialItemCount,
+    ...(value.hasMore === undefined ? {} : { hasMore: value.hasMore })
+  })
 }
 
 export function buildActivityReadModel(input: {
@@ -484,6 +492,7 @@ export function buildActivityReadModel(input: {
   readonly supplementalItems?: readonly ActivityItem[]
   readonly privateExecutionAddresses?: readonly string[]
   readonly limit?: number
+  readonly hasMore?: boolean
 }): ActivityReadModel {
   const scope = parseScope(input.scope)
   const supplementalItems = input.supplementalItems ?? []
@@ -551,6 +560,7 @@ export function buildActivityReadModel(input: {
   return Object.freeze({
     scope,
     items,
-    partialItemCount: items.filter(item => item.completeness === 'partial').length
+    partialItemCount: items.filter(item => item.completeness === 'partial').length,
+    ...(input.hasMore || deduplicated.length > limit ? { hasMore: true } : {})
   })
 }

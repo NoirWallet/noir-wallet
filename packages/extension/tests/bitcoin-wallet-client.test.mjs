@@ -17,6 +17,7 @@ import {
   selectBitcoinCoins
 } from '../src/infrastructure/chains/bitcoin/index.ts'
 import { createBitcoinWalletClient } from '../src/popup/services/bitcoin-wallet-client.ts'
+import { loadLedgerSigningView } from '../src/popup/services/ledger-signing-view.ts'
 
 initEccLib(secp256k1)
 
@@ -330,6 +331,9 @@ test('strictly binds Keystone handoff, PSBT retrieval and signed submission mess
       return {
         result: {
           transactionId,
+          scope: graph.root.scope,
+          chainId,
+          summary: context().summary,
           request: { encoding: 'base64', value: signedPsbtBase64 },
           payloadFingerprint: fingerprint,
           expiresAt: 5_000
@@ -345,6 +349,9 @@ test('strictly binds Keystone handoff, PSBT retrieval and signed submission mess
     graph: { root: { status: 'approved' } }
   })
   await expect(client.getExternalSigningRequest(transactionId)).resolves.toMatchObject({
+    scope: graph.root.scope,
+    chainId,
+    summary: context().summary,
     request: { encoding: 'base64', value: signedPsbtBase64 }
   })
   await expect(
@@ -360,6 +367,48 @@ test('strictly binds Keystone handoff, PSBT retrieval and signed submission mess
       signedPsbtBase64
     }
   ])
+})
+
+test('loads a Ledger Bitcoin signing review from the approved external request', async () => {
+  const value = context()
+  const originalChrome = globalThis.chrome
+  const messages = []
+  globalThis.chrome = {
+    runtime: {
+      sendMessage: async message => {
+        messages.push(message)
+        return {
+          result: {
+            transactionId,
+            scope: value.graph.root.scope,
+            chainId,
+            summary: value.summary,
+            vendor: 'ledger',
+            ledgerRequest: {
+              kind: 'psbt',
+              psbtBase64: value.prepared.psbtBase64,
+              accountPath: "m/84'/0'/0'",
+              masterFingerprintHex: '01020304',
+              expectedAddress: value.sender.address,
+              network: 'mainnet'
+            },
+            request: { encoding: 'base64', value: value.prepared.psbtBase64 },
+            payloadFingerprint: fingerprint,
+            expiresAt: Date.now() + 60_000
+          }
+        }
+      }
+    }
+  }
+  try {
+    const view = await loadLedgerSigningView({ family: 'bitcoin', transactionId })
+    expect(messages).toEqual([{ type: 'GET_KEYSTONE_BITCOIN_SIGNING_REQUEST', transactionId }])
+    expect(view.scope).toEqual({ ...value.graph.root.scope, chainId })
+    expect(view.summary).toEqual(value.summary)
+    expect(view.request).toMatchObject({ kind: 'psbt', psbtBase64: value.prepared.psbtBase64 })
+  } finally {
+    globalThis.chrome = originalChrome
+  }
 })
 
 test('rejects Bitcoin response substitution, forged errors, and invalid public input', async () => {

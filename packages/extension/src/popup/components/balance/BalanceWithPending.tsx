@@ -1,7 +1,6 @@
 import { Icon } from '@iconify/react'
-import Big from '@/lib/big'
 import { safeBig } from '@/lib/big'
-import { formatNumber, formatPrice } from '@/lib/format'
+import { formatFiatAmount, formatTokenQuantity } from '@/lib/number-format'
 import { Tooltip } from '../ui/tooltip'
 import { cn } from '@/lib/utils'
 
@@ -27,12 +26,17 @@ export function BalanceWithPending({
 
   return (
     <div className={cn('flex flex-col items-end gap-1', className)}>
-      <p className={cn('font-medium', amountClassName)}>
-        {formatNumber(amount, { rm: Big.roundDown })} ZEC
+      <p
+        className={cn('max-w-full break-all text-right font-medium', amountClassName)}
+        title={`${amount} ZEC`}
+      >
+        {formatTokenQuantity(amount)} ZEC
       </p>
       {showPending && (
         <div className="flex items-center gap-1 text-xs text-muted">
-          <span>{formatNumber(pending!, { rm: Big.roundDown })} ZEC unspendable</span>
+          <span title={`${pending} ZEC unspendable`}>
+            {formatTokenQuantity(pending)} ZEC unspendable
+          </span>
           <Tooltip content={CONFIRMING_TOOLTIP} className="max-w-[240px]">
             <span className="inline-flex cursor-default">
               <Icon icon="lucide:info" width={12} height={12} className="text-muted" />
@@ -41,7 +45,7 @@ export function BalanceWithPending({
         </div>
       )}
       {fiatValue != null && (
-        <p className="text-xs text-muted">{formatPrice(fiatValue, { showSign: true })}</p>
+        <p className="text-xs text-muted">{formatFiatAmount(fiatValue, { showSign: true })}</p>
       )}
     </div>
   )

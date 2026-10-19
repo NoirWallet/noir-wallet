@@ -79,7 +79,7 @@ describe('Wallet sync recovery', () => {
   })
 
   it('runs manual resync in the trusted Background credential session', () => {
-    assert.ok(zcashSettingsSource.includes("from '../../services/zcash-settings-client'"))
+    assert.ok(zcashSettingsSource.includes("from '../../hooks/useResyncZcash'"))
     assert.ok(!zcashSettingsSource.includes('backgroundZcashWalletRuntime.resyncZcashWallet('))
 
     const handlerStart = backgroundSource.indexOf('async function handleResyncZcashWallet(')
@@ -137,7 +137,7 @@ describe('Wallet sync recovery', () => {
       credentialCheck
     )
     const syncStart = syncSchedulerSource.indexOf(
-      'await this.runSyncForWallet(syncTarget, accountId)',
+      'await this.runSyncForWallet(syncTarget, accountId, passiveRun)',
       walletReady
     )
 

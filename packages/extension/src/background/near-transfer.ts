@@ -24,6 +24,7 @@ import type { StorageV2ReadRepository } from '@/ports/repositories'
 import { credentialSession } from './credential-session'
 import { nearLedgerSigningBridge } from './ledger-signing-bridge'
 import { NEAR_TRANSACTION_MONITOR_ALARM } from './near-transaction-monitor'
+import { reportBackgroundSendBroadcast } from './analytics/send-broadcast'
 import {
   BackgroundNearTransferController,
   type ActiveNearTransferContext
@@ -101,8 +102,10 @@ export function createBackgroundNearTransferController(
     assets,
     onPendingBroadcast: () =>
       chrome.alarms.create(NEAR_TRANSACTION_MONITOR_ALARM, { delayInMinutes: 0.1 }),
-    onMonitoringRequired: () =>
-      chrome.alarms.create(NEAR_TRANSACTION_MONITOR_ALARM, { delayInMinutes: 0.1 })
+    onMonitoringRequired: (graph, recovered) => {
+      if (recovered) reportBackgroundSendBroadcast(graph)
+      return chrome.alarms.create(NEAR_TRANSACTION_MONITOR_ALARM, { delayInMinutes: 0.1 })
+    }
   })
   return new BackgroundNearTransferController({
     orchestrator,

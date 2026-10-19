@@ -89,3 +89,31 @@ test('quarantined wallet stays idle until explicit recovery removes its marker',
   await harness.scheduler.run()
   assert.equal(harness.getInitializationCount(), 1)
 })
+
+test('another confirmed transaction during catch-up triggers a subsequent wallet scan', async () => {
+  const { scheduler } = createSchedulerHarness()
+  let startFirstScan
+  let finishFirstScan
+  const firstStarted = new Promise(resolve => {
+    startFirstScan = resolve
+  })
+  const firstFinished = new Promise(resolve => {
+    finishFirstScan = resolve
+  })
+  let scans = 0
+  scheduler.runSyncForWallet = async () => {
+    scans++
+    if (scans === 1) {
+      startFirstScan()
+      await firstFinished
+    }
+    return 'completed'
+  }
+
+  const first = scheduler.runTransactionCatchUp('wallet-a', 'account-a')
+  await firstStarted
+  const second = scheduler.runTransactionCatchUp('wallet-a', 'account-a')
+  finishFirstScan()
+  assert.deepEqual(await Promise.all([first, second]), ['completed', 'completed'])
+  assert.equal(scans, 2)
+})

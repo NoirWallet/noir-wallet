@@ -8,6 +8,7 @@ const publicKey = `ed25519:${'1'.repeat(32)}`
 
 function harness({ approved = true } = {}) {
   const calls = []
+  const analyticsEvents = []
   const active = {
     context: {
       chainAccount: {
@@ -61,6 +62,7 @@ function harness({ approved = true } = {}) {
     }
   }
   const handler = new BackgroundNearDAppHandler({
+    analytics: (name, options) => analyticsEvents.push({ name, options }),
     native: {
       async request(request) {
         calls.push(['native', request])
@@ -94,7 +96,7 @@ function harness({ approved = true } = {}) {
       }
     }
   })
-  return { handler, calls }
+  return { handler, calls, analyticsEvents, signer }
 }
 
 test('signs an OKX-compatible NEAR function-call transaction without broadcasting it', async () => {
@@ -246,4 +248,42 @@ test('signs a NEP-413 message through the message approval path', async () => {
     state: 'state'
   })
   expect(state.calls.find(call => call[0] === 'approval')[1]).toBe('nearMessage')
+})
+
+test('analytics separates NEAR signing, user cancellation and approved broadcast failures', async () => {
+  const request = {
+    method: 'signAndSendTransaction',
+    params: [
+      { receiverId: 'recipient.testnet', actions: [{ type: 'Transfer', params: { deposit: '1' } }] }
+    ]
+  }
+  const signedOnly = harness()
+  await signedOnly.handler.request(
+    { ...request, method: 'signTransaction' },
+    'https://dapp.example',
+    {}
+  )
+  expect(signedOnly.analyticsEvents).toEqual([])
+  const rejected = harness({ approved: false })
+  await expect(rejected.handler.request(request, 'https://dapp.example', {})).rejects.toMatchObject(
+    { code: 4001 }
+  )
+  expect(rejected.analyticsEvents.map(event => event.name)).toEqual(['dapp_request_rejected'])
+  const failed = harness()
+  failed.signer.confirm = async () => {
+    throw new Error('private signing failure')
+  }
+  await expect(failed.handler.request(request, 'https://dapp.example', {})).rejects.toThrow()
+  expect(failed.analyticsEvents.map(event => event.name)).toEqual(['dapp_transaction_failed'])
+  const sent = harness()
+  await sent.handler.request(request, 'https://dapp.example', {})
+  expect(sent.analyticsEvents.map(event => event.name)).toEqual(['dapp_transaction_sent'])
+  expect(sent.analyticsEvents[0].options).toMatchObject({
+    chain: 'near',
+    pageId: 'noir_dapp',
+    hasTransaction: 1
+  })
+  expect(JSON.stringify([...failed.analyticsEvents, ...sent.analyticsEvents])).not.toMatch(
+    /private signing|dapp.example/
+  )
 })

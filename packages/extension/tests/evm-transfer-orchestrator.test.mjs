@@ -18,6 +18,7 @@ import {
   parsePendingEvmTransfer
 } from '../src/infrastructure/chains/evm/index.ts'
 import { InMemoryTransactionRepository } from '../src/infrastructure/persistence/repositories/index.ts'
+import { reportBackgroundSendBroadcast } from '../src/background/analytics/send-broadcast.ts'
 
 const chainId = parseChainId('eip155:1').id
 const chains = createEvmBitcoinChainRegistry('mainnet')
@@ -191,6 +192,7 @@ function harness(options = {}) {
     createExternalRequestId:
       options.createExternalRequestId ?? (() => '9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d'),
     onPendingBroadcast: options.onPendingBroadcast,
+    onBroadcastAccepted: options.onBroadcastAccepted,
     onMonitoringRequired: options.onMonitoringRequired
   })
   return { orchestrator, repository, pendingStore, session, calls }
@@ -657,12 +659,17 @@ test('hands an exact EIP-1559 request to Keystone and verifies its UUID-bound si
     transactionId: prepared.graph.root.id
   })
   await expect(
+    testHarness.orchestrator.getPendingApproval({ scope, transactionId: prepared.graph.root.id })
+  ).resolves.toBeNull()
+  await expect(
     testHarness.orchestrator.getExternalSigningRequest({
       scope,
       transactionId: prepared.graph.root.id
     })
   ).resolves.toEqual({
     transactionId: prepared.graph.root.id,
+    scope,
+    summary: prepared.signing.summary,
     request: prepared.signing.execution.request,
     payloadFingerprint: prepared.signing.payloadFingerprint.digestHex,
     expiresAt: prepared.signing.expiresAt
@@ -703,6 +710,8 @@ test('binds a Ledger EIP-1559 signature to the prepared transaction and sender',
   })
   expect(external).toMatchObject({
     vendor: 'ledger',
+    scope,
+    summary: prepared.signing.summary,
     ledgerRequest: {
       kind: 'transaction',
       derivationPath: "m/44'/60'/0'/0/0",
@@ -710,6 +719,9 @@ test('binds a Ledger EIP-1559 signature to the prepared transaction and sender',
       unsignedTransactionHex: expect.stringMatching(/^0x02/)
     }
   })
+  await expect(
+    testHarness.orchestrator.getPendingApproval({ scope, transactionId: prepared.graph.root.id })
+  ).resolves.toBeNull()
   const decoded = parseTransaction(rawTransaction)
   const signatureHex = `${decoded.r}${decoded.s.slice(2)}${decoded.yParity.toString(16).padStart(2, '0')}`
   await expect(
@@ -961,6 +973,7 @@ test('recovers an approved command after a service worker interruption before si
 test('keeps one signed raw transaction for exact rebroadcast after an ambiguous RPC failure', async () => {
   let known = false
   let pendingSchedules = 0
+  const analytics = []
   const testHarness = harness({
     rpc: rpc({
       broadcastRawTransaction: async () => {
@@ -970,7 +983,13 @@ test('keeps one signed raw transaction for exact rebroadcast after an ambiguous 
     }),
     onPendingBroadcast: () => {
       pendingSchedules += 1
-    }
+    },
+    onBroadcastAccepted: (graph, recovered) =>
+      recovered &&
+      reportBackgroundSendBroadcast(graph, (name, options) => {
+        analytics.push({ name, options })
+        return new Promise(() => {})
+      })
   })
   const prepared = await prepare(testHarness.orchestrator)
   const pending = await testHarness.orchestrator.approve({
@@ -979,6 +998,7 @@ test('keeps one signed raw transaction for exact rebroadcast after an ambiguous 
     payloadFingerprint: prepared.signing.payloadFingerprint.digestHex
   })
   expect(pending.status).toBe('signed-pending-broadcast')
+  expect(analytics).toHaveLength(0)
   expect(pending.graph.root.status).toBe('signed')
   expect(pending.graph.segments[0].evidence).toMatchObject({
     transactionHash,
@@ -997,6 +1017,8 @@ test('keeps one signed raw transaction for exact rebroadcast after an ambiguous 
     transactionId: prepared.graph.root.id
   })
   expect(recovered.status).toBe('broadcast')
+  expect(analytics).toHaveLength(1)
+  expect(analytics[0].options.idempotencyKey).toBe(`send-broadcast:${prepared.graph.root.id}`)
   expect(recovered.graph.root.status).toBe('broadcast')
   await expect(testHarness.pendingStore.get(prepared.graph.root.id)).resolves.toBeNull()
 })

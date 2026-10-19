@@ -1,10 +1,10 @@
 import { Button } from '../ui/button'
 import { TransactionResult } from './TransactionResult'
-import { formatSortAddress, formatNumber } from '@/lib/format'
+import { formatSortAddress } from '@/lib/format'
 import { DEFAULT_NETWORK } from '@/lib/runtime-network'
 import { getZcashChainId } from '@/core/chains/registry'
 import { formatChainTransactionExplorerUrl } from '@/popup/services/chain-explorer'
-import Big from '@/lib/big'
+import { AmountDisplay } from '@/popup/components/common/AmountDisplay'
 import { useAddressBookStore } from '@/store/address-book-store'
 import type { TransactionStep } from '@/popup/hooks/useTransaction'
 import { getStandardTransactionResultCopy } from '@/lib/transaction-status-copy'
@@ -100,7 +100,7 @@ export function StandardTransactionResult({
           <div className="flex justify-between items-center py-3 border-b border-white/10">
             <span className="text-sm text-muted">Amount</span>
             <span className="text-sm font-medium">
-              {formatNumber(amount, { rm: Big.roundDown })} ZEC
+              <AmountDisplay value={amount} symbol="ZEC" />
             </span>
           </div>
 

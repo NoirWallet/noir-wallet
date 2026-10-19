@@ -19,6 +19,21 @@ test.describe('EVM wallet runtime error mapping', () => {
     })
     expect(
       mapEvmWalletRuntimeError(
+        new EvmTransactionError('insufficient-funds', 'private balance detail', {
+          requiredNativeBalanceRaw: '1043863666000',
+          availableNativeBalanceRaw: '1000000000000',
+          shortfallRaw: '43863666000',
+          maximumGasCostRaw: '200000000000',
+          transactionValueRaw: '843863666000'
+        })
+      )
+    ).toEqual({
+      code: 'insufficient-funds',
+      message: 'The EVM balance is insufficient',
+      shortfallRaw: '43863666000'
+    })
+    expect(
+      mapEvmWalletRuntimeError(
         new EvmTransactionError('simulation-failed', 'private revert detail')
       )
     ).toEqual({

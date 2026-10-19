@@ -33,6 +33,16 @@ export interface SwapMaximumAdjustment {
   readonly adjustmentCount: number
 }
 
+export function resolveSelectedSwapMaximum(input: {
+  readonly selected: boolean
+  readonly currentAmount: string
+  readonly maximumAmount: string
+}): string | null {
+  return input.selected && !safeBig(input.currentAmount || '0').eq(input.maximumAmount)
+    ? input.maximumAmount
+    : null
+}
+
 export function resolveZcashSwapMaximumAdjustment(input: {
   readonly currentAmount: string
   readonly exactMaximum: string | null
@@ -46,19 +56,23 @@ export function resolveZcashSwapMaximumAdjustment(input: {
 }
 
 function maximumAdjustment(
-  input: SwapMaximumInput,
+  input: Pick<SwapMaximumInput, 'source' | 'currentAmount' | 'adjustmentCount'>,
   amountRaw: string,
   adjustmentCount: number
 ): SwapMaximumAdjustment | null {
   const amount = BigInt(amountRaw)
   if (amount <= 0n) throw new Error('The source wallet balance does not cover the network fee')
+  const currentAmount = BigInt(
+    parseDisplayUnitAmount(input.currentAmount, input.source.asset.metadata.decimals)
+  )
   if (
-    amount ===
-    BigInt(parseDisplayUnitAmount(input.currentAmount, input.source.asset.metadata.decimals))
+    input.source.family === 'evm' && adjustmentCount > 0
+      ? amount >= currentAmount
+      : amount === currentAmount
   ) {
     return null
   }
-  const limit = input.source.family === 'evm' ? 3 : 2
+  const limit = input.source.family === 'evm' ? 4 : 2
   if (adjustmentCount >= limit) {
     throw new Error('Unable to calculate the maximum spendable amount for this quote')
   }
@@ -66,6 +80,26 @@ function maximumAdjustment(
     amount: formatBaseUnitDecimalAmount(amountRaw, input.source.asset.metadata.decimals),
     adjustmentCount: adjustmentCount + 1
   }
+}
+
+export function resolveEvmSwapMaximumInsufficientFundsAdjustment(
+  input: Pick<SwapMaximumInput, 'source' | 'currentAmount' | 'adjustmentCount'>,
+  error: unknown
+): SwapMaximumAdjustment | null {
+  if (
+    input.source.family !== 'evm' ||
+    input.source.asset.asset.kind !== 'native' ||
+    !(error instanceof EvmWalletClientError) ||
+    error.code !== 'insufficient-funds'
+  ) {
+    return null
+  }
+  const currentRaw = BigInt(
+    parseDisplayUnitAmount(input.currentAmount, input.source.asset.metadata.decimals)
+  )
+  const reduction = error.shortfallRaw ? BigInt(error.shortfallRaw) * 2n : (currentRaw + 3n) / 4n
+  const nextRaw = currentRaw > reduction ? currentRaw - reduction : 0n
+  return maximumAdjustment(input, nextRaw.toString(), input.adjustmentCount)
 }
 
 function isFeeServiceFailure(error: unknown): boolean {
@@ -105,7 +139,7 @@ export async function resolveSwapMaximumAdjustment(
         throw new Error('The source wallet balance does not cover the network fee')
       return {
         amount: formatBaseUnitDecimalAmount(probeRaw.toString(), source.asset.metadata.decimals),
-        adjustmentCount: 1
+        adjustmentCount: 0
       }
     }
     const plan = await dependencies.getEvmTransactionPlan(review.quoteHandle)
@@ -120,6 +154,12 @@ export async function resolveSwapMaximumAdjustment(
       executionMode: input.executionMode,
       ...(evmTransaction ? { evmTransaction, quotedAmountRaw: review.amountIn } : {})
     })
+    if (evmTransaction && input.adjustmentCount > 0) {
+      const quotedAmount = BigInt(review.amountIn)
+      const unreservedMaximum =
+        BigInt(maximum.amountRaw) + (BigInt(maximum.networkFeeRaw) + 3n) / 4n
+      if (quotedAmount <= unreservedMaximum) return null
+    }
     return maximumAdjustment(input, maximum.amountRaw, input.adjustmentCount)
   } catch (error) {
     if (
@@ -127,11 +167,7 @@ export async function resolveSwapMaximumAdjustment(
       error instanceof EvmWalletClientError &&
       error.code === 'insufficient-funds'
     ) {
-      return maximumAdjustment(
-        input,
-        (BigInt(review.amountIn) / 2n).toString(),
-        input.adjustmentCount
-      )
+      return resolveEvmSwapMaximumInsufficientFundsAdjustment(input, error)
     }
     if (!isFeeServiceFailure(error)) throw error
     return maximumAdjustment(

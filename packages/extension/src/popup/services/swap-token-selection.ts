@@ -104,6 +104,7 @@ export function resolveSwapTokenSelection(input: {
   readonly crossChainDestinationTokens?: readonly SwapToken[]
   readonly savedSelection?: SavedSwapTokenSelection
   readonly requestedSourceAssetId?: string | null
+  readonly selectedSourceAssetId?: string | null
   readonly preferredSourceAssetId?: string
   readonly enabledChains?: readonly ChainDefinition[]
 }): ResolvedSwapTokenSelection | null {
@@ -118,9 +119,14 @@ export function resolveSwapTokenSelection(input: {
       token.assetId === input.requestedSourceAssetId &&
       enabledBlockchains.includes(token.blockchain)
   )
-  if (!requestedSource && walletSourceTokens.length === 0) return null
+  const selectedSource = (input.sourceTokens ?? input.tokens).find(
+    token =>
+      token.assetId === input.selectedSourceAssetId && enabledBlockchains.includes(token.blockchain)
+  )
+  if (!requestedSource && !selectedSource && walletSourceTokens.length === 0) return null
   const tokenIn =
     requestedSource ??
+    selectedSource ??
     walletSourceTokens.find(token => token.assetId === input.savedSelection?.tokenInId) ??
     walletSourceTokens.find(token => token.assetId === input.preferredSourceAssetId) ??
     walletSourceTokens[0]

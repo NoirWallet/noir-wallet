@@ -30,7 +30,8 @@ import { useWalletStore } from '@/store/wallet-store'
 import { useAccountDataStore } from '@/store/account-data-store'
 import { useTransactionResultStore } from '@/store/transaction-result-store'
 import { useLocation, useNavigate } from '../../provider/Router'
-import { formatNumber, formatPrice, formatSortAddress } from '@/lib/format'
+import { formatPrice, formatSortAddress } from '@/lib/format'
+import { AmountDisplay } from '@/popup/components/common/AmountDisplay'
 import { DetailRow } from '../../components/common/DetailRow'
 import { AddressTypeLabel, AddressTypeSwitch } from '../../components/account/AddressType'
 import { TokenIcon } from '../../components/tokens/TokenIcon'
@@ -58,7 +59,6 @@ import {
 } from '@/core/wallet/funding-source'
 import type { FundingSource } from '@/types'
 import { safeBig } from '@/lib/big'
-import Big from 'big.js'
 import { useZnsResolve } from '../../hooks/useZnsResolve'
 import { isTransparentZcashAddress, sanitizeMemoForRecipient } from '@/lib/zcash-memo'
 import { getShieldableTransparentBalance } from '@/core/zcash/shielding'
@@ -252,14 +252,7 @@ export function Send() {
   const sendEventBase: TrackOptions = {
     pageId: PAGE_IDS.SEND,
     hasTransaction: 1,
-    inputAmount: amount,
-    inputSymbol: 'ZEC',
-    usdAmount:
-      zecPrice > 0
-        ? safeBig(amount || '0')
-            .mul(zecPrice)
-            .toFixed(2)
-        : undefined
+    inputSymbol: 'ZEC'
   }
 
   const handleConfirm = async () => {
@@ -369,14 +362,8 @@ export function Send() {
         })
       },
       analytics: {
-        onSuccess: {
-          name: ANALYTICS_EVENTS.SEND_SUCCEEDED,
-          options: { ...sendEventBase, extra: { fee: selectedFeeZec } }
-        },
-        onFail: {
-          name: ANALYTICS_EVENTS.SEND_FAILED,
-          options: sendEventBase
-        }
+        pageId: PAGE_IDS.SEND,
+        fundingSource
       }
     })
 
@@ -571,7 +558,9 @@ export function Send() {
             <div className="relative mb-3">
               <TokenIcon symbol="ZEC" nativeChain="zcash" size="xl" />
             </div>
-            <p className="text-2xl font-bold">{formatNumber(amount, { rm: Big.roundDown })} ZEC</p>
+            <div className="max-w-full text-center text-2xl font-bold">
+              <AmountDisplay value={amount} symbol="ZEC" />
+            </div>
             <p className="text-sm text-muted mt-0.5">
               ≈{' '}
               {formatPrice(

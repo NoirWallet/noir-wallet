@@ -49,14 +49,13 @@ test.describe('Portfolio amount formatting', () => {
   })
 })
 
-test.describe('Portfolio display amount compaction', () => {
+test.describe('Portfolio display amount formatting', () => {
   test('bounds long fractional balances to significant digits', () => {
     // The reported overflow: 0.005867687705178373 ETH.
-    expect(formatDisplayTokenAmount('5867687705178373', 18)).toBe('0.005868')
-    expect(formatDisplayTokenAmount('5871510000000000', 18)).toBe('0.005872')
-    // Compacts four or more leading zeros into a subscript count.
-    expect(formatDisplayTokenAmount('12345678901234', 18)).toBe('0.0₄1234')
-    expect(formatDisplayTokenAmount('1050000000000', 18)).toBe('0.0₅105')
+    expect(formatDisplayTokenAmount('5867687705178373', 18)).toBe('0.005867')
+    expect(formatDisplayTokenAmount('5871510000000000', 18)).toBe('0.005871')
+    expect(formatDisplayTokenAmount('12345678901234', 18)).toBe('0.00001234')
+    expect(formatDisplayTokenAmount('1050000000000', 18)).toBe('0.00000105')
     expect(formatDisplayTokenAmount('500000000000000000', 18)).toBe('0.5')
   })
 
@@ -66,19 +65,19 @@ test.describe('Portfolio display amount compaction', () => {
     expect(formatDisplayTokenAmount('12345670', 2)).toBe('123,456.7')
   })
 
-  test('collapses very large balances to compact units', () => {
-    expect(formatDisplayTokenAmount('1234567000000', 6)).toBe('1.23M')
-    expect(formatDisplayTokenAmount('5000000000000000000000000000', 18)).toBe('5B')
+  test('preserves full whole units for very large balances', () => {
+    expect(formatDisplayTokenAmount('1234567000000', 6)).toBe('1,234,567')
+    expect(formatDisplayTokenAmount('5000000000000000000000000000', 18)).toBe('5,000,000,000')
   })
 
-  test('keeps very small non-zero balances visible with a subscript count', () => {
-    expect(formatDisplayTokenAmount('1', 18)).toBe('0.0₁₇1')
+  test('keeps very small non-zero balances distinct from observed zero', () => {
+    expect(formatDisplayTokenAmount('1', 18)).toBe('<0.00000001')
     expect(formatDisplayTokenAmount('0', 18)).toBe('0')
   })
 
   test('shares one strategy for already-decimal aggregate values', () => {
-    expect(formatDisplayAmount(new Big('0.005867687705178373'))).toBe('0.005868')
-    expect(formatDisplayAmount(new Big('1234.5678'))).toBe('1,234.57')
+    expect(formatDisplayAmount(new Big('0.005867687705178373'))).toBe('0.005867')
+    expect(formatDisplayAmount(new Big('1234.5678'))).toBe('1,234.56')
     expect(formatDisplayAmount(new Big(0))).toBe('0')
     expect(() => formatDisplayAmount(new Big(-1))).toThrow(/Invalid display amount/)
   })
@@ -91,9 +90,9 @@ test.describe('Portfolio display amount compaction', () => {
 })
 
 test.describe('Activity amount formatting', () => {
-  test('uses readable decimal or scientific notation for small amounts', () => {
+  test('shares the holdings profile for small amounts', () => {
     expect(formatActivityTokenAmount('10000000000000', 18)).toBe('0.00001')
-    expect(formatActivityTokenAmount('1', 18)).toBe('1e-18')
+    expect(formatActivityTokenAmount('1', 18)).toBe('<0.00000001')
     expect(formatActivityTokenAmount('500000000000000000', 18)).toBe('0.5')
   })
 })

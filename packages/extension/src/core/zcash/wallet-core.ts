@@ -448,8 +448,12 @@ export class ZcashWalletCore {
    * Combine the wallet's full PCZT with the signer's redacted+signed PCZT, then
    * prove and broadcast. Returns txid.
    */
-  async pcztProveSend(fullPcztBase64: string, signedPcztBase64: string): Promise<string> {
-    return this.client.pcztProveSend(fullPcztBase64, signedPcztBase64)
+  async pcztProveSend(
+    fullPcztBase64: string,
+    signedPcztBase64: string,
+    submissionDeadline?: number
+  ): Promise<string> {
+    return this.client.pcztProveSend(fullPcztBase64, signedPcztBase64, submissionDeadline)
   }
 
   async pcztLedgerPayload(redactedBase64: string, accountIndex: number) {
@@ -599,7 +603,10 @@ export class ZcashWalletCore {
     return []
   }
 
-  async sendTransaction(params: SendTransactionParams): Promise<TransferResult> {
+  async sendTransaction(
+    params: SendTransactionParams,
+    submissionDeadline?: number
+  ): Promise<TransferResult> {
     if (this.watchOnly) {
       throw new Error('Watch-only wallet: use the hardware signing flow (pcztCreate)')
     }
@@ -618,7 +625,8 @@ export class ZcashWalletCore {
       amount: amountZatoshis,
       memo: params.memo,
       fundingSource: params.fundingSource,
-      marginalFeeZats: params.marginalFeeZats
+      marginalFeeZats: params.marginalFeeZats,
+      ...(submissionDeadline === undefined ? {} : { submissionDeadline })
     })
   }
 

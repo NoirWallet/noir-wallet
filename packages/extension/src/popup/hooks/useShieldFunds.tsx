@@ -7,7 +7,7 @@ import { useNavigate } from '../provider/Router'
 import { openHardwareSignAndWait, openHardwareSignTab } from '@/lib/hardware-tab'
 import { ShieldConfirmSheet } from '../components/transaction/ShieldConfirmSheet'
 import { WALLET_CONFIG } from '@/config/wallet'
-import { ANALYTICS_EVENTS, PAGE_IDS } from '@/lib/analytics'
+import { PAGE_IDS } from '@/lib/analytics'
 import { MARGINAL_FEE_ZATS } from '@/config/fee'
 import { sanitizeMarginalFeeZats } from '@/core/zcash/fee-policy'
 import type { Transaction } from '@/types/wallet'
@@ -213,13 +213,6 @@ export function useShieldFunds(): UseShieldFundsResult {
         )
         navigate('/transaction-result')
 
-        const shieldAnalyticsBase = {
-          pageId: PAGE_IDS.SEND,
-          hasTransaction: 1,
-          inputAmount: transparentBalance,
-          inputSymbol: 'ZEC'
-        }
-
         const startResponse = await chrome.runtime.sendMessage({
           type: 'BACKGROUND_ZCASH_TX',
           action: 'shield',
@@ -228,16 +221,7 @@ export function useShieldFunds(): UseShieldFundsResult {
           accountKey,
           transactionId: pendingTx.id,
           marginalFeeZats,
-          analytics: {
-            onSuccess: {
-              name: ANALYTICS_EVENTS.SHIELD_SUCCEEDED,
-              options: shieldAnalyticsBase
-            },
-            onFail: {
-              name: ANALYTICS_EVENTS.SHIELD_FAILED,
-              options: shieldAnalyticsBase
-            }
-          }
+          analytics: { pageId: PAGE_IDS.SEND }
         })
         if (startResponse?.success !== true) {
           throw new Error(startResponse?.error || 'Failed to start shield transaction')
