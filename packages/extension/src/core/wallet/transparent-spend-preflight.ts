@@ -2,7 +2,7 @@ import type { ZcashBalance } from '@/types'
 
 interface TransparentSpendCore {
   syncSessionSetup(): Promise<void>
-  getBalance(): Promise<ZcashBalance>
+  getBalance(accountIndex?: number): Promise<ZcashBalance>
 }
 
 /**
@@ -11,8 +11,9 @@ interface TransparentSpendCore {
  */
 export async function prepareTransparentSpend(
   core: TransparentSpendCore,
-  _amount?: string
+  _amount?: string,
+  accountIndex?: number
 ): Promise<ZcashBalance> {
   await core.syncSessionSetup()
-  return core.getBalance()
+  return core.getBalance(accountIndex)
 }

@@ -11,17 +11,10 @@ afterEach(() => {
 })
 
 function respondOkJson(body) {
-  globalThis.fetch = async () => ({
-    ok: true,
-    status: 200,
-    statusText: 'OK',
-    async json() {
-      return body
-    },
-    async text() {
-      return JSON.stringify(body)
-    }
-  })
+  globalThis.fetch = async () =>
+    new Response(JSON.stringify(body), {
+      headers: { 'content-type': 'application/json' }
+    })
 }
 
 test('classifies a mined tx as confirmed with its confirmation count', async () => {
@@ -95,17 +88,7 @@ test('maps a network failure to a transient error', async () => {
 })
 
 test('maps a non-2xx HTTP response to a transient error', async () => {
-  globalThis.fetch = async () => ({
-    ok: false,
-    status: 500,
-    statusText: 'Server Error',
-    async json() {
-      return {}
-    },
-    async text() {
-      return 'oops'
-    }
-  })
+  globalThis.fetch = async () => new Response('oops', { status: 500, statusText: 'Server Error' })
 
   assert.deepEqual(await lookupTransaction(NODE, 'abc'), { status: 'error' })
 })

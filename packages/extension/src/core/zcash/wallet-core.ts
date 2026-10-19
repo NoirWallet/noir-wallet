@@ -565,11 +565,13 @@ export class ZcashWalletCore {
     return result
   }
 
-  async getBalance(): Promise<ZcashBalance> {
-    if (this.accountId === null) {
-      throw new Error('Account not initialized')
-    }
-    const balance = await this.client.getBalance(this.accountId)
+  async getBalance(accountIndex?: number): Promise<ZcashBalance> {
+    const accountId =
+      accountIndex === undefined
+        ? this.accountId
+        : await this.resolveAccountIdForDerivation(await this.client.getAccountIds(), accountIndex)
+    if (accountId === null) throw new Error('Account not initialized')
+    const balance = await this.client.getBalance(accountId)
     return balance
   }
 
@@ -578,7 +580,10 @@ export class ZcashWalletCore {
     return []
   }
 
-  async sendTransaction(params: SendTransactionParams): Promise<TransferResult> {
+  async sendTransaction(
+    params: SendTransactionParams,
+    approvedAccountIndex?: number
+  ): Promise<TransferResult> {
     if (this.watchOnly) {
       throw new Error('Watch-only wallet: use the hardware signing flow (pcztCreate)')
     }
@@ -586,13 +591,12 @@ export class ZcashWalletCore {
       throw new Error('Wallet not unlocked')
     }
     const amountZatoshis = safeBig(params.amount).times(1e8).toFixed(0)
-    await this.ensureAccountIdMatchesIndex()
-    await this.verifyAccountConsistency()
+    const accountIndex = approvedAccountIndex ?? this.accountIndex
+    const seedPhrase = this.seedPhrase
 
     return await this.client.sendTransaction({
-      accountId: this.accountId!,
-      accountIndex: this.accountIndex,
-      seedPhrase: this.seedPhrase!,
+      accountIndex,
+      seedPhrase,
       to: params.to,
       amount: amountZatoshis,
       memo: params.memo,
@@ -651,20 +655,23 @@ export class ZcashWalletCore {
     return this.client.estimateShieldFee({ accountId: this.accountId, marginalFeeZats })
   }
 
-  async shieldFunds(marginalFeeZats?: number): Promise<{ txid: string; amount: string | null }> {
+  async shieldFunds(
+    marginalFeeZats?: number,
+    approvedAccountIndex?: number
+  ): Promise<{ txid: string; amount: string | null }> {
     if (this.watchOnly) {
       throw new Error('Watch-only wallet: use the hardware signing flow (pcztShieldCreate)')
     }
     if (!this.seedPhrase) {
       throw new Error('Wallet not unlocked')
     }
-    await this.ensureAccountIdMatchesIndex()
-    await this.verifyAccountConsistency()
+    const accountIndex = approvedAccountIndex ?? this.accountIndex
+    const seedPhrase = this.seedPhrase
 
     const beforeSummary = await this.getWalletSummary()
     console.log('[Shield] BEFORE summary:', JSON.stringify(beforeSummary))
 
-    const balance = await this.getBalance()
+    const balance = await this.getBalance(accountIndex)
     console.log('[Shield] BEFORE balance:', JSON.stringify(balance))
     const shieldableBalance = getShieldableTransparentBalance(balance)
 
@@ -673,16 +680,14 @@ export class ZcashWalletCore {
     }
 
     console.log('[ZcashWalletCore] Shield pre-check:', {
-      accountId: this.accountId,
-      accountIndex: this.accountIndex,
+      accountIndex,
       transparentBalance: shieldableBalance,
       shieldedBalance: balance.shielded
     })
 
     const txid = await this.client.oneClickShield({
-      accountId: this.accountId!,
-      accountIndex: this.accountIndex,
-      seedPhrase: this.seedPhrase!,
+      accountIndex,
+      seedPhrase,
       marginalFeeZats
     })
 
@@ -692,10 +697,14 @@ export class ZcashWalletCore {
     // only and must never bubble up an error that would mislabel a live shield
     // as "failed".
     try {
-      const history = await this.client.getTransactionHistory(this.accountId!)
+      const accountId = await this.resolveAccountIdForDerivation(
+        await this.client.getAccountIds(),
+        accountIndex
+      )
+      const history = accountId === null ? [] : await this.client.getTransactionHistory(accountId)
       actualAmount = getShieldInputAmountFromHistory(history, txid)
       const afterSummary = await this.getWalletSummary()
-      const afterBalance = await this.getBalance()
+      const afterBalance = await this.getBalance(accountIndex)
       const beforeAccBal = (beforeSummary?.account_balances as any)?.[0]?.[1]
       const afterAccBal = (afterSummary?.account_balances as any)?.[0]?.[1]
       console.log('[Shield] AFTER summary:', JSON.stringify(afterSummary))

@@ -132,6 +132,19 @@ test('stale hardware tab writes cannot restore a removed duplicate or its select
   assert.equal(values.get('hw_retained'), 'synthetic-encrypted-record')
 })
 
+test('stale metadata writes cannot restore a deleted account or its selection', async t => {
+  const { area, snapshot } = harness(t)
+  await metadata.setAccountDeleted('mainnet_removed_removed-account', true)
+  await metadata.writeWalletMetadata(area, snapshot)
+  const current = await metadata.readWalletMetadata(area)
+  assert.deepEqual(current.state.wallets.find(wallet => wallet.id === 'removed').accounts, [])
+  assert.equal(current.state.currentWalletId, 'retained')
+  assert.equal(current.state.currentAccountId, 'retained-account')
+  assert.deepEqual(current.state.accountDisplayNames, {
+    'retained_retained-account': 'Keep'
+  })
+})
+
 test('deletion waits for an older in-flight write and blocks later stale writes', async t => {
   const h = harness(t)
   let entered

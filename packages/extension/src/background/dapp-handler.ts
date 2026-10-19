@@ -21,6 +21,7 @@ import { closeAllPopupWindows } from './window-manager'
 import { useWalletStore, rehydrateWalletStore } from '@/store/wallet-store'
 import { useAccountDataStore, buildAccountKey } from '@/store/account-data-store'
 import { pendingRequestsManager } from './pending-requests'
+import { getApprovalContext } from './approval-context'
 import { sleep } from '@/lib/utils'
 import { logger } from '@/lib/logger'
 import { getDiagnosticRpcMethod } from '@/lib/diagnostic-log'
@@ -151,6 +152,7 @@ export class DAppHandler {
    */
   clearPermissions(): void {
     this.permissions.clear()
+    pendingRequestsManager.cancelMatching(() => true)
     console.log('[DAppHandler] Cleared permissions cache')
   }
 
@@ -269,16 +271,14 @@ export class DAppHandler {
       return null
     }
 
-    if (shouldAutoConnectDApp(origin)) {
+    if (shouldAutoConnectDApp(origin) && (await dappManager.canAutoConnect(origin))) {
       const accounts = await this.authorizeAllWalletAccounts(origin)
       const account = accountManager.getCurrentAccount()
       if (!account) return null
-      return {
-        transparent: account.addresses.transparent,
-        shielded: account.addresses.shielded,
-        accounts
-      }
+      return this.authorizedAccountResponse(origin, account, accounts)
     }
+
+    if (await dappManager.isRevoked(origin)) return null
 
     if (this.permissions.has(origin)) {
       if (await this.isCurrentAccountUnauthorized(origin)) {
@@ -288,12 +288,7 @@ export class DAppHandler {
       console.log('[DAppHandler] Returning cached accounts for:', origin)
       const account = await accountManager.getCurrentAccount()
       if (account) {
-        const cachedAddresses = this.permissions.get(origin)?.accounts
-        return {
-          transparent: cachedAddresses?.[0] || account.addresses.transparent,
-          shielded: cachedAddresses?.[1] || account.addresses.shielded,
-          accounts: await this.resolveAccounts(origin)
-        }
+        return this.authorizedAccountResponse(origin, account, await this.resolveAccounts(origin))
       }
     }
 
@@ -318,12 +313,7 @@ export class DAppHandler {
 
       const account = await accountManager.getCurrentAccount()
       if (account) {
-        this.setPermissionForAccount(origin, account)
-        return {
-          transparent: account.addresses.transparent,
-          shielded: account.addresses.shielded,
-          accounts: await this.resolveAccounts(origin)
-        }
+        return this.authorizedAccountResponse(origin, account, await this.resolveAccounts(origin))
       }
     }
 
@@ -331,20 +321,49 @@ export class DAppHandler {
     return null
   }
 
+  private async authorizedAccountResponse(
+    origin: string,
+    account: AccountData,
+    accounts: BatchAccount[]
+  ) {
+    const authorization = await dappManager.getAuthorization(origin)
+    const { currentWalletId } = useWalletStore.getState()
+    if (
+      accountManager.isLocked() ||
+      !authorization.accounts.some(
+        ref => ref.walletId === currentWalletId && ref.accountId === account.id
+      )
+    ) {
+      this.permissions.delete(origin)
+      return null
+    }
+    this.setPermissionForAccount(origin, account)
+    return {
+      transparent: account.addresses.transparent,
+      shielded: account.addresses.shielded,
+      accounts: accounts.filter(candidate =>
+        authorization.accounts.some(
+          ref => ref.walletId === candidate.walletId && ref.accountId === candidate.accountId
+        )
+      )
+    }
+  }
+
   private async requestAccounts(
     origin: string
   ): Promise<{ transparent: string; shielded: string; accounts: BatchAccount[] }> {
     const isConnected = await dappManager.isConnected(origin)
+    const authorizationRevision = await dappManager.getAuthorizationRevision(origin)
 
     let chosen: BatchAccount[]
-    if (shouldAutoConnectDApp(origin)) {
+    if (shouldAutoConnectDApp(origin) && (await dappManager.canAutoConnect(origin))) {
       chosen = await this.authorizeAllWalletAccounts(origin)
     } else {
       // Always show the approval window so the user can review / add accounts,
       // even when the dApp is already authorized (MetaMask-style).
       console.log('[DAppHandler] Connect approval requested for:', origin)
       chosen = await this.runConnectApproval(origin)
-      await this.applyConnectApproval(origin, chosen)
+      await this.applyConnectApproval(origin, chosen, authorizationRevision)
     }
 
     if (!isConnected) {
@@ -359,8 +378,6 @@ export class DAppHandler {
     if (!account) {
       throw new Error('No account available')
     }
-
-    this.setPermissionForAccount(origin, account)
 
     await dappManager.updateLastActive(origin)
 
@@ -377,10 +394,18 @@ export class DAppHandler {
       syncScheduler.onRequestSync()
     }
 
+    const accounts = await this.resolveAccounts(origin)
+    await this.assertApprovedAccountAuthorized(
+      origin,
+      currentWalletId || '',
+      account.id,
+      authorizationRevision
+    )
+    this.setPermissionForAccount(origin, account)
     return {
       transparent: account.addresses.transparent,
       shielded: account.addresses.shielded,
-      accounts: await this.resolveAccounts(origin)
+      accounts
     }
   }
 
@@ -528,6 +553,7 @@ export class DAppHandler {
       throw new Error('Wallet is locked')
     }
 
+    const revision = await dappManager.getAuthorizationRevision(origin)
     await rehydrateWalletStore()
     const accounts = this.buildAllWalletAccounts()
     if (accounts.length === 0) {
@@ -544,7 +570,7 @@ export class DAppHandler {
       existingIds.size !== accounts.length || accounts.some(account => !existingIds.has(account.id))
 
     if (!existingConnection || accountSetChanged) {
-      await this.persistAuthorized(origin, accounts)
+      await this.persistAuthorized(origin, accounts, { automatic: true })
     }
 
     const { currentWalletId } = useWalletStore.getState()
@@ -563,6 +589,7 @@ export class DAppHandler {
       })
     }
 
+    await this.assertApprovedAccountAuthorized(origin, currentWalletId, current.id, revision)
     this.setPermissionForAccount(origin, current)
     return accounts
   }
@@ -679,13 +706,18 @@ export class DAppHandler {
   }
 
   /** Persist the user's authorized account selection for `origin`. */
-  private async persistAuthorized(origin: string, chosen: BatchAccount[]): Promise<void> {
+  private async persistAuthorized(
+    origin: string,
+    chosen: BatchAccount[],
+    authorization?: { automatic?: boolean; expectedRevision?: number }
+  ): Promise<void> {
     const tabs = await chrome.tabs.query({ active: true, currentWindow: true })
     const currentTab = tabs[0]
     await dappManager.setAuthorizedAccounts(
       origin,
       { title: currentTab?.title, favIconUrl: currentTab?.favIconUrl },
-      chosen.map(a => ({ walletId: a.walletId, accountId: a.accountId }))
+      chosen.map(a => ({ walletId: a.walletId, accountId: a.accountId })),
+      authorization
     )
   }
 
@@ -695,13 +727,17 @@ export class DAppHandler {
    * selection, switch to the first chosen account so the new session is
    * immediately usable instead of starting logged out.
    */
-  private async applyConnectApproval(origin: string, chosen: BatchAccount[]): Promise<void> {
+  private async applyConnectApproval(
+    origin: string,
+    chosen: BatchAccount[],
+    revision?: number
+  ): Promise<void> {
     const { currentWalletId } = useWalletStore.getState()
     const current = accountManager.getCurrentAccount()
     const target =
       chosen.find(a => a.walletId === currentWalletId && a.accountId === current?.id) ?? chosen[0]
 
-    await this.persistAuthorized(origin, chosen)
+    await this.persistAuthorized(origin, chosen, { expectedRevision: revision })
     await dappManager.updateConnectionBinding(origin, {
       walletId: target.walletId,
       accountId: target.accountId
@@ -875,8 +911,15 @@ export class DAppHandler {
     const { fundingSource } = params
     await this.ensurePermission(origin)
 
-    const { requestId, approved, walletId, accountId, marginalFeeZats, feeZats } =
-      await this.requestUserApprovalWithId(origin, 'sendTransaction', params)
+    const {
+      requestId,
+      approved,
+      walletId,
+      accountId,
+      authorizationRevision,
+      marginalFeeZats,
+      feeZats
+    } = await this.requestUserApprovalWithId(origin, 'sendTransaction', params)
 
     if (!approved) {
       trackEvent(ANALYTICS_EVENTS.DAPP_REQUEST_REJECTED, {
@@ -886,7 +929,7 @@ export class DAppHandler {
       throw new Error('User rejected the transaction')
     }
     try {
-      await this.assertApprovedAccountAuthorized(origin, walletId, accountId)
+      await this.assertApprovedAccountAuthorized(origin, walletId, accountId, authorizationRevision)
     } catch (error) {
       chrome.runtime
         .sendMessage({
@@ -921,6 +964,8 @@ export class DAppHandler {
     const accountKey = buildAccountKey(network, walletId, accountId)
 
     const sourceAccount = useWalletStore.getState().getAccount(walletId, accountId)
+    if (!sourceAccount) throw new Error('Wallet account no longer available')
+    const approvedAccountIndex = sourceAccount.derivationIndex
     const fromAddress = sourceAccount?.addresses[fundingSource] || ''
     let txPaused = false
     let transactionId: string | undefined
@@ -940,7 +985,7 @@ export class DAppHandler {
 
       const walletCore = await accountManager.getWalletCore(walletId, accountId)
       if (fundingSource === 'transparent') {
-        await prepareTransparentSpend(walletCore, params.amount)
+        await prepareTransparentSpend(walletCore, params.amount, approvedAccountIndex)
         logger.log(
           '[Tx Preflight] Refreshed transparent UTXOs before dApp send',
           walletId,
@@ -976,8 +1021,8 @@ export class DAppHandler {
         }
       })
       transactionId = tx.id
-      await this.assertApprovedAccountAuthorized(origin, walletId, accountId)
-      const transferResult = await walletCore.sendTransaction(txParams)
+      await this.assertApprovedAccountAuthorized(origin, walletId, accountId, authorizationRevision)
+      const transferResult = await walletCore.sendTransaction(txParams, approvedAccountIndex)
       const { txHash: hash, txHashes } = requireSuccessfulTransfer(transferResult)
       broadcastHash = hash
       const expiryHeight = await computeExpiryHeight(() => walletCore.getLatestBlock())
@@ -1190,7 +1235,7 @@ export class DAppHandler {
     this.validateSignMessageParam(message)
     await this.ensurePermission(origin)
 
-    const { approved, walletId, accountId } = await this.requestUserApproval(
+    const { approved, walletId, accountId, authorizationRevision } = await this.requestUserApproval(
       origin,
       'signMessage',
       { message }
@@ -1203,7 +1248,7 @@ export class DAppHandler {
       })
       throw new Error('User rejected the signature request')
     }
-    await this.assertApprovedAccountAuthorized(origin, walletId, accountId)
+    await this.assertApprovedAccountAuthorized(origin, walletId, accountId, authorizationRevision)
 
     trackEvent(ANALYTICS_EVENTS.DAPP_MESSAGE_SIGNED, {
       pageId: PAGE_IDS.DAPP,
@@ -1219,10 +1264,13 @@ export class DAppHandler {
     }
 
     const walletCore = await accountManager.getWalletCore(walletId, accountId)
-    await this.assertApprovedAccountAuthorized(origin, walletId, accountId)
+    await this.assertApprovedAccountAuthorized(origin, walletId, accountId, authorizationRevision)
+    const approvedAccount = useWalletStore.getState().getAccount(walletId, accountId)
+    if (!approvedAccount) throw new Error('Wallet account no longer available')
+    const approvedAccountIndex = approvedAccount.derivationIndex
     const promise = this.resolveSigningResult(
       options?.signingMode,
-      () => walletCore.signMessage(message),
+      () => walletCore.signMessage(message, approvedAccountIndex),
       accountIndex => walletCore.signMessage(message, accountIndex),
       () => walletCore.signMessage(message, undefined, 0)
     ).finally(() => {
@@ -1274,7 +1322,7 @@ export class DAppHandler {
         ? useAccountDataStore.getState().getBalance(currentNetwork, currentWalletId, account.id)
         : null
 
-    const { requestId, approved, walletId, accountId, marginalFeeZats } =
+    const { requestId, approved, walletId, accountId, authorizationRevision, marginalFeeZats } =
       await this.requestUserApprovalWithId(origin, 'shieldFunds', {
         amount: getShieldableTransparentBalance(balance)
       })
@@ -1287,7 +1335,7 @@ export class DAppHandler {
       throw new Error('User rejected the shield request')
     }
     try {
-      await this.assertApprovedAccountAuthorized(origin, walletId, accountId)
+      await this.assertApprovedAccountAuthorized(origin, walletId, accountId, authorizationRevision)
     } catch (error) {
       chrome.runtime
         .sendMessage({
@@ -1322,6 +1370,8 @@ export class DAppHandler {
 
     const accountKey = buildAccountKey(currentNetwork, walletId, accountId)
     const approvedAccount = useWalletStore.getState().getAccount(walletId, accountId)
+    if (!approvedAccount) throw new Error('Wallet account no longer available')
+    const approvedAccountIndex = approvedAccount.derivationIndex
     let transactionId: string | undefined
     let broadcastHash: string | undefined
     try {
@@ -1336,7 +1386,11 @@ export class DAppHandler {
       }
 
       const walletCore = await accountManager.getWalletCore(walletId, accountId)
-      const freshBalance = await prepareTransparentSpend(walletCore)
+      const freshBalance = await prepareTransparentSpend(
+        walletCore,
+        undefined,
+        approvedAccountIndex
+      )
       const freshTransparentBalance = getShieldableTransparentBalance(freshBalance)
       if (!hasEnoughTransparentBalanceToShield(freshTransparentBalance)) {
         throw new Error(MIN_SHIELDING_BALANCE_MESSAGE)
@@ -1362,8 +1416,11 @@ export class DAppHandler {
         }
       })
       transactionId = tx.id
-      await this.assertApprovedAccountAuthorized(origin, walletId, accountId)
-      const shieldResult = await walletCore.shieldFunds(sanitizeMarginalFeeZats(marginalFeeZats))
+      await this.assertApprovedAccountAuthorized(origin, walletId, accountId, authorizationRevision)
+      const shieldResult = await walletCore.shieldFunds(
+        sanitizeMarginalFeeZats(marginalFeeZats),
+        approvedAccountIndex
+      )
       const { txid } = shieldResult
       broadcastHash = txid
       const amount = shieldResult.amount ?? freshTransparentBalance
@@ -1502,7 +1559,7 @@ export class DAppHandler {
    */
   private async isCurrentAccountUnauthorized(origin: string): Promise<boolean> {
     const connection = await dappManager.getConnection(origin)
-    if (!connection) return false
+    if (!connection) return true
     const authorized = getConnectionAccountRefs(connection)
     if (authorized.length === 0) {
       return true
@@ -1516,7 +1573,11 @@ export class DAppHandler {
   }
 
   private async ensurePermission(origin: string): Promise<void> {
-    if (shouldAutoConnectDApp(origin)) {
+    if (await dappManager.isRevoked(origin)) {
+      this.permissions.delete(origin)
+      throw new Error('Not authorized. Call zcash_requestAccounts first.')
+    }
+    if (shouldAutoConnectDApp(origin) && (await dappManager.canAutoConnect(origin))) {
       await this.authorizeAllWalletAccounts(origin)
       return
     }
@@ -1548,13 +1609,17 @@ export class DAppHandler {
   private async assertApprovedAccountAuthorized(
     origin: string,
     walletId: string,
-    accountId: string
+    accountId: string,
+    expectedRevision?: number
   ): Promise<void> {
-    const authorized = await dappManager.getAuthorizedAccounts(origin)
+    const authorization = await dappManager.getAuthorization(origin)
     if (
       accountManager.isLocked() ||
       !useWalletStore.getState().getAccount(walletId, accountId) ||
-      !authorized.some(account => account.walletId === walletId && account.accountId === accountId)
+      (expectedRevision !== undefined && authorization.revision !== expectedRevision) ||
+      !authorization.accounts.some(
+        account => account.walletId === walletId && account.accountId === accountId
+      )
     ) {
       throw new Error('Wallet account or site connection changed. Reconnect and try again.')
     }
@@ -1564,9 +1629,19 @@ export class DAppHandler {
     origin: string,
     action: string,
     data?: any
-  ): Promise<{ approved: boolean; walletId: string; accountId: string }> {
+  ): Promise<{
+    approved: boolean
+    walletId: string
+    accountId: string
+    authorizationRevision: number
+  }> {
     const result = await this.requestUserApprovalWithId(origin, action, data)
-    return { approved: result.approved, walletId: result.walletId, accountId: result.accountId }
+    return {
+      approved: result.approved,
+      walletId: result.walletId,
+      accountId: result.accountId,
+      authorizationRevision: result.authorizationRevision
+    }
   }
 
   private async requestUserApprovalWithId(
@@ -1578,6 +1653,7 @@ export class DAppHandler {
     requestId: string
     walletId: string
     accountId: string
+    authorizationRevision: number
     marginalFeeZats?: number
     feeZats?: number
     selectedIds?: string[]
@@ -1587,112 +1663,114 @@ export class DAppHandler {
     const capturedWalletId = useWalletStore.getState().currentWalletId || ''
     const account = accountManager.getCurrentAccount()
     const capturedAccountId = account?.id || ''
+    const network = useWalletStore.getState().currentNetwork
+    const authorizationRevision = await dappManager.getAuthorizationRevision(origin)
 
-    return new Promise(async resolve => {
-      await closeAllPopupWindows()
-
+    await closeAllPopupWindows()
+    return new Promise(resolve => {
       const requestId = pendingRequestsManager.create(
         origin,
         action,
         data,
         capturedWalletId,
-        capturedAccountId
+        capturedAccountId,
+        network,
+        authorizationRevision
       )
 
-      const lastWindow = await chrome.windows.getLastFocused()
-      const windowWidth = UI_CONFIG.DAPP_WINDOW.WIDTH
-      const windowHeight = UI_CONFIG.DAPP_WINDOW.HEIGHT
+      let windowId: number | undefined
+      let finished = false
+      let checkInterval: ReturnType<typeof setInterval> | undefined
+      let timeoutId: ReturnType<typeof setTimeout> | undefined
 
-      const left =
-        lastWindow?.left !== undefined && lastWindow?.width !== undefined
-          ? lastWindow.left + lastWindow.width - windowWidth - 20
-          : undefined
-      const top = lastWindow?.top !== undefined ? lastWindow.top + 100 : undefined
+      const finish = (
+        approved: boolean,
+        extras?: { marginalFeeZats?: number; feeZats?: number; selectedIds?: string[] }
+      ) => {
+        if (finished) return
+        finished = true
+        clearInterval(checkInterval)
+        clearTimeout(timeoutId)
+        chrome.runtime.onMessage.removeListener(messageListener)
+        pendingRequestsManager.cancel(requestId)
+        if (!approved && windowId !== undefined) {
+          chrome.windows.remove(windowId).catch(() => {})
+        }
+        resolve({
+          approved,
+          requestId,
+          walletId: capturedWalletId,
+          accountId: capturedAccountId,
+          authorizationRevision,
+          marginalFeeZats: extras?.marginalFeeZats,
+          feeZats: extras?.feeZats,
+          selectedIds: extras?.selectedIds
+        })
+      }
 
-      chrome.windows.create(
-        {
+      const messageListener = (msg: any) => {
+        if (msg.type === 'DAPP_APPROVAL_RESULT' && msg.requestId === requestId) {
+          void (async () => {
+            if (msg.success) {
+              await getApprovalContext(requestId)
+            }
+            finish(msg.success, {
+              marginalFeeZats: msg.marginalFeeZats,
+              feeZats: msg.feeZats,
+              selectedIds: msg.selectedIds
+            })
+          })().catch(() => finish(false))
+        }
+      }
+
+      chrome.runtime.onMessage.addListener(messageListener)
+      pendingRequestsManager.onCancel(requestId, () => finish(false))
+      timeoutId = setTimeout(() => {
+        finish(false)
+      }, 120000)
+
+      void (async () => {
+        await getApprovalContext(requestId)
+        const lastWindow = await chrome.windows.getLastFocused()
+        if (finished) return
+        const width = UI_CONFIG.DAPP_WINDOW.WIDTH
+        const height = UI_CONFIG.DAPP_WINDOW.HEIGHT
+        const window = await chrome.windows.create({
           url: `index.html#approval?requestId=${requestId}`,
           type: 'popup',
-          width: windowWidth,
-          height: windowHeight,
-          left,
-          top,
-          focused: true
-        },
-        window => {
-          if (!window || !window.id) {
-            pendingRequestsManager.cancel(requestId)
-            resolve({
-              approved: false,
-              requestId,
-              walletId: capturedWalletId,
-              accountId: capturedAccountId
-            })
-            return
-          }
-
-          const windowId = window.id
-
-          let finished = false
-          let checkInterval: ReturnType<typeof setInterval>
-          let timeoutId: ReturnType<typeof setTimeout>
-
-          const finish = (
-            approved: boolean,
-            extras?: { marginalFeeZats?: number; feeZats?: number; selectedIds?: string[] }
-          ) => {
-            if (finished) return
-            finished = true
-            clearInterval(checkInterval)
-            clearTimeout(timeoutId)
-            chrome.runtime.onMessage.removeListener(messageListener)
-            pendingRequestsManager.cancel(requestId)
-            if (!approved) {
-              chrome.windows.remove(windowId).catch(() => {})
-            }
-            resolve({
-              approved,
-              requestId,
-              walletId: capturedWalletId,
-              accountId: capturedAccountId,
-              marginalFeeZats: extras?.marginalFeeZats,
-              feeZats: extras?.feeZats,
-              selectedIds: extras?.selectedIds
-            })
-          }
-
-          const messageListener = (msg: any) => {
-            if (msg.type === 'DAPP_APPROVAL_RESULT' && msg.requestId === requestId) {
-              finish(msg.success, {
-                marginalFeeZats: msg.marginalFeeZats,
-                feeZats: msg.feeZats,
-                selectedIds: msg.selectedIds
-              })
-            }
-          }
-
-          chrome.runtime.onMessage.addListener(messageListener)
-
-          checkInterval = setInterval(() => {
-            chrome.windows.get(windowId, w => {
-              if (chrome.runtime.lastError || !w) {
-                finish(false)
-              }
-            })
-          }, 500)
-
-          timeoutId = setTimeout(() => {
-            finish(false)
-          }, 120000)
+          width,
+          height,
+          focused: true,
+          left:
+            lastWindow?.left !== undefined && lastWindow?.width !== undefined
+              ? lastWindow.left + lastWindow.width - width - 20
+              : undefined,
+          top: lastWindow?.top !== undefined ? lastWindow.top + 100 : undefined
+        })
+        if (finished) {
+          if (window?.id !== undefined) await chrome.windows.remove(window.id).catch(() => {})
+          return
         }
-      )
+        if (window?.id === undefined) {
+          finish(false)
+          return
+        }
+        windowId = window.id
+        checkInterval = setInterval(() => {
+          if (windowId === undefined) return
+          chrome.windows.get(windowId, w => {
+            if (chrome.runtime.lastError || !w) finish(false)
+          })
+        }, 500)
+      })().catch(() => finish(false))
     })
   }
 
   async revokePermission(origin: string): Promise<void> {
-    await this.broadcastEvent(origin, 'accountsChanged', null)
     this.permissions.delete(origin)
     await dappManager.removeConnection(origin)
+    pendingRequestsManager.cancelMatching(request => request.origin === origin)
+    await this.broadcastEvent(origin, 'accountsChanged', null)
     trackEvent(ANALYTICS_EVENTS.DAPP_DISCONNECTED, {
       pageId: PAGE_IDS.DAPP,
       extra: { origin }
@@ -1829,6 +1907,12 @@ export class DAppHandler {
           accountId: current.id
         })
       }
+      try {
+        await this.assertApprovedAccountAuthorized(dapp.origin, currentWalletId, current.id)
+      } catch {
+        this.permissions.delete(dapp.origin)
+        continue
+      }
       this.setPermissionForAccount(dapp.origin, current)
 
       try {
@@ -1858,6 +1942,13 @@ export class DAppHandler {
 
     for (const dapp of connectedDApps) {
       if (dapp.boundWalletId !== params.walletId || dapp.boundAccountId !== params.accountId) {
+        continue
+      }
+
+      try {
+        await this.assertApprovedAccountAuthorized(dapp.origin, params.walletId, params.accountId)
+      } catch {
+        this.permissions.delete(dapp.origin)
         continue
       }
 
@@ -1907,6 +1998,21 @@ export class DAppHandler {
 
       if (tabOrigin === origin) {
         try {
+          if (eventName === 'accountsChanged' && data && !Array.isArray(data)) {
+            const authorized = await dappManager.getAuthorizedAccounts(origin)
+            if (
+              accountManager.isLocked() ||
+              !authorized.some(ref => {
+                const account = useWalletStore.getState().getAccount(ref.walletId, ref.accountId)
+                return (
+                  !!account &&
+                  account.addresses.transparent === data.transparent &&
+                  account.addresses.shielded === data.shielded
+                )
+              })
+            )
+              return
+          }
           await chrome.tabs.sendMessage(tab.id, {
             type: 'NOIR_EVENT',
             chainId: 'zcash',

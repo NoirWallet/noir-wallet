@@ -1,4 +1,4 @@
-import { fetchWithTimeout } from './fetch-utils.ts'
+import { fetchJsonWithTimeout } from './fetch-utils.ts'
 
 const RPC_TIMEOUT_MS = 10_000
 
@@ -53,14 +53,14 @@ export async function zcashNodeRpc<T>(
   params: unknown[] = [],
   signal?: AbortSignal
 ): Promise<T> {
-  const response = await fetchWithTimeout(baseUrl, {
+  const json = await fetchJsonWithTimeout<JsonRpcResponse<T>>(baseUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
     timeoutMs: RPC_TIMEOUT_MS,
+    maxBytes: 32 * 1024 * 1024,
     signal
   })
-  const json = (await response.json()) as JsonRpcResponse<T>
   if (json.error) {
     throw new ZcashRpcError(`RPC ${method} failed: ${json.error.message}`, json.error.code)
   }

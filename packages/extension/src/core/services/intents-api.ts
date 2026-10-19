@@ -9,7 +9,12 @@ import {
   NOIR_SWAP_APP_FEES,
   NOIR_SWAP_REFERRAL
 } from '@/config/near'
-import { FetchHttpError, FetchTimeoutError, fetchWithTimeout } from '@/lib/fetch-utils'
+import {
+  FetchHttpError,
+  FetchResponseTooLargeError,
+  FetchTimeoutError,
+  fetchJsonWithTimeout
+} from '@/lib/fetch-utils'
 import { DedupPromise } from '@/lib/async-utils'
 import { createIntentsDeadline } from '@/lib/intents-timeouts'
 
@@ -24,6 +29,7 @@ function getSwapQuoteErrorMessage(error: unknown): string {
   if (error instanceof FetchTimeoutError) {
     return 'Swap quote request timed out. Please try again.'
   }
+  if (error instanceof FetchResponseTooLargeError) return SWAP_QUOTE_UNAVAILABLE_MESSAGE
   if (error instanceof FetchHttpError) {
     if (error.status === 429) {
       return 'Swap quote service is busy. Please try again shortly.'
@@ -101,6 +107,14 @@ export interface SwapStatus {
   destinationAsset?: string
 }
 
+interface SwapStatusApiResponse {
+  status?: string
+  swapDetails?: SwapStatus['swapDetails']
+  status_response?: { status?: string; swapDetails?: SwapStatus['swapDetails'] }
+  quoteResponse?: { quoteRequest?: { originAsset?: string; destinationAsset?: string } }
+  quote_response?: { quoteRequest?: { originAsset?: string; destinationAsset?: string } }
+}
+
 const SWAP_STATUSES = new Set<SwapStatusType>([
   'KNOWN_DEPOSIT_TX',
   'PENDING_DEPOSIT',
@@ -133,10 +147,13 @@ async function ensureIconsLoaded(tokens: SwapToken[]): Promise<void> {
   if (iconsLoaded) return
   try {
     const chains = [...new Set(tokens.map(t => t.blockchain))].join(',')
-    const response = await fetchWithTimeout(`${TOKEN_ICONS_API}?chains=${chains}`, {
-      timeoutMs: 15000
-    })
-    const iconTokens: Array<{ assetId: string; icon?: string | null }> = await response.json()
+    const iconTokens = await fetchJsonWithTimeout<Array<{ assetId: string; icon?: string | null }>>(
+      `${TOKEN_ICONS_API}?chains=${chains}`,
+      {
+        timeoutMs: 15000,
+        maxBytes: 8 * 1024 * 1024
+      }
+    )
     for (const t of iconTokens) {
       if (t.icon) iconMap.set(t.assetId, t.icon)
     }
@@ -147,8 +164,10 @@ async function ensureIconsLoaded(tokens: SwapToken[]): Promise<void> {
 }
 
 async function fetchAllTokens(): Promise<SwapToken[]> {
-  const response = await fetchWithTimeout(ONECLICK_TOKENS_API, { timeoutMs: 15000 })
-  const tokens: SwapToken[] = await response.json()
+  const tokens = await fetchJsonWithTimeout<SwapToken[]>(ONECLICK_TOKENS_API, {
+    timeoutMs: 15000,
+    maxBytes: 8 * 1024 * 1024
+  })
   await ensureIconsLoaded(tokens)
   const enriched = tokens.map(token => ({ ...token, icon: iconMap.get(token.assetId) ?? null }))
   tokenCache = enriched
@@ -293,19 +312,20 @@ export async function fetchQuote(params: QuoteParams): Promise<QuoteResult> {
       appFees: NOIR_SWAP_APP_FEES
     }
 
-    const response = await fetchWithTimeout(`${INTENTS_API_BASE}/quote`, {
+    const data = await fetchJsonWithTimeout<
+      Partial<NonNullable<QuoteResult['quoteSuccessResult']>> & { message?: string }
+    >(`${INTENTS_API_BASE}/quote`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(requestBody),
-      timeoutMs: 20000
+      timeoutMs: 20000,
+      maxBytes: 1024 * 1024
     })
-
-    const data = await response.json()
 
     if (data?.quote) {
       return {
         quoteStatus: 'success',
-        quoteSuccessResult: data
+        quoteSuccessResult: { quote: data.quote }
       }
     } else {
       return {
@@ -326,14 +346,13 @@ export async function fetchQuote(params: QuoteParams): Promise<QuoteResult> {
  */
 export async function fetchSwapStatus(depositAddress: string): Promise<SwapStatus | null> {
   try {
-    const response = await fetchWithTimeout(
+    const data = await fetchJsonWithTimeout<SwapStatusApiResponse>(
       `${INTENTS_API_BASE}/status?depositAddress=${depositAddress}`,
       {
-        timeoutMs: 15000
+        timeoutMs: 15000,
+        maxBytes: 1024 * 1024
       }
     )
-
-    const data = await response.json()
     const swapDetails = data?.swapDetails || data?.status_response?.swapDetails
     const rawStatus = data?.status || data?.status_response?.status
     if (typeof rawStatus !== 'string' || !SWAP_STATUSES.has(rawStatus as SwapStatusType)) {

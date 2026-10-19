@@ -339,7 +339,8 @@ disconnect(): Promise<void>
 ```
 
 Revokes the current origin and emits `accountsChanged` with `null`. It does not lock Noir Wallet or
-affect other connected sites.
+affect other connected sites. Revocation persists after restarting the extension, including for
+first-party sites. Reconnecting requires user approval through `requestAccounts()`.
 
   </Accordion>
 

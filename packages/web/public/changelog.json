@@ -1,6 +1,14 @@
 {
   "schemaVersion": 1,
   "releases": {
+    "1.0.40": {
+      "changes": [
+        "Resetting a wallet or deleting an account now clears its saved data more reliably.",
+        "Disconnected sites stay disconnected after restarting; reconnecting requires your approval.",
+        "dApp approvals keep the requested account when you switch accounts or refresh the approval window.",
+        "Network requests now time out reliably and can be retried if a response stalls."
+      ]
+    },
     "1.0.39": {
       "changes": [
         "ZeroIndexer broadcasting is enabled by default. Manage it in Security & Privacy; sync keeps your selected RPC.",

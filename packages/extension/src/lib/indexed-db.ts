@@ -12,12 +12,13 @@ import { isWalletSnapshotIntegrityError } from './wallet-snapshot-errors'
 
 const DB_NAME = 'zcash-wallet-db'
 // Schema versions must remain monotonic across builds that share an extension ID.
-const DB_VERSION = 7
+const DB_VERSION = 8
 const STORE_NAME = 'walletData'
 const TRANSACTIONS_STORE_NAME = 'transactions'
 const TRANSPARENT_TRANSACTION_CACHE_STORE_NAME = 'transparentTransactionCache'
 const LEGACY_TRANSPARENT_TX_CACHE_STORE_NAME = 'transparentTxCache'
 const VOTING_DATA_STORE_NAME = 'votingData'
+const WRITE_BLOCK_STORE_NAME = 'walletWriteBlocks'
 
 function normalizeTransactions(value: unknown): Transaction[] {
   if (Array.isArray(value)) return value
@@ -88,6 +89,108 @@ function walletDbChunkKey(key: string, index: number): string {
 
 function walletDbChunkRange(key: string): IDBKeyRange {
   return IDBKeyRange.bound(`${key}::c::`, `${key}::c::\uffff`)
+}
+
+function queueWalletWrite(
+  tx: IDBTransaction,
+  key: string,
+  write: () => void
+): { error: Error | null } {
+  const guard = { error: null as Error | null }
+  const [network, walletId, accountId] = key.split('_')
+  const blockStore = tx.objectStore(WRITE_BLOCK_STORE_NAME)
+  const abortIfBlocked = (blocked: unknown): boolean => {
+    if (!blocked) return false
+    guard.error = new Error('Wallet data is being removed')
+    tx.abort()
+    return true
+  }
+  const commit = () => {
+    try {
+      write()
+    } catch (error) {
+      guard.error = error instanceof Error ? error : new Error('Wallet data write failed')
+      tx.abort()
+    }
+  }
+  const walletBlock = blockStore.get(`${network}_${walletId}`)
+  walletBlock.onsuccess = () => {
+    if (abortIfBlocked(walletBlock.result)) return
+    if (!accountId) {
+      commit()
+      return
+    }
+    const accountBlock = blockStore.get(key)
+    accountBlock.onsuccess = () => {
+      if (!abortIfBlocked(accountBlock.result)) commit()
+    }
+  }
+  return guard
+}
+
+async function setWriteBlock(key: string, blocked: boolean): Promise<void> {
+  const db = await getConnection()
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(WRITE_BLOCK_STORE_NAME, 'readwrite')
+    const store = tx.objectStore(WRITE_BLOCK_STORE_NAME)
+    if (blocked) store.put(true, key)
+    else store.delete(key)
+    tx.oncomplete = () => resolve()
+    tx.onerror = () => reject(tx.error ?? new Error('Wallet write block failed'))
+    tx.onabort = () => reject(tx.error ?? new Error('Wallet write block aborted'))
+  })
+}
+
+export function blockWalletRecords(network: string, walletId: string): Promise<void> {
+  return setWriteBlock(`${network}_${walletId}`, true)
+}
+
+export function unblockWalletRecords(network: string, walletId: string): Promise<void> {
+  return setWriteBlock(`${network}_${walletId}`, false)
+}
+
+export function blockAccountRecords(
+  network: string,
+  walletId: string,
+  accountId: string
+): Promise<void> {
+  return setWriteBlock(`${network}_${walletId}_${accountId}`, true)
+}
+
+export function unblockAccountRecords(
+  network: string,
+  walletId: string,
+  accountId: string
+): Promise<void> {
+  return setWriteBlock(`${network}_${walletId}_${accountId}`, false)
+}
+
+export async function nextUnusedDerivationIndex(
+  network: string,
+  walletId: string,
+  highestLiveIndex: number
+): Promise<number> {
+  const db = await getConnection()
+  const prefix = `${network}_${walletId}_`
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(WRITE_BLOCK_STORE_NAME, 'readonly')
+    const request = tx
+      .objectStore(WRITE_BLOCK_STORE_NAME)
+      .getAllKeys(IDBKeyRange.bound(prefix, `${prefix}\uffff`))
+    let highest = highestLiveIndex
+    request.onsuccess = () => {
+      for (const key of request.result) {
+        if (typeof key !== 'string') continue
+        const suffix = key.slice(prefix.length)
+        if (!/^\d+$/.test(suffix)) continue
+        const index = Number(suffix)
+        if (Number.isSafeInteger(index)) highest = Math.max(highest, index)
+      }
+    }
+    tx.oncomplete = () => resolve(highest + 1)
+    tx.onerror = () => reject(tx.error ?? new Error('Unable to check removed account indices'))
+    tx.onabort = () => reject(tx.error ?? new Error('Account index lookup aborted'))
+  })
 }
 
 /**
@@ -178,6 +281,9 @@ async function getConnection(): Promise<IDBDatabase> {
       if (!db.objectStoreNames.contains(VOTING_DATA_STORE_NAME)) {
         db.createObjectStore(VOTING_DATA_STORE_NAME)
       }
+      if (!db.objectStoreNames.contains(WRITE_BLOCK_STORE_NAME)) {
+        db.createObjectStore(WRITE_BLOCK_STORE_NAME)
+      }
     }
   })
 
@@ -220,8 +326,13 @@ export async function saveWalletDb(key: string, data: Uint8Array | Uint8Array[])
 
   const db = await getConnection()
   return new Promise((resolve, reject) => {
-    const transaction = db.transaction(STORE_NAME, 'readwrite')
+    const transaction = db.transaction([STORE_NAME, WRITE_BLOCK_STORE_NAME], 'readwrite')
     const store = transaction.objectStore(STORE_NAME)
+    const guard = queueWalletWrite(transaction, key, () => {
+      store.delete(walletDbChunkRange(key))
+      chunks.forEach((chunk, i) => store.put(chunk, walletDbChunkKey(key, i)))
+      store.put(manifest, key)
+    })
     let settled = false
     const finish = (fn: () => void) => {
       if (settled) return
@@ -238,7 +349,7 @@ export async function saveWalletDb(key: string, data: Uint8Array | Uint8Array[])
       })
     transaction.onabort = () =>
       finish(() => {
-        const err = transaction.error || new Error('IndexedDB transaction aborted')
+        const err = guard.error ?? transaction.error ?? new Error('IndexedDB transaction aborted')
         console.warn(`[IndexedDB] save aborted for ${key}: ${err.name}: ${err.message}`)
         reject(err)
       })
@@ -248,20 +359,6 @@ export async function saveWalletDb(key: string, data: Uint8Array | Uint8Array[])
         console.warn(`[IndexedDB] save error for ${key}: ${err.name}: ${err.message}`)
         reject(err)
       })
-
-    try {
-      // Keep replacement and cleanup in one transaction, including synchronous failures.
-      store.delete(walletDbChunkRange(key))
-      chunks.forEach((chunk, i) => store.put(chunk, walletDbChunkKey(key, i)))
-      store.put(manifest, key)
-    } catch (error) {
-      try {
-        transaction.abort()
-      } catch {
-        // An IndexedDB failure may have already aborted the transaction.
-      }
-      finish(() => reject(error))
-    }
   })
 }
 
@@ -446,26 +543,118 @@ export async function hasWalletDb(key: string): Promise<boolean> {
  * @param key - Storage key (e.g., "testnet_walletId123")
  */
 export async function deleteWalletDb(key: string): Promise<void> {
-  try {
-    const db = await getConnection()
+  const db = await getConnection()
 
-    return new Promise((resolve, reject) => {
-      const transaction = db.transaction(STORE_NAME, 'readwrite')
-      const store = transaction.objectStore(STORE_NAME)
-      store.delete(key)
-      store.delete(walletDbChunkRange(key))
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(STORE_NAME, 'readwrite')
+    const store = transaction.objectStore(STORE_NAME)
+    store.delete(key)
+    store.delete(walletDbChunkRange(key))
 
-      transaction.oncomplete = () => {
-        console.log(`[IndexedDB] Deleted wallet db for key: ${key}`)
-        resolve()
-      }
-      transaction.onerror = () => reject(transaction.error)
-      transaction.onabort = () =>
-        reject(transaction.error || new Error('IndexedDB delete transaction aborted'))
-    })
-  } catch (e) {
-    console.warn('[IndexedDB] Failed to delete wallet db:', e)
-  }
+    transaction.oncomplete = () => {
+      console.log(`[IndexedDB] Deleted wallet db for key: ${key}`)
+      resolve()
+    }
+    transaction.onerror = () => reject(transaction.error)
+    transaction.onabort = () =>
+      reject(transaction.error || new Error('IndexedDB delete transaction aborted'))
+  })
+}
+
+/** Remove every persisted record belonging to one wallet in a single transaction. */
+export async function deleteWalletRecords(network: string, walletId: string): Promise<void> {
+  const db = await getConnection()
+  const walletKey = `${network}_${walletId}`
+  const accountRange = IDBKeyRange.bound(`${walletKey}_`, `${walletKey}_\uffff`)
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(
+      [
+        STORE_NAME,
+        TRANSACTIONS_STORE_NAME,
+        TRANSPARENT_TRANSACTION_CACHE_STORE_NAME,
+        JOURNAL_STORE_NAME,
+        JOURNAL_MANIFEST_STORE_NAME,
+        VOTING_DATA_STORE_NAME,
+        WRITE_BLOCK_STORE_NAME
+      ],
+      'readwrite'
+    )
+    tx.objectStore(WRITE_BLOCK_STORE_NAME).put(true, walletKey)
+    tx.objectStore(STORE_NAME).delete(walletKey)
+    tx.objectStore(STORE_NAME).delete(walletDbChunkRange(walletKey))
+    tx.objectStore(TRANSACTIONS_STORE_NAME).delete(accountRange)
+    tx.objectStore(TRANSPARENT_TRANSACTION_CACHE_STORE_NAME).delete(accountRange)
+    tx.objectStore(VOTING_DATA_STORE_NAME).delete(accountRange)
+    tx.objectStore(JOURNAL_MANIFEST_STORE_NAME).delete(walletKey)
+    const journal = tx.objectStore(JOURNAL_STORE_NAME)
+    const cursor = journal.index('byWallet').openCursor(IDBKeyRange.only(walletKey))
+    cursor.onsuccess = () => {
+      if (!cursor.result) return
+      cursor.result.delete()
+      cursor.result.continue()
+    }
+    tx.oncomplete = () => resolve()
+    tx.onerror = () => reject(tx.error ?? new Error('Wallet data deletion failed'))
+    tx.onabort = () => reject(tx.error ?? new Error('Wallet data deletion aborted'))
+  })
+}
+
+/** Discard a shared WASM snapshot while retaining account transaction history. */
+export async function deleteWalletSnapshot(network: string, walletId: string): Promise<void> {
+  const db = await getConnection()
+  const walletKey = `${network}_${walletId}`
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(
+      [STORE_NAME, JOURNAL_STORE_NAME, JOURNAL_MANIFEST_STORE_NAME],
+      'readwrite'
+    )
+    tx.objectStore(STORE_NAME).delete(walletKey)
+    tx.objectStore(STORE_NAME).delete(walletDbChunkRange(walletKey))
+    tx.objectStore(JOURNAL_MANIFEST_STORE_NAME).delete(walletKey)
+    const cursor = tx
+      .objectStore(JOURNAL_STORE_NAME)
+      .index('byWallet')
+      .openCursor(IDBKeyRange.only(walletKey))
+    cursor.onsuccess = () => {
+      if (!cursor.result) return
+      cursor.result.delete()
+      cursor.result.continue()
+    }
+    tx.oncomplete = () => resolve()
+    tx.onerror = () => reject(tx.error ?? new Error('Wallet snapshot deletion failed'))
+    tx.onabort = () => reject(tx.error ?? new Error('Wallet snapshot deletion aborted'))
+  })
+}
+
+/** Reset all wallet-owned IndexedDB records after active writers have stopped. */
+export async function clearAllWalletRecords(): Promise<void> {
+  const db = await getConnection()
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(
+      [
+        STORE_NAME,
+        TRANSACTIONS_STORE_NAME,
+        TRANSPARENT_TRANSACTION_CACHE_STORE_NAME,
+        JOURNAL_STORE_NAME,
+        JOURNAL_MANIFEST_STORE_NAME,
+        VOTING_DATA_STORE_NAME
+      ],
+      'readwrite'
+    )
+    for (const name of [
+      STORE_NAME,
+      TRANSACTIONS_STORE_NAME,
+      TRANSPARENT_TRANSACTION_CACHE_STORE_NAME,
+      JOURNAL_STORE_NAME,
+      JOURNAL_MANIFEST_STORE_NAME,
+      VOTING_DATA_STORE_NAME
+    ]) {
+      tx.objectStore(name).clear()
+    }
+    tx.oncomplete = () => resolve()
+    tx.onerror = () => reject(tx.error ?? new Error('Wallet data reset failed'))
+    tx.onabort = () => reject(tx.error ?? new Error('Wallet data reset aborted'))
+  })
 }
 
 /**
@@ -530,33 +719,43 @@ export async function saveVotingState(
 ): Promise<void> {
   const db = await getConnection()
   return new Promise((resolve, reject) => {
-    const transaction = db.transaction(VOTING_DATA_STORE_NAME, 'readwrite')
+    const transaction = db.transaction(
+      [VOTING_DATA_STORE_NAME, WRITE_BLOCK_STORE_NAME],
+      'readwrite'
+    )
     const store = transaction.objectStore(VOTING_DATA_STORE_NAME)
-    const request = store.get(key)
+    let request: IDBRequest<VotingStateEntry | undefined>
     let updateError: Error | null = null
+    const guard = queueWalletWrite(transaction, key, () => {
+      request = store.get(key)
+      request.onsuccess = () => {
+        const current = request.result as VotingStateEntry | undefined
+        let action: 'write' | 'unchanged'
+        try {
+          action = validateVotingCheckpoint(current, bytes, revision)
+        } catch (error) {
+          updateError = error instanceof Error ? error : new Error('Invalid voting checkpoint')
+          transaction.abort()
+          return
+        }
+        if (action === 'unchanged') return
 
-    request.onsuccess = () => {
-      const current = request.result as VotingStateEntry | undefined
-      let action: 'write' | 'unchanged'
-      try {
-        action = validateVotingCheckpoint(current, bytes, revision)
-      } catch (error) {
-        updateError = error instanceof Error ? error : new Error('Invalid voting checkpoint')
-        transaction.abort()
-        return
+        store.put(
+          { revision: revision.toString(), bytes: new Uint8Array(bytes), updatedAt: Date.now() },
+          key
+        )
       }
-      if (action === 'unchanged') return
-
-      store.put(
-        { revision: revision.toString(), bytes: new Uint8Array(bytes), updatedAt: Date.now() },
-        key
-      )
-    }
+    })
 
     transaction.oncomplete = () => resolve()
     transaction.onerror = () => reject(transaction.error)
     transaction.onabort = () =>
-      reject(updateError ?? transaction.error ?? new Error('Voting checkpoint transaction aborted'))
+      reject(
+        updateError ??
+          guard.error ??
+          transaction.error ??
+          new Error('Voting checkpoint transaction aborted')
+      )
   })
 }
 
@@ -612,21 +811,27 @@ export async function mutateTransactions(
   const db = await getConnection()
 
   return new Promise((resolve, reject) => {
-    const transaction = db.transaction(TRANSACTIONS_STORE_NAME, 'readwrite')
+    const transaction = db.transaction(
+      [TRANSACTIONS_STORE_NAME, WRITE_BLOCK_STORE_NAME],
+      'readwrite'
+    )
     const store = transaction.objectStore(TRANSACTIONS_STORE_NAME)
-    const request = store.get(key)
+    let request: IDBRequest<Transaction[]>
     let updatedTransactions: Transaction[] = []
     let updateError: unknown
 
-    request.onsuccess = () => {
-      try {
-        updatedTransactions = updater(normalizeTransactions(request.result))
-        store.put(updatedTransactions, key)
-      } catch (error) {
-        updateError = error
-        transaction.abort()
+    const guard = queueWalletWrite(transaction, key, () => {
+      request = store.get(key)
+      request.onsuccess = () => {
+        try {
+          updatedTransactions = updater(normalizeTransactions(request.result))
+          store.put(updatedTransactions, key)
+        } catch (error) {
+          updateError = error
+          transaction.abort()
+        }
       }
-    }
+    })
 
     transaction.oncomplete = () => {
       console.log(`[IndexedDB] Updated ${updatedTransactions.length} transactions for key: ${key}`)
@@ -634,7 +839,9 @@ export async function mutateTransactions(
     }
     transaction.onerror = () => reject(transaction.error)
     transaction.onabort = () =>
-      reject(updateError ?? transaction.error ?? new Error('Transaction update aborted'))
+      reject(
+        updateError ?? guard.error ?? transaction.error ?? new Error('Transaction update aborted')
+      )
   })
 }
 
@@ -643,23 +850,20 @@ export async function mutateTransactions(
  * @param key - Storage key (e.g., "mainnet_walletId123_accountId456")
  */
 export async function deleteTransactions(key: string): Promise<void> {
-  try {
-    const db = await getConnection()
+  const db = await getConnection()
 
-    return new Promise((resolve, reject) => {
-      const transaction = db.transaction(TRANSACTIONS_STORE_NAME, 'readwrite')
-      const store = transaction.objectStore(TRANSACTIONS_STORE_NAME)
-      const request = store.delete(key)
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(TRANSACTIONS_STORE_NAME, 'readwrite')
+    const store = transaction.objectStore(TRANSACTIONS_STORE_NAME)
+    store.delete(key)
 
-      request.onsuccess = () => {
-        console.log(`[IndexedDB] Deleted transactions for key: ${key}`)
-        resolve()
-      }
-      request.onerror = () => reject(request.error)
-    })
-  } catch (e) {
-    console.warn('[IndexedDB] Failed to delete transactions:', e)
-  }
+    transaction.oncomplete = () => {
+      console.log(`[IndexedDB] Deleted transactions for key: ${key}`)
+      resolve()
+    }
+    transaction.onerror = () => reject(transaction.error ?? new Error('Transaction delete failed'))
+    transaction.onabort = () => reject(transaction.error ?? new Error('Transaction delete aborted'))
+  })
 }
 
 /**
@@ -671,18 +875,26 @@ export async function saveTransparentTxCache(
 ): Promise<void> {
   const db = await getConnection()
   return new Promise((resolve, reject) => {
-    const transaction = db.transaction(TRANSPARENT_TRANSACTION_CACHE_STORE_NAME, 'readwrite')
+    const transaction = db.transaction(
+      [TRANSPARENT_TRANSACTION_CACHE_STORE_NAME, WRITE_BLOCK_STORE_NAME],
+      'readwrite'
+    )
     const store = transaction.objectStore(TRANSPARENT_TRANSACTION_CACHE_STORE_NAME)
-    const request = store.get(key)
-    request.onsuccess = () => {
-      // Receive and recipient recovery can finish concurrently for the same account.
-      const cached = normalizeTransparentTxCache(request.result)
-      store.put({ ...cached, ...Object.fromEntries(transactions) }, key)
-    }
+    let request: IDBRequest<unknown>
+    const guard = queueWalletWrite(transaction, key, () => {
+      request = store.get(key)
+      request.onsuccess = () => {
+        // Receive and recipient recovery can finish concurrently for the same account.
+        const cached = normalizeTransparentTxCache(request.result)
+        store.put({ ...cached, ...Object.fromEntries(transactions) }, key)
+      }
+    })
     transaction.oncomplete = () => resolve()
     transaction.onerror = () => reject(transaction.error)
     transaction.onabort = () =>
-      reject(transaction.error || new Error('Transparent transaction cache save aborted'))
+      reject(
+        guard.error ?? transaction.error ?? new Error('Transparent transaction cache save aborted')
+      )
   })
 }
 
@@ -714,20 +926,16 @@ export async function loadTransparentTxCache(
  * Delete persisted transparent transaction details for an account.
  */
 export async function deleteTransparentTxCache(key: string): Promise<void> {
-  try {
-    const db = await getConnection()
+  const db = await getConnection()
 
-    await new Promise<void>((resolve, reject) => {
-      const transaction = db.transaction(TRANSPARENT_TRANSACTION_CACHE_STORE_NAME, 'readwrite')
-      transaction.objectStore(TRANSPARENT_TRANSACTION_CACHE_STORE_NAME).delete(key)
-      transaction.oncomplete = () => resolve()
-      transaction.onerror = () => reject(transaction.error)
-      transaction.onabort = () =>
-        reject(transaction.error || new Error('Transparent transaction cache delete aborted'))
-    })
-  } catch (error) {
-    console.warn('[IndexedDB] Failed to delete transparent transaction cache:', error)
-  }
+  await new Promise<void>((resolve, reject) => {
+    const transaction = db.transaction(TRANSPARENT_TRANSACTION_CACHE_STORE_NAME, 'readwrite')
+    transaction.objectStore(TRANSPARENT_TRANSACTION_CACHE_STORE_NAME).delete(key)
+    transaction.oncomplete = () => resolve()
+    transaction.onerror = () => reject(transaction.error)
+    transaction.onabort = () =>
+      reject(transaction.error || new Error('Transparent transaction cache delete aborted'))
+  })
 }
 
 // ============================================================================
@@ -779,11 +987,14 @@ export async function getJournalManifest(
 export async function saveJournalManifest(manifest: JournalManifest): Promise<void> {
   const db = await getConnection()
   return new Promise((resolve, reject) => {
-    const tx = db.transaction(JOURNAL_MANIFEST_STORE_NAME, 'readwrite')
+    const tx = db.transaction([JOURNAL_MANIFEST_STORE_NAME, WRITE_BLOCK_STORE_NAME], 'readwrite')
     const store = tx.objectStore(JOURNAL_MANIFEST_STORE_NAME)
-    const req = store.put(manifest, manifest.walletKey)
-    req.onsuccess = () => resolve()
-    req.onerror = () => reject(req.error)
+    const guard = queueWalletWrite(tx, manifest.walletKey, () => {
+      store.put(manifest, manifest.walletKey)
+    })
+    tx.oncomplete = () => resolve()
+    tx.onerror = () => reject(guard.error ?? tx.error ?? new Error('Journal manifest save failed'))
+    tx.onabort = () => reject(guard.error ?? tx.error ?? new Error('Journal manifest save aborted'))
   })
 }
 
@@ -802,39 +1013,46 @@ export async function appendJournalEntry(
   const walletKey = journalWalletKey(network, walletId)
 
   return new Promise((resolve, reject) => {
-    const tx = db.transaction([JOURNAL_STORE_NAME, JOURNAL_MANIFEST_STORE_NAME], 'readwrite')
+    const tx = db.transaction(
+      [JOURNAL_STORE_NAME, JOURNAL_MANIFEST_STORE_NAME, WRITE_BLOCK_STORE_NAME],
+      'readwrite'
+    )
     const journalStore = tx.objectStore(JOURNAL_STORE_NAME)
     const manifestStore = tx.objectStore(JOURNAL_MANIFEST_STORE_NAME)
 
     let assignedSeq = 0
-    const mReq = manifestStore.get(walletKey)
-    mReq.onsuccess = () => {
-      const existing = mReq.result as JournalManifest | undefined
-      assignedSeq = existing?.nextSeq ?? 0
+    let mReq: IDBRequest<JournalManifest | undefined>
+    const guard = queueWalletWrite(tx, walletKey, () => {
+      mReq = manifestStore.get(walletKey)
+      mReq.onsuccess = () => {
+        const existing = mReq.result as JournalManifest | undefined
+        assignedSeq = existing?.nextSeq ?? 0
 
-      const entry: JournalEntry = {
-        walletKey,
-        seq: assignedSeq,
-        rangeStart,
-        rangeEnd,
-        data,
-        committedAt: Date.now()
-      }
-      journalStore.put(entry)
+        const entry: JournalEntry = {
+          walletKey,
+          seq: assignedSeq,
+          rangeStart,
+          rangeEnd,
+          data,
+          committedAt: Date.now()
+        }
+        journalStore.put(entry)
 
-      const manifest: JournalManifest = {
-        walletKey,
-        baseSnapshotSeq: existing?.baseSnapshotSeq ?? 0,
-        nextSeq: assignedSeq + 1,
-        totalBytes: (existing?.totalBytes ?? 0) + data.byteLength,
-        createdAt: existing?.createdAt ?? Date.now(),
-        updatedAt: Date.now()
+        const manifest: JournalManifest = {
+          walletKey,
+          baseSnapshotSeq: existing?.baseSnapshotSeq ?? 0,
+          nextSeq: assignedSeq + 1,
+          totalBytes: (existing?.totalBytes ?? 0) + data.byteLength,
+          createdAt: existing?.createdAt ?? Date.now(),
+          updatedAt: Date.now()
+        }
+        manifestStore.put(manifest, walletKey)
       }
-      manifestStore.put(manifest, walletKey)
-    }
+    })
 
     tx.oncomplete = () => resolve(assignedSeq)
-    tx.onerror = () => reject(tx.error)
+    tx.onerror = () => reject(guard.error ?? tx.error ?? new Error('Journal append failed'))
+    tx.onabort = () => reject(guard.error ?? tx.error ?? new Error('Journal append aborted'))
   })
 }
 

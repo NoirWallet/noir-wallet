@@ -656,11 +656,12 @@ export class ZcashWorkerClient {
     return this.request('decrypt', { ciphertext, passphrase })
   }
 
-  async reset(): Promise<void> {
-    if (this.isInitialized) {
+  async reset(options?: { force?: boolean; strict?: boolean }): Promise<void> {
+    if (this.isInitialized || options?.force) {
       try {
         await this.request('wallet.reset', { walletId: this.walletId })
       } catch (e) {
+        if (options?.strict) throw e
         console.warn('Reset RPC failed', e)
       }
     }

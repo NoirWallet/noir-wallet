@@ -177,7 +177,16 @@ export class SyncScheduler {
       this.foregroundWalletId = null
     }
     this.abortSync(walletId)
-    await this.waitForWalletSyncIdle(walletId, 15_000)
+    if (!(await this.waitForWalletSyncIdle(walletId, 15_000))) {
+      this.removedWalletIds.delete(walletId)
+      throw new Error('Wallet sync is still running. Please try again.')
+    }
+  }
+
+  finishAccountRemoval(walletId: string): void {
+    this.removedWalletIds.delete(walletId)
+    this.syncAbortFlags.delete(getWalletSyncKey(walletId))
+    this.cancelledPreflightWalletIds.delete(walletId)
   }
 
   pauseForTx(walletId?: string): void {

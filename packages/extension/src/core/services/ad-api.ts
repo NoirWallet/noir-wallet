@@ -1,4 +1,4 @@
-import { fetchWithTimeout } from '@/lib/fetch-utils'
+import { fetchJsonWithTimeout } from '@/lib/fetch-utils'
 
 const AD_API_URL = 'https://api.zknoir.com/v1/ad'
 
@@ -51,6 +51,9 @@ export function parseHomeAdResponse(value: unknown): HomeAd | null {
 }
 
 export async function fetchHomeAd(): Promise<HomeAd | null> {
-  const response = await fetchWithTimeout(AD_API_URL, { timeoutMs: 10_000 })
-  return parseHomeAdResponse((await response.json()) as unknown)
+  const response = await fetchJsonWithTimeout(AD_API_URL, {
+    timeoutMs: 10_000,
+    maxBytes: 256 * 1024
+  })
+  return parseHomeAdResponse(response)
 }

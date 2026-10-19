@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Icon } from '@iconify/react'
 import { fetchHomeAd, type HomeAd } from '@/core/services/ad-api'
-import { fetchWithTimeout } from '@/lib/fetch-utils'
+import { fetchBlobWithTimeout } from '@/lib/fetch-utils'
 
 interface LoadedHomeAd extends HomeAd {
   imageSrc: string
@@ -20,8 +20,10 @@ export function HomeAdBanner() {
         const nextAd = await fetchHomeAd()
         if (!nextAd) return
 
-        const imageResponse = await fetchWithTimeout(nextAd.imageUrl, { timeoutMs: 10_000 })
-        const image = await imageResponse.blob()
+        const image = await fetchBlobWithTimeout(nextAd.imageUrl, {
+          timeoutMs: 10_000,
+          maxBytes: 5 * 1024 * 1024
+        })
         if (!image.type.startsWith('image/')) return
 
         imageSrc = URL.createObjectURL(image)

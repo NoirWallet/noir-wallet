@@ -1,10 +1,9 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Button } from '../../components/ui/button'
 import { WarningBox } from '../../components/ui/WarningBox'
 import { useWalletStore } from '@/store/wallet-store'
 import { useTransactionResultStore } from '@/store/transaction-result-store'
-import { accountManager } from '@/core/wallet/account-manager'
 import { Icon } from '@iconify/react'
 import { AddressTypeLabel } from '@/popup/components/account/AddressType'
 import { formatAccountName, formatNumber, getAccountDisplayName } from '@/lib/format'
@@ -31,8 +30,10 @@ interface BatchAccountOption {
 
 export function ApprovalPage() {
   const [searchParams] = useSearchParams()
-  const { getCurrentAccount, currentWalletId, accountDisplayNames } = useWalletStore()
-  const currentAccount = getCurrentAccount()
+  const { getAccount, accountDisplayNames } = useWalletStore()
+  const [binding, setBinding] = useState<{ walletId: string; accountId: string } | null>(null)
+  const currentWalletId = binding?.walletId
+  const currentAccount = binding ? getAccount(binding.walletId, binding.accountId) : null
   const accountDisplayName =
     currentAccount && currentWalletId
       ? getAccountDisplayName(
@@ -64,12 +65,20 @@ export function ApprovalPage() {
   const fundingSource: AddressType =
     data.fundingSource === 'transparent' ? 'transparent' : 'shielded'
   const hasEnoughShieldingBalance = !isShield || hasEnoughTransparentBalanceToShield(data.amount)
+  const estimate = useCallback(async () => {
+    const response = await chrome.runtime.sendMessage({ type: 'ESTIMATE_APPROVAL_FEE', requestId })
+    if (response?.error || typeof response?.fee !== 'string') {
+      throw new Error(response?.error || 'Fee estimation failed')
+    }
+    return response.fee
+  }, [requestId])
   const feeEstimate = useFeeEstimate({
     type: isShield ? 'shield' : 'send',
     to: data.to,
     amount: data.amount,
     memo: data.memo,
     fundingSource,
+    estimate,
     enabled: (isSend || isShield) && walletReady && hasEnoughShieldingBalance
   })
   const feeByTier = deriveFeeByTier(feeEstimate.feeZats, feeEstimate.error)
@@ -89,12 +98,14 @@ export function ApprovalPage() {
     hasFetched.current = true
 
     chrome.runtime.sendMessage({ type: 'GET_PENDING_REQUEST', requestId }, response => {
-      if (response.error) {
-        setError(response.error)
+      if (chrome.runtime.lastError || !response || response.error) {
+        setError(response?.error || 'Request not found or expired')
       } else if (response.request) {
         setOrigin(response.request.origin)
         setAction(response.request.action)
         setData(response.request.data || {})
+        setBinding({ walletId: response.request.walletId, accountId: response.request.accountId })
+        setWalletReady(true)
         if (response.request.data?.preselectedIds) {
           setSelectedIds(response.request.data.preselectedIds)
         }
@@ -103,16 +114,8 @@ export function ApprovalPage() {
   }, [requestId])
 
   useEffect(() => {
-    if ((!isSend && !isShield) || walletReady) return
-    let cancelled = false
-    accountManager
-      .waitForAccountReady(20000)
-      .then(() => !cancelled && setWalletReady(true))
-      .catch(() => {})
-    return () => {
-      cancelled = true
-    }
-  }, [isSend, isShield, walletReady])
+    if (binding && !currentAccount) setError('Account is no longer available')
+  }, [binding, currentAccount])
 
   const toggleAccount = (id: string) => {
     setSelectedIds(prev => (prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]))
@@ -137,16 +140,8 @@ export function ApprovalPage() {
     setIsLoading(true)
     let resultListener: Parameters<typeof chrome.runtime.onMessage.addListener>[0] | null = null
     try {
-      if (isSend || isShield) {
-        console.log('[ApprovalPage] Waiting for wallet initialization...')
-        try {
-          await accountManager.waitForAccountReady(20000)
-          console.log('[ApprovalPage] Wallet ready, proceeding with approval')
-        } catch (err) {
-          console.error('[ApprovalPage] Wallet initialization timeout:', err)
-          throw new Error('Wallet initialization timeout. Please try again.')
-        }
-      }
+      const context = await chrome.runtime.sendMessage({ type: 'GET_PENDING_REQUEST', requestId })
+      if (context?.error || !context?.request) throw new Error(context?.error || 'Request expired')
 
       if (action === 'sendTransaction' || action === 'shieldFunds') {
         setResult(

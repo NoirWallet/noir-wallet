@@ -12,6 +12,7 @@ import {
   WALLET_STATE_KEY
 } from './wallet-metadata-storage'
 import { withWalletSettingsLock } from './wallet-settings-storage'
+import { ACCOUNT_DATA_KEY, readAccountData, writeAccountData } from './account-data-storage'
 
 interface StorageAdapter {
   getItem(key: string): Promise<unknown>
@@ -31,6 +32,7 @@ export function createChromeStorageAdapter(area: StorageArea = 'local'): Storage
       if (area === 'local' && key === WALLET_STATE_KEY) {
         return readWalletMetadata(storage)
       }
+      if (area === 'local' && key === ACCOUNT_DATA_KEY) return readAccountData(storage)
       try {
         const result = await storage.get(key)
         return result[key] ?? null
@@ -43,6 +45,10 @@ export function createChromeStorageAdapter(area: StorageArea = 'local'): Storage
     setItem: async (key: string, value: unknown): Promise<void> => {
       if (area === 'local' && key === WALLET_STATE_KEY) {
         await writeWalletMetadata(storage, value)
+        return
+      }
+      if (area === 'local' && key === ACCOUNT_DATA_KEY) {
+        await writeAccountData(storage, value)
         return
       }
       const write = async () => {
