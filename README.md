@@ -125,7 +125,7 @@ pnpm --filter @noir-wallet/extension test:extension
 
 Extension type checking covers both application code and the Vite/manifest configuration; extension builds run the same checks.
 
-`pnpm test` runs the deterministic wallet core suite used by CI. The SDK's native tests run separately with `pnpm --filter @noir-wallet/sdk test`. Add committed wallet core cases as flat `packages/extension/tests/*.core.test.mjs` files; ordinary `*.test.mjs` files remain in the local Playwright logic suite and do not enter CI. The Playwright commands are retained for local logic and real MV3 checks. See [Automated Testing](./AGENTS.md#automated-testing) for the test layout and local build requirements.
+`pnpm test` runs the deterministic wallet core suite used by CI. The SDK's native tests run separately with `pnpm --filter @noir-wallet/sdk test`. Existing Playwright commands remain available for local logic and real MV3 checks. See [contributor verification](./CONTRIBUTING.md#verification) for test scope and output boundaries.
 
 ### Load Extension in Chrome
 
@@ -134,6 +134,10 @@ Extension type checking covers both application code and the Vite/manifest confi
 3. Enable "Developer mode"
 4. Click "Load unpacked"
 5. Select `packages/extension/dist` directory
+
+### Debugging the Extension
+
+Inspect the popup from its window and the Background service worker from `chrome://extensions`. History-proxy and token-discovery requests originate in Background, so inspect that worker's Network panel. Inspect the offscreen Worker host at `chrome-extension://<extension-id>/src/offscreen/index.html`; Worker logs are forwarded to the Background console.
 
 ## Example Application
 
