@@ -85,4 +85,4 @@ The backup and deletion flows classify failures before displaying them; unrecogn
 
 Only operations explicitly wrapped in `withRetry()` use the classifier's retryable flag. The default is three attempts total, with 1- and 2-second waits; callers may override the attempt count and base delay. A nonretryable error or the last failure ends with the mapped user message.
 
-Do not interpret retryable as permission to rebroadcast a transaction when broadcast may have succeeded. Check Activity and local records first. See the [transaction lifecycle](../AGENTS.md#transaction-lifecycle).
+Do not interpret retryable as permission to rebroadcast a transaction when broadcast may have succeeded. Check Activity and local records first. See the [transaction lifecycle](./mutil-chain/architecture/transaction-lifecycle.md).
