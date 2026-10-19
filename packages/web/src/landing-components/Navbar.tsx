@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 
 const socialLinks = [
   {
-    href: 'https://zknoir.com/github',
+    href: __WALLET_REPOSITORY_URL__,
     label: 'GitHub',
     icon: (
       <svg viewBox="0 0 24 24" className="h-4 w-4" fill="currentColor" aria-hidden="true">
