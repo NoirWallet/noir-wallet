@@ -1,22 +1,36 @@
-interface PendingRequest {
+import type { Network } from '@/types'
+
+export interface PendingRequest {
   id: string
   origin: string
   action: string
   data: any
   walletId: string
   accountId: string
+  network: Network
+  authorizationRevision: number
   timestamp: number
 }
 
 class PendingRequestsManager {
   private requests = new Map<string, PendingRequest>()
+  private timers = new Map<string, ReturnType<typeof setTimeout>>()
+  private cancellations = new Map<string, () => void>()
 
   /**
    * Create a pending request and return its ID.
    * Captures walletId/accountId at creation time so the correct wallet
    * is used even if the user switches accounts before approval.
    */
-  create(origin: string, action: string, data: any, walletId: string, accountId: string): string {
+  create(
+    origin: string,
+    action: string,
+    data: any,
+    walletId: string,
+    accountId: string,
+    network: Network,
+    authorizationRevision: number
+  ): string {
     const id = crypto.randomUUID()
 
     this.requests.set(id, {
@@ -26,15 +40,20 @@ class PendingRequestsManager {
       data,
       walletId,
       accountId,
+      network,
+      authorizationRevision,
       timestamp: Date.now()
     })
 
     // Auto-cleanup after 5 minutes
-    setTimeout(
-      () => {
-        this.requests.delete(id)
-      },
-      5 * 60 * 1000
+    this.timers.set(
+      id,
+      setTimeout(
+        () => {
+          this.cancel(id)
+        },
+        5 * 60 * 1000
+      )
     )
 
     return id
@@ -53,7 +72,7 @@ class PendingRequestsManager {
   consume(id: string): PendingRequest | null {
     const request = this.requests.get(id)
     if (request) {
-      this.requests.delete(id)
+      this.cancel(id)
       return request
     }
     return null
@@ -64,6 +83,21 @@ class PendingRequestsManager {
    */
   cancel(id: string): void {
     this.requests.delete(id)
+    clearTimeout(this.timers.get(id))
+    this.timers.delete(id)
+    const onCancel = this.cancellations.get(id)
+    this.cancellations.delete(id)
+    onCancel?.()
+  }
+
+  onCancel(id: string, callback: () => void): void {
+    this.cancellations.set(id, callback)
+  }
+
+  cancelMatching(matches: (request: PendingRequest) => boolean): void {
+    for (const request of this.requests.values()) {
+      if (matches(request)) this.cancel(request.id)
+    }
   }
 }
 

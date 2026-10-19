@@ -9,7 +9,7 @@ import { DEFAULT_NETWORK, getNetworkConfig } from '@/config/networks'
 import { sanitizeMarginalFeeZats } from '@/config/fee'
 import { safeBig } from '@/lib/big'
 import { closeAllPopupWindows } from './window-manager'
-import { pendingRequestsManager } from './pending-requests'
+import { getApprovalContext, estimateApprovalFee } from './approval-context'
 import { SecureStorage } from '../core/wallet/secure-storage'
 import { needsUnlock } from '../lib/lock-utils'
 import { transactionMonitor } from './transaction-monitor'
@@ -716,6 +716,48 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true
   }
 
+  if (message.type === 'PREPARE_ACCOUNT_REMOVAL') {
+    const walletId = message.walletId as string | undefined
+    if (!walletId) {
+      sendResponse({ error: 'Wallet not found' })
+      return true
+    }
+    syncScheduler
+      .prepareWalletRemoval(walletId)
+      .then(() => accountManager.discardWalletSnapshotForAccountRemoval(walletId))
+      .then(() => sendResponse({ success: true }))
+      .catch(error => {
+        syncScheduler.finishAccountRemoval(walletId)
+        sendResponse({ error: error.message })
+      })
+    return true
+  }
+
+  if (message.type === 'FINISH_ACCOUNT_REMOVAL') {
+    const walletId = message.walletId as string | undefined
+    const accountId = message.accountId as string | undefined
+    const derivationIndex = message.derivationIndex as number | undefined
+    if (!walletId) {
+      sendResponse({ error: 'Wallet not found' })
+      return true
+    }
+    Promise.resolve()
+      .then(async () => {
+        await rehydrateWalletStore()
+        if (accountId && !useWalletStore.getState().getAccount(walletId, accountId)) {
+          await useAccountDataStore
+            .getState()
+            .deleteAccountData(accountManager.getNetwork(), walletId, accountId, derivationIndex)
+        }
+      })
+      .then(() => sendResponse({ success: true }))
+      .catch(error => sendResponse({ error: error.message }))
+      .finally(() => {
+        syncScheduler.finishAccountRemoval(walletId)
+      })
+    return true
+  }
+
   if (message.type === 'WALLET_REMOVED') {
     const walletId = message.walletId as string | undefined
     Promise.resolve()
@@ -726,6 +768,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
         await rehydrateWalletStore()
       })
+      .then(() => sendResponse({ success: true }))
+      .catch(error => sendResponse({ error: error.message }))
+    return true
+  }
+
+  if (message.type === 'WALLET_REMOVAL_COMMITTED') {
+    rehydrateWalletStore()
       .then(() => sendResponse({ success: true }))
       .catch(error => sendResponse({ error: error.message }))
     return true
@@ -904,12 +953,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === 'GET_PENDING_REQUEST') {
-    const request = pendingRequestsManager.get(message.requestId)
-    if (request) {
-      sendResponse({ request })
-    } else {
-      sendResponse({ error: 'Request not found or expired' })
-    }
+    getApprovalContext(message.requestId)
+      .then(request => sendResponse({ request }))
+      .catch(error => sendResponse({ error: error.message }))
+    return true
+  }
+
+  if (message.type === 'ESTIMATE_APPROVAL_FEE') {
+    estimateApprovalFee(message.requestId)
+      .then(fee => sendResponse({ fee }))
+      .catch(error => sendResponse({ error: error.message }))
     return true
   }
 
@@ -1325,15 +1378,10 @@ async function handleWalletUnlock(password: string): Promise<any> {
  * Preserves dApp connections (EIP-1193 standard: lock ≠ disconnect)
  */
 async function handleWalletLock(): Promise<void> {
-  try {
-    await accountManager.lock()
-    await dappHandler.notifyAccountsChanged([])
-    dappHandler.clearPermissions()
-
-    console.log('[Background] Wallet locked, background context cleared, dApps notified')
-  } catch (error) {
-    console.warn('[Background] Lock notification error:', error)
-  }
+  await accountManager.lock()
+  dappHandler.clearPermissions()
+  await dappHandler.notifyAccountsChanged([])
+  console.log('[Background] Wallet locked, background context cleared, dApps notified')
 }
 
 /**

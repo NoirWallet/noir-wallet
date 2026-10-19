@@ -11,6 +11,14 @@ import type { KeySource, Network, SyncReason, SyncTrigger } from '@/types'
 import {
   loadWalletDb,
   deleteWalletDb,
+  deleteWalletRecords,
+  deleteWalletSnapshot,
+  clearAllWalletRecords,
+  blockWalletRecords,
+  unblockWalletRecords,
+  blockAccountRecords,
+  unblockAccountRecords,
+  nextUnusedDerivationIndex,
   hasWalletDb,
   getJournalManifest,
   clearJournalEntries,
@@ -80,6 +88,7 @@ import {
 import { lookupBlockHeightByTime } from '../zcash/date-block-lookup'
 import { fetchBlockTime } from '@/config/rpc-registry-client'
 import { isSyncOccupyingWallet, shouldShowSyncPreflight } from '@/background/sync-status-policy'
+import { setWalletCleanupPending, setAccountDeleted } from '@/lib/wallet-metadata-storage'
 
 export type ResolvedBirthdayHeight = {
   height: number
@@ -366,6 +375,14 @@ export class AccountManager {
     }
   }
 
+  private async withDestructiveCleanup<T>(operation: () => Promise<T>): Promise<T> {
+    if (!navigator.locks) throw new Error('Wallet cleanup coordination is unavailable')
+    return navigator.locks.request('noir-wallet-destructive-cleanup', async () => {
+      await rehydrateWalletStore()
+      return operation()
+    })
+  }
+
   private getOrCreateWalletCore(walletId: string): ZcashWalletCore {
     let core = this.walletCores.get(walletId)
     if (!core) {
@@ -563,7 +580,7 @@ export class AccountManager {
     options?: { discard?: boolean }
   ): Promise<void> {
     const core = this.walletCores.get(walletId)
-    if (!core) return
+    if (!core && !options?.discard) return
 
     if (this.isWalletActivelySyncing(walletId)) {
       await chrome.runtime.sendMessage({ type: 'ABORT_SYNC', walletId }).catch(() => {})
@@ -575,9 +592,13 @@ export class AccountManager {
     }
 
     try {
-      await core.reset()
-    } catch {
-      /* ignore */
+      if (options?.discard) {
+        await getWorkerClient(walletId).reset({ force: true, strict: true })
+      } else {
+        await core!.reset()
+      }
+    } catch (error) {
+      if (options?.discard) throw error
     }
     this.walletCores.delete(walletId)
     this.walletCoreLastUsed.delete(walletId)
@@ -1820,6 +1841,10 @@ export class AccountManager {
   }
 
   async addNewAccount(walletId: string, accountName?: string): Promise<string> {
+    return this.withDestructiveCleanup(() => this.addNewAccountLocked(walletId, accountName))
+  }
+
+  private async addNewAccountLocked(walletId: string, accountName?: string): Promise<string> {
     if (!this.password) {
       throw new Error('Password not set')
     }
@@ -1841,7 +1866,7 @@ export class AccountManager {
     }
 
     const maxIndex = wallet.accounts.reduce((max, acc) => Math.max(max, acc.derivationIndex), -1)
-    const nextIndex = maxIndex + 1
+    const nextIndex = await nextUnusedDerivationIndex(this.network, walletId, maxIndex)
 
     const name = accountName || `Account_${nextIndex}_${Date.now()}`
 
@@ -2991,25 +3016,84 @@ export class AccountManager {
     await this.purgeWalletData(walletId)
   }
 
+  private async stopBackgroundWallet(walletId: string): Promise<void> {
+    const response = await chrome.runtime.sendMessage({ type: 'WALLET_REMOVED', walletId })
+    if (!response?.success) {
+      throw new Error(response?.error || 'Unable to stop wallet background work. Please try again.')
+    }
+  }
+
+  private async notifyBackgroundWalletRemovalCommitted(): Promise<void> {
+    const response = await chrome.runtime.sendMessage({ type: 'WALLET_REMOVAL_COMMITTED' })
+    if (!response?.success) {
+      throw new Error(response?.error || 'Unable to refresh wallet background state. Please retry.')
+    }
+  }
+
+  private async finishDeletedWalletCleanup(walletId: string): Promise<boolean> {
+    const saved = await chrome.storage.local.get([
+      'wallet_cleanup_pending_ids',
+      'wallet_deleted_ids'
+    ])
+    if (
+      !Array.isArray(saved.wallet_cleanup_pending_ids) ||
+      !saved.wallet_cleanup_pending_ids.includes(walletId) ||
+      !Array.isArray(saved.wallet_deleted_ids) ||
+      !saved.wallet_deleted_ids.includes(walletId)
+    ) {
+      return false
+    }
+    await this.notifyBackgroundWalletRemovalCommitted()
+    await SecureStorage.removeWalletSeedPhrase(walletId)
+    await SecureStorage.removeHardwareWalletData(walletId)
+    await setWalletCleanupPending(walletId, false)
+    return true
+  }
+
+  async discardWalletSnapshotForAccountRemoval(walletId: string): Promise<void> {
+    this.purgingWalletIds.add(walletId)
+    try {
+      await chrome.runtime.sendMessage({ type: 'ABORT_SYNC', walletId })
+      await signalSyncAbort(walletId)
+      await this.waitForSyncIdle(walletId, 30_000)
+      if (this.isWalletActivelySyncing(walletId)) {
+        throw new Error('Wallet sync is still running. Please try again.')
+      }
+      await this.resetWalletCoreSafely(walletId, { discard: true })
+      this.clearRuntimeCaches(walletId)
+      await deleteWalletSnapshot(this.network, walletId)
+      await syncJobStore.remove(walletId, this.network)
+    } finally {
+      this.purgingWalletIds.delete(walletId)
+    }
+  }
+
   private async purgeWalletData(walletId: string): Promise<void> {
     // Tombstone first: blocks any in-flight sync checkpoint from persisting the
     // wallet DB back after we delete it (the resurrection race on mid-sync delete).
     this.purgingWalletIds.add(walletId)
-    this.automaticResyncAttemptedWalletIds.delete(walletId)
-    this.spendabilityRecoveryAttemptedWalletIds.delete(walletId)
-    this.spendabilityRecoveryByWallet.delete(walletId)
-    await chrome.runtime.sendMessage({ type: 'ABORT_SYNC', walletId }).catch(() => {})
-    await signalSyncAbort(walletId).catch(() => {})
-    await chrome.runtime
-      .sendMessage({ type: 'RECONCILE_WALLET_STATE', walletId, all: true })
-      .catch(() => {})
-    await this.waitForSyncIdle(walletId, 30_000)
-    await syncJobStore.remove(walletId, this.network).catch(() => {})
-    await this.resetWalletCoreSafely(walletId, { discard: true })
-    this.clearRuntimeCaches(walletId)
-    await clearJournalEntries(this.network, walletId).catch(() => {})
-    await deleteJournal(this.network, walletId).catch(() => {})
-    await this.clearPersistedDb(walletId).catch(() => {})
+    try {
+      this.automaticResyncAttemptedWalletIds.delete(walletId)
+      this.spendabilityRecoveryAttemptedWalletIds.delete(walletId)
+      this.spendabilityRecoveryByWallet.delete(walletId)
+      await chrome.runtime.sendMessage({ type: 'ABORT_SYNC', walletId })
+      await signalSyncAbort(walletId)
+      await chrome.runtime
+        .sendMessage({ type: 'RECONCILE_WALLET_STATE', walletId, all: true })
+        .catch(() => {})
+      await this.waitForSyncIdle(walletId, 30_000)
+      if (this.isWalletActivelySyncing(walletId)) {
+        throw new Error('Wallet sync is still running. Please try again.')
+      }
+      await this.resetWalletCoreSafely(walletId, { discard: true })
+      this.clearRuntimeCaches(walletId)
+      await deleteWalletRecords(this.network, walletId)
+      await syncJobStore.remove(walletId, this.network)
+      await this.accountDataStore.deleteWalletData(this.network, walletId)
+    } catch (error) {
+      this.purgingWalletIds.delete(walletId)
+      throw error
+    }
   }
 
   private async restoreSessionToCore(
@@ -3123,33 +3207,61 @@ export class AccountManager {
   }
 
   async clearWalletData(): Promise<void> {
+    return this.withDestructiveCleanup(() => this.clearWalletDataLocked())
+  }
+
+  private async clearWalletDataLocked(): Promise<void> {
     const wallets = [...this.store.wallets]
-    await this.store.reset()
-    for (const wallet of wallets) {
-      await SecureStorage.removeWalletSeedPhrase(wallet.id)
-      await SecureStorage.removeHardwareWalletData(wallet.id)
-    }
-
-    await chrome.runtime.sendMessage({ type: 'CLEAR_INTENTS_PROGRESS' }).catch(() => {})
-
-    // Also remove legacy storage key if it exists
-    await chrome.storage.local.remove('walletData').catch(() => {})
-
-    await chrome.runtime.sendMessage({ type: 'ABORT_SYNC' }).catch(() => {})
-    const walletIds = [...this.walletCores.keys()]
+    const savedCleanup = await chrome.storage.local.get([
+      'wallet_cleanup_pending_ids',
+      'wallet_deleted_ids'
+    ])
+    const walletIds = new Set([
+      ...wallets.map(wallet => wallet.id),
+      ...(Array.isArray(savedCleanup.wallet_cleanup_pending_ids)
+        ? savedCleanup.wallet_cleanup_pending_ids.filter(
+            (id: unknown): id is string => typeof id === 'string'
+          )
+        : []),
+      ...(Array.isArray(savedCleanup.wallet_deleted_ids)
+        ? savedCleanup.wallet_deleted_ids.filter(
+            (id: unknown): id is string => typeof id === 'string'
+          )
+        : [])
+    ])
     for (const walletId of walletIds) {
-      try {
-        await this.resetWalletCoreSafely(walletId)
-      } catch (e) {
-        logger.warn('Failed to reset worker during clear', walletId, undefined, e)
-      }
+      await setWalletCleanupPending(walletId, true)
+      await blockWalletRecords(this.network, walletId)
+      await this.stopBackgroundWallet(walletId)
+      await this.purgeWalletData(walletId)
+    }
+    await clearAllWalletRecords()
+    this.accountDataStore.reset()
+    const locked = await chrome.runtime.sendMessage({ type: 'WALLET_LOCKED' })
+    if (!locked?.success) {
+      throw new Error(locked?.error || 'Unable to clear wallet session. Please try again.')
+    }
+    await this.lock()
+    const clearedProgress = await chrome.runtime.sendMessage({ type: 'CLEAR_INTENTS_PROGRESS' })
+    if (!clearedProgress?.success) {
+      throw new Error(
+        clearedProgress?.error || 'Unable to clear transaction progress. Please try again.'
+      )
+    }
+    await chrome.storage.local.remove(['walletData', 'account_data'])
+    await chrome.storage.session.clear()
+    await SecureStorage.resetLoginAttempts()
+    await this.store.reset()
+    await this.notifyBackgroundWalletRemovalCommitted()
+    for (const walletId of walletIds) {
+      await SecureStorage.removeWalletSeedPhrase(walletId)
+      await SecureStorage.removeHardwareWalletData(walletId)
+      await setWalletCleanupPending(walletId, false)
     }
     this.walletCores.clear()
     this.walletCoreLastUsed.clear()
     this.spendabilityRecoveryAttemptedWalletIds.clear()
     this.spendabilityRecoveryByWallet.clear()
-
-    await SecureStorage.resetLoginAttempts()
 
     this.setSessionPassword(null)
     this.currentWalletId = null
@@ -3662,13 +3774,54 @@ export class AccountManager {
     accountId: string,
     verification?: WalletBackupVerification
   ): Promise<void> {
+    return this.withDestructiveCleanup(() =>
+      this.removeAccountLocked(walletId, accountId, verification)
+    )
+  }
+
+  private async removeAccountLocked(
+    walletId: string,
+    accountId: string,
+    verification?: WalletBackupVerification
+  ): Promise<void> {
     let wallet: WalletItem
     let verified = false
     const password = this.password
     const generation = this.passwordGeneration
     while (true) {
       const current = this.store.getWallet(walletId)
-      if (!current || !current.accounts.some(account => account.id === accountId)) return
+      if (!current) {
+        await this.finishDeletedWalletCleanup(walletId)
+        return
+      }
+      if (!current.accounts.some(account => account.id === accountId)) {
+        const saved = await chrome.storage.local.get([
+          'wallet_cleanup_pending_ids',
+          'wallet_deleted_account_keys'
+        ])
+        const accountKey = buildAccountKey(this.network, walletId, accountId)
+        if (
+          !Array.isArray(saved.wallet_cleanup_pending_ids) ||
+          !saved.wallet_cleanup_pending_ids.includes(walletId) ||
+          !Array.isArray(saved.wallet_deleted_account_keys) ||
+          !saved.wallet_deleted_account_keys.includes(accountKey)
+        ) {
+          return
+        }
+        const finished = await chrome.runtime.sendMessage({
+          type: 'FINISH_ACCOUNT_REMOVAL',
+          walletId
+        })
+        if (!finished?.success) {
+          throw new Error(
+            finished?.error || 'Unable to resume wallet background work. Please retry.'
+          )
+        }
+        await unblockWalletRecords(this.network, walletId)
+        await setWalletCleanupPending(walletId, false)
+        await chrome.runtime.sendMessage({ type: 'BACKGROUND_SYNC', trigger: 'wallet-change' })
+        return
+      }
       const totalAccounts = this.store.wallets.reduce((sum, item) => sum + item.accounts.length, 0)
       if (totalAccounts <= 1) throw new Error('Cannot remove the last account')
       if (current.accounts.length === 1 && !isHardwareKeySource(current.keySource) && !verified) {
@@ -3696,25 +3849,18 @@ export class AccountManager {
     const remainingAccounts = wallet.accounts.filter(a => a.id !== accountId)
 
     if (remainingAccounts.length === 0) {
-      // The background owns the sync loop, so it must stop syncing and purge the
-      // wallet data authoritatively before we drop the wallet. Awaiting this
-      // closes the mid-sync delete resurrection race (a stray sync checkpoint
-      // re-persisting the DB after deletion).
-      await chrome.runtime.sendMessage({ type: 'WALLET_REMOVED', walletId }).catch(() => {})
+      await setWalletCleanupPending(walletId, true)
+      await blockWalletRecords(this.network, walletId)
+      await this.stopBackgroundWallet(walletId)
+      await this.purgeWalletData(walletId)
 
       const wasCurrentWallet = this.store.currentWalletId === walletId
       await this.store.removeWallet(walletId)
-      this.purgingWalletIds.add(walletId)
-      this.clearRuntimeCaches(walletId)
-      const staleCore = this.walletCores.get(walletId)
-      if (staleCore) {
-        this.walletCores.delete(walletId)
-        this.walletCoreLastUsed.delete(walletId)
-        staleCore.reset().catch(() => {})
-      }
+      await this.notifyBackgroundWalletRemovalCommitted()
 
       await SecureStorage.removeWalletSeedPhrase(walletId)
       await SecureStorage.removeHardwareWalletData(walletId)
+      await setWalletCleanupPending(walletId, false)
 
       if (wasCurrentWallet) {
         const nextWallet = this.store.getCurrentWallet() ?? this.store.wallets[0]
@@ -3731,10 +3877,63 @@ export class AccountManager {
         }
       }
     } else {
-      this.store.updateWallet(walletId, w => ({ ...w, accounts: remainingAccounts }))
+      const derivationIndex = wallet.accounts.find(
+        account => account.id === accountId
+      )!.derivationIndex
+      await setWalletCleanupPending(walletId, true)
+      await blockWalletRecords(this.network, walletId)
+      const prepared = await chrome.runtime.sendMessage({
+        type: 'PREPARE_ACCOUNT_REMOVAL',
+        walletId
+      })
+      if (!prepared?.success) {
+        await unblockWalletRecords(this.network, walletId)
+        await setWalletCleanupPending(walletId, false)
+        throw new Error(
+          prepared?.error || 'Unable to stop wallet background work. Please try again.'
+        )
+      }
+      let removed = false
+      try {
+        await this.discardWalletSnapshotForAccountRemoval(walletId)
+        await blockAccountRecords(this.network, walletId, accountId)
+        await blockAccountRecords(this.network, walletId, String(derivationIndex))
+        await setAccountDeleted(buildAccountKey(this.network, walletId, accountId), true)
+        await this.accountDataStore.deleteAccountData(
+          this.network,
+          walletId,
+          accountId,
+          derivationIndex
+        )
+        await this.store.updateWallet(walletId, w => ({ ...w, accounts: remainingAccounts }))
+        removed = true
 
-      if (this.store.currentWalletId === walletId && this.store.currentAccountId === accountId) {
-        this.store.setCurrentAccount(walletId, remainingAccounts[0].id)
+        if (this.store.currentWalletId === walletId && this.store.currentAccountId === accountId) {
+          await this.store.setCurrentAccount(walletId, remainingAccounts[0].id)
+        }
+      } finally {
+        try {
+          if (!removed) {
+            await unblockAccountRecords(this.network, walletId, accountId)
+            await unblockAccountRecords(this.network, walletId, String(derivationIndex))
+            await setAccountDeleted(buildAccountKey(this.network, walletId, accountId), false)
+          }
+        } finally {
+          const finished = await chrome.runtime.sendMessage({
+            type: 'FINISH_ACCOUNT_REMOVAL',
+            walletId,
+            accountId,
+            derivationIndex
+          })
+          if (!finished?.success) {
+            throw new Error(
+              finished?.error || 'Unable to resume wallet background work. Please retry.'
+            )
+          }
+          await unblockWalletRecords(this.network, walletId)
+          await setWalletCleanupPending(walletId, false)
+          await chrome.runtime.sendMessage({ type: 'BACKGROUND_SYNC', trigger: 'wallet-change' })
+        }
       }
     }
   }
@@ -3870,8 +4069,18 @@ export class AccountManager {
   }
 
   async removeWallet(walletId: string, verification?: WalletBackupVerification): Promise<void> {
+    return this.withDestructiveCleanup(() => this.removeWalletLocked(walletId, verification))
+  }
+
+  private async removeWalletLocked(
+    walletId: string,
+    verification?: WalletBackupVerification
+  ): Promise<void> {
     let wallet = this.store.getWallet(walletId)
-    if (!wallet) throw new Error('Wallet not found')
+    if (!wallet) {
+      if (await this.finishDeletedWalletCleanup(walletId)) return
+      throw new Error('Wallet not found')
+    }
     const password = this.password
     const generation = this.passwordGeneration
     if (!isHardwareKeySource(wallet.keySource)) {
@@ -3891,22 +4100,21 @@ export class AccountManager {
     this.ensureRemovalCurrent(wallet, password, generation)
 
     const wasCurrentWallet = this.store.currentWalletId === walletId
+    await setWalletCleanupPending(walletId, true)
+    await blockWalletRecords(this.network, walletId)
+    await this.stopBackgroundWallet(walletId)
+    await this.purgeWalletData(walletId)
     await this.store.removeWallet(walletId)
+    await this.notifyBackgroundWalletRemovalCommitted()
     await SecureStorage.removeWalletSeedPhrase(walletId)
     await SecureStorage.removeHardwareWalletData(walletId)
-    await this.purgeWalletData(walletId)
-
-    for (const account of wallet.accounts) {
-      await this.accountDataStore.deleteAccountData(this.network, walletId, account.id)
-    }
+    await setWalletCleanupPending(walletId, false)
 
     if (wasCurrentWallet && this.store.wallets.length > 0) {
       const nextWallet = this.store.getCurrentWallet() ?? this.store.wallets[0]
       this.store.setCurrentAccount(nextWallet.id, nextWallet.accounts[0].id)
       this.currentWalletId = nextWallet.id
     }
-
-    chrome.runtime.sendMessage({ type: 'WALLET_REMOVED', walletId }).catch(() => {})
   }
 
   async changePassword(currentPassword: string, newPassword: string): Promise<boolean> {

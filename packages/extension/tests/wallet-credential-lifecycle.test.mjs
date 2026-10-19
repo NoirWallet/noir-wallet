@@ -25,10 +25,17 @@ function loadModule(path, dependencies) {
 
 function createHarness(t) {
   const previousChrome = globalThis.chrome
+  const previousNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator')
   const previousWarn = console.warn
   console.warn = () => {}
+  Object.defineProperty(globalThis, 'navigator', {
+    configurable: true,
+    value: { locks: { request: async (_name, callback) => callback() } }
+  })
   t.after(() => {
     globalThis.chrome = previousChrome
+    if (previousNavigator) Object.defineProperty(globalThis, 'navigator', previousNavigator)
+    else delete globalThis.navigator
     console.warn = previousWarn
   })
 
@@ -86,6 +93,7 @@ function createHarness(t) {
     './session-state': { SESSION_PASSWORD_STORAGE_KEY: 'session_password' }
   })
   const derived = []
+  const removedDerivations = new Set()
   const core = {
     accountIndex: 0,
     async initialize() {},
@@ -165,6 +173,11 @@ function createHarness(t) {
     '@/config/networks': { DEFAULT_NETWORK: 'mainnet' },
     '@/config/wallet': { WALLET_CONFIG: config },
     '@/lib/errors': { withRetry: operation => operation() },
+    '@/lib/indexed-db': {
+      async nextUnusedDerivationIndex(_network, _walletId, highest) {
+        return Math.max(highest, ...removedDerivations) + 1
+      }
+    },
     '../worker/client': { getWorkerClient: () => ({ abortPendingInit() {} }) },
     '@/lib/hardware-capabilities': {
       isHardwareKeySource: source => source === 'ledger' || source === 'keystone'
@@ -195,6 +208,7 @@ function createHarness(t) {
     effects,
     walletState,
     derived,
+    removedDerivations,
     phraseA,
     phraseB,
     phraseC,
@@ -354,6 +368,16 @@ test('derived account and receive address rotation preserve encrypted wallet cre
     (await SecureStorage.loadWalletSeedPhrase(wallet.id, 'old-password')) === phraseA,
     true
   )
+})
+
+test('add account skips the removed highest derivation index', async t => {
+  const { manager, walletState, derived, removedDerivations, phraseA } = createHarness(t)
+  await manager.importWallet(phraseA, 'old-password')
+  const wallet = walletState.wallets[0]
+  removedDerivations.add(1)
+  const accountId = await manager.addNewAccount(wallet.id)
+  assert.equal(walletState.getAccount(wallet.id, accountId).derivationIndex, 2)
+  assert.equal(derived.at(-1).index, 2)
 })
 
 test('password change reencrypts every software and hardware credential together', async t => {

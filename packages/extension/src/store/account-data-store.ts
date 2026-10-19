@@ -8,7 +8,8 @@ import {
   loadTransactions,
   mutateTransactions,
   deleteTransactions,
-  deleteTransparentTxCache
+  deleteTransparentTxCache,
+  deleteVotingState
 } from '@/lib/indexed-db'
 import { formatNumber } from '@/lib/format'
 import Big from 'big.js'
@@ -123,7 +124,13 @@ interface AccountDataStore {
   setWalletSyncStateFor: (network: Network, walletId: string, syncState: Partial<SyncState>) => void
 
   // Cleanup
-  deleteAccountData: (network: Network, walletId: string, accountId: string) => Promise<void>
+  deleteAccountData: (
+    network: Network,
+    walletId: string,
+    accountId: string,
+    derivationIndex?: number
+  ) => Promise<void>
+  deleteWalletData: (network: Network, walletId: string) => Promise<void>
   reset: () => void
 }
 
@@ -382,10 +389,10 @@ export const useAccountDataStore = create<AccountDataStore>()(
         })
       },
 
-      deleteAccountData: async (network, walletId, accountId) => {
+      deleteAccountData: async (network, walletId, accountId, derivationIndex) => {
         const key = buildAccountKey(network, walletId, accountId)
 
-        set(state => {
+        await set(state => {
           const newBalances = new Map(state.balances)
           const newSyncStates = new Map(state.syncStates)
           const newCache = new Map(state.transactionsCache)
@@ -404,7 +411,30 @@ export const useAccountDataStore = create<AccountDataStore>()(
           }
         })
 
-        await Promise.all([deleteTransactions(key), deleteTransparentTxCache(key)])
+        await Promise.all([
+          deleteTransactions(key),
+          deleteTransparentTxCache(key),
+          ...(derivationIndex === undefined
+            ? []
+            : [deleteVotingState(`${network}_${walletId}_${derivationIndex}`)])
+        ])
+      },
+
+      deleteWalletData: async (network, walletId) => {
+        const prefix = `${network}_${walletId}_`
+        const walletKey = buildWalletKey(network, walletId)
+        await set(state => ({
+          balances: new Map([...state.balances].filter(([key]) => !key.startsWith(prefix))),
+          syncStates: new Map(
+            [...state.syncStates].filter(([key]) => key !== walletKey && !key.startsWith(prefix))
+          ),
+          transactionsCache: new Map(
+            [...state.transactionsCache].filter(([key]) => !key.startsWith(prefix))
+          ),
+          transactionsLoaded: new Set(
+            [...state.transactionsLoaded].filter(key => !key.startsWith(prefix))
+          )
+        }))
       },
 
       reset: () => {

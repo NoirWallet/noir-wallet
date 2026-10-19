@@ -166,8 +166,16 @@ export function UnlockForm({
     })
 
     if (confirmed) {
-      await accountManager.clearWalletData()
-      replace('/onboarding')
+      setIsLoading(true)
+      setError('')
+      try {
+        await accountManager.clearWalletData()
+        replace('/onboarding')
+      } catch {
+        setError('Unable to reset wallet. Please try again.')
+      } finally {
+        setIsLoading(false)
+      }
     }
   }
 

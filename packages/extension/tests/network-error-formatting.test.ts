@@ -1,7 +1,7 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { SWAP_QUOTE_UNAVAILABLE_MESSAGE, fetchQuote } from '../src/core/services/intents-api'
-import { FetchHttpError, fetchWithTimeout } from '../src/lib/fetch-utils'
+import { FetchHttpError, fetchJsonWithTimeout } from '../src/lib/fetch-utils'
 
 const quoteParams = {
   originAsset: 'zec:native',
@@ -23,7 +23,7 @@ test('does not expose an upstream HTML error page', async () => {
     })
 
   try {
-    const error = await fetchWithTimeout('https://service.example.test').catch(cause => cause)
+    const error = await fetchJsonWithTimeout('https://service.example.test').catch(cause => cause)
     assert.ok(error instanceof FetchHttpError)
     assert.equal(error.message, 'HTTP 502: Bad Gateway')
     assert.equal(error.detail, undefined)

@@ -23,6 +23,35 @@ export interface ConnectedDApp {
 }
 
 const STORAGE_KEY = 'connectedDApps'
+const AUTHORIZATION_KEY = 'dapp_authorization_state'
+interface AuthorizationState {
+  revision: number
+  mode: 'approved' | 'revoked'
+}
+
+function parseAuthorizationState(value: unknown): Record<string, AuthorizationState> {
+  if (value == null) return {}
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Site authorization storage is unavailable')
+  }
+  const states: Record<string, AuthorizationState> = {}
+  for (const [origin, entry] of Object.entries(value)) {
+    if (
+      !entry ||
+      typeof entry !== 'object' ||
+      !('revision' in entry) ||
+      typeof entry.revision !== 'number' ||
+      !Number.isSafeInteger(entry.revision) ||
+      entry.revision < 0 ||
+      !('mode' in entry) ||
+      (entry.mode !== 'approved' && entry.mode !== 'revoked')
+    ) {
+      throw new Error('Site authorization storage is unavailable')
+    }
+    states[origin] = { revision: entry.revision, mode: entry.mode }
+  }
+  return states
+}
 
 function isAccountRef(value: unknown): value is AccountRef {
   if (typeof value !== 'object' || value === null) return false
@@ -57,7 +86,8 @@ export function getConnectionAccountRefs(dapp: ConnectedDApp): AccountRef[] {
 export class DAppManager {
   private static instance: DAppManager
   private connectedDApps: Map<string, ConnectedDApp> = new Map()
-  private initialized = false
+  private authorizationState: Record<string, AuthorizationState> = {}
+  private mutations: Promise<unknown> = Promise.resolve()
 
   private constructor() {}
 
@@ -69,21 +99,46 @@ export class DAppManager {
   }
 
   async initialize(): Promise<void> {
-    if (this.initialized) return
+    await this.mutate(() => {})
+  }
 
-    try {
-      const result = await chrome.storage.local.get(STORAGE_KEY)
-      const stored = result[STORAGE_KEY]
-
-      if (stored && Array.isArray(stored)) {
-        stored.forEach((dapp: ConnectedDApp) => {
-          this.connectedDApps.set(dapp.origin, dapp)
-        })
-      }
-      this.initialized = true
-    } catch (error) {
-      console.error('Failed to initialize DAppManager:', error)
+  private async loadStorage(): Promise<void> {
+    const result = await chrome.storage.local.get([STORAGE_KEY, AUTHORIZATION_KEY])
+    const stored = result[STORAGE_KEY]
+    this.connectedDApps.clear()
+    if (stored && Array.isArray(stored)) {
+      stored.forEach((dapp: ConnectedDApp) => {
+        this.connectedDApps.set(dapp.origin, dapp)
+      })
     }
+    this.authorizationState = parseAuthorizationState(result[AUTHORIZATION_KEY])
+  }
+
+  private mutate<T>(operation: () => T | Promise<T>): Promise<T> {
+    const run = async () => {
+      const commit = async () => {
+        await this.loadStorage()
+        return operation()
+      }
+      return typeof navigator !== 'undefined' && navigator.locks
+        ? navigator.locks.request('noir-dapp-authorization', commit)
+        : commit()
+    }
+    const result = this.mutations.then(run, run)
+    this.mutations = result.catch(() => {})
+    return result
+  }
+
+  async getAuthorizationRevision(origin: string): Promise<number> {
+    return this.mutate(() => this.authorizationState[origin]?.revision ?? 0)
+  }
+
+  async canAutoConnect(origin: string): Promise<boolean> {
+    return this.mutate(() => !this.authorizationState[origin])
+  }
+
+  async isRevoked(origin: string): Promise<boolean> {
+    return this.mutate(() => this.authorizationState[origin]?.mode === 'revoked')
   }
 
   /**
@@ -94,43 +149,66 @@ export class DAppManager {
   async setAuthorizedAccounts(
     origin: string,
     tabInfo: { title?: string; favIconUrl?: string },
-    accounts: AccountRef[]
+    accounts: AccountRef[],
+    authorization?: { automatic?: boolean; expectedRevision?: number }
   ): Promise<void> {
-    await this.initialize()
-    const primary = accounts[0]
-    const existing = this.connectedDApps.get(origin)
+    return this.mutate(async () => {
+      const state = this.authorizationState[origin]
+      if (
+        (authorization?.automatic && state) ||
+        (authorization?.expectedRevision !== undefined &&
+          authorization.expectedRevision !== (state?.revision ?? 0))
+      )
+        throw new Error('Site authorization changed. Connect again.')
+      const primary = accounts[0]
+      const existing = this.connectedDApps.get(origin)
 
-    if (existing) {
-      existing.authorizedAccounts = accounts
-      existing.lastActiveAt = Date.now()
-      if (existing.boundWalletId == null && primary) {
-        existing.boundWalletId = primary.walletId
-        existing.boundAccountId = primary.accountId
+      if (existing) {
+        existing.authorizedAccounts = accounts
+        existing.lastActiveAt = Date.now()
+        if (primary) {
+          existing.boundWalletId = primary.walletId
+          existing.boundAccountId = primary.accountId
+        }
+      } else {
+        const host = new URL(origin).host
+        this.connectedDApps.set(origin, {
+          id: this.generateId(origin),
+          name: tabInfo.title || host,
+          host,
+          origin,
+          favicon: tabInfo.favIconUrl || this.getDefaultFavicon(origin),
+          connectedAt: Date.now(),
+          lastActiveAt: Date.now(),
+          boundWalletId: primary?.walletId,
+          boundAccountId: primary?.accountId,
+          authorizedAccounts: accounts
+        })
       }
-    } else {
-      const host = new URL(origin).host
-      this.connectedDApps.set(origin, {
-        id: this.generateId(origin),
-        name: tabInfo.title || host,
-        host,
-        origin,
-        favicon: tabInfo.favIconUrl || this.getDefaultFavicon(origin),
-        connectedAt: Date.now(),
-        lastActiveAt: Date.now(),
-        boundWalletId: primary?.walletId,
-        boundAccountId: primary?.accountId,
-        authorizedAccounts: accounts
-      })
-    }
 
-    await this.saveToStorage()
+      if (!authorization?.automatic) {
+        this.authorizationState[origin] = { revision: state?.revision ?? 0, mode: 'approved' }
+      }
+      await this.saveToStorage()
+    })
   }
 
   /** Union of batch-authorized accounts and the single-account binding. */
   async getAuthorizedAccounts(origin: string): Promise<AccountRef[]> {
-    await this.initialize()
-    const dapp = this.connectedDApps.get(origin)
-    return dapp ? getConnectionAccountRefs(dapp) : []
+    return (await this.getAuthorization(origin)).accounts
+  }
+
+  async getAuthorization(origin: string): Promise<{ revision: number; accounts: AccountRef[] }> {
+    return this.mutate(() => {
+      const dapp = this.connectedDApps.get(origin)
+      return {
+        revision: this.authorizationState[origin]?.revision ?? 0,
+        accounts:
+          dapp && this.authorizationState[origin]?.mode !== 'revoked'
+            ? getConnectionAccountRefs(dapp)
+            : []
+      }
+    })
   }
 
   /**
@@ -139,60 +217,67 @@ export class DAppManager {
    * already authorized.
    */
   async addAuthorizedAccount(origin: string, account: AccountRef): Promise<void> {
-    await this.initialize()
-    const dapp = this.connectedDApps.get(origin)
-    if (!dapp) return
+    return this.mutate(async () => {
+      const dapp = this.connectedDApps.get(origin)
+      if (!dapp) return
 
-    const refs = getConnectionAccountRefs(dapp)
-    if (!refs.some(a => a.walletId === account.walletId && a.accountId === account.accountId)) {
-      refs.push(account)
-    }
-    dapp.authorizedAccounts = refs
-    dapp.lastActiveAt = Date.now()
-    await this.saveToStorage()
+      const refs = getConnectionAccountRefs(dapp)
+      if (!refs.some(a => a.walletId === account.walletId && a.accountId === account.accountId)) {
+        refs.push(account)
+      }
+      dapp.authorizedAccounts = refs
+      dapp.lastActiveAt = Date.now()
+      await this.saveToStorage()
+    })
   }
 
   async updateConnectionBinding(
     origin: string,
     binding: { walletId: string; accountId: string }
   ): Promise<void> {
-    await this.initialize()
-    const d = this.connectedDApps.get(origin)
-    if (!d) return
-    d.boundWalletId = binding.walletId
-    d.boundAccountId = binding.accountId
-    d.lastActiveAt = Date.now()
-    await this.saveToStorage()
+    return this.mutate(async () => {
+      const d = this.connectedDApps.get(origin)
+      if (!d) return
+      d.boundWalletId = binding.walletId
+      d.boundAccountId = binding.accountId
+      d.lastActiveAt = Date.now()
+      await this.saveToStorage()
+    })
   }
 
   async removeConnection(origin: string): Promise<void> {
-    await this.initialize()
-    this.connectedDApps.delete(origin)
-    await this.saveToStorage()
+    return this.mutate(async () => {
+      this.authorizationState[origin] = {
+        revision: (this.authorizationState[origin]?.revision ?? 0) + 1,
+        mode: 'revoked'
+      }
+      this.connectedDApps.delete(origin)
+      await this.saveToStorage()
+    })
   }
 
   async updateLastActive(origin: string): Promise<void> {
-    await this.initialize()
-    const dapp = this.connectedDApps.get(origin)
-    if (dapp) {
-      dapp.lastActiveAt = Date.now()
-      await this.saveToStorage()
-    }
+    return this.mutate(async () => {
+      const dapp = this.connectedDApps.get(origin)
+      if (dapp) {
+        dapp.lastActiveAt = Date.now()
+        await this.saveToStorage()
+      }
+    })
   }
 
   async getConnection(origin: string): Promise<ConnectedDApp | null> {
-    await this.initialize()
-    return this.connectedDApps.get(origin) || null
+    return this.mutate(() => this.connectedDApps.get(origin) || null)
   }
 
   async getAllConnections(): Promise<ConnectedDApp[]> {
-    await this.initialize()
-    return Array.from(this.connectedDApps.values()).sort((a, b) => b.lastActiveAt - a.lastActiveAt)
+    return this.mutate(() =>
+      Array.from(this.connectedDApps.values()).sort((a, b) => b.lastActiveAt - a.lastActiveAt)
+    )
   }
 
   async isConnected(origin: string): Promise<boolean> {
-    await this.initialize()
-    return this.connectedDApps.has(origin)
+    return this.mutate(() => this.connectedDApps.has(origin))
   }
 
   async getCurrentTabDApp(): Promise<ConnectedDApp | null> {
@@ -218,7 +303,10 @@ export class DAppManager {
 
   private async saveToStorage(): Promise<void> {
     const dapps = Array.from(this.connectedDApps.values())
-    await chrome.storage.local.set({ [STORAGE_KEY]: dapps })
+    await chrome.storage.local.set({
+      [STORAGE_KEY]: dapps,
+      [AUTHORIZATION_KEY]: this.authorizationState
+    })
   }
 
   private generateId(origin: string): string {
