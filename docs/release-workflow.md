@@ -216,13 +216,17 @@ No merge, version bump, or manually created tag is required for each Beta. Selec
 
 ## Production Procedure
 
+### Release notes
+
+`CHANGELOG.md` holds developer-oriented GitHub Release notes; `packages/web/public/changelog.json` holds the concise notes displayed after an extension update. Give each meaningful user-visible feature or important fix its own bullet, but combine minor fixes where appropriate. Do not pad the list or include internal refactors, tests, CI, or dependency updates unless they materially affect users. Keep the wording plain and specific. The changelog schema permits 1–8 bullets of at most 120 characters each; verify the current schema before changing this format.
+
 ### 1. Prepare and review the release source
 
 Create a temporary `release/{version}` branch from the source you intend to ship. For a selective release, use the verified stable source commit or an actual production source tag, then cherry-pick the required fixes. Open a preparation PR for review; merging unrelated integration changes is not required.
 
 1. Set a new version in `packages/extension/package.json`, for example `1.0.40`, and use branch `release/1.0.40`.
 2. Add exactly one nonempty `## [1.0.40]` section to `CHANGELOG.md`.
-3. Add the matching user-facing update entry in `packages/web/public/changelog.json`, following the [release notes rules](../AGENTS.md#user-facing-release-notes).
+3. Add the matching user-facing update entry in `packages/web/public/changelog.json`, following the [release notes rules](#release-notes).
 
 Review the exact diff against the stable baseline and run the relevant local checks. For V1:
 

@@ -151,7 +151,7 @@ pnpm --filter @noir-wallet/web-vote test
 pnpm --filter @noir-wallet/extension exec node --import ../../scripts/register-test-loader.mjs --test tests/tx-monitor-policy.test.mjs
 ```
 
-See [automated testing rules](./AGENTS.md#automated-testing) for suite scope, test-authoring requirements, local real-MV3 browser verification, and artifact locations.
+See [contributor verification](./CONTRIBUTING.md#development-and-verification) for test scope, local real-MV3 browser verification, and artifact locations.
 
 ### Load Extension in Chrome
 

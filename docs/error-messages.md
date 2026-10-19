@@ -119,7 +119,7 @@ Unavailable balance metadata first reloads a persisted snapshot and starts catch
 
 Only operations that explicitly call `withRetry()` act on the retryable flag. The default is at most **3 attempts** (initial call plus 2 retries), with **1-second and 2-second** waits; callers can override the count and base interval. A non-retryable error or the final failure ends the operation. Other call sites may display the error directly or use their own recovery policy.
 
-If a transaction has been broadcast or its outcome is unknown, check Activity and existing records before trying again. The flag does not authorize automatic rebroadcast. See the [transaction lifecycle rules](../AGENTS.md#transaction-lifecycle).
+If a transaction has been broadcast or its outcome is unknown, check Activity and existing records before trying again. The flag does not authorize automatic rebroadcast. See the [transaction lifecycle rules](../AGENTS.md#async-and-transaction-lifecycle).
 
 ## Form Validation
 
