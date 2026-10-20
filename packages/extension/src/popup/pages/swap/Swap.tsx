@@ -178,7 +178,7 @@ import {
 } from '@/popup/services/swap-page-model'
 import {
   resolvePortfolioTransferAvailability,
-  resolveZcashTransferAvailability
+  resolveZcashFundingAvailability
 } from '@/popup/services/transfer-availability'
 import {
   getFundingBalance,
@@ -316,8 +316,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
   const getCurrentBalance = useAccountDataStore(state => state.getCurrentBalance)
   const storeBalance = getCurrentBalance()
   const zcashFundingBalance = getFundingBalance(storeBalance, fundingSource)
-  const zcashAvailableBalance =
-    fundingSource === 'transparent' ? zcashFundingBalance.available : storeBalance?.available || '0'
+  const zcashAvailableBalance = zcashFundingBalance.available
 
   const zecPrice = useWalletStore(state => state.zecPrice)
   const swapPreferenceScope = createSwapTokenPreferenceScope(effectiveWalletId, effectiveAccountId)
@@ -1234,7 +1233,6 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
     []
   )
 
-  const rawSpendable = swap.isZecSource ? zcashAvailableBalance : '0'
   const walletAmountRaw = useMemo(() => {
     if (!walletOwnedSource || !swap.amountIn) return null
     try {
@@ -1282,11 +1280,11 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
     !displayedFeeLoading &&
     displayedFeeByTier.standard === null &&
     displayedFeeByTier.fast === null
-  const zcashAvailability = resolveZcashTransferAvailability({
-    availableBalance: rawSpendable,
+  const zcashAvailability = resolveZcashFundingAvailability({
+    balance: swap.isZecSource ? storeBalance : null,
+    fundingSource,
     selectedFeeZats,
     standardFeeZats,
-    feeAlreadyReservedZats: fundingSource === 'transparent' ? 0 : undefined,
     maximumAmount: maxTransfer.maxAmount
   })
   const routeMaximum = useTransferMaximum({

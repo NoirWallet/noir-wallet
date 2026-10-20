@@ -8,6 +8,7 @@ export interface KeystoneZcashVerificationAccount {
     readonly transparent: string
     readonly shielded: string
     readonly fullUnified?: string
+    readonly transparentAddressIndex?: number
   }>
 }
 
@@ -112,9 +113,23 @@ export function parseKeystoneZcashVerificationInput(
   if (
     !expectedKeys.includes('transparent') ||
     !expectedKeys.includes('shielded') ||
-    expectedKeys.some(key => key !== 'transparent' && key !== 'shielded' && key !== 'fullUnified')
+    expectedKeys.some(
+      key =>
+        key !== 'transparent' &&
+        key !== 'shielded' &&
+        key !== 'fullUnified' &&
+        key !== 'transparentAddressIndex'
+    )
   ) {
     throw new Error('Invalid Keystone Zcash expected addresses')
+  }
+  if (
+    Object.prototype.hasOwnProperty.call(value.account.expected, 'transparentAddressIndex') &&
+    (!Number.isSafeInteger(value.account.expected.transparentAddressIndex) ||
+      (value.account.expected.transparentAddressIndex as number) < 0 ||
+      (value.account.expected.transparentAddressIndex as number) > 0x7fffffff)
+  ) {
+    throw new Error('Invalid Keystone Zcash transparent address index')
   }
   return Object.freeze({
     envelope: parseV1EncryptedCredentialEnvelope(value.envelope),

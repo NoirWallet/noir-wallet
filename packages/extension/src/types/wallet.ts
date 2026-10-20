@@ -32,6 +32,8 @@ export interface ZcashWalletConfig {
 
 export type AccountAddresses = Record<AddressType, string> & {
   fullUnified?: string
+  /** External transparent child index returned with the primary transparent receiver. */
+  transparentAddressIndex?: number
 }
 
 export interface ShieldedReceiveAddress {

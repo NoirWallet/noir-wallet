@@ -9,7 +9,12 @@ import {
   NOIR_SWAP_APP_FEES,
   NOIR_SWAP_REFERRAL
 } from '@/config/intents'
-import { fetchWithTimeout } from '@/lib/fetch-utils'
+import {
+  FetchHttpError,
+  FetchTimeoutError,
+  FetchResponseTooLargeError,
+  fetchWithTimeout
+} from '@/lib/fetch-utils'
 import { DedupPromise } from '@/lib/async-utils'
 import { assertMainnetProtocolFeature } from '@/lib/runtime-network'
 
@@ -606,6 +611,19 @@ export function isZecToken(token: SwapToken | null): boolean {
   return token.blockchain === 'zec' || token.blockchain === 'zcash'
 }
 
+function getSwapQuoteErrorMessage(error: unknown): string {
+  if (error instanceof FetchTimeoutError) return 'Swap quote request timed out. Please try again.'
+  if (error instanceof FetchResponseTooLargeError)
+    return 'Swap quotes are temporarily unavailable. Please try again.'
+  if (error instanceof FetchHttpError) {
+    if (error.status === 429) return 'Swap service is busy. Please try again shortly.'
+    if (error.status >= 500) return 'Swap quotes are temporarily unavailable. Please try again.'
+    return error.detail || 'Unable to get a swap quote. Please try again.'
+  }
+  if (error instanceof TypeError) return 'Unable to connect to the swap service. Please try again.'
+  return error instanceof Error ? error.message : 'Unable to get a swap quote. Please try again.'
+}
+
 /**
  * Fetches cross-chain swap quote from the API
  */
@@ -635,6 +653,7 @@ export async function fetchQuote(params: QuoteParams): Promise<QuoteResult> {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(requestBody),
       timeoutMs: 20000,
+      maxBytes: 1024 * 1024,
       signal: params.signal
     })
 
@@ -651,7 +670,7 @@ export async function fetchQuote(params: QuoteParams): Promise<QuoteResult> {
   } catch (error) {
     return {
       quoteStatus: 'error',
-      message: error instanceof Error ? error.message : 'Unknown error'
+      message: getSwapQuoteErrorMessage(error)
     }
   }
 }
@@ -670,7 +689,7 @@ export async function fetchSwapStatus(depositAddress: string): Promise<SwapStatu
 
   for (const endpoint of endpoints) {
     try {
-      const response = await fetchWithTimeout(endpoint)
+      const response = await fetchWithTimeout(endpoint, { maxBytes: 1024 * 1024 })
       return parseSwapStatusResponse(await response.json())
     } catch (error) {
       lastError = error

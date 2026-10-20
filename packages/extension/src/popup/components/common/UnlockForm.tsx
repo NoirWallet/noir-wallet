@@ -171,8 +171,16 @@ export function UnlockForm({
     })
 
     if (confirmed) {
-      await zcashWalletRuntimeClient.reset()
-      replace('/onboarding')
+      setIsLoading(true)
+      setError('')
+      try {
+        await zcashWalletRuntimeClient.reset()
+        replace('/onboarding')
+      } catch {
+        setError('Unable to reset wallet. Please try again.')
+      } finally {
+        setIsLoading(false)
+      }
     }
   }
 

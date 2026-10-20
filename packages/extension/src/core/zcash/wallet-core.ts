@@ -10,12 +10,12 @@ import { safeBig } from '@/lib/big'
 import { logger } from '@/lib/logger'
 import { getShieldableTransparentBalance, getShieldInputAmountFromHistory } from './shielding'
 import { isRetryableWalletRpcError } from './wallet-rpc-errors'
+import { mapWasmAccountAddresses, mapWasmShieldedAddresses } from './account-addresses'
 import type {
   BallotDecision,
   HardwarePcztPair,
   JournalReplayOptions,
   LedgerPcztSignatures,
-  WasmUnifiedAddresses,
   VotingActionResult,
   VotingDiscovery,
   VotingEligibility,
@@ -32,17 +32,6 @@ import type {
   AccountAddresses,
   FundingSource
 } from '@/types'
-
-function mapWasmUnifiedToShieldedAddresses(
-  addresses: WasmUnifiedAddresses,
-  transparent?: string
-): Pick<AccountAddresses, 'shielded' | 'fullUnified'> & { transparent?: string } {
-  return {
-    ...(transparent !== undefined ? { transparent } : {}),
-    shielded: addresses.unified,
-    fullUnified: addresses.full_unified
-  }
-}
 
 export {
   isSyncBusyError,
@@ -302,64 +291,6 @@ export class ZcashWalletCore {
     return this.client.getAccountHdIndex(accountId)
   }
 
-  private async ensureAccountIdMatchesIndex(): Promise<void> {
-    if (this.accountId === null || this.accountIndex === undefined) return
-
-    try {
-      const hdIndex = await this.client.getAccountHdIndex(this.accountId)
-      if (hdIndex !== null && hdIndex !== this.accountIndex) {
-        logger.warn(
-          `WalletCore: accountId ${this.accountId} hdIndex ${hdIndex} doesn't match accountIndex ${this.accountIndex}, recovering correct accountId...`,
-          this.walletId
-        )
-        this.accountId = null
-
-        const accountIds = await this.client.getAccountIds()
-        for (const id of accountIds) {
-          const idxCheck = await this.client.getAccountHdIndex(id)
-          if (idxCheck === this.accountIndex) {
-            this.accountId = id
-            logger.log(
-              `WalletCore: recovered correct accountId ${id} for derivation index ${this.accountIndex}`,
-              this.walletId
-            )
-            break
-          }
-        }
-
-        if (this.accountId === null) {
-          throw new Error(
-            `Cannot find WASM account for derivation index ${this.accountIndex}. ` +
-              `Account may not be registered in WASM.`
-          )
-        }
-      }
-    } catch (e) {
-      if ((e as Error).message?.includes('Cannot find WASM account')) throw e
-      logger.warn(`WalletCore: could not ensure account consistency: ${e}`, this.walletId)
-    }
-  }
-
-  private async verifyAccountConsistency(): Promise<void> {
-    if (this.accountId === null) return
-    try {
-      const hdIndex = await this.client.getAccountHdIndex(this.accountId)
-      if (hdIndex !== null && hdIndex !== this.accountIndex) {
-        logger.error(
-          `WalletCore: CRITICAL accountId/accountIndex mismatch: accountId=${this.accountId} has hdIndex=${hdIndex}, accountIndex=${this.accountIndex}`,
-          this.walletId
-        )
-        throw new Error(
-          `Account key mismatch: WASM account ${this.accountId} has derivation index ${hdIndex}, ` +
-            `but expected ${this.accountIndex}. This would cause a signing failure.`
-        )
-      }
-    } catch (e) {
-      if ((e as Error).message?.includes('Account key mismatch')) throw e
-      logger.warn(`WalletCore: could not verify account consistency: ${e}`, this.walletId)
-    }
-  }
-
   async createAccount(
     seedPhrase: string,
     accountIndex: number,
@@ -488,11 +419,7 @@ export class ZcashWalletCore {
           return this.getUnifiedAddresses()
         }
         const addresses = await this.client.getSessionAddresses(accountIndex, net)
-        return {
-          transparent: addresses.transparent,
-          shielded: addresses.unified,
-          fullUnified: addresses.full_unified
-        }
+        return mapWasmAccountAddresses(addresses)
       }
       // Watch-only accounts can't derive from seed; read from the WASM DB instead
       if (this.watchOnly && this.accountId !== null) {
@@ -504,11 +431,7 @@ export class ZcashWalletCore {
     logger.log(`WalletCore: getAddresses for network ${net}`, this.walletId)
     const addresses = await this.client.mnemonicToAddresses(seed, accountIndex, net)
 
-    return {
-      transparent: addresses.transparent,
-      shielded: addresses.unified,
-      fullUnified: addresses.full_unified
-    }
+    return mapWasmAccountAddresses(addresses)
   }
 
   async getUnifiedAddresses(accountId?: number): Promise<AccountAddresses> {
@@ -517,10 +440,7 @@ export class ZcashWalletCore {
       throw new Error('No account created')
     }
     const addresses = await this.client.getUnifiedAddresses(id)
-    return {
-      transparent: addresses.transparent ?? '',
-      ...mapWasmUnifiedToShieldedAddresses(addresses)
-    }
+    return mapWasmAccountAddresses(addresses)
   }
 
   async getNextShieldedAddress(
@@ -534,15 +454,16 @@ export class ZcashWalletCore {
     if (!addresses.unified) {
       throw new Error('Failed to generate next shielded address')
     }
-    return mapWasmUnifiedToShieldedAddresses(addresses)
+    return mapWasmShieldedAddresses(addresses)
   }
 
-  async getBalance(): Promise<ZcashBalance> {
-    if (this.accountId === null) {
-      throw new Error('Account not initialized')
-    }
-    const balance = await this.client.getBalance(this.accountId)
-    return balance
+  async getBalance(accountIndex?: number): Promise<ZcashBalance> {
+    const accountId =
+      accountIndex === undefined
+        ? this.accountId
+        : await this.resolveAccountIdForDerivation(await this.client.getAccountIds(), accountIndex)
+    if (accountId === null) throw new Error('Account not initialized')
+    return this.client.getBalance(accountId)
   }
 
   private requireVotingAccountId(): number {
@@ -605,7 +526,8 @@ export class ZcashWalletCore {
 
   async sendTransaction(
     params: SendTransactionParams,
-    submissionDeadline?: number
+    submissionDeadline?: number,
+    approvedAccountIndex?: number
   ): Promise<TransferResult> {
     if (this.watchOnly) {
       throw new Error('Watch-only wallet: use the hardware signing flow (pcztCreate)')
@@ -614,13 +536,12 @@ export class ZcashWalletCore {
       throw new Error('Wallet not unlocked')
     }
     const amountZatoshis = safeBig(params.amount).times(1e8).toFixed(0)
-    await this.ensureAccountIdMatchesIndex()
-    await this.verifyAccountConsistency()
+    const accountIndex = approvedAccountIndex ?? this.accountIndex
+    const seedPhrase = this.seedPhrase
 
     return await this.client.sendTransaction({
-      accountId: this.accountId!,
-      accountIndex: this.accountIndex,
-      ...(this.seedPhrase ? { seedPhrase: this.seedPhrase } : {}),
+      accountIndex,
+      ...(seedPhrase ? { seedPhrase } : {}),
       to: params.to,
       amount: amountZatoshis,
       memo: params.memo,
@@ -684,17 +605,20 @@ export class ZcashWalletCore {
     return this.client.estimateShieldFee({ accountId: this.accountId, marginalFeeZats })
   }
 
-  async shieldFunds(marginalFeeZats?: number): Promise<{ txid: string; amount: string | null }> {
+  async shieldFunds(
+    marginalFeeZats?: number,
+    approvedAccountIndex?: number
+  ): Promise<{ txid: string; amount: string | null }> {
     if (this.watchOnly) {
       throw new Error('Watch-only wallet: use the hardware signing flow (pcztShieldCreate)')
     }
     if (!this.seedPhrase && !this.sessionCredentialBound) {
       throw new Error('Wallet not unlocked')
     }
-    await this.ensureAccountIdMatchesIndex()
-    await this.verifyAccountConsistency()
+    const accountIndex = approvedAccountIndex ?? this.accountIndex
+    const seedPhrase = this.seedPhrase
 
-    const balance = await this.getBalance()
+    const balance = await this.getBalance(accountIndex)
     const shieldableBalance = getShieldableTransparentBalance(balance)
 
     if (safeBig(shieldableBalance).lte(0)) {
@@ -702,9 +626,8 @@ export class ZcashWalletCore {
     }
 
     const txid = await this.client.oneClickShield({
-      accountId: this.accountId!,
-      accountIndex: this.accountIndex,
-      ...(this.seedPhrase ? { seedPhrase: this.seedPhrase } : {}),
+      accountIndex,
+      ...(seedPhrase ? { seedPhrase } : {}),
       marginalFeeZats
     })
 
@@ -714,7 +637,11 @@ export class ZcashWalletCore {
     // only and must never bubble up an error that would mislabel a live shield
     // as "failed".
     try {
-      const history = await this.client.getTransactionHistory(this.accountId!)
+      const accountId = await this.resolveAccountIdForDerivation(
+        await this.client.getAccountIds(),
+        accountIndex
+      )
+      const history = accountId === null ? [] : await this.client.getTransactionHistory(accountId)
       actualAmount = getShieldInputAmountFromHistory(history, txid)
     } catch (diagError) {
       console.warn('[Shield] Post-broadcast diagnostics failed (tx already broadcast):', diagError)

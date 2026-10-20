@@ -1,10 +1,14 @@
-interface PendingRequest {
+import type { Network } from '@/types'
+
+export interface PendingRequest {
   id: string
   origin: string
   action: string
   data: any
   walletId: string
   accountId: string
+  network: Network
+  authorizationRevision: number
   timestamp: number
 }
 
@@ -24,7 +28,15 @@ export class PendingRequestsManager {
    * Captures walletId/accountId at creation time so the correct wallet
    * is used even if the user switches accounts before approval.
    */
-  create(origin: string, action: string, data: any, walletId: string, accountId: string): string {
+  create(
+    origin: string,
+    action: string,
+    data: any,
+    walletId: string,
+    accountId: string,
+    network: Network,
+    authorizationRevision: number
+  ): string {
     const id = crypto.randomUUID()
 
     const request = {
@@ -34,6 +46,8 @@ export class PendingRequestsManager {
       data,
       walletId,
       accountId,
+      network,
+      authorizationRevision,
       timestamp: Date.now()
     }
 

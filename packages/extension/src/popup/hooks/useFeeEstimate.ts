@@ -20,6 +20,7 @@ interface UseFeeEstimateArgs {
   /** Gate estimation until inputs are valid (e.g. review screen open). */
   enabled?: boolean
   debounceMs?: number
+  estimate?: () => Promise<string>
 }
 
 /**
@@ -37,7 +38,8 @@ export function useFeeEstimate({
   memo,
   fundingSource = 'shielded',
   enabled = true,
-  debounceMs = 500
+  debounceMs = 500,
+  estimate
 }: UseFeeEstimateArgs): FeeEstimateState {
   const [state, setState] = useState<FeeEstimateState>({
     feeZats: null,
@@ -60,8 +62,9 @@ export function useFeeEstimate({
 
     const timer = setTimeout(async () => {
       try {
-        const feeStr =
-          type === 'shield'
+        const feeStr = estimate
+          ? await estimate()
+          : type === 'shield'
             ? await zcashWalletRuntimeClient.estimateShieldFee(MARGINAL_FEE_ZATS.standard)
             : await zcashWalletRuntimeClient.estimateTransferFee({
                 to: to!,
@@ -83,7 +86,7 @@ export function useFeeEstimate({
       clearTimeout(timer)
       requestSeq.current += 1
     }
-  }, [type, to, amount, memo, fundingSource, active, debounceMs])
+  }, [type, to, amount, memo, fundingSource, active, debounceMs, estimate])
 
   return state
 }

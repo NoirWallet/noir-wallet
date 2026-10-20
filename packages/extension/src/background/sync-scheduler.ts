@@ -171,6 +171,7 @@ export class SyncScheduler {
     }
     this.abortSync(walletId)
     if (!(await this.waitForWalletSyncIdle(walletId, 15_000))) {
+      await this.cancelWalletRemoval(walletId)
       throw new Error('Wallet sync did not stop before removal')
     }
   }
@@ -182,6 +183,7 @@ export class SyncScheduler {
     }
     this.abortSync(walletId)
     if (!(await this.waitForWalletSyncIdle(walletId, 15_000))) {
+      await this.cancelWalletRemoval(walletId)
       throw new Error('Wallet sync did not stop before removal')
     }
   }
@@ -199,6 +201,7 @@ export class SyncScheduler {
       this.waitForWalletSyncIdle(walletId, 15_000)
     ])
     if (!schedulerIdle || !walletIdle) {
+      await this.cancelWalletRemoval(walletId)
       throw new Error('Wallet sync did not stop before account removal')
     }
   }

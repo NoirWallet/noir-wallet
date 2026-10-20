@@ -6,6 +6,8 @@ import {
   formatBaseUnitDecimalAmount
 } from '@/popup/components/portfolio/portfolio-format'
 import { resolveTransferSpendableRaw } from './transfer-maximum'
+import { getFundingBalance } from '@/core/wallet/funding-balance'
+import type { FundingSource, ZcashBalance } from '@/types/wallet'
 
 type AccountBalance = Readonly<{
   availableRaw: string
@@ -80,4 +82,20 @@ export function resolveZcashTransferAvailability(input: {
     amount: safeBig(amount).round(ZEC_DECIMALS, Big.roundDown).toFixed(),
     fallbackAmount
   }
+}
+
+export function resolveZcashFundingAvailability(input: {
+  readonly balance: ZcashBalance | null | undefined
+  readonly fundingSource: FundingSource
+  readonly selectedFeeZats: number
+  readonly standardFeeZats: number
+  readonly maximumAmount?: string | null
+}): Readonly<{ amount: string; fallbackAmount: string }> {
+  return resolveZcashTransferAvailability({
+    availableBalance: getFundingBalance(input.balance, input.fundingSource).available,
+    selectedFeeZats: input.selectedFeeZats,
+    standardFeeZats: input.standardFeeZats,
+    feeAlreadyReservedZats: 0,
+    maximumAmount: input.maximumAmount
+  })
 }

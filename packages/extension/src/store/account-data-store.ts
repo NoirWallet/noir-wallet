@@ -71,6 +71,41 @@ const accountDataPersistence = createAccountDataPersistence(
                 accountKey === buildAccountKey('testnet', wallet.id as string, account.id))
           )
       )
+    },
+    isEntryDeleted: async key => {
+      const saved = await chrome.storage.local.get([
+        'wallet_deleted_ids',
+        'wallet_deleted_account_keys',
+        'wallet_deleted_account_indexes'
+      ])
+      const deletedWalletIds = saved.wallet_deleted_ids
+      const deletedAccountKeys = saved.wallet_deleted_account_keys
+      const deletedIndexes = saved.wallet_deleted_account_indexes
+      if (
+        (deletedWalletIds != null && !Array.isArray(deletedWalletIds)) ||
+        (deletedAccountKeys != null && !Array.isArray(deletedAccountKeys)) ||
+        (deletedIndexes != null &&
+          (typeof deletedIndexes !== 'object' || Array.isArray(deletedIndexes)))
+      ) {
+        throw new Error('Wallet deletion records are unavailable')
+      }
+      const parts = key.split('_')
+      const walletId = parts[1]
+      if (!walletId) return true
+      if ((deletedWalletIds as string[] | undefined)?.includes(walletId)) return true
+      const accountSuffix = parts.slice(1).join('_')
+      if (
+        (deletedAccountKeys as string[] | undefined)?.some(
+          accountKey => accountKey.slice(accountKey.indexOf('_') + 1) === accountSuffix
+        )
+      ) {
+        return true
+      }
+      const indexes = deletedIndexes as Record<string, number> | undefined
+      return Object.entries(indexes ?? {}).some(([accountKey, index]) => {
+        const accountParts = accountKey.split('_')
+        return accountParts[1] === walletId && key === `${parts[0]}_${walletId}_${index}`
+      })
     }
   }
 )
@@ -219,7 +254,12 @@ interface AccountDataStore {
   ) => void
 
   // Cleanup
-  deleteAccountData: (network: Network, walletId: string, accountId: string) => Promise<void>
+  deleteAccountData: (
+    network: Network,
+    walletId: string,
+    accountId: string,
+    derivationIndex?: number
+  ) => Promise<void>
   deleteWalletData: (
     network: Network,
     walletId: string,
@@ -500,8 +540,13 @@ export const useAccountDataStore = create<AccountDataStore>()(
         })
       },
 
-      deleteAccountData: async (network, walletId, accountId) => {
+      deleteAccountData: async (network, walletId, accountId, derivationIndex) => {
         const key = buildAccountKey(network, walletId, accountId)
+        const legacyKey =
+          derivationIndex === undefined
+            ? null
+            : buildAccountKey(network, walletId, String(derivationIndex))
+        const keys = legacyKey && legacyKey !== key ? [key, legacyKey] : [key]
 
         set(state => {
           const newBalances = new Map(state.balances)
@@ -510,11 +555,13 @@ export const useAccountDataStore = create<AccountDataStore>()(
           const newCache = new Map(state.transactionsCache)
           const newLoaded = new Set(state.transactionsLoaded)
 
-          newBalances.delete(key)
-          newSyncStates.delete(key)
-          portfolioValues.delete(key)
-          newCache.delete(key)
-          newLoaded.delete(key)
+          for (const accountKey of keys) {
+            newBalances.delete(accountKey)
+            newSyncStates.delete(accountKey)
+            portfolioValues.delete(accountKey)
+            newCache.delete(accountKey)
+            newLoaded.delete(accountKey)
+          }
 
           return {
             balances: newBalances,
@@ -525,8 +572,13 @@ export const useAccountDataStore = create<AccountDataStore>()(
           }
         })
 
-        await Promise.all([deleteTransactions(key), deleteTransparentTxCache(key)])
-        await flushAccountDataStore({ accountKeys: [key] })
+        await Promise.all(
+          keys.flatMap(accountKey => [
+            deleteTransactions(accountKey),
+            deleteTransparentTxCache(accountKey)
+          ])
+        )
+        await flushAccountDataStore({ accountKeys: keys })
       },
 
       deleteWalletData: async (network, walletId, accountIds) => {

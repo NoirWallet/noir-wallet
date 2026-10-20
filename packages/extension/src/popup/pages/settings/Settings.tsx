@@ -9,6 +9,7 @@ import { useSettingsStore } from '@/store/settings-store'
 import { EXTENSION_SIDE_PANEL_PATH, EXTENSION_DISPLAY_MODE_STORAGE_KEY } from '@/config/extension'
 import { readStoredExtensionDisplayMode } from '@/lib/extension-display-mode'
 import { useActiveAccountNetworks } from '@/popup/hooks/useActiveAccountNetworks'
+import { SocialLinks } from '@/popup/components/common/SocialLinks'
 
 interface SidePanelOpenApi {
   open(options: { windowId: number }): Promise<void>
@@ -185,7 +186,8 @@ export function Settings() {
         ))}
       </div>
 
-      <div className="page-footer">
+      <div className="page-footer space-y-3">
+        <SocialLinks />
         <Button onClick={handleLock} variant="outline" className="w-full h-[45px]">
           <Icon icon="lucide:lock" width={16} height={16} className="mr-2" />
           Lock Wallet

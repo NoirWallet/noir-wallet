@@ -778,6 +778,7 @@ const TRUSTED_RUNTIME_SCHEMAS: Readonly<Record<string, RuntimeMessageSchema>> = 
   },
   RPC_ENDPOINT_CHANGED: { required: { preferences: isRecord } },
   GET_PENDING_REQUEST: { required: { requestId: isShortString } },
+  ESTIMATE_APPROVAL_FEE: { required: { requestId: isShortString } },
   GET_SYNC_STATE: {
     optional: { walletId: isShortString, accountId: isShortString }
   },
@@ -996,6 +997,7 @@ const TRUSTED_RUNTIME_CONTEXTS: Readonly<Record<string, readonly OwnExtensionSen
     ACCOUNT_SWITCHED: ['extension-page'],
     RPC_ENDPOINT_CHANGED: ['extension-page'],
     GET_PENDING_REQUEST: ['extension-page'],
+    ESTIMATE_APPROVAL_FEE: ['extension-page'],
     GET_SYNC_STATE: ['extension-page'],
     ABORT_SYNC: ['extension-page'],
     BACKGROUND_SYNC: ['extension-page'],

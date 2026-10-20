@@ -605,10 +605,12 @@ test.describe('dApp account reference cleanup', () => {
 
   test('does not publish an authorization in memory when persistence fails', async () => {
     let shouldFail = true
+    let stored = {}
     const storage = {
-      get: async () => ({}),
-      set: async () => {
+      get: async () => structuredClone(stored),
+      set: async items => {
         if (shouldFail) throw new Error('storage unavailable')
+        stored = structuredClone({ ...stored, ...items })
       }
     }
     const manager = new DAppManager(storage)

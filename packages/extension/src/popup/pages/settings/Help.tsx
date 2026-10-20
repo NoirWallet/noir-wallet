@@ -3,8 +3,7 @@ import { Icon } from '@iconify/react'
 import { PageHeader } from '../../components/common/PageHeader'
 import { Button } from '../../components/ui/button'
 import { toast } from '@/store/toast-store'
-
-const TELEGRAM_SUPPORT_URL = 'https://t.me/noirprivacy'
+import { TELEGRAM_SUPPORT_URL } from '@/config/social-links'
 
 interface DiagnosticExportResponse {
   success: boolean

@@ -35,6 +35,7 @@ test.describe('Ledger Zcash hardware credentials', () => {
       vendor: 'ledger',
       firmwareProfile: 'zcash',
       capabilities: ['zcash'],
+      ledgerSigningTransport: 'bluetooth',
       accountExport: {
         ufvk: legacy.ufvk,
         accountHdIndex: 4,
@@ -53,6 +54,9 @@ test.describe('Ledger Zcash hardware credentials', () => {
   test('rejects a forged Ledger fingerprint or capability escalation', () => {
     expect(() =>
       parseStoredHardwareCredential({ ...legacy, seedFingerprintHex: 'a1'.repeat(32) })
+    ).toThrow('Invalid legacy Ledger credential')
+    expect(() =>
+      parseStoredHardwareCredential({ ...legacy, ledgerSigningTransport: 'wireless' })
     ).toThrow('Invalid legacy Ledger credential')
     expect(() =>
       parseStoredHardwareCredential({

@@ -24,7 +24,7 @@ import { getAccountDisplayName } from '@/lib/format'
 import { getBirthdayDateFromBlockTimestamp } from '@/lib/zcash-birthday'
 import { useWalletStore } from '@/store/wallet-store'
 import { DEFAULT_NETWORK } from '@/lib/runtime-network'
-import { getStoredTransparentAddressPath, getZip32AccountPath } from '@/lib/zcash-derivation'
+import { getZcashDerivationPaths } from '@/lib/zcash-derivation'
 
 function privacyLabel(address: AccountNetworkAddressView): 'Shielded' | 'Transparent' {
   return address.privacy === 'transparent' ? 'Transparent' : 'Shielded'
@@ -44,7 +44,6 @@ export function ZcashSettings() {
   const [birthdayDate, setBirthdayDate] = useState<string | null>(null)
   const [birthdayLoading, setBirthdayLoading] = useState(true)
   const [activeAccount, setActiveAccount] = useState(false)
-  const [softwareWallet, setSoftwareWallet] = useState(false)
   const [canRotateShielded, setCanRotateShielded] = useState(false)
   const [isRotatingShielded, setIsRotatingShielded] = useState(false)
   const [rotationError, setRotationError] = useState<string | null>(null)
@@ -61,9 +60,12 @@ export function ZcashSettings() {
     walletId && accountId && account
       ? getAccountDisplayName(walletId, accountId, account.name, accountDisplayNames)
       : ''
-  const transparentDerivationPath = account
-    ? getStoredTransparentAddressPath(DEFAULT_NETWORK, account.derivationIndex, account.addresses)
-    : null
+  const derivationPaths = getZcashDerivationPaths(
+    DEFAULT_NETWORK,
+    network?.accountDerivationPath,
+    account?.networkAddresses?.[DEFAULT_NETWORK] ?? account?.addresses,
+    network?.addresses.find(address => address.scheme === 'zcash-transparent-p2pkh')?.value
+  )
 
   useEffect(() => {
     let cancelled = false
@@ -73,7 +75,6 @@ export function ZcashSettings() {
     setHistoryOpen(false)
     setHistoryError(null)
     setActiveAccount(false)
-    setSoftwareWallet(false)
     setCanRotateShielded(false)
     setAddressLoading(Boolean(walletId && accountId))
 
@@ -102,7 +103,6 @@ export function ZcashSettings() {
         }
         setNetwork(zcashNetwork)
         setActiveAccount(entry.active)
-        setSoftwareWallet(entry.walletSource.kind === 'software')
         setCanRotateShielded(
           entry.walletSource.kind === 'software' ||
             (entry.walletSource.kind === 'hardware' &&
@@ -399,7 +399,7 @@ export function ZcashSettings() {
           )}
         </section>
 
-        {softwareWallet && (
+        {derivationPaths.account && (
           <section aria-labelledby="zcash-paths-heading">
             <h2 id="zcash-paths-heading" className="mb-2 text-xs font-medium text-muted">
               Derivation paths
@@ -408,31 +408,29 @@ export function ZcashSettings() {
               <button
                 type="button"
                 className="flex w-full items-center justify-between gap-3 rounded-md bg-card px-4 py-3 text-left"
-                onClick={() =>
-                  void copyToClipboard(
-                    getZip32AccountPath(DEFAULT_NETWORK, account.derivationIndex)
-                  )
-                }
+                onClick={() => void copyToClipboard(derivationPaths.account!)}
                 aria-label="Copy Zcash account derivation path"
               >
                 <span className="min-w-0">
-                  <span className="block text-xs text-muted">Account</span>
-                  <span className="break-all font-mono text-xs">
-                    {getZip32AccountPath(DEFAULT_NETWORK, account.derivationIndex)}
-                  </span>
+                  <span className="block text-xs text-muted">Account derivation path</span>
+                  <span className="break-all font-mono text-xs">{derivationPaths.account}</span>
                 </span>
                 <Icon icon="lucide:copy" width={15} height={15} className="shrink-0 text-muted" />
               </button>
-              {transparentDerivationPath && (
+              {derivationPaths.transparent && (
                 <button
                   type="button"
                   className="flex w-full items-center justify-between gap-3 rounded-md bg-card px-4 py-3 text-left"
-                  onClick={() => void copyToClipboard(transparentDerivationPath)}
+                  onClick={() => void copyToClipboard(derivationPaths.transparent!)}
                   aria-label="Copy Zcash transparent address derivation path"
                 >
                   <span className="min-w-0">
-                    <span className="block text-xs text-muted">Transparent address</span>
-                    <span className="break-all font-mono text-xs">{transparentDerivationPath}</span>
+                    <span className="block text-xs text-muted">
+                      Transparent address derivation path
+                    </span>
+                    <span className="break-all font-mono text-xs">
+                      {derivationPaths.transparent}
+                    </span>
                   </span>
                   <Icon icon="lucide:copy" width={15} height={15} className="shrink-0 text-muted" />
                 </button>

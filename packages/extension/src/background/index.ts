@@ -42,6 +42,7 @@ import { prepareTransparentSpend } from '@/core/wallet/transparent-spend-preflig
 import { sanitizeMarginalFeeZats } from '@/core/zcash/fee-policy'
 import { closeAllPopupWindows } from './window-manager'
 import { pendingRequestsManager } from './pending-requests'
+import { getApprovalContext, estimateApprovalFee } from './approval-context'
 import { SecureStorage } from '../core/wallet/secure-storage'
 import { needsUnlock } from '../lib/lock-utils'
 import { transactionMonitor } from './transaction-monitor'
@@ -1512,6 +1513,7 @@ async function performSilentWasmInitialization(): Promise<void> {
     })
 
     await backgroundZcashWalletRuntime.initialize()
+    await walletCleanupCoordinator.resumePendingCleanup()
 
     const initialRpcEndpointId = getPreferredRpcEndpointOption('zcash').id
     void refreshRpcEndpointRegistry()
@@ -4510,12 +4512,20 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
   }
 
   if (message.type === 'GET_PENDING_REQUEST') {
-    const request = pendingRequestsManager.get(message.requestId)
-    if (request) {
-      sendResponse({ request })
-    } else {
-      sendResponse({ error: 'Request not found or expired' })
+    getApprovalContext(message.requestId)
+      .then(request => sendResponse({ request }))
+      .catch(error => sendResponse({ error: error.message }))
+    return true
+  }
+
+  if (message.type === 'ESTIMATE_APPROVAL_FEE') {
+    if (!isOwnExtensionRouteSender(sender, chrome.runtime.id, '/approval')) {
+      sendResponse({ error: 'Unauthorized approval fee request' })
+      return true
     }
+    estimateApprovalFee(message.requestId)
+      .then(fee => sendResponse({ fee }))
+      .catch(error => sendResponse({ error: error.message }))
     return true
   }
 
@@ -4594,7 +4604,13 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
           ...(built.ledgerDisplayAddress === undefined
             ? {}
             : { ledgerDisplayAddress: built.ledgerDisplayAddress }),
-          ...(built.vendor === 'ledger' ? { ledgerPayload: built.ledgerPayload } : {})
+          ...(built.vendor === 'ledger' ? { ledgerPayload: built.ledgerPayload } : {}),
+          ...(built.ledgerDeviceModel === undefined
+            ? {}
+            : { ledgerDeviceModel: built.ledgerDeviceModel }),
+          ...(built.ledgerSigningTransport === undefined
+            ? {}
+            : { ledgerSigningTransport: built.ledgerSigningTransport })
         }
       })
       .then(sendResponse)
@@ -5462,13 +5478,13 @@ async function performWalletLockState(): Promise<void> {
     }
     if (zcashResult.status === 'rejected') throw zcashResult.reason
 
+    dappHandler.clearPermissions()
     await dappHandler.notifyAccountsChanged([])
     await evmDAppHandler.notifyAccountsChanged()
     await bitcoinDAppHandler.notifyAccountsChanged()
     await solanaDAppHandler?.notifyAccountsChanged()
     await nearDAppHandler?.notifyAccountsChanged()
     await multichainSessionDAppHandler?.notifyAllSessionsChanged()
-    dappHandler.clearPermissions()
   } finally {
     syncScheduler.resumeAfterTx()
   }
@@ -5960,6 +5976,8 @@ async function handleHardwarePcztBuild(params: {
       vendor: 'keystone' | 'ledger'
       ledgerPayload?: LedgerSigningPayload
       ledgerDisplayAddress?: string
+      ledgerDeviceModel?: string
+      ledgerSigningTransport?: 'usb' | 'bluetooth'
     }
   | { success: false; error: string }
 > {
@@ -5982,6 +6000,8 @@ async function handleHardwarePcztBuild(params: {
       throw new Error('Select an active hardware account')
     }
     const vendor = wallet.keySource
+    const ledgerCredential =
+      vendor === 'ledger' ? await readLedgerProvisioningCredential(walletId) : undefined
     if (vendor === 'keystone' && fundingSource === 'transparent') {
       throw new Error('Transparent funding is not supported by Keystone hardware wallets')
     }
@@ -6044,6 +6064,14 @@ async function handleHardwarePcztBuild(params: {
       feeZats: built.feeZats,
       amount: built.amount,
       vendor,
+      ...(ledgerCredential === undefined
+        ? {}
+        : {
+            ledgerDeviceModel: ledgerCredential.deviceModel,
+            ...(ledgerCredential.ledgerSigningTransport === undefined
+              ? {}
+              : { ledgerSigningTransport: ledgerCredential.ledgerSigningTransport })
+          }),
       ...(built.ledgerDisplayAddress === undefined
         ? {}
         : { ledgerDisplayAddress: built.ledgerDisplayAddress }),

@@ -66,6 +66,22 @@ function parsePortfolioChainSelectionByAccount(
   )
 }
 
+function parseLedgerSigningTransportByWallet(
+  value: unknown
+): Readonly<Record<string, 'usb' | 'bluetooth'>> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return {}
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(
+        ([walletId, transport]) =>
+          walletId.length > 0 &&
+          walletId.length <= 128 &&
+          (transport === 'usb' || transport === 'bluetooth')
+      )
+      .slice(0, 64)
+  )
+}
+
 function ensureSettingsStoreHydrated(): Promise<void> {
   if (useSettingsStore.persist.hasHydrated()) return Promise.resolve()
   if (!settingsHydrationPromise) {
@@ -97,6 +113,7 @@ interface SettingsStore {
   balancesHidden: boolean
   portfolioViewMode: 'assets' | 'chains'
   portfolioChainSelectionByAccount: Readonly<Record<string, readonly string[]>>
+  ledgerSigningTransportByWallet: Readonly<Record<string, 'usb' | 'bluetooth'>>
   sidePanelMode: boolean
   isSidePanelModeLoaded: boolean
   isLoaded: boolean
@@ -109,6 +126,7 @@ interface SettingsStore {
   setBalancesHidden: (hidden: boolean) => void
   setPortfolioViewMode: (mode: 'assets' | 'chains') => void
   setPortfolioChainSelection: (scopeKey: string, chainIds: readonly string[] | null) => void
+  setLedgerSigningTransport: (walletId: string, transport: 'usb' | 'bluetooth') => void
   setSidePanelMode: (enabled: boolean) => Promise<void>
   syncSidePanelMode: (enabled: boolean) => void
   loadSidePanelMode: () => Promise<void>
@@ -129,6 +147,7 @@ export const useSettingsStore = create<SettingsStore>()(
       balancesHidden: false,
       portfolioViewMode: 'assets',
       portfolioChainSelectionByAccount: {},
+      ledgerSigningTransportByWallet: {},
       sidePanelMode: false,
       isSidePanelModeLoaded: false,
       isLoaded: false,
@@ -163,6 +182,16 @@ export const useSettingsStore = create<SettingsStore>()(
           else next[scopeKey] = Object.freeze([...new Set(chainIds)])
           return { portfolioChainSelectionByAccount: next }
         })
+      },
+
+      setLedgerSigningTransport: (walletId, transport) => {
+        if (!walletId || walletId.length > 128) return
+        set(state => ({
+          ledgerSigningTransportByWallet: {
+            ...state.ledgerSigningTransportByWallet,
+            [walletId]: transport
+          }
+        }))
       },
 
       setSidePanelMode: async enabled => {
@@ -298,6 +327,9 @@ export const useSettingsStore = create<SettingsStore>()(
           portfolioChainSelectionByAccount: parsePortfolioChainSelectionByAccount(
             value.portfolioChainSelectionByAccount
           ),
+          ledgerSigningTransportByWallet: parseLedgerSigningTransportByWallet(
+            value.ledgerSigningTransportByWallet
+          ),
           sidePanelMode: current.sidePanelMode,
           isSidePanelModeLoaded: current.isSidePanelModeLoaded,
           chainEndpointSettingsByNetwork,
@@ -321,7 +353,8 @@ export const useSettingsStore = create<SettingsStore>()(
         feeTier: state.feeTier,
         balancesHidden: state.balancesHidden,
         portfolioViewMode: state.portfolioViewMode,
-        portfolioChainSelectionByAccount: state.portfolioChainSelectionByAccount
+        portfolioChainSelectionByAccount: state.portfolioChainSelectionByAccount,
+        ledgerSigningTransportByWallet: state.ledgerSigningTransportByWallet
       })
     }
   )

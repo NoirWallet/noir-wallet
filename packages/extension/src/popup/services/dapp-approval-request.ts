@@ -28,6 +28,8 @@ export interface DAppApprovalRequest {
   readonly origin: string
   readonly action: DAppApprovalAction
   readonly data: Record<string, unknown>
+  readonly walletId?: string
+  readonly accountId?: string
 }
 
 export type PendingApprovalResponse =
@@ -86,7 +88,9 @@ export function parsePendingApprovalResponse(
       id: request.id,
       origin: request.origin,
       action: request.action,
-      data: request.data
+      data: request.data,
+      ...(typeof request.walletId === 'string' ? { walletId: request.walletId } : {}),
+      ...(typeof request.accountId === 'string' ? { accountId: request.accountId } : {})
     }
   }
 }

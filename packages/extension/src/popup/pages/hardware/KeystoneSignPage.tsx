@@ -14,6 +14,7 @@ import { parseSignedPczt, type UR } from '@/lib/keystone'
 import {
   discoverLedger,
   isLedgerTransparentInputDataError,
+  ledgerSupportsBluetooth,
   parseLedgerSigningPayload,
   signLedgerPczt,
   type LedgerTransport
@@ -24,6 +25,7 @@ import { base64ToBytes, bytesToBase64 } from '@/lib/bytes'
 import { zcashWalletRuntimeClient } from '@/popup/services/zcash-wallet-runtime-client'
 import { rheaSwapClient } from '@/popup/services/rhea-swap-client'
 import { useWalletStore } from '@/store/wallet-store'
+import { useSettingsStore } from '@/store/settings-store'
 import { buildAccountKey, useAccountDataStore } from '@/store/account-data-store'
 import {
   recordHardwareOperationOutcome,
@@ -70,6 +72,8 @@ export function KeystoneSignPage() {
   const [vendor, setVendor] = useState<'keystone' | 'ledger'>('keystone')
   const [ledgerPayload, setLedgerPayload] = useState<LedgerSigningPayload | null>(null)
   const [ledgerDisplayAddress, setLedgerDisplayAddress] = useState<string | null>(null)
+  const [ledgerDeviceModel, setLedgerDeviceModel] = useState<string>()
+  const [legacyLedgerTransport, setLegacyLedgerTransport] = useState<LedgerTransport>()
   const [reviewNotice, setReviewNotice] = useState<string | null>(null)
   const transparentInputRebuiltRef = useRef(false)
   const [deviceMessage, setDeviceMessage] = useState('Follow the instructions on your Ledger')
@@ -84,6 +88,19 @@ export function KeystoneSignPage() {
   const [retryable, setRetryable] = useState(true)
 
   const network = useWalletStore(state => state.currentNetwork)
+  const savedLedgerTransport = useSettingsStore(
+    state => state.ledgerSigningTransportByWallet[request?.walletId ?? '']
+  )
+  const saveLedgerTransport = useSettingsStore(state => state.setLedgerSigningTransport)
+  const preferredLedgerTransport: LedgerTransport =
+    ledgerSupportsBluetooth(ledgerDeviceModel) &&
+    (savedLedgerTransport ?? legacyLedgerTransport) === 'bluetooth'
+      ? 'bluetooth'
+      : 'usb'
+
+  useEffect(() => {
+    if (!useSettingsStore.persist.hasHydrated()) void useSettingsStore.persist.rehydrate()
+  }, [])
   const resultAccountKey =
     request && recordedTransactionId
       ? buildAccountKey(network, request.walletId, request.accountId)
@@ -165,12 +182,22 @@ export function KeystoneSignPage() {
         if (res.vendor === 'ledger') {
           setLedgerPayload(parseLedgerSigningPayload(res.ledgerPayload))
           setLedgerDisplayAddress(res.ledgerDisplayAddress ?? null)
+          setLedgerDeviceModel(
+            typeof res.ledgerDeviceModel === 'string' ? res.ledgerDeviceModel : undefined
+          )
+          setLegacyLedgerTransport(
+            res.ledgerSigningTransport === 'usb' || res.ledgerSigningTransport === 'bluetooth'
+              ? res.ledgerSigningTransport
+              : undefined
+          )
           setVendor('ledger')
           setPcztBytes(null)
         } else if (res.vendor === 'keystone') {
           setPcztBytes(base64ToBytes(res.redacted))
           setLedgerPayload(null)
           setLedgerDisplayAddress(null)
+          setLedgerDeviceModel(undefined)
+          setLegacyLedgerTransport(undefined)
           setVendor('keystone')
         } else {
           throw new Error('Unknown hardware signing device')
@@ -446,7 +473,11 @@ export function KeystoneSignPage() {
 
   const handleLedgerSign = async (transport: LedgerTransport) => {
     if (!ledgerPayload || !request) return
-    setDeviceMessage('Select your Ledger in the browser dialog')
+    setDeviceMessage(
+      transport === 'usb'
+        ? 'Select your Ledger in the browser dialog'
+        : 'Select your Ledger over Bluetooth'
+    )
     setStep('ledger-device')
     try {
       // Browser device prompts must start from the button's user gesture.
@@ -458,6 +489,7 @@ export function KeystoneSignPage() {
         device,
         onInteraction: () => setDeviceMessage('Review and approve on your Ledger')
       })
+      saveLedgerTransport(request.walletId, transport)
       await submitHardwareSignature({ signatures })
     } catch (cause) {
       if (
@@ -575,17 +607,29 @@ export function KeystoneSignPage() {
             )}
           </div>
           <div className="page-footer space-y-2">
-            <Button className="w-full" onClick={() => void handleLedgerSign('usb')}>
-              <Icon icon="lucide:usb" width={16} height={16} className="mr-2" />
-              Sign via USB
-            </Button>
-            <Button
-              className="w-full"
-              variant="outline"
-              onClick={() => void handleLedgerSign('bluetooth')}
-            >
-              Sign via Bluetooth
-            </Button>
+            {(['usb', 'bluetooth'] as const)
+              .filter(
+                transport => transport === 'usb' || ledgerSupportsBluetooth(ledgerDeviceModel)
+              )
+              .sort((a, b) =>
+                a === preferredLedgerTransport ? -1 : b === preferredLedgerTransport ? 1 : 0
+              )
+              .map((transport, index) => (
+                <Button
+                  key={transport}
+                  className="w-full"
+                  variant={index === 0 ? undefined : 'outline'}
+                  onClick={() => void handleLedgerSign(transport)}
+                >
+                  <Icon
+                    icon={transport === 'usb' ? 'lucide:usb' : 'lucide:bluetooth'}
+                    width={16}
+                    height={16}
+                    className="mr-2"
+                  />
+                  Sign via {transport === 'usb' ? 'USB' : 'Bluetooth'}
+                </Button>
+              ))}
             <Button className="w-full" variant="ghost" onClick={() => window.close()}>
               Cancel
             </Button>
