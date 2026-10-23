@@ -4,6 +4,37 @@ import test from 'node:test'
 import { getNearProvider } from '../dist/chains/near/index.mjs'
 import { getSolanaProvider } from '../dist/chains/solana/index.mjs'
 import { getBitcoinProvider } from '../dist/chains/bitcoin/index.mjs'
+import { detectEvmProvider } from '../dist/chains/evm/index.mjs'
+
+test('discovers Noir Wallet by its EIP-6963 identity among other announcements', async () => {
+  const provider = {
+    isNoirWallet: true,
+    request: async () => null,
+    isConnected: () => false,
+    on() {
+      return this
+    },
+    removeListener() {
+      return this
+    }
+  }
+  const otherProvider = { ...provider }
+  const browserWindow = new EventTarget()
+  browserWindow.addEventListener('eip6963:requestProvider', () => {
+    for (const detail of [
+      { info: { rdns: 'com.example.wallet' }, provider: otherProvider },
+      { info: { rdns: 'com.zknoir' }, provider }
+    ]) {
+      browserWindow.dispatchEvent(new CustomEvent('eip6963:announceProvider', { detail }))
+    }
+  })
+  globalThis.window = browserWindow
+  try {
+    assert.equal(await detectEvmProvider({ timeoutMs: 1000 }), provider)
+  } finally {
+    delete globalThis.window
+  }
+})
 
 function solanaProvider() {
   return {

@@ -514,7 +514,7 @@ test('announces an EIP-6963 provider and enforces EVM permissions in real MV3', 
             info?: { name?: string; rdns?: string }
             provider?: unknown
           }
-          if (detail.info?.rdns !== 'io.github.noirwallet') return
+          if (detail.info?.rdns !== 'com.zknoir') return
           window.clearTimeout(timeout)
           window.removeEventListener('eip6963:announceProvider', listener)
           const target = window as typeof window & {
@@ -532,7 +532,7 @@ test('announces an EIP-6963 provider and enforces EVM permissions in real MV3', 
   )
   expect(announcement).toEqual({
     name: 'Noir Wallet',
-    rdns: 'io.github.noirwallet',
+    rdns: 'com.zknoir',
     sameProvider: true
   })
 

@@ -316,7 +316,7 @@ test.describe('EIP-6963 provider injection', () => {
     expect(harness.announcements).toHaveLength(1)
     expect(harness.announcements[0].info).toMatchObject({
       name: 'Noir Wallet',
-      rdns: 'io.github.noirwallet'
+      rdns: 'com.zknoir'
     })
     expect(harness.announcements[0].info.icon).toBe(providerIconDataUrl)
     expect(harness.announcements[0].provider).toBe(harness.windowMock.noirwallet.ethereum)

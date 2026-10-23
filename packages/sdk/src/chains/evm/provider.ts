@@ -1,6 +1,6 @@
 import type { DetectEvmProviderOptions, Eip6963ProviderDetail, EvmProvider } from './types'
 
-const NOIR_WALLET_RDNS = 'io.github.noirwallet'
+const NOIR_WALLET_RDNS = 'com.zknoir'
 
 type NoirWalletWindow = Window & {
   noirwallet?: {
