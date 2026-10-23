@@ -3,7 +3,7 @@ import type { BrowserContext, Page, Route } from '@playwright/test'
 import { networks, payments } from 'bitcoinjs-lib'
 import { Buffer } from 'buffer'
 import { keccak256, parseTransaction, type Hex } from 'viem'
-import { DEFAULT_HISTORY_API_ORIGIN } from '../../src/config/extension'
+import { DEFAULT_HISTORY_API_ORIGIN } from '../../scripts/lib/extension-build-config'
 import { NEAR_NETWORKS } from '../../src/config/networks'
 import {
   captureScreenshot,

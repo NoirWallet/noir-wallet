@@ -1,13 +1,13 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { DEFAULT_ZERO_INDEXER_REGISTRY } from '../src/config/zero-indexer.ts'
 import {
-  DEFAULT_ZERO_INDEXER_REGISTRY,
   createCustomZeroIndexerEndpoint,
   parseZeroIndexerNodePreferences,
   parseZeroIndexerNodeStatus,
-  parseZeroIndexerRegistryDocument
-} from '../src/config/zero-indexer-nodes.ts'
-import { parseZeroIndexerRuntimeOptions } from '../src/config/zero-indexer-runtime.ts'
+  parseZeroIndexerRegistryDocument,
+  parseZeroIndexerRuntimeOptions
+} from '../src/core/zcash/zero-indexer.ts'
 import {
   isTransactionSubmissionUnknown,
   parseTransferResult,

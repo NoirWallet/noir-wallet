@@ -6,8 +6,11 @@ import { Button } from '../../components/ui/button'
 import { zcashWalletRuntimeClient } from '@/popup/services/zcash-wallet-runtime-client'
 import { Switch } from '@/popup/components/ui/switch'
 import { useSettingsStore } from '@/store/settings-store'
-import { EXTENSION_SIDE_PANEL_PATH, EXTENSION_DISPLAY_MODE_STORAGE_KEY } from '@/config/extension'
-import { readStoredExtensionDisplayMode } from '@/lib/extension-display-mode'
+import { EXTENSION_SIDE_PANEL_PATH } from '@/config/extension'
+import {
+  EXTENSION_DISPLAY_MODE_STORAGE_KEY,
+  readStoredExtensionDisplayMode
+} from '@/lib/extension-display-mode'
 import { useActiveAccountNetworks } from '@/popup/hooks/useActiveAccountNetworks'
 
 interface SidePanelOpenApi {

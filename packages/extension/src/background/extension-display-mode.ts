@@ -1,9 +1,8 @@
+import { EXTENSION_POPUP_PATH, EXTENSION_SIDE_PANEL_PATH } from '@/config/extension'
 import {
-  EXTENSION_POPUP_PATH,
-  EXTENSION_SIDE_PANEL_PATH,
-  EXTENSION_DISPLAY_MODE_STORAGE_KEY
-} from '@/config/extension'
-import { readStoredExtensionDisplayMode } from '@/lib/extension-display-mode'
+  EXTENSION_DISPLAY_MODE_STORAGE_KEY,
+  readStoredExtensionDisplayMode
+} from '@/lib/extension-display-mode'
 import { SETTINGS_STORAGE_KEY, decodePersistedWalletSettings } from '@/lib/wallet-settings-storage'
 
 interface SidePanelApi {
