@@ -279,12 +279,6 @@ Do not treat `getAccounts() === null` as an exception; it is the normal result f
 
 ## Extension compatibility
 
-V2 announces its EVM provider through EIP-6963 with rDNS `com.zknoir`, derived from
-`zknoir.com`, maintained in the shared [wallet configuration](./src/config.ts).
-Use `detectEvmProvider()` from `@noir-wallet/sdk/chains/evm` to discover it
-without depending on `window.ethereum`. Integrations that filter EIP-6963 announcements
-directly must use the same rDNS.
-
 The optional `fundingSource` parameter in `getMaxTransfer()` and `sendTransaction()` requires Noir Wallet 1.0.27 or later. When omitted, it defaults to shielded funds.
 
 The SDK normalizes older single-account responses into the current `accounts` array shape, so one integration path works with both response formats.

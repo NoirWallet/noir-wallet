@@ -2,7 +2,10 @@ import { expect, test } from '@playwright/test'
 import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
 import ts from 'typescript'
-import { NOIR_WALLET_RDNS } from '../../sdk/src/config'
+
+const { rdns: NOIR_WALLET_RDNS } = JSON.parse(
+  readFileSync(new URL('../../sdk/package.json', import.meta.url), 'utf8')
+)
 
 const providerSource = readFileSync(
   new URL('../src/content-script/inject-provider.ts', import.meta.url),

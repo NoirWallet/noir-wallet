@@ -7,7 +7,7 @@ import {
   type Hex
 } from 'viem'
 import { verifyMessageSignature } from '../../../sdk/src/chains/zcash/utils'
-import { NOIR_WALLET_RDNS } from '../../../sdk/src/config'
+import { rdns as NOIR_WALLET_RDNS } from '../../../sdk/package.json'
 import { DEFAULT_HISTORY_API_ORIGIN } from '../../src/config/extension'
 import {
   captureScreenshot,

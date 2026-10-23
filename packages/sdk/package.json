@@ -2,6 +2,7 @@
   "name": "@noir-wallet/sdk",
   "version": "0.1.9",
   "description": "TypeScript SDK for Noir Wallet dApp integration",
+  "rdns": "com.zknoir",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",

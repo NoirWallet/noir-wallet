@@ -9,7 +9,7 @@ import { mkdirSync, readFileSync, renameSync, watch, writeFileSync } from 'node:
 import { createRequire } from 'node:module'
 import { createServer } from 'node:net'
 import { name, version } from './package.json'
-import { NOIR_WALLET_RDNS } from '../sdk/src/config'
+import { rdns as NOIR_WALLET_RDNS } from '../sdk/package.json'
 import {
   ALL_CHAIN_FEATURE_FLAGS,
   EVM_CHAIN_FEATURE_FLAG,

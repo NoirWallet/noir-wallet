@@ -7,7 +7,7 @@ on:
     paths:
       - 'packages/extension/**'
       - '!packages/extension/**/*.md'
-      - 'packages/sdk/src/config.ts'
+      - 'packages/sdk/package.json'
       - 'packages/evm-history-worker/**'
       - '!packages/evm-history-worker/**/*.md'
       - 'scripts/extension-release.mjs'

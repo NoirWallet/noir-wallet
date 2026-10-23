@@ -1,4 +1,4 @@
-import { NOIR_WALLET_RDNS } from '../../config'
+import { rdns as NOIR_WALLET_RDNS } from '../../../package.json'
 import type { DetectEvmProviderOptions, Eip6963ProviderDetail, EvmProvider } from './types'
 
 type NoirWalletWindow = Window & {
