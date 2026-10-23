@@ -884,7 +884,7 @@ if (ethereumProvider && !earlyEthereumProvider) {
     uuid: crypto.randomUUID(),
     name: NOIR_WALLET_PROVIDER_NAME,
     icon: NOIR_WALLET_PROVIDER_ICON,
-    rdns: 'com.zknoir'
+    rdns: import.meta.env.NOIR_WALLET_RDNS
   })
   const providerDetail = Object.freeze({ info: providerInfo, provider: ethereumProvider })
   const announceProvider = () => {

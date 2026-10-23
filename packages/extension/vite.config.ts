@@ -9,6 +9,7 @@ import { mkdirSync, readFileSync, renameSync, watch, writeFileSync } from 'node:
 import { createRequire } from 'node:module'
 import { createServer } from 'node:net'
 import { name, version } from './package.json'
+import { NOIR_WALLET_RDNS } from '../sdk/src/config'
 import {
   ALL_CHAIN_FEATURE_FLAGS,
   EVM_CHAIN_FEATURE_FLAG,
@@ -76,6 +77,11 @@ const providerIconDataUrl = `data:image/png;base64,${readFileSync(
   path.resolve(__dirname, './public/icons/icon128.png')
 ).toString('base64')}`
 const earlyEvmProviderSource = path.resolve(__dirname, 'public/early-evm-provider.js')
+const readEarlyEvmProviderSource = () =>
+  readFileSync(earlyEvmProviderSource, 'utf8').replace(
+    "'__NOIR_WALLET_RDNS__'",
+    JSON.stringify(NOIR_WALLET_RDNS)
+  )
 const buildOutDir = isExtensionDevServer
   ? 'dist-dev'
   : isPlaywrightBuild
@@ -173,6 +179,7 @@ export default defineConfig({
     ),
     __ENABLED_CHAIN_FEATURE_FLAGS__: JSON.stringify(enabledChainFeatureFlags),
     'import.meta.env.NOIR_PROVIDER_ICON_DATA_URL': JSON.stringify(providerIconDataUrl),
+    'import.meta.env.NOIR_WALLET_RDNS': JSON.stringify(NOIR_WALLET_RDNS),
     'import.meta.env.NOIR_APP_VERSION': JSON.stringify(version),
     'import.meta.env.NOIR_NETWORK_MODE': JSON.stringify(networkMode),
     'import.meta.env.NOIR_ENABLED_CHAIN_FEATURE_FLAGS': JSON.stringify(enabledChainFeatureFlags)
@@ -204,6 +211,13 @@ export default defineConfig({
     {
       name: 'load-early-evm-provider-synchronously',
       enforce: 'post',
+      generateBundle() {
+        this.emitFile({
+          type: 'asset',
+          fileName: 'early-evm-provider.js',
+          source: readEarlyEvmProviderSource()
+        })
+      },
       configureServer(server) {
         // CRXJS dev loaders use dynamic import; prepend the bootstrap before that import runs.
         if (!isExtensionDevServer || !enabledChainFeatureFlags.includes(EVM_CHAIN_FEATURE_FLAG))
@@ -225,7 +239,7 @@ export default defineConfig({
           const loader = contents.startsWith(marker)
             ? contents.slice(endIndex + endMarker.length)
             : contents
-          const next = `${marker}${readFileSync(earlyEvmProviderSource, 'utf8')}\n${endMarker}${loader}`
+          const next = `${marker}${readEarlyEvmProviderSource()};\n${endMarker}${loader}`
           if (next !== contents) {
             const stagedPath = `${loaderPath}.tmp-${process.pid}`
             writeFileSync(stagedPath, next)

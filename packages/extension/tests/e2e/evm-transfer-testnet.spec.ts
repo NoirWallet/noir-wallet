@@ -7,6 +7,7 @@ import {
   type Hex
 } from 'viem'
 import { verifyMessageSignature } from '../../../sdk/src/chains/zcash/utils'
+import { NOIR_WALLET_RDNS } from '../../../sdk/src/config'
 import { DEFAULT_HISTORY_API_ORIGIN } from '../../src/config/extension'
 import {
   captureScreenshot,
@@ -503,7 +504,7 @@ test('announces an EIP-6963 provider and enforces EVM permissions in real MV3', 
   })
 
   const announcement = await dapp.evaluate(
-    () =>
+    rdns =>
       new Promise<{ name: string; rdns: string; sameProvider: boolean }>((resolve, reject) => {
         const timeout = window.setTimeout(
           () => reject(new Error('EIP-6963 announcement timed out')),
@@ -514,7 +515,7 @@ test('announces an EIP-6963 provider and enforces EVM permissions in real MV3', 
             info?: { name?: string; rdns?: string }
             provider?: unknown
           }
-          if (detail.info?.rdns !== 'com.zknoir') return
+          if (detail.info?.rdns !== rdns) return
           window.clearTimeout(timeout)
           window.removeEventListener('eip6963:announceProvider', listener)
           const target = window as typeof window & {
@@ -528,11 +529,12 @@ test('announces an EIP-6963 provider and enforces EVM permissions in real MV3', 
         }
         window.addEventListener('eip6963:announceProvider', listener)
         window.dispatchEvent(new Event('eip6963:requestProvider'))
-      })
+      }),
+    NOIR_WALLET_RDNS
   )
   expect(announcement).toEqual({
     name: 'Noir Wallet',
-    rdns: 'com.zknoir',
+    rdns: NOIR_WALLET_RDNS,
     sameProvider: true
   })
 
