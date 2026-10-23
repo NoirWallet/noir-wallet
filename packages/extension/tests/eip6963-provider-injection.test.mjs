@@ -3,6 +3,10 @@ import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
 import ts from 'typescript'
 
+const { rdns: NOIR_WALLET_RDNS } = JSON.parse(
+  readFileSync(new URL('../../sdk/package.json', import.meta.url), 'utf8')
+)
+
 const providerSource = readFileSync(
   new URL('../src/content-script/inject-provider.ts', import.meta.url),
   'utf-8'
@@ -40,6 +44,7 @@ const executableProviderSource = `${providerBrandSource
   )}\n${withoutImport(walletStandardSource, './provider-brand').replaceAll('export ', '')}\n${withoutImport(nearConnectWalletSource, './provider-brand').replaceAll('export ', '')}\n${withoutImport(withoutImport(withoutImport(providerSource, './solana-wallet-standard'), './near-connect-wallet'), './provider-brand')}`
   .replace('import.meta.env.NOIR_APP_VERSION', '__APP_VERSION__')
   .replace('import.meta.env.NOIR_NETWORK_MODE', '__NETWORK_MODE__')
+  .replace('import.meta.env.NOIR_WALLET_RDNS', JSON.stringify(NOIR_WALLET_RDNS))
   .replace('import.meta.env.NOIR_ENABLED_CHAIN_FEATURE_FLAGS', '__ENABLED_CHAIN_FEATURE_FLAGS__')
 const compiledProvider = ts.transpileModule(executableProviderSource, {
   compilerOptions: {
@@ -316,7 +321,7 @@ test.describe('EIP-6963 provider injection', () => {
     expect(harness.announcements).toHaveLength(1)
     expect(harness.announcements[0].info).toMatchObject({
       name: 'Noir Wallet',
-      rdns: 'io.github.noirwallet'
+      rdns: NOIR_WALLET_RDNS
     })
     expect(harness.announcements[0].info.icon).toBe(providerIconDataUrl)
     expect(harness.announcements[0].provider).toBe(harness.windowMock.noirwallet.ethereum)
