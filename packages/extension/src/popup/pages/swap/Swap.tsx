@@ -75,6 +75,7 @@ export function Swap() {
 
   const [viewStep, setViewStep] = useState<SwapViewStep>('input')
   const [quoteResult, setQuoteResult] = useState<QuoteResult | null>(null)
+  const [quotedRecipient, setQuotedRecipient] = useState('')
   const [isSending, setIsSending] = useState(false)
   const [isHardwareSigning, setIsHardwareSigning] = useState(false)
   const [maxSelected, setMaxSelected] = useState(false)
@@ -263,6 +264,7 @@ export function Swap() {
           outputPrice: tokenOut.price
         })
         setQuoteResult(result)
+        setQuotedRecipient(recipient)
         swap.setAmountOut(quote.amountOutFormatted)
         swap.setDepositAddress(quote.depositAddress)
 
@@ -359,7 +361,7 @@ export function Swap() {
             originAsset: swap.tokenIn?.assetId,
             destinationAsset: swap.tokenOut?.assetId,
             minAmountOut: quote.minAmountOut,
-            recipient: swap.recipientAddress || undefined,
+            recipient: quotedRecipient,
             deadline:
               quote.deadline && Number.isFinite(Date.parse(quote.deadline))
                 ? Date.parse(quote.deadline)
@@ -409,7 +411,7 @@ export function Swap() {
           accountId: currentAccount.id,
           to: swap.depositAddress,
           amount: swap.amountIn,
-          displayTo: swap.recipientAddress || undefined,
+          displayTo: quotedRecipient,
           quoteBinding,
           monitorParams,
           fundingSource,
@@ -455,7 +457,7 @@ export function Swap() {
           from: fromAddress,
           fromType: fundingSource,
           txType: 'swap',
-          displayTo: swap.recipientAddress || undefined,
+          displayTo: quotedRecipient,
           memo: onChainSwapMemo,
           quoteBinding,
           monitorParams,
@@ -594,6 +596,7 @@ export function Swap() {
     amountErrorCopy,
     maxTransfer.maxAmount,
     quoteResult,
+    quotedRecipient,
     navigateToSwapResult,
     setResult,
     sendTransaction,
@@ -737,6 +740,7 @@ export function Swap() {
           tokenOut={swap.tokenOut}
           amountIn={swap.amountIn}
           amountOut={swap.amountOut}
+          recipient={quotedRecipient}
           minAmountOut={minAmountOut}
           priceImpact={priceImpact}
           fromFiat={swap.fromFiat}
