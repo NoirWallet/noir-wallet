@@ -530,8 +530,10 @@ export class SyncScheduler {
   ): Promise<SyncOutcome['status']> {
     const key = getWalletSyncKey(walletId)
     return this.activeSyncTasks.run(key, async () => {
+      if (this.isTxPaused(walletId)) return 'skipped'
       this.syncAbortFlags.set(key, false)
       await clearSyncAbort(walletId).catch(() => {})
+      if (this.isTxPaused(walletId)) return 'skipped'
       return this.executeSync(walletId, accountId, trigger)
     })
   }
@@ -562,6 +564,7 @@ export class SyncScheduler {
         logger.warn('Sync skipped: persisted wallet account is unavailable', walletId, accountId)
         return 'skipped'
       }
+      if (this.isTxPaused(walletId)) return 'skipped'
 
       const workerStartedAt = performance.now()
       const ready = await accountManager.waitForWalletReady(
@@ -579,6 +582,7 @@ export class SyncScheduler {
         logger.warn('Sync skipped: wallet WASM not ready', walletId, accountId)
         return 'skipped'
       }
+      if (this.isTxPaused(walletId)) return 'skipped'
 
       const syncKey = getWalletSyncKey(walletId)
       const pendingOnChainTx = await hasPendingZcashTxForWallet(walletId)
@@ -600,9 +604,11 @@ export class SyncScheduler {
       if (syncResult.status === 'completed' || syncResult.status === 'partial') {
         const { currentWalletId } = useWalletStore.getState()
         const fgWalletId = this.foregroundWalletId || currentWalletId
-        if (walletId === fgWalletId) {
+        if (walletId === fgWalletId && !this.isTxPaused(walletId)) {
           await accountManager.refreshBalances(walletId, true).catch(() => {})
-          await accountManager.refreshWalletTransactionHistoriesFromWasm(walletId).catch(() => {})
+          if (!this.isTxPaused(walletId)) {
+            await accountManager.refreshWalletTransactionHistoriesFromWasm(walletId).catch(() => {})
+          }
         }
       }
 
