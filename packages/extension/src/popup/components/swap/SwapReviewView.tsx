@@ -13,6 +13,7 @@ interface SwapReviewViewProps {
   tokenOut: SwapToken
   amountIn: string
   amountOut: string
+  recipient: string
   fromFiat: string
   toFiat: string
   slippage: number
@@ -34,6 +35,7 @@ export function SwapReviewView({
   tokenOut,
   amountIn,
   amountOut,
+  recipient,
   minAmountOut,
   priceImpact,
   fromFiat,
@@ -48,7 +50,7 @@ export function SwapReviewView({
 }: SwapReviewViewProps) {
   return (
     <>
-      <div className="flex-1 px-5 py-4">
+      <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
         <h2 className="text-xl font-semibold text-center mb-8">Review Quote</h2>
 
         <div className="flex items-center justify-center gap-4 mb-8">
@@ -103,6 +105,11 @@ export function SwapReviewView({
               <AddressTypeLabel type={fundingSource} />
             </DetailItem>
           )}
+
+          <div className="border-t border-border pt-3">
+            <p className="text-sm text-muted">Recipient</p>
+            <p className="mt-1 break-all font-mono text-xs text-foreground">{recipient}</p>
+          </div>
         </div>
 
         {insufficient && (
