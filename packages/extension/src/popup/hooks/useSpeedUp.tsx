@@ -6,6 +6,8 @@ import { accountManager } from '@/core/wallet/account-manager'
 import { SpeedUpConfirmSheet } from '../components/transaction/SpeedUpConfirmSheet'
 import type { Transaction } from '@/types/wallet'
 import { getTransactionRecoveryAction } from '@/lib/transaction-replacement'
+import type { FeeTier } from '@/config/fee'
+import { toast } from '@/store/toast-store'
 
 /**
  * Drives the Speed Up flow: a confirm sheet (default Fast tier) plus the resend.
@@ -23,6 +25,7 @@ export function useSpeedUp() {
   const { setResult, updateStep } = useTransactionResultStore()
   const { navigate } = useNavigate()
   const [sheetTx, setSheetTx] = useState<Transaction | null>(null)
+  const [sheetRevision, setSheetRevision] = useState(0)
 
   const requestSpeedUp = useCallback((tx: Transaction) => {
     if (getTransactionRecoveryAction(tx) === 'speed_up') setSheetTx(tx)
@@ -32,15 +35,29 @@ export function useSpeedUp() {
     async ({
       amount,
       fee,
-      marginalFeeZats
+      marginalFeeZats,
+      feeQuoteId,
+      feeTier
     }: {
       amount: string
       fee: string
       marginalFeeZats: number
+      feeQuoteId: string
+      feeTier: FeeTier
     }) => {
       const tx = sheetTx
-      setSheetTx(null)
       if (!tx) return
+      try {
+        const currentQuote = await accountManager.getFeeQuote()
+        if (currentQuote.id !== feeQuoteId || currentQuote.expiresAt <= Date.now()) {
+          throw new Error('Fee estimate changed')
+        }
+      } catch {
+        setSheetRevision(value => value + 1)
+        toast.error('Network fee changed', 'Review the updated fee before confirming.')
+        return
+      }
+      setSheetTx(null)
 
       accountManager.requestSync('transaction')
 
@@ -62,6 +79,8 @@ export function useSpeedUp() {
         memo: tx.memo,
         fee,
         marginalFeeZats,
+        feeQuoteId,
+        feeTier,
         replacesTransactionId: tx.id,
         onCreated: (transaction, accountKey) => {
           if (useTransactionResultStore.getState().data !== pendingResult) return
@@ -95,6 +114,7 @@ export function useSpeedUp() {
 
   const speedUpSheet = (
     <SpeedUpConfirmSheet
+      key={sheetRevision}
       open={!!sheetTx}
       onOpenChange={open => !open && setSheetTx(null)}
       tx={sheetTx}
