@@ -17,7 +17,7 @@ import {
 } from './src/config/multichain-feature-flags'
 import { findProhibitedRuntimeModules } from './scripts/lib/runtime-module-policy.mjs'
 import { collectLedgerDependencyNotices } from './scripts/lib/ledger-dependency-notices.mjs'
-import { resolveHistoryApiOrigin } from './src/config/extension'
+import { resolveHistoryApiOrigin } from './scripts/lib/extension-build-config'
 import { resolveBetaInviteRequired } from './src/config/beta-invite'
 
 const require = createRequire(import.meta.url)

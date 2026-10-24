@@ -1,4 +1,4 @@
-import { normalizeZeroIndexerUrl, type ZeroIndexerNodeStatus } from '@/config/zero-indexer-nodes'
+import { normalizeZeroIndexerUrl, type ZeroIndexerNodeStatus } from '@/core/zcash/zero-indexer'
 
 export function selectedZeroIndexerNodeLabel(status: ZeroIndexerNodeStatus | null): string {
   if (!status || status.mode === 'auto') return 'Auto'

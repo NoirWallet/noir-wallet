@@ -1,5 +1,5 @@
-import { SWAP_TOKEN_CATALOG_CACHE_STORAGE_KEY } from '@/config/extension'
 import { parseSwapTokenCatalogResponse, type SwapToken } from '@/core/services/intents-api'
+import { SWAP_TOKEN_CATALOG_CACHE_STORAGE_KEY } from './swap-token-catalog-storage'
 
 const CACHE_VERSION = 1
 const MAX_CACHE_AGE_MS = 24 * 60 * 60 * 1000

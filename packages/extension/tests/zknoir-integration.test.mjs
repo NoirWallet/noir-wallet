@@ -1,24 +1,10 @@
 import { test as it } from '@playwright/test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import vm from 'node:vm'
-import ts from 'typescript'
+import { shouldAutoConnectDApp, ZKNOIR_LENDING_URL } from '../src/core/dapp/first-party-policy.ts'
 
 const describe = it.describe
 
-const configSource = readFileSync(new URL('../src/config/extension.ts', import.meta.url), 'utf-8')
-const configModule = { exports: {} }
-vm.runInNewContext(
-  ts.transpileModule(configSource, {
-    compilerOptions: {
-      module: ts.ModuleKind.CommonJS,
-      target: ts.ScriptTarget.ES2022
-    }
-  }).outputText,
-  { module: configModule, exports: configModule.exports }
-)
-
-const { shouldAutoConnectDApp, ZKNOIR_LENDING_URL } = configModule.exports
 const handlerSource = readFileSync(
   new URL('../src/background/dapp-handler.ts', import.meta.url),
   'utf-8'

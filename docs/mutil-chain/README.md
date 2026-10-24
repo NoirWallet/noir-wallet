@@ -15,11 +15,12 @@ Chain availability comes from the product registry, enabled feature flags, and r
 ## Implementation Sources
 
 - `packages/extension/src/core/chains/`: chain identifiers, product definitions, asset registry, and capability policy.
+- `packages/extension/src/core/zcash/`: Zcash transaction rules and shared private-broadcast contracts and validation.
 - `packages/extension/src/core/keyring/`: internal command protocol and wallet computation ports.
 - `packages/extension/src/infrastructure/keyring/`: command clients and credential persistence.
 - `packages/extension/src/core/transactions/`: scoped transaction graphs and lifecycle rules.
 - `packages/extension/src/core/activity/` and `src/infrastructure/activity/`: Activity projections, aggregation, and supplemental history.
-- `packages/extension/src/config/`: bundled values, parsing, and simple accessors. Managed RPC pools belong to the remote registry.
+- `packages/extension/src/config/`: bundled values, configuration parsing, and simple accessors. Runtime contracts belong to their domain modules; persisted settings and cache keys belong to their persistence modules. Managed RPC pools belong to the remote registry.
 
 The Background account-network catalog keeps Storage V2's Zcash identity unchanged and projects the current shielded receive selection from retained wallet metadata for the same wallet, account, and network. Rotation and selection of a historical address use that same selection; the Addresses page refreshes when it changes.
 
