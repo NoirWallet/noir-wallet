@@ -3,6 +3,9 @@
   "releases": {
     "1.0.40": {
       "changes": [
+        "Review Quote now shows the full recipient address before you confirm a swap.",
+        "Recovery words stay hidden until you reveal them during backup.",
+        "Wallet sync pauses more reliably while preparing transactions.",
         "Resetting a wallet or deleting an account now clears its saved data more reliably.",
         "Disconnected sites stay disconnected after restarting; reconnecting requires your approval.",
         "dApp approvals keep the requested account when you switch accounts or refresh the approval window.",
