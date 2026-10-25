@@ -142,3 +142,54 @@ test('persisted false zero indexer preference survives a stale store write', asy
     }
   )
 })
+
+test('stale pages cannot replace added or removed custom networks or the active mode', async () => {
+  const before = { schemaVersion: 1, customEvmNetworks: [], overrides: [] }
+  const added = { ...before, customEvmNetworks: [{ chainId: 'eip155:31337' }] }
+  await withChromeStorage(undefined, async stored => {
+    const storage = createWalletSettingsPersistStorage()
+    for (const [latest, stale] of [
+      [added, before],
+      [before, added]
+    ]) {
+      stored.set('wallet_settings', {
+        state: {
+          networkMode: 'testnet',
+          chainEndpointSettings: latest,
+          chainEndpointSettingsByNetwork: { mainnet: before, testnet: latest }
+        },
+        version: 0
+      })
+      await storage.setItem('wallet_settings', {
+        state: {
+          networkMode: 'mainnet',
+          balancesHidden: true,
+          chainEndpointSettings: stale,
+          chainEndpointSettingsByNetwork: { mainnet: stale }
+        },
+        version: 0
+      })
+      const saved = JSON.parse(stored.get('wallet_settings')).state
+      assert.deepEqual(saved.chainEndpointSettings, latest)
+      assert.deepEqual(saved.chainEndpointSettingsByNetwork, { mainnet: before, testnet: latest })
+      assert.equal(saved.networkMode, 'testnet')
+      assert.equal(saved.balancesHidden, true)
+    }
+  })
+})
+
+test('a stale page cannot mask legacy endpoint settings with an empty network partition', async () => {
+  const legacy = { schemaVersion: 1, customEvmNetworks: [], overrides: [] }
+  await withChromeStorage(
+    { state: { chainEndpointSettings: legacy }, version: 0 },
+    async stored => {
+      await createWalletSettingsPersistStorage().setItem('wallet_settings', {
+        state: { chainEndpointSettingsByNetwork: {} },
+        version: 0
+      })
+      const saved = JSON.parse(stored.get('wallet_settings')).state
+      assert.deepEqual(saved.chainEndpointSettings, legacy)
+      assert.equal(Object.hasOwn(saved, 'chainEndpointSettingsByNetwork'), false)
+    }
+  )
+})

@@ -28,6 +28,11 @@ function harness(overrides = {}) {
         applied.push(next)
         reloaded.push(next)
       },
+      commitCustomNetwork: async (network, origin) => {
+        commits.push({ network, origin })
+        settings = { ...settings, customEvmNetworks: [...settings.customEvmNetworks, network] }
+        applied.push(settings)
+      },
       requestApproval: async (origin, action, data) => {
         approvals.push({ origin, action, data })
         return { approved: true }
@@ -120,7 +125,7 @@ test.describe('EVM dApp network switch coordinator', () => {
     expect(unsupported.approvals).toEqual([])
   })
 
-  test('treats add for a built-in network as idempotent and rejects custom networks', async () => {
+  test('treats add for a built-in network as idempotent and reviews custom networks', async () => {
     const state = harness()
     await expect(
       handleEvmDAppNetworkSwitch(bscRequest, 'https://dapp.example', 'add', state.options)
@@ -128,13 +133,27 @@ test.describe('EVM dApp network switch coordinator', () => {
     expect(state.approvals).toEqual([])
     expect(state.applied).toEqual([])
 
-    await expect(
-      handleEvmDAppNetworkSwitch(
-        { chainId: '0x7a69', numericChainId: 31337 },
-        'https://dapp.example',
-        'add',
-        state.options
-      )
-    ).rejects.toMatchObject({ code: 4200 })
+    await handleEvmDAppNetworkSwitch(
+      {
+        chainId: '0x7a69',
+        numericChainId: 31337,
+        metadata: {
+          chainName: 'Local EVM',
+          nativeCurrency: { name: 'Local Ether', symbol: 'LETH', decimals: 18 },
+          rpcUrls: ['http://localhost:8545/'],
+          blockExplorerUrls: []
+        }
+      },
+      'https://dapp.example',
+      'add',
+      state.options
+    )
+    expect(state.approvals[0].data).toMatchObject({
+      action: 'add',
+      chainId: 'eip155:31337',
+      rpcUrl: 'http://localhost:8545/'
+    })
+    expect(state.getSettings().customEvmNetworks).toHaveLength(1)
+    expect(state.getSettings().activeEvmChainId).toBeUndefined()
   })
 })

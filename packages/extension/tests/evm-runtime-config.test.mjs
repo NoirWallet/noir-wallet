@@ -36,7 +36,7 @@ test.describe('EVM runtime configuration', () => {
     expect(resolveActiveEvmNetworkConfig('testnet', settings).chainId).toBe('eip155:11155111')
   })
 
-  test('keeps custom EVM support below the release gate', () => {
+  test('includes custom EVM networks in the released runtime', () => {
     const custom = {
       schemaVersion: 1,
       activeEvmChainId: 'eip155:31337',
@@ -61,17 +61,15 @@ test.describe('EVM runtime configuration', () => {
       nativeCurrency: { symbol: 'LETH', slip44Reference: '60' }
     })
     expect(resolveActiveEvmNetworkConfig('testnet', custom)).toMatchObject({
-      source: 'builtin',
-      chainId: 'eip155:11155111'
+      source: 'custom',
+      chainId: 'eip155:31337'
     })
-    expect(resolveEvmNetworkCatalog('testnet', custom)).not.toContainEqual(
+    expect(resolveEvmNetworkCatalog('testnet', custom)).toContainEqual(
       expect.objectContaining({ chainId: 'eip155:31337' })
     )
-    expect(resolveReleasedChainEndpointSettings('testnet', custom)).toEqual({
-      schemaVersion: 1,
-      customEvmNetworks: [],
-      overrides: []
-    })
+    expect(resolveReleasedChainEndpointSettings('testnet', custom).customEvmNetworks).toHaveLength(
+      1
+    )
     expect(() =>
       resolveConfiguredEvmNetworkCatalog('mainnet', {
         ...custom,
@@ -116,6 +114,7 @@ test.describe('EVM runtime configuration', () => {
       'eip155:137',
       'eip155:143',
       'eip155:196',
+      'eip155:31337',
       'eip155:42161',
       'eip155:421614',
       'eip155:43113',

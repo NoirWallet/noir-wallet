@@ -7,6 +7,7 @@ import '@/lib/buffer-polyfill'
 import { betaInviteActivation } from './beta-invite'
 import { getBetaInviteErrorMessage } from '@/core/wallet/beta-invite'
 import { promptBetaInviteActivation } from './beta-invite-window'
+import { handleEvmWalletChoiceMessage } from './evm-wallet-choice'
 import {
   BETA_INVITE_REQUIRED_MESSAGE,
   resolveUnactivatedBetaDAppRequest
@@ -107,7 +108,8 @@ import { CredentialAuthenticationError } from '@/infrastructure/keyring/credenti
 import {
   SETTINGS_STORAGE_KEY,
   resolvePersistedAutoLockMs,
-  updatePersistedWalletSettings
+  updatePersistedWalletSettings,
+  withWalletSettingsLock
 } from '@/lib/wallet-settings-storage'
 import {
   getChainEndpointRuntimeKey,
@@ -688,10 +690,59 @@ async function handleEvmDAppNetworkRequest(
   action: 'switch' | 'add',
   tabInfo: { readonly title?: string; readonly favIconUrl?: string; readonly pageUrl?: string }
 ): Promise<void> {
+  const runtime = evmDAppHandler
+  const account = useWalletStore.getState()
+  const accountIdentity = [
+    account.currentWalletId,
+    account.currentAccountId,
+    account.currentNetwork
+  ]
+  const sourceChainId = runtime.getCaip2ChainId()
+  const authorization = JSON.stringify(
+    await dappManager.getChainAuthorization(origin, sourceChainId)
+  )
+  const readUnlockEpoch = async () =>
+    account.currentWalletId
+      ? (await credentialSession.getCredentialBinding(account.currentWalletId).catch(() => null))
+          ?.globalUnlockEpoch
+      : undefined
+  const unlockEpoch = await readUnlockEpoch()
+  const validateRequest = async (): Promise<void> => {
+    const current = useWalletStore.getState()
+    if (
+      runtime !== evmDAppHandler ||
+      JSON.stringify(accountIdentity) !==
+        JSON.stringify([
+          current.currentWalletId,
+          current.currentAccountId,
+          current.currentNetwork
+        ]) ||
+      authorization !==
+        JSON.stringify(await dappManager.getChainAuthorization(origin, sourceChainId)) ||
+      unlockEpoch !== (await readUnlockEpoch())
+    ) {
+      throw new Eip1193ProviderError(
+        4001,
+        'Wallet context changed. Review the network request again.'
+      )
+    }
+  }
+  await validateRequest()
   await handleEvmDAppNetworkSwitch(requested, origin, action, {
     readSettings: () => chainEndpointSettingsCoordinator.read(),
+    validateRequest,
+    commitCustomNetwork: async network => {
+      await updateChainEndpointSettings(async () => {
+        await validateRequest()
+        return chainEndpointSettingsCoordinator.saveCustomEvmNetwork(
+          network,
+          undefined,
+          validateRequest
+        )
+      })
+    },
     commitActiveChain: (chainId, approvalOrigin) =>
-      commitEvmDAppActiveChain(chainId, approvalOrigin),
+      commitEvmDAppActiveChain(chainId, approvalOrigin, validateRequest),
     requestApproval: (approvalOrigin, approvalAction, data) =>
       dappHandler.requestExternalApproval(approvalOrigin, approvalAction, {
         ...(typeof data === 'object' && data !== null && !Array.isArray(data) ? data : {}),
@@ -701,28 +752,57 @@ async function handleEvmDAppNetworkRequest(
   })
 }
 
-function commitEvmDAppActiveChain(chainId: string, origin: string): Promise<void> {
-  const operation = multichainRuntimeReady
+function commitEvmDAppActiveChain(
+  chainId: string,
+  origin: string,
+  validateRequest: () => Promise<void>
+): Promise<void> {
+  const previousReadiness = multichainRuntimeReady
+  let reconfiguring = false
+  const operation = previousReadiness
     .catch(() => {})
     .then(() =>
       accountContextTransition.runActiveOperation(async () => {
+        await validateRequest()
         const sourceChainId = evmDAppHandler.getCaip2ChainId()
-        const saved = await chainEndpointSettingsCoordinator.selectActiveEvmChain(chainId)
+        const saved = await chainEndpointSettingsCoordinator.selectActiveEvmChain(
+          chainId,
+          validateRequest
+        )
+        reconfiguring = true
         await dappManager.carryEvmAuthorizationToChain(origin, sourceChainId, chainId)
         await reloadMultichainRuntime(saved)
       })
     )
-  multichainRuntimeReady = operation
+  multichainRuntimeReady = operation.catch(error => {
+    if (reconfiguring) throw error
+    return previousReadiness
+  })
+  void multichainRuntimeReady.catch(() => {})
   return operation
 }
 
-function applyChainEndpointSettings(settings: unknown): Promise<ChainEndpointSettings> {
-  const operation = multichainRuntimeReady
+function applyChainEndpointSettings(
+  settings: unknown,
+  expectedSettings?: unknown
+): Promise<ChainEndpointSettings> {
+  return updateChainEndpointSettings(() =>
+    chainEndpointSettingsCoordinator.apply(settings, expectedSettings)
+  )
+}
+
+function updateChainEndpointSettings(
+  update: () => Promise<ChainEndpointSettings>
+): Promise<ChainEndpointSettings> {
+  const previousReadiness = multichainRuntimeReady
+  let reconfiguring = false
+  const operation = previousReadiness
     .catch(() => {})
     .then(() =>
       accountContextTransition.runActiveOperation(async () => {
         const previous = await chainEndpointSettingsCoordinator.read()
-        const result = await chainEndpointSettingsCoordinator.apply(settings)
+        const result = await update()
+        reconfiguring = true
         await reloadMultichainRuntime(result)
         const previousZcashRpc = previous.overrides.find(
           override => override.chainId === getZcashChainId(DEFAULT_NETWORK)
@@ -738,7 +818,14 @@ function applyChainEndpointSettings(settings: unknown): Promise<ChainEndpointSet
         return result
       })
     )
-  multichainRuntimeReady = operation.then(() => undefined)
+  // Validation and concurrent-edit rejections leave the existing runtime ready.
+  multichainRuntimeReady = operation.then(
+    () => undefined,
+    error => {
+      if (reconfiguring) throw error
+      return previousReadiness
+    }
+  )
   void multichainRuntimeReady.catch(() => {})
   return operation
 }
@@ -1153,10 +1240,12 @@ async function synchronizeCurrentSoftwareWalletNetworkMetadata(): Promise<void> 
 }
 
 async function persistNetworkMode(target: Network): Promise<void> {
-  const stored = await chrome.storage.local.get(SETTINGS_STORAGE_KEY)
-  const raw = stored[SETTINGS_STORAGE_KEY]
-  await chrome.storage.local.set({
-    [SETTINGS_STORAGE_KEY]: updatePersistedWalletSettings(raw, { networkMode: target })
+  await withWalletSettingsLock(async () => {
+    const stored = await chrome.storage.local.get(SETTINGS_STORAGE_KEY)
+    const raw = stored[SETTINGS_STORAGE_KEY]
+    await chrome.storage.local.set({
+      [SETTINGS_STORAGE_KEY]: updatePersistedWalletSettings(raw, { networkMode: target })
+    })
   })
 }
 
@@ -2748,7 +2837,7 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
   }
 
   if (message.type === 'APPLY_CHAIN_ENDPOINT_SETTINGS') {
-    void applyChainEndpointSettings(message.settings)
+    void applyChainEndpointSettings(message.settings, message.expectedSettings)
       .then(result => {
         sendResponse({ result })
       })
@@ -2760,6 +2849,35 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
               : 'Chain endpoint settings could not be applied'
         })
       })
+    return true
+  }
+
+  if (
+    message.type === 'SAVE_CUSTOM_EVM_NETWORK' ||
+    message.type === 'REMOVE_CUSTOM_EVM_NETWORK' ||
+    message.type === 'SELECT_ACTIVE_EVM_CHAIN'
+  ) {
+    void updateChainEndpointSettings(() => {
+      if (message.type === 'SAVE_CUSTOM_EVM_NETWORK') {
+        return chainEndpointSettingsCoordinator.saveCustomEvmNetwork(
+          message.network,
+          message.expectedNetwork
+        )
+      }
+      if (message.type === 'REMOVE_CUSTOM_EVM_NETWORK') {
+        return chainEndpointSettingsCoordinator.removeCustomEvmNetwork(message.network)
+      }
+      return chainEndpointSettingsCoordinator.selectActiveEvmChain(message.chainId as string)
+    })
+      .then(result => sendResponse({ result }))
+      .catch(error =>
+        sendResponse({
+          error:
+            error instanceof Error && error.message.length <= 256
+              ? error.message
+              : 'Network settings could not be saved'
+        })
+      )
     return true
   }
 
@@ -4965,6 +5083,10 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  // Selecting another wallet must not wait for Noir's wallet or WASM initialization.
+  if (isRuntimeRecord(message) && handleEvmWalletChoiceMessage(message, sender, sendResponse)) {
+    return true
+  }
   if (isRuntimeRecord(message) && message.type === 'GET_WALLET_SESSION_STATE') {
     return handleRuntimeMessage(message, sender, sendResponse)
   }

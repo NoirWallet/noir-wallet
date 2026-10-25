@@ -58,6 +58,44 @@ export interface ExplorerChainOption {
   }[]
 }
 
+export interface NetworkSettingsOption {
+  readonly chainId: string
+  readonly label: string
+  readonly iconChain: string
+  readonly source: 'builtin' | 'custom'
+  readonly numericChainId?: number
+  readonly currencySymbol: string
+}
+
+export function buildNetworkSettingsOptions(
+  settings: ChainEndpointSettings
+): readonly NetworkSettingsOption[] {
+  const evmNetworks = resolveEvmFeatureRuntimePolicy(__ENABLED_CHAIN_FEATURE_FLAGS__)
+    .newOperationsEnabled
+    ? resolveEvmNetworkCatalog(DEFAULT_NETWORK, settings)
+    : []
+  const evmById = new Map(evmNetworks.map(network => [network.chainId, network]))
+  const nativeSymbols: Readonly<Record<string, string>> = {
+    zec: 'ZEC',
+    btc: 'BTC',
+    sol: 'SOL',
+    near: 'NEAR'
+  }
+  return Object.freeze(
+    buildExplorerChainOptions(settings).map(option => {
+      const evm = evmById.get(option.chainId as `eip155:${string}`)
+      return Object.freeze({
+        chainId: option.chainId,
+        label: option.label,
+        iconChain: option.iconChain,
+        source: evm?.source ?? 'builtin',
+        ...(evm ? { numericChainId: evm.numericChainId } : {}),
+        currencySymbol: evm?.nativeCurrency.symbol ?? nativeSymbols[option.iconChain] ?? ''
+      })
+    })
+  )
+}
+
 export function buildZcashRpcChainOption(groups: readonly RpcEndpointGroup[]): RpcChainOption {
   return {
     chainId: getZcashChainId(DEFAULT_NETWORK),

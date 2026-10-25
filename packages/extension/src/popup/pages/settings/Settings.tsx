@@ -82,9 +82,9 @@ export function Settings() {
 
   const menuItems = [
     { label: 'General', action: () => navigate('/general') },
+    { label: 'Networks', action: () => navigate('/networks') },
     { label: 'Address Book', action: () => navigate('/address-book') },
-    { label: 'Preferred Explorer', action: () => navigate('/preferred-explorer') },
-    { label: 'RPC Endpoint', action: () => navigate('/rpc-endpoint') },
+    { label: 'Default EVM Wallet', action: () => navigate('/default-evm-wallet') },
     { label: 'Security & Privacy', action: () => navigate('/security-privacy') },
     { label: 'Developer Settings', action: () => navigate('/developer-settings') },
     { label: 'About', action: () => navigate('/about') },

@@ -25,6 +25,7 @@ import {
 } from '@/core/zcash/shielding'
 import { getOwnExtensionSenderContext } from '@/lib/runtime-message-security'
 import { ApprovalWindowLayout } from '@/popup/components/dapp/ApprovalWindowLayout'
+import { EvmAddNetworkDetails } from '@/popup/components/dapp/EvmAddNetworkDetails'
 import {
   ApprovalDetailCard,
   DAppConnectionHeader,
@@ -47,6 +48,7 @@ import { calculateSuggestedPrivateGasFundingRaw } from '@/core/transactions/priv
 import {
   formatDAppHost,
   parseBitcoinSigningSummary,
+  parseEvmAddNetworkApproval,
   parseEvmMessageSummary,
   parseEvmPrivateTransferApproval,
   parseEvmTransactionSummary,
@@ -177,6 +179,8 @@ export function ApprovalPage() {
   const isShield = action === 'shieldFunds'
   const isEvmConnect = action === 'evmConnect'
   const isEvmNetwork = action === 'evmNetwork'
+  const evmAddNetwork =
+    isEvmNetwork && data.action === 'add' ? parseEvmAddNetworkApproval(data) : null
   const isEvmTransaction = action === 'evmTransaction'
   const isEvmPrivateTransfer = action === 'evmPrivateTransfer'
   const isEvmGasFunding = action === 'evmGasFunding'
@@ -1007,6 +1011,9 @@ export function ApprovalPage() {
       }
 
       case 'evmNetwork':
+        if (data.action === 'add' && evmAddNetwork === null) {
+          return renderInvalidSigningRequest('The network details are invalid.', false)
+        }
         return (
           <div className="space-y-5">
             <DAppRequestHeader
@@ -1014,36 +1021,14 @@ export function ApprovalPage() {
               pageUrl={dappPageUrl}
               action={data.action === 'add' ? 'Add network' : 'Switch network'}
             />
-            <DAppNetworkCard
-              chain={typeof data.iconChain === 'string' ? data.iconChain : 'evm'}
-              network={data.chainName}
-              chainId={data.chainId}
-            />
-            {data.action === 'switch' && (
-              <p className="px-1 text-sm leading-5 text-muted">
-                If this site is connected, it will use its approved accounts on this network.
-              </p>
-            )}
-            {data.rpcUrl && (
-              <details className="group">
-                <summary className="flex cursor-pointer list-none items-center gap-1 px-1 text-sm text-muted transition-colors hover:text-foreground [&::-webkit-details-marker]:hidden">
-                  <Icon
-                    icon="lucide:chevron-right"
-                    className="size-4 transition-transform group-open:rotate-90"
-                  />
-                  Advanced
-                </summary>
-                <ApprovalDetailCard title="RPC endpoint" className="mt-2">
-                  <p className="break-all font-mono text-xs leading-5 text-foreground/90">
-                    {data.rpcUrl}
-                  </p>
-                </ApprovalDetailCard>
-              </details>
-            )}
-            {data.action === 'add' && data.rpcUrl && (
-              <WarningBox>
-                The selected RPC can observe your IP address, wallet address, and request timing.
-              </WarningBox>
+            {evmAddNetwork ? (
+              <EvmAddNetworkDetails network={evmAddNetwork} />
+            ) : (
+              <DAppNetworkCard
+                chain={typeof data.iconChain === 'string' ? data.iconChain : 'custom-evm'}
+                network={data.chainName}
+                chainId={data.chainId}
+              />
             )}
           </div>
         )
@@ -1615,6 +1600,7 @@ export function ApprovalPage() {
               isLoading ||
               !hasEnoughShieldingBalance ||
               (isEvmTransaction && evmTransactionSummary === null) ||
+              (isEvmNetwork && data.action === 'add' && evmAddNetwork === null) ||
               (isEvmMessage && evmMessageSummary === null) ||
               ((isBitcoinTransaction || isBitcoinMessage) && bitcoinSigningSummary === null) ||
               ((isSolanaTransaction || isSolanaMessage || isNearTransaction || isNearMessage) &&

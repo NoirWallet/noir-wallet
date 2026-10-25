@@ -1131,30 +1131,6 @@ test('attests custom endpoints for every released chain including Zcash', async 
       popup.evaluate(() => chrome.runtime.sendMessage({ type: 'GET_CHAIN_ENDPOINT_SETTINGS' }))
     )
     .toEqual({ result: expectedSettings })
-  const customEvm = await popup.evaluate(() =>
-    chrome.runtime.sendMessage({
-      type: 'APPLY_CHAIN_ENDPOINT_SETTINGS',
-      settings: {
-        schemaVersion: 1,
-        activeEvmChainId: 'eip155:31337',
-        customEvmNetworks: [
-          {
-            chainId: 'eip155:31337',
-            numericChainId: 31337,
-            displayName: 'Local EVM',
-            nativeCurrency: { name: 'Local Ether', symbol: 'LETH', decimals: 18 },
-            rpc: {
-              protocol: 'evm-json-rpc',
-              label: 'Local EVM RPC',
-              url: 'http://localhost:8545'
-            }
-          }
-        ],
-        overrides: []
-      }
-    })
-  )
-  expect(customEvm).toEqual({ error: 'Custom EVM networks are not available in this release' })
   expect(requests).toEqual(
     expect.arrayContaining([
       'POST /ethereum',
@@ -3474,20 +3450,23 @@ test('renders and switches the released EVM catalog and chain-scoped endpoint se
   await popup.getByRole('button', { name: 'Settings', exact: true }).click()
   await expect(popup.getByRole('heading', { name: 'Settings' })).toBeVisible()
 
-  await popup.getByRole('button', { name: 'RPC Endpoint' }).click()
-  await expect(popup.getByRole('heading', { name: 'RPC Endpoints' })).toBeVisible()
+  await expect(popup.getByRole('button', { name: 'Preferred Explorer', exact: true })).toHaveCount(
+    0
+  )
+  await expect(popup.getByRole('button', { name: 'RPC Endpoint', exact: true })).toHaveCount(0)
+  await popup.getByRole('button', { name: 'Networks', exact: true }).click()
+  await expect(popup.getByRole('heading', { name: 'Networks' })).toBeVisible()
   for (const network of ['Zcash', 'Bitcoin', ...BUILTIN_EVM_NETWORKS, 'Solana', 'NEAR']) {
-    await expect(popup.getByText(network, { exact: true })).toBeVisible()
+    await expect(popup.getByRole('button', { name: `Configure ${network} network` })).toBeVisible()
   }
   await expect(popup.getByText('Local EVM', { exact: true })).toHaveCount(0)
-  await expect(popup.getByText('DeltaRPC Singapore', { exact: true })).toHaveCount(0)
-  await expect(popup.getByText(new URL(EVM_NETWORK_CONFIGS.mainnet[0].rpcUrl).host)).toBeVisible()
-  await expect(popup.getByText(/solana\.deltarpc\.com/)).toBeVisible()
-  await expect(popup.getByText(/free\.rpc\.fastnear\.com/)).toBeVisible()
+  await expect(popup.locator('button[aria-label^="Configure "][aria-pressed]')).toHaveCount(0)
   await expectPopupWidth(popup)
   await expectVisibleImagesLoaded(popup)
-  await captureScreenshot(popup, 'release-default-rpc-endpoints.png')
-  await popup.getByRole('button', { name: 'Configure Zcash RPC' }).click()
+  await captureScreenshot(popup, 'release-default-networks.png')
+
+  await popup.getByRole('button', { name: 'Configure Zcash network' }).click()
+  await popup.getByRole('button', { name: 'RPC Endpoint', exact: true }).click()
   const zcashRpcDialog = popup.getByRole('dialog')
   await expect(zcashRpcDialog.getByRole('heading', { name: 'Zcash RPC' })).toBeVisible()
   await expect(
@@ -3500,11 +3479,13 @@ test('renders and switches the released EVM catalog and chain-scoped endpoint se
   await captureScreenshot(popup, 'release-default-zcash-rpc-selector.png')
   await popup.keyboard.press('Escape')
   await expect(zcashRpcDialog).toHaveCount(0)
-  const ethereumRpcRow = popup
-    .getByRole('button')
-    .filter({ has: popup.getByText('Ethereum', { exact: true }) })
-  await expect(ethereumRpcRow).toHaveCount(1)
-  await ethereumRpcRow.click()
+  await popup.getByRole('button', { name: 'Back' }).click()
+
+  await popup.getByRole('button', { name: 'Configure Ethereum network' }).click()
+  await expect(popup.getByRole('button', { name: 'RPC Endpoint', exact: true })).toContainText(
+    new URL(EVM_NETWORK_CONFIGS.mainnet[0].rpcUrl).host
+  )
+  await popup.getByRole('button', { name: 'RPC Endpoint', exact: true }).click()
   const ethereumRpcDialog = popup.getByRole('dialog')
   await expect(
     ethereumRpcDialog.getByRole('button', { name: 'Use automatic RPC' })
@@ -3514,66 +3495,44 @@ test('renders and switches the released EVM catalog and chain-scoped endpoint se
   await captureScreenshot(popup, 'release-default-ethereum-rpc-presets.png')
   await popup.keyboard.press('Escape')
   await expect(ethereumRpcDialog).toHaveCount(0)
-  const solanaRpcRow = popup
-    .getByRole('button')
-    .filter({ has: popup.getByText('Solana', { exact: true }) })
-  await expect(solanaRpcRow).toHaveCount(1)
-  await solanaRpcRow.click()
-  const solanaRpcDialog = popup.getByRole('dialog')
-  await expect(
-    solanaRpcDialog.getByRole('button', { name: /^Use (?!automatic).* RPC$/ })
-  ).toHaveCount(1)
-  await solanaRpcDialog.getByRole('button', { name: 'Use Delta RPC' }).click()
-  await expect(solanaRpcDialog).toHaveCount(0)
-  await solanaRpcRow.click()
-  await expect(solanaRpcDialog.getByRole('button', { name: 'Use Delta RPC' })).toHaveAttribute(
-    'aria-pressed',
-    'true'
+  await expect(popup.getByRole('button', { name: 'Block Explorer', exact: true })).toContainText(
+    'etherscan.io'
   )
+  await popup.getByRole('button', { name: 'Block Explorer', exact: true }).click()
+  await expect(popup.getByRole('heading', { name: 'Ethereum Explorer' })).toBeVisible()
+  await expectPopupWidth(popup)
+  await captureScreenshot(popup, 'release-default-ethereum-explorers.png')
   await popup.keyboard.press('Escape')
+  await popup.getByRole('button', { name: 'Back' }).click()
 
-  const nearRpcRow = popup
-    .getByRole('button')
-    .filter({ has: popup.getByText('NEAR', { exact: true }) })
-  await expect(nearRpcRow).toHaveCount(1)
-  await nearRpcRow.click()
-  const nearRpcDialog = popup.getByRole('dialog')
-  await expect(
-    nearRpcDialog.getByRole('button', { name: /^Use (?!automatic).* RPC$/ })
-  ).toHaveCount(1)
-  await nearRpcDialog.getByRole('button', { name: 'Use Fastnear RPC' }).click()
-  await expect(nearRpcDialog).toHaveCount(0)
-  await nearRpcRow.click()
-  await expect(nearRpcDialog.getByRole('button', { name: 'Use Fastnear RPC' })).toHaveAttribute(
-    'aria-pressed',
-    'true'
-  )
-  await popup.keyboard.press('Escape')
+  for (const network of [
+    { name: 'Solana', provider: 'Delta' },
+    { name: 'NEAR', provider: 'Fastnear' }
+  ]) {
+    await popup.getByRole('button', { name: `Configure ${network.name} network` }).click()
+    await popup.getByRole('button', { name: 'RPC Endpoint', exact: true }).click()
+    const networkRpcDialog = popup.getByRole('dialog')
+    await expect(
+      networkRpcDialog.getByRole('button', { name: /^Use (?!automatic).* RPC$/ })
+    ).toHaveCount(1)
+    await networkRpcDialog.getByRole('button', { name: `Use ${network.provider} RPC` }).click()
+    await expect(networkRpcDialog).toHaveCount(0)
+    await popup.getByRole('button', { name: 'RPC Endpoint', exact: true }).click()
+    await expect(
+      networkRpcDialog.getByRole('button', { name: `Use ${network.provider} RPC` })
+    ).toHaveAttribute('aria-pressed', 'true')
+    await popup.keyboard.press('Escape')
+    await popup.getByRole('button', { name: 'Back' }).click()
+  }
 
-  const bitcoinRpcRow = popup
-    .getByRole('button')
-    .filter({ has: popup.getByText('Bitcoin', { exact: true }) })
-  await expect(bitcoinRpcRow).toHaveCount(1)
-  await bitcoinRpcRow.click()
+  await popup.getByRole('button', { name: 'Configure Bitcoin network' }).click()
+  await popup.getByRole('button', { name: 'RPC Endpoint', exact: true }).click()
   const rpcDialog = popup.getByRole('dialog')
   await expect(rpcDialog.getByLabel('Bitcoin RPC URL')).toHaveCount(0)
-  const useAutoRpc = rpcDialog.getByRole('button', { name: 'Use automatic RPC' })
-  await expect(useAutoRpc).toBeEnabled()
-  await useAutoRpc.click()
+  await rpcDialog.getByRole('button', { name: 'Use automatic RPC' }).click()
   await expect(rpcDialog).toHaveCount(0)
   await expect(popup.getByText('Auto RPC Enabled', { exact: true })).toBeVisible()
   await popup.getByRole('button', { name: 'Back' }).click()
-
-  await popup.getByRole('button', { name: 'Preferred Explorer' }).click()
-  await expect(popup.getByRole('heading', { name: 'Block Explorers' })).toBeVisible()
-  for (const network of ['Zcash', 'Bitcoin', ...BUILTIN_EVM_NETWORKS, 'Solana', 'NEAR']) {
-    await expect(popup.getByText(network, { exact: true })).toBeVisible()
-  }
-  await expect(popup.getByText('Local EVM', { exact: true })).toHaveCount(0)
-  await expect(popup.getByText('etherscan.io', { exact: true })).toBeVisible()
-  await expectPopupWidth(popup)
-  await expectVisibleImagesLoaded(popup)
-  await captureScreenshot(popup, 'release-default-block-explorers.png')
 
   const addedAccount = await popup.evaluate(async () => {
     const stored = (await chrome.storage.local.get('wallet_state')).wallet_state
