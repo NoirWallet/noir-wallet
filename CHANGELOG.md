@@ -2,10 +2,13 @@
 
 Developer-oriented release history for Noir Wallet. Concise in-wallet update notes are maintained separately in [packages/web/public/changelog.json](./packages/web/public/changelog.json).
 
-## [1.0.40] - 2026-10-19
+## [1.0.40] - 2026-10-25
 
 ### Fixed
 
+- Show the full quoted recipient before confirming a swap and keep Confirm visible when long addresses wrap.
+- Keep recovery words out of readable page content and the accessibility tree until the backup phrase is revealed.
+- Respect transaction pauses before queued synchronization starts and between synchronization stages, without starting follow-up balance or history requests after a paused scan.
 - Clear wallet snapshots, transactions, balance caches, voting data, and sessions according to the reset or deletion scope. Stop background writes from restoring deleted data, allow cleanup failures to retry, and preserve other accounts' records.
 - Preserve explicit dApp disconnection across restarts, including first-party sites, and require user approval to reconnect.
 - Keep approval display, fee estimation, transaction execution, and current-account message signing bound to the requested account when switching accounts or refreshing the approval window.
