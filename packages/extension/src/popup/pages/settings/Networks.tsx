@@ -51,7 +51,7 @@ const fields: readonly {
 ]
 
 export function Networks() {
-  const { navigate } = useNavigate()
+  const { goBack } = useNavigate()
   const settings = useSettingsStore(state => state.chainEndpointSettings)
   const setSettings = useSettingsStore(state => state.setChainEndpointSettings)
   const loadSettings = useSettingsStore(state => state.loadSettings)
@@ -183,7 +183,7 @@ export function Networks() {
     setError(null)
     if (editing !== undefined) setEditing(undefined)
     else if (detailChainId) setDetailChainId(null)
-    else navigate('/settings')
+    else goBack()
   }
 
   return (
@@ -340,11 +340,6 @@ export function Networks() {
                         <span className="block truncate text-sm font-medium" title={network.label}>
                           {network.label}
                         </span>
-                        {network.numericChainId !== undefined && (
-                          <span className="block truncate text-xs text-muted">
-                            Chain ID {network.numericChainId}
-                          </span>
-                        )}
                       </span>
                       <Icon icon="lucide:chevron-right" className="size-4 shrink-0 text-muted" />
                     </button>

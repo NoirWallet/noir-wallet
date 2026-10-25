@@ -146,18 +146,27 @@ export function buildRpcChainOptions(settings: ChainEndpointSettings): readonly 
     ...(evmEnabled
       ? resolveEvmNetworkCatalog(DEFAULT_NETWORK, settings).map(network => {
           const builtin = findBuiltinEvmNetworkConfig(DEFAULT_NETWORK, network.chainId)
+          const custom = settings.customEvmNetworks.find(item => item.chainId === network.chainId)
+          const defaultUrl = builtin
+            ? getEvmRpcEndpointOptions(DEFAULT_NETWORK, network.chainId)[0].url
+            : (custom?.rpc.url ?? network.rpcUrl)
           return Object.freeze({
             chainId: network.chainId,
             label: network.displayName,
             iconChain: network.iconChain,
             protocol: 'evm-json-rpc' as const,
-            defaultUrl: builtin
-              ? getEvmRpcEndpointOptions(DEFAULT_NETWORK, network.chainId)[0].url
-              : (settings.customEvmNetworks.find(custom => custom.chainId === network.chainId)?.rpc
-                  .url ?? network.rpcUrl),
+            defaultUrl,
             ...(builtin
               ? { presets: getEvmRpcEndpointOptions(DEFAULT_NETWORK, network.chainId) }
-              : {})
+              : {
+                  presets: [
+                    Object.freeze({
+                      id: 'default',
+                      label: custom?.rpc.label ?? 'Default',
+                      url: defaultUrl
+                    })
+                  ]
+                })
           })
         })
       : []),
