@@ -23,12 +23,12 @@ function token() {
   }
 }
 
-test('shows RHEA quote and swap errors without replacing the provider message', () => {
+test('shows the useful minimum from RHEA quote and swap errors', () => {
   expect(
     getRheaSwapErrorMessage(
       new RheaSwapClientError('Temporary swap limits: minimum swap amount is $1,000')
     )
-  ).toBe('Temporary swap limits: minimum swap amount is $1,000')
+  ).toBe('Minimum swap amount is $1,000.')
   expect(getRheaSwapErrorMessage(new Error('Minimum swap amount is $1,000'))).toBe(
     'Amount is below the current minimum for this Swap route.'
   )

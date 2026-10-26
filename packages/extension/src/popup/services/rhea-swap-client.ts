@@ -36,14 +36,36 @@ export class RheaSwapClientError extends Error {
   }
 }
 
+function readSwapErrorReason(message: string, depth = 0): string {
+  if (depth >= 4) return ''
+  const start = message.indexOf('{')
+  const end = message.lastIndexOf('}')
+  if (start !== -1) {
+    try {
+      const payload: unknown = JSON.parse(message.slice(start, end + 1))
+      if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
+        const record = payload as Record<string, unknown>
+        for (const key of ['message', 'msg', 'reason', 'error']) {
+          if (typeof record[key] === 'string') return readSwapErrorReason(record[key], depth + 1)
+        }
+      }
+    } catch {
+      // An invalid upstream response must not become product copy.
+    }
+    return ''
+  }
+  return message.trim().replace(/^HTTP \d{3}:\s*/i, '')
+}
+
 export function getRheaSwapErrorMessage(error: unknown): string {
-  if (
-    error instanceof RheaSwapClientError &&
-    /unsupported destination token|destinationtoken.*not supported/i.test(error.message)
-  ) {
+  if (!(error instanceof RheaSwapClientError)) return classifyError(error).userMessage
+  const reason = readSwapErrorReason(error.message)
+  if (/unsupported destination token|destinationtoken.*not supported/i.test(reason)) {
     return 'This destination is unavailable for this swap. Choose another asset.'
   }
-  return error instanceof RheaSwapClientError ? error.message : classifyError(error).userMessage
+  const minimum = reason.match(/minimum (?:swap )?amount(?:\s+is|\s+of|:)?\s*(\$[\d,]+(?:\.\d+)?)/i)
+  if (minimum) return `Minimum swap amount is ${minimum[1]}.`
+  return classifyError(new Error(reason)).userMessage
 }
 
 interface RuntimeMessenger {
