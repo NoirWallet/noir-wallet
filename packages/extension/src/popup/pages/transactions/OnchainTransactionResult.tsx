@@ -18,6 +18,7 @@ import {
 import {
   getOnchainTransactionFailureLabel,
   getOnchainResultAction,
+  getOnchainResultExitOutcome,
   getOnchainResultTotal,
   getOnchainTransactionStatusPresentation,
   resolveVisibleTransactionStatus
@@ -180,28 +181,30 @@ export function OnchainTransactionResult({
         className={compactDetails ? 'pb-0 pt-4' : 'py-3'}
         bodyClassName={compactDetails ? 'my-0' : 'my-2'}
         footer={
-          resultAction === 'retry' ? (
-            <Button className="h-[45px] w-full" isLoading={resuming} onClick={handleResume}>
-              Retry broadcast
-            </Button>
-          ) : resultAction === 'explorer' && explorerUrl ? (
-            <Button asChild className="h-[45px] w-full">
-              <a href={explorerUrl} target="_blank" rel="noopener noreferrer">
-                View on Explorer
-              </a>
-            </Button>
-          ) : (
+          <div className="flex w-full flex-col gap-2">
+            {resultAction === 'retry' ? (
+              <Button className="h-[45px] w-full" isLoading={resuming} onClick={handleResume}>
+                Retry broadcast
+              </Button>
+            ) : resultAction === 'explorer' && explorerUrl ? (
+              <Button asChild className="h-[45px] w-full">
+                <a href={explorerUrl} target="_blank" rel="noopener noreferrer">
+                  View on Explorer
+                </a>
+              </Button>
+            ) : resultAction === 'activity' ? (
+              <Button className="h-[45px] w-full" onClick={() => onViewActivity(graph.root.id)}>
+                View Activity
+              </Button>
+            ) : null}
             <Button
+              variant={resultAction === 'done' ? 'default' : 'outline'}
               className="h-[45px] w-full"
-              onClick={() =>
-                status === 'final' || status === 'failed'
-                  ? onDone(status)
-                  : onViewActivity(graph.root.id)
-              }
+              onClick={() => onDone(getOnchainResultExitOutcome(status))}
             >
-              {status === 'final' || status === 'failed' ? 'Done' : 'View Activity'}
+              Done
             </Button>
-          )
+          </div>
         }
       >
         <div className="w-full">
