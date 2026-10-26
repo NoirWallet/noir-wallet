@@ -2,7 +2,7 @@ import { test as it } from '@playwright/test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { logger } from '../src/lib/logger.ts'
-import { resolveHistoryApiOrigin } from '../src/config/extension.ts'
+import { resolveHistoryApiOrigin } from '../scripts/lib/extension-build-config.ts'
 
 const describe = it.describe
 

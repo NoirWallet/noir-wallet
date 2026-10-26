@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test'
 
 import { getEvmNetworkConfigs } from '../src/config/networks.ts'
-import { resolveHistoryApiOrigin } from '../src/config/extension.ts'
+import { resolveHistoryApiOrigin } from '../scripts/lib/extension-build-config.ts'
 import { CHAIN_ID_TO_ANKR } from '../../evm-history-worker/src/index.ts'
 
 const PROBE_ADDRESS = '0x000000000000000000000000000000000000dEaD'

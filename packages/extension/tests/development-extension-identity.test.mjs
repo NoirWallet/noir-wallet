@@ -3,7 +3,7 @@ import { createPublicKey } from 'node:crypto'
 import {
   DEVELOPMENT_EXTENSION_PUBLIC_KEY,
   resolveDevelopmentExtensionKey
-} from '../src/config/extension.ts'
+} from '../scripts/lib/extension-build-config.ts'
 
 test.describe('development extension identity', () => {
   test('uses one valid fixed public key for the local dev server', () => {

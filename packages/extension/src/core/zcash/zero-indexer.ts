@@ -1,6 +1,9 @@
-import { ZERO_INDEXER_MAINNET_URL, ZERO_INDEXER_TESTNET_URL } from './zero-indexer'
-
 export type ZeroIndexerNetwork = 'mainnet' | 'testnet'
+
+export interface ZeroIndexerOptions {
+  urls: string[]
+  sendTimeoutMs?: number
+}
 
 export interface ZeroIndexerEndpoint {
   id: string
@@ -37,22 +40,6 @@ export interface ZeroIndexerNodePreferences {
   >
 }
 
-export const ZERO_INDEXER_NODES_STORAGE_KEY = 'zero_indexer_nodes_v1'
-export const ZERO_INDEXER_RUNTIME_STORAGE_KEY = 'zero_indexer_runtime_v1'
-export const ZERO_INDEXER_REGISTRY_CACHE_KEY = 'zero_indexer_registry_cache_v1'
-export const ZERO_INDEXER_REGISTRY_URL = 'https://rpc.zknoir.com/v1/zero-indexer-endpoints'
-
-export const DEFAULT_ZERO_INDEXER_REGISTRY: ZeroIndexerRegistryDocument = {
-  version: 1,
-  updatedAt: '2026-10-11T00:00:00.000Z',
-  networks: {
-    mainnet: [{ id: 'zero-indexer-mainnet', label: 'ZeroIndexer', url: ZERO_INDEXER_MAINNET_URL }],
-    testnet: [
-      { id: 'zero-indexer-testnet', label: 'ZeroIndexer Testnet', url: ZERO_INDEXER_TESTNET_URL }
-    ]
-  }
-}
-
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/
 
 export function normalizeZeroIndexerUrl(value: unknown): string {
@@ -76,6 +63,34 @@ export function normalizeZeroIndexerUrl(value: unknown): string {
     throw new Error('ZeroIndexer URL must use HTTPS without credentials, query, or fragment')
   }
   return url.toString().replace(/\/+$/, '')
+}
+
+export function parseZeroIndexerRuntimeOptions(value: unknown): ZeroIndexerOptions | null {
+  if (value === null) return null
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Invalid privacy broadcast configuration')
+  }
+  const options = value as Record<string, unknown>
+  if (
+    Object.keys(options).some(key => key !== 'urls' && key !== 'sendTimeoutMs') ||
+    !Array.isArray(options.urls) ||
+    options.urls.length === 0
+  ) {
+    throw new Error('Invalid privacy broadcast configuration')
+  }
+  const urls = options.urls.map(url => normalizeZeroIndexerUrl(url))
+  const timeout = options.sendTimeoutMs
+  const uniqueUrls = [...new Set(urls)]
+  if (timeout === undefined) return { urls: uniqueUrls }
+  if (
+    typeof timeout !== 'number' ||
+    !Number.isSafeInteger(timeout) ||
+    timeout <= 0 ||
+    timeout > 0xffffffff
+  ) {
+    throw new Error('Invalid privacy broadcast timeout')
+  }
+  return { urls: uniqueUrls, sendTimeoutMs: timeout }
 }
 
 export function createCustomZeroIndexerEndpoint(

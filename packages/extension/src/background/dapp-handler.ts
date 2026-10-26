@@ -1,6 +1,7 @@
 import { isZcashHardwareKeySource } from '@/core/wallet/hardware-wallet-data'
 import { backgroundZcashWalletRuntime } from './zcash-wallet-runtime'
 import { connectionAuthorizesAccount, dappManager } from '../core/dapp/dapp-manager'
+import { shouldAutoConnectDApp } from '@/core/dapp/first-party-policy'
 import { syncScheduler } from './sync-scheduler'
 import type {
   AccountData,
@@ -9,7 +10,7 @@ import type {
   WalletItem,
   ZcashBalance
 } from '@/types'
-import { UI_CONFIG, shouldAutoConnectDApp } from '@/config/extension'
+import { UI_CONFIG } from '@/config/extension'
 import { SIGNING_ACCOUNT_INDEX, WALLET_CONFIG } from '@/config/wallet'
 import { MARGINAL_FEE_ZATS } from '@/config/fee'
 import { sanitizeMarginalFeeZats } from '@/core/zcash/fee-policy'

@@ -20,6 +20,7 @@ interface ImportMetaEnv {
   readonly VITE_WASM_THREADS?: string
   readonly NOIR_APP_VERSION: string
   readonly NOIR_PROVIDER_ICON_DATA_URL: string
+  readonly NOIR_WALLET_RDNS: string
   readonly NOIR_NETWORK_MODE: 'mainnet' | 'testnet'
   readonly NOIR_ENABLED_CHAIN_FEATURE_FLAGS: readonly `chain.${string}`[]
 }

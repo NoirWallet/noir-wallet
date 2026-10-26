@@ -1769,7 +1769,6 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
             destinationChainId: destination.chainId,
             tokenIn,
             tokenOut,
-            recipient: resolvedRecipientAddress,
             quote: result,
             review,
             ...(isPrivateFunding ||
@@ -2397,7 +2396,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
               destinationAsset: swap.tokenOut?.assetId,
               expectedAmountOut: quoteResult.estimatedOut,
               minAmountOut: quoteResult.minAmountOut,
-              recipient: resolvedRecipientAddress || undefined,
+              recipient: quoteResult.recipient,
               deadline: getRheaSwapQuoteDeadline(quoteResult)
             }
           : undefined
@@ -2444,7 +2443,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
           accountId: currentAccount.id,
           to: swap.depositAddress,
           amount: swap.amountIn,
-          displayTo: resolvedRecipientAddress || undefined,
+          displayTo: quoteResult.recipient,
           quoteBinding,
           fundingSource,
           marginalFeeZats
@@ -2488,7 +2487,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
           from: fromAddress,
           fromType: fundingSource,
           txType: 'swap',
-          displayTo: resolvedRecipientAddress || undefined,
+          displayTo: quoteResult.recipient,
           quoteBinding,
           marginalFeeZats,
           analytics: {
@@ -3265,11 +3264,11 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
           destinationDetails={
             (crossChainSendRequested || privateTransferRequested) && swap.tokenOut
               ? {
-                  network: formatChainName(swap.tokenOut.blockchain),
-                  recipient: resolvedRecipientAddress
+                  network: formatChainName(swap.tokenOut.blockchain)
                 }
               : undefined
           }
+          recipient={reviewedQuote.recipient}
           arrivalEstimate={
             (isPrivateFunding || privateTransferRequested) && walletOwnedSource
               ? (getConfidentialTransferEstimate(walletOwnedSource.chain.chain.id) ?? undefined)

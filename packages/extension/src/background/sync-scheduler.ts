@@ -597,10 +597,12 @@ export class SyncScheduler {
     if (this.activeSyncPromises.has(key)) {
       return this.activeSyncPromises.get(key)!
     }
+    if (this.yieldToTxPause()) return 'skipped'
 
     this.syncAbortFlags.set(key, false)
     const promise = (async () => {
       await clearSyncAbort(walletId).catch(() => {})
+      if (this.yieldToTxPause()) return 'skipped' as const
       if (this.syncAbortFlags.get(key)) {
         await signalSyncAbort(walletId).catch(() => {})
         return 'aborted' as const
@@ -627,11 +629,13 @@ export class SyncScheduler {
         accountId,
         this.preflightWalletIds.has(walletId)
       )
+      if (this.yieldToTxPause()) return 'skipped'
 
       const ready = await backgroundZcashWalletRuntime.waitForWalletReady(
         walletId,
         WALLET_CONFIG.SYNC.INIT_READY_TIMEOUT_MS
       )
+      if (this.yieldToTxPause()) return 'skipped'
       if (!ready) {
         logger.warn('Sync skipped: wallet WASM not ready', walletId, accountId)
         return 'skipped'
@@ -639,6 +643,7 @@ export class SyncScheduler {
 
       const syncKey = getWalletSyncKey(walletId)
       const pendingOnChainTx = await hasPendingZcashTxForWallet(walletId)
+      if (this.yieldToTxPause()) return 'skipped'
       const syncResult = await backgroundZcashWalletRuntime.syncBlocks(
         () => this.syncAbortFlags.get(syncKey) === true,
         walletId,
@@ -652,10 +657,12 @@ export class SyncScheduler {
       )
 
       if (syncResult.status === 'completed' || syncResult.status === 'partial') {
+        if (this.yieldToTxPause()) return syncResult.status
         const { currentWalletId } = useWalletStore.getState()
         const fgWalletId = this.foregroundWalletId || currentWalletId
         if (walletId === fgWalletId) {
           await backgroundZcashWalletRuntime.refreshBalances(walletId, true).catch(() => {})
+          if (this.yieldToTxPause()) return syncResult.status
           await backgroundZcashWalletRuntime
             .refreshWalletTransactionHistoriesFromWasm(walletId)
             .catch(() => {})

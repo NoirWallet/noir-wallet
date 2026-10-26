@@ -1,6 +1,5 @@
+import { rdns as NOIR_WALLET_RDNS } from '../../../package.json'
 import type { DetectEvmProviderOptions, Eip6963ProviderDetail, EvmProvider } from './types'
-
-const NOIR_WALLET_RDNS = 'io.github.noirwallet'
 
 type NoirWalletWindow = Window & {
   noirwallet?: {

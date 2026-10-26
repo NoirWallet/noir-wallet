@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { resolveHistoryApiOrigin } from '../src/config/extension.ts'
+import { resolveHistoryApiOrigin } from '../scripts/lib/extension-build-config.ts'
 
 test('Beta history proxy overrides require HTTPS, including on loopback', () => {
   assert.equal(

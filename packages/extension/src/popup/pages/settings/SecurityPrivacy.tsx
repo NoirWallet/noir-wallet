@@ -10,13 +10,13 @@ import {
 import { Switch } from '@/popup/components/ui/switch'
 import { toast } from '@/store/toast-store'
 import { SETTINGS_STORAGE_KEY } from '@/lib/wallet-settings-storage'
-import { parseZeroIndexerEnabled } from '@/config/zero-indexer-settings'
 import { sendZeroIndexerNodeMessage } from '@/popup/services/zero-indexer-node-client'
 import { selectedZeroIndexerNodeLabel } from '@/popup/services/zero-indexer-node-model'
 import {
+  parseZeroIndexerEnabled,
   ZERO_INDEXER_NODES_STORAGE_KEY,
   ZERO_INDEXER_RUNTIME_STORAGE_KEY
-} from '@/config/zero-indexer-nodes'
+} from '@/infrastructure/chains/zero-indexer-preferences'
 
 export function SecurityPrivacy() {
   const { navigate } = useNavigate()

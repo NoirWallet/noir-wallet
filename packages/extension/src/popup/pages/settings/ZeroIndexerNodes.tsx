@@ -2,10 +2,9 @@ import { Icon } from '@iconify/react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   ZERO_INDEXER_NODES_STORAGE_KEY,
-  ZERO_INDEXER_RUNTIME_STORAGE_KEY,
-  type ZeroIndexerEndpoint,
-  type ZeroIndexerNodeStatus
-} from '@/config/zero-indexer-nodes'
+  ZERO_INDEXER_RUNTIME_STORAGE_KEY
+} from '@/infrastructure/chains/zero-indexer-preferences'
+import type { ZeroIndexerEndpoint, ZeroIndexerNodeStatus } from '@/core/zcash/zero-indexer'
 import { SETTINGS_STORAGE_KEY } from '@/lib/wallet-settings-storage'
 import { cn } from '@/lib/utils'
 import {

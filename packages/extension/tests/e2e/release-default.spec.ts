@@ -23,7 +23,7 @@ import {
   SOLANA_NETWORKS
 } from '../../src/config/networks'
 import { ASSET_PRICE_SOURCE_ASSETS } from '../../src/config/asset-market-assets'
-import { DEFAULT_HISTORY_API_ORIGIN } from '../../src/config/extension'
+import { DEFAULT_HISTORY_API_ORIGIN } from '../../scripts/lib/extension-build-config'
 import { RPC_REGISTRY } from '../../../rpc-registry/src/registry'
 import { findChainEndpointOverride } from '../../src/core/chains/chain-endpoint-settings'
 import {

@@ -1,4 +1,4 @@
-import { parseZeroIndexerNodeStatus, type ZeroIndexerNodeStatus } from '@/config/zero-indexer-nodes'
+import { parseZeroIndexerNodeStatus, type ZeroIndexerNodeStatus } from '@/core/zcash/zero-indexer'
 
 type ZeroIndexerNodeMessage =
   | { type: 'GET_ZERO_INDEXER_NODE_STATUS'; refresh?: boolean }

@@ -2,7 +2,8 @@ import {
   getLendingDestinationAssetId,
   type LendingMarketView
 } from '@/core/services/lending-market-catalog'
-import { LENDING_MARKET_CACHE_STORAGE_KEY } from '@/config/extension'
+
+export const LENDING_MARKET_CACHE_STORAGE_KEY = 'lending_market_cache_v1'
 
 const CACHE_VERSION = 3
 const MAX_ENTRIES = 100

@@ -1,24 +1,25 @@
 import { DEFAULT_NETWORK } from '@/lib/runtime-network'
 import { attestZcashLightwalletdEndpoint } from '@/infrastructure/chains/zcash/zcash-network-attestation'
-import { readZeroIndexerEnabled } from '@/infrastructure/chains/zero-indexer-preferences'
-import type { ZeroIndexerOptions } from '@/config/zero-indexer'
+import {
+  readZeroIndexerEnabled,
+  ZERO_INDEXER_NODES_STORAGE_KEY,
+  ZERO_INDEXER_REGISTRY_CACHE_KEY,
+  ZERO_INDEXER_RUNTIME_STORAGE_KEY
+} from '@/infrastructure/chains/zero-indexer-preferences'
+import { DEFAULT_ZERO_INDEXER_REGISTRY, ZERO_INDEXER_REGISTRY_URL } from '@/config/zero-indexer'
 import { DedupPromise, SerialTaskQueue } from '@/lib/async-utils'
 import {
   createCustomZeroIndexerEndpoint,
-  DEFAULT_ZERO_INDEXER_REGISTRY,
   normalizeZeroIndexerUrl,
   parseZeroIndexerNodePreferences,
   parseZeroIndexerNodeStatus,
   parseZeroIndexerRegistryDocument,
-  ZERO_INDEXER_NODES_STORAGE_KEY,
-  ZERO_INDEXER_REGISTRY_CACHE_KEY,
-  ZERO_INDEXER_REGISTRY_URL,
-  ZERO_INDEXER_RUNTIME_STORAGE_KEY,
+  type ZeroIndexerOptions,
   type ZeroIndexerNetwork,
   type ZeroIndexerNodePreferences,
   type ZeroIndexerNodeStatus,
   type ZeroIndexerRegistryDocument
-} from '@/config/zero-indexer-nodes'
+} from '@/core/zcash/zero-indexer'
 
 const REGISTRY_TIMEOUT_MS = 3_000
 const PROBE_CACHE_MAX_AGE_MS = 5 * 60_000

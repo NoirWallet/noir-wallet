@@ -4,7 +4,7 @@
 
 import type { FundingSource, Network, ZcashBalance } from '@/types'
 import type { TransferEstimate, TransferResult } from '@/core/zcash/transfer-result'
-import type { ZeroIndexerOptions } from '@/config/zero-indexer'
+import type { ZeroIndexerOptions } from '@/core/zcash/zero-indexer'
 import type {
   BallotDecision,
   PreparedVotingRound,

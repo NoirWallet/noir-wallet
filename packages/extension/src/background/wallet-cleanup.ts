@@ -67,11 +67,11 @@ import {
   USER_ASSET_MARKET_CACHE_STORAGE_KEY,
   USER_ASSET_ONE_CLICK_PRICE_CACHE_STORAGE_KEY
 } from '@/infrastructure/prices'
-import { deleteLendingMarketCache } from '@/infrastructure/lending/chrome-lending-market-cache'
 import {
-  LENDING_MARKET_CACHE_STORAGE_KEY,
-  SWAP_TOKEN_CATALOG_CACHE_STORAGE_KEY
-} from '@/config/extension'
+  deleteLendingMarketCache,
+  LENDING_MARKET_CACHE_STORAGE_KEY
+} from '@/infrastructure/lending/chrome-lending-market-cache'
+import { SWAP_TOKEN_CATALOG_CACHE_STORAGE_KEY } from '@/infrastructure/persistence/swap-token-catalog-storage'
 import { ActivityHistoryCache } from './activity-history-cache'
 import { dappExecutionModeCoordinator } from './dapp-execution-mode'
 import type { WalletBackupVerification } from '@/core/wallet/secret-phrase-backup'

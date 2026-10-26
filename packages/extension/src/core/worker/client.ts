@@ -24,7 +24,7 @@ import { isRetryableWalletRpcError, isWalletDirtyError } from '@/core/zcash/wall
 import { getOwnExtensionSenderContext } from '@/lib/runtime-message-security'
 import { decodeWorkerRpcError } from './rpc-errors'
 import { readZeroIndexerOptionsForWorker } from '@/infrastructure/chains/zero-indexer-preferences'
-import type { ZeroIndexerOptions } from '@/config/zero-indexer'
+import type { ZeroIndexerOptions } from '@/core/zcash/zero-indexer'
 
 const { LIGHT, MEDIUM, WASM_HEAVY, TRANSACTION } = WALLET_CONFIG.SYNC.RPC_TIMEOUT_MS
 

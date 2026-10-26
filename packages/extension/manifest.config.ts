@@ -1,10 +1,7 @@
 import { defineManifest } from '@crxjs/vite-plugin'
 import packageJson from './package.json'
-import {
-  DAPP_CONTENT_SCRIPT_MATCHES,
-  resolveDevelopmentExtensionKey,
-  EXTENSION_SIDE_PANEL_PATH
-} from './src/config/extension'
+import { DAPP_CONTENT_SCRIPT_MATCHES, EXTENSION_SIDE_PANEL_PATH } from './src/config/extension'
+import { resolveDevelopmentExtensionKey } from './scripts/lib/extension-build-config'
 import {
   ALL_CHAIN_FEATURE_FLAGS,
   EVM_CHAIN_FEATURE_FLAG,

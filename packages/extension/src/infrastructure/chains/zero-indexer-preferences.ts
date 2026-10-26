@@ -1,12 +1,20 @@
-import { parseZeroIndexerEnabled } from '@/config/zero-indexer-settings'
-import { parseZeroIndexerRuntimeOptions } from '@/config/zero-indexer-runtime'
-import type { ZeroIndexerOptions } from '@/config/zero-indexer'
+import { parseZeroIndexerRuntimeOptions, type ZeroIndexerOptions } from '@/core/zcash/zero-indexer'
 import {
+  decodePersistedWalletSettings,
   SETTINGS_STORAGE_KEY,
   updatePersistedWalletSettings,
   withWalletSettingsLock
 } from '@/lib/wallet-settings-storage'
 import type { Network } from '@/types'
+
+export const ZERO_INDEXER_NODES_STORAGE_KEY = 'zero_indexer_nodes_v1'
+export const ZERO_INDEXER_RUNTIME_STORAGE_KEY = 'zero_indexer_runtime_v1'
+export const ZERO_INDEXER_REGISTRY_CACHE_KEY = 'zero_indexer_registry_cache_v1'
+
+export function parseZeroIndexerEnabled(raw: unknown): boolean {
+  const state = decodePersistedWalletSettings(raw)
+  return state?.zeroIndexerEnabled !== false
+}
 
 export async function readZeroIndexerOptionsForWorker(
   network: Network
