@@ -3016,7 +3016,11 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
       walletOwnedSourceBase?.family === 'evm' ? (
       <AccountAddressSelectorButton
         mode={sourceMode}
-        address={walletOwnedSource?.refundAddress}
+        address={
+          sourceMode === 'private'
+            ? sourcePrivateExecutionAddress
+            : walletOwnedSourceBase.refundAddress
+        }
         ariaLabel={`Choose source account, current ${sourceMode}`}
         disabled={walletActionMode.loading}
         onClick={() => setSourceSelectorOpen(true)}
@@ -3758,8 +3762,8 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
           value={sourceMode}
           onSelect={handleSourceModeChange}
           privateAvailable={Boolean(privateWalletOwnedSource)}
-          mainAddress={mainWalletOwnedSource?.refundAddress}
-          privateAddress={privateWalletOwnedSource?.refundAddress}
+          mainAddress={walletOwnedSourceBase?.refundAddress}
+          privateAddress={sourcePrivateExecutionAddress}
           mainBalance={mainWalletSpendableBalance}
           privateBalance={privateWalletSpendableBalance}
           symbol={swap.tokenIn?.symbol}
