@@ -125,7 +125,6 @@ interface SwapInputViewProps {
   recipientAddress: string
   slippage: number
   networkFee?: string
-  quoteFeeUsd?: string | null
   isQuoting: boolean
   quoteError?: string | null
   maxLoading?: boolean
@@ -479,7 +478,6 @@ export function SwapInputView({
   recipientAddress,
   slippage,
   networkFee,
-  quoteFeeUsd,
   isQuoting,
   quoteError,
   maxLoading = false,
@@ -523,8 +521,6 @@ export function SwapInputView({
     ? insufficientMessage ||
       (feeIsApproximate ? 'Insufficient balance' : `Insufficient balance (Fee: ${networkFee} ZEC)`)
     : undefined
-  const showQuoteFeeSkeleton =
-    isQuoting && !(networkFee && isZecSource) && (quoteFeeUsd === null || quoteFeeUsd === undefined)
 
   if (catalogError) {
     return (
@@ -727,32 +723,15 @@ export function SwapInputView({
             aria-expanded={showDetails}
             className="flex w-full items-center justify-between py-1 text-sm"
           >
-            <div
-              className="flex items-center gap-1.5 text-muted"
-              role={showQuoteFeeSkeleton ? 'status' : undefined}
-              aria-label={showQuoteFeeSkeleton ? 'Updating fee' : undefined}
-            >
-              <span>Fee:</span>
-              {showQuoteFeeSkeleton ? (
-                <Skeleton className="h-3.5 w-14 rounded-sm" />
-              ) : (
-                <span
-                  className="text-foreground"
-                  title={
-                    !isZecSource && quoteFeeUsd !== null && quoteFeeUsd !== undefined
-                      ? 'Estimated from the quoted input and output values'
-                      : undefined
-                  }
-                >
-                  {networkFee && isZecSource
-                    ? `${feeIsApproximate ? '≈ ' : ''}${formatFeeAmount(networkFee)} ZEC`
-                    : quoteFeeUsd !== null && quoteFeeUsd !== undefined
-                      ? `≈ ${formatFiatAmount(quoteFeeUsd, { showSign: true })}`
-                      : '—'}
+            {networkFee && isZecSource && (
+              <span className="flex items-center gap-1.5 text-muted">
+                Fee:
+                <span className="text-foreground">
+                  {`${feeIsApproximate ? '≈ ' : ''}${formatFeeAmount(networkFee)} ZEC`}
                 </span>
-              )}
-            </div>
-            <span className="flex items-center gap-2 text-muted">
+              </span>
+            )}
+            <span className="ml-auto flex items-center gap-2 text-muted">
               Slippage <span className="text-foreground">{slippage}%</span>
               <Icon
                 icon="lucide:chevron-down"

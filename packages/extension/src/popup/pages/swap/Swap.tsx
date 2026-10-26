@@ -3376,8 +3376,6 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
       liveQuoteKey === liveQuoteRequest.key &&
       quoteResult !== null &&
       !swap.isQuoting
-    const quoteFeeUsd = null
-
     return (
       <SwapInputView
         tokenIn={swap.tokenIn}
@@ -3402,7 +3400,6 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
         recipientAddress={swap.recipientAddress}
         slippage={swap.slippage}
         networkFee={networkFee}
-        quoteFeeUsd={quoteFeeUsd}
         isQuoting={swap.isQuoting}
         quoteError={
           crossChainSendRequested &&
