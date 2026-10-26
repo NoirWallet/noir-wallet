@@ -3989,16 +3989,18 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
 
   if (message.type === 'ADD_SOFTWARE_WALLET') {
     enqueueWalletSessionTransition(() =>
-      addSoftwareWallet(
-        {
-          mode: message.mode as SoftwareWalletProvisioningMode,
-          mnemonic: message.mnemonic as string,
-          accountName: message.accountName as string,
-          ...(message.birthdayHeight === undefined
-            ? {}
-            : { birthdayHeight: message.birthdayHeight as number })
-        },
-        synchronizeCurrentSoftwareWalletNetworkMetadata
+      accountContextTransition.runActiveOperation(() =>
+        addSoftwareWallet(
+          {
+            mode: message.mode as SoftwareWalletProvisioningMode,
+            mnemonic: message.mnemonic as string,
+            accountName: message.accountName as string,
+            ...(message.birthdayHeight === undefined
+              ? {}
+              : { birthdayHeight: message.birthdayHeight as number })
+          },
+          synchronizeCurrentSoftwareWalletNetworkMetadata
+        )
       )
     )
       .then(result => sendResponse({ success: true, ...result }))
@@ -4313,12 +4315,16 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
 
   if (message.type === 'PROVISION_KEYSTONE_HARDWARE') {
     enqueueWalletSessionTransition(() =>
-      provisionKeystoneHardware({
-        credential: message.credential,
-        displayName: message.displayName,
-        ...(message.password === undefined ? {} : { password: message.password }),
-        ...(message.birthdayHeight === undefined ? {} : { birthdayHeight: message.birthdayHeight })
-      })
+      accountContextTransition.runActiveOperation(() =>
+        provisionKeystoneHardware({
+          credential: message.credential,
+          displayName: message.displayName,
+          ...(message.password === undefined ? {} : { password: message.password }),
+          ...(message.birthdayHeight === undefined
+            ? {}
+            : { birthdayHeight: message.birthdayHeight })
+        })
+      )
     )
       .then(result => sendResponse({ success: true, result }))
       .catch(error =>
@@ -4335,16 +4341,20 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
       return true
     }
     enqueueWalletSessionTransition(() =>
-      provisionLedgerHardware({
-        credential: message.credential,
-        displayName: message.displayName,
-        ...(message.password === undefined ? {} : { password: message.password }),
-        ...(message.existingKeyDomainId === undefined
-          ? {}
-          : { existingKeyDomainId: message.existingKeyDomainId }),
-        ...(message.anchorProof === undefined ? {} : { anchorProof: message.anchorProof }),
-        ...(message.birthdayHeight === undefined ? {} : { birthdayHeight: message.birthdayHeight })
-      })
+      accountContextTransition.runActiveOperation(() =>
+        provisionLedgerHardware({
+          credential: message.credential,
+          displayName: message.displayName,
+          ...(message.password === undefined ? {} : { password: message.password }),
+          ...(message.existingKeyDomainId === undefined
+            ? {}
+            : { existingKeyDomainId: message.existingKeyDomainId }),
+          ...(message.anchorProof === undefined ? {} : { anchorProof: message.anchorProof }),
+          ...(message.birthdayHeight === undefined
+            ? {}
+            : { birthdayHeight: message.birthdayHeight })
+        })
+      )
     )
       .then(result => sendResponse({ success: true, result }))
       .catch(error =>
@@ -4367,12 +4377,17 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
   }
 
   if (message.type === 'ADD_ACCOUNT') {
-    handleAddWalletAccount(message.walletId, message.accountName, {
-      ...(message.birthdayHeight === undefined ? {} : { birthdayHeight: message.birthdayHeight }),
-      ...(message.expectedDerivationIndex === undefined
-        ? {}
-        : { expectedDerivationIndex: message.expectedDerivationIndex })
-    })
+    accountContextTransition
+      .runActiveOperation(() =>
+        handleAddWalletAccount(message.walletId, message.accountName, {
+          ...(message.birthdayHeight === undefined
+            ? {}
+            : { birthdayHeight: message.birthdayHeight }),
+          ...(message.expectedDerivationIndex === undefined
+            ? {}
+            : { expectedDerivationIndex: message.expectedDerivationIndex })
+        })
+      )
       .then(result => sendResponse({ success: true, ...result }))
       .catch(error =>
         sendResponse({
@@ -5264,9 +5279,13 @@ function enqueueWalletSessionTransition<T>(operation: () => Promise<T>): Promise
 }
 
 function handleWalletUnlock(password: string): Promise<any> {
-  return enqueueWalletSessionTransition(() =>
-    accountContextTransition.runActiveOperation(() => performWalletUnlock(password))
-  )
+  return enqueueWalletSessionTransition(async () => {
+    const result = await accountContextTransition.runActiveOperation(() =>
+      performWalletUnlock(password)
+    )
+    if (result?.success) await walletCleanupCoordinator.resumePendingCleanup()
+    return result
+  })
 }
 
 function restoreZcashDAppPermissionsAfterUnlock(): void {
@@ -5768,10 +5787,12 @@ async function handleSwitchWalletAccount(walletId: string, accountId: string) {
 
     const wallet = useWalletStore.getState().getWallet(walletId)
     if (!wallet) {
-      const selection = await credentialLifecycle.selectActiveAccount(walletId, accountId)
-      if (selection.status === 'storage-v2-inactive') throw new Error('Wallet not found')
-      await synchronizeNativeActiveAccount(walletId, accountId)
-      return { selectionStatus: selection.status, generationId: selection.generationId }
+      return accountContextTransition.runActiveOperation(async () => {
+        const selection = await credentialLifecycle.selectActiveAccount(walletId, accountId)
+        if (selection.status === 'storage-v2-inactive') throw new Error('Wallet not found')
+        await synchronizeNativeActiveAccount(walletId, accountId)
+        return { selectionStatus: selection.status, generationId: selection.generationId }
+      })
     }
     const restoreFromSession =
       !isZcashHardwareKeySource(wallet.keySource) &&
