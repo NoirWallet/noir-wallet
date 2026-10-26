@@ -28,6 +28,8 @@ interface SwapReviewViewProps {
   priceImpact: number
   arrivalEstimate?: string
   isLoading?: boolean
+  preparationError?: string | null
+  onRetryPreparation?: () => void
   /** Selected fee tier (read-only display on review). */
   feeTier?: FeeTier
   onFeeTierChange?: (tier: FeeTier) => void
@@ -73,6 +75,8 @@ export function SwapReviewView({
   slippage,
   onConfirm,
   isLoading,
+  preparationError,
+  onRetryPreparation,
   feeTier,
   onFeeTierChange,
   feeByTier,
@@ -222,6 +226,19 @@ export function SwapReviewView({
           )}
         </div>
 
+        {preparationError && (
+          <p className="mt-3 px-1 text-xs text-danger" role="alert">
+            {preparationError}{' '}
+            <button
+              type="button"
+              className="text-primary hover:underline"
+              disabled={isLoading}
+              onClick={onRetryPreparation}
+            >
+              Retry
+            </button>
+          </p>
+        )}
         {insufficient && (
           <p className="text-warning text-xs mt-3 px-1">
             Amount exceeds balance at this fee. Go back to lower the amount or switch fee tier.
@@ -232,7 +249,7 @@ export function SwapReviewView({
       <div className="page-footer">
         <Button
           onClick={onConfirm}
-          disabled={isLoading || insufficient}
+          disabled={isLoading || insufficient || Boolean(preparationError)}
           isLoading={isLoading}
           className="h-[45px] w-full"
         >

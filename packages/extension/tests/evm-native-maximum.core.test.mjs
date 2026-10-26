@@ -94,7 +94,7 @@ test('native RHEA Max keeps fee headroom and accepts a quote after a small fee i
     },
     dependencies
   )
-  assert.deepEqual(bufferedQuote, { amount: '0.999874', adjustmentCount: 1 })
+  assert.deepEqual(bufferedQuote, { amount: '0.999874', adjustmentCount: 1, maximum })
 
   currentFeeRaw = laterFeeRaw
   const adjustment = await resolveSwapMaximumAdjustment(

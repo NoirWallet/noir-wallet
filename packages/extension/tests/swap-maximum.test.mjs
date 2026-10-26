@@ -71,7 +71,11 @@ test('uses the half-balance fee probe to reach a buffered near-full Max', async 
     input({ source, currentAmount: probe.amount, review: prepare('500000'), adjustmentCount: 0 }),
     dependencies
   )
-  expect(nearFull).toEqual({ amount: '0.875', adjustmentCount: 1 })
+  expect(nearFull).toEqual({
+    amount: '0.875',
+    adjustmentCount: 1,
+    maximum: { amountRaw: '875000', networkFeeRaw: '100000' }
+  })
   await expect(
     resolveSwapMaximumAdjustment(
       input({
@@ -111,7 +115,11 @@ test('fee-tier refresh restarts an existing Max adjustment at the fee probe', as
         }),
         dependencies
       )
-    ).resolves.toEqual({ amount: '0.825', adjustmentCount: 1 })
+    ).resolves.toEqual({
+      amount: '0.825',
+      adjustmentCount: 1,
+      maximum: { amountRaw: '825000', networkFeeRaw: '140000' }
+    })
   }
 })
 
@@ -136,7 +144,8 @@ test('uses the authoritative native contract plan and only adjusts an unaffordab
   const request = input({ executionMode: 'private', currentAmount: '0.99999', review })
   await expect(resolveSwapMaximumAdjustment(request, dependencies)).resolves.toEqual({
     amount: '0.999937',
-    adjustmentCount: 1
+    adjustmentCount: 1,
+    maximum: { amountRaw: '999937', networkFeeRaw: '50' }
   })
   expect(calls[1]).toMatchObject({
     evmTransaction: transaction,
@@ -174,7 +183,8 @@ test('accepts the buffered native quote when a later fee increases by less than 
   })
   await expect(resolveSwapMaximumAdjustment(initial, dependencies)).resolves.toEqual({
     amount: '0.85',
-    adjustmentCount: 1
+    adjustmentCount: 1,
+    maximum: { amountRaw: '850000', networkFeeRaw: '100000' }
   })
   const buffered = input({
     currentAmount: '0.85',

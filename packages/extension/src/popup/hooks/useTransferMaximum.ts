@@ -59,6 +59,10 @@ export function useTransferMaximum(options: {
     loading: current && state.loading,
     fallbackUsed: current && state.fallbackUsed,
     error: current ? state.error : null,
+    update: (value: QuoteDepositMaximum) => {
+      sequence.current += 1
+      setState({ key: requestKey, value, loading: false, fallbackUsed: false, error: null })
+    },
     request
   }
 }
