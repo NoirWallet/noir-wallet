@@ -124,7 +124,7 @@ pnpm build:web
 pnpm build:docs
 ```
 
-Website builds use the public `NoirWallet/noir-wallet-sdk` repository for the GitHub links and `/github`, `/beta`, and `/beta/versions` redirects while the wallet source repository remains private. Set `WALLET_REPOSITORY=owner/repo` when building `packages/web` to point these links and routes at another GitHub repository and its Releases page. The value is validated during the build; see [`.env.example`](./.env.example).
+Website builds use the public `NoirWallet/noir-wallet` repository for the GitHub links and `/github`, `/beta`, and `/beta/versions` redirects. Set `WALLET_REPOSITORY=owner/repo` when building `packages/web` to point these links and routes at another GitHub repository and its Releases page. The value is validated during the build; see [`.env.example`](./.env.example).
 
 ### Type Checking
 
