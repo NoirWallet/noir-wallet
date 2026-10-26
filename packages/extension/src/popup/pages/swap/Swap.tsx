@@ -568,9 +568,15 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
   const mainWalletOwnedSource = useMemo(
     () =>
       walletOwnedSourceBase
-        ? selectWalletOwnedQuoteAssetExecution(walletOwnedSourceBase, 'main')
+        ? selectWalletOwnedQuoteAssetExecution(
+            walletOwnedSourceBase,
+            'main',
+            undefined,
+            storageV2Account?.walletSource.kind === 'private-key' ||
+              storageV2Account?.walletSource.kind === 'hardware'
+          )
         : null,
-    [walletOwnedSourceBase]
+    [storageV2Account?.walletSource.kind, walletOwnedSourceBase]
   )
   const privateWalletOwnedSource = useMemo(
     () =>

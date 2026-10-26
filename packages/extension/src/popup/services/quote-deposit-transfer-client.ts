@@ -355,12 +355,13 @@ export function resolveWalletOwnedQuoteAsset(
 
 function selectEvmBalance(
   asset: PortfolioAssetView,
-  mode: QuoteDepositExecutionMode
+  mode: QuoteDepositExecutionMode,
+  publicOnly: boolean
 ): PortfolioAssetView | null {
   const selectedRaw =
     mode === 'private'
       ? (asset.balance.privateOnchainRaw ?? asset.balance.privateRaw)
-      : asset.balance.mainRaw
+      : (asset.balance.mainRaw ?? (publicOnly ? asset.balance.availableRaw : undefined))
   if (selectedRaw === undefined) return null
   return Object.freeze({
     ...asset,
@@ -376,11 +377,12 @@ function selectEvmBalance(
 export function selectWalletOwnedQuoteAssetExecution(
   source: WalletOwnedQuoteAsset,
   mode: QuoteDepositExecutionMode,
-  privateExecutionAddress?: string
+  privateExecutionAddress?: string,
+  publicOnly = false
 ): WalletOwnedQuoteAsset | null {
   if (source.family !== 'evm') return mode === 'main' ? source : null
-  const asset = selectEvmBalance(source.asset, mode)
-  const networkFeeAsset = selectEvmBalance(source.networkFeeAsset, mode)
+  const asset = selectEvmBalance(source.asset, mode, publicOnly)
+  const networkFeeAsset = selectEvmBalance(source.networkFeeAsset, mode, publicOnly)
   if (!asset || !networkFeeAsset) return null
   let refundAddress = source.refundAddress
   if (mode === 'private') {
