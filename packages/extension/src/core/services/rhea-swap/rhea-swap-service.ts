@@ -166,6 +166,8 @@ export class RheaSwapService {
               tokens.push(toRheaSwapToken(item))
             } catch {
               // A malformed catalog entry must not take every asset on its chain offline.
+              // Retain usable rows, but do not treat an omitted asset as unsupported.
+              if (!failedChainIds.includes(chainId)) failedChainIds.push(chainId)
             }
           }
         } catch {

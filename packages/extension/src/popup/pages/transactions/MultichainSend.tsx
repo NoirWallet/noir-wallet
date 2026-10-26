@@ -47,6 +47,7 @@ import { buildAddToPrivateEvmPath, type EvmSendSourceMode } from './evm-send-val
 import { useWalletActionExecutionMode } from '@/popup/hooks/useWalletActionExecutionMode'
 import { resolveEffectiveActiveAccountIdentity } from '@/popup/lib/effective-active-account'
 import { getCrossChainSendAssetGroup } from '@/popup/services/cross-chain-send-assets'
+import { prefetchEvmSendCatalogs } from '@/popup/services/evm-send-catalog'
 
 type SendSubmission =
   | Readonly<{ family: 'evm'; value: EvmTransferSubmission }>
@@ -332,6 +333,18 @@ export function MultichainSend() {
   const setEvmSourceMode = evmActionMode.setMode
   const zcashEnabled =
     storageV2Account?.networks.some(network => network.chain.family === 'zcash') ?? true
+
+  useEffect(() => {
+    let cancelled = false
+    void prefetchEvmSendCatalogs(
+      storageV2Account?.networks.map(network => network.chain) ?? [],
+      requestedAssetId?.split('/')[0] ?? evmNetwork?.chain.id,
+      () => cancelled
+    )
+    return () => {
+      cancelled = true
+    }
+  }, [storageV2Account, requestedAssetId])
 
   const load = useCallback(
     async (forceRefresh = false) => {
