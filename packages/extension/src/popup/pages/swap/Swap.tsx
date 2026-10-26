@@ -549,6 +549,13 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
 
   usePortfolioUpdates(effectiveWalletId, effectiveAccountId, readLatestPortfolio)
 
+  const walletSourceQuoteTarget = useMemo(
+    () =>
+      !swap.isZecSource && swap.tokenIn && portfolio
+        ? resolveWalletQuoteReceiveTarget(swap.tokenIn, portfolio, receiveTargets)
+        : null,
+    [swap.isZecSource, swap.tokenIn, portfolio, receiveTargets]
+  )
   const walletOwnedSourceBase = useMemo(
     () =>
       !swap.isZecSource && swap.tokenIn && portfolio
@@ -558,12 +565,12 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
   )
   const sourcePrivateExecutionAddress = useMemo(
     () =>
-      walletOwnedSourceBase?.family === 'evm'
+      walletSourceQuoteTarget?.kind === 'evm'
         ? storageV2Account?.networks.find(
-            network => network.chain.id === walletOwnedSourceBase.chain.chain.id
+            network => network.chain.id === walletSourceQuoteTarget.chain.id
           )?.privateExecutionAddress
         : undefined,
-    [storageV2Account, walletOwnedSourceBase]
+    [storageV2Account, walletSourceQuoteTarget]
   )
   const mainWalletOwnedSource = useMemo(
     () =>
@@ -649,13 +656,6 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
     [portfolio, receiveTargets, walletSwapSourceTokens]
   )
   const isZecDestination = isZecToken(swap.tokenOut)
-  const walletSourceQuoteTarget = useMemo(
-    () =>
-      !swap.isZecSource && swap.tokenIn && portfolio
-        ? resolveWalletQuoteReceiveTarget(swap.tokenIn, portfolio, receiveTargets)
-        : null,
-    [swap.isZecSource, swap.tokenIn, portfolio, receiveTargets]
-  )
   const swapRefreshChainId = resolveSwapRefreshChainId(swap.tokenIn, receiveTargets)
   useEffect(() => {
     if (!swapRefreshChainId || !effectiveWalletId || !effectiveAccountId) return
@@ -3013,13 +3013,11 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
     ) : viewStep === 'input' &&
       !isPrivateFunding &&
       !privateTransferRequested &&
-      walletOwnedSourceBase?.family === 'evm' ? (
+      walletSourceQuoteTarget?.kind === 'evm' ? (
       <AccountAddressSelectorButton
         mode={sourceMode}
         address={
-          sourceMode === 'private'
-            ? sourcePrivateExecutionAddress
-            : walletOwnedSourceBase.refundAddress
+          sourceMode === 'private' ? sourcePrivateExecutionAddress : walletSourceQuoteTarget.address
         }
         ariaLabel={`Choose source account, current ${sourceMode}`}
         disabled={walletActionMode.loading}
@@ -3762,7 +3760,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
           value={sourceMode}
           onSelect={handleSourceModeChange}
           privateAvailable={Boolean(privateWalletOwnedSource)}
-          mainAddress={walletOwnedSourceBase?.refundAddress}
+          mainAddress={walletSourceQuoteTarget?.address}
           privateAddress={sourcePrivateExecutionAddress}
           mainBalance={mainWalletSpendableBalance}
           privateBalance={privateWalletSpendableBalance}
