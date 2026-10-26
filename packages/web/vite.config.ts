@@ -3,7 +3,7 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { resolve } from 'path'
 
-const repository = process.env.WALLET_REPOSITORY ?? 'NoirWallet/noir-wallet-sdk'
+const repository = process.env.WALLET_REPOSITORY ?? 'NoirWallet/noir-wallet'
 
 if (!/^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\/[A-Za-z0-9._-]+$/.test(repository)) {
   throw new Error('WALLET_REPOSITORY must be a non-empty GitHub owner/repo')
