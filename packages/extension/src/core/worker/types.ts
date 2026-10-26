@@ -31,6 +31,11 @@ export type {
 /**
  * All wallet.* RPCs require walletId to route to the correct WebWallet instance.
  */
+export interface ZcashTransactionContext {
+  accountKey: string
+  transactionId: string
+}
+
 interface WalletRouted {
   walletId: string
 }

@@ -20,7 +20,8 @@ import type {
   VotingDiscovery,
   VotingEligibility,
   VotingProposal,
-  VotingRoundStatus
+  VotingRoundStatus,
+  ZcashTransactionContext
 } from '../worker/types'
 import type { TransferResult } from './transfer-result'
 import type {
@@ -527,7 +528,8 @@ export class ZcashWalletCore {
   async sendTransaction(
     params: SendTransactionParams,
     submissionDeadline?: number,
-    approvedAccountIndex?: number
+    approvedAccountIndex?: number,
+    transactionContext?: ZcashTransactionContext
   ): Promise<TransferResult> {
     if (this.watchOnly) {
       throw new Error('Watch-only wallet: use the hardware signing flow (pcztCreate)')
@@ -539,16 +541,19 @@ export class ZcashWalletCore {
     const accountIndex = approvedAccountIndex ?? this.accountIndex
     const seedPhrase = this.seedPhrase
 
-    return await this.client.sendTransaction({
-      accountIndex,
-      ...(seedPhrase ? { seedPhrase } : {}),
-      to: params.to,
-      amount: amountZatoshis,
-      memo: params.memo,
-      fundingSource: params.fundingSource,
-      marginalFeeZats: params.marginalFeeZats,
-      ...(submissionDeadline === undefined ? {} : { submissionDeadline })
-    })
+    return await this.client.sendTransaction(
+      {
+        accountIndex,
+        ...(seedPhrase ? { seedPhrase } : {}),
+        to: params.to,
+        amount: amountZatoshis,
+        memo: params.memo,
+        fundingSource: params.fundingSource,
+        marginalFeeZats: params.marginalFeeZats,
+        ...(submissionDeadline === undefined ? {} : { submissionDeadline })
+      },
+      transactionContext
+    )
   }
 
   /** Estimate the network fee (zatoshis) for a transfer at the given marginal fee. */
@@ -607,7 +612,8 @@ export class ZcashWalletCore {
 
   async shieldFunds(
     marginalFeeZats?: number,
-    approvedAccountIndex?: number
+    approvedAccountIndex?: number,
+    transactionContext?: ZcashTransactionContext
   ): Promise<{ txid: string; amount: string | null }> {
     if (this.watchOnly) {
       throw new Error('Watch-only wallet: use the hardware signing flow (pcztShieldCreate)')
@@ -625,11 +631,14 @@ export class ZcashWalletCore {
       throw new Error('No transparent funds available to shield')
     }
 
-    const txid = await this.client.oneClickShield({
-      accountIndex,
-      ...(seedPhrase ? { seedPhrase } : {}),
-      marginalFeeZats
-    })
+    const txid = await this.client.oneClickShield(
+      {
+        accountIndex,
+        ...(seedPhrase ? { seedPhrase } : {}),
+        marginalFeeZats
+      },
+      transactionContext
+    )
 
     let actualAmount: string | null = null
 

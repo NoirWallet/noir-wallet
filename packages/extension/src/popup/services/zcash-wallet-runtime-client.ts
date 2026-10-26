@@ -1,4 +1,5 @@
 import type { MnemonicWordCount } from '@/config/wallet'
+import { getResponseErrorMessage } from '@/lib/errors'
 import type { WalletBackupVerification } from '@/core/wallet/secret-phrase-backup'
 import type { AccountAddresses, FundingSource } from '@/types'
 import type { BirthdayHeightSource } from '@/lib/zcash-birthday'
@@ -41,10 +42,6 @@ function responseRecord(value: unknown): RuntimeResponse | null {
     : null
 }
 
-function responseError(response: RuntimeResponse | null, fallback: string): Error {
-  return new Error(response && typeof response.error === 'string' ? response.error : fallback)
-}
-
 async function send(message: Readonly<Record<string, unknown>>): Promise<RuntimeResponse> {
   const response = responseRecord(await chrome.runtime.sendMessage(message))
   if (!response) throw new Error('Wallet Background returned an invalid response')
@@ -56,7 +53,7 @@ async function expectSuccess(
   fallback: string
 ): Promise<RuntimeResponse> {
   const response = await send(message)
-  if (response.success !== true) throw responseError(response, fallback)
+  if (response.success !== true) throw new Error(getResponseErrorMessage(response) ?? fallback)
   return response
 }
 
@@ -75,7 +72,9 @@ function requireFiniteNumber(response: RuntimeResponse, key: string, fallback: s
 export const zcashWalletRuntimeClient = Object.freeze({
   async initialize(): Promise<void> {
     const response = await send({ type: 'GET_BACKGROUND_INITIALIZATION_STATE' })
-    if (response.ready !== true) throw responseError(response, 'Wallet Background is not ready')
+    if (response.ready !== true) {
+      throw new Error(getResponseErrorMessage(response) ?? 'Wallet Background is not ready')
+    }
   },
 
   async unlock(password: string): Promise<UnlockResult> {

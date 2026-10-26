@@ -17,7 +17,7 @@ import { deriveFeeByTier, marginalFeeForTier } from '@/core/zcash/fee-policy'
 import type { AddressType } from '@/types/wallet'
 import { formatSortAddress } from '@/lib/format'
 import { cn } from '@/lib/utils'
-import { classifyError } from '@/lib/errors'
+import { classifyError, getResponseErrorMessage } from '@/lib/errors'
 import Big from 'big.js'
 import {
   hasEnoughTransparentBalanceToShield,
@@ -254,7 +254,7 @@ export function ApprovalPage() {
     if (!requestId) throw new Error('Approval request is unavailable')
     const response = await chrome.runtime.sendMessage({ type: 'ESTIMATE_APPROVAL_FEE', requestId })
     if (response?.error || typeof response?.fee !== 'string') {
-      throw new Error(response?.error || 'Fee estimation failed')
+      throw new Error(getResponseErrorMessage(response) || 'Fee estimation failed')
     }
     return response.fee
   }, [requestId])
@@ -460,7 +460,7 @@ export function ApprovalPage() {
           requestId
         })
         if (response?.error || !response?.request) {
-          throw new Error(response?.error || 'Request not found or expired')
+          throw new Error(getResponseErrorMessage(response) || 'Request not found or expired')
         }
       }
 
@@ -501,7 +501,9 @@ export function ApprovalPage() {
           feeZats: feeByTier[feeTier] ?? undefined
         })
         if (response?.success !== true)
-          throw new Error(response?.error || 'The approval could not be completed')
+          throw new Error(
+            getResponseErrorMessage(response) || 'The approval could not be completed'
+          )
       } else {
         const response = (await chrome.runtime.sendMessage({
           type: 'DAPP_APPROVAL_RESULT',
@@ -513,7 +515,9 @@ export function ApprovalPage() {
           ...(isMultichainConnect ? { selectedScopes } : {})
         })) as { success?: boolean; error?: string } | undefined
         if (response?.success !== true) {
-          throw new Error(response?.error || 'The approval could not be completed')
+          throw new Error(
+            getResponseErrorMessage(response) || 'The approval could not be completed'
+          )
         }
         window.close()
       }

@@ -9,6 +9,17 @@ import { isWalletSnapshotIntegrityError } from './wallet-snapshot-errors'
 export const WALLET_SNAPSHOT_RECOVERY_MESSAGE =
   'Wallet data needs to be resynced before sending again.'
 
+export function getResponseErrorMessage(response: unknown): string | undefined {
+  if (
+    typeof response !== 'object' ||
+    response === null ||
+    Array.isArray(response) ||
+    !('error' in response)
+  )
+    return undefined
+  return typeof response.error === 'string' ? response.error : undefined
+}
+
 export function isWalletSnapshotRecoveryError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error)
   const prefix = `${WALLET_SNAPSHOT_RECOVERY_MESSAGE}\n\nOriginal error: `

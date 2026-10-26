@@ -2396,6 +2396,42 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
     return false
   }
 
+  if (message.type === 'ZCASH_TRANSACTION_OUTCOME') {
+    if (getOwnExtensionSenderContext(sender, chrome.runtime.id) !== 'offscreen-document') {
+      sendResponse({ error: 'Unauthorized transaction outcome sender' })
+      return true
+    }
+    void multichainStartupReady
+      .then(() =>
+        accountContextTransition.runActiveOperation(async () => {
+          const scope = getZcashAccountScopes().find(item => item.accountKey === message.accountKey)
+          if (!scope || typeof message.transactionId !== 'string') return
+          const transaction = (await loadTransactions(scope.accountKey)).find(
+            item => item.id === message.transactionId
+          )
+          if (!transaction?.txHash) return
+          void chrome.runtime
+            .sendMessage({
+              type: 'ZCASH_TX_COMPLETED',
+              accountKey: scope.accountKey,
+              transactionId: transaction.id,
+              txHash: transaction.txHash
+            })
+            .catch(() => {})
+          void chrome.runtime
+            .sendMessage({ type: 'TRANSACTION_UPDATED', accountKey: scope.accountKey })
+            .catch(() => {})
+          await zcashTxMonitor.restoreStuckWithdrawals([scope])
+          if (transaction.type === 'swap') {
+            await rheaSwapTransactionMonitor?.restorePendingZcashSwaps([scope])
+          }
+        })
+      )
+      .then(() => sendResponse({ success: true }))
+      .catch(() => sendResponse({ error: 'Transaction monitoring deferred' }))
+    return true
+  }
+
   // Ignore OFFSCREEN_READY messages - they are handled by client.ts
   if (message.type === 'OFFSCREEN_READY') {
     if (getOwnExtensionSenderContext(sender, chrome.runtime.id) !== 'offscreen-document') {
@@ -4971,7 +5007,9 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
   if (message.type === 'UPDATE_TRANSACTION') {
     const { accountKey, transactionId, updates } = message
     transactionRecorder
-      .updateTransaction(accountKey, transactionId, updates)
+      .updateTransaction(accountKey, transactionId, updates, {
+        onlyIfUnsubmitted: updates.status === 'failed'
+      })
       .then(() => sendResponse({ success: true }))
       .catch(err => sendResponse({ success: false, error: err.message }))
     return true
@@ -6162,8 +6200,13 @@ async function handleBackgroundZcashTx(params: {
 
       let txid: string
       let txHashes: string[]
+      const transactionContext = { accountKey, transactionId }
       if (action === 'shield') {
-        const shieldResult = await walletCore.shieldFunds(marginalFeeZats)
+        const shieldResult = await walletCore.shieldFunds(
+          marginalFeeZats,
+          undefined,
+          transactionContext
+        )
         txid = shieldResult.txid
         txHashes = [txid]
         broadcastTxHash = txid
@@ -6178,7 +6221,9 @@ async function handleBackgroundZcashTx(params: {
         )
         const transferResult = await walletCore.sendTransaction(
           { ...sendParams!, marginalFeeZats },
-          submissionDeadline
+          submissionDeadline,
+          undefined,
+          transactionContext
         )
         const successfulTransfer = requireSuccessfulTransfer(transferResult)
         txid = successfulTransfer.txHash

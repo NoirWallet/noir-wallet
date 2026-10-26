@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { WALLET_CONFIG, type AutoLockMs } from '@/config/wallet'
 import { DEFAULT_NETWORK } from '@/lib/runtime-network'
+import { getResponseErrorMessage } from '@/lib/errors'
 import type { Network } from '@/types'
 import { DEFAULT_FEE_TIER, type FeeTier } from '@/config/fee'
 import { createWalletSettingsPersistStorage } from '@/lib/wallet-settings-persist-storage'
@@ -200,7 +201,9 @@ export const useSettingsStore = create<SettingsStore>()(
           sidePanelMode: enabled
         })
         if (!response?.success) {
-          throw new Error(response?.error || 'Failed to change wallet display mode')
+          throw new Error(
+            getResponseErrorMessage(response) || 'Failed to change wallet display mode'
+          )
         }
         if (typeof response.sidePanelMode !== 'boolean') {
           throw new Error('Background returned an invalid wallet display mode')
@@ -217,7 +220,7 @@ export const useSettingsStore = create<SettingsStore>()(
           type: 'GET_EXTENSION_DISPLAY_MODE'
         })
         if (!response?.success || typeof response.sidePanelMode !== 'boolean') {
-          throw new Error(response?.error || 'Failed to read wallet display mode')
+          throw new Error(getResponseErrorMessage(response) || 'Failed to read wallet display mode')
         }
         set({ sidePanelMode: response.sidePanelMode, isSidePanelModeLoaded: true })
       },

@@ -127,6 +127,8 @@ Old beta RPC History caches are cleared and fetched again, including `activity_h
 
 ## 7. Persistence and Recovery
 
+Zcash software sends and shielding pass the original transaction ID to Offscreen. A complete Worker result updates that existing account-scoped record before snapshot persistence, including results arriving after the RPC timeout. Background reuses the existing monitors; this does not add submission phases, restart replay, or matching of legacy empty-hash records.
+
 `TransactionRepository` provides scoped `create()`, `get/list()`, `applySegmentEvent()`, and `deleteByAccountScope()`. Creating the same graph twice is idempotent; reusing a TransactionId for a different graph returns `id-conflict`. Reads require `keyDomainId + accountId`; listing may filter by on-chain ChainId and Root status. No unscoped global read is permitted. Account deletion removes only that partition and its chain/event indexes.
 
 The in-memory repository is for reference tests. The production `IndexedDbTransactionRepository` commits graphs, event fingerprints, and scope/chain/status indexes in one `noir-wallet-transactions-v2-db` transaction. After restart it restores deduplication from the event store, not only `lastEventId`. Graph/event limits, query limits, corrupt records, and inconsistent indexes fail closed.

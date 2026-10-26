@@ -34,7 +34,7 @@ import {
 import { safeBig } from '@/lib/big'
 import { MARGINAL_FEE_ZATS } from '@/config/fee'
 import { staticFeeFallbackZats } from '@/core/zcash/fee-policy'
-import { classifyError } from '@/lib/errors'
+import { classifyError, getResponseErrorMessage } from '@/lib/errors'
 import { TimeoutError } from '@/lib/async-utils'
 import { isValidAddTransactionResponse } from '@/lib/transaction-record-response'
 import { resolveZcashResultView } from '@/lib/transaction-result-model'
@@ -177,7 +177,7 @@ export function KeystoneSignPage() {
           ...(req.marginalFeeZats === undefined ? {} : { marginalFeeZats: req.marginalFeeZats })
         })
         if (!res?.success) {
-          throw new Error(res?.error || 'Failed to build transaction')
+          throw new Error(getResponseErrorMessage(res) || 'Failed to build transaction')
         }
         if (res.vendor === 'ledger') {
           setLedgerPayload(parseLedgerSigningPayload(res.ledgerPayload))
@@ -291,7 +291,9 @@ export function KeystoneSignPage() {
         }
       })
       if (!isValidAddTransactionResponse(addResponse)) {
-        throw new Error(addResponse?.error || 'Failed to create transaction record')
+        throw new Error(
+          getResponseErrorMessage(addResponse) || 'Failed to create transaction record'
+        )
       }
       transactionId = addResponse.transaction.id
       setRecordedTransactionId(transactionId)
@@ -318,7 +320,7 @@ export function KeystoneSignPage() {
         if (submission?.completionPending === true) {
           throw new TimeoutError(TRANSACTION_PENDING_MESSAGE)
         }
-        throw new Error(submission?.error || 'Hardware transaction failed')
+        throw new Error(getResponseErrorMessage(submission) || 'Hardware transaction failed')
       }
       const hash = submission.txHash
       broadcastHash = hash
@@ -365,7 +367,9 @@ export function KeystoneSignPage() {
           }
         })
         if (!updateResponse?.success) {
-          throw new Error(updateResponse?.error || 'Failed to update transaction record')
+          throw new Error(
+            getResponseErrorMessage(updateResponse) || 'Failed to update transaction record'
+          )
         }
       } catch (bookkeepingError) {
         console.error('[HardwareSign] Broadcast record update failed:', bookkeepingError)
