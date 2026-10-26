@@ -372,7 +372,7 @@ test('upgrades the frozen v1.0.30 Golden Profile and remains idempotent after re
 
     const retainedBeforeUnlock = await inspectRetainedV1Data(popup)
     expect(retainedBeforeUnlock).toMatchObject({
-      version: 7,
+      version: 9,
       currentWalletId: golden.expected.walletId,
       currentAccountId: golden.expected.accountId,
       addresses: golden.expected.addresses

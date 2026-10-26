@@ -33,11 +33,14 @@ export class TransactionRecorder {
   async updateTransaction(
     accountKey: string,
     transactionId: string,
-    updates: Partial<Transaction>
+    updates: Partial<Transaction>,
+    options: { onlyIfUnsubmitted?: boolean } = {}
   ): Promise<void> {
     await mutateTransactions(accountKey, txs => {
       const updatedTxs = txs.map(tx =>
-        tx.id === transactionId ? mergeTransactionUpdate(tx, updates) : tx
+        tx.id === transactionId && (!options.onlyIfUnsubmitted || !tx.txHash)
+          ? mergeTransactionUpdate(tx, updates)
+          : tx
       )
       const synchronizedTxs = synchronizeInternalTransferConfirmations(updatedTxs)
       const localHashes = localTxHashSet(synchronizedTxs)

@@ -42,6 +42,7 @@ import { prepareTransparentSpend } from '@/core/wallet/transparent-spend-preflig
 import { sanitizeMarginalFeeZats } from '@/core/zcash/fee-policy'
 import { closeAllPopupWindows } from './window-manager'
 import { pendingRequestsManager } from './pending-requests'
+import { getApprovalContext, estimateApprovalFee } from './approval-context'
 import { SecureStorage } from '../core/wallet/secure-storage'
 import { needsUnlock } from '../lib/lock-utils'
 import { transactionMonitor } from './transaction-monitor'
@@ -1512,6 +1513,7 @@ async function performSilentWasmInitialization(): Promise<void> {
     })
 
     await backgroundZcashWalletRuntime.initialize()
+    await walletCleanupCoordinator.resumePendingCleanup()
 
     const initialRpcEndpointId = getPreferredRpcEndpointOption('zcash').id
     void refreshRpcEndpointRegistry()
@@ -2392,6 +2394,42 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
   // Internal Background-to-Offscreen route; handled only by the Offscreen Document.
   if (message.type === 'KEYRING_WORKER_RPC') {
     return false
+  }
+
+  if (message.type === 'ZCASH_TRANSACTION_OUTCOME') {
+    if (getOwnExtensionSenderContext(sender, chrome.runtime.id) !== 'offscreen-document') {
+      sendResponse({ error: 'Unauthorized transaction outcome sender' })
+      return true
+    }
+    void multichainStartupReady
+      .then(() =>
+        accountContextTransition.runActiveOperation(async () => {
+          const scope = getZcashAccountScopes().find(item => item.accountKey === message.accountKey)
+          if (!scope || typeof message.transactionId !== 'string') return
+          const transaction = (await loadTransactions(scope.accountKey)).find(
+            item => item.id === message.transactionId
+          )
+          if (!transaction?.txHash) return
+          void chrome.runtime
+            .sendMessage({
+              type: 'ZCASH_TX_COMPLETED',
+              accountKey: scope.accountKey,
+              transactionId: transaction.id,
+              txHash: transaction.txHash
+            })
+            .catch(() => {})
+          void chrome.runtime
+            .sendMessage({ type: 'TRANSACTION_UPDATED', accountKey: scope.accountKey })
+            .catch(() => {})
+          await zcashTxMonitor.restoreStuckWithdrawals([scope])
+          if (transaction.type === 'swap') {
+            await rheaSwapTransactionMonitor?.restorePendingZcashSwaps([scope])
+          }
+        })
+      )
+      .then(() => sendResponse({ success: true }))
+      .catch(() => sendResponse({ error: 'Transaction monitoring deferred' }))
+    return true
   }
 
   // Ignore OFFSCREEN_READY messages - they are handled by client.ts
@@ -4510,12 +4548,20 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
   }
 
   if (message.type === 'GET_PENDING_REQUEST') {
-    const request = pendingRequestsManager.get(message.requestId)
-    if (request) {
-      sendResponse({ request })
-    } else {
-      sendResponse({ error: 'Request not found or expired' })
+    getApprovalContext(message.requestId)
+      .then(request => sendResponse({ request }))
+      .catch(error => sendResponse({ error: error.message }))
+    return true
+  }
+
+  if (message.type === 'ESTIMATE_APPROVAL_FEE') {
+    if (!isOwnExtensionRouteSender(sender, chrome.runtime.id, '/approval')) {
+      sendResponse({ error: 'Unauthorized approval fee request' })
+      return true
     }
+    estimateApprovalFee(message.requestId)
+      .then(fee => sendResponse({ fee }))
+      .catch(error => sendResponse({ error: error.message }))
     return true
   }
 
@@ -4594,7 +4640,13 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
           ...(built.ledgerDisplayAddress === undefined
             ? {}
             : { ledgerDisplayAddress: built.ledgerDisplayAddress }),
-          ...(built.vendor === 'ledger' ? { ledgerPayload: built.ledgerPayload } : {})
+          ...(built.vendor === 'ledger' ? { ledgerPayload: built.ledgerPayload } : {}),
+          ...(built.ledgerDeviceModel === undefined
+            ? {}
+            : { ledgerDeviceModel: built.ledgerDeviceModel }),
+          ...(built.ledgerSigningTransport === undefined
+            ? {}
+            : { ledgerSigningTransport: built.ledgerSigningTransport })
         }
       })
       .then(sendResponse)
@@ -4955,7 +5007,9 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
   if (message.type === 'UPDATE_TRANSACTION') {
     const { accountKey, transactionId, updates } = message
     transactionRecorder
-      .updateTransaction(accountKey, transactionId, updates)
+      .updateTransaction(accountKey, transactionId, updates, {
+        onlyIfUnsubmitted: updates.status === 'failed'
+      })
       .then(() => sendResponse({ success: true }))
       .catch(err => sendResponse({ success: false, error: err.message }))
     return true
@@ -5462,13 +5516,13 @@ async function performWalletLockState(): Promise<void> {
     }
     if (zcashResult.status === 'rejected') throw zcashResult.reason
 
+    dappHandler.clearPermissions()
     await dappHandler.notifyAccountsChanged([])
     await evmDAppHandler.notifyAccountsChanged()
     await bitcoinDAppHandler.notifyAccountsChanged()
     await solanaDAppHandler?.notifyAccountsChanged()
     await nearDAppHandler?.notifyAccountsChanged()
     await multichainSessionDAppHandler?.notifyAllSessionsChanged()
-    dappHandler.clearPermissions()
   } finally {
     syncScheduler.resumeAfterTx()
   }
@@ -5960,6 +6014,8 @@ async function handleHardwarePcztBuild(params: {
       vendor: 'keystone' | 'ledger'
       ledgerPayload?: LedgerSigningPayload
       ledgerDisplayAddress?: string
+      ledgerDeviceModel?: string
+      ledgerSigningTransport?: 'usb' | 'bluetooth'
     }
   | { success: false; error: string }
 > {
@@ -5982,6 +6038,8 @@ async function handleHardwarePcztBuild(params: {
       throw new Error('Select an active hardware account')
     }
     const vendor = wallet.keySource
+    const ledgerCredential =
+      vendor === 'ledger' ? await readLedgerProvisioningCredential(walletId) : undefined
     if (vendor === 'keystone' && fundingSource === 'transparent') {
       throw new Error('Transparent funding is not supported by Keystone hardware wallets')
     }
@@ -6044,6 +6102,14 @@ async function handleHardwarePcztBuild(params: {
       feeZats: built.feeZats,
       amount: built.amount,
       vendor,
+      ...(ledgerCredential === undefined
+        ? {}
+        : {
+            ledgerDeviceModel: ledgerCredential.deviceModel,
+            ...(ledgerCredential.ledgerSigningTransport === undefined
+              ? {}
+              : { ledgerSigningTransport: ledgerCredential.ledgerSigningTransport })
+          }),
       ...(built.ledgerDisplayAddress === undefined
         ? {}
         : { ledgerDisplayAddress: built.ledgerDisplayAddress }),
@@ -6134,8 +6200,13 @@ async function handleBackgroundZcashTx(params: {
 
       let txid: string
       let txHashes: string[]
+      const transactionContext = { accountKey, transactionId }
       if (action === 'shield') {
-        const shieldResult = await walletCore.shieldFunds(marginalFeeZats)
+        const shieldResult = await walletCore.shieldFunds(
+          marginalFeeZats,
+          undefined,
+          transactionContext
+        )
         txid = shieldResult.txid
         txHashes = [txid]
         broadcastTxHash = txid
@@ -6150,7 +6221,9 @@ async function handleBackgroundZcashTx(params: {
         )
         const transferResult = await walletCore.sendTransaction(
           { ...sendParams!, marginalFeeZats },
-          submissionDeadline
+          submissionDeadline,
+          undefined,
+          transactionContext
         )
         const successfulTransfer = requireSuccessfulTransfer(transferResult)
         txid = successfulTransfer.txHash

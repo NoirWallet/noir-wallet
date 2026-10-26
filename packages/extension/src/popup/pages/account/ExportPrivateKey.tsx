@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Icon } from '@iconify/react'
+import { getResponseErrorMessage } from '@/lib/errors'
 import { PageHeader } from '../../components/common/PageHeader'
 import { Button } from '../../components/ui/button'
 import { Input } from '../../components/ui/input'
@@ -144,14 +145,7 @@ export function ExportPrivateKey() {
         Array.isArray(response) ||
         (response as { success?: unknown }).success !== true
       ) {
-        throw new Error(
-          typeof response === 'object' &&
-            response !== null &&
-            !Array.isArray(response) &&
-            typeof (response as { error?: unknown }).error === 'string'
-            ? (response as { error: string }).error
-            : 'Private-key export failed'
-        )
+        throw new Error(getResponseErrorMessage(response) ?? 'Private-key export failed')
       }
       const result = (response as { result?: unknown }).result
       if (typeof result !== 'object' || result === null || Array.isArray(result)) {

@@ -47,7 +47,7 @@ import {
   marginalFeeForTier,
   staticFeeFallbackZats
 } from '@/core/zcash/fee-policy'
-import { resolveZcashTransferAvailability } from '@/popup/services/transfer-availability'
+import { resolveZcashFundingAvailability } from '@/popup/services/transfer-availability'
 import {
   getFundingBalance,
   getFundingAmountError,
@@ -157,12 +157,11 @@ export function Send() {
   const selectedFeeZats = feeByTier[feeTier] ?? staticFeeFallbackZats(feeTier)
   const standardFeeZats = feeByTier.standard ?? staticFeeFallbackZats('standard')
   const estimatedFeeZec = safeBig(selectedFeeZats).div(1e8).toFixed()
-  const { amount: effectiveMaxStr } = resolveZcashTransferAvailability({
-    availableBalance:
-      fundingSource === 'transparent' ? sourceBalance.available : (balance?.available ?? '0'),
+  const { amount: effectiveMaxStr } = resolveZcashFundingAvailability({
+    balance,
+    fundingSource,
     selectedFeeZats,
     standardFeeZats,
-    feeAlreadyReservedZats: fundingSource === 'transparent' ? 0 : undefined,
     maximumAmount: maxTransfer.maxAmount
   })
   const amountError = getFundingAmountError(amount, sourceBalance, effectiveMaxStr)

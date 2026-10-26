@@ -240,9 +240,11 @@ it('keeps schema-2 Zcash credentials and their unavailable fingerprint intact du
   const legacy = createLedgerHardwareCredential({
     ...device,
     ufvk: 'uview1public-unfunded-vector',
-    accountHdIndex: 9
+    accountHdIndex: 9,
+    ledgerSigningTransport: 'bluetooth'
   })
   assert.equal(parseStoredHardwareCredential(legacy).schemaVersion, 2)
+  assert.equal(parseStoredHardwareCredential(legacy).ledgerSigningTransport, 'bluetooth')
   assert.equal(legacy.accountExport.seedFingerprintHex, '0'.repeat(64))
   const zcash = {
     family: 'zcash',
@@ -252,8 +254,17 @@ it('keeps schema-2 Zcash credentials and their unavailable fingerprint intact du
     ufvk: legacy.accountExport.ufvk,
     accountHdIndex: 9
   }
-  const upgraded = createLedgerMultichainHardwareCredential({ ...device, accounts: [zcash, evm] })
+  const upgraded = createLedgerMultichainHardwareCredential({
+    ...device,
+    accounts: [zcash, evm],
+    ledgerSigningTransport: legacy.ledgerSigningTransport
+  })
   assert.deepEqual(legacyZcashHardwareWalletData(upgraded), legacyZcashHardwareWalletData(legacy))
+  assert.equal(parseStoredHardwareCredential(upgraded).ledgerSigningTransport, 'bluetooth')
+  assert.throws(
+    () => parseStoredHardwareCredential({ ...upgraded, ledgerSigningTransport: 'wireless' }),
+    /Invalid Ledger multichain credential/
+  )
   assert.throws(
     () =>
       parseStoredHardwareCredential({

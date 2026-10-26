@@ -36,13 +36,41 @@ export interface DAppChainAuthorization {
 }
 
 const STORAGE_KEY = 'connectedDApps'
+const AUTHORIZATION_KEY = 'dapp_authorization_state'
 const MAX_CONNECTED_DAPPS = 256
 const MAX_AUTHORIZED_ACCOUNTS = 100
 const MAX_ACCOUNT_REF_LENGTH = 256
 const MAX_CONNECTION_TEXT_LENGTH = 2_048
 
+interface AuthorizationState {
+  readonly revision: number
+  readonly mode: 'approved' | 'revoked'
+}
+
+function parseAuthorizationState(value: unknown): Record<string, AuthorizationState> {
+  if (value === undefined) return Object.create(null) as Record<string, AuthorizationState>
+  if (!isRecord(value)) {
+    throw new Error('Invalid stored dApp authorization state')
+  }
+  const states: Record<string, AuthorizationState> = Object.create(null)
+  for (const [origin, state] of Object.entries(value)) {
+    parseHttpOrigin(origin)
+    if (
+      !isRecord(state) ||
+      Object.keys(state).some(key => key !== 'revision' && key !== 'mode') ||
+      !Number.isSafeInteger(state.revision) ||
+      (state.revision as number) < 0 ||
+      (state.mode !== 'approved' && state.mode !== 'revoked')
+    ) {
+      throw new Error('Invalid stored dApp authorization state')
+    }
+    states[origin] = { revision: state.revision as number, mode: state.mode }
+  }
+  return states
+}
+
 interface DAppConnectionStorage {
-  get(key: string): Promise<Record<string, unknown>>
+  get(key: string | string[]): Promise<Record<string, unknown>>
   set(items: Record<string, unknown>): Promise<void>
 }
 
@@ -718,6 +746,7 @@ export class DAppManager {
   private initialized = false
   private initializationPromise: Promise<void> | null = null
   private mutationQueue: Promise<void> = Promise.resolve()
+  private authorizationState: Record<string, AuthorizationState> = Object.create(null)
 
   constructor(private readonly injectedStorage?: DAppConnectionStorage) {}
 
@@ -733,11 +762,12 @@ export class DAppManager {
     if (this.initializationPromise) return this.initializationPromise
 
     const operation = (async () => {
-      const result = await this.getStorage().get(STORAGE_KEY)
+      const result = await this.getStorage().get([STORAGE_KEY, AUTHORIZATION_KEY])
       const stored = result[STORAGE_KEY]
       const connections = stored === undefined ? [] : parseStoredDAppConnections(stored)
 
       this.connectedDApps = new Map(connections.map(dapp => [dapp.origin, dapp]))
+      this.authorizationState = parseAuthorizationState(result[AUTHORIZATION_KEY])
       this.initialized = true
     })()
     this.initializationPromise = operation
@@ -760,10 +790,19 @@ export class DAppManager {
     origin: string,
     tabInfo: { title?: string; favIconUrl?: string },
     accounts: AccountRef[],
-    binding: AccountRef
+    binding: AccountRef,
+    authorization?: { readonly automatic?: boolean; readonly expectedRevision?: number }
   ): Promise<void> {
     return this.enqueueMutation(async () => {
       await this.initialize()
+      const state = this.authorizationState[origin]
+      if (
+        (authorization?.automatic && state !== undefined) ||
+        (authorization?.expectedRevision !== undefined &&
+          authorization.expectedRevision !== (state?.revision ?? 0))
+      ) {
+        throw new Error('Site authorization changed. Connect again.')
+      }
       const existing = this.connectedDApps.get(origin)
       this.assertConnectionCapacity(existing)
       const replacement = replaceDAppAuthorization(existing, {
@@ -777,15 +816,41 @@ export class DAppManager {
       })
       const next = new Map(this.connectedDApps)
       next.set(origin, replacement)
-      await this.commitConnections(next)
+      const states = { ...this.authorizationState }
+      if (!authorization?.automatic) {
+        states[origin] = { revision: state?.revision ?? 0, mode: 'approved' }
+      }
+      await this.commitConnections(next, states)
     })
+  }
+
+  async getAuthorization(origin: string): Promise<{ revision: number; accounts: AccountRef[] }> {
+    await this.waitForStableState()
+    const state = this.authorizationState[origin]
+    const connection = this.connectedDApps.get(origin)
+    return {
+      revision: state?.revision ?? 0,
+      accounts: connection && state?.mode !== 'revoked' ? getConnectionAccountRefs(connection) : []
+    }
+  }
+
+  async getAuthorizationRevision(origin: string): Promise<number> {
+    return (await this.getAuthorization(origin)).revision
+  }
+
+  async canAutoConnect(origin: string): Promise<boolean> {
+    await this.waitForStableState()
+    return this.authorizationState[origin] === undefined
+  }
+
+  async isRevoked(origin: string): Promise<boolean> {
+    await this.waitForStableState()
+    return this.authorizationState[origin]?.mode === 'revoked'
   }
 
   /** Explicit batch authorization, or the valid legacy single-account binding. */
   async getAuthorizedAccounts(origin: string): Promise<AccountRef[]> {
-    await this.waitForStableState()
-    const dapp = this.connectedDApps.get(origin)
-    return dapp ? getConnectionAccountRefs(dapp) : []
+    return (await this.getAuthorization(origin)).accounts
   }
 
   async setChainAuthorizedAccounts(
@@ -811,7 +876,11 @@ export class DAppManager {
       })
       const next = new Map(this.connectedDApps)
       next.set(origin, replacement)
-      await this.commitConnections(next)
+      const states = { ...this.authorizationState }
+      if (ZCASH_DAPP_CHAIN_IDS.has(normalizeDAppChainId(chainId))) {
+        states[origin] = { revision: states[origin]?.revision ?? 0, mode: 'approved' }
+      }
+      await this.commitConnections(next, states)
     })
   }
 
@@ -917,7 +986,11 @@ export class DAppManager {
       })
       const next = new Map(this.connectedDApps)
       next.set(origin, replacement)
-      await this.commitConnections(next)
+      const states = { ...this.authorizationState }
+      if (zcashAuthorization !== undefined) {
+        states[origin] = { revision: states[origin]?.revision ?? 0, mode: 'approved' }
+      }
+      await this.commitConnections(next, states)
     })
   }
 
@@ -1005,7 +1078,7 @@ export class DAppManager {
       await this.initialize()
       const next = new Map(this.connectedDApps)
       next.delete(origin)
-      await this.commitConnections(next)
+      await this.commitConnections(next, this.revokeOrigins([origin]))
     })
   }
 
@@ -1013,7 +1086,10 @@ export class DAppManager {
     return this.enqueueMutation(async () => {
       await this.initialize()
       const dapp = this.connectedDApps.get(origin)
-      if (!dapp || getConnectionAccountRefs(dapp).length === 0) return
+      if (!dapp || getConnectionAccountRefs(dapp).length === 0) {
+        await this.commitConnections(new Map(this.connectedDApps), this.revokeOrigins([origin]))
+        return
+      }
       const chainAuthorizations = normalizeChainAuthorizations(dapp.chainAuthorizations)
       const next = new Map(this.connectedDApps)
       if (chainAuthorizations.length === 0) {
@@ -1031,7 +1107,7 @@ export class DAppManager {
           caip25Session: dapp.caip25Session
         })
       }
-      await this.commitConnections(next)
+      await this.commitConnections(next, this.revokeOrigins([origin]))
     })
   }
 
@@ -1077,7 +1153,7 @@ export class DAppManager {
     return this.enqueueMutation(async () => {
       await this.initialize()
       const origins = Object.freeze(Array.from(this.connectedDApps.keys()))
-      await this.commitConnections(new Map())
+      await this.commitConnections(new Map(), this.revokeOrigins(origins))
       return origins
     })
   }
@@ -1134,7 +1210,16 @@ export class DAppManager {
   }
 
   private enqueueMutation<T>(operation: () => Promise<T>): Promise<T> {
-    const result = this.mutationQueue.then(operation)
+    const run = async () => {
+      const execute = async () => {
+        await this.reloadStorage()
+        return operation()
+      }
+      return typeof navigator !== 'undefined' && navigator.locks
+        ? navigator.locks.request('noir-dapp-authorization', execute)
+        : execute()
+    }
+    const result = this.mutationQueue.then(run)
     this.mutationQueue = result.then(
       () => undefined,
       () => undefined
@@ -1143,13 +1228,48 @@ export class DAppManager {
   }
 
   private async waitForStableState(): Promise<void> {
-    await this.initialize()
     await this.mutationQueue
+    const read = () => this.reloadStorage()
+    if (typeof navigator !== 'undefined' && navigator.locks) {
+      await navigator.locks.request('noir-dapp-authorization', read)
+    } else {
+      await read()
+    }
   }
 
-  private async commitConnections(next: Map<string, ConnectedDApp>): Promise<void> {
-    await this.getStorage().set({ [STORAGE_KEY]: Array.from(next.values()) })
+  private async reloadStorage(): Promise<void> {
+    const result = await this.getStorage().get([STORAGE_KEY, AUTHORIZATION_KEY])
+    this.connectedDApps = new Map(
+      (result[STORAGE_KEY] === undefined
+        ? []
+        : parseStoredDAppConnections(result[STORAGE_KEY])
+      ).map(connection => [connection.origin, connection])
+    )
+    this.authorizationState = parseAuthorizationState(result[AUTHORIZATION_KEY])
+    this.initialized = true
+  }
+
+  private revokeOrigins(origins: readonly string[]): Record<string, AuthorizationState> {
+    const states = { ...this.authorizationState }
+    for (const origin of origins) {
+      const revision = states[origin]?.revision ?? 0
+      if (revision >= Number.MAX_SAFE_INTEGER)
+        throw new Error('Site authorization revision exhausted')
+      states[origin] = { revision: revision + 1, mode: 'revoked' }
+    }
+    return states
+  }
+
+  private async commitConnections(
+    next: Map<string, ConnectedDApp>,
+    states: Record<string, AuthorizationState> = this.authorizationState
+  ): Promise<void> {
+    await this.getStorage().set({
+      [STORAGE_KEY]: Array.from(next.values()),
+      [AUTHORIZATION_KEY]: states
+    })
     this.connectedDApps = next
+    this.authorizationState = states
   }
 
   private assertConnectionCapacity(existing: ConnectedDApp | undefined): void {

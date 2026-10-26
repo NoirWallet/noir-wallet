@@ -18,6 +18,7 @@ import {
 import { parseRheaSwapTransactionBinding } from '@/core/transactions/domain'
 import { isZcashOperationAnalyticsContext } from './analytics/operations'
 import { isDiagnosticContextId } from './diagnostic-log'
+import type { ZcashTransactionContext } from '@/core/worker/types'
 
 export interface RuntimeMessageSenderLike {
   readonly id?: string
@@ -92,6 +93,7 @@ export interface KeyringWorkerRpcRuntimeMessage {
   readonly type: 'KEYRING_WORKER_RPC'
   readonly method: string
   readonly payload: Readonly<Record<string, unknown>>
+  readonly transactionContext?: ZcashTransactionContext
 }
 
 export interface NoirRuntimeEventMessage {
@@ -778,6 +780,7 @@ const TRUSTED_RUNTIME_SCHEMAS: Readonly<Record<string, RuntimeMessageSchema>> = 
   },
   RPC_ENDPOINT_CHANGED: { required: { preferences: isRecord } },
   GET_PENDING_REQUEST: { required: { requestId: isShortString } },
+  ESTIMATE_APPROVAL_FEE: { required: { requestId: isShortString } },
   GET_SYNC_STATE: {
     optional: { walletId: isShortString, accountId: isShortString }
   },
@@ -996,6 +999,7 @@ const TRUSTED_RUNTIME_CONTEXTS: Readonly<Record<string, readonly OwnExtensionSen
     ACCOUNT_SWITCHED: ['extension-page'],
     RPC_ENDPOINT_CHANGED: ['extension-page'],
     GET_PENDING_REQUEST: ['extension-page'],
+    ESTIMATE_APPROVAL_FEE: ['extension-page'],
     GET_SYNC_STATE: ['extension-page'],
     ABORT_SYNC: ['extension-page'],
     BACKGROUND_SYNC: ['extension-page'],
@@ -1425,10 +1429,17 @@ export function parseTrustedExtensionRuntimeMessage(
 function parseWorkerRpcMessage(
   value: unknown,
   expectedType: WorkerRpcRuntimeMessage['type'] | KeyringWorkerRpcRuntimeMessage['type']
-): Omit<WorkerRpcRuntimeMessage, 'type'> {
+): Omit<KeyringWorkerRpcRuntimeMessage, 'type'> {
+  const hasTransactionContext =
+    isRuntimeRecord(value) && Object.prototype.hasOwnProperty.call(value, 'transactionContext')
   if (
     !isRuntimeRecord(value) ||
-    !hasExactRuntimeKeys(value, ['type', 'method', 'payload']) ||
+    !hasExactRuntimeKeys(
+      value,
+      hasTransactionContext
+        ? ['type', 'method', 'payload', 'transactionContext']
+        : ['type', 'method', 'payload']
+    ) ||
     value.type !== expectedType ||
     typeof value.method !== 'string' ||
     value.method.length === 0 ||
@@ -1439,9 +1450,33 @@ function parseWorkerRpcMessage(
     throw new Error('Invalid Worker RPC message')
   }
 
+  let transactionContext: ZcashTransactionContext | undefined
+  if (hasTransactionContext) {
+    const context = value.transactionContext
+    if (
+      expectedType !== 'KEYRING_WORKER_RPC' ||
+      (value.method !== 'transaction.send' && value.method !== 'transaction.oneclick_shield') ||
+      !isRuntimeRecord(context) ||
+      !hasExactRuntimeKeys(context, ['accountKey', 'transactionId']) ||
+      typeof context.accountKey !== 'string' ||
+      context.accountKey.length === 0 ||
+      context.accountKey.length > 256 ||
+      typeof context.transactionId !== 'string' ||
+      context.transactionId.length === 0 ||
+      context.transactionId.length > 256
+    ) {
+      throw new Error('Invalid Worker RPC transaction context')
+    }
+    transactionContext = {
+      accountKey: context.accountKey,
+      transactionId: context.transactionId
+    }
+  }
+
   return {
     method: value.method,
-    payload: copyRuntimeRecord(value.payload, WORKER_LIMITS)
+    payload: copyRuntimeRecord(value.payload, WORKER_LIMITS),
+    ...(transactionContext ? { transactionContext } : {})
   }
 }
 

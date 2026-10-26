@@ -24,6 +24,8 @@ Chain availability comes from the product registry, enabled feature flags, and r
 
 The Background account-network catalog keeps Storage V2's Zcash identity unchanged and projects the current shielded receive selection from retained wallet metadata for the same wallet, account, and network. Rotation and selection of a historical address use that same selection; the Addresses page refreshes when it changes.
 
+Zcash settings reads the registered account derivation path for software and hardware accounts. The transparent address path is shown only when WASM has supplied the child index for that same network's primary transparent receiver; shielded address rotation does not change this index. Unknown indexes are not assumed to be zero.
+
 The public dApp API belongs to the independent [SDK](../../packages/sdk/README.md) and [published provider guide](../../packages/docs/content/docs/developers/provider-api.mdx). Internal plans and historical review records are kept outside this public reference.
 
 ## Ledger Hardware
@@ -37,6 +39,8 @@ Bitcoin imports a BIP84 account root, not separate wallets for each address unde
 The retained Zcash runtime still permits one Zcash account per Ledger wallet; additional EVM, Bitcoin, Solana, and NEAR accounts are independent of that limit. Extending a wallet requires a fresh export of a registered public anchor from the connected device. Names and legacy zero-valued fingerprints do not establish device identity. Provisioning uses the credential transaction journal and Storage V2 generation pointer; retained Zcash data continues to use the same wallet and account identifiers.
 
 Device interaction runs in a full extension tab. Background code retains the reviewed payload, checks account and authorization bindings, verifies returned signatures, and broadcasts transactions. Locking, account or network changes, disconnecting a dApp, expiry, and closing the signing tab cancel outstanding device requests. Wallet transfer records can be continued by the user after a service-worker restart while their original approval remains valid; interrupted dApp calls must be initiated and approved again. An unsigned RHEA swap also requires a fresh quote and preparation after a restart. Solana blockhash expiry requires a new preparation and approval.
+
+Zcash signing preserves a retained V1 USB/Bluetooth preference. A later successful device signature saves the selected transport in wallet-scoped settings, which take precedence over that retained preference. Bluetooth is offered only for a compatible recorded device model; other models use USB.
 
 Shared device-signing contracts and boundary validation live in `src/core/keyring/protocol/ledger-signing.ts`; transport and vendor SDK adapters live in `src/lib/ledger/`. Credential provisioning and persistence belong to `src/infrastructure/keyring/`, with background orchestration in `src/background/hardware-wallet-provisioning.ts`. Popup pages delegate device and runtime interactions to `src/popup/services/`; the shared provisioning client is `hardware-provisioning-client.ts`.
 

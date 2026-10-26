@@ -32,6 +32,7 @@ export interface AccountNetworkAddressSummary {
 export interface AccountNetworkSummary {
   readonly chainId: string
   readonly addresses: readonly AccountNetworkAddressSummary[]
+  readonly accountDerivationPath?: string
   readonly privateExecutionAddress?: string
 }
 
@@ -248,6 +249,9 @@ export class AccountNetworksCoordinator {
                   Object.freeze({
                     chainId: chain.id,
                     addresses: Object.freeze(addresses),
+                    ...(chain.family === 'zcash'
+                      ? { accountDerivationPath: chainAccount.derivation.path }
+                      : {}),
                     ...(privateExecutionAddress === undefined ? {} : { privateExecutionAddress })
                   })
                 ]

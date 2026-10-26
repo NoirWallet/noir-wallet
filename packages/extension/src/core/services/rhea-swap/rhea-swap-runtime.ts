@@ -438,7 +438,15 @@ export function parseRheaSwapQuoteView(value: unknown): RheaSwapQuoteView {
   if (!isRecord(value)) throw new Error('RHEA Swap quote result must be an object')
   assertKeys(
     value,
-    ['quoteHandle', 'estimatedOut', 'minAmountOut', 'router', 'receivedAt', 'expiresAt'],
+    [
+      'quoteHandle',
+      'recipient',
+      'estimatedOut',
+      'minAmountOut',
+      'router',
+      'receivedAt',
+      'expiresAt'
+    ],
     [],
     'RHEA Swap quote result'
   )
@@ -455,6 +463,7 @@ export function parseRheaSwapQuoteView(value: unknown): RheaSwapQuoteView {
   }
   return Object.freeze({
     quoteHandle: readString(value.quoteHandle, 'RHEA Swap quote handle', 160),
+    recipient: readString(value.recipient, 'RHEA Swap recipient'),
     estimatedOut: readRawAmount(value.estimatedOut, 'RHEA Swap estimated output'),
     minAmountOut: readRawAmount(value.minAmountOut, 'RHEA Swap minimum output'),
     router: readString(value.router, 'RHEA Swap router', 128),
@@ -507,6 +516,7 @@ export function parseRheaSwapReviewView(value: unknown): RheaSwapReviewView {
     value,
     [
       'quoteHandle',
+      'recipient',
       'estimatedOut',
       'minAmountOut',
       'router',
@@ -526,6 +536,7 @@ export function parseRheaSwapReviewView(value: unknown): RheaSwapReviewView {
   )
   const quote = parseRheaSwapQuoteView({
     quoteHandle: value.quoteHandle,
+    recipient: value.recipient,
     estimatedOut: value.estimatedOut,
     minAmountOut: value.minAmountOut,
     router: value.router,

@@ -1,4 +1,5 @@
 import { Icon } from '@iconify/react'
+import { getResponseErrorMessage } from '@/lib/errors'
 import { useEffect, useRef, useState } from 'react'
 import { PageHeader } from '../../components/common/PageHeader'
 import { useNavigate } from '../../provider/Router'
@@ -102,7 +103,9 @@ export function SecurityPrivacy() {
         enabled: !zeroIndexerEnabled
       })
       if (!response?.success || typeof response.enabled !== 'boolean') {
-        throw new Error(response?.error || 'Could not update private broadcast preference')
+        throw new Error(
+          getResponseErrorMessage(response) || 'Could not update private broadcast preference'
+        )
       }
       if (enabledRevision.current === revision) setZeroIndexerEnabled(response.enabled)
       if (response.warning) toast.error(response.warning)

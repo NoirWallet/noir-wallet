@@ -152,7 +152,6 @@ export function createRheaSwapBinding(input: {
   readonly destinationChainId: string
   readonly tokenIn: RheaSwapToken
   readonly tokenOut: RheaSwapToken
-  readonly recipient: string
   readonly quote: RheaSwapQuoteView
   readonly review: RheaSwapReviewView
   readonly confidentiality?: 'basic'
@@ -192,7 +191,7 @@ export function createRheaSwapBinding(input: {
       assetId: input.destinationAssetId,
       protocolChainId: input.tokenOut.rheaChainId,
       protocolAssetId: input.tokenOut.assetId,
-      recipient: input.recipient,
+      recipient: input.quote.recipient,
       expectedAmountRaw: input.quote.estimatedOut,
       minimumAmountRaw: input.quote.minAmountOut
     }

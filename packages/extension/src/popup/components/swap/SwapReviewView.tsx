@@ -19,6 +19,7 @@ interface SwapReviewViewProps {
   tokenOut: SwapToken
   amountIn: string
   amountOut: string
+  recipient: string
   fromFiat: string
   toFiat: string
   slippage: number
@@ -45,7 +46,7 @@ interface SwapReviewViewProps {
     readonly sender: string
     readonly depositAddress: string | null
   } | null
-  destinationDetails?: { readonly network: string; readonly recipient: string }
+  destinationDetails?: { readonly network: string }
   approvalDetails?: {
     readonly spender: string
     readonly amount: string
@@ -63,6 +64,7 @@ export function SwapReviewView({
   tokenOut,
   amountIn,
   amountOut,
+  recipient,
   minAmountOut,
   priceImpact,
   arrivalEstimate,
@@ -117,16 +119,11 @@ export function SwapReviewView({
         </div>
 
         <div className="mt-4 space-y-3 rounded-xl bg-card/60 p-4">
-          {destinationDetails && (
-            <DetailItem label="Recipient">
-              <span
-                className="block break-all font-mono text-[11px]"
-                title={destinationDetails.recipient}
-              >
-                {destinationDetails.recipient}
-              </span>
-            </DetailItem>
-          )}
+          <DetailItem label="Recipient">
+            <span className="block break-all font-mono text-[11px]" title={recipient}>
+              {recipient}
+            </span>
+          </DetailItem>
           <DetailItem label="Price Impact">
             <span className={priceImpact > 5 ? 'text-red-500' : 'text-foreground'}>
               {priceImpact < 0.01 ? '< 0.01' : priceImpact.toFixed(2)}%

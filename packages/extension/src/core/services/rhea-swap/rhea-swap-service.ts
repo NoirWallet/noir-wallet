@@ -898,8 +898,10 @@ export class RheaSwapService {
   }
 
   private toQuoteView(record: RheaSwapQuoteSessionRecord, quote: Quote): RheaSwapQuoteView {
+    if (!record.request.recipient) throw new Error('RHEA Swap quote is missing its recipient')
     return Object.freeze({
       quoteHandle: record.quoteHandle,
+      recipient: record.request.recipient,
       estimatedOut: quote.estimatedOut,
       minAmountOut: quote.minAmountOut,
       router: quote.route.router,

@@ -2,10 +2,19 @@ self.addEventListener('error', e => e.preventDefault())
 self.addEventListener('unhandledrejection', e => e.preventDefault())
 
 import { getOffscreenClient } from '@/core/worker/client'
-import type { RPCSchema } from '@/core/worker/types'
-import { encodeWorkerRpcError } from '@/core/worker/rpc-errors'
+import type { RPCSchema, ZcashTransactionContext } from '@/core/worker/types'
+import { decodeWorkerRpcError, encodeWorkerRpcError } from '@/core/worker/rpc-errors'
 import { isTransactionSubmissionUnknown } from '@/core/zcash/transfer-result'
-import { loadWalletDb, quarantineWalletPersistence, saveWalletDb } from '@/lib/indexed-db'
+import {
+  applyZcashWorkerBroadcast,
+  zcashWorkerBroadcastResult
+} from '@/lib/transaction-replacement'
+import {
+  loadWalletDb,
+  mutateTransactions,
+  quarantineWalletPersistence,
+  saveWalletDb
+} from '@/lib/indexed-db'
 import {
   registerOffscreenSyncAbortListener,
   isSyncAbortRequested,
@@ -901,6 +910,56 @@ async function persistWalletDbAfterTransaction(walletId: string): Promise<void> 
   await saveWalletDb(payload.dbKey, chunks)
 }
 
+async function persistBroadcastHash(
+  method: string,
+  walletId: string,
+  context: ZcashTransactionContext | undefined,
+  result: unknown
+): Promise<void> {
+  if (!context) return
+  const broadcast = zcashWorkerBroadcastResult(method, result)
+  if (!broadcast) return
+  let changed = false
+  await mutateTransactions(context.accountKey, transactions => {
+    const updated = applyZcashWorkerBroadcast(transactions, context, walletId, broadcast)
+    changed = updated !== transactions
+    return updated
+  })
+  if (changed) {
+    void chrome.runtime
+      .sendMessage({
+        type: 'ZCASH_TRANSACTION_OUTCOME',
+        accountKey: context.accountKey,
+        transactionId: context.transactionId
+      })
+      .catch(() => {})
+  }
+}
+
+async function persistBroadcastHashSafely(
+  method: string,
+  walletId: string,
+  context: ZcashTransactionContext | undefined,
+  result: unknown
+): Promise<void> {
+  await persistBroadcastHash(method, walletId, context, result).catch(() => {
+    offscreenWarn('Failed to persist transaction hash', walletId)
+  })
+}
+
+zcashWorkerClient.onLateTransactionResult = async event => {
+  const { method, walletId, transactionContext, response } = event
+  const error = response.error ? decodeWorkerRpcError(response as { error: string }) : undefined
+  if (!error) {
+    await persistBroadcastHashSafely(method, walletId, transactionContext, response.result)
+  }
+  if (!error || isTransactionSubmissionUnknown(error)) {
+    await persistWalletDbAfterTransaction(walletId).catch(() => {
+      offscreenWarn('Failed to persist wallet after late transaction result', walletId)
+    })
+  }
+}
+
 function sendRetryableError(
   sendResponse: (response: unknown) => void,
   error: string,
@@ -927,6 +986,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true
   }
   message = rpcMessage
+  const transactionContext = rpcMessage.transactionContext
 
   if (message.method === 'session.unlock') {
     if (!hasExactRuntimeKeys(message.payload, ['input'])) {
@@ -1613,7 +1673,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         logDebugTiming(debugRequestId, 'offscreen-dispatch-wait', diagnosticStartedAt)
       }
       const workerStartedAt = performance.now()
-      const result = await zcashWorkerClient.requestToWorker(message.method, message.payload)
+      const result = await zcashWorkerClient.requestToWorker(
+        message.method,
+        message.payload,
+        transactionContext
+      )
       if (debugRequestId) {
         logDebugTiming(debugRequestId, 'offscreen-worker-roundtrip', workerStartedAt)
       }
@@ -1622,6 +1686,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         clearWalletDirty(rpcWalletId)
       }
       if (isTransactionMutation(message.method) && message.payload?.walletId) {
+        await persistBroadcastHashSafely(
+          message.method,
+          message.payload.walletId,
+          transactionContext,
+          result
+        )
         await persistWalletDbAfterTransaction(message.payload.walletId).catch(error => {
           offscreenError('Failed to persist DB after transaction', error, message.payload.walletId)
         })
@@ -1657,10 +1727,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           await ensureWalletInitialized(walletId)
           const retryResult = await zcashWorkerClient.requestToWorker(
             message.method,
-            message.payload
+            message.payload,
+            transactionContext
           )
           trySetupLogForwarding()
           if (isTransactionMutation(message.method)) {
+            await persistBroadcastHashSafely(
+              message.method,
+              walletId,
+              transactionContext,
+              retryResult
+            )
             await persistWalletDbAfterTransaction(walletId).catch(persistError => {
               offscreenError('Failed to persist DB after transaction retry', persistError, walletId)
             })

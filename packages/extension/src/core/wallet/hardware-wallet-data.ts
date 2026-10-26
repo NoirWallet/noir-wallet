@@ -38,6 +38,7 @@ export interface LedgerZcashHardwareCredential {
   }>
   readonly deviceModel: string
   readonly deviceName: string
+  readonly ledgerSigningTransport?: 'usb' | 'bluetooth'
 }
 
 export type LedgerHardwareCredential =
@@ -387,6 +388,7 @@ export function createLedgerHardwareCredential(input: {
   accountHdIndex: number
   deviceModel: string
   deviceName: string
+  ledgerSigningTransport?: 'usb' | 'bluetooth'
 }): LedgerZcashHardwareCredential {
   return parseLedgerZcashHardwareCredential({
     schemaVersion: LEDGER_HARDWARE_CREDENTIAL_SCHEMA_VERSION,
@@ -400,7 +402,10 @@ export function createLedgerHardwareCredential(input: {
       accountHdIndex: input.accountHdIndex
     },
     deviceModel: input.deviceModel,
-    deviceName: input.deviceName
+    deviceName: input.deviceName,
+    ...(input.ledgerSigningTransport === undefined
+      ? {}
+      : { ledgerSigningTransport: input.ledgerSigningTransport })
   })
 }
 
@@ -420,14 +425,18 @@ function parseLedgerZcashHardwareCredential(value: unknown): LedgerZcashHardware
       'capabilities',
       'accountExport',
       'deviceModel',
-      'deviceName'
+      'deviceName',
+      ...(value.ledgerSigningTransport === undefined ? [] : ['ledgerSigningTransport'])
     ]) ||
     value.schemaVersion !== LEDGER_HARDWARE_CREDENTIAL_SCHEMA_VERSION ||
     value.vendor !== 'ledger' ||
     value.firmwareProfile !== 'zcash' ||
     !Array.isArray(value.capabilities) ||
     value.capabilities.length !== 1 ||
-    value.capabilities[0] !== 'zcash'
+    value.capabilities[0] !== 'zcash' ||
+    (value.ledgerSigningTransport !== undefined &&
+      value.ledgerSigningTransport !== 'usb' &&
+      value.ledgerSigningTransport !== 'bluetooth')
   ) {
     throw new Error('Invalid Ledger hardware credential')
   }
@@ -445,7 +454,10 @@ function parseLedgerZcashHardwareCredential(value: unknown): LedgerZcashHardware
     capabilities: Object.freeze(['zcash'] as const),
     accountExport,
     deviceModel,
-    deviceName
+    deviceName,
+    ...(value.ledgerSigningTransport === undefined
+      ? {}
+      : { ledgerSigningTransport: value.ledgerSigningTransport as 'usb' | 'bluetooth' })
   })
 }
 
@@ -608,7 +620,10 @@ export function parseStoredHardwareCredential(value: unknown): StoredHardwareCre
       ufvk: value.ufvk,
       accountHdIndex: value.accountHdIndex,
       deviceModel: value.deviceModel,
-      deviceName: value.deviceName ?? 'Ledger'
+      deviceName: value.deviceName ?? 'Ledger',
+      ...(value.ledgerSigningTransport === undefined
+        ? {}
+        : { ledgerSigningTransport: value.ledgerSigningTransport })
     })
   }
   return parseStoredKeystoneHardwareCredential(value)

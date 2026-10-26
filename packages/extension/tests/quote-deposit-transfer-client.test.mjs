@@ -306,6 +306,7 @@ test.describe('quote deposit transfer client', () => {
     }
     const quote = {
       quoteHandle: 'rhea-quote:signature-binding',
+      recipient: 'alice.near',
       estimatedOut: '900',
       minAmountOut: '850',
       router: 'one-inch',
@@ -330,7 +331,6 @@ test.describe('quote deposit transfer client', () => {
         destinationChainId: 'near:mainnet',
         tokenIn,
         tokenOut,
-        recipient: 'alice.near',
         quote,
         review
       }).sourceTarget
@@ -355,9 +355,9 @@ test.describe('quote deposit transfer client', () => {
       destinationChainId: 'eip155:1',
       tokenIn: token,
       tokenOut: token,
-      recipient: '0x2222222222222222222222222222222222222222',
       quote: {
         quoteHandle: 'rhea-quote:private-same-chain',
+        recipient: '0x2222222222222222222222222222222222222222',
         estimatedOut: '990',
         minAmountOut: '980',
         router: 'nearintents',

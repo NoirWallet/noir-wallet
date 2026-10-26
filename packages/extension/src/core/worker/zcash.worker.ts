@@ -1,3 +1,4 @@
+import { findWasmAccountIdByHdIndex } from './account-resolution'
 /**
  * Zcash Web Worker
  *
@@ -131,14 +132,25 @@ async function findAccountIdByHdIndex(
   accountIndex: number
 ): Promise<number | null> {
   const summary = await getSummaryOrCached(walletId, w)
-  if (!summary?.account_balances) return null
-  for (const entry of summary.account_balances) {
-    if (!Array.isArray(entry) || entry.length < 1) continue
-    const id = entry[0] as number
-    const hdIndex = await w.get_account_hd_index(id)
-    if (hdIndex === accountIndex) return id
+  return findWasmAccountIdByHdIndex(summary?.account_balances, accountIndex, id =>
+    w.get_account_hd_index(id)
+  )
+}
+
+async function resolveRequestedAccountId(
+  walletId: string,
+  wallet: WebWallet,
+  accountId?: number,
+  accountIndex?: number
+): Promise<number> {
+  const resolved =
+    accountIndex === undefined
+      ? accountId
+      : await findAccountIdByHdIndex(walletId, wallet, accountIndex)
+  if (typeof resolved !== 'number' || !Number.isSafeInteger(resolved) || resolved < 0) {
+    throw new Error('Requested account is not initialized')
   }
-  return null
+  return resolved
 }
 
 async function signMessageWithTransparent(
@@ -1401,7 +1413,6 @@ self.addEventListener('message', async (event: MessageEvent<RPCRequest<any>>) =>
       case 'transaction.send': {
         const {
           walletId,
-          accountId,
           accountIndex,
           seedPhrase,
           to,
@@ -1413,6 +1424,7 @@ self.addEventListener('message', async (event: MessageEvent<RPCRequest<any>>) =>
         } = payload as RPCSchema['transaction.send']['request']
         result = await runForWallet(walletId, async () => {
           const w = getWallet(walletId)
+          const accountId = await resolveRequestedAccountId(walletId, w, undefined, accountIndex)
           const walletNetwork = getWalletNet(walletId)
           const resolvedSeedPhrase = resolveWalletMnemonic(walletId, seedPhrase)
           const memoBytes = memo ? new TextEncoder().encode(memo) : undefined
@@ -1452,10 +1464,11 @@ self.addEventListener('message', async (event: MessageEvent<RPCRequest<any>>) =>
       }
 
       case 'transaction.oneclick_shield': {
-        const { walletId, accountId, accountIndex, seedPhrase, marginalFeeZats } =
+        const { walletId, accountIndex, seedPhrase, marginalFeeZats } =
           payload as RPCSchema['transaction.oneclick_shield']['request']
         result = await runForWallet(walletId, async () => {
           const w = getWallet(walletId)
+          const accountId = await resolveRequestedAccountId(walletId, w, undefined, accountIndex)
           const walletNetwork = getWalletNet(walletId)
           const resolvedSeedPhrase = resolveWalletMnemonic(walletId, seedPhrase)
 
@@ -1500,6 +1513,7 @@ self.addEventListener('message', async (event: MessageEvent<RPCRequest<any>>) =>
         const {
           walletId,
           accountId,
+          accountIndex,
           to,
           value,
           memo,
@@ -1510,9 +1524,15 @@ self.addEventListener('message', async (event: MessageEvent<RPCRequest<any>>) =>
         const estimateFee = () =>
           runForWallet(walletId, async () => {
             const w = getWallet(walletId)
+            const targetAccountId = await resolveRequestedAccountId(
+              walletId,
+              w,
+              accountId,
+              accountIndex
+            )
             const memoBytes = memo ? new TextEncoder().encode(memo) : undefined
             const estimate = await w.estimate_transfer(
-              accountId,
+              targetAccountId,
               to,
               BigInt(value),
               fundingSource,
@@ -1569,12 +1589,18 @@ self.addEventListener('message', async (event: MessageEvent<RPCRequest<any>>) =>
       }
 
       case 'transaction.estimateShieldFee': {
-        const { walletId, accountId, marginalFeeZats } =
+        const { walletId, accountId, accountIndex, marginalFeeZats } =
           payload as RPCSchema['transaction.estimateShieldFee']['request']
         result = await runForWallet(walletId, async () => {
           const w = getWallet(walletId)
-          const fee = await w.estimate_pczt_shield_fee(
+          const targetAccountId = await resolveRequestedAccountId(
+            walletId,
+            w,
             accountId,
+            accountIndex
+          )
+          const fee = await w.estimate_pczt_shield_fee(
+            targetAccountId,
             BigInt(sanitizeMarginalFeeZats(marginalFeeZats))
           )
           return fee.toString()

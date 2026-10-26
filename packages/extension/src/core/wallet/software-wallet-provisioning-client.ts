@@ -1,4 +1,5 @@
 import type { MnemonicWordCount } from '@/config/wallet'
+import { getResponseErrorMessage } from '@/lib/errors'
 
 type SoftwareWalletProvisioningMode = 'create' | 'import'
 
@@ -8,16 +9,12 @@ function responseRecord(value: unknown): Record<string, unknown> | null {
     : null
 }
 
-function responseError(record: Record<string, unknown> | null, fallback: string): Error {
-  return new Error(record && typeof record.error === 'string' ? record.error : fallback)
-}
-
 export async function generateAddWalletMnemonic(wordCount: MnemonicWordCount): Promise<string[]> {
   const record = responseRecord(
     await chrome.runtime.sendMessage({ type: 'GENERATE_ADD_WALLET_MNEMONIC', wordCount })
   )
   if (record?.success !== true || typeof record.mnemonic !== 'string') {
-    throw responseError(record, 'Recovery phrase generation failed')
+    throw new Error(getResponseErrorMessage(record) ?? 'Recovery phrase generation failed')
   }
   const words = record.mnemonic.split(' ')
   if (words.length !== wordCount) {
@@ -42,7 +39,7 @@ export async function provisionAdditionalSoftwareWallet(input: {
     })
   )
   if (record?.success !== true || typeof record.walletId !== 'string') {
-    throw responseError(record, 'Wallet setup failed')
+    throw new Error(getResponseErrorMessage(record) ?? 'Wallet setup failed')
   }
   return record.walletId
 }

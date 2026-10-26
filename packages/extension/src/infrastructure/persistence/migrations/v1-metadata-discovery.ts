@@ -28,6 +28,7 @@ export interface V1DiscoveredAccount {
     readonly transparent: string
     readonly shielded: string
     readonly fullUnified?: string
+    readonly transparentAddressIndex?: number
   }>
   readonly createdAt: number
 }
@@ -167,6 +168,13 @@ function parseWallets(
         addresses?.fullUnified === undefined
           ? undefined
           : parseNonEmptyString(addresses.fullUnified, 4_096)
+      const transparentAddressIndex =
+        typeof addresses?.transparentAddressIndex === 'number' &&
+        Number.isSafeInteger(addresses.transparentAddressIndex) &&
+        addresses.transparentAddressIndex >= 0 &&
+        addresses.transparentAddressIndex <= 0x7fffffff
+          ? addresses.transparentAddressIndex
+          : undefined
       if (
         !accountId ||
         accountIndex === null ||
@@ -193,7 +201,8 @@ function parseWallets(
           addresses: Object.freeze({
             transparent,
             shielded,
-            ...(typeof fullUnified === 'string' ? { fullUnified } : {})
+            ...(typeof fullUnified === 'string' ? { fullUnified } : {}),
+            ...(transparentAddressIndex === undefined ? {} : { transparentAddressIndex })
           }),
           createdAt
         })

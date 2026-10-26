@@ -178,7 +178,7 @@ import {
 } from '@/popup/services/swap-page-model'
 import {
   resolvePortfolioTransferAvailability,
-  resolveZcashTransferAvailability
+  resolveZcashFundingAvailability
 } from '@/popup/services/transfer-availability'
 import {
   getFundingBalance,
@@ -316,8 +316,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
   const getCurrentBalance = useAccountDataStore(state => state.getCurrentBalance)
   const storeBalance = getCurrentBalance()
   const zcashFundingBalance = getFundingBalance(storeBalance, fundingSource)
-  const zcashAvailableBalance =
-    fundingSource === 'transparent' ? zcashFundingBalance.available : storeBalance?.available || '0'
+  const zcashAvailableBalance = zcashFundingBalance.available
 
   const zecPrice = useWalletStore(state => state.zecPrice)
   const swapPreferenceScope = createSwapTokenPreferenceScope(effectiveWalletId, effectiveAccountId)
@@ -1234,7 +1233,6 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
     []
   )
 
-  const rawSpendable = swap.isZecSource ? zcashAvailableBalance : '0'
   const walletAmountRaw = useMemo(() => {
     if (!walletOwnedSource || !swap.amountIn) return null
     try {
@@ -1282,11 +1280,11 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
     !displayedFeeLoading &&
     displayedFeeByTier.standard === null &&
     displayedFeeByTier.fast === null
-  const zcashAvailability = resolveZcashTransferAvailability({
-    availableBalance: rawSpendable,
+  const zcashAvailability = resolveZcashFundingAvailability({
+    balance: swap.isZecSource ? storeBalance : null,
+    fundingSource,
     selectedFeeZats,
     standardFeeZats,
-    feeAlreadyReservedZats: fundingSource === 'transparent' ? 0 : undefined,
     maximumAmount: maxTransfer.maxAmount
   })
   const routeMaximum = useTransferMaximum({
@@ -1771,7 +1769,6 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
             destinationChainId: destination.chainId,
             tokenIn,
             tokenOut,
-            recipient: resolvedRecipientAddress,
             quote: result,
             review,
             ...(isPrivateFunding ||
@@ -2399,7 +2396,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
               destinationAsset: swap.tokenOut?.assetId,
               expectedAmountOut: quoteResult.estimatedOut,
               minAmountOut: quoteResult.minAmountOut,
-              recipient: resolvedRecipientAddress || undefined,
+              recipient: quoteResult.recipient,
               deadline: getRheaSwapQuoteDeadline(quoteResult)
             }
           : undefined
@@ -2446,7 +2443,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
           accountId: currentAccount.id,
           to: swap.depositAddress,
           amount: swap.amountIn,
-          displayTo: resolvedRecipientAddress || undefined,
+          displayTo: quoteResult.recipient,
           quoteBinding,
           fundingSource,
           marginalFeeZats
@@ -2490,7 +2487,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
           from: fromAddress,
           fromType: fundingSource,
           txType: 'swap',
-          displayTo: resolvedRecipientAddress || undefined,
+          displayTo: quoteResult.recipient,
           quoteBinding,
           marginalFeeZats,
           analytics: {
@@ -3267,11 +3264,11 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
           destinationDetails={
             (crossChainSendRequested || privateTransferRequested) && swap.tokenOut
               ? {
-                  network: formatChainName(swap.tokenOut.blockchain),
-                  recipient: resolvedRecipientAddress
+                  network: formatChainName(swap.tokenOut.blockchain)
                 }
               : undefined
           }
+          recipient={reviewedQuote.recipient}
           arrivalEstimate={
             (isPrivateFunding || privateTransferRequested) && walletOwnedSource
               ? (getConfidentialTransferEstimate(walletOwnedSource.chain.chain.id) ?? undefined)

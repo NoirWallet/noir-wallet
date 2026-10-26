@@ -12,7 +12,7 @@ import { MARGINAL_FEE_ZATS } from '@/config/fee'
 import { sanitizeMarginalFeeZats } from '@/core/zcash/fee-policy'
 import type { Transaction } from '@/types/wallet'
 import { safeBig } from '@/lib/big'
-import { classifyError } from '@/lib/errors'
+import { classifyError, getResponseErrorMessage } from '@/lib/errors'
 import { isValidAddTransactionResponse } from '@/lib/transaction-record-response'
 import {
   getShieldableTransparentBalance,
@@ -224,7 +224,9 @@ export function useShieldFunds(): UseShieldFundsResult {
           analytics: { pageId: PAGE_IDS.SEND }
         })
         if (startResponse?.success !== true) {
-          throw new Error(startResponse?.error || 'Failed to start shield transaction')
+          throw new Error(
+            getResponseErrorMessage(startResponse) || 'Failed to start shield transaction'
+          )
         }
       } catch (error) {
         console.error('[useShieldFunds] Shield funds failed:', error)

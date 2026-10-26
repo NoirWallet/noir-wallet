@@ -101,6 +101,8 @@ Unmined WASM records without a timestamp keep their first locally observed time 
 
 Wallet snapshots reject empty serialization before writing and atomically replace their manifest and chunks. Reads inspect quarantine, manifest, and chunk bytes in one committed transaction; confirmed corruption remains available for explicit recovery. Spendability recovery reloads a persisted snapshot and requests catch-up without deleting wallet data. Confirmed-transaction catch-up shares the wallet's sync scheduler. Passive sync may use a persisted watch-only snapshot while locked or with no UI open, without restoring signing credentials; polling uses backoff, jitter, and a bounded scan budget from `src/config/wallet.ts`.
 
+The shared `zcash-wallet-db` schema is version 9 and upgrades V1 version 8 in place, retaining wallet data and write fences. Deletion persists tombstones before removing credentials and prevents stale contexts from restoring account data. Removing one account discards the shared WASM snapshots and sync journals on both networks after stopping the worker; retained accounts keep their credentials, addresses, birthdays, and account-scoped history and rebuild their scanned state from those inputs. Startup also resumes V1 `wallet_cleanup_pending_ids`: committed deletions finish cleanup, while a pending operation with intact wallet metadata and no deletion tombstone is rolled back. Missing or inconsistent recovery metadata leaves the pending marker intact and fails initialization rather than guessing which credentials to remove.
+
 The Popup reads only the current account through trusted `GET_ACTIVITY`. Content scripts cannot specify Account scope or enumerate partitions. `createConfiguredActivityHistorySources` selects adapters; Background uses one aggregation and local fallback path, while each adapter still contacts its configured source:
 
 | Chain / network            | History source                                                                                 |
@@ -124,6 +126,8 @@ Supported EVM chains query the History Worker's root path with POST JSON-RPC. Ea
 Old beta RPC History caches are cleared and fetched again, including `activity_history_cache_v2:*` Chrome local keys, obsolete IndexedDB schema or mode partitions, mixed-EVM projections, and EVM items without Account scope or chainId in their IDs. Wallet credentials, Zcash WASM data, and authoritative local transactions remain. Account deletion and Wallet Reset clear both supplemental caches and legacy Chrome keys.
 
 ## 7. Persistence and Recovery
+
+Zcash software sends and shielding pass the original transaction ID to Offscreen. A complete Worker result updates that existing account-scoped record before snapshot persistence, including results arriving after the RPC timeout. Background reuses the existing monitors; this does not add submission phases, restart replay, or matching of legacy empty-hash records.
 
 `TransactionRepository` provides scoped `create()`, `get/list()`, `applySegmentEvent()`, and `deleteByAccountScope()`. Creating the same graph twice is idempotent; reusing a TransactionId for a different graph returns `id-conflict`. Reads require `keyDomainId + accountId`; listing may filter by on-chain ChainId and Root status. No unscoped global read is permitted. Account deletion removes only that partition and its chain/event indexes.
 

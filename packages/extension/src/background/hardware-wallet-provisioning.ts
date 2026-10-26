@@ -181,7 +181,8 @@ async function provisionLedgerMultichain(
         ufvk: zcash.ufvk,
         accountHdIndex: zcash.accountHdIndex,
         deviceModel: credential.deviceModel,
-        deviceName: credential.deviceName
+        deviceName: credential.deviceName,
+        ledgerSigningTransport: credential.ledgerSigningTransport
       }),
       input.displayName,
       password,
