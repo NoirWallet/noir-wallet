@@ -13,6 +13,7 @@ import { classifyError } from '@/lib/errors'
 import { cn } from '@/lib/utils'
 import { getUtcDayStartTimestamp } from '@/lib/zcash-birthday'
 import dayjs from '@/lib/dayjs'
+import { getImportZcashHistoryDefaults } from '@/popup/services/import-zcash-history-selection'
 
 type HistoryMode = 'new' | 'restore'
 type RestoreMethod = 'date' | 'height'
@@ -25,19 +26,22 @@ export function ImportZcashHistoryPage() {
     flowMode,
     importedSeedPhrase,
     birthdayHeight,
+    importZcashHistorySelection,
     setBirthdayHeight,
+    setImportZcashHistorySelection,
     addImportedWallet,
     error: storeError
   } = useOnboardingStore()
   const fullRecoveryHeight = getFullZcashRecoveryBirthdayHeight(DEFAULT_NETWORK)
-  const [historyMode, setHistoryMode] = useState<HistoryMode>(
-    birthdayHeight === undefined ? 'new' : 'restore'
+  const [initialSelection] = useState(() =>
+    getImportZcashHistoryDefaults(birthdayHeight, importZcashHistorySelection)
   )
-  const [restoreMethod, setRestoreMethod] = useState<RestoreMethod>(
-    birthdayHeight === undefined ? 'date' : 'height'
+  const [historyMode, setHistoryMode] = useState<HistoryMode>(initialSelection.historyMode)
+  const [restoreMethod, setRestoreMethod] = useState<RestoreMethod>(initialSelection.restoreMethod)
+  const [syncDate, setSyncDate] = useState<dayjs.Dayjs | null>(
+    initialSelection.syncDate ? dayjs(initialSelection.syncDate) : null
   )
-  const [syncDate, setSyncDate] = useState<dayjs.Dayjs | null>(null)
-  const [syncHeight, setSyncHeight] = useState(birthdayHeight ? String(birthdayHeight) : '')
+  const [syncHeight, setSyncHeight] = useState(initialSelection.syncHeight)
   const [isImporting, setIsImporting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -91,6 +95,13 @@ export function ImportZcashHistoryPage() {
     try {
       const height = await resolveBirthdayHeight()
       setBirthdayHeight(height)
+      setImportZcashHistorySelection(
+        historyMode === 'new'
+          ? { mode: 'new' }
+          : restoreMethod === 'date'
+            ? { mode: 'restore', method: 'date', date: syncDate!.format('YYYY-MM-DD') }
+            : { mode: 'restore', method: 'height' }
+      )
 
       if (flowMode === 'addWallet') {
         const success = await addImportedWallet()
