@@ -102,6 +102,7 @@ export function AssetDetail() {
     'idle' | 'loading' | 'supported' | 'unsupported' | 'error'
   >('idle')
   const [privateTransferDialogOpen, setPrivateTransferDialogOpen] = useState(false)
+  const [privateRouteRetry, setPrivateRouteRetry] = useState(0)
   const { copyToClipboard, showToast } = useCopyToClipboard()
   const { isShielding, handleShieldFunds, shieldSheet } = useShieldFunds()
 
@@ -236,12 +237,21 @@ export function AssetDetail() {
     }
     setPrivateRouteSupport('loading')
     rheaSwapClient
-      .listTokens({ direction: 'from', tokenListChainIds: [Number(numericChainId)] })
+      .listTokens(
+        { direction: 'from', tokenListChainIds: [Number(numericChainId)] },
+        { bypassCache: privateRouteRetry > 0 }
+      )
       .then(catalog => {
         if (cancelled) return
         const contract = asset.asset.kind === 'token' ? asset.asset.reference.toLowerCase() : null
         const supported = resolveRheaPrivateTransferToken(catalog.tokens, contract)
-        setPrivateRouteSupport(supported === null ? 'unsupported' : 'supported')
+        setPrivateRouteSupport(
+          supported !== null
+            ? 'supported'
+            : catalog.failedChainIds.includes(Number(numericChainId))
+              ? 'error'
+              : 'unsupported'
+        )
       })
       .catch(() => {
         if (!cancelled) setPrivateRouteSupport('error')
@@ -249,7 +259,14 @@ export function AssetDetail() {
     return () => {
       cancelled = true
     }
-  }, [asset, chain?.chain.id, privateTransferEligible])
+  }, [
+    asset,
+    chain?.chain.id,
+    privateTransferEligible,
+    privateRouteRetry,
+    effectiveWalletId,
+    effectiveAccountId
+  ])
 
   useEffect(() => {
     let cancelled = false
@@ -885,6 +902,11 @@ export function AssetDetail() {
               : (privateTransferDisabledReason ?? 'Confidential transfer is unavailable')
           }
           onContinue={handlePrivateBalanceTransfer}
+          onRetryAvailability={
+            privateRouteSupport === 'error'
+              ? () => setPrivateRouteRetry(value => value + 1)
+              : undefined
+          }
         />
       )}
       {shieldSheet}

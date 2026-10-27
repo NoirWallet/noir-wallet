@@ -33,7 +33,10 @@ import {
 } from '@/popup/components/dapp/ApprovalRequestPresentation'
 import { SigningSummaryReview } from '@/popup/components/signing/SigningSummaryReview'
 import { Skeleton } from '@/popup/components/ui/skeleton'
-import { parsePendingApprovalResponse } from '@/popup/services/dapp-approval-request'
+import {
+  canRetryPendingApprovalLoad,
+  parsePendingApprovalResponse
+} from '@/popup/services/dapp-approval-request'
 import { useActiveAccountNetworks } from '@/popup/hooks/useActiveAccountNetworks'
 import { buildPrivateGasFundingPath } from '@/popup/pages/transactions/evm-send-validation'
 import { NetworkFeeTierPicker } from '@/popup/components/transaction/NetworkFeeTierPicker'
@@ -170,6 +173,8 @@ export function ApprovalPage() {
   const [action, setAction] = useState('unknown')
   const [data, setData] = useState<any>({})
   const [error, setError] = useState(requestId ? '' : 'Invalid request')
+  const [loadAttempt, setLoadAttempt] = useState(0)
+  const [canRetryLoad, setCanRetryLoad] = useState(false)
   const [requestLoaded, setRequestLoaded] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [showResult, setShowResult] = useState(false)
@@ -336,18 +341,21 @@ export function ApprovalPage() {
     fetchedRequestId.current = requestId
     setRequestLoaded(false)
     setError('')
+    setCanRetryLoad(false)
     let cancelled = false
 
     chrome.runtime.sendMessage({ type: 'GET_PENDING_REQUEST', requestId }, (response: unknown) => {
       if (cancelled) return
       const runtimeError = chrome.runtime.lastError
       if (runtimeError) {
+        setCanRetryLoad(true)
         setError('Unable to load this approval request.')
         return
       }
 
       const parsed = parsePendingApprovalResponse(response, requestId)
       if (parsed.status === 'error') {
+        setCanRetryLoad(canRetryPendingApprovalLoad(parsed.error))
         setError(parsed.error)
         return
       }
@@ -397,7 +405,7 @@ export function ApprovalPage() {
       cancelled = true
       if (fetchedRequestId.current === requestId) fetchedRequestId.current = null
     }
-  }, [requestId])
+  }, [requestId, loadAttempt])
 
   useEffect(() => {
     if ((!isSend && !isShield) || walletReady || approvalBinding) return
@@ -435,6 +443,7 @@ export function ApprovalPage() {
   }
 
   const handleDecision = async (approved: boolean) => {
+    setCanRetryLoad(false)
     if (approved && !requestLoaded) return
 
     if (!approved) {
@@ -540,9 +549,14 @@ export function ApprovalPage() {
             <Icon icon="lucide:alert-circle" className="w-16 h-16 text-destructive mx-auto" />
             <h2 className="text-xl font-semibold">Request Error</h2>
             <p className="text-sm text-muted-foreground">{error}</p>
-            <Button onClick={() => window.close()} variant="outline">
-              Close
-            </Button>
+            <div className="flex justify-center gap-3">
+              {canRetryLoad && (
+                <Button onClick={() => setLoadAttempt(value => value + 1)}>Retry</Button>
+              )}
+              <Button onClick={() => window.close()} variant="outline">
+                Close
+              </Button>
+            </div>
           </div>
         </div>
       </div>

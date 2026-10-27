@@ -86,6 +86,7 @@ export function PrivateBalanceTransferDialog({
   chain,
   mainAddress,
   privateAddress,
+  onRetryAvailability,
   onContinue
 }: {
   readonly open: boolean
@@ -106,6 +107,7 @@ export function PrivateBalanceTransferDialog({
   readonly chain: PortfolioChainView
   readonly mainAddress: string
   readonly privateAddress: string
+  readonly onRetryAvailability?: () => void
   readonly onContinue: (
     direction: PrivateBalanceTransferDirection,
     amount: string,
@@ -274,6 +276,17 @@ export function PrivateBalanceTransferDialog({
               <p role="alert" className="text-[11px] leading-4 text-warning">
                 {error}
               </p>
+              {onRetryAvailability && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="mt-2"
+                  disabled={loading}
+                  onClick={onRetryAvailability}
+                >
+                  Retry
+                </Button>
+              )}
             </div>
           )}
 

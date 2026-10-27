@@ -436,7 +436,21 @@ export function Send() {
                 {formatSortAddress(zns.address)}
               </p>
             )}
-            {zns.error && <p className="text-danger text-xs mt-1.5 px-1">{zns.error}</p>}
+            {zns.error && (
+              <div className="mt-1.5 flex items-center gap-3 px-1 text-xs">
+                <p className="text-danger">{zns.error}</p>
+                {zns.retryable && (
+                  <button
+                    type="button"
+                    className="text-primary"
+                    onClick={zns.retry}
+                    disabled={zns.loading}
+                  >
+                    Retry
+                  </button>
+                )}
+              </div>
+            )}
           </div>
 
           <SendAmountInputCard
