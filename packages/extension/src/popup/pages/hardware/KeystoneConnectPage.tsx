@@ -1,3 +1,4 @@
+import { InlineError } from '@/popup/components/common/InlineError'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Icon } from '@iconify/react'
 import { Button } from '../../components/ui/button'
@@ -463,24 +464,11 @@ export function KeystoneConnectPage() {
             )}
 
             {walletInventoryError && (
-              <div className="mb-5 rounded-xl border border-warning/30 bg-warning/10 p-3">
-                <p className="text-sm font-medium text-warning">
-                  Unable to verify existing wallets
-                </p>
-                <p className="mt-1 text-xs text-muted">
-                  Wallet connection is paused so Noir Wallet does not ask you to create another
-                  password by mistake.
-                </p>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => void loadWalletInventory()}
-                  className="mt-3"
-                >
-                  Retry
-                </Button>
-              </div>
+              <InlineError
+                className="mb-5"
+                message="Unable to verify existing wallets"
+                onRetry={() => void loadWalletInventory()}
+              />
             )}
 
             {createError && (

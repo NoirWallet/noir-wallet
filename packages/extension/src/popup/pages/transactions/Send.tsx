@@ -7,6 +7,7 @@ import { ShieldFundsBanner } from '../../components/transaction/ShieldFundsBanne
 import { FundingSourceSelector } from '../../components/transaction/FundingSourceSelector'
 import { openModal } from '../../provider/ModalManager'
 import { RecipientSelector } from '../../components/transaction/RecipientSelector'
+import { InlineError } from '@/popup/components/common/InlineError'
 import {
   SendAssetHeader,
   SendAmountInputCard,
@@ -437,19 +438,12 @@ export function Send() {
               </p>
             )}
             {zns.error && (
-              <div className="mt-1.5 flex items-center gap-3 px-1 text-xs">
-                <p className="text-danger">{zns.error}</p>
-                {zns.retryable && (
-                  <button
-                    type="button"
-                    className="text-primary"
-                    onClick={zns.retry}
-                    disabled={zns.loading}
-                  >
-                    Retry
-                  </button>
-                )}
-              </div>
+              <InlineError
+                className="mt-1.5 px-1"
+                message={zns.error}
+                onRetry={zns.retryable ? zns.retry : undefined}
+                retrying={zns.loading}
+              />
             )}
           </div>
 

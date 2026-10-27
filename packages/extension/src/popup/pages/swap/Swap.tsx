@@ -73,6 +73,7 @@ import {
 } from '@/core/wallet/funding-source'
 import type { FundingSource } from '@/types/wallet'
 import { PageHeader } from '../../components/common/PageHeader'
+import { InlineError } from '../../components/common/InlineError'
 import { AmountDisplay } from '../../components/common/AmountDisplay'
 import { SendRouteMenu } from '../../components/transaction/SendRouteMenu'
 import { Button } from '../../components/ui/button'
@@ -3244,17 +3245,12 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
             rows={reviewRows}
             error={
               transferPreparationError ? (
-                <p className="mt-3 px-1 text-xs text-danger" role="alert">
-                  {transferPreparationError}{' '}
-                  <button
-                    type="button"
-                    className="text-primary hover:underline"
-                    disabled={isPreparingReview}
-                    onClick={() => void reviewLiveQuote(networkFeeTier).catch(() => {})}
-                  >
-                    Retry
-                  </button>
-                </p>
+                <InlineError
+                  message={transferPreparationError}
+                  onRetry={() => void reviewLiveQuote(networkFeeTier).catch(() => {})}
+                  retrying={isPreparingReview}
+                  className="mt-3 px-1"
+                />
               ) : !transferReview && !isPreparingReview ? (
                 <p className="mt-3 px-1 text-xs text-warning" role="alert">
                   Transfer review is unavailable. Go back and try again.
@@ -3574,7 +3570,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
 
   const transferPreparationStatusError =
     transferPreparationError ??
-    (swap.catalogError ? 'Could not load transfer assets. Try again.' : null) ??
+    (swap.catalogError ? 'Could not load transfer assets.' : null) ??
     (lockedAssetFlowRequested &&
     !swap.areTokensLoading &&
     !swap.destinationTokensLoading &&
@@ -3634,17 +3630,23 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
       />
       {crossChainSendUnavailable ? (
         <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-8 text-center">
-          <Icon icon="lucide:circle-alert" width={24} height={24} className="text-warning" />
-          <p className="mt-4 text-sm text-muted" role="alert">
-            {crossChainSendUnavailable}
-          </p>
-          <Button
-            variant="outline"
-            className="mt-5"
-            onClick={swap.catalogError ? swap.retryTokenCatalog : () => navigate('/send')}
-          >
-            {swap.catalogError ? 'Retry' : 'Back to Send'}
-          </Button>
+          {swap.catalogError ? (
+            <InlineError
+              message={crossChainSendUnavailable}
+              onRetry={swap.retryTokenCatalog}
+              className="w-full text-left"
+            />
+          ) : (
+            <>
+              <Icon icon="lucide:circle-alert" width={24} height={24} className="text-warning" />
+              <p className="mt-4 text-sm text-muted" role="alert">
+                {crossChainSendUnavailable}
+              </p>
+              <Button variant="outline" className="mt-5" onClick={() => navigate('/send')}>
+                Back to Send
+              </Button>
+            </>
+          )}
         </div>
       ) : viewStep === 'approval-pending' ? (
         renderContent()
@@ -3716,32 +3718,26 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
           ]}
           error={
             transferPreparationStatusError ? (
-              <div className="mt-3 px-1 text-xs leading-5">
-                <span className="break-words text-danger" role="alert">
-                  {transferPreparationStatusError}
-                </span>
-                {(transferPreparationError || swap.quoteError || swap.catalogError) && (
-                  <button
-                    type="button"
-                    className="ml-2 inline-flex items-center gap-1 whitespace-nowrap text-primary hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    onClick={() => {
-                      setTransferPreparationError(null)
-                      autoReviewStartedScope.current = null
-                      if (swap.catalogError) swap.retryTokenCatalog()
-                      else if (quoteResult && isRheaSwapQuoteFresh(quoteResult))
-                        void reviewLiveQuote()
-                      else {
-                        setQuoteResult(null)
-                        setLiveQuoteKey(null)
-                        setQuoteRefreshTick(current => current + 1)
+              <InlineError
+                message={transferPreparationStatusError}
+                className="mt-3 px-1 leading-5"
+                onRetry={
+                  transferPreparationError || swap.quoteError || swap.catalogError
+                    ? () => {
+                        setTransferPreparationError(null)
+                        autoReviewStartedScope.current = null
+                        if (swap.catalogError) swap.retryTokenCatalog()
+                        else if (quoteResult && isRheaSwapQuoteFresh(quoteResult))
+                          void reviewLiveQuote()
+                        else {
+                          setQuoteResult(null)
+                          setLiveQuoteKey(null)
+                          setQuoteRefreshTick(current => current + 1)
+                        }
                       }
-                    }}
-                  >
-                    <Icon icon="lucide:refresh-cw" width={12} height={12} aria-hidden="true" />
-                    Retry
-                  </button>
-                )}
-              </div>
+                    : undefined
+                }
+              />
             ) : undefined
           }
           preparing={!transferPreparationStatusError}

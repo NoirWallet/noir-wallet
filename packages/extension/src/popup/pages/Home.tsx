@@ -36,6 +36,7 @@ import { hasLegacyOrchardBalance } from '@/lib/legacy-pool-privacy-notice'
 import { canShieldTransparentFunds } from '@/core/zcash/shielding'
 import { getOwnExtensionSenderContext } from '@/lib/runtime-message-security'
 import { WalletActionButton } from '@/popup/components/common/WalletActionButton'
+import { InlineError } from '@/popup/components/common/InlineError'
 import { MultichainPortfolioPanel } from '../components/portfolio/MultichainPortfolioPanel'
 import { formatDisplayAmount } from '../components/portfolio/portfolio-format'
 import { MultichainActivityPanel } from '../components/transaction/MultichainActivityPanel'
@@ -839,17 +840,12 @@ export function Home() {
         </div>
 
         {accountNetworksError && (
-          <div role="alert" className="mb-4 flex items-center justify-between gap-3 px-5 text-xs">
-            <p className="text-danger">Unable to load account addresses</p>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={accountNetworksLoading}
-              onClick={() => void refreshAccountNetworks()}
-            >
-              Retry
-            </Button>
-          </div>
+          <InlineError
+            className="mb-4 px-5"
+            message="Unable to load account addresses"
+            retrying={accountNetworksLoading}
+            onRetry={() => void refreshAccountNetworks()}
+          />
         )}
 
         {/* Action Buttons */}
@@ -1063,24 +1059,19 @@ export function Home() {
 
           <TabsContent value="lending" className="px-5 py-4 mt-0">
             {(lendingSessionError || lendingMcaError || lendingError) && (
-              <div role="alert" className="mb-3 flex items-center justify-between gap-3 text-xs">
-                <p className="text-danger">
-                  {lendingSessionError || lendingMcaError
+              <InlineError
+                className="mb-3"
+                message={
+                  lendingSessionError || lendingMcaError
                     ? 'Unable to check lending account'
-                    : 'Unable to load lending data'}
-                </p>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={lendingLoading || lendingCheckingMca || lendingSessionLoading}
-                  onClick={() => {
-                    if (lendingSessionError) setLendingSessionRetry(value => value + 1)
-                    else void refreshLending({ forceMcaCheck: Boolean(lendingMcaError) })
-                  }}
-                >
-                  Retry
-                </Button>
-              </div>
+                    : 'Unable to load lending data'
+                }
+                retrying={lendingLoading || lendingCheckingMca || lendingSessionLoading}
+                onRetry={() => {
+                  if (lendingSessionError) setLendingSessionRetry(value => value + 1)
+                  else void refreshLending({ forceMcaCheck: Boolean(lendingMcaError) })
+                }}
+              />
             )}
             {lendingPositions.length > 0 ? (
               <div className="space-y-1">

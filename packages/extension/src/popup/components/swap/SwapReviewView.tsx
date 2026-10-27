@@ -11,6 +11,7 @@ import { NetworkFeeTierPicker } from '../transaction/NetworkFeeTierPicker'
 import { TokenIcon } from '../tokens/TokenIcon'
 import { ChainIcon } from '../common/ChainIcon'
 import { AmountDisplay } from '../common/AmountDisplay'
+import { InlineError } from '../common/InlineError'
 import { AddressTypeLabel } from '../account/AddressType'
 import type { FundingSource } from '@/types/wallet'
 
@@ -227,17 +228,12 @@ export function SwapReviewView({
         </div>
 
         {preparationError && (
-          <p className="mt-3 px-1 text-xs text-danger" role="alert">
-            {preparationError}{' '}
-            <button
-              type="button"
-              className="text-primary hover:underline"
-              disabled={isLoading}
-              onClick={onRetryPreparation}
-            >
-              Retry
-            </button>
-          </p>
+          <InlineError
+            message={preparationError}
+            onRetry={onRetryPreparation}
+            retrying={isLoading}
+            className="mt-3 px-1"
+          />
         )}
         {insufficient && (
           <p className="text-warning text-xs mt-3 px-1">

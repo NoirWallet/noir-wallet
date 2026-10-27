@@ -13,6 +13,7 @@ import { Input } from '../ui/input'
 import { Skeleton } from '../ui/skeleton'
 import { BalanceHelp } from '../transaction/BalanceHelp'
 import { safeBig } from '@/lib/big'
+import { InlineError } from '../common/InlineError'
 
 function AddressInputWithRecent({
   label,
@@ -524,17 +525,12 @@ export function SwapInputView({
 
   if (catalogError) {
     return (
-      <div
-        className="flex min-h-0 flex-1 flex-col items-center justify-center px-8 text-center"
-        role="alert"
-      >
-        <span className="flex size-12 items-center justify-center rounded-full bg-warning/10 text-warning">
-          <Icon icon="lucide:cloud-off" width={24} height={24} />
-        </span>
-        <h2 className="mt-4 text-base font-semibold">Unable to load assets</h2>
-        <Button onClick={onRetryTokenCatalog} className="mt-5 min-w-28">
-          Retry
-        </Button>
+      <div className="flex min-h-0 flex-1 items-center px-8">
+        <InlineError
+          message="Unable to load assets"
+          onRetry={onRetryTokenCatalog}
+          className="w-full"
+        />
       </div>
     )
   }
@@ -612,23 +608,12 @@ export function SwapInputView({
         </div>
 
         {quoteError && (
-          <div
-            role="alert"
-            className="mt-2 flex items-start justify-between gap-3 px-1 text-xs leading-5 text-warning"
-          >
-            <p className="min-w-0 break-words">{quoteError}</p>
-            {onRetryQuote && (
-              <button
-                type="button"
-                onClick={onRetryQuote}
-                disabled={isQuoting}
-                className="inline-flex shrink-0 items-center gap-1 text-primary hover:underline disabled:opacity-50"
-              >
-                <Icon icon="lucide:refresh-cw" width={12} height={12} aria-hidden="true" />
-                Retry
-              </button>
-            )}
-          </div>
+          <InlineError
+            message={quoteError}
+            onRetry={onRetryQuote}
+            retrying={isQuoting}
+            className="mt-2 px-1 leading-5"
+          />
         )}
 
         {!hideReceiveAddress && tokenOut && (

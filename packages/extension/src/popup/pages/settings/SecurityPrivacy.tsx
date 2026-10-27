@@ -2,6 +2,7 @@ import { Icon } from '@iconify/react'
 import { getResponseErrorMessage } from '@/lib/errors'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { PageHeader } from '../../components/common/PageHeader'
+import { InlineError } from '../../components/common/InlineError'
 import { useNavigate } from '../../provider/Router'
 import {
   DEFAULT_GOOGLE_ANALYTICS_ENABLED,
@@ -196,19 +197,12 @@ export function SecurityPrivacy() {
             </button>
           </section>
           {zeroIndexerLoadError && (
-            <div role="alert" className="mb-3 flex items-center justify-between gap-3 px-1 text-xs">
-              <span className="min-w-0 break-words text-danger">
-                Could not load private broadcast preference
-              </span>
-              <button
-                type="button"
-                onClick={() => void loadZeroIndexerEnabled()}
-                className="inline-flex shrink-0 items-center gap-1 text-primary hover:underline"
-              >
-                <Icon icon="lucide:refresh-cw" width={12} height={12} aria-hidden="true" />
-                Retry
-              </button>
-            </div>
+            <InlineError
+              message="Could not load private broadcast preference"
+              onRetry={() => void loadZeroIndexerEnabled()}
+              retrying={zeroIndexerLoading}
+              className="mb-3"
+            />
           )}
           <button
             type="button"

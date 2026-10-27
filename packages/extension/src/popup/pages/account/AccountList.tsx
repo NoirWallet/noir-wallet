@@ -3,6 +3,7 @@ import { useState, useEffect, useRef } from 'react'
 import { Icon } from '@iconify/react'
 import { Button } from '../../components/ui/button'
 import { PageHeader } from '../../components/common/PageHeader'
+import { InlineError } from '../../components/common/InlineError'
 import { RenameAccountContent } from '../../components/account/AccountModals'
 import { AddWalletContent, type AddWalletAction } from '../../components/account/AddWalletContent'
 import { Input } from '../../components/ui/input'
@@ -370,19 +371,12 @@ export function AccountList() {
 
       <div className="page-content">
         {catalogError && (
-          <div className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-danger/30 p-3">
-            <p role="alert" className="text-xs text-danger">
-              Unable to load accounts.
-            </p>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={networksLoading}
-              onClick={() => void loadWallets()}
-            >
-              Retry
-            </Button>
-          </div>
+          <InlineError
+            message="Unable to load accounts."
+            onRetry={() => void loadWallets()}
+            retrying={networksLoading}
+            className="mb-4"
+          />
         )}
         <div className="mb-4">
           <Input

@@ -711,8 +711,9 @@ export function KeystoneSignPage() {
           iconClass="text-danger"
           title={retryable ? failedCopy.title : `Cannot Sign with ${deviceName}`}
           description={error || failedCopy.description}
-          actionText={retryable ? 'Try Again' : 'Close'}
-          onAction={retryable ? () => request && buildPczt(request) : () => window.close()}
+          actionText="Close"
+          onRetry={retryable ? () => request && buildPczt(request) : undefined}
+          onAction={() => window.close()}
           secondaryText={retryable ? 'Close' : undefined}
           onSecondary={retryable ? () => window.close() : undefined}
         />

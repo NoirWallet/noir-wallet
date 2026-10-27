@@ -3,6 +3,7 @@ import { Icon } from '@iconify/react'
 import type { PortfolioAssetView, PortfolioChainView, PortfolioReadModel } from '@/core/portfolio'
 import { formatSortAddress } from '@/lib/format'
 import { AmountDisplay } from '@/popup/components/common/AmountDisplay'
+import { InlineError } from '@/popup/components/common/InlineError'
 import { resolveChainIconAlias } from '@/lib/chain-icon'
 import { Button } from '@/popup/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/popup/components/ui/dialog'
@@ -729,32 +730,24 @@ export function EvmSendForm({
           </p>
         )}
         {displayedError && (
-          <p role="alert" className="mt-3 px-1 text-xs text-danger">
-            {displayedError}
-          </p>
+          <InlineError
+            message={displayedError}
+            onRetry={maximumError ? handleMaximum : undefined}
+            className="mt-3 px-1"
+          />
         )}
-        {maximumError && (
-          <Button variant="ghost" size="xs" onClick={handleMaximum}>
-            Retry
-          </Button>
-        )}
-        {route === 'pending' && (
-          <div
-            role="status"
-            className="flex items-center justify-between gap-3 px-1 text-xs text-muted"
-          >
-            <span>
-              {support.loading
-                ? 'Checking Confidential availability…'
-                : 'Unable to check Confidential availability.'}
-            </span>
-            {!support.loading && (
-              <Button variant="ghost" size="xs" onClick={support.retry}>
-                Retry
-              </Button>
-            )}
-          </div>
-        )}
+        {route === 'pending' &&
+          (support.loading ? (
+            <p role="status" className="px-1 text-xs text-muted">
+              Checking Confidential availability…
+            </p>
+          ) : (
+            <InlineError
+              message="Unable to check Confidential availability."
+              onRetry={support.retry}
+              className="px-1"
+            />
+          ))}
       </div>
 
       <div className="page-footer">
@@ -906,13 +899,7 @@ export function EvmSendForm({
               confirming={approving}
               preparing={updatingFee}
               confirmDisabled={review.intentKey !== intentKey}
-              error={
-                error ? (
-                  <p role="alert" className="mt-3 text-xs text-danger">
-                    {error}
-                  </p>
-                ) : undefined
-              }
+              error={error ? <InlineError message={error} className="mt-3" /> : undefined}
               cancelDisabled={approving}
               onCancel={() => void handleCloseReview()}
               onConfirm={handleApprove}

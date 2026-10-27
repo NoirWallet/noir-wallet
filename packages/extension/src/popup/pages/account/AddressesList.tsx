@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom'
 import { Icon } from '@iconify/react'
 import { QRCodeSVG } from 'qrcode.react'
 import { PageHeader } from '../../components/common/PageHeader'
+import { InlineError } from '../../components/common/InlineError'
 import { CopyToast, useCopyToClipboard } from '../../components/common/CopyToast'
 import { AddressTypeLabel } from '../../components/account/AddressType'
 import {
@@ -442,20 +443,11 @@ export function AddressesList() {
         {loading ? (
           <ListSkeleton rows={4} label="Loading addresses" className="mt-5" card />
         ) : error ? (
-          <div className="flex flex-col items-center gap-3 py-10 text-center">
-            <p role="alert" className="text-sm text-muted">
-              {error}
-            </p>
-            {canRetry && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setLoadAttempt(value => value + 1)}
-              >
-                Retry
-              </Button>
-            )}
-          </div>
+          <InlineError
+            message={error}
+            onRetry={canRetry ? () => setLoadAttempt(value => value + 1) : undefined}
+            className="mt-5"
+          />
         ) : filteredNetworks.length === 0 ? (
           <p className="py-10 text-center text-sm text-muted">No matching networks</p>
         ) : (

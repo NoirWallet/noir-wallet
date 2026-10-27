@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Icon } from '@iconify/react'
 import { PageHeader } from '../../components/common/PageHeader'
+import { InlineError } from '../../components/common/InlineError'
 import { useNavigate } from '../../provider/Router'
 import { Button } from '../../components/ui/button'
 import { zcashWalletRuntimeClient } from '@/popup/services/zcash-wallet-runtime-client'
@@ -180,19 +181,15 @@ export function Settings() {
           </div>
         </button>
         {initializationError && (
-          <div role="alert" className="flex items-center justify-between gap-3 px-1 text-xs">
-            <span className="min-w-0 break-words text-danger">{initializationError}</span>
-            {(isSidePanelSurface || getSidePanelOpenApi()) && (
-              <button
-                type="button"
-                onClick={() => setInitializationRetry(value => value + 1)}
-                className="inline-flex shrink-0 items-center gap-1 text-primary hover:underline"
-              >
-                <Icon icon="lucide:refresh-cw" width={12} height={12} aria-hidden="true" />
-                Retry
-              </button>
-            )}
-          </div>
+          <InlineError
+            message={initializationError}
+            onRetry={
+              isSidePanelSurface || getSidePanelOpenApi()
+                ? () => setInitializationRetry(value => value + 1)
+                : undefined
+            }
+            retrying={isInitializingDisplayMode}
+          />
         )}
         {displayModeError && (
           <p role="alert" className="px-1 text-xs text-danger">

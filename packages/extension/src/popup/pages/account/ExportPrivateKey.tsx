@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom'
 import { Icon } from '@iconify/react'
 import { getResponseErrorMessage } from '@/lib/errors'
 import { PageHeader } from '../../components/common/PageHeader'
+import { InlineError } from '../../components/common/InlineError'
 import { Button } from '../../components/ui/button'
 import { Input } from '../../components/ui/input'
 import { WarningBox } from '../../components/ui/WarningBox'
@@ -306,11 +307,13 @@ export function ExportPrivateKey() {
         {networks.length === 0 && !loading && !error && (
           <p className="text-sm text-muted">No exportable account is available.</p>
         )}
-        {error && <p className="text-sm text-danger">{error}</p>}
-        {catalogLoadFailed && !loading && (
-          <Button variant="outline" size="sm" onClick={() => setLoadAttempt(value => value + 1)}>
-            Retry
-          </Button>
+        {error && (
+          <InlineError
+            message={error}
+            onRetry={
+              catalogLoadFailed && !loading ? () => setLoadAttempt(value => value + 1) : undefined
+            }
+          />
         )}
       </div>
       <div className="page-footer">

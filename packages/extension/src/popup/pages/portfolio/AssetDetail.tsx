@@ -20,6 +20,7 @@ import { getChainEndpointRuntimeKey } from '@/core/chains/chain-endpoint-setting
 import { useWalletStore } from '@/store/wallet-store'
 import { useSettingsStore } from '@/store/settings-store'
 import { PageHeader } from '@/popup/components/common/PageHeader'
+import { InlineError } from '@/popup/components/common/InlineError'
 import { CopyToast, useCopyToClipboard } from '@/popup/components/common/CopyToast'
 import { TokenIcon } from '@/popup/components/tokens/TokenIcon'
 import { Button } from '@/popup/components/ui/button'
@@ -483,15 +484,16 @@ export function AssetDetail() {
         <div className="flex flex-1 flex-col items-center justify-center px-8 text-center">
           <Icon icon="lucide:circle-alert" width={40} height={40} className="text-muted" />
           <p className="mt-4 text-base font-medium">Asset unavailable</p>
-          <p className="mt-1 text-sm leading-5 text-muted">
-            {status === 'error'
-              ? 'This asset could not be refreshed. Check your connection and try again.'
-              : 'This asset is not available for the active Wallet and Account.'}
-          </p>
-          {status === 'error' && (
-            <Button variant="outline" size="sm" className="mt-4" onClick={() => void load(true)}>
-              Retry
-            </Button>
+          {status === 'error' ? (
+            <InlineError
+              message="This asset could not be refreshed. Check your connection."
+              onRetry={() => void load(true)}
+              className="mt-4 w-full text-left"
+            />
+          ) : (
+            <p className="mt-1 text-sm leading-5 text-muted">
+              This asset is not available for the active Wallet and Account.
+            </p>
           )}
         </div>
       </div>
@@ -749,13 +751,11 @@ export function AssetDetail() {
             onRangeChange={setHistoryRange}
           />
           {historyStatus === 'error' && (
-            <button
-              type="button"
-              onClick={() => setHistoryRetry(value => value + 1)}
-              className="mt-1 text-[11px] font-medium text-primary hover:underline"
-            >
-              Retry chart
-            </button>
+            <InlineError
+              message="Unable to load chart."
+              onRetry={() => setHistoryRetry(value => value + 1)}
+              className="mt-1"
+            />
           )}
         </section>
 

@@ -7,6 +7,7 @@ import { formatTokenQuantity } from '@/lib/number-format'
 import { ExecutionAccountBadge } from '@/popup/components/account/ExecutionAccountSelector'
 import { TokenIcon } from '@/popup/components/tokens/TokenIcon'
 import { Button } from '@/popup/components/ui/button'
+import { InlineError } from '@/popup/components/common/InlineError'
 import type { PortfolioAssetView, PortfolioChainView } from '@/core/portfolio'
 import { useTransferMaximum } from '@/popup/hooks/useTransferMaximum'
 import {
@@ -272,22 +273,12 @@ export function PrivateBalanceTransferDialog({
           />
 
           {error && (
-            <div className="px-1">
-              <p role="alert" className="text-[11px] leading-4 text-warning">
-                {error}
-              </p>
-              {onRetryAvailability && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="mt-2"
-                  disabled={loading}
-                  onClick={onRetryAvailability}
-                >
-                  Retry
-                </Button>
-              )}
-            </div>
+            <InlineError
+              message={error}
+              onRetry={onRetryAvailability}
+              retrying={loading}
+              className="px-1 leading-4"
+            />
           )}
 
           <Button

@@ -1,3 +1,4 @@
+import { InlineError } from '@/popup/components/common/InlineError'
 import { ANALYTICS_EVENTS, sendAnalyticsEvent } from '@/lib/analytics'
 import { useEffect, useRef, useState } from 'react'
 import { Icon } from '@iconify/react'
@@ -598,34 +599,18 @@ export function LedgerConnectPage() {
               )}
             </details>
             {catalogReadError && (
-              <div className="space-y-2">
-                <p role="alert" className="text-sm text-danger">
-                  {catalogReadError}
-                </p>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={loading}
-                  onClick={() => setCatalogLoadAttempt(value => value + 1)}
-                >
-                  Retry wallet check
-                </Button>
-              </div>
+              <InlineError
+                message={`Wallet check: ${catalogReadError}`}
+                retrying={loading}
+                onRetry={() => setCatalogLoadAttempt(value => value + 1)}
+              />
             )}
             {credentialReadError && (
-              <div className="space-y-2">
-                <p role="alert" className="text-sm text-danger">
-                  {credentialReadError}
-                </p>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={loading}
-                  onClick={() => setCredentialLoadAttempt(value => value + 1)}
-                >
-                  Retry wallet credentials
-                </Button>
-              </div>
+              <InlineError
+                message={`Ledger wallet: ${credentialReadError}`}
+                retrying={loading}
+                onRetry={() => setCredentialLoadAttempt(value => value + 1)}
+              />
             )}
             {error && <p className="text-sm text-danger">{error}</p>}
           </div>

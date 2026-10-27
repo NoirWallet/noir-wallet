@@ -12,6 +12,7 @@ import { Input } from '@/popup/components/ui/input'
 import { NetworkFeeTierSelector } from './NetworkFeeTierSelector'
 import { AmountDisplay } from '@/popup/components/common/AmountDisplay'
 import { classifyError } from '@/lib/errors'
+import { InlineError } from '@/popup/components/common/InlineError'
 
 interface NetworkFeeTierPickerProps {
   readonly chainFamily: 'bitcoin' | 'evm'
@@ -173,17 +174,11 @@ function NetworkFeeTierEditContent({
           </div>
         </div>
       )}
-      {error && <p className="text-xs text-danger">{error}</p>}
-      {retrySelection && (
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={updating}
-          onClick={() => void handleSelect(retrySelection)}
-        >
-          Retry
-        </Button>
-      )}
+      <InlineError
+        message={error}
+        retrying={updating}
+        onRetry={retrySelection ? () => void handleSelect(retrySelection) : undefined}
+      />
     </div>
   )
 }

@@ -1,3 +1,4 @@
+import { InlineError } from '@/popup/components/common/InlineError'
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Button } from '../../components/ui/button'
@@ -545,14 +546,14 @@ export function ApprovalPage() {
     return (
       <div className="page-container h-full flex flex-col">
         <div className="flex-1 flex items-center justify-center">
-          <div className="text-center space-y-4">
+          <div className="w-full px-5 text-center space-y-4">
             <Icon icon="lucide:alert-circle" className="w-16 h-16 text-destructive mx-auto" />
             <h2 className="text-xl font-semibold">Request Error</h2>
-            <p className="text-sm text-muted-foreground">{error}</p>
+            <InlineError
+              message={error}
+              onRetry={canRetryLoad ? () => setLoadAttempt(value => value + 1) : undefined}
+            />
             <div className="flex justify-center gap-3">
-              {canRetryLoad && (
-                <Button onClick={() => setLoadAttempt(value => value + 1)}>Retry</Button>
-              )}
               <Button onClick={() => window.close()} variant="outline">
                 Close
               </Button>
