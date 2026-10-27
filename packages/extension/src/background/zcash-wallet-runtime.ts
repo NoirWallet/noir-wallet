@@ -5545,14 +5545,6 @@ export class BackgroundZcashWalletRuntime {
         walletId
       )
 
-      logger.log(`[refreshBalances] Parsed ${accountBalances.length} WASM account(s):`, walletId)
-      for (const [accId, bal] of accountBalances) {
-        logger.log(
-          `  WASM AccountId ${accId}: sapling=${bal.sapling_balance}, orchard=${bal.orchard_balance}, ironwood=${bal.ironwood_balance ?? 0}, unshielded=${bal.unshielded_balance}`,
-          walletId
-        )
-      }
-
       await this.assertWasmAccountInvariant(walletId)
       if (options && !options.canApply()) return
 

@@ -171,7 +171,7 @@ function redactText(input: string): string {
     .replace(/\bBearer\s+[A-Za-z0-9._~+\/-]+=*/gi, 'Bearer [Redacted]')
     .replace(/\buview1[a-z0-9]+\b/gi, '[Viewing key redacted]')
     .replace(
-      /["']?\b(amount|balance|fee|price|value|usd(?:\s*value)?|transparent|shielded|sapling|orchard|spendable|available|pending|total)(?:\s+balance)?\b["']?\s*[:=]\s*["']?-?\d+(?:\.\d+)?/gi,
+      /["']?\b(amount|balance|fee|price|value|usd(?:\s*value)?|transparent|shielded|sapling|orchard|ironwood|unshielded|spendable|available|pending|total)(?:\s+balance)?\b["']?\s*[:=]\s*["']?-?\d+(?:\.\d+)?/gi,
       '$1=[Redacted]'
     )
     .replace(

@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { getDiagnosticErrorDetails, serializeDiagnosticArgs } from '../src/lib/diagnostic-log.ts'
+import {
+  getDiagnosticErrorDetails,
+  sanitizeDiagnosticMessage,
+  serializeDiagnosticArgs
+} from '../src/lib/diagnostic-log.ts'
 import { parseTrustedExtensionRuntimeMessage } from '../src/lib/runtime-message-security.ts'
 
 test('diagnostic runtime drafts accept legacy and anonymous context formats, rejecting identifying contexts', () => {
@@ -66,4 +70,14 @@ test('diagnostics retain safe error chains without running custom getters', () =
   assert.match(log, /SNAPSHOT_FAILURE/)
   inner.cause = outer
   assert.doesNotThrow(() => serializeDiagnosticArgs([outer]))
+})
+
+test('diagnostics redact every Zcash pool in new and previously persisted messages', () => {
+  const message = 'WASM summary: sapling=111, orchard=222, ironwood=333, unshielded=444'
+  for (const safe of [serializeDiagnosticArgs([message]), sanitizeDiagnosticMessage(message)]) {
+    for (const pool of ['sapling', 'orchard', 'ironwood', 'unshielded']) {
+      assert.match(safe, new RegExp(`${pool}=\\[Redacted\\]`))
+    }
+    assert.match(safe, /WASM summary/)
+  }
 })
