@@ -72,7 +72,13 @@ export function LedgerConnectPage() {
   const network = useWalletStore(state => state.currentNetwork)
   const retainedWalletCount = useWalletStore(state => state.wallets.length)
   const [catalog, setCatalog] = useState<AccountNetworksCatalogView | null>(null)
-  const [loading, setLoading] = useState(true)
+  const [catalogLoading, setCatalogLoading] = useState(true)
+  const [credentialLoading, setCredentialLoading] = useState(false)
+  const [catalogReadError, setCatalogReadError] = useState('')
+  const [credentialReadError, setCredentialReadError] = useState('')
+  const [catalogLoadAttempt, setCatalogLoadAttempt] = useState(0)
+  const [credentialLoadAttempt, setCredentialLoadAttempt] = useState(0)
+  const loading = catalogLoading || credentialLoading
   const [catalogAvailable, setCatalogAvailable] = useState(false)
   const [step, setStep] = useState<'connect' | 'waiting' | 'accounts' | 'configure' | 'success'>(
     'connect'
@@ -130,6 +136,9 @@ export function LedgerConnectPage() {
   const familyChoices = ledgerFamilyChoices(availableFamilies)
   useEffect(() => {
     let disposed = false
+    setCatalogLoading(true)
+    setCatalogAvailable(false)
+    setCatalogReadError('')
     void accountNetworksClient
       .getCatalog()
       .then(result => {
@@ -139,22 +148,27 @@ export function LedgerConnectPage() {
         }
       })
       .catch(cause => {
-        if (!disposed) setError(cause instanceof Error ? cause.message : 'Wallet check failed')
+        if (!disposed)
+          setCatalogReadError(cause instanceof Error ? cause.message : 'Wallet check failed')
       })
       .finally(() => {
-        if (!disposed) setLoading(false)
+        if (!disposed) setCatalogLoading(false)
       })
     return () => {
       disposed = true
       abort.current?.abort()
       previewAbort.current?.abort()
     }
-  }, [])
+  }, [catalogLoadAttempt])
   useEffect(() => {
     let disposed = false
     setExistingCredential(undefined)
-    if (!targetWalletId) return
-    setLoading(true)
+    setCredentialReadError('')
+    if (!targetWalletId) {
+      setCredentialLoading(false)
+      return
+    }
+    setCredentialLoading(true)
     void ledgerHardwareProvisioningClient
       .getCredential(targetWalletId)
       .then(credential => {
@@ -162,15 +176,17 @@ export function LedgerConnectPage() {
       })
       .catch(cause => {
         if (!disposed)
-          setError(cause instanceof Error ? cause.message : 'Ledger Wallet unavailable')
+          setCredentialReadError(
+            cause instanceof Error ? cause.message : 'Ledger Wallet unavailable'
+          )
       })
       .finally(() => {
-        if (!disposed) setLoading(false)
+        if (!disposed) setCredentialLoading(false)
       })
     return () => {
       disposed = true
     }
-  }, [targetWalletId])
+  }, [targetWalletId, credentialLoadAttempt])
   const cancelConnection = () => {
     if (provisioning.current) return
     abort.current?.abort()
@@ -581,6 +597,36 @@ export function LedgerConnectPage() {
                 <p className="mt-2 text-xs text-danger">Enter a valid account index.</p>
               )}
             </details>
+            {catalogReadError && (
+              <div className="space-y-2">
+                <p role="alert" className="text-sm text-danger">
+                  {catalogReadError}
+                </p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={loading}
+                  onClick={() => setCatalogLoadAttempt(value => value + 1)}
+                >
+                  Retry wallet check
+                </Button>
+              </div>
+            )}
+            {credentialReadError && (
+              <div className="space-y-2">
+                <p role="alert" className="text-sm text-danger">
+                  {credentialReadError}
+                </p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={loading}
+                  onClick={() => setCredentialLoadAttempt(value => value + 1)}
+                >
+                  Retry wallet credentials
+                </Button>
+              </div>
+            )}
             {error && <p className="text-sm text-danger">{error}</p>}
           </div>
           <div className="page-footer space-y-2">

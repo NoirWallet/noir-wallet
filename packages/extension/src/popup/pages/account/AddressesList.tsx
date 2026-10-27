@@ -355,6 +355,8 @@ export function AddressesList() {
   const [networks, setNetworks] = useState<readonly AccountNetworkView[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [canRetry, setCanRetry] = useState(false)
+  const [loadAttempt, setLoadAttempt] = useState(0)
   const [qrTarget, setQrTarget] = useState<AddressQrTarget | null>(null)
   const [privateAddressAction, setPrivateAddressAction] = useState<{
     readonly address: string
@@ -367,6 +369,7 @@ export function AddressesList() {
     setQrTarget(null)
     setPrivateAddressAction(null)
     setError(null)
+    setCanRetry(false)
     setLoading(Boolean(walletId && accountId))
 
     if (!walletId || !accountId) {
@@ -388,7 +391,10 @@ export function AddressesList() {
         }
         setNetworks(entry.networks)
       } catch {
-        if (!cancelled) setError('Unable to load addresses for this account.')
+        if (!cancelled) {
+          setError('Unable to load addresses for this account.')
+          setCanRetry(true)
+        }
       } finally {
         if (!cancelled) setLoading(false)
       }
@@ -397,7 +403,7 @@ export function AddressesList() {
     return () => {
       cancelled = true
     }
-  }, [walletId, accountId, shieldedReceiveAddress])
+  }, [walletId, accountId, shieldedReceiveAddress, loadAttempt])
 
   const filteredNetworks = useMemo(() => {
     const query = networkQuery.trim().toLowerCase()
@@ -436,9 +442,20 @@ export function AddressesList() {
         {loading ? (
           <ListSkeleton rows={4} label="Loading addresses" className="mt-5" card />
         ) : error ? (
-          <p role="alert" className="py-10 text-center text-sm text-muted">
-            {error}
-          </p>
+          <div className="flex flex-col items-center gap-3 py-10 text-center">
+            <p role="alert" className="text-sm text-muted">
+              {error}
+            </p>
+            {canRetry && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setLoadAttempt(value => value + 1)}
+              >
+                Retry
+              </Button>
+            )}
+          </div>
         ) : filteredNetworks.length === 0 ? (
           <p className="py-10 text-center text-sm text-muted">No matching networks</p>
         ) : (

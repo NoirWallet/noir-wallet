@@ -82,12 +82,18 @@ export function ExportPrivateKey() {
   const [format, setFormat] = useState<PrivateKeyExportFormat | null>(null)
   const [visible, setVisible] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [catalogLoadFailed, setCatalogLoadFailed] = useState(false)
+  const [loadAttempt, setLoadAttempt] = useState(0)
   const [exporting, setExporting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const { copyToClipboard, showToast } = useCopyToClipboard()
 
   useEffect(() => {
     let cancelled = false
+    setLoading(true)
+    setCatalogLoadFailed(false)
+    setError(null)
+    setNetworks([])
     void accountNetworksClient
       .getCatalog()
       .then(catalog => {
@@ -104,10 +110,17 @@ export function ExportPrivateKey() {
               network.chain.family === 'near'
           ) ?? []
         setNetworks(supported)
-        setChainId(supported[0]?.chain.id ?? '')
+        setChainId(current =>
+          supported.some(network => network.chain.id === current)
+            ? current
+            : (supported[0]?.chain.id ?? '')
+        )
       })
       .catch(reason => {
-        if (!cancelled) setError(reason instanceof Error ? reason.message : 'Account unavailable')
+        if (!cancelled) {
+          setCatalogLoadFailed(true)
+          setError(reason instanceof Error ? reason.message : 'Account unavailable')
+        }
       })
       .finally(() => {
         if (!cancelled) setLoading(false)
@@ -115,7 +128,7 @@ export function ExportPrivateKey() {
     return () => {
       cancelled = true
     }
-  }, [accountId, walletId])
+  }, [accountId, walletId, loadAttempt])
 
   const networkGroups = useMemo(() => groupAccountNetworksForDisplay(networks), [networks])
   const selectedGroup = useMemo(
@@ -294,6 +307,11 @@ export function ExportPrivateKey() {
           <p className="text-sm text-muted">No exportable account is available.</p>
         )}
         {error && <p className="text-sm text-danger">{error}</p>}
+        {catalogLoadFailed && !loading && (
+          <Button variant="outline" size="sm" onClick={() => setLoadAttempt(value => value + 1)}>
+            Retry
+          </Button>
+        )}
       </div>
       <div className="page-footer">
         <Button

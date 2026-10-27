@@ -1,5 +1,5 @@
 import { isZcashHardwareKeySource } from '@/core/wallet/hardware-wallet-data'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Icon } from '@iconify/react'
 import { Button } from '../../components/ui/button'
 import { PageHeader } from '../../components/common/PageHeader'
@@ -102,10 +102,15 @@ export function AccountList() {
   >(new Map())
   const [networkCatalog, setNetworkCatalog] = useState<AccountNetworksCatalogView | null>(null)
   const [networksLoading, setNetworksLoading] = useState(true)
+  const [catalogError, setCatalogError] = useState(false)
+  const loadRequest = useRef(0)
   const [expandedAccountKey, setExpandedAccountKey] = useState<string | null>(null)
 
   useEffect(() => {
-    loadWallets()
+    void loadWallets()
+    return () => {
+      loadRequest.current += 1
+    }
   }, [])
 
   useEffect(() => {
@@ -120,24 +125,28 @@ export function AccountList() {
   }, [])
 
   const loadWallets = async () => {
+    const request = ++loadRequest.current
     setNetworksLoading(true)
-    const networksRequest = accountNetworksClient.getCatalog().catch(() => null)
     try {
-      const networkCatalog = await networksRequest
-      setNetworkCatalog(networkCatalog)
+      const nextCatalog = await accountNetworksClient.getCatalog()
+      if (request !== loadRequest.current) return
+      setNetworkCatalog(nextCatalog)
       setAccountNetworks(
         new Map(
-          (networkCatalog?.accounts ?? []).map(account => [
+          (nextCatalog?.accounts ?? []).map(account => [
             accountListKey(account.walletId, account.accountId),
             account.networks
           ])
         )
       )
-    } catch (error) {
-      console.error('Failed to load wallets:', error)
+      setCatalogError(false)
+    } catch {
+      if (request === loadRequest.current) setCatalogError(true)
     } finally {
-      setLoading(false)
-      setNetworksLoading(false)
+      if (request === loadRequest.current) {
+        setLoading(false)
+        setNetworksLoading(false)
+      }
     }
   }
 
@@ -360,6 +369,21 @@ export function AccountList() {
       <PageHeader title="Noir Wallet" showBack onBack={() => replace('/')} />
 
       <div className="page-content">
+        {catalogError && (
+          <div className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-danger/30 p-3">
+            <p role="alert" className="text-xs text-danger">
+              Unable to load accounts.
+            </p>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={networksLoading}
+              onClick={() => void loadWallets()}
+            >
+              Retry
+            </Button>
+          </div>
+        )}
         <div className="mb-4">
           <Input
             value={searchQuery}
@@ -382,7 +406,9 @@ export function AccountList() {
             {loading ? (
               <ListSkeleton rows={4} label="Loading wallets" card />
             ) : wallets.length === 0 && nativeAccounts.length === 0 ? (
-              <div className="text-center py-8 text-muted">No wallets found</div>
+              catalogError ? null : (
+                <div className="text-center py-8 text-muted">No wallets found</div>
+              )
             ) : searchQuery.trim() &&
               filteredAccounts.length === 0 &&
               nativeAccounts.length === 0 ? (
