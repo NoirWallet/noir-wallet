@@ -272,7 +272,7 @@ it('accepts a same-address transfer review while rejecting a falsely marked self
   )
 })
 
-it('reuses the ten-minute catalog cache and merges concurrent Send loads', async () => {
+it('normalizes and shares ten-minute Send catalogs while allowing a forced retry', async () => {
   let now = 0
   let requests = 0
   const client = createRheaSwapClient(
@@ -282,20 +282,30 @@ it('reuses the ten-minute catalog cache and merges concurrent Send loads', async
     },
     { now: () => now }
   )
-  const request = evmSendCatalogRequest(chain)
-  await Promise.all([client.listTokens(request), client.listTokens(request)])
+  const request = { ...evmSendCatalogRequest(chain), tokenListChainIds: [10, 1] }
+  const normalized = { ...request, tokenListChainIds: [1, 10] }
+  const [first, second] = await Promise.all([
+    client.listTokens(request),
+    client.listTokens(normalized)
+  ])
+  assert.deepEqual(first, second)
   assert.equal(requests, 1)
-  assert.equal(support(client.readCachedTokens(request)), 'supported')
+  assert.deepEqual(client.readCachedTokens(normalized), first)
+  assert.equal(support(first), 'supported')
+  await client.listTokens(normalized)
+  assert.equal(requests, 1)
   now = 10 * 60 * 1000
   assert.equal(client.readCachedTokens(request), null)
-  await client.listTokens(request)
+  await client.listTokens(normalized)
   assert.equal(requests, 2)
+  await client.listTokens(request, { bypassCache: true })
+  assert.equal(requests, 3)
 })
 
 it('does not cache partial/empty catalogs and lets a retry recover', async () => {
-  const results = [{ ...catalog(token()), failedChainIds: [1] }, catalog(), catalog(token())]
+  const results = [{ ...catalog(token()), failedChainIds: [10] }, catalog(), catalog(token())]
   const client = createRheaSwapClient(async () => ({ result: results.shift() }))
-  const request = evmSendCatalogRequest(chain)
+  const request = { ...evmSendCatalogRequest(chain), tokenListChainIds: [1, 10] }
   for (let i = 0; i < 2; i++) {
     await client.listTokens(request)
     assert.equal(client.readCachedTokens(request), null)
