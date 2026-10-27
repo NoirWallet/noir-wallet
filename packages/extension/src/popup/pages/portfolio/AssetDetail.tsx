@@ -4,6 +4,7 @@ import { useSearchParams } from 'react-router-dom'
 import { Icon } from '@iconify/react'
 import Big from '@/lib/big'
 import type { PortfolioReadModel } from '@/core/portfolio'
+import { supportsEvmPrivateExecution } from '@/core/chains/evm'
 import type { ActivityItem } from '@/core/activity'
 import {
   findAssetPrice,
@@ -221,7 +222,7 @@ export function AssetDetail() {
   )?.value
   const privateTransferEligible = Boolean(
     currentNetwork === 'mainnet' &&
-    storageV2Account?.walletSource.kind === 'software' &&
+    supportsEvmPrivateExecution(storageV2Account?.walletSource) &&
     evmAccountNetwork?.privateExecutionAddress &&
     evmMainAddress
   )

@@ -1,6 +1,6 @@
 # Confidential DeFi Development and Troubleshooting
 
-This guide covers local setup, data sources, recovery, and diagnosis for software EVM accounts using a Global PEA, Confidential balances, internal transfers, Confidential Send/Swap, and dApp Confidential asset transfers. Product and security boundaries are enforced in the implementation; see `packages/extension/src/core/services/confidential-funding/` and the routes named below when changing behavior.
+This guide covers local setup, data sources, recovery, and diagnosis for mnemonic and imported EVM private-key accounts using a Global PEA, Confidential balances, internal transfers, Confidential Send/Swap, and dApp Confidential asset transfers. Hardware accounts and private keys imported for other chain families do not support Confidential execution. The shared account capability is defined in `packages/extension/src/core/chains/evm/execution-capability.ts`; funding boundaries are enforced in `packages/extension/src/core/services/confidential-funding/` and the routes named below.
 
 ## 1. Account and Balance Model
 

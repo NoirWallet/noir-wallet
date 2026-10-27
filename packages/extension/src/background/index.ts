@@ -535,13 +535,13 @@ const walletDAppConnection = new WalletDAppConnectionCoordinator({
   }
 })
 
-function requireActiveDAppExecutionModeScope(): DAppExecutionModeScope {
-  const { currentWalletId, currentAccountId } = useWalletStore.getState()
-  if (!currentWalletId || !currentAccountId) throw new Error('No active wallet account')
+async function requireActiveDAppExecutionModeScope(): Promise<DAppExecutionModeScope> {
+  const account = await accountNetworksCoordinator.readActiveAccount()
+  if (!account) throw new Error('No active wallet account')
   return Object.freeze({
     network: DEFAULT_NETWORK,
-    keyDomainId: currentWalletId,
-    accountId: currentAccountId
+    keyDomainId: account.reference.walletId,
+    accountId: account.reference.accountId
   })
 }
 
@@ -3977,7 +3977,7 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
     accountContextTransition
       .runActiveOperation(async () => {
         await rehydrateWalletStore()
-        return dappExecutionModeCoordinator.read(requireActiveDAppExecutionModeScope())
+        return dappExecutionModeCoordinator.read(await requireActiveDAppExecutionModeScope())
       })
       .then(state => sendResponse({ success: true, state }))
       .catch(error =>
@@ -3992,7 +3992,7 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
     accountContextTransition
       .runActiveOperation(async () => {
         await rehydrateWalletStore()
-        const scope = requireActiveDAppExecutionModeScope()
+        const scope = await requireActiveDAppExecutionModeScope()
         return dappExecutionModeTransitionCoordinator.set(
           scope,
           message.mode as DAppExecutionMode,

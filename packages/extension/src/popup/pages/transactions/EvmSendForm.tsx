@@ -83,6 +83,7 @@ import { useSettingsStore } from '@/store/settings-store'
 import { getChainEndpointRuntimeKey } from '@/core/chains/chain-endpoint-settings'
 import { LatestAttempt } from '@/lib/async-utils'
 import { getRheaSwapErrorMessage } from '@/popup/services/rhea-swap-client'
+import { resolveEffectiveActiveAccountIdentity } from '@/popup/lib/effective-active-account'
 
 export interface EvmSendAsset {
   readonly asset: PortfolioAssetView
@@ -147,12 +148,19 @@ export function EvmSendForm({
   const asset = selection.asset
   const chain = selection.chain
   const { activeAccount: catalogAccount, catalog } = useActiveAccountNetworks()
-  const walletId = useWalletStore(state => state.currentWalletId)
-  const accountId = useWalletStore(state => state.currentAccountId)
+  const currentWalletId = useWalletStore(state => state.currentWalletId)
+  const currentAccountId = useWalletStore(state => state.currentAccountId)
   const networkMode = useWalletStore(state => state.currentNetwork)
   const endpoints = useSettingsStore(state =>
     getChainEndpointRuntimeKey(state.chainEndpointSettings)
   )
+  const effectiveAccount = resolveEffectiveActiveAccountIdentity({
+    currentWalletId,
+    currentAccountId,
+    nativeAccount: catalogAccount
+  })
+  const walletId = effectiveAccount?.walletId ?? null
+  const accountId = effectiveAccount?.accountId ?? null
   const activeAccount =
     catalogAccount?.walletId === walletId && catalogAccount.accountId === accountId
       ? catalogAccount

@@ -1,4 +1,5 @@
 import { transactionBroadcasted } from '@/core/transactions/transaction-analytics'
+import { supportsEvmPrivateExecution } from '@/core/chains/evm'
 import { IndexedDbTransactionRepository } from '@/infrastructure/persistence/repositories'
 import { ANALYTICS_EVENTS } from '../lib/analytics/constants'
 import { emitDAppEvent, observeDAppRequest, type DAppAnalyticsSink } from './dapp-analytics'
@@ -464,7 +465,7 @@ export class BackgroundEvmDAppHandler {
   }
 
   private assertSoftwareSigningAccount(active: ActiveEvmDAppAccount): void {
-    if (active.context.keyDomainSource.kind !== 'software') {
+    if (!supportsEvmPrivateExecution(active.context.keyDomainSource)) {
       throw new Eip1193ProviderError(
         4200,
         'Keystone EVM signing is available only from the Noir Wallet transaction screen.'
@@ -732,7 +733,7 @@ export class BackgroundEvmDAppHandler {
     })
     const active = await this.requireAuthorizedAccount(origin, parsed.from)
     if (
-      active.context.keyDomainSource.kind !== 'software' &&
+      !supportsEvmPrivateExecution(active.context.keyDomainSource) &&
       !(
         active.context.keyDomainSource.kind === 'hardware' &&
         active.context.keyDomainSource.vendor === 'ledger'

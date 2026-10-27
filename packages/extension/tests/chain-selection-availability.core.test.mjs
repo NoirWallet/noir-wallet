@@ -10,6 +10,7 @@ import {
   selectableChainOptions
 } from '../src/popup/services/chain-selection-availability.ts'
 import { privateKeyImportFamilyOptions } from '../src/popup/services/private-key-import-options.ts'
+import { supportsEvmPrivateExecution } from '../src/core/chains/evm/execution-capability.ts'
 import { buildAddTokenNetworks } from '../src/popup/services/add-token-model.ts'
 import { buildSendAssetSelectionModel } from '../src/popup/pages/transactions/send-asset-order.ts'
 import {
@@ -18,6 +19,21 @@ import {
 } from '../src/popup/pages/hardware/keystone-chain-selection.ts'
 
 describe('Chain selection availability', () => {
+  it('allows Confidential execution for mnemonic and EVM private-key accounts only', () => {
+    for (const [source, expected] of [
+      [{ kind: 'software' }, true],
+      [{ kind: 'private-key', chainFamily: 'eip155' }, true],
+      [{ kind: 'private-key', chainFamily: 'bip122' }, false],
+      [{ kind: 'private-key', chainFamily: 'solana' }, false],
+      [{ kind: 'private-key', chainFamily: 'near' }, false],
+      [{ kind: 'hardware' }, false],
+      [null, false],
+      [undefined, false]
+    ]) {
+      assert.equal(supportsEvmPrivateExecution(source), expected, JSON.stringify(source))
+    }
+  })
+
   it('keeps deferred chains visible without putting them in selectable network IDs', () => {
     const options = [
       { id: 'zcash:mainnet', family: 'zcash' },

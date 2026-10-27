@@ -11,6 +11,7 @@ import {
   type AddressGatedChainRegistry
 } from '@/core/chains/registry'
 import { BITCOIN_ADDRESS_POLICY } from '@/core/chains/bitcoin'
+import { supportsEvmPrivateExecution } from '@/core/chains/evm'
 import type { KeyDomainId } from '@/core/keyring/domain'
 import type { HardwareCredentialMetadata } from '@/core/keyring/domain'
 import { DEFAULT_NETWORK } from '@/lib/runtime-network'
@@ -217,7 +218,7 @@ export class AccountNetworksCoordinator {
                 const evmPeaDerivation = this.options.evmPeaDerivation
                 if (
                   chain.family === 'evm' &&
-                  keyDomain.source.kind === 'software' &&
+                  supportsEvmPrivateExecution(keyDomain.source) &&
                   evmPeaDerivation
                 ) {
                   const binding = parseEvmAccountBinding(chainAccount, chain.id)
