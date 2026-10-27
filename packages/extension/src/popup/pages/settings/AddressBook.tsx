@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Icon } from '@iconify/react'
 import { resolveChainIconAlias } from '@/lib/chain-icon'
 import { formatSortAddress } from '@/lib/format'
 import { PageHeader } from '@/popup/components/common/PageHeader'
 import { ChainIcon } from '@/popup/components/common/ChainIcon'
 import { Button } from '@/popup/components/ui/button'
+import { ListSkeleton } from '@/popup/components/ui/skeleton'
 import { Input } from '@/popup/components/ui/input'
 import {
   Dialog,
@@ -23,10 +24,29 @@ export function AddressBook() {
   const [editing, setEditing] = useState<AddressBookContact | null>(null)
   const [deleting, setDeleting] = useState<AddressBookContact | null>(null)
   const [name, setName] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState(false)
+  const loadRevision = useRef(0)
+
+  const loadContacts = useCallback(async () => {
+    const revision = ++loadRevision.current
+    setLoading(true)
+    setLoadError(false)
+    try {
+      await initializeAddressBook()
+    } catch {
+      if (revision === loadRevision.current) setLoadError(true)
+    } finally {
+      if (revision === loadRevision.current) setLoading(false)
+    }
+  }, [])
 
   useEffect(() => {
-    void initializeAddressBook().catch(() => {})
-  }, [])
+    void loadContacts()
+    return () => {
+      loadRevision.current += 1
+    }
+  }, [loadContacts])
 
   const groups = useMemo(() => {
     const grouped = new Map<string, AddressBookContact[]>()
@@ -56,7 +76,36 @@ export function AddressBook() {
     <div className="page-container">
       <PageHeader title="Address Book" showBack />
       <div className="page-content !px-4">
-        {groups.length === 0 ? (
+        {loadError && groups.length > 0 && (
+          <div role="alert" className="mb-4 flex items-center justify-between gap-3 px-1 text-xs">
+            <span className="min-w-0 break-words text-danger">
+              Could not refresh saved recipients
+            </span>
+            <button
+              type="button"
+              onClick={() => void loadContacts()}
+              className="inline-flex shrink-0 items-center gap-1 text-primary hover:underline"
+            >
+              <Icon icon="lucide:refresh-cw" width={12} height={12} aria-hidden="true" />
+              Retry
+            </button>
+          </div>
+        )}
+        {groups.length === 0 && loading ? (
+          <ListSkeleton rows={4} label="Loading saved recipients" />
+        ) : groups.length === 0 && loadError ? (
+          <div
+            className="flex h-full flex-col items-center justify-center px-5 pb-12 text-center"
+            role="alert"
+          >
+            <Icon icon="lucide:cloud-off" width={25} height={25} className="text-muted" />
+            <h2 className="mt-4 text-base font-semibold">Could not load saved recipients</h2>
+            <Button onClick={() => void loadContacts()} className="mt-5">
+              <Icon icon="lucide:refresh-cw" width={16} height={16} className="mr-2" />
+              Retry
+            </Button>
+          </div>
+        ) : groups.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center px-5 pb-12 text-center">
             <div className="flex size-14 items-center justify-center rounded-full bg-card text-muted">
               <Icon icon="lucide:book-user" width={25} height={25} />

@@ -1,6 +1,6 @@
 import { Icon } from '@iconify/react'
 import { getResponseErrorMessage } from '@/lib/errors'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { PageHeader } from '../../components/common/PageHeader'
 import { useNavigate } from '../../provider/Router'
 import {
@@ -26,9 +26,32 @@ export function SecurityPrivacy() {
   const [isSaving, setIsSaving] = useState(false)
   const [zeroIndexerEnabled, setZeroIndexerEnabled] = useState(false)
   const [zeroIndexerLoaded, setZeroIndexerLoaded] = useState(false)
+  const [zeroIndexerLoading, setZeroIndexerLoading] = useState(false)
+  const [zeroIndexerLoadError, setZeroIndexerLoadError] = useState(false)
   const [zeroIndexerSaving, setZeroIndexerSaving] = useState(false)
   const [broadcastNode, setBroadcastNode] = useState('Auto')
   const enabledRevision = useRef(0)
+  const enabledLoadRevision = useRef(0)
+
+  const loadZeroIndexerEnabled = useCallback(async () => {
+    const requestRevision = ++enabledLoadRevision.current
+    const initialRevision = enabledRevision.current
+    setZeroIndexerLoading(true)
+    setZeroIndexerLoadError(false)
+    try {
+      const response = await chrome.runtime.sendMessage({ type: 'GET_ZERO_INDEXER_ENABLED' })
+      if (requestRevision !== enabledLoadRevision.current) return
+      if (!response?.success || typeof response.enabled !== 'boolean') {
+        throw new Error('Could not load private broadcast preference')
+      }
+      if (enabledRevision.current === initialRevision) setZeroIndexerEnabled(response.enabled)
+      setZeroIndexerLoaded(true)
+    } catch {
+      if (requestRevision === enabledLoadRevision.current) setZeroIndexerLoadError(true)
+    } finally {
+      if (requestRevision === enabledLoadRevision.current) setZeroIndexerLoading(false)
+    }
+  }, [])
 
   useEffect(() => {
     let active = true
@@ -61,7 +84,11 @@ export function SecurityPrivacy() {
     const onChanged = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
       if (area === 'local' && changes[SETTINGS_STORAGE_KEY]) {
         enabledRevision.current += 1
+        enabledLoadRevision.current += 1
         setZeroIndexerEnabled(parseZeroIndexerEnabled(changes[SETTINGS_STORAGE_KEY].newValue))
+        setZeroIndexerLoaded(true)
+        setZeroIndexerLoading(false)
+        setZeroIndexerLoadError(false)
       }
       if (
         (area === 'local' &&
@@ -71,27 +98,14 @@ export function SecurityPrivacy() {
         void loadNode()
     }
     chrome.storage.onChanged.addListener(onChanged)
-    const initialRevision = enabledRevision.current
-    void chrome.runtime
-      .sendMessage({ type: 'GET_ZERO_INDEXER_ENABLED' })
-      .then(response => {
-        if (!active) return
-        if (response?.success && typeof response.enabled === 'boolean') {
-          if (enabledRevision.current === initialRevision) setZeroIndexerEnabled(response.enabled)
-          setZeroIndexerLoaded(true)
-        } else {
-          toast.error('Could not load private broadcast preference')
-        }
-      })
-      .catch(() => {
-        if (active) toast.error('Could not load private broadcast preference')
-      })
+    void loadZeroIndexerEnabled()
     void loadNode()
     return () => {
       active = false
+      enabledLoadRevision.current += 1
       chrome.storage.onChanged.removeListener(onChanged)
     }
-  }, [])
+  }, [loadZeroIndexerEnabled])
 
   const handleZeroIndexerToggle = async () => {
     if (!zeroIndexerLoaded || zeroIndexerSaving) return
@@ -162,7 +176,7 @@ export function SecurityPrivacy() {
               role="switch"
               aria-checked={zeroIndexerEnabled}
               aria-label="Private broadcast"
-              disabled={!zeroIndexerLoaded || zeroIndexerSaving}
+              disabled={!zeroIndexerLoaded || zeroIndexerLoading || zeroIndexerSaving}
               onClick={() => void handleZeroIndexerToggle()}
               className="flex w-full items-center justify-between gap-4 p-4 text-left transition-colors hover:bg-white/5 disabled:opacity-50"
             >
@@ -181,6 +195,21 @@ export function SecurityPrivacy() {
               </span>
             </button>
           </section>
+          {zeroIndexerLoadError && (
+            <div role="alert" className="mb-3 flex items-center justify-between gap-3 px-1 text-xs">
+              <span className="min-w-0 break-words text-danger">
+                Could not load private broadcast preference
+              </span>
+              <button
+                type="button"
+                onClick={() => void loadZeroIndexerEnabled()}
+                className="inline-flex shrink-0 items-center gap-1 text-primary hover:underline"
+              >
+                <Icon icon="lucide:refresh-cw" width={12} height={12} aria-hidden="true" />
+                Retry
+              </button>
+            </div>
+          )}
           <button
             type="button"
             role="switch"

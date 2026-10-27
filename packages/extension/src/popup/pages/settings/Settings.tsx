@@ -39,6 +39,9 @@ export function Settings() {
   const loadSidePanelMode = useSettingsStore(state => state.loadSidePanelMode)
   const [isChangingDisplayMode, setIsChangingDisplayMode] = useState(false)
   const [displayModeError, setDisplayModeError] = useState<string | null>(null)
+  const [initializationError, setInitializationError] = useState<string | null>(null)
+  const [initializationRetry, setInitializationRetry] = useState(0)
+  const [isInitializingDisplayMode, setIsInitializingDisplayMode] = useState(true)
   const [currentWindowId, setCurrentWindowId] = useState<number | null>(null)
 
   useEffect(() => {
@@ -56,6 +59,8 @@ export function Settings() {
     }
 
     const initializeDisplayMode = async () => {
+      setInitializationError(null)
+      setIsInitializingDisplayMode(true)
       await loadSidePanelMode()
       if (isSidePanelSurface) return
 
@@ -71,15 +76,19 @@ export function Settings() {
       if (!disposed) setCurrentWindowId(currentWindow.id)
     }
 
-    initializeDisplayMode().catch(error => {
-      if (!disposed) setDisplayModeError(getErrorMessage(error))
-    })
+    initializeDisplayMode()
+      .catch(error => {
+        if (!disposed) setInitializationError(getErrorMessage(error))
+      })
+      .finally(() => {
+        if (!disposed) setIsInitializingDisplayMode(false)
+      })
     chrome.storage.onChanged.addListener(handleStorageChanged)
     return () => {
       disposed = true
       chrome.storage.onChanged.removeListener(handleStorageChanged)
     }
-  }, [isSidePanelSurface, loadSidePanelMode, syncSidePanelMode])
+  }, [initializationRetry, isSidePanelSurface, loadSidePanelMode, syncSidePanelMode])
 
   const menuItems = [
     { label: 'General', action: () => navigate('/general') },
@@ -149,6 +158,7 @@ export function Settings() {
           aria-label="Side panel mode"
           disabled={
             isChangingDisplayMode ||
+            isInitializingDisplayMode ||
             !isSidePanelModeLoaded ||
             (!sidePanelMode && !isSidePanelSurface && currentWindowId === null)
           }
@@ -169,6 +179,21 @@ export function Settings() {
             <Switch checked={sidePanelMode} />
           </div>
         </button>
+        {initializationError && (
+          <div role="alert" className="flex items-center justify-between gap-3 px-1 text-xs">
+            <span className="min-w-0 break-words text-danger">{initializationError}</span>
+            {(isSidePanelSurface || getSidePanelOpenApi()) && (
+              <button
+                type="button"
+                onClick={() => setInitializationRetry(value => value + 1)}
+                className="inline-flex shrink-0 items-center gap-1 text-primary hover:underline"
+              >
+                <Icon icon="lucide:refresh-cw" width={12} height={12} aria-hidden="true" />
+                Retry
+              </button>
+            )}
+          </div>
+        )}
         {displayModeError && (
           <p role="alert" className="px-1 text-xs text-danger">
             {displayModeError}
