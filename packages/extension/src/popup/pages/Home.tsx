@@ -126,8 +126,12 @@ export function Home() {
   }, [location.search, navigate])
   const balancesHidden = useSettingsStore(state => state.balancesHidden)
   const setBalancesHidden = useSettingsStore(state => state.setBalancesHidden)
-  const { activeAccount: storageV2Account, loading: accountNetworksLoading } =
-    useActiveAccountNetworks()
+  const {
+    activeAccount: storageV2Account,
+    loading: accountNetworksLoading,
+    error: accountNetworksError,
+    refresh: refreshAccountNetworks
+  } = useActiveAccountNetworks()
   const [addressMenuOpen, setAddressMenuOpen] = useState(false)
 
   const openLendingApp = () => {
@@ -345,8 +349,13 @@ export function Home() {
     accountScope: lendingAccountScope,
     dataLoaded: lendingLoaded,
     isLoadingData: lendingLoading,
-    error: lendingError
+    error: lendingError,
+    mcaError: lendingMcaError,
+    isCheckingMca: lendingCheckingMca
   } = useLendingStore()
+  const [lendingSessionError, setLendingSessionError] = useState(false)
+  const [lendingSessionLoading, setLendingSessionLoading] = useState(false)
+  const [lendingSessionRetry, setLendingSessionRetry] = useState(0)
 
   useEffect(() => {
     if (!supportsLending) {
@@ -359,12 +368,19 @@ export function Home() {
       return
     }
     let cancelled = false
+    setLendingSessionError(false)
+    setLendingSessionLoading(true)
     void hydrateLendingCache().catch(() => {})
     void hasAttestedCredentialSession()
       .then(active => {
         if (active && !cancelled) return refreshLending()
       })
-      .catch(() => {})
+      .catch(() => {
+        if (!cancelled) setLendingSessionError(true)
+      })
+      .finally(() => {
+        if (!cancelled) setLendingSessionLoading(false)
+      })
     return () => {
       cancelled = true
     }
@@ -374,6 +390,7 @@ export function Home() {
     effectiveWalletId,
     effectiveAccountId,
     lendingAccountScope,
+    lendingSessionRetry,
     hydrateLendingCache,
     refreshLending,
     resetLending,
@@ -441,7 +458,8 @@ export function Home() {
           assetPriceStatus === 'ready' &&
           multichainFiat.missingAssetCount === 0 &&
           multichainFiat.staleAssetCount === 0 &&
-          (!supportsLending || (lendingLoaded && !lendingError))
+          (!supportsLending ||
+            (lendingLoaded && !lendingError && !lendingMcaError && !lendingSessionError))
       })
       return
     }
@@ -450,7 +468,9 @@ export function Home() {
     setPortfolioValueFor(network, effectiveWalletId, effectiveAccountId, {
       totalUsd: safeBig(storeBalance.total).times(zecPrice).plus(lendingSuppliedUsd).toFixed(),
       updatedAt: Date.now(),
-      complete: !supportsLending || (lendingLoaded && !lendingError)
+      complete:
+        !supportsLending ||
+        (lendingLoaded && !lendingError && !lendingMcaError && !lendingSessionError)
     })
   }, [
     assetPriceStatus,
@@ -458,6 +478,8 @@ export function Home() {
     effectiveAccountId,
     effectiveWalletId,
     lendingError,
+    lendingMcaError,
+    lendingSessionError,
     lendingLoaded,
     lendingSuppliedUsd,
     multichainFiat.missingAssetCount,
@@ -816,6 +838,20 @@ export function Home() {
           </div>
         </div>
 
+        {accountNetworksError && (
+          <div role="alert" className="mb-4 flex items-center justify-between gap-3 px-5 text-xs">
+            <p className="text-danger">Unable to load account addresses</p>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={accountNetworksLoading}
+              onClick={() => void refreshAccountNetworks()}
+            >
+              Retry
+            </Button>
+          </div>
+        )}
+
         {/* Action Buttons */}
         <div
           data-testid="home-actions"
@@ -833,6 +869,7 @@ export function Home() {
             icon={<Icon icon="lucide:arrow-down" width={20} height={20} />}
             label="Receive"
             onClick={openAddressesList}
+            disabled={!effectiveWalletId || !effectiveAccountId}
           />
           {!isTestnet && supportsLending && (
             <WalletActionButton
@@ -1025,6 +1062,26 @@ export function Home() {
           </TabsContent>
 
           <TabsContent value="lending" className="px-5 py-4 mt-0">
+            {(lendingSessionError || lendingMcaError || lendingError) && (
+              <div role="alert" className="mb-3 flex items-center justify-between gap-3 text-xs">
+                <p className="text-danger">
+                  {lendingSessionError || lendingMcaError
+                    ? 'Unable to check lending account'
+                    : 'Unable to load lending data'}
+                </p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={lendingLoading || lendingCheckingMca || lendingSessionLoading}
+                  onClick={() => {
+                    if (lendingSessionError) setLendingSessionRetry(value => value + 1)
+                    else void refreshLending({ forceMcaCheck: Boolean(lendingMcaError) })
+                  }}
+                >
+                  Retry
+                </Button>
+              </div>
+            )}
             {lendingPositions.length > 0 ? (
               <div className="space-y-1">
                 {lendingPositions.map(market => (
@@ -1074,23 +1131,9 @@ export function Home() {
                   </div>
                 ))}
               </div>
-            ) : lendingLoading ? (
+            ) : lendingLoading || lendingCheckingMca || lendingSessionLoading ? (
               <ListSkeleton rows={2} label="Loading lending positions" card />
-            ) : lendingError && !lendingLoaded ? (
-              <div className="flex flex-col items-center justify-center py-12 text-center">
-                <div className="size-12 rounded-full bg-foreground/5 flex items-center justify-center mb-3">
-                  <Icon icon="lucide:wifi-off" width={24} height={24} className="text-muted" />
-                </div>
-                <p className="text-sm text-muted mb-1">Unable to load lending data</p>
-                <p className="text-xs text-muted/60 mb-4">Network issue, tap to retry</p>
-                <button
-                  onClick={() => refreshLending()}
-                  className="px-4 py-2 bg-primary/10 text-primary rounded-lg text-sm font-medium hover:bg-primary/20 transition-colors"
-                >
-                  Retry
-                </button>
-              </div>
-            ) : (
+            ) : lendingSessionError || lendingMcaError || lendingError ? null : (
               <div className="flex flex-col items-center justify-center py-12 text-center">
                 <div className="size-12 rounded-full bg-foreground/5 flex items-center justify-center mb-3">
                   <Icon icon="lucide:landmark" width={24} height={24} className="text-muted" />

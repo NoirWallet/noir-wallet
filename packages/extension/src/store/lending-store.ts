@@ -56,6 +56,7 @@ interface LendingStore {
   }
 
   error: string | null
+  mcaError: string | null
 
   checkMcaStatus: () => Promise<void>
   fetchLendingData: () => Promise<void>
@@ -118,12 +119,13 @@ export const useLendingStore = create<LendingStore>()((set, get) => ({
   },
 
   error: null,
+  mcaError: null,
 
   checkMcaStatus: async () => {
     const { currentWalletId, currentAccountId } = useWalletStore.getState()
     const accountScope = `${currentWalletId || 'none'}:${currentAccountId || 'none'}`
     const refreshGeneration = get().refreshGeneration
-    set({ isCheckingMca: true, error: null })
+    set({ isCheckingMca: true, mcaError: null })
 
     try {
       const result = await withRetry(async () => {
@@ -148,7 +150,8 @@ export const useLendingStore = create<LendingStore>()((set, get) => ({
         publicKey: result.publicKey,
         signingMode: result.signingMode,
         isCheckingMca: false,
-        mcaChecked: true
+        mcaChecked: true,
+        mcaError: null
       })
     } catch (err) {
       const active = useWalletStore.getState()
@@ -163,8 +166,8 @@ export const useLendingStore = create<LendingStore>()((set, get) => ({
       console.error('[LendingStore] checkMcaStatus failed:', err)
       set({
         isCheckingMca: false,
-        mcaChecked: true,
-        error: err instanceof Error ? err.message : 'Failed to check lending account status'
+        mcaChecked: false,
+        mcaError: err instanceof Error ? err.message : 'Failed to check lending account status'
       })
     }
   },
@@ -234,6 +237,7 @@ export const useLendingStore = create<LendingStore>()((set, get) => ({
       const lastRefreshedAt = get().lastRefreshedAt
       const canReuseLiveData =
         !options?.forceMcaCheck &&
+        get().mcaChecked &&
         lastRefreshedAt !== null &&
         Date.now() - lastRefreshedAt < LIVE_DATA_REUSE_MS
       if (canReuseLiveData) return
@@ -312,7 +316,8 @@ export const useLendingStore = create<LendingStore>()((set, get) => ({
         amountUsd: '0',
         rawAmount: '0'
       },
-      error: null
+      error: null,
+      mcaError: null
     }),
 
   getZecAsset: () => getZecAssetData(get().assetsView),
