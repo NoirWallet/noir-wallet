@@ -1,5 +1,15 @@
-import { test } from 'node:test'
+import { after, test } from 'node:test'
 import assert from 'node:assert/strict'
+
+const originalLocks = Object.getOwnPropertyDescriptor(globalThis.navigator, 'locks')
+Object.defineProperty(globalThis.navigator, 'locks', {
+  configurable: true,
+  value: { request: async (_name, operation) => operation() }
+})
+after(() => {
+  if (originalLocks === undefined) delete globalThis.navigator.locks
+  else Object.defineProperty(globalThis.navigator, 'locks', originalLocks)
+})
 
 test('late display mode read does not replace a newer storage update', async () => {
   const originalChrome = globalThis.chrome
@@ -34,6 +44,7 @@ test('late display mode read does not replace a newer storage update', async () 
     assert.equal(useSettingsStore.getState().sidePanelMode, true)
     assert.equal(useSettingsStore.getState().isSidePanelModeLoaded, true)
   } finally {
+    await new Promise(resolve => setImmediate(resolve))
     globalThis.chrome = originalChrome
   }
 })
@@ -72,6 +83,7 @@ test('older display mode read does not replace a newer read', async () => {
     await first
     assert.equal(useSettingsStore.getState().sidePanelMode, true)
   } finally {
+    await new Promise(resolve => setImmediate(resolve))
     globalThis.chrome = originalChrome
   }
 })

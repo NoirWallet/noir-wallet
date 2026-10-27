@@ -1,5 +1,15 @@
-import { test } from 'node:test'
+import { after, test } from 'node:test'
 import assert from 'node:assert/strict'
+
+const originalLocks = Object.getOwnPropertyDescriptor(globalThis.navigator, 'locks')
+Object.defineProperty(globalThis.navigator, 'locks', {
+  configurable: true,
+  value: { request: async (_name, operation) => operation() }
+})
+after(() => {
+  if (originalLocks === undefined) delete globalThis.navigator.locks
+  else Object.defineProperty(globalThis.navigator, 'locks', originalLocks)
+})
 
 test('failed lending identity lookup remains retryable with cached markets and clears on reset', async () => {
   const originalChrome = globalThis.chrome
@@ -45,6 +55,7 @@ test('failed lending identity lookup remains retryable with cached markets and c
     assert.equal(useLendingStore.getState().mcaError, null)
     assert.equal(useLendingStore.getState().mcaChecked, false)
   } finally {
+    await new Promise(resolve => setImmediate(resolve))
     globalThis.setTimeout = originalSetTimeout
     globalThis.chrome = originalChrome
   }
