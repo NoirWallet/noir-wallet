@@ -1,7 +1,10 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { getRheaSwapProgressStatus, mergeSwapProgressStatus } from '../src/lib/swap-progress.ts'
-import { getOnchainResultAction } from '../src/popup/services/onchain-transaction-result.ts'
+import {
+  getOnchainResultAction,
+  getOnchainResultExitOutcome
+} from '../src/popup/services/onchain-transaction-result.ts'
 
 const hash = (role, value, status = 'broadcast') => ({
   role,
@@ -86,8 +89,12 @@ test('pending public transfer opens explorer while interruption and completion r
   for (const status of ['broadcast', 'confirming']) {
     assert.equal(getOnchainResultAction(status, 'https://etherscan.io/tx/hash'), 'explorer')
     assert.equal(getOnchainResultAction(status, null), 'activity')
+    assert.equal(getOnchainResultExitOutcome(status), 'pending')
   }
   assert.equal(getOnchainResultAction('signed', 'https://etherscan.io/tx/hash'), 'retry')
+  assert.equal(getOnchainResultExitOutcome('signed'), 'pending')
   assert.equal(getOnchainResultAction('final', 'https://etherscan.io/tx/hash'), 'done')
+  assert.equal(getOnchainResultExitOutcome('final'), 'final')
   assert.equal(getOnchainResultAction('failed', 'https://etherscan.io/tx/hash'), 'done')
+  assert.equal(getOnchainResultExitOutcome('failed'), 'failed')
 })

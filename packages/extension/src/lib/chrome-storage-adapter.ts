@@ -16,7 +16,10 @@ interface StorageAdapter {
  * Creates a chrome.storage adapter for Zustand persist middleware
  * @param area - 'local' for persistent storage, 'session' for ephemeral storage
  */
-export function createChromeStorageAdapter(area: StorageArea = 'local'): StorageAdapter {
+export function createChromeStorageAdapter(
+  area: StorageArea = 'local',
+  options: { strictRead?: boolean } = {}
+): StorageAdapter {
   const storage = area === 'local' ? chrome.storage.local : chrome.storage.session
 
   return {
@@ -29,6 +32,7 @@ export function createChromeStorageAdapter(area: StorageArea = 'local'): Storage
         return result[key] ?? null
       } catch (error) {
         console.error('[ChromeStorageAdapter] getItem error:', error)
+        if (options.strictRead) throw error
         return null
       }
     },

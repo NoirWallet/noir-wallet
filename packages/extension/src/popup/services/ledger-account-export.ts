@@ -202,6 +202,9 @@ export async function exportLedgerWalletAccounts(input: {
     throw new Error('Select at least one Ledger chain account')
   const credential = createLedgerMultichainHardwareCredential({
     ...metadata,
+    ...(input.existing?.ledgerSigningTransport === undefined
+      ? {}
+      : { ledgerSigningTransport: input.existing.ledgerSigningTransport }),
     accounts: [...existing, ...additions]
   })
   return { credential, anchorProof }

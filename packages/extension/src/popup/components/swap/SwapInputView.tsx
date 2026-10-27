@@ -13,6 +13,7 @@ import { Input } from '../ui/input'
 import { Skeleton } from '../ui/skeleton'
 import { BalanceHelp } from '../transaction/BalanceHelp'
 import { safeBig } from '@/lib/big'
+import { InlineError } from '../common/InlineError'
 
 function AddressInputWithRecent({
   label,
@@ -125,7 +126,6 @@ interface SwapInputViewProps {
   recipientAddress: string
   slippage: number
   networkFee?: string
-  quoteFeeUsd?: string | null
   isQuoting: boolean
   quoteError?: string | null
   maxLoading?: boolean
@@ -479,7 +479,6 @@ export function SwapInputView({
   recipientAddress,
   slippage,
   networkFee,
-  quoteFeeUsd,
   isQuoting,
   quoteError,
   maxLoading = false,
@@ -523,22 +522,15 @@ export function SwapInputView({
     ? insufficientMessage ||
       (feeIsApproximate ? 'Insufficient balance' : `Insufficient balance (Fee: ${networkFee} ZEC)`)
     : undefined
-  const showQuoteFeeSkeleton =
-    isQuoting && !(networkFee && isZecSource) && (quoteFeeUsd === null || quoteFeeUsd === undefined)
 
   if (catalogError) {
     return (
-      <div
-        className="flex min-h-0 flex-1 flex-col items-center justify-center px-8 text-center"
-        role="alert"
-      >
-        <span className="flex size-12 items-center justify-center rounded-full bg-warning/10 text-warning">
-          <Icon icon="lucide:cloud-off" width={24} height={24} />
-        </span>
-        <h2 className="mt-4 text-base font-semibold">Unable to load assets</h2>
-        <Button onClick={onRetryTokenCatalog} className="mt-5 min-w-28">
-          Retry
-        </Button>
+      <div className="flex min-h-0 flex-1 items-center px-8">
+        <InlineError
+          message="Unable to load assets"
+          onRetry={onRetryTokenCatalog}
+          className="w-full"
+        />
       </div>
     )
   }
@@ -616,23 +608,12 @@ export function SwapInputView({
         </div>
 
         {quoteError && (
-          <div
-            role="alert"
-            className="mt-2 flex items-start justify-between gap-3 px-1 text-xs leading-5 text-warning"
-          >
-            <p className="min-w-0 break-words">{quoteError}</p>
-            {onRetryQuote && (
-              <button
-                type="button"
-                onClick={onRetryQuote}
-                disabled={isQuoting}
-                className="inline-flex shrink-0 items-center gap-1 text-primary hover:underline disabled:opacity-50"
-              >
-                <Icon icon="lucide:refresh-cw" width={12} height={12} aria-hidden="true" />
-                Retry
-              </button>
-            )}
-          </div>
+          <InlineError
+            message={quoteError}
+            onRetry={onRetryQuote}
+            retrying={isQuoting}
+            className="mt-2 px-1 leading-5"
+          />
         )}
 
         {!hideReceiveAddress && tokenOut && (
@@ -727,32 +708,15 @@ export function SwapInputView({
             aria-expanded={showDetails}
             className="flex w-full items-center justify-between py-1 text-sm"
           >
-            <div
-              className="flex items-center gap-1.5 text-muted"
-              role={showQuoteFeeSkeleton ? 'status' : undefined}
-              aria-label={showQuoteFeeSkeleton ? 'Updating fee' : undefined}
-            >
-              <span>Fee:</span>
-              {showQuoteFeeSkeleton ? (
-                <Skeleton className="h-3.5 w-14 rounded-sm" />
-              ) : (
-                <span
-                  className="text-foreground"
-                  title={
-                    !isZecSource && quoteFeeUsd !== null && quoteFeeUsd !== undefined
-                      ? 'Estimated from the quoted input and output values'
-                      : undefined
-                  }
-                >
-                  {networkFee && isZecSource
-                    ? `${feeIsApproximate ? '≈ ' : ''}${formatFeeAmount(networkFee)} ZEC`
-                    : quoteFeeUsd !== null && quoteFeeUsd !== undefined
-                      ? `≈ ${formatFiatAmount(quoteFeeUsd, { showSign: true })}`
-                      : '—'}
+            {networkFee && isZecSource && (
+              <span className="flex items-center gap-1.5 text-muted">
+                Fee:
+                <span className="text-foreground">
+                  {`${feeIsApproximate ? '≈ ' : ''}${formatFeeAmount(networkFee)} ZEC`}
                 </span>
-              )}
-            </div>
-            <span className="flex items-center gap-2 text-muted">
+              </span>
+            )}
+            <span className="ml-auto flex items-center gap-2 text-muted">
               Slippage <span className="text-foreground">{slippage}%</span>
               <Icon
                 icon="lucide:chevron-down"

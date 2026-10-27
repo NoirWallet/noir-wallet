@@ -74,6 +74,7 @@ export interface LedgerMultichainHardwareCredential {
   }
   readonly deviceModel: string
   readonly deviceName: string
+  readonly ledgerSigningTransport?: 'usb' | 'bluetooth'
 }
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -244,20 +245,27 @@ export function parseLedgerMultichainHardwareCredential(
   value: unknown
 ): LedgerMultichainHardwareCredential {
   if (!record(value)) throw new Error('Invalid Ledger multichain credential')
-  keys(value, [
-    'schemaVersion',
-    'vendor',
-    'firmwareProfile',
-    'capabilities',
-    'accountExport',
-    'deviceModel',
-    'deviceName'
-  ])
+  keys(
+    value,
+    [
+      'schemaVersion',
+      'vendor',
+      'firmwareProfile',
+      'capabilities',
+      'accountExport',
+      'deviceModel',
+      'deviceName'
+    ],
+    ['ledgerSigningTransport']
+  )
   if (
     value.schemaVersion !== 3 ||
     value.vendor !== 'ledger' ||
     value.firmwareProfile !== 'multi-app' ||
-    !record(value.accountExport)
+    !record(value.accountExport) ||
+    (value.ledgerSigningTransport !== undefined &&
+      value.ledgerSigningTransport !== 'usb' &&
+      value.ledgerSigningTransport !== 'bluetooth')
   )
     throw new Error('Invalid Ledger multichain credential')
   keys(value.accountExport, ['protocol', 'accounts'])
@@ -299,7 +307,10 @@ export function parseLedgerMultichainHardwareCredential(
       accounts: Object.freeze(accounts)
     }),
     deviceModel: text(value.deviceModel, 'device model'),
-    deviceName: text(value.deviceName, 'device name')
+    deviceName: text(value.deviceName, 'device name'),
+    ...(value.ledgerSigningTransport === undefined
+      ? {}
+      : { ledgerSigningTransport: value.ledgerSigningTransport as 'usb' | 'bluetooth' })
   })
 }
 
@@ -307,6 +318,7 @@ export function createLedgerMultichainHardwareCredential(input: {
   readonly accounts: readonly LedgerPublicAccount[]
   readonly deviceModel: string
   readonly deviceName: string
+  readonly ledgerSigningTransport?: 'usb' | 'bluetooth'
 }): LedgerMultichainHardwareCredential {
   return parseLedgerMultichainHardwareCredential({
     schemaVersion: 3,
@@ -317,7 +329,10 @@ export function createLedgerMultichainHardwareCredential(input: {
     ),
     accountExport: { protocol: 'ledger-accounts-v1', accounts: input.accounts },
     deviceModel: input.deviceModel,
-    deviceName: input.deviceName
+    deviceName: input.deviceName,
+    ...(input.ledgerSigningTransport === undefined
+      ? {}
+      : { ledgerSigningTransport: input.ledgerSigningTransport })
   })
 }
 

@@ -94,7 +94,7 @@ test('bind requires exact successful response and maps business errors', async (
     bindBetaInviteCode('ABC123', '0xaddress', fetchResult({ code: 4004, message: 'missing' })),
     { code: 'invalid-code' }
   )
-  const timeout = new FetchTimeoutError('https://api.zknoir.com/Invite-42_é/bind', 10_000)
+  const timeout = new FetchTimeoutError(10_000)
   await assert.rejects(
     bindBetaInviteCode('Invite-42_é', '0xaddress', async () => {
       throw timeout

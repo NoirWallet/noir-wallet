@@ -1,5 +1,4 @@
 import {
-  SwapClient,
   normalizeBuild,
   normalizeQuote,
   type QuoteRequest,
@@ -8,6 +7,7 @@ import {
   type SwapReportRequestRaw,
   type SwapQuoteDataRaw
 } from '@rhea-finance/cross-chain-aggregation-dex'
+import { RheaSwapCatalogClient } from '@/core/services/rhea-swap/rhea-swap-catalog-client'
 import {
   RheaSwapService,
   RHEA_SWAP_TOKEN_CATALOG_TTL_MS,
@@ -343,7 +343,7 @@ export function createBackgroundRheaSwapService(): RheaSwapService | null {
     service = null
     return service
   }
-  const client = new SwapClient({
+  const client = new RheaSwapCatalogClient({
     baseUrl: 'https://api.rhea.finance',
     apiKey: accessToken,
     timeoutMs: DEFAULT_REQUEST_TIMEOUT_MS,

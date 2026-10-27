@@ -45,6 +45,7 @@ export interface CompatibilityAccountRequest {
     readonly transparent: string
     readonly shielded: string
     readonly fullUnified?: string
+    readonly transparentAddressIndex?: number
   }>
 }
 
@@ -164,12 +165,23 @@ export function parseCompatibilityWorkerRequest(value: unknown): CompatibilityWo
     const expectedKeys = Object.keys(expected)
     if (
       expectedKeys.some(
-        key => key !== 'transparent' && key !== 'shielded' && key !== 'fullUnified'
+        key =>
+          key !== 'transparent' &&
+          key !== 'shielded' &&
+          key !== 'fullUnified' &&
+          key !== 'transparentAddressIndex'
       ) ||
       !Object.prototype.hasOwnProperty.call(expected, 'transparent') ||
       !Object.prototype.hasOwnProperty.call(expected, 'shielded')
     ) {
       throw new Error('Invalid expected Zcash address fields')
+    }
+    if (Object.prototype.hasOwnProperty.call(expected, 'transparentAddressIndex')) {
+      readSafeInteger(
+        expected.transparentAddressIndex,
+        `Compatibility account ${position} transparent address index`,
+        MAX_BIP32_INDEX
+      )
     }
     return Object.freeze({
       accountIndex,

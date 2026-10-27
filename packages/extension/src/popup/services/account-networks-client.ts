@@ -14,6 +14,7 @@ import {
   type HardwareCredentialMetadata
 } from '@/core/keyring/domain'
 import { DEFAULT_NETWORK } from '@/lib/runtime-network'
+import { getZcashAccountIndexFromPath } from '@/lib/zcash-derivation'
 import { resolveEvmNetworkCatalog } from '@/core/chains/evm-runtime-config'
 import { getActiveChainEndpointSettings } from '@/core/chains/chain-endpoint-settings'
 import { parseStorageV2GenerationId } from '@/infrastructure/persistence/schema'
@@ -31,6 +32,7 @@ export interface AccountNetworkAddressView {
 export interface AccountNetworkView {
   readonly chain: ChainDefinition
   readonly addresses: readonly AccountNetworkAddressView[]
+  readonly accountDerivationPath?: string
   readonly privateExecutionAddress?: string
 }
 
@@ -169,11 +171,18 @@ function parseNetwork(value: unknown, chains: AddressGatedChainRegistry): Accoun
     network,
     'privateExecutionAddress'
   )
+  const hasAccountDerivationPath = Object.prototype.hasOwnProperty.call(
+    network,
+    'accountDerivationPath'
+  )
   assertExactKeys(
     network,
-    hasPrivateExecutionAddress
-      ? ['chainId', 'addresses', 'privateExecutionAddress']
-      : ['chainId', 'addresses'],
+    [
+      'chainId',
+      'addresses',
+      ...(hasPrivateExecutionAddress ? ['privateExecutionAddress'] : []),
+      ...(hasAccountDerivationPath ? ['accountDerivationPath'] : [])
+    ],
     'Account network'
   )
   if (typeof network.chainId !== 'string' || !Array.isArray(network.addresses)) {
@@ -183,6 +192,16 @@ function parseNetwork(value: unknown, chains: AddressGatedChainRegistry): Accoun
     throw new Error('Invalid Account network Address count')
   }
   const chain = chains.resolve(network.chainId)
+  if (
+    hasAccountDerivationPath &&
+    (chain.family !== 'zcash' ||
+      getZcashAccountIndexFromPath(
+        chain.network.kind === 'mainnet' ? 'mainnet' : 'testnet',
+        network.accountDerivationPath
+      ) === null)
+  ) {
+    throw new Error('Invalid Zcash account derivation path')
+  }
   const addresses = network.addresses.map(address => parseAddress(address, chain))
   if (new Set(addresses.map(address => address.value)).size !== addresses.length) {
     throw new Error('Duplicate Account network Address')
@@ -208,6 +227,9 @@ function parseNetwork(value: unknown, chains: AddressGatedChainRegistry): Accoun
   return Object.freeze({
     chain,
     addresses: Object.freeze(addresses),
+    ...(hasAccountDerivationPath
+      ? { accountDerivationPath: network.accountDerivationPath as string }
+      : {}),
     ...(privateExecutionAddress === undefined ? {} : { privateExecutionAddress })
   })
 }

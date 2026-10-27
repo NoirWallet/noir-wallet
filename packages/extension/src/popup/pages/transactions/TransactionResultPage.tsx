@@ -578,7 +578,7 @@ export function TransactionResultPage() {
           ? { label: 'Resync Zcash', onClick: handleSnapshotRecovery }
           : recoveryAction === 'speed_up'
             ? { label: 'Speed Up', onClick: handleSpeedUp }
-            : { label: 'Try Again', onClick: handleRetry }
+            : { label: 'Retry', onClick: handleRetry, retry: true }
     const pendingDescription =
       resultStep === 'pending'
         ? data.error ||

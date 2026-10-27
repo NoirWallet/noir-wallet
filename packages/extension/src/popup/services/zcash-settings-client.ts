@@ -1,3 +1,5 @@
+import { getResponseErrorMessage } from '@/lib/errors'
+
 function responseRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -18,9 +20,5 @@ export async function resyncZcashWallet(input: {
     })
   )
   if (response?.success === true) return
-  throw new Error(
-    response && typeof response.error === 'string'
-      ? response.error
-      : 'Zcash resync could not be started'
-  )
+  throw new Error(getResponseErrorMessage(response) ?? 'Zcash resync could not be started')
 }

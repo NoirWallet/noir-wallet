@@ -606,6 +606,7 @@ test('removes one account logically and rejects unverified wallet deletion', asy
     }
   )
 
+  // Shared WASM state must be rebuilt without the removed account; scoped history is retained.
   expect(result.logicalRemoval).toMatchObject({
     response: { success: true },
     accounts: [remainingAccountId],
@@ -618,9 +619,9 @@ test('removes one account logically and rejects unverified wallet deletion', asy
     pendingRelayAccounts: [remainingAccountId],
     pendingZcashAccounts: [remainingAccountId],
     credentialRetained: true,
-    snapshot: true,
-    journalCount: 1,
-    journalManifest: true,
+    snapshot: false,
+    journalCount: 0,
+    journalManifest: false,
     remainingTransactions: [{ id: 'remaining-tx' }],
     remainingTransparentCache: { remaining: true }
   })
@@ -655,7 +656,7 @@ test('removes one account logically and rejects unverified wallet deletion', asy
     currentAccountId: remainingAccountId,
     balanceKeys: [remainingAccountKey],
     syncStateKeys: [walletKey],
-    journalCount: 1
+    journalCount: 0
   })
   expect(result.physicalRemoval.finalBitcoinData).toEqual({
     discoveryScans: 1,
@@ -665,10 +666,10 @@ test('removes one account logically and rejects unverified wallet deletion', asy
   })
   expect(result.physicalRemoval.finalEvmHistory).toBe(1)
   expect(result.physicalRemoval.credential).toBeDefined()
-  expect(result.physicalRemoval.snapshot).toBeDefined()
+  expect(result.physicalRemoval.snapshot).toBeUndefined()
   expect(result.physicalRemoval.transactions).toEqual([{ id: 'remaining-tx' }])
   expect(result.physicalRemoval.transparentCache).toEqual({ remaining: true })
-  expect(result.physicalRemoval.manifest).toBeDefined()
+  expect(result.physicalRemoval.manifest).toBeUndefined()
 })
 
 test('full reset removes orphaned wallet storage and retained migration data', async ({

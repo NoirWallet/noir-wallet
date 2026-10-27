@@ -1,6 +1,6 @@
 import type { PortfolioReadModel } from '@/core/portfolio'
 import { isZecToken } from '@/core/services/intents-api'
-import type { RheaSwapToken } from '@/core/services/rhea-swap'
+import type { RheaSwapQuoteRequest, RheaSwapToken } from '@/core/services/rhea-swap'
 import { safeBig } from '@/lib/big'
 import { parseAmount } from '@/lib/format'
 import {
@@ -300,6 +300,7 @@ export function buildLiveSwapQuoteRequest(input: {
   amount: string
   slippageTolerance: number
   confidentiality?: 'basic'
+  request: RheaSwapQuoteRequest
 }> | null {
   if (
     !input.tokenIn ||
@@ -335,6 +336,29 @@ export function buildLiveSwapQuoteRequest(input: {
       ]),
       amount,
       slippageTolerance,
+      request: {
+        fromChain: input.tokenIn.rheaChainId,
+        toChain: input.tokenOut.rheaChainId,
+        tokenIn: {
+          chain: input.tokenIn.rheaChainId,
+          address: input.tokenIn.rheaAddress,
+          symbol: input.tokenIn.symbol,
+          decimals: input.tokenIn.decimals,
+          isNative: input.tokenIn.isNative
+        },
+        tokenOut: {
+          chain: input.tokenOut.rheaChainId,
+          address: input.tokenOut.rheaAddress,
+          symbol: input.tokenOut.symbol,
+          decimals: input.tokenOut.decimals,
+          isNative: input.tokenOut.isNative
+        },
+        amountIn: amount,
+        slippageBps: slippageTolerance,
+        sender: input.refundAddress,
+        recipient: input.recipientAddress,
+        ...(input.confidentiality === undefined ? {} : { confidentiality: input.confidentiality })
+      },
       ...(input.confidentiality === undefined ? {} : { confidentiality: input.confidentiality })
     })
   } catch {

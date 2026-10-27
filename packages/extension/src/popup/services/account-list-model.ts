@@ -3,13 +3,13 @@ import { matchesAccountSearch } from '@/lib/account-search'
 import { safeBig } from '@/lib/big'
 import { formatWalletName, getAccountDisplayName } from '@/lib/format'
 import { buildAccountKey } from '@/store/account-data-store'
-import type { AddressType, WalletItem, ZcashBalance } from '@/types'
-import type { AccountNetworksCatalogView } from './account-networks-client'
+import type { WalletItem, ZcashBalance } from '@/types'
+import type { AccountNetworksCatalogView, AccountNetworksView } from './account-networks-client'
 
 export interface AccountListItem {
   readonly id: string
   readonly name: string
-  readonly addresses: readonly Readonly<{ type: AddressType; address: string }>[]
+  readonly addresses: readonly Readonly<{ address: string }>[]
   readonly isPinned: boolean
   readonly isHidden: boolean
   readonly walletId: string
@@ -18,6 +18,25 @@ export interface AccountListItem {
 
 export function accountListKey(walletId: string, accountId: string): string {
   return `${walletId}:${accountId}`
+}
+
+function catalogAddresses(account: AccountNetworksView | undefined): readonly string[] {
+  return (
+    account?.networks.flatMap(network => [
+      ...network.addresses.map(address => address.value),
+      ...(network.privateExecutionAddress ? [network.privateExecutionAddress] : [])
+    ]) ?? []
+  )
+}
+
+function uniqueSearchAddresses(addresses: readonly string[]): AccountListItem['addresses'] {
+  const seen = new Set<string>()
+  return addresses.flatMap(address => {
+    const key = address.toLowerCase()
+    if (!key || seen.has(key)) return []
+    seen.add(key)
+    return [{ address }]
+  })
 }
 
 export function resolveAccountPortfolioValue(
@@ -52,14 +71,23 @@ export function buildVisibleAccountList(input: {
   hiddenAccounts: readonly AccountListItem[]
   nativeAccounts: AccountNetworksCatalogView['accounts']
 }> {
+  const catalogByAccount = new Map(
+    input.nativeAccounts.map(account => [
+      accountListKey(account.walletId, account.accountId),
+      account
+    ])
+  )
   const accounts: AccountListItem[] = input.wallets.flatMap(wallet =>
     wallet.accounts.map(account => ({
       id: account.id,
       name: getAccountDisplayName(wallet.id, account.id, account.name, input.accountDisplayNames),
-      addresses: Object.freeze([
-        { type: 'shielded' as const, address: account.addresses.shielded },
-        { type: 'transparent' as const, address: account.addresses.transparent }
-      ]),
+      addresses: Object.freeze(
+        uniqueSearchAddresses([
+          account.addresses.shielded,
+          account.addresses.transparent,
+          ...catalogAddresses(catalogByAccount.get(accountListKey(wallet.id, account.id)))
+        ])
+      ),
       isPinned: account.isPinned || false,
       isHidden: account.isHidden || false,
       walletId: wallet.id,
@@ -84,7 +112,8 @@ export function buildVisibleAccountList(input: {
       !query ||
       account.accountDisplayName.toLowerCase().includes(query) ||
       account.walletDisplayName.toLowerCase().includes(query) ||
-      account.networks.some(network => network.chain.displayName.toLowerCase().includes(query))
+      account.networks.some(network => network.chain.displayName.toLowerCase().includes(query)) ||
+      catalogAddresses(account).some(address => address.toLowerCase().includes(query))
     )
   })
   return Object.freeze({

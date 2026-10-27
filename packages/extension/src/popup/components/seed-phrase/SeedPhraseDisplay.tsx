@@ -12,6 +12,7 @@ export function SeedPhraseDisplay({ words, blurred, onReveal, onCopy }: SeedPhra
   return (
     <div className="relative group">
       <div
+        aria-hidden={blurred ? true : undefined}
         className={`grid grid-cols-3 gap-3 p-4 bg-black/40 rounded-xl border border-white/10 transition-all duration-300 ${
           blurred ? 'blur-md select-none' : ''
         }`}
@@ -20,7 +21,7 @@ export function SeedPhraseDisplay({ words, blurred, onReveal, onCopy }: SeedPhra
           <div key={index} className="relative flex items-center">
             <span className="absolute left-3 text-xs text-muted select-none">{index + 1}.</span>
             <div className="w-full py-2.5 pl-8 pr-2 bg-card rounded-lg text-sm font-medium text-center border border-transparent">
-              {word}
+              {blurred ? '------' : word}
             </div>
           </div>
         ))}

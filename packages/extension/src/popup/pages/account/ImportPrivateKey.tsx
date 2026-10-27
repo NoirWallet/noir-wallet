@@ -1,4 +1,5 @@
 import { ANALYTICS_EVENTS, sendAnalyticsEvent } from '@/lib/analytics'
+import { getResponseErrorMessage } from '@/lib/errors'
 import { useEffect, useMemo, useState } from 'react'
 import { Icon } from '@iconify/react'
 import { PageHeader } from '../../components/common/PageHeader'
@@ -106,14 +107,7 @@ export function ImportPrivateKey() {
         Array.isArray(response) ||
         (response as { success?: unknown }).success !== true
       ) {
-        throw new Error(
-          typeof response === 'object' &&
-            response !== null &&
-            !Array.isArray(response) &&
-            typeof (response as { error?: unknown }).error === 'string'
-            ? (response as { error: string }).error
-            : 'Private-key preview failed'
-        )
+        throw new Error(getResponseErrorMessage(response) ?? 'Private-key preview failed')
       }
       const nextPreview = parsePrivateKeyPreview((response as { result?: unknown }).result)
       if (nextPreview.chainFamily !== chainFamily) {
@@ -144,14 +138,7 @@ export function ImportPrivateKey() {
         Array.isArray(response) ||
         (response as { success?: unknown }).success !== true
       ) {
-        throw new Error(
-          typeof response === 'object' &&
-            response !== null &&
-            !Array.isArray(response) &&
-            typeof (response as { error?: unknown }).error === 'string'
-            ? (response as { error: string }).error
-            : 'Private-key Wallet import failed'
-        )
+        throw new Error(getResponseErrorMessage(response) ?? 'Private-key Wallet import failed')
       }
       sendAnalyticsEvent(ANALYTICS_EVENTS.WALLET_CREATED, {
         chain:

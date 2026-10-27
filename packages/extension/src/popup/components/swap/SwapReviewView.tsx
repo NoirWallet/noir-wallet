@@ -11,6 +11,7 @@ import { NetworkFeeTierPicker } from '../transaction/NetworkFeeTierPicker'
 import { TokenIcon } from '../tokens/TokenIcon'
 import { ChainIcon } from '../common/ChainIcon'
 import { AmountDisplay } from '../common/AmountDisplay'
+import { InlineError } from '../common/InlineError'
 import { AddressTypeLabel } from '../account/AddressType'
 import type { FundingSource } from '@/types/wallet'
 
@@ -19,6 +20,7 @@ interface SwapReviewViewProps {
   tokenOut: SwapToken
   amountIn: string
   amountOut: string
+  recipient: string
   fromFiat: string
   toFiat: string
   slippage: number
@@ -27,6 +29,8 @@ interface SwapReviewViewProps {
   priceImpact: number
   arrivalEstimate?: string
   isLoading?: boolean
+  preparationError?: string | null
+  onRetryPreparation?: () => void
   /** Selected fee tier (read-only display on review). */
   feeTier?: FeeTier
   onFeeTierChange?: (tier: FeeTier) => void
@@ -45,7 +49,7 @@ interface SwapReviewViewProps {
     readonly sender: string
     readonly depositAddress: string | null
   } | null
-  destinationDetails?: { readonly network: string; readonly recipient: string }
+  destinationDetails?: { readonly network: string }
   approvalDetails?: {
     readonly spender: string
     readonly amount: string
@@ -63,6 +67,7 @@ export function SwapReviewView({
   tokenOut,
   amountIn,
   amountOut,
+  recipient,
   minAmountOut,
   priceImpact,
   arrivalEstimate,
@@ -71,6 +76,8 @@ export function SwapReviewView({
   slippage,
   onConfirm,
   isLoading,
+  preparationError,
+  onRetryPreparation,
   feeTier,
   onFeeTierChange,
   feeByTier,
@@ -117,16 +124,11 @@ export function SwapReviewView({
         </div>
 
         <div className="mt-4 space-y-3 rounded-xl bg-card/60 p-4">
-          {destinationDetails && (
-            <DetailItem label="Recipient">
-              <span
-                className="block break-all font-mono text-[11px]"
-                title={destinationDetails.recipient}
-              >
-                {destinationDetails.recipient}
-              </span>
-            </DetailItem>
-          )}
+          <DetailItem label="Recipient">
+            <span className="block break-all font-mono text-[11px]" title={recipient}>
+              {recipient}
+            </span>
+          </DetailItem>
           <DetailItem label="Price Impact">
             <span className={priceImpact > 5 ? 'text-red-500' : 'text-foreground'}>
               {priceImpact < 0.01 ? '< 0.01' : priceImpact.toFixed(2)}%
@@ -225,6 +227,14 @@ export function SwapReviewView({
           )}
         </div>
 
+        {preparationError && (
+          <InlineError
+            message={preparationError}
+            onRetry={onRetryPreparation}
+            retrying={isLoading}
+            className="mt-3 px-1"
+          />
+        )}
         {insufficient && (
           <p className="text-warning text-xs mt-3 px-1">
             Amount exceeds balance at this fee. Go back to lower the amount or switch fee tier.
@@ -235,7 +245,7 @@ export function SwapReviewView({
       <div className="page-footer">
         <Button
           onClick={onConfirm}
-          disabled={isLoading || insufficient}
+          disabled={isLoading || insufficient || Boolean(preparationError)}
           isLoading={isLoading}
           className="h-[45px] w-full"
         >

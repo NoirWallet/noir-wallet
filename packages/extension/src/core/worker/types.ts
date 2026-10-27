@@ -31,6 +31,11 @@ export type {
 /**
  * All wallet.* RPCs require walletId to route to the correct WebWallet instance.
  */
+export interface ZcashTransactionContext {
+  accountKey: string
+  transactionId: string
+}
+
 interface WalletRouted {
   walletId: string
 }
@@ -82,6 +87,7 @@ export type WasmUnifiedAddresses = {
   transparent?: string | null
   unified: string
   full_unified?: string
+  address_index?: number | null
 }
 
 export interface RPCSchema {
@@ -353,7 +359,6 @@ export interface RPCSchema {
   // Transactions (unified software-wallet flow)
   'transaction.send': {
     request: WalletRouted & {
-      accountId: number
       accountIndex: number
       seedPhrase?: string
       to: string
@@ -369,7 +374,6 @@ export interface RPCSchema {
 
   'transaction.oneclick_shield': {
     request: WalletRouted & {
-      accountId: number
       accountIndex: number
       seedPhrase?: string
       marginalFeeZats?: number
@@ -380,7 +384,9 @@ export interface RPCSchema {
   // Fee estimation (read-only PCZT simulation, no signing key required)
   'transaction.estimateFee': {
     request: WalletRouted & {
-      accountId: number
+      accountId?: number
+      /** Explicit HD account binding for approval requests. */
+      accountIndex?: number
       to: string
       value: string // zatoshis
       memo?: string
@@ -405,7 +411,9 @@ export interface RPCSchema {
 
   'transaction.estimateShieldFee': {
     request: WalletRouted & {
-      accountId: number
+      accountId?: number
+      /** Explicit HD account binding for approval requests. */
+      accountIndex?: number
       marginalFeeZats: number
     }
     response: string // fee in zatoshis

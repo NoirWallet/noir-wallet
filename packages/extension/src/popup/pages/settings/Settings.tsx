@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Icon } from '@iconify/react'
 import { PageHeader } from '../../components/common/PageHeader'
+import { InlineError } from '../../components/common/InlineError'
 import { useNavigate } from '../../provider/Router'
 import { Button } from '../../components/ui/button'
 import { zcashWalletRuntimeClient } from '@/popup/services/zcash-wallet-runtime-client'
@@ -12,6 +13,7 @@ import {
   readStoredExtensionDisplayMode
 } from '@/lib/extension-display-mode'
 import { useActiveAccountNetworks } from '@/popup/hooks/useActiveAccountNetworks'
+import { SocialLinks } from '@/popup/components/common/SocialLinks'
 
 interface SidePanelOpenApi {
   open(options: { windowId: number }): Promise<void>
@@ -38,6 +40,9 @@ export function Settings() {
   const loadSidePanelMode = useSettingsStore(state => state.loadSidePanelMode)
   const [isChangingDisplayMode, setIsChangingDisplayMode] = useState(false)
   const [displayModeError, setDisplayModeError] = useState<string | null>(null)
+  const [initializationError, setInitializationError] = useState<string | null>(null)
+  const [initializationRetry, setInitializationRetry] = useState(0)
+  const [isInitializingDisplayMode, setIsInitializingDisplayMode] = useState(true)
   const [currentWindowId, setCurrentWindowId] = useState<number | null>(null)
 
   useEffect(() => {
@@ -55,6 +60,8 @@ export function Settings() {
     }
 
     const initializeDisplayMode = async () => {
+      setInitializationError(null)
+      setIsInitializingDisplayMode(true)
       await loadSidePanelMode()
       if (isSidePanelSurface) return
 
@@ -70,15 +77,19 @@ export function Settings() {
       if (!disposed) setCurrentWindowId(currentWindow.id)
     }
 
-    initializeDisplayMode().catch(error => {
-      if (!disposed) setDisplayModeError(getErrorMessage(error))
-    })
+    initializeDisplayMode()
+      .catch(error => {
+        if (!disposed) setInitializationError(getErrorMessage(error))
+      })
+      .finally(() => {
+        if (!disposed) setIsInitializingDisplayMode(false)
+      })
     chrome.storage.onChanged.addListener(handleStorageChanged)
     return () => {
       disposed = true
       chrome.storage.onChanged.removeListener(handleStorageChanged)
     }
-  }, [isSidePanelSurface, loadSidePanelMode, syncSidePanelMode])
+  }, [initializationRetry, isSidePanelSurface, loadSidePanelMode, syncSidePanelMode])
 
   const menuItems = [
     { label: 'General', action: () => navigate('/general') },
@@ -148,6 +159,7 @@ export function Settings() {
           aria-label="Side panel mode"
           disabled={
             isChangingDisplayMode ||
+            isInitializingDisplayMode ||
             !isSidePanelModeLoaded ||
             (!sidePanelMode && !isSidePanelSurface && currentWindowId === null)
           }
@@ -168,6 +180,17 @@ export function Settings() {
             <Switch checked={sidePanelMode} />
           </div>
         </button>
+        {initializationError && (
+          <InlineError
+            message={initializationError}
+            onRetry={
+              isSidePanelSurface || getSidePanelOpenApi()
+                ? () => setInitializationRetry(value => value + 1)
+                : undefined
+            }
+            retrying={isInitializingDisplayMode}
+          />
+        )}
         {displayModeError && (
           <p role="alert" className="px-1 text-xs text-danger">
             {displayModeError}
@@ -188,7 +211,8 @@ export function Settings() {
         ))}
       </div>
 
-      <div className="page-footer">
+      <div className="page-footer space-y-3">
+        <SocialLinks />
         <Button onClick={handleLock} variant="outline" className="w-full h-[45px]">
           <Icon icon="lucide:lock" width={16} height={16} className="mr-2" />
           Lock Wallet

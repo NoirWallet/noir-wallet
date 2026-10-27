@@ -15,7 +15,14 @@
  * - No manual initialize() call required by the consumer
  */
 
-import type { RPCSchema, RPCRequest, RPCResponse, RPCMethod, JournalReplayOptions } from './types'
+import type {
+  RPCSchema,
+  RPCRequest,
+  RPCResponse,
+  RPCMethod,
+  JournalReplayOptions,
+  ZcashTransactionContext
+} from './types'
 import type { Network } from '@/types'
 import { DEFAULT_NETWORK, getNetworkConfig } from '@/lib/runtime-network'
 import { DedupPromise, ReadyFlag, TimeoutError } from '@/lib/async-utils'
@@ -33,8 +40,24 @@ let worker: Worker | null = null
 let messageId = 0
 const pendingRequests = new Map<
   string,
-  { resolve: (val: any) => void; reject: (err: Error) => void }
+  {
+    resolve: (val: any) => void
+    reject: (err: Error) => void
+    timedOut?: boolean
+    onLateResult?: (response: RPCResponse<RPCMethod>) => void
+  }
 >()
+
+export interface LateTransactionResult {
+  method: 'transaction.send' | 'transaction.oneclick_shield'
+  walletId: string
+  transactionContext?: ZcashTransactionContext
+  response: RPCResponse<RPCMethod>
+}
+
+function isTransactionMutation(method: string): method is LateTransactionResult['method'] {
+  return method === 'transaction.send' || method === 'transaction.oneclick_shield'
+}
 
 // Detect environment: Extension contexts only
 function detectEnvironment(): 'extension' | 'offscreen' {
@@ -210,7 +233,8 @@ type OffscreenRpcResponse = {
 function sendOffscreenRpcOnce(
   method: string,
   payload: any,
-  timeout: number
+  timeout: number,
+  transactionContext?: ZcashTransactionContext
 ): Promise<OffscreenRpcResponse> {
   return new Promise((resolve, reject) => {
     const timeoutId = setTimeout(() => {
@@ -219,16 +243,19 @@ function sendOffscreenRpcOnce(
     }, timeout)
 
     const type = typeof document === 'undefined' ? 'KEYRING_WORKER_RPC' : 'WORKER_RPC'
-    chrome.runtime.sendMessage({ type, method, payload }, response => {
-      clearTimeout(timeoutId)
+    chrome.runtime.sendMessage(
+      { type, method, payload, ...(transactionContext ? { transactionContext } : {}) },
+      response => {
+        clearTimeout(timeoutId)
 
-      if (chrome.runtime.lastError) {
-        reject(new Error(chrome.runtime.lastError.message))
-        return
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message))
+          return
+        }
+
+        resolve((response ?? {}) as OffscreenRpcResponse)
       }
-
-      resolve((response ?? {}) as OffscreenRpcResponse)
-    })
+    )
   })
 }
 
@@ -263,7 +290,11 @@ async function maybeReloadWalletBeforeRetry(payload: {
 }
 
 // Forward RPC to Offscreen Document (Extension only)
-async function forwardToOffscreen<T = any>(method: string, payload: any): Promise<T> {
+async function forwardToOffscreen<T = any>(
+  method: string,
+  payload: any,
+  transactionContext?: ZcashTransactionContext
+): Promise<T> {
   // Check Offscreen API availability
   if (!chrome.offscreen || !chrome.offscreen.hasDocument || !chrome.offscreen.createDocument) {
     throw new Error(
@@ -321,7 +352,7 @@ async function forwardToOffscreen<T = any>(method: string, payload: any): Promis
   const retryDelays = WALLET_CONFIG.SYNC.OFFSCREEN_RPC_RETRY_DELAYS_MS
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    const response = await sendOffscreenRpcOnce(method, payload, timeout)
+    const response = await sendOffscreenRpcOnce(method, payload, timeout, transactionContext)
 
     if (response.error) {
       const canRetry =
@@ -367,6 +398,8 @@ export async function applyZeroIndexerOptionsToActiveWorker(
 }
 
 export class ZcashWorkerClient {
+  onLateTransactionResult?: (event: LateTransactionResult) => void | Promise<void>
+
   // WASM initialization state
   private initDedup = new DedupPromise<boolean | 'empty'>()
   private isInitialized = false
@@ -435,6 +468,10 @@ export class ZcashWorkerClient {
 
       if (pending) {
         pendingRequests.delete(id)
+        if (pending.timedOut) {
+          pending.onLateResult?.(event.data)
+          return
+        }
         if (error) {
           pending.reject(
             decodeWorkerRpcError(event.data as OffscreenRpcResponse & { error: string })
@@ -594,15 +631,16 @@ export class ZcashWorkerClient {
    */
   private async request<M extends RPCMethod>(
     method: M,
-    payload: RPCSchema[M]['request']
+    payload: RPCSchema[M]['request'],
+    transactionContext?: ZcashTransactionContext
   ): Promise<RPCSchema[M]['response']> {
     // Extension environment (Background/Popup/Windows): forward to Offscreen
     if (this.environment === 'extension') {
-      return forwardToOffscreen(method, payload)
+      return forwardToOffscreen(method, payload, transactionContext)
     }
 
     // Offscreen or Web environment: use local Worker
-    return this.requestToWorker(method, payload)
+    return this.requestToWorker(method, payload, transactionContext)
   }
 
   /**
@@ -611,7 +649,8 @@ export class ZcashWorkerClient {
    */
   async requestToWorker<M extends RPCMethod>(
     method: M,
-    payload: RPCSchema[M]['request']
+    payload: RPCSchema[M]['request'],
+    transactionContext?: ZcashTransactionContext
   ): Promise<RPCSchema[M]['response']> {
     if (method === 'init') {
       const initPayload = payload as RPCSchema['init']['request']
@@ -626,15 +665,41 @@ export class ZcashWorkerClient {
 
     const id = (messageId++).toString()
     const timeout = getRpcTimeout(method)
+    const transactionWalletId = isTransactionMutation(method)
+      ? (payload as { walletId?: unknown }).walletId
+      : undefined
+    const onLateResult =
+      isTransactionMutation(method) && typeof transactionWalletId === 'string'
+        ? (response: RPCResponse<RPCMethod>) => {
+            void Promise.resolve()
+              .then(() =>
+                this.onLateTransactionResult?.({
+                  method,
+                  walletId: transactionWalletId,
+                  transactionContext,
+                  response
+                })
+              )
+              .catch(() => {
+                console.warn('[ZcashWorkerClient] Late transaction result handling failed')
+              })
+          }
+        : undefined
 
     return new Promise((resolve, reject) => {
       const timeoutId = setTimeout(() => {
-        pendingRequests.delete(id)
+        const pending = pendingRequests.get(id)
+        if (pending?.onLateResult) {
+          pending.timedOut = true
+        } else {
+          pendingRequests.delete(id)
+        }
         this.recoverWorkerAfterRpcTimeout(method, payload as { walletId?: string })
         reject(new TimeoutError(`Worker RPC timeout: ${method}`))
       }, timeout)
 
       pendingRequests.set(id, {
+        onLateResult,
         resolve: val => {
           clearTimeout(timeoutId)
           resolve(val)
@@ -681,11 +746,12 @@ export class ZcashWorkerClient {
     return this.request('mnemonic.toAddresses', { phrase, accountIndex, network })
   }
 
-  async reset(): Promise<void> {
-    if (this.isInitialized) {
+  async reset(options?: { force?: boolean; strict?: boolean }): Promise<void> {
+    if (this.isInitialized || options?.force) {
       try {
         await this.request('wallet.reset', { walletId: this.walletId })
       } catch (e) {
+        if (options?.strict) throw e
         console.warn('Reset RPC failed', e)
       }
     }
@@ -980,11 +1046,12 @@ export class ZcashWorkerClient {
   }
 
   async sendTransaction(
-    params: Omit<RPCSchema['transaction.send']['request'], 'walletId'>
+    params: Omit<RPCSchema['transaction.send']['request'], 'walletId'>,
+    transactionContext?: ZcashTransactionContext
   ): Promise<RPCSchema['transaction.send']['response']> {
     await this.ensureInitialized()
     await this.ensureAccountReady()
-    return this.request('transaction.send', { ...params, walletId: this.wid() })
+    return this.request('transaction.send', { ...params, walletId: this.wid() }, transactionContext)
   }
 
   // --- Hardware wallet (watch-only UFVK + external PCZT signing) ---
@@ -1075,11 +1142,16 @@ export class ZcashWorkerClient {
   }
 
   async oneClickShield(
-    params: Omit<RPCSchema['transaction.oneclick_shield']['request'], 'walletId'>
+    params: Omit<RPCSchema['transaction.oneclick_shield']['request'], 'walletId'>,
+    transactionContext?: ZcashTransactionContext
   ): Promise<string> {
     await this.ensureInitialized()
     await this.ensureAccountReady()
-    return this.request('transaction.oneclick_shield', { ...params, walletId: this.wid() })
+    return this.request(
+      'transaction.oneclick_shield',
+      { ...params, walletId: this.wid() },
+      transactionContext
+    )
   }
 
   async signMessage(

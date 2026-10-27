@@ -7,7 +7,7 @@ import {
 } from '@/popup/services/account-networks-client'
 import { useAddressBookStore } from '@/store/address-book-store'
 import { useWalletStore } from '@/store/wallet-store'
-import { Button } from '../ui/button'
+import { InlineError } from '../common/InlineError'
 import { ListSkeleton } from '../ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../ui/tabs'
 import { ExecutionAccountBadge } from '../account/ExecutionAccountSelector'
@@ -124,12 +124,11 @@ export function RecipientSelector({
         {loading ? (
           <ListSkeleton rows={3} label="Loading wallet accounts" className="px-1 py-1" card />
         ) : error ? (
-          <div className="flex flex-col items-center py-7 text-center">
-            <p className="text-sm font-medium">Unable to load accounts</p>
-            <Button variant="secondary" size="sm" className="mt-3" onClick={loadAccounts}>
-              Retry
-            </Button>
-          </div>
+          <InlineError
+            className="px-1 py-7"
+            message="Unable to load accounts"
+            onRetry={loadAccounts}
+          />
         ) : accountGroups.length === 0 ? (
           <EmptyState
             icon="lucide:wallet"

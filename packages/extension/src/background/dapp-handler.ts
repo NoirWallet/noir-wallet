@@ -20,6 +20,8 @@ import { closeAllPopupWindows } from './window-manager'
 import { useWalletStore, rehydrateWalletStore } from '@/store/wallet-store'
 import { useAccountDataStore, buildAccountKey } from '@/store/account-data-store'
 import { EVM_GAS_FUNDING_APPROVAL_TIMEOUT_MS, pendingRequestsManager } from './pending-requests'
+import { getApprovalContext } from './approval-context'
+import { signApprovedDAppMessage } from './dapp-message-signing'
 import { sleep } from '@/lib/utils'
 import { logger } from '@/lib/logger'
 import { ANALYTICS_EVENTS, PAGE_IDS, trackEvent } from '@/background/analytics/reporter'
@@ -183,6 +185,7 @@ export class DAppHandler {
    */
   clearPermissions(): void {
     this.permissions.clear()
+    pendingRequestsManager.cancelAll()
   }
 
   async removeAccountReferences(walletId: string, accountId?: string): Promise<void> {
@@ -319,16 +322,14 @@ export class DAppHandler {
       return null
     }
 
-    if (shouldAutoConnectDApp(origin)) {
+    if (shouldAutoConnectDApp(origin) && (await dappManager.canAutoConnect(origin))) {
       const accounts = await this.authorizeAllWalletAccounts(origin)
       const account = backgroundZcashWalletRuntime.getCurrentAccount()
       if (!account) return null
-      return {
-        transparent: account.addresses.transparent,
-        shielded: account.addresses.shielded,
-        accounts
-      }
+      return this.authorizedAccountResponse(origin, account, accounts)
     }
+
+    if (await dappManager.isRevoked(origin)) return null
 
     if (this.permissions.has(origin)) {
       if (await this.isCurrentAccountUnauthorized(origin)) {
@@ -337,11 +338,7 @@ export class DAppHandler {
       }
       const account = await backgroundZcashWalletRuntime.getCurrentAccount()
       if (account) {
-        return {
-          transparent: account.addresses.transparent,
-          shielded: account.addresses.shielded,
-          accounts: await this.resolveAccounts(origin)
-        }
+        return this.authorizedAccountResponse(origin, account, await this.resolveAccounts(origin))
       }
     }
 
@@ -364,16 +361,40 @@ export class DAppHandler {
 
       const account = await backgroundZcashWalletRuntime.getCurrentAccount()
       if (account) {
-        this.setPermissionForAccount(origin, account)
-        return {
-          transparent: account.addresses.transparent,
-          shielded: account.addresses.shielded,
-          accounts: await this.resolveAccounts(origin)
-        }
+        return this.authorizedAccountResponse(origin, account, await this.resolveAccounts(origin))
       }
     }
 
     return null
+  }
+
+  private async authorizedAccountResponse(
+    origin: string,
+    account: AccountData,
+    accounts: BatchAccount[]
+  ): Promise<{ transparent: string; shielded: string; accounts: BatchAccount[] } | null> {
+    const authorization = await dappManager.getAuthorization(origin)
+    const { currentWalletId, currentAccountId } = useWalletStore.getState()
+    if (
+      backgroundZcashWalletRuntime.isLocked() ||
+      currentAccountId !== account.id ||
+      !authorization.accounts.some(
+        ref => ref.walletId === currentWalletId && ref.accountId === account.id
+      )
+    ) {
+      this.permissions.delete(origin)
+      return null
+    }
+    this.setPermissionForAccount(origin, account)
+    return {
+      transparent: account.addresses.transparent,
+      shielded: account.addresses.shielded,
+      accounts: accounts.filter(candidate =>
+        authorization.accounts.some(
+          ref => ref.walletId === candidate.walletId && ref.accountId === candidate.accountId
+        )
+      )
+    }
   }
 
   private async requestAccounts(
@@ -385,15 +406,16 @@ export class DAppHandler {
     } = {}
   ): Promise<{ transparent: string; shielded: string; accounts: BatchAccount[] }> {
     const isConnected = await dappManager.isConnected(origin)
+    const authorizationRevision = await dappManager.getAuthorizationRevision(origin)
 
     let chosen: BatchAccount[]
-    if (shouldAutoConnectDApp(origin)) {
+    if (shouldAutoConnectDApp(origin) && (await dappManager.canAutoConnect(origin))) {
       chosen = await this.authorizeAllWalletAccounts(origin)
     } else {
       // Always show the approval window so the user can review / add accounts,
       // even when the dApp is already authorized (MetaMask-style).
       chosen = await this.runConnectApproval(origin, tabInfo)
-      await this.applyConnectApproval(origin, chosen, tabInfo)
+      await this.applyConnectApproval(origin, chosen, tabInfo, authorizationRevision)
     }
 
     if (!isConnected) {
@@ -407,8 +429,6 @@ export class DAppHandler {
     if (!account) {
       throw new Error('No account available')
     }
-
-    this.setPermissionForAccount(origin, account)
 
     await dappManager.updateLastActive(origin)
 
@@ -424,10 +444,18 @@ export class DAppHandler {
       syncScheduler.onRequestSync()
     }
 
+    const accounts = await this.resolveAccounts(origin)
+    await this.assertApprovedAccountAuthorized(
+      origin,
+      currentWalletId || '',
+      account.id,
+      authorizationRevision
+    )
+    this.setPermissionForAccount(origin, account)
     return {
       transparent: account.addresses.transparent,
       shielded: account.addresses.shielded,
-      accounts: await this.resolveAccounts(origin)
+      accounts
     }
   }
 
@@ -577,6 +605,10 @@ export class DAppHandler {
       throw new Error('Wallet is locked')
     }
 
+    if (!(await dappManager.canAutoConnect(origin))) {
+      throw new Error('Not authorized. Call zcash_requestAccounts first.')
+    }
+    const authorizationRevision = await dappManager.getAuthorizationRevision(origin)
     await rehydrateWalletStore()
     const accounts = this.buildAllWalletAccounts()
     if (accounts.length === 0) {
@@ -599,7 +631,7 @@ export class DAppHandler {
         accounts.find(
           account => account.walletId === currentWalletId && account.accountId === current?.id
         ) ?? accounts[0]
-      await this.persistAuthorized(origin, accounts, binding, {})
+      await this.persistAuthorized(origin, accounts, binding, {}, { automatic: true })
     }
 
     const { currentWalletId } = useWalletStore.getState()
@@ -618,6 +650,12 @@ export class DAppHandler {
       })
     }
 
+    await this.assertApprovedAccountAuthorized(
+      origin,
+      currentWalletId,
+      current.id,
+      authorizationRevision
+    )
     this.setPermissionForAccount(origin, current)
     return accounts
   }
@@ -807,13 +845,15 @@ export class DAppHandler {
     origin: string,
     chosen: BatchAccount[],
     binding: BatchAccount,
-    tabInfo: { readonly title?: string; readonly favIconUrl?: string; readonly pageUrl?: string }
+    tabInfo: { readonly title?: string; readonly favIconUrl?: string; readonly pageUrl?: string },
+    authorization?: { readonly automatic?: boolean; readonly expectedRevision?: number }
   ): Promise<void> {
     await dappManager.setAuthorizedAccounts(
       origin,
       tabInfo,
       chosen.map(a => ({ walletId: a.walletId, accountId: a.accountId })),
-      { walletId: binding.walletId, accountId: binding.accountId }
+      { walletId: binding.walletId, accountId: binding.accountId },
+      authorization
     )
   }
 
@@ -826,14 +866,15 @@ export class DAppHandler {
   private async applyConnectApproval(
     origin: string,
     chosen: BatchAccount[],
-    tabInfo: { readonly title?: string; readonly favIconUrl?: string; readonly pageUrl?: string }
+    tabInfo: { readonly title?: string; readonly favIconUrl?: string; readonly pageUrl?: string },
+    expectedRevision: number
   ): Promise<void> {
     const { currentWalletId } = useWalletStore.getState()
     const current = backgroundZcashWalletRuntime.getCurrentAccount()
     const target =
       chosen.find(a => a.walletId === currentWalletId && a.accountId === current?.id) ?? chosen[0]
 
-    await this.persistAuthorized(origin, chosen, target, tabInfo)
+    await this.persistAuthorized(origin, chosen, target, tabInfo, { expectedRevision })
 
     if (target.walletId !== currentWalletId || target.accountId !== current?.id) {
       await this.switchActiveAccount(target.walletId, target.accountId)
@@ -1019,11 +1060,18 @@ export class DAppHandler {
     const { fundingSource } = params
     await this.ensurePermission(origin)
 
-    const { requestId, approved, walletId, accountId, marginalFeeZats, feeZats } =
-      await this.requestUserApprovalWithId(origin, 'sendTransaction', {
-        ...params,
-        ...dappApprovalMetadata(tabInfo)
-      })
+    const {
+      requestId,
+      approved,
+      walletId,
+      accountId,
+      authorizationRevision,
+      marginalFeeZats,
+      feeZats
+    } = await this.requestUserApprovalWithId(origin, 'sendTransaction', {
+      ...params,
+      ...dappApprovalMetadata(tabInfo)
+    })
 
     if (!approved) {
       trackEvent(ANALYTICS_EVENTS.DAPP_REQUEST_REJECTED, {
@@ -1040,7 +1088,7 @@ export class DAppHandler {
       throw new Error('Transparent funding is not supported by Keystone hardware wallets.')
     }
     if (isZcashHardwareKeySource(wallet?.keySource)) {
-      await this.ensureApprovedAccountContext(origin, walletId, accountId)
+      await this.ensureApprovedAccountContext(origin, walletId, accountId, authorizationRevision)
       return this.sendTransactionViaHardware(
         origin,
         params,
@@ -1053,13 +1101,15 @@ export class DAppHandler {
     }
 
     return accountContextTransition.runActiveOperation(async () => {
-      await this.ensureApprovedAccountContext(origin, walletId, accountId)
+      await this.ensureApprovedAccountContext(origin, walletId, accountId, authorizationRevision)
       const txParams: SendTransactionParams = { ...params, fundingSource, marginalFeeZats }
 
       const network = useWalletStore.getState().currentNetwork
       const accountKey = buildAccountKey(network, walletId, accountId)
 
       const sourceAccount = useWalletStore.getState().getAccount(walletId, accountId)
+      if (!sourceAccount) throw new Error('Wallet account no longer available')
+      const approvedAccountIndex = sourceAccount.derivationIndex
       const fromAddress = sourceAccount?.addresses[fundingSource] || ''
       let txPaused = false
       let transactionId: string | undefined
@@ -1079,7 +1129,7 @@ export class DAppHandler {
 
         const walletCore = await backgroundZcashWalletRuntime.getWalletCore(walletId, accountId)
         if (fundingSource === 'transparent') {
-          await prepareTransparentSpend(walletCore, txParams.amount)
+          await prepareTransparentSpend(walletCore, txParams.amount, approvedAccountIndex)
         }
 
         const fallbackFeeZec = safeBig(WALLET_CONFIG.NETWORK_FEE).times(
@@ -1112,7 +1162,12 @@ export class DAppHandler {
           }
         })
         transactionId = tx.id
-        const transferResult = await walletCore.sendTransaction(txParams)
+        await this.ensureApprovedAccountContext(origin, walletId, accountId, authorizationRevision)
+        const transferResult = await walletCore.sendTransaction(
+          txParams,
+          undefined,
+          approvedAccountIndex
+        )
         const { txHash: hash, txHashes } = requireSuccessfulTransfer(transferResult)
         broadcastHash = hash
         const expiryHeight = await computeExpiryHeight(() =>
@@ -1346,7 +1401,7 @@ export class DAppHandler {
     this.validateSignMessageParam(message)
     await this.ensurePermission(origin)
 
-    const { approved, walletId, accountId } = await this.requestUserApproval(
+    const { approved, walletId, accountId, authorizationRevision } = await this.requestUserApproval(
       origin,
       'signMessage',
       { message, ...dappApprovalMetadata(tabInfo) }
@@ -1361,7 +1416,7 @@ export class DAppHandler {
     }
 
     return accountContextTransition.runActiveOperation(async () => {
-      await this.ensureApprovedAccountContext(origin, walletId, accountId)
+      await this.ensureApprovedAccountContext(origin, walletId, accountId, authorizationRevision)
       const mode: IdentitySigningMode = options?.signingMode ?? 'current'
       const dedupKey = `${walletId}:${accountId}:${message}:${mode}`
       const pending = this.signMessageInFlight.get(dedupKey)
@@ -1371,11 +1426,16 @@ export class DAppHandler {
       }
 
       const walletCore = await backgroundZcashWalletRuntime.getWalletCore(walletId, accountId)
-      const promise = this.resolveSigningResult(
+      await this.ensureApprovedAccountContext(origin, walletId, accountId, authorizationRevision)
+      const approvedAccount = useWalletStore.getState().getAccount(walletId, accountId)
+      if (!approvedAccount) throw new Error('Wallet account no longer available')
+      const approvedAccountIndex = approvedAccount.derivationIndex
+      const promise = signApprovedDAppMessage(
+        walletCore,
+        message,
+        approvedAccountIndex,
         options?.signingMode,
-        () => walletCore.signMessage(message),
-        accountIndex => walletCore.signMessage(message, accountIndex),
-        () => walletCore.signMessage(message, undefined, 0)
+        SIGNING_ACCOUNT_INDEX
       ).finally(() => {
         if (this.signMessageInFlight.get(dedupKey) === promise) {
           this.signMessageInFlight.delete(dedupKey)
@@ -1390,24 +1450,6 @@ export class DAppHandler {
       })
       return result
     })
-  }
-
-  private async resolveSigningResult<T extends { pubkey?: string; address?: string }>(
-    mode: 'derived' | 'current' | 'legacy_index0' | undefined,
-    getCurrent: () => Promise<T>,
-    getDerived: (accountIndex: number) => Promise<T>,
-    getLegacy?: () => Promise<T>
-  ): Promise<T & { signingMode: 'derived' | 'current' | 'legacy_index0'; originAddress?: string }> {
-    if (mode === 'legacy_index0' && getLegacy) {
-      const result = await getLegacy()
-      return { ...result, signingMode: 'legacy_index0' }
-    }
-    if (mode === 'derived') {
-      const [derived, main] = await Promise.all([getDerived(SIGNING_ACCOUNT_INDEX), getCurrent()])
-      return { ...derived, signingMode: 'derived', originAddress: (main as any).address }
-    }
-    const result = await getCurrent()
-    return { ...result, signingMode: 'current' }
   }
 
   private async getAddresses(origin: string): Promise<{ transparent: string; shielded: string }> {
@@ -1435,7 +1477,7 @@ export class DAppHandler {
         ? useAccountDataStore.getState().getBalance(currentNetwork, currentWalletId, account.id)
         : null
 
-    const { requestId, approved, walletId, accountId, marginalFeeZats } =
+    const { requestId, approved, walletId, accountId, authorizationRevision, marginalFeeZats } =
       await this.requestUserApprovalWithId(origin, 'shieldFunds', {
         amount: getShieldableTransparentBalance(balance),
         ...dappApprovalMetadata(tabInfo)
@@ -1450,10 +1492,12 @@ export class DAppHandler {
     }
 
     return accountContextTransition.runActiveOperation(async () => {
-      await this.ensureApprovedAccountContext(origin, walletId, accountId)
+      await this.ensureApprovedAccountContext(origin, walletId, accountId, authorizationRevision)
       let txPaused = false
       const accountKey = buildAccountKey(currentNetwork, walletId, accountId)
       const approvedAccount = useWalletStore.getState().getAccount(walletId, accountId)
+      if (!approvedAccount) throw new Error('Wallet account no longer available')
+      const approvedAccountIndex = approvedAccount.derivationIndex
       let transactionId: string | undefined
       let broadcastHash: string | undefined
       try {
@@ -1470,7 +1514,7 @@ export class DAppHandler {
 
         const walletCore = await backgroundZcashWalletRuntime.getWalletCore(walletId, accountId)
         const latestTransparentBalance = getShieldableTransparentBalance(
-          await prepareTransparentSpend(walletCore)
+          await prepareTransparentSpend(walletCore, undefined, approvedAccountIndex)
         )
         if (!hasEnoughTransparentBalanceToShield(latestTransparentBalance)) {
           throw new Error(MIN_SHIELDING_BALANCE_MESSAGE)
@@ -1496,7 +1540,11 @@ export class DAppHandler {
           }
         })
         transactionId = tx.id
-        const shieldResult = await walletCore.shieldFunds(sanitizeMarginalFeeZats(marginalFeeZats))
+        await this.ensureApprovedAccountContext(origin, walletId, accountId, authorizationRevision)
+        const shieldResult = await walletCore.shieldFunds(
+          sanitizeMarginalFeeZats(marginalFeeZats),
+          approvedAccountIndex
+        )
         const { txid } = shieldResult
         broadcastHash = txid
         const amount = shieldResult.amount ?? latestTransparentBalance
@@ -1731,7 +1779,11 @@ export class DAppHandler {
   }
 
   private async ensurePermission(origin: string): Promise<void> {
-    if (shouldAutoConnectDApp(origin)) {
+    if (await dappManager.isRevoked(origin)) {
+      this.permissions.delete(origin)
+      throw new Error('Not authorized. Call zcash_requestAccounts first.')
+    }
+    if (shouldAutoConnectDApp(origin) && (await dappManager.canAutoConnect(origin))) {
       await this.authorizeAllWalletAccounts(origin)
       return
     }
@@ -1769,9 +1821,11 @@ export class DAppHandler {
   private async ensureApprovedAccountContext(
     origin: string,
     walletId: string,
-    accountId: string
+    accountId: string,
+    authorizationRevision?: number
   ): Promise<void> {
     await this.ensurePermission(origin)
+    await this.assertApprovedAccountAuthorized(origin, walletId, accountId, authorizationRevision)
     const state = useWalletStore.getState()
     const account = backgroundZcashWalletRuntime.getCurrentAccount()
     if (
@@ -1790,13 +1844,41 @@ export class DAppHandler {
     }
   }
 
+  private async assertApprovedAccountAuthorized(
+    origin: string,
+    walletId: string,
+    accountId: string,
+    authorizationRevision?: number
+  ): Promise<void> {
+    const authorization = await dappManager.getAuthorization(origin)
+    if (
+      (authorizationRevision !== undefined && authorization.revision !== authorizationRevision) ||
+      !authorization.accounts.some(
+        account => account.walletId === walletId && account.accountId === accountId
+      )
+    ) {
+      this.permissions.delete(origin)
+      throw new Error('Wallet account or site connection changed. Reconnect and try again.')
+    }
+  }
+
   private async requestUserApproval(
     origin: string,
     action: string,
     data?: any
-  ): Promise<{ approved: boolean; walletId: string; accountId: string }> {
+  ): Promise<{
+    approved: boolean
+    walletId: string
+    accountId: string
+    authorizationRevision: number
+  }> {
     const result = await this.requestUserApprovalWithId(origin, action, data)
-    return { approved: result.approved, walletId: result.walletId, accountId: result.accountId }
+    return {
+      approved: result.approved,
+      walletId: result.walletId,
+      accountId: result.accountId,
+      authorizationRevision: result.authorizationRevision
+    }
   }
 
   async requestExternalApproval(
@@ -1880,6 +1962,7 @@ export class DAppHandler {
     requestId: string
     walletId: string
     accountId: string
+    authorizationRevision: number
     marginalFeeZats?: number
     feeZats?: number
     selectedIds?: string[]
@@ -1888,6 +1971,8 @@ export class DAppHandler {
     const capturedWalletId = useWalletStore.getState().currentWalletId || ''
     const account = backgroundZcashWalletRuntime.getCurrentAccount()
     const capturedAccountId = account?.id || ''
+    const capturedNetwork = useWalletStore.getState().currentNetwork
+    const authorizationRevision = await dappManager.getAuthorizationRevision(origin)
     const executionModeRequestToken =
       capturedWalletId &&
       capturedAccountId &&
@@ -1912,7 +1997,9 @@ export class DAppHandler {
       action,
       data,
       capturedWalletId,
-      capturedAccountId
+      capturedAccountId,
+      capturedNetwork,
+      authorizationRevision
     )
 
     const lastWindow = await chrome.windows.getLastFocused()
@@ -1943,7 +2030,8 @@ export class DAppHandler {
               approved: false,
               requestId,
               walletId: capturedWalletId,
-              accountId: capturedAccountId
+              accountId: capturedAccountId,
+              authorizationRevision
             })
             return
           }
@@ -1980,6 +2068,7 @@ export class DAppHandler {
               requestId,
               walletId: capturedWalletId,
               accountId: capturedAccountId,
+              authorizationRevision,
               marginalFeeZats: extras?.marginalFeeZats,
               feeZats: extras?.feeZats,
               selectedIds: extras?.selectedIds,
@@ -2086,13 +2175,30 @@ export class DAppHandler {
               sendResponse({ error: 'Wait for the network fee update to complete' })
               return false
             }
-            finish(result.success, {
-              marginalFeeZats: result.marginalFeeZats,
-              feeZats: result.feeZats,
-              selectedIds: result.selectedIds ? [...result.selectedIds] : undefined,
-              selectedScopes: result.selectedScopes
-            })
-            sendResponse({ success: true })
+            if (!result.success) {
+              finish(false)
+              sendResponse({ success: true })
+              return false
+            }
+            void getApprovalContext(requestId)
+              .then(() => {
+                if (finished) {
+                  sendResponse({ error: 'Approval request is no longer active' })
+                  return
+                }
+                finish(true, {
+                  marginalFeeZats: result.marginalFeeZats,
+                  feeZats: result.feeZats,
+                  selectedIds: result.selectedIds ? [...result.selectedIds] : undefined,
+                  selectedScopes: result.selectedScopes
+                })
+                sendResponse({ success: true })
+              })
+              .catch(error => {
+                finish(false)
+                sendResponse({ error: error instanceof Error ? error.message : 'Approval expired' })
+              })
+            return true
           }
 
           removeCancellationListener = pendingRequestsManager.onCancel(requestId, () =>

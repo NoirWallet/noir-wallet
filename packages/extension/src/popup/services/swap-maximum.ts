@@ -9,6 +9,7 @@ import {
 } from '@/popup/components/portfolio/portfolio-format'
 import type {
   QuoteDepositExecutionMode,
+  QuoteDepositMaximum,
   QuoteDepositTransferClient,
   WalletOwnedQuoteAsset
 } from './quote-deposit-transfer-client'
@@ -31,6 +32,7 @@ interface SwapMaximumDependencies {
 export interface SwapMaximumAdjustment {
   readonly amount: string
   readonly adjustmentCount: number
+  readonly maximum?: QuoteDepositMaximum
 }
 
 export function resolveSelectedSwapMaximum(input: {
@@ -160,7 +162,8 @@ export async function resolveSwapMaximumAdjustment(
         BigInt(maximum.amountRaw) + (BigInt(maximum.networkFeeRaw) + 3n) / 4n
       if (quotedAmount <= unreservedMaximum) return null
     }
-    return maximumAdjustment(input, maximum.amountRaw, input.adjustmentCount)
+    const adjustment = maximumAdjustment(input, maximum.amountRaw, input.adjustmentCount)
+    return adjustment ? { ...adjustment, maximum } : null
   } catch (error) {
     if (
       evmTransaction &&

@@ -242,6 +242,7 @@ test.describe('Account networks coordinator', () => {
           networks: [
             {
               chainId: zcashChainId,
+              accountDerivationPath: "m/32'/1'/0'",
               addresses: [
                 {
                   value: 'utest1shieldedfixture',
@@ -437,6 +438,7 @@ test.describe('Account networks coordinator', () => {
     expect(catalog.accounts[0].networks).toEqual([
       {
         chainId: zcashChainId,
+        accountDerivationPath: "m/32'/1'/0'",
         addresses: [
           {
             value: 'utest1shieldedfixture',

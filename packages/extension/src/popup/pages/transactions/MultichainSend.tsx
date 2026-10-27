@@ -5,9 +5,9 @@ import type { PortfolioReadModel } from '@/core/portfolio'
 import { findAssetPrice, type AssetPriceReadModel } from '@/core/prices'
 import { formatSortAddress } from '@/lib/format'
 import { resolveChainIconAlias } from '@/lib/chain-icon'
-import { Button } from '@/popup/components/ui/button'
 import { Input } from '@/popup/components/ui/input'
 import { PageHeader } from '@/popup/components/common/PageHeader'
+import { InlineError } from '@/popup/components/common/InlineError'
 import { SendRouteMenu } from '@/popup/components/transaction/SendRouteMenu'
 import { ChainIcon } from '@/popup/components/common/ChainIcon'
 import { TokenIcon } from '@/popup/components/tokens/TokenIcon'
@@ -47,6 +47,7 @@ import { buildAddToPrivateEvmPath, type EvmSendSourceMode } from './evm-send-val
 import { useWalletActionExecutionMode } from '@/popup/hooks/useWalletActionExecutionMode'
 import { resolveEffectiveActiveAccountIdentity } from '@/popup/lib/effective-active-account'
 import { getCrossChainSendAssetGroup } from '@/popup/services/cross-chain-send-assets'
+import { prefetchEvmSendCatalogs } from '@/popup/services/evm-send-catalog'
 
 type SendSubmission =
   | Readonly<{ family: 'evm'; value: EvmTransferSubmission }>
@@ -278,12 +279,11 @@ function AssetSelection({
           </div>
         )}
         {additionalError && (
-          <div className="mt-2 flex items-center justify-between gap-3 rounded-xl border border-warning/20 bg-warning/8 px-3 py-2.5 text-xs text-warning">
-            <span>Additional networks are unavailable.</span>
-            <Button variant="ghost" size="xs" onClick={onRetry}>
-              Retry
-            </Button>
-          </div>
+          <InlineError
+            message="Additional networks are unavailable."
+            onRetry={onRetry}
+            className="mt-2 px-3 py-2.5"
+          />
         )}
       </div>
     </div>
@@ -332,6 +332,18 @@ export function MultichainSend() {
   const setEvmSourceMode = evmActionMode.setMode
   const zcashEnabled =
     storageV2Account?.networks.some(network => network.chain.family === 'zcash') ?? true
+
+  useEffect(() => {
+    let cancelled = false
+    void prefetchEvmSendCatalogs(
+      storageV2Account?.networks.map(network => network.chain) ?? [],
+      requestedAssetId?.split('/')[0] ?? evmNetwork?.chain.id,
+      () => cancelled
+    )
+    return () => {
+      cancelled = true
+    }
+  }, [storageV2Account, requestedAssetId])
 
   const load = useCallback(
     async (forceRefresh = false) => {

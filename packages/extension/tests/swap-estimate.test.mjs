@@ -54,9 +54,6 @@ test.describe('Swap provisional price estimate', () => {
     )
     expect(inputViewSource).toContain("isEstimatedAmount && 'text-muted'")
     expect(inputViewSource).toContain('Estimated output:')
-    expect(inputViewSource).toContain(
-      "aria-label={showQuoteFeeSkeleton ? 'Updating fee' : undefined}"
-    )
     expect(inputViewSource).not.toContain("'Updating…'")
     expect(inputViewSource).not.toContain('This wallet')
     expect(inputViewSource).toContain(

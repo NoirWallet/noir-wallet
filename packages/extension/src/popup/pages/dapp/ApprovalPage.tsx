@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef } from 'react'
+import { InlineError } from '@/popup/components/common/InlineError'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Button } from '../../components/ui/button'
 import { WarningBox } from '../../components/ui/WarningBox'
@@ -17,7 +18,7 @@ import { deriveFeeByTier, marginalFeeForTier } from '@/core/zcash/fee-policy'
 import type { AddressType } from '@/types/wallet'
 import { formatSortAddress } from '@/lib/format'
 import { cn } from '@/lib/utils'
-import { classifyError } from '@/lib/errors'
+import { classifyError, getResponseErrorMessage } from '@/lib/errors'
 import Big from 'big.js'
 import {
   hasEnoughTransparentBalanceToShield,
@@ -34,7 +35,10 @@ import {
 } from '@/popup/components/dapp/ApprovalRequestPresentation'
 import { SigningSummaryReview } from '@/popup/components/signing/SigningSummaryReview'
 import { Skeleton } from '@/popup/components/ui/skeleton'
-import { parsePendingApprovalResponse } from '@/popup/services/dapp-approval-request'
+import {
+  canRetryPendingApprovalLoad,
+  parsePendingApprovalResponse
+} from '@/popup/services/dapp-approval-request'
 import { useActiveAccountNetworks } from '@/popup/hooks/useActiveAccountNetworks'
 import { buildPrivateGasFundingPath } from '@/popup/pages/transactions/evm-send-validation'
 import { NetworkFeeTierPicker } from '@/popup/components/transaction/NetworkFeeTierPicker'
@@ -137,12 +141,24 @@ function ConnectionPermissionSummary({ includesActivity = false }: { includesAct
 export function ApprovalPage() {
   const { navigate } = useNavigate()
   const [searchParams] = useSearchParams()
-  const { getCurrentAccount, currentWalletId, currentNetwork, accountDisplayNames } =
-    useWalletStore()
+  const {
+    getCurrentAccount,
+    getAccount,
+    currentWalletId: activeWalletId,
+    currentNetwork,
+    accountDisplayNames
+  } = useWalletStore()
+  const [approvalBinding, setApprovalBinding] = useState<{
+    walletId: string
+    accountId: string
+  } | null>(null)
+  const currentWalletId = approvalBinding?.walletId ?? activeWalletId
   const { activeAccount: storageV2Account } = useActiveAccountNetworks()
-  const currentAccount = getCurrentAccount()
+  const currentAccount = approvalBinding
+    ? getAccount(approvalBinding.walletId, approvalBinding.accountId)
+    : getCurrentAccount()
   const accountDisplayName =
-    storageV2Account?.accountDisplayName ??
+    (approvalBinding ? undefined : storageV2Account?.accountDisplayName) ??
     (currentAccount && currentWalletId
       ? getAccountDisplayName(
           currentWalletId,
@@ -160,10 +176,15 @@ export function ApprovalPage() {
   const [action, setAction] = useState('unknown')
   const [data, setData] = useState<any>({})
   const [error, setError] = useState(requestId ? '' : 'Invalid request')
+  const [loadAttempt, setLoadAttempt] = useState(0)
+  const [canRetryLoad, setCanRetryLoad] = useState(false)
   const [requestLoaded, setRequestLoaded] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [showResult, setShowResult] = useState(false)
   const [walletReady, setWalletReady] = useState(false)
+  const resultListenerRef = useRef<
+    Parameters<typeof chrome.runtime.onMessage.addListener>[0] | null
+  >(null)
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [selectedScopes, setSelectedScopes] = useState<Record<string, string[]>>({})
   const [expandedScopeId, setExpandedScopeId] = useState<string | null>(null)
@@ -171,6 +192,14 @@ export function ApprovalPage() {
   const { copyToClipboard, showToast: showCopyToast } = useCopyToClipboard()
   const dappDomain = formatDAppHost(origin)
   const dappPageUrl = resolveDAppFaviconPageUrl(data, origin)
+
+  useEffect(
+    () => () => {
+      if (resultListenerRef.current)
+        chrome.runtime.onMessage.removeListener(resultListenerRef.current)
+    },
+    []
+  )
 
   const feeTier = useSettingsStore(state => state.feeTier)
   const setFeeTier = useSettingsStore(state => state.setFeeTier)
@@ -231,12 +260,21 @@ export function ApprovalPage() {
   const fundingSource: AddressType =
     data.fundingSource === 'transparent' ? 'transparent' : 'shielded'
   const hasEnoughShieldingBalance = !isShield || hasEnoughTransparentBalanceToShield(data.amount)
+  const estimateApprovalFee = useCallback(async (): Promise<string> => {
+    if (!requestId) throw new Error('Approval request is unavailable')
+    const response = await chrome.runtime.sendMessage({ type: 'ESTIMATE_APPROVAL_FEE', requestId })
+    if (response?.error || typeof response?.fee !== 'string') {
+      throw new Error(getResponseErrorMessage(response) || 'Fee estimation failed')
+    }
+    return response.fee
+  }, [requestId])
   const feeEstimate = useFeeEstimate({
     type: isShield ? 'shield' : 'send',
     to: data.to,
     amount: data.amount,
     memo: data.memo,
     fundingSource,
+    estimate: isSend || isShield ? estimateApprovalFee : undefined,
     enabled: (isSend || isShield) && walletReady && hasEnoughShieldingBalance
   })
   const feeByTier = deriveFeeByTier(feeEstimate.feeZats, feeEstimate.error)
@@ -308,18 +346,21 @@ export function ApprovalPage() {
     fetchedRequestId.current = requestId
     setRequestLoaded(false)
     setError('')
+    setCanRetryLoad(false)
     let cancelled = false
 
     chrome.runtime.sendMessage({ type: 'GET_PENDING_REQUEST', requestId }, (response: unknown) => {
       if (cancelled) return
       const runtimeError = chrome.runtime.lastError
       if (runtimeError) {
+        setCanRetryLoad(true)
         setError('Unable to load this approval request.')
         return
       }
 
       const parsed = parsePendingApprovalResponse(response, requestId)
       if (parsed.status === 'error') {
+        setCanRetryLoad(canRetryPendingApprovalLoad(parsed.error))
         setError(parsed.error)
         return
       }
@@ -331,6 +372,19 @@ export function ApprovalPage() {
       setOrigin(parsed.request.origin)
       setAction(parsed.request.action)
       setData(requestData)
+      if (
+        ['connect', 'sendTransaction', 'signMessage', 'shieldFunds'].includes(
+          parsed.request.action
+        ) &&
+        parsed.request.walletId &&
+        parsed.request.accountId
+      ) {
+        setApprovalBinding({
+          walletId: parsed.request.walletId,
+          accountId: parsed.request.accountId
+        })
+        setWalletReady(true)
+      }
       setSelectedIds(preselectedIds)
       const scopeSelections: Record<string, string[]> = Object.create(null)
       if (Array.isArray(requestData.scopes)) {
@@ -356,10 +410,10 @@ export function ApprovalPage() {
       cancelled = true
       if (fetchedRequestId.current === requestId) fetchedRequestId.current = null
     }
-  }, [requestId])
+  }, [requestId, loadAttempt])
 
   useEffect(() => {
-    if ((!isSend && !isShield) || walletReady) return
+    if ((!isSend && !isShield) || walletReady || approvalBinding) return
     let cancelled = false
     zcashWalletRuntimeClient
       .waitForAccountReady(20000)
@@ -368,7 +422,7 @@ export function ApprovalPage() {
     return () => {
       cancelled = true
     }
-  }, [isSend, isShield, walletReady])
+  }, [isSend, isShield, walletReady, approvalBinding])
 
   const toggleAccount = (id: string) => {
     const option = Array.isArray(data.accounts)
@@ -394,6 +448,7 @@ export function ApprovalPage() {
   }
 
   const handleDecision = async (approved: boolean) => {
+    setCanRetryLoad(false)
     if (approved && !requestLoaded) return
 
     if (!approved) {
@@ -413,12 +468,13 @@ export function ApprovalPage() {
 
     setIsLoading(true)
     try {
-      if (approved && requiresZcashAccountReady) {
-        try {
-          await zcashWalletRuntimeClient.waitForAccountReady(20000)
-        } catch (err) {
-          console.error('[ApprovalPage] Wallet initialization timeout:', err)
-          throw new Error('Wallet initialization timeout. Please try again.')
+      if (requiresZcashAccountReady) {
+        const response = await chrome.runtime.sendMessage({
+          type: 'GET_PENDING_REQUEST',
+          requestId
+        })
+        if (response?.error || !response?.request) {
+          throw new Error(getResponseErrorMessage(response) || 'Request not found or expired')
         }
       }
 
@@ -435,18 +491,11 @@ export function ApprovalPage() {
         )
         setShowResult(true)
 
-        await chrome.runtime.sendMessage({
-          type: 'DAPP_APPROVAL_RESULT',
-          requestId,
-          success: true,
-          marginalFeeZats: marginalFeeForTier(feeTier),
-          feeZats: feeByTier[feeTier] ?? undefined
-        })
-
         const resultListener = (msg: any, sender: chrome.runtime.MessageSender) => {
           if (getOwnExtensionSenderContext(sender, chrome.runtime.id) !== 'service-worker') return
           if (msg.type === 'DAPP_TX_RESULT' && msg.requestId === requestId) {
             chrome.runtime.onMessage.removeListener(resultListener)
+            if (resultListenerRef.current === resultListener) resultListenerRef.current = null
             if (msg.success) {
               updateStep('submitted', { txHash: msg.txHash })
             } else if (msg.completionPending === true) {
@@ -456,7 +505,19 @@ export function ApprovalPage() {
             }
           }
         }
+        resultListenerRef.current = resultListener
         chrome.runtime.onMessage.addListener(resultListener)
+        const response = await chrome.runtime.sendMessage({
+          type: 'DAPP_APPROVAL_RESULT',
+          requestId,
+          success: true,
+          marginalFeeZats: marginalFeeForTier(feeTier),
+          feeZats: feeByTier[feeTier] ?? undefined
+        })
+        if (response?.success !== true)
+          throw new Error(
+            getResponseErrorMessage(response) || 'The approval could not be completed'
+          )
       } else {
         const response = (await chrome.runtime.sendMessage({
           type: 'DAPP_APPROVAL_RESULT',
@@ -468,11 +529,17 @@ export function ApprovalPage() {
           ...(isMultichainConnect ? { selectedScopes } : {})
         })) as { success?: boolean; error?: string } | undefined
         if (response?.success !== true) {
-          throw new Error(response?.error || 'The approval could not be completed')
+          throw new Error(
+            getResponseErrorMessage(response) || 'The approval could not be completed'
+          )
         }
         window.close()
       }
     } catch (err) {
+      if (resultListenerRef.current) {
+        chrome.runtime.onMessage.removeListener(resultListenerRef.current)
+        resultListenerRef.current = null
+      }
       console.error('Failed to send decision:', err)
       setError(classifyError(err).userMessage)
       setIsLoading(false)
@@ -483,13 +550,18 @@ export function ApprovalPage() {
     return (
       <div className="page-container h-full flex flex-col">
         <div className="flex-1 flex items-center justify-center">
-          <div className="text-center space-y-4">
+          <div className="w-full px-5 text-center space-y-4">
             <Icon icon="lucide:alert-circle" className="w-16 h-16 text-destructive mx-auto" />
             <h2 className="text-xl font-semibold">Request Error</h2>
-            <p className="text-sm text-muted-foreground">{error}</p>
-            <Button onClick={() => window.close()} variant="outline">
-              Close
-            </Button>
+            <InlineError
+              message={error}
+              onRetry={canRetryLoad ? () => setLoadAttempt(value => value + 1) : undefined}
+            />
+            <div className="flex justify-center gap-3">
+              <Button onClick={() => window.close()} variant="outline">
+                Close
+              </Button>
+            </div>
           </div>
         </div>
       </div>

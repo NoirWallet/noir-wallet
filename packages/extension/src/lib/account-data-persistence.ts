@@ -17,6 +17,7 @@ export interface AccountDataPersistencePorts {
   remove: () => Promise<void>
   withLock: <T>(operation: () => Promise<T>) => Promise<T>
   isAccountActive: (accountKey: string) => Promise<boolean>
+  isEntryDeleted?: (key: string) => Promise<boolean>
   migrate: (state: unknown, version: number) => unknown
 }
 
@@ -147,6 +148,7 @@ export function createAccountDataPersistence(
               if (!(await ports.isAccountActive(change.key))) continue
               if (!isNewerPortfolioValue(change.value, values[change.key])) continue
             }
+            if (role === 'background' && (await ports.isEntryDeleted?.(change.key))) continue
             values[change.key] = change.value
             changed = true
           }

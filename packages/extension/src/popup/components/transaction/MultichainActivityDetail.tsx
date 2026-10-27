@@ -62,6 +62,7 @@ import {
 } from './multichain-activity-presentation'
 import { ActivityRouteTokenIcons } from './ActivityRouteTokenIcons'
 import { resolveScopedZcashActivityTransaction } from '@/popup/services/zcash-activity-detail'
+import { InlineError } from '../common/InlineError'
 
 interface MultichainActivityDetailProps {
   readonly item: ActivityItem
@@ -832,25 +833,32 @@ export function MultichainActivityDetail({
           Broadcast submitted. Background monitoring will continue.
         </p>
       )}
-      {retryOutcome === 'pending' && (
+      {retryOutcome === 'pending' && recoveryAction === 'none' && (
         <p role="status" className="mt-4 text-center text-xs text-warning">
           The network has not accepted this transaction yet. You can retry the same signed
           transaction.
         </p>
       )}
-      {retryOutcome === 'failed' && (
+      {retryOutcome === 'failed' && recoveryAction === 'none' && (
         <p role="alert" className="mt-4 text-center text-xs text-danger">
           Broadcast retry failed. Check the network and try again.
         </p>
       )}
       {recoveryAction !== 'none' && (
-        <Button
-          className="mt-4 h-[45px] w-full"
-          isLoading={retrying}
-          onClick={handleRetryBroadcast}
-        >
-          Retry broadcast
-        </Button>
+        <InlineError
+          className="mt-4"
+          message={
+            retryOutcome === 'failed'
+              ? 'Broadcast retry failed. Check the network and try again.'
+              : retryOutcome === 'pending'
+                ? 'The network has not accepted this transaction yet.'
+                : 'Broadcast was interrupted.'
+          }
+          onRetry={handleRetryBroadcast}
+          retrying={retrying}
+          retryLabel="Retry broadcast"
+          tone={retryOutcome === 'failed' ? 'error' : 'warning'}
+        />
       )}
       {onSpeedUp && getTransactionRecoveryAction(scopedZcashRecord ?? undefined) === 'speed_up' && (
         <Button className="mt-4 h-[45px] w-full" onClick={() => void handleSpeedUp()}>

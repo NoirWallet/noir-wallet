@@ -8,9 +8,9 @@ import { WALLET_CONFIG } from '@/config/wallet'
 import { MARGINAL_FEE_ZATS } from '@/config/fee'
 import { sanitizeMarginalFeeZats } from '@/core/zcash/fee-policy'
 import { safeBig } from '@/lib/big'
-import { classifyError } from '@/lib/errors'
+import { classifyError, getResponseErrorMessage } from '@/lib/errors'
 import { sanitizeMemoForRecipient } from '@/lib/zcash-memo'
-import { getOwnExtensionSenderContext } from '@/lib/runtime-message-security'
+import { waitForZcashTxCompleted } from '@/popup/services/zcash-transaction-completion'
 import { TimeoutError } from '@/lib/async-utils'
 import { TRANSACTION_PENDING_MESSAGE } from '@/lib/transaction-status-copy'
 import { isValidAddTransactionResponse } from '@/lib/transaction-record-response'
@@ -73,63 +73,6 @@ function getActiveAccountKey(): string | null {
   return currentWalletId && currentAccountId
     ? buildAccountKey(currentNetwork, currentWalletId, currentAccountId)
     : null
-}
-
-function waitForZcashTxCompleted(
-  accountKey: string,
-  transactionId: string,
-  timeoutMs: number,
-  dispatch: () => Promise<unknown>
-): Promise<{ txHash: string }> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      chrome.runtime.onMessage.removeListener(listener)
-      reject(new TimeoutError('Transaction timed out'))
-    }, timeoutMs)
-
-    const listener = (
-      message: {
-        type?: string
-        accountKey?: string
-        transactionId?: string
-        txHash?: string
-        error?: string
-        completionPending?: boolean
-      },
-      sender: chrome.runtime.MessageSender
-    ) => {
-      if (
-        getOwnExtensionSenderContext(sender, chrome.runtime.id) !== 'service-worker' ||
-        message.type !== 'ZCASH_TX_COMPLETED' ||
-        message.accountKey !== accountKey ||
-        message.transactionId !== transactionId
-      ) {
-        return
-      }
-
-      clearTimeout(timer)
-      chrome.runtime.onMessage.removeListener(listener)
-
-      if (message.error) {
-        reject(
-          message.completionPending ? new TimeoutError(message.error) : new Error(message.error)
-        )
-        return
-      }
-      if (message.txHash) {
-        resolve({ txHash: message.txHash })
-        return
-      }
-      reject(new Error('Transaction completed without tx hash'))
-    }
-
-    chrome.runtime.onMessage.addListener(listener)
-    void dispatch().catch(error => {
-      clearTimeout(timer)
-      chrome.runtime.onMessage.removeListener(listener)
-      reject(error)
-    })
-  })
 }
 
 /**
@@ -243,11 +186,7 @@ export function useTransaction(): UseTransactionReturn {
         })
 
         if (!isValidAddTransactionResponse(response)) {
-          const error =
-            typeof response === 'object' && response !== null && 'error' in response
-              ? String(response.error)
-              : 'Failed to add transaction'
-          throw new Error(error)
+          throw new Error(getResponseErrorMessage(response) ?? 'Failed to add transaction')
         }
 
         const recordedTx = response.transaction

@@ -23,8 +23,11 @@ import {
   loadTransactions,
   mutateTransactions,
   deleteVotingState,
-  deleteVotingStatesForWallet,
   deleteWalletPersistenceAndQuarantine,
+  deleteWalletRecords,
+  blockAccountRecords,
+  blockVotingState,
+  getBlockedAccountIndexes,
   deleteAllWalletData,
   getWalletPersistenceQuarantine,
   quarantineWalletPersistence
@@ -38,6 +41,7 @@ import {
 } from '@/store/wallet-store'
 import {
   commitWalletMetadataDeletion,
+  getDeletedAccountIndexes,
   markWalletBackupVerified,
   readWalletMetadata
 } from '@/lib/wallet-metadata-storage'
@@ -106,6 +110,7 @@ import { clearSyncAbort, signalSyncAbort } from '@/lib/sync-abort'
 import { withTimeout, TimeoutError } from '@/lib/async-utils'
 import { TransactionRecipientRecovery } from './transaction-recipient-recovery'
 import { lookupBlockHeightByTime } from '@/core/zcash/date-block-lookup'
+import { mapWasmAccountAddresses, mergeAccountAddresses } from '@/core/zcash/account-addresses'
 import { fetchBlockTime } from '@/infrastructure/chains/rpc-registry-client'
 import { withRetry, isRpcEndpointError } from '@/lib/errors'
 import {
@@ -114,6 +119,7 @@ import {
   markWalletWorkerUnhealthy
 } from '@/core/worker/client'
 import { clearLendingMcaCache } from '@/core/services/lending-mca-cache'
+import { resolveAccountIdForRemoval } from './account-removal-account-id'
 import { selectNextZcashAccountIndex } from '@/core/wallet/account-index'
 import { clearIdentityCache } from '@/core/wallet/identity-cache'
 import type { BirthdayHeightSource } from '@/lib/zcash-birthday'
@@ -161,17 +167,6 @@ export type SyncBlocksOptions = {
   priority?: 'foreground' | 'background'
   waitForTipAdvance?: boolean
   maxDurationMs?: number
-}
-
-function mergeAccountAddresses(
-  stored: AccountAddresses,
-  fromMnemonic: AccountAddresses
-): AccountAddresses {
-  return {
-    transparent: fromMnemonic.transparent,
-    shielded: stored.shielded || fromMnemonic.shielded,
-    fullUnified: stored.fullUnified || fromMnemonic.fullUnified
-  }
 }
 
 /**
@@ -602,7 +597,7 @@ export class BackgroundZcashWalletRuntime {
     options?: { discard?: boolean }
   ): Promise<void> {
     const core = this.walletCores.get(walletId)
-    if (!core) return
+    if (!core && !options?.discard) return
 
     if (this.isWalletSyncOperationActive(walletId)) {
       this.onSyncAbortRequested?.(walletId)
@@ -613,10 +608,14 @@ export class BackgroundZcashWalletRuntime {
       await this.snapshotBeforeReset(walletId)
     }
 
-    try {
-      await core.reset()
-    } catch {
-      /* ignore */
+    if (options?.discard) {
+      await getWorkerClient(walletId).reset({ force: true, strict: true })
+    } else {
+      try {
+        await core!.reset()
+      } catch {
+        /* ignore */
+      }
     }
     this.walletCores.delete(walletId)
     this.walletCoreLastUsed.delete(walletId)
@@ -1972,7 +1971,11 @@ export class BackgroundZcashWalletRuntime {
         wasmAccountIds.map(accountId => core.getAccountHdIndex(accountId))
       )
       const derivationIndex = selectNextZcashAccountIndex(
-        wallet.accounts.map(account => account.derivationIndex),
+        [
+          ...wallet.accounts.map(account => account.derivationIndex),
+          ...(await getDeletedAccountIndexes(walletId)),
+          ...(await getBlockedAccountIndexes(walletId))
+        ],
         wasmIndexes
       )
       const addresses = await core.getAddresses(seedPhrase, this.network, derivationIndex)
@@ -2040,7 +2043,11 @@ export class BackgroundZcashWalletRuntime {
         wasmAccountIds.map(accountId => core.getAccountHdIndex(accountId))
       )
       const nextIndex = selectNextZcashAccountIndex(
-        wallet.accounts.map(account => account.derivationIndex),
+        [
+          ...wallet.accounts.map(account => account.derivationIndex),
+          ...(await getDeletedAccountIndexes(walletId)),
+          ...(await getBlockedAccountIndexes(walletId))
+        ],
         wasmIndexes
       )
       if (
@@ -2148,9 +2155,8 @@ export class BackgroundZcashWalletRuntime {
 
       const nextShielded = await core.getNextShieldedAddress()
       updatedAddresses = {
-        transparent: account.addresses.transparent,
-        shielded: nextShielded.shielded,
-        fullUnified: nextShielded.fullUnified
+        ...account.addresses,
+        ...nextShielded
       }
 
       const existingHistory = account.networkShieldedReceiveAddressHistory?.[this.network]
@@ -2315,11 +2321,7 @@ export class BackgroundZcashWalletRuntime {
           account.derivationIndex,
           network
         )
-        derived[account.id] = {
-          transparent: addresses.transparent,
-          shielded: addresses.unified,
-          fullUnified: addresses.full_unified
-        }
+        derived[account.id] = mapWasmAccountAddresses(addresses)
       }
     }
     return Object.freeze(derived)
@@ -3046,20 +3048,21 @@ export class BackgroundZcashWalletRuntime {
     this.spendabilityRecoveryAttemptedWalletIds.delete(walletId)
     this.spendabilityRecoveryByWallet.delete(walletId)
     this.onSyncAbortRequested?.(walletId)
-    await signalSyncAbort(walletId).catch(() => {})
+    await signalSyncAbort(walletId)
     await chrome.runtime
       .sendMessage({ type: 'RECONCILE_WALLET_STATE', walletId, all: true })
       .catch(() => {})
     await this.waitForSyncIdle(walletId, 30_000)
-    await syncJobStore.remove(walletId, this.network).catch(() => {})
+    if (this.isWalletActivelySyncing(walletId)) {
+      throw new Error('Wallet sync is still running. Please try again.')
+    }
     await this.resetWalletCoreSafely(walletId, { discard: true })
     this.clearRuntimeCaches(walletId)
     this.walletRuntimeGeneration.delete(walletId)
-    await deleteWalletPersistenceAndQuarantine(
-      `${this.network}_${walletId}`,
-      this.network,
-      walletId
-    )
+    await deleteWalletRecords('mainnet', walletId)
+    await deleteWalletRecords('testnet', walletId)
+    await syncJobStore.remove(walletId, 'mainnet')
+    await syncJobStore.remove(walletId, 'testnet')
   }
 
   private async restoreSessionToCore(
@@ -3205,9 +3208,12 @@ export class BackgroundZcashWalletRuntime {
     })
   }
 
-  async resetWalletDataAuthoritatively(): Promise<void> {
+  async resetWalletDataAuthoritatively(walletIds: readonly string[] = []): Promise<void> {
     this.cancelActiveRestore(undefined, true)
-    const metadataWalletIds = this.store.wallets.map(wallet => wallet.id)
+    const metadataWalletIds = new Set([
+      ...walletIds,
+      ...this.store.wallets.map(wallet => wallet.id)
+    ])
     for (const walletId of metadataWalletIds) {
       await this.purgeWalletData(walletId)
     }
@@ -3656,19 +3662,80 @@ export class BackgroundZcashWalletRuntime {
       await this.removeWalletAuthoritatively(walletId)
       return 'wallet'
     } else {
-      const core = await this.getWalletCore(walletId, accountId)
-      const wasmAccountId = await this.resolveWasmAccountId(walletId, accountId, core)
-      if (wasmAccountId !== null) {
-        await deleteVotingState(`${this.network}_${walletId}_${wasmAccountId}`)
-      }
-      this.recipientRecovery.cancel(walletId, accountId)
+      const derivationIndex = wallet.accounts[accountIndex].derivationIndex
+      const core = this.walletCores.get(walletId)
+      const wasmAccountId = await resolveAccountIdForRemoval(
+        this.getAccountMapping(walletId, accountId),
+        derivationIndex,
+        core?.hasWasmInitialized()
+          ? () => this.resolveWasmAccountId(walletId, accountId, core)
+          : undefined
+      )
+      await this.finishAccountRemovalCleanup(walletId, accountId, derivationIndex, wasmAccountId)
       this.store.removeAccount(walletId, accountId)
       this.currentWalletId = this.store.currentWalletId
       await flushWalletStore()
-      await this.accountDataStore.deleteAccountData(this.network, walletId, accountId)
-      this.clearRuntimeCaches(walletId, accountId)
       return 'account'
     }
+  }
+
+  private async discardWalletSnapshotsForAccountRemoval(walletId: string): Promise<void> {
+    this.purgingWalletIds.add(walletId)
+    try {
+      this.onSyncAbortRequested?.(walletId)
+      await signalSyncAbort(walletId)
+      await this.waitForSyncIdle(walletId, 30_000)
+      if (this.isWalletActivelySyncing(walletId)) {
+        throw new Error('Wallet sync is still running. Please try again.')
+      }
+      await this.resetWalletCoreSafely(walletId, { discard: true })
+      this.clearRuntimeCaches(walletId)
+      for (const network of ['mainnet', 'testnet'] as const) {
+        await deleteWalletPersistenceAndQuarantine(`${network}_${walletId}`, network, walletId)
+        await syncJobStore.remove(walletId, network)
+      }
+    } finally {
+      this.purgingWalletIds.delete(walletId)
+    }
+  }
+
+  async finishAccountRemovalCleanup(
+    walletId: string,
+    accountId: string,
+    derivationIndex?: number,
+    wasmAccountId?: number | null
+  ): Promise<void> {
+    this.recipientRecovery.cancel(walletId, accountId)
+    await Promise.all([
+      blockAccountRecords('mainnet', walletId, accountId),
+      blockAccountRecords('testnet', walletId, accountId)
+    ])
+    if (wasmAccountId === undefined && derivationIndex !== undefined) {
+      const core = this.walletCores.get(walletId)
+      wasmAccountId = await resolveAccountIdForRemoval(
+        this.getAccountMapping(walletId, accountId),
+        derivationIndex,
+        core?.hasWasmInitialized()
+          ? async () => {
+              const ids = await core.getAllAccountIds()
+              for (const id of ids) {
+                if ((await core.getAccountHdIndex(id)) === derivationIndex) return id
+              }
+              return null
+            }
+          : undefined
+      )
+    }
+    if (wasmAccountId !== null && wasmAccountId !== undefined) {
+      await blockVotingState(this.network, walletId, wasmAccountId)
+      await deleteVotingState(`${this.network}_${walletId}_${wasmAccountId}`)
+    }
+    await this.discardWalletSnapshotsForAccountRemoval(walletId)
+    await Promise.all([
+      this.accountDataStore.deleteAccountData('mainnet', walletId, accountId, derivationIndex),
+      this.accountDataStore.deleteAccountData('testnet', walletId, accountId, derivationIndex)
+    ])
+    this.clearRuntimeCaches(walletId, accountId)
   }
 
   async switchWallet(walletId: string): Promise<void> {
@@ -3808,10 +3875,9 @@ export class BackgroundZcashWalletRuntime {
     const accountIds = removedAccountIds ?? wallet?.accounts.map(account => account.id) ?? []
     await commitWalletMetadataDeletion(walletId, accountIds)
     await this.purgeWalletData(walletId)
-    await deleteVotingStatesForWallet(this.network, walletId)
-
     if (accountIds.length > 0) {
-      await this.accountDataStore.deleteWalletData(this.network, walletId, [...accountIds])
+      await this.accountDataStore.deleteWalletData('mainnet', walletId, [...accountIds])
+      await this.accountDataStore.deleteWalletData('testnet', walletId, [...accountIds])
     }
 
     await SecureStorage.removeWalletSeedPhrase(walletId)

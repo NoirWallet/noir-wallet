@@ -1,4 +1,5 @@
 import { parseZeroIndexerNodeStatus, type ZeroIndexerNodeStatus } from '@/core/zcash/zero-indexer'
+import { getResponseErrorMessage } from '@/lib/errors'
 
 type ZeroIndexerNodeMessage =
   | { type: 'GET_ZERO_INDEXER_NODE_STATUS'; refresh?: boolean }
@@ -19,13 +20,10 @@ export async function sendZeroIndexerNodeMessage(
   const result = response as {
     success?: unknown
     status?: unknown
-    error?: unknown
     warning?: unknown
   }
   if (result.success !== true) {
-    throw new Error(
-      typeof result.error === 'string' ? result.error : 'Could not load broadcast nodes'
-    )
+    throw new Error(getResponseErrorMessage(response) ?? 'Could not load broadcast nodes')
   }
   return {
     status: parseZeroIndexerNodeStatus(result.status),

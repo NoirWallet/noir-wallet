@@ -18,6 +18,12 @@ export function getOnchainResultAction(
   return explorerUrl ? 'explorer' : 'activity'
 }
 
+export function getOnchainResultExitOutcome(
+  status: TransactionLifecycleStatus
+): 'pending' | 'final' | 'failed' {
+  return status === 'final' || status === 'failed' ? status : 'pending'
+}
+
 export function getOnchainResultTotal(
   amountRaw: string,
   feeRaw: string,

@@ -5,7 +5,10 @@ import {
   getFundingSourceOptions,
   getFundingSourceUnavailableReason
 } from '../src/core/wallet/funding-source.ts'
-import { resolveZcashTransferAvailability } from '../src/popup/services/transfer-availability.ts'
+import {
+  resolveZcashFundingAvailability,
+  resolveZcashTransferAvailability
+} from '../src/popup/services/transfer-availability.ts'
 
 const balance = {
   shielded: '2',
@@ -67,6 +70,40 @@ describe('Zcash funding amount validation', () => {
         standardFeeZats: 15000
       }).amount,
       '0.99915'
+    )
+  })
+
+  test('Send and Swap Max fallbacks use only the selected confirmed pool and reserve the fee once', () => {
+    const mixed = { ...balance, available: '3.49985' }
+    const estimate = { balance: mixed, selectedFeeZats: 60000, standardFeeZats: 15000 }
+    const shielded = resolveZcashFundingAvailability({ ...estimate, fundingSource: 'shielded' })
+    const transparent = resolveZcashFundingAvailability({
+      ...estimate,
+      fundingSource: 'transparent'
+    })
+    assert.deepEqual(shielded, { amount: '0.9994', fallbackAmount: '0.9994' })
+    assert.deepEqual(transparent, { amount: '2.4994', fallbackAmount: '2.4994' })
+    assert.equal(getFundingAmountError(shielded.amount, getFundingBalance(mixed, 'shielded')), null)
+    assert.equal(
+      resolveZcashFundingAvailability({
+        ...estimate,
+        fundingSource: 'shielded',
+        maximumAmount: '0.9988'
+      }).amount,
+      '0.9988'
+    )
+    assert.equal(
+      resolveZcashFundingAvailability({
+        ...estimate,
+        fundingSource: 'transparent',
+        maximumAmount: '2.4988'
+      }).amount,
+      '2.4988'
+    )
+    assert.equal(
+      resolveZcashFundingAvailability({ ...estimate, balance: null, fundingSource: 'shielded' })
+        .amount,
+      '0'
     )
   })
 

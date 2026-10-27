@@ -190,6 +190,7 @@ export interface RheaSwapQuoteRequest {
 
 export interface RheaSwapQuoteView {
   readonly quoteHandle: string
+  readonly recipient: string
   readonly estimatedOut: string
   readonly minAmountOut: string
   readonly router: string
