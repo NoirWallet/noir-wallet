@@ -63,6 +63,9 @@ export function getRheaSwapErrorMessage(error: unknown): string {
   if (/unsupported destination token|destinationtoken.*not supported/i.test(reason)) {
     return 'This destination is unavailable for this swap. Choose another asset.'
   }
+  if (/confidential_route_unavailable|no confidential route available/i.test(reason)) {
+    return 'No Confidential route is available for this transfer.'
+  }
   const minimum = reason.match(/minimum (?:swap )?amount(?:\s+is|\s+of|:)?\s*(\$[\d,]+(?:\.\d+)?)/i)
   if (minimum) return `Minimum swap amount is ${minimum[1]}.`
   return classifyError(new Error(reason)).userMessage

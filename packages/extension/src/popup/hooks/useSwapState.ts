@@ -340,7 +340,7 @@ export function useSwapState(
     tokenInPrice: tokenIn?.price,
     tokenOutPrice: tokenOut?.price
   })
-  const rate = amountOut ? displayRate : '...'
+  const rate = displayOut ? displayRate : '...'
 
   // Actions
   const activePair = useRef({ tokenIn, tokenOut })

@@ -1,5 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
-import { zcashWalletRuntimeClient } from '@/popup/services/zcash-wallet-runtime-client'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import {
+  zcashWalletRuntimeClient,
+  type MaxTransferEstimate
+} from '@/popup/services/zcash-wallet-runtime-client'
 import type { FeeTier } from '@/config/fee'
 import { marginalFeeForTier } from '@/core/zcash/fee-policy'
 import { safeBig } from '@/lib/big'
@@ -30,7 +33,10 @@ export function useMaxTransferEstimate({
   feeTier,
   fundingSource = 'shielded',
   enabled = true
-}: UseMaxTransferEstimateArgs): MaxTransferEstimateState & { request: () => Promise<void> } {
+}: UseMaxTransferEstimateArgs): MaxTransferEstimateState & {
+  request: () => Promise<void>
+  update: (estimate: MaxTransferEstimate, to: string) => void
+} {
   const currentWalletId = useWalletStore(state => state.currentWalletId)
   const currentAccountId = useWalletStore(state => state.currentAccountId)
   const currentNetwork = useWalletStore(state => state.currentNetwork)
@@ -44,8 +50,7 @@ export function useMaxTransferEstimate({
     error: false
   })
   const requestSeq = useRef(0)
-  const requestKey = JSON.stringify([
-    to,
+  const scope = JSON.stringify([
     memo,
     feeTier,
     fundingSource,
@@ -55,16 +60,29 @@ export function useMaxTransferEstimate({
     currentNetwork,
     sourceAvailable
   ])
-  const latest = useRef({ to, memo, feeTier, fundingSource, enabled, key: requestKey })
-  latest.current = { to, memo, feeTier, fundingSource, enabled, key: requestKey }
+  const requestKey = JSON.stringify([to, scope])
+  const latest = useRef({ to, memo, feeTier, fundingSource, enabled, scope, key: requestKey })
+  latest.current = { to, memo, feeTier, fundingSource, enabled, scope, key: requestKey }
   useEffect(() => {
     requestSeq.current += 1
-    const timer = enabled && to ? setTimeout(() => void request(), 300) : undefined
+    const resolved = state.key === requestKey && state.maxAmount !== null
+    const timer = !resolved && enabled && to ? setTimeout(() => void request(), 300) : undefined
     return () => {
       clearTimeout(timer)
       requestSeq.current += 1
     }
   }, [requestKey])
+
+  const update = useCallback((estimate: MaxTransferEstimate, target: string) => {
+    requestSeq.current += 1
+    setState({
+      key: JSON.stringify([target, latest.current.scope]),
+      maxAmount: safeBig(estimate.maxAmountZats).div(1e8).toFixed(),
+      fee: safeBig(estimate.feeZats).div(1e8).toFixed(),
+      loading: false,
+      error: false
+    })
+  }, [])
 
   const request = async () => {
     const input = latest.current
@@ -93,6 +111,6 @@ export function useMaxTransferEstimate({
   }
 
   return state.key === requestKey
-    ? { ...state, request }
-    : { maxAmount: null, fee: null, loading: false, error: false, request }
+    ? { ...state, request, update }
+    : { maxAmount: null, fee: null, loading: false, error: false, request, update }
 }

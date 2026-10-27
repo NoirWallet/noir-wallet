@@ -130,4 +130,27 @@ it('keeps minimum amounts while removing nested provider metadata without changi
     getRheaSwapErrorMessage(new RheaSwapClientError('Unsupported destination token')),
     'This destination is unavailable for this swap. Choose another asset.'
   )
+  assert.equal(
+    getRheaSwapErrorMessage(
+      new RheaSwapClientError('No confidential route available: Cross-chain quote failed')
+    ),
+    'No Confidential route is available for this transfer.'
+  )
+})
+
+it('identifies native gas insufficiency in Swap and Transfer without hiding unrelated failures', () => {
+  for (const message of [
+    'The EVM balance is insufficient',
+    'The EVM balance does not cover the transfer and network fee',
+    'EVM account needs 100 more wei for transaction value and maximum Gas',
+    'Private Execution Address needs 100 more wei for transaction value and maximum Gas'
+  ]) {
+    const error = new Error(message)
+    assert.equal(
+      getRheaSwapErrorMessage(error),
+      'Insufficient native balance for the amount and network fee.'
+    )
+    assert.equal(classifyError(error).retryable, false)
+  }
+  assert.equal(getRheaSwapErrorMessage(new Error('Request timed out')), 'Request timed out.')
 })

@@ -651,6 +651,12 @@ export function TransactionResultPage() {
           resumingConfidentialFunding={resumingConfidentialFunding}
           onClose={handleDone}
           onViewActivity={handleViewActivity}
+          viewActivityDisabled={
+            data.originChain === 'zcash' &&
+            Boolean(data.rheaQuoteHandle) &&
+            !data.activityTransactionId &&
+            !data.zcashTransactionId
+          }
         />
       </div>
     )

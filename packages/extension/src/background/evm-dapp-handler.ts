@@ -124,6 +124,12 @@ export interface EvmDAppExecutionIdentity {
   readonly address: string
 }
 
+export function mapEvmTransactionPreparationError(error: unknown): unknown {
+  return error instanceof EvmTransactionError && error.code === 'insufficient-funds'
+    ? new Eip1193ProviderError(-32000, 'Insufficient funds for the transaction and network fee.')
+    : error
+}
+
 export interface EvmDAppRequest {
   readonly method: EvmDAppRuntimeMethod
   readonly params?: readonly unknown[] | Readonly<Record<string, unknown>>
@@ -801,7 +807,7 @@ export class BackgroundEvmDAppHandler {
           this.options.network.networkMode !== 'mainnet' ||
           !funding
         ) {
-          throw error
+          throw mapEvmTransactionPreparationError(error)
         }
         const decision = await this.options.approval.requestExternalApproval(
           origin,

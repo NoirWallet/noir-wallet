@@ -74,6 +74,17 @@ export interface ActivitySwapPresentation {
   readonly destinationAccountMode?: 'Public' | 'Confidential'
 }
 
+export function resolveActivityChainMetadata(
+  chainId: string | undefined,
+  metadata: ReadonlyMap<string, ActivityChainMetadata>
+): ActivityChainMetadata | undefined {
+  if (!chainId) return undefined
+  const registered = metadata.get(chainId)
+  if (registered) return registered
+  const rheaEvmChainId = /^rhea:([1-9]\d*)$/.exec(chainId)?.[1]
+  return rheaEvmChainId ? metadata.get(`eip155:${rheaEvmChainId}`) : undefined
+}
+
 export function isAccountModeTransfer(
   item: ActivityItem,
   route: ActivitySwapPresentation
@@ -160,8 +171,8 @@ export function getActivitySwapPresentation(
     : destinationSegment?.target.kind === 'onchain'
       ? destinationSegment.target.chainId
       : item.snapshot?.recipient?.chainId
-  const sourceChain = sourceChainId ? chainMetadata.get(sourceChainId) : undefined
-  const destinationChain = destinationChainId ? chainMetadata.get(destinationChainId) : undefined
+  const sourceChain = resolveActivityChainMetadata(sourceChainId, chainMetadata)
+  const destinationChain = resolveActivityChainMetadata(destinationChainId, chainMetadata)
   const recipientAddress =
     item.snapshot?.protocol?.destination.recipient ??
     (item.source === 'zcash-v1' ? item.snapshot?.recipient?.address : undefined)

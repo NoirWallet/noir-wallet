@@ -77,7 +77,16 @@ export function createEvmTransferGraph(input: CreateEvmTransferGraphInput): Tran
     throw new Error('EVM transfer graph requires an EVM chain')
   }
   const assetId = parseAssetId(input.prepared.assetId)
-  const asset = input.assets.get(assetId.id)
+  const listed = input.assets.get(assetId.id)
+  const inspected =
+    input.prepared.kind === 'erc20-transfer' ? input.assets.inspect(assetId.id) : undefined
+  const asset =
+    listed ??
+    (inspected?.verification === 'unverified' &&
+    inspected.asset.kind === 'token' &&
+    inspected.asset.namespace === 'erc20'
+      ? inspected
+      : undefined)
   if (assetId.chainId !== chainId.id || !asset) {
     throw new Error('EVM transfer graph asset does not match its chain')
   }

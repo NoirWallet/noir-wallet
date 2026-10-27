@@ -429,6 +429,10 @@ chain leaves its settings unchanged. Adding a network does not make it active; r
 switch when needed. A switch to an unconfigured chain rejects with code `4902`, and a rejected
 approval returns `4001`. Built-in chains in the other global network mode cannot be added.
 
+For `eth_requestAccounts`, closing the wallet's unlock window cancels the request with `4001`.
+An `eth_sendTransaction` request with insufficient funds returns `-32000` before opening
+transaction approval; the error identifies insufficient funds for the transaction and network fee.
+
 For Chainlist compatibility, `wallet_addEthereumChain` also accepts an optional account address
 as the second positional parameter. This hint is ignored and never grants account permissions.
 `wallet_switchEthereumChain` still accepts exactly one chain parameter.

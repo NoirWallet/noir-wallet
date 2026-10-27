@@ -5338,14 +5338,22 @@ async function promptUnlock(
 
   const unlockPromise = new Promise<void>((resolve, reject) => {
     let settled = false
+    let unlockReceived = false
     let timeoutId: ReturnType<typeof setTimeout>
     const finish = (error?: unknown) => {
       if (settled) return
       settled = true
       clearTimeout(timeoutId)
       chrome.runtime.onMessage.removeListener(listener)
+      chrome.windows.onRemoved.removeListener(onWindowRemoved)
       if (error) reject(error)
       else resolve()
+    }
+
+    const onWindowRemoved = (removedId: number) => {
+      if (removedId === unlockWindowId && !unlockReceived) {
+        finish(new Eip1193ProviderError(4001, 'User cancelled the unlock request.'))
+      }
     }
 
     const listener = (message: unknown, sender: chrome.runtime.MessageSender) => {
@@ -5360,6 +5368,7 @@ async function promptUnlock(
         return
       }
 
+      unlockReceived = true
       void (async () => {
         try {
           if (options.restoreZcashRuntime === false) {
@@ -5379,6 +5388,7 @@ async function promptUnlock(
       })()
     }
     chrome.runtime.onMessage.addListener(listener)
+    chrome.windows.onRemoved.addListener(onWindowRemoved)
 
     timeoutId = setTimeout(() => {
       finish(new Error('Unlock timeout'))

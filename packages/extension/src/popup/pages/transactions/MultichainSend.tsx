@@ -492,9 +492,11 @@ export function MultichainSend() {
     }
     const sendAsset = assets.find(item => item.asset.asset.id === requestedAssetId)
     if (sendAsset) {
-      if (requestedSourceMode === 'private' && evmActionMode.privateAvailable) {
-        setEvmSourceMode('private')
-      }
+      if (
+        requestedSourceMode === 'main' ||
+        (requestedSourceMode === 'private' && evmActionMode.privateAvailable)
+      )
+        setEvmSourceMode(requestedSourceMode)
       setSelection(sendAsset)
     }
   }, [
@@ -581,6 +583,7 @@ export function MultichainSend() {
     selection && currentNetwork === 'mainnet' && getCrossChainSendAssetGroup(selection.asset.asset)
       ? selection.asset.asset.id
       : null
+  const crossChainSourceMode = selection?.chain.chain.family === 'evm' ? evmSourceMode : 'main'
   return (
     <div className="page-container">
       <PageHeader
@@ -594,7 +597,12 @@ export function MultichainSend() {
               onChange={route => {
                 if (route === 'cross-chain') {
                   navigate(
-                    `/send/cross-chain?source=${encodeURIComponent(crossChainSourceAssetId)}`,
+                    `/send/cross-chain?${new URLSearchParams({
+                      source: crossChainSourceAssetId,
+                      sourceMode: crossChainSourceMode,
+                      sourceWalletId: effectiveWalletId ?? '',
+                      sourceAccountId: effectiveAccountId ?? ''
+                    })}`,
                     {
                       replace: true,
                       state: { returnToSendAssetId: crossChainSourceAssetId }

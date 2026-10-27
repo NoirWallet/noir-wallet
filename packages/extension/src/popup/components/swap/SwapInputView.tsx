@@ -283,6 +283,7 @@ function SwapAssetCard({
   if (tokenSelectDisabled) return <SwapAssetCardSkeleton direction={direction} />
 
   const hasAccountDetails = Boolean(accountAddress || accountFallbackLabel || accountBadge)
+  const longAmount = amount.length > 12
 
   return (
     <section className="min-h-[124px] rounded-xl bg-card/60 px-4 py-3.5">
@@ -332,7 +333,7 @@ function SwapAssetCard({
                 height={14}
                 className={maxLoading ? 'shrink-0 animate-spin' : 'shrink-0'}
               />
-              <span className="break-all text-right font-mono" title={balance}>
+              <span className="min-w-0 truncate text-right font-mono" title={balance}>
                 {formatTokenQuantity(balance)}
               </span>
             </button>
@@ -353,7 +354,9 @@ function SwapAssetCard({
 
       <div
         className={cn(
-          'flex items-center justify-between gap-3',
+          longAmount
+            ? 'flex flex-col items-stretch gap-2'
+            : 'flex items-center justify-between gap-3',
           validationMessage ? 'mt-2' : 'mt-5'
         )}
       >
@@ -732,8 +735,9 @@ export function SwapInputView({
               <div className="flex items-center justify-between text-sm">
                 <span className="text-muted">Rate</span>
                 <span className="text-right">
-                  1 {formatSymbol(tokenIn?.symbol) || '—'} = {formatTokenQuantity(rate)}{' '}
-                  {formatSymbol(tokenOut?.symbol) || '—'}
+                  1 {formatSymbol(tokenIn?.symbol) || '—'} ={' '}
+                  {isEstimatedOut && rate !== '...' ? '≈ ' : ''}
+                  {formatTokenQuantity(rate)} {formatSymbol(tokenOut?.symbol) || '—'}
                 </span>
               </div>
               <div className="flex items-center justify-between text-sm">

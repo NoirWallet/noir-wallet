@@ -23,7 +23,10 @@ import { useSettingsStore } from '@/store/settings-store'
 import { useWalletStore } from '@/store/wallet-store'
 import { buildAccountKey } from '@/store/account-data-store'
 import { useUserEvmAssets } from '@/popup/hooks/useUserEvmAssets'
-import { buildActivityPresentationCatalog } from '@/popup/services/activity-presentation-catalog'
+import {
+  buildActivityPresentationCatalog,
+  type ActivityChainMetadata
+} from '@/popup/services/activity-presentation-catalog'
 import {
   confidentialFundingClient,
   getConfidentialFundingPlanId
@@ -38,7 +41,10 @@ import { TokenIcon } from '../tokens/TokenIcon'
 import { Button } from '../ui/button'
 import { ActivityInteractionIcon } from './ActivityInteractionIcon'
 import { TransactionProgressSteps } from './TransactionProgressSteps'
-import { getActivityInteractionPresentation } from './activity-interaction-adapters'
+import {
+  getActivityApprovalDetails,
+  getActivityInteractionPresentation
+} from './activity-interaction-adapters'
 import { resolveActivityChainId } from './activity-chain'
 import {
   getActivityTransactionReferences,
@@ -58,7 +64,8 @@ import {
   getActivitySwapPresentation,
   buildActivityExecutionAddressModes,
   isOwnedAccountTransfer,
-  isActivityRecoveryTransition
+  isActivityRecoveryTransition,
+  resolveActivityChainMetadata
 } from './multichain-activity-presentation'
 import { ActivityRouteTokenIcons } from './ActivityRouteTokenIcons'
 import { resolveScopedZcashActivityTransaction } from '@/popup/services/zcash-activity-detail'
@@ -105,10 +112,10 @@ function TransactionReference({
 
 function chainDisplayName(
   chainId: string,
-  metadata: ReadonlyMap<string, { readonly displayName: string }>
+  metadata: ReadonlyMap<string, ActivityChainMetadata>
 ): string {
   if (chainId === 'near:mainnet') return 'NEAR'
-  return metadata.get(chainId)?.displayName ?? 'Unknown network'
+  return resolveActivityChainMetadata(chainId, metadata)?.displayName ?? 'Unknown network'
 }
 
 function SwapChainIcon({ alias }: { readonly alias?: string }) {
@@ -262,6 +269,7 @@ export function MultichainActivityDetail({
   )
   const primaryChainId = asset?.asset.chainId ?? resolveActivityChainId(visibleItem)
   const interaction = getActivityInteractionPresentation(visibleItem, primaryChainId)
+  const approval = getActivityApprovalDetails(visibleItem, assetMetadata)
   const aaveSupply = getAaveSupplyPresentation(visibleItem)
   const title = swap
     ? getActivityRouteTitle(visibleItem, swap)
@@ -269,12 +277,13 @@ export function MultichainActivityDetail({
   const sameNetworkAccountTransfer =
     swap && isOwnedAccountTransfer(swap) && swap.sourceNetwork === swap.destinationNetwork
   const primaryNetworkName = primaryChainId
-    ? (chainMetadata.get(primaryChainId)?.displayName ??
+    ? (resolveActivityChainMetadata(primaryChainId, chainMetadata)?.displayName ??
       interaction?.fallbackNetworkName ??
       'Unknown network')
     : 'Wallet'
   const primaryChainIconAlias = primaryChainId
-    ? (chainMetadata.get(primaryChainId)?.iconAlias ?? interaction?.fallbackChainIconAlias)
+    ? (resolveActivityChainMetadata(primaryChainId, chainMetadata)?.iconAlias ??
+      interaction?.fallbackChainIconAlias)
     : interaction?.fallbackChainIconAlias
   const fee = visibleItem.snapshot?.feeLimit
   const feeAsset = fee ? assetMetadata.get(fee.assetId) : undefined
@@ -694,14 +703,23 @@ export function MultichainActivityDetail({
           </DetailRow>
         ) : visibleItem.kind !== 'shield' && !swap && transferRecipient ? (
           <DetailRow label={aaveSupply ? 'Aave contract' : (interaction?.targetLabel ?? 'To')}>
-            <span className="max-w-[220px] truncate font-mono text-sm" title={transferRecipient}>
-              {formatSortAddress(transferRecipient)}
+            <span className="inline-flex min-w-0 max-w-[220px] items-center gap-2">
+              {approval?.tokenSymbol && (
+                <span className="shrink-0 text-sm">{approval.tokenSymbol}</span>
+              )}
+              <span className="truncate font-mono text-sm" title={transferRecipient}>
+                {formatSortAddress(transferRecipient)}
+              </span>
             </span>
           </DetailRow>
         ) : null}
         {visibleItem.snapshot?.evm?.methodSelector && (
           <DetailRow label="Method">
-            {swapSourceMethod ? (
+            {approval?.methodLabel ? (
+              <span className="text-right text-sm" title={visibleItem.snapshot.evm.methodSelector}>
+                {approval.methodLabel}
+              </span>
+            ) : swapSourceMethod ? (
               <span className="text-right text-sm" title={visibleItem.snapshot.evm.methodSelector}>
                 {swapSourceMethod}
               </span>
