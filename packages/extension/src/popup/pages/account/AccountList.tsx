@@ -52,6 +52,7 @@ import { isWalletLockedError } from '@/lib/errors'
 import {
   accountListKey,
   buildVisibleAccountList,
+  hasAccountMenuAddAction,
   resolveAccountPortfolioValue
 } from '@/popup/services/account-list-model'
 
@@ -151,7 +152,7 @@ export function AccountList() {
     }
   }
 
-  const { filteredAccounts, filteredAccountKeys, pinnedAccounts, hiddenAccounts, nativeAccounts } =
+  const { filteredAccounts, pinnedAccounts, hiddenAccounts, nativeAccounts, regularEntries } =
     buildVisibleAccountList({
       wallets,
       accountDisplayNames,
@@ -409,41 +410,6 @@ export function AccountList() {
               <div className="text-center py-8 text-muted">No accounts found</div>
             ) : (
               <>
-                {nativeAccounts.map(account => (
-                  <NativeHardwareAccountItem
-                    key={accountListKey(account.walletId, account.accountId)}
-                    account={account}
-                    switching={
-                      switchingAccountKey === accountListKey(account.walletId, account.accountId)
-                    }
-                    removing={removingWalletId === account.walletId}
-                    expanded={
-                      expandedAccountKey === accountListKey(account.walletId, account.accountId)
-                    }
-                    onToggleNetworks={() => {
-                      const key = accountListKey(account.walletId, account.accountId)
-                      setExpandedAccountKey(current => (current === key ? null : key))
-                    }}
-                    onCopyAddress={address => void copyToClipboard(address)}
-                    onSelect={handleNativeAccountSelect}
-                    onRename={handleNativeWalletRename}
-                    onRemove={handleNativeWalletRemove}
-                    onExport={account =>
-                      navigate(
-                        `/export-private-key?walletId=${account.walletId}&accountId=${account.accountId}`
-                      )
-                    }
-                    portfolioValue={resolveAccountPortfolioValue(
-                      account.walletId,
-                      account.accountId,
-                      currentNetwork,
-                      portfolioValues,
-                      zcashBalances,
-                      zecPrice
-                    )}
-                    balancesHidden={balancesHidden}
-                  />
-                ))}
                 {pinnedAccounts.length > 0 && (
                   <div className="space-y-2">
                     <div className="px-2">
@@ -477,6 +443,12 @@ export function AccountList() {
                             }}
                             onCopyAddress={address => void copyToClipboard(address)}
                             onSelect={handleAccountSelect}
+                            onAddAccount={
+                              hasAccountMenuAddAction(wallet)
+                                ? () => void handleAddSoftwareAccount(wallet.id)
+                                : undefined
+                            }
+                            addingAccount={addingWalletId === wallet.id}
                             portfolioValue={resolveAccountPortfolioValue(
                               wallet.id,
                               account.id,
@@ -493,18 +465,47 @@ export function AccountList() {
                   </div>
                 )}
 
-                {wallets.map(wallet => {
-                  const walletNormalAccounts = wallet.accounts.filter(
-                    account =>
-                      !account.isPinned &&
-                      !account.isHidden &&
-                      filteredAccountKeys.has(`${wallet.id}:${account.id}`)
-                  )
-
-                  if (walletNormalAccounts.length === 0 && searchQuery) {
-                    return null
+                {regularEntries.map(entry => {
+                  if (entry.kind === 'native') {
+                    const account = entry.account
+                    return (
+                      <NativeHardwareAccountItem
+                        key={accountListKey(account.walletId, account.accountId)}
+                        account={account}
+                        switching={
+                          switchingAccountKey ===
+                          accountListKey(account.walletId, account.accountId)
+                        }
+                        removing={removingWalletId === account.walletId}
+                        expanded={
+                          expandedAccountKey === accountListKey(account.walletId, account.accountId)
+                        }
+                        onToggleNetworks={() => {
+                          const key = accountListKey(account.walletId, account.accountId)
+                          setExpandedAccountKey(current => (current === key ? null : key))
+                        }}
+                        onCopyAddress={address => void copyToClipboard(address)}
+                        onSelect={handleNativeAccountSelect}
+                        onRename={handleNativeWalletRename}
+                        onRemove={handleNativeWalletRemove}
+                        onExport={account =>
+                          navigate(
+                            `/export-private-key?walletId=${account.walletId}&accountId=${account.accountId}`
+                          )
+                        }
+                        portfolioValue={resolveAccountPortfolioValue(
+                          account.walletId,
+                          account.accountId,
+                          currentNetwork,
+                          portfolioValues,
+                          zcashBalances,
+                          zecPrice
+                        )}
+                        balancesHidden={balancesHidden}
+                      />
+                    )
                   }
-
+                  const { wallet, accounts: walletNormalAccounts } = entry
                   return (
                     <div key={wallet.id} className="space-y-2">
                       <div className="px-2">
@@ -621,6 +622,12 @@ export function AccountList() {
                             }}
                             onCopyAddress={address => void copyToClipboard(address)}
                             onSelect={handleAccountSelect}
+                            onAddAccount={
+                              hasAccountMenuAddAction(wallet)
+                                ? () => void handleAddSoftwareAccount(wallet.id)
+                                : undefined
+                            }
+                            addingAccount={addingWalletId === wallet.id}
                             portfolioValue={resolveAccountPortfolioValue(
                               wallet.id,
                               account.id,
@@ -863,6 +870,8 @@ function AccountItem({
   onToggleNetworks,
   onCopyAddress,
   onSelect,
+  onAddAccount,
+  addingAccount = false,
   portfolioValue,
   balancesHidden
 }: {
@@ -877,6 +886,8 @@ function AccountItem({
   onToggleNetworks: () => void
   onCopyAddress: (address: string) => void
   onSelect: (accountId: string, walletId: string) => void
+  onAddAccount?: () => void
+  addingAccount?: boolean
   portfolioValue: AccountPortfolioValueSnapshot | null
   balancesHidden: boolean
 }) {
@@ -1030,6 +1041,18 @@ function AccountItem({
                     />
                     {account.isHidden ? 'Show account' : 'Hide account'}
                   </DropdownMenuItem>
+                  {onAddAccount && (
+                    <DropdownMenuItem
+                      disabled={addingAccount}
+                      onClick={e => {
+                        e.stopPropagation()
+                        onAddAccount()
+                      }}
+                    >
+                      <Icon icon="lucide:plus" className="mr-2 h-4 w-4" />
+                      Add Account
+                    </DropdownMenuItem>
+                  )}
                 </DropdownMenuContent>
               </DropdownMenu>
             </div>

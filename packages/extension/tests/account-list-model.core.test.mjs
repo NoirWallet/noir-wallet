@@ -9,11 +9,13 @@ const storage = {
 globalThis.chrome = {
   storage: { local: storage, session: storage, onChanged: { addListener: () => {} } }
 }
-const { buildVisibleAccountList } = await import('../src/popup/services/account-list-model.ts')
+const { buildVisibleAccountList, hasAccountMenuAddAction } =
+  await import('../src/popup/services/account-list-model.ts')
 
 const wallet = {
   id: 'wallet-1',
   name: 'Main Wallet',
+  createdAt: 100,
   accounts: [
     {
       id: 'account-1',
@@ -133,4 +135,94 @@ test('searches addresses and PEA for catalog-only accounts without changing name
     )
   }
   assert.equal(list('missing', [native]).nativeAccounts.length, 0)
+})
+
+test('orders retained and imported wallets by creation time across sources', () => {
+  const retained = {
+    ...wallet,
+    accounts: [{ ...wallet.accounts[0], isPinned: false }]
+  }
+  const earlyNative = {
+    ...catalogAccount,
+    walletId: 'native-early',
+    accountId: 'native-early-account',
+    walletCreatedAt: 50
+  }
+  const lateNative = {
+    ...catalogAccount,
+    walletId: 'native-late',
+    accountId: 'native-late-account',
+    walletCreatedAt: 150
+  }
+  const result = buildVisibleAccountList({
+    wallets: [retained],
+    accountDisplayNames: {},
+    nativeAccounts: [lateNative, catalogAccount, earlyNative],
+    searchQuery: ''
+  })
+  assert.deepEqual(
+    result.regularEntries.map(entry =>
+      entry.kind === 'wallet' ? entry.wallet.id : entry.account.walletId
+    ),
+    ['native-early', 'wallet-1', 'native-late']
+  )
+
+  const legacy = buildVisibleAccountList({
+    wallets: [retained],
+    accountDisplayNames: {},
+    nativeAccounts: [lateNative, { ...earlyNative, walletCreatedAt: undefined }],
+    searchQuery: ''
+  })
+  assert.deepEqual(
+    legacy.regularEntries.map(entry =>
+      entry.kind === 'wallet' ? entry.wallet.id : entry.account.walletId
+    ),
+    ['wallet-1', 'native-late', 'native-early']
+  )
+})
+
+test('omits empty wallet groups while preserving a wallet-specific Add Account action for pinned or hidden accounts', () => {
+  const first = { ...wallet, accounts: [{ ...wallet.accounts[0], isPinned: true }] }
+  const second = {
+    ...wallet,
+    id: 'wallet-2',
+    name: 'Second Wallet',
+    createdAt: 200,
+    accounts: [{ ...wallet.accounts[1], isHidden: true }]
+  }
+  const result = buildVisibleAccountList({
+    wallets: [first, second],
+    accountDisplayNames: {},
+    nativeAccounts: [],
+    searchQuery: ''
+  })
+  assert.deepEqual(result.regularEntries, [])
+  assert.deepEqual(
+    result.pinnedAccounts.map(account => account.walletId),
+    ['wallet-1']
+  )
+  assert.deepEqual(
+    result.hiddenAccounts.map(account => account.walletId),
+    ['wallet-2']
+  )
+  assert.equal(hasAccountMenuAddAction(first), true)
+  assert.equal(hasAccountMenuAddAction(second), true)
+  assert.equal(hasAccountMenuAddAction({ ...first, keySource: 'ledger' }), false)
+  assert.equal(
+    hasAccountMenuAddAction({ ...first, accounts: [{ ...first.accounts[0], isPinned: false }] }),
+    false
+  )
+
+  const search = buildVisibleAccountList({
+    wallets: [first, second],
+    accountDisplayNames: {},
+    nativeAccounts: [],
+    searchQuery: 'Savings'
+  })
+  assert.deepEqual(search.regularEntries, [])
+  assert.deepEqual(
+    search.pinnedAccounts.map(account => account.walletId),
+    ['wallet-1']
+  )
+  assert.deepEqual(search.hiddenAccounts, [])
 })

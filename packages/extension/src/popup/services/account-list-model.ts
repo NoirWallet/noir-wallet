@@ -3,8 +3,9 @@ import { matchesAccountSearch } from '@/lib/account-search'
 import { safeBig } from '@/lib/big'
 import { formatWalletName, getAccountDisplayName } from '@/lib/format'
 import { buildAccountKey } from '@/store/account-data-store'
-import type { WalletItem, ZcashBalance } from '@/types'
+import type { AccountData, WalletItem, ZcashBalance } from '@/types'
 import type { AccountNetworksCatalogView, AccountNetworksView } from './account-networks-client'
+import { isZcashHardwareKeySource } from '@/core/wallet/hardware-wallet-data'
 
 export interface AccountListItem {
   readonly id: string
@@ -16,8 +17,20 @@ export interface AccountListItem {
   readonly walletName: string
 }
 
+export type RegularAccountEntry =
+  | Readonly<{ kind: 'wallet'; wallet: WalletItem; accounts: readonly AccountData[] }>
+  | Readonly<{ kind: 'native'; account: AccountNetworksView }>
+
 export function accountListKey(walletId: string, accountId: string): string {
   return `${walletId}:${accountId}`
+}
+
+export function hasAccountMenuAddAction(wallet: WalletItem): boolean {
+  return (
+    !isZcashHardwareKeySource(wallet.keySource) &&
+    wallet.accounts.length > 0 &&
+    wallet.accounts.every(account => account.isPinned || account.isHidden)
+  )
 }
 
 function catalogAddresses(account: AccountNetworksView | undefined): readonly string[] {
@@ -70,6 +83,7 @@ export function buildVisibleAccountList(input: {
   pinnedAccounts: readonly AccountListItem[]
   hiddenAccounts: readonly AccountListItem[]
   nativeAccounts: AccountNetworksCatalogView['accounts']
+  regularEntries: readonly RegularAccountEntry[]
 }> {
   const catalogByAccount = new Map(
     input.nativeAccounts.map(account => [
@@ -116,15 +130,38 @@ export function buildVisibleAccountList(input: {
       catalogAddresses(account).some(address => address.toLowerCase().includes(query))
     )
   })
+  const filteredAccountKeys = new Set(
+    filteredAccounts.map(account => accountListKey(account.walletId, account.id))
+  )
+  const regularEntries: RegularAccountEntry[] = [
+    ...input.wallets.flatMap(wallet => {
+      const normalAccounts = wallet.accounts.filter(
+        account =>
+          !account.isPinned &&
+          !account.isHidden &&
+          filteredAccountKeys.has(accountListKey(wallet.id, account.id))
+      )
+      return normalAccounts.length > 0
+        ? [{ kind: 'wallet' as const, wallet, accounts: normalAccounts }]
+        : []
+    }),
+    ...nativeAccounts.map(account => ({ kind: 'native' as const, account }))
+  ]
+  regularEntries.sort((left, right) => {
+    const leftCreatedAt =
+      left.kind === 'wallet' ? left.wallet.createdAt : left.account.walletCreatedAt
+    const rightCreatedAt =
+      right.kind === 'wallet' ? right.wallet.createdAt : right.account.walletCreatedAt
+    return (leftCreatedAt ?? Number.MAX_SAFE_INTEGER) - (rightCreatedAt ?? Number.MAX_SAFE_INTEGER)
+  })
   return Object.freeze({
     filteredAccounts: Object.freeze(filteredAccounts),
-    filteredAccountKeys: new Set(
-      filteredAccounts.map(account => accountListKey(account.walletId, account.id))
-    ),
+    filteredAccountKeys,
     pinnedAccounts: Object.freeze(
       sortedAccounts.filter(account => account.isPinned && !account.isHidden)
     ),
     hiddenAccounts: Object.freeze(sortedAccounts.filter(account => account.isHidden)),
-    nativeAccounts: Object.freeze(nativeAccounts)
+    nativeAccounts: Object.freeze(nativeAccounts),
+    regularEntries: Object.freeze(regularEntries)
   })
 }

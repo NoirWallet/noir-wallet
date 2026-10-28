@@ -40,6 +40,7 @@ export interface AccountNetworkSummary {
 export interface AccountNetworksSummary {
   readonly walletId: KeyDomainId
   readonly walletDisplayName: string
+  readonly walletCreatedAt: number
   readonly walletSource:
     | Readonly<{ readonly kind: 'software' }>
     | Readonly<{
@@ -269,6 +270,7 @@ export class AccountNetworksCoordinator {
         return Object.freeze({
           walletId: account.keyDomainId,
           walletDisplayName: keyDomain.displayName,
+          walletCreatedAt: keyDomain.createdAt,
           walletSource:
             keyDomain.source.kind === 'software'
               ? Object.freeze({ kind: 'software' as const })
