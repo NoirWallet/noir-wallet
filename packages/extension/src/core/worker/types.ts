@@ -197,8 +197,7 @@ export interface RPCSchema {
   }
   'wallet.dbToBytes': {
     request: WalletRouted
-    // Streamed as chunks to avoid a single 100MB+ reallocation and to feed
-    // IndexedDB chunked storage directly (per-value size limit is ~127 MiB).
+    // Owned buffers are transferred to the host for IndexedDB chunked storage.
     response: Uint8Array[]
   }
   'wallet.persistDb': {
@@ -224,7 +223,9 @@ export interface RPCSchema {
     response: boolean
   }
   'wallet.replayJournalEntries': {
-    request: WalletRouted & { network: string; journalWalletId: string }
+    // The offscreen host resolves the journal, then sends one page to the worker.
+    request: WalletRouted &
+      ({ network: string; journalWalletId: string } | { entries: Uint8Array[] })
     response: number
   }
   'wallet.beginSyncSession': {

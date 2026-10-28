@@ -860,11 +860,9 @@ self.addEventListener('message', async (event: MessageEvent<RPCRequest<any>>) =>
             const chunks: Uint8Array[] = []
             let totalBytes = 0
             await w.db_to_bytes_chunked((chunk: Uint8Array) => {
-              // Copy out of WASM linear memory into a standalone buffer so it
-              // survives the postMessage clone and IndexedDB put unchanged.
-              const copy = new Uint8Array(chunk)
-              chunks.push(copy)
-              totalBytes += copy.byteLength
+              // The WASM binding already copies each chunk into an owned JS buffer.
+              chunks.push(chunk)
+              totalBytes += chunk.byteLength
             })
             workerDiagnosticLog('[Worker] Wallet database serialized', {
               bytes: totalBytes,
@@ -1470,7 +1468,19 @@ self.addEventListener('message', async (event: MessageEvent<RPCRequest<any>>) =>
     }
 
     const response: RPCResponse<any> = { id, method, result }
-    self.postMessage(response)
+    if (method === 'wallet.dbToBytes') {
+      const chunks = result as RPCSchema['wallet.dbToBytes']['response']
+      const buffers = chunks.map(chunk => {
+        if (!(chunk.buffer instanceof ArrayBuffer)) {
+          throw new Error('Wallet snapshot must use transferable ArrayBuffers')
+        }
+        return chunk.buffer
+      })
+      // Ownership ends here; the offscreen host owns these bytes until IDB commits.
+      self.postMessage(response, { transfer: [...new Set(buffers)] })
+    } else {
+      self.postMessage(response)
+    }
   } catch (error) {
     console.error(`[Worker] RPC request failed: ${getDiagnosticRpcMethod(method)}`, error)
     let errorMessage = 'Unknown worker error'
