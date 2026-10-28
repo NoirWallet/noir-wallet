@@ -31,11 +31,11 @@ export interface CompactBlockCdnOptions {
     maxConcurrentChunkRequests?: number;
 }
 
-/** Runtime broadcast endpoints; supply again when restoring wallet bytes. */
+/** Runtime Orchard broadcast and transaction lookup endpoints; supply again when restoring wallet bytes. */
 export interface ZeroIndexerOptions {
-    /** Ordered endpoints used only for transactions containing an Orchard bundle. */
+    /** Ordered endpoints for Orchard transaction broadcast and status lookup. */
     urls: string[];
-    /** Positive per-endpoint timeout in milliseconds. Defaults to 30000. */
+    /** Positive per-endpoint timeout for send and GetTransaction, in milliseconds. Defaults to 30000. */
     sendTimeoutMs?: number;
 }
 
@@ -1003,11 +1003,11 @@ export interface InitOutput {
     readonly rustsecp256k1_v0_14_default_illegal_callback_fn: (a: number, b: number) => void;
     readonly rustsecp256k1_v0_14_context_create: (a: number) => number;
     readonly rustsecp256k1_v0_14_context_destroy: (a: number) => void;
-    readonly __wasm_bindgen_func_elem_16443: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_16460: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_12376: (a: number, b: number, c: number) => void;
-    readonly __wasm_bindgen_func_elem_16445: (a: number, b: number, c: number) => void;
-    readonly __wasm_bindgen_func_elem_12301: (a: number, b: number) => void;
+    readonly __wasm_bindgen_func_elem_16453: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_16470: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_12386: (a: number, b: number, c: number) => void;
+    readonly __wasm_bindgen_func_elem_16455: (a: number, b: number, c: number) => void;
+    readonly __wasm_bindgen_func_elem_12311: (a: number, b: number) => void;
     readonly memory: WebAssembly.Memory;
     readonly __wbindgen_export: (a: number, b: number) => number;
     readonly __wbindgen_export2: (a: number, b: number, c: number, d: number) => number;
