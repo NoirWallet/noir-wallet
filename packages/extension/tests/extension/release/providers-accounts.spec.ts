@@ -182,9 +182,15 @@ test('exposes the released multichain provider surface by default', async ({ con
       ethereum?: unknown
     }
     const originalEthereum = target.ethereum
-    const laterWalletProvider = Object.freeze({ isMetaMask: true })
+    const laterWalletProvider = Object.freeze({
+      isMetaMask: true,
+      request: async () => []
+    })
     const acceptsLaterWallet = Reflect.set(target, 'ethereum', laterWalletProvider)
     const laterWalletBecameDefault = target.ethereum === laterWalletProvider
+    const laterWalletRegistered = (
+      target.ethereum as { providers?: readonly unknown[] } | undefined
+    )?.providers?.includes(laterWalletProvider)
     const noirProviderStayedAvailable = target.noirwallet?.ethereum !== undefined
     if (acceptsLaterWallet) Reflect.set(target, 'ethereum', originalEthereum)
     const initialAnnouncements = Reflect.get(window, '__noirInitialEip6963Announcements')
@@ -231,6 +237,7 @@ test('exposes the released multichain provider surface by default', async ({ con
       hasDefaultEthereum: target.ethereum !== undefined,
       acceptsLaterWallet,
       laterWalletBecameDefault,
+      laterWalletRegistered,
       noirProviderStayedAvailable,
       initialNoirAnnouncementObserved,
       announcementCount: announcements.length
@@ -266,7 +273,8 @@ test('exposes the released multichain provider surface by default', async ({ con
     nearConnectSignAndSendTransaction: nearEnabled ? true : undefined,
     hasDefaultEthereum: true,
     acceptsLaterWallet: true,
-    laterWalletBecameDefault: true,
+    laterWalletBecameDefault: false,
+    laterWalletRegistered: true,
     noirProviderStayedAvailable: true,
     initialNoirAnnouncementObserved: true,
     announcementCount: 1

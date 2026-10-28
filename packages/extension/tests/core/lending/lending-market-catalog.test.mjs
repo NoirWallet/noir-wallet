@@ -7,6 +7,7 @@ import {
   normalizeLendingMarketSymbol,
   sortLendingMarketsBySupplyApy
 } from '../../../src/core/services/lending-market-catalog.ts'
+import { parseLendingMarketCacheState } from '../../../src/infrastructure/lending/chrome-lending-market-cache.ts'
 
 function market(tokenId, symbol) {
   return {
@@ -95,4 +96,31 @@ test('preserves bridge suffixes while formatting native market aliases', () => {
   expect(normalizeLendingMarketSymbol('NBTC')).toBe('BTC')
   expect(normalizeLendingMarketSymbol('USDT.e')).toBe('USDT.e')
   expect(normalizeLendingMarketSymbol('USDC.e')).toBe('USDC.e')
+})
+
+test('oversized SDK icons fall back without making market snapshots invalid', () => {
+  const assets = {
+    'asset.near': {
+      metadata: {
+        name: 'Asset',
+        symbol: 'AST',
+        decimals: 24,
+        icon: `data:image/svg+xml,${'a'.repeat(2049)}`
+      },
+      config: { extra_decimals: 0 },
+      price: { usd: '1' },
+      supplied: { balance: '0' },
+      supply_apr: '0',
+      farms: { supplied: {}, borrowed: {}, tokennetbalance: {} }
+    }
+  }
+  const [market] = getLendingMarketViews(assets, undefined)
+  expect(market).toMatchObject({ id: 'asset.near', symbol: 'AST' })
+  expect(market).not.toHaveProperty('icon')
+  const version = parseLendingMarketCacheState(null).version
+  const parsed = parseLendingMarketCacheState({
+    version,
+    entries: { 'wallet:account:mainnet': { cachedAt: Date.now(), markets: [market] } }
+  })
+  expect(parsed.entries['wallet:account:mainnet'].markets[0]).not.toHaveProperty('icon')
 })

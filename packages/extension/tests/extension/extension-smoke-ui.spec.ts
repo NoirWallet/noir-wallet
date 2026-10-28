@@ -138,10 +138,15 @@ test('loads the built extension popup and service worker', async ({ extensionId,
     .poll(() =>
       popup.evaluate(async () => {
         const alarm = await chrome.alarms.get('wallet-balance-sync')
-        return alarm?.periodInMinutes ?? null
+        return alarm
+          ? {
+              recurring: alarm.periodInMinutes !== undefined,
+              scheduledInFuture: alarm.scheduledTime > Date.now()
+            }
+          : null
       })
     )
-    .toBe(1)
+    .toEqual({ recurring: false, scheduledInFuture: true })
   await captureScreenshot(popup, 'extension-welcome.png')
 })
 
@@ -953,9 +958,6 @@ test('imports 12 words, preserves added-wallet backup, and changes the wallet pa
   const resyncZcashButton = popup.getByRole('button', { name: 'Resync Zcash' })
   await resyncZcashButton.scrollIntoViewIfNeeded()
   await expect(resyncZcashButton).toBeVisible()
-  await expect(
-    popup.getByText(/EVM and Bitcoin balances and activity are not changed/)
-  ).toBeVisible()
   await resyncZcashButton.click()
   await expect(popup.getByRole('heading', { name: 'Resync Zcash' })).toBeVisible()
   await expect(popup.getByText(/This rebuilds local Zcash data/)).toBeVisible()

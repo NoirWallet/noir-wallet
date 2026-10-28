@@ -1854,8 +1854,14 @@ test('retries the exact signed transaction from Activity after an interrupted br
   await expect(popup.getByRole('heading', { name: 'Review Send' })).toBeVisible({
     timeout: 30_000
   })
-  const reviewDialog = popup.getByRole('dialog')
-  await expect(reviewDialog.getByText(longAmount, { exact: true })).toBeVisible()
+  const reviewDialog = popup.getByRole('dialog', { name: 'Review Send' })
+  const reviewAmount = reviewDialog
+    .getByRole('button', { name: 'Show full ETH amount' })
+    .filter({ hasText: '0.12345678… ETH' })
+  await expect(reviewAmount).toContainText('0.12345678… ETH')
+  await reviewAmount.click()
+  await expect(popup.getByText(`${longAmount} ETH`, { exact: true })).toBeVisible()
+  await reviewAmount.click()
   await expect
     .poll(() =>
       reviewDialog.evaluate(element => ({
@@ -2528,11 +2534,14 @@ test('prepares, signs, broadcasts, monitors, and records a Sepolia transfer in r
   await expect(popup.getByTestId('send-asset-header')).toContainText('Ethereum Sepolia')
   await popup.getByLabel('Send To').fill(RECIPIENT)
   await popup.getByLabel('USDC amount').fill('0.5')
-  await expect(popup.getByTestId('send-network-fee')).toContainText(/0\.(?:000063|0₄63) ETH/, {
+  await expect(popup.getByTestId('send-network-fee')).toContainText('0.0000756 ETH', {
     timeout: 30_000
   })
   await expect(popup.getByTestId('send-network-fee')).toContainText('Standard')
-  await popup.getByTestId('send-network-fee').getByRole('button').click()
+  await popup
+    .getByTestId('send-network-fee')
+    .getByRole('button', { name: 'Edit network fee' })
+    .click()
   const feeSettings = popup.getByRole('dialog', { name: 'Network Fee' })
   await feeSettings.getByLabel('Custom priority fee').fill('2.5')
   await captureScreenshot(popup, 'noir-v2-custom-priority-fee.png')
@@ -2546,7 +2555,9 @@ test('prepares, signs, broadcasts, monitors, and records a Sepolia transfer in r
   await expect(reviewDialog.getByRole('heading', { name: 'Review Send' })).toBeVisible({
     timeout: 30_000
   })
-  await expect(reviewDialog.locator('p').filter({ hasText: /^0\.5\s*USDC$/ })).toBeVisible()
+  await expect(reviewDialog.getByRole('button', { name: 'Show full USDC amount' })).toHaveText(
+    '0.5 USDC'
+  )
   await expect(popup.getByText('Token transfer', { exact: true })).toBeVisible()
   await expect(
     popup.getByText('This token transfer calls the bundled USDC contract.', { exact: true })
@@ -2577,7 +2588,7 @@ test('prepares, signs, broadcasts, monitors, and records a Sepolia transfer in r
   await sendAmountCard.getByRole('button', { name: 'Max' }).click()
   await expect(sendAmountCard).toContainText('Available', { timeout: 30_000 })
   await popup.getByLabel('ETH amount').fill('0.001')
-  await expect(popup.getByTestId('send-network-fee')).toContainText(/0\.(?:000063|0₄63) ETH/, {
+  await expect(popup.getByTestId('send-network-fee')).toContainText('0.000063 ETH', {
     timeout: 30_000
   })
   await expect(popup.getByRole('button', { name: 'Continue', exact: true })).toBeEnabled()
@@ -2589,7 +2600,11 @@ test('prepares, signs, broadcasts, monitors, and records a Sepolia transfer in r
     timeout: 30_000
   })
   await expect(sendAmountCard).toContainText('Available')
-  await expect(reviewDialog.locator('p').filter({ hasText: /^0\.001\s*ETH$/ })).toBeVisible()
+  await expect(
+    reviewDialog
+      .getByRole('button', { name: 'Show full ETH amount' })
+      .filter({ hasText: '0.001 ETH' })
+  ).toBeVisible()
   await expect(reviewDialog.getByText('Network fee', { exact: true })).toBeVisible()
   await expect(popup.getByText('Native transfer', { exact: true })).toBeVisible()
   await expect(popup.getByText(/slippage/i)).toHaveCount(0)
@@ -3105,7 +3120,13 @@ test('shows Main and Confidential indexed history together in Activity', async (
             retryAfter: number
           }
           if (record.chainId === 'eip155:11155111') {
-            cursor.update({ ...record, lastAttemptAt: 0, successfulSyncAt: 0, retryAfter: 0 })
+            cursor.update({
+              ...record,
+              lastAttemptAt: 0,
+              successfulSyncAt: 0,
+              historySyncAt: 0,
+              retryAfter: 0
+            })
             count += 1
           }
           cursor.continue()

@@ -1538,8 +1538,8 @@ test.describe('pinned Multichain WASM in the real MV3 extension', () => {
         from: evm.identity.value,
         to: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48',
         valueWei: '0',
-        gasLimit: '65000',
-        maximumFeeWei: '325000000000000',
+        gasLimit: '78000',
+        maximumFeeWei: '390000000000000',
         methodSelector: '0xa9059cbb'
       }
     })

@@ -165,14 +165,18 @@ test('persists and removes account-scoped Lending market snapshots', async () =>
   const storage = installChromeStorage()
   try {
     await writeLendingMarketCache('wallet-1:account-1', [lendingMarket()])
-    await writeLendingMarketCache('wallet-1:account-2', [lendingMarket()])
-    await expect(readLendingMarketCache('wallet-1:account-1')).resolves.toMatchObject([
+    await writeLendingMarketCache('wallet-1:account-1:mainnet', [lendingMarket()])
+    await writeLendingMarketCache('wallet-1:account-1:testnet', [lendingMarket()])
+    await writeLendingMarketCache('wallet-1:account-2:mainnet', [lendingMarket()])
+    await expect(readLendingMarketCache('wallet-1:account-1:mainnet')).resolves.toMatchObject([
       { id: 'eth.bridge.near', symbol: 'ETH', supplied: '1.5' }
     ])
 
     await deleteLendingMarketCache('wallet-1', 'account-1')
     await expect(readLendingMarketCache('wallet-1:account-1')).resolves.toEqual([])
-    await expect(readLendingMarketCache('wallet-1:account-2')).resolves.toHaveLength(1)
+    await expect(readLendingMarketCache('wallet-1:account-1:mainnet')).resolves.toEqual([])
+    await expect(readLendingMarketCache('wallet-1:account-1:testnet')).resolves.toEqual([])
+    await expect(readLendingMarketCache('wallet-1:account-2:mainnet')).resolves.toHaveLength(1)
   } finally {
     storage.restore()
   }

@@ -513,6 +513,7 @@ async function mockProtocolApis(
   context: BrowserContext,
   options: {
     readonly mcaId?: string
+    readonly mcaByWallet?: (wallet: Readonly<Record<string, string>>) => string | null
     readonly includeMultichainMarkets?: boolean
     readonly tokenResponseDelayMs?: number
     readonly quoteResponseDelayMs?: number
@@ -856,7 +857,7 @@ async function mockProtocolApis(
     const request = route.request().postDataJSON() as {
       id: string | number
       method?: string
-      params?: { method_name?: string; block_id?: unknown }
+      params?: { method_name?: string; block_id?: unknown; args_base64?: string }
     }
     const near = NEAR_NETWORKS.mainnet
     const attestationResult =
@@ -887,30 +888,36 @@ async function mockProtocolApis(
       return
     }
     const methodName = request.params?.method_name
-    const emptyPortfolio = options.mcaId
-      ? {
-          booster_staking: null,
-          booster_stakings: [],
-          farms: [],
-          has_non_farmed_assets: false,
-          positions: {},
-          supplied: options.includeMultichainMarkets
-            ? [
-                {
-                  token_id: 'eth.bridge.near',
-                  apr: '0',
-                  balance: '15000000000000000000000000000',
-                  shares: '15000000000000000000000000000'
-                }
-              ]
-            : []
-        }
-      : null
+    const args = request.params?.args_base64
+      ? JSON.parse(Buffer.from(request.params.args_base64, 'base64').toString('utf8'))
+      : {}
+    const emptyPortfolio =
+      options.mcaId && args.account_id === options.mcaId
+        ? {
+            booster_staking: null,
+            booster_stakings: [],
+            farms: [],
+            has_non_farmed_assets: false,
+            positions: {},
+            supplied: options.includeMultichainMarkets
+              ? [
+                  {
+                    token_id: 'eth.bridge.near',
+                    apr: '0',
+                    balance: '15000000000000000000000000000',
+                    shares: '15000000000000000000000000000'
+                  }
+                ]
+              : []
+          }
+        : null
     const result =
       methodName === 'current_salt'
         ? '12345678'
         : methodName === 'get_mca_by_wallet'
-          ? options.mcaId || null
+          ? options.mcaByWallet
+            ? options.mcaByWallet(args.wallet)
+            : options.mcaId || null
           : methodName === 'batch_views'
             ? [
                 emptyPortfolio,

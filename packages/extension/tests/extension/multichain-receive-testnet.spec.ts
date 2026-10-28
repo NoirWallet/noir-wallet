@@ -138,30 +138,30 @@ test('shows verified EVM, Bitcoin, Solana and NEAR addresses without releasing w
   await expect(popup.getByRole('heading', { name: 'Portfolio' })).toBeVisible({ timeout: 30_000 })
   expect(await popup.evaluate(() => crossOriginIsolated)).toBe(true)
 
-  await popup.getByRole('button', { name: 'dApp address: Main' }).click()
+  await popup.getByRole('button', { name: 'dApp address: Public' }).click()
   let executionModeCard = popup
     .getByRole('dialog', { name: 'dApp address' })
     .getByTestId('dapp-execution-mode-card')
-  const mainMode = executionModeCard.getByRole('radio', { name: 'Use Main address for dApps' })
+  const mainMode = executionModeCard.getByRole('radio', { name: 'Use Public address for dApps' })
   const privateMode = executionModeCard.getByRole('radio', {
-    name: 'Use Private address for dApps'
+    name: 'Use Confidential address for dApps'
   })
   await expect(mainMode).toBeChecked()
   await expect(privateMode).toBeEnabled()
   await privateMode.click()
   const privateModeDialog = popup.getByRole('dialog', { name: 'Turn on dApp privacy?' })
   await expect(privateModeDialog).toContainText(
-    'Supported connected dApps will switch from your Main address to your Private Execution Address'
+    'Supported connected dApps will switch from your Public address to your Confidential address'
   )
   await privateModeDialog.getByRole('button', { name: 'Turn on' }).click()
-  await expect(popup.getByRole('button', { name: 'dApp address: Private' })).toBeVisible()
+  await expect(popup.getByRole('button', { name: 'dApp address: Confidential' })).toBeVisible()
   await expect(popup.getByText('dApp privacy is on', { exact: true })).toBeVisible()
-  await popup.getByRole('button', { name: 'dApp address: Private' }).click()
+  await popup.getByRole('button', { name: 'dApp address: Confidential' }).click()
   executionModeCard = popup
     .getByRole('dialog', { name: 'dApp address' })
     .getByTestId('dapp-execution-mode-card')
-  await executionModeCard.getByRole('radio', { name: 'Use Main address for dApps' }).click()
-  await expect(popup.getByRole('button', { name: 'dApp address: Main' })).toBeVisible()
+  await executionModeCard.getByRole('radio', { name: 'Use Public address for dApps' }).click()
+  await expect(popup.getByRole('button', { name: 'dApp address: Public' })).toBeVisible()
 
   await popup.getByRole('button', { name: 'Choose wallet' }).click()
   await expect(popup.getByText('Noir Wallet', { exact: true })).toBeVisible()
@@ -240,7 +240,9 @@ test('shows verified EVM, Bitcoin, Solana and NEAR addresses without releasing w
   await expect(accountAddresses.locator(`[title="${EXPECTED_EVM_ADDRESS}"]`)).toHaveCount(
     EXPECTED_EVM_NETWORK_LABELS.length
   )
-  await expect(accountAddresses.getByText('Private', { exact: true })).toHaveCount(0)
+  await expect(accountAddresses.getByText('Confidential', { exact: true })).toHaveCount(
+    EXPECTED_EVM_NETWORK_LABELS.length
+  )
   await expect(accountAddresses.locator(`[title="${EXPECTED_BITCOIN_ADDRESS}"]`)).toBeVisible()
   for (const type of ['Native SegWit', 'Legacy', 'Nested SegWit', 'Taproot']) {
     await expect(accountAddresses.getByText(type, { exact: true })).toBeVisible()
@@ -293,19 +295,19 @@ test('shows verified EVM, Bitcoin, Solana and NEAR addresses without releasing w
   await expect(homeReceiveAddresses.locator(`[title="${EXPECTED_EVM_ADDRESS}"]`)).toHaveCount(
     EXPECTED_EVM_NETWORK_LABELS.length
   )
-  await expect(homeReceiveAddresses.getByText('Private', { exact: true })).toHaveCount(0)
+  await expect(homeReceiveAddresses.getByText('Confidential', { exact: true })).toHaveCount(0)
   await expect(homeReceiveAddresses.locator(`[title="${EXPECTED_BITCOIN_ADDRESS}"]`)).toBeVisible()
   await expectPopupFits(popup, false)
   await captureScreenshot(popup, 'multichain-receive-addresses.png')
 
   await popup.getByRole('button', { name: 'Back' }).click()
   await expect(popup.getByRole('heading', { name: 'Portfolio' })).toBeVisible()
-  await popup.getByRole('button', { name: 'dApp address: Main' }).click()
+  await popup.getByRole('button', { name: 'dApp address: Public' }).click()
   executionModeCard = popup
     .getByRole('dialog', { name: 'dApp address' })
     .getByTestId('dapp-execution-mode-card')
-  await executionModeCard.getByRole('radio', { name: 'Use Private address for dApps' }).click()
-  await expect(popup.getByRole('button', { name: 'dApp address: Private' })).toBeVisible()
+  await executionModeCard.getByRole('radio', { name: 'Use Confidential address for dApps' }).click()
+  await expect(popup.getByRole('button', { name: 'dApp address: Confidential' })).toBeVisible()
 
   const privateExecutionAddress = await popup.evaluate(async () => {
     const response = await chrome.runtime.sendMessage({ type: 'GET_ACCOUNT_NETWORKS' })
@@ -330,7 +332,7 @@ test('shows verified EVM, Bitcoin, Solana and NEAR addresses without releasing w
   await expect(privateReceiveAddresses.locator(`[title="${privateExecutionAddress}"]`)).toHaveCount(
     EXPECTED_EVM_NETWORK_LABELS.length
   )
-  await expect(privateReceiveAddresses.getByText('Private', { exact: true })).toHaveCount(
+  await expect(privateReceiveAddresses.getByText('Confidential', { exact: true })).toHaveCount(
     EXPECTED_EVM_NETWORK_LABELS.length
   )
   await captureScreenshot(popup, 'multichain-receive-private-addresses.png')

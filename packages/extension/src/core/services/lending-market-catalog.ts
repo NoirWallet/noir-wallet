@@ -124,7 +124,10 @@ export function getLendingMarketViews(
       const symbol = normalizeLendingMarketSymbol(metadata.symbol)
       const useCanonicalNativeIcon = tokenId === 'wrap.near' || tokenId === 'nbtc.bridge.near'
       const icon =
-        !useCanonicalNativeIcon && typeof metadata.icon === 'string' && metadata.icon.length > 0
+        !useCanonicalNativeIcon &&
+        typeof metadata.icon === 'string' &&
+        metadata.icon.length > 0 &&
+        metadata.icon.length <= 2_048
           ? metadata.icon
           : null
       const normalizedPriceUsd = Number.isFinite(priceUsd) && priceUsd >= 0 ? priceUsd : 0

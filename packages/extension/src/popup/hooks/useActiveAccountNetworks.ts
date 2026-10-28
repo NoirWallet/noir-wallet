@@ -5,6 +5,7 @@ import {
   type AccountNetworksView
 } from '../services/account-networks-client'
 import { useWalletStore } from '@/store/wallet-store'
+import { getOwnExtensionSenderContext } from '@/lib/runtime-message-security'
 
 export function useActiveAccountNetworks() {
   const [catalog, setCatalog] = useState<AccountNetworksCatalogView | null>(null)
@@ -41,8 +42,22 @@ export function useActiveAccountNetworks() {
     // Storage V2 Account and fail to cancel account-scoped reviews immediately.
     setCatalog(null)
     void refresh()
+    const listener = (message: unknown, sender: chrome.runtime.MessageSender) => {
+      if (getOwnExtensionSenderContext(sender, chrome.runtime.id) !== 'service-worker') return
+      if (
+        typeof message !== 'object' ||
+        message === null ||
+        (message as { type?: unknown }).type !== 'ACCOUNT_CONTEXT_CHANGED'
+      ) {
+        return
+      }
+      setCatalog(null)
+      void refresh()
+    }
+    chrome.runtime.onMessage.addListener(listener)
     return () => {
       sequence.current++
+      chrome.runtime.onMessage.removeListener(listener)
     }
   }, [refresh])
 

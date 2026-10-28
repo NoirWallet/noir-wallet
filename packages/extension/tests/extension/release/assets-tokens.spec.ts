@@ -8,14 +8,65 @@ import {
   captureScreenshot,
   expect,
   importTestWallet,
+  mockEvmHistoryProxy,
   mockExternalAssetIcons,
   mockReleasedBitcoinEsplora,
   mockReleasedEvmRpc,
   nearEnabled,
+  seedFreshAssetPrices,
   solanaEnabled,
   test,
   waitForBackgroundWalletInitialization
 } from '../../helpers/release-default'
+
+test('loads Home totals when Token activity opens before the Assets tab', async ({
+  context,
+  popup
+}) => {
+  test.setTimeout(180_000)
+  await mockExternalAssetIcons(context)
+  await context.route('**/get_multichain_lending_tokens_data**', route => route.abort())
+  await context.route('https://1click.chaindefuser.com/v0/tokens', route => route.abort())
+  await mockReleasedEvmRpc(context)
+  await mockReleasedBitcoinEsplora(context)
+  await mockEvmHistoryProxy(context)
+  await waitForBackgroundWalletInitialization(popup)
+  await importTestWallet(popup)
+  await seedFreshAssetPrices(popup)
+  const total = popup.getByTestId('home-total-assets')
+  await expect(total).toContainText('$', { timeout: 60_000 })
+  const initialTotal = await total.innerText()
+  await captureScreenshot(popup, 'home-assets-total-before-activity.png')
+  await popup.getByRole('button', { name: 'Show chain view' }).click()
+  await popup.getByRole('button', { name: 'Expand Ethereum tokens', exact: true }).click()
+  await popup.getByRole('button', { name: 'View ETH details on Ethereum', exact: true }).click()
+  const viewAll = popup.getByRole('button', { name: 'View all', exact: true })
+  await expect(viewAll).toBeVisible()
+  await viewAll.scrollIntoViewIfNeeded()
+  await captureScreenshot(popup, 'home-token-detail-view-all.png')
+  await viewAll.click()
+  await expect(popup.getByRole('tab', { name: 'Activity', exact: true })).toHaveAttribute(
+    'aria-selected',
+    'true'
+  )
+  await expect(popup.getByRole('heading', { name: 'Portfolio' })).toHaveCount(0)
+  await expect(popup.getByRole('status', { name: 'Loading activity', exact: true })).toHaveCount(
+    0,
+    {
+      timeout: 30_000
+    }
+  )
+  await expect(total).toHaveText(initialTotal, { timeout: 30_000 })
+  await expect(popup.getByRole('status', { name: 'Loading total assets' })).toHaveCount(0)
+  await captureScreenshot(popup, 'home-token-activity-total.png')
+
+  await popup.getByRole('tab', { name: 'Lending', exact: true }).click()
+  await expect(total).toHaveText(initialTotal)
+  await captureScreenshot(popup, 'home-lending-total-after-activity.png')
+  await popup.getByRole('tab', { name: 'Assets', exact: true }).click()
+  await expect(popup.getByRole('heading', { name: 'Portfolio' })).toBeVisible()
+  await expect(total).toHaveText(initialTotal)
+})
 
 test('adds and removes an exact custom Token without symbol or icon spoofing', async ({
   context,

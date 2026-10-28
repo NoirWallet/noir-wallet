@@ -176,9 +176,9 @@ test('serves cached EVM balances across Popup reload without repeating RPC reads
     })
     await chrome.storage.local.set({
       lending_market_cache_v1: {
-        version: 2,
+        version: 3,
         entries: {
-          [`${walletId}:${accountId}`]: {
+          [`${walletId}:${accountId}:mainnet`]: {
             cachedAt: Date.now(),
             markets: [
               market('usdc.test.near', 'USDC', '0.000666', '0.00'),
@@ -189,9 +189,10 @@ test('serves cached EVM balances across Popup reload without repeating RPC reads
       }
     })
   })
+  await popup.reload()
   await popup.getByRole('tab', { name: 'Lending' }).click()
   await expect(popup.getByText('0.000666 USDC', { exact: true })).toBeVisible()
-  await expect(popup.getByText('0.0₁₁2021 rNEAR', { exact: true })).toBeVisible()
+  await expect(popup.getByText('<0.00000001 rNEAR', { exact: true })).toBeVisible()
   await captureScreenshot(popup, 'REF-13215-lending-small-decimal-balances.png')
   await popup.getByRole('tab', { name: 'Assets' }).click()
   await expect(
@@ -352,7 +353,7 @@ test('REF-13211 shows the Private USDC Gas requirement before transfer preparati
   ).toBeVisible()
   await popup.getByLabel('Send To').fill('0x9C73842d02D1Fe00000000000000000000000000')
   await popup.getByLabel('USDC amount').fill('1')
-  await expect(popup.getByTestId('send-amount-card')).toContainText('Available 1.764 USDC')
+  await expect(popup.getByTestId('send-amount-card')).toContainText('Available 1.7647 USDC')
   const missingGasAlert = popup.getByRole('alert').filter({
     hasText: 'Insufficient ETH balance.'
   })

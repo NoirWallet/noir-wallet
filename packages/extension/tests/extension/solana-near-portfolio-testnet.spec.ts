@@ -405,7 +405,7 @@ test('signs, broadcasts and finalizes a Solana Devnet transfer through the real 
   await expect(solanaMax).toBeEnabled()
   await solanaMax.click()
   await expect(solanaAmount).toHaveValue('2.499995')
-  await expect(popup.getByTestId('send-amount-card')).toContainText('Available 2.499 SOL')
+  await expect(popup.getByTestId('send-amount-card')).toContainText('Available 2.4999 SOL')
   await expect(popup.getByRole('button', { name: 'Continue', exact: true })).toBeEnabled({
     timeout: 30_000
   })
@@ -420,7 +420,7 @@ test('signs, broadcasts and finalizes a Solana Devnet transfer through the real 
   const review = popup.getByRole('dialog', { name: 'Review Send' })
   await expect(review).toBeVisible()
   await expect(review.getByText('0.001 SOL', { exact: true })).toBeVisible()
-  await expect(review.getByText('0.0₅5 SOL', { exact: true })).toBeVisible()
+  await expect(review.getByText('0.000005 SOL', { exact: true })).toBeVisible()
   await review.getByRole('button', { name: 'Send', exact: true }).click()
 
   await expect(popup.getByRole('heading', { name: 'Transaction Submitted' })).toBeVisible({
@@ -434,7 +434,9 @@ test('signs, broadcasts and finalizes a Solana Devnet transfer through the real 
   await expect(popup.getByRole('heading', { name: 'Transaction Confirmed' })).toBeVisible({
     timeout: 30_000
   })
-  await expect(popup.getByText('Confirmed · 1/1', { exact: true })).toBeVisible()
+  await expect(
+    popup.locator('[data-transaction-status="final"]').getByText('Confirmed', { exact: true })
+  ).toBeVisible()
 })
 
 test('signs, broadcasts and finalizes a NEAR Testnet transfer through the real MV3 boundary', async ({
@@ -490,7 +492,7 @@ test('signs, broadcasts and finalizes a NEAR Testnet transfer through the real M
   const review = popup.getByRole('dialog', { name: 'Review Send' })
   await expect(review).toBeVisible()
   await expect(review.getByText('0.001 NEAR', { exact: true })).toBeVisible()
-  await expect(review.getByText('0.0004463 NEAR', { exact: true })).toBeVisible()
+  await expect(review.getByText('0.0004464 NEAR', { exact: true })).toBeVisible()
   await review.getByRole('button', { name: 'Send', exact: true }).click()
 
   await expect(popup.getByRole('heading', { name: 'Transaction Submitted' })).toBeVisible({
@@ -504,5 +506,7 @@ test('signs, broadcasts and finalizes a NEAR Testnet transfer through the real M
   await expect(popup.getByRole('heading', { name: 'Transaction Confirmed' })).toBeVisible({
     timeout: 30_000
   })
-  await expect(popup.getByText('Confirmed · 1/1', { exact: true })).toBeVisible()
+  await expect(
+    popup.locator('[data-transaction-status="final"]').getByText('Confirmed', { exact: true })
+  ).toBeVisible()
 })

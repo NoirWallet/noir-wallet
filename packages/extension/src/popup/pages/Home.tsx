@@ -27,7 +27,11 @@ import { AddressTypeLabel } from '../components/account/AddressType'
 import { useShieldFunds } from '../hooks/useShieldFunds'
 import { useSpeedUp } from '../hooks/useSpeedUp'
 import { Tooltip } from '../components/ui/tooltip'
-import { useLendingStore } from '@/store/lending-store'
+import {
+  getLendingAccountScope,
+  useLendingStore,
+  type LendingAccountContext
+} from '@/store/lending-store'
 import { BalanceWithPending } from '../components/balance/BalanceWithPending'
 import { ExtensionUpdateBanner } from '../components/common/ExtensionUpdateBanner'
 import { LegacyPoolPrivacyNotice } from '../components/common/LegacyPoolPrivacyNotice'
@@ -51,9 +55,9 @@ import { clearHomeTransactionFocus, resolveHomeDefaultTab } from '../services/ho
 import { assetPriceClient } from '../services/asset-price-client'
 import { parseAssetId } from '@/core/chains/registry'
 import type { AssetPriceReadModel } from '@/core/prices'
-import type { PortfolioReadModel } from '@/core/portfolio'
 import { summarizePortfolioFiat } from '../components/portfolio/portfolio-prices'
 import { useActiveAccountNetworks } from '../hooks/useActiveAccountNetworks'
+import { useHomePortfolio } from '../hooks/useHomePortfolio'
 import { useSettingsStore } from '@/store/settings-store'
 import { hasAttestedCredentialSession } from '@/core/wallet/credential-session-client'
 import { ZcashSyncProgress } from '../components/common/ZcashSyncProgress'
@@ -111,10 +115,6 @@ export function Home() {
   const [assetPrices, setAssetPrices] = useState<AssetPriceReadModel | null>(null)
   const assetPricesRef = useRef<AssetPriceReadModel | null>(null)
   const [assetPriceStatus, setAssetPriceStatus] = useState<'loading' | 'ready' | 'error'>('loading')
-  const [multichainPortfolio, setMultichainPortfolio] = useState<PortfolioReadModel | null>(null)
-  const [portfolioLoadStatus, setPortfolioLoadStatus] = useState<'loading' | 'ready' | 'error'>(
-    'loading'
-  )
   const [activeTab, setActiveTab] = useState<'assets' | 'lending' | 'activity'>(() =>
     resolveHomeDefaultTab(location.search)
   )
@@ -150,6 +150,14 @@ export function Home() {
   })
   const effectiveWalletId = effectiveAccount?.walletId ?? null
   const effectiveAccountId = effectiveAccount?.accountId ?? null
+  const {
+    model: multichainPortfolio,
+    status: portfolioLoadStatus,
+    refresh: refreshPortfolio
+  } = useHomePortfolio(
+    multichainPortfolioEnabled ? effectiveWalletId : null,
+    multichainPortfolioEnabled ? effectiveAccountId : null
+  )
   const dappExecutionSupport = useMemo(() => {
     if (!effectiveWalletId || !effectiveAccountId) {
       return Object.freeze({ connected: 0, privateCapable: 0, mainOnly: 0 })
@@ -189,7 +197,30 @@ export function Home() {
     storageV2Account?.networks.some(network =>
       ['zcash', 'evm', 'bitcoin'].includes(network.chain.family)
     ) ?? Boolean(currentAccount)
-  const supportsLending = !isHardwareWallet && supportsSwap
+  const supportsLending = currentNetwork === 'mainnet' && !isHardwareWallet && supportsSwap
+  const lendingContext = useMemo<LendingAccountContext | null>(() => {
+    if (!supportsLending || !effectiveWalletId || !effectiveAccountId) return null
+    const identity: LendingAccountContext['identity'] | null = supportsZcash
+      ? { kind: 'zcash' }
+      : dappAddresses.mainAddress
+        ? { kind: 'evm', address: dappAddresses.mainAddress }
+        : null
+    return identity
+      ? {
+          walletId: effectiveWalletId,
+          accountId: effectiveAccountId,
+          network: currentNetwork,
+          identity
+        }
+      : null
+  }, [
+    supportsLending,
+    supportsZcash,
+    effectiveWalletId,
+    effectiveAccountId,
+    currentNetwork,
+    dappAddresses.mainAddress
+  ])
   const storeBalance = getCurrentBalance()
   const { isSyncing, syncProgress, currentHeight, latestHeight, etaMs, syncReason } =
     getCurrentSyncState()
@@ -357,24 +388,23 @@ export function Home() {
   const [lendingSessionError, setLendingSessionError] = useState(false)
   const [lendingSessionLoading, setLendingSessionLoading] = useState(false)
   const [lendingSessionRetry, setLendingSessionRetry] = useState(0)
+  const lendingScopeMatches =
+    lendingContext !== null && lendingAccountScope === getLendingAccountScope(lendingContext)
 
   useEffect(() => {
-    if (!supportsLending) {
+    if (!lendingContext) {
       resetLending()
-      return
-    }
-    const activeLendingScope = `${currentWalletId || 'none'}:${currentAccountId || 'none'}`
-    if (lendingAccountScope !== null && lendingAccountScope !== activeLendingScope) {
-      resetLending()
+      setLendingSessionError(supportsLending && !accountNetworksLoading)
+      setLendingSessionLoading(accountNetworksLoading)
       return
     }
     let cancelled = false
     setLendingSessionError(false)
     setLendingSessionLoading(true)
-    void hydrateLendingCache().catch(() => {})
+    void hydrateLendingCache(lendingContext).catch(() => {})
     void hasAttestedCredentialSession()
       .then(active => {
-        if (active && !cancelled) return refreshLending()
+        if (active && !cancelled) return refreshLending(lendingContext)
       })
       .catch(() => {
         if (!cancelled) setLendingSessionError(true)
@@ -386,11 +416,8 @@ export function Home() {
       cancelled = true
     }
   }, [
-    currentAccountId,
-    currentWalletId,
-    effectiveWalletId,
-    effectiveAccountId,
-    lendingAccountScope,
+    lendingContext,
+    accountNetworksLoading,
     lendingSessionRetry,
     hydrateLendingCache,
     refreshLending,
@@ -398,9 +425,10 @@ export function Home() {
     supportsLending
   ])
 
-  const lendingPositions = supportsLending
-    ? getMarketAssets().filter(market => safeBig(market.supplied).gt(0))
-    : []
+  const lendingPositions =
+    supportsLending && lendingScopeMatches
+      ? getMarketAssets().filter(market => safeBig(market.supplied).gt(0))
+      : []
   const lendingSuppliedUsd = lendingPositions
     .reduce((total, market) => total.plus(market.suppliedUsd), safeBig(0))
     .toNumber()
@@ -952,7 +980,8 @@ export function Home() {
               <MultichainPortfolioPanel
                 walletId={effectiveWalletId}
                 accountId={effectiveAccountId}
-                initialModel={multichainPortfolio}
+                model={multichainPortfolio}
+                status={portfolioLoadStatus}
                 prices={assetPrices}
                 priceStatus={assetPriceStatus}
                 balancesHidden={balancesHidden}
@@ -961,8 +990,7 @@ export function Home() {
                     ? { syncProgress, currentHeight, latestHeight, etaMs }
                     : undefined
                 }
-                onModelChange={setMultichainPortfolio}
-                onStatusChange={setPortfolioLoadStatus}
+                onRefresh={refreshPortfolio}
                 onRetryPrices={refreshAssetPrices}
                 onSelectAsset={assetId =>
                   navigate.navigate(`/asset-detail?assetId=${encodeURIComponent(assetId)}`)
@@ -1058,7 +1086,8 @@ export function Home() {
           </TabsContent>
 
           <TabsContent value="lending" className="px-5 py-4 mt-0">
-            {(lendingSessionError || lendingMcaError || lendingError) && (
+            {(lendingSessionError ||
+              (lendingScopeMatches && (lendingMcaError || lendingError))) && (
               <InlineError
                 className="mb-3"
                 message={
@@ -1068,8 +1097,12 @@ export function Home() {
                 }
                 retrying={lendingLoading || lendingCheckingMca || lendingSessionLoading}
                 onRetry={() => {
-                  if (lendingSessionError) setLendingSessionRetry(value => value + 1)
-                  else void refreshLending({ forceMcaCheck: Boolean(lendingMcaError) })
+                  if (!lendingContext) void refreshAccountNetworks()
+                  else if (lendingSessionError) setLendingSessionRetry(value => value + 1)
+                  else
+                    void refreshLending(lendingContext, {
+                      forceMcaCheck: Boolean(lendingMcaError)
+                    })
                 }}
               />
             )}
@@ -1122,7 +1155,10 @@ export function Home() {
                   </div>
                 ))}
               </div>
-            ) : lendingLoading || lendingCheckingMca || lendingSessionLoading ? (
+            ) : (lendingContext !== null && !lendingScopeMatches) ||
+              lendingLoading ||
+              lendingCheckingMca ||
+              lendingSessionLoading ? (
               <ListSkeleton rows={2} label="Loading lending positions" card />
             ) : lendingSessionError || lendingMcaError || lendingError ? null : (
               <div className="flex flex-col items-center justify-center py-12 text-center">
