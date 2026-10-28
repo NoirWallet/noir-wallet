@@ -60,7 +60,7 @@ it('returns the requested recipient with the quote and binds transfer activity t
     destinationAssetId: 'near:mainnet/slip44:397',
     destinationChainId: 'near:mainnet',
     tokenIn: { rheaChainId: '1', assetId: 'nep141:eth.omft.near' },
-    tokenOut: { rheaChainId: 'near', assetId: 'nep141:wrap.near' },
+    tokenOut: { rheaChainId: 'near', assetId: 'nep141:wrap.near', symbol: 'wNEAR', decimals: 24 },
     quote,
     review: {
       ...quote,

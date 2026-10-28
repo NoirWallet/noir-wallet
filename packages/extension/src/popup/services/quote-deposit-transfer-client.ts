@@ -30,6 +30,7 @@ import {
   createAssetRegistry,
   createInitialProductChainRegistry,
   getBundledInitialProductAssetDefinitions,
+  parseAssetDisplayMetadata,
   parseAssetId,
   parseChainId
 } from '@/core/chains/registry'
@@ -165,6 +166,16 @@ export function createRheaSwapBinding(input: {
   if (!sourceTarget) {
     throw new Error('RHEA Swap did not provide a source-chain transaction target')
   }
+  let destinationMetadata
+  try {
+    destinationMetadata = parseAssetDisplayMetadata({
+      name: input.tokenOut.symbol,
+      symbol: input.tokenOut.symbol,
+      decimals: input.tokenOut.decimals
+    })
+  } catch {
+    // Catalog labels outside wallet display limits must not block a valid quote.
+  }
   return parseRheaSwapTransactionBinding({
     schemaVersion: 1,
     provider: 'rhea-cross-chain-dex',
@@ -193,7 +204,8 @@ export function createRheaSwapBinding(input: {
       protocolAssetId: input.tokenOut.assetId,
       recipient: input.quote.recipient,
       expectedAmountRaw: input.quote.estimatedOut,
-      minimumAmountRaw: input.quote.minAmountOut
+      minimumAmountRaw: input.quote.minAmountOut,
+      ...(destinationMetadata ? { metadata: destinationMetadata } : {})
     }
   })
 }
