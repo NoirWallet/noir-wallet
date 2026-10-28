@@ -10,6 +10,10 @@ import {
   getRheaSwapErrorMessage,
   RheaSwapClientError
 } from '../../../src/popup/services/rhea-swap-client.ts'
+import {
+  getRheaSwapMinimumAmountMessage,
+  getSafeRheaSwapRuntimeErrorMessage
+} from '../../../src/core/services/rhea-swap/rhea-swap-error.ts'
 import { classifyError } from '../../../src/lib/errors.ts'
 
 function source(balance = '1000000') {
@@ -158,7 +162,63 @@ it('keeps minimum amounts while removing nested provider metadata without changi
     getRheaSwapErrorMessage(
       new RheaSwapClientError('No confidential route available: Cross-chain quote failed')
     ),
-    'No Confidential route is available for this transfer.'
+    'No swap route is available for this transfer.'
+  )
+  assert.equal(
+    getRheaSwapErrorMessage(new RheaSwapClientError('confidential_route_unavailable')),
+    'No swap route is available for this transfer.'
+  )
+  assert.equal(
+    getRheaSwapErrorMessage(
+      new RheaSwapClientError('No supported route currently. Please try again.')
+    ),
+    'No swap route is available for this transfer.'
+  )
+  assert.equal(
+    getRheaSwapErrorMessage(
+      new RheaSwapClientError('Quote response does not contain a valid best route')
+    ),
+    'An unexpected error occurred. Please try again.'
+  )
+})
+
+it('keeps provider minimums from multiple route failures without returning provider metadata', () => {
+  const providerFailure =
+    'NearIntents quote failed (400): {"message":"Temporary swap limits: minimum swap amount is $1,000","correlationId":"provider-reference"}'
+  const compound = `Cross-chain quote failed: nearintents: ${providerFailure}; preswap: pre-swap route failed: USDT: 1Click quote failed: ${providerFailure}`
+  const error = new RheaSwapClientError(compound)
+  const classification = classifyError(error)
+  assert.equal(getRheaSwapErrorMessage(error), 'Minimum swap amount is $1,000.')
+  assert.deepEqual(classifyError(error), classification)
+  assert.equal(
+    getRheaSwapMinimumAmountMessage(`${compound}${' unrelated provider detail'.repeat(30)}`),
+    'Minimum swap amount is $1,000.'
+  )
+  const runtimeMessage = getSafeRheaSwapRuntimeErrorMessage(
+    new Error(`${compound}${' unrelated provider detail'.repeat(30)}`)
+  )
+  assert.equal(runtimeMessage, 'Minimum swap amount is $1,000.')
+  assert.equal(getRheaSwapMinimumAmountMessage(runtimeMessage), runtimeMessage)
+  assert.equal(getRheaSwapErrorMessage(new RheaSwapClientError(runtimeMessage)), runtimeMessage)
+  assert.equal(getSafeRheaSwapRuntimeErrorMessage(new Error(runtimeMessage)), runtimeMessage)
+  assert.equal(
+    getRheaSwapMinimumAmountMessage('Minimum swap amount is $1,000.125.'),
+    'Minimum swap amount is $1,000.125.'
+  )
+  assert.equal(
+    getSafeRheaSwapRuntimeErrorMessage(new Error('private_key:secret')),
+    'RHEA Swap request failed'
+  )
+  assert.equal(
+    getSafeRheaSwapRuntimeErrorMessage(new Error('Unrecognized response'.repeat(40))),
+    'RHEA Swap request failed'
+  )
+  assert.equal(getRheaSwapMinimumAmountMessage('Request timed out'), null)
+  assert.equal(getRheaSwapMinimumAmountMessage('minimum swap amount is $123456789012345'), null)
+  assert.equal(getRheaSwapMinimumAmountMessage('minimum swap amount is $1,000.1234567'), null)
+  assert.equal(
+    getRheaSwapErrorMessage(new RheaSwapClientError('Request timed out')),
+    'Request timed out.'
   )
 })
 

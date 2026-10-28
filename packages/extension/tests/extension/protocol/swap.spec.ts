@@ -259,6 +259,36 @@ test('shows only the header title on the Swap review page in real MV3', async ({
   await captureScreenshot(popup, 'swap-review-single-header.png')
 })
 
+test('allows reversing the initial asset selected from asset details', async ({
+  context,
+  popup,
+  extensionId
+}) => {
+  await mockEvmNetwork(context)
+  await mockBitcoinNetwork(context)
+  await mockProtocolApis(context)
+  await waitForBackgroundWalletInitialization(popup)
+  await importTestWallet(popup)
+  await popup.goto(`chrome-extension://${extensionId}/index.html`)
+  await popup.getByRole('button', { name: 'View ETH details on Ethereum' }).click({
+    timeout: 60_000
+  })
+  await popup.getByRole('button', { name: 'Swap', exact: true }).click()
+  const from = popup.getByRole('button', { name: 'From asset' })
+  const to = popup.getByRole('button', { name: 'To asset' })
+  await expect(from).toContainText('ETH')
+  await expect(to).toContainText('USDC')
+  await captureScreenshot(popup, 'swap-asset-detail-initial-pair.png')
+  await popup.getByRole('button', { name: 'Switch assets', exact: true }).click()
+  await expect(from).toContainText('USDC')
+  await expect(to).toContainText('ETH')
+  await expect.poll(() => readPersistedSwapSource(popup)).not.toBe(ETH_ASSET)
+  await captureScreenshot(popup, 'swap-asset-detail-reversed-pair.png')
+  await popup.getByRole('button', { name: 'Switch assets', exact: true }).click()
+  await expect(from).toContainText('ETH')
+  await expect(to).toContainText('USDC')
+})
+
 for (const sourceMode of ['main', 'private'] as const) {
   test(`reserves actual contract gas for native Swap Max from ${sourceMode} in real MV3`, async ({
     context,
@@ -293,11 +323,41 @@ for (const sourceMode of ['main', 'private'] as const) {
         .click()
     }
     await expect(popup.getByRole('button', { name: 'To asset' })).toContainText('USDC')
-    await popup.getByRole('button', { name: /^Use maximum balance:/ }).click()
+    const balance = popup.getByRole('button', { name: /^Use maximum balance:/ })
+    const balanceLabel = await balance.getAttribute('aria-label')
+    let probeStarted = false
+    let releaseProbe!: () => void
+    const probePending = new Promise<void>(resolve => {
+      releaseProbe = resolve
+    })
+    await context.route(QUOTE_URL, async route => {
+      if (!probeStarted) {
+        probeStarted = true
+        await probePending
+      }
+      await route.fallback()
+    })
+    await balance.click()
+    try {
+      await expect.poll(() => probeStarted).toBe(true)
+      await expect(popup.getByRole('textbox', { name: 'From amount' })).toHaveValue('')
+      await expect(balance).toBeDisabled()
+      await expect(balance).toHaveAttribute('aria-label', balanceLabel!)
+      await expect(popup.getByRole('button', { name: 'Swap', exact: true })).toBeDisabled()
+      await captureScreenshot(popup, `swap-native-max-${sourceMode}-calculating.png`)
+    } finally {
+      releaseProbe()
+    }
     await expect(popup.getByRole('textbox', { name: 'From amount' })).toHaveValue('0.999325', {
       timeout: 30_000
     })
+    await expect(balance).toHaveAttribute('aria-label', balanceLabel!)
     await expect(popup.getByRole('button', { name: 'Swap', exact: true })).toBeEnabled()
+    expect(api.getQuoteRequests().map(request => request.amount)).toEqual([
+      '500000000000000000',
+      '999325000000000000'
+    ])
+    await captureScreenshot(popup, `swap-native-max-${sourceMode}-ready.png`)
     await popup.getByRole('button', { name: 'Swap', exact: true }).click()
     await expect(popup.getByRole('heading', { name: 'Review Swap', exact: true })).toBeVisible({
       timeout: 60_000
@@ -449,6 +509,8 @@ test('recovers expired Swap review and shows preparation loading in real MV3', a
   await maxButton.click()
   await expect.poll(() => maxQuoteRequests).toBe(1)
   await expect(popup.getByRole('textbox', { name: 'From amount', exact: true })).toHaveValue('0.95')
+  await expect(maxButton).toHaveAttribute('aria-label', 'Use maximum balance: 1')
+  await captureScreenshot(popup, 'swap-max-fallback-balance.png')
   await expect(popup.getByText('Could not calculate Max amount.')).toHaveCount(0)
   await popup.getByRole('textbox', { name: 'From amount', exact: true }).fill('0.002')
   await expect(popup.getByRole('button', { name: 'Swap', exact: true })).toBeEnabled({

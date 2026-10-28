@@ -153,6 +153,7 @@ import {
   createBackgroundAssetPriceService
 } from './asset-prices'
 import { createBackgroundRheaSwapService, readRheaZcashTransferDeadline } from './rhea-swap'
+import { getSafeRheaSwapRuntimeErrorMessage } from '@/core/services/rhea-swap/rhea-swap-error'
 import {
   RHEA_SWAP_TRANSACTION_MONITOR_ALARM,
   RheaSwapTransactionMonitor,
@@ -3523,15 +3524,7 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
         )
       })
       .catch(error => {
-        const rawMessage = error instanceof Error ? error.message.trim() : ''
-        const safeMessage =
-          rawMessage &&
-          rawMessage.length <= 500 &&
-          !/(?:bearer|access[_ -]?token|refresh[_ -]?token|private[_ -]?key|mnemonic|signature)\s*[:=]/i.test(
-            rawMessage
-          )
-            ? rawMessage.replace(/[\u0000-\u001f\u007f-\u009f]+/g, ' ')
-            : 'RHEA Swap request failed'
+        const safeMessage = getSafeRheaSwapRuntimeErrorMessage(error)
         console.error('[RHEA Swap] Request failed', {
           operation: message.type,
           errorName: error instanceof Error ? error.name : 'UnknownError',

@@ -27,6 +27,7 @@ import {
   type RheaSwapSubmissionView
 } from '@/core/services/rhea-swap'
 import type { RheaSwapTransactionBinding } from '@/core/transactions/domain'
+import { getRheaSwapMinimumAmountMessage } from '@/core/services/rhea-swap/rhea-swap-error'
 import { classifyError } from '@/lib/errors'
 
 export class RheaSwapClientError extends Error {
@@ -59,15 +60,19 @@ function readSwapErrorReason(message: string, depth = 0): string {
 
 export function getRheaSwapErrorMessage(error: unknown): string {
   if (!(error instanceof RheaSwapClientError)) return classifyError(error).userMessage
+  const minimum = getRheaSwapMinimumAmountMessage(error.message)
+  if (minimum) return minimum
   const reason = readSwapErrorReason(error.message)
   if (/unsupported destination token|destinationtoken.*not supported/i.test(reason)) {
     return 'This destination is unavailable for this swap. Choose another asset.'
   }
-  if (/confidential_route_unavailable|no confidential route available/i.test(reason)) {
-    return 'No Confidential route is available for this transfer.'
+  if (
+    /\b(?:confidential_route_unavailable|route_unavailable|no (?:confidential |supported |swap )?route(?: is)? available|no supported route currently)\b/i.test(
+      reason
+    )
+  ) {
+    return 'No swap route is available for this transfer.'
   }
-  const minimum = reason.match(/minimum (?:swap )?amount(?:\s+is|\s+of|:)?\s*(\$[\d,]+(?:\.\d+)?)/i)
-  if (minimum) return `Minimum swap amount is ${minimum[1]}.`
   return classifyError(new Error(reason)).userMessage
 }
 

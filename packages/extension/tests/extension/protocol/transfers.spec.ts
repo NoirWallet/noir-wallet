@@ -442,7 +442,7 @@ for (const sourceMode of ['main', 'private'] as const) {
       await expect(
         popup
           .getByRole('dialog', { name: 'Review Send' })
-          .getByRole('button', { name: 'Send', exact: true })
+          .getByRole('button', { name: 'Send anyway', exact: true })
       ).toBeEnabled({ timeout: 30_000 })
       expect(rpc.getBroadcastCount()).toBe(0)
       await captureScreenshot(popup, 'send-native-max-main-review.png')
@@ -884,12 +884,14 @@ test('shows the provider quote error on cross-chain Send', async ({
   await mockEvmNetwork(context)
   await mockBitcoinNetwork(context)
   await mockProtocolApis(context)
+  const providerFailure =
+    'Quote failed (400): {"message":"Temporary swap limits: minimum swap amount is $1,000","correlationId":"provider-reference"}'
   await context.route(QUOTE_URL, route =>
     route.fulfill({
       contentType: 'application/json',
       body: JSON.stringify({
         code: 422,
-        msg: 'Temporary swap limits: minimum swap amount is $1,000',
+        msg: `Cross-chain quote failed: ${Array(5).fill(providerFailure).join('; ')}`,
         data: null
       })
     })
@@ -908,9 +910,10 @@ test('shows the provider quote error on cross-chain Send', async ({
   await destinations.getByRole('button', { name: /^USDC on Polygon/ }).click()
   await popup.getByRole('textbox', { name: 'From amount' }).fill('1')
 
-  await expect(
-    popup.getByText('Temporary swap limits: minimum swap amount is $1,000', { exact: true })
-  ).toBeVisible()
+  await expect(popup.getByText('Minimum swap amount is $1,000.', { exact: true })).toBeVisible({
+    timeout: 30_000
+  })
+  await captureScreenshot(popup, 'cross-chain-send-provider-minimum.png')
 })
 
 test('formats long Send balances and reviews without a redundant Confidential route card in real MV3', async ({

@@ -939,6 +939,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
     if (
       isPrivateFunding ||
       privateTransferRequested ||
+      (!crossChainSendRequested && swap.selectedSourceAssetId !== null) ||
       !requestedSourceToken ||
       swap.tokenIn?.assetId === requestedSourceToken.assetId
     ) {
@@ -953,6 +954,8 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
   }, [
     isPrivateFunding,
     privateTransferRequested,
+    crossChainSendRequested,
+    swap.selectedSourceAssetId,
     requestedSourceToken,
     swap.selectTokenIn,
     swap.sourceTokens,
@@ -1456,12 +1459,6 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
       return
     }
     if (routeMaximum.loading || reviewAfterQuoteRefresh.current !== null) return
-    swap.updateAmountIn(
-      formatBaseUnitDecimalAmount(
-        fallbackTransferMaximum(walletOwnedSource).amountRaw,
-        walletOwnedSource.asset.metadata.decimals
-      )
-    )
     void routeMaximum.request()
   }, [
     maxSelected,
@@ -1478,7 +1475,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
         balanceRaw: walletOwnedSource.asset.balance.availableRaw,
         decimals: walletOwnedSource.asset.metadata.decimals,
         isNative: walletOwnedSource.asset.asset.kind === 'native',
-        maximumRaw: routeMaximum.value?.amountRaw ?? null
+        maximumRaw: null
       })
     : null
   const walletSpendableBalance = walletAvailability?.display ?? '0'
@@ -1554,6 +1551,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
           ? 'basic'
           : undefined,
       blocked:
+        (maxSelected && routeMaximum.loading) ||
         walletActionMode.loading ||
         destinationWalletActionMode.loading ||
         (crossChainSendRequested &&
@@ -1584,6 +1582,8 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
     walletActionMode.loading,
     destinationWalletActionMode.loading,
     hasInvalidWalletAmount,
+    maxSelected,
+    routeMaximum.loading,
     zcashAmountError,
     walletSourcesLoading,
     isPrivateFunding,

@@ -2,6 +2,8 @@
 
 The shared classifier and exact user-facing messages are defined in [errors.ts](../packages/extension/src/lib/errors.ts). It uses the first matching rule in source order. Pages also perform field validation and operation-specific error handling, so check the call site before assuming that a message below is always displayed.
 
+RHEA Swap uses [rhea-swap-client.ts](../packages/extension/src/popup/services/rhea-swap-client.ts) to show a provider minimum as `Minimum swap amount is $1,000.` (using the amount returned by the provider) and an explicit unavailable route as `No swap route is available for this transfer.` Unknown or invalid quote responses retain the shared generic error.
+
 `classifyError()` returns a safe `userMessage`, the original raw `technicalMessage`, and a `retryable` flag. The raw cause is retained for internal diagnosis; it must not be copied into user-facing text or analytics. The retryable flag does not itself start a retry.
 
 ## Shared Classifier

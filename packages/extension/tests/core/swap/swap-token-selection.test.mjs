@@ -145,6 +145,19 @@ test.describe('account-scoped Swap token selection', () => {
     ).toMatchObject({ tokenIn: ETH_USDC })
   })
 
+  test('keeps a reversed or manually selected source after an asset-detail initial selection', () => {
+    expect(
+      resolveSwapTokenSelection({
+        tokens: TOKENS,
+        walletSourceTokens: [ZEC, ETH, ETH_USDC],
+        requestedSourceAssetId: ZEC.assetId,
+        selectedSourceAssetId: ETH.assetId,
+        savedSelection: { tokenInId: ETH.assetId, tokenOutId: ZEC.assetId },
+        enabledChains: [zcashChain, ethereumChain]
+      })
+    ).toEqual({ tokenIn: ETH, tokenOut: ZEC })
+  })
+
   test('keeps a Bitcoin-only private-key Wallet usable with a saved external destination', () => {
     expect(
       resolveSwapTokenSelection({
