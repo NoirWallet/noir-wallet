@@ -25,6 +25,7 @@ import {
   waitForBackgroundWalletInitialization
 } from '../../helpers/protocol-wallet'
 import type { Hex, Route } from '../../helpers/protocol-wallet'
+import { getZcashChainId } from '../../../src/core/chains/registry'
 
 registerProtocolFixtures()
 
@@ -126,6 +127,103 @@ test('renders usable Swap assets while unrelated chain catalogs are pending', as
     releaseDestinations?.()
     release?.()
   }
+})
+
+test('uses a selected Zcash wallet recipient for Swap from an EVM-only wallet', async ({
+  context,
+  popup,
+  extensionId
+}) => {
+  test.setTimeout(180_000)
+  await mockEvmNetwork(context)
+  await mockBitcoinNetwork(context)
+  const api = await mockProtocolApis(context)
+  await waitForBackgroundWalletInitialization(popup)
+  await importTestWallet(popup)
+  await popup.goto(`chrome-extension://${extensionId}/index.html`)
+  await popup.getByRole('button', { name: 'Swap', exact: true }).click()
+  await popup.getByRole('button', { name: 'From asset' }).click()
+  let assets = popup.getByRole('dialog', { name: 'SELECT ASSET' })
+  await assets.getByPlaceholder('Search tokens').fill('ETH')
+  await assets
+    .getByRole('button', { name: /^ETH on Ethereum/ })
+    .first()
+    .click()
+  await popup.getByRole('button', { name: 'To asset' }).click()
+  assets = popup.getByRole('dialog', { name: 'SELECT ASSET' })
+  await assets.getByPlaceholder('Search tokens').fill('ZEC')
+  await assets
+    .getByRole('button', { name: /^ZEC on Zcash/ })
+    .first()
+    .click()
+  await popup
+    .getByRole('button', { name: /Select address|u1|t1/ })
+    .last()
+    .click()
+  const ownAddresses = popup.getByRole('dialog', { name: 'Select Address' })
+  await expect(ownAddresses.getByRole('button')).toHaveCount(3)
+  await captureScreenshot(popup, 'swap-zec-own-addresses.png')
+  await ownAddresses.getByRole('button', { name: 'Close', exact: true }).click()
+  await popup.getByRole('button', { name: 'Back', exact: true }).click()
+  const zcashRecipient = await popup.evaluate(async zcashChainId => {
+    const response = await chrome.runtime.sendMessage({ type: 'GET_ACCOUNT_NETWORKS' })
+    const active = response?.result?.accounts?.find(
+      (account: { active?: unknown }) => account.active === true
+    )
+    const zcash = active?.networks?.find(
+      (network: { chainId?: unknown }) => network.chainId === zcashChainId
+    )
+    return zcash?.addresses?.find(
+      (address: { scheme?: unknown }) => address.scheme === 'zcash-shielded-unified'
+    )?.value as string | undefined
+  }, getZcashChainId('mainnet'))
+  expect(zcashRecipient).toMatch(/^u1/)
+  await popup.getByRole('button', { name: 'Choose wallet' }).click()
+  await popup.getByRole('button', { name: 'Add Wallet', exact: true }).click()
+  await popup.getByRole('button', { name: 'Import Wallet', exact: true }).click()
+  await popup.getByRole('button', { name: 'Private Key', exact: true }).click()
+  await popup.getByLabel('Wallet name').fill('Synthetic EVM')
+  await popup.getByLabel('Private key', { exact: true }).fill(`0x${'00'.repeat(31)}01`)
+  await expect(popup.getByText('Detected network', { exact: true })).toBeVisible()
+  await popup.getByRole('button', { name: 'Continue', exact: true }).click()
+  await expect(popup.getByText('EVM address preview', { exact: true })).toBeVisible()
+  await popup.getByRole('button', { name: 'Import wallet', exact: true }).click()
+  await expect(popup.getByRole('button', { name: 'View ETH details on Ethereum' })).toBeVisible({
+    timeout: 60_000
+  })
+
+  await popup.getByRole('button', { name: 'Swap', exact: true }).click()
+  await popup.getByRole('button', { name: 'To asset' }).click()
+  assets = popup.getByRole('dialog', { name: 'SELECT ASSET' })
+  await assets.getByPlaceholder('Search tokens').fill('ZEC')
+  await assets
+    .getByRole('button', { name: /^ZEC on Zcash/ })
+    .first()
+    .click()
+  await expect(popup.getByRole('textbox', { name: 'Destination address' })).toBeVisible()
+  await expect(popup.getByRole('dialog', { name: 'Select Address' })).toHaveCount(0)
+  await popup.getByRole('textbox', { name: 'From amount' }).fill('0.01')
+  await popup.getByRole('textbox', { name: 'Destination address' }).fill('not-a-zcash-address')
+  await expect(popup.getByText('Enter a valid Zcash address.')).toBeVisible()
+  await expect(popup.getByRole('button', { name: 'Swap', exact: true })).toBeDisabled()
+  await popup.waitForTimeout(1_000)
+  expect(api.getQuoteRequests()).toHaveLength(0)
+
+  await popup.getByRole('button', { name: 'My accounts' }).click()
+  const recipients = popup.getByRole('dialog', { name: 'Select Recipient' })
+  await expect(recipients.getByRole('button', { name: /Send to .* Shielded/ })).toBeVisible()
+  await recipients.getByRole('button', { name: /Send to .* Shielded/ }).click()
+  await expect(popup.getByRole('textbox', { name: 'Destination address' })).toHaveValue(
+    zcashRecipient!
+  )
+  await captureScreenshot(popup, 'swap-evm-only-zec-recipient.png')
+  await expect.poll(() => api.getQuoteRequests().at(-1)?.recipient).toBe(zcashRecipient)
+  const review = popup.getByRole('button', { name: 'Swap', exact: true })
+  await expect(review).toBeEnabled({ timeout: 30_000 })
+  await review.click()
+  await expect(popup.getByRole('heading', { name: 'Review Swap' })).toBeVisible()
+  await expect(popup.getByText(zcashRecipient!, { exact: true })).toBeVisible()
+  await captureScreenshot(popup, 'swap-evm-only-zec-review.png')
 })
 
 test('shows only the header title on the Swap review page in real MV3', async ({

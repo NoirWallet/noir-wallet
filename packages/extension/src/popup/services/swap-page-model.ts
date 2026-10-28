@@ -1,4 +1,5 @@
 import type { PortfolioReadModel } from '@/core/portfolio'
+import { parseZcashAddress } from '@/core/address-book/address-book'
 import { isZecToken } from '@/core/services/intents-api'
 import type { RheaSwapQuoteRequest, RheaSwapToken } from '@/core/services/rhea-swap'
 import { safeBig } from '@/lib/big'
@@ -13,6 +14,7 @@ import {
   type WalletOwnedQuoteAsset
 } from '@/popup/services/quote-deposit-transfer-client'
 import type { AdditionalReceiveTargetsView } from '@/popup/services/receive-targets-client'
+import type { Network } from '@/types'
 import { resolveAccountAvailableRaw } from '@/popup/services/transfer-availability'
 import {
   filterCrossChainSendDestinations,
@@ -221,6 +223,30 @@ export function filterSelectableSwapDestinationTokens(input: {
   return input.crossChainSendRequested
     ? filterCrossChainSendDestinations(input.sourceToken, available, input.capabilities)
     : available
+}
+
+export function isValidSwapZcashRecipient(address: string, network: Network): boolean {
+  try {
+    parseZcashAddress(address, network)
+    return true
+  } catch {
+    return false
+  }
+}
+
+export function resolveScopedSwapZcashRecipient(
+  selection: Readonly<{ scope: string | null; address: string }>,
+  activeScope: string | null,
+  network: Network
+): Readonly<{ address: string; error: string | null }> {
+  const address = activeScope && selection.scope === activeScope ? selection.address : ''
+  return Object.freeze({
+    address,
+    error:
+      address && !isValidSwapZcashRecipient(address, network)
+        ? 'Enter a valid Zcash address.'
+        : null
+  })
 }
 
 export function resolveLockedWalletSwapSourceToken(input: {

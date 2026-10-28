@@ -9,6 +9,7 @@ import { useAccountDataStore } from '@/store/account-data-store'
 import { useTransactionResultStore } from '@/store/transaction-result-store'
 import { useSettingsStore } from '@/store/settings-store'
 import { getChainEndpointRuntimeKey } from '@/core/chains/chain-endpoint-settings'
+import { getZcashChainId } from '@/core/chains/registry'
 import {
   resolveEvmFeatureRuntimePolicy,
   resolveSolanaFeatureRuntimePolicy
@@ -66,6 +67,7 @@ import {
 import { AddressSelectorModal } from '../../components/account/AddressSelector'
 import { AddressTypeSwitch } from '../../components/account/AddressType'
 import { FundingSourceSelector } from '../../components/transaction/FundingSourceSelector'
+import { RecipientSelector } from '../../components/transaction/RecipientSelector'
 import { getActiveAccountScopeKey } from '@/popup/lib/active-account-scope'
 import {
   getFundingSourceOptions,
@@ -169,13 +171,15 @@ import {
   isRheaSwapQuoteFresh,
   getRheaSwapQuoteDeadline,
   isSwapSourceAmountInsufficient,
+  isValidSwapZcashRecipient,
   resolveConfidentialFundingDestinationToken,
   resolveLockedWalletSwapSourceToken,
   resolvePreferredSwapSourceAssetId,
   resolveSwapRefreshChainId,
   resolveSwapExecutionSourceMode,
   resolveSwapSelectorBalanceMode,
-  resolveSwapReviewAction
+  resolveSwapReviewAction,
+  resolveScopedSwapZcashRecipient
 } from '@/popup/services/swap-page-model'
 import {
   resolvePortfolioTransferAvailability,
@@ -378,6 +382,10 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
   const [sourceSelectorOpen, setSourceSelectorOpen] = useState(false)
   const [destinationSelectorOpen, setDestinationSelectorOpen] = useState(false)
   const [useCustomRecipient, setUseCustomRecipient] = useState(false)
+  const [zecRecipientSelection, setZecRecipientSelection] = useState<{
+    scope: string | null
+    address: string
+  }>({ scope: walletSourcesScope, address: '' })
   const [portfolioSnapshot, setPortfolioSnapshot] = useState(() => ({
     scope: walletSourcesScope,
     value: retainedWalletSources?.portfolio ?? null
@@ -807,14 +815,33 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
     : (isPrivateFunding || destinationMode === 'private') && walletDestinationTarget?.kind === 'evm'
       ? destinationPrivateExecutionAddress
       : walletDestinationTarget?.address
+  const hasManagedZcashDestination = Boolean(
+    currentAccount?.addresses.shielded &&
+    currentAccount.addresses.transparent &&
+    currentWalletId === storageV2Account?.walletId &&
+    currentAccountId === storageV2Account.accountId &&
+    storageV2Account.networks.some(network => network.chain.family === 'zcash')
+  )
   const requiresRecipientAddress =
-    !isPrivateFunding && !isZecDestination && (!walletDestinationTarget || useCustomRecipient)
+    !isPrivateFunding &&
+    (isZecDestination
+      ? !hasManagedZcashDestination
+      : !walletDestinationTarget || useCustomRecipient)
   const privateDestinationSelectionRequested =
     isPrivateFunding ||
     executionSourceMode === 'private' ||
     (!useCustomRecipient && destinationWalletActionMode.mode === 'private')
+  const scopedZecRecipient = resolveScopedSwapZcashRecipient(
+    zecRecipientSelection,
+    walletSourcesScope,
+    currentNetwork
+  )
+  const recipientError =
+    isZecDestination && requiresRecipientAddress ? scopedZecRecipient.error : null
   const resolvedRecipientAddress = requiresRecipientAddress
-    ? swap.recipientAddress
+    ? isZecDestination
+      ? scopedZecRecipient.address
+      : swap.recipientAddress
     : managedDestinationAddress || ''
   const resolvedRefundAddress = swap.isZecSource
     ? currentAccount?.addresses.transparent || ''
@@ -1004,6 +1031,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
     setMaxSelected(false)
     setFundingSource('shielded')
     swap.resetSwap()
+    setZecRecipientSelection({ scope: activeScope, address: '' })
   }, [
     effectiveWalletId,
     effectiveAccountId,
@@ -1536,6 +1564,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
             crossChainPrivateSourceUnavailable)) ||
         (lockedAssetFlowRequested && !lockedAssetFlowReady) ||
         (isPrivateFunding && !privateFundingDestinationToken) ||
+        recipientError !== null ||
         hasInvalidWalletAmount ||
         (swap.isZecSource && zcashAmountError !== null) ||
         (!swap.isZecSource && walletSourcesLoading)
@@ -1566,7 +1595,8 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
     crossChainSendSourceReady,
     crossChainSendDestinationReady,
     crossChainSendRecipientReady,
-    crossChainPrivateSourceUnavailable
+    crossChainPrivateSourceUnavailable,
+    recipientError
   ])
 
   const swapEventBase = useCallback((): TrackOptions => {
@@ -2134,8 +2164,8 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
             : ''
         )
 
-        if (requiresRecipientAddress && swap.recipientAddress) {
-          addRecentRecipientAddress(tokenOut.blockchain, swap.recipientAddress)
+        if (requiresRecipientAddress && resolvedRecipientAddress) {
+          addRecentRecipientAddress(tokenOut.blockchain, resolvedRecipientAddress)
         }
         if (!isTransferAnalyticsFlow) {
           sendAnalyticsEvent(ANALYTICS_EVENTS.SWAP_QUOTED, {
@@ -3041,6 +3071,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
   )
 
   const handleSelectZecAddress = useCallback(async () => {
+    if (!hasManagedZcashDestination) return
     await openModal({
       title: 'Select Address',
       showCloseButton: true,
@@ -3055,7 +3086,30 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
         />
       )
     })
-  }, [swap])
+  }, [hasManagedZcashDestination, swap])
+
+  const handleSelectZecRecipient = useCallback(async () => {
+    const scope = walletSourcesScope
+    if (!scope) return
+    await openModal({
+      title: 'Select Recipient',
+      showCloseButton: true,
+      body: (_resolve, close) => (
+        <RecipientSelector
+          chainId={getZcashChainId(currentNetwork)}
+          onSelect={address => {
+            if (
+              activeScopeRef.current !== scope ||
+              !isValidSwapZcashRecipient(address, currentNetwork)
+            )
+              return
+            setZecRecipientSelection({ scope, address })
+            close()
+          }}
+        />
+      )
+    })
+  }, [currentNetwork, walletSourcesScope])
 
   const handleOpenSlippageSetting = useCallback(async () => {
     await openModal({
@@ -3559,7 +3613,12 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
         spendableBalance={spendableBalance}
         availableBalance={zcashFundingBalance.available}
         pendingBalance={zcashFundingBalance.pending}
-        recipientAddress={swap.recipientAddress}
+        recipientAddress={
+          isZecDestination && requiresRecipientAddress
+            ? scopedZecRecipient.address
+            : swap.recipientAddress
+        }
+        recipientError={recipientError}
         slippage={swap.slippage}
         networkFee={networkFee}
         isQuoting={swap.isQuoting}
@@ -3659,7 +3718,16 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
                 }
               : undefined
         }
-        onRecipientAddressChange={swap.setRecipientAddress}
+        onRecipientAddressChange={value => {
+          if (isZecDestination && requiresRecipientAddress) {
+            setZecRecipientSelection({ scope: walletSourcesScope, address: value })
+          } else {
+            swap.setRecipientAddress(value)
+          }
+        }}
+        onSelectRecipientFromWallet={
+          isZecDestination && requiresRecipientAddress ? handleSelectZecRecipient : undefined
+        }
         onUseCustomRecipientChange={value => {
           if (!privateTransferRequested) setUseCustomRecipient(value)
         }}

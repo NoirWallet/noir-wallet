@@ -2,7 +2,10 @@ import assert from 'node:assert/strict'
 import { it } from 'node:test'
 import { selectWalletOwnedQuoteAssetExecution } from '../../../src/popup/services/quote-deposit-transfer-client.ts'
 import { resolveSwapMaximumAdjustment } from '../../../src/popup/services/swap-maximum.ts'
-import { buildLiveSwapQuoteRequest } from '../../../src/popup/services/swap-page-model.ts'
+import {
+  buildLiveSwapQuoteRequest,
+  resolveScopedSwapZcashRecipient
+} from '../../../src/popup/services/swap-page-model.ts'
 import {
   getRheaSwapErrorMessage,
   RheaSwapClientError
@@ -107,6 +110,27 @@ it('retains the reviewed sender, recipient, amount and privacy mode when a quote
   assert.equal(quote.request.recipient, 'recipient')
   assert.equal(quote.request.confidentiality, 'basic')
   assert.equal(quote.request.slippageBps, 100)
+})
+
+it('accepts a Zcash recipient only for its selected account scope and network', () => {
+  const address = 't1XVXWCvpMgBvUaed4XDqWtgQgJSu1Ghz7F'
+  assert.deepEqual(
+    resolveScopedSwapZcashRecipient({ scope: 'wallet-a', address }, 'wallet-a', 'mainnet'),
+    { address, error: null }
+  )
+  assert.deepEqual(
+    resolveScopedSwapZcashRecipient({ scope: 'wallet-a', address }, 'wallet-b', 'mainnet'),
+    { address: '', error: null }
+  )
+  assert.equal(
+    resolveScopedSwapZcashRecipient({ scope: 'wallet-a', address }, 'wallet-a', 'testnet').error,
+    'Enter a valid Zcash address.'
+  )
+  assert.equal(
+    resolveScopedSwapZcashRecipient({ scope: 'wallet-a', address: '0x123' }, 'wallet-a', 'mainnet')
+      .error,
+    'Enter a valid Zcash address.'
+  )
 })
 
 it('keeps minimum amounts while removing nested provider metadata without changing retry classification', () => {

@@ -21,7 +21,8 @@ function AddressInputWithRecent({
   value,
   placeholder,
   recentAddresses,
-  onChange
+  onChange,
+  error
 }: {
   label: string
   showLabel?: boolean
@@ -29,6 +30,7 @@ function AddressInputWithRecent({
   placeholder: string
   recentAddresses: string[]
   onChange: (value: string) => void
+  error?: string | null
 }) {
   const [showRecent, setShowRecent] = useState(false)
   const blurTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
@@ -58,6 +60,7 @@ function AddressInputWithRecent({
           onBlur={handleBlur}
           placeholder={placeholder}
           aria-label={label}
+          aria-invalid={Boolean(error) || undefined}
           className="h-[46px] rounded-xl border-0 bg-card pl-12 pr-12 font-mono text-sm shadow-none"
           startContent={
             <span className="flex size-6 items-center justify-center rounded-lg bg-primary/15 text-primary">
@@ -124,6 +127,7 @@ interface SwapInputViewProps {
   availableBalance?: string
   pendingBalance?: string
   recipientAddress: string
+  recipientError?: string | null
   slippage: number
   networkFee?: string
   isQuoting: boolean
@@ -152,6 +156,7 @@ interface SwapInputViewProps {
   onAmountInChange: (value: string) => void
   onMaxClick?: () => void
   onRecipientAddressChange: (value: string) => void
+  onSelectRecipientFromWallet?: () => void
   onUseCustomRecipientChange: (value: boolean) => void
   onSelectToken: (type: 'in' | 'out') => void
   onSelectZecAddress: () => void
@@ -480,6 +485,7 @@ export function SwapInputView({
   availableBalance,
   pendingBalance,
   recipientAddress,
+  recipientError,
   slippage,
   networkFee,
   isQuoting,
@@ -508,6 +514,7 @@ export function SwapInputView({
   onAmountInChange,
   onMaxClick,
   onRecipientAddressChange,
+  onSelectRecipientFromWallet,
   onUseCustomRecipientChange,
   onSelectToken,
   onSelectZecAddress,
@@ -638,6 +645,15 @@ export function SwapInputView({
                       Use current wallet address
                     </button>
                   )}
+                  {isZecDestination && onSelectRecipientFromWallet && (
+                    <button
+                      type="button"
+                      onClick={onSelectRecipientFromWallet}
+                      className="text-xs font-medium text-primary"
+                    >
+                      My accounts
+                    </button>
+                  )}
                 </div>
                 <AddressInputWithRecent
                   label="Destination address"
@@ -646,7 +662,9 @@ export function SwapInputView({
                   placeholder={`${formatChainName(tokenOut.blockchain)} address...`}
                   recentAddresses={recentRecipientAddresses}
                   onChange={onRecipientAddressChange}
+                  error={recipientError}
                 />
+                {recipientError && <InlineError message={recipientError} className="mt-2" />}
                 {!recipientAddress && amountIn && (
                   <p className="mt-2 text-xs text-muted">
                     Enter a destination address to request a live quote.
