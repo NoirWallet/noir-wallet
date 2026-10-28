@@ -175,7 +175,7 @@ function redactText(input: string): string {
       '$1=[Redacted]'
     )
     .replace(
-      /["']?\b(address|walletId|accountId|transactionId|txHash|txid|requestId|origin|domain|hostname|endpoint)\b["']?\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s,;)}\]]+)/gi,
+      /["']?\b(address|walletId|accountId|transactionId|txHash|txid|requestId|origin|domain|hostname|endpoint)\b["']?\s*[:=]\s*(?:\[Redacted identifier\]|"[^"]*"|'[^']*'|[^\s,;)}\]]+)/gi,
       '$1=[Redacted identifier]'
     )
     .replace(/-?\d+(?:\.\d+)?\s*(?:ZEC|zatoshis?|USD)\b/gi, '[Redacted amount]')

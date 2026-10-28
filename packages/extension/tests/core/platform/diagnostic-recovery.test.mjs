@@ -81,3 +81,22 @@ test('diagnostics redact every Zcash pool in new and previously persisted messag
     assert.match(safe, /WASM summary/)
   }
 })
+
+test('identifier redaction remains stable through repeated forwarding and export', () => {
+  const message =
+    'walletId=synthetic-wallet accountId="synthetic-account" origin=https://example.test'
+  const safe = sanitizeDiagnosticMessage(message)
+  assert.equal(
+    safe,
+    'walletId=[Redacted identifier] accountId=[Redacted identifier] origin=[Redacted identifier]'
+  )
+  let forwarded = safe
+  for (let pass = 0; pass < 5; pass += 1) {
+    forwarded = sanitizeDiagnosticMessage(serializeDiagnosticArgs([forwarded]))
+    assert.equal(forwarded, safe)
+  }
+  assert.equal(
+    sanitizeDiagnosticMessage(`${safe}; transactionId=new-private-identifier`),
+    `${safe}; transactionId=[Redacted identifier]`
+  )
+})
