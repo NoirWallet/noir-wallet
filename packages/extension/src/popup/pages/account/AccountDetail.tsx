@@ -2,14 +2,14 @@ import { isZcashHardwareKeySource } from '@/core/wallet/hardware-wallet-data'
 import { useSearchParams } from 'react-router-dom'
 import { Icon } from '@iconify/react'
 import { PageHeader } from '../../components/common/PageHeader'
-import { RenameAccountContent } from '../../components/account/AccountModals'
+import { InlineEditableName } from '../../components/account/InlineEditableName'
 import { RemoveWalletContent } from '../../components/account/RemoveWalletContent'
 import { openModal } from '../../provider/ModalManager'
 import { useNavigate } from '../../provider/Router'
 import { useDialog } from '../../hooks/useDialog'
 import { useWalletStore } from '@/store/wallet-store'
 import { zcashWalletRuntimeClient } from '@/popup/services/zcash-wallet-runtime-client'
-import { formatAccountName, getAccountDisplayName } from '@/lib/format'
+import { getAccountDisplayName } from '@/lib/format'
 import { toast } from '@/store/toast-store'
 import { useResyncZcash } from '../../hooks/useResyncZcash'
 
@@ -41,30 +41,10 @@ export function AccountDetail() {
     )
   }
 
-  const handleEditAccountName = async () => {
-    await openModal({
-      title: 'Edit account name',
-      body: (_resolve, close) => (
-        <RenameAccountContent
-          walletId={wallet.id}
-          accountId={account.id}
-          currentName={accountName}
-          close={close}
-        />
-      )
-    })
-  }
-
   const isHardwareWallet = isZcashHardwareKeySource(wallet?.keySource)
   const isCurrentAccount = wallet.id === currentWalletId && account.id === currentAccountId
 
   const menuItems = [
-    {
-      label: 'Account name',
-      value: formatAccountName(accountName),
-      icon: <Icon icon="lucide:chevron-right" width={16} height={16} />,
-      action: handleEditAccountName
-    },
     {
       label: 'Addresses',
       value: undefined,
@@ -183,6 +163,15 @@ export function AccountDetail() {
 
       <div className="page-content">
         <div className="space-y-3 mb-6">
+          <div className="flex items-center justify-between gap-3 rounded-2xl bg-card px-4 py-4">
+            <span className="shrink-0 text-base text-white/90">Account name</span>
+            <InlineEditableName
+              value={accountName}
+              kind="account"
+              className="text-base font-medium text-white"
+              onSave={name => zcashWalletRuntimeClient.renameAccount(wallet.id, account.id, name)}
+            />
+          </div>
           {menuItems.map(item => {
             const rowClassName =
               'w-full px-4 py-4 bg-card rounded-2xl transition-colors ' +

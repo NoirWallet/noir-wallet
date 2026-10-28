@@ -51,8 +51,7 @@ function sourceSnapshot() {
 }
 
 class MemoryStorageV2Repository {
-  constructor() {
-    const source = sourceSnapshot()
+  constructor(source = sourceSnapshot()) {
     this.pointer = {
       schemaVersion: 2,
       generationId: source.manifest.generationId,
@@ -143,6 +142,31 @@ test.describe('Wallet metadata coordinator', () => {
     })
     expect(target.keyDomains).toEqual(sourceSnapshot().keyDomains)
     expect(target.manifest.activeAccount).toEqual(sourceSnapshot().manifest.activeAccount)
+  })
+
+  test('renames a retained software wallet without changing its accounts or credentials', async () => {
+    const source = structuredClone(sourceSnapshot())
+    source.keyDomains[0].id = 'wallet:retained:one'
+    source.keyDomains[0].credentialRef = 'credential-set:retained:one'
+    source.keyDomains[0].source = { kind: 'software', mnemonicWordCount: 12 }
+    source.accounts[0].keyDomainId = 'wallet:retained:one'
+    source.manifest.mainKeyDomainId = 'wallet:retained:one'
+    source.manifest.activeAccount.keyDomainId = 'wallet:retained:one'
+    const repository = new MemoryStorageV2Repository(source)
+
+    const result = await coordinator(repository).renameWallet({
+      keyDomainId: 'wallet:retained:one',
+      displayName: 'Daily software'
+    })
+
+    const target = await repository.getSnapshot(result.generationId)
+    expect(target.keyDomains[0]).toMatchObject({
+      id: 'wallet:retained:one',
+      displayName: 'Daily software',
+      credentialRef: 'credential-set:retained:one'
+    })
+    expect(target.accounts).toEqual(source.accounts)
+    expect(target.manifest.activeAccount).toEqual(source.manifest.activeAccount)
   })
 
   test('is idempotent and validates names before staging', async () => {

@@ -5,6 +5,8 @@ import {
   getWalletDeletionRecord,
   markWalletBackupVerified,
   readWalletMetadata,
+  renameRetainedAccountMetadata,
+  renameRetainedWalletMetadata,
   writeWalletMetadata
 } from '../../../src/lib/wallet-metadata-storage.ts'
 
@@ -125,6 +127,172 @@ test.describe('Wallet metadata persistence', () => {
       expect(
         storage.values.wallet_state.state.wallets[0].secretPhraseBackupVerifiedAt
       ).toBeUndefined()
+    } finally {
+      storage.restore()
+    }
+  })
+
+  test('renames retained wallet and account metadata without replacing other fields', async () => {
+    const otherWallet = { ...wallet, id: 'wallet:other', name: 'Other wallet' }
+    const initial = {
+      wallet_state: {
+        state: {
+          wallets: [wallet, otherWallet],
+          currentWalletId: wallet.id,
+          accountDisplayNames: { 'wallet:other_account:0': 'Other account' }
+        }
+      }
+    }
+    const storage = mockStorage(initial)
+    try {
+      await renameRetainedWalletMetadata(wallet.id, wallet.name, 'Daily wallet')
+      await renameRetainedAccountMetadata(wallet.id, 'account:0', null, 'Daily account')
+      expect(storage.values.wallet_state.state).toEqual({
+        wallets: [{ ...wallet, name: 'Daily wallet' }, otherWallet],
+        currentWalletId: wallet.id,
+        accountDisplayNames: {
+          'wallet:other_account:0': 'Other account',
+          'wallet:retained_account:0': 'Daily account'
+        }
+      })
+    } finally {
+      storage.restore()
+    }
+  })
+
+  test('stale store writes keep committed names while updating unrelated metadata', async () => {
+    const originalWallet = {
+      ...wallet,
+      accounts: [{ id: 'account:0', name: 'Original account', isPinned: false }]
+    }
+    const stale = {
+      state: {
+        wallets: [originalWallet],
+        accountDisplayNames: { 'wallet:retained_account:0': 'Original override' },
+        zecPrice: 1
+      }
+    }
+    const storage = mockStorage({ wallet_state: stale })
+    try {
+      await renameRetainedWalletMetadata(wallet.id, wallet.name, 'Renamed wallet')
+      await renameRetainedAccountMetadata(
+        wallet.id,
+        'account:0',
+        'Original override',
+        'Renamed account'
+      )
+      await writeWalletMetadata({
+        ...stale,
+        state: {
+          ...stale.state,
+          zecPrice: 42,
+          wallets: [
+            {
+              ...originalWallet,
+              accounts: [{ ...originalWallet.accounts[0], isPinned: true }]
+            }
+          ]
+        }
+      })
+
+      const state = storage.values.wallet_state.state
+      expect(state.zecPrice).toBe(42)
+      expect(state.wallets[0].name).toBe('Renamed wallet')
+      expect(state.wallets[0].accounts[0]).toEqual({
+        id: 'account:0',
+        name: 'Original account',
+        isPinned: true
+      })
+      expect(state.accountDisplayNames).toEqual({
+        'wallet:retained_account:0': 'Renamed account'
+      })
+    } finally {
+      storage.restore()
+    }
+  })
+
+  test('old snapshots without overrides cannot add stale names but new identities keep names', async () => {
+    const originalWallet = { ...wallet, accounts: [{ id: 'account:0', name: 'Original' }] }
+    const storage = mockStorage({ wallet_state: { state: { wallets: [originalWallet] } } })
+    try {
+      const addedWallet = {
+        ...wallet,
+        id: 'wallet:new',
+        name: 'New wallet',
+        seedPhraseKey: 'seed_wallet:new',
+        createdAt: wallet.createdAt + 1,
+        accounts: [{ id: 'account:new', name: 'New wallet account' }]
+      }
+      await writeWalletMetadata({
+        state: {
+          wallets: [
+            {
+              ...originalWallet,
+              name: 'Stale wallet rename',
+              accounts: [
+                { id: 'account:0', name: 'Stale account rename' },
+                { id: 'account:1', name: 'New account' }
+              ]
+            },
+            addedWallet
+          ],
+          accountDisplayNames: {
+            'wallet:retained_account:0': 'Stale override',
+            'wallet:retained_account:1': 'New account override'
+          }
+        }
+      })
+
+      const state = storage.values.wallet_state.state
+      expect(state.wallets[0].name).toBe(wallet.name)
+      expect(state.wallets[0].accounts).toEqual([
+        { id: 'account:0', name: 'Original' },
+        { id: 'account:1', name: 'New account' }
+      ])
+      expect(state.wallets[1]).toEqual(addedWallet)
+      expect(state.accountDisplayNames).toEqual({
+        'wallet:retained_account:1': 'New account override'
+      })
+    } finally {
+      storage.restore()
+    }
+  })
+
+  test('rejects stale, deleted, and failed retained rename writes', async () => {
+    const initial = {
+      wallet_state: {
+        state: {
+          wallets: [wallet],
+          accountDisplayNames: { 'wallet:retained_account:0': 'Original account' }
+        }
+      }
+    }
+    const storage = mockStorage(initial)
+    try {
+      await expect(
+        renameRetainedWalletMetadata(wallet.id, 'Stale wallet', 'Renamed')
+      ).rejects.toThrow(/changed or was removed/)
+      await expect(
+        renameRetainedAccountMetadata(wallet.id, 'account:0', null, 'Renamed')
+      ).rejects.toThrow(/changed or was removed/)
+      expect(storage.values).toEqual(initial)
+
+      storage.failSet(new Error('storage write failed'))
+      await expect(
+        renameRetainedAccountMetadata(wallet.id, 'account:0', 'Original account', 'Renamed')
+      ).rejects.toThrow('storage write failed')
+      expect(storage.values).toEqual(initial)
+      storage.failSet(null)
+
+      storage.values.wallet_deleted_account_keys = ['mainnet_wallet:retained_account:0']
+      await expect(
+        renameRetainedAccountMetadata(wallet.id, 'account:0', 'Original account', 'Renamed')
+      ).rejects.toThrow(/changed or was removed/)
+      storage.values.wallet_deleted_ids = [wallet.id]
+      await expect(renameRetainedWalletMetadata(wallet.id, wallet.name, 'Renamed')).rejects.toThrow(
+        /changed or was removed/
+      )
+      expect(storage.values.wallet_state).toEqual(initial.wallet_state)
     } finally {
       storage.restore()
     }

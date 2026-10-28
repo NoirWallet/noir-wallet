@@ -353,6 +353,76 @@ async function expectPopupFits(page: import('@playwright/test').Page): Promise<v
     .toEqual({ viewportWidth: 375, documentWidth: 375, viewportHeight: 600 })
 }
 
+test('groups a Keystone wallet and persists wallet and account names', async ({
+  popup,
+  extensionId
+}) => {
+  await waitForBackgroundWalletInitialization(popup)
+  const provisioned = await popup.evaluate(
+    async ({ credential, password }) =>
+      chrome.runtime.sendMessage({
+        type: 'PROVISION_KEYSTONE_HARDWARE',
+        credential,
+        displayName: 'Keystone Multi-Coin',
+        password
+      }),
+    { credential, password: PASSWORD }
+  )
+  expect(provisioned).toMatchObject({
+    success: true,
+    result: { status: 'committed', keyDomainId: expect.stringMatching(/^wallet:keystone-v2:/) }
+  })
+  const walletId = provisioned.result.keyDomainId
+  const catalog = await popup.evaluate(() =>
+    chrome.runtime.sendMessage({ type: 'GET_ACCOUNT_NETWORKS' })
+  )
+  const account = catalog.result.accounts[0]
+  expect(account).toMatchObject({ walletId, walletSource: { kind: 'hardware' } })
+
+  await popup.goto(`chrome-extension://${extensionId}/index.html`)
+  await popup.getByRole('button', { name: 'Choose wallet' }).click()
+  const group = popup.locator('section[aria-label="Wallet group Keystone Multi-Coin"]')
+  await expect(group).toBeVisible()
+  await expect(group.locator('[aria-label^="Account actions for "]')).toHaveCount(1)
+  await expect(group.getByRole('button', { name: 'Add Account', exact: true })).toHaveCount(0)
+  const renameKeystoneAccount = group.getByRole('button', {
+    name: `Rename account ${account.accountDisplayName}`
+  })
+  await renameKeystoneAccount.hover()
+  await expect(renameKeystoneAccount.locator('svg')).toBeVisible()
+  await renameKeystoneAccount.click()
+  await group.getByRole('textbox', { name: 'Account name' }).fill('Keystone Treasury')
+  await group.getByRole('textbox', { name: 'Account name' }).press('Enter')
+  await expect(group.getByRole('textbox', { name: 'Account name' })).toHaveCount(0)
+  const renameKeystoneWallet = popup.getByRole('button', {
+    name: 'Rename wallet Keystone Multi-Coin'
+  })
+  await renameKeystoneWallet.hover()
+  await expect(renameKeystoneWallet.locator('svg')).toBeVisible()
+  await renameKeystoneWallet.click()
+  await group.getByRole('textbox', { name: 'Wallet name' }).fill('Keystone Archive')
+  await group.getByRole('textbox', { name: 'Wallet name' }).press('Enter')
+  await expect(group.getByRole('textbox', { name: 'Wallet name' })).toHaveCount(0)
+  await popup.reload()
+  await popup.getByRole('button', { name: 'Choose wallet' }).click()
+  const renamedGroup = popup.locator('section[aria-label="Wallet group Keystone Archive"]')
+  await expect(
+    renamedGroup.getByRole('button', { name: 'Account actions for Keystone Treasury' })
+  ).toBeVisible()
+  await expect(renamedGroup.getByRole('button', { name: 'Add Account', exact: true })).toHaveCount(
+    0
+  )
+  const renamedCatalog = await popup.evaluate(() =>
+    chrome.runtime.sendMessage({ type: 'GET_ACCOUNT_NETWORKS' })
+  )
+  expect(renamedCatalog.result.accounts[0]).toMatchObject({
+    walletId,
+    accountId: account.accountId,
+    walletDisplayName: 'Keystone Archive',
+    accountDisplayName: 'Keystone Treasury'
+  })
+})
+
 test('provisions and operates a pure Storage V2 Multi-Coin Keystone Wallet', async ({
   context,
   popup,
@@ -810,7 +880,12 @@ test('provisions and operates a pure Storage V2 Multi-Coin Keystone Wallet', asy
     timeout: 30_000
   })
   await popup.getByRole('button', { name: 'Choose wallet' }).click()
-  await popup.getByRole('button', { name: 'Wallet actions for Keystone Multi-Coin' }).click()
+  await popup
+    .locator('section[aria-label="Wallet group Keystone Multi-Coin"]')
+    .getByRole('button', {
+      name: `Account actions for ${catalog.result.accounts[0].accountDisplayName}`
+    })
+    .click()
   await popup.getByRole('menuitem', { name: 'Remove wallet' }).click()
   await expect(popup.getByRole('heading', { name: 'Remove wallet' })).toBeVisible()
   await popup.getByRole('button', { name: 'Remove', exact: true }).click()
@@ -820,11 +895,9 @@ test('provisions and operates a pure Storage V2 Multi-Coin Keystone Wallet', asy
   ).toBeVisible()
   await popup.getByRole('button', { name: 'OK', exact: true }).click()
 
-  await popup.getByRole('button', { name: 'Wallet actions for Keystone Multi-Coin' }).click()
-  await popup.getByRole('menuitem', { name: 'Rename wallet' }).click()
-  await expect(popup.getByRole('heading', { name: 'Rename wallet' })).toBeVisible()
-  await popup.getByPlaceholder('Enter wallet name').fill('Keystone Daily')
-  await popup.getByRole('button', { name: 'Confirm', exact: true }).click()
+  await popup.getByRole('button', { name: 'Rename wallet Keystone Multi-Coin' }).click()
+  await popup.getByRole('textbox', { name: 'Wallet name' }).fill('Keystone Daily')
+  await popup.getByRole('textbox', { name: 'Wallet name' }).press('Enter')
   await expect(popup.getByText('Keystone Daily', { exact: true })).toBeVisible()
   await captureScreenshot(popup, 'keystone-v2-wallet-renamed.png')
   const renamedCatalog = await popup.evaluate(() =>
@@ -882,7 +955,12 @@ test('provisions and operates a pure Storage V2 Multi-Coin Keystone Wallet', asy
     timeout: 30_000
   })
   await popup.getByRole('button', { name: 'Choose wallet' }).click()
-  await popup.getByRole('button', { name: 'Wallet actions for Keystone Daily' }).click()
+  await popup
+    .locator('section[aria-label="Wallet group Keystone Daily"]')
+    .getByRole('button', {
+      name: `Account actions for ${catalog.result.accounts[0].accountDisplayName}`
+    })
+    .click()
   await popup.getByRole('menuitem', { name: 'Remove wallet' }).click()
   await popup.getByRole('button', { name: 'Remove', exact: true }).click()
   await expect(popup.getByText('Removing wallet...', { exact: true })).toBeVisible()

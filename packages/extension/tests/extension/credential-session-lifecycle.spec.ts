@@ -90,7 +90,9 @@ async function selectRetainedAccountThroughPopup(
   await expect(page.getByRole('button', { name: 'Choose wallet' })).toBeVisible()
   await page.getByRole('button', { name: 'Choose wallet' }).click()
   await page.getByPlaceholder('Search Account').fill(target.walletName)
-  await page.getByRole('button', { name: `Switch to ${target.accountName}` }).click()
+  await page.getByRole('button', { name: `Switch to ${target.accountName}` }).click({
+    position: { x: 4, y: 4 }
+  })
   const chooseWallet = page.getByRole('button', { name: 'Choose wallet' })
   const syncConfirmation = page.getByRole('dialog', { name: 'Switch Account' })
   await expect
@@ -288,7 +290,9 @@ test('returns from an active private-key wallet to a retained Zcash wallet', asy
   })
   await popup.getByRole('button', { name: 'Choose wallet' }).click()
   await popup.getByPlaceholder('Search Account').fill('Imported EVM Test')
-  await popup.getByRole('button', { name: 'Switch to Account 1' }).click()
+  await popup.getByRole('button', { name: 'Switch to Account 1' }).click({
+    position: { x: 4, y: 4 }
+  })
   await expect(popup.getByRole('button', { name: 'Choose wallet' })).toBeVisible()
   await expect
     .poll(() =>

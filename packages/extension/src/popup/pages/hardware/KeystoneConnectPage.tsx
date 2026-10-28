@@ -26,6 +26,7 @@ import {
   createZcashHardwareCredential
 } from '@/core/wallet/hardware-wallet-data'
 import { useWalletStore } from '@/store/wallet-store'
+import { nextHardwareWalletName } from '@/lib/hardware-connect-options'
 import { PASSWORD_POLICY } from '@/config/wallet'
 import { getNewPasswordValidationError, isNewPasswordValid } from '@/core/wallet/password-policy'
 import { formatSortAddress } from '@/lib/format'
@@ -74,7 +75,8 @@ export function KeystoneConnectPage() {
   const [connection, setConnection] = useState<KeystoneConnectionAccount | null>(null)
   const [accountIndex, setAccountIndex] = useState(0)
 
-  const [walletName, setWalletName] = useState('Keystone')
+  const [walletName, setWalletName] = useState('Keystone Wallet 1')
+  const walletNameEdited = useRef(false)
   const [birthdayHeight, setBirthdayHeight] = useState<number | undefined>(undefined)
   const [isExistingWallet, setIsExistingWallet] = useState(false)
   const [password, setPassword] = useState('')
@@ -129,6 +131,8 @@ export function KeystoneConnectPage() {
       const catalog = await accountNetworksClient.getCatalog()
       if (request !== walletInventoryRequest.current) return
       setHasStorageV2Wallet((catalog?.accounts.length ?? 0) > 0)
+      if (catalog && !walletNameEdited.current)
+        setWalletName(nextHardwareWalletName('keystone', catalog.accounts))
     } catch {
       if (request !== walletInventoryRequest.current) return
       setWalletInventoryError(true)
@@ -405,8 +409,11 @@ export function KeystoneConnectPage() {
               <label className="block text-sm text-muted mb-2">Wallet Name</label>
               <Input
                 value={walletName}
-                onChange={e => setWalletName(e.target.value)}
-                placeholder="Keystone"
+                onChange={e => {
+                  walletNameEdited.current = true
+                  setWalletName(e.target.value)
+                }}
+                placeholder="Keystone Wallet 1"
                 className="h-[45px]"
               />
             </div>

@@ -49,6 +49,18 @@ test('retained V1 reconciliation preserves only recognized native V2 credential 
   ).toBe(true)
   expect(
     isNativeV2CredentialKeyDomain({
+      id: 'wallet:ledger-v3:fixture',
+      source: { kind: 'hardware' }
+    })
+  ).toBe(true)
+  expect(
+    isNativeV2CredentialKeyDomain({
+      id: 'wallet:ledger-v3:spoofed',
+      source: { kind: 'software' }
+    })
+  ).toBe(false)
+  expect(
+    isNativeV2CredentialKeyDomain({
       id: 'wallet:private-key-v2:spoofed',
       source: { kind: 'software' }
     })

@@ -204,13 +204,28 @@ test('imports and exports EVM and Bitcoin private keys in Testnet Mode', async (
   })
   expect(bitcoinAccount.networks[0].addresses).toHaveLength(4)
 
+  await popup.getByRole('button', { name: 'Choose wallet' }).click()
+  const privateKeyGroup = popup.locator('section[aria-label="Wallet group Imported Private Key"]')
+  await expect(privateKeyGroup).toBeVisible()
+  await expect(privateKeyGroup.locator('[aria-label^="Account actions for "]')).toHaveCount(2)
+  await expect(
+    privateKeyGroup.getByRole('button', { name: 'Add Account', exact: true })
+  ).toHaveCount(0)
+  await expect(privateKeyGroup.getByRole('button', { name: /^Rename wallet / })).toHaveCount(0)
+  await privateKeyGroup.scrollIntoViewIfNeeded()
+  await captureScreenshot(popup, 'private-key-account-group.png')
+  await popup.getByRole('button', { name: 'Back' }).click()
+
   await terminateExtensionServiceWorker(context, popup)
   await popup.reload()
   // A Service Worker restart does not end the browser-scoped chrome.storage.session unlock.
   // Browser restart, extension reload/update, explicit lock, and network-mode restart do.
   await expect(popup.getByRole('heading', { name: 'Portfolio' })).toBeVisible({ timeout: 15_000 })
   await popup.getByRole('button', { name: 'Choose wallet' }).click()
-  await popup.getByRole('button', { name: 'Wallet actions for Imported Bitcoin Testnet' }).click()
+  await privateKeyGroup
+    .getByRole('button', { name: `Account actions for ${bitcoinAccount.accountDisplayName}` })
+    .last()
+    .click()
   await popup.getByRole('menuitem', { name: 'Export private key' }).click()
   expect(await revealSelectedPrivateKey(popup)).toBe(BITCOIN_TESTNET_WIF)
 
@@ -261,6 +276,84 @@ test('imports and exports EVM and Bitcoin private keys in Testnet Mode', async (
   await popup.getByPlaceholder('Enter Password').fill(NEXT_PASSWORD)
   await popup.getByRole('button', { name: 'Unlock', exact: true }).click()
   await expect(popup.getByRole('heading', { name: 'Portfolio' })).toBeVisible({ timeout: 30_000 })
+
+  await popup.getByRole('button', { name: 'Choose wallet' }).click()
+  const importedGroup = popup.locator('section[aria-label="Wallet group Imported Private Key"]')
+  await importedGroup
+    .getByRole('button', { name: `Account actions for ${evmAccount.accountDisplayName}` })
+    .first()
+    .click()
+  await expect(popup.getByRole('menuitem', { name: 'Export private key' })).toBeVisible()
+  await expect(popup.getByRole('menuitem', { name: 'Remove account' })).toBeVisible()
+  await popup.keyboard.press('Escape')
+  const renameEvmAccount = importedGroup
+    .getByRole('button', { name: `Rename account ${evmAccount.accountDisplayName}` })
+    .first()
+  await renameEvmAccount.hover()
+  await expect(renameEvmAccount.locator('svg')).toBeVisible()
+  await renameEvmAccount.click()
+  await importedGroup.getByRole('textbox', { name: 'Account name' }).fill('EVM Reserve')
+  await captureScreenshot(popup, 'private-key-inline-account-rename.png')
+  await importedGroup.getByRole('textbox', { name: 'Account name' }).press('Enter')
+  await expect(importedGroup.getByRole('textbox', { name: 'Account name' })).toHaveCount(0)
+  await expect(
+    importedGroup.getByRole('button', { name: 'Account actions for EVM Reserve' })
+  ).toBeVisible()
+  await popup.reload()
+  await popup.getByRole('button', { name: 'Choose wallet' }).click()
+  await expect(
+    importedGroup.getByRole('button', { name: 'Account actions for EVM Reserve' })
+  ).toBeVisible()
+  await expect(importedGroup.locator('[aria-label^="Account actions for "]')).toHaveCount(2)
+  await importedGroup.scrollIntoViewIfNeeded()
+  await captureScreenshot(popup, 'private-key-account-group-renamed.png')
+  const namesAfterRename = await popup.evaluate(async () => {
+    const response = await chrome.runtime.sendMessage({ type: 'GET_ACCOUNT_NETWORKS' })
+    return response.result?.accounts?.map(
+      (account: { walletId: string; accountId: string; accountDisplayName: string }) => ({
+        walletId: account.walletId,
+        accountId: account.accountId,
+        accountDisplayName: account.accountDisplayName
+      })
+    )
+  })
+  expect(namesAfterRename).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        walletId: evmAccount.walletId,
+        accountId: evmAccount.accountId,
+        accountDisplayName: 'EVM Reserve'
+      }),
+      expect.objectContaining({
+        walletId: bitcoinAccount.walletId,
+        accountId: bitcoinAccount.accountId,
+        accountDisplayName: bitcoinAccount.accountDisplayName
+      })
+    ])
+  )
+  await importedGroup.getByRole('button', { name: 'Account actions for EVM Reserve' }).click()
+  await popup.getByRole('menuitem', { name: 'Remove account' }).click()
+  await popup.getByRole('button', { name: 'Remove', exact: true }).click()
+  await expect(importedGroup.locator('[aria-label^="Account actions for "]')).toHaveCount(1)
+  await expect
+    .poll(async () => {
+      const response = await popup.evaluate(() =>
+        chrome.runtime.sendMessage({ type: 'GET_ACCOUNT_NETWORKS' })
+      )
+      return response.result?.accounts?.map((account: { walletId: string }) => account.walletId)
+    })
+    .toContain(bitcoinAccount.walletId)
+  await expect
+    .poll(async () => {
+      const response = await popup.evaluate(() =>
+        chrome.runtime.sendMessage({ type: 'GET_ACCOUNT_NETWORKS' })
+      )
+      return response.result?.accounts?.map((account: { walletId: string }) => account.walletId)
+    })
+    .not.toContain(evmAccount.walletId)
+  await popup.reload()
+  await popup.getByRole('button', { name: 'Choose wallet' }).click()
+  await expect(importedGroup.locator('[aria-label^="Account actions for "]')).toHaveCount(1)
 })
 
 test('imports Solana and NEAR private-key Wallets behind the Beta chain gates', async ({
@@ -329,7 +422,10 @@ test('imports Solana and NEAR private-key Wallets behind the Beta chain gates', 
   expect(nearAccount.networks[0].addresses[0].value).toMatch(/^[0-9a-f]{64}$/)
 
   await popup.getByRole('button', { name: 'Choose wallet' }).click()
-  await popup.getByRole('button', { name: 'Wallet actions for Imported NEAR Testnet' }).click()
+  await popup
+    .getByRole('button', { name: `Account actions for ${nearAccount.accountDisplayName}` })
+    .last()
+    .click()
   await popup.getByRole('menuitem', { name: 'Export private key' }).click()
   expect(await revealSelectedPrivateKey(popup)).toMatch(/^ed25519:[1-9A-HJ-NP-Za-km-z]{87,88}$/)
 })

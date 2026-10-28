@@ -48,6 +48,7 @@ import {
 import { cn } from '@/lib/utils'
 import { getNewPasswordValidationError, isNewPasswordValid } from '@/core/wallet/password-policy'
 import { useWalletStore } from '@/store/wallet-store'
+import { nextHardwareWalletName } from '@/lib/hardware-connect-options'
 import {
   MAX_LEDGER_ACCOUNT_INDEX,
   parseLedgerAccountIndex,
@@ -95,7 +96,9 @@ export function LedgerConnectPage() {
     credential: LedgerHardwareCredential
     anchorProof?: LedgerPublicAccount
   } | null>(null)
-  const [walletName, setWalletName] = useState('Ledger')
+  const [walletName, setWalletName] = useState('Ledger Wallet 1')
+  const walletNameEdited = useRef(false)
+  const newWalletName = useRef('Ledger Wallet 1')
   const [birthdayHeight, setBirthdayHeight] = useState<number | undefined>()
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
@@ -135,6 +138,13 @@ export function LedgerConnectPage() {
   const parsedDeviceIndex = parseLedgerAccountIndex(deviceIndex)
   const firstWallet = !loading && !catalog?.accounts.length && retainedWalletCount === 0
   const familyChoices = ledgerFamilyChoices(availableFamilies)
+  useEffect(() => {
+    if (catalog && !targetWalletId && !walletNameEdited.current) {
+      const suggested = nextHardwareWalletName('ledger', catalog.accounts)
+      newWalletName.current = suggested
+      setWalletName(suggested)
+    }
+  }, [catalog, targetWalletId])
   useEffect(() => {
     let disposed = false
     setCatalogLoading(true)
@@ -329,7 +339,6 @@ export function LedgerConnectPage() {
       })
       controller.signal.throwIfAborted()
       setExported(result)
-      if (!targetWalletId) setWalletName(result.credential.deviceName)
       setStep('configure')
     } catch (cause) {
       if (!controller.signal.aborted) {
@@ -485,6 +494,7 @@ export function LedgerConnectPage() {
                       setFamilies([])
                       setError('')
                       if (wallet) setWalletName(wallet.name)
+                      else setWalletName(newWalletName.current)
                     }}
                   >
                     <option value="">New Ledger Wallet</option>
@@ -714,7 +724,11 @@ export function LedgerConnectPage() {
                 <Input
                   id="ledger-wallet-name"
                   value={walletName}
-                  onChange={event => setWalletName(event.target.value)}
+                  onChange={event => {
+                    walletNameEdited.current = true
+                    newWalletName.current = event.target.value
+                    setWalletName(event.target.value)
+                  }}
                 />
               </div>
             )}

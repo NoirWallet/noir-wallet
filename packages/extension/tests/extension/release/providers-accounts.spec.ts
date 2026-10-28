@@ -514,7 +514,9 @@ test('wallet-side Connect restores an existing EVM site for the active account',
   await selectNewZcashAccountHistory(popup)
   await expect(popup.getByText('Account 2', { exact: true })).toBeVisible({ timeout: 60_000 })
   await removeZcashHistoryMock()
-  await popup.getByRole('button', { name: 'Switch to Account 2' }).click()
+  await popup.getByRole('button', { name: 'Switch to Account 2' }).click({
+    position: { x: 4, y: 4 }
+  })
   await expect(popup.getByRole('button', { name: 'Choose wallet' })).toBeVisible()
   await expect
     .poll(() =>
@@ -537,7 +539,9 @@ test('wallet-side Connect restores an existing EVM site for the active account',
   })
   expect(active.accountId).not.toBe(previous.accountId)
   await popup.getByRole('button', { name: 'Choose wallet' }).click()
-  await popup.getByRole('button', { name: 'Switch to Account 1' }).click()
+  await popup.getByRole('button', { name: 'Switch to Account 1' }).click({
+    position: { x: 4, y: 4 }
+  })
   await expect(popup.getByText('Account 1', { exact: true })).toBeVisible()
   await popup.evaluate(
     ({ site, account }) =>
@@ -584,7 +588,9 @@ test('wallet-side Connect restores an existing EVM site for the active account',
   const [previousAddress] = await readAccounts()
   expect(previousAddress).toMatch(/^0x[0-9a-f]{40}$/)
   await popup.getByRole('button', { name: 'Choose wallet' }).click()
-  await popup.getByRole('button', { name: 'Switch to Account 2' }).click()
+  await popup.getByRole('button', { name: 'Switch to Account 2' }).click({
+    position: { x: 4, y: 4 }
+  })
   await expect(popup.getByText('Account 2', { exact: true })).toBeVisible()
   await expect.poll(readAccounts).toEqual([previousAddress])
   await expect(popup.getByTestId('dapp-connect-prompt')).toBeVisible()
@@ -955,7 +961,11 @@ test('imports and exports scoped EVM and Bitcoin private-key Wallets across Work
   ).toEqual(new Set(['0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf']))
 
   await popup.getByRole('button', { name: 'Choose wallet' }).click()
-  await popup.getByRole('button', { name: 'Wallet actions for Imported EVM Test' }).click()
+  await popup
+    .locator('section[aria-label="Wallet group Imported Private Key"]')
+    .getByRole('button', { name: `Account actions for ${evmAccount.accountDisplayName}` })
+    .first()
+    .click()
   await popup.getByRole('menuitem', { name: 'Export private key' }).click()
   const evmExportOption = popup.getByRole('button', { name: 'EVM', exact: true })
   await expect(evmExportOption.locator('[data-slot="chain-icon-group"] img')).toHaveCount(4)
@@ -1036,7 +1046,11 @@ test('imports and exports scoped EVM and Bitcoin private-key Wallets across Work
   })
   await expect(popup.getByText('Imported EVM Test', { exact: true })).toBeVisible()
   await expect(popup.getByText('Imported Bitcoin Test', { exact: true })).toBeVisible()
-  await popup.getByRole('button', { name: 'Wallet actions for Imported Bitcoin Test' }).click()
+  await popup
+    .locator('section[aria-label="Wallet group Imported Private Key"]')
+    .getByRole('button', { name: `Account actions for ${bitcoinAccount.accountDisplayName}` })
+    .last()
+    .click()
   await popup.getByRole('menuitem', { name: 'Export private key' }).click()
   await popup.getByLabel('Enter password').fill(TEST_PASSWORD)
   await popup.getByRole('button', { name: 'Reveal private key' }).click()

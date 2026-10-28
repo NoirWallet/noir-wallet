@@ -17,16 +17,32 @@ export interface AccountListItem {
   readonly walletName: string
 }
 
-export type RegularAccountEntry =
-  | Readonly<{ kind: 'wallet'; wallet: WalletItem; accounts: readonly AccountData[] }>
+export type RegularAccountItem =
+  | Readonly<{ kind: 'retained'; wallet: WalletItem; account: AccountData }>
   | Readonly<{ kind: 'native'; account: AccountNetworksView }>
+
+export type WalletAddAccountAction = Readonly<{ kind: 'software'; walletId: string }>
+
+export interface RegularAccountEntry {
+  readonly kind: 'wallet' | 'private-key'
+  readonly id: string
+  readonly walletId: string | null
+  readonly displayName: string
+  readonly hardwareVendor: string | null
+  readonly addAccount: WalletAddAccountAction | null
+  readonly accounts: readonly RegularAccountItem[]
+}
 
 export function accountListKey(walletId: string, accountId: string): string {
   return `${walletId}:${accountId}`
 }
 
-export function hasAccountMenuAddAction(wallet: WalletItem): boolean {
+export function hasAccountMenuAddAction(
+  wallet: WalletItem,
+  action: WalletAddAccountAction | undefined
+): boolean {
   return (
+    action?.walletId === wallet.id &&
     !isZcashHardwareKeySource(wallet.keySource) &&
     wallet.accounts.length > 0 &&
     wallet.accounts.every(account => account.isPinned || account.isHidden)
@@ -84,7 +100,25 @@ export function buildVisibleAccountList(input: {
   hiddenAccounts: readonly AccountListItem[]
   nativeAccounts: AccountNetworksCatalogView['accounts']
   regularEntries: readonly RegularAccountEntry[]
+  walletAddAccountActions: ReadonlyMap<string, WalletAddAccountAction>
 }> {
+  const catalogByWallet = new Map<string, AccountNetworksView[]>()
+  for (const account of input.nativeAccounts) {
+    const accounts = catalogByWallet.get(account.walletId) ?? []
+    accounts.push(account)
+    catalogByWallet.set(account.walletId, accounts)
+  }
+  const walletAddAccountActions = new Map<string, WalletAddAccountAction>()
+  for (const wallet of input.wallets) {
+    const catalogSource = catalogByWallet.get(wallet.id)?.[0]?.walletSource.kind
+    if (
+      !isZcashHardwareKeySource(wallet.keySource) &&
+      catalogSource !== 'hardware' &&
+      catalogSource !== 'private-key'
+    ) {
+      walletAddAccountActions.set(wallet.id, { kind: 'software', walletId: wallet.id })
+    }
+  }
   const catalogByAccount = new Map(
     input.nativeAccounts.map(account => [
       accountListKey(account.walletId, account.accountId),
@@ -126,6 +160,7 @@ export function buildVisibleAccountList(input: {
       !query ||
       account.accountDisplayName.toLowerCase().includes(query) ||
       account.walletDisplayName.toLowerCase().includes(query) ||
+      (account.walletSource.kind === 'private-key' && 'imported private key'.includes(query)) ||
       account.networks.some(network => network.chain.displayName.toLowerCase().includes(query)) ||
       catalogAddresses(account).some(address => address.toLowerCase().includes(query))
     )
@@ -133,27 +168,93 @@ export function buildVisibleAccountList(input: {
   const filteredAccountKeys = new Set(
     filteredAccounts.map(account => accountListKey(account.walletId, account.id))
   )
-  const regularEntries: RegularAccountEntry[] = [
-    ...input.wallets.flatMap(wallet => {
-      const normalAccounts = wallet.accounts.filter(
-        account =>
-          !account.isPinned &&
-          !account.isHidden &&
-          filteredAccountKeys.has(accountListKey(wallet.id, account.id))
+  const groups = new Map<
+    string,
+    Omit<RegularAccountEntry, 'accounts'> & {
+      createdAt: number
+      accounts: RegularAccountItem[]
+    }
+  >()
+  const retainedWallets = new Map(input.wallets.map(wallet => [wallet.id, wallet]))
+  const ensureWalletGroup = (walletId: string, catalog?: AccountNetworksView) => {
+    const id = `wallet:${walletId}`
+    const existing = groups.get(id)
+    if (existing) return existing
+    const wallet = retainedWallets.get(walletId)
+    const hardwareVendor =
+      catalog?.walletSource.kind === 'hardware'
+        ? catalog.walletSource.hardware.vendor
+        : wallet && isZcashHardwareKeySource(wallet.keySource)
+          ? wallet.keySource
+          : null
+    const group = {
+      kind: 'wallet' as const,
+      id,
+      walletId,
+      displayName: wallet
+        ? formatWalletName(wallet, input.wallets)
+        : (catalog?.walletDisplayName ?? ''),
+      hardwareVendor,
+      addAccount: walletAddAccountActions.get(walletId) ?? null,
+      createdAt: wallet?.createdAt ?? catalog?.walletCreatedAt ?? Number.MAX_SAFE_INTEGER,
+      accounts: [] as RegularAccountItem[]
+    }
+    groups.set(id, group)
+    return group
+  }
+  for (const wallet of input.wallets) {
+    for (const account of wallet.accounts) {
+      if (
+        account.isPinned ||
+        account.isHidden ||
+        !filteredAccountKeys.has(accountListKey(wallet.id, account.id))
       )
-      return normalAccounts.length > 0
-        ? [{ kind: 'wallet' as const, wallet, accounts: normalAccounts }]
-        : []
-    }),
-    ...nativeAccounts.map(account => ({ kind: 'native' as const, account }))
-  ]
-  regularEntries.sort((left, right) => {
-    const leftCreatedAt =
-      left.kind === 'wallet' ? left.wallet.createdAt : left.account.walletCreatedAt
-    const rightCreatedAt =
-      right.kind === 'wallet' ? right.wallet.createdAt : right.account.walletCreatedAt
-    return (leftCreatedAt ?? Number.MAX_SAFE_INTEGER) - (rightCreatedAt ?? Number.MAX_SAFE_INTEGER)
-  })
+        continue
+      ensureWalletGroup(
+        wallet.id,
+        catalogByAccount.get(accountListKey(wallet.id, account.id))
+      ).accounts.push({ kind: 'retained', wallet, account })
+    }
+  }
+  for (const account of nativeAccounts) {
+    if (account.walletSource.kind !== 'private-key') {
+      ensureWalletGroup(account.walletId, account).accounts.push({ kind: 'native', account })
+      continue
+    }
+    const id = 'imported-private-key'
+    let group = groups.get(id)
+    if (!group) {
+      group = {
+        kind: 'private-key',
+        id,
+        walletId: null,
+        displayName: 'Imported Private Key',
+        hardwareVendor: null,
+        addAccount: null,
+        createdAt: Number.MAX_SAFE_INTEGER,
+        accounts: []
+      }
+      groups.set(id, group)
+    }
+    group.createdAt = Math.min(group.createdAt, account.walletCreatedAt ?? Number.MAX_SAFE_INTEGER)
+    group.accounts.push({ kind: 'native', account })
+  }
+  const regularEntries = [...groups.values()]
+    .sort((left, right) => left.createdAt - right.createdAt)
+    .map(({ createdAt: _createdAt, ...group }) => {
+      if (group.kind === 'private-key') {
+        group.accounts.sort(
+          (left, right) =>
+            (left.kind === 'native'
+              ? (left.account.walletCreatedAt ?? Number.MAX_SAFE_INTEGER)
+              : 0) -
+            (right.kind === 'native'
+              ? (right.account.walletCreatedAt ?? Number.MAX_SAFE_INTEGER)
+              : 0)
+        )
+      }
+      return Object.freeze({ ...group, accounts: Object.freeze(group.accounts) })
+    })
   return Object.freeze({
     filteredAccounts: Object.freeze(filteredAccounts),
     filteredAccountKeys,
@@ -162,6 +263,7 @@ export function buildVisibleAccountList(input: {
     ),
     hiddenAccounts: Object.freeze(sortedAccounts.filter(account => account.isHidden)),
     nativeAccounts: Object.freeze(nativeAccounts),
+    walletAddAccountActions,
     regularEntries: Object.freeze(regularEntries)
   })
 }

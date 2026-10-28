@@ -235,6 +235,68 @@ test('Ledger native provisioning preserves one KeyDomain across adding chains, r
     )
   ).toContain(secondSolanaAddress)
 
+  await popup.goto(`chrome-extension://${extensionId}/index.html`)
+  await popup.getByRole('button', { name: 'Choose wallet' }).click()
+  const ledgerGroup = popup.locator('section[aria-label="Wallet group Ledger Public Vector"]')
+  await expect(ledgerGroup).toBeVisible()
+  await expect(ledgerGroup.locator('[aria-label^="Account actions for "]')).toHaveCount(2)
+  await expect(ledgerGroup.getByRole('button', { name: 'Add Account', exact: true })).toHaveCount(0)
+  await captureScreenshot(popup, 'ledger-account-group.png')
+
+  const renameLedgerAccount = ledgerGroup.getByRole('button', {
+    name: `Rename account ${newAccount.accountDisplayName}`
+  })
+  await renameLedgerAccount.hover()
+  await expect(renameLedgerAccount.locator('svg')).toBeVisible()
+  await renameLedgerAccount.click()
+  await ledgerGroup.getByRole('textbox', { name: 'Account name' }).fill('Ledger Savings')
+  await ledgerGroup.getByRole('textbox', { name: 'Account name' }).press('Enter')
+  await expect(ledgerGroup.getByRole('textbox', { name: 'Account name' })).toHaveCount(0)
+  await expect(
+    ledgerGroup.getByRole('button', { name: 'Account actions for Ledger Savings' })
+  ).toBeVisible()
+  await expect(
+    ledgerGroup.getByRole('button', { name: `Account actions for ${account.accountDisplayName}` })
+  ).toBeVisible()
+  const renameLedgerWallet = popup.getByRole('button', {
+    name: 'Rename wallet Ledger Public Vector'
+  })
+  await renameLedgerWallet.hover()
+  await expect(renameLedgerWallet.locator('svg')).toBeVisible()
+  await renameLedgerWallet.click()
+  await ledgerGroup.getByRole('textbox', { name: 'Wallet name' }).fill('Ledger Archive')
+  await ledgerGroup.getByRole('textbox', { name: 'Wallet name' }).press('Enter')
+  await expect(ledgerGroup.getByRole('textbox', { name: 'Wallet name' })).toHaveCount(0)
+  const renamedLedgerGroup = popup.locator('section[aria-label="Wallet group Ledger Archive"]')
+  await expect(renamedLedgerGroup).toBeVisible()
+  await popup.reload()
+  await popup.getByRole('button', { name: 'Choose wallet' }).click()
+  await expect(
+    renamedLedgerGroup.getByRole('button', { name: 'Account actions for Ledger Savings' })
+  ).toBeVisible()
+  await expect(
+    renamedLedgerGroup.getByRole('button', {
+      name: `Account actions for ${account.accountDisplayName}`
+    })
+  ).toBeVisible()
+  const renamedLedgerCatalog = (await readCatalog()).result.accounts
+  expect(renamedLedgerCatalog).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        walletId,
+        accountId: accountIds[0],
+        walletDisplayName: 'Ledger Archive',
+        accountDisplayName: account.accountDisplayName
+      }),
+      expect.objectContaining({
+        walletId,
+        accountId: newAccount.accountId,
+        walletDisplayName: 'Ledger Archive',
+        accountDisplayName: 'Ledger Savings'
+      })
+    ])
+  )
+
   await terminateExtensionServiceWorker(context, popup)
   await waitForBackgroundWalletInitialization(popup)
   expect((await readCatalog()).result.accounts[0].accountId).toBe(accountIds[0])

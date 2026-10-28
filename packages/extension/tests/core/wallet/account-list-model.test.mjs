@@ -38,24 +38,26 @@ const catalogAccount = {
   walletId: 'wallet-1',
   accountId: 'account-1',
   accountDisplayName: 'Savings',
+  accountIndex: 0,
   walletDisplayName: 'Main Wallet',
+  walletSource: { kind: 'software' },
   networks: [
     {
-      chain: { displayName: 'Ethereum' },
+      chain: { displayName: 'Ethereum', family: 'evm' },
       addresses: [{ value: '0xPublicAddress' }],
       privateExecutionAddress: '0xPrivateExecutionAddress'
     },
     {
-      chain: { displayName: 'BNB Chain' },
+      chain: { displayName: 'BNB Chain', family: 'evm' },
       addresses: [{ value: '0xpublicaddress' }],
       privateExecutionAddress: '0xPrivateExecutionAddress'
     },
     {
-      chain: { displayName: 'Bitcoin' },
+      chain: { displayName: 'Bitcoin', family: 'bitcoin' },
       addresses: [{ value: 'bc1qBitcoinAddress' }]
     },
     {
-      chain: { displayName: 'Zcash' },
+      chain: { displayName: 'Zcash', family: 'zcash' },
       addresses: [{ value: 'u1legacy-shielded' }, { value: 't1legacy-transparent' }]
     }
   ]
@@ -101,7 +103,12 @@ test('preserves hidden accounts and does not duplicate catalog accounts already 
   const hiddenCatalogAccount = {
     ...catalogAccount,
     accountId: 'account-2',
-    networks: [{ chain: { displayName: 'Ethereum' }, addresses: [{ value: '0xHiddenPublic' }] }]
+    networks: [
+      {
+        chain: { displayName: 'Ethereum', family: 'evm' },
+        addresses: [{ value: '0xHiddenPublic' }]
+      }
+    ]
   }
   const result = list('hiddenpublic', [catalogAccount, hiddenCatalogAccount])
   assert.deepEqual([...result.filteredAccountKeys], ['wallet-1:account-2'])
@@ -161,9 +168,7 @@ test('orders retained and imported wallets by creation time across sources', () 
     searchQuery: ''
   })
   assert.deepEqual(
-    result.regularEntries.map(entry =>
-      entry.kind === 'wallet' ? entry.wallet.id : entry.account.walletId
-    ),
+    result.regularEntries.map(entry => entry.walletId),
     ['native-early', 'wallet-1', 'native-late']
   )
 
@@ -174,9 +179,7 @@ test('orders retained and imported wallets by creation time across sources', () 
     searchQuery: ''
   })
   assert.deepEqual(
-    legacy.regularEntries.map(entry =>
-      entry.kind === 'wallet' ? entry.wallet.id : entry.account.walletId
-    ),
+    legacy.regularEntries.map(entry => entry.walletId),
     ['wallet-1', 'native-late', 'native-early']
   )
 })
@@ -205,11 +208,16 @@ test('omits empty wallet groups while preserving a wallet-specific Add Account a
     result.hiddenAccounts.map(account => account.walletId),
     ['wallet-2']
   )
-  assert.equal(hasAccountMenuAddAction(first), true)
-  assert.equal(hasAccountMenuAddAction(second), true)
-  assert.equal(hasAccountMenuAddAction({ ...first, keySource: 'ledger' }), false)
+  const firstAction = result.walletAddAccountActions.get(first.id)
+  assert.equal(hasAccountMenuAddAction(first, firstAction), true)
+  assert.equal(hasAccountMenuAddAction(second, result.walletAddAccountActions.get(second.id)), true)
+  assert.equal(hasAccountMenuAddAction(first, undefined), false)
+  assert.equal(hasAccountMenuAddAction(second, firstAction), false)
   assert.equal(
-    hasAccountMenuAddAction({ ...first, accounts: [{ ...first.accounts[0], isPinned: false }] }),
+    hasAccountMenuAddAction(
+      { ...first, accounts: [{ ...first.accounts[0], isPinned: false }] },
+      firstAction
+    ),
     false
   )
 
@@ -225,4 +233,137 @@ test('omits empty wallet groups while preserving a wallet-specific Add Account a
     ['wallet-1']
   )
   assert.deepEqual(search.hiddenAccounts, [])
+})
+
+test('groups private keys across chain families without merging wallet or account identities', () => {
+  const privateKey = (walletId, chainFamily, createdAt) => ({
+    ...catalogAccount,
+    walletId,
+    accountId: 'account-1',
+    walletDisplayName: `${chainFamily} import`,
+    walletCreatedAt: createdAt,
+    walletSource: { kind: 'private-key', chainFamily }
+  })
+  const imports = [privateKey('evm-key', 'eip155', 200), privateKey('sol-key', 'solana', 50)]
+  const input = {
+    wallets: [],
+    accountDisplayNames: {},
+    nativeAccounts: imports,
+    searchQuery: ''
+  }
+  const result = buildVisibleAccountList(input)
+  assert.equal(result.regularEntries.length, 1)
+  const group = result.regularEntries[0]
+  assert.equal(group.kind, 'private-key')
+  assert.equal(group.displayName, 'Imported Private Key')
+  assert.equal(group.walletId, null)
+  assert.equal(group.addAccount, null)
+  assert.deepEqual(
+    group.accounts.map(item => item.account.walletId),
+    ['sol-key', 'evm-key']
+  )
+  assert.equal(
+    buildVisibleAccountList({ ...input, searchQuery: 'Imported Private Key' }).regularEntries[0]
+      .accounts.length,
+    2
+  )
+  const filtered = buildVisibleAccountList({ ...input, searchQuery: 'solana import' })
+  assert.deepEqual(
+    filtered.regularEntries[0].accounts.map(item => item.account.walletId),
+    ['sol-key']
+  )
+  assert.deepEqual(buildVisibleAccountList({ ...input, searchQuery: 'missing' }).regularEntries, [])
+})
+
+test('keeps different hardware wallets separate and groups retained and native accounts of one wallet', () => {
+  const retained = {
+    ...wallet,
+    keySource: 'ledger',
+    accounts: [{ ...wallet.accounts[0], isPinned: false }]
+  }
+  const hardware = (walletId, accountId, vendor) => ({
+    ...catalogAccount,
+    walletId,
+    accountId,
+    walletDisplayName: 'Custom device name',
+    walletSource: {
+      kind: 'hardware',
+      hardware: { vendor, firmwareProfile: vendor === 'ledger' ? 'multi-app' : 'multi-coin' }
+    }
+  })
+  const native = [
+    hardware('wallet-1', 'account-1', 'ledger'),
+    hardware('wallet-1', 'account-2', 'ledger'),
+    hardware('other-ledger', 'account-1', 'ledger'),
+    hardware('keystone', 'account-1', 'keystone')
+  ]
+  const input = {
+    wallets: [retained],
+    accountDisplayNames: {},
+    nativeAccounts: native,
+    searchQuery: ''
+  }
+  const result = buildVisibleAccountList(input)
+  assert.equal(result.regularEntries.length, 3)
+  const group = result.regularEntries.find(entry => entry.walletId === 'wallet-1')
+  assert.equal(group.displayName, 'Main Wallet')
+  assert.equal(group.hardwareVendor, 'ledger')
+  assert.equal(group.addAccount, null)
+  assert.deepEqual(
+    group.accounts.map(item => item.kind),
+    ['retained', 'native']
+  )
+  assert.deepEqual(
+    group.accounts.map(item =>
+      item.kind === 'retained' ? item.account.id : item.account.accountId
+    ),
+    ['account-1', 'account-2']
+  )
+  assert.equal(
+    result.regularEntries.find(entry => entry.walletId === 'other-ledger').addAccount,
+    null
+  )
+  assert.equal(result.regularEntries.find(entry => entry.walletId === 'keystone').addAccount, null)
+  const filtered = buildVisibleAccountList({ ...input, searchQuery: 'Custom device name' })
+  assert.equal(
+    filtered.regularEntries.find(entry => entry.walletId === 'wallet-1').accounts.length,
+    1
+  )
+})
+
+test('hardware wallets never expose Add Account for pinned or hidden retained accounts', () => {
+  for (const keySource of ['ledger', 'keystone']) {
+    const retained = {
+      ...wallet,
+      keySource,
+      accounts: wallet.accounts.map(account => ({ ...account }))
+    }
+    const result = buildVisibleAccountList({
+      wallets: [retained],
+      accountDisplayNames: {},
+      nativeAccounts: [],
+      searchQuery: ''
+    })
+    assert.equal(result.walletAddAccountActions.has(wallet.id), false)
+    assert.equal(result.regularEntries.length, 0)
+    assert.equal(
+      hasAccountMenuAddAction(retained, { kind: 'software', walletId: wallet.id }),
+      false
+    )
+  }
+  const catalogHardware = {
+    ...catalogAccount,
+    walletSource: {
+      kind: 'hardware',
+      hardware: { vendor: 'ledger', firmwareProfile: 'multi-app' }
+    }
+  }
+  const catalogResult = buildVisibleAccountList({
+    wallets: [wallet],
+    accountDisplayNames: {},
+    nativeAccounts: [catalogHardware],
+    searchQuery: ''
+  })
+  assert.equal(catalogResult.walletAddAccountActions.has(wallet.id), false)
+  assert.equal(catalogResult.regularEntries.length, 0)
 })
