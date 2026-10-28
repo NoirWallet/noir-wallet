@@ -3,6 +3,7 @@ import {
   captureScreenshot,
   expect,
   test,
+  terminateExtensionServiceWorker,
   waitForBackgroundWalletInitialization
 } from '../helpers/extension-fixtures'
 
@@ -251,6 +252,31 @@ async function openIntegrationPage(popup: Page, extensionId: string): Promise<vo
   await expect
     .poll(() => popup.evaluate(() => Boolean(window.credentialRepositoryIntegration)))
     .toBe(true)
+}
+
+async function readActivityCacheKeys(popup: Page, seedKeys: readonly string[] = []) {
+  return popup.evaluate(async keys => {
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open('noir-wallet-activity-history-cache', 1)
+      request.onupgradeneeded = () => request.result.createObjectStore('records')
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
+    })
+    try {
+      return await new Promise<IDBValidKey[]>((resolve, reject) => {
+        const transaction = database.transaction('records', keys.length ? 'readwrite' : 'readonly')
+        const store = transaction.objectStore('records')
+        for (const key of keys) {
+          store.put({ schemaVersion: 2, refreshedAtByChainId: {}, items: [] }, key)
+        }
+        const request = store.getAllKeys()
+        transaction.oncomplete = () => resolve(request.result)
+        transaction.onabort = transaction.onerror = () => reject(transaction.error)
+      })
+    } finally {
+      database.close()
+    }
+  }, seedKeys)
 }
 
 test('keeps the 24-word Account 0 vector identical across both real WASM engines', async ({
@@ -1464,6 +1490,7 @@ test('removes a Wallet from Storage V2 and purges its retired ciphertext', async
 
 for (const kind of ['account', 'wallet'] as const) {
   test(`routes production ${kind} removal through retained V1 and Storage V2`, async ({
+    context,
     popup,
     extensionId
   }) => {
@@ -1475,6 +1502,11 @@ for (const kind of ['account', 'wallet'] as const) {
         window.credentialRepositoryIntegration!.prepareProductionV2Removal(password, kind),
       { password, kind }
     )
+    const activityKeys = ['mainnet', 'testnet'].flatMap(network => [
+      `activity_history_cache_v3:${network}:${target.walletId}:${target.accountId}:default`,
+      `activity_history_cache_v3:${network}:${target.walletId}:${target.accountId}-survivor:default`
+    ])
+    await readActivityCacheKeys(popup, activityKeys)
 
     await popup.goto(`chrome-extension://${extensionId}/index.html`)
     let survivorBefore: { chainAccounts: unknown[]; addresses: unknown[] } | null = null
@@ -1540,6 +1572,9 @@ for (const kind of ['account', 'wallet'] as const) {
       target => window.credentialRepositoryIntegration!.inspectProductionV2Removal(target),
       target
     )
+    expect(await readActivityCacheKeys(popup)).toEqual(
+      activityKeys.filter(key => key.includes(`${target.accountId}-survivor:`)).sort()
+    )
     expect(inspected).toMatchObject(
       kind === 'wallet'
         ? {
@@ -1573,6 +1608,21 @@ for (const kind of ['account', 'wallet'] as const) {
       expect(inspected.counts?.chainAccounts).toBe(inspected.survivorChainAccounts.length)
       expect(inspected.counts?.addresses).toBe(inspected.survivorAddresses.length)
     }
+    await terminateExtensionServiceWorker(context, popup)
+    await popup.goto(`chrome-extension://${extensionId}/index.html`)
+    await waitForBackgroundWalletInitialization(popup)
+    await expect(
+      popup.evaluate(
+        password => chrome.runtime.sendMessage({ type: 'WALLET_UNLOCK', password }),
+        password
+      )
+    ).resolves.toMatchObject({ success: true })
+    expect(
+      await popup.evaluate(async () => {
+        const local = await chrome.storage.local.get('wallet_pending_account_cleanup')
+        return Object.keys(local.wallet_pending_account_cleanup ?? {}).length
+      })
+    ).toBe(0)
   })
 }
 
