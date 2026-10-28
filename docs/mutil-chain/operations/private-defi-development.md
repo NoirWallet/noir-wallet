@@ -133,32 +133,23 @@ Logs must not include access or refresh tokens, complete signed payloads, mnemon
 
 ## 7. Verification
 
-Run focused logic tests for changed behavior:
+Run the offline behavior tests:
 
 ```bash
-pnpm --filter @noir-wallet/extension exec playwright test \
-  --project=logic \
-  tests/confidential-funding.test.mjs \
-  tests/confidential-funding-recovery.test.mjs \
-  tests/confidential-funding-store.test.mjs \
-  tests/confidential-funding-portfolio.test.mjs \
-  tests/private-balance-transfer.test.mjs \
-  tests/evm-dapp-private-transfer.test.mjs \
-  tests/dapp-private-transfer-approval.test.mjs
+pnpm test
 ```
 
 The protocol test uses deterministic responses in a real MV3 extension and does not broadcast Mainnet funds:
 
 ```bash
-RHEA_SWAP_ACCESS_TOKEN=test-rhea-access-token \
-pnpm --filter @noir-wallet/extension test:protocol:mainnet
+pnpm test e2e protocol-mainnet
 ```
 
 Run extension type checking and the build for affected extension code:
 
 ```bash
 pnpm --filter @noir-wallet/extension type-check
-pnpm --filter @noir-wallet/extension test:logic
+pnpm test
 pnpm --filter @noir-wallet/extension build
 ```
 

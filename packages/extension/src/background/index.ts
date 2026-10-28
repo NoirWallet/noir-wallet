@@ -63,7 +63,11 @@ import {
 import { transactionRecorder } from './transaction-recorder'
 import { useAccountDataStore } from '@/store/account-data-store'
 import { syncScheduler, SYNC_KEEPALIVE_ALARM } from './sync-scheduler'
-import { refreshAfterOnChainBroadcast } from './tx-sync'
+import {
+  catchUpAfterOnChainTx,
+  markWalletNeedsCatchUp,
+  refreshAfterOnChainBroadcast
+} from './tx-sync'
 import { getRetryableWalletRpcUserMessage } from '@/core/zcash/wallet-rpc-errors'
 import {
   clearPreparedHardwareSignRequest,
@@ -156,6 +160,7 @@ import {
   recoverSignedRheaSwapsAndPoll,
   scheduleRheaSwapTransactionMonitorRetry
 } from './rhea-swap-transaction-monitor'
+import { prepareRheaSwapZcashDestinationCatchUp } from './rhea-swap-zcash-sync'
 import { createBackgroundRheaSwapEvmSignatureCoordinator } from './rhea-swap-evm-signature'
 import {
   createBackgroundRheaSwapSolanaCoordinator,
@@ -422,6 +427,27 @@ const rheaSwapService = DEFAULT_NETWORK === 'mainnet' ? createBackgroundRheaSwap
 const rheaSwapTransactionMonitor = rheaSwapService
   ? new RheaSwapTransactionMonitor(rheaSwapService, {
       loadZcashAccountScopes: getZcashAccountScopes,
+      prepareZcashDestinationCatchUp: scope =>
+        prepareRheaSwapZcashDestinationCatchUp(scope, {
+          getNetwork: () => backgroundZcashWalletRuntime.getNetwork(),
+          accountExists: (walletId, accountId) =>
+            Boolean(useWalletStore.getState().getAccount(walletId, accountId)),
+          getActiveScope: () => {
+            const state = useWalletStore.getState()
+            return {
+              network: state.currentNetwork,
+              walletId: state.currentWalletId,
+              accountId: state.currentAccountId
+            }
+          },
+          markNeedsCatchUp: markWalletNeedsCatchUp,
+          catchUp: catchUpAfterOnChainTx,
+          onCatchUpError: error => {
+            console.warn('[RHEA Swap Monitor] Zcash destination catch-up failed', {
+              errorName: error instanceof Error ? error.name : 'UnknownError'
+            })
+          }
+        }),
       refreshPortfolio: async ({ scope, chainIds }) => {
         const model = await portfolioCoordinator?.refreshActive(chainIds)
         if (
