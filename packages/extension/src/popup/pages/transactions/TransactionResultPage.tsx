@@ -96,10 +96,8 @@ export function TransactionResultPage() {
           currentNetwork
         )
       : null
-  const syncState = useAccountDataStore(state =>
-    currentWalletId
-      ? state.getWalletSyncState(currentNetwork, currentWalletId)
-      : { isSyncing: false }
+  const isSyncing = useAccountDataStore(state =>
+    currentWalletId ? state.getWalletSyncState(currentNetwork, currentWalletId).isSyncing : false
   )
   const swapDepositAddress = data?.type === 'swap' ? data.depositAddress : undefined
   const rheaQuoteHandle = data?.type === 'swap' ? data.rheaQuoteHandle : undefined
@@ -582,7 +580,7 @@ export function TransactionResultPage() {
     const pendingDescription =
       resultStep === 'pending'
         ? data.error ||
-          (syncState.isSyncing
+          (isSyncing
             ? 'Waiting for sync to complete before sending...'
             : data.customDescription ||
               'Building and broadcasting your transaction. This may take a few minutes.')

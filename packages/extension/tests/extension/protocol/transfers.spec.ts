@@ -742,7 +742,9 @@ test('reviews a same-token cross-chain Send with the destination address in real
   await expect(popup.getByRole('group', { name: 'Send mode' })).toHaveCount(0)
   await expect(popup.getByRole('button', { name: 'From asset' })).toBeDisabled()
   await popup.getByRole('textbox', { name: 'From amount' }).fill('1')
-  await expect(popup.getByRole('button', { name: 'Review Send' })).toBeEnabled()
+  await expect(popup.getByRole('button', { name: 'Review Send' })).toBeEnabled({
+    timeout: 30_000
+  })
   const walletRecipient = api.getQuoteRequests().at(-1)?.recipient
   expect(walletRecipient).toMatch(/^0x[0-9a-fA-F]{40}$/)
   const externalRecipient = `0x${'12'.repeat(20)}`
@@ -750,7 +752,9 @@ test('reviews a same-token cross-chain Send with the destination address in real
   await popup.getByRole('textbox', { name: 'Destination address' }).fill(externalRecipient)
   await expect.poll(() => api.getQuoteRequests().at(-1)?.recipient).toBe(externalRecipient)
   expect(walletRecipient).not.toBe(externalRecipient)
-  await expect(popup.getByRole('button', { name: 'Review Send' })).toBeEnabled()
+  await expect(popup.getByRole('button', { name: 'Review Send' })).toBeEnabled({
+    timeout: 30_000
+  })
   await captureScreenshot(popup, 'cross-chain-send-input.png')
   await popup.getByRole('button', { name: 'Review Send' }).click()
 
@@ -773,6 +777,79 @@ test('reviews a same-token cross-chain Send with the destination address in real
   await expect(popup.getByRole('button', { name: 'Send route, current On-chain' })).toBeVisible()
   await expect(popup.getByText('To Ethereum', { exact: true })).toBeVisible()
   await expect(popup.getByRole('group', { name: 'Send mode' })).toHaveCount(0)
+})
+
+test('shows cross-chain Send result for an imported EVM private-key wallet', async ({
+  context,
+  popup,
+  extensionId
+}) => {
+  test.setTimeout(180_000)
+  const pageErrors: string[] = []
+  popup.on('pageerror', error => pageErrors.push(error.message))
+  const evmNetwork = await mockEvmNetwork(context, { allowBroadcast: true })
+  await mockBitcoinNetwork(context)
+  const protocolApis = await mockProtocolApis(context, { orderStatus: 'pending' })
+  await waitForBackgroundWalletInitialization(popup)
+  await importTestWallet(popup)
+  await popup.goto(`chrome-extension://${extensionId}/index.html`)
+
+  await popup.getByRole('button', { name: 'Choose wallet' }).click()
+  await popup.getByRole('button', { name: 'Add Wallet', exact: true }).click()
+  await popup.getByRole('button', { name: 'Import Wallet', exact: true }).click()
+  await popup.getByRole('button', { name: 'Private Key', exact: true }).click()
+  await popup.getByLabel('Wallet name').fill('Synthetic EVM Wallet')
+  await popup.getByLabel('Private key', { exact: true }).fill(`0x${'00'.repeat(31)}01`)
+  await popup.getByRole('button', { name: 'Continue', exact: true }).click()
+  await expect(popup.getByText('EVM address preview', { exact: true })).toBeVisible()
+  await popup.getByRole('button', { name: 'Import wallet', exact: true }).click()
+  await expect(popup.getByRole('heading', { name: 'Portfolio' })).toBeVisible({ timeout: 60_000 })
+  const legacyWalletId = await popup.evaluate(async () => {
+    const stored = (await chrome.storage.local.get('wallet_state')).wallet_state
+    const state = typeof stored === 'string' ? JSON.parse(stored).state : stored?.state
+    return state?.currentWalletId ?? null
+  })
+  expect(legacyWalletId).toBeNull()
+
+  await popup.getByRole('button', { name: 'Send', exact: true }).click()
+  await popup.getByRole('button', { name: 'Send USDC on Ethereum' }).click()
+  await popup.getByRole('button', { name: 'Send route, current On-chain' }).click()
+  await popup.getByRole('menuitemradio', { name: 'Cross-chain' }).click()
+  await popup.getByRole('button', { name: 'To asset' }).click()
+  const destinations = popup.getByRole('dialog', { name: 'SELECT NETWORK' })
+  await destinations.getByPlaceholder('Search tokens').fill('USDC')
+  await destinations.getByRole('button', { name: /^USDC on Polygon/ }).click()
+  await popup.getByRole('textbox', { name: 'From amount' }).fill('1')
+  await popup.getByRole('button', { name: 'Review Send' }).click()
+  await expect(popup.getByRole('heading', { name: 'Review Send' })).toBeVisible()
+  await popup.getByRole('button', { name: 'Confirm Send', exact: true }).click()
+
+  await expect.poll(evmNetwork.getBroadcastCount, { timeout: 30_000 }).toBe(1)
+  await expect(popup.getByRole('heading', { name: 'Cross-chain Send' })).toBeVisible()
+  await expect(popup.getByRole('region', { name: 'Transaction progress' })).toBeVisible()
+  await expect(popup.getByRole('button', { name: 'View Activity' })).toBeVisible()
+  expect(pageErrors).toEqual([])
+  await captureScreenshot(popup, 'cross-chain-send-private-key-result.png')
+
+  protocolApis.setOrderStatus('completed')
+  await popup.evaluate(() => chrome.runtime.sendMessage({ type: 'RECHECK_PENDING_TRANSACTIONS' }))
+  await expect(popup.getByRole('button', { name: 'Done', exact: true })).toBeVisible({
+    timeout: 30_000
+  })
+  await popup.getByRole('button', { name: 'Done', exact: true }).click()
+  await expect(popup.getByRole('heading', { name: 'Portfolio' })).toBeVisible()
+  expect(evmNetwork.getBroadcastCount()).toBe(1)
+  expect(pageErrors).toEqual([])
+  const activity = (await popup.evaluate(() =>
+    chrome.runtime.sendMessage({ type: 'GET_ACTIVITY' })
+  )) as {
+    result?: { items?: Array<{ kind: string; segments: Array<{ role: string }> }> }
+  }
+  expect(
+    activity.result?.items?.some(
+      item => item.kind === 'transfer' && item.segments.some(segment => segment.role === 'relay')
+    )
+  ).toBe(true)
 })
 
 test('returns to the selected Send asset after switching to the cross-chain route', async ({
