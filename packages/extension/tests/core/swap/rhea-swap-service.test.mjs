@@ -324,9 +324,9 @@ test('quote and build remain bound across a session-store reload', async () => {
   const normalizedRequest = {
     ...confidentialQuoteRequest,
     extensions: { referral: 'noir_swap' },
-    quoteWaitingTimeMs: 3000,
-    sameChainTimeoutMs: 500,
-    crossChainTimeoutMs: 3000
+    quoteWaitingTimeMs: 6000,
+    sameChainTimeoutMs: 1500,
+    crossChainTimeoutMs: 6000
   }
   const rawQuote = {
     isCrossChain: true,
@@ -366,9 +366,9 @@ test('quote and build remain bound across a session-store reload', async () => {
         amountIn: '100000000',
         referral: 'noir_swap',
         slippage: 50,
-        quoteWaitingTimeMs: 3000,
-        sameChainTimeoutMs: 500,
-        crossChainTimeoutMs: 3000,
+        quoteWaitingTimeMs: 6000,
+        sameChainTimeoutMs: 1500,
+        crossChainTimeoutMs: 6000,
         sender: 't1sender',
         recipient: 'alice.near',
         confidentiality: 'basic'

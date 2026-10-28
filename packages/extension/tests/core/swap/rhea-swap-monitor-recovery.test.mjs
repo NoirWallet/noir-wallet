@@ -394,6 +394,73 @@ it('keeps both pending jobs when monitor registration overlaps', async () => {
   assert.equal(values.get('rhea_swap_pending_transactions').length, 2)
 })
 
+it('retains older quote timing budgets when saving new sessions and rejects invalid timings', async () => {
+  const values = storage()
+  const legacy = {
+    schemaVersion: 1,
+    quoteHandle: 'rhea-quote:legacy-timing',
+    request: {
+      fromChain: '1',
+      toChain: 'near',
+      tokenIn: { chain: '1', address: `0x${'2'.repeat(40)}` },
+      tokenOut: { chain: 'near', address: 'wrap.near' },
+      amountIn: '1000000',
+      slippageBps: 50,
+      sender: `0x${'1'.repeat(40)}`,
+      recipient: 'alice.near',
+      extensions: { referral: 'noir_swap' },
+      quoteWaitingTimeMs: 3000,
+      sameChainTimeoutMs: 500,
+      crossChainTimeoutMs: 3000
+    },
+    quoteRaw: {
+      isCrossChain: true,
+      chainType: 'evm',
+      bestQuote: {
+        router: 'nearintents',
+        amountOut: '2000000000000000000000000',
+        minAmountOut: '1900000000000000000000000',
+        preSwap: null,
+        bridge: null
+      }
+    },
+    receivedAt: 1000,
+    expiresAt: 31000
+  }
+  const key = `rhea_swap_quote:${encodeURIComponent(legacy.quoteHandle)}`
+  values.set(key, legacy)
+  const store = new ChromeRheaSwapQuoteStore()
+  const current = {
+    ...legacy,
+    quoteHandle: 'rhea-quote:current-timing',
+    request: {
+      ...legacy.request,
+      quoteWaitingTimeMs: 6000,
+      sameChainTimeoutMs: 1500,
+      crossChainTimeoutMs: 6000
+    }
+  }
+  await store.put(current)
+  assert.deepEqual(
+    (await new ChromeRheaSwapQuoteStore().get(legacy.quoteHandle)).request,
+    legacy.request
+  )
+  assert.deepEqual((await store.get(current.quoteHandle)).request, current.request)
+
+  for (const [field, value] of [
+    ['quoteWaitingTimeMs', -1],
+    ['quoteWaitingTimeMs', 1.5],
+    ['sameChainTimeoutMs', '3000'],
+    ['sameChainTimeoutMs', undefined],
+    ['crossChainTimeoutMs', Number.MAX_SAFE_INTEGER + 1]
+  ]) {
+    await assert.rejects(
+      store.put({ ...current, request: { ...current.request, [field]: value } }),
+      /Stored RHEA Swap quote timing is invalid/
+    )
+  }
+})
+
 it('clears pending monitoring and RHEA sessions on wallet reset', async () => {
   const values = storage()
   values.set('rhea_swap_quote:rhea-quote:old', { invalid: true })
