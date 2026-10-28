@@ -74,7 +74,7 @@ const ERROR_MAPPINGS: ErrorMapping[] = [
     retryable: true
   },
   {
-    pattern: /rate.?limit/i,
+    pattern: /rate.?limit|\bHTTP\s+429\b/i,
     message: 'Server is busy. Please wait a moment and try again.',
     retryable: true
   },

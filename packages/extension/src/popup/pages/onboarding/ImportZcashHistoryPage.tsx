@@ -4,6 +4,7 @@ import { Button } from '../../components/ui/button'
 import { Input } from '../../components/ui/input'
 import { DatePicker } from '../../components/ui/date-picker'
 import { PageHeader } from '../../components/common/PageHeader'
+import { InlineError } from '../../components/common/InlineError'
 import { useNavigate } from '../../provider/Router'
 import { useOnboardingStore } from '@/store/onboarding-store'
 import { zcashWalletRuntimeClient } from '@/popup/services/zcash-wallet-runtime-client'
@@ -44,6 +45,7 @@ export function ImportZcashHistoryPage() {
   const [syncHeight, setSyncHeight] = useState(initialSelection.syncHeight)
   const [isImporting, setIsImporting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [retryable, setRetryable] = useState(false)
 
   useEffect(() => {
     if (!importedSeedPhrase) replace('/onboarding/import')
@@ -91,6 +93,7 @@ export function ImportZcashHistoryPage() {
 
   const handleContinue = async () => {
     setError(null)
+    setRetryable(false)
     setIsImporting(true)
     try {
       const height = await resolveBirthdayHeight()
@@ -110,11 +113,10 @@ export function ImportZcashHistoryPage() {
       }
       navigate('/onboarding/import-password')
     } catch (cause) {
-      setError(
-        cause instanceof ZcashHistoryValidationError
-          ? cause.message
-          : classifyError(cause).userMessage
-      )
+      const classified = classifyError(cause)
+      const validationError = cause instanceof ZcashHistoryValidationError
+      setError(validationError ? cause.message : classified.userMessage)
+      setRetryable(!validationError && classified.retryable)
     } finally {
       setIsImporting(false)
     }
@@ -198,15 +200,17 @@ export function ImportZcashHistoryPage() {
             )}
           </div>
         )}
-
-        {(error || storeError) && (
-          <p role="alert" className="mt-4 text-sm text-destructive">
-            {error || storeError}
-          </p>
-        )}
       </div>
 
       <div className="page-footer">
+        {(error || storeError) && (
+          <InlineError
+            message={error || storeError}
+            onRetry={error && retryable ? () => void handleContinue() : undefined}
+            retrying={isImporting}
+            className="mb-3"
+          />
+        )}
         <Button
           onClick={handleContinue}
           disabled={isImporting}
