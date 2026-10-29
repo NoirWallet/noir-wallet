@@ -4348,14 +4348,16 @@ export class BackgroundZcashWalletRuntime {
         await core.syncSessionSetup()
         sessionSetupDone = true
       } catch (e) {
-        logger.warn(
-          `syncSessionSetup failed, falling back to per-batch refresh: ${
-            (e as Error)?.message || e
-          }`,
-          syncWalletId,
-          syncAccountId,
-          e
-        )
+        if (!isAborted?.()) {
+          logger.warn(
+            `syncSessionSetup failed, falling back to per-batch refresh: ${
+              (e as Error)?.message || e
+            }`,
+            syncWalletId,
+            syncAccountId,
+            e
+          )
+        }
       }
       let batchesSinceRefresh = 0
       const REFRESH_EVERY_N = WALLET_CONFIG.SYNC.SESSION_SETUP_REFRESH_EVERY_N_BATCHES
