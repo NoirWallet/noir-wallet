@@ -255,7 +255,13 @@ export function useSwapState(
       isCancelled: () => boolean
     ) => {
       let loaded = direction === 'from' ? sourceCatalog : crossChainDestinationCatalog
-      const publish = (next: readonly RheaSwapToken[]) => {
+      let pending: readonly RheaSwapToken[] = []
+      let publishTimer: ReturnType<typeof setTimeout> | null = null
+      const publish = () => {
+        publishTimer = null
+        if (isCancelled() || pending.length === 0) return
+        const next = pending
+        pending = []
         loaded = mergeTokenCatalogs(loaded, next)
         if (direction === 'from') {
           selectorSourceCatalog.current = loaded
@@ -271,15 +277,23 @@ export function useSwapState(
           direction === 'from' ? loaded : getSwapDestinationTokens(tokenIn, sourceCatalog, loaded)
         )
       }
-      await loadTokenCatalogByChain(
-        direction,
-        direction === 'from'
-          ? WALLET_SOURCE_CHAIN_IDS
-          : ALL_DESTINATION_CHAIN_IDS.filter(chainId => chainId !== tokenIn?.tokenListChainId),
-        false,
-        publish,
-        isCancelled
-      )
+      try {
+        await loadTokenCatalogByChain(
+          direction,
+          direction === 'from'
+            ? WALLET_SOURCE_CHAIN_IDS
+            : ALL_DESTINATION_CHAIN_IDS.filter(chainId => chainId !== tokenIn?.tokenListChainId),
+          false,
+          next => {
+            pending = mergeTokenCatalogs(pending, next)
+            if (publishTimer === null) publishTimer = setTimeout(publish, 120)
+          },
+          isCancelled
+        )
+      } finally {
+        if (publishTimer !== null) clearTimeout(publishTimer)
+        publish()
+      }
       return direction === 'from'
         ? loaded
         : getSwapDestinationTokens(tokenIn, sourceCatalog, loaded)

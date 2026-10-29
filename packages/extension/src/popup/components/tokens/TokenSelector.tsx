@@ -1,7 +1,7 @@
 /**
  * Token selector component for Swap and other scenarios
  */
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { Icon } from '@iconify/react'
 import { Input } from '../ui/input'
 import type { SwapToken } from '@/core/services/intents-api'
@@ -38,6 +38,7 @@ export interface TokenSelectorProps {
   tokens?: readonly SwapToken[]
   balances?: ReadonlyMap<string, string>
   catalogLoading?: boolean
+  stableCatalogOrder?: boolean
   excludeAssetId?: string
   emptyMessage?: string
 }
@@ -48,6 +49,7 @@ export function TokenSelector({
   tokens: providedTokens,
   balances,
   catalogLoading = false,
+  stableCatalogOrder = false,
   excludeAssetId,
   emptyMessage = 'No tokens found'
 }: TokenSelectorProps) {
@@ -56,6 +58,7 @@ export function TokenSelector({
   const [fetchedTokens, setFetchedTokens] = useState<readonly SwapToken[]>([])
   const [fetchedLoading, setFetchedLoading] = useState(providedTokens === undefined)
   const [selectionTraceId] = useState(() => createDebugRequestId('token-selector'))
+  const previousRows = useRef<{ filter: string; keys: readonly string[] } | null>(null)
   const hasProvidedTokens = providedTokens !== undefined
   const tokens = useMemo(
     () =>
@@ -109,7 +112,7 @@ export function TokenSelector({
   const selectedNetworkLabel = selectedNetwork?.label ?? 'All Networks'
   const filteredTokens = useMemo(() => {
     const startedAt = performance.now()
-    const filtered = [
+    const ranked = [
       ...sortTokensByBalanceValue(
         tokens.filter(token => {
           if (token.assetId === excludeAssetId) return false
@@ -120,13 +123,45 @@ export function TokenSelector({
         balances
       )
     ].sort((left, right) => compareSwapTokenSearchRelevance(left, right, search))
+    const filter = `${effectiveBlockchain}:${search}`
+    const previous =
+      stableCatalogOrder && !search && previousRows.current?.filter === filter
+        ? new Map(previousRows.current.keys.map((key, index) => [key, index]))
+        : null
+    const filtered = previous
+      ? ranked.sort((left, right) => {
+          const leftIndex = previous.get(`${left.blockchain}:${left.assetId}`)
+          const rightIndex = previous.get(`${right.blockchain}:${right.assetId}`)
+          return leftIndex === undefined
+            ? rightIndex === undefined
+              ? 0
+              : 1
+            : rightIndex === undefined
+              ? -1
+              : leftIndex - rightIndex
+        })
+      : ranked
     logDebugTiming(
       selectionTraceId,
       `filter-sort input=${tokens.length} output=${filtered.length} queryLength=${search.length}`,
       startedAt
     )
     return filtered
-  }, [tokens, excludeAssetId, effectiveBlockchain, search, balances, selectionTraceId])
+  }, [
+    tokens,
+    excludeAssetId,
+    effectiveBlockchain,
+    search,
+    balances,
+    selectionTraceId,
+    stableCatalogOrder
+  ])
+  useEffect(() => {
+    previousRows.current = {
+      filter: `${effectiveBlockchain}:${search}`,
+      keys: filteredTokens.map(token => `${token.blockchain}:${token.assetId}`)
+    }
+  }, [effectiveBlockchain, search, filteredTokens])
   const visibleTokens = filteredTokens.slice(0, MAX_RENDERED_TOKENS)
 
   return (
