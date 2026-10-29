@@ -190,24 +190,25 @@ test.describe('EVM Blockscout history client', () => {
         referrerPolicy: 'no-referrer'
       })
     }
-    expect(requests[1].url.searchParams.get('contractaddress')).toBeNull()
+    expect(requests[1].url.searchParams.get('contractaddress')).toBe(USDC)
   })
 
-  test('includes untracked ERC-20 transfers from the address-wide token history', async () => {
+  test('rejects untracked ERC-20 transfers returned for a tracked contract request', async () => {
     const unknown = `0x${'4'.repeat(40)}`
-    const client = createClient(async input =>
-      new URL(input).searchParams.get('action') === 'txlist'
+    const requests = []
+    const client = createClient(async input => {
+      const url = new URL(input)
+      requests.push(url)
+      return url.searchParams.get('action') === 'txlist'
         ? jsonResponse([])
         : jsonResponse([tokenTransfer({ contractAddress: unknown })])
-    )
-    const [item] = await client.readAddressActivity({ scope: SCOPE, address: ADDRESS })
-    expect(item.segments[0].evidence.assetEffects.changes).toEqual([
-      {
-        assetId: `eip155:1/erc20:${unknown}`,
-        amountRaw: '5000000',
-        direction: 'incoming'
-      }
-    ])
+    })
+    await expect(
+      client.readAddressActivity({ scope: SCOPE, address: ADDRESS })
+    ).rejects.toMatchObject({ code: 'invalid-response' })
+    const tokenRequests = requests.filter(url => url.searchParams.get('action') === 'tokentx')
+    expect(tokenRequests).toHaveLength(1)
+    expect(tokenRequests[0].searchParams.get('contractaddress')).toBe(USDC)
   })
 
   test('maps reverted native activity and accepts an exact empty-history envelope', async () => {

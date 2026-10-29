@@ -22,6 +22,7 @@ import {
 } from '@/infrastructure/chains/bitcoin'
 import { parseEvmAccountBinding } from '@/infrastructure/chains/evm'
 import { listEvmHistoryCacheByScope } from '@/infrastructure/chains/evm/evm-activity-history-cache'
+import { filterTrackedEvmTokenActivity } from '@/infrastructure/chains/evm/evm-indexed-activity'
 import { EvmMultichainSigningClient } from '@/infrastructure/keyring/multichain/evm-signing-client'
 import type { StorageV2ReadRepository } from '@/ports/repositories'
 import {
@@ -241,6 +242,9 @@ export function createBackgroundActivityCoordinator(
     bitcoinCustomRpcUrl,
     endpointSettings
   })
+  const trackedEvmTokenAssetIds = new Set(
+    evmHistorySources.flatMap(source => source.trackedErc20AssetIds)
+  )
   const bitcoinDiscovery = bitcoinHistory ? new IndexedDbBitcoinDiscoveryRepository() : undefined
 
   const loadBitcoinItems = async (
@@ -437,9 +441,13 @@ export function createBackgroundActivityCoordinator(
         )
       )
     }
+    const supportedItems = items.flatMap(item => {
+      const supported = filterTrackedEvmTokenActivity(item, trackedEvmTokenAssetIds)
+      return supported ? [supported] : []
+    })
     return historyPageCount > 1
-      ? mergeBoundedActivityItems([], items, 10_000)
-      : Object.freeze(items)
+      ? mergeBoundedActivityItems([], supportedItems, 10_000)
+      : Object.freeze(supportedItems)
   }
 
   const loadCachedEvmItems = async (
@@ -480,7 +488,11 @@ export function createBackgroundActivityCoordinator(
         record.retryAfter
       )
       for (const item of record.items) {
-        items.push(mode === 'private' ? Object.freeze({ ...item, accountMode: 'private' }) : item)
+        const supported = filterTrackedEvmTokenActivity(item, trackedEvmTokenAssetIds)
+        if (!supported) continue
+        items.push(
+          mode === 'private' ? Object.freeze({ ...supported, accountMode: 'private' }) : supported
+        )
       }
     }
     return Object.freeze({

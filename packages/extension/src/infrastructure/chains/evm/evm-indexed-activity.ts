@@ -88,6 +88,48 @@ export function isZeroValueEvmTokenActivity(item: ActivityItem): boolean {
   )
 }
 
+export function isUntrackedEvmTokenActivity(
+  item: ActivityItem,
+  trackedAssetIds: ReadonlySet<string>
+): boolean {
+  if (item.source !== 'rpc' || !item.id.startsWith('rpc:evm:') || !item.id.endsWith(':token')) {
+    return false
+  }
+  const amount = item.snapshot?.primaryAmount
+  if (amount) {
+    return amount.assetId.includes('/erc20:') && !trackedAssetIds.has(amount.assetId)
+  }
+  return !item.segments.some(segment =>
+    segment.evidence?.assetEffects?.changes.some(change => trackedAssetIds.has(change.assetId))
+  )
+}
+
+export function filterTrackedEvmTokenActivity(
+  item: ActivityItem,
+  trackedAssetIds: ReadonlySet<string>
+): ActivityItem | undefined {
+  if (isUntrackedEvmTokenActivity(item, trackedAssetIds)) return undefined
+  if (item.source !== 'rpc' || !item.id.startsWith('rpc:evm:') || !item.id.endsWith(':token')) {
+    return item
+  }
+  const segments = item.segments.map(segment => {
+    const effects = segment.evidence?.assetEffects
+    if (!effects) return segment
+    const changes = effects.changes.filter(change => trackedAssetIds.has(change.assetId))
+    if (changes.length === effects.changes.length) return segment
+    return Object.freeze({
+      ...segment,
+      evidence: Object.freeze({
+        ...segment.evidence,
+        assetEffects: Object.freeze({ ...effects, changes: Object.freeze(changes) })
+      })
+    })
+  })
+  return segments.every((segment, index) => segment === item.segments[index])
+    ? item
+    : Object.freeze({ ...item, segments: Object.freeze(segments) })
+}
+
 function directionFor(address: string, from: string, to: string | undefined) {
   if (from === address && to === address) return 'self' as const
   if (from === address) return 'outgoing' as const

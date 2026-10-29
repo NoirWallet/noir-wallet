@@ -236,6 +236,13 @@ export function getActivityDisplayChanges(
   item: ActivityItem,
   assetMetadata: ReadonlyMap<string, ActivityAssetMetadata>
 ): readonly ActivityDisplayChange[] {
+  // Preserve the wallet's reviewed amount; observed effects only fill missing display data.
+  if (
+    item.source === 'wallet-v2' &&
+    resolveActivityDisplayAmount(item.snapshot?.primaryAmount, assetMetadata)
+  ) {
+    return []
+  }
   const changes = getActivityAssetEffects(item)?.changes ?? []
   return changes
     .map(change => {

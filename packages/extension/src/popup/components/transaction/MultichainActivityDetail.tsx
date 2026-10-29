@@ -251,7 +251,6 @@ export function MultichainActivityDetail({
       : getActivityAssetEffects(visibleItem)
   const assetChanges = getActivityDisplayChanges(visibleItem, assetMetadata)
   const displayedChanges = assetChanges.filter(change => !change.isRaw).slice(0, 2)
-  const remainingChanges = assetChanges.length - displayedChanges.length
 
   const amount = visibleItem.snapshot?.primaryAmount
   const asset = amount ? assetMetadata.get(amount.assetId) : undefined
@@ -610,7 +609,7 @@ export function MultichainActivityDetail({
               </div>
             )}
           </div>
-          {assetEffects ? (
+          {assetEffects && displayedChanges.length > 0 ? (
             <div className="w-full space-y-1" data-activity-asset-changes>
               {displayedChanges.map((change, index) => (
                 <div
@@ -629,24 +628,12 @@ export function MultichainActivityDetail({
                   />
                 </div>
               ))}
-              {remainingChanges > 0 && (
-                <p className="text-xs text-muted">
-                  {displayedChanges.length > 0
-                    ? `${remainingChanges} more ${remainingChanges === 1 ? 'asset' : 'assets'}`
-                    : `${remainingChanges} asset ${remainingChanges === 1 ? 'change' : 'changes'}`}
-                </p>
-              )}
-              {assetChanges.length === 0 && (
-                <p className="text-sm text-muted">{primaryNetworkName}</p>
-              )}
             </div>
           ) : formattedAmount !== null ? (
             <div className="max-w-full break-all font-mono text-3xl font-bold">
               <AmountDisplay value={formattedAmount} prefix={displayedSign} symbol={symbol} />
             </div>
-          ) : interaction ? (
-            <p className="text-sm text-muted">{primaryNetworkName}</p>
-          ) : (
+          ) : assetEffects || interaction ? null : (
             <p className="max-w-full break-all font-mono text-3xl font-bold">—</p>
           )}
         </div>

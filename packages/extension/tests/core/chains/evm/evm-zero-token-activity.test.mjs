@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
+  filterTrackedEvmTokenActivity,
+  isUntrackedEvmTokenActivity,
   isZeroValueEvmTokenActivity,
   mapEvmIndexedActivity
 } from '../../../../src/infrastructure/chains/evm/evm-indexed-activity.ts'
@@ -96,6 +98,39 @@ function cacheRecord(items) {
     items
   }
 }
+
+test('untracked token-only history cannot impersonate wallet sends in cached activity', () => {
+  const tracked = new Set([tokenAssetId])
+  const unknownAssetId = `${chainId}/erc20:0x${'4'.repeat(40)}`
+  const [unknown] = map([], [tokenTransfer('1', '99', { assetId: unknownAssetId })])
+  assert.equal(isUntrackedEvmTokenActivity(unknown, tracked), true)
+  const [known] = map([], [tokenTransfer('2', '10')])
+  assert.equal(isUntrackedEvmTokenActivity(known, tracked), false)
+  const [groupedUnknown] = map(
+    [],
+    [
+      tokenTransfer('3', '99', { assetId: unknownAssetId }),
+      tokenTransfer('3', '1', { assetId: unknownAssetId, from: recipient, to: address })
+    ]
+  )
+  assert.equal(isUntrackedEvmTokenActivity(groupedUnknown, tracked), true)
+  const [groupedKnown] = map(
+    [],
+    [tokenTransfer('4', '99', { assetId: unknownAssetId }), tokenTransfer('4', '10')]
+  )
+  assert.equal(isUntrackedEvmTokenActivity(groupedKnown, tracked), false)
+  assert.deepEqual(
+    filterTrackedEvmTokenActivity(groupedKnown, tracked).segments[0].evidence.assetEffects.changes,
+    [{ assetId: tokenAssetId, amountRaw: '10', direction: 'outgoing' }]
+  )
+  assert.equal(groupedKnown.segments[0].evidence.assetEffects.changes.length, 2)
+  const [contractCall] = map(
+    [transaction('5')],
+    [tokenTransfer('5', '99', { assetId: unknownAssetId })]
+  )
+  assert.equal(isUntrackedEvmTokenActivity(contractCall, tracked), false)
+  assert.equal(isUntrackedEvmTokenActivity({ ...unknown, source: 'wallet-v2' }, tracked), false)
+})
 
 test('zero ERC-20 events do not become asset transfers or mask the outer transaction', () => {
   assert.deepEqual(map([], [tokenTransfer('1', '0')]), [])

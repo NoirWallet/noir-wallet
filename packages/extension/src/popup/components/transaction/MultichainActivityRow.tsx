@@ -183,9 +183,9 @@ export function MultichainActivityRow({
     getActivityAssetEffects(item) !== undefined &&
     !(item.kind === 'transfer' && item.snapshot?.direction === 'self')
   const summaryChange = changes.find(change => !change.isRaw)
-  const primary = observed
-    ? summaryChange
-    : resolveActivityDisplayAmount(item.snapshot?.primaryAmount, assetMetadata)
+  const primary =
+    (observed ? summaryChange : undefined) ??
+    resolveActivityDisplayAmount(item.snapshot?.primaryAmount, assetMetadata)
   const counter = resolveActivityDisplayAmount(item.snapshot?.counterAmount, assetMetadata)
   const swap = getActivitySwapPresentation(
     item,
@@ -210,8 +210,7 @@ export function MultichainActivityRow({
   const isIncoming = item.kind === 'receive' || item.snapshot?.direction === 'incoming'
   const accessibleTitle =
     item.kind === 'contract-call' && interaction?.family === 'evm' ? 'Contract call' : text.title
-  const showChanges = observed && changes.length > 0
-  const remainingChanges = changes.length - (summaryChange ? 1 : 0)
+  const showChanges = observed && summaryChange !== undefined
   const subtitle =
     interaction?.family === 'evm' && interaction.targetAddress
       ? `${resolvedNetworkName} · ${formatSortAddress(interaction.targetAddress)}`
@@ -251,34 +250,23 @@ export function MultichainActivityRow({
       </div>
 
       <div className={cn('min-w-0 justify-self-end text-right', showChanges && 'max-w-[145px]')}>
-        {showChanges ? (
+        {showChanges && summaryChange ? (
           <div data-activity-asset-changes>
-            {summaryChange ? (
-              <p
-                title={`${summaryChange.direction === 'incoming' ? '+' : '−'}${summaryChange.value} ${summaryChange.symbol}`}
-                className={cn(
-                  'flex min-w-0 items-baseline justify-end gap-1 font-mono text-sm font-medium tabular-nums',
-                  summaryChange.direction === 'incoming' && 'text-primary'
-                )}
-              >
-                <span className="min-w-0 truncate">
-                  {summaryChange.direction === 'incoming' ? '+' : '−'}
-                  {summaryChange.formatted}
-                </span>
-                <span className="max-w-16 shrink-0 truncate">{summaryChange.symbol}</span>
-              </p>
-            ) : (
-              <p className="text-sm">
-                {changes.length} asset {changes.length === 1 ? 'change' : 'changes'}
-              </p>
-            )}
-            {summaryChange && remainingChanges > 0 && (
-              <p className="text-xs text-muted">
-                {remainingChanges} more {remainingChanges === 1 ? 'asset' : 'assets'}
-              </p>
-            )}
+            <p
+              title={`${summaryChange.direction === 'incoming' ? '+' : '−'}${summaryChange.value} ${summaryChange.symbol}`}
+              className={cn(
+                'flex min-w-0 items-baseline justify-end gap-1 font-mono text-sm font-medium tabular-nums',
+                summaryChange.direction === 'incoming' && 'text-primary'
+              )}
+            >
+              <span className="min-w-0 truncate">
+                {summaryChange.direction === 'incoming' ? '+' : '−'}
+                {summaryChange.formatted}
+              </span>
+              <span className="max-w-16 shrink-0 truncate">{summaryChange.symbol}</span>
+            </p>
           </div>
-        ) : (
+        ) : primary || !observed ? (
           <p
             className={cn(
               'whitespace-nowrap font-mono text-sm font-medium',
@@ -287,7 +275,7 @@ export function MultichainActivityRow({
           >
             {primary ? signedAmount(item, primary) : '—'}
           </p>
-        )}
+        ) : null}
         {showStatus ? (
           <p
             className={cn(

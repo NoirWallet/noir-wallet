@@ -149,7 +149,7 @@ test('Ankr history batches chains by address with the earliest incremental block
   expect(result.get('eip155:8453').items[0].completeness).toBe('partial')
 })
 
-test('Ankr keeps untracked ERC-20 movements with raw units and contract identity', async () => {
+test('Ankr excludes untracked ERC-20 movements from activity', async () => {
   const unknownContract = `0x${'4'.repeat(40)}`
   const client = createEvmAnkrHistoryClient(
     'https://history.example/',
@@ -175,16 +175,10 @@ test('Ankr keeps untracked ERC-20 movements with raw units and contract identity
           })
     }
   )
-  const item = (
-    await client.readAddressActivities([{ chainId: 'eip155:1', scope, address: ADDRESS }])
-  ).get('eip155:1').items[0]
-  expect(item.segments[0].evidence.assetEffects.changes).toEqual([
-    {
-      assetId: `eip155:1/erc20:${unknownContract}`,
-      amountRaw: '123',
-      direction: 'incoming'
-    }
+  const result = await client.readAddressActivities([
+    { chainId: 'eip155:1', scope, address: ADDRESS }
   ])
+  expect(result.get('eip155:1')).toMatchObject({ items: [], partial: false })
 })
 
 test('discarding an aborted batch also discards responses from a fetch that ignores abort', async () => {
