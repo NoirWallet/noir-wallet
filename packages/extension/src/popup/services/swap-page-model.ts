@@ -6,7 +6,8 @@ import { safeBig } from '@/lib/big'
 import { parseAmount } from '@/lib/format'
 import {
   formatBaseUnitAmount,
-  formatBaseUnitDecimalAmount
+  formatBaseUnitDecimalAmount,
+  parseDisplayUnitAmount
 } from '@/popup/components/portfolio/portfolio-format'
 import {
   resolveWalletOwnedQuoteAsset,
@@ -340,7 +341,8 @@ export function buildLiveSwapQuoteRequest(input: {
     return null
   }
   try {
-    const amount = parseAmount(input.amountIn, input.tokenIn.decimals)
+    const amount = parseDisplayUnitAmount(input.amountIn, input.tokenIn.decimals)
+    if (BigInt(amount) <= 0n) return null
     const slippageTolerance = Math.round(input.slippage * 100)
     return Object.freeze({
       scopeKey: JSON.stringify([

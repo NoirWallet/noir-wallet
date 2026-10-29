@@ -863,6 +863,9 @@ export class RheaSwapService {
   }
 
   private assertQuoteMatchesRequest(quote: Quote, request: QuoteRequest): void {
+    if (BigInt(quote.estimatedOut) <= 0n || BigInt(quote.minAmountOut) <= 0n) {
+      throw new Error('Amount is below the minimum for this Swap route')
+    }
     if (
       quote.fromChain !== request.fromChain ||
       quote.toChain !== request.toChain ||

@@ -99,7 +99,7 @@ it('retains the reviewed sender, recipient, amount and privacy mode when a quote
     decimals: 6,
     isNative: true
   }
-  const quote = buildLiveSwapQuoteRequest({
+  const input = {
     tokenIn: token,
     tokenOut: { ...token, assetId: 'usdc', rheaAddress: 'usdc', symbol: 'USDC', isNative: false },
     amountIn: '0.5',
@@ -108,12 +108,16 @@ it('retains the reviewed sender, recipient, amount and privacy mode when a quote
     recipientAddress: 'recipient',
     confidentiality: 'basic',
     blocked: false
-  })
+  }
+  const quote = buildLiveSwapQuoteRequest(input)
   assert.equal(quote.request.amountIn, '500000')
   assert.equal(quote.request.sender, 'sender')
   assert.equal(quote.request.recipient, 'recipient')
   assert.equal(quote.request.confidentiality, 'basic')
   assert.equal(quote.request.slippageBps, 100)
+  assert.equal(buildLiveSwapQuoteRequest({ ...input, amountIn: '0.0000001' }), null)
+  assert.equal(buildLiveSwapQuoteRequest({ ...input, amountIn: '0.5000001' }), null)
+  assert.equal(buildLiveSwapQuoteRequest({ ...input, amountIn: '0.000001' }).request.amountIn, '1')
 })
 
 it('accepts a Zcash recipient only for its selected account scope and network', () => {

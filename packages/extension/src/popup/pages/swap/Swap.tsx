@@ -2179,12 +2179,20 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
             `[Swap] Preparation failed (stage=${failedStage}, category=${error instanceof Error ? error.name : 'UnknownError'})`
           )
           await discardPreparedQuoteTransfer()
+          if (requestSequence !== quoteRequestSequence.current) return
           if (isPrivateFunding) {
             setIsPrivateFundingSubmitting(false)
           }
           const message = getRheaSwapErrorMessage(error)
           if (lockedAssetFlowRequested || feeTierOverride) setTransferPreparationError(message)
-          else toast.error(message)
+          else {
+            setQuoteResult(null)
+            setLiveQuoteKey(null)
+            setQuoteReceivedAt(null)
+            swap.setAmountOut('')
+            swap.setQuoteError(message)
+            setQuoteRetryable(classifyError(error).retryable)
+          }
         }
         if (feeTierOverride) throw new Error(getRheaSwapErrorMessage(error))
       } finally {

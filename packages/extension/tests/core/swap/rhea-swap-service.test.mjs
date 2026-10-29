@@ -489,6 +489,22 @@ test('quote and build remain bound across a session-store reload', async () => {
   await expect(replacedRecipientService.quote(confidentialQuoteRequest)).rejects.toThrow(
     /does not match its request/
   )
+  for (const field of ['estimatedOut', 'minAmountOut']) {
+    const emptyOutputSessions = new MemoryRheaSwapQuoteSessionStore()
+    const emptyOutputService = new RheaSwapService(
+      {
+        async quote() {
+          return { ...quote, [field]: '0' }
+        }
+      },
+      emptyOutputSessions,
+      { createHandle: () => 'empty-output' }
+    )
+    await expect(emptyOutputService.quote(confidentialQuoteRequest)).rejects.toThrow(
+      /below the minimum/
+    )
+    expect(await emptyOutputSessions.get('rhea-quote:empty-output')).toBeNull()
+  }
   const replacedBuildService = new RheaSwapService(client, new MemoryRheaSwapQuoteSessionStore(), {
     now: () => 2_000
   })
