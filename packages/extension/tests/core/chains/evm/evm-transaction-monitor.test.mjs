@@ -14,6 +14,16 @@ const blockHash = `0x${'b'.repeat(64)}`
 const reorgBlockHash = `0x${'c'.repeat(64)}`
 const replacementTransactionHash = `0x${'d'.repeat(64)}`
 const sender = `0x${'1'.repeat(40)}`
+const counterparty = `0x${'2'.repeat(40)}`
+const token = `0x${'3'.repeat(40)}`
+const receivedToken = `0x${'4'.repeat(40)}`
+const transferTopic = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef'
+const addressTopic = address => `0x${address.slice(2).padStart(64, '0')}`
+const transferLog = (address, from, to, amount, extraTopics = []) => ({
+  address,
+  topics: [transferTopic, addressTopic(from), addressTopic(to), ...extraTopics],
+  data: `0x${amount.toString(16).padStart(64, '0')}`
+})
 const scope = { keyDomainId: 'key-domain:1', accountId: 'account:1' }
 const secondScope = { keyDomainId: 'key-domain:2', accountId: 'account:2' }
 
@@ -109,6 +119,7 @@ test.describe('EVM persisted transaction monitor', () => {
     const finalized = await repository.get(scope, parseTransactionId('transaction:evm:monitor'))
     expect(finalized.root.status).toBe('final')
     expect(finalized.segments[0].evidence).toMatchObject({ blockHash, blockHeight: 101 })
+    expect(finalized.segments[0].evidence.assetEffects).toBeUndefined()
 
     await expect(monitor.poll([scope])).resolves.toEqual({
       checked: 0,
@@ -116,6 +127,70 @@ test.describe('EVM persisted transaction monitor', () => {
       unchanged: 0,
       errors: 0
     })
+  })
+
+  test('persists net receipt token movements and known native value with final evidence', async () => {
+    const repository = new InMemoryTransactionRepository()
+    const contractCall = graph('transaction:evm:receipt-effects')
+    contractCall.root.kind = 'contract-call'
+    contractCall.root.intent.direction = 'contract'
+    contractCall.root.intent.recipient = { chainId, address: counterparty }
+    contractCall.root.intent.primaryAmount = {
+      assetId: `${chainId}/slip44:60`,
+      amountRaw: '12'
+    }
+    await repository.create(contractCall)
+    const activeReceipt = {
+      ...receipt(),
+      logs: [
+        transferLog(token, sender, counterparty, 100n),
+        transferLog(token, counterparty, sender, 30n),
+        transferLog(receivedToken, counterparty, sender, 50n),
+        transferLog(token, sender, sender, 10n),
+        transferLog(token, sender, counterparty, 1n, [`0x${'0'.repeat(64)}`])
+      ]
+    }
+    const monitor = new EvmTransactionMonitor({
+      repository,
+      chainId,
+      rpc: rpc(activeReceipt),
+      now: () => 1_100,
+      createEventId: ids()
+    })
+
+    await expect(monitor.poll([scope])).resolves.toMatchObject({ applied: 1, errors: 0 })
+    const finalized = await repository.get(scope, parseTransactionId(contractCall.root.id))
+    expect(finalized.segments[0].evidence.assetEffects).toEqual({
+      source: 'receipt',
+      completeness: 'partial',
+      changes: [
+        { assetId: `${chainId}/slip44:60`, direction: 'outgoing', amountRaw: '12' },
+        { assetId: `${chainId}/erc20:${token}`, direction: 'outgoing', amountRaw: '70' },
+        { assetId: `${chainId}/erc20:${receivedToken}`, direction: 'incoming', amountRaw: '50' }
+      ]
+    })
+  })
+
+  test('finalizes a successful receipt even when aggregated effects exceed the amount limit', async () => {
+    const repository = new InMemoryTransactionRepository()
+    const transaction = graph('transaction:evm:overflow-effects')
+    await repository.create(transaction)
+    const hugeAmount = (1n << 256n) - 1n
+    const monitor = new EvmTransactionMonitor({
+      repository,
+      chainId,
+      rpc: rpc({
+        ...receipt(),
+        logs: Array.from({ length: 9 }, () => transferLog(token, counterparty, sender, hugeAmount))
+      }),
+      now: () => 1_100,
+      createEventId: ids()
+    })
+
+    await expect(monitor.poll([scope])).resolves.toMatchObject({ applied: 1, errors: 0 })
+    const finalized = await repository.get(scope, parseTransactionId(transaction.root.id))
+    expect(finalized.root.status).toBe('final')
+    expect(finalized.segments[0].evidence.assetEffects).toBeUndefined()
   })
 
   test('marks the original transaction cancelled after its local replacement finalizes', async () => {

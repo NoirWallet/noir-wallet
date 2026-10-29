@@ -184,6 +184,103 @@ test('formats EVM approval amounts and addresses without changing the signing su
   })
 })
 
+test('shows requested ERC-20 call arguments only for canonical calldata of known tokens', () => {
+  const original = baseSummaries.find(item => item.schema === 'evm.transaction.v1')
+  const word = value => value.toString(16).padStart(64, '0')
+  const addressWord = address => address.slice(2).padStart(64, '0')
+  const tokenContract = original.fields.to
+  const recipient = '0x3333333333333333333333333333333333333333'
+  const sender = '0x4444444444444444444444444444444444444444'
+  const options = {
+    nativeCurrency: { symbol: 'ETH', decimals: 18 },
+    tokenMetadata: [{ contractAddress: tokenContract, symbol: 'USDC', decimals: 6 }]
+  }
+  const reviewCall = calldata => {
+    const input = {
+      ...original,
+      fields: {
+        ...original.fields,
+        valueWei: '0',
+        calldata: content('hex', calldata),
+        methodSelector: calldata.slice(0, 10)
+      }
+    }
+    return buildSigningSummaryReviewModel(input, options)
+  }
+  const approve = reviewCall(`0x095ea7b3${addressWord(recipient)}${word(1_500_000)}`)
+  const requestRows = approve.sections.find(section => section.title === 'Calldata request').rows
+  expect(approve.sections[0].rows.find(row => row.label === 'Native value')).toMatchObject({
+    value: '0 ETH'
+  })
+  expect(requestRows.find(row => row.label === 'Requested spender')).toMatchObject({
+    title: recipient
+  })
+  expect(requestRows.find(row => row.label === 'Requested allowance')).toMatchObject({
+    value: '1.5 USDC'
+  })
+  expect(approve.sections.find(section => section.title === 'Contract data').rows).toEqual(
+    expect.arrayContaining([expect.objectContaining({ label: 'Calldata' })])
+  )
+
+  const transfer = reviewCall(`0xa9059cbb${addressWord(recipient)}${word(2_000_000)}`)
+  expect(transfer.sections.find(section => section.title === 'Calldata request').rows).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ label: 'Requested recipient', title: recipient }),
+      expect.objectContaining({ label: 'Requested amount', value: '2 USDC' })
+    ])
+  )
+  const transferFrom = reviewCall(
+    `0x23b872dd${addressWord(sender)}${addressWord(recipient)}${word(3_000_000)}`
+  )
+  expect(transferFrom.sections.find(section => section.title === 'Calldata request').rows).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ label: 'Requested sender', title: sender }),
+      expect.objectContaining({ label: 'Requested recipient', title: recipient })
+    ])
+  )
+
+  const unlimited = `0x095ea7b3${addressWord(recipient)}${'f'.repeat(64)}`
+  expect(
+    reviewCall(unlimited)
+      .sections.find(section => section.title === 'Calldata request')
+      .rows.find(row => row.label === 'Requested allowance').value
+  ).toBe('Unlimited')
+  for (const calldata of [
+    unlimited,
+    `0x23b872dd${addressWord(sender)}${addressWord(recipient)}${word(42)}`
+  ]) {
+    const unknownToken = buildSigningSummaryReviewModel(
+      {
+        ...original,
+        fields: {
+          ...original.fields,
+          calldata: content('hex', calldata),
+          methodSelector: calldata.slice(0, 10)
+        }
+      },
+      { nativeCurrency: options.nativeCurrency }
+    )
+    expect(unknownToken.sections.some(section => section.title === 'Calldata request')).toBe(false)
+    expect(unknownToken.sections[0].rows.find(row => row.label === 'Contract')).toMatchObject({
+      title: tokenContract
+    })
+    expect(unknownToken.sections.find(section => section.title === 'Contract data').rows).toEqual(
+      expect.arrayContaining([expect.objectContaining({ label: 'Calldata', value: calldata })])
+    )
+  }
+
+  const malformed = [
+    `0x095ea7b3${addressWord(recipient)}${word(1)}00`,
+    `0x095ea7b3${'f'.repeat(24)}${recipient.slice(2)}${word(1)}`,
+    `0x095ea7b3${addressWord(recipient)}${word(1).slice(2)}`
+  ]
+  for (const calldata of malformed) {
+    expect(
+      reviewCall(calldata).sections.some(section => section.title === 'Calldata request')
+    ).toBe(false)
+  }
+})
+
 const tronOwner = 'TUEZSdKsoDHQMeZwihtdoBiN46zxhGWYdH'
 const tronReceiver = 'TEkxiTehnzSmSe2XqrBj4w32RUN966rdz8'
 

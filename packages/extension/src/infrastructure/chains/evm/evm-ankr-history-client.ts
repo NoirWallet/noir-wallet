@@ -124,19 +124,19 @@ function parseTransaction(value: unknown): IndexedTransaction {
 
 function parseTransfer(
   value: unknown,
+  chainId: string,
   assets: readonly TrackedErc20Asset[]
-): IndexedTokenTransfer | null {
+): IndexedTokenTransfer {
   const transfer = record(value, 'token transfer')
   const contract = address(transfer.contractAddress, 'token contract')
   const asset = assets.find(candidate => candidate.contract.toLowerCase() === contract)
-  if (!asset) return null
   if (!Number.isSafeInteger(transfer.blockHeight) || (transfer.blockHeight as number) < 0) {
     invalid('token block height')
   }
   if (!Number.isSafeInteger(transfer.timestamp) || (transfer.timestamp as number) < 0) {
     invalid('token timestamp')
   }
-  if (transfer.tokenDecimals !== asset.decimals) invalid('token decimals')
+  if (asset && transfer.tokenDecimals !== asset.decimals) invalid('token decimals')
   const raw = transfer.valueRawInteger || transfer.value
   return Object.freeze({
     transactionHash: hash(transfer.transactionHash, 'token transaction hash'),
@@ -146,7 +146,7 @@ function parseTransfer(
     to: address(transfer.toAddress, 'token recipient'),
     amountRaw: tokenInteger(raw, 'token amount'),
     timestamp: timestamp(transfer.timestamp as number, 'token timestamp'),
-    assetId: parseAssetId(asset.assetId).id
+    assetId: parseAssetId(asset?.assetId ?? `${chainId}/erc20:${contract}`).id
   })
 }
 
@@ -428,8 +428,7 @@ export function createEvmAnkrHistoryClient(
           tokens.status === 'fulfilled'
             ? tokens.value.items
                 .filter(item => record(item, 'token transfer').blockchain === blockchain)
-                .map(item => parseTransfer(item, chain.trackedErc20Assets))
-                .filter((item): item is IndexedTokenTransfer => item !== null)
+                .map(item => parseTransfer(item, target.chainId, chain.trackedErc20Assets))
             : []
         const items = mapEvmIndexedActivity({
           request: target,

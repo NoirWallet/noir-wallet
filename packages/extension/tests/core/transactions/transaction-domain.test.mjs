@@ -11,6 +11,7 @@ import {
   deriveTransactionRootStatus,
   parseTransactionEventId,
   parseTransactionGraph,
+  parseTransactionSegmentEvidence,
   parseTransactionId,
   parseTransactionSegmentId,
   reconcileTransactionRoot,
@@ -153,6 +154,41 @@ test.describe('Unified transaction lifecycle', () => {
         }
       })
     ).toThrow(/intent snapshot/)
+  })
+
+  test('strictly validates persisted observed asset effects and their segment chain', () => {
+    const effects = {
+      source: 'receipt',
+      completeness: 'partial',
+      changes: [{ assetId: ethAssetId, amountRaw: '2', direction: 'outgoing' }]
+    }
+    const evidence = parseTransactionSegmentEvidence({
+      transactionHash: '0xabc',
+      assetEffects: effects
+    })
+    expect(evidence.assetEffects).toEqual(effects)
+    expect(() => parseTransactionSegmentEvidence({ assetEffects: effects })).toThrow(/hash/)
+    expect(() =>
+      parseTransactionSegmentEvidence({
+        transactionHash: '0xabc',
+        assetEffects: { ...effects, changes: [{ ...effects.changes[0], amountRaw: '02' }] }
+      })
+    ).toThrow()
+    expect(() =>
+      parseTransactionSegmentEvidence({
+        transactionHash: '0xabc',
+        assetEffects: { ...effects, changes: [effects.changes[0], effects.changes[0]] }
+      })
+    ).toThrow(/Duplicate/)
+    const originId = segmentId('observed-effects')
+    expect(() =>
+      parseTransactionGraph({
+        root: createRoot([originId]),
+        segments: [
+          createSegment(originId, 'origin', { kind: 'onchain', chainId: nearChainId }, { evidence })
+        ]
+      })
+    ).toThrow(/chain/)
   })
 
   test('allows forward reconciliation but only explicit non-terminal reorg downgrades', () => {

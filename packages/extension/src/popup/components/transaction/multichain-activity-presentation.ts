@@ -1,4 +1,4 @@
-import type { ActivityItem, ActivitySegment } from '@/core/activity'
+import { getActivityAssetEffects, type ActivityItem, type ActivitySegment } from '@/core/activity'
 import type {
   TransactionAssetAmount,
   TransactionFailureCode,
@@ -14,10 +14,9 @@ import type {
   ActivityChainMetadata
 } from '@/popup/services/activity-presentation-catalog'
 import type { AccountNetworkView } from '@/popup/services/account-networks-client'
-import { formatActivityTokenAmount } from '../portfolio/portfolio-format'
+import { formatActivityTokenAmount, formatBaseUnitAmount } from '../portfolio/portfolio-format'
 import { getActivityInteractionPresentation } from './activity-interaction-adapters'
 import type { TransactionProgressStep } from '@/popup/services/transaction-progress'
-import { identifyAaveSupplyMethod, isAaveSupplyRecipient } from '@/core/activity/aave-v3-ethereum'
 import {
   getLifecycleStatusPresentation,
   type TransactionPresentationTone
@@ -60,6 +59,12 @@ export interface ActivityDisplayAmount {
   readonly symbol: string
   readonly formatted: string
   readonly iconUrl?: string
+}
+
+export interface ActivityDisplayChange extends ActivityDisplayAmount {
+  readonly direction: 'incoming' | 'outgoing'
+  readonly value: string
+  readonly isRaw: boolean
 }
 
 export interface ActivitySwapPresentation {
@@ -227,36 +232,35 @@ export function getActivitySwapSourceMethodLabel(
   return `${sourceSymbol || 'Token'} transfer`
 }
 
-export function getAaveSupplyPresentation(item: ActivityItem): {
-  readonly protocol: 'Aave V3'
-  readonly methodLabel?: string
-} | null {
-  const recipient = item.snapshot?.recipient
-  if (
-    item.kind !== 'supply' ||
-    !recipient ||
-    !isAaveSupplyRecipient(recipient.chainId, recipient.address)
-  ) {
-    return null
-  }
-  const method = identifyAaveSupplyMethod(
-    recipient.chainId,
-    recipient.address,
-    item.snapshot?.evm?.methodSelector
-  )
-  return Object.freeze({
-    protocol: 'Aave V3',
-    ...(method
-      ? {
-          methodLabel:
-            method === 'depositETH'
-              ? 'Supply ETH'
-              : method === 'supplyWithPermit'
-                ? 'Supply with permit'
-                : 'Supply'
-        }
-      : {})
-  })
+export function getActivityDisplayChanges(
+  item: ActivityItem,
+  assetMetadata: ReadonlyMap<string, ActivityAssetMetadata>
+): readonly ActivityDisplayChange[] {
+  const changes = getActivityAssetEffects(item)?.changes ?? []
+  return changes
+    .map(change => {
+      const metadata = assetMetadata.get(change.assetId)?.metadata ?? change.metadata
+      const display = resolveActivityDisplayAmount(change, assetMetadata)
+      return Object.freeze({
+        ...(display ?? {
+          assetId: change.assetId,
+          symbol: formatSortAddress(parseAssetId(change.assetId).reference),
+          formatted: formatActivityTokenAmount(change.amountRaw, 0)
+        }),
+        direction: change.direction,
+        value: metadata
+          ? formatBaseUnitAmount(change.amountRaw, metadata.decimals)
+          : change.amountRaw,
+        isRaw: metadata === undefined
+      })
+    })
+    .sort((left, right) =>
+      left.direction === right.direction
+        ? left.assetId.localeCompare(right.assetId)
+        : left.direction === 'outgoing'
+          ? -1
+          : 1
+    )
 }
 
 export function resolveActivityDisplayAmount(
@@ -307,7 +311,6 @@ function isSignedOrderOrigin(segment: ActivitySegment): boolean {
 
 export function getActivityDetailTitle(item: ActivityItem, interactionTitle?: string): string {
   if (isConfidentialFundingActivity(item)) return 'Add to Confidential'
-  if (getAaveSupplyPresentation(item)) return 'Supply to Aave'
   if (item.failureCode === 'refunded') return 'Refund'
   if (
     item.kind === 'transfer' &&
@@ -674,14 +677,6 @@ export function getActivityRowTextPresentation(
   const recipient = getActivityTransferRecipient(item)
   const direction = item.snapshot?.direction
   const isIncoming = item.kind === 'receive' || direction === 'incoming'
-  const aaveSupply = getAaveSupplyPresentation(item)
-
-  if (aaveSupply) {
-    return {
-      title: symbol ? `Supplied ${symbol}` : 'Supplied to Aave',
-      subtitle: `${aaveSupply.protocol} · ${networkName}`
-    }
-  }
 
   if (item.kind === 'shield') {
     return {

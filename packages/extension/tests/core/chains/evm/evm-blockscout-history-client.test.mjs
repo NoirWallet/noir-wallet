@@ -116,17 +116,6 @@ test.describe('EVM Blockscout history client', () => {
         return jsonResponse([
           normalTransaction(),
           normalTransaction({
-            blockHash: hash('c'),
-            blockNumber: '101',
-            confirmations: '4',
-            from: OTHER,
-            hash: hash('d'),
-            nonce: '8',
-            timeStamp: '1700000010',
-            to: USDC,
-            value: '0'
-          }),
-          normalTransaction({
             blockHash: hash('f'),
             blockNumber: '102',
             confirmations: '3',
@@ -201,7 +190,24 @@ test.describe('EVM Blockscout history client', () => {
         referrerPolicy: 'no-referrer'
       })
     }
-    expect(requests[1].url.searchParams.get('contractaddress')).toBe(USDC)
+    expect(requests[1].url.searchParams.get('contractaddress')).toBeNull()
+  })
+
+  test('includes untracked ERC-20 transfers from the address-wide token history', async () => {
+    const unknown = `0x${'4'.repeat(40)}`
+    const client = createClient(async input =>
+      new URL(input).searchParams.get('action') === 'txlist'
+        ? jsonResponse([])
+        : jsonResponse([tokenTransfer({ contractAddress: unknown })])
+    )
+    const [item] = await client.readAddressActivity({ scope: SCOPE, address: ADDRESS })
+    expect(item.segments[0].evidence.assetEffects.changes).toEqual([
+      {
+        assetId: `eip155:1/erc20:${unknown}`,
+        amountRaw: '5000000',
+        direction: 'incoming'
+      }
+    ])
   })
 
   test('maps reverted native activity and accepts an exact empty-history envelope', async () => {

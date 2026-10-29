@@ -123,9 +123,67 @@ test('zero ERC-20 events do not become asset transfers or mask the outer transac
 test('a zero token event does not mask a nonzero event in the same transaction', () => {
   const items = map([transaction('5')], [tokenTransfer('5', '0'), tokenTransfer('5', '4404100000')])
   assert.equal(items.length, 1)
-  assert.equal(items[0].kind, 'transfer')
-  assert.equal(items[0].snapshot.primaryAmount.amountRaw, '4404100000')
-  assert.equal(items[0].snapshot.primaryAmount.assetId, tokenAssetId)
+  assert.equal(items[0].kind, 'contract-call')
+  assert.equal(items[0].snapshot.primaryAmount, undefined)
+  assert.deepEqual(items[0].segments[0].evidence.assetEffects.changes, [
+    { assetId: tokenAssetId, amountRaw: '4404100000', direction: 'outgoing' }
+  ])
+})
+
+test('groups multiple token transfers into net asset changes alongside native value', () => {
+  const incomingContract = `0x${'4'.repeat(40)}`
+  const incomingAssetId = `${chainId}/erc20:${incomingContract}`
+  const items = map(
+    [transaction('9', { valueRaw: '7' })],
+    [
+      tokenTransfer('9', '10'),
+      tokenTransfer('9', '3', { from: recipient, to: address }),
+      tokenTransfer('9', '5', { assetId: incomingAssetId, from: recipient, to: address })
+    ]
+  )
+  assert.equal(items.length, 1)
+  assert.equal(items[0].kind, 'contract-call')
+  assert.equal(items[0].snapshot.recipient.address, tokenContract)
+  assert.deepEqual(items[0].snapshot.primaryAmount, { assetId: nativeAssetId, amountRaw: '7' })
+  assert.deepEqual(items[0].segments[0].evidence.assetEffects.changes, [
+    { assetId: tokenAssetId, amountRaw: '7', direction: 'outgoing' },
+    { assetId: incomingAssetId, amountRaw: '5', direction: 'incoming' },
+    { assetId: nativeAssetId, amountRaw: '7', direction: 'outgoing' }
+  ])
+  assert.equal(
+    map([transaction('a', { failed: true })], [tokenTransfer('a', '9')])[0].segments[0].evidence
+      .assetEffects,
+    undefined
+  )
+  const inconsistent = map(
+    [transaction('c')],
+    [tokenTransfer('c', '9', { blockHash: hash('d'), blockHeight: 101 })]
+  )[0]
+  assert.equal(inconsistent.completeness, 'partial')
+  assert.equal(inconsistent.segments[0].evidence.assetEffects, undefined)
+})
+
+test('token-only grouped effects do not invent a contract recipient', () => {
+  const items = map(
+    [],
+    [tokenTransfer('b', '10'), tokenTransfer('b', '5', { from: recipient, to: address })]
+  )
+  assert.equal(items.length, 1)
+  assert.equal(items[0].snapshot.sender, undefined)
+  assert.equal(items[0].snapshot.recipient, undefined)
+  assert.deepEqual(items[0].segments[0].evidence.assetEffects.changes, [
+    { assetId: tokenAssetId, amountRaw: '5', direction: 'outgoing' }
+  ])
+  const conflicting = map(
+    [],
+    [
+      tokenTransfer('e', '1', { blockHash: undefined }),
+      tokenTransfer('e', '2', { blockHash: hash('1') }),
+      tokenTransfer('e', '3', { blockHash: hash('2') })
+    ]
+  )[0]
+  assert.equal(conflicting.completeness, 'partial')
+  assert.equal(conflicting.segments[0].evidence.assetEffects, undefined)
 })
 
 test('cached zero RPC token transfers are removed without affecting other activity', async () => {

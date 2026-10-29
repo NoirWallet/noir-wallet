@@ -149,6 +149,44 @@ test('Ankr history batches chains by address with the earliest incremental block
   expect(result.get('eip155:8453').items[0].completeness).toBe('partial')
 })
 
+test('Ankr keeps untracked ERC-20 movements with raw units and contract identity', async () => {
+  const unknownContract = `0x${'4'.repeat(40)}`
+  const client = createEvmAnkrHistoryClient(
+    'https://history.example/',
+    chains,
+    async (_url, init) => {
+      const request = JSON.parse(init.body)
+      return request.method === 'ankr_getTransactionsByAddress'
+        ? rpc({ transactions: [] })
+        : rpc({
+            transfers: [
+              {
+                blockchain: 'eth',
+                transactionHash: HASH,
+                blockHeight: 100,
+                fromAddress: OTHER,
+                toAddress: ADDRESS,
+                contractAddress: unknownContract,
+                tokenDecimals: 18,
+                timestamp: 1_700_000_000,
+                valueRawInteger: '123'
+              }
+            ]
+          })
+    }
+  )
+  const item = (
+    await client.readAddressActivities([{ chainId: 'eip155:1', scope, address: ADDRESS }])
+  ).get('eip155:1').items[0]
+  expect(item.segments[0].evidence.assetEffects.changes).toEqual([
+    {
+      assetId: `eip155:1/erc20:${unknownContract}`,
+      amountRaw: '123',
+      direction: 'incoming'
+    }
+  ])
+})
+
 test('discarding an aborted batch also discards responses from a fetch that ignores abort', async () => {
   let releaseResponses
   const responseGate = new Promise(resolve => {

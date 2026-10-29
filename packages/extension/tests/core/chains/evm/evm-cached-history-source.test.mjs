@@ -73,6 +73,111 @@ function activityItem(overrides = {}) {
 }
 
 test.describe('cached EVM history source', () => {
+  test('degrades inferred legacy protocol amounts and refreshes their evidence from full history', async () => {
+    const hash = `0x${'a'.repeat(64)}`
+    const tokenAssetId = `eip155:1/erc20:0x${'3'.repeat(40)}`
+    const old = activityItem({
+      id: `rpc:evm:${chainId}:${hash}:token`,
+      kind: 'supply',
+      snapshot: {
+        ...activityItem().snapshot,
+        direction: 'outgoing',
+        primaryAmount: { assetId: tokenAssetId, amountRaw: '500' }
+      }
+    })
+    const cache = memoryCache({
+      schemaVersion: 1,
+      chainId,
+      address,
+      scope,
+      lastAttemptAt: 1_000,
+      successfulSyncAt: 1_000,
+      retryAfter: 100_000,
+      items: [old]
+    })
+    const cachedOnly = createCachedOnlyEvmActivityHistorySource({
+      chainId,
+      cache: cache.repository
+    })
+    const [degraded] = await cachedOnly.readAddressActivity({ scope, address })
+    expect(degraded.kind).toBe('contract-call')
+    expect(degraded.completeness).toBe('partial')
+    expect(degraded.snapshot.primaryAmount).toBeUndefined()
+    expect(cache.record().items[0].kind).toBe('supply')
+
+    const fresh = activityItem({
+      id: `rpc:evm:${chainId}:${hash}:native`,
+      segments: [
+        {
+          ...old.segments[0],
+          evidence: {
+            ...old.segments[0].evidence,
+            assetEffects: {
+              source: 'indexer',
+              completeness: 'partial',
+              changes: [{ assetId: tokenAssetId, amountRaw: '500', direction: 'outgoing' }]
+            }
+          }
+        }
+      ]
+    })
+    let fromBlock = -1
+    const reader = createCachedEvmActivityHistorySource({
+      chainId,
+      cache: cache.repository,
+      now: () => 2_000,
+      source: source(async input => {
+        fromBlock = input.fromBlock
+        return [fresh]
+      })
+    })
+    expect((await reader.readAddressActivity({ scope, address })).map(item => item.id)).toEqual([
+      fresh.id
+    ])
+    expect(fromBlock).toBeUndefined()
+  })
+
+  test('replaces a legacy token row when a fresh grouped row has the same chain and hash', async () => {
+    const hash = `0x${'a'.repeat(64)}`
+    const old = activityItem({ id: `rpc:evm:${chainId}:${hash}:token` })
+    const fresh = activityItem({
+      id: `rpc:evm:${chainId}:${hash}:native`,
+      segments: [
+        {
+          ...old.segments[0],
+          evidence: {
+            ...old.segments[0].evidence,
+            assetEffects: {
+              source: 'indexer',
+              completeness: 'partial',
+              changes: [{ assetId: 'eip155:1/slip44:60', amountRaw: '1', direction: 'incoming' }]
+            }
+          }
+        }
+      ]
+    })
+    const cache = memoryCache({
+      schemaVersion: 1,
+      chainId,
+      address,
+      scope,
+      lastAttemptAt: 1_000,
+      successfulSyncAt: 1_000,
+      retryAfter: 2_000,
+      items: [old]
+    })
+    const reader = createCachedEvmActivityHistorySource({
+      chainId,
+      cache: cache.repository,
+      now: () => 3_000,
+      source: source(async () => [fresh])
+    })
+    expect((await reader.readAddressActivity({ scope, address })).map(item => item.id)).toEqual([
+      fresh.id
+    ])
+    expect(cache.record().items.map(item => item.id)).toEqual([fresh.id])
+  })
+
   test('keeps an existing chain cache visible when its remote source is unavailable', async () => {
     const cachedItem = activityItem()
     const cache = memoryCache({

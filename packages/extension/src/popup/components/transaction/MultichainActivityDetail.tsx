@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Icon } from '@iconify/react'
-import { mapTransactionGraphToActivityItem, type ActivityItem } from '@/core/activity'
+import {
+  getActivityAssetEffects,
+  mapTransactionGraphToActivityItem,
+  type ActivityItem
+} from '@/core/activity'
 import { getBitcoinNetworkConfig } from '@/config/networks'
 import { parseTransactionId } from '@/core/transactions/domain'
 import { getZcashChainId } from '@/core/chains/registry'
@@ -55,7 +59,7 @@ import {
   getActivityRouteTitle,
   getActivityTransferRecipient,
   getActivitySwapSourceMethodLabel,
-  getAaveSupplyPresentation,
+  getActivityDisplayChanges,
   canCancelEvmActivity,
   getActivityFailureLabel,
   getActivityRecoveryAction,
@@ -241,6 +245,13 @@ export function MultichainActivityDetail({
   )
   const transferRecipient = getActivityTransferRecipient(visibleItem)
   const swapSourceMethod = getActivitySwapSourceMethodLabel(visibleItem, swap?.source?.symbol)
+  const assetEffects =
+    visibleItem.kind === 'transfer' && visibleItem.snapshot?.direction === 'self'
+      ? undefined
+      : getActivityAssetEffects(visibleItem)
+  const assetChanges = getActivityDisplayChanges(visibleItem, assetMetadata)
+  const displayedChanges = assetChanges.filter(change => !change.isRaw).slice(0, 2)
+  const remainingChanges = assetChanges.length - displayedChanges.length
 
   const amount = visibleItem.snapshot?.primaryAmount
   const asset = amount ? assetMetadata.get(amount.assetId) : undefined
@@ -270,7 +281,6 @@ export function MultichainActivityDetail({
   const primaryChainId = asset?.asset.chainId ?? resolveActivityChainId(visibleItem)
   const interaction = getActivityInteractionPresentation(visibleItem, primaryChainId)
   const approval = getActivityApprovalDetails(visibleItem, assetMetadata)
-  const aaveSupply = getAaveSupplyPresentation(visibleItem)
   const title = swap
     ? getActivityRouteTitle(visibleItem, swap)
     : getActivityDetailTitle(visibleItem, interaction?.title)
@@ -295,6 +305,10 @@ export function MultichainActivityDetail({
   const cancelAvailable = canCancelEvmActivity(visibleItem, evmChainIds)
   const isCrossChain = visibleItem.segments.length > 1
   const transactionReferences = getActivityTransactionReferences(visibleItem)
+  const explorerReference = !isCrossChain ? transactionReferences[0] : undefined
+  const explorerUrl = explorerReference?.chainId
+    ? formatChainTransactionExplorerUrl(explorerReference.chainId, explorerReference.hash, network)
+    : ''
   const usesShieldedPoolSource =
     visibleItem.source === 'zcash-v1' &&
     visibleItem.kind === 'transfer' &&
@@ -596,7 +610,37 @@ export function MultichainActivityDetail({
               </div>
             )}
           </div>
-          {formattedAmount !== null ? (
+          {assetEffects ? (
+            <div className="w-full space-y-1" data-activity-asset-changes>
+              {displayedChanges.map((change, index) => (
+                <div
+                  key={change.assetId}
+                  className={cn(
+                    'max-w-full font-mono',
+                    index === 0 ? 'text-3xl font-bold' : 'text-sm',
+                    change.direction === 'incoming' && 'text-primary'
+                  )}
+                >
+                  <AmountDisplay
+                    value={change.value}
+                    prefix={change.direction === 'incoming' ? '+' : '−'}
+                    symbol={change.symbol}
+                    className="[&>span:first-child]:truncate [&>span:last-child]:max-w-24 [&>span:last-child]:truncate"
+                  />
+                </div>
+              ))}
+              {remainingChanges > 0 && (
+                <p className="text-xs text-muted">
+                  {displayedChanges.length > 0
+                    ? `${remainingChanges} more ${remainingChanges === 1 ? 'asset' : 'assets'}`
+                    : `${remainingChanges} asset ${remainingChanges === 1 ? 'change' : 'changes'}`}
+                </p>
+              )}
+              {assetChanges.length === 0 && (
+                <p className="text-sm text-muted">{primaryNetworkName}</p>
+              )}
+            </div>
+          ) : formattedAmount !== null ? (
             <div className="max-w-full break-all font-mono text-3xl font-bold">
               <AmountDisplay value={formattedAmount} prefix={displayedSign} symbol={symbol} />
             </div>
@@ -657,11 +701,6 @@ export function MultichainActivityDetail({
             {status.label}
           </span>
         </DetailRow>
-        {aaveSupply && (
-          <DetailRow label="Protocol">
-            <span className="text-sm">{aaveSupply.protocol}</span>
-          </DetailRow>
-        )}
         {visibleItem.kind === 'shield' && (
           <DetailRow label="Privacy">
             <span className="text-sm">Transparent → Shielded</span>
@@ -702,7 +741,7 @@ export function MultichainActivityDetail({
             </span>
           </DetailRow>
         ) : visibleItem.kind !== 'shield' && !swap && transferRecipient ? (
-          <DetailRow label={aaveSupply ? 'Aave contract' : (interaction?.targetLabel ?? 'To')}>
+          <DetailRow label={interaction?.targetLabel ?? 'To'}>
             <span className="inline-flex min-w-0 max-w-[220px] items-center gap-2">
               {approval?.tokenSymbol && (
                 <span className="shrink-0 text-sm">{approval.tokenSymbol}</span>
@@ -713,30 +752,16 @@ export function MultichainActivityDetail({
             </span>
           </DetailRow>
         ) : null}
-        {visibleItem.snapshot?.evm?.methodSelector && (
-          <DetailRow label="Method">
-            {approval?.methodLabel ? (
+        {visibleItem.snapshot?.evm?.methodSelector &&
+          (approval?.methodLabel || swapSourceMethod) && (
+            <DetailRow label="Method">
               <span className="text-right text-sm" title={visibleItem.snapshot.evm.methodSelector}>
-                {approval.methodLabel}
+                {approval?.methodLabel ?? swapSourceMethod}
               </span>
-            ) : swapSourceMethod ? (
-              <span className="text-right text-sm" title={visibleItem.snapshot.evm.methodSelector}>
-                {swapSourceMethod}
-              </span>
-            ) : aaveSupply?.methodLabel ? (
-              <span className="text-right text-sm">
-                {aaveSupply.methodLabel}
-                <span className="block font-mono text-xs text-muted">
-                  {visibleItem.snapshot.evm.methodSelector}
-                </span>
-              </span>
-            ) : (
-              <span className="font-mono text-sm">{visibleItem.snapshot.evm.methodSelector}</span>
-            )}
-          </DetailRow>
-        )}
+            </DetailRow>
+          )}
         {fee && feeAsset && (
-          <DetailRow label="Network fee">
+          <DetailRow label={visibleItem.snapshot?.evm ? 'Fee limit' : 'Network fee'}>
             <AmountDisplay
               value={formatBaseUnitAmount(fee.amountRaw, feeAsset.metadata.decimals)}
               symbol={feeAsset.metadata.symbol}
@@ -833,6 +858,17 @@ export function MultichainActivityDetail({
             </p>
           </div>
         </div>
+      )}
+      {explorerUrl && (
+        <a
+          href={explorerUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mb-4 flex items-center justify-center gap-1.5 border-t border-white/8 pt-4 text-sm text-primary"
+        >
+          View on explorer
+          <Icon icon="lucide:arrow-up-right" width={15} height={15} />
+        </a>
       )}
       <CopyToast show={showToast} message="Address copied" />
 

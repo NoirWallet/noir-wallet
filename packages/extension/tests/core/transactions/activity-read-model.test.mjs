@@ -27,6 +27,7 @@ const arbitrumChainId = parseChainId('eip155:42161').id
 const zcashChainId = parseChainId('bip122:00040fe8ec8471911baa1db1266ea15d').id
 const bitcoinChainId = parseChainId('bip122:000000000019d6689c085ae165831e93').id
 const ethAssetId = 'eip155:1/slip44:60'
+const usdcAssetId = `eip155:1/erc20:0x${'3'.repeat(40)}`
 const zecAssetId = `${zcashChainId}/slip44:133`
 const btcAssetId = `${bitcoinChainId}/slip44:0`
 const evmHash = `0x${'A'.repeat(64)}`
@@ -359,6 +360,87 @@ test.describe('Activity read model', () => {
 
     expect(model.items).toHaveLength(1)
     expect(model.items[0]).toMatchObject({ id: 'transaction:activity', source: 'wallet-v2' })
+  })
+
+  test('merges observed assets by chain and hash without changing the wallet intent', () => {
+    const local = graph()
+    local.root.kind = 'contract-call'
+    local.root.intent.direction = 'contract'
+    delete local.root.intent.primaryAmount
+    const observed = supplemental({
+      id: 'rpc:evm:observed',
+      source: 'rpc',
+      chainId: evmChainId,
+      assetId: usdcAssetId,
+      hash: evmHash.toLowerCase(),
+      updatedAt: 1_500
+    })
+    observed.segments[0].evidence.assetEffects = {
+      source: 'indexer',
+      completeness: 'partial',
+      changes: [{ assetId: usdcAssetId, amountRaw: '5000000', direction: 'outgoing' }]
+    }
+    const model = buildActivityReadModel({
+      scope,
+      localGraphs: [local],
+      supplementalItems: [observed]
+    })
+    expect(model.items).toHaveLength(1)
+    expect(model.items[0].snapshot).toEqual(local.root.intent)
+    expect(model.items[0].segments[0].evidence.assetEffects).toEqual(
+      observed.segments[0].evidence.assetEffects
+    )
+    expect(
+      filterActivityItems({
+        items: model.items,
+        selectedChainIds: [evmChainId],
+        assetId: usdcAssetId
+      })
+    ).toHaveLength(1)
+    expect(parseActivityReadModel(structuredClone(model))).toEqual(model)
+
+    local.segments[0].evidence.assetEffects = {
+      source: 'receipt',
+      completeness: 'partial',
+      changes: [{ assetId: ethAssetId, amountRaw: '1', direction: 'outgoing' }]
+    }
+    expect(
+      buildActivityReadModel({ scope, localGraphs: [local], supplementalItems: [observed] })
+        .items[0].segments[0].evidence.assetEffects.source
+    ).toBe('receipt')
+    local.segments[0].evidence.blockHash = `0x${'1'.repeat(64)}`
+    observed.segments[0].evidence.blockHash = `0x${'2'.repeat(64)}`
+    expect(
+      buildActivityReadModel({ scope, localGraphs: [local], supplementalItems: [observed] })
+        .items[0].segments[0].evidence.blockHash
+    ).toBe(local.segments[0].evidence.blockHash)
+    delete local.segments[0].evidence.blockHash
+    delete observed.segments[0].evidence.blockHash
+    local.root.status = 'final'
+    local.segments[0].status = 'final'
+    const failedRpc = {
+      ...observed,
+      status: 'failed',
+      failureCode: 'reverted',
+      segments: [{ ...observed.segments[0], status: 'failed', failureCode: 'reverted' }]
+    }
+    const confirmed = buildActivityReadModel({
+      scope,
+      localGraphs: [local],
+      supplementalItems: [failedRpc]
+    })
+    expect(confirmed.items[0].status).toBe('final')
+    expect(confirmed.items[0].segments[0].evidence.assetEffects.source).toBe('receipt')
+    local.root.status = 'broadcast'
+    local.segments[0].status = 'broadcast'
+    local.root.reconfirming = true
+    local.segments[0].reconfirming = true
+    const reconfirming = buildActivityReadModel({
+      scope,
+      localGraphs: [local],
+      supplementalItems: [observed]
+    })
+    expect(reconfirming.items[0].segments[0].evidence.assetEffects).toBeUndefined()
   })
 
   test('keeps the destination receipt beside a local cross-chain transfer', () => {

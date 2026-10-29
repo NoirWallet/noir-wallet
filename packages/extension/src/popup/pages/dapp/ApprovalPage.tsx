@@ -45,6 +45,7 @@ import { NetworkFeeTierPicker } from '@/popup/components/transaction/NetworkFeeT
 import { parseNetworkFeeTier, type NetworkFeeTier } from '@/core/transactions/domain'
 import { parseEvmFeeSelection, type EvmFeeSelection } from '@/infrastructure/chains/evm'
 import { NETWORKS } from '@/config/networks'
+import { getBundledEvmAssetDefinitions } from '@/core/chains/registry/product-chain-definitions'
 import { ChainIcon } from '@/popup/components/common/ChainIcon'
 import { CopyToast, useCopyToClipboard } from '@/popup/components/common/CopyToast'
 import { useNavigate } from '@/popup/provider/Router'
@@ -1478,7 +1479,19 @@ export function ApprovalPage() {
         isSubmitting={isLoading}
         evmPresentation={{
           nativeCurrency: { symbol: nativeSymbol, decimals: nativeDecimals },
-          directContract: data.privacyRoute === 'direct-contract'
+          directContract: data.privacyRoute === 'direct-contract',
+          tokenMetadata: getBundledEvmAssetDefinitions(currentNetwork)
+            .filter(
+              asset =>
+                asset.chainId === evmTransactionSummary.chainId &&
+                asset.namespace === 'erc20' &&
+                asset.verification === 'trusted'
+            )
+            .map(asset => ({
+              contractAddress: asset.reference,
+              symbol: asset.metadata.symbol,
+              decimals: asset.metadata.decimals
+            }))
         }}
         feeControl={
           data.feeEditingAvailable ? (

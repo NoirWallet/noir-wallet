@@ -228,6 +228,12 @@ test.describe('EVM RPC client', () => {
   test('validates broadcast hashes, receipts, and finalized block evidence', async () => {
     const transactionHash = `0x${'a'.repeat(64)}`
     const blockHash = `0x${'b'.repeat(64)}`
+    const transferLog = {
+      address: USDC.toUpperCase().replace('0X', '0x'),
+      topics: [`0x${'d'.repeat(64)}`],
+      data: '0x0001',
+      transactionHash
+    }
     const transport = scriptedFetch([
       request =>
         rpcResponse(request, { result: transactionHash.toUpperCase().replace('0X', '0x') }),
@@ -238,7 +244,7 @@ test.describe('EVM RPC client', () => {
             blockHash,
             blockNumber: '0x64',
             status: '0x1',
-            logs: []
+            logs: [transferLog]
           }
         }),
       request => rpcResponse(request, { result: null }),
@@ -272,7 +278,8 @@ test.describe('EVM RPC client', () => {
       transactionHash,
       blockHash,
       blockNumber: '100',
-      status: 'success'
+      status: 'success',
+      logs: [{ address: USDC, topics: transferLog.topics, data: transferLog.data }]
     })
     await expect(client.getTransactionReceipt(transactionHash)).resolves.toBeNull()
     await expect(client.hasTransaction(transactionHash)).resolves.toBe(true)

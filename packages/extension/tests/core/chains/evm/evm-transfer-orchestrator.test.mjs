@@ -560,7 +560,7 @@ test('approves an ERC-20 allowance review without rejecting its approve activity
   })
 })
 
-test('keeps a recognized Aave supply review valid through pending integrity checks', async () => {
+test('keeps a contract call generic through pending integrity checks', async () => {
   const testHarness = harness()
   const calldata = encodeFunctionData({
     abi: parseAbi([
@@ -580,18 +580,15 @@ test('keeps a recognized Aave supply review valid through pending integrity chec
   })
 
   expect(prepared.graph.root).toMatchObject({
-    kind: 'supply',
+    kind: 'contract-call',
     intent: {
-      direction: 'outgoing',
-      primaryAmount: {
-        assetId: 'eip155:1/erc20:0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48',
-        amountRaw: '2500000'
-      }
+      direction: 'contract'
     }
   })
+  expect(prepared.graph.root.intent.primaryAmount).toBeUndefined()
   await expect(
     testHarness.orchestrator.getPendingApproval({ scope, transactionId: prepared.graph.root.id })
-  ).resolves.toMatchObject({ graph: { root: { kind: 'supply' } } })
+  ).resolves.toMatchObject({ graph: { root: { kind: 'contract-call' } } })
 })
 
 test('preserves a custom Token metadata snapshot through approval integrity checks', async () => {

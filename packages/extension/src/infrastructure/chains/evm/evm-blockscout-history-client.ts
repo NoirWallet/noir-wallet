@@ -137,15 +137,17 @@ function parseNormalTransaction(value: unknown): IndexedTransaction {
   })
 }
 
-function parseTokenTransfer(value: unknown, trackedAsset: TrackedErc20Asset): IndexedTokenTransfer {
+function parseTokenTransfer(
+  value: unknown,
+  chainId: string,
+  trackedAssets: readonly TrackedErc20Asset[]
+): IndexedTokenTransfer {
   if (!isRecord(value)) {
     throw new EvmRpcError('invalid-response', 'Invalid EVM token history transaction')
   }
   const contract = parseAddress(value.contractAddress, 'EVM token history contract')
-  if (contract !== trackedAsset.contract) {
-    throw new EvmRpcError('invalid-response', 'EVM token history returned another contract')
-  }
-  if (String(value.tokenDecimal) !== String(trackedAsset.decimals)) {
+  const trackedAsset = trackedAssets.find(asset => asset.contract === contract)
+  if (trackedAsset && String(value.tokenDecimal) !== String(trackedAsset.decimals)) {
     throw new EvmRpcError('invalid-response', 'EVM token history decimals do not match')
   }
   return Object.freeze({
@@ -162,7 +164,7 @@ function parseTokenTransfer(value: unknown, trackedAsset: TrackedErc20Asset): In
       ? {}
       : { nonce: parseUnsignedDecimal(value.nonce, 'EVM token history nonce') }),
     timestamp: parseTimestamp(value.timeStamp),
-    assetId: parseAssetId(trackedAsset.assetId).id
+    assetId: parseAssetId(trackedAsset?.assetId ?? `${chainId}/erc20:${contract}`).id
   })
 }
 
@@ -342,43 +344,38 @@ export function createEvmBlockscoutHistoryClient(
   return Object.freeze({
     readAddressActivity: async (input: ReadEvmAddressActivityInput) => {
       const address = parseAddress(input.address, 'EVM history address')
-      const [normalResult, tokenResults] = await Promise.all([
+      const [normalResult, tokenResult] = await Promise.all([
         readNormalTransactions(address, input.signal, input.fromBlock).then(
           value => ({ status: 'fulfilled' as const, value }),
           reason => ({ status: 'rejected' as const, reason: reason as unknown })
         ),
-        Promise.all(
-          trackedAssets.map(async asset =>
-            request('tokentx', address, input.signal, asset.contract, input.fromBlock).then(
-              response =>
-                ({
-                  status: 'fulfilled' as const,
-                  value: Object.freeze({
-                    items: Object.freeze(
-                      response.items.map(item => parseTokenTransfer(item, asset))
-                    ),
-                    partial: response.partial
-                  })
-                }) as const,
-              reason => ({ status: 'rejected' as const, reason: reason as unknown })
-            )
-          )
+        request('tokentx', address, input.signal, undefined, input.fromBlock).then(
+          response => ({
+            status: 'fulfilled' as const,
+            value: Object.freeze({
+              items: Object.freeze(
+                response.items.map(item => parseTokenTransfer(item, chain.id, trackedAssets))
+              ),
+              partial: response.partial
+            })
+          }),
+          reason => ({ status: 'rejected' as const, reason: reason as unknown })
         )
       ])
       const firstFailure =
         normalResult.status === 'rejected'
           ? normalResult.reason
-          : tokenResults.find(result => result.status === 'rejected')?.reason
+          : tokenResult.status === 'rejected'
+            ? tokenResult.reason
+            : undefined
       const sourcePartial =
         firstFailure !== undefined ||
         (normalResult.status === 'fulfilled' && normalResult.value.partial) ||
-        tokenResults.some(result => result.status === 'fulfilled' && result.value.partial)
+        (tokenResult.status === 'fulfilled' && tokenResult.value.partial)
       const normalTransactions =
         normalResult.status === 'fulfilled' ? normalResult.value.items : Object.freeze([])
-      const tokenGroups = tokenResults.map(result =>
-        result.status === 'fulfilled' ? result.value.items : Object.freeze([])
-      )
-      const tokenTransfers = tokenGroups.flat()
+      const tokenTransfers =
+        tokenResult.status === 'fulfilled' ? tokenResult.value.items : Object.freeze([])
       const items = mapEvmIndexedActivity({
         request: input,
         chainId: chain.id,
