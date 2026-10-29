@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useLocation, useSearchParams } from 'react-router-dom'
 import { Icon } from '@iconify/react'
 import type { PortfolioReadModel } from '@/core/portfolio'
 import { findAssetPrice, type AssetPriceReadModel } from '@/core/prices'
@@ -42,7 +42,11 @@ import type { SolanaTransferSubmission } from '@/popup/services/solana-wallet-cl
 import { NearSendForm } from './NearSendForm'
 import { NearTransactionResult } from './NearTransactionResult'
 import type { NearTransferSubmission } from '@/popup/services/near-wallet-client'
-import { readCachedPortfolio, refreshPortfolioFromCache } from '@/popup/services/portfolio-cache'
+import {
+  isPortfolioModelForScope,
+  readCachedPortfolio,
+  refreshPortfolioFromCache
+} from '@/popup/services/portfolio-cache'
 import { buildAddToPrivateEvmPath, type EvmSendSourceMode } from './evm-send-validation'
 import { useWalletActionExecutionMode } from '@/popup/hooks/useWalletActionExecutionMode'
 import { resolveEffectiveActiveAccountIdentity } from '@/popup/lib/effective-active-account'
@@ -292,6 +296,7 @@ function AssetSelection({
 
 export function MultichainSend() {
   const [searchParams] = useSearchParams()
+  const location = useLocation()
   const requestedAssetId = searchParams.get('assetId')
   const requestedSourceMode = searchParams.get('sourceMode')
   const requestedRecipient = searchParams.get('recipient')
@@ -306,10 +311,19 @@ export function MultichainSend() {
   const zcashTotal = useAccountDataStore(state => state.getCurrentBalance()?.total ?? '0')
   const requestSequence = useRef(0)
   const appliedRequestedAssetRef = useRef<string | null>(null)
-  const [model, setModel] = useState<PortfolioReadModel | null>(null)
-  const [assetPrices, setAssetPrices] = useState<AssetPriceReadModel | null>(null)
+  const [modelSnapshot, setModelSnapshot] = useState<{
+    scopeKey: string
+    value: PortfolioReadModel | null
+  } | null>(null)
+  const [assetPriceSnapshot, setAssetPriceSnapshot] = useState<{
+    scopeKey: string
+    value: AssetPriceReadModel | null
+  } | null>(null)
   const [loadStatus, setLoadStatus] = useState<'loading' | 'ready' | 'error'>('loading')
-  const [selection, setSelection] = useState<SendAsset | null>(null)
+  const [selectionSnapshot, setSelectionSnapshot] = useState<{
+    scopeKey: string
+    value: SendAsset
+  } | null>(null)
   const [submission, setSubmission] = useState<SendSubmission | null>(null)
   const [evmSourceSelectorOpen, setEvmSourceSelectorOpen] = useState(false)
   const { activeAccount: storageV2Account } = useActiveAccountNetworks()
@@ -320,6 +334,54 @@ export function MultichainSend() {
   })
   const effectiveWalletId = effectiveAccount?.walletId ?? null
   const effectiveAccountId = effectiveAccount?.accountId ?? null
+  const scopeKey = JSON.stringify([
+    effectiveWalletId,
+    effectiveAccountId,
+    currentNetwork,
+    chainEndpointRuntimeKey
+  ])
+  const selection = selectionSnapshot?.scopeKey === scopeKey ? selectionSnapshot.value : null
+  const setSelection = (value: SendAsset | null) =>
+    setSelectionSnapshot(value ? { scopeKey, value } : null)
+  const navigationSnapshot = location.state as {
+    initialPortfolio?: PortfolioReadModel | null
+    initialPrices?: AssetPriceReadModel | null
+    walletId?: string | null
+    accountId?: string | null
+    network?: string
+    endpointRuntimeKey?: string
+  } | null
+  const initialPortfolio =
+    navigationSnapshot?.walletId === effectiveWalletId &&
+    navigationSnapshot?.accountId === effectiveAccountId &&
+    navigationSnapshot?.network === currentNetwork &&
+    navigationSnapshot?.endpointRuntimeKey === chainEndpointRuntimeKey &&
+    isPortfolioModelForScope(
+      navigationSnapshot?.initialPortfolio ?? null,
+      effectiveWalletId,
+      effectiveAccountId
+    )
+      ? navigationSnapshot.initialPortfolio
+      : null
+  const model = modelSnapshot?.scopeKey === scopeKey ? modelSnapshot.value : null
+  const visibleModel =
+    loadStatus === 'loading' &&
+    initialPortfolio &&
+    (model?.assets.length ?? 0) < initialPortfolio.assets.length
+      ? initialPortfolio
+      : (model ?? initialPortfolio)
+  const initialPrices =
+    initialPortfolio && navigationSnapshot?.initialPrices?.status !== 'error'
+      ? (navigationSnapshot?.initialPrices ?? null)
+      : null
+  const cachedPrices = assetPriceSnapshot?.scopeKey === scopeKey ? assetPriceSnapshot.value : null
+  const assetPrices =
+    cachedPrices &&
+    (!initialPrices ||
+      (cachedPrices.fetchedAt >= initialPrices.fetchedAt &&
+        cachedPrices.quotes.length >= initialPrices.quotes.length))
+      ? cachedPrices
+      : initialPrices
   const evmNetwork = storageV2Account?.networks.find(
     network => network.chain.family === 'evm' && network.privateExecutionAddress
   )
@@ -361,16 +423,16 @@ export function MultichainSend() {
         }
         const cached = await readCachedPortfolio(scope)
         if (request !== requestSequence.current) return
-        if (cached) setModel(cached)
+        if (cached) setModelSnapshot({ scopeKey, value: cached })
         const refreshed = await refreshPortfolioFromCache(scope, cached, { forceRefresh })
         if (request !== requestSequence.current) return
-        setModel(refreshed)
+        setModelSnapshot({ scopeKey, value: refreshed })
         setLoadStatus(refreshed ? 'ready' : 'error')
       } catch {
         if (request === requestSequence.current) setLoadStatus('error')
       }
     },
-    [chainEndpointRuntimeKey, effectiveAccountId, effectiveWalletId]
+    [chainEndpointRuntimeKey, effectiveAccountId, effectiveWalletId, scopeKey]
   )
 
   const readLatest = useCallback(async () => {
@@ -382,18 +444,18 @@ export function MultichainSend() {
         accountId: effectiveAccountId
       })
       if (request !== requestSequence.current) return
-      setModel(latest)
+      setModelSnapshot({ scopeKey, value: latest })
       setLoadStatus(latest ? 'ready' : 'error')
     } catch {
-      if (request === requestSequence.current && !model) setLoadStatus('error')
+      if (request === requestSequence.current && !visibleModel) setLoadStatus('error')
     }
-  }, [effectiveAccountId, effectiveWalletId, model])
+  }, [effectiveAccountId, effectiveWalletId, scopeKey, visibleModel])
 
   useEffect(() => {
     setSelection(null)
     setSubmission(null)
     setEvmSourceSelectorOpen(false)
-    setModel(null)
+    setModelSnapshot(null)
     void load()
     return () => {
       requestSequence.current += 1
@@ -409,22 +471,21 @@ export function MultichainSend() {
     void assetPriceClient
       .getPrices('read')
       .then(prices => {
-        if (!cancelled) setAssetPrices(prices)
+        if (!cancelled && prices && prices.status !== 'error' && prices.quotes.length > 0)
+          setAssetPriceSnapshot({ scopeKey, value: prices })
       })
-      .catch(() => {
-        if (!cancelled) setAssetPrices(null)
-      })
+      .catch(() => {})
     return () => {
       cancelled = true
     }
-  }, [effectiveWalletId, effectiveAccountId])
+  }, [scopeKey])
 
   usePortfolioUpdates(effectiveWalletId, effectiveAccountId, readLatest)
 
   const assets = useMemo<readonly SendAsset[]>(() => {
-    if (!model) return []
-    const chainById = new Map(model.chains.map(chain => [chain.chain.id, chain]))
-    return model.assets.flatMap(asset => {
+    if (!visibleModel) return []
+    const chainById = new Map(visibleModel.chains.map(chain => [chain.chain.id, chain]))
+    return visibleModel.assets.flatMap(asset => {
       const chain = chainById.get(asset.asset.chainId)
       return chain &&
         isSelectableChainFamily(chain.chain.family, __ENABLED_CHAIN_FEATURE_FLAGS__) &&
@@ -436,7 +497,7 @@ export function MultichainSend() {
         ? [{ asset, chain }]
         : []
     })
-  }, [model])
+  }, [visibleModel])
 
   const leaveOnchainResult = useCallback(
     (path: string, shouldOffer: boolean) => {
@@ -473,18 +534,18 @@ export function MultichainSend() {
   useEffect(() => {
     if (
       !requestedAssetId ||
-      !model ||
+      !visibleModel ||
       (requestedSourceMode === 'private' && evmActionMode.loading) ||
       appliedRequestedAssetRef.current === requestedAssetId
     ) {
       return
     }
-    const requested = model.assets.find(asset => asset.asset.id === requestedAssetId)
+    const requested = visibleModel.assets.find(asset => asset.asset.id === requestedAssetId)
     if (!requested) {
       if (loadStatus !== 'loading') appliedRequestedAssetRef.current = requestedAssetId
       return
     }
-    const chain = model.chains.find(item => item.chain.id === requested.asset.chainId)
+    const chain = visibleModel.chains.find(item => item.chain.id === requested.asset.chainId)
     appliedRequestedAssetRef.current = requestedAssetId
     if (chain?.chain.family === 'zcash') {
       navigate('/send/zcash')
@@ -504,7 +565,7 @@ export function MultichainSend() {
     evmActionMode.privateAvailable,
     evmActionMode.loading,
     loadStatus,
-    model,
+    visibleModel,
     navigate,
     requestedAssetId,
     requestedSourceMode,
@@ -614,10 +675,10 @@ export function MultichainSend() {
           ) : undefined
         }
       />
-      {selection?.chain.chain.family === 'evm' && model ? (
+      {selection?.chain.chain.family === 'evm' && visibleModel ? (
         <EvmSendForm
           selection={selection}
-          portfolio={model}
+          portfolio={visibleModel}
           priceUsd={availableUsdPrice(selection.asset, assetPrices)}
           sourceMode={evmSourceMode}
           sourceSelectorOpen={evmSourceSelectorOpen}
@@ -672,7 +733,7 @@ export function MultichainSend() {
           zecPrice={zecPrice}
           prices={assetPrices}
           loadingAdditional={loadStatus === 'loading'}
-          additionalError={loadStatus === 'error' && !model}
+          additionalError={loadStatus === 'error' && !visibleModel}
           onSelectZcash={() => navigate('/send/zcash')}
           onRetry={() => void load(true)}
           onSelect={setSelection}

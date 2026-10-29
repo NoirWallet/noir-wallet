@@ -59,6 +59,7 @@ import { summarizePortfolioFiat } from '../components/portfolio/portfolio-prices
 import { useActiveAccountNetworks } from '../hooks/useActiveAccountNetworks'
 import { useHomePortfolio } from '../hooks/useHomePortfolio'
 import { useSettingsStore } from '@/store/settings-store'
+import { getChainEndpointRuntimeKey } from '@/core/chains/chain-endpoint-settings'
 import { hasAttestedCredentialSession } from '@/core/wallet/credential-session-client'
 import { ZcashSyncProgress } from '../components/common/ZcashSyncProgress'
 import { automaticRefreshSession } from '../services/automatic-refresh-session'
@@ -158,6 +159,19 @@ export function Home() {
     multichainPortfolioEnabled ? effectiveWalletId : null,
     multichainPortfolioEnabled ? effectiveAccountId : null
   )
+  const openSend = () =>
+    navigate.navigate('/send', {
+      state: {
+        initialPortfolio: multichainPortfolio,
+        initialPrices: assetPrices,
+        walletId: effectiveWalletId,
+        accountId: effectiveAccountId,
+        network: currentNetwork,
+        endpointRuntimeKey: getChainEndpointRuntimeKey(
+          useSettingsStore.getState().chainEndpointSettings
+        )
+      }
+    })
   const dappExecutionSupport = useMemo(() => {
     if (!effectiveWalletId || !effectiveAccountId) {
       return Object.freeze({ connected: 0, privateCapable: 0, mainOnly: 0 })
@@ -887,7 +901,7 @@ export function Home() {
           <WalletActionButton
             icon={<Icon icon="lucide:send" width={20} height={20} />}
             label="Send"
-            onClick={() => navigate.navigate('/send')}
+            onClick={openSend}
           />
           <WalletActionButton
             icon={<Icon icon="lucide:arrow-down" width={20} height={20} />}
@@ -1032,9 +1046,9 @@ export function Home() {
                       key={addr.type}
                       role="button"
                       tabIndex={0}
-                      onClick={() => navigate.navigate('/send')}
+                      onClick={openSend}
                       onKeyDown={e => {
-                        if (e.key === 'Enter') navigate.navigate('/send')
+                        if (e.key === 'Enter') openSend()
                       }}
                       className="flex items-center justify-between rounded-lg px-2 py-2 -mx-2 cursor-pointer transition-colors hover:bg-white/5"
                     >
