@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react'
 import { Icon } from '@iconify/react'
 import { PageHeader } from '../../components/common/PageHeader'
-import { InlineError } from '../../components/common/InlineError'
 import { useNavigate } from '../../provider/Router'
 import { Button } from '../../components/ui/button'
 import { zcashWalletRuntimeClient } from '@/popup/services/zcash-wallet-runtime-client'
 import { Switch } from '@/popup/components/ui/switch'
 import { useSettingsStore } from '@/store/settings-store'
+import { toast } from '@/store/toast-store'
 import { EXTENSION_SIDE_PANEL_PATH } from '@/config/extension'
 import {
   EXTENSION_DISPLAY_MODE_STORAGE_KEY,
@@ -24,24 +24,18 @@ function getSidePanelOpenApi(): SidePanelOpenApi | undefined {
   return (chrome as typeof chrome & { sidePanel?: SidePanelOpenApi }).sidePanel
 }
 
-function getErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : 'Failed to change wallet display mode'
-}
-
 export function Settings() {
   const { navigate } = useNavigate()
   const { activeAccount } = useActiveAccountNetworks()
   const isSidePanelSurface =
     new URLSearchParams(window.location.search).get('surface') === 'side-panel'
+  const sidePanelSupported = Boolean(getSidePanelOpenApi())
   const sidePanelMode = useSettingsStore(state => state.sidePanelMode)
   const isSidePanelModeLoaded = useSettingsStore(state => state.isSidePanelModeLoaded)
   const setSidePanelMode = useSettingsStore(state => state.setSidePanelMode)
   const syncSidePanelMode = useSettingsStore(state => state.syncSidePanelMode)
   const loadSidePanelMode = useSettingsStore(state => state.loadSidePanelMode)
   const [isChangingDisplayMode, setIsChangingDisplayMode] = useState(false)
-  const [displayModeError, setDisplayModeError] = useState<string | null>(null)
-  const [initializationError, setInitializationError] = useState<string | null>(null)
-  const [initializationRetry, setInitializationRetry] = useState(0)
   const [isInitializingDisplayMode, setIsInitializingDisplayMode] = useState(true)
   const [currentWindowId, setCurrentWindowId] = useState<number | null>(null)
 
@@ -60,13 +54,12 @@ export function Settings() {
     }
 
     const initializeDisplayMode = async () => {
-      setInitializationError(null)
       setIsInitializingDisplayMode(true)
       await loadSidePanelMode()
       if (isSidePanelSurface) return
 
       const sidePanel = getSidePanelOpenApi()
-      if (!sidePanel) throw new Error('Side panel is not supported by this browser')
+      if (!sidePanel) return
 
       const [currentWindow] = await Promise.all([
         chrome.windows.getCurrent(),
@@ -78,9 +71,7 @@ export function Settings() {
     }
 
     initializeDisplayMode()
-      .catch(error => {
-        if (!disposed) setInitializationError(getErrorMessage(error))
-      })
+      .catch(() => {})
       .finally(() => {
         if (!disposed) setIsInitializingDisplayMode(false)
       })
@@ -89,7 +80,7 @@ export function Settings() {
       disposed = true
       chrome.storage.onChanged.removeListener(handleStorageChanged)
     }
-  }, [initializationRetry, isSidePanelSurface, loadSidePanelMode, syncSidePanelMode])
+  }, [isSidePanelSurface, loadSidePanelMode, syncSidePanelMode])
 
   const menuItems = [
     { label: 'General', action: () => navigate('/general') },
@@ -112,36 +103,31 @@ export function Settings() {
   }
 
   const handleDisplayModeChange = async () => {
-    if (!isSidePanelModeLoaded) return
+    if (!isSidePanelModeLoaded || isChangingDisplayMode) return
 
     const nextSidePanelMode = !sidePanelMode
     const shouldOpenSidePanel = nextSidePanelMode && !isSidePanelSurface
 
     setIsChangingDisplayMode(true)
-    setDisplayModeError(null)
     try {
-      if (shouldOpenSidePanel) {
-        const sidePanel = getSidePanelOpenApi()
-        if (!sidePanel || currentWindowId === null) {
-          throw new Error('Side panel is not ready in the current browser window')
+      let openResult: Promise<boolean> | undefined
+      if (shouldOpenSidePanel && currentWindowId !== null) {
+        // Start within the click gesture; opening is optional once the mode is saved.
+        try {
+          openResult = getSidePanelOpenApi()
+            ?.open({ windowId: currentWindowId })
+            .then(
+              () => true,
+              () => false
+            )
+        } catch {
+          // The toolbar can still open the saved side-panel mode on its next click.
         }
-
-        const openResult = sidePanel.open({ windowId: currentWindowId }).then(
-          () => ({ success: true }) as const,
-          error => ({ success: false, error }) as const
-        )
-        await setSidePanelMode(true)
-        const result = await openResult
-        if (!result.success) {
-          await setSidePanelMode(false)
-          throw result.error
-        }
-        window.close()
-      } else {
-        await setSidePanelMode(nextSidePanelMode)
       }
-    } catch (error) {
-      setDisplayModeError(getErrorMessage(error))
+      await setSidePanelMode(nextSidePanelMode)
+      if (openResult && (await openResult)) window.close()
+    } catch {
+      toast.info('Display mode unchanged.')
     } finally {
       setIsChangingDisplayMode(false)
     }
@@ -152,49 +138,30 @@ export function Settings() {
       <PageHeader title="Settings" showBack />
 
       <div className="page-content space-y-2">
-        <button
-          type="button"
-          role="switch"
-          aria-checked={sidePanelMode}
-          aria-label="Side panel mode"
-          disabled={
-            isChangingDisplayMode ||
-            isInitializingDisplayMode ||
-            !isSidePanelModeLoaded ||
-            (!sidePanelMode && !isSidePanelSurface && currentWindowId === null)
-          }
-          onClick={handleDisplayModeChange}
-          className="w-full p-4 bg-card rounded-xl hover:bg-white/5 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-wait text-left"
-        >
-          <div className="flex items-center justify-between gap-4">
-            <div>
-              <div className="text-sm">Side panel mode</div>
-              <div className="text-xs text-muted mt-1">
-                {sidePanelMode
-                  ? 'Toolbar icon opens the Chrome side panel'
-                  : isSidePanelModeLoaded
-                    ? 'Toolbar icon opens the wallet popup'
-                    : 'Loading wallet display mode'}
+        {sidePanelSupported && (isInitializingDisplayMode || isSidePanelModeLoaded) && (
+          <button
+            type="button"
+            role="switch"
+            aria-checked={sidePanelMode}
+            aria-label="Side panel mode"
+            disabled={isChangingDisplayMode || isInitializingDisplayMode || !isSidePanelModeLoaded}
+            onClick={handleDisplayModeChange}
+            className="w-full p-4 bg-card rounded-xl hover:bg-white/5 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-wait text-left"
+          >
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <div className="text-sm">Side panel mode</div>
+                <div className="text-xs text-muted mt-1">
+                  {sidePanelMode
+                    ? 'Toolbar icon opens the Chrome side panel'
+                    : isSidePanelModeLoaded
+                      ? 'Toolbar icon opens the wallet popup'
+                      : 'Loading wallet display mode'}
+                </div>
               </div>
+              <Switch checked={sidePanelMode} />
             </div>
-            <Switch checked={sidePanelMode} />
-          </div>
-        </button>
-        {initializationError && (
-          <InlineError
-            message={initializationError}
-            onRetry={
-              isSidePanelSurface || getSidePanelOpenApi()
-                ? () => setInitializationRetry(value => value + 1)
-                : undefined
-            }
-            retrying={isInitializingDisplayMode}
-          />
-        )}
-        {displayModeError && (
-          <p role="alert" className="px-1 text-xs text-danger">
-            {displayModeError}
-          </p>
+          </button>
         )}
 
         {menuItems.map((item, index) => (

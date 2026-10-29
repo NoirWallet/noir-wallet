@@ -113,7 +113,7 @@ function AddressActions({
       <button
         type="button"
         aria-label={`Copy ${networkName} ${type} address`}
-        title="Copy address"
+        title={`Copy ${networkName} ${type} address`}
         className="flex size-8 items-center justify-center rounded-lg text-foreground transition-colors hover:bg-foreground/10"
         onClick={() => onCopy(address.value)}
       >
