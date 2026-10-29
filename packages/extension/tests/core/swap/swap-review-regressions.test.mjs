@@ -156,7 +156,7 @@ it('keeps minimum amounts while removing nested provider metadata without changi
     getRheaSwapErrorMessage(
       new RheaSwapClientError('{"message":"Request timed out","path":"/internal"}')
     ),
-    'Request timed out.'
+    'No route found for this swap.'
   )
   assert.equal(
     getRheaSwapErrorMessage(new RheaSwapClientError('Unsupported destination token')),
@@ -164,25 +164,49 @@ it('keeps minimum amounts while removing nested provider metadata without changi
   )
   assert.equal(
     getRheaSwapErrorMessage(
+      new RheaSwapClientError(
+        'No confidential route available: quote failed (400): {"msg":"transport timeout","code":"QUOTE_TIMEOUT","reason":"quote_timeout","retryAfter":6500}'
+      )
+    ),
+    'No route found for this swap.'
+  )
+  assert.equal(
+    getRheaSwapErrorMessage(
+      new RheaSwapClientError(
+        'No confidential route available: quote failed (400): {"msg":"No route found","timeout":6000}'
+      )
+    ),
+    'no route'
+  )
+  assert.equal(
+    getRheaSwapErrorMessage(
+      new RheaSwapClientError(
+        'No confidential route available: quote failed (400): {"msg":"No route found","error":{"reason":"quote_timeout"}}'
+      )
+    ),
+    'No route found for this swap.'
+  )
+  assert.equal(
+    getRheaSwapErrorMessage(
       new RheaSwapClientError('No confidential route available: Cross-chain quote failed')
     ),
-    'No swap route is available for this transfer.'
+    'no route'
   )
   assert.equal(
     getRheaSwapErrorMessage(new RheaSwapClientError('confidential_route_unavailable')),
-    'No swap route is available for this transfer.'
+    'no route'
   )
   assert.equal(
     getRheaSwapErrorMessage(
       new RheaSwapClientError('No supported route currently. Please try again.')
     ),
-    'No swap route is available for this transfer.'
+    'no route'
   )
   assert.equal(
     getRheaSwapErrorMessage(
       new RheaSwapClientError('Quote response does not contain a valid best route')
     ),
-    'An unexpected error occurred. Please try again.'
+    'no route'
   )
 })
 
@@ -222,7 +246,7 @@ it('keeps provider minimums from multiple route failures without returning provi
   assert.equal(getRheaSwapMinimumAmountMessage('minimum swap amount is $1,000.1234567'), null)
   assert.equal(
     getRheaSwapErrorMessage(new RheaSwapClientError('Request timed out')),
-    'Request timed out.'
+    'No route found for this swap.'
   )
 })
 

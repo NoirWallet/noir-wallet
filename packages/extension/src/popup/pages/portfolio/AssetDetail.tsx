@@ -92,7 +92,13 @@ export function AssetDetail() {
   const [priceStatus, setPriceStatus] = useState<'loading' | 'ready' | 'error'>('loading')
   const [history, setHistory] = useState<AssetMarketHistoryReadModel | null>(null)
   const [historyRange, setHistoryRange] = useState<AssetMarketHistoryRange>('1d')
-  const [historyStatus, setHistoryStatus] = useState<'loading' | 'ready' | 'error'>('loading')
+  const [historyRanges, setHistoryRanges] = useState<{
+    assetId: string
+    ranges: readonly AssetMarketHistoryRange[]
+  } | null>(null)
+  const [historyStatus, setHistoryStatus] = useState<'loading' | 'ready' | 'unsupported' | 'error'>(
+    'loading'
+  )
   const [historyRetry, setHistoryRetry] = useState(0)
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
   const [bitcoinCatalog, setBitcoinCatalog] = useState<BitcoinAddressBalanceCatalogView | null>(
@@ -341,7 +347,9 @@ export function AssetDetail() {
     if (!assetId) return
     const request = ++historyRequestSequence.current
     let usableHistory = false
-    setHistory(null)
+    setHistory(current =>
+      current?.assetId === assetId && current.range === historyRange ? current : null
+    )
     setHistoryStatus('loading')
     const apply = (value: AssetMarketHistoryReadModel | null) => {
       if (request !== historyRequestSequence.current || !value) return
@@ -351,10 +359,38 @@ export function AssetDetail() {
     }
     const loadHistory = async () => {
       try {
-        apply(await assetMarketHistoryClient.getHistory(assetId, historyRange, 'read'))
+        const cached = await assetMarketHistoryClient.getHistory(assetId, historyRange, 'read')
+        if (request !== historyRequestSequence.current) return
+        if (cached.status === 'unsupported') {
+          setHistory(null)
+          setHistoryStatus('unsupported')
+          return
+        }
+        setHistoryRanges({ assetId, ranges: cached.availableRanges })
+        if (!cached.availableRanges.includes(historyRange)) {
+          setHistoryRange(cached.availableRanges[0])
+          return
+        }
+        apply(cached.history)
       } catch {}
       try {
-        apply(await assetMarketHistoryClient.getHistory(assetId, historyRange, 'refresh'))
+        const refreshed = await assetMarketHistoryClient.getHistory(
+          assetId,
+          historyRange,
+          'refresh'
+        )
+        if (request !== historyRequestSequence.current) return
+        if (refreshed.status === 'unsupported') {
+          setHistory(null)
+          setHistoryStatus('unsupported')
+          return
+        }
+        setHistoryRanges({ assetId, ranges: refreshed.availableRanges })
+        if (!refreshed.availableRanges.includes(historyRange)) {
+          setHistoryRange(refreshed.availableRanges[0])
+          return
+        }
+        apply(refreshed.history)
       } catch {}
       if (request === historyRequestSequence.current && !usableHistory) setHistoryStatus('error')
     }
@@ -749,6 +785,8 @@ export function AssetDetail() {
               quote?.marketChange?.freshness === 'stale' ||
               history?.freshness === 'stale'
             }
+            showRanges={historyStatus !== 'unsupported'}
+            availableRanges={historyRanges?.assetId === asset?.asset.id ? historyRanges.ranges : []}
             onRangeChange={setHistoryRange}
           />
           {historyStatus === 'error' && (

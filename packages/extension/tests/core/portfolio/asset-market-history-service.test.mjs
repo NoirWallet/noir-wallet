@@ -10,9 +10,11 @@ import {
 import { parseAssetMarketHistoryReadModel } from '../../../src/core/prices/index.ts'
 import {
   COIN_GECKO_MARKET_CHART_URL,
+  COIN_GECKO_ASSET_PLATFORMS_URL,
   COINMARKETCAP_KEYLESS_KLINE_URL,
   GECKO_TERMINAL_POOL_OHLCV_URL,
-  AssetMarketHistoryService
+  AssetMarketHistoryService,
+  UnsupportedAssetMarketHistoryError
 } from '../../../src/infrastructure/prices/index.ts'
 
 function createMappings(network = 'mainnet') {
@@ -154,6 +156,235 @@ test('keeps additional mappings on CoinGecko without a shared bundled asset', ()
   )
 })
 
+test('derives contract history sources from registered chain and address regardless of Token symbol', () => {
+  const definitions = [
+    ['eip155:137', '0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'],
+    ['eip155:1', '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'],
+    ['eip155:137', '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb']
+  ].map(([chainId, reference]) => ({
+    chainId,
+    namespace: 'erc20',
+    reference,
+    kind: 'token',
+    metadata: { name: 'Same name', symbol: 'SAME', decimals: 6 },
+    source: 'user-added',
+    verification: 'user-approved'
+  }))
+  const chains = createInitialProductChainRegistry('mainnet')
+  const assets = createAssetRegistry(chains, definitions)
+  const mappings = getAssetMarketHistorySourceMappings('mainnet', assets)
+  expect(mappings).toHaveLength(3)
+  expect(new Set(mappings.map(mapping => mapping.marketAssetId)).size).toBe(3)
+  expect(mappings).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        assetId: 'eip155:137/erc20:0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        primary: null,
+        fallback: {
+          source: 'coingecko-contract',
+          chainId: 'eip155:137',
+          contractAddress: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+        }
+      }),
+      expect.objectContaining({
+        assetId: 'eip155:1/erc20:0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        primary: null,
+        fallback: {
+          source: 'coingecko-contract',
+          chainId: 'eip155:1',
+          contractAddress: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+        }
+      }),
+      expect.objectContaining({
+        assetId: 'eip155:137/erc20:0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+        primary: null,
+        fallback: {
+          source: 'coingecko-contract',
+          chainId: 'eip155:137',
+          contractAddress: '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+        }
+      })
+    ])
+  )
+})
+
+test('isolates discovered contract history by chain and address across persisted cache reloads', async () => {
+  const chains = createInitialProductChainRegistry('mainnet')
+  const definitions = [
+    ['eip155:137', '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'],
+    ['eip155:1', '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'],
+    ['eip155:137', '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb']
+  ].map(([chainId, reference]) => ({
+    chainId,
+    namespace: 'erc20',
+    reference,
+    kind: 'token',
+    metadata: { name: 'Same name', symbol: 'SAME', decimals: 6 },
+    source: 'user-added',
+    verification: 'user-approved'
+  }))
+  const mappings = getAssetMarketHistorySourceMappings(
+    'mainnet',
+    createAssetRegistry(chains, definitions)
+  )
+  let stored = null
+  let platformRequests = 0
+  const historyRequests = []
+  const cache = {
+    get: async () => stored,
+    put: async value => {
+      stored = value
+    }
+  }
+  const service = new AssetMarketHistoryService({
+    mappings,
+    cache,
+    now: () => 10_000,
+    fetch: async input => {
+      const url = new URL(String(input))
+      if (url.href === COIN_GECKO_ASSET_PLATFORMS_URL) {
+        platformRequests += 1
+        return new Response(
+          JSON.stringify([
+            { id: 'polygon-pos', chain_identifier: 137 },
+            { id: 'ethereum', chain_identifier: 1 },
+            { id: 'shiden network', chain_identifier: 336 },
+            { id: '', chain_identifier: null }
+          ])
+        )
+      }
+      historyRequests.push(url)
+      const firstPrice = url.pathname.includes('/ethereum/')
+        ? 200
+        : url.pathname.includes('/0xbb')
+          ? 300
+          : 100
+      return new Response(
+        JSON.stringify({
+          prices: [
+            [1_000, firstPrice],
+            [2_000, firstPrice + 1]
+          ]
+        })
+      )
+    }
+  })
+  const results = await Promise.all(
+    mappings.map(mapping => service.refresh(mapping.assetId, 'all'))
+  )
+  expect(results.map(result => result.points[0].priceUsd)).toEqual(['100', '200', '300'])
+  expect(platformRequests).toBe(1)
+  expect(historyRequests.map(url => url.pathname)).toEqual(
+    expect.arrayContaining([
+      '/api/v3/coins/polygon-pos/contract/0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/market_chart',
+      '/api/v3/coins/ethereum/contract/0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/market_chart',
+      '/api/v3/coins/polygon-pos/contract/0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/market_chart'
+    ])
+  )
+  for (const url of historyRequests) {
+    expect(url.searchParams.get('days')).toBe('365')
+    expect(url.searchParams.has('interval')).toBe(false)
+  }
+  expect(stored.entries).toHaveLength(3)
+  const reloaded = new AssetMarketHistoryService({
+    mappings,
+    cache,
+    now: () => 10_000,
+    fetch: async () => {
+      throw new Error('Fresh persisted history must not request the provider')
+    }
+  })
+  for (const [index, mapping] of mappings.entries()) {
+    await expect(reloaded.refresh(mapping.assetId, 'all')).resolves.toEqual(results[index])
+  }
+  expect(
+    () =>
+      new AssetMarketHistoryService({
+        mappings: [{ ...mappings[0], fallback: mappings[1].fallback }],
+        cache
+      })
+  ).toThrow('Invalid market history source mapping')
+})
+
+test('keeps contract discovery retryable after rate limiting and distinguishes missing assets', async () => {
+  const chains = createInitialProductChainRegistry('mainnet')
+  const assets = createAssetRegistry(chains, [
+    {
+      chainId: 'eip155:137',
+      namespace: 'erc20',
+      reference: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      kind: 'token',
+      metadata: { name: 'Custom', symbol: 'CUSTOM', decimals: 18 },
+      source: 'user-added',
+      verification: 'user-approved'
+    }
+  ])
+  const mappings = getAssetMarketHistorySourceMappings('mainnet', assets)
+  const assetId = mappings[0].assetId
+  let now = 10_000
+  let catalogStatus = 429
+  let includePlatform = false
+  let historyStatus = 404
+  let stored = null
+  const service = new AssetMarketHistoryService({
+    mappings,
+    now: () => now,
+    cache: {
+      get: async () => stored,
+      put: async value => {
+        stored = value
+      }
+    },
+    fetch: async input => {
+      if (String(input) === COIN_GECKO_ASSET_PLATFORMS_URL) {
+        return new Response(
+          JSON.stringify([
+            { id: 'ethereum', chain_identifier: 1 },
+            ...(includePlatform ? [{ id: 'polygon-pos', chain_identifier: 137 }] : [])
+          ]),
+          { status: catalogStatus }
+        )
+      }
+      return new Response(
+        JSON.stringify({
+          prices: [
+            [1_000, 10],
+            [2_000, 11]
+          ]
+        }),
+        { status: historyStatus }
+      )
+    }
+  })
+  await expect(service.refresh(assetId, '1d')).resolves.toBeNull()
+  catalogStatus = 200
+  await expect(service.refresh(assetId, '1d')).rejects.toBeInstanceOf(
+    UnsupportedAssetMarketHistoryError
+  )
+  includePlatform = true
+  now += 5 * 60_000 + 1
+  await expect(service.refresh(assetId, '1d')).rejects.toBeInstanceOf(
+    UnsupportedAssetMarketHistoryError
+  )
+  historyStatus = 429
+  await expect(service.refresh(assetId, '1d')).resolves.toBeNull()
+  historyStatus = 200
+  await expect(service.refresh(assetId, '1d')).resolves.toMatchObject({
+    assetId,
+    freshness: 'fresh',
+    points: [
+      { timestamp: 1_000, priceUsd: '10' },
+      { timestamp: 2_000, priceUsd: '11' }
+    ]
+  })
+  now += 20 * 60_000
+  historyStatus = 404
+  await expect(service.refresh(assetId, '1d')).resolves.toMatchObject({
+    assetId,
+    freshness: 'stale'
+  })
+})
+
 test('loads bounded ordered history, caches it, and scopes the response to the requested asset', async () => {
   const mapping = createMappings().find(item => item.marketAssetId === 'ethereum')
   expect(mapping).toBeTruthy()
@@ -184,6 +415,10 @@ test('loads bounded ordered history, caches it, and scopes the response to the r
   })
 
   const refreshed = await service.refresh(mapping.assetId, '1d')
+  expect(service.supportsAsset(mapping.assetId)).toBe(true)
+  expect(service.supportsAsset('eip155:137/erc20:0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')).toBe(
+    false
+  )
   expect(parseAssetMarketHistoryReadModel(refreshed)).toMatchObject({
     assetId: mapping.assetId,
     source: 'geckoterminal-keyless',

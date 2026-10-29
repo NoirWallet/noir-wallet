@@ -35,7 +35,9 @@ test('notifies Popup listeners when a persisted asset price cache changes', () =
   storageChanges.emit({ asset_price_cache_v1: { newValue: {} } }, 'local')
   storageChanges.emit({ asset_market_change_cache_v1: { newValue: {} } }, 'local')
   storageChanges.emit({ defi_llama_market_change_cache_v1: { newValue: {} } }, 'local')
-  expect(notifications).toBe(3)
+  storageChanges.emit({ user_asset_market_cache_v1: { newValue: {} } }, 'local')
+  storageChanges.emit({ user_asset_one_click_price_cache_v1: { newValue: {} } }, 'local')
+  expect(notifications).toBe(5)
 
   unsubscribe()
   expect(storageChanges.listenerCount()).toBe(0)

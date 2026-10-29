@@ -58,6 +58,35 @@ function readSwapErrorReason(message: string, depth = 0): string {
   return message.trim().replace(/^HTTP \d{3}:\s*/i, '')
 }
 
+function hasSwapTimeoutReason(value: unknown, depth = 0): boolean {
+  if (depth >= 6) return false
+  if (typeof value === 'string') {
+    const start = value.indexOf('{')
+    const reason = start === -1 ? value : value.slice(0, start)
+    if (
+      /\b(?:quote_timeout|request timed? out|transport (?:timed? out|timeout)|quote (?:timed? out|timeout)|deadline exceeded)\b/i.test(
+        reason
+      )
+    ) {
+      return true
+    }
+    if (start === -1) return false
+    try {
+      return hasSwapTimeoutReason(
+        JSON.parse(value.slice(start, value.lastIndexOf('}') + 1)),
+        depth + 1
+      )
+    } catch {
+      return false
+    }
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const record = value as Record<string, unknown>
+  return ['message', 'msg', 'reason', 'error', 'code', 'apiCode'].some(key =>
+    hasSwapTimeoutReason(record[key], depth + 1)
+  )
+}
+
 export function getRheaSwapErrorMessage(error: unknown): string {
   if (!(error instanceof RheaSwapClientError)) return classifyError(error).userMessage
   const minimum = getRheaSwapMinimumAmountMessage(error.message)
@@ -66,12 +95,15 @@ export function getRheaSwapErrorMessage(error: unknown): string {
   if (/unsupported destination token|destinationtoken.*not supported/i.test(reason)) {
     return 'This destination is unavailable for this swap. Choose another asset.'
   }
+  if (hasSwapTimeoutReason(error.message)) {
+    return 'No route found for this swap.'
+  }
   if (
-    /\b(?:confidential_route_unavailable|route_unavailable|no (?:confidential |supported |swap )?route(?: is)? available|no supported route currently)\b/i.test(
+    /\b(?:confidential_route_unavailable|route_unavailable|no (?:confidential |supported |swap )?route|route not found|no liquidity|quote response does not contain a valid best route)\b/i.test(
       reason
     )
   ) {
-    return 'No swap route is available for this transfer.'
+    return 'no route'
   }
   return classifyError(new Error(reason)).userMessage
 }

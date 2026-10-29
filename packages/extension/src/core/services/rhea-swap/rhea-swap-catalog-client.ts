@@ -8,6 +8,7 @@ import {
 } from '@rhea-finance/cross-chain-aggregation-dex'
 import { DedupPromise } from '@/lib/async-utils'
 import { RHEA_SWAP_TOKEN_CATALOG_TTL_MS, toRheaSwapToken } from './rhea-swap-model'
+import { createRheaSwapFetch } from './rhea-swap-fetch'
 
 /** SDK 2.0.6 drops malformed rows and caches empty lists; neither proves exclusion. */
 export class RheaSwapCatalogClient extends SwapClient {
@@ -19,7 +20,7 @@ export class RheaSwapCatalogClient extends SwapClient {
   private readonly catalogNow: () => number
 
   constructor(config: SwapClientConfig) {
-    super(config)
+    super({ ...config, fetch: createRheaSwapFetch(config.fetch ?? globalThis.fetch) })
     this.catalogNow = config.now ?? Date.now
   }
 

@@ -51,7 +51,11 @@ import {
   resolveBitcoinFeatureRuntimePolicy,
   resolveEvmFeatureRuntimePolicy
 } from '@/core/chains/feature-runtime-policy'
-import { clearHomeTransactionFocus, resolveHomeDefaultTab } from '../services/home-navigation'
+import {
+  clearHomeTransactionFocus,
+  homeTabPath,
+  resolveHomeDefaultTab
+} from '../services/home-navigation'
 import { assetPriceClient } from '../services/asset-price-client'
 import { parseAssetId } from '@/core/chains/registry'
 import type { AssetPriceReadModel } from '@/core/prices'
@@ -116,13 +120,12 @@ export function Home() {
   const [assetPrices, setAssetPrices] = useState<AssetPriceReadModel | null>(null)
   const assetPricesRef = useRef<AssetPriceReadModel | null>(null)
   const [assetPriceStatus, setAssetPriceStatus] = useState<'loading' | 'ready' | 'error'>('loading')
-  const [activeTab, setActiveTab] = useState<'assets' | 'lending' | 'activity'>(() =>
-    resolveHomeDefaultTab(location.search)
-  )
   const [focusTransactionId, setFocusTransactionId] = useState<string | null>(() =>
     new URLSearchParams(location.search).get('transactionId')
   )
   useEffect(() => {
+    const transactionId = new URLSearchParams(location.search).get('transactionId')
+    if (transactionId) setFocusTransactionId(transactionId)
     const cleanPath = clearHomeTransactionFocus(location.search)
     if (cleanPath !== null) navigate.replace(cleanPath)
   }, [location.search, navigate])
@@ -212,6 +215,13 @@ export function Home() {
       ['zcash', 'evm', 'bitcoin'].includes(network.chain.family)
     ) ?? Boolean(currentAccount)
   const supportsLending = currentNetwork === 'mainnet' && !isHardwareWallet && supportsSwap
+  const [activeTab, setActiveTab] = useState<'assets' | 'lending' | 'activity'>(() =>
+    resolveHomeDefaultTab(location.search, supportsLending)
+  )
+  useEffect(() => {
+    const tab = resolveHomeDefaultTab(location.search, supportsLending)
+    setActiveTab(tab)
+  }, [location.search, supportsLending])
   const lendingContext = useMemo<LendingAccountContext | null>(() => {
     if (!supportsLending || !effectiveWalletId || !effectiveAccountId) return null
     const identity: LendingAccountContext['identity'] | null = supportsZcash
@@ -931,6 +941,9 @@ export function Home() {
           onValueChange={value => {
             if (value === 'assets' || value === 'lending' || value === 'activity') {
               setActiveTab(value)
+              if (value !== 'activity') setFocusTransactionId(null)
+              const path = homeTabPath(location.search, value)
+              if (path !== `${location.pathname}${location.search}`) navigate.replace(path)
             }
           }}
           className="relative w-full gap-0"

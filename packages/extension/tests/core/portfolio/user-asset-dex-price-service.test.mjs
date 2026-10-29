@@ -124,6 +124,116 @@ test('discovers an exact custom Token Pool and serves its validated price and 24
   expect(requests).toHaveLength(1)
 })
 
+test('refreshes a newly added Token without requesting older Tokens or losing their cached prices', async () => {
+  const oldToken = '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+  const oldAssetId = `eip155:1/erc20:${oldToken}`
+  const pool = mapping()
+  let discoveredPool = null
+  let marketSnapshot = {
+    version: 1,
+    fetchedAt: NOW,
+    quotes: [
+      {
+        marketAssetId: `ua-1-${oldToken.slice(2)}`,
+        percent24h: '0',
+        observedPriceUsd: '1.1',
+        fetchedAt: NOW
+      }
+    ]
+  }
+  let fallbackSnapshot = {
+    version: 1,
+    fetchedAt: NOW - 61_000,
+    quotes: [{ assetId: oldAssetId, priceUsd: '1.1', sourceUpdatedAt: NOW }]
+  }
+  const discovered = []
+  const pairRequests = []
+  const fallbackRequests = []
+  const fallback = new OneClickAssetPriceService({
+    mappings: [oldToken, TOKEN].map(contract => ({
+      assetId: `eip155:1/erc20:${contract}`,
+      marketAssetId: `ua-1-${contract.slice(2)}`,
+      sourceBlockchain: 'eth',
+      sourceContractAddress: contract,
+      sourceDecimals: 18
+    })),
+    cache: {
+      get: async () => fallbackSnapshot,
+      put: async value => { fallbackSnapshot = value }
+    },
+    now: () => NOW,
+    fetch: async () => {
+      fallbackRequests.push('tokens')
+      return new Response(JSON.stringify([
+        {
+          assetId: 'old', blockchain: 'eth', contractAddress: oldToken,
+          decimals: 18, price: fallbackRequests.length === 1 ? -1 : 1.1,
+          priceUpdatedAt: new Date(NOW).toISOString()
+        },
+        {
+          assetId: 'new', blockchain: 'eth', contractAddress: TOKEN,
+          decimals: 18, price: 1.25, priceUpdatedAt: new Date(NOW).toISOString()
+        }
+      ]))
+    }
+  })
+  const service = new UserAssetDexPriceService({
+    assetIds: [oldAssetId, ASSET_ID],
+    resolvePolicy: getUserAssetDexPoolDiscoveryPolicy,
+    discovery: {
+      discover: async assetId => {
+        discovered.push(assetId)
+        discoveredPool = pool
+        return { status: 'available', source: 'network', pool, observedPriceUsd: '1.25' }
+      }
+    },
+    poolCache: {
+      get: async assetId => assetId === ASSET_ID ? discoveredPool : null,
+      put: async () => {},
+      delete: async () => {}
+    },
+    marketCache: {
+      get: async () => marketSnapshot,
+      put: async value => { marketSnapshot = value }
+    },
+    fallback,
+    now: () => NOW,
+    fetch: async url => {
+      pairRequests.push(String(url))
+      return new Response(JSON.stringify({ pairs: [{
+        chainId: pool.dexScreenerChainId,
+        dexId: pool.dexId,
+        pairAddress: pool.pairAddress,
+        baseToken: { address: pool.baseTokenAddress },
+        quoteToken: { address: pool.quoteTokenAddress },
+        priceUsd: '1.24',
+        priceChange: { h24: 2.5 },
+        liquidity: { usd: 500_000 },
+        volume: { h24: 50_000 }
+      }] }))
+    }
+  })
+
+  await expect(service.refresh(ASSET_ID)).resolves.toMatchObject({
+    status: 'ready',
+    quotes: [
+      { assetId: oldAssetId, priceUsd: '1.1' },
+      { assetId: ASSET_ID, priceUsd: '1.24' }
+    ]
+  })
+  expect(discovered).toEqual([ASSET_ID])
+  expect(pairRequests).toEqual([`${DEX_SCREENER_PAIR_URL}/ethereum/${PAIR}`])
+  expect(fallbackRequests).toEqual(['tokens'])
+  expect(fallbackSnapshot.fetchedAt).toBe(NOW - 61_000)
+  expect(fallbackSnapshot.quotes).toEqual(expect.arrayContaining([
+    expect.objectContaining({ assetId: oldAssetId, priceUsd: '1.1' })
+  ]))
+  expect(marketSnapshot.quotes).toHaveLength(2)
+  await fallback.refresh()
+  expect(fallbackRequests).toEqual(['tokens', 'tokens'])
+  expect(fallbackSnapshot.fetchedAt).toBe(NOW)
+})
+
 test('does not invent prices for testnet or for assets without a qualified Pool', async () => {
   const testnetAsset = 'eip155:11155111/erc20:0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
   let discoveryCount = 0

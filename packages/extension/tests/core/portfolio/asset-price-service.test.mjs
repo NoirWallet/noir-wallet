@@ -69,6 +69,16 @@ test('refreshes only cached custom prices while viewing a bundled asset', async 
   const calls = []
   const service = new BackgroundAssetPriceService(
     {
+      readCached: async () => {
+        calls.push('bundled-price-read')
+        return {
+          source: 'wallet-market-data',
+          status: 'error',
+          fetchedAt: 1,
+          quotes: [],
+          missingAssetIds: []
+        }
+      },
       refresh: async () => ({
         source: 'wallet-market-data',
         status: 'error',
@@ -77,7 +87,13 @@ test('refreshes only cached custom prices while viewing a bundled asset', async 
         missingAssetIds: []
       })
     },
-    { refresh: async () => ({ fetchedAt: 1, quotes: [], missingAssetIds: [] }) },
+    {
+      readCached: async () => {
+        calls.push('bundled-market-read')
+        return { fetchedAt: 1, quotes: [], missingAssetIds: [] }
+      },
+      refresh: async () => ({ fetchedAt: 1, quotes: [], missingAssetIds: [] })
+    },
     undefined,
     {
       hasAsset: assetId => assetId.toLowerCase() === customAssetId,
@@ -85,8 +101,8 @@ test('refreshes only cached custom prices while viewing a bundled asset', async 
         calls.push('read')
         return userModel
       },
-      refresh: async () => {
-        calls.push('refresh')
+      refresh: async assetId => {
+        calls.push(assetId ?? 'refresh')
         return userModel
       }
     }
@@ -95,11 +111,17 @@ test('refreshes only cached custom prices while viewing a bundled asset', async 
   await service.refresh('eip155:1/slip44:60')
   expect(calls).toEqual(['read'])
   await service.refresh(customAssetId)
-  expect(calls).toEqual(['read', 'refresh'])
+  expect(calls).toHaveLength(4)
+  expect(calls).toEqual(expect.arrayContaining([
+    'read', 'bundled-price-read', 'bundled-market-read', customAssetId
+  ]))
   await service.refresh(customAssetId.toUpperCase())
-  expect(calls).toEqual(['read', 'refresh', 'refresh'])
+  expect(calls).toHaveLength(7)
+  expect(calls).toContain(customAssetId.toUpperCase())
+  expect(calls.filter(call => call === 'bundled-price-read')).toHaveLength(2)
+  expect(calls.filter(call => call === 'bundled-market-read')).toHaveLength(2)
   await service.refresh()
-  expect(calls).toEqual(['read', 'refresh', 'refresh', 'refresh'])
+  expect(calls.at(-1)).toBe('refresh')
 })
 
 test('maps only canonical product assets to explicit 1Click sources on both builds', () => {

@@ -59,6 +59,7 @@ export function TokenSelector({
   const [fetchedLoading, setFetchedLoading] = useState(providedTokens === undefined)
   const [selectionTraceId] = useState(() => createDebugRequestId('token-selector'))
   const previousRows = useRef<{ filter: string; keys: readonly string[] } | null>(null)
+  const [renderWindow, setRenderWindow] = useState({ filter: 'all:', count: MAX_RENDERED_TOKENS })
   const hasProvidedTokens = providedTokens !== undefined
   const tokens = useMemo(
     () =>
@@ -110,8 +111,13 @@ export function TokenSelector({
       : 'all'
   const selectedNetwork = networkOptions.find(option => option.id === effectiveBlockchain)
   const selectedNetworkLabel = selectedNetwork?.label ?? 'All Networks'
+  const filterKey = `${effectiveBlockchain}:${search}`
   const filteredTokens = useMemo(() => {
     const startedAt = performance.now()
+    const previous =
+      stableCatalogOrder && !search && previousRows.current?.filter === filterKey
+        ? new Map(previousRows.current.keys.map((key, index) => [key, index]))
+        : undefined
     const ranked = [
       ...sortTokensByBalanceValue(
         tokens.filter(token => {
@@ -120,33 +126,16 @@ export function TokenSelector({
             return false
           return matchesSwapTokenSearch(token, search)
         }),
-        balances
+        balances,
+        previous
       )
     ].sort((left, right) => compareSwapTokenSearchRelevance(left, right, search))
-    const filter = `${effectiveBlockchain}:${search}`
-    const previous =
-      stableCatalogOrder && !search && previousRows.current?.filter === filter
-        ? new Map(previousRows.current.keys.map((key, index) => [key, index]))
-        : null
-    const filtered = previous
-      ? ranked.sort((left, right) => {
-          const leftIndex = previous.get(`${left.blockchain}:${left.assetId}`)
-          const rightIndex = previous.get(`${right.blockchain}:${right.assetId}`)
-          return leftIndex === undefined
-            ? rightIndex === undefined
-              ? 0
-              : 1
-            : rightIndex === undefined
-              ? -1
-              : leftIndex - rightIndex
-        })
-      : ranked
     logDebugTiming(
       selectionTraceId,
-      `filter-sort input=${tokens.length} output=${filtered.length} queryLength=${search.length}`,
+      `filter-sort input=${tokens.length} output=${ranked.length} queryLength=${search.length}`,
       startedAt
     )
-    return filtered
+    return ranked
   }, [
     tokens,
     excludeAssetId,
@@ -154,15 +143,17 @@ export function TokenSelector({
     search,
     balances,
     selectionTraceId,
-    stableCatalogOrder
+    stableCatalogOrder,
+    filterKey
   ])
   useEffect(() => {
     previousRows.current = {
-      filter: `${effectiveBlockchain}:${search}`,
+      filter: filterKey,
       keys: filteredTokens.map(token => `${token.blockchain}:${token.assetId}`)
     }
-  }, [effectiveBlockchain, search, filteredTokens])
-  const visibleTokens = filteredTokens.slice(0, MAX_RENDERED_TOKENS)
+  }, [filterKey, filteredTokens])
+  const visibleLimit = renderWindow.filter === filterKey ? renderWindow.count : MAX_RENDERED_TOKENS
+  const visibleTokens = filteredTokens.slice(0, visibleLimit)
 
   return (
     <div className="h-[60vh] flex flex-col">
@@ -252,7 +243,18 @@ export function TokenSelector({
           </p>
         )}
       </div>
-      <div className="flex-1 overflow-y-auto">
+      <div
+        className="flex-1 overflow-y-auto"
+        onScroll={event => {
+          const list = event.currentTarget
+          if (
+            visibleLimit < filteredTokens.length &&
+            list.scrollHeight - list.scrollTop - list.clientHeight < 200
+          ) {
+            setRenderWindow({ filter: filterKey, count: visibleLimit + MAX_RENDERED_TOKENS })
+          }
+        }}
+      >
         {loading ? (
           <ListSkeleton rows={5} label="Loading tokens" className="px-1" />
         ) : filteredTokens.length === 0 ? (

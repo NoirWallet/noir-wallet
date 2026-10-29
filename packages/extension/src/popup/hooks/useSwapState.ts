@@ -366,58 +366,65 @@ export function useSwapState(
     },
     []
   )
-  const switchTokens = useCallback(async () => {
-    if (!tokenIn || !tokenOut || switchingTokens.current) return
-    const sequence = ++switchRequestSequence.current
-    switchingTokens.current = true
-    setIsSwitchingTokens(true)
-    try {
-      const isCancelled = () =>
-        sequence !== switchRequestSequence.current ||
-        activePair.current.tokenIn !== tokenIn ||
-        activePair.current.tokenOut !== tokenOut
-      const pair = await loadReversedSwapPair({
-        tokenIn,
-        tokenOut,
-        isCancelled,
-        loadSources: () =>
-          loadTokenCatalogByChain(
-            'from',
-            [tokenOut.tokenListChainId],
-            false,
-            tokens => setSourceCatalog(previous => mergeTokenCatalogs(previous, tokens)),
-            isCancelled
-          ),
-        loadDestinations: () =>
-          loadTokenCatalogByChain(
-            'cross-chain-to',
-            [tokenIn.tokenListChainId],
-            false,
-            tokens =>
-              setCrossChainDestinationCatalog(previous => mergeTokenCatalogs(previous, tokens)),
-            isCancelled
-          )
-      })
-      if (!pair) return
-      setTokenIn(pair.tokenIn)
-      setSelectedSourceAssetId(pair.tokenIn.assetId)
-      setTokenOut(pair.tokenOut)
-      if (preferenceScope)
-        setSavedTokenSelection(preferenceScope, {
-          tokenInId: pair.tokenIn.assetId,
-          tokenOutId: pair.tokenOut.assetId
+  const switchTokens = useCallback(
+    async (options?: { isCancelled?: () => boolean; onReversed?: () => void }) => {
+      if (!tokenIn || !tokenOut || switchingTokens.current) return
+      const sequence = ++switchRequestSequence.current
+      switchingTokens.current = true
+      setIsSwitchingTokens(true)
+      try {
+        const isCancelled = () =>
+          sequence !== switchRequestSequence.current ||
+          activePair.current.tokenIn !== tokenIn ||
+          activePair.current.tokenOut !== tokenOut ||
+          options?.isCancelled?.() === true
+        const pair = await loadReversedSwapPair({
+          tokenIn,
+          tokenOut,
+          isCancelled,
+          loadSources: () =>
+            loadTokenCatalogByChain(
+              'from',
+              [tokenOut.tokenListChainId],
+              false,
+              tokens => setSourceCatalog(previous => mergeTokenCatalogs(previous, tokens)),
+              isCancelled
+            ),
+          loadDestinations: () =>
+            loadTokenCatalogByChain(
+              'cross-chain-to',
+              [tokenIn.tokenListChainId],
+              false,
+              tokens =>
+                setCrossChainDestinationCatalog(previous => mergeTokenCatalogs(previous, tokens)),
+              isCancelled
+            )
         })
+        if (!pair || isCancelled()) return
+        options?.onReversed?.()
+        setTokenIn(pair.tokenIn)
+        setSelectedSourceAssetId(pair.tokenIn.assetId)
+        setTokenOut(pair.tokenOut)
+        if (preferenceScope)
+          setSavedTokenSelection(preferenceScope, {
+            tokenInId: pair.tokenIn.assetId,
+            tokenOutId: pair.tokenOut.assetId
+          })
 
-      setAmountIn('')
-      setAmountOut('')
-      setQuoteError(null)
-    } finally {
-      if (sequence === switchRequestSequence.current) {
-        switchingTokens.current = false
-        setIsSwitchingTokens(false)
+        setAmountIn('')
+        setAmountOut('')
+        setRecipientAddress('')
+        setDepositAddress('')
+        setQuoteError(null)
+      } finally {
+        if (sequence === switchRequestSequence.current) {
+          switchingTokens.current = false
+          setIsSwitchingTokens(false)
+        }
       }
-    }
-  }, [preferenceScope, tokenIn, tokenOut, setSavedTokenSelection])
+    },
+    [preferenceScope, tokenIn, tokenOut, setSavedTokenSelection]
+  )
 
   const resetSwap = useCallback(() => {
     setAmountIn('')

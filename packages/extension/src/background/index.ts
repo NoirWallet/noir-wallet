@@ -174,6 +174,7 @@ import {
 import { parseKeyDomainId } from '@/core/keyring/domain'
 import { parseAccountId } from '@/core/accounts/domain'
 import { isAssetMarketHistoryRange } from '@/core/prices'
+import { UnsupportedAssetMarketHistoryError } from '@/infrastructure/prices'
 import {
   getBitcoinChainId,
   getZcashChainId,
@@ -1055,8 +1056,10 @@ async function reloadMultichainRuntime(
     intentsProtocolPriceMappings
   )
   assetMarketHistoryService = createBackgroundAssetMarketHistoryService(
+    userAssets.definitions,
     intentsProtocolAssets,
-    intentsProtocolPriceMappings
+    intentsProtocolPriceMappings,
+    customEvmNetworks
   )
   if (DEFAULT_NETWORK === 'mainnet') {
     nearIntentsTransactionMonitor ??= new BackgroundNearIntentsTransactionMonitor()
@@ -3011,6 +3014,7 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
         const result = await coordinator.add(message.candidate)
         await tokenVisibility?.setHidden(result.assetId, false)
         await refreshMultichainRuntimeForUserAssets(true, [result.chainId])
+        void refreshAssetPrices(result.assetId).catch(() => {})
         return result
       })
       .then(result => sendResponse({ result }))
@@ -3541,16 +3545,39 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
       !isAssetMarketHistoryRange(message.range) ||
       (message.action !== 'read' && message.action !== 'refresh')
     ) {
-      sendResponse({ result: null })
+      sendResponse({ error: 'Invalid asset market history request' })
+      return true
+    }
+    let supported: boolean
+    const historyService = assetMarketHistoryService
+    try {
+      supported = historyService.supportsAsset(message.assetId)
+    } catch {
+      sendResponse({ error: 'Invalid asset market history request' })
+      return true
+    }
+    if (!supported) {
+      sendResponse({ status: 'unsupported' })
       return true
     }
     const operation =
       message.action === 'read'
-        ? assetMarketHistoryService.readCached(message.assetId, message.range)
-        : assetMarketHistoryService.refresh(message.assetId, message.range)
+        ? historyService.readCached(message.assetId, message.range)
+        : historyService.refresh(message.assetId, message.range)
     void operation
-      .then(result => sendResponse({ result }))
-      .catch(() => sendResponse({ result: null }))
+      .then(result =>
+        sendResponse({
+          result,
+          availableRanges: historyService.getAvailableRanges(message.assetId)
+        })
+      )
+      .catch(error =>
+        sendResponse(
+          error instanceof UnsupportedAssetMarketHistoryError
+            ? { status: 'unsupported' }
+            : { error: 'Asset market history unavailable' }
+        )
+      )
     return true
   }
 

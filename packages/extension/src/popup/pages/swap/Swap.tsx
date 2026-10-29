@@ -852,8 +852,24 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
     !isPrivateFunding &&
     !privateTransferRequested &&
     !swap.isSwitchingTokens &&
+    !requiresRecipientAddress &&
+    Boolean(resolvedRefundAddress) &&
+    (!swap.isZecSource || hasManagedZcashDestination) &&
+    (isZecDestination ? hasManagedZcashDestination : Boolean(walletDestinationTarget)) &&
+    (executionSourceMode !== 'private' || Boolean(sourcePrivateExecutionAddress)) &&
+    (destinationMode !== 'private' || Boolean(destinationPrivateExecutionAddress)) &&
     canReverseSwapPair(swap.tokenIn, swap.tokenOut, enabledSwapChains)
   )
+  const reverseContext = JSON.stringify([
+    walletSourcesScope,
+    executionSourceMode,
+    destinationMode,
+    resolvedRefundAddress,
+    resolvedRecipientAddress,
+    requiresRecipientAddress
+  ])
+  const activeReverseContext = useRef(reverseContext)
+  activeReverseContext.current = reverseContext
   const requestedSourceToken = useMemo(() => {
     if (!requestedSourceAssetId) return null
     const resolved = resolveWalletSwapSourceToken(
@@ -1031,6 +1047,8 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
     setQuoteResult(null)
     setLiveQuoteKey(null)
     lastRequestedQuoteKey.current = null
+    reviewAfterQuoteRefresh.current = null
+    autoReviewStartedScope.current = null
     setMaxSelected(false)
     setFundingSource('shielded')
     swap.resetSwap()
@@ -1400,18 +1418,23 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
     standardFeeZats,
     maximumAmount: maxTransfer.maxAmount
   })
+  const canEstimateRouteMaximum = Boolean(
+    viewStep === 'input' &&
+    !swap.isZecSource &&
+    walletOwnedSource?.asset.asset.kind === 'native' &&
+    swap.tokenIn &&
+    swap.tokenOut &&
+    resolvedRecipientAddress &&
+    recipientError === null &&
+    (!crossChainSendRequested ||
+      (crossChainSendSourceReady &&
+        crossChainSendDestinationReady &&
+        crossChainSendRecipientReady)) &&
+    !walletSourcesLoading &&
+    BigInt(walletOwnedSource.asset.balance.availableRaw) > 0n
+  )
   const routeMaximum = useTransferMaximum({
-    enabled:
-      viewStep === 'input' &&
-      !swap.isZecSource &&
-      walletOwnedSource?.asset.asset.kind === 'native' &&
-      Boolean(swap.tokenIn && swap.tokenOut && resolvedRecipientAddress) &&
-      (!crossChainSendRequested ||
-        (crossChainSendSourceReady &&
-          crossChainSendDestinationReady &&
-          crossChainSendRecipientReady)) &&
-      !walletSourcesLoading &&
-      BigInt(walletOwnedSource.asset.balance.availableRaw) > 0n,
+    enabled: canEstimateRouteMaximum,
     requestKey: `${walletSourcesScope}:${swap.tokenIn?.assetId}:${swap.tokenOut?.assetId}:${walletOwnedSource?.refundAddress}:${walletOwnedSource?.asset.balance.availableRaw}:${resolvedRecipientAddress}:${executionSourceMode}:${destinationMode}:${swap.slippage}:${networkFeeTier}`,
     fallback: () => {
       if (!walletOwnedSource) throw new Error('No Swap source')
@@ -1458,10 +1481,16 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
         )
       return
     }
-    if (routeMaximum.loading || reviewAfterQuoteRefresh.current !== null) return
+    if (
+      !canEstimateRouteMaximum ||
+      routeMaximum.loading ||
+      reviewAfterQuoteRefresh.current !== null
+    )
+      return
     void routeMaximum.request()
   }, [
     maxSelected,
+    canEstimateRouteMaximum,
     routeMaximum.value,
     routeMaximum.loading,
     viewStep,
@@ -1624,7 +1653,6 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
 
   useEffect(() => {
     if (viewStep !== 'input') {
-      reviewAfterQuoteRefresh.current = null
       swap.setIsQuoting(false)
       return
     }
@@ -1634,6 +1662,18 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
     lastRequestedQuoteKey.current = requestKey
 
     if (requestChanged) {
+      if (
+        reviewAfterQuoteRefresh.current &&
+        liveQuoteRequest &&
+        !isSwapQuoteRefreshReady(
+          reviewAfterQuoteRefresh.current,
+          liveQuoteRequest,
+          liveQuoteRequest.key
+        )
+      ) {
+        reviewAfterQuoteRefresh.current = null
+        autoReviewStartedScope.current = null
+      }
       setQuoteResult(null)
       setRheaReview(null)
       setLiveQuoteKey(null)
@@ -2377,8 +2417,14 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
   )
 
   const refreshExpiredReview = useCallback(async () => {
+    const sequence = ++quoteRequestSequence.current
+    const scope = activeScopeRef.current
+    const refreshTarget = createSwapQuoteRefreshTarget(liveQuoteRequest)
     setIsPrivateFundingSubmitting(false)
     await discardPreparedQuoteTransfer()
+    if (sequence !== quoteRequestSequence.current || scope !== activeScopeRef.current) return
+    reviewAfterQuoteRefresh.current = refreshTarget
+    autoReviewStartedScope.current = null
     setViewStep('input')
     setQuoteResult(null)
     setRheaReview(null)
@@ -2387,7 +2433,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
     swap.setDepositAddress('')
     setQuoteRefreshTick(current => current + 1)
     toast.info('Swap review expired. Getting a new quote.')
-  }, [discardPreparedQuoteTransfer, swap.setDepositAddress])
+  }, [discardPreparedQuoteTransfer, liveQuoteRequest, swap.setDepositAddress])
 
   const handleConfirmSwap = useCallback(async () => {
     if (
@@ -2932,10 +2978,30 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
 
   const handleSwitchTokens = useCallback(() => {
     if (!canSwitchTokens) return
-    reviewAfterQuoteRefresh.current = null
-    setMaxSelected(false)
-    void swap.switchTokens().catch(error => toast.error(getRheaSwapErrorMessage(error)))
-  }, [canSwitchTokens, swap.switchTokens])
+    const context = reverseContext
+    const reversedSourceMode = destinationMode
+    const reversedDestinationMode = executionSourceMode
+    void swap
+      .switchTokens({
+        isCancelled: () => activeReverseContext.current !== context,
+        onReversed: () => {
+          reviewAfterQuoteRefresh.current = null
+          setMaxSelected(false)
+          maxQuoteAdjustmentCount.current = 0
+          setSourceMode(reversedSourceMode)
+          setDestinationMode(reversedDestinationMode)
+        }
+      })
+      .catch(error => toast.error(getRheaSwapErrorMessage(error)))
+  }, [
+    canSwitchTokens,
+    destinationMode,
+    executionSourceMode,
+    reverseContext,
+    setDestinationMode,
+    setSourceMode,
+    swap.switchTokens
+  ])
 
   const handleSelectToken = useCallback(
     async (type: 'in' | 'out') => {
@@ -3045,6 +3111,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
                 handleSwitchTokens()
                 return
               }
+              reviewAfterQuoteRefresh.current = null
               setMaxSelected(false)
               if (type === 'in') {
                 swap.selectTokenIn(token)
@@ -3087,6 +3154,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
         <AddressSelectorModal
           selectedType={swap.addressType}
           onSelect={type => {
+            reviewAfterQuoteRefresh.current = null
             swap.setAddressType(type)
             close()
           }}
@@ -3111,6 +3179,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
               !isValidSwapZcashRecipient(address, currentNetwork)
             )
               return
+            reviewAfterQuoteRefresh.current = null
             setZecRecipientSelection({ scope, address })
             close()
           }}
@@ -3127,6 +3196,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
         <SlippageSettingContent
           currentSlippage={swap.slippage}
           onSave={newSlippage => {
+            reviewAfterQuoteRefresh.current = null
             swap.setSlippage(newSlippage)
             close()
           }}
@@ -3137,6 +3207,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
 
   const handleReturnToInput = useCallback(() => {
     quoteRequestSequence.current += 1
+    reviewAfterQuoteRefresh.current = null
     setIsPrivateFundingSubmitting(false)
     void discardPreparedQuoteTransfer()
     if (privateBalanceTransferRequested) {
@@ -3149,6 +3220,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
   const handleSourceModeChange = (mode: QuoteDepositExecutionMode) => {
     if (mode === sourceMode || (mode === 'private' && !privateWalletOwnedSource)) return
     quoteRequestSequence.current += 1
+    reviewAfterQuoteRefresh.current = null
     void discardPreparedQuoteTransfer()
     setQuoteResult(null)
     setLiveQuoteKey(null)
@@ -3651,6 +3723,16 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
                   : swap.quoteError
         }
         maxLoading={routeMaximum.loading || maxTransfer.loading}
+        maxDisabled={
+          !swap.isZecSource &&
+          walletOwnedSource?.asset.asset.kind === 'native' &&
+          !canEstimateRouteMaximum
+        }
+        maxDisabledReason={
+          !resolvedRecipientAddress
+            ? 'Enter a destination address to use Max'
+            : 'Max is unavailable for this route'
+        }
         catalogError={swap.catalogError}
         sourceAssetsLoading={swap.sourceTokens.length === 0}
         destinationAssetsLoading={
@@ -3717,6 +3799,8 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
               }
             : walletOwnedSource
               ? () => {
+                  if (walletOwnedSource.asset.asset.kind === 'native' && !canEstimateRouteMaximum)
+                    return
                   reviewAfterQuoteRefresh.current = null
                   setMaxSelected(true)
                   maxQuoteAdjustmentCount.current = 0
@@ -3727,6 +3811,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
               : undefined
         }
         onRecipientAddressChange={value => {
+          reviewAfterQuoteRefresh.current = null
           if (isZecDestination && requiresRecipientAddress) {
             setZecRecipientSelection({ scope: walletSourcesScope, address: value })
           } else {
@@ -3737,7 +3822,10 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
           isZecDestination && requiresRecipientAddress ? handleSelectZecRecipient : undefined
         }
         onUseCustomRecipientChange={value => {
-          if (!privateTransferRequested) setUseCustomRecipient(value)
+          if (!privateTransferRequested) {
+            reviewAfterQuoteRefresh.current = null
+            setUseCustomRecipient(value)
+          }
         }}
         onSelectToken={type => {
           if (
@@ -4003,6 +4091,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
           value={requiresRecipientAddress ? 'custom' : destinationMode}
           onSelect={mode => {
             quoteRequestSequence.current += 1
+            reviewAfterQuoteRefresh.current = null
             void discardPreparedQuoteTransfer()
             setQuoteResult(null)
             setLiveQuoteKey(null)
@@ -4013,7 +4102,10 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
           privateAvailable={Boolean(destinationPrivateExecutionAddress)}
           mainAddress={walletDestinationTarget.address}
           privateAddress={destinationPrivateExecutionAddress}
-          onCustomAddress={() => setUseCustomRecipient(true)}
+          onCustomAddress={() => {
+            reviewAfterQuoteRefresh.current = null
+            setUseCustomRecipient(true)
+          }}
         />
       )}
     </div>

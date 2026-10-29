@@ -133,6 +133,8 @@ interface SwapInputViewProps {
   isQuoting: boolean
   quoteError?: string | null
   maxLoading?: boolean
+  maxDisabled?: boolean
+  maxDisabledReason?: string
   catalogError?: boolean
   sourceAssetsLoading?: boolean
   destinationAssetsLoading?: boolean
@@ -183,6 +185,8 @@ interface SwapAssetCardProps {
   onAmountChange?: (value: string) => void
   onMaxClick?: () => void
   maxLoading?: boolean
+  maxDisabled?: boolean
+  maxDisabledReason?: string
   isReadOnly?: boolean
   isAmountLoading?: boolean
   isEstimatedAmount?: boolean
@@ -278,6 +282,8 @@ function SwapAssetCard({
   onAmountChange,
   onMaxClick,
   maxLoading = false,
+  maxDisabled = false,
+  maxDisabledReason,
   isReadOnly = false,
   isAmountLoading = false,
   isEstimatedAmount = false,
@@ -325,12 +331,18 @@ function SwapAssetCard({
             <button
               type="button"
               onClick={onMaxClick}
-              disabled={!onMaxClick || maxLoading}
+              disabled={!onMaxClick || maxLoading || maxDisabled}
               aria-label={
-                balanceHelp ? `Available balance: ${balance}` : `Use maximum balance: ${balance}`
+                balanceHelp
+                  ? `Available balance: ${balance}`
+                  : maxDisabled && maxDisabledReason
+                    ? `${maxDisabledReason}. Available balance: ${balance}`
+                    : `Use maximum balance: ${balance}`
               }
-              title={onMaxClick ? 'Use maximum balance' : 'Balance'}
-              className="flex min-w-0 shrink items-center gap-1.5 text-[12px] text-muted transition-colors enabled:hover:text-primary disabled:cursor-default"
+              title={
+                maxDisabled ? maxDisabledReason : onMaxClick ? 'Use maximum balance' : 'Balance'
+              }
+              className="flex min-w-0 shrink items-center gap-1.5 text-[12px] text-muted transition-colors enabled:hover:text-primary disabled:cursor-default disabled:opacity-50"
             >
               <Icon
                 icon={maxLoading ? 'lucide:loader-circle' : 'lucide:wallet-cards'}
@@ -491,6 +503,8 @@ export function SwapInputView({
   isQuoting,
   quoteError,
   maxLoading = false,
+  maxDisabled = false,
+  maxDisabledReason,
   catalogError = false,
   sourceAssetsLoading = false,
   destinationAssetsLoading = false,
@@ -527,7 +541,11 @@ export function SwapInputView({
   const [showDetails, setShowDetails] = useState(false)
   const destinationBadge =
     destinationBadgeOverride ??
-    (isZecDestination ? (addressType === 'shielded' ? 'Shielded' : 'Transparent') : undefined)
+    (isZecDestination && !requiresRecipientAddress
+      ? addressType === 'shielded'
+        ? 'Shielded'
+        : 'Transparent'
+      : undefined)
   const balanceValidationMessage = hasInsufficientFunds
     ? insufficientMessage ||
       (feeIsApproximate ? 'Insufficient balance' : `Insufficient balance (Fee: ${networkFee} ZEC)`)
@@ -568,6 +586,8 @@ export function SwapInputView({
             onAmountChange={onAmountInChange}
             onMaxClick={onMaxClick}
             maxLoading={maxLoading}
+            maxDisabled={maxDisabled}
+            maxDisabledReason={maxDisabledReason}
             validationMessage={balanceValidationMessage}
           />
 
