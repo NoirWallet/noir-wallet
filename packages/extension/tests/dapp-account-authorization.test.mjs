@@ -160,6 +160,34 @@ function connection(overrides = {}) {
   }
 }
 
+test('transaction history is unavailable even to authorized third-party and first-party sites', async t => {
+  for (const origin of [ORIGIN, 'https://app.zknoir.com']) {
+    await t.test(origin, async t => {
+      let historyReads = 0
+      const { handler } = createHarness(
+        t,
+        connection({ origin, boundWalletId: 'wallet-a', boundAccountId: 'account-a' }),
+        {
+          '@/lib/indexed-db': {
+            async loadTransactions() {
+              historyReads++
+              return []
+            }
+          }
+        }
+      )
+      await handler.initialize()
+      await handler.restorePermissionsFromStorage()
+
+      await assert.rejects(
+        handler.handleRequest({ method: 'zcash_getTransactionHistory', origin }),
+        /Unknown method: zcash_getTransactionHistory/
+      )
+      assert.equal(historyReads, 0)
+    })
+  }
+})
+
 test('an accountless legacy connection cannot silently read or restore the current account', async t => {
   const { handler, dappManager, walletState } = createHarness(t, connection())
   await handler.initialize()

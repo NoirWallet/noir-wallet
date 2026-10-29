@@ -297,7 +297,7 @@ export function ApprovalPage() {
                 <li className="flex items-center gap-3">
                   <Icon icon="lucide:eye" className="w-3 h-3 text-muted-foreground/80" />
                   <span className="text-sm text-muted-foreground">
-                    View your wallet balance and activity
+                    View your wallet addresses and balances
                   </span>
                 </li>
                 <li className="flex items-center gap-3">
