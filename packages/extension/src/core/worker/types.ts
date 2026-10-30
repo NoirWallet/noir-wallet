@@ -4,6 +4,7 @@
 
 import type { FundingSource, KeySource, Network, ZcashBalance } from '@/types'
 import type { TransferEstimate, TransferResult } from '@/core/zcash/transfer-result'
+import type { FeeQuote, QuotedFeeEstimate } from '@/config/fee'
 import type {
   BallotDecision,
   PreparedVotingRound,
@@ -61,6 +62,8 @@ export interface LedgerPcztSignatures {
 export interface MaxTransferEstimate {
   maxAmountZats: string
   feeZats: string
+  marginalFeeZats: string
+  feeQuote: FeeQuote
 }
 
 export type WasmUnifiedAddresses = {
@@ -287,11 +290,12 @@ export interface RPCSchema {
       memo?: string
       fundingSource?: FundingSource
       marginalFeeZats?: number
+      feeQuoteId?: string
     }
     response: HardwarePcztPair
   }
   'pczt.shieldCreate': {
-    request: WalletRouted & { accountId: number; marginalFeeZats?: number }
+    request: WalletRouted & { accountId: number; marginalFeeZats?: number; feeQuoteId?: string }
     response: HardwarePcztPair
   }
   'pczt.proveSend': {
@@ -358,6 +362,10 @@ export interface RPCSchema {
   }
 
   // Transactions (unified software-wallet flow)
+  'transaction.getFeeQuote': {
+    request: WalletRouted & { accountId?: number; accountIndex?: number }
+    response: FeeQuote
+  }
   'transaction.send': {
     request: WalletRouted & {
       accountIndex: number
@@ -366,8 +374,9 @@ export interface RPCSchema {
       amount: string
       memo?: string
       fundingSource?: FundingSource
-      /** ZIP-317 marginal fee per action (zatoshis); defaults to standard. */
+      /** Confirmed ZIP-317 rate paired with the worker-issued quote ID. */
       marginalFeeZats?: number
+      feeQuoteId?: string
     }
     response: TransferResult
   }
@@ -377,6 +386,7 @@ export interface RPCSchema {
       accountIndex: number
       seedPhrase: string
       marginalFeeZats?: number
+      feeQuoteId?: string
     }
     response: string // txid
   }
@@ -391,9 +401,10 @@ export interface RPCSchema {
       value: string // zatoshis
       memo?: string
       fundingSource?: FundingSource
-      marginalFeeZats: number
+      marginalFeeZats?: number
+      feeQuoteId?: string
     }
-    response: TransferEstimate
+    response: TransferEstimate & { feeQuote: FeeQuote }
   }
 
   'transaction.estimateMaxTransfer': {
@@ -402,7 +413,8 @@ export interface RPCSchema {
       to: string
       memo?: string
       fundingSource?: FundingSource
-      marginalFeeZats: number
+      marginalFeeZats?: number
+      feeQuoteId?: string
     }
     response: MaxTransferEstimate
   }
@@ -411,9 +423,10 @@ export interface RPCSchema {
     request: WalletRouted & {
       accountId?: number
       accountIndex?: number
-      marginalFeeZats: number
+      marginalFeeZats?: number
+      feeQuoteId?: string
     }
-    response: string // fee in zatoshis
+    response: QuotedFeeEstimate
   }
 
   // Message Signing
