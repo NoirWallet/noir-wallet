@@ -19,7 +19,7 @@ if (!wallet) throw new Error('Noir Wallet is not installed')
     Connect, read addresses, balances, and send limits.
   </Card>
   <Card title="Transactions" href="#transactions" icon="Send">
-    Send ZEC, shield funds, and read transaction history.
+    Send ZEC and shield funds.
   </Card>
   <Card title="Identity" href="#identity-methods" icon="ShieldCheck">
     Read public identities and request message signatures.
@@ -225,27 +225,6 @@ excluded. Ledger completes hardware signing in a separate tab. Keystone cannot s
 inputs required to complete a shield transaction.
 
   </Accordion>
-
-  <Accordion title="getTransactionHistory() — Read local and on-chain history" id="gettransactionhistory">
-
-```ts
-getTransactionHistory(): Promise<Array<{
-  txid: string
-  type: string
-  amount: string
-  status: string
-  timestamp: number
-  memo?: string
-}>>
-```
-
-Returns the active account's newest entries first. `timestamp` is Unix time in milliseconds.
-Lending entries use a `lending_` type prefix, and locally confirming states may be normalized to
-`mined`. A locally pending entry may have an empty `txid`. A locked wallet returns an empty array.
-
-Treat `type` and `status` as display values rather than exhaustive protocol enums.
-
-  </Accordion>
 </Accordions>
 
 ## Identity methods
@@ -387,7 +366,6 @@ The typed SDK is recommended. These are the raw method names used internally:
 | `getMaxTransfer()`         | `zcash_getMaxTransfer`         |
 | `sendTransaction()`        | `zcash_sendTransaction`        |
 | `shieldFunds()`            | `zcash_shieldFunds`            |
-| `getTransactionHistory()`  | `zcash_getTransactionHistory`  |
 | `getPublicKey()`           | `zcash_getPublicKey`           |
 | `signMessage()`            | `zcash_signMessage`            |
 | `checkLendingMcaAccount()` | `zcash_checkLendingMcaAccount` |

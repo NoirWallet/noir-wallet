@@ -30,7 +30,6 @@ import { transactionRecorder } from './transaction-recorder'
 import { zcashTxMonitor, computeExpiryHeight } from './zcash-tx-monitor'
 import { catchUpAfterOnChainTx } from './tx-sync'
 import { checkLendingMcaAccount } from '@/core/services/lending-service'
-import { loadTransactions } from '@/lib/indexed-db'
 import { openHardwareSignTab } from '@/lib/hardware-tab'
 import { TimeoutError } from '@/lib/async-utils'
 import { TRANSACTION_PENDING_MESSAGE } from '@/lib/transaction-status-copy'
@@ -249,9 +248,6 @@ export class DAppHandler {
 
       case 'zcash_shieldFunds':
         return this.shieldFunds(origin)
-
-      case 'zcash_getTransactionHistory':
-        return this.getTransactionHistory(origin)
 
       case 'zcash_switchNetwork':
         throw new Error('zcash_switchNetwork is deprecated. Install the testnet extension instead.')
@@ -1494,45 +1490,6 @@ export class DAppHandler {
     } finally {
       syncScheduler.resumeAfterTx(walletId)
     }
-  }
-
-  private async getTransactionHistory(origin: string): Promise<
-    Array<{
-      txid: string
-      type: string
-      amount: string
-      status: string
-      timestamp: number
-      memo?: string
-    }>
-  > {
-    await this.ensurePermission(origin)
-
-    if (accountManager.isLocked()) return []
-
-    const { currentWalletId, currentAccountId, currentNetwork } = useWalletStore.getState()
-    if (!currentWalletId || !currentAccountId) return []
-
-    const accountKey = buildAccountKey(currentNetwork, currentWalletId, currentAccountId)
-    const transactions = await loadTransactions(accountKey)
-
-    return transactions
-      .filter(tx => tx.network === currentNetwork)
-      .sort((a, b) => b.timestamp - a.timestamp)
-      .map(tx => ({
-        txid: tx.txHash,
-        type:
-          tx.type === 'supply' || tx.type === 'withdraw' || tx.type === 'claim'
-            ? `lending_${tx.type}`
-            : tx.type,
-        amount: tx.amount,
-        status:
-          tx.status === 'success' || tx.status === 'confirming' || tx.status === 'relay_confirmed'
-            ? 'mined'
-            : tx.status,
-        timestamp: tx.timestamp,
-        memo: tx.memo || undefined
-      }))
   }
 
   private async checkLendingMcaAccount(origin: string) {
