@@ -62,6 +62,25 @@ test('reruns when relevant files changed, including a renamed input', async () =
   assert.equal(await renamed.check(), true)
   const gate = fixture({ files: [{ filename: 'scripts/ci-validated-scope.mjs' }] })
   assert.equal(await gate.check(), true)
+  for (const filename of [
+    'scripts/sdk-release.mjs',
+    'scripts/sdk-package-check.mjs',
+    'scripts/run-core-tests.mjs',
+    'scripts/register-test-loader.mjs',
+    'scripts/typescript-test-loader.mjs',
+    '.github/workflows/publish-sdk.yml'
+  ]) {
+    assert.equal(await fixture({ files: [{ filename }] }).check(), true)
+  }
+  for (const filename of [
+    'scripts/sdk-release.mjs',
+    'scripts/sdk-package-check.mjs',
+    'scripts/run-core-tests.mjs',
+    'scripts/register-test-loader.mjs',
+    'scripts/typescript-test-loader.mjs'
+  ]) {
+    assert.equal(await fixture({ scope: 'docs', files: [{ filename }] }).check(), false)
+  }
 })
 
 test('failure, cancellation, or no completed prior run retries validation', async () => {

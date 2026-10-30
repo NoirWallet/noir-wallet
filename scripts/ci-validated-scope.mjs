@@ -15,7 +15,15 @@ const scopes = {
   sdk: {
     workflow: 'sdk.yml',
     relevant: path =>
-      path.startsWith('packages/sdk/') || shared.has(path) || path === '.github/workflows/sdk.yml'
+      path.startsWith('packages/sdk/') ||
+      shared.has(path) ||
+      path === 'scripts/sdk-release.mjs' ||
+      path === 'scripts/sdk-package-check.mjs' ||
+      path === 'scripts/run-core-tests.mjs' ||
+      path === 'scripts/register-test-loader.mjs' ||
+      path === 'scripts/typescript-test-loader.mjs' ||
+      path === '.github/workflows/sdk.yml' ||
+      path === '.github/workflows/publish-sdk.yml'
   },
   docs: {
     workflow: 'docs.yml',
