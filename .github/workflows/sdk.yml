@@ -3,22 +3,6 @@ name: SDK
 on:
   pull_request:
     branches: [main, v2]
-    paths:
-      - 'packages/sdk/**'
-      - 'package.json'
-      - 'pnpm-lock.yaml'
-      - 'pnpm-workspace.yaml'
-      - 'tsconfig.base.json'
-      - '.node-version'
-      - '.npmrc'
-      - '.github/workflows/sdk.yml'
-      - 'scripts/ci-validated-scope.mjs'
-      - 'scripts/sdk-release.mjs'
-      - 'scripts/sdk-package-check.mjs'
-      - 'scripts/run-core-tests.mjs'
-      - 'scripts/register-test-loader.mjs'
-      - 'scripts/typescript-test-loader.mjs'
-      - '.github/workflows/publish-sdk.yml'
   push:
     branches: [main, v2]
     paths:
@@ -53,6 +37,7 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     outputs:
+      reused: ${{ steps.scope.outputs.run == 'false' }}
       artifact_id: ${{ steps.artifact.outputs.artifact-id }}
       version: ${{ steps.pack.outputs.version }}
       source_sha: ${{ steps.pack.outputs.source_sha }}
@@ -158,3 +143,23 @@ jobs:
         env:
           VERSION: ${{ needs.verify.outputs.version }}
         run: printf '## SDK staging rehearsal passed\n\nChecked `@noir-wallet/sdk@%s` artifact, npm CLI dry-run, and installed consumer. OIDC and npm server staging remain unverified.\n' "$VERSION" >> "$GITHUB_STEP_SUMMARY"
+
+  gate:
+    name: SDK Gate
+    needs: [verify, dry-run]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Check SDK validation result
+        env:
+          SDK_VERIFY_RESULT: ${{ needs.verify.result }}
+          SDK_DRY_RUN_RESULT: ${{ needs.dry-run.result }}
+          SDK_REUSED: ${{ needs.verify.outputs.reused }}
+          SDK_ARTIFACT_ID: ${{ needs.verify.outputs.artifact_id }}
+          SDK_VERSION: ${{ needs.verify.outputs.version }}
+          SDK_SOURCE_SHA: ${{ needs.verify.outputs.source_sha }}
+          SDK_BUILD_ATTEMPT: ${{ needs.verify.outputs.build_attempt }}
+        run: node scripts/ci-validated-scope.mjs sdk-gate

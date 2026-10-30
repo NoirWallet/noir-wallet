@@ -95,6 +95,26 @@ export async function needsScopeValidation({ scope, event, runId, repository, re
   )
 }
 
+export function isSdkGateSuccessful({
+  verifyResult,
+  dryRunResult,
+  reused,
+  artifactId,
+  version,
+  sourceSha,
+  buildAttempt
+}) {
+  if (verifyResult !== 'success') return false
+  const hasArtifact =
+    /^[1-9]\d*$/.test(artifactId ?? '') &&
+    /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version ?? '') &&
+    shaPattern.test(sourceSha ?? '') &&
+    /^[1-9]\d*$/.test(buildAttempt ?? '')
+  if (reused === 'true')
+    return dryRunResult === 'skipped' && !artifactId && !version && !sourceSha && !buildAttempt
+  return reused === 'false' && dryRunResult === 'success' && hasArtifact
+}
+
 async function githubRequest(repository, token, route) {
   const response = await fetch(`https://api.github.com/repos/${repository}/${route}`, {
     headers: {
@@ -109,21 +129,42 @@ async function githubRequest(repository, token, route) {
 }
 
 if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  try {
+  if (process.argv[2] === 'sdk-gate') {
     const env = process.env
-    if (!env.GH_TOKEN) throw new Error('GH_TOKEN is required')
-    const event = JSON.parse(readFileSync(env.GITHUB_EVENT_PATH, 'utf8'))
-    const run = await needsScopeValidation({
-      scope: process.argv[2],
-      event,
-      runId: Number(env.GITHUB_RUN_ID),
-      repository: env.GITHUB_REPOSITORY,
-      request: route => githubRequest(env.GITHUB_REPOSITORY, env.GH_TOKEN, route)
+    const success = isSdkGateSuccessful({
+      verifyResult: env.SDK_VERIFY_RESULT,
+      dryRunResult: env.SDK_DRY_RUN_RESULT,
+      reused: env.SDK_REUSED,
+      artifactId: env.SDK_ARTIFACT_ID,
+      version: env.SDK_VERSION,
+      sourceSha: env.SDK_SOURCE_SHA,
+      buildAttempt: env.SDK_BUILD_ATTEMPT
     })
-    appendFileSync(env.GITHUB_OUTPUT, `run=${run}\n`)
-    console.log(run ? 'Run validation' : 'Relevant inputs match the last successful PR validation')
-  } catch (error) {
-    appendFileSync(process.env.GITHUB_OUTPUT, 'run=true\n')
-    console.error(error instanceof Error ? error.message : 'Scope check failed; running validation')
+    if (!success) {
+      console.error('SDK validation or explicit reuse did not complete successfully')
+      process.exitCode = 1
+    }
+  } else {
+    try {
+      const env = process.env
+      if (!env.GH_TOKEN) throw new Error('GH_TOKEN is required')
+      const event = JSON.parse(readFileSync(env.GITHUB_EVENT_PATH, 'utf8'))
+      const run = await needsScopeValidation({
+        scope: process.argv[2],
+        event,
+        runId: Number(env.GITHUB_RUN_ID),
+        repository: env.GITHUB_REPOSITORY,
+        request: route => githubRequest(env.GITHUB_REPOSITORY, env.GH_TOKEN, route)
+      })
+      appendFileSync(env.GITHUB_OUTPUT, `run=${run}\n`)
+      console.log(
+        run ? 'Run validation' : 'Relevant inputs match the last successful PR validation'
+      )
+    } catch (error) {
+      appendFileSync(process.env.GITHUB_OUTPUT, 'run=true\n')
+      console.error(
+        error instanceof Error ? error.message : 'Scope check failed; running validation'
+      )
+    }
   }
 }

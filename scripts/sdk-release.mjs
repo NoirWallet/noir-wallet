@@ -304,6 +304,29 @@ export function validateRegistryTarget(packument, version) {
   )
 }
 
+function verificationCommand(metadata) {
+  return (
+    `gh workflow run publish-sdk.yml --repo ${SDK_REPOSITORY} --ref main ` +
+    `-f operation=verify -f candidate_run_id=${metadata.runId} ` +
+    `-f candidate_run_attempt=${metadata.runAttempt}`
+  )
+}
+
+function verificationInstruction(metadata) {
+  return `After npm approval, verify the original build:\n\n\`\`\`sh\n${verificationCommand(metadata)}\n\`\`\`\n`
+}
+
+function unconfirmedStageSummary(metadata) {
+  return (
+    `## SDK staging result unconfirmed\n\n${describe(metadata)}\n${verificationInstruction(metadata)}\n` +
+    'Check npm Staged Packages and the public package version before another upload:\n\n' +
+    '- No staged version and no public version: rerun the failed upload job with the original artifact.\n' +
+    '- Staged version exists: confirm package, version, and latest tag; compare its downloaded tarball SHA-256 with the artifact above, complete real-extension acceptance, then approve with 2FA and verify.\n' +
+    '- Public version exists: run the verification command above.\n' +
+    '- Status unknown or contents conflict: stop and investigate.\n'
+  )
+}
+
 export async function stageSdkRelease(
   directory,
   expected,
@@ -336,48 +359,54 @@ export async function stageSdkRelease(
           !/^npm_config_/i.test(key)
       )
     )
-    const result = run(
-      'npm',
-      [
-        'stage',
-        'publish',
-        path.resolve(directory, metadata.tarball),
-        '--access=public',
-        '--tag=latest',
-        `--registry=${REGISTRY}`,
-        '--ignore-scripts',
-        '--provenance',
-        '--json',
-        `--userconfig=${path.join(scratch, '.npmrc')}`,
-        '--workspaces=false'
-      ],
-      {
-        cwd: scratch,
-        env: uploadEnv,
-        encoding: 'utf8',
-        maxBuffer: 4 * 1024 * 1024,
-        stdio: ['ignore', 'pipe', 'pipe'],
-        timeout: 180000
-      }
-    )
-    const output = JSON.parse(result)
-    const contents = output.stageId ? output : output[SDK_PACKAGE]
-    assert(
-      typeof contents?.stageId === 'string' && /^[a-zA-Z0-9_-]{1,200}$/.test(contents.stageId),
-      'npm reported success without a valid stageId; inspect Staged Packages before retrying'
-    )
-    assert(
-      contents.name === SDK_PACKAGE &&
-        contents.version === metadata.version &&
-        contents.integrity === metadata.integrity,
-      'npm stage receipt does not match the accepted tarball'
-    )
+    let contents
+    try {
+      const result = run(
+        'npm',
+        [
+          'stage',
+          'publish',
+          path.resolve(directory, metadata.tarball),
+          '--access=public',
+          '--tag=latest',
+          `--registry=${REGISTRY}`,
+          '--ignore-scripts',
+          '--provenance',
+          '--json',
+          `--userconfig=${path.join(scratch, '.npmrc')}`,
+          '--workspaces=false'
+        ],
+        {
+          cwd: scratch,
+          env: uploadEnv,
+          encoding: 'utf8',
+          maxBuffer: 4 * 1024 * 1024,
+          stdio: ['ignore', 'pipe', 'pipe'],
+          timeout: 180000
+        }
+      )
+      const output = JSON.parse(result)
+      contents = output.stageId ? output : output[SDK_PACKAGE]
+      assert(
+        typeof contents?.stageId === 'string' && /^[a-zA-Z0-9_-]{1,200}$/.test(contents.stageId),
+        'npm reported success without a valid stageId'
+      )
+      assert(
+        contents.name === SDK_PACKAGE &&
+          contents.version === metadata.version &&
+          contents.integrity === metadata.integrity,
+        'npm stage receipt does not match the accepted tarball'
+      )
+    } catch (error) {
+      summary(env, unconfirmedStageSummary(metadata))
+      throw new Error(`SDK staging result unconfirmed: ${error.message}`, { cause: error })
+    }
     summary(
       env,
       `## SDK staged; approval pending\n\n${describe(metadata)}\nStage ID: \`${contents.stageId}\`\n\n` +
         'Open Staged Packages in your [npm account](https://www.npmjs.com/), ' +
         'complete real-extension acceptance using this artifact, then approve with 2FA. ' +
-        'The package is not publicly released yet.\n'
+        `The package is not publicly released yet.\n\n${verificationInstruction(metadata)}`
     )
     return { ...metadata, stageId: contents.stageId }
   } finally {
@@ -515,14 +544,30 @@ export function validatePublishedProvenance(attestations, metadata) {
   // Only call this on bundles returned by npm audit signatures, which verifies the DSSE signatures.
 }
 
-export async function verifyPublishedSdk(directory, expected, { fetchImpl = fetch } = {}) {
+export async function verifyPublishedSdk(
+  directory,
+  expected,
+  { fetchImpl = fetch, onPublicationState = () => {} } = {}
+) {
   const metadata = validateSdkArtifact(directory, { ...expected, mode: 'release' })
   const packument = await requestJson(PACKAGE_URL, { fetchImpl })
+  assert(
+    packument?.name === SDK_PACKAGE &&
+      packument.versions &&
+      typeof packument.versions === 'object' &&
+      !Array.isArray(packument.versions),
+    'Invalid SDK registry response'
+  )
+  if (!Object.hasOwn(packument.versions, metadata.version)) {
+    onPublicationState('not-published')
+    throw new Error('SDK version is not published; npm approval may still be pending')
+  }
   const published = packument.versions?.[metadata.version]
   assert(
     published?.name === SDK_PACKAGE && published.version === metadata.version,
-    'SDK version is not published; npm approval may still be pending'
+    'Published SDK identity does not match the accepted version'
   )
+  onPublicationState('published')
   assert(
     packument['dist-tags']?.latest === metadata.version,
     'npm latest does not match the accepted SDK version'
@@ -608,7 +653,7 @@ export async function locateSdkArtifact(env, { request } = {}) {
       matches[0].expired === false &&
       Number.isSafeInteger(matches[0].id) &&
       matches[0].id > 0,
-    'Exactly one unexpired SDK artifact is required; rebuild and accept a new package if it expired'
+    'Exactly one unexpired SDK artifact is required; an expired original cannot be repacked as the same candidate'
   )
   return {
     artifact_id: String(matches[0].id),
@@ -692,6 +737,7 @@ async function main() {
   } else if (
     ['pack', 'pack-check', 'validate', 'dry-run', 'stage', 'verify-published'].includes(command)
   ) {
+    if (command === 'verify-published' && !directory) outputs(env, { publication_state: 'unknown' })
     assert(directory, 'SDK artifact directory is required')
     let metadata
     if (command === 'pack' || command === 'pack-check') {
@@ -699,7 +745,8 @@ async function main() {
         command === 'pack' ? packageSdkRelease(directory, env) : packageSdkCheck(directory, env)
       summary(
         env,
-        `## SDK ${metadata.mode === 'check' ? 'rehearsal' : 'acceptance'} artifact\n\n${describe(metadata)}\nDownload this run's \`${artifactName(metadata)}\` artifact.\n`
+        `## SDK ${metadata.mode === 'check' ? 'rehearsal' : 'acceptance'} artifact\n\n${describe(metadata)}\nDownload this run's \`${artifactName(metadata)}\` artifact.\n` +
+          (metadata.mode === 'release' ? `\n${verificationInstruction(metadata)}` : '')
       )
     } else if (command === 'validate') {
       metadata = validateSdkArtifact(directory, expectedFromEnv(env))
@@ -708,8 +755,19 @@ async function main() {
     } else if (command === 'stage') {
       metadata = await stageSdkRelease(directory, expectedFromEnv(env), env)
     } else {
-      trustedInvocation(env)
-      metadata = await verifyPublishedSdk(directory, expectedFromEnv(env))
+      let publicationState = 'unknown'
+      try {
+        trustedInvocation(env)
+        metadata = await verifyPublishedSdk(directory, expectedFromEnv(env), {
+          onPublicationState(state) {
+            publicationState = state
+            outputs(env, { publication_state: state })
+          }
+        })
+      } catch (error) {
+        if (publicationState === 'unknown') outputs(env, { publication_state: 'unknown' })
+        throw error
+      }
       summary(
         env,
         `## Published SDK bytes match\n\n${describe(metadata)}\n` +

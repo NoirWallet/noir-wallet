@@ -211,4 +211,17 @@ jobs:
         run: printf '## SDK verification passed\n\nPublished `@noir-wallet/sdk@%s` matches the accepted tarball and provenance; installed consumer and npm signatures passed.\n' "$VERSION" >> "$GITHUB_STEP_SUMMARY"
       - name: Record incomplete verification
         if: failure()
-        run: printf '## Published but verification failed\n\nInspect the failed verification step before approving any npm staging request.\n' >> "$GITHUB_STEP_SUMMARY"
+        env:
+          PUBLICATION_STATE: ${{ steps.published.outputs.publication_state || 'unknown' }}
+        run: |
+          case "$PUBLICATION_STATE" in
+            published)
+              printf '## Published; verification incomplete\n\nThe version exists on npm. Inspect the failed step and complete verification of the original candidate before announcing the release.\n' >> "$GITHUB_STEP_SUMMARY"
+              ;;
+            not-published)
+              printf '## Not published; verification incomplete\n\nThe registry does not contain this version. Check npm Staged Packages, compare the candidate before approving it, then run verification again using the original run ID and build attempt.\n' >> "$GITHUB_STEP_SUMMARY"
+              ;;
+            *)
+              printf '## Publication state not confirmed\n\nInspect the failed candidate lookup, artifact, setup, or registry step. Resolve the error before verifying the original candidate again; this failure does not establish whether an upload succeeded. An expired original artifact cannot be recovered by repacking.\n' >> "$GITHUB_STEP_SUMMARY"
+              ;;
+          esac

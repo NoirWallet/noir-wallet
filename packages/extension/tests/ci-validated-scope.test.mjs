@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { needsScopeValidation } from '../../../scripts/ci-validated-scope.mjs'
+import { isSdkGateSuccessful, needsScopeValidation } from '../../../scripts/ci-validated-scope.mjs'
 
 const repository = 'NoirWallet/noir-wallet'
 const oldSha = 'a'.repeat(40)
@@ -128,4 +128,43 @@ test('a changed target branch or diverged head requires fresh validation', async
     }),
     true
   )
+})
+
+test('SDK gate accepts a completed artifact rehearsal or explicit reuse', () => {
+  const built = {
+    verifyResult: 'success',
+    dryRunResult: 'success',
+    reused: 'false',
+    artifactId: '123',
+    version: '0.2.0',
+    sourceSha: newSha,
+    buildAttempt: '1'
+  }
+  assert.equal(isSdkGateSuccessful(built), true)
+  const reused = {
+    verifyResult: 'success',
+    dryRunResult: 'skipped',
+    reused: 'true',
+    artifactId: '',
+    version: '',
+    sourceSha: '',
+    buildAttempt: ''
+  }
+  assert.equal(isSdkGateSuccessful(reused), true)
+  for (const changed of [
+    { verifyResult: 'failure' },
+    { verifyResult: 'cancelled' },
+    { dryRunResult: 'failure' },
+    { dryRunResult: 'cancelled' },
+    { dryRunResult: 'skipped' },
+    { artifactId: '' },
+    { version: '' },
+    { sourceSha: '' },
+    { buildAttempt: '' },
+    { reused: 'true' }
+  ]) {
+    assert.equal(isSdkGateSuccessful({ ...built, ...changed }), false)
+  }
+  assert.equal(isSdkGateSuccessful({ ...reused, reused: 'false' }), false)
+  assert.equal(isSdkGateSuccessful({ ...reused, artifactId: '123' }), false)
 })

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
@@ -286,20 +286,27 @@ test('refuses existing versions, a latest downgrade, registry errors and missing
   assert.throws(() => validateRegistryTarget(registry, '0.1.9'), /already published/)
   assert.throws(() => validateRegistryTarget(registry, '0.1.8'), /advance latest/)
   const f = fixture(t)
+  const summaryPath = path.join(f.directory, 'stage-summary.md')
+  const stageEnv = { ...env, GITHUB_STEP_SUMMARY: summaryPath }
   const run = () => assert.fail('Upload must not run')
   await assert.rejects(
-    stageSdkRelease(f.artifact, expected, { ...env, ACTIONS_ID_TOKEN_REQUEST_TOKEN: '' }, { run }),
+    stageSdkRelease(
+      f.artifact,
+      expected,
+      { ...stageEnv, ACTIONS_ID_TOKEN_REQUEST_TOKEN: '' },
+      { run }
+    ),
     /OIDC/
   )
   await assert.rejects(
-    stageSdkRelease(f.artifact, expected, env, {
+    stageSdkRelease(f.artifact, expected, stageEnv, {
       run,
       fetchImpl: async () => ({ ok: false, status: 403 })
     }),
     /403/
   )
   await assert.rejects(
-    stageSdkRelease(f.artifact, expected, env, {
+    stageSdkRelease(f.artifact, expected, stageEnv, {
       run,
       fetchImpl: async () => {
         throw new Error('network unavailable')
@@ -308,7 +315,7 @@ test('refuses existing versions, a latest downgrade, registry errors and missing
     /network unavailable/
   )
   await assert.rejects(
-    stageSdkRelease(f.artifact, expected, env, {
+    stageSdkRelease(f.artifact, expected, stageEnv, {
       run,
       fetchImpl: async () => ({
         ok: true,
@@ -317,10 +324,13 @@ test('refuses existing versions, a latest downgrade, registry errors and missing
     }),
     /already published/
   )
+  assert.equal(existsSync(summaryPath), false)
 })
 
 test('retries upload with the original bytes and build attempt, without npm credentials or package lifecycle scripts', async t => {
   const f = fixture(t)
+  const summaryPath = path.join(f.directory, 'stage-summary.md')
+  const stageEnv = { ...env, GITHUB_STEP_SUMMARY: summaryPath }
   let fail = true
   const attempts = []
   const options = {
@@ -346,13 +356,15 @@ test('retries upload with the original bytes and build attempt, without npm cred
       })
     }
   }
-  await assert.rejects(stageSdkRelease(f.artifact, expected, env, options), /E409/)
+  await assert.rejects(stageSdkRelease(f.artifact, expected, stageEnv, options), /E409/)
+  assert.equal(attempts.length, 1)
+  assert.match(readFileSync(summaryPath, 'utf8'), /SDK staging result unconfirmed/)
   fail = false
   const result = await stageSdkRelease(
     f.artifact,
     expected,
     {
-      ...env,
+      ...stageEnv,
       GITHUB_RUN_ATTEMPT: '2',
       NODE_AUTH_TOKEN: 'synthetic-ignored',
       NPM_CONFIG_REGISTRY: 'https://example.invalid'
@@ -362,6 +374,57 @@ test('retries upload with the original bytes and build attempt, without npm cred
   assert.equal(result.runAttempt, '1')
   assert.equal(result.stageId, 'stage-123')
   assert.deepEqual(attempts, [f.bytes, f.bytes])
+  const stageSummary = readFileSync(summaryPath, 'utf8')
+  const verifyCommand =
+    'gh workflow run publish-sdk.yml --repo NoirWallet/noir-wallet --ref main ' +
+    '-f operation=verify -f candidate_run_id=123 -f candidate_run_attempt=1'
+  assert.equal(stageSummary.split(verifyCommand).length, 3)
+  assert.doesNotMatch(stageSummary, /candidate_run_attempt=2/)
+})
+
+test('does not retry after an ambiguous upload or receipt', async t => {
+  const f = fixture(t)
+  const cases = [
+    () => {
+      throw new Error('ETIMEDOUT')
+    },
+    () => '{',
+    () =>
+      JSON.stringify({
+        name: SDK_PACKAGE,
+        version: f.metadata.version,
+        integrity: 'sha512-wrong',
+        stageId: 'stage-123'
+      })
+  ]
+  for (const [index, upload] of cases.entries()) {
+    const summaryPath = path.join(f.directory, `ambiguous-${index}.md`)
+    let uploads = 0
+    await assert.rejects(
+      stageSdkRelease(
+        f.artifact,
+        expected,
+        { ...env, GITHUB_STEP_SUMMARY: summaryPath },
+        {
+          fetchImpl: async () => ({ ok: true, json: async () => registry }),
+          run(_command, args) {
+            if (args[0] === '--version') return `${SDK_NPM_VERSION}\n`
+            uploads++
+            return upload()
+          }
+        }
+      ),
+      /SDK staging result unconfirmed/
+    )
+    assert.equal(uploads, 1)
+    const stageSummary = readFileSync(summaryPath, 'utf8')
+    assert.match(stageSummary, /No staged version and no public version/)
+    assert.match(stageSummary, /Staged version exists/)
+    assert.match(stageSummary, /Public version exists/)
+    assert.match(stageSummary, /Status unknown or contents conflict/)
+    assert.match(stageSummary, new RegExp(f.metadata.sha256))
+    assert.match(stageSummary, /candidate_run_id=123 -f candidate_run_attempt=1/)
+  }
 })
 
 test('checks actual registry bytes, latest and required provenance before the independent signature audit', async t => {
@@ -387,24 +450,71 @@ test('checks actual registry bytes, latest and required provenance before the in
     json: async () => packument,
     arrayBuffer: async () => bytes
   })
-  assert.deepEqual(await verifyPublishedSdk(f.artifact, expected, { fetchImpl }), f.metadata)
+  const states = []
+  const options = { fetchImpl, onPublicationState: state => states.push(state) }
+  assert.deepEqual(await verifyPublishedSdk(f.artifact, expected, options), f.metadata)
+  assert.deepEqual(states, ['published'])
   bytes = Buffer.from('substituted')
-  await assert.rejects(
-    verifyPublishedSdk(f.artifact, expected, { fetchImpl }),
-    /Downloaded npm tarball/
-  )
+  await assert.rejects(verifyPublishedSdk(f.artifact, expected, options), /Downloaded npm tarball/)
+  assert.deepEqual(states, ['published', 'published'])
   bytes = f.bytes
   packument = { ...packument, 'dist-tags': { latest: '0.3.0' } }
-  await assert.rejects(verifyPublishedSdk(f.artifact, expected, { fetchImpl }), /latest/)
+  await assert.rejects(verifyPublishedSdk(f.artifact, expected, options), /latest/)
+  assert.equal(states.at(-1), 'published')
+  packument = { ...packument, 'dist-tags': undefined }
+  await assert.rejects(verifyPublishedSdk(f.artifact, expected, options), /latest/)
+  assert.equal(states.at(-1), 'published')
   packument = { ...packument, 'dist-tags': { latest: '0.2.0' } }
   published.dist.integrity = 'sha512-different'
-  await assert.rejects(verifyPublishedSdk(f.artifact, expected, { fetchImpl }), /integrity/)
+  await assert.rejects(verifyPublishedSdk(f.artifact, expected, options), /integrity/)
+  assert.equal(states.at(-1), 'published')
   published.dist.integrity = f.metadata.integrity
   published.dist.tarball = 'https://example.invalid/sdk.tgz'
   await assert.rejects(
     verifyPublishedSdk(f.artifact, expected, { fetchImpl }),
     /registry asset URL/
   )
+})
+
+test('distinguishes unpublished versions from unknown registry and artifact failures', async t => {
+  const f = fixture(t)
+  const states = []
+  const onPublicationState = state => states.push(state)
+  await assert.rejects(
+    verifyPublishedSdk(f.artifact, expected, {
+      fetchImpl: async () => ({ ok: true, json: async () => registry }),
+      onPublicationState
+    }),
+    /not published/
+  )
+  assert.deepEqual(states, ['not-published'])
+  states.length = 0
+  await assert.rejects(
+    verifyPublishedSdk(f.artifact, expected, {
+      fetchImpl: async () => {
+        throw new Error('network unavailable')
+      },
+      onPublicationState
+    }),
+    /network unavailable/
+  )
+  assert.deepEqual(states, [])
+  await assert.rejects(
+    verifyPublishedSdk(f.artifact, expected, {
+      fetchImpl: async () => ({
+        ok: true,
+        json: async () => ({ ...registry, name: '@other/sdk' })
+      }),
+      onPublicationState
+    }),
+    /Invalid SDK registry response/
+  )
+  assert.deepEqual(states, [])
+  await assert.rejects(
+    verifyPublishedSdk(f.artifact, { ...expected, runAttempt: '2' }, { onPublicationState }),
+    /expected build/
+  )
+  assert.deepEqual(states, [])
 })
 
 test('locates only a successful build attempt of the trusted workflow and its exact nonexpired artifact', async () => {
