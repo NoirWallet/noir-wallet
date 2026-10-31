@@ -6,12 +6,7 @@ import { useWalletStore } from '@/store/wallet-store'
 import { buildAccountKey, useAccountDataStore } from '@/store/account-data-store'
 import { useTransactionResultStore } from '@/store/transaction-result-store'
 import { useSettingsStore } from '@/store/settings-store'
-import {
-  deriveFeeByTier,
-  deriveFeeByTierFromEstimate,
-  marginalFeeForTier,
-  staticFeeFallbackZats
-} from '@/config/fee'
+import { marginalFeeForTier, staticFeeFallbackZats } from '@/config/fee'
 import { fetchQuote, type QuoteResult } from '@/core/services/intents-api'
 import { parseAmount } from '@/lib/format'
 import { useSwapPreferences } from '@/store/swap-store'
@@ -109,15 +104,20 @@ export function Swap() {
     type: 'send',
     to: swap.depositAddress,
     amount: swap.amountIn,
+    memo: onChainSwapMemo,
     fundingSource,
+    feeTier,
     enabled: swap.isZecToOther && !!swap.depositAddress && !maxSelected && !isMaxTransferAmount
   })
-  const feeByTier = deriveFeeByTier(feeEstimate.feeZats, feeEstimate.error)
-  const maxFeeByTier = deriveFeeByTierFromEstimate(
-    maxTransfer.fee ? safeBig(maxTransfer.fee).mul(1e8).toNumber() : null,
-    feeTier,
-    maxTransfer.error
-  )
+  const feeByTier = {
+    standard: feeTier === 'standard' ? feeEstimate.feeZats : null,
+    fast: feeTier === 'fast' ? feeEstimate.feeZats : null
+  }
+  const maxFeeZats = maxTransfer.fee ? safeBig(maxTransfer.fee).mul(1e8).toNumber() : null
+  const maxFeeByTier = {
+    standard: feeTier === 'standard' ? maxFeeZats : null,
+    fast: feeTier === 'fast' ? maxFeeZats : null
+  }
   const isMaxFeeMode = maxSelected || isMaxTransferAmount
   const displayedFeeByTier = isMaxFeeMode ? maxFeeByTier : feeByTier
   const displayedFeeLoading = isMaxFeeMode ? maxTransfer.loading : feeEstimate.loading
@@ -138,6 +138,12 @@ export function Swap() {
     : fallbackSpendable
   const spendableBalance = swap.isZecToOther ? effectiveSpendable.toFixed() : '0'
   const networkFee = maxTransfer.fee && isMaxTransferAmount ? maxTransfer.fee : estimatedFeeZec
+  const selectedFeeQuote = isMaxFeeMode ? maxTransfer.feeQuote : feeEstimate.feeQuote
+  const feeReady =
+    !!selectedFeeQuote &&
+    selectedFeeQuote.expiresAt > Date.now() &&
+    !displayedFeeLoading &&
+    !(isMaxFeeMode ? maxTransfer.error : feeEstimate.error)
 
   const amountError = swap.isZecToOther
     ? getFundingAmountError(swap.amountIn, sourceBalance, maxTransfer.maxAmount)
@@ -237,14 +243,16 @@ export function Swap() {
 
         if (!isZecToOther || !maxSelected) break
 
+        const feeQuote = await accountManager.getFeeQuote()
         const estimate = await accountManager.estimateMaxTransfer(
           quote.depositAddress,
           sanitizeMemoForRecipient(
             quote.depositAddress,
             `Swap ${tokenIn.symbol} → ${tokenOut.symbol}`
           ),
-          marginalFeeForTier(feeTier),
-          fundingSource
+          marginalFeeForTier(feeTier, feeQuote.standardMarginalFeeZats),
+          fundingSource,
+          feeQuote.id
         )
         const exactMax = safeBig(estimate.maxAmountZats).div(1e8).toFixed()
         if (safeBig(quotedAmount).eq(exactMax)) break
@@ -327,25 +335,27 @@ export function Swap() {
   const handleConfirmSwap = useCallback(async () => {
     if (!swap.depositAddress) return
     if (swap.isZecToOther) {
+      if (!feeReady || !selectedFeeQuote) {
+        toast.error('Network fee estimate is unavailable. Please try again.')
+        return
+      }
+      try {
+        const currentQuote = await accountManager.getFeeQuote()
+        if (currentQuote.id !== selectedFeeQuote.id || selectedFeeQuote.expiresAt <= Date.now()) {
+          throw new Error('Fee estimate changed')
+        }
+      } catch {
+        if (isMaxFeeMode) maxTransfer.refresh()
+        else feeEstimate.refresh()
+        toast.error('Network fee changed', 'Review the updated fee before confirming.')
+        return
+      }
       if (amountError) {
         toast.error(amountErrorCopy || 'Amount exceeds available balance.')
         return
       }
 
-      let exactMax = maxTransfer.maxAmount
-      if (!exactMax) {
-        try {
-          const estimate = await accountManager.estimateMaxTransfer(
-            swap.depositAddress,
-            onChainSwapMemo,
-            marginalFeeForTier(feeTier),
-            fundingSource
-          )
-          exactMax = safeBig(estimate.maxAmountZats).div(1e8).toFixed()
-        } catch {
-          // The transaction builder remains the source of truth if live estimation is unavailable.
-        }
-      }
+      const exactMax = maxTransfer.maxAmount
       if (exactMax && safeBig(swap.amountIn || '0').gt(exactMax)) {
         toast.error(
           'Amount exceeds spendable balance',
@@ -392,7 +402,7 @@ export function Swap() {
             }
           : undefined
 
-      const marginalFeeZats = marginalFeeForTier(feeTier)
+      const marginalFeeZats = marginalFeeForTier(feeTier, selectedFeeQuote.standardMarginalFeeZats)
 
       const submitBase = swapEventBase()
       sendAnalyticsEvent(ANALYTICS_EVENTS.SWAP_SUBMITTED, {
@@ -415,7 +425,9 @@ export function Swap() {
           quoteBinding,
           monitorParams,
           fundingSource,
-          marginalFeeZats
+          marginalFeeZats,
+          feeQuoteId: selectedFeeQuote.id,
+          feeTier
         }
         const isSidePanel = isSidePanelSurface(window.location.search)
 
@@ -462,6 +474,9 @@ export function Swap() {
           quoteBinding,
           monitorParams,
           marginalFeeZats,
+          feeQuoteId: selectedFeeQuote.id,
+          feeTier,
+          fee: networkFee,
           analytics: {
             onSuccess: {
               name: ANALYTICS_EVENTS.SWAP_DEPOSIT_SENT,
@@ -595,6 +610,9 @@ export function Swap() {
     amountError,
     amountErrorCopy,
     maxTransfer.maxAmount,
+    selectedFeeQuote,
+    feeReady,
+    networkFee,
     quoteResult,
     quotedRecipient,
     navigateToSwapResult,
@@ -751,6 +769,9 @@ export function Swap() {
           feeTier={swap.isZecToOther ? feeTier : undefined}
           selectedFeeZec={swap.isZecToOther ? networkFee : undefined}
           insufficient={hasInsufficientFunds}
+          feeUnavailable={swap.isZecToOther && !feeReady}
+          feeError={swap.isZecToOther && (isMaxFeeMode ? maxTransfer.error : feeEstimate.error)}
+          onRetryFee={isMaxFeeMode ? maxTransfer.refresh : feeEstimate.refresh}
           fundingSource={swap.isZecToOther ? fundingSource : undefined}
         />
       )

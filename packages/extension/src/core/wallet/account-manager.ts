@@ -89,6 +89,8 @@ import { lookupBlockHeightByTime } from '../zcash/date-block-lookup'
 import { fetchBlockTime } from '@/config/rpc-registry-client'
 import { isSyncOccupyingWallet, shouldShowSyncPreflight } from '@/background/sync-status-policy'
 import { setWalletCleanupPending, setAccountDeleted } from '@/lib/wallet-metadata-storage'
+import type { FeeQuote, QuotedFeeEstimate } from '@/config/fee'
+import type { MaxTransferEstimate } from '../worker/types'
 
 export type ResolvedBirthdayHeight = {
   height: number
@@ -2360,20 +2362,29 @@ export class AccountManager {
     return fetchBlockTime(getNetworkConfig(this.network).rpcUrl, height)
   }
 
-  /** Estimate transfer fee (zatoshis) for the current account at a marginal-fee tier. */
+  async getFeeQuote(): Promise<FeeQuote> {
+    const walletId = this.store.currentWalletId
+    const account = this.getCurrentAccount()
+    if (!walletId || !account) throw new Error('No active wallet or account')
+    const core = await this.getWalletCore(walletId, account.id)
+    return core.getFeeQuote()
+  }
+
+  /** Estimate transfer fee for the current account without losing the quoted rate. */
   async estimateTransferFee(
     to: string,
     amount: string,
     memo: string | undefined,
-    marginalFeeZats: number,
-    fundingSource: FundingSource = 'shielded'
-  ): Promise<string> {
+    marginalFeeZats: number | undefined,
+    fundingSource: FundingSource = 'shielded',
+    feeQuoteId?: string
+  ): Promise<QuotedFeeEstimate> {
     const walletId = this.store.currentWalletId
     const account = this.getCurrentAccount()
     if (!walletId || !account) throw new Error('No active wallet or account')
     return this.runSpendabilityEstimate(walletId, account.id, async () => {
       const core = await this.getWalletCore(walletId, account.id)
-      return core.estimateTransferFee(to, amount, memo, marginalFeeZats, fundingSource)
+      return core.estimateTransferFee(to, amount, memo, marginalFeeZats, fundingSource, feeQuoteId)
     })
   }
 
@@ -2381,9 +2392,10 @@ export class AccountManager {
   async estimateMaxTransfer(
     to: string,
     memo: string | undefined,
-    marginalFeeZats: number,
-    fundingSource: FundingSource = 'shielded'
-  ): Promise<{ maxAmountZats: string; feeZats: string }> {
+    marginalFeeZats: number | undefined,
+    fundingSource: FundingSource = 'shielded',
+    feeQuoteId?: string
+  ): Promise<MaxTransferEstimate> {
     const walletId = this.store.currentWalletId
     const account = this.getCurrentAccount()
     if (!walletId || !account) throw new Error('No active wallet or account')
@@ -2393,7 +2405,8 @@ export class AccountManager {
       to,
       memo,
       marginalFeeZats,
-      fundingSource
+      fundingSource,
+      feeQuoteId
     )
   }
 
@@ -2402,12 +2415,13 @@ export class AccountManager {
     accountId: string,
     to: string,
     memo: string | undefined,
-    marginalFeeZats: number,
-    fundingSource: FundingSource = 'shielded'
-  ): Promise<{ maxAmountZats: string; feeZats: string }> {
+    marginalFeeZats: number | undefined,
+    fundingSource: FundingSource = 'shielded',
+    feeQuoteId?: string
+  ): Promise<MaxTransferEstimate> {
     return this.runSpendabilityEstimate(walletId, accountId, async () => {
       const core = await this.getWalletCore(walletId, accountId)
-      return core.estimateMaxTransfer(to, memo, marginalFeeZats, fundingSource)
+      return core.estimateMaxTransfer(to, memo, marginalFeeZats, fundingSource, feeQuoteId)
     })
   }
 
@@ -2481,9 +2495,12 @@ export class AccountManager {
   }
 
   /** Estimate shielding fee (zatoshis) for the current account at a marginal-fee tier. */
-  async estimateShieldFee(marginalFeeZats: number): Promise<string> {
+  async estimateShieldFee(
+    marginalFeeZats?: number,
+    feeQuoteId?: string
+  ): Promise<QuotedFeeEstimate> {
     const core = await this.getWalletCore()
-    return core.estimateShieldFee(marginalFeeZats)
+    return core.estimateShieldFee(marginalFeeZats, feeQuoteId)
   }
 
   /**

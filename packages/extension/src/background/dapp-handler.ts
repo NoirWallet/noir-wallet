@@ -15,7 +15,7 @@ import type {
 } from '@/types'
 import { UI_CONFIG } from '@/config/ui'
 import { SIGNING_ACCOUNT_INDEX, WALLET_CONFIG } from '@/config/wallet'
-import { MARGINAL_FEE_ZATS, sanitizeMarginalFeeZats } from '@/config/fee'
+import { marginalFeeForTier, type FeeTier } from '@/config/fee'
 import { safeBig } from '@/lib/big'
 import { closeAllPopupWindows } from './window-manager'
 import { useWalletStore, rehydrateWalletStore } from '@/store/wallet-store'
@@ -30,7 +30,6 @@ import { transactionRecorder } from './transaction-recorder'
 import { zcashTxMonitor, computeExpiryHeight } from './zcash-tx-monitor'
 import { catchUpAfterOnChainTx } from './tx-sync'
 import { checkLendingMcaAccount } from '@/core/services/lending-service'
-import { loadTransactions } from '@/lib/indexed-db'
 import { openHardwareSignTab } from '@/lib/hardware-tab'
 import { TimeoutError } from '@/lib/async-utils'
 import { TRANSACTION_PENDING_MESSAGE } from '@/lib/transaction-status-copy'
@@ -249,9 +248,6 @@ export class DAppHandler {
 
       case 'zcash_shieldFunds':
         return this.shieldFunds(origin)
-
-      case 'zcash_getTransactionHistory':
-        return this.getTransactionHistory(origin)
 
       case 'zcash_switchNetwork':
         throw new Error('zcash_switchNetwork is deprecated. Install the testnet extension instead.')
@@ -487,13 +483,16 @@ export class DAppHandler {
     }
 
     const feeTier = input.feeTier === 'fast' ? 'fast' : 'standard'
+    const core = await accountManager.getWalletCore(target.walletId, target.accountId)
+    const feeQuote = await core.getFeeQuote()
     const estimate = await accountManager.estimateMaxTransferFor(
       target.walletId,
       target.accountId,
       input.to,
       input.memo as string | undefined,
-      MARGINAL_FEE_ZATS[feeTier],
-      fundingSource
+      marginalFeeForTier(feeTier, feeQuote.standardMarginalFeeZats),
+      fundingSource,
+      feeQuote.id
     )
     return {
       maxAmount: safeBig(estimate.maxAmountZats).div(1e8).toFixed(),
@@ -918,7 +917,8 @@ export class DAppHandler {
       accountId,
       authorizationRevision,
       marginalFeeZats,
-      feeZats
+      feeQuoteId,
+      feeTier
     } = await this.requestUserApprovalWithId(origin, 'sendTransaction', params)
 
     if (!approved) {
@@ -954,11 +954,20 @@ export class DAppHandler {
         requestId,
         walletId,
         accountId,
-        marginalFeeZats
+        marginalFeeZats,
+        'send',
+        feeQuoteId,
+        feeTier
       )
     }
 
-    const txParams: SendTransactionParams = { ...params, fundingSource, marginalFeeZats }
+    const txParams: SendTransactionParams = {
+      ...params,
+      fundingSource,
+      marginalFeeZats,
+      feeQuoteId,
+      feeTier
+    }
 
     const network = useWalletStore.getState().currentNetwork
     const accountKey = buildAccountKey(network, walletId, accountId)
@@ -993,15 +1002,15 @@ export class DAppHandler {
         )
       }
 
-      const fallbackFeeZec = safeBig(WALLET_CONFIG.NETWORK_FEE).times(
-        sanitizeMarginalFeeZats(marginalFeeZats) / MARGINAL_FEE_ZATS.standard
+      const feeEstimate = await walletCore.estimateTransferFee(
+        params.to,
+        params.amount,
+        params.memo,
+        marginalFeeZats,
+        fundingSource,
+        feeQuoteId
       )
-      const approvedFeeZats =
-        typeof feeZats === 'number' && Number.isSafeInteger(feeZats) && feeZats > 0 ? feeZats : null
-      const feeZec =
-        approvedFeeZats !== null
-          ? safeBig(approvedFeeZats).div(1e8).toFixed()
-          : fallbackFeeZec.toFixed()
+      const feeZec = safeBig(feeEstimate.feeZats).div(1e8).toFixed()
 
       const tx = await transactionRecorder.addTransaction({
         accountKey,
@@ -1139,7 +1148,9 @@ export class DAppHandler {
     walletId: string,
     accountId: string,
     marginalFeeZats?: number,
-    kind: 'send' | 'shield' = 'send'
+    kind: 'send' | 'shield' = 'send',
+    feeQuoteId?: string,
+    feeTier?: FeeTier
   ): Promise<string> {
     const tab = await openHardwareSignTab({
       kind,
@@ -1151,7 +1162,9 @@ export class DAppHandler {
       fundingSource: params.fundingSource ?? 'shielded',
       dappRequestId,
       origin,
-      marginalFeeZats
+      marginalFeeZats,
+      feeQuoteId,
+      feeTier
     })
 
     return new Promise<string>((resolve, reject) => {
@@ -1322,10 +1335,18 @@ export class DAppHandler {
         ? useAccountDataStore.getState().getBalance(currentNetwork, currentWalletId, account.id)
         : null
 
-    const { requestId, approved, walletId, accountId, authorizationRevision, marginalFeeZats } =
-      await this.requestUserApprovalWithId(origin, 'shieldFunds', {
-        amount: getShieldableTransparentBalance(balance)
-      })
+    const {
+      requestId,
+      approved,
+      walletId,
+      accountId,
+      authorizationRevision,
+      marginalFeeZats,
+      feeQuoteId,
+      feeTier
+    } = await this.requestUserApprovalWithId(origin, 'shieldFunds', {
+      amount: getShieldableTransparentBalance(balance)
+    })
 
     if (!approved) {
       trackEvent(ANALYTICS_EVENTS.DAPP_REQUEST_REJECTED, {
@@ -1364,7 +1385,9 @@ export class DAppHandler {
         walletId,
         accountId,
         marginalFeeZats,
-        'shield'
+        'shield',
+        feeQuoteId,
+        feeTier
       )
     }
 
@@ -1395,9 +1418,8 @@ export class DAppHandler {
       if (!hasEnoughTransparentBalanceToShield(freshTransparentBalance)) {
         throw new Error(MIN_SHIELDING_BALANCE_MESSAGE)
       }
-      const feeZec = safeBig(WALLET_CONFIG.NETWORK_FEE)
-        .times(sanitizeMarginalFeeZats(marginalFeeZats) / MARGINAL_FEE_ZATS.standard)
-        .toFixed()
+      const feeEstimate = await walletCore.estimateShieldFee(marginalFeeZats, feeQuoteId)
+      const feeZec = safeBig(feeEstimate.feeZats).div(1e8).toFixed()
       const tx = await transactionRecorder.addTransaction({
         accountKey,
         transaction: {
@@ -1418,8 +1440,9 @@ export class DAppHandler {
       transactionId = tx.id
       await this.assertApprovedAccountAuthorized(origin, walletId, accountId, authorizationRevision)
       const shieldResult = await walletCore.shieldFunds(
-        sanitizeMarginalFeeZats(marginalFeeZats),
-        approvedAccountIndex
+        marginalFeeZats,
+        approvedAccountIndex,
+        feeQuoteId
       )
       const { txid } = shieldResult
       broadcastHash = txid
@@ -1494,45 +1517,6 @@ export class DAppHandler {
     } finally {
       syncScheduler.resumeAfterTx(walletId)
     }
-  }
-
-  private async getTransactionHistory(origin: string): Promise<
-    Array<{
-      txid: string
-      type: string
-      amount: string
-      status: string
-      timestamp: number
-      memo?: string
-    }>
-  > {
-    await this.ensurePermission(origin)
-
-    if (accountManager.isLocked()) return []
-
-    const { currentWalletId, currentAccountId, currentNetwork } = useWalletStore.getState()
-    if (!currentWalletId || !currentAccountId) return []
-
-    const accountKey = buildAccountKey(currentNetwork, currentWalletId, currentAccountId)
-    const transactions = await loadTransactions(accountKey)
-
-    return transactions
-      .filter(tx => tx.network === currentNetwork)
-      .sort((a, b) => b.timestamp - a.timestamp)
-      .map(tx => ({
-        txid: tx.txHash,
-        type:
-          tx.type === 'supply' || tx.type === 'withdraw' || tx.type === 'claim'
-            ? `lending_${tx.type}`
-            : tx.type,
-        amount: tx.amount,
-        status:
-          tx.status === 'success' || tx.status === 'confirming' || tx.status === 'relay_confirmed'
-            ? 'mined'
-            : tx.status,
-        timestamp: tx.timestamp,
-        memo: tx.memo || undefined
-      }))
   }
 
   private async checkLendingMcaAccount(origin: string) {
@@ -1655,6 +1639,8 @@ export class DAppHandler {
     accountId: string
     authorizationRevision: number
     marginalFeeZats?: number
+    feeQuoteId?: string
+    feeTier?: FeeTier
     feeZats?: number
     selectedIds?: string[]
   }> {
@@ -1685,7 +1671,13 @@ export class DAppHandler {
 
       const finish = (
         approved: boolean,
-        extras?: { marginalFeeZats?: number; feeZats?: number; selectedIds?: string[] }
+        extras?: {
+          marginalFeeZats?: number
+          feeQuoteId?: string
+          feeTier?: FeeTier
+          feeZats?: number
+          selectedIds?: string[]
+        }
       ) => {
         if (finished) return
         finished = true
@@ -1703,6 +1695,8 @@ export class DAppHandler {
           accountId: capturedAccountId,
           authorizationRevision,
           marginalFeeZats: extras?.marginalFeeZats,
+          feeQuoteId: extras?.feeQuoteId,
+          feeTier: extras?.feeTier,
           feeZats: extras?.feeZats,
           selectedIds: extras?.selectedIds
         })
@@ -1716,6 +1710,8 @@ export class DAppHandler {
             }
             finish(msg.success, {
               marginalFeeZats: msg.marginalFeeZats,
+              feeQuoteId: msg.feeQuoteId,
+              feeTier: msg.feeTier,
               feeZats: msg.feeZats,
               selectedIds: msg.selectedIds
             })
