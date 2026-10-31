@@ -1,7 +1,12 @@
 import type { PortfolioReadModel } from '@/core/portfolio'
 import { parseZcashAddress } from '@/core/address-book/address-book'
 import { isZecToken } from '@/core/services/intents-api'
-import type { RheaSwapQuoteRequest, RheaSwapToken } from '@/core/services/rhea-swap'
+import {
+  RHEA_SWAP_CHAIN_CATALOG,
+  type RheaSwapQuoteRequest,
+  type RheaSwapToken
+} from '@/core/services/rhea-swap'
+import { createInitialProductChainRegistry } from '@/core/chains/registry'
 import { safeBig } from '@/lib/big'
 import {
   parseAmount,
@@ -22,6 +27,44 @@ import {
   filterCrossChainSendDestinations,
   type CrossChainSendCapabilities
 } from '@/popup/services/cross-chain-send-assets'
+
+export function resolveSwapRecipientChainId(
+  token: RheaSwapToken | null,
+  network: Network
+): string | null {
+  if (!token) return null
+  const descriptor = RHEA_SWAP_CHAIN_CATALOG.find(chain => chain.apiChainId === token.rheaChainId)
+  if (!descriptor) return null
+  if (/^\d+$/.test(descriptor.apiChainId)) return `eip155:${descriptor.apiChainId}`
+  return (
+    createInitialProductChainRegistry(network)
+      .list()
+      .find(chain => chain.family === descriptor.walletFamily)?.id ?? null
+  )
+}
+
+export function resolveManagedSwapRecipient(input: {
+  readonly address: string
+  readonly zcashAddresses?: Readonly<{ shielded: string; transparent: string }>
+  readonly walletAddress?: string
+  readonly privateAddress?: string
+  readonly isEvm: boolean
+}): 'shielded' | 'transparent' | 'main' | 'private' | null {
+  if (!input.address) return null
+  if (input.zcashAddresses) {
+    if (input.address === input.zcashAddresses.shielded) return 'shielded'
+    if (input.address === input.zcashAddresses.transparent) return 'transparent'
+    return null
+  }
+  const matches = (candidate: string | undefined) =>
+    candidate &&
+    (input.isEvm
+      ? candidate.toLowerCase() === input.address.toLowerCase()
+      : candidate === input.address)
+  if (matches(input.walletAddress)) return 'main'
+  if (input.isEvm && matches(input.privateAddress)) return 'private'
+  return null
+}
 
 export function resolveSwapRefreshChainId(
   token: RheaSwapToken | null,

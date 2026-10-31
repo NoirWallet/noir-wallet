@@ -52,10 +52,14 @@ function EmptyState({
 export function RecipientSelector({
   chainId,
   excludeAddresses = EMPTY_ADDRESSES,
+  includeUnavailableAccounts = false,
+  includeCurrentAccount = false,
   onSelect
 }: {
   readonly chainId: string
   readonly excludeAddresses?: readonly string[]
+  readonly includeUnavailableAccounts?: boolean
+  readonly includeCurrentAccount?: boolean
   readonly onSelect: (address: string) => void
 }) {
   const contacts = useAddressBookStore(state => state.contacts)
@@ -101,8 +105,12 @@ export function RecipientSelector({
   }, [chainId])
 
   const accountGroups = useMemo(
-    () => buildMyAccountRecipientGroups(catalog, chainId, excludeAddresses),
-    [catalog, chainId, excludeAddresses]
+    () =>
+      buildMyAccountRecipientGroups(catalog, chainId, excludeAddresses, {
+        includeUnavailableAccounts,
+        includeCurrentAccount
+      }),
+    [catalog, chainId, excludeAddresses, includeUnavailableAccounts, includeCurrentAccount]
   )
   const savedRecipients = useMemo(
     () => buildSavedRecipientList(contacts, chainId, excludeAddresses),
@@ -144,6 +152,27 @@ export function RecipientSelector({
                 group.accountDisplayName,
                 accountDisplayNames
               )
+              if (group.addresses.length === 0) {
+                return (
+                  <button
+                    key={group.key}
+                    type="button"
+                    disabled
+                    className="flex w-full min-w-0 flex-col items-start gap-1 rounded-lg bg-card px-3 py-2.5 text-left opacity-60"
+                  >
+                    <span className="flex w-full min-w-0 items-center gap-2">
+                      <span className="min-w-0 truncate text-sm font-medium">{displayName}</span>
+                      {group.active && <span className="shrink-0 text-xs text-muted">Current</span>}
+                      {group.walletDisplayName && (
+                        <span className="ml-auto max-w-[42%] truncate text-xs text-muted">
+                          {group.walletDisplayName}
+                        </span>
+                      )}
+                    </span>
+                    <span className="text-xs text-muted">Unavailable on this network</span>
+                  </button>
+                )
+              }
               return (
                 <section key={group.key}>
                   <div className="mb-2 flex min-w-0 items-center gap-2 px-1">
@@ -179,7 +208,7 @@ export function RecipientSelector({
                             <ExecutionAccountBadge mode="private" iconOnly />
                           )}
                           <p
-                            className="min-w-0 flex-1 truncate font-mono text-xs text-muted"
+                            className="min-w-0 flex-1 truncate font-mono text-xs text-foreground"
                             title={address.value}
                           >
                             {formatSortAddress(address.value)}
@@ -224,7 +253,7 @@ export function RecipientSelector({
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-medium">{contact.name}</p>
                   <p
-                    className="mt-0.5 truncate font-mono text-xs text-muted"
+                    className="mt-0.5 truncate font-mono text-xs text-foreground"
                     title={contact.address}
                   >
                     {formatSortAddress(contact.address)}

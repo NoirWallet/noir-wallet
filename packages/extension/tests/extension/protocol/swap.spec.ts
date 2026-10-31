@@ -156,12 +156,10 @@ test('uses a selected Zcash wallet recipient for Swap from an EVM-only wallet', 
     .getByRole('button', { name: /^ZEC on Zcash/ })
     .first()
     .click()
-  await popup
-    .getByRole('button', { name: /Select address|u1|t1/ })
-    .last()
-    .click()
-  const ownAddresses = popup.getByRole('dialog', { name: 'Select Address' })
-  await expect(ownAddresses.getByRole('button')).toHaveCount(3)
+  await popup.getByRole('button', { name: 'Select Recipient', exact: true }).click()
+  const ownAddresses = popup.getByRole('dialog', { name: 'Select Recipient' })
+  await expect(ownAddresses.getByRole('button', { name: /Send to .* Shielded/ })).toHaveCount(1)
+  await expect(ownAddresses.getByRole('button', { name: /Send to .* Transparent/ })).toHaveCount(1)
   await captureScreenshot(popup, 'swap-zec-own-addresses.png')
   await ownAddresses.getByRole('button', { name: 'Close', exact: true }).click()
   await popup.getByRole('button', { name: 'Back', exact: true }).click()
@@ -200,22 +198,25 @@ test('uses a selected Zcash wallet recipient for Swap from an EVM-only wallet', 
     .getByRole('button', { name: /^ZEC on Zcash/ })
     .first()
     .click()
-  await expect(popup.getByRole('textbox', { name: 'Destination address' })).toBeVisible()
-  await expect(popup.getByRole('dialog', { name: 'Select Address' })).toHaveCount(0)
+  await expect(popup.getByRole('textbox', { name: 'Receive at' })).toBeVisible()
   await popup.getByRole('textbox', { name: 'From amount' }).fill('0.01')
-  await popup.getByRole('textbox', { name: 'Destination address' }).fill('not-a-zcash-address')
+  await popup.getByRole('textbox', { name: 'Receive at' }).fill('not-a-zcash-address')
   await expect(popup.getByText('Enter a valid Zcash address.')).toBeVisible()
   await expect(popup.getByRole('button', { name: 'Swap', exact: true })).toBeDisabled()
   await popup.waitForTimeout(1_000)
   expect(api.getQuoteRequests()).toHaveLength(0)
 
-  await popup.getByRole('button', { name: 'My accounts' }).click()
+  await popup.getByRole('button', { name: 'Select Recipient', exact: true }).click()
   const recipients = popup.getByRole('dialog', { name: 'Select Recipient' })
+  const unavailableAccount = recipients.getByRole('button', {
+    name: /Unavailable on this network/
+  })
+  await expect(unavailableAccount).toHaveCount(1)
+  await expect(unavailableAccount).toBeDisabled()
+  await captureScreenshot(popup, 'swap-zec-unavailable-account.png')
   await expect(recipients.getByRole('button', { name: /Send to .* Shielded/ })).toBeVisible()
   await recipients.getByRole('button', { name: /Send to .* Shielded/ }).click()
-  await expect(popup.getByRole('textbox', { name: 'Destination address' })).toHaveValue(
-    zcashRecipient!
-  )
+  await expect(popup.getByRole('textbox', { name: 'Receive at' })).toHaveValue(zcashRecipient!)
   await captureScreenshot(popup, 'swap-evm-only-zec-recipient.png')
   await expect.poll(() => api.getQuoteRequests().at(-1)?.recipient).toBe(zcashRecipient)
   const review = popup.getByRole('button', { name: 'Swap', exact: true })
@@ -675,10 +676,10 @@ test('selects independent source and destination accounts in Swap in real MV3', 
   await expect
     .poll(() => api.getQuoteRequests().at(-1)?.refundTo.toLowerCase())
     .toBe(addresses.main.toLowerCase())
-  await popup.getByRole('button', { name: 'Choose destination account, current main' }).click()
+  await popup.getByRole('button', { name: 'Select Recipient', exact: true }).click()
   await popup
-    .getByRole('dialog', { name: 'Choose destination account' })
-    .getByRole('radio', { name: /Confidential account/ })
+    .getByRole('dialog', { name: 'Select Recipient' })
+    .getByRole('button', { name: /Send to .* Confidential/ })
     .click()
   await expect(
     popup.getByRole('button', { name: 'Choose source account, current main' })
@@ -702,10 +703,10 @@ test('selects independent source and destination accounts in Swap in real MV3', 
   await expect
     .poll(() => api.getQuoteRequests().at(-1)?.refundTo.toLowerCase())
     .toBe(addresses.private.toLowerCase())
-  await popup.getByRole('button', { name: 'Choose destination account, current private' }).click()
+  await popup.getByRole('button', { name: 'Select Recipient', exact: true }).click()
   await popup
-    .getByRole('dialog', { name: 'Choose destination account' })
-    .getByRole('radio', { name: /Public account/ })
+    .getByRole('dialog', { name: 'Select Recipient' })
+    .getByRole('button', { name: /Send to .* Public/ })
     .click()
   await expect
     .poll(() => api.getQuoteRequests().at(-1)?.recipient.toLowerCase())
@@ -716,22 +717,22 @@ test('selects independent source and destination accounts in Swap in real MV3', 
   await expectNoOverflow(popup)
   await captureScreenshot(popup, 'swap-confidential-to-main.png')
 
-  await popup.getByRole('button', { name: 'Choose destination account, current main' }).click()
+  await popup.getByRole('button', { name: 'Select Recipient', exact: true }).click()
   await captureScreenshot(popup, 'swap-destination-account-selector.png')
   await popup
-    .getByRole('dialog', { name: 'Choose destination account' })
-    .getByRole('button', { name: 'Custom address', exact: true })
+    .getByRole('dialog', { name: 'Select Recipient' })
+    .getByRole('button', { name: 'Close', exact: true })
     .click()
   const customAddress = '0x1111111111111111111111111111111111111111'
-  await popup.getByRole('textbox', { name: 'Destination address' }).fill(customAddress)
+  await popup.getByRole('textbox', { name: 'Receive at' }).fill(customAddress)
   await expect
     .poll(() => api.getQuoteRequests().at(-1)?.recipient.toLowerCase())
     .toBe(customAddress)
   await captureScreenshot(popup, 'swap-custom-destination.png')
-  await popup.getByRole('button', { name: 'Choose destination account, current custom' }).click()
+  await popup.getByRole('button', { name: 'Select Recipient', exact: true }).click()
   await popup
-    .getByRole('dialog', { name: 'Choose destination account' })
-    .getByRole('radio', { name: /Public account/ })
+    .getByRole('dialog', { name: 'Select Recipient' })
+    .getByRole('button', { name: /Send to .* Public/ })
     .click()
   await expect
     .poll(() => api.getQuoteRequests().at(-1)?.recipient.toLowerCase())
@@ -771,9 +772,9 @@ test('selects independent source and destination accounts in Swap in real MV3', 
     await expect(
       popup.getByRole('button', { name: `Choose source account, current ${mode}` })
     ).toBeVisible()
-    await expect(
-      popup.getByRole('button', { name: `Choose destination account, current ${mode}` })
-    ).toBeVisible()
+    await expect(popup.getByRole('textbox', { name: 'Receive at' })).toHaveValue(
+      confidential ? addresses.private : addresses.main
+    )
     const notification = popup.getByRole('button', { name: 'Dismiss notification' })
     if (await notification.isVisible()) await notification.click()
     await captureScreenshot(

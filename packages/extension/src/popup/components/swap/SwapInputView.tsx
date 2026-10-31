@@ -1,110 +1,18 @@
-import { useRef, useState, type ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { Icon } from '@iconify/react'
 import type { AddressType } from '@/types'
 import type { SwapToken } from '@/core/services/intents-api'
 import { formatChainName, formatSortAddress, formatSymbol } from '@/lib/format'
 import { formatFeeAmount, formatFiatAmount, formatTokenQuantity } from '@/lib/number-format'
 import { cn } from '@/lib/utils'
-import { AddressTypeSwitch } from '../account/AddressType'
 import { ExecutionAccountBadge } from '../account/ExecutionAccountSelector'
 import { TokenIcon } from '../tokens/TokenIcon'
 import { Button } from '../ui/button'
-import { Input } from '../ui/input'
 import { Skeleton } from '../ui/skeleton'
 import { BalanceHelp } from '../transaction/BalanceHelp'
+import { SendRecipientInputCard } from '../transaction/SendInputCards'
 import { safeBig } from '@/lib/big'
 import { InlineError } from '../common/InlineError'
-
-function AddressInputWithRecent({
-  label,
-  showLabel = true,
-  value,
-  placeholder,
-  recentAddresses,
-  onChange,
-  error
-}: {
-  label: string
-  showLabel?: boolean
-  value: string
-  placeholder: string
-  recentAddresses: string[]
-  onChange: (value: string) => void
-  error?: string | null
-}) {
-  const [showRecent, setShowRecent] = useState(false)
-  const blurTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
-
-  const handleFocus = () => {
-    clearTimeout(blurTimer.current)
-    if (!value && recentAddresses.length > 0) setShowRecent(true)
-  }
-
-  const handleBlur = () => {
-    blurTimer.current = setTimeout(() => setShowRecent(false), 150)
-  }
-
-  return (
-    <div>
-      {showLabel && (
-        <span className="mb-2 block text-sm font-medium text-foreground/65">{label}</span>
-      )}
-      <div className="relative">
-        <Input
-          value={value}
-          onChange={event => {
-            onChange(event.target.value)
-            setShowRecent(false)
-          }}
-          onFocus={handleFocus}
-          onBlur={handleBlur}
-          placeholder={placeholder}
-          aria-label={label}
-          aria-invalid={Boolean(error) || undefined}
-          className="h-[46px] rounded-xl border-0 bg-card pl-12 pr-12 font-mono text-sm shadow-none"
-          startContent={
-            <span className="flex size-6 items-center justify-center rounded-lg bg-primary/15 text-primary">
-              <Icon icon="lucide:map-pin" width={14} height={14} />
-            </span>
-          }
-          endContent={
-            value ? (
-              <button
-                type="button"
-                aria-label={`Clear ${label.toLowerCase()}`}
-                onMouseDown={event => event.preventDefault()}
-                onClick={() => onChange('')}
-                className="flex size-6 items-center justify-center rounded-full bg-white/10 text-muted transition-colors hover:text-foreground"
-              >
-                <Icon icon="lucide:x" width={15} height={15} />
-              </button>
-            ) : undefined
-          }
-        />
-        {showRecent && recentAddresses.length > 0 && (
-          <div className="absolute left-0 right-0 top-full z-20 mt-1 overflow-hidden rounded-xl border border-border bg-card shadow-lg">
-            <p className="px-3 pb-1 pt-2 text-[11px] text-muted">Recent</p>
-            {recentAddresses.map(address => (
-              <button
-                key={address}
-                type="button"
-                onMouseDown={event => event.preventDefault()}
-                onClick={() => {
-                  onChange(address)
-                  setShowRecent(false)
-                }}
-                className="w-full truncate px-3 py-2.5 text-left font-mono text-xs transition-colors hover:bg-white/5"
-                title={address}
-              >
-                {formatSortAddress(address)}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
 
 interface SwapInputViewProps {
   tokenIn: SwapToken | null
@@ -112,7 +20,6 @@ interface SwapInputViewProps {
   isZecSource: boolean
   isZecDestination: boolean
   requiresRecipientAddress: boolean
-  canUseWalletDestination: boolean
   canSwitchTokens: boolean
   switchingTokens?: boolean
   amountIn: string
@@ -126,7 +33,6 @@ interface SwapInputViewProps {
   spendableBalance: string
   availableBalance?: string
   pendingBalance?: string
-  recipientAddress: string
   recipientError?: string | null
   slippage: number
   networkFee?: string
@@ -142,13 +48,11 @@ interface SwapInputViewProps {
   hasInsufficientFunds?: boolean
   insufficientMessage?: string
   walletManagedRefundAddress?: string
-  recentRecipientAddresses?: string[]
   feeIsApproximate?: boolean
   sourceAddress?: string
   sourceBadge?: string
   destinationBadge?: string
   sourceAccountAction?: ReactNode
-  destinationAccountAction?: ReactNode
   destinationAssetLocked?: boolean
   sourceAssetLocked?: boolean
   hideSwitchAssets?: boolean
@@ -159,9 +63,7 @@ interface SwapInputViewProps {
   onMaxClick?: () => void
   onRecipientAddressChange: (value: string) => void
   onSelectRecipientFromWallet?: () => void
-  onUseCustomRecipientChange: (value: boolean) => void
   onSelectToken: (type: 'in' | 'out') => void
-  onSelectZecAddress: () => void
   onSwitchTokens: () => void
   onRetryTokenCatalog: () => void
   onRetryQuote?: () => void
@@ -482,7 +384,6 @@ export function SwapInputView({
   isZecSource,
   isZecDestination,
   requiresRecipientAddress,
-  canUseWalletDestination,
   canSwitchTokens,
   switchingTokens = false,
   amountIn,
@@ -496,7 +397,6 @@ export function SwapInputView({
   spendableBalance,
   availableBalance,
   pendingBalance,
-  recipientAddress,
   recipientError,
   slippage,
   networkFee,
@@ -512,13 +412,11 @@ export function SwapInputView({
   hasInsufficientFunds,
   insufficientMessage,
   walletManagedRefundAddress,
-  recentRecipientAddresses = [],
   feeIsApproximate,
   sourceAddress,
   sourceBadge,
   destinationBadge: destinationBadgeOverride,
   sourceAccountAction,
-  destinationAccountAction,
   destinationAssetLocked = false,
   sourceAssetLocked = false,
   hideSwitchAssets = false,
@@ -529,9 +427,7 @@ export function SwapInputView({
   onMaxClick,
   onRecipientAddressChange,
   onSelectRecipientFromWallet,
-  onUseCustomRecipientChange,
   onSelectToken,
-  onSelectZecAddress,
   onSwitchTokens,
   onRetryTokenCatalog,
   onRetryQuote,
@@ -625,7 +521,6 @@ export function SwapInputView({
               fiatValue={toFiat}
               accountAddress={destinationAddress}
               accountBadge={destinationBadge}
-              accountAction={destinationAccountAction}
               accountFallbackLabel={requiresRecipientAddress ? 'Custom address' : 'Wallet'}
               onTokenSelect={() => onSelectToken('out')}
               tokenSelectDisabled={destinationAssetsLoading}
@@ -650,93 +545,19 @@ export function SwapInputView({
           <div className="mt-5">
             {destinationAssetsLoading ? (
               <ReceiveAddressSkeleton />
-            ) : requiresRecipientAddress && tokenOut ? (
-              <div>
-                <div className="mb-2 flex items-center justify-between">
-                  <span className="text-sm font-medium text-foreground/65">
-                    Destination address
-                  </span>
-                  {canUseWalletDestination && (
-                    <button
-                      type="button"
-                      onClick={() => onUseCustomRecipientChange(false)}
-                      className="text-xs font-medium text-primary"
-                    >
-                      Use current wallet address
-                    </button>
-                  )}
-                  {isZecDestination && onSelectRecipientFromWallet && (
-                    <button
-                      type="button"
-                      onClick={onSelectRecipientFromWallet}
-                      className="text-xs font-medium text-primary"
-                    >
-                      My accounts
-                    </button>
-                  )}
-                </div>
-                <AddressInputWithRecent
-                  label="Destination address"
-                  showLabel={false}
-                  value={recipientAddress}
-                  placeholder={`${formatChainName(tokenOut.blockchain)} address...`}
-                  recentAddresses={recentRecipientAddresses}
-                  onChange={onRecipientAddressChange}
-                  error={recipientError}
-                />
-                {recipientError && <InlineError message={recipientError} className="mt-2" />}
-                {!recipientAddress && amountIn && (
-                  <p className="mt-2 text-xs text-muted">
-                    Enter a destination address to request a live quote.
-                  </p>
-                )}
-              </div>
-            ) : isZecDestination ? (
-              <div>
-                <div className="mb-2 flex items-center justify-between">
-                  <span className="text-sm font-medium text-foreground/65">Receive address</span>
-                  <AddressTypeSwitch type={addressType} onClick={onSelectZecAddress} size="md" />
-                </div>
-                <button
-                  type="button"
-                  onClick={onSelectZecAddress}
-                  className="flex h-[46px] w-full items-center gap-3 rounded-xl bg-card px-3 text-left"
-                >
-                  <span className="flex size-6 shrink-0 items-center justify-center rounded-lg bg-primary/15 text-primary">
-                    <Icon icon="lucide:map-pin" width={14} height={14} />
-                  </span>
-                  <span
-                    className="min-w-0 flex-1 truncate font-mono text-sm"
-                    title={destinationAddress}
-                  >
-                    {destinationAddress ? formatSortAddress(destinationAddress) : 'Select address'}
-                  </span>
-                  <Icon icon="lucide:chevron-right" width={16} height={16} className="text-muted" />
-                </button>
-              </div>
             ) : (
               <div>
-                <span className="mb-2 block text-sm font-medium text-foreground/65">
-                  Receive address
-                </span>
-                <div className="flex h-[46px] w-full items-center gap-3 rounded-xl bg-card px-3">
-                  <span className="flex size-6 shrink-0 items-center justify-center rounded-lg bg-primary/15 text-primary">
-                    <Icon icon="lucide:map-pin" width={14} height={14} />
-                  </span>
-                  <span
-                    className="min-w-0 flex-1 truncate font-mono text-sm"
-                    title={destinationAddress}
-                  >
-                    {destinationAddress ? formatSortAddress(destinationAddress) : 'Unavailable'}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => onUseCustomRecipientChange(true)}
-                    className="text-xs font-medium text-primary transition-colors hover:text-primary/80"
-                  >
-                    Change
-                  </button>
-                </div>
+                <SendRecipientInputCard
+                  id="swap-recipient"
+                  label="Receive at"
+                  variant="filled"
+                  value={destinationAddress ?? ''}
+                  placeholder={`${formatChainName(tokenOut.blockchain)} address`}
+                  onChange={onRecipientAddressChange}
+                  onSelectRecipient={onSelectRecipientFromWallet}
+                  invalid={Boolean(recipientError)}
+                />
+                {recipientError && <InlineError message={recipientError} className="mt-2" />}
               </div>
             )}
           </div>

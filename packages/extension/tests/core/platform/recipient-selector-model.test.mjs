@@ -78,6 +78,34 @@ test('shows only the preferred receive address of other EVM and Bitcoin accounts
   ])
 })
 
+test('includes the current Bitcoin receive address only when requested', () => {
+  const groups = buildMyAccountRecipientGroups(catalog, BITCOIN, [], {
+    includeCurrentAccount: true
+  })
+
+  expect(groups.map(group => group.key)).toEqual(['1:0', '1:1', '2:0'])
+  expect(groups[0].addresses.map(item => item.value)).toEqual(['bc1qnative1'])
+  expect(
+    buildMyAccountRecipientGroups(catalog, BITCOIN, ['bc1qnative1'], {
+      includeCurrentAccount: true
+    }).map(group => group.key)
+  ).toEqual(['1:1', '2:0'])
+})
+
+test('keeps accounts without the target network disabled only when requested', () => {
+  const scope = {
+    generationId: 'generation-1',
+    accounts: [account('1', '0', true, '1'), { ...account('2', '0', false, '2'), networks: [] }]
+  }
+
+  expect(buildMyAccountRecipientGroups(scope, BITCOIN).map(group => group.key)).toEqual([])
+  const groups = buildMyAccountRecipientGroups(scope, BITCOIN, [], {
+    includeUnavailableAccounts: true
+  })
+  expect(groups.map(group => group.key)).toEqual(['2:0'])
+  expect(groups[0].addresses).toEqual([])
+})
+
 test('includes the current EVM account alternate execution address and excludes only the sender', () => {
   const current = account('1', '0', true, '1')
   current.networks.find(item => item.chain.id === EVM).privateExecutionAddress =

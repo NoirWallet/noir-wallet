@@ -748,8 +748,7 @@ test('reviews a same-token cross-chain Send with the destination address in real
   const walletRecipient = api.getQuoteRequests().at(-1)?.recipient
   expect(walletRecipient).toMatch(/^0x[0-9a-fA-F]{40}$/)
   const externalRecipient = `0x${'12'.repeat(20)}`
-  await popup.getByRole('button', { name: 'Change', exact: true }).click()
-  await popup.getByRole('textbox', { name: 'Destination address' }).fill(externalRecipient)
+  await popup.getByRole('textbox', { name: 'Receive at' }).fill(externalRecipient)
   await expect.poll(() => api.getQuoteRequests().at(-1)?.recipient).toBe(externalRecipient)
   expect(walletRecipient).not.toBe(externalRecipient)
   await expect(popup.getByRole('button', { name: 'Review Send' })).toBeEnabled({

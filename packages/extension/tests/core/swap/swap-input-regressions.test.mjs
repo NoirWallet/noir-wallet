@@ -11,7 +11,9 @@ import {
 import { resolveSelectedSwapMaximum } from '../../../src/popup/services/swap-maximum.ts'
 import {
   resolveSwapSelectorBalanceMode,
-  resolveWalletSwapSourceAvailableRaw
+  resolveWalletSwapSourceAvailableRaw,
+  resolveManagedSwapRecipient,
+  resolveSwapRecipientChainId
 } from '../../../src/popup/services/swap-page-model.ts'
 import {
   canReverseSwapPair,
@@ -30,6 +32,38 @@ const zcashChain = {
   network: { kind: 'mainnet' }
 }
 const arbitrumChain = { id: 'eip155:42161', family: 'evm', network: { kind: 'mainnet' } }
+
+test('only the current destination account can restore a managed recipient and allow reversal', () => {
+  const publicAddress = `0x${'a'.repeat(40)}`
+  const privateAddress = `0x${'b'.repeat(40)}`
+  const input = { walletAddress: publicAddress, privateAddress, isEvm: true }
+  assert.equal(
+    resolveManagedSwapRecipient({ ...input, address: publicAddress.toUpperCase() }),
+    'main'
+  )
+  assert.equal(resolveManagedSwapRecipient({ ...input, address: privateAddress }), 'private')
+  assert.equal(resolveManagedSwapRecipient({ ...input, address: `0x${'c'.repeat(40)}` }), null)
+  assert.equal(resolveManagedSwapRecipient({ ...input, address: '' }), null)
+  const zcash = { zcashAddresses: { shielded: 'u1own', transparent: 't1own' }, isEvm: false }
+  assert.equal(resolveManagedSwapRecipient({ ...zcash, address: 't1own' }), 'transparent')
+  assert.equal(resolveManagedSwapRecipient({ ...zcash, address: 'u1own' }), 'shielded')
+  assert.equal(resolveManagedSwapRecipient({ ...zcash, address: 'U1OWN' }), null)
+  assert.equal(
+    resolveManagedSwapRecipient({
+      address: 'Alice.near',
+      walletAddress: 'alice.near',
+      isEvm: false
+    }),
+    null
+  )
+})
+
+test('recipient books follow the destination chain even without a current account receive target', () => {
+  assert.equal(resolveSwapRecipientChainId(usdc, 'mainnet'), arbitrumChain.id)
+  assert.equal(resolveSwapRecipientChainId(zec, 'mainnet'), zcashChain.id)
+  assert.equal(resolveSwapRecipientChainId(null, 'mainnet'), null)
+  assert.equal(resolveSwapRecipientChainId({ rheaChainId: 'unsupported' }, 'mainnet'), null)
+})
 
 test('large quote output stays decimal through fiat, exchange rate and price impact calculations', () => {
   const amountOut = formatBaseUnitDecimalAmount('4483300000', 6)
