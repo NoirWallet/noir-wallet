@@ -5,9 +5,9 @@ import { useWalletStore } from '@/store/wallet-store'
 import { useNavigate } from '../provider/Router'
 import { openHardwareSignAndWait, openHardwareSignTab } from '@/lib/hardware-tab'
 import { ShieldConfirmSheet } from '../components/transaction/ShieldConfirmSheet'
-import { WALLET_CONFIG } from '@/config/wallet'
+import { accountManager } from '@/core/wallet/account-manager'
 import { ANALYTICS_EVENTS, PAGE_IDS } from '@/lib/analytics'
-import { MARGINAL_FEE_ZATS, sanitizeMarginalFeeZats } from '@/config/fee'
+import type { FeeTier } from '@/config/fee'
 import type { Transaction } from '@/types/wallet'
 import { safeBig } from '@/lib/big'
 import { classifyError } from '@/lib/errors'
@@ -44,6 +44,7 @@ export function useShieldFunds(): UseShieldFundsResult {
   const [isShielding, setIsShielding] = useState(false)
   const [sheetOpen, setSheetOpen] = useState(false)
   const [sheetBalance, setSheetBalance] = useState(0)
+  const [feeRefreshRevision, setFeeRefreshRevision] = useState(0)
   const { navigate } = useNavigate()
   const { setResult } = useTransactionResultStore()
 
@@ -55,7 +56,27 @@ export function useShieldFunds(): UseShieldFundsResult {
   }, [isShielding])
 
   const executeShield = useCallback(
-    async (marginalFeeZats: number) => {
+    async ({
+      marginalFeeZats,
+      feeQuoteId,
+      feeTier,
+      feeZats
+    }: {
+      marginalFeeZats: number
+      feeQuoteId: string
+      feeTier: FeeTier
+      feeZats: number
+    }) => {
+      try {
+        const currentQuote = await accountManager.getFeeQuote()
+        if (currentQuote.id !== feeQuoteId || currentQuote.expiresAt <= Date.now()) {
+          throw new Error('Fee estimate changed')
+        }
+      } catch {
+        setFeeRefreshRevision(value => value + 1)
+        toast.error('Network fee changed', 'Review the updated fee before confirming.')
+        return
+      }
       setSheetOpen(false)
 
       const accountDataStore = useAccountDataStore.getState()
@@ -92,7 +113,9 @@ export function useShieldFunds(): UseShieldFundsResult {
           walletId: currentWalletId,
           accountId: currentAccountId,
           amount: transparentBalance,
-          marginalFeeZats
+          marginalFeeZats,
+          feeQuoteId,
+          feeTier
         }
         const isSidePanel = isSidePanelSurface(window.location.search)
 
@@ -150,9 +173,7 @@ export function useShieldFunds(): UseShieldFundsResult {
             : ''
 
         // Cosmetic fee for the pending record; the chain reports the real fee later.
-        const feeZec = safeBig(WALLET_CONFIG.NETWORK_FEE)
-          .times(sanitizeMarginalFeeZats(marginalFeeZats) / MARGINAL_FEE_ZATS.standard)
-          .toFixed()
+        const feeZec = safeBig(feeZats).div(1e8).toFixed()
 
         const response = await chrome.runtime.sendMessage({
           type: 'ADD_TRANSACTION',
@@ -214,6 +235,8 @@ export function useShieldFunds(): UseShieldFundsResult {
           accountKey,
           transactionId: pendingTx.id,
           marginalFeeZats,
+          feeQuoteId,
+          feeTier,
           analytics: {
             onSuccess: {
               name: ANALYTICS_EVENTS.SHIELD_SUCCEEDED,
@@ -297,6 +320,7 @@ export function useShieldFunds(): UseShieldFundsResult {
       open={sheetOpen}
       onOpenChange={setSheetOpen}
       transparentBalance={sheetBalance}
+      feeRefreshRevision={feeRefreshRevision}
       isShielding={isShielding}
       onConfirm={executeShield}
     />

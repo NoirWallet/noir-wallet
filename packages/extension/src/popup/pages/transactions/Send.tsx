@@ -34,19 +34,15 @@ import { DetailRow } from '../../components/common/DetailRow'
 import { AddressTypeLabel, AddressTypeSwitch } from '../../components/account/AddressType'
 import { TokenIcon } from '../../components/tokens/TokenIcon'
 import { useTransaction } from '../../hooks/useTransaction'
+import { accountManager } from '@/core/wallet/account-manager'
 import { useShieldFunds } from '../../hooks/useShieldFunds'
 import { useFeeEstimate } from '../../hooks/useFeeEstimate'
 import { useMaxTransferEstimate } from '../../hooks/useMaxTransferEstimate'
 import { FeeTierPicker } from '../../components/transaction/FeeTierPicker'
 import { NetworkFeeRow } from '../../components/transaction/NetworkFeeRow'
 import { useSettingsStore } from '@/store/settings-store'
-import {
-  deriveFeeByTier,
-  deriveFeeByTierFromEstimate,
-  marginalFeeForTier,
-  staticFeeFallbackZats
-} from '@/config/fee'
-import { ZEC_DECIMALS, getMaxSpendableZec } from '@/config/wallet'
+import { marginalFeeForTier } from '@/config/fee'
+import { ZEC_DECIMALS } from '@/config/wallet'
 import { safeBig } from '@/lib/big'
 import Big from 'big.js'
 import { useZnsResolve } from '../../hooks/useZnsResolve'
@@ -136,37 +132,36 @@ export function Send() {
     amount,
     memo: effectiveMemo,
     fundingSource,
+    feeTier,
     enabled:
       safeBig(amount || '0').gt(0) && !!effectiveToAddress && !maxSelected && !isMaxTransferAmount
   })
 
-  const feeByTier = deriveFeeByTier(feeEstimate.feeZats, feeEstimate.error)
-  const maxFeeByTier = deriveFeeByTierFromEstimate(
-    maxTransfer.fee ? safeBig(maxTransfer.fee).mul(1e8).toNumber() : null,
-    feeTier,
-    maxTransfer.error
-  )
+  const feeByTier = {
+    standard: feeTier === 'standard' ? feeEstimate.feeZats : null,
+    fast: feeTier === 'fast' ? feeEstimate.feeZats : null
+  }
+  const maxFeeZats = maxTransfer.fee ? safeBig(maxTransfer.fee).mul(1e8).toNumber() : null
+  const maxFeeByTier = {
+    standard: feeTier === 'standard' ? maxFeeZats : null,
+    fast: feeTier === 'fast' ? maxFeeZats : null
+  }
   const isMaxFeeMode = maxSelected || isMaxTransferAmount
   const displayedFeeByTier = isMaxFeeMode ? maxFeeByTier : feeByTier
   const displayedFeeLoading = isMaxFeeMode ? maxTransfer.loading : feeEstimate.loading
 
-  const selectedFeeZats = feeByTier[feeTier] ?? staticFeeFallbackZats(feeTier)
-  const standardFeeZats = feeByTier.standard ?? staticFeeFallbackZats('standard')
-  const estimatedFeeZec = safeBig(selectedFeeZats).div(1e8).toFixed()
-  const extraFeeZec = safeBig(Math.max(0, selectedFeeZats - standardFeeZats))
-    .div(1e8)
-    .toNumber()
-  const fallbackMax = safeBig(getMaxSpendableZec(sourceBalance.spendable)).minus(extraFeeZec)
-  const effectiveMaxStr = (
-    maxTransfer.maxAmount
-      ? safeBig(maxTransfer.maxAmount)
-      : fallbackMax.lt(0)
-        ? safeBig(0)
-        : fallbackMax
-  )
+  const selectedFeeZats = isMaxFeeMode
+    ? maxTransfer.fee
+      ? safeBig(maxTransfer.fee).mul(1e8).toNumber()
+      : null
+    : feeEstimate.feeZats
+  const estimatedFeeZec =
+    selectedFeeZats == null ? '0' : safeBig(selectedFeeZats).div(1e8).toFixed()
+  const effectiveMaxStr = safeBig(maxTransfer.maxAmount ?? '0')
     .round(ZEC_DECIMALS, Big.roundDown)
     .toFixed()
-  const canSelectMax = !!effectiveToAddress && safeBig(effectiveMaxStr).gt(0)
+  const canSelectMax =
+    !!effectiveToAddress && !!maxTransfer.feeQuote && safeBig(effectiveMaxStr).gt(0)
   const amountBig = safeBig(amount || '0')
   const amountError = getFundingAmountError(amount, sourceBalance, maxTransfer.maxAmount)
   const amountErrorCopy =
@@ -178,7 +173,13 @@ export function Send() {
           ? 'Amount exceeds available balance.'
           : undefined
   const isValidAmount = amountBig.gt(0) && !amountError && !fundingSourceUnavailableReason
-  const selectedFeeZec = maxTransfer.fee && isMaxTransferAmount ? maxTransfer.fee : estimatedFeeZec
+  const selectedFeeZec = isMaxFeeMode ? (maxTransfer.fee ?? estimatedFeeZec) : estimatedFeeZec
+  const selectedFeeQuote = isMaxFeeMode ? maxTransfer.feeQuote : feeEstimate.feeQuote
+  const feeReady =
+    !!selectedFeeQuote &&
+    selectedFeeQuote.expiresAt > Date.now() &&
+    !displayedFeeLoading &&
+    !(isMaxFeeMode ? maxTransfer.error : feeEstimate.error)
 
   useEffect(() => {
     if (maxSelected && maxTransfer.maxAmount) {
@@ -269,9 +270,27 @@ export function Send() {
   }
 
   const handleConfirm = async () => {
-    if (!isValidAmount || !fromAddress || fundingSourceUnavailableReason) {
+    if (
+      !isValidAmount ||
+      !fromAddress ||
+      fundingSourceUnavailableReason ||
+      !feeReady ||
+      !selectedFeeQuote
+    ) {
       return
     }
+    try {
+      const currentQuote = await accountManager.getFeeQuote()
+      if (currentQuote.id !== selectedFeeQuote.id || selectedFeeQuote.expiresAt <= Date.now()) {
+        throw new Error('Fee estimate changed')
+      }
+    } catch {
+      if (isMaxFeeMode) maxTransfer.refresh()
+      else feeEstimate.refresh()
+      toast.error('Network fee changed', 'Review the updated fee before confirming.')
+      return
+    }
+    const marginalFeeZats = marginalFeeForTier(feeTier, selectedFeeQuote.standardMarginalFeeZats)
 
     if (saveContact && contactName.trim() && !isExistingContact) {
       addContact(effectiveToAddress, contactName.trim(), zns.name || undefined)
@@ -298,7 +317,9 @@ export function Send() {
         maxTransfer: maxSelected,
         memo: effectiveMemo,
         fundingSource,
-        marginalFeeZats: marginalFeeForTier(feeTier)
+        marginalFeeZats,
+        feeQuoteId: selectedFeeQuote.id,
+        feeTier
       }
       const isSidePanel = isSidePanelSurface(window.location.search)
 
@@ -358,7 +379,9 @@ export function Send() {
       fromType: fundingSource,
       memo: effectiveMemo,
       fee: selectedFeeZec,
-      marginalFeeZats: marginalFeeForTier(feeTier),
+      marginalFeeZats,
+      feeQuoteId: selectedFeeQuote.id,
+      feeTier,
       onCreated: (transaction, accountKey) => {
         if (useTransactionResultStore.getState().data !== pendingResult) return
         updateStep('pending', {
@@ -503,6 +526,15 @@ export function Send() {
               loading={displayedFeeLoading}
               hideLabel
             />
+            {(isMaxFeeMode ? maxTransfer.error : feeEstimate.error) && (
+              <button
+                type="button"
+                className="mt-2 text-xs text-destructive"
+                onClick={isMaxFeeMode ? maxTransfer.refresh : feeEstimate.refresh}
+              >
+                Fee estimate unavailable. Retry
+              </button>
+            )}
           </SendNetworkFeeCard>
 
           <div>
@@ -608,6 +640,15 @@ export function Send() {
             )}
 
             <NetworkFeeRow tier={feeTier} feeZec={selectedFeeZec} />
+            {(isMaxFeeMode ? maxTransfer.error : feeEstimate.error) && (
+              <button
+                type="button"
+                className="text-xs text-destructive"
+                onClick={isMaxFeeMode ? maxTransfer.refresh : feeEstimate.refresh}
+              >
+                Fee estimate unavailable. Retry
+              </button>
+            )}
           </div>
 
           {!isExistingContact && (
@@ -644,7 +685,7 @@ export function Send() {
             >
               Cancel
             </Button>
-            <Button onClick={handleConfirm} className="flex-1 h-[45px]">
+            <Button onClick={handleConfirm} disabled={!feeReady} className="flex-1 h-[45px]">
               Confirm
             </Button>
           </div>

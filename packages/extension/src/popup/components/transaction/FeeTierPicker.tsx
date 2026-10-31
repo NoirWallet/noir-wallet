@@ -1,7 +1,7 @@
 import { Icon } from '@iconify/react'
 import { DetailRow } from '../common/DetailRow'
 import { FeeTierSelector } from './FeeTierSelector'
-import { getFeeTierLabel, staticFeeFallbackZats, type FeeTier } from '@/config/fee'
+import { getFeeTierLabel, type FeeTier } from '@/config/fee'
 import { openModal } from '../../provider/ModalManager'
 import { safeBig } from '@/lib/big'
 
@@ -32,11 +32,7 @@ interface FeeTierPickerProps {
  * pattern: shows the current tier + live fee, and opens a bottom sheet for
  * tier switching so the input view stays uncluttered.
  *
- * When no estimate is in flight (e.g. amount not yet entered) both trigger and
- * sheet substitute the ZIP-317 static fallback so nothing renders as "—".
- * While a live estimate is loading we keep the nulls intact in the sheet so
- * the cards show the "…" spinner instead of stale fallback figures; the
- * trigger keeps the last known fallback to avoid layout flicker.
+ * The chosen tier displays its actual proposal fee. Other tiers resolve when selected.
  */
 export function FeeTierPicker({
   tier,
@@ -46,22 +42,13 @@ export function FeeTierPicker({
   variant = 'inline',
   hideLabel
 }: FeeTierPickerProps) {
-  const selectedFeeZats = feeByTier[tier] ?? staticFeeFallbackZats(tier)
-  const selectedFeeZec = safeBig(selectedFeeZats).div(1e8).toFixed()
-
-  // Estimate is "approximate" when no live value is in flight or resolved —
-  // i.e. the upstream feeEstimate hasn't been enabled yet (e.g. swap before a
-  // quote, send before a recipient). In that case the trigger and sheet show
-  // ZIP-317 static fallbacks; surface a hint in the sheet so users don't
-  // mistake the static number for the live network estimate.
-  const isApproximate = !loading && feeByTier.standard === null && feeByTier.fast === null
-
-  const sheetFeeByTier: Record<FeeTier, number | null> = loading
-    ? feeByTier
-    : {
-        standard: feeByTier.standard ?? staticFeeFallbackZats('standard'),
-        fast: feeByTier.fast ?? staticFeeFallbackZats('fast')
-      }
+  const selectedFeeZec =
+    feeByTier[tier] == null ? null : safeBig(feeByTier[tier]).div(1e8).toFixed()
+  const selectedFeeLabel = selectedFeeZec
+    ? `≈ ${selectedFeeZec} ZEC`
+    : loading
+      ? 'Estimating…'
+      : '—'
 
   const handleEdit = () => {
     void openModal({
@@ -70,9 +57,8 @@ export function FeeTierPicker({
       body: (_resolve, close) => (
         <FeeTierEditContent
           selectedTier={tier}
-          feeByTier={sheetFeeByTier}
+          feeByTier={feeByTier}
           loading={loading}
-          isApproximate={isApproximate}
           onSelect={t => {
             onTierChange(t)
             close()
@@ -98,7 +84,7 @@ export function FeeTierPicker({
           className="w-full h-[54px] bg-card rounded-xl px-4 flex items-center justify-between hover:opacity-90 transition-opacity"
         >
           <span className="flex items-baseline gap-1.5">
-            <span className="text-sm">≈ {selectedFeeZec} ZEC</span>
+            <span className="text-sm">{selectedFeeLabel}</span>
             <span className="text-xs text-muted">({getFeeTierLabel(tier)})</span>
           </span>
           <span className="size-3.5 inline-flex items-center justify-center [&_svg]:size-3.5">
@@ -115,7 +101,7 @@ export function FeeTierPicker({
       onClick={handleEdit}
       className="flex items-center gap-1.5 hover:opacity-80 transition-opacity"
     >
-      <span className="text-sm">≈ {selectedFeeZec} ZEC</span>
+      <span className="text-sm">{selectedFeeLabel}</span>
       <span className="text-xs text-muted">({getFeeTierLabel(tier)})</span>
       <span className="size-3 inline-flex items-center justify-center [&_svg]:size-3">
         {trailingIcon}
@@ -132,13 +118,11 @@ function FeeTierEditContent({
   selectedTier,
   feeByTier,
   loading,
-  isApproximate,
   onSelect
 }: {
   selectedTier: FeeTier
   feeByTier: Record<FeeTier, number | null>
   loading?: boolean
-  isApproximate?: boolean
   onSelect: (tier: FeeTier) => void
 }) {
   return (
@@ -150,11 +134,6 @@ function FeeTierEditContent({
         loading={loading}
         hideLabel
       />
-      {isApproximate && (
-        <p className="text-xs text-muted leading-relaxed">
-          Approximate ZIP-317 estimate. Live fee resolves once the recipient is set.
-        </p>
-      )}
     </div>
   )
 }
