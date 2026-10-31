@@ -144,19 +144,38 @@ export function Send() {
     amount,
     memo: effectiveMemo,
     fundingSource,
+    scopeKey: JSON.stringify([
+      currentNetwork,
+      currentWalletId,
+      currentAccountId,
+      sourceBalance.available,
+      sourceBalance.pending
+    ]),
     enabled:
       safeBig(amount || '0').gt(0) && !!effectiveToAddress && !maxSelected && !isMaxTransferAmount
   })
 
-  const feeByTier = deriveFeeByTier(feeEstimate.feeZats, feeEstimate.error)
+  const feeByTier = deriveFeeByTier(feeEstimate.feeZats, false)
   const maxFeeByTier = deriveFeeByTierFromEstimate(
     maxTransfer.fee ? safeBig(maxTransfer.fee).mul(1e8).toNumber() : null,
     feeTier,
-    maxTransfer.error
+    false
   )
   const isMaxFeeMode = maxSelected || isMaxTransferAmount
   const displayedFeeByTier = isMaxFeeMode ? maxFeeByTier : feeByTier
-  const displayedFeeLoading = isMaxFeeMode ? maxTransfer.loading : feeEstimate.loading
+  const feeRequired = !!effectiveToAddress && safeBig(amount || '0').gt(0)
+  const feeError = feeRequired && (isMaxFeeMode ? maxTransfer.error : feeEstimate.error)
+  const feeReady =
+    feeRequired &&
+    !feeError &&
+    (isMaxFeeMode
+      ? !maxTransfer.loading && !!maxTransfer.fee && safeBig(maxTransfer.fee).gt(0)
+      : !feeEstimate.loading && feeEstimate.feeZats !== null)
+  const displayedFeeLoading = feeRequired && !feeReady && !feeError
+  const retryFeeEstimate = () => {
+    if (isMaxFeeMode) void maxTransfer.request()
+    else feeEstimate.retry()
+  }
 
   const selectedFeeZats = feeByTier[feeTier] ?? staticFeeFallbackZats(feeTier)
   const standardFeeZats = feeByTier.standard ?? staticFeeFallbackZats('standard')
@@ -247,7 +266,7 @@ export function Send() {
   }
 
   const handleContinue = () => {
-    if (toAddress && isValidAmount) {
+    if (toAddress && isValidAmount && !reviewInsufficient && feeReady && !zns.loading) {
       setShowReview(true)
     }
   }
@@ -260,7 +279,7 @@ export function Send() {
 
   const handleConfirm = async () => {
     if (isHardwareSigning) return
-    if (!isValidAmount || !fromAddress || !currentAccount) return
+    if (!isValidAmount || reviewInsufficient || !feeReady || !fromAddress || !currentAccount) return
     const activeScope = getActiveAccountScopeKey()
     if (!activeScope) return
     assertActiveAccountScope(activeScope)
@@ -490,9 +509,17 @@ export function Send() {
               onTierChange={setFeeTier}
               feeByTier={displayedFeeByTier}
               loading={displayedFeeLoading}
+              allowFallback={!feeRequired}
               hideLabel
             />
           </SendNetworkFeeCard>
+          {feeError && (
+            <InlineError
+              className="px-1"
+              message="Could not estimate network fee"
+              onRetry={retryFeeEstimate}
+            />
+          )}
 
           {showMemo ? (
             <div>
@@ -546,7 +573,12 @@ export function Send() {
       <div className="page-footer">
         <Button
           disabled={
-            !effectiveToAddress || !amount || !isValidAmount || reviewInsufficient || zns.loading
+            !effectiveToAddress ||
+            !amount ||
+            !isValidAmount ||
+            reviewInsufficient ||
+            !feeReady ||
+            zns.loading
           }
           onClick={handleContinue}
           className="w-full h-[45px]"
@@ -612,8 +644,16 @@ export function Send() {
               onTierChange={setFeeTier}
               feeByTier={displayedFeeByTier}
               loading={displayedFeeLoading}
+              allowFallback={false}
             />
           </div>
+          {feeError && (
+            <InlineError
+              className="mx-5 mt-3"
+              message="Could not estimate network fee"
+              onRetry={retryFeeEstimate}
+            />
+          )}
 
           <div className="p-5 flex gap-3">
             <Button
@@ -625,7 +665,7 @@ export function Send() {
             </Button>
             <Button
               onClick={handleConfirm}
-              disabled={reviewInsufficient || isHardwareSigning}
+              disabled={reviewInsufficient || !feeReady || isHardwareSigning}
               className="flex-1 h-[45px]"
             >
               {isHardwareSigning ? 'Waiting for hardware wallet...' : 'Confirm'}
