@@ -12,6 +12,7 @@ import { zcashWalletRuntimeClient } from '@/popup/services/zcash-wallet-runtime-
 import { getAccountDisplayName } from '@/lib/format'
 import { toast } from '@/store/toast-store'
 import { useResyncZcash } from '../../hooks/useResyncZcash'
+import { accountNetworksClient } from '../../services/account-networks-client'
 
 export function AccountDetail() {
   const { navigate, goBack } = useNavigate()
@@ -116,6 +117,23 @@ export function AccountDetail() {
       danger: true,
       icon: <Icon icon="lucide:trash-2" width={16} height={16} />,
       action: async () => {
+        if (wallet.accounts.length === 1) {
+          try {
+            const catalog = await accountNetworksClient.getCatalog()
+            if (!catalog?.accounts.some(item => item.walletId === wallet.id)) {
+              throw new Error('Wallet inventory is unavailable')
+            }
+            if (!catalog.accounts.some(item => item.walletId !== wallet.id)) {
+              throw new Error('Cannot remove the last wallet. Use Reset Wallet instead.')
+            }
+          } catch (error) {
+            await alert({
+              title: 'Unable to remove wallet',
+              message: error instanceof Error ? error.message : 'Wallet inventory is unavailable'
+            })
+            return
+          }
+        }
         if (wallet.accounts.length === 1 && !isHardwareWallet) {
           const removed = await openModal<boolean | undefined>({
             title: 'Remove wallet',

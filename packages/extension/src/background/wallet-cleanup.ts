@@ -82,6 +82,7 @@ import { ActivityHistoryCache } from './activity-history-cache'
 import { dappExecutionModeCoordinator } from './dapp-execution-mode'
 import type { WalletBackupVerification } from '@/core/wallet/secret-phrase-backup'
 import { isNativeV2CredentialKeyDomain } from '@/core/wallet/native-hardware-identity'
+import type { StorageV2Snapshot } from '@/ports/repositories'
 
 type ActiveAccount = {
   walletId: string | null
@@ -158,6 +159,33 @@ export class WalletCleanupCoordinator {
 
   private async hydrateStores(): Promise<void> {
     await Promise.all([rehydrateWalletStore(), rehydrateAccountDataStore()])
+  }
+
+  private async assertAnotherWalletRemains(
+    walletId: string,
+    existingSnapshot?: StorageV2Snapshot
+  ): Promise<void> {
+    const pointer = await this.storageRepository.getActivePointer()
+    if (!pointer) throw new Error('Wallet inventory is unavailable')
+    const snapshot =
+      existingSnapshot ?? (await this.storageRepository.getSnapshot(pointer.generationId))
+    if (!snapshot) throw new Error('Active Storage V2 generation is missing')
+    if (
+      snapshot.manifest.status !== 'verified' ||
+      snapshot.manifest.generationId !== pointer.generationId ||
+      snapshot.manifest.sourceFingerprint !== pointer.sourceFingerprint
+    ) {
+      throw new Error('Active Storage V2 generation does not match its pointer')
+    }
+    if (!snapshot.keyDomains.some(keyDomain => keyDomain.id === walletId)) {
+      throw new Error('Wallet not found')
+    }
+    if (!snapshot.accounts.some(account => account.keyDomainId === walletId)) {
+      throw new Error('Wallet has no Accounts')
+    }
+    if (!snapshot.accounts.some(account => account.keyDomainId !== walletId)) {
+      throw new Error('Cannot remove the last wallet. Use Reset Wallet instead.')
+    }
   }
 
   private async resumeAfterMutation(
@@ -407,18 +435,12 @@ export class WalletCleanupCoordinator {
         return
       }
 
-      const totalAccounts = useWalletStore
-        .getState()
-        .wallets.reduce((sum, item) => sum + item.accounts.length, 0)
-      if (totalAccounts <= 1) {
-        throw new Error('Cannot remove the last account')
-      }
-
       await accountContextTransition.runScopedMutation([{ walletId, accountId }], async () => {
         const removesWallet = wallet.accounts.length === 1
         const sessionPassword = backgroundZcashWalletRuntime.getSessionPassword()
         if (removesWallet) {
           await backgroundZcashWalletRuntime.verifyWalletBackupForRemoval(walletId, verification)
+          await this.assertAnotherWalletRemains(walletId)
           await syncScheduler.prepareWalletRemoval(walletId)
           await blockWalletWrites(walletId)
           try {
@@ -532,6 +554,7 @@ export class WalletCleanupCoordinator {
         async () => {
           const sessionPassword = backgroundZcashWalletRuntime.getSessionPassword()
           await backgroundZcashWalletRuntime.verifyWalletBackupForRemoval(walletId, verification)
+          await this.assertAnotherWalletRemains(walletId)
           await syncScheduler.prepareWalletRemoval(walletId)
           await blockWalletWrites(walletId)
           try {
@@ -791,9 +814,7 @@ export class WalletCleanupCoordinator {
     if (keyDomain && !isNativeV2CredentialKeyDomain(keyDomain) && !deletedAccountIds) {
       throw new Error('Wallet metadata is not managed by the native Wallet inventory')
     }
-    if (!deletedAccountIds && (snapshot?.keyDomains.length ?? 0) <= 1) {
-      throw new Error('Cannot remove the last wallet. Use Reset Wallet instead.')
-    }
+    if (!deletedAccountIds) await this.assertAnotherWalletRemains(walletId, snapshot ?? undefined)
     const accountIds =
       deletedAccountIds ??
       snapshot?.accounts

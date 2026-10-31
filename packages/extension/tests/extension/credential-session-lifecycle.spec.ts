@@ -391,6 +391,7 @@ test('recovers an existing healthy Wallet when the selected retained credential 
 })
 
 test('backs up and removes the intended retained software wallet with word proof', async ({
+  context,
   popup,
   extensionId
 }) => {
@@ -428,12 +429,27 @@ test('backs up and removes the intended retained software wallet with word proof
   await expect(popup.getByRole('heading', { name: 'Enter your password' })).toBeVisible()
   await popup.getByPlaceholder('Enter Password').fill(password)
   await popup.getByRole('button', { name: 'Unlock' }).click()
+  await expect(popup.getByRole('button', { name: 'Choose wallet' })).toBeVisible()
+  await expect
+    .poll(() =>
+      popup.evaluate(() => chrome.runtime.sendMessage({ type: 'GET_WALLET_SESSION_STATE' }))
+    )
+    .toEqual({ active: true })
+  await terminateExtensionServiceWorker(context, popup)
+  await popup.goto(`chrome-extension://${extensionId}/index.html`)
+  await waitForBackgroundWalletInitialization(popup)
+  await expect(
+    popup.evaluate(() => chrome.runtime.sendMessage({ type: 'GET_WALLET_SESSION_STATE' }))
+  ).resolves.toEqual({ active: true })
   const banner = popup.getByRole('complementary', { name: 'Secret phrase backup reminder' })
   await expect(banner).toContainText('Archive account')
   await expect(banner).not.toContainText('Account 2')
   await captureScreenshot(popup, 'wallet-backup-banner-375x600.png')
   await banner.getByRole('button', { name: 'Back up' }).click()
   await expect(popup.getByRole('heading', { name: 'Back up secret phrase' })).toBeVisible()
+  await popup.getByPlaceholder('Enter your password').fill('incorrect-password')
+  await popup.getByRole('button', { name: 'Unlock to reveal' }).click()
+  await expect(popup.getByRole('alert')).toContainText('Incorrect password')
   await popup.getByPlaceholder('Enter your password').fill(password)
   await popup.getByRole('button', { name: 'Unlock to reveal' }).click()
   await expect(popup.getByRole('button', { name: 'Continue' })).toBeVisible({ timeout: 30_000 })

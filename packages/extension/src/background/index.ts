@@ -4288,12 +4288,8 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
   }
 
   if (message.type === 'GET_ZCASH_SEED_PHRASE') {
-    accountContextTransition
-      .runActiveOperation(async () => {
-        await rehydrateWalletStore()
-        await backgroundZcashWalletRuntime.initialize()
-        return backgroundZcashWalletRuntime.getSeedPhrase(message.password, message.walletId)
-      })
+    void rehydrateWalletStore()
+      .then(() => backgroundZcashWalletRuntime.getSeedPhrase(message.password, message.walletId))
       .then(seedPhrase => sendResponse({ success: true, seedPhrase }))
       .catch(error =>
         sendResponse({
