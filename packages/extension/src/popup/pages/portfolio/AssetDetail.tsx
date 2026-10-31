@@ -548,6 +548,8 @@ export function AssetDetail() {
   const formattedChange = quote?.marketChange
     ? formatPercentage(quote.marketChange.percent24h, { maxDigits: 2, showPlus: true })
     : null
+  const visibleHistory =
+    history?.assetId === asset.asset.id && history.range === historyRange ? history : null
   const preferredBitcoinAddress = bitcoinCatalog?.addresses.find(
     address => !address.change && address.addressIndex === 0
   )
@@ -774,32 +776,36 @@ export function AssetDetail() {
           </section>
         )}
 
-        <section className="border-t border-border py-4">
-          <MarketPriceChart
-            points={history?.points ?? null}
-            range={historyRange}
-            loading={historyStatus === 'loading'}
-            priceLoading={priceStatus === 'loading'}
-            priceLabel={quote ? formatTokenPrice(quote.priceUsd, { showSign: true }) : null}
-            changeLabel={formattedChange}
-            changeDirection={change?.gt(0) ? 'positive' : change?.lt(0) ? 'negative' : 'neutral'}
-            delayed={
-              quote?.freshness === 'stale' ||
-              quote?.marketChange?.freshness === 'stale' ||
-              history?.freshness === 'stale'
-            }
-            showRanges={historyStatus !== 'unsupported'}
-            availableRanges={historyRanges?.assetId === asset?.asset.id ? historyRanges.ranges : []}
-            onRangeChange={setHistoryRange}
-          />
-          {historyStatus === 'error' && (
-            <InlineError
-              message="Unable to load chart."
-              onRetry={() => setHistoryRetry(value => value + 1)}
-              className="mt-1"
+        {(historyStatus === 'loading' || visibleHistory) && (
+          <section className="border-t border-border py-4">
+            <MarketPriceChart
+              points={visibleHistory?.points ?? null}
+              range={historyRange}
+              loading={historyStatus === 'loading'}
+              priceLoading={priceStatus === 'loading'}
+              priceLabel={quote ? formatTokenPrice(quote.priceUsd, { showSign: true }) : null}
+              changeLabel={formattedChange}
+              changeDirection={change?.gt(0) ? 'positive' : change?.lt(0) ? 'negative' : 'neutral'}
+              delayed={
+                quote?.freshness === 'stale' ||
+                quote?.marketChange?.freshness === 'stale' ||
+                visibleHistory?.freshness === 'stale'
+              }
+              showRanges={historyStatus !== 'unsupported'}
+              availableRanges={
+                historyRanges?.assetId === asset.asset.id ? historyRanges.ranges : []
+              }
+              onRangeChange={setHistoryRange}
             />
-          )}
-        </section>
+          </section>
+        )}
+        {historyStatus === 'error' && (
+          <InlineError
+            message="Unable to load chart."
+            onRetry={() => setHistoryRetry(value => value + 1)}
+            className="pb-4"
+          />
+        )}
 
         {hasPendingBalance && !isZcashAsset && (
           <section className="space-y-3 border-t border-border py-4" aria-label="Balance breakdown">
