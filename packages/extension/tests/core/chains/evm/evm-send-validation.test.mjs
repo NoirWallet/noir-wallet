@@ -10,6 +10,10 @@ import {
   resolveEvmNativeMaximumAmount
 } from '../../../../src/popup/pages/transactions/evm-send-validation.ts'
 import { resolveAccountAvailableRaw } from '../../../../src/popup/services/transfer-availability.ts'
+import {
+  calculatePrivateFundingSourceAmount,
+  calculateSuggestedPrivateGasFundingRaw
+} from '../../../../src/core/transactions/private-funding.ts'
 
 test.describe('EVM send validation', () => {
   test('preserves Max intent through both balance transfer directions and private Send', () => {
@@ -161,5 +165,96 @@ test.describe('EVM send validation', () => {
     expect(() => buildPrivateGasFundingPath({ ...input, minimumOutputRaw: '1e3' })).toThrow(
       'Invalid'
     )
+  })
+
+  test('does not turn an unestimated zero gas cost into a one-wei funding suggestion', () => {
+    expect(calculateSuggestedPrivateGasFundingRaw('1', '0')).toBeNull()
+    expect(
+      calculateSuggestedPrivateGasFundingRaw('1', '0', {
+        decimals: 18,
+        nativePriceUsd: null
+      })
+    ).toBeNull()
+  })
+
+  test('uses the larger of the five-dollar reserve and the live gas budget', () => {
+    const ethPrice = { decimals: 18, nativePriceUsd: '2000' }
+    expect(calculateSuggestedPrivateGasFundingRaw('1', '0', ethPrice)).toBe('2500000000000000')
+    expect(
+      calculateSuggestedPrivateGasFundingRaw('1000000000000000', '1000000000000000', ethPrice)
+    ).toBe('5000000000000000')
+    expect(
+      calculateSuggestedPrivateGasFundingRaw('1', '10', {
+        decimals: 18,
+        nativePriceUsd: null
+      })
+    ).toBe('41')
+    expect(
+      calculateSuggestedPrivateGasFundingRaw('1', '0', {
+        decimals: 2,
+        nativePriceUsd: '3'
+      })
+    ).toBe('167')
+  })
+
+  test('keeps every wei for the same canonical native asset despite route aliases', () => {
+    const native = { assetId: 'eip155:8453/slip44:60', decimals: 18, price: 0 }
+    expect(
+      calculatePrivateFundingSourceAmount({
+        suggestedOutputRaw: '1',
+        source: native,
+        destination: { ...native }
+      })
+    ).toBe('0.000000000000000001')
+    expect(
+      calculatePrivateFundingSourceAmount({
+        suggestedOutputRaw: '1',
+        source: native,
+        destination: { ...native, decimals: 6 }
+      })
+    ).toBeNull()
+  })
+
+  test('rounds different assets up at the source token precision', () => {
+    expect(
+      calculatePrivateFundingSourceAmount({
+        suggestedOutputRaw: '1',
+        source: { assetId: 'eip155:1/erc20:source', decimals: 18, price: '1000' },
+        destination: { assetId: 'eip155:1/erc20:destination', decimals: 18, price: '2000' }
+      })
+    ).toBe('0.000000000000000002')
+  })
+
+  test('rejects invalid funding amounts, decimals, prices and excessive output', () => {
+    const priced = { decimals: 18, nativePriceUsd: '2000' }
+    for (const raw of ['01', '-1', '1.5', `${'9'.repeat(79)}`]) {
+      expect(calculateSuggestedPrivateGasFundingRaw(raw, '1', priced)).toBeNull()
+    }
+    expect(
+      calculateSuggestedPrivateGasFundingRaw('1', '1', { ...priced, decimals: 256 })
+    ).toBeNull()
+    expect(
+      calculateSuggestedPrivateGasFundingRaw('1', '1', { ...priced, nativePriceUsd: 'NaN' })
+    ).toBeNull()
+    expect(
+      calculateSuggestedPrivateGasFundingRaw('1', '1', { ...priced, nativePriceUsd: '0' })
+    ).toBeNull()
+    expect(
+      calculateSuggestedPrivateGasFundingRaw(((1n << 256n) - 1n).toString(), '1', priced)
+    ).toBeNull()
+    expect(
+      calculatePrivateFundingSourceAmount({
+        suggestedOutputRaw: '1',
+        source: { assetId: 'eip155:1/slip44:60', decimals: 18, price: Number.NaN },
+        destination: { assetId: 'eip155:8453/slip44:60', decimals: 18, price: 2000 }
+      })
+    ).toBeNull()
+    expect(
+      calculatePrivateFundingSourceAmount({
+        suggestedOutputRaw: '1',
+        source: { assetId: ' ', decimals: 18, price: 2000 },
+        destination: { assetId: 'eip155:8453/slip44:60', decimals: 18, price: 2000 }
+      })
+    ).toBeNull()
   })
 })

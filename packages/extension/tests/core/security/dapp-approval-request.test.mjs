@@ -2,6 +2,10 @@ import { test } from 'node:test'
 import { expect } from '@playwright/test'
 import { readFileSync } from 'node:fs'
 import { parsePendingApprovalResponse } from '../../../src/popup/services/dapp-approval-request.ts'
+import {
+  parseEvmGasFundingDetails,
+  resolveEvmGasFundingPreview
+} from '../../../src/popup/services/evm-gas-funding.ts'
 
 const approvalPageSource = readFileSync(
   new URL('../../../src/popup/pages/dapp/ApprovalPage.tsx', import.meta.url),
@@ -67,6 +71,61 @@ test.describe('dApp approval request boundary', () => {
         requestId
       )
     ).toMatchObject({ status: 'ready', request: { action: 'evmGasFunding' } })
+  })
+
+  test('checks fresh Public funds without spending Confidential or another account balance', () => {
+    const details = parseEvmGasFundingDetails({
+      chainId: 1,
+      nativeCurrency: { symbol: 'ETH', decimals: 18, slip44Reference: '60' },
+      privateAddress: '0x2222222222222222222222222222222222222222',
+      requiredNativeBalanceRaw: '1',
+      availableNativeBalanceRaw: '0',
+      shortfallRaw: '1',
+      maximumGasCostRaw: '0'
+    })
+    expect(details).not.toBeNull()
+    const portfolio = {
+      scope: { keyDomainId: 'wallet-1', accountId: 'account-1' },
+      assets: [
+        {
+          asset: { id: details.nativeAssetId },
+          freshness: 'fresh',
+          balance: {
+            availableRaw: '1000000000000000000',
+            mainRaw: '0',
+            privateRaw: '1000000000000000000'
+          }
+        }
+      ]
+    }
+    const input = {
+      details,
+      walletId: 'wallet-1',
+      accountId: 'account-1',
+      portfolio,
+      nativePriceUsd: '2000'
+    }
+    const unavailable = resolveEvmGasFundingPreview(input)
+    expect(unavailable.publicBalanceRaw).toBe('0')
+    expect(unavailable.error).toBe('Insufficient ETH balance in Public account.')
+    expect(unavailable.suggestedOutputRaw).toBe('2500000000000000')
+    const publicAsset = { ...portfolio.assets[0], balance: { mainRaw: '1000000000000000000' } }
+    expect(
+      resolveEvmGasFundingPreview({ ...input, portfolio: { ...portfolio, assets: [publicAsset] } })
+        .error
+    ).toBeNull()
+    for (const invalidPortfolio of [
+      { ...portfolio, scope: { ...portfolio.scope, accountId: 'account-2' } },
+      { ...portfolio, assets: [{ ...publicAsset, freshness: 'stale' }] },
+      {
+        ...portfolio,
+        assets: [{ ...publicAsset, balance: { availableRaw: '1000000000000000000' } }]
+      }
+    ]) {
+      expect(
+        resolveEvmGasFundingPreview({ ...input, portfolio: invalidPortfolio }).publicBalanceRaw
+      ).toBeNull()
+    }
   })
 
   test('preserves an explicit expired-request error', () => {

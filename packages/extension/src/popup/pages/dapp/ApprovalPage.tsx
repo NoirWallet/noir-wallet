@@ -8,7 +8,7 @@ import { useTransactionResultStore } from '@/store/transaction-result-store'
 import { zcashWalletRuntimeClient } from '@/popup/services/zcash-wallet-runtime-client'
 import { Icon } from '@iconify/react'
 import { AddressTypeLabel } from '@/popup/components/account/AddressType'
-import { formatAccountName, getAccountDisplayName } from '@/lib/format'
+import { formatAccountName, getAccountDisplayName, formatSortAddress } from '@/lib/format'
 import { AmountDisplay } from '@/popup/components/common/AmountDisplay'
 import { StandardTransactionResult } from '../../components/transaction/StandardTransactionResult'
 import { FeeTierPicker } from '../../components/transaction/FeeTierPicker'
@@ -16,7 +16,7 @@ import { useFeeEstimate } from '../../hooks/useFeeEstimate'
 import { useSettingsStore } from '@/store/settings-store'
 import { deriveFeeByTier, marginalFeeForTier } from '@/core/zcash/fee-policy'
 import type { AddressType } from '@/types/wallet'
-import { formatSortAddress } from '@/lib/format'
+
 import { cn } from '@/lib/utils'
 import { classifyError, getResponseErrorMessage } from '@/lib/errors'
 import { formatBaseUnitDecimalAmount } from '@/lib/number-format'
@@ -40,7 +40,7 @@ import {
   parsePendingApprovalResponse
 } from '@/popup/services/dapp-approval-request'
 import { useActiveAccountNetworks } from '@/popup/hooks/useActiveAccountNetworks'
-import { buildPrivateGasFundingPath } from '@/popup/pages/transactions/evm-send-validation'
+import { EvmGasFundingApproval } from '@/popup/components/dapp/EvmGasFundingApproval'
 import { NetworkFeeTierPicker } from '@/popup/components/transaction/NetworkFeeTierPicker'
 import { parseNetworkFeeTier, type NetworkFeeTier } from '@/core/transactions/domain'
 import { parseEvmFeeSelection, type EvmFeeSelection } from '@/infrastructure/chains/evm'
@@ -49,7 +49,6 @@ import { getBundledEvmAssetDefinitions } from '@/core/chains/registry/product-ch
 import { ChainIcon } from '@/popup/components/common/ChainIcon'
 import { CopyToast, useCopyToClipboard } from '@/popup/components/common/CopyToast'
 import { useNavigate } from '@/popup/provider/Router'
-import { calculateSuggestedPrivateGasFundingRaw } from '@/core/transactions/private-funding'
 import {
   formatDAppHost,
   parseBitcoinSigningSummary,
@@ -154,7 +153,11 @@ export function ApprovalPage() {
     accountId: string
   } | null>(null)
   const currentWalletId = approvalBinding?.walletId ?? activeWalletId
-  const { activeAccount: storageV2Account } = useActiveAccountNetworks()
+  const {
+    activeAccount: storageV2Account,
+    loading: accountNetworksLoading,
+    refresh: refreshAccountNetworks
+  } = useActiveAccountNetworks()
   const currentAccount = approvalBinding
     ? getAccount(approvalBinding.walletId, approvalBinding.accountId)
     : getCurrentAccount()
@@ -632,139 +635,21 @@ export function ApprovalPage() {
   }
 
   if (isEvmGasFunding) {
-    const chainId = Number(data.chainId)
-    const symbol = typeof data.nativeCurrency?.symbol === 'string' ? data.nativeCurrency.symbol : ''
-    const decimals = Number(data.nativeCurrency?.decimals)
-    const slip44Reference =
-      typeof data.nativeCurrency?.slip44Reference === 'string'
-        ? data.nativeCurrency.slip44Reference
-        : ''
-    const shortfallRaw = typeof data.shortfallRaw === 'string' ? data.shortfallRaw : ''
-    const requiredRaw =
-      typeof data.requiredNativeBalanceRaw === 'string' ? data.requiredNativeBalanceRaw : ''
-    const availableRaw =
-      typeof data.availableNativeBalanceRaw === 'string' ? data.availableNativeBalanceRaw : ''
-    const maximumGasCostRaw =
-      typeof data.maximumGasCostRaw === 'string' ? data.maximumGasCostRaw : ''
-    const privateAddress = typeof data.privateAddress === 'string' ? data.privateAddress : ''
-    const valid =
-      Number.isSafeInteger(chainId) &&
-      chainId > 0 &&
-      symbol.length > 0 &&
-      /^[0-9]+$/.test(slip44Reference) &&
-      Number.isSafeInteger(decimals) &&
-      decimals >= 0 &&
-      decimals <= 255 &&
-      /^\d+$/.test(shortfallRaw) &&
-      BigInt(shortfallRaw) > 0n &&
-      /^\d+$/.test(requiredRaw) &&
-      /^\d+$/.test(availableRaw) &&
-      /^\d+$/.test(maximumGasCostRaw) &&
-      /^0x[0-9a-fA-F]{40}$/.test(privateAddress)
-    const formatGas = (raw: string) => formatBaseUnitDecimalAmount(raw, decimals)
-    const suggestedOutputRaw = valid
-      ? calculateSuggestedPrivateGasFundingRaw(shortfallRaw, maximumGasCostRaw)
-      : null
-
     return (
-      <ApprovalWindowLayout
-        footer={
-          <div className="flex gap-3">
-            <Button
-              variant="outline"
-              className="flex-1"
-              onClick={() => void handleDecision(false)}
-              disabled={isLoading}
-              size="lg"
-            >
-              Reject
-            </Button>
-            <Button
-              className="flex-1 bg-primary hover:bg-primary/90"
-              onClick={() => {
-                if (!requestId || !valid || !suggestedOutputRaw) return
-                if (fundingComplete) {
-                  void handleDecision(true)
-                  return
-                }
-                navigate(
-                  buildPrivateGasFundingPath({
-                    chainId: `eip155:${chainId}`,
-                    nativeAssetId: `eip155:${chainId}/slip44:${slip44Reference}`,
-                    requestId,
-                    minimumOutputRaw: shortfallRaw,
-                    suggestedOutputRaw
-                  })
-                )
-              }}
-              disabled={!valid || !suggestedOutputRaw || isLoading}
-              size="lg"
-            >
-              {fundingComplete ? 'Continue' : 'Fund gas'}
-            </Button>
-          </div>
-        }
-      >
-        <div className="space-y-5">
-          <DAppRequestHeader
-            domain={dappDomain}
-            pageUrl={dappPageUrl}
-            action={fundingComplete ? 'Confidential Gas added' : 'Fund Confidential Gas'}
-          />
-          {valid ? (
-            <section className="overflow-hidden rounded-2xl border border-border bg-card/35">
-              <div className="flex items-center gap-3 border-b border-border px-4 py-3.5">
-                <span className="flex size-9 items-center justify-center rounded-xl bg-primary/10 text-primary">
-                  <Icon icon="solar:incognito-outline" width={20} height={20} />
-                </span>
-                <div className="min-w-0">
-                  <p className="text-sm font-medium">Confidential account</p>
-                  <p className="truncate font-mono text-xs text-muted" title={privateAddress}>
-                    {formatSortAddress(privateAddress)}
-                  </p>
-                </div>
-              </div>
-              <div className="space-y-3 px-4 py-3.5 text-sm">
-                <div className="flex justify-between gap-3">
-                  <span className="text-muted">Current Gas</span>
-                  <span className="font-mono">
-                    <AmountDisplay value={formatGas(availableRaw)} symbol={symbol} />
-                  </span>
-                </div>
-                <div className="flex justify-between gap-3">
-                  <span className="text-muted">Maximum Gas</span>
-                  <span className="font-mono">
-                    <AmountDisplay
-                      value={formatGas(maximumGasCostRaw)}
-                      symbol={symbol}
-                      profile="fee"
-                    />
-                  </span>
-                </div>
-                <div className="flex justify-between gap-3 font-medium">
-                  <span>Minimum</span>
-                  <span className="font-mono text-primary">
-                    <AmountDisplay value={formatGas(shortfallRaw)} symbol={symbol} />
-                  </span>
-                </div>
-                <div className="flex justify-between gap-3 font-medium">
-                  <span>Suggested</span>
-                  <span className="font-mono text-primary">
-                    <AmountDisplay
-                      value={suggestedOutputRaw ? formatGas(suggestedOutputRaw) : null}
-                      symbol={symbol}
-                    />
-                  </span>
-                </div>
-              </div>
-            </section>
-          ) : (
-            <div className="rounded-xl border border-danger/40 bg-danger/10 p-4 text-sm text-danger">
-              Gas funding details are unavailable. Reject this request and try again.
-            </div>
-          )}
-        </div>
-      </ApprovalWindowLayout>
+      <EvmGasFundingApproval
+        data={data}
+        requestId={requestId}
+        walletId={storageV2Account?.walletId ?? currentWalletId}
+        accountId={storageV2Account?.accountId ?? currentAccount?.id ?? null}
+        accountLoading={accountNetworksLoading}
+        onRefreshAccount={() => void refreshAccountNetworks()}
+        domain={dappDomain}
+        pageUrl={dappPageUrl}
+        fundingComplete={fundingComplete}
+        isLoading={isLoading}
+        onDecision={approved => void handleDecision(approved)}
+        onFund={navigate}
+      />
     )
   }
 

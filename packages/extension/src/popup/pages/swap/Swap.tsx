@@ -1303,19 +1303,19 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
     return calculatePrivateFundingSourceAmount({
       suggestedOutputRaw: privateFundingSuggestedOutputRaw,
       source: {
-        chainId: swap.tokenIn.rheaChainId,
-        address: swap.tokenIn.rheaAddress,
+        assetId: resolveRheaSwapDestinationIdentity(swap.tokenIn, portfolio).assetId,
         decimals: swap.tokenIn.decimals,
         price: swap.tokenIn.price
       },
       destination: {
-        chainId: privateFundingDestinationToken.rheaChainId,
-        address: privateFundingDestinationToken.rheaAddress,
+        assetId: resolveRheaSwapDestinationIdentity(privateFundingDestinationToken, portfolio)
+          .assetId,
         decimals: privateFundingDestinationToken.decimals,
         price: privateFundingDestinationToken.price
       }
     })
   }, [
+    portfolio,
     privateFundingDestinationToken,
     privateFundingRequestId,
     privateFundingSuggestedOutputRaw,
