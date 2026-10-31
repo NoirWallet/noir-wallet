@@ -609,6 +609,9 @@ export function Home() {
             close()
             resolve(undefined)
           }}
+          onContinueSwap={transactionId =>
+            navigate.navigate(`/swap?resumeApproval=${encodeURIComponent(transactionId)}`)
+          }
         />
       )
     })

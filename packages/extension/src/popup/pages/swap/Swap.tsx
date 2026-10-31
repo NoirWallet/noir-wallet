@@ -82,7 +82,15 @@ import { Button } from '../../components/ui/button'
 import { Skeleton } from '../../components/ui/skeleton'
 import { TransactionResult } from '../../components/transaction/TransactionResult'
 import { formatChainTransactionExplorerUrl } from '@/popup/services/chain-explorer'
-import type { TransactionGraph } from '@/core/transactions/domain'
+
+import {
+  type TransactionGraph,
+  parseTransactionId,
+  DEFAULT_NETWORK_FEE_TIER,
+  type NetworkFeeTier
+} from '@/core/transactions/domain'
+import { parseKeyDomainId } from '@/core/keyring/domain'
+import { parseAccountId } from '@/core/accounts/domain'
 import {
   ExecutionAccountBadge,
   ExecutionAccountSelectorDialog,
@@ -147,10 +155,12 @@ import {
   readCachedPortfolio,
   refreshPortfolioFromCache
 } from '@/popup/services/portfolio-cache'
-import { DEFAULT_NETWORK_FEE_TIER, type NetworkFeeTier } from '@/core/transactions/domain'
+
 import { resolveEffectiveActiveAccountIdentity } from '@/popup/lib/effective-active-account'
 import { getRheaSwapErrorMessage, rheaSwapClient } from '@/popup/services/rhea-swap-client'
 import { requiredRheaEvmApproval } from '@/popup/services/rhea-evm-approval'
+import { swapApprovalContinuationClient } from '@/popup/services/swap-approval-continuation-client'
+import type { SwapApprovalContinuation } from '@/background/swap-approval-continuation'
 import { TransactionReviewView } from '@/popup/components/transaction/TransactionReviewView'
 import { NetworkFeeTierPicker } from '@/popup/components/transaction/NetworkFeeTierPicker'
 import {
@@ -256,6 +266,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
   }
   const privateTransferRequested = searchParams.get('privateTransfer') === '1'
   const autoReviewRequested = searchParams.get('review') === '1'
+  const resumeApprovalId = searchParams.get('resumeApproval')
   const privateTransferRecipient = searchParams.get('recipient') ?? ''
   const privateTransferAmount = searchParams.get('amount') ?? ''
   const privateDestinationRequested = searchParams.get('privateDestination') === '1'
@@ -383,6 +394,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
   const [sourceSelectorOpen, setSourceSelectorOpen] = useState(false)
   const [destinationSelectorOpen, setDestinationSelectorOpen] = useState(false)
   const [useCustomRecipient, setUseCustomRecipient] = useState(false)
+  const restoredRecipientAssetId = useRef<string | null>(null)
   const [zecRecipientSelection, setZecRecipientSelection] = useState<{
     scope: string | null
     address: string
@@ -418,6 +430,12 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
     readonly executionMode: QuoteDepositExecutionMode
   } | null>(null)
   const [approvalError, setApprovalError] = useState<string | null>(null)
+  const [approvalToRestore, setApprovalToRestore] = useState<{
+    record: SwapApprovalContinuation
+    graph: TransactionGraph
+  } | null>(null)
+  const restoredApprovalId = useRef<string | null>(null)
+  const completedApprovalId = useRef<string | null>(null)
   const [zcashMaximumTarget, setZcashMaximumTarget] = useState<{
     readonly scope: string
     readonly address: string
@@ -489,6 +507,49 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
       setSwapPreferencesHydrated(true)
     })
   }, [])
+
+  useEffect(() => {
+    if (!resumeApprovalId || !effectiveWalletId || !effectiveAccountId || crossChainSendRequested)
+      return
+    let cancelled = false
+    restoredApprovalId.current = null
+    setApprovalToRestore(null)
+    void swapApprovalContinuationClient
+      .get(resumeApprovalId)
+      .then(async record => {
+        if (
+          !record ||
+          record.network !== currentNetwork ||
+          record.walletId !== effectiveWalletId ||
+          record.accountId !== effectiveAccountId
+        )
+          throw new Error('Swap continuation is unavailable. Start a new Swap.')
+        const graph = await new IndexedDbTransactionRepository().get(
+          {
+            keyDomainId: parseKeyDomainId(record.walletId),
+            accountId: parseAccountId(record.accountId)
+          },
+          parseTransactionId(record.transactionId)
+        )
+        if (!graph) throw new Error('Approval transaction is unavailable')
+        if (!cancelled) setApprovalToRestore({ record, graph })
+      })
+      .catch(error => {
+        if (!cancelled)
+          swap.setQuoteError(
+            error instanceof Error ? error.message : 'Swap continuation is unavailable'
+          )
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [
+    resumeApprovalId,
+    currentNetwork,
+    effectiveWalletId,
+    effectiveAccountId,
+    crossChainSendRequested
+  ])
 
   useEffect(() => {
     let cancelled = false
@@ -949,6 +1010,9 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
   )
 
   useEffect(() => {
+    const restoredAssetId = restoredRecipientAssetId.current
+    restoredRecipientAssetId.current = null
+    if (restoredAssetId !== null && restoredAssetId === swap.tokenOut?.assetId) return
     setUseCustomRecipient(privateTransferRequested)
   }, [privateTransferRequested, swap.tokenOut?.assetId])
 
@@ -1627,6 +1691,72 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
     crossChainSendRecipientReady,
     crossChainPrivateSourceUnavailable,
     recipientError
+  ])
+
+  useEffect(() => {
+    if (!approvalToRestore || restoredApprovalId.current === approvalToRestore.record.transactionId)
+      return
+    const { record, graph } = approvalToRestore
+    if (
+      record.network !== currentNetwork ||
+      record.walletId !== effectiveWalletId ||
+      record.accountId !== effectiveAccountId
+    )
+      return
+    if (swap.areTokensLoading || swap.destinationTokensLoading) return
+    const hasSource = swap.sourceTokens.some(token => token.assetId === record.sourceAssetId)
+    const hasDestination = swap.destinationTokens.some(
+      token => token.assetId === record.destinationAssetId
+    )
+    if (!hasSource || !hasDestination) {
+      swap.setQuoteError('Swap assets are no longer available. Start a new Swap.')
+      return
+    }
+    if (
+      !swap.restoreSelection({
+        sourceAssetId: record.sourceAssetId,
+        destinationAssetId: record.destinationAssetId,
+        amountIn: record.amountIn,
+        recipientAddress: record.recipientAddress
+      })
+    ) {
+      swap.setQuoteError('Swap changed while restoring. Start a new Swap.')
+      return
+    }
+    restoredRecipientAssetId.current = record.destinationAssetId
+    setSourceMode(record.sourceMode)
+    setDestinationMode(record.destinationMode)
+    setUseCustomRecipient(record.customRecipient)
+    const destination = swap.destinationTokens.find(
+      token => token.assetId === record.destinationAssetId
+    )
+    if (destination && isZecToken(destination)) {
+      setZecRecipientSelection({ scope: walletSourcesScope, address: record.recipientAddress })
+    }
+    restoredApprovalId.current = record.transactionId
+    setSubmittedApproval({
+      graph,
+      token: record.token,
+      spender: record.spender,
+      amountRaw: record.amountRaw,
+      owner: record.owner,
+      executionMode: record.sourceMode
+    })
+    setViewStep('approval-pending')
+  }, [
+    approvalToRestore,
+    currentNetwork,
+    effectiveWalletId,
+    effectiveAccountId,
+    swap.areTokensLoading,
+    swap.destinationTokensLoading,
+    swap.sourceTokens,
+    swap.destinationTokens,
+    swap.restoreSelection,
+    swap.setQuoteError,
+    setSourceMode,
+    setDestinationMode,
+    walletSourcesScope
   ])
 
   const swapEventBase = useCallback((): TrackOptions => {
@@ -2797,11 +2927,44 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
         pendingQuoteTransfer.current = null
         setPreparedQuoteTransfer(null)
         if (submission.value.status === 'external-signature-required') {
+          const approvalTransactionId = submission.value.transactionId
           try {
+            if (pendingRheaEvmAfterApproval) {
+              if (
+                submission.family !== 'evm' ||
+                !effectiveWalletId ||
+                !effectiveAccountId ||
+                !swap.tokenIn ||
+                !swap.tokenOut ||
+                !resolvedRecipientAddress
+              )
+                throw new Error('Swap approval context changed. Review the Swap again.')
+              await swapApprovalContinuationClient.save({
+                transactionId: approvalTransactionId,
+                network: currentNetwork,
+                walletId: effectiveWalletId,
+                accountId: effectiveAccountId,
+                chainId: preparedQuoteTransfer.source.chain.chain.id,
+                token: pendingRheaEvmAfterApproval.approval.token,
+                spender: pendingRheaEvmAfterApproval.approval.spender,
+                owner: preparedQuoteTransfer.source.refundAddress,
+                amountRaw: pendingRheaEvmAfterApproval.approval.amountRaw,
+                sourceAssetId: swap.tokenIn.assetId,
+                destinationAssetId: swap.tokenOut.assetId,
+                amountIn: swap.amountIn,
+                recipientAddress: resolvedRecipientAddress,
+                sourceMode: executionSourceMode,
+                destinationMode,
+                customRecipient: requiresRecipientAddress
+              })
+            }
             await (submission.family === 'bitcoin'
-              ? openHardwareBitcoinSignTab(submission.value.transactionId)
-              : openHardwareEvmSignTab(submission.value.transactionId))
+              ? openHardwareBitcoinSignTab(approvalTransactionId)
+              : openHardwareEvmSignTab(approvalTransactionId))
           } catch (handoffError) {
+            if (pendingRheaEvmAfterApproval) {
+              await swapApprovalContinuationClient.clear(approvalTransactionId).catch(() => {})
+            }
             await quoteDepositTransferClient.reject(preparedQuoteTransfer)
             throw handoffError
           }
@@ -2935,6 +3098,9 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
     networkFeeTier,
     rheaSigningReview,
     executionSourceMode,
+    destinationMode,
+    requiresRecipientAddress,
+    currentNetwork,
     isPrivateFunding,
     privateFundingRequestId,
     lockedAssetFlowRequested,
@@ -2954,18 +3120,33 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
     setApprovalError(null)
     const sequence = ++quoteRequestSequence.current
     try {
-      const allowance = await evmWalletClient.getTokenAllowance(
-        walletOwnedSource.chain.chain.id,
-        submittedApproval.token,
-        submittedApproval.spender,
-        submittedApproval.owner,
-        submittedApproval.executionMode
+      const continuation = approvalToRestore?.record
+      if (
+        continuation &&
+        (continuation.transactionId !== submittedApproval.graph.root.id ||
+          continuation.sourceAssetId !== swap.tokenIn?.assetId ||
+          continuation.destinationAssetId !== swap.tokenOut?.assetId ||
+          continuation.amountIn !== swap.amountIn ||
+          continuation.recipientAddress !== resolvedRecipientAddress ||
+          continuation.sourceMode !== executionSourceMode ||
+          continuation.destinationMode !== destinationMode)
       )
+        throw new Error('Swap details changed. Start a new Swap.')
+      const allowance = continuation
+        ? (await swapApprovalContinuationClient.continue(continuation.transactionId)).amountRaw
+        : await evmWalletClient.getTokenAllowance(
+            walletOwnedSource.chain.chain.id,
+            submittedApproval.token,
+            submittedApproval.spender,
+            submittedApproval.owner,
+            submittedApproval.executionMode
+          )
       if (sequence !== quoteRequestSequence.current) return
       if (BigInt(allowance) < BigInt(submittedApproval.amountRaw)) {
         setApprovalError('Token approval is not confirmed yet. Check Activity and try again.')
         return
       }
+      if (continuation) completedApprovalId.current = continuation.transactionId
       reviewAfterQuoteRefresh.current = createSwapQuoteRefreshTarget(liveQuoteRequest)
       setSubmittedApproval(null)
       setViewStep('input')
@@ -2978,6 +3159,13 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
       setIsPreparingReview(false)
     }
   }
+
+  useEffect(() => {
+    if (viewStep !== 'review' || !completedApprovalId.current) return
+    const transactionId = completedApprovalId.current
+    completedApprovalId.current = null
+    void swapApprovalContinuationClient.clear(transactionId).catch(() => {})
+  }, [viewStep])
 
   const handleSwitchTokens = useCallback(() => {
     if (!canSwitchTokens) return

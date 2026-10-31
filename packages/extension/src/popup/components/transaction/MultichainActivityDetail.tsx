@@ -74,6 +74,8 @@ import {
 import { ActivityRouteTokenIcons } from './ActivityRouteTokenIcons'
 import { resolveScopedZcashActivityTransaction } from '@/popup/services/zcash-activity-detail'
 import { InlineError } from '../common/InlineError'
+import { swapApprovalContinuationClient } from '@/popup/services/swap-approval-continuation-client'
+import { useActiveAccountNetworks } from '@/popup/hooks/useActiveAccountNetworks'
 
 interface MultichainActivityDetailProps {
   readonly item: ActivityItem
@@ -82,6 +84,7 @@ interface MultichainActivityDetailProps {
   readonly accountNetworks?: readonly AccountNetworkView[]
   readonly onSpeedUp?: (transaction: Transaction) => void
   readonly onClose?: () => void
+  readonly onContinueSwap?: (transactionId: string) => void
 }
 
 function TransactionReference({
@@ -138,7 +141,8 @@ export function MultichainActivityDetail({
   portfolio,
   accountNetworks = [],
   onSpeedUp,
-  onClose
+  onClose,
+  onContinueSwap
 }: MultichainActivityDetailProps) {
   const [visibleItem, setVisibleItem] = useState(item)
   const [retrying, setRetrying] = useState(false)
@@ -147,6 +151,8 @@ export function MultichainActivityDetail({
   const [resumingPrivateFunding, setResumingPrivateFunding] = useState(false)
   const [cancelling, setCancelling] = useState(false)
   const [zcashRecord, setZcashRecord] = useState<Transaction | null>(null)
+  const [swapApprovalAvailable, setSwapApprovalAvailable] = useState(false)
+  const { activeAccount: activeSwapAccount } = useActiveAccountNetworks()
   const { copyToClipboard, showToast } = useCopyToClipboard()
   const endpointSettings = useSettingsStore(state => state.chainEndpointSettings)
   const userEvmAssets = useUserEvmAssets()
@@ -195,6 +201,49 @@ export function MultichainActivityDetail({
   useEffect(() => {
     setVisibleItem(current => (item.updatedAt >= current.updatedAt ? item : current))
   }, [item])
+
+  useEffect(() => {
+    let cancelled = false
+    setSwapApprovalAvailable(false)
+    if (
+      visibleItem.source !== 'wallet-v2' ||
+      (visibleItem.kind !== 'contract-call' && visibleItem.kind !== 'approve') ||
+      visibleItem.status === 'failed' ||
+      network !== currentNetwork ||
+      activeSwapAccount?.walletId !== visibleItem.scope.keyDomainId ||
+      activeSwapAccount.accountId !== visibleItem.scope.accountId
+    )
+      return
+    void swapApprovalContinuationClient
+      .get(visibleItem.id)
+      .then(record => {
+        if (!cancelled)
+          setSwapApprovalAvailable(
+            Boolean(
+              record &&
+              record.walletId === visibleItem.scope.keyDomainId &&
+              record.accountId === visibleItem.scope.accountId &&
+              record.network === network
+            )
+          )
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [
+    visibleItem.id,
+    visibleItem.kind,
+    visibleItem.source,
+    visibleItem.status,
+    visibleItem.updatedAt,
+    visibleItem.scope.keyDomainId,
+    visibleItem.scope.accountId,
+    network,
+    currentNetwork,
+    activeSwapAccount?.walletId,
+    activeSwapAccount?.accountId
+  ])
 
   useEffect(() => {
     let cancelled = false
@@ -925,6 +974,20 @@ export function MultichainActivityDetail({
           Continue
         </Button>
       )}
+      {swapApprovalAvailable &&
+        onContinueSwap &&
+        activeSwapAccount?.walletId === visibleItem.scope.keyDomainId &&
+        activeSwapAccount.accountId === visibleItem.scope.accountId && (
+          <Button
+            className="mt-4 h-[45px] w-full"
+            onClick={() => {
+              onClose?.()
+              onContinueSwap(visibleItem.id)
+            }}
+          >
+            Continue Swap
+          </Button>
+        )}
     </article>
   )
 }

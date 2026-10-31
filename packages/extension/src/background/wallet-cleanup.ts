@@ -57,6 +57,10 @@ import { zcashTxMonitor } from './zcash-tx-monitor'
 import { credentialSession } from './credential-session'
 import { OffscreenCompatibilityWorkerPort } from './offscreen-compatibility-worker'
 import { accountContextTransition } from './account-context-transition'
+import {
+  clearAllSwapApprovalContinuations,
+  clearSwapApprovalContinuationsForAccount
+} from './swap-approval-continuation'
 import { WalletMetadataCoordinator } from '@/infrastructure/keyring/wallet-metadata-coordinator'
 import { pendingRequestsManager } from './pending-requests'
 import {
@@ -755,6 +759,7 @@ export class WalletCleanupCoordinator {
           deleteHistoryCache(),
           this.activityHistoryCache.clear(),
           dappExecutionModeCoordinator.clear(),
+          clearAllSwapApprovalContinuations(),
           chrome.storage.local.remove([
             getUserEvmAssetCatalogStorageKey('mainnet'),
             getUserEvmAssetCatalogStorageKey('testnet'),
@@ -796,7 +801,8 @@ export class WalletCleanupCoordinator {
       this.portfolioCache.deleteByAccountScope(scope),
       deleteLendingMarketCache(walletId, accountId),
       this.activityHistoryCache.deleteByScope(scope),
-      dappExecutionModeCoordinator.removeAccount(walletId, accountId)
+      dappExecutionModeCoordinator.removeAccount(walletId, accountId),
+      clearSwapApprovalContinuationsForAccount(walletId, accountId)
     ])
   }
 

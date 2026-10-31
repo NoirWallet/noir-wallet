@@ -476,17 +476,24 @@ export function AssetDetail() {
       await openModal({
         showCloseButton: true,
         className: 'max-h-[calc(100dvh-1rem)] overflow-y-auto overscroll-contain',
-        body: () => (
+        body: (resolve: (value: unknown) => void, close: () => void) => (
           <MultichainActivityDetail
             item={item}
             network={currentNetwork}
             portfolio={visibleModel}
             accountNetworks={storageV2Account?.networks}
+            onClose={() => {
+              close()
+              resolve(undefined)
+            }}
+            onContinueSwap={transactionId =>
+              navigate(`/swap?resumeApproval=${encodeURIComponent(transactionId)}`)
+            }
           />
         )
       })
     },
-    [currentNetwork, visibleModel]
+    [currentNetwork, visibleModel, navigate, storageV2Account?.networks]
   )
 
   if (status === 'loading' && !visibleModel) {

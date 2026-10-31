@@ -16,6 +16,13 @@ import {
   resolveUnactivatedBetaDAppRequest
 } from '@/core/dapp/beta-invite-policy'
 import { isZcashHardwareKeySource } from '@/core/wallet/hardware-wallet-data'
+import {
+  saveSwapApprovalContinuation,
+  readSwapApprovalContinuation,
+  continueSwapAfterApproval,
+  clearSwapApprovalContinuation,
+  clearAllSwapApprovalContinuations
+} from './swap-approval-continuation'
 import { resolveWalletUnlockPath } from '@/core/wallet/wallet-unlock-path'
 import { parseLedgerPcztSignatures } from '@/lib/ledger/signature'
 import { safeBig } from '@/lib/big'
@@ -1344,6 +1351,7 @@ async function switchGlobalNetworkMode(target: Network): Promise<{ restartRequir
       networkRestartRequired = true
       await persistNetworkMode(target)
       targetModePersisted = true
+      await clearAllSwapApprovalContinuations()
       await chrome.alarms.create(NETWORK_MODE_RESTART_ALARM, { when: Date.now() + 500 })
       return { restartRequired: true as const }
     } catch (error) {
@@ -2297,6 +2305,55 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
     return true
   }
 
+  if (
+    runtimeMessage.type === 'SAVE_SWAP_APPROVAL_CONTINUATION' ||
+    runtimeMessage.type === 'GET_SWAP_APPROVAL_CONTINUATION' ||
+    runtimeMessage.type === 'CONTINUE_SWAP_AFTER_APPROVAL' ||
+    runtimeMessage.type === 'CLEAR_SWAP_APPROVAL_CONTINUATION'
+  ) {
+    const type = runtimeMessage.type
+    const canRead = getOwnExtensionSenderContext(sender, chrome.runtime.id) === 'extension-page'
+    if (!canRead) {
+      sendResponse({ error: 'Unauthorized Swap continuation sender' })
+      return true
+    }
+    void (async () => {
+      const readActive = async () => {
+        await rehydrateWalletStore()
+        const state = useWalletStore.getState()
+        const catalog = await accountNetworksCoordinator.readCatalog()
+        const account = catalog?.accounts.find(candidate => candidate.active)
+        return {
+          network: state.currentNetwork,
+          walletId: account?.walletId ?? null,
+          accountId: account?.accountId ?? null
+        }
+      }
+      if (type === 'SAVE_SWAP_APPROVAL_CONTINUATION') {
+        if (!evmTransferRouter) throw new Error('EVM transfer is unavailable')
+        return saveSwapApprovalContinuation(runtimeMessage.input, evmTransferRouter, readActive)
+      }
+      if (typeof runtimeMessage.transactionId !== 'string')
+        throw new Error('Invalid transaction ID')
+      if (type === 'GET_SWAP_APPROVAL_CONTINUATION')
+        return readSwapApprovalContinuation(runtimeMessage.transactionId, readActive)
+      if (type === 'CONTINUE_SWAP_AFTER_APPROVAL') {
+        if (!evmTransferRouter) throw new Error('EVM transfer is unavailable')
+        return continueSwapAfterApproval(
+          runtimeMessage.transactionId,
+          evmTransferRouter,
+          readActive
+        )
+      }
+      await clearSwapApprovalContinuation(runtimeMessage.transactionId)
+      return true
+    })()
+      .then(result => sendResponse({ result }))
+      .catch(error =>
+        sendResponse({ error: error instanceof Error ? error.message : 'Swap continuation failed' })
+      )
+    return true
+  }
   if (
     [
       'GET_LEDGER_SIGNING_REQUEST',

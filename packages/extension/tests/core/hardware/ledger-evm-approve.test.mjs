@@ -16,6 +16,7 @@ import {
 } from '../../../src/infrastructure/chains/evm/index.ts'
 import { parseEvmAccountBinding } from '../../../src/infrastructure/chains/evm/evm-account.ts'
 import { loadLedgerSigningView } from '../../../src/popup/services/ledger-signing-view.ts'
+import { saveSwapApprovalContinuation } from '../../../src/background/swap-approval-continuation.ts'
 import { HardwareEvmSigningContextResolver } from '../../../src/infrastructure/keyring/hardware-evm-signing-context.ts'
 import { LedgerHardwareProvisioningCoordinator } from '../../../src/infrastructure/keyring/ledger-hardware-provisioning-coordinator.ts'
 import {
@@ -209,6 +210,72 @@ it('loads an approved Ledger EVM review from its external signing request', asyn
     assert.deepEqual(view.scope, { ...request.scope, chainId })
     assert.deepEqual(view.summary, request.summary)
     assert.equal(view.payloadFingerprint.digestHex, fingerprint)
+  } finally {
+    globalThis.chrome = originalChrome
+  }
+})
+
+it('binds a Swap continuation to the approved Ledger calldata and active account', async () => {
+  const { controller, chainAccount } = await fixture()
+  const { transactionId, request } = await prepareApproval(controller)
+  const originalChrome = globalThis.chrome
+  const values = new Map()
+  globalThis.chrome = {
+    storage: {
+      local: {
+        get: async key => (key === null ? Object.fromEntries(values) : { [key]: values.get(key) }),
+        set: async entries => {
+          for (const [key, value] of Object.entries(entries)) values.set(key, value)
+        },
+        remove: async key => {
+          values.delete(key)
+        }
+      }
+    }
+  }
+  const active = {
+    network: 'mainnet',
+    walletId: chainAccount.scope.keyDomainId,
+    accountId: chainAccount.scope.accountId
+  }
+  const input = {
+    transactionId,
+    ...active,
+    chainId,
+    token,
+    spender,
+    owner: address,
+    amountRaw: '123',
+    sourceAssetId: 'eip155:1/erc20:source',
+    destinationAssetId: 'eip155:1/native:destination',
+    amountIn: '1.25',
+    recipientAddress: address,
+    sourceMode: 'main',
+    destinationMode: 'main',
+    customRecipient: false
+  }
+  const router = { getExternalSigningRequest: async () => request }
+  try {
+    await assert.rejects(
+      saveSwapApprovalContinuation({ ...input, spender: address }, router, async () => active),
+      /does not match/
+    )
+    await assert.rejects(
+      saveSwapApprovalContinuation({ ...input, amountRaw: '124' }, router, async () => active),
+      /does not match/
+    )
+    assert.equal(values.size, 0)
+    let reads = 0
+    await assert.rejects(
+      saveSwapApprovalContinuation(input, router, async () =>
+        ++reads === 1 ? active : { ...active, accountId: 'account:changed' }
+      ),
+      /Active account changed/
+    )
+    assert.equal(values.size, 0)
+    const saved = await saveSwapApprovalContinuation(input, router, async () => active)
+    assert.equal(saved.transactionId, transactionId)
+    assert.equal(values.size, 1)
   } finally {
     globalThis.chrome = originalChrome
   }

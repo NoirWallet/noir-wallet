@@ -72,7 +72,7 @@ export function useSwapState(
   const selectorSourceCatalog = useRef<readonly RheaSwapToken[]>([])
   const [amountIn, setAmountIn] = useState('')
   const [amountOut, setAmountOut] = useState('')
-  const [recipientAddress, setRecipientAddress] = useState('')
+  const [recipientAddress, setRecipientAddressState] = useState('')
   const [depositAddress, setDepositAddress] = useState('')
   const [isQuoting, setIsQuoting] = useState(false)
   const [quoteError, setQuoteError] = useState<string | null>(null)
@@ -81,10 +81,17 @@ export function useSwapState(
   const [isSwitchingTokens, setIsSwitchingTokens] = useState(false)
   const switchRequestSequence = useRef(0)
   const switchingTokens = useRef(false)
+  const selectionEdited = useRef(false)
+  const selectionRestored = useRef(false)
+  const inputRevision = useRef(0)
+  const markSelectionEdited = useCallback(() => {
+    selectionEdited.current = true
+    inputRevision.current += 1
+  }, [])
 
   const addressType = useSwapPreferences(state => state.addressType)
   const slippage = useSwapPreferences(state => state.slippage)
-  const setAddressType = useSwapPreferences(state => state.setAddressType)
+  const persistAddressType = useSwapPreferences(state => state.setAddressType)
   const setSlippage = useSwapPreferences(state => state.setSlippage)
   const setSavedTokenSelection = useSwapPreferences(state => state.setSavedTokenSelection)
   const setSavedTokenInId = useSwapPreferences(state => state.setSavedTokenInId)
@@ -97,6 +104,9 @@ export function useSwapState(
   useEffect(() => {
     if (activePreferenceScope.current === preferenceScope) return
     activePreferenceScope.current = preferenceScope
+    selectionEdited.current = false
+    selectionRestored.current = false
+    inputRevision.current += 1
     switchRequestSequence.current += 1
     switchingTokens.current = false
     setIsSwitchingTokens(false)
@@ -105,7 +115,7 @@ export function useSwapState(
     setTokenOut(null)
     setAmountIn('')
     setAmountOut('')
-    setRecipientAddress('')
+    setRecipientAddressState('')
     setDepositAddress('')
     setQuoteError(null)
   }, [preferenceScope])
@@ -357,6 +367,20 @@ export function useSwapState(
   const rate = displayOut ? displayRate : '...'
 
   // Actions
+  const setRecipientAddress = useCallback(
+    (value: string) => {
+      markSelectionEdited()
+      setRecipientAddressState(value)
+    },
+    [markSelectionEdited]
+  )
+  const setAddressType = useCallback(
+    (value: typeof addressType) => {
+      markSelectionEdited()
+      persistAddressType(value)
+    },
+    [markSelectionEdited, persistAddressType]
+  )
   const activePair = useRef({ tokenIn, tokenOut })
   activePair.current = { tokenIn, tokenOut }
   useEffect(
@@ -369,12 +393,15 @@ export function useSwapState(
   const switchTokens = useCallback(
     async (options?: { isCancelled?: () => boolean; onReversed?: () => void }) => {
       if (!tokenIn || !tokenOut || switchingTokens.current) return
+      markSelectionEdited()
+      const revision = inputRevision.current
       const sequence = ++switchRequestSequence.current
       switchingTokens.current = true
       setIsSwitchingTokens(true)
       try {
         const isCancelled = () =>
           sequence !== switchRequestSequence.current ||
+          revision !== inputRevision.current ||
           activePair.current.tokenIn !== tokenIn ||
           activePair.current.tokenOut !== tokenOut ||
           options?.isCancelled?.() === true
@@ -413,7 +440,7 @@ export function useSwapState(
 
         setAmountIn('')
         setAmountOut('')
-        setRecipientAddress('')
+        setRecipientAddressState('')
         setDepositAddress('')
         setQuoteError(null)
       } finally {
@@ -423,19 +450,21 @@ export function useSwapState(
         }
       }
     },
-    [preferenceScope, tokenIn, tokenOut, setSavedTokenSelection]
+    [markSelectionEdited, preferenceScope, tokenIn, tokenOut, setSavedTokenSelection]
   )
 
   const resetSwap = useCallback(() => {
+    inputRevision.current += 1
     setAmountIn('')
     setAmountOut('')
-    setRecipientAddress('')
+    setRecipientAddressState('')
     setDepositAddress('')
     setQuoteError(null)
   }, [])
 
   const setTokenPair = useCallback(
     (nextTokenIn: RheaSwapToken, nextTokenOut: RheaSwapToken | null) => {
+      inputRevision.current += 1
       setTokenIn(nextTokenIn)
       setTokenOut(nextTokenOut)
       if (preferenceScope) {
@@ -452,6 +481,7 @@ export function useSwapState(
   )
 
   const setProvisionalTokenIn = useCallback((token: RheaSwapToken) => {
+    inputRevision.current += 1
     setTokenIn(token)
     setTokenOut(null)
     setAmountIn('')
@@ -461,6 +491,7 @@ export function useSwapState(
 
   const selectTokenIn = useCallback(
     (token: RheaSwapToken) => {
+      markSelectionEdited()
       setSourceCatalog(previous =>
         mergeSelectedSwapSourceCatalog(previous, selectorSourceCatalog.current, token)
       )
@@ -470,11 +501,12 @@ export function useSwapState(
       setAmountOut('')
       setQuoteError(null)
     },
-    [preferenceScope, setSavedTokenInId]
+    [markSelectionEdited, preferenceScope, setSavedTokenInId]
   )
 
   const selectTokenOut = useCallback(
     (token: RheaSwapToken) => {
+      markSelectionEdited()
       if (token.blockchain === tokenIn?.blockchain) {
         setSourceCatalog(previous =>
           previous.includes(token) ? previous : mergeTokenCatalogs(previous, [token])
@@ -489,37 +521,83 @@ export function useSwapState(
       setAmountOut('')
       setQuoteError(null)
     },
-    [preferenceScope, setSavedTokenOutId, tokenIn?.blockchain]
+    [markSelectionEdited, preferenceScope, setSavedTokenOutId, tokenIn?.blockchain]
   )
 
   const selectTokenOutForFlow = useCallback((token: RheaSwapToken) => {
+    inputRevision.current += 1
     setTokenOut(token)
     setAmountOut('')
     setQuoteError(null)
   }, [])
 
   const clearTokenOutForFlow = useCallback(() => {
+    inputRevision.current += 1
     setTokenOut(null)
     setAmountOut('')
     setQuoteError(null)
   }, [])
 
   const clearTokenPairForFlow = useCallback(() => {
+    inputRevision.current += 1
     setTokenIn(null)
     setTokenOut(null)
     setAmountOut('')
     setQuoteError(null)
   }, [])
 
-  const updateAmountIn = useCallback((value: string) => {
-    setAmountIn(value.replace(/[^0-9.]/g, ''))
-    setAmountOut('')
-    setQuoteError(null)
-  }, [])
+  const updateAmountIn = useCallback(
+    (value: string) => {
+      markSelectionEdited()
+      setAmountIn(value.replace(/[^0-9.]/g, ''))
+      setAmountOut('')
+      setQuoteError(null)
+    },
+    [markSelectionEdited]
+  )
 
   const retryTokenCatalog = useCallback(() => {
     setCatalogRequestId(value => value + 1)
   }, [])
+
+  const restoreSelection = useCallback(
+    (selection: {
+      sourceAssetId: string
+      destinationAssetId: string
+      amountIn: string
+      recipientAddress: string
+    }): boolean => {
+      if (
+        selectionEdited.current ||
+        selectionRestored.current ||
+        activePreferenceScope.current !== preferenceScope ||
+        !selection.sourceAssetId ||
+        selection.sourceAssetId === selection.destinationAssetId
+      )
+        return false
+      const source = sourceCatalog.find(token => token.assetId === selection.sourceAssetId)
+      const destination = destinationTokens.find(
+        token => token.assetId === selection.destinationAssetId
+      )
+      if (!source || !destination) return false
+      selectionRestored.current = true
+      setTokenIn(source)
+      setSelectedSourceAssetId(source.assetId)
+      setTokenOut(destination)
+      setAmountIn(selection.amountIn.replace(/[^0-9.]/g, ''))
+      setAmountOut('')
+      setRecipientAddressState(selection.recipientAddress)
+      setDepositAddress('')
+      setQuoteError(null)
+      if (preferenceScope)
+        setSavedTokenSelection(preferenceScope, {
+          tokenInId: source.assetId,
+          tokenOutId: destination.assetId
+        })
+      return true
+    },
+    [destinationTokens, preferenceScope, setSavedTokenSelection, sourceCatalog]
+  )
 
   return {
     // State
@@ -562,6 +640,7 @@ export function useSwapState(
 
     // Actions
     switchTokens,
+    restoreSelection,
     retryTokenCatalog,
     resetSwap,
     setTokenPair,
