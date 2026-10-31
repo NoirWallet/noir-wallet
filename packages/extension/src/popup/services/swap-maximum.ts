@@ -3,10 +3,7 @@ import type { NetworkFeeTier } from '@/core/transactions/domain'
 import { EvmWalletClientError } from './evm-wallet-client'
 import { fallbackTransferMaximum } from './transfer-maximum'
 import { safeBig } from '@/lib/big'
-import {
-  formatBaseUnitDecimalAmount,
-  parseDisplayUnitAmount
-} from '@/popup/components/portfolio/portfolio-format'
+import { formatBaseUnitDecimalAmount, parseDisplayUnitAmount } from '@/lib/number-format'
 import type {
   QuoteDepositExecutionMode,
   QuoteDepositMaximum,

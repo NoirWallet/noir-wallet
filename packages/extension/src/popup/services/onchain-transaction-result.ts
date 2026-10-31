@@ -7,7 +7,7 @@ import {
   getLifecycleStatusPresentation,
   type TransactionPresentationTone
 } from '@/lib/transaction-status-presentation'
-import { formatBaseUnitAmount } from '@/popup/components/portfolio/portfolio-format'
+import { formatBaseUnitAmount } from '@/lib/number-format'
 
 export function getOnchainResultAction(
   status: TransactionLifecycleStatus,

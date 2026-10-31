@@ -12,8 +12,13 @@ import {
   type AssetMarketHistoryReadModel,
   type AssetPriceReadModel
 } from '@/core/prices'
-import { formatPercent } from '@/lib/format'
-import { formatFiatAmount, formatTokenPrice } from '@/lib/number-format'
+import {
+  formatPercentage,
+  formatFiatAmount,
+  formatTokenPrice,
+  formatBaseUnitAmount
+} from '@/lib/number-format'
+
 import { resolveChainIconAlias } from '@/lib/chain-icon'
 import { cn } from '@/lib/utils'
 import { getZcashPrivacyBalanceDisplay } from './asset-detail-balance'
@@ -25,10 +30,8 @@ import { InlineError } from '@/popup/components/common/InlineError'
 import { CopyToast, useCopyToClipboard } from '@/popup/components/common/CopyToast'
 import { TokenIcon } from '@/popup/components/tokens/TokenIcon'
 import { Button } from '@/popup/components/ui/button'
-import {
-  formatBaseUnitAmount,
-  formatDisplayTokenAmount
-} from '@/popup/components/portfolio/portfolio-format'
+
+import { formatDisplayTokenAmount } from '@/popup/components/portfolio/portfolio-format'
 import { getPortfolioAssetUsdValue } from '@/popup/components/portfolio/portfolio-prices'
 import {
   isPortfolioModelForScope,
@@ -543,7 +546,7 @@ export function AssetDetail() {
   const hasPendingBalance = asset.balance.pendingRaw !== '0'
   const change = quote?.marketChange ? new Big(quote.marketChange.percent24h) : null
   const formattedChange = quote?.marketChange
-    ? formatPercent(quote.marketChange.percent24h, { maxDigits: 2, showPlus: true })
+    ? formatPercentage(quote.marketChange.percent24h, { maxDigits: 2, showPlus: true })
     : null
   const preferredBitcoinAddress = bitcoinCatalog?.addresses.find(
     address => !address.change && address.addressIndex === 0

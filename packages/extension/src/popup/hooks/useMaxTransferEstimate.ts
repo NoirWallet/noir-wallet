@@ -5,7 +5,8 @@ import {
 } from '@/popup/services/zcash-wallet-runtime-client'
 import type { FeeTier } from '@/config/fee'
 import { marginalFeeForTier } from '@/core/zcash/fee-policy'
-import { safeBig } from '@/lib/big'
+import { formatBaseUnitDecimalAmount } from '@/lib/number-format'
+import { ZEC_DECIMALS } from '@/config/wallet'
 import type { FundingSource } from '@/types'
 import { useWalletStore } from '@/store/wallet-store'
 import { useAccountDataStore } from '@/store/account-data-store'
@@ -75,13 +76,14 @@ export function useMaxTransferEstimate({
 
   const update = useCallback((estimate: MaxTransferEstimate, target: string) => {
     requestSeq.current += 1
-    setState({
-      key: JSON.stringify([target, latest.current.scope]),
-      maxAmount: safeBig(estimate.maxAmountZats).div(1e8).toFixed(),
-      fee: safeBig(estimate.feeZats).div(1e8).toFixed(),
-      loading: false,
-      error: false
-    })
+    const key = JSON.stringify([target, latest.current.scope])
+    try {
+      const maxAmount = formatBaseUnitDecimalAmount(estimate.maxAmountZats, ZEC_DECIMALS)
+      const fee = formatBaseUnitDecimalAmount(estimate.feeZats, ZEC_DECIMALS)
+      setState({ key, maxAmount, fee, loading: false, error: false })
+    } catch {
+      setState({ key, maxAmount: null, fee: null, loading: false, error: true })
+    }
   }, [])
 
   const request = async () => {
@@ -99,8 +101,8 @@ export function useMaxTransferEstimate({
       if (seq !== requestSeq.current || input.key !== latest.current.key) return
       setState({
         key: input.key,
-        maxAmount: safeBig(estimate.maxAmountZats).div(1e8).toFixed(),
-        fee: safeBig(estimate.feeZats).div(1e8).toFixed(),
+        maxAmount: formatBaseUnitDecimalAmount(estimate.maxAmountZats, ZEC_DECIMALS),
+        fee: formatBaseUnitDecimalAmount(estimate.feeZats, ZEC_DECIMALS),
         loading: false,
         error: false
       })

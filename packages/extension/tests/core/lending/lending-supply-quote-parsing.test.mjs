@@ -56,5 +56,8 @@ test.describe('lending supply quote parsing', () => {
         18
       ).minAmountOut
     ).toBe('0.98')
+    expect(
+      parseSupplyQuoteResult(result({ amountOut: '99', minAmountOut: '98' }), 0).minAmountOut
+    ).toBe('98')
   })
 })

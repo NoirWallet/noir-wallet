@@ -18,8 +18,8 @@ import { openHardwareSignAndWait, openHardwareSignTab } from '@/lib/hardware-tab
 import { isSidePanelSurface } from '@/lib/extension-display-mode'
 import { toast } from '@/store/toast-store'
 import { classifyError } from '@/lib/errors'
-import { ANALYTICS_EVENTS, PAGE_IDS, sendAnalyticsEvent } from '@/lib/analytics'
-import type { TrackOptions } from '@/lib/analytics'
+import { ANALYTICS_EVENTS, PAGE_IDS, sendAnalyticsEvent, type TrackOptions } from '@/lib/analytics'
+
 import {
   Dialog,
   DialogContent,
@@ -31,7 +31,8 @@ import { useWalletStore } from '@/store/wallet-store'
 import { useAccountDataStore } from '@/store/account-data-store'
 import { useTransactionResultStore } from '@/store/transaction-result-store'
 import { useLocation, useNavigate } from '../../provider/Router'
-import { formatPrice, formatSortAddress } from '@/lib/format'
+import { formatSortAddress } from '@/lib/format'
+import { formatFiatAmount, formatBaseUnitDecimalAmount } from '@/lib/number-format'
 import { AmountDisplay } from '@/popup/components/common/AmountDisplay'
 import { DetailRow } from '../../components/common/DetailRow'
 import { AddressTypeLabel, AddressTypeSwitch } from '../../components/account/AddressType'
@@ -60,6 +61,8 @@ import {
 } from '@/core/wallet/funding-source'
 import type { FundingSource } from '@/types'
 import { safeBig } from '@/lib/big'
+
+import { ZEC_DECIMALS } from '@/config/wallet'
 import { useZnsResolve } from '../../hooks/useZnsResolve'
 import { isTransparentZcashAddress, sanitizeMemoForRecipient } from '@/lib/zcash-memo'
 import { getShieldableTransparentBalance } from '@/core/zcash/shielding'
@@ -157,7 +160,7 @@ export function Send() {
 
   const selectedFeeZats = feeByTier[feeTier] ?? staticFeeFallbackZats(feeTier)
   const standardFeeZats = feeByTier.standard ?? staticFeeFallbackZats('standard')
-  const estimatedFeeZec = safeBig(selectedFeeZats).div(1e8).toFixed()
+  const estimatedFeeZec = formatBaseUnitDecimalAmount(String(selectedFeeZats), ZEC_DECIMALS)
   const { amount: effectiveMaxStr } = resolveZcashFundingAvailability({
     balance,
     fundingSource,
@@ -570,7 +573,7 @@ export function Send() {
             </div>
             <p className="text-sm text-muted mt-0.5">
               ≈{' '}
-              {formatPrice(
+              {formatFiatAmount(
                 safeBig(amount || '0')
                   .times(zecPrice || 0)
                   .toFixed(),

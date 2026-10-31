@@ -23,8 +23,8 @@ import {
 } from './signing-summary-review-model-types'
 import { formatEvmWeiAsGwei } from '@/infrastructure/chains/evm'
 import { decodeErc20CalldataRequest } from '@/infrastructure/chains/evm/evm-contract-call-classification'
-import { formatAmount, formatSortAddress } from '@/lib/format'
-import { formatFeeAmount, formatReviewAmount } from '@/lib/number-format'
+import { formatSortAddress } from '@/lib/format'
+import { formatAmount, formatFeeAmount, formatReviewAmount } from '@/lib/number-format'
 
 export interface EvmReviewPresentationOptions {
   readonly nativeCurrency?: { readonly symbol: string; readonly decimals: number }

@@ -44,14 +44,14 @@ import {
   openHardwareEvmSignTab
 } from '@/lib/hardware-tab'
 import { isSidePanelSurface } from '@/lib/extension-display-mode'
-import { ANALYTICS_EVENTS, PAGE_IDS, sendAnalyticsEvent } from '@/lib/analytics'
+import { ANALYTICS_EVENTS, PAGE_IDS, sendAnalyticsEvent, type TrackOptions } from '@/lib/analytics'
 import {
   hasSubmittedRheaOrigin,
   resolveSwapAnalyticsAction,
   resolveSwapAnalyticsContext
 } from '@/popup/services/swap-event-model'
 import { IndexedDbTransactionRepository } from '@/infrastructure/persistence/repositories'
-import type { TrackOptions } from '@/lib/analytics'
+
 import { SwapTokenSelector } from '../../components/swap/SwapTokenSelector'
 import { SlippageSettingContent } from '../../components/swap/SlippageSetting'
 import { SwapReviewView } from '../../components/swap/SwapReviewView'
@@ -90,6 +90,12 @@ import {
 } from '../../components/account/ExecutionAccountSelector'
 import { useWalletActionExecutionMode } from '../../hooks/useWalletActionExecutionMode'
 import { safeBig } from '@/lib/big'
+import {
+  formatBaseUnitAmount,
+  formatBaseUnitDecimalAmount,
+  parseDisplayUnitAmount
+} from '@/lib/number-format'
+import { ZEC_DECIMALS } from '@/config/wallet'
 import { calculatePrivateFundingSourceAmount } from '@/core/transactions/private-funding'
 import { resolveChainIconAlias } from '@/lib/chain-icon'
 import { classifyError } from '@/lib/errors'
@@ -124,11 +130,6 @@ import {
   type AdditionalReceiveTargetsView
 } from '@/popup/services/receive-targets-client'
 import type { PortfolioReadModel } from '@/core/portfolio'
-import {
-  formatBaseUnitAmount,
-  formatBaseUnitDecimalAmount,
-  parseDisplayUnitAmount
-} from '@/popup/components/portfolio/portfolio-format'
 import { usePortfolioUpdates } from '@/popup/hooks/usePortfolioUpdates'
 import {
   createSwapTokenPreferenceScope,
@@ -1402,7 +1403,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
   const displayedFeeLoading = isMaxFeeMode ? maxTransfer.loading : feeEstimate.loading
   const standardFeeZats = feeByTier.standard ?? staticFeeFallbackZats('standard')
   const selectedFeeZats = feeByTier[feeTier] ?? staticFeeFallbackZats(feeTier)
-  const estimatedFeeZec = safeBig(selectedFeeZats).div(1e8).toFixed()
+  const estimatedFeeZec = formatBaseUnitDecimalAmount(String(selectedFeeZats), ZEC_DECIMALS)
   // Approximate while no live estimate is in flight or resolved (e.g. before a
   // quote has produced a deposit address). UI uses this to avoid implying the
   // ZIP-317 fallback figure is the real network fee.
@@ -1884,7 +1885,9 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
               })
             ).catch(() => null)
             if (requestSequence !== quoteRequestSequence.current) return
-            const exactMax = estimate ? safeBig(estimate.maxAmountZats).div(1e8).toFixed() : null
+            const exactMax = estimate
+              ? formatBaseUnitDecimalAmount(estimate.maxAmountZats, ZEC_DECIMALS)
+              : null
             const adjustment = resolveZcashSwapMaximumAdjustment({
               currentAmount: swap.amountIn,
               exactMaximum: exactMax,

@@ -1,11 +1,9 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import Big from '../../../src/lib/big.ts'
-import { formatNumber } from '../../../src/lib/format.ts'
-import {
-  formatBaseUnitDecimalAmount,
-  formatDisplayTokenAmount
-} from '../../../src/popup/components/portfolio/portfolio-format.ts'
+import { formatTokenQuantity, formatBaseUnitDecimalAmount } from '../../../src/lib/number-format.ts'
+
+import { formatDisplayTokenAmount } from '../../../src/popup/components/portfolio/portfolio-format.ts'
 import {
   calculateSwapPriceImpact,
   getSwapAmountValues
@@ -38,21 +36,21 @@ test('large quote output stays decimal through fiat, exchange rate and price imp
   assert.equal(amountOut, '4483.3')
   const input = { amountIn: '3.83', amountOut, tokenInPrice: 1200, tokenOutPrice: 1 }
   const values = getSwapAmountValues(input)
-  assert.equal(values.toFiat, '4483.30')
-  assert.equal(values.fromFiat, '4596.00')
+  assert.equal(values.toFiat, '4483.3')
+  assert.equal(values.fromFiat, '4596')
   assert.equal(values.rate, new Big('4483.3').div('3.83').toFixed())
   assert.ok(Math.abs(calculateSwapPriceImpact(input) - 2.4521322889469103) < 1e-10)
-  assert.equal(formatNumber(amountOut), '4,483.3')
+  assert.equal(formatTokenQuantity(amountOut), '4,483.3')
 })
 
 test('whole amounts never use K/M/B or lose integer precision during rendering', () => {
   assert.equal(formatDisplayTokenAmount('1234567000000', 6), '1,234,567')
   assert.equal(formatDisplayTokenAmount('5000000000000000000000000000', 18), '5,000,000,000')
   assert.equal(
-    formatNumber('123456789012345678901234567890'),
+    formatTokenQuantity('123456789012345678901234567890'),
     '123,456,789,012,345,678,901,234,567,890'
   )
-  assert.equal(formatNumber('-12345.12345', { rm: Big.roundDown }), '-12,345.12')
+  assert.equal(formatTokenQuantity('-12345.12345'), '-12,345.12')
 })
 
 test('Max follows a lower settled fee estimate while a manually entered amount is preserved', () => {

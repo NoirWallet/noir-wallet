@@ -14,7 +14,8 @@ import type {
   ActivityChainMetadata
 } from '@/popup/services/activity-presentation-catalog'
 import type { AccountNetworkView } from '@/popup/services/account-networks-client'
-import { formatActivityTokenAmount, formatBaseUnitAmount } from '../portfolio/portfolio-format'
+import { formatBaseUnitAmount } from '@/lib/number-format'
+import { formatActivityTokenAmount } from '../portfolio/portfolio-format'
 import { getActivityInteractionPresentation } from './activity-interaction-adapters'
 import type { TransactionProgressStep } from '@/popup/services/transaction-progress'
 import {

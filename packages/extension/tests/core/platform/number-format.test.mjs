@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { expect } from '@playwright/test'
 import Big from '../../../src/lib/big.ts'
 import {
+  formatAmount,
+  formatBaseUnitAmount,
+  formatBaseUnitDecimalAmount,
+  parseDisplayUnitAmount,
   formatDecimalAmount,
   formatFeeAmount,
   formatFiatAmount,
@@ -106,4 +111,64 @@ test('percentage thresholds preserve direction and decimal scaling without float
   assert.equal(formatPercentage('0.05284', { decimals: 2 }), '5.28%')
   assert.equal(formatPercentage('0'), '0%')
   assert.equal(formatDecimalAmount('1.99999', { maximumFractionDigits: 2 }), '1.99')
+})
+
+test.describe('Base-unit amount formatting', () => {
+  test('preserves every base unit across high asset precisions and transaction round trips', () => {
+    const raw = ((1n << 256n) - 1n).toString()
+    for (const decimals of [0, 18, 255]) {
+      const amount = formatBaseUnitDecimalAmount(raw, decimals)
+      assert.equal(parseDisplayUnitAmount(amount, decimals), raw)
+      assert.equal(formatBaseUnitDecimalAmount(BigInt(raw), decimals), amount)
+    }
+    const smallest = `0.${'0'.repeat(254)}1`
+    assert.equal(formatBaseUnitDecimalAmount('1', 255), smallest)
+    assert.equal(formatAmount('1', 255), smallest)
+    assert.equal(formatAmount('-1', 255), `-${smallest}`)
+    assert.equal(parseDisplayUnitAmount(smallest, 255), '1')
+    assert.equal(formatBaseUnitDecimalAmount('0', 255), '0')
+  })
+  test('keeps arithmetic base-unit conversion separate from grouped display output', () => {
+    expect(formatBaseUnitDecimalAmount('1234567890000000000000', 18)).toBe('1234.56789')
+    expect(formatBaseUnitAmount('1234567890000000000000', 18, 4)).toBe('1,234.5678…')
+  })
+  test('formats base units without converting through JavaScript numbers', () => {
+    expect(formatBaseUnitAmount('123456789', 6)).toBe('123.456789')
+    expect(formatBaseUnitAmount('123456789012345678901234567890', 0)).toBe(
+      '123,456,789,012,345,678,901,234,567,890'
+    )
+  })
+
+  test('truncates display precision without rounding spendable values up', () => {
+    expect(formatBaseUnitAmount('123456789', 8, 6)).toBe('1.234567…')
+    expect(formatBaseUnitAmount('1', 18, 6)).toBe('< 0.000001')
+  })
+
+  test('removes insignificant fractional zeroes', () => {
+    expect(formatBaseUnitAmount('100000000', 8)).toBe('1')
+    expect(formatBaseUnitAmount('100100000', 8)).toBe('1.001')
+  })
+
+  test('rejects invalid amounts and decimal metadata', () => {
+    expect(() => formatBaseUnitAmount('-1', 8)).toThrow(/Invalid base-unit amount/)
+    expect(() => formatBaseUnitAmount('01', 8)).toThrow(/Invalid base-unit amount/)
+    expect(() => formatBaseUnitAmount('1', 256)).toThrow(/Invalid base-unit amount/)
+    expect(() => formatBaseUnitAmount('1', 8, 0)).toThrow(/Invalid base-unit amount/)
+  })
+})
+
+test.describe('Transaction amount parsing', () => {
+  test('converts decimal display values without floating-point arithmetic', () => {
+    expect(parseDisplayUnitAmount('1', 18)).toBe('1000000000000000000')
+    expect(parseDisplayUnitAmount('0.001', 18)).toBe('1000000000000000')
+    expect(parseDisplayUnitAmount('12.340001', 6)).toBe('12340001')
+    expect(parseDisplayUnitAmount('0', 0)).toBe('0')
+  })
+
+  test('rejects ambiguous or over-precise values', () => {
+    expect(() => parseDisplayUnitAmount('01', 18)).toThrow(/Invalid display-unit amount/)
+    expect(() => parseDisplayUnitAmount('1e-3', 18)).toThrow(/Invalid display-unit amount/)
+    expect(() => parseDisplayUnitAmount('1.0000001', 6)).toThrow(/asset precision/)
+    expect(() => parseDisplayUnitAmount('.1', 18)).toThrow(/Invalid display-unit amount/)
+  })
 })

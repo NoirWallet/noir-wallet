@@ -87,7 +87,7 @@ import {
 } from '@/config/wallet'
 import { assertNewPassword } from '@/core/wallet/password-policy'
 import { resolveMinedTransactionStatus } from '@/lib/transaction-status'
-import { formatAmount } from '@/lib/format'
+import { formatAmount } from '@/lib/number-format'
 import type { WasmTransactionEntry } from '@/core/worker/types'
 import {
   mapWasmAccountBalanceToZcashBalance,

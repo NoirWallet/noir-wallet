@@ -22,7 +22,8 @@ import { cn } from '@/lib/utils'
 import { useWalletStore } from '@/store/wallet-store'
 import { useAccountDataStore } from '@/store/account-data-store'
 import { useSettingsStore } from '@/store/settings-store'
-import { formatPrice, formatWalletName, getAccountDisplayName } from '@/lib/format'
+import { formatWalletName, getAccountDisplayName } from '@/lib/format'
+import { formatFiatAmount } from '@/lib/number-format'
 import type { AccountData, WalletItem } from '@/types'
 import type { AccountPortfolioValueSnapshot } from '@/core/wallet/account-portfolio-value'
 import { getOwnExtensionSenderContext } from '@/lib/runtime-message-security'
@@ -63,15 +64,15 @@ function AccountTotalValue({
   const value = hidden
     ? '••••'
     : canShowValue && snapshot
-      ? `${snapshot.complete ? '' : '≈'}${formatPrice(snapshot.totalUsd, { showSign: true })}`
+      ? `${snapshot.complete ? '' : '≈'}${formatFiatAmount(snapshot.totalUsd, { showSign: true })}`
       : '—'
   const accessibleValue = hidden
     ? 'Account total hidden'
     : !canShowValue || !snapshot
       ? 'Account total unavailable'
       : snapshot.complete
-        ? `Account total ${formatPrice(snapshot.totalUsd, { showSign: true })}`
-        : `Account total approximately ${formatPrice(snapshot.totalUsd, { showSign: true })}`
+        ? `Account total ${formatFiatAmount(snapshot.totalUsd, { showSign: true })}`
+        : `Account total approximately ${formatFiatAmount(snapshot.totalUsd, { showSign: true })}`
 
   return (
     <span

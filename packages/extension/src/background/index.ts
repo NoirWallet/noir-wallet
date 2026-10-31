@@ -1,7 +1,10 @@
 import {
   initializeAnalyticsReporting,
   handleAnalyticsAlarm,
-  ANALYTICS_OUTBOX_ALARM
+  ANALYTICS_OUTBOX_ALARM,
+  ANALYTICS_EVENTS,
+  handleAnalyticsMessage,
+  trackEvent
 } from '@/background/analytics/reporter'
 import '@/lib/buffer-polyfill'
 import { betaInviteActivation } from './beta-invite'
@@ -16,13 +19,10 @@ import { isZcashHardwareKeySource } from '@/core/wallet/hardware-wallet-data'
 import { resolveWalletUnlockPath } from '@/core/wallet/wallet-unlock-path'
 import { parseLedgerPcztSignatures } from '@/lib/ledger/signature'
 import { safeBig } from '@/lib/big'
+import { formatBaseUnitDecimalAmount } from '@/lib/number-format'
 import type { LedgerSigningPayload } from '@/core/worker/types'
 import '@/core/services/lending-sdk-init'
-import {
-  ANALYTICS_EVENTS,
-  handleAnalyticsMessage,
-  trackEvent
-} from '@/background/analytics/reporter'
+
 import {
   projectZcashOperationEvent,
   type ZcashOperationAnalyticsContext
@@ -31,7 +31,7 @@ import { dappHandler } from './dapp-handler'
 import { evmDAppOperationStore } from './evm-dapp-operation-store'
 import { backgroundZcashWalletRuntime } from './zcash-wallet-runtime'
 import { UI_CONFIG } from '@/config/extension'
-import { WALLET_CONFIG, type MnemonicWordCount } from '@/config/wallet'
+import { WALLET_CONFIG, ZEC_DECIMALS, type MnemonicWordCount } from '@/config/wallet'
 import {
   DEFAULT_NETWORK,
   getNetworkConfig,
@@ -58,7 +58,8 @@ import {
   useWalletStore,
   prepareWalletStoreForUse,
   rehydrateWalletStore,
-  waitForHydration
+  waitForHydration,
+  flushWalletStore
 } from '@/store/wallet-store'
 import { transactionRecorder } from './transaction-recorder'
 import { useAccountDataStore } from '@/store/account-data-store'
@@ -86,7 +87,7 @@ import {
 } from '@/core/zcash/shielding'
 import type { TransactionStatusUpdatedMessage } from '@/types/transaction-messages'
 import { initializeExtensionUpdates } from './extension-update'
-import type { SendTransactionParams, TransactionType } from '@/types'
+import type { SendTransactionParams, TransactionType, Network } from '@/types'
 import { isIntentsSettledTransaction } from '@/lib/cross-chain-transaction'
 import { buildAccountKey, type AccountScope } from '@/core/wallet/account-scope'
 import {
@@ -179,21 +180,26 @@ import {
   getBitcoinChainId,
   getZcashChainId,
   parseAssetId,
-  parseChainId
+  parseChainId,
+  type AssetDefinitionInput
 } from '@/core/chains/registry'
-import type { ParsedEip1193ChainRequest } from '@/core/dapp/eip1193'
+
 import {
   computeEvmSigningPayloadFingerprint,
   EvmRpcError,
   EvmTransactionError,
-  type EvmSigningPreparePayload
+  type EvmSigningPreparePayload,
+  ChromeSessionEvmPendingTransferStore,
+  type DetectedEvmAssetCoordinator,
+  type UserEvmAssetCoordinator
 } from '@/infrastructure/chains/evm'
 import { EvmMultichainSigningClient } from '@/infrastructure/keyring/multichain/evm-signing-client'
 import {
   createBackgroundEvmTransferRuntime,
-  hasBackgroundEvmTransferCapability
+  hasBackgroundEvmTransferCapability,
+  type BackgroundEvmTransferRouter
 } from './evm-transfer'
-import type { BackgroundEvmTransferRouter } from './evm-transfer'
+
 import {
   CONFIDENTIAL_FUNDING_MONITOR_ALARM,
   createBackgroundConfidentialFundingCoordinator
@@ -218,6 +224,7 @@ import { createBackgroundBitcoinAddressBalancesCoordinator } from './bitcoin-add
 import { createBackgroundEvmDAppHandler } from './evm-dapp'
 import { handleEvmDAppNetworkSwitch } from './evm-dapp-network-switch'
 import {
+  type ParsedEip1193ChainRequest,
   Eip1193ProviderError,
   toEip1193ErrorShape,
   type EvmDAppRuntimeMethod
@@ -279,19 +286,19 @@ import { mapBitcoinWalletRuntimeError } from './bitcoin-wallet-runtime-error'
 import { PortfolioCoordinatorError } from '@/infrastructure/portfolio'
 import {
   BitcoinDiscoveryReadError,
-  BitcoinPortfolioCoordinatorError
+  BitcoinPortfolioCoordinatorError,
+  ChromeSessionBitcoinPendingTransferStore
 } from '@/infrastructure/chains/bitcoin'
 import {
   ChainEndpointSettingsCoordinator,
   resolveConfiguredBitcoinRpcUrl
 } from './chain-endpoint-settings'
-import { ChromeSessionEvmPendingTransferStore } from '@/infrastructure/chains/evm'
-import { ChromeSessionBitcoinPendingTransferStore } from '@/infrastructure/chains/bitcoin'
+
 import { ChromeSessionSolanaPendingTransferStore } from '@/infrastructure/chains/solana'
 import { ChromeSessionNearPendingTransferStore } from '@/infrastructure/chains/near'
-import { flushWalletStore } from '@/store/wallet-store'
+
 import { validateVotingDecisions } from '@/lib/voting'
-import type { Network } from '@/types'
+
 import { BitcoinMultichainDerivationClient } from '@/infrastructure/keyring/multichain/bitcoin-derivation-client'
 import type { NetworkAccountMetadataInput } from '@/infrastructure/keyring/network-account-metadata-coordinator'
 import {
@@ -331,10 +338,7 @@ import {
   cancelAllLedgerSigning
 } from './ledger-signing-coordinator'
 import { readLedgerProvisioningCredential } from './ledger-signing-bridge'
-import type {
-  DetectedEvmAssetCoordinator,
-  UserEvmAssetCoordinator
-} from '@/infrastructure/chains/evm'
+
 import type { ChromeTokenVisibilityRepository } from '@/infrastructure/portfolio/chrome-token-visibility'
 import type { DetectedEvmAssetRecord, UserEvmAssetRecord } from '@/core/chains/user-assets'
 import { createBackgroundUserEvmAssetRuntime } from './user-evm-assets'
@@ -348,9 +352,12 @@ import {
   resolveIntentsWalletAsset,
   type IntentsProtocolAssetPriceMapping
 } from '@/core/services/intents-wallet-assets'
-import type { AssetDefinitionInput } from '@/core/chains/registry'
+
 import { ChromeSwapTokenCatalogCacheRepository } from '@/infrastructure/persistence/chrome-swap-token-catalog-cache'
-import { getActionFailureNotificationCopy } from '@/lib/transaction-status-copy'
+import {
+  getActionFailureNotificationCopy,
+  TRANSACTION_PENDING_MESSAGE
+} from '@/lib/transaction-status-copy'
 import {
   applyExtensionDisplayMode,
   enqueueExtensionDisplayModeUpdate,
@@ -361,7 +368,7 @@ import {
 import { computePassiveSyncDelayMinutes, shouldRequestPeriodicSync } from './passive-sync-policy'
 import { fetchLatestBlockHeight } from '@/infrastructure/chains/rpc-registry-client'
 import { SerialTaskQueue, TimeoutError, withTimeout } from '@/lib/async-utils'
-import { TRANSACTION_PENDING_MESSAGE } from '@/lib/transaction-status-copy'
+
 import {
   getPreferredRpcEndpointOption,
   refreshRpcEndpointRegistry
@@ -6259,7 +6266,7 @@ async function handleHardwarePcztBuild(params: {
           sanitizeMarginalFeeZats(marginalFeeZats),
           fundingSource
         )
-        effectiveAmount = safeBig(estimate.maxAmountZats).div(1e8).toFixed()
+        effectiveAmount = formatBaseUnitDecimalAmount(estimate.maxAmountZats, ZEC_DECIMALS)
         if (!safeBig(effectiveAmount).gt(0)) {
           throw new Error('No spendable balance is available for this transaction')
         }

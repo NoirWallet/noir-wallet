@@ -31,7 +31,8 @@ import {
   recordHardwareOperationOutcome,
   recordHardwareSignFailure
 } from '@/popup/services/hardware-transaction-analytics'
-import { safeBig } from '@/lib/big'
+import { formatBaseUnitDecimalAmount } from '@/lib/number-format'
+import { ZEC_DECIMALS } from '@/config/wallet'
 import { MARGINAL_FEE_ZATS } from '@/config/fee'
 import { staticFeeFallbackZats } from '@/core/zcash/fee-policy'
 import { classifyError, getResponseErrorMessage } from '@/lib/errors'
@@ -126,9 +127,10 @@ export function KeystoneSignPage() {
   // Real ZIP-317 fee returned by the build; fall back to the chosen tier's
   // static estimate if the live estimate was unavailable.
   const feeTier = (request?.marginalFeeZats ?? 0) >= MARGINAL_FEE_ZATS.fast ? 'fast' : 'standard'
-  const feeZec = safeBig(feeZats ?? staticFeeFallbackZats(feeTier))
-    .div(1e8)
-    .toFixed()
+  const feeZec = formatBaseUnitDecimalAmount(
+    String(feeZats ?? staticFeeFallbackZats(feeTier)),
+    ZEC_DECIMALS
+  )
   const failedCopy = getStandardTransactionResultCopy('failed', { error })
 
   useEffect(() => {

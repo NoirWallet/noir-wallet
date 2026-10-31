@@ -1,9 +1,8 @@
 import { Icon } from '@iconify/react'
 import { cn } from '@/lib/utils'
-import { safeBig } from '@/lib/big'
 import { ZEC_DECIMALS } from '@/config/wallet'
 import { FEE_TIERS, type FeeTier } from '@/config/fee'
-import { formatFeeAmount } from '@/lib/number-format'
+import { formatBaseUnitDecimalAmount, formatFeeAmount } from '@/lib/number-format'
 
 interface FeeTierSelectorProps {
   value: FeeTier
@@ -21,10 +20,7 @@ interface FeeTierSelectorProps {
 
 function formatZec(zats: number | null): string | null {
   if (zats == null) return null
-  return safeBig(zats)
-    .div(1e8)
-    .toFixed(ZEC_DECIMALS)
-    .replace(/\.?0+$/, '')
+  return formatBaseUnitDecimalAmount(String(zats), ZEC_DECIMALS)
 }
 
 /**

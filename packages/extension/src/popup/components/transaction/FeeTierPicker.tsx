@@ -4,7 +4,8 @@ import { FeeTierSelector } from './FeeTierSelector'
 import { getFeeTierLabel, type FeeTier } from '@/config/fee'
 import { staticFeeFallbackZats } from '@/core/zcash/fee-policy'
 import { openModal } from '../../provider/ModalManager'
-import { safeBig } from '@/lib/big'
+import { formatBaseUnitDecimalAmount } from '@/lib/number-format'
+import { ZEC_DECIMALS } from '@/config/wallet'
 import { AmountDisplay } from '../common/AmountDisplay'
 
 interface FeeTierPickerProps {
@@ -49,7 +50,7 @@ export function FeeTierPicker({
   hideLabel
 }: FeeTierPickerProps) {
   const selectedFeeZats = feeByTier[tier] ?? staticFeeFallbackZats(tier)
-  const selectedFeeZec = safeBig(selectedFeeZats).div(1e8).toFixed()
+  const selectedFeeZec = formatBaseUnitDecimalAmount(String(selectedFeeZats), ZEC_DECIMALS)
 
   // Estimate is "approximate" when no live value is in flight or resolved —
   // i.e. the upstream feeEstimate hasn't been enabled yet (e.g. swap before a

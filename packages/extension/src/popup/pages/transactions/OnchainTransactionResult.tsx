@@ -12,10 +12,8 @@ import { TokenIcon } from '@/popup/components/tokens/TokenIcon'
 import { TransactionResult } from '@/popup/components/transaction/TransactionResult'
 import type { EvmTransferActivity } from '@/popup/services/evm-transfer-activity'
 import { shouldApplyOnchainTransactionStatus } from '@/popup/services/evm-transaction-result-status'
-import {
-  formatBaseUnitAmount,
-  formatPortfolioNetworkName
-} from '@/popup/components/portfolio/portfolio-format'
+import { formatBaseUnitAmount } from '@/lib/number-format'
+import { formatPortfolioNetworkName } from '@/popup/components/portfolio/portfolio-format'
 import {
   getOnchainTransactionFailureLabel,
   getOnchainResultAction,

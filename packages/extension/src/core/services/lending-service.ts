@@ -12,7 +12,7 @@ import {
 import { clearLendingMcaCache, getMcaCacheKey, runMcaCheckDeduped } from './lending-mca-cache'
 import { safeBig } from '@/lib/big'
 import { ZEC_NEAR_TOKEN_ID } from '@/config/intents'
-import { formatAmount } from '@/lib/format'
+import { formatAmount } from '@/lib/number-format'
 import { parseEvmAddress } from '@/core/dapp/eip1193'
 
 export const REWARD_TOKEN_ID = 'lst.rhealab.near'

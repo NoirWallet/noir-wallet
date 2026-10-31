@@ -3,12 +3,13 @@ import { parseZcashAddress } from '@/core/address-book/address-book'
 import { isZecToken } from '@/core/services/intents-api'
 import type { RheaSwapQuoteRequest, RheaSwapToken } from '@/core/services/rhea-swap'
 import { safeBig } from '@/lib/big'
-import { parseAmount } from '@/lib/format'
 import {
+  parseAmount,
   formatBaseUnitAmount,
   formatBaseUnitDecimalAmount,
   parseDisplayUnitAmount
-} from '@/popup/components/portfolio/portfolio-format'
+} from '@/lib/number-format'
+
 import {
   resolveWalletOwnedQuoteAsset,
   type PreparedQuoteDepositTransfer,

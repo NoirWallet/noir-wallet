@@ -6,7 +6,7 @@ import {
 } from '@rhea-finance/cross-chain-sdk'
 import { ZEC_NEAR_ASSET, ZEC_NEAR_TOKEN_ID } from '@/config/intents'
 import { safeBig } from '@/lib/big'
-import { formatAmount } from '@/lib/format'
+import { formatAmount } from '@/lib/number-format'
 
 export type LendingMarketId = string
 

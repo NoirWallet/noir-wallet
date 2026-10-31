@@ -19,7 +19,7 @@ import type { AddressType } from '@/types/wallet'
 import { formatSortAddress } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { classifyError, getResponseErrorMessage } from '@/lib/errors'
-import Big from 'big.js'
+import { formatBaseUnitDecimalAmount } from '@/lib/number-format'
 import {
   hasEnoughTransparentBalanceToShield,
   MIN_SHIELDING_BALANCE_MESSAGE
@@ -661,7 +661,7 @@ export function ApprovalPage() {
       /^\d+$/.test(availableRaw) &&
       /^\d+$/.test(maximumGasCostRaw) &&
       /^0x[0-9a-fA-F]{40}$/.test(privateAddress)
-    const formatGas = (raw: string) => new Big(raw).div(new Big(10).pow(decimals)).toFixed()
+    const formatGas = (raw: string) => formatBaseUnitDecimalAmount(raw, decimals)
     const suggestedOutputRaw = valid
       ? calculateSuggestedPrivateGasFundingRaw(shortfallRaw, maximumGasCostRaw)
       : null
@@ -1458,14 +1458,18 @@ export function ApprovalPage() {
   }
 
   if (isEvmTransaction && evmTransactionSummary) {
-    const nativeDecimals = Number.isSafeInteger(data.nativeCurrency?.decimals)
-      ? data.nativeCurrency.decimals
-      : 18
+    const nativeDecimals =
+      Number.isSafeInteger(data.nativeCurrency?.decimals) &&
+      data.nativeCurrency.decimals >= 0 &&
+      data.nativeCurrency.decimals <= 255
+        ? data.nativeCurrency.decimals
+        : 18
     const nativeSymbol =
       typeof data.nativeCurrency?.symbol === 'string' ? data.nativeCurrency.symbol : 'Native'
-    const feeAmount = new Big(evmTransactionSummary.fields.maximumFeeWei)
-      .div(new Big(10).pow(nativeDecimals))
-      .toFixed()
+    const feeAmount = formatBaseUnitDecimalAmount(
+      evmTransactionSummary.fields.maximumFeeWei,
+      nativeDecimals
+    )
     return (
       <SigningSummaryReview
         summary={evmTransactionSummary}
@@ -1516,9 +1520,7 @@ export function ApprovalPage() {
   if (isEvmPrivateTransfer) {
     const valid = evmPrivateTransfer !== null && evmPrivateTransfer.expiresAt > Date.now()
     const formatAsset = (raw: string) =>
-      evmPrivateTransfer
-        ? new Big(raw).div(new Big(10).pow(evmPrivateTransfer.asset.decimals)).toFixed()
-        : '—'
+      evmPrivateTransfer ? formatBaseUnitDecimalAmount(raw, evmPrivateTransfer.asset.decimals) : '—'
     return (
       <ApprovalWindowLayout
         footer={
@@ -1628,7 +1630,7 @@ export function ApprovalPage() {
             <NetworkFeeTierPicker
               chainFamily="bitcoin"
               tier={dappNetworkFeeTier}
-              amount={new Big(bitcoinSigningSummary.fields.feeSats).div(1e8).toFixed()}
+              amount={formatBaseUnitDecimalAmount(bitcoinSigningSummary.fields.feeSats, 8)}
               symbol="BTC"
               onTierChange={handleNetworkFeeTierChange}
               disabled={isLoading}

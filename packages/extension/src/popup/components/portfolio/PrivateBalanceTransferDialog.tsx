@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Icon } from '@iconify/react'
-import { formatBaseUnitAmount } from '@/popup/components/portfolio/portfolio-format'
+import { formatBaseUnitAmount, formatTokenQuantity } from '@/lib/number-format'
 import { SendAmountInputCard } from '@/popup/components/transaction/SendInputCards'
 import { formatSortAddress } from '@/lib/format'
-import { formatTokenQuantity } from '@/lib/number-format'
+
 import { ExecutionAccountBadge } from '@/popup/components/account/ExecutionAccountSelector'
 import { TokenIcon } from '@/popup/components/tokens/TokenIcon'
 import { Button } from '@/popup/components/ui/button'
