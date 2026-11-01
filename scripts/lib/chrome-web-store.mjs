@@ -235,10 +235,12 @@ function submissionOutcome(status, version, previousSubmission) {
     }
     return result('blocked', version, { state: status.submittedState, retryable: false })
   }
-  if (status.submittedState === 'REJECTED' || status.submittedState === 'CANCELLED') {
-    return result('blocked', version, { state: status.submittedState, retryable: false })
-  }
-  if (status.submittedState === 'PUBLISHED' || status.submittedState === 'PUBLISHED_TO_TESTERS') {
+  if (
+    status.submittedState === 'PUBLISHED' ||
+    status.submittedState === 'PUBLISHED_TO_TESTERS' ||
+    status.submittedState === 'REJECTED' ||
+    status.submittedState === 'CANCELLED'
+  ) {
     if (status.submittedVersions.length > 0 && !status.submittedVersions.includes(version))
       return null
     return result('blocked', version, { state: status.submittedState, retryable: false })

@@ -173,11 +173,15 @@ describe('Chrome Web Store v2 release operations', () => {
     )
   })
 
-  it('permits a new version after an older submitted revision was published', async () => {
-    for (const terminalState of ['PUBLISHED', 'PUBLISHED_TO_TESTERS']) {
+  it('permits a new version after an older submitted revision reached a terminal state', async () => {
+    for (const terminalState of ['PUBLISHED', 'PUBLISHED_TO_TESTERS', 'REJECTED', 'CANCELLED']) {
       const oldRevision = submission('1.9.0', terminalState)
+      const publishedRevision =
+        terminalState === 'REJECTED' || terminalState === 'CANCELLED'
+          ? submission('1.8.0', 'PUBLISHED')
+          : oldRevision
       const oldStatus = status({
-        publishedItemRevisionStatus: oldRevision,
+        publishedItemRevisionStatus: publishedRevision,
         submittedItemRevisionStatus: oldRevision
       })
       const { client, calls } = fixture([
@@ -187,7 +191,7 @@ describe('Chrome Web Store v2 release operations', () => {
         { body: publish() },
         {
           body: status({
-            publishedItemRevisionStatus: oldRevision,
+            publishedItemRevisionStatus: publishedRevision,
             submittedItemRevisionStatus: submission()
           })
         }
@@ -207,23 +211,25 @@ describe('Chrome Web Store v2 release operations', () => {
       )
     }
 
-    const sameVersion = fixture([
-      {
-        body: status({
-          submittedItemRevisionStatus: submission(VERSION, 'PUBLISHED')
-        })
-      }
-    ])
-    const blocked = await submitPackage({
-      client: sameVersion.client,
-      version: VERSION,
-      uploadReceipt: { status: 'succeeded', version: VERSION }
-    })
-    assert.equal(blocked.status, 'blocked')
-    assert.deepEqual(
-      sameVersion.calls.map(call => call.method),
-      ['GET']
-    )
+    for (const terminalState of ['PUBLISHED', 'PUBLISHED_TO_TESTERS', 'REJECTED', 'CANCELLED']) {
+      const sameVersion = fixture([
+        {
+          body: status({
+            submittedItemRevisionStatus: submission(VERSION, terminalState)
+          })
+        }
+      ])
+      const blocked = await submitPackage({
+        client: sameVersion.client,
+        version: VERSION,
+        uploadReceipt: { status: 'succeeded', version: VERSION }
+      })
+      assert.equal(blocked.status, 'blocked')
+      assert.deepEqual(
+        sameVersion.calls.map(call => call.method),
+        ['GET']
+      )
+    }
   })
 
   it('keeps ambiguous POST outcomes unknown and does not issue a second POST', async () => {
