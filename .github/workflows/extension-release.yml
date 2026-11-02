@@ -1,4 +1,4 @@
-name: Prepare V2 Extension Beta
+name: '[Manual] Prepare V2 Extension Beta'
 run-name: V2 Beta by @${{ github.actor }}
 
 on:
