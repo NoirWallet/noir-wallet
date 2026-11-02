@@ -288,14 +288,16 @@ export async function sendStoreNotification({
     return { status: 'failed', retryable: true, reason: 'invalid_webhook' }
   }
   const label =
-    submission.state === 'STAGED' ? '审核通过，待人工上线' : '已提交 Chrome Web Store 审核'
+    submission.state === 'STAGED'
+      ? 'Review approved, ready for manual publication'
+      : 'Submitted to Chrome Web Store for review'
   const text = [
-    `Noir Wallet v${binding.version}：${label}`,
-    `提审回执：${submission.state}。当前审核进度见商店后台；审核通过后由维护者手动上线。`,
-    `源码：${binding.sourceSha.slice(0, 12)}`,
+    `Noir Wallet v${binding.version}: ${label}`,
+    `Submission receipt: ${submission.state}. Check the dashboard for the current status. Publish manually after approval.`,
+    `Commit: ${binding.sourceSha.slice(0, 12)}`,
     `<https://github.com/${binding.repository}/releases/tag/v${binding.version}|GitHub Release> · ` +
       `<https://github.com/${binding.repository}/actions/runs/${run.id}|Actions> · ` +
-      `<https://chrome.google.com/webstore/devconsole/${binding.publisherId}/${binding.extensionId}/edit|商店后台>`
+      `<https://chrome.google.com/webstore/devconsole/${binding.publisherId}/${binding.extensionId}/edit|Chrome Web Store>`
   ].join('\n')
   try {
     const response = await fetchImpl(url.href, {

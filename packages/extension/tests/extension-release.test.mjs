@@ -598,8 +598,8 @@ describe('Store review notification', () => {
       assert.equal(payload.unfurl_media, false)
       assert.ok(payload.text.includes(`Noir Wallet v${binding.version}`))
       assert.match(payload.text, new RegExp(state))
-      assert.match(payload.text, /提审回执：/)
-      assert.match(payload.text, /待人工上线|手动上线/)
+      assert.match(payload.text, /Submission receipt:/)
+      assert.match(payload.text, /Publish manually after approval/)
       assert.match(payload.text, /github\.com\/NoirWallet\/noir-wallet\/releases\/tag\/v1\.0\.39/)
       assert.match(payload.text, /github\.com\/NoirWallet\/noir-wallet\/actions\/runs\/98765/)
       assert.match(
