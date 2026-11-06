@@ -14,7 +14,8 @@ import { StandardTransactionResult } from '../../components/transaction/Standard
 import { FeeTierPicker } from '../../components/transaction/FeeTierPicker'
 import { useFeeEstimate } from '../../hooks/useFeeEstimate'
 import { useSettingsStore } from '@/store/settings-store'
-import { deriveFeeByTier, marginalFeeForTier } from '@/core/zcash/fee-policy'
+import { marginalFeeForTier } from '@/core/zcash/fee-policy'
+import type { FeeTier, QuotedFeeEstimate } from '@/config/fee'
 import type { AddressType } from '@/types/wallet'
 
 import { cn } from '@/lib/utils'
@@ -26,6 +27,8 @@ import {
 } from '@/core/zcash/shielding'
 import { getOwnExtensionSenderContext } from '@/lib/runtime-message-security'
 import { ApprovalWindowLayout } from '@/popup/components/dapp/ApprovalWindowLayout'
+import { NoirPublicActivationReview } from '@/popup/components/dapp/NoirPublicActivationReview'
+import { TokenIcon } from '@/popup/components/tokens/TokenIcon'
 import { EvmAddNetworkDetails } from '@/popup/components/dapp/EvmAddNetworkDetails'
 import {
   ApprovalDetailCard,
@@ -39,6 +42,10 @@ import {
   canRetryPendingApprovalLoad,
   parsePendingApprovalResponse
 } from '@/popup/services/dapp-approval-request'
+import {
+  parsePublicActivationReview,
+  parsePublicTransactionReview
+} from '@/popup/services/noir-public-approval-review'
 import { useActiveAccountNetworks } from '@/popup/hooks/useActiveAccountNetworks'
 import { EvmGasFundingApproval } from '@/popup/components/dapp/EvmGasFundingApproval'
 import { NetworkFeeTierPicker } from '@/popup/components/transaction/NetworkFeeTierPicker'
@@ -49,6 +56,7 @@ import { getBundledEvmAssetDefinitions } from '@/core/chains/registry/product-ch
 import { ChainIcon } from '@/popup/components/common/ChainIcon'
 import { CopyToast, useCopyToClipboard } from '@/popup/components/common/CopyToast'
 import { useNavigate } from '@/popup/provider/Router'
+import type { NoirPublicFunctionCallRequest } from '@/core/services/noir-protocol/public/types'
 import {
   formatDAppHost,
   parseBitcoinSigningSummary,
@@ -77,8 +85,6 @@ interface MultichainScopeOption {
   chainId: string
   chainName: string
   iconChain: string
-  methods: string[]
-  notifications: string[]
   accounts: ChainAccountOption[]
   preselectedIds: string[]
 }
@@ -138,6 +144,65 @@ function ConnectionPermissionSummary({ includesActivity = false }: { includesAct
   )
 }
 
+function PublicFunctionCalls({
+  requests,
+  executionFeeRaw
+}: {
+  requests: readonly NoirPublicFunctionCallRequest[]
+  executionFeeRaw?: string
+}) {
+  return requests.map((request, requestIndex) => (
+    <ApprovalDetailCard
+      key={requestIndex}
+      title={
+        executionFeeRaw && requestIndex === 0
+          ? 'Execution fee'
+          : `FunctionCall ${requestIndex + (executionFeeRaw ? 0 : 1)}`
+      }
+    >
+      <div className="space-y-3 text-xs">
+        {executionFeeRaw && requestIndex === 0 && (
+          <div className="grid grid-cols-[72px_minmax(0,1fr)] gap-2">
+            <span className="text-muted">Amount</span>
+            <span className="text-right font-medium">
+              {formatBaseUnitDecimalAmount(executionFeeRaw, 8)} ZEC
+            </span>
+          </div>
+        )}
+        <div className="grid grid-cols-[72px_minmax(0,1fr)] gap-2">
+          <span className="text-muted">Receiver</span>
+          <span className="break-all text-right font-mono">{request.FunctionCall.receiver_id}</span>
+        </div>
+        {request.FunctionCall.function_calls.map((call, callIndex) => (
+          <div
+            key={callIndex}
+            className="space-y-2 border-t border-border/70 pt-3 first:border-0 first:pt-0"
+          >
+            <div className="grid grid-cols-[72px_minmax(0,1fr)] gap-2">
+              <span className="text-muted">Method</span>
+              <span className="break-all text-right font-mono">{call.method_name}</span>
+            </div>
+            <div className="min-w-0 space-y-1.5">
+              <p className="text-muted">Arguments</p>
+              <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-all rounded-md bg-background/50 p-2.5 text-left font-mono leading-5 text-foreground/90">
+                {call.args}
+              </pre>
+            </div>
+            <div className="grid grid-cols-[72px_minmax(0,1fr)] gap-2">
+              <span className="text-muted">Deposit</span>
+              <span className="break-all text-right font-mono">{call.deposit} yoctoNEAR</span>
+            </div>
+            <div className="grid grid-cols-[72px_minmax(0,1fr)] gap-2">
+              <span className="text-muted">Gas</span>
+              <span className="break-all text-right font-mono">{call.gas}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </ApprovalDetailCard>
+  ))
+}
+
 export function ApprovalPage() {
   const { navigate } = useNavigate()
   const [searchParams] = useSearchParams()
@@ -184,6 +249,7 @@ export function ApprovalPage() {
   const [canRetryLoad, setCanRetryLoad] = useState(false)
   const [requestLoaded, setRequestLoaded] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
+  const decisionInFlight = useRef(false)
   const [showResult, setShowResult] = useState(false)
   const [walletReady, setWalletReady] = useState(false)
   const resultListenerRef = useRef<
@@ -228,6 +294,10 @@ export function ApprovalPage() {
   const isNearTransaction = action === 'nearTransaction'
   const isNearMessage = action === 'nearMessage'
   const isMultichainConnect = action === 'multichainConnect'
+  const isPublicTransaction = action === 'publicTransaction'
+  const isPublicActivate = action === 'publicActivate'
+  const publicTransactionReview = isPublicTransaction ? parsePublicTransactionReview(data) : null
+  const publicActivationReview = isPublicActivate ? parsePublicActivationReview(data) : null
   const requiresZcashAccountReady =
     action === 'connect' ||
     action === 'sendTransaction' ||
@@ -264,24 +334,53 @@ export function ApprovalPage() {
   const fundingSource: AddressType =
     data.fundingSource === 'transparent' ? 'transparent' : 'shielded'
   const hasEnoughShieldingBalance = !isShield || hasEnoughTransparentBalanceToShield(data.amount)
-  const estimateApprovalFee = useCallback(async (): Promise<string> => {
-    if (!requestId) throw new Error('Approval request is unavailable')
-    const response = await chrome.runtime.sendMessage({ type: 'ESTIMATE_APPROVAL_FEE', requestId })
-    if (response?.error || typeof response?.fee !== 'string') {
-      throw new Error(getResponseErrorMessage(response) || 'Fee estimation failed')
-    }
-    return response.fee
-  }, [requestId])
+  const estimateApprovalFee = useCallback(
+    async (tier: FeeTier): Promise<QuotedFeeEstimate> => {
+      if (!requestId) throw new Error('Approval request is unavailable')
+      const response = await chrome.runtime.sendMessage({
+        type: 'ESTIMATE_APPROVAL_FEE',
+        requestId,
+        feeTier: tier
+      })
+      if (
+        response?.error ||
+        typeof response?.fee !== 'string' ||
+        typeof response?.marginalFeeZats !== 'string' ||
+        !response.feeQuote
+      ) {
+        throw new Error(getResponseErrorMessage(response) || 'Fee estimation failed')
+      }
+      return {
+        feeZats: response.fee,
+        marginalFeeZats: response.marginalFeeZats,
+        feeQuote: response.feeQuote
+      }
+    },
+    [requestId]
+  )
   const feeEstimate = useFeeEstimate({
     type: isShield ? 'shield' : 'send',
     to: data.to,
     amount: data.amount,
     memo: data.memo,
     fundingSource,
+    feeTier,
     estimate: isSend || isShield ? estimateApprovalFee : undefined,
     enabled: (isSend || isShield) && walletReady && hasEnoughShieldingBalance
   })
-  const feeByTier = deriveFeeByTier(feeEstimate.feeZats, feeEstimate.error)
+  const feeByTier = feeEstimate.feeByTier
+  const feeReady =
+    !!feeEstimate.feeQuote &&
+    feeEstimate.feeQuote.expiresAt > Date.now() &&
+    feeEstimate.feeZats !== null &&
+    !feeEstimate.loading &&
+    !feeEstimate.error
+  const latestFee = useRef({
+    feeQuote: feeEstimate.feeQuote,
+    feeZats: feeEstimate.feeZats,
+    feeTier
+  })
+  latestFee.current = { feeQuote: feeEstimate.feeQuote, feeZats: feeEstimate.feeZats, feeTier }
 
   const handleNetworkFeeTierChange = async (nextTier: NetworkFeeTier) => {
     if (!requestId) throw new Error('Approval request is unavailable')
@@ -454,6 +553,12 @@ export function ApprovalPage() {
   const handleDecision = async (approved: boolean) => {
     setCanRetryLoad(false)
     if (approved && !requestLoaded) return
+    if (approved && isPublicActivate && !parsePublicActivationReview(data)) {
+      setError('The activation review is invalid or expired.')
+      return
+    }
+    if (decisionInFlight.current) return
+    decisionInFlight.current = true
 
     if (!approved) {
       setIsLoading(true)
@@ -483,6 +588,32 @@ export function ApprovalPage() {
       }
 
       if (action === 'sendTransaction' || action === 'shieldFunds') {
+        if (!feeReady || !feeEstimate.feeQuote || feeEstimate.feeZats === null) {
+          throw new Error('Network fee estimate is unavailable. Please try again.')
+        }
+        const marginalFeeZats = marginalFeeForTier(
+          feeTier,
+          feeEstimate.feeQuote.standardMarginalFeeZats
+        )
+        const approvalFee = await chrome.runtime.sendMessage({
+          type: 'ESTIMATE_APPROVAL_FEE',
+          requestId,
+          marginalFeeZats,
+          feeQuoteId: feeEstimate.feeQuote.id
+        })
+        if (
+          latestFee.current.feeQuote?.id !== feeEstimate.feeQuote.id ||
+          latestFee.current.feeZats !== feeEstimate.feeZats ||
+          latestFee.current.feeTier !== feeTier ||
+          approvalFee?.error ||
+          approvalFee?.feeQuote?.id !== feeEstimate.feeQuote.id ||
+          approvalFee?.fee !== String(feeEstimate.feeZats)
+        ) {
+          feeEstimate.retry()
+          setIsLoading(false)
+          decisionInFlight.current = false
+          return
+        }
         setResult(
           {
             type: 'zcash',
@@ -515,8 +646,10 @@ export function ApprovalPage() {
           type: 'DAPP_APPROVAL_RESULT',
           requestId,
           success: true,
-          marginalFeeZats: marginalFeeForTier(feeTier),
-          feeZats: feeByTier[feeTier] ?? undefined
+          marginalFeeZats,
+          feeQuoteId: feeEstimate.feeQuote.id,
+          feeTier,
+          feeZats: feeEstimate.feeZats
         })
         if (response?.success !== true)
           throw new Error(
@@ -547,6 +680,7 @@ export function ApprovalPage() {
       console.error('Failed to send decision:', err)
       setError(classifyError(err).userMessage)
       setIsLoading(false)
+      decisionInFlight.current = false
     }
   }
 
@@ -671,6 +805,75 @@ export function ApprovalPage() {
 
   const renderContent = () => {
     switch (action) {
+      case 'publicActivate':
+        return publicActivationReview ? (
+          <div className="space-y-4">
+            {origin === `chrome-extension://${chrome.runtime.id}` ? (
+              <div className="flex items-center gap-3">
+                <TokenIcon symbol="ZEC" nativeChain="zcash" size={36} />
+                <div>
+                  <h1 className="text-lg font-semibold">Activate Public</h1>
+                  <p className="text-xs text-muted">Zcash</p>
+                </div>
+              </div>
+            ) : (
+              <>
+                <DAppRequestHeader
+                  domain={dappDomain}
+                  pageUrl={dappPageUrl}
+                  action="Activate Public"
+                />
+                <DAppNetworkCard
+                  chain={publicActivationReview.account.chain === 'evm' ? 'evm' : 'zcash'}
+                  network={publicActivationReview.account.chain === 'evm' ? 'EVM' : 'Zcash'}
+                  chainId={publicActivationReview.chainId}
+                />
+              </>
+            )}
+            <NoirPublicActivationReview review={publicActivationReview} />
+          </div>
+        ) : (
+          renderInvalidSigningRequest('The activation review is invalid or expired.', false)
+        )
+
+      case 'publicTransaction':
+        return publicTransactionReview ? (
+          <div className="space-y-4">
+            <DAppRequestHeader
+              domain={dappDomain}
+              pageUrl={dappPageUrl}
+              action="Review Public transaction"
+            />
+            <DAppNetworkCard
+              chain={publicTransactionReview.account.chain === 'evm' ? 'evm' : 'zcash'}
+              network={publicTransactionReview.account.chain === 'evm' ? 'EVM' : 'Zcash'}
+              chainId={publicTransactionReview.account.chain === 'evm' ? data.chainId : undefined}
+            />
+            <ApprovalDetailCard title="Public account">
+              <div className="space-y-3 text-xs">
+                <div className="grid grid-cols-[88px_minmax(0,1fr)] gap-2">
+                  <span className="text-muted">MCA</span>
+                  <span className="break-all text-right font-mono">
+                    {publicTransactionReview.account.mcaId}
+                  </span>
+                </div>
+                <div className="grid grid-cols-[88px_minmax(0,1fr)] gap-2">
+                  <span className="text-muted">Signing address</span>
+                  <span className="break-all text-right font-mono">
+                    {publicTransactionReview.account.address}
+                  </span>
+                </div>
+              </div>
+            </ApprovalDetailCard>
+            <PublicFunctionCalls
+              requests={publicTransactionReview.txRequests}
+              executionFeeRaw={publicTransactionReview.executionFee.amountRaw}
+            />
+          </div>
+        ) : (
+          renderInvalidSigningRequest('The Public transaction request is invalid.', false)
+        )
+
       case 'multichainConnect': {
         const scopes: MultichainScopeOption[] = Array.isArray(data.scopes)
           ? data.scopes.filter(
@@ -680,8 +883,6 @@ export function ApprovalPage() {
                 typeof Reflect.get(scope, 'chainId') === 'string' &&
                 typeof Reflect.get(scope, 'chainName') === 'string' &&
                 typeof Reflect.get(scope, 'iconChain') === 'string' &&
-                Array.isArray(Reflect.get(scope, 'methods')) &&
-                Array.isArray(Reflect.get(scope, 'notifications')) &&
                 Array.isArray(Reflect.get(scope, 'accounts')) &&
                 Array.isArray(Reflect.get(scope, 'preselectedIds'))
             )
@@ -695,17 +896,15 @@ export function ApprovalPage() {
             <DAppConnectionHeader domain={dappDomain} pageUrl={dappPageUrl} />
 
             <section
-              aria-label="Accounts and networks"
+              aria-label="Accounts"
               className="overflow-hidden rounded-2xl border border-border bg-card/35"
             >
               <div className="flex items-center justify-between border-b border-border px-4 py-3">
                 <div>
-                  <h2 className="text-sm font-medium">Accounts and networks</h2>
-                  <p className="mt-0.5 text-[11px] text-muted">
-                    {scopes.length} networks · {selectedAccountCount} selected
-                  </p>
+                  <h2 className="text-sm font-medium">Accounts</h2>
+                  <p className="mt-0.5 text-[11px] text-muted">{selectedAccountCount} selected</p>
                 </div>
-                <div className="flex -space-x-2" aria-hidden="true">
+                <div className="flex items-center gap-1" aria-hidden="true">
                   {scopes.slice(0, 5).map(scope => (
                     <ChainIcon
                       key={scope.chainId}
@@ -934,7 +1133,7 @@ export function ApprovalPage() {
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
                     <span className="text-xs text-muted-foreground">
-                      {selectedAccounts.length} selected{' '}
+                      {selectedAccounts.length} selected{isEvmConnect ? ' EVM' : ''}{' '}
                       {selectedAccounts.length === 1 ? 'account' : 'accounts'}
                     </span>
                     {canEdit && (
@@ -1162,7 +1361,7 @@ export function ApprovalPage() {
               </WarningBox>
             )}
 
-            {!editingAccounts && <ConnectionPermissionSummary includesActivity />}
+            {!editingAccounts && <ConnectionPermissionSummary />}
           </div>
         )
       }
@@ -1219,11 +1418,16 @@ export function ApprovalPage() {
                   tier={feeTier}
                   onTierChange={setFeeTier}
                   feeByTier={feeByTier}
+                  loadingByTier={feeEstimate.loadingByTier}
                   loading={feeEstimate.loading}
+                  allowFallback={false}
                   hideLabel
                 />
               }
             />
+            {feeEstimate.error && (
+              <InlineError message="Could not estimate network fee" onRetry={feeEstimate.retry} />
+            )}
           </div>
         )
 
@@ -1283,11 +1487,16 @@ export function ApprovalPage() {
                   tier={feeTier}
                   onTierChange={setFeeTier}
                   feeByTier={feeByTier}
+                  loadingByTier={feeEstimate.loadingByTier}
                   loading={feeEstimate.loading}
+                  allowFallback={false}
                   hideLabel
                 />
               }
             />
+            {feeEstimate.error && (
+              <InlineError message="Could not estimate network fee" onRetry={feeEstimate.retry} />
+            )}
 
             {!hasEnoughShieldingBalance && (
               <p className="text-xs text-destructive text-center">
@@ -1562,7 +1771,9 @@ export function ApprovalPage() {
             disabled={isLoading}
             size="lg"
           >
-            {isMultichainConnect || MULTI_ACCOUNT_CONNECT_ACTIONS.has(action) ? 'Cancel' : 'Reject'}
+            {isMultichainConnect || isPublicActivate || MULTI_ACCOUNT_CONNECT_ACTIONS.has(action)
+              ? 'Cancel'
+              : 'Reject'}
           </Button>
           <Button
             className="flex-1 bg-primary hover:bg-primary/90"
@@ -1571,9 +1782,12 @@ export function ApprovalPage() {
             disabled={
               isLoading ||
               !hasEnoughShieldingBalance ||
+              ((isSend || isShield) && !feeReady) ||
               (isEvmTransaction && evmTransactionSummary === null) ||
               (isEvmNetwork && data.action === 'add' && evmAddNetwork === null) ||
               (isEvmMessage && evmMessageSummary === null) ||
+              (isPublicTransaction && publicTransactionReview === null) ||
+              (isPublicActivate && publicActivationReview === null) ||
               ((isBitcoinTransaction || isBitcoinMessage) && bitcoinSigningSummary === null) ||
               ((isSolanaTransaction || isSolanaMessage || isNearTransaction || isNearMessage) &&
                 nativeSigningSummary === null) ||
@@ -1604,19 +1818,23 @@ export function ApprovalPage() {
                         : 'Switch Network'
                       : isBitcoinConnect
                         ? 'Connect'
-                        : isSolanaConnect || isNearConnect
-                          ? 'Connect'
-                          : isEvmTransaction
+                        : isPublicActivate
+                          ? 'Pay & activate'
+                          : isPublicTransaction
                             ? 'Confirm'
-                            : isEvmMessage
-                              ? 'Sign message'
-                              : isSolanaMessage || isNearMessage
-                                ? 'Sign message'
-                                : action === 'signMessage'
+                            : isSolanaConnect || isNearConnect
+                              ? 'Connect'
+                              : isEvmTransaction
+                                ? 'Confirm'
+                                : isEvmMessage
                                   ? 'Sign message'
-                                  : action === 'sendTransaction' || action === 'shieldFunds'
-                                    ? 'Confirm'
-                                    : 'Approve'}
+                                  : isSolanaMessage || isNearMessage
+                                    ? 'Sign message'
+                                    : action === 'signMessage'
+                                      ? 'Sign message'
+                                      : action === 'sendTransaction' || action === 'shieldFunds'
+                                        ? 'Confirm'
+                                        : 'Approve'}
           </Button>
         </div>
       }

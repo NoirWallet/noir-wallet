@@ -14,8 +14,28 @@ import type {
   SigningMode,
   LendingMcaStatus,
   Network,
-  TransactionHistoryEntry
+  PublicAccount,
+  PublicAssets,
+  PublicTransaction,
+  SendPublicTransactionParams
 } from './types'
+
+function readSigningMode(options?: SignMessageOptions): SigningMode {
+  if (options === undefined) return 'current'
+  if (
+    !options ||
+    typeof options !== 'object' ||
+    Array.isArray(options) ||
+    Object.keys(options).some(key => key !== 'signingMode')
+  ) {
+    throw new TypeError('Invalid signing options.')
+  }
+  const mode = options.signingMode === undefined ? 'current' : options.signingMode
+  if (mode !== 'current' && mode !== 'derived' && mode !== 'legacy_index0') {
+    throw new TypeError('Unknown signing mode.')
+  }
+  return mode
+}
 
 /** High-level Zcash SDK client built on top of the injected request provider. */
 export class ZcashClient {
@@ -111,7 +131,7 @@ export class ZcashClient {
     signingMode: SigningMode
     originAddress?: string
   } | null> {
-    const signingMode = options?.signingMode ?? 'current'
+    const signingMode = readSigningMode(options)
     return this.provider.request({
       method: 'zcash_getPublicKey',
       params: [{ signingMode }]
@@ -126,7 +146,7 @@ export class ZcashClient {
   }
 
   async signMessage(message: string, options?: SignMessageOptions): Promise<SignMessageResult> {
-    const signingMode = options?.signingMode ?? 'current'
+    const signingMode = readSigningMode(options)
     return this.provider.request({
       method: 'zcash_signMessage',
       params: [message, { signingMode }]
@@ -138,9 +158,20 @@ export class ZcashClient {
     return this.provider.request({ method: 'zcash_shieldFunds' })
   }
 
-  /** Fetch transaction history (on-chain + local pending). */
-  async getTransactionHistory(): Promise<TransactionHistoryEntry[]> {
-    return this.provider.request({ method: 'zcash_getTransactionHistory' })
+  async activatePublicAccount(): Promise<PublicAccount> {
+    return this.provider.request({ method: 'zcash_activatePublicAccount' })
+  }
+
+  async getPublicAssets(): Promise<PublicAssets> {
+    return this.provider.request({ method: 'zcash_getPublicAssets' })
+  }
+
+  async sendPublicTransaction(params: SendPublicTransactionParams): Promise<PublicTransaction> {
+    return this.provider.request({ method: 'zcash_sendPublicTransaction', params: [params] })
+  }
+
+  async getPublicTransaction(operationId: string): Promise<PublicTransaction | null> {
+    return this.provider.request({ method: 'zcash_getPublicTransaction', params: [operationId] })
   }
 
   /** @deprecated Global network mode is controlled in Noir Wallet settings. */

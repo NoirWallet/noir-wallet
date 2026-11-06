@@ -59,6 +59,51 @@ interface PreparedScope {
   readonly proposal: DAppSessionAccountProposal
 }
 
+function evmApprovalProposal(
+  prepared: readonly PreparedScope[]
+): DAppSessionAccountProposal | null {
+  const evm = prepared.filter(item => item.supported.family === 'evm')
+  const first = evm[0]?.proposal
+  if (!first) return null
+  const accounts = first.accounts.filter(account =>
+    evm.every(item =>
+      item.proposal.accounts.some(
+        candidate =>
+          candidate.id === account.id &&
+          candidate.reference.walletId === account.reference.walletId &&
+          candidate.reference.accountId === account.reference.accountId &&
+          candidate.address === account.address
+      )
+    )
+  )
+  if (
+    !accounts.some(account => account.required) ||
+    evm.some(
+      item =>
+        item.proposal.activeReference.walletId !== first.activeReference.walletId ||
+        item.proposal.activeReference.accountId !== first.activeReference.accountId ||
+        item.proposal.activeAddress !== first.activeAddress
+    )
+  ) {
+    throw new Caip25ProviderError(5100, 'No common EVM account is available for this session.')
+  }
+  return Object.freeze({
+    ...first,
+    chainId: 'evm',
+    chainName: 'EVM',
+    iconChain: 'evm',
+    accounts: Object.freeze(accounts),
+    preselectedIds: Object.freeze(
+      accounts
+        .filter(
+          account =>
+            account.required || evm.every(item => item.proposal.preselectedIds.includes(account.id))
+        )
+        .map(account => account.id)
+    )
+  })
+}
+
 type SessionHandler = Pick<
   BackgroundBitcoinDAppHandler,
   'prepareSessionAccountSelection' | 'resolveSessionAccountSelection' | 'getSessionAccounts'
@@ -68,7 +113,11 @@ export interface BackgroundMultichainSessionDAppHandlerOptions {
   readonly analytics?: DAppAnalyticsSink
   readonly network: Network
   readonly evmNetworks: readonly EvmNetworkConfig[]
-  readonly manager: Pick<DAppManager, 'getAllConnections' | 'getCaip25Session' | 'setCaip25Session'>
+  readonly activeChainIds?: () => Promise<readonly string[]>
+  readonly manager: Pick<
+    DAppManager,
+    'getAllConnections' | 'getCaip25Session' | 'getAuthorizationRevision' | 'setCaip25Session'
+  >
   readonly approval: Pick<
     DAppHandler,
     'requestExternalApproval' | 'broadcastProviderEvent' | 'cancelPendingApprovals'
@@ -114,7 +163,12 @@ export interface BackgroundMultichainSessionDAppHandlerOptions {
       readonly params?: readonly unknown[] | Readonly<Record<string, unknown>>
     },
     origin: string,
-    tabInfo: MultichainSessionTabInfo
+    tabInfo: MultichainSessionTabInfo,
+    scope: string
+  ) => Promise<unknown>
+  readonly selectPublicAccount: (
+    origin: string,
+    scopes: readonly Caip25StoredScope[]
   ) => Promise<unknown>
 }
 
@@ -130,17 +184,49 @@ function invocableMethods(
   return Object.freeze(new Set(methods.filter(method => !excludedSet.has(method))))
 }
 
-const ZCASH_SESSION_METHODS = invocableMethods(ZCASH_DAPP_RUNTIME_METHODS, [
-  'zcash_requestAccounts',
-  'zcash_disconnect',
-  'zcash_switchNetwork'
+const PUBLIC_ZCASH_METHODS = Object.freeze(
+  new Set([
+    'zcash_getPublicAccount',
+    'zcash_activatePublicAccount',
+    'zcash_getPublicAssets',
+    'zcash_sendPublicTransaction',
+    'zcash_getPublicTransaction'
+  ])
+)
+
+export const PUBLIC_SESSION_METHODS = Object.freeze(
+  new Set([
+    'noir_getPublicAccount',
+    'noir_getPublicAssets',
+    'noir_activatePublicAccount',
+    'noir_sendPublicTransaction',
+    'noir_getPublicTransaction',
+    'noir_getPublicKey',
+    'noir_signMessage'
+  ])
+)
+const PUBLIC_SELECTION_METHOD = 'noir_selectPublicAccount'
+
+const ZCASH_SESSION_METHODS = new Set([
+  ...invocableMethods(ZCASH_DAPP_RUNTIME_METHODS, [
+    'zcash_requestAccounts',
+    'zcash_disconnect',
+    'zcash_switchNetwork',
+    ...PUBLIC_ZCASH_METHODS
+  ]),
+  ...PUBLIC_SESSION_METHODS,
+  PUBLIC_SELECTION_METHOD
 ])
-const EVM_SESSION_METHODS = invocableMethods(EVM_DAPP_RUNTIME_METHODS, [
-  'eth_requestAccounts',
-  'wallet_requestPermissions',
-  'wallet_revokePermissions',
-  'wallet_switchEthereumChain',
-  'wallet_addEthereumChain'
+const EVM_SESSION_METHODS = new Set([
+  ...invocableMethods(EVM_DAPP_RUNTIME_METHODS, [
+    'eth_requestAccounts',
+    'wallet_requestPermissions',
+    'wallet_revokePermissions',
+    'wallet_switchEthereumChain',
+    'wallet_addEthereumChain'
+  ]),
+  ...PUBLIC_SESSION_METHODS,
+  PUBLIC_SELECTION_METHOD
 ])
 const BITCOIN_SESSION_METHODS = invocableMethods(BITCOIN_DAPP_RUNTIME_METHODS, [
   'connect',
@@ -324,8 +410,48 @@ export class BackgroundMultichainSessionDAppHandler {
     )
   }
 
-  async notifySessionChanged(origin: string): Promise<void> {
+  supportsChain(chainId: string): boolean {
+    return this.supportedScopes.has(chainId)
+  }
+
+  /** Review previously approved capabilities that this runtime still supports. */
+  async reconnect(origin: string): Promise<void> {
+    const revision = await this.options.manager.getAuthorizationRevision(origin)
+    const session = await this.options.manager.getCaip25Session(origin)
+    if (!session) throw new Caip25ProviderError(4100, 'The site session is no longer available.')
+    const scopes = session.scopes.filter(scope => this.supportsChain(scope.chainId))
+    if (scopes.length === 0) {
+      throw new Caip25ProviderError(
+        5100,
+        'No supported networks remain. Connect from the site again.'
+      )
+    }
+    await this.createSession(
+      {
+        scopes: Object.fromEntries(
+          scopes.map(scope => [
+            scope.chainId,
+            { methods: scope.methods, notifications: scope.notifications }
+          ])
+        ),
+        ...(session.properties === undefined ? {} : { properties: session.properties })
+      },
+      origin,
+      {},
+      revision
+    )
+  }
+
+  async notifySessionChanged(origin: string, expectedRevision?: number): Promise<void> {
+    const revision =
+      expectedRevision ?? (await this.options.manager.getAuthorizationRevision(origin))
     const session = await this.getSession(origin)
+    if (!(await this.isCurrentRevision(origin, revision))) {
+      if (expectedRevision !== undefined) {
+        throw new Caip25ProviderError(4100, 'Site authorization changed. Connect again.')
+      }
+      return
+    }
     await this.options.approval
       .broadcastProviderEvent(
         origin,
@@ -334,6 +460,10 @@ export class BackgroundMultichainSessionDAppHandler {
         session ?? Object.freeze({ scopes: Object.freeze({}) })
       )
       .catch(() => {})
+  }
+
+  private async isCurrentRevision(origin: string, revision: number): Promise<boolean> {
+    return (await this.options.manager.getAuthorizationRevision(origin)) === revision
   }
 
   private getSupportedScope(chainIdValue: string): SupportedScope {
@@ -404,31 +534,58 @@ export class BackgroundMultichainSessionDAppHandler {
   private async createSession(
     params: unknown,
     origin: string,
-    tabInfo: MultichainSessionTabInfo
+    tabInfo: MultichainSessionTabInfo,
+    reconnectRevision?: number
   ): Promise<Caip25Session> {
     const parsed = parseCaip25CreateSessionRequest(params)
-    const prepared = await Promise.all(
-      Object.entries(parsed.scopes).map(([chainId, scope]) =>
-        this.prepareScope(origin, chainId, scope)
-      )
+    const activeChains = this.options.activeChainIds
+      ? new Set(await this.options.activeChainIds())
+      : null
+    const requested = Object.entries(parsed.scopes).filter(
+      ([chainId]) =>
+        this.supportedScopes.has(chainId) && (activeChains === null || activeChains.has(chainId))
     )
+    if (requested.length === 0)
+      throw new Caip25ProviderError(
+        5100,
+        'The requested networks are not supported by the active account.'
+      )
+    for (const [chainId, scope] of requested) {
+      assertScopeCapabilities(this.getSupportedScope(chainId), scope)
+    }
+    const expectedRevision =
+      reconnectRevision ?? (await this.options.manager.getAuthorizationRevision(origin))
+    const prepared = await Promise.all(
+      requested.map(([chainId, scope]) => this.prepareScope(origin, chainId, scope))
+    )
+    const assertUnchanged = async () => {
+      if ((await this.options.manager.getAuthorizationRevision(origin)) !== expectedRevision) {
+        throw new Caip25ProviderError(4100, 'Site authorization changed. Connect again.')
+      }
+    }
+    await assertUnchanged()
+    const evmProposal = evmApprovalProposal(prepared)
+    const approvalScopes = prepared.flatMap((item, index) => {
+      if (item.supported.family !== 'evm') return [item.proposal]
+      return prepared.findIndex(scope => scope.supported.family === 'evm') === index && evmProposal
+        ? [evmProposal]
+        : []
+    })
     const decision = await this.options.approval.requestExternalApproval(
       origin,
       'multichainConnect',
       {
-        scopes: prepared.map(item => ({
-          chainId: item.supported.chainId,
-          chainName: item.supported.chainName,
-          iconChain: item.supported.iconChain,
-          methods: item.request.methods,
-          notifications: item.request.notifications,
-          accounts: item.proposal.accounts.map(account => ({
+        scopes: approvalScopes.map(proposal => ({
+          chainId: proposal.chainId,
+          chainName: proposal.chainName,
+          iconChain: proposal.iconChain,
+          accounts: proposal.accounts.map(account => ({
             id: account.id,
             label: account.label,
             address: account.address,
             required: account.required
           })),
-          preselectedIds: item.proposal.preselectedIds
+          preselectedIds: proposal.preselectedIds
         })),
         ...(tabInfo.favIconUrl === undefined ? {} : { favicon: tabInfo.favIconUrl }),
         ...(tabInfo.pageUrl === undefined ? {} : { faviconPageUrl: tabInfo.pageUrl })
@@ -437,15 +594,32 @@ export class BackgroundMultichainSessionDAppHandler {
     if (!decision.approved) {
       throw new Caip25ProviderError(4001, 'User rejected the session request.')
     }
+    await assertUnchanged()
     const selectedScopes = decision.selectedScopes
     if (!selectedScopes) {
       throw new Caip25ProviderError(-32603, 'The wallet approval did not return scope selections.')
+    }
+    if (
+      Object.keys(selectedScopes).some(
+        id => !approvalScopes.some(proposal => proposal.chainId === id)
+      ) ||
+      approvalScopes.some(proposal => {
+        const ids = selectedScopes[proposal.chainId]
+        return (
+          !ids ||
+          ids.length === 0 ||
+          new Set(ids).size !== ids.length ||
+          ids.some(id => !proposal.accounts.some(account => account.id === id))
+        )
+      })
+    ) {
+      throw new Caip25ProviderError(4100, 'The selected session accounts are not available.')
     }
     const selections = await Promise.all(
       prepared.map(item =>
         this.resolveScopeSelection(
           item,
-          selectedScopes[item.supported.chainId] ?? item.proposal.preselectedIds
+          selectedScopes[item.supported.family === 'evm' ? 'evm' : item.supported.chainId]!
         )
       )
     )
@@ -454,14 +628,17 @@ export class BackgroundMultichainSessionDAppHandler {
     )
     const zcashIndex = prepared.findIndex(item => item.supported.family === 'zcash')
     const zcashSelection = zcashIndex < 0 ? undefined : selections[zcashIndex]
-    const storedScopes: Caip25StoredScope[] = prepared.map(item =>
+    const storedScopes: Caip25StoredScope[] = prepared.map((item, index) =>
       Object.freeze({
         chainId: item.supported.chainId,
         methods: item.request.methods,
-        notifications: item.request.notifications
+        notifications: item.request.notifications,
+        ...(item.supported.family === 'evm'
+          ? { accounts: selections[index]!.authorization.accounts }
+          : {})
       })
     )
-    await this.options.manager.setCaip25Session(
+    const committedRevision = await this.options.manager.setCaip25Session(
       origin,
       tabInfo,
       authorizations,
@@ -474,11 +651,15 @@ export class BackgroundMultichainSessionDAppHandler {
         : {
             accounts: zcashSelection.authorization.accounts,
             binding: zcashSelection.authorization.binding
-          }
+          },
+      expectedRevision
     )
     const session = await this.getSession(origin)
     if (!session) throw new Caip25ProviderError(-32603, 'The session could not be persisted.')
-    await this.notifySessionChanged(origin)
+    if (!(await this.isCurrentRevision(origin, committedRevision))) {
+      throw new Caip25ProviderError(4100, 'Site authorization changed. Connect again.')
+    }
+    await this.notifySessionChanged(origin, committedRevision)
     for (const item of prepared) {
       const selected = selections[prepared.indexOf(item)]
       emitDAppEvent(
@@ -487,6 +668,9 @@ export class BackgroundMultichainSessionDAppHandler {
         ANALYTICS_EVENTS.DAPP_CONNECTED,
         { extra: { account_count: selected.authorization.accounts.length, source: 'session' } }
       )
+    }
+    if (!(await this.isCurrentRevision(origin, committedRevision))) {
+      throw new Caip25ProviderError(4100, 'Site authorization changed. Connect again.')
     }
     return session
   }
@@ -503,7 +687,7 @@ export class BackgroundMultichainSessionDAppHandler {
         accounts: Object.freeze(
           addresses.map(address => formatCaip10Account(scope.chainId, address))
         ),
-        methods: scope.methods,
+        methods: Object.freeze(scope.methods.filter(method => supported.methods.has(method))),
         notifications: scope.notifications
       })
     }
@@ -539,6 +723,12 @@ export class BackgroundMultichainSessionDAppHandler {
     tabInfo: MultichainSessionTabInfo
   ): Promise<unknown> {
     const parsed = parseCaip27InvokeMethodRequest(params)
+    if (PUBLIC_ZCASH_METHODS.has(parsed.request.method)) {
+      throw new Caip25ProviderError(
+        4100,
+        `${parsed.request.method} is unavailable in this session.`
+      )
+    }
     const stored = await this.options.manager.getCaip25Session(origin)
     const granted = stored?.scopes.find(scope => scope.chainId === parsed.scope)
     if (!granted) throw new Caip25ProviderError(4100, `Scope ${parsed.scope} is not authorized.`)
@@ -549,6 +739,10 @@ export class BackgroundMultichainSessionDAppHandler {
       )
     }
     const supported = this.getSupportedScope(parsed.scope)
+    if (parsed.request.method === PUBLIC_SELECTION_METHOD) {
+      parseCaip25NoParams(parsed.request.params)
+      return this.options.selectPublicAccount(origin, stored!.scopes)
+    }
     if (supported.family === 'evm' && this.options.evm.getCaip2ChainId() !== parsed.scope) {
       throw new Caip25ProviderError(
         4901,
@@ -562,7 +756,8 @@ export class BackgroundMultichainSessionDAppHandler {
         ...(parsed.request.params === undefined ? {} : { params: parsed.request.params })
       },
       origin,
-      tabInfo
+      tabInfo,
+      parsed.scope
     )
   }
 }
