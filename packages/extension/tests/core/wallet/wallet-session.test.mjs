@@ -25,13 +25,17 @@ globalThis.chrome = {
   }
 }
 
-const [{ BackgroundZcashWalletRuntime }, { SecureStorage }, { useWalletStore }] = await Promise.all(
-  [
-    import('../../../src/background/zcash-wallet-runtime.ts'),
-    import('../../../src/core/wallet/secure-storage.ts'),
-    import('../../../src/store/wallet-store.ts')
-  ]
-)
+const [
+  { BackgroundZcashWalletRuntime },
+  { SecureStorage },
+  { useWalletStore },
+  { credentialSession }
+] = await Promise.all([
+  import('../../../src/background/zcash-wallet-runtime.ts'),
+  import('../../../src/core/wallet/secure-storage.ts'),
+  import('../../../src/store/wallet-store.ts'),
+  import('../../../src/background/credential-session.ts')
+])
 
 after(() => {
   if (originalLocks === undefined) delete globalThis.navigator.locks
@@ -115,6 +119,162 @@ test('failed first-wallet persistence does not install the session password', as
     assert.equal(runtime.getSessionPassword(), null)
   } finally {
     SecureStorage.saveLastActivityTime = originalSaveLastActivityTime
+    useWalletStore.setState(originalState, true)
+  }
+})
+
+test('additional software wallet provision succeeds after selecting a native account', async () => {
+  const source = ts.transpileModule(
+    readFileSync(
+      new URL('../../../src/background/software-wallet-provisioning.ts', import.meta.url),
+      'utf8'
+    ),
+    { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }
+  ).outputText
+  const state = {
+    wallets: [{ id: 'retained-wallet' }],
+    currentWalletId: null,
+    getWallet: () => null
+  }
+  let credentialLocked = false
+  const runtime = {
+    initialize: async () => {},
+    getSessionPassword: () => null,
+    unlock: async (_password, options) => {
+      if (options?.allowMissingCredentialRecovery === true) {
+        state.currentWalletId = 'retained-wallet'
+      }
+      return { success: state.currentWalletId !== null }
+    },
+    addImportedWallet: async () => 'imported-wallet',
+    lock: async () => {}
+  }
+  const dependencies = {
+    '@/core/wallet/hardware-wallet-data': { isZcashHardwareKeySource: () => false },
+    '@scure/bip39': { validateMnemonic: () => true },
+    '@scure/bip39/wordlists/english': { wordlist: [] },
+    './zcash-wallet-runtime': { backgroundZcashWalletRuntime: runtime },
+    '@/config/wallet': {},
+    '@/store/wallet-store': {
+      rehydrateWalletStore: async () => {},
+      useWalletStore: { getState: () => state }
+    },
+    '@/infrastructure/keyring/multichain/canonical-mnemonic-generator': {},
+    '@/infrastructure/keyring/multichain/background-transport': {},
+    './credential-lifecycle': {
+      credentialLifecycle: { synchronizeRetainedV1: async () => ({ status: 'synchronized' }) }
+    },
+    './credential-session': {
+      credentialSession: {
+        hasUnlockSession: async () => true,
+        getProvisioningPassword: async () => 'synthetic-password',
+        unlock: async () => ({ unlockedCredentials: [] }),
+        bindZcashCredential: async () => true,
+        lock: async () => {
+          credentialLocked = true
+        }
+      }
+    },
+    './sync-scheduler': {
+      syncScheduler: { pauseForTx() {}, abortSync() {}, resumeAfterTx() {}, onRequestSync() {} }
+    },
+    '@/core/wallet/account-name': { normalizeAccountName: name => name }
+  }
+  const module = { exports: {} }
+  new Function('require', 'module', 'exports', source)(
+    specifier => dependencies[specifier] ?? {},
+    module,
+    module.exports
+  )
+
+  const result = await module.exports.addSoftwareWallet({
+    mode: 'import',
+    mnemonic: [...Array(11).fill('abandon'), 'about'].join(' '),
+    accountName: 'Imported'
+  })
+
+  assert.equal(result.walletId, 'imported-wallet')
+  assert.equal(credentialLocked, false)
+})
+
+test('same-wallet session restoration preserves an in-flight backup authorization', async () => {
+  const originalState = useWalletStore.getState()
+  const originalGetBinding = credentialSession.getCredentialBinding
+  const originalGetPassword = credentialSession.getProvisioningPassword
+  const runtime = new BackgroundZcashWalletRuntime()
+  const binding = { globalUnlockEpoch: 1, credentialGenerationId: 'test-generation' }
+  let releasePendingBinding = () => {}
+  let failRestore = false
+  const beginBlockedChallenge = () => {
+    let bindingStarted
+    const started = new Promise(resolve => {
+      bindingStarted = resolve
+    })
+    const pendingBinding = new Promise(resolve => {
+      releasePendingBinding = () => resolve(binding)
+    })
+    credentialSession.getCredentialBinding = async () => {
+      credentialSession.getCredentialBinding = async () => binding
+      bindingStarted()
+      return pendingBinding
+    }
+    return {
+      started,
+      challenge: runtime.getWalletBackupWordIndices('wallet-1'),
+      release: () => releasePendingBinding()
+    }
+  }
+  try {
+    useWalletStore.setState({
+      currentWalletId: 'wallet-1',
+      currentAccountId: 'account-1',
+      wallets: [
+        {
+          id: 'wallet-1',
+          name: 'Test wallet',
+          keySource: 'software',
+          createdAt: 1,
+          seedPhraseKey: 'seed_wallet-1',
+          accounts: [{ id: 'account-1', derivationIndex: 0 }]
+        }
+      ]
+    })
+    runtime.withWalletCoreLock = async () => {
+      if (failRestore) throw new Error('core busy')
+    }
+    runtime.inspectWalletCredential = async () => ({
+      status: 'valid',
+      credential: { kind: 'seed', seedPhrase: 'alpha beta gamma' }
+    })
+    credentialSession.getProvisioningPassword = async () => 'test-only'
+
+    assert.equal(await runtime.restoreFromCredentialSession('wallet-1', 'account-1'), true)
+    const sameWallet = beginBlockedChallenge()
+    await sameWallet.started
+    assert.equal(await runtime.restoreFromCredentialSession('wallet-1', 'account-1'), true)
+    sameWallet.release()
+    const indices = await sameWallet.challenge
+    assert.equal(indices.length, 2)
+    assert.notEqual(indices[0], indices[1])
+
+    const retry = beginBlockedChallenge()
+    await retry.started
+    failRestore = true
+    await assert.rejects(runtime.restoreFromCredentialSession('wallet-1', 'account-1'), /core busy/)
+    failRestore = false
+    assert.equal(await runtime.restoreFromCredentialSession('wallet-1', 'account-1'), true)
+    retry.release()
+    assert.equal((await retry.challenge).length, 2)
+
+    const locked = beginBlockedChallenge()
+    await locked.started
+    await runtime.lock()
+    locked.release()
+    await assert.rejects(locked.challenge, /Unable to verify this wallet backup/)
+  } finally {
+    releasePendingBinding()
+    credentialSession.getCredentialBinding = originalGetBinding
+    credentialSession.getProvisioningPassword = originalGetPassword
     useWalletStore.setState(originalState, true)
   }
 })

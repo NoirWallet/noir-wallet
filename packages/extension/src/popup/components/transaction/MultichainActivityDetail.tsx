@@ -26,7 +26,7 @@ import { formatChainTransactionExplorerUrl } from '@/popup/services/chain-explor
 import { useSettingsStore } from '@/store/settings-store'
 import { useWalletStore } from '@/store/wallet-store'
 import { buildAccountKey } from '@/store/account-data-store'
-import { useUserEvmAssets } from '@/popup/hooks/useUserEvmAssets'
+import { useActivityEvmAssets } from '@/popup/hooks/useActivityEvmAssets'
 import {
   buildActivityPresentationCatalog,
   type ActivityChainMetadata
@@ -35,6 +35,11 @@ import {
   confidentialFundingClient,
   getConfidentialFundingPlanId
 } from '@/popup/services/confidential-funding-client'
+import {
+  canRetryConfidentialSubmission,
+  needsConfidentialSubmissionCheck,
+  type ConfidentialFundingPlan
+} from '@/core/services/confidential-funding'
 import { toast } from '@/store/toast-store'
 import { DetailRow } from '../common/DetailRow'
 import { AmountDisplay } from '../common/AmountDisplay'
@@ -56,7 +61,10 @@ import {
 } from '@/popup/services/activity-transaction-references'
 import {
   getActivityDetailTitle,
+  getActivityAccountRouteLabel,
   getActivityRouteTitle,
+  getClusterBatchStatusLabel,
+  getClusterChildStatusLabel,
   getActivityTransferRecipient,
   getActivitySwapSourceMethodLabel,
   getActivityDisplayChanges,
@@ -148,14 +156,16 @@ export function MultichainActivityDetail({
   const [retrying, setRetrying] = useState(false)
   const [retryOutcome, setRetryOutcome] = useState<'broadcast' | 'pending' | 'failed' | null>(null)
   const [privateFundingNeedsAuth, setPrivateFundingNeedsAuth] = useState(false)
+  const [confidentialPlan, setConfidentialPlan] = useState<ConfidentialFundingPlan | null>(null)
   const [resumingPrivateFunding, setResumingPrivateFunding] = useState(false)
+  const [checkingPrivateFunding, setCheckingPrivateFunding] = useState(false)
   const [cancelling, setCancelling] = useState(false)
   const [zcashRecord, setZcashRecord] = useState<Transaction | null>(null)
   const [swapApprovalAvailable, setSwapApprovalAvailable] = useState(false)
   const { activeAccount: activeSwapAccount } = useActiveAccountNetworks()
   const { copyToClipboard, showToast } = useCopyToClipboard()
   const endpointSettings = useSettingsStore(state => state.chainEndpointSettings)
-  const userEvmAssets = useUserEvmAssets()
+  const { userAssets: userEvmAssets, detectedAssets: detectedEvmAssets } = useActivityEvmAssets()
   const currentWalletId = useWalletStore(state => state.currentWalletId)
   const currentAccountId = useWalletStore(state => state.currentAccountId)
   const currentNetwork = useWalletStore(state => state.currentNetwork)
@@ -279,8 +289,15 @@ export function MultichainActivityDetail({
     }
   }, [item.id, item.scope.accountId, item.source])
   const { assetMetadata, chainMetadata, evmChainIds } = useMemo(
-    () => buildActivityPresentationCatalog({ network, endpointSettings, userEvmAssets, portfolio }),
-    [endpointSettings, network, portfolio, userEvmAssets]
+    () =>
+      buildActivityPresentationCatalog({
+        network,
+        endpointSettings,
+        userEvmAssets,
+        detectedEvmAssets,
+        portfolio
+      }),
+    [endpointSettings, network, portfolio, userEvmAssets, detectedEvmAssets]
   )
   const executionAddressModes = useMemo(
     () => buildActivityExecutionAddressModes(accountNetworks),
@@ -310,13 +327,8 @@ export function MultichainActivityDetail({
       ? formatBaseUnitAmount(amount.amountRaw, displayMetadata.decimals)
       : null
   const swapSourceAmount = visibleItem.snapshot?.primaryAmount
-  const swapDestinationAmount = visibleItem.snapshot?.counterAmount
   const swapSourceDecimals = swapSourceAmount
     ? (assetMetadata.get(swapSourceAmount.assetId)?.metadata ?? swapSourceAmount.metadata)?.decimals
-    : undefined
-  const swapDestinationDecimals = swapDestinationAmount
-    ? (assetMetadata.get(swapDestinationAmount.assetId)?.metadata ?? swapDestinationAmount.metadata)
-        ?.decimals
     : undefined
   const direction = visibleItem.snapshot?.direction
   const isIncoming = visibleItem.kind === 'receive' || direction === 'incoming'
@@ -363,21 +375,74 @@ export function MultichainActivityDetail({
     direction === 'outgoing' &&
     visibleItem.snapshot?.sender === undefined
   const privateFundingPlanId = getConfidentialFundingPlanId(visibleItem.id)
+  const activeConfidentialPlan =
+    confidentialPlan?.transactionId === visibleItem.id &&
+    confidentialPlan.network === network &&
+    confidentialPlan.keyDomainId === visibleItem.scope.keyDomainId &&
+    confidentialPlan.accountId === visibleItem.scope.accountId
+      ? confidentialPlan
+      : null
+  const needsSubmissionCheck =
+    activeConfidentialPlan !== null && needsConfidentialSubmissionCheck(activeConfidentialPlan)
+  const canCheckSubmission =
+    needsSubmissionCheck &&
+    activeConfidentialPlan.keyDomainId === currentWalletId &&
+    activeConfidentialPlan.accountId === currentAccountId &&
+    activeConfidentialPlan.network === currentNetwork
+  const canRetrySubmission =
+    activeConfidentialPlan !== null && canRetryConfidentialSubmission(activeConfidentialPlan)
 
   useEffect(() => {
     let cancelled = false
+    let latestUpdatedAt = -Infinity
     setPrivateFundingNeedsAuth(false)
+    setConfidentialPlan(null)
     if (!privateFundingPlanId) return
-    void confidentialFundingClient
-      .get(privateFundingPlanId)
-      .then(plan => {
-        if (!cancelled) setPrivateFundingNeedsAuth(plan.phase === 'needs-auth')
-      })
-      .catch(() => {})
+    const refreshPlan = () => {
+      void confidentialFundingClient
+        .get(privateFundingPlanId)
+        .then(plan => {
+          if (
+            !cancelled &&
+            plan.network === network &&
+            plan.keyDomainId === visibleItem.scope.keyDomainId &&
+            plan.accountId === visibleItem.scope.accountId &&
+            plan.transactionId === visibleItem.id
+          ) {
+            if (plan.updatedAt >= latestUpdatedAt) {
+              latestUpdatedAt = plan.updatedAt
+              setPrivateFundingNeedsAuth(plan.phase === 'needs-auth')
+              setConfidentialPlan(plan)
+            }
+          }
+        })
+        .catch(() => {})
+    }
+    const listener = (message: unknown, sender: chrome.runtime.MessageSender) => {
+      if (getOwnExtensionSenderContext(sender, chrome.runtime.id) !== 'service-worker') return
+      if (
+        message &&
+        typeof message === 'object' &&
+        'type' in message &&
+        message.type === 'TRANSACTION_UPDATED'
+      ) {
+        refreshPlan()
+      }
+    }
+    refreshPlan()
+    chrome.runtime.onMessage.addListener(listener)
     return () => {
       cancelled = true
+      chrome.runtime.onMessage.removeListener(listener)
     }
-  }, [privateFundingPlanId, visibleItem.updatedAt])
+  }, [
+    privateFundingPlanId,
+    visibleItem.updatedAt,
+    visibleItem.id,
+    visibleItem.scope.keyDomainId,
+    visibleItem.scope.accountId,
+    network
+  ])
 
   const handleRetryBroadcast = async () => {
     setRetrying(true)
@@ -438,13 +503,34 @@ export function MultichainActivityDetail({
       const plan = await confidentialFundingClient.get(privateFundingPlanId)
       await confidentialFundingClient.confirm(plan.planId, plan.approvalFingerprint)
       setPrivateFundingNeedsAuth(false)
-      toast.success('Confidential funding resumed')
+      toast.success(
+        plan.operation === 'cluster'
+          ? 'Cluster transfer resumed'
+          : plan.operation
+            ? 'Shield transfer resumed'
+            : 'Confidential funding resumed'
+      )
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : 'Confidential funding could not continue'
       )
     } finally {
       setResumingPrivateFunding(false)
+    }
+  }
+
+  const handleCheckPrivateFunding = async () => {
+    if (!privateFundingPlanId || !canCheckSubmission || checkingPrivateFunding) return
+    setCheckingPrivateFunding(true)
+    try {
+      const plan = await confidentialFundingClient.checkSubmission(privateFundingPlanId)
+      setConfidentialPlan(plan)
+      setPrivateFundingNeedsAuth(plan.phase === 'needs-auth')
+      if (needsConfidentialSubmissionCheck(plan)) toast.info('No update yet. Check again later.')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Transfer status is unavailable')
+    } finally {
+      setCheckingPrivateFunding(false)
     }
   }
 
@@ -478,7 +564,7 @@ export function MultichainActivityDetail({
               </div>
               <div className="flex justify-between gap-3 py-1">
                 <span className="text-muted">Maximum network fee</span>
-                <span className="font-mono">
+                <span className="font-sans tabular-nums">
                   <AmountDisplay
                     value={formatBaseUnitAmount(
                       summary.fields.maximumFeeWei,
@@ -490,7 +576,7 @@ export function MultichainActivityDetail({
               </div>
               <div className="flex justify-between gap-3 py-1">
                 <span className="text-muted">Max fee per gas</span>
-                <span className="font-mono">
+                <span className="font-sans tabular-nums">
                   <AmountDisplay
                     value={formatEvmWeiAsGwei(summary.fields.maxFeePerGasWei ?? '0')}
                     symbol="GWEI"
@@ -500,7 +586,7 @@ export function MultichainActivityDetail({
               </div>
               <div className="flex justify-between gap-3 py-1">
                 <span className="text-muted">Priority fee per gas</span>
-                <span className="font-mono">
+                <span className="font-sans tabular-nums">
                   <AmountDisplay
                     value={formatEvmWeiAsGwei(summary.fields.maxPriorityFeePerGasWei ?? '0')}
                     symbol="GWEI"
@@ -601,33 +687,52 @@ export function MultichainActivityDetail({
       {swap ? (
         <div className="flex flex-col items-center py-7 text-center" data-activity-swap-detail>
           <ActivityRouteTokenIcons route={swap} size="detail" />
-          <div className="mt-4 max-w-full break-all font-mono text-3xl font-bold">
-            {swap.source && swapSourceAmount && swapSourceDecimals !== undefined ? (
-              <AmountDisplay
-                value={formatBaseUnitAmount(swapSourceAmount.amountRaw, swapSourceDecimals)}
-                prefix="−"
-                symbol={swap.source.symbol}
-              />
-            ) : (
-              '—'
-            )}
-          </div>
-          {swap.destination && (
-            <div className="mt-1 max-w-full break-all font-mono text-sm text-muted">
-              Expected{' '}
-              {swapDestinationAmount && swapDestinationDecimals !== undefined ? (
-                <AmountDisplay
-                  value={formatBaseUnitAmount(
-                    swapDestinationAmount.amountRaw,
-                    swapDestinationDecimals
-                  )}
-                  prefix="+"
-                  symbol={swap.destination.symbol}
-                />
-              ) : (
-                '—'
-              )}
+          {swap.isExternalDeposit ? (
+            <div className="mt-4 max-w-full">
+              <p className="text-sm text-muted">
+                {swap.destinationIsSettled ? 'Received' : 'Expected'}
+              </p>
+              <div
+                className={cn(
+                  'mt-1 break-all font-sans text-3xl font-bold tabular-nums',
+                  swap.destinationIsSettled && 'text-primary'
+                )}
+              >
+                {swap.destination ? (
+                  <AmountDisplay
+                    value={swap.destination.formatted}
+                    prefix="+"
+                    symbol={swap.destination.symbol}
+                  />
+                ) : (
+                  '—'
+                )}
+              </div>
             </div>
+          ) : (
+            <>
+              <div className="mt-4 max-w-full break-all font-sans text-3xl font-bold tabular-nums">
+                {swap.source && swapSourceAmount && swapSourceDecimals !== undefined ? (
+                  <AmountDisplay
+                    value={formatBaseUnitAmount(swapSourceAmount.amountRaw, swapSourceDecimals)}
+                    prefix="−"
+                    symbol={swap.source.symbol}
+                  />
+                ) : (
+                  '—'
+                )}
+              </div>
+              {swap.destination && (
+                <div className="mt-1 max-w-full break-all font-sans text-sm text-muted tabular-nums">
+                  {swap.destinationIsSettled ? 'Received' : 'Expected'}{' '}
+                  <AmountDisplay
+                    value={swap.destination.formatted}
+                    prefix="+"
+                    symbol={swap.destination.symbol}
+                  />
+                </div>
+              )}
+            </>
           )}
         </div>
       ) : (
@@ -664,7 +769,7 @@ export function MultichainActivityDetail({
                 <div
                   key={change.assetId}
                   className={cn(
-                    'max-w-full font-mono',
+                    'max-w-full font-sans tabular-nums',
                     index === 0 ? 'text-3xl font-bold' : 'text-sm',
                     change.direction === 'incoming' && 'text-primary'
                   )}
@@ -679,11 +784,11 @@ export function MultichainActivityDetail({
               ))}
             </div>
           ) : formattedAmount !== null ? (
-            <div className="max-w-full break-all font-mono text-3xl font-bold">
+            <div className="max-w-full break-all font-sans text-3xl font-bold tabular-nums">
               <AmountDisplay value={formattedAmount} prefix={displayedSign} symbol={symbol} />
             </div>
           ) : assetEffects || interaction ? null : (
-            <p className="max-w-full break-all font-mono text-3xl font-bold">—</p>
+            <p className="max-w-full break-all font-sans text-3xl font-bold">—</p>
           )}
         </div>
       )}
@@ -713,9 +818,7 @@ export function MultichainActivityDetail({
               swap.destinationAccountMode &&
               swap.sourceAccountMode !== swap.destinationAccountMode && (
                 <DetailRow label="Account">
-                  <span className="text-sm">
-                    {swap.sourceAccountMode} → {swap.destinationAccountMode}
-                  </span>
+                  <span className="text-sm">{getActivityAccountRouteLabel(swap)}</span>
                 </DetailRow>
               )}
           </>
@@ -732,29 +835,73 @@ export function MultichainActivityDetail({
         <DetailRow label="Status">
           <span
             data-activity-status-value
-            className={cn('text-sm', getTransactionStatusToneClassName(status.tone))}
+            className={cn(
+              'text-sm',
+              getTransactionStatusToneClassName(needsSubmissionCheck ? 'warning' : status.tone)
+            )}
           >
-            {status.label}
+            {needsSubmissionCheck
+              ? 'Needs attention'
+              : activeConfidentialPlan?.operation === 'cluster'
+                ? getClusterBatchStatusLabel(activeConfidentialPlan)
+                : status.label}
           </span>
         </DetailRow>
-        {visibleItem.kind === 'shield' && (
+        {activeConfidentialPlan?.operation === 'cluster' && (
+          <>
+            <DetailRow label="Method">
+              <span className="text-sm">Cluster</span>
+            </DetailRow>
+            <DetailRow label="Transfers">
+              <span className="text-sm">{activeConfidentialPlan.withdraws.length}</span>
+            </DetailRow>
+            <div className="space-y-2 border-t border-white/10 pt-3">
+              {activeConfidentialPlan.withdraws.map(row => (
+                <div key={row.sequence} className="flex items-start justify-between gap-3 text-sm">
+                  <span className="text-muted">Transfer {row.sequence + 1}</span>
+                  <div className="min-w-0 text-right">
+                    <div>{getClusterChildStatusLabel(row)}</div>
+                    {row.scheduledAt && Number.isSafeInteger(row.scheduledAt) && (
+                      <div className="text-xs text-muted">
+                        Earliest broadcast {new Date(row.scheduledAt).toLocaleString()}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+        {visibleItem.kind === 'shield' && !visibleItem.snapshot?.shield && (
           <DetailRow label="Privacy">
             <span className="text-sm">Transparent → Shielded</span>
           </DetailRow>
         )}
-        {visibleItem.kind !== 'shield' && visibleItem.snapshot?.sender && (
-          <DetailRow label="From">
-            <span
-              className="max-w-[220px] truncate font-mono text-sm"
-              title={visibleItem.snapshot.sender.address}
-            >
-              {formatSortAddress(visibleItem.snapshot.sender.address)}
-            </span>
-          </DetailRow>
-        )}
+        {(visibleItem.kind !== 'shield' || visibleItem.snapshot?.shield) &&
+          visibleItem.snapshot?.sender &&
+          visibleItem.snapshot?.shield?.sourceDomain !== 'shield' && (
+            <DetailRow label="From">
+              <span
+                className="max-w-[220px] truncate font-mono text-sm"
+                title={visibleItem.snapshot.sender.address}
+              >
+                {formatSortAddress(visibleItem.snapshot.sender.address)}
+              </span>
+            </DetailRow>
+          )}
         {usesShieldedPoolSource && (
           <DetailRow label="From">
             <span className="text-sm">Shielded Pool</span>
+          </DetailRow>
+        )}
+        {visibleItem.snapshot?.shield?.sourceDomain === 'shield' && (
+          <DetailRow label="From">
+            <span className="text-sm">NEAR Confidential</span>
+          </DetailRow>
+        )}
+        {visibleItem.snapshot?.shield?.destinationDomain === 'shield' && (
+          <DetailRow label="To">
+            <span className="text-sm">NEAR Confidential</span>
           </DetailRow>
         )}
         {swap?.recipientAddress ? (
@@ -973,6 +1120,22 @@ export function MultichainActivityDetail({
         >
           Continue
         </Button>
+      )}
+      {needsSubmissionCheck && (
+        <InlineError
+          className="mt-4"
+          message={
+            canCheckSubmission
+              ? canRetrySubmission
+                ? 'Transfer submission needs a retry.'
+                : 'Submission window ended. Check the transfer status.'
+              : 'Switch to this Account to check the transfer.'
+          }
+          onRetry={canCheckSubmission ? () => void handleCheckPrivateFunding() : undefined}
+          retrying={checkingPrivateFunding}
+          retryLabel={canRetrySubmission ? 'Retry submission' : 'Check status'}
+          tone="warning"
+        />
       )}
       {swapApprovalAvailable &&
         onContinueSwap &&

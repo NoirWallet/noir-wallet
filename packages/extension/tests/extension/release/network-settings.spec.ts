@@ -39,6 +39,7 @@ import {
   selectNewZcashAccountHistory,
   serveSdkExample,
   solanaEnabled,
+  stopImportedZcashSync,
   terminateExtensionServiceWorker,
   test,
   tmpdir,
@@ -147,7 +148,8 @@ test('attests custom endpoints for every released chain including Zcash', async 
 test('adds, persists, selects and removes custom RPCs through the real popup', async ({
   context,
   popup,
-  extensionId
+  extensionId,
+  zcashCustomRpcUrl
 }) => {
   test.setTimeout(180_000)
   await context.route('https://rpc.zknoir.com/v1/rpc-endpoints?scope=multichain', route =>
@@ -159,9 +161,24 @@ test('adds, persists, selects and removes custom RPCs through the real popup', a
   await mockReleasedBitcoinEsplora(context)
   await waitForBackgroundWalletInitialization(popup)
   await importTestWallet(popup)
+  await stopImportedZcashSync(popup)
+  await popup.getByRole('button', { name: 'Open menu' }).click()
   await popup.getByRole('button', { name: 'Settings', exact: true }).click()
-  await popup.getByRole('button', { name: 'RPC Endpoint', exact: true }).click()
-  await expect(popup.getByRole('heading', { name: 'RPC Endpoints' })).toBeVisible()
+  await popup.getByRole('button', { name: 'Networks', exact: true }).click()
+  await expect(popup.getByRole('heading', { name: 'Networks' })).toBeVisible()
+
+  const openChainRpc = async (chain: string) => {
+    await popup.getByRole('button', { name: `Configure ${chain} network` }).click()
+    await expect(popup.getByRole('heading', { name: 'Network Details' })).toBeVisible()
+    await popup.getByRole('button', { name: 'RPC Endpoint', exact: true }).click()
+  }
+  const reopenRpc = async () => {
+    await popup.getByRole('button', { name: 'RPC Endpoint', exact: true }).click()
+  }
+  const leaveChain = async () => {
+    await popup.getByRole('button', { name: 'Back' }).click()
+    await expect(popup.getByRole('heading', { name: 'Networks' })).toBeVisible()
+  }
 
   const releasedRpcChains = [
     ['Arbitrum', 'arbitrum'],
@@ -172,10 +189,8 @@ test('adds, persists, selects and removes custom RPCs through the real popup', a
   ]
   for (const [index, [chain, path]] of releasedRpcChains.entries()) {
     const customUrl =
-      chain === 'Zcash'
-        ? 'https://zcashwebrpc.deltarpc.com'
-        : `https://endpoint-release.noir.test/${path}`
-    await popup.getByRole('button', { name: `Configure ${chain} RPC` }).click()
+      chain === 'Zcash' ? zcashCustomRpcUrl : `https://endpoint-release.noir.test/${path}`
+    await openChainRpc(chain)
     const dialog = popup.getByRole('dialog')
     await expect(dialog.getByLabel(`${chain} RPC URL`)).toHaveCount(0)
     if (chain === 'Arbitrum') {
@@ -188,10 +203,10 @@ test('adds, persists, selects and removes custom RPCs through the real popup', a
       await captureScreenshot(popup, 'rpc-arbitrum-presets.png')
       await dialog.getByRole('button', { name: 'Use automatic RPC' }).click()
       await expect(dialog).toHaveCount(0)
-      await popup.getByRole('button', { name: 'Configure Arbitrum RPC' }).click()
+      await reopenRpc()
       await dialog.getByRole('button', { name: 'Use dRPC RPC' }).click()
       await expect(dialog).toHaveCount(0)
-      await popup.getByRole('button', { name: 'Configure Arbitrum RPC' }).click()
+      await reopenRpc()
       await expect(dialog.getByRole('button', { name: 'Use dRPC RPC' })).toHaveAttribute(
         'aria-pressed',
         'true'
@@ -226,19 +241,21 @@ test('adds, persists, selects and removes custom RPCs through the real popup', a
     )
     await dialog.getByRole('button', { name: 'Verify & Add' }).click()
     await expect(dialog).toHaveCount(0, { timeout: 30_000 })
+    await leaveChain()
   }
 
   await popup.reload()
+  await popup.getByRole('button', { name: 'Open menu' }).click()
   await popup.getByRole('button', { name: 'Settings', exact: true }).click()
-  await popup.getByRole('button', { name: 'RPC Endpoint', exact: true }).click()
-  await expect(popup.getByRole('heading', { name: 'RPC Endpoints' })).toBeVisible()
+  await popup.getByRole('button', { name: 'Networks', exact: true }).click()
+  await expect(popup.getByRole('heading', { name: 'Networks' })).toBeVisible()
   const stored = await popup.evaluate(() =>
     chrome.runtime.sendMessage({ type: 'GET_CHAIN_ENDPOINT_SETTINGS' })
   )
   expect(stored.result.savedRpcEndpoints).toHaveLength(releasedRpcChains.length)
   expect(await readPersistedEndpointModes(popup)).toEqual(['mainnet'])
   for (const [chain] of releasedRpcChains) {
-    await popup.getByRole('button', { name: `Configure ${chain} RPC` }).click()
+    await openChainRpc(chain)
     const dialog = popup.getByRole('dialog')
     await expect(dialog.getByRole('button', { name: `Use My ${chain} RPC` })).toBeVisible()
     await dialog.getByRole('button', { name: `Use My ${chain} RPC` }).click()
@@ -249,7 +266,7 @@ test('adds, persists, selects and removes custom RPCs through the real popup', a
       )
     } else {
       await expect(dialog).toHaveCount(0, { timeout: 30_000 })
-      await popup.getByRole('button', { name: `Configure ${chain} RPC` }).click()
+      await reopenRpc()
     }
     await captureScreenshot(
       popup,
@@ -273,7 +290,7 @@ test('adds, persists, selects and removes custom RPCs through the real popup', a
         chrome.runtime.sendMessage({ type: 'GET_CHAIN_ENDPOINT_SETTINGS' })
       )
       expect(findChainEndpointOverride(autoSettings.result, 'eip155:42161')?.rpc).toBeUndefined()
-      await popup.getByRole('button', { name: 'Configure Arbitrum RPC' }).click()
+      await reopenRpc()
       await expect(dialog.getByRole('button', { name: 'Use automatic RPC' })).toHaveAttribute(
         'aria-pressed',
         'true'
@@ -298,6 +315,7 @@ test('adds, persists, selects and removes custom RPCs through the real popup', a
       .click()
     await popup.getByRole('dialog').getByRole('button', { name: 'Remove', exact: true }).click()
     await expect(popup.getByRole('dialog')).toHaveCount(0, { timeout: 30_000 })
+    await leaveChain()
   }
   const removed = await popup.evaluate(() =>
     chrome.runtime.sendMessage({ type: 'GET_CHAIN_ENDPOINT_SETTINGS' })
@@ -308,9 +326,11 @@ test('adds, persists, selects and removes custom RPCs through the real popup', a
   const sidePanel = await context.newPage()
   await sidePanel.setViewportSize({ width: 480, height: 900 })
   await sidePanel.goto(`chrome-extension://${extensionId}/index.html?surface=side-panel`)
+  await sidePanel.getByRole('button', { name: 'Open menu' }).click()
   await sidePanel.getByRole('button', { name: 'Settings', exact: true }).click()
+  await sidePanel.getByRole('button', { name: 'Networks', exact: true }).click()
+  await sidePanel.getByRole('button', { name: 'Configure Arbitrum network' }).click()
   await sidePanel.getByRole('button', { name: 'RPC Endpoint', exact: true }).click()
-  await sidePanel.getByRole('button', { name: 'Configure Arbitrum RPC' }).click()
   const sidePanelDialog = sidePanel.getByRole('dialog')
   const presets = sidePanelDialog.getByTestId('provider-presets')
   await expect(sidePanelDialog.getByRole('button', { name: 'Use ZAN RPC' })).toBeInViewport()
@@ -373,8 +393,12 @@ test('renders and switches the released EVM catalog and chain-scoped endpoint se
   await importTestWallet(popup)
   await seedFreshAssetPrices(popup)
   await popup.getByRole('button', { name: 'Choose wallet' }).click()
+  await popup
+    .getByRole('dialog', { name: 'Accounts' })
+    .getByRole('button', { name: 'Accounts', exact: true })
+    .click()
   const removeZcashHistoryMock = await mockUnknownZcashAccountHistory(context)
-  await popup.getByRole('button', { name: 'Add Account', exact: true }).click()
+  await popup.getByRole('button', { name: 'Add account', exact: true }).click()
   await selectNewZcashAccountHistory(popup)
   await expect(popup.getByText('Account 2', { exact: true })).toBeVisible({ timeout: 60_000 })
   await removeZcashHistoryMock()
@@ -410,7 +434,7 @@ test('renders and switches the released EVM catalog and chain-scoped endpoint se
   await expect(popup.getByRole('status', { name: 'Loading activity' })).toHaveCount(0)
   await expect(popup.getByRole('button', { name: 'Retry', exact: true })).toHaveCount(0)
   const activityFilter = popup.getByRole('button', {
-    name: 'Filter activity by network: All Networks'
+    name: 'Filter activity by network: All networks'
   })
   await expect(activityFilter).toBeVisible()
   const activityFilterPosition = await activityFilter.boundingBox()
@@ -460,10 +484,10 @@ test('renders and switches the released EVM catalog and chain-scoped endpoint se
   expect(Math.abs(portfolioFilterPosition.x - activityFilterPosition.x)).toBeLessThan(0.5)
   expect(Math.abs(portfolioFilterPosition.y - activityFilterPosition.y)).toBeLessThan(0.5)
   await portfolioFilterForAlignment.click()
-  await popup.getByRole('menuitemradio', { name: 'All Networks', exact: true }).click()
+  await popup.getByRole('menuitemradio', { name: 'All networks', exact: true }).click()
   await activityTab.click()
   await expect(
-    popup.getByRole('button', { name: 'Filter activity by network: All Networks' })
+    popup.getByRole('button', { name: 'Filter activity by network: All networks' })
   ).toBeVisible()
   await expect(popup.getByRole('status', { name: 'Loading activity' })).toHaveCount(0)
   await expect(popup.getByText('+0.005872 ETH', { exact: true })).toBeVisible()
@@ -479,23 +503,23 @@ test('renders and switches the released EVM catalog and chain-scoped endpoint se
 
   const walletChooser = popup.getByRole('button', { name: 'Choose wallet' })
   await expect(walletChooser).toBeVisible()
-  await expect(walletChooser).toHaveText('')
-  const accountAddresses = popup.getByRole('button', { name: 'Show account addresses' })
-  await expect(accountAddresses).toBeVisible()
-  await expect(accountAddresses).toContainText('Account 1')
+  await expect(popup.getByRole('button', { name: 'Show account addresses' })).toContainText(
+    'Account 1'
+  )
   await expect(popup.getByRole('button', { name: 'Choose account' })).toHaveCount(0)
   await expect(popup.getByRole('button', { name: /Copy .* account address/ })).toHaveCount(0)
 
-  await accountAddresses.click()
-  const accountAddressMenu = popup.getByLabel('Account address menu')
+  await popup.getByRole('button', { name: 'Show account addresses' }).click()
+  const accountAddressMenu = popup.getByRole('dialog', { name: 'Account 1 addresses' })
   await expect(accountAddressMenu).toBeVisible()
-  await expect(accountAddressMenu.getByText('Zcash', { exact: true })).toBeVisible()
-  await expect(accountAddressMenu.getByText('EVM', { exact: true })).toBeVisible()
-  await expect(accountAddressMenu.getByText('Bitcoin', { exact: true })).toBeVisible()
+  await expect(accountAddressMenu.getByRole('button', { name: /Copy Zcash/ }).first()).toBeVisible()
+  await expect(accountAddressMenu.getByText(/Ethereum.*EVM/)).toBeVisible()
   await captureScreenshot(popup, 'release-default-home-account-address-menu.png')
   await accountAddressMenu.getByRole('button', { name: 'View all' }).click()
-  await expect(popup.getByRole('heading', { name: 'Addresses' })).toBeVisible()
-  await expect(popup.getByRole('region', { name: 'Account network addresses' })).toBeVisible()
+  await expect(popup.getByRole('heading', { name: 'Address', exact: true })).toBeVisible()
+  const allAddresses = popup.getByRole('region', { name: 'Account network addresses' })
+  await expect(allAddresses).toBeVisible()
+  await expect(allAddresses.getByRole('heading', { name: 'Bitcoin' })).toBeVisible()
   await popup.getByRole('button', { name: 'Back' }).click()
   await expect(popup.getByRole('heading', { name: 'Portfolio' })).toBeVisible()
 
@@ -540,7 +564,7 @@ test('renders and switches the released EVM catalog and chain-scoped endpoint se
   await popup.getByRole('button', { name: 'Back' }).click()
   await expect(popup.getByRole('button', { name: 'Send NEAR on NEAR' })).toBeVisible()
   await popup.getByRole('button', { name: 'Send ETH on Ethereum' }).click()
-  await expect(popup.getByLabel('Send To')).toBeFocused()
+  await expect(popup.getByLabel('ETH amount')).toBeVisible()
   await expect(popup.getByRole('button', { name: 'Change asset' })).toHaveCount(0)
   await expect
     .poll(() =>
@@ -569,7 +593,7 @@ test('renders and switches the released EVM catalog and chain-scoped endpoint se
   await recipientDialog.getByRole('button', { name: 'Close' }).click()
   await popup.getByRole('button', { name: 'Back' }).click()
   await popup.getByRole('button', { name: 'Send ZEC on Zcash' }).click()
-  await expect(popup.getByLabel('Send To')).toBeFocused()
+  await expect(popup.getByLabel('ZEC amount')).toBeVisible()
   await expect
     .poll(() =>
       popup
@@ -578,8 +602,8 @@ test('renders and switches the released EVM catalog and chain-scoped endpoint se
           elements.map(element => element.id || element.getAttribute('aria-label'))
         )
     )
-    .toEqual(['zcash-send-recipient', 'ZEC amount'])
-  await expect(popup.getByTestId('zcash-amount-card')).toHaveCSS('min-height', '92px')
+    .toEqual(['ZEC amount', 'zcash-send-recipient'])
+  await expect(popup.getByTestId('zcash-amount-card')).toHaveCSS('min-height', '40px')
   await expect(popup.getByText('Memo (optional)', { exact: true })).toBeVisible()
   await expect(popup.getByRole('button', { name: 'Continue', exact: true })).toBeVisible()
   await captureScreenshot(popup, 'release-default-zcash-send-form.png')
@@ -601,8 +625,8 @@ test('renders and switches the released EVM catalog and chain-scoped endpoint se
   await expect(popup.getByRole('heading', { name: 'Portfolio' })).toBeVisible()
 
   await popup.getByRole('button', { name: 'Receive', exact: true }).click()
-  await expect(popup.getByRole('heading', { name: 'Addresses' })).toBeVisible()
-  await expect(popup.getByLabel('Search Networks')).toBeVisible()
+  await expect(popup.getByRole('heading', { name: 'Address', exact: true })).toBeVisible()
+  await expect(popup.getByLabel('Search network')).toBeVisible()
   const receiveAddresses = popup.getByRole('region', { name: 'Account network addresses' })
   await expect(receiveAddresses.getByRole('heading', { name: 'Zcash' })).toBeVisible()
   await expect(receiveAddresses.getByRole('heading', { name: 'Bitcoin' })).toBeVisible()
@@ -643,7 +667,7 @@ test('renders and switches the released EVM catalog and chain-scoped endpoint se
     'true'
   )
   const portfolioNetworkFilter = popup.getByRole('button', {
-    name: 'Filter portfolio by network: All Networks'
+    name: 'Filter portfolio by network: All networks'
   })
   await expect(portfolioNetworkFilter).toBeVisible()
   await expect(popup.getByRole('button', { name: 'Refresh portfolio' })).toBeVisible()
@@ -731,7 +755,7 @@ test('renders and switches the released EVM catalog and chain-scoped endpoint se
     popup.getByRole('button', { name: 'Filter portfolio by network: Ethereum' })
   ).toBeVisible({ timeout: 30_000 })
   await popup.getByRole('button', { name: 'Filter portfolio by network: Ethereum' }).click()
-  await popup.getByRole('menuitemradio', { name: 'All Networks', exact: true }).click()
+  await popup.getByRole('menuitemradio', { name: 'All networks', exact: true }).click()
   await expect(popup.getByRole('button', { name: 'Expand low value assets' })).toBeVisible()
 
   const bitcoinAddressRequests = () =>
@@ -788,21 +812,21 @@ test('renders and switches the released EVM catalog and chain-scoped endpoint se
     ).toBe(true)
   }
   await captureScreenshot(popup, 'release-default-asset-detail.png')
-  await popup.getByRole('button', { name: 'Transfer ETH between Public and Confidential' }).click()
-  const transferDialog = popup.getByRole('dialog', { name: 'Transfer ETH' })
-  await expect(transferDialog).toBeVisible()
-  await expect(transferDialog.getByText('Public', { exact: true })).toBeVisible()
-  await expect(transferDialog.getByText('Confidential', { exact: true }).first()).toBeVisible()
-  await expect(transferDialog.getByRole('button', { name: 'Review transfer' })).toBeDisabled()
-  await transferDialog.getByLabel('Transfer amount').fill('0.1')
-  await expect(transferDialog.getByRole('button', { name: 'Review transfer' })).toBeEnabled()
+  await popup.getByRole('button', { name: 'Move', exact: true }).click()
+  await expect(popup.getByRole('heading', { name: 'Move', exact: true })).toBeVisible()
+  await expect(popup.getByRole('button', { name: 'From: Public. Change account' })).toBeVisible()
+  await expect(popup.getByRole('button', { name: 'To: Private. Change account' })).toBeVisible()
+  await expect(popup.getByRole('button', { name: 'Transfer', exact: true })).toBeDisabled()
+  await popup.getByRole('textbox', { name: 'Transfer amount' }).fill('0.1')
+  await expect(popup.getByRole('button', { name: 'Transfer', exact: true })).toBeEnabled()
   await captureScreenshot(popup, 'THU-DEMO-03-Main-to-Private-transfer-sheet.png')
-  await transferDialog.getByRole('button', { name: 'Switch transfer direction' }).click()
-  await expect(transferDialog.getByRole('button', { name: 'Review transfer' })).toBeDisabled()
-  await transferDialog.getByLabel('Transfer amount').fill('0.1')
-  await expect(transferDialog.getByRole('button', { name: 'Review transfer' })).toBeEnabled()
+  await popup.getByRole('button', { name: 'Switch transfer direction' }).click()
+  await expect(popup.getByRole('button', { name: 'From: Private. Change account' })).toBeVisible()
+  await expect(popup.getByRole('button', { name: 'To: Public. Change account' })).toBeVisible()
+  await expect(popup.getByRole('button', { name: 'Transfer', exact: true })).toBeDisabled()
+  await popup.getByRole('textbox', { name: 'Transfer amount' }).fill('0.1')
+  await expect(popup.getByRole('button', { name: 'Transfer', exact: true })).toBeEnabled()
   await captureScreenshot(popup, 'THU-DEMO-04-Private-to-Main-transfer-sheet.png')
-  await transferDialog.getByRole('button', { name: 'Close' }).click()
   await popup.getByRole('button', { name: 'Back' }).click()
   await expect(popup.getByRole('heading', { name: 'Portfolio' })).toBeVisible()
   await popup.getByRole('button', { name: 'Expand low value assets' }).click()
@@ -852,7 +876,7 @@ test('renders and switches the released EVM catalog and chain-scoped endpoint se
   await expect(popup.getByRole('button', { name: 'Receive Bitcoin' })).toBeInViewport()
   await captureScreenshot(popup, 'release-default-bitcoin-asset-details.png')
   await popup.getByRole('button', { name: 'Receive Bitcoin' }).click()
-  await expect(popup.getByRole('heading', { name: 'Addresses' })).toBeVisible()
+  await expect(popup.getByRole('heading', { name: 'Address', exact: true })).toBeVisible()
   await expect(
     popup
       .getByRole('region', { name: 'Account network addresses' })
@@ -861,7 +885,7 @@ test('renders and switches the released EVM catalog and chain-scoped endpoint se
   await popup.getByRole('button', { name: 'Back' }).click()
   await expect(popup.getByRole('heading', { name: 'BTC', exact: true })).toBeVisible()
   await popup.getByRole('button', { name: 'Addresses', exact: true }).click()
-  await expect(popup.getByRole('heading', { name: 'Addresses' })).toBeVisible()
+  await expect(popup.getByRole('heading', { name: 'Address', exact: true })).toBeVisible()
   await expect(popup.getByRole('region', { name: 'Account network addresses' })).toBeVisible()
   await expect(popup.getByRole('heading', { name: 'Bitcoin' })).toBeVisible()
   const bitcoinAddress = popup.getByRole('region', { name: 'Bitcoin' })
@@ -874,7 +898,7 @@ test('renders and switches the released EVM catalog and chain-scoped endpoint se
   await expect(popup.getByRole('heading', { name: 'BTC', exact: true })).toBeVisible()
 
   await popup.getByRole('button', { name: 'Receive', exact: true }).click()
-  await expect(popup.getByRole('heading', { name: 'Addresses' })).toBeVisible()
+  await expect(popup.getByRole('heading', { name: 'Address', exact: true })).toBeVisible()
   await expect(popup.getByText('Taproot', { exact: true })).toBeVisible()
   await popup.getByRole('button', { name: 'Back' }).click()
   await expect(popup.getByRole('heading', { name: 'BTC', exact: true })).toBeVisible()

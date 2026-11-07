@@ -7,6 +7,7 @@ import { TokenIcon } from '../tokens/TokenIcon'
 import { ChainIcon } from '../common/ChainIcon'
 import {
   getActivityRowTextPresentation,
+  getActivityAccountRouteLabel,
   getActivityRouteTitle,
   getActivityStatusPresentation,
   getActivitySwapPresentation,
@@ -113,9 +114,10 @@ function SwapActivityRow({
   const destinationSymbol = presentation.destination?.symbol ?? 'Asset'
   const action = getActivityRouteTitle(item, presentation)
   const route = `${presentation.sourceNetwork} → ${presentation.destinationNetwork}`
-  const accountRoute = isOwnedAccountTransfer(presentation)
-    ? `${presentation.sourceAccountMode} → ${presentation.destinationAccountMode}`
-    : null
+  const accountRoute =
+    presentation.isExternalDeposit || isOwnedAccountTransfer(presentation)
+      ? getActivityAccountRouteLabel(presentation)
+      : null
   const showStatus = item.status !== 'final'
 
   return (
@@ -125,38 +127,62 @@ function SwapActivityRow({
       data-activity-status={item.status}
       data-activity-account-mode={item.accountMode}
       data-activity-kind={item.kind}
-      aria-label={`View ${action} ${sourceSymbol} to ${destinationSymbol} details from ${presentation.sourceNetwork} to ${presentation.destinationNetwork}`}
+      aria-label={
+        presentation.isExternalDeposit
+          ? `View ${action} ${destinationSymbol} details from External to Shield`
+          : `View ${action} ${sourceSymbol} to ${destinationSymbol} details from ${presentation.sourceNetwork} to ${presentation.destinationNetwork}`
+      }
       onClick={() => onClick?.(item)}
-      className="grid min-h-[62px] w-full min-w-0 grid-cols-[36px_minmax(0,1fr)_auto] items-center gap-3 px-5 py-2.5 text-left transition-colors hover:bg-foreground/3 focus-visible:bg-foreground/3 focus-visible:outline-none disabled:pointer-events-none"
+      className="wallet-interactive grid min-h-[72px] w-full min-w-0 grid-cols-[36px_minmax(0,1fr)_minmax(0,45%)] items-center gap-3 px-4 py-3 text-left enabled:hover:bg-foreground/6 enabled:active:bg-foreground/10 focus-visible:bg-foreground/6 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary disabled:pointer-events-none"
       disabled={!onClick}
     >
       <ActivityRouteTokenIcons route={presentation} />
       <div className="min-w-0">
         <div className="flex min-w-0 items-center gap-1.5">
           <p className="min-w-0 truncate text-sm font-medium">
-            {action === 'Account Transfer'
-              ? action
-              : `${action} ${sourceSymbol} → ${destinationSymbol}`}
+            {presentation.isExternalDeposit
+              ? `${action} ${destinationSymbol}`
+              : action === 'Account Transfer'
+                ? action
+                : `${action} ${sourceSymbol} → ${destinationSymbol}`}
           </p>
           {item.accountMode === 'private' && <ExecutionAccountBadge mode="private" iconOnly />}
         </div>
         <p className="truncate text-xs text-muted" title={accountRoute ?? route}>
           {accountRoute ?? route}
         </p>
-        {accountRoute && presentation.sourceNetwork !== presentation.destinationNetwork && (
-          <p className="truncate text-[11px] text-muted" title={route}>
-            {route}
-          </p>
-        )}
+        {accountRoute &&
+          !presentation.isExternalDeposit &&
+          presentation.sourceNetwork !== presentation.destinationNetwork && (
+            <p className="truncate text-[11px] text-muted" title={route}>
+              {route}
+            </p>
+          )}
       </div>
-      <div className="justify-self-end text-right">
-        <p className="whitespace-nowrap font-mono text-sm font-medium">
-          {presentation.source ? `−${presentation.source.formatted} ${sourceSymbol}` : '—'}
-        </p>
-        {presentation.destination && (
-          <p className="whitespace-nowrap font-mono text-[11px] text-muted">
-            Expected +{presentation.destination.formatted} {destinationSymbol}
+      <div className="min-w-0 justify-self-end text-right">
+        {presentation.isExternalDeposit ? (
+          <p
+            className={cn(
+              'break-all font-sans text-sm font-medium tabular-nums',
+              presentation.destinationIsSettled && 'text-primary'
+            )}
+          >
+            {presentation.destination
+              ? `${presentation.destinationIsSettled ? '+' : 'Expected +'}${presentation.destination.formatted} ${destinationSymbol}`
+              : '—'}
           </p>
+        ) : (
+          <>
+            <p className="break-all font-sans text-sm font-medium tabular-nums">
+              {presentation.source ? `−${presentation.source.formatted} ${sourceSymbol}` : '—'}
+            </p>
+            {presentation.destination && (
+              <p className="break-all font-sans text-[11px] text-muted tabular-nums">
+                {presentation.destinationIsSettled ? 'Received' : 'Expected'} +
+                {presentation.destination.formatted} {destinationSymbol}
+              </p>
+            )}
+          </>
         )}
         {showStatus && (
           <p className={cn('text-[11px]', getTransactionStatusToneClassName(status.tone))}>
@@ -225,7 +251,7 @@ export function MultichainActivityRow({
       aria-label={`View ${accessibleTitle} details on ${resolvedNetworkName}`}
       onClick={() => onClick?.(item)}
       className={cn(
-        'grid min-h-[62px] w-full min-w-0 grid-cols-[36px_minmax(0,1fr)_auto] items-center gap-3 px-5 py-2.5 text-left transition-colors hover:bg-foreground/3 focus-visible:bg-foreground/3 focus-visible:outline-none disabled:pointer-events-none',
+        'wallet-interactive grid min-h-[72px] w-full min-w-0 grid-cols-[36px_minmax(0,1fr)_minmax(0,45%)] items-center gap-3 px-4 py-3 text-left enabled:hover:bg-foreground/6 enabled:active:bg-foreground/10 focus-visible:bg-foreground/6 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary disabled:pointer-events-none',
         isCancelled && 'opacity-60'
       )}
       disabled={!onClick}
@@ -255,11 +281,11 @@ export function MultichainActivityRow({
             <p
               title={`${summaryChange.direction === 'incoming' ? '+' : '−'}${summaryChange.value} ${summaryChange.symbol}`}
               className={cn(
-                'flex min-w-0 items-baseline justify-end gap-1 font-mono text-sm font-medium tabular-nums',
+                'flex min-w-0 flex-wrap items-baseline justify-end gap-1 font-sans text-sm font-medium tabular-nums',
                 summaryChange.direction === 'incoming' && 'text-primary'
               )}
             >
-              <span className="min-w-0 truncate">
+              <span className="min-w-0 break-all">
                 {summaryChange.direction === 'incoming' ? '+' : '−'}
                 {summaryChange.formatted}
               </span>
@@ -269,7 +295,7 @@ export function MultichainActivityRow({
         ) : primary || !observed ? (
           <p
             className={cn(
-              'whitespace-nowrap font-mono text-sm font-medium',
+              'break-all font-sans text-sm font-medium tabular-nums',
               isIncoming && 'text-primary'
             )}
           >

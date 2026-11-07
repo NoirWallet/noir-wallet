@@ -13,6 +13,8 @@ import {
 } from '@/core/wallet/hardware-wallet-data'
 import { logger } from '@/lib/logger'
 import { traceDebugStage } from '@/lib/debug-performance'
+import type { FeeQuote, QuotedFeeEstimate } from '@/config/fee'
+import type { MaxTransferEstimate } from '@/core/worker/types'
 import { MnemonicGenerator } from '@/core/wallet/mnemonic'
 import type {
   Network,
@@ -120,7 +122,7 @@ import {
   isAnyWorkerInitPending,
   markWalletWorkerUnhealthy
 } from '@/core/worker/client'
-import { clearLendingMcaCache } from '@/core/services/lending-mca-cache'
+import { clearZcashMcaCache } from '@/core/services/zcash-mca-cache'
 import { resolveAccountIdForRemoval } from './account-removal-account-id'
 import { selectNextZcashAccountIndex } from '@/core/wallet/account-index'
 import { clearIdentityCache } from '@/core/wallet/identity-cache'
@@ -140,6 +142,7 @@ import { generateCanonicalMnemonic } from '@/infrastructure/keyring/multichain/c
 import {
   getFullZcashRecoveryBirthdayHeight,
   getSafeNewWalletBirthdayHeight,
+  isValidZcashBirthdayHeight,
   selectCachedChainTipHeight
 } from '@/core/wallet/birthday-height'
 
@@ -876,19 +879,13 @@ export class BackgroundZcashWalletRuntime {
     this.walletSummaryCache.delete(walletId)
   }
 
-  private clearRuntimeCaches(
-    walletId?: string,
-    accountId?: string,
-    options?: { clearLending?: boolean }
-  ): void {
-    const clearLending = options?.clearLending !== false
-
+  private clearRuntimeCaches(walletId?: string, accountId?: string): void {
     if (!walletId) {
       this.clearAccountMappingCache()
       this.clearWalletSummaryCache()
       this.clearTransactionHistoryCache()
       clearIdentityCache()
-      if (clearLending) clearLendingMcaCache()
+      clearZcashMcaCache()
       return
     }
 
@@ -896,9 +893,7 @@ export class BackgroundZcashWalletRuntime {
     this.clearWalletSummaryCache(walletId)
     this.clearTransactionHistoryCache(walletId, accountId)
     clearIdentityCache(walletId, accountId)
-    if (clearLending) {
-      clearLendingMcaCache(walletId, accountId)
-    }
+    clearZcashMcaCache(walletId, accountId)
   }
 
   private async getCachedWalletSummary(
@@ -1765,7 +1760,7 @@ export class BackgroundZcashWalletRuntime {
       if (!this.walletCore) {
         await this.initialize()
       } else {
-        this.walletCore.ensureInitialized().catch(error => {
+        this.walletCore.ensureInitialized(`${this.network}_${storeWalletId}`).catch(error => {
           logger.error(
             `Background WASM initialization failed: ${error instanceof Error ? error.message : String(error)}`,
             this.currentWalletId || undefined,
@@ -2382,7 +2377,13 @@ export class BackgroundZcashWalletRuntime {
         otherCore.clearSession()
       }
     }
-    this.setSessionPassword(null)
+    // A core restore retry does not revoke the still-attested keyring credential.
+    if (
+      this.password !== null ||
+      (this.sessionCredentialWalletId !== null && this.sessionCredentialWalletId !== walletId)
+    ) {
+      this.setSessionPassword(null)
+    }
     this.sessionCredentialWalletId = walletId
     this.currentWalletId = walletId
 
@@ -2461,15 +2462,21 @@ export class BackgroundZcashWalletRuntime {
     return fetchBlockTime(getNetworkConfig(this.network).rpcUrl, height)
   }
 
-  /** Estimate transfer fee (zatoshis) for the current account at a marginal-fee tier. */
+  async getFeeQuote(): Promise<FeeQuote> {
+    const core = await this.getWalletCore()
+    return core.getFeeQuote()
+  }
+
+  /** Estimate transfer fee for the current account at a quoted marginal rate. */
   async estimateTransferFee(
     to: string,
     amount: string,
     memo: string | undefined,
-    marginalFeeZats: number,
+    marginalFeeZats: number | undefined,
     fundingSource: FundingSource = 'shielded',
-    debugRequestId?: string
-  ): Promise<string> {
+    debugRequestId?: string,
+    feeQuoteId?: string
+  ): Promise<QuotedFeeEstimate> {
     const walletId = this.store.currentWalletId
     const account = this.getCurrentAccount()
     if (!walletId || !account) throw new Error('No active wallet or account')
@@ -2480,7 +2487,15 @@ export class BackgroundZcashWalletRuntime {
         this.getWalletCore(walletId, account.id)
       )
       return measure('background-worker-fee-roundtrip', () =>
-        core.estimateTransferFee(to, amount, memo, marginalFeeZats, fundingSource, debugRequestId)
+        core.estimateTransferFee(
+          to,
+          amount,
+          memo,
+          marginalFeeZats,
+          fundingSource,
+          debugRequestId,
+          feeQuoteId
+        )
       )
     })
   }
@@ -2489,10 +2504,11 @@ export class BackgroundZcashWalletRuntime {
   async estimateMaxTransfer(
     to: string,
     memo: string | undefined,
-    marginalFeeZats: number,
+    marginalFeeZats: number | undefined,
     fundingSource: FundingSource = 'shielded',
-    debugRequestId?: string
-  ): Promise<{ maxAmountZats: string; feeZats: string }> {
+    debugRequestId?: string,
+    feeQuoteId?: string
+  ): Promise<MaxTransferEstimate> {
     const walletId = this.store.currentWalletId
     const account = this.getCurrentAccount()
     if (!walletId || !account) throw new Error('No active wallet or account')
@@ -2503,7 +2519,8 @@ export class BackgroundZcashWalletRuntime {
       memo,
       marginalFeeZats,
       fundingSource,
-      debugRequestId
+      debugRequestId,
+      feeQuoteId
     )
   }
 
@@ -2512,10 +2529,11 @@ export class BackgroundZcashWalletRuntime {
     accountId: string,
     to: string,
     memo: string | undefined,
-    marginalFeeZats: number,
+    marginalFeeZats: number | undefined,
     fundingSource: FundingSource = 'shielded',
-    debugRequestId?: string
-  ): Promise<{ maxAmountZats: string; feeZats: string }> {
+    debugRequestId?: string,
+    feeQuoteId?: string
+  ): Promise<MaxTransferEstimate> {
     const runtimeGeneration = this.walletRuntimeGeneration.get(walletId) ?? 0
     const passwordGeneration = this.passwordGeneration
     const network = this.network
@@ -2526,7 +2544,14 @@ export class BackgroundZcashWalletRuntime {
         this.getWalletCore(walletId, accountId)
       )
       const estimate = await measure('background-worker-maximum-roundtrip', () =>
-        core.estimateMaxTransfer(to, memo, marginalFeeZats, fundingSource, debugRequestId)
+        core.estimateMaxTransfer(
+          to,
+          memo,
+          marginalFeeZats,
+          fundingSource,
+          debugRequestId,
+          feeQuoteId
+        )
       )
       return { estimate, core }
     })
@@ -2606,10 +2631,13 @@ export class BackgroundZcashWalletRuntime {
     }
   }
 
-  /** Estimate shielding fee (zatoshis) for the current account at a marginal-fee tier. */
-  async estimateShieldFee(marginalFeeZats: number): Promise<string> {
+  /** Estimate shielding fee for the current account at a quoted marginal rate. */
+  async estimateShieldFee(
+    marginalFeeZats?: number,
+    feeQuoteId?: string
+  ): Promise<QuotedFeeEstimate> {
     const core = await this.getWalletCore()
-    return core.estimateShieldFee(marginalFeeZats)
+    return core.estimateShieldFee(marginalFeeZats, feeQuoteId)
   }
 
   /**
@@ -3293,14 +3321,12 @@ export class BackgroundZcashWalletRuntime {
       throw new Error('Switch to this wallet before resyncing Zcash')
     }
 
+    if (!isValidZcashBirthdayHeight(birthdayHeight)) {
+      throw new Error('Invalid Zcash birthday height. Choose a positive whole-number block height.')
+    }
+
     const credential = await this.loadWalletCredential(walletId, this.password)
     if (!credential) throw new Error('Failed to load wallet credential')
-
-    if (!birthdayHeight || birthdayHeight <= 0) {
-      throw new Error(
-        'Cannot resync wallet: missing birthday height. Please choose a valid start height.'
-      )
-    }
 
     if (!options?.automatic) {
       this.automaticResyncAttemptedWalletIds.delete(walletId)
@@ -4352,6 +4378,16 @@ export class BackgroundZcashWalletRuntime {
         }
       }
 
+      if (!isNearChainTip(fullyScannedHeight, latestHeight)) {
+        this.updateSyncProgressForWallet(syncWalletId, {
+          isSyncing: true,
+          syncProgress: 0,
+          currentHeight: fullyScannedHeight || birthdayHeight,
+          latestHeight,
+          etaMs: null
+        })
+      }
+
       await core.beginSyncSession()
       syncSessionActive = true
 
@@ -4377,6 +4413,7 @@ export class BackgroundZcashWalletRuntime {
       let batchesSinceRefresh = 0
       const REFRESH_EVERY_N = WALLET_CONFIG.SYNC.SESSION_SETUP_REFRESH_EVERY_N_BATCHES
 
+      const syncTargetHeight = latestHeight
       const initialHeight = fullyScannedHeight || birthdayHeight
       const syncBase = fullyScannedHeight > birthdayHeight ? fullyScannedHeight : birthdayHeight
       const totalRange = latestHeight - syncBase
@@ -4387,7 +4424,7 @@ export class BackgroundZcashWalletRuntime {
       const isSmallSync =
         totalRange <= getSyncBatchSize(totalRange, syncWalletId === this.currentWalletId)
       const isSilentSync = isNearChainTip(fullyScannedHeight, latestHeight)
-      const showSyncUi = !isSmallSync && !isSilentSync
+      const showSyncUi = !isSilentSync
 
       if (isSilentSync) {
         logger.log(
@@ -4467,19 +4504,8 @@ export class BackgroundZcashWalletRuntime {
       let lastDisplayHeight = Math.min(syncBase + displayedScannedBlocks, latestHeight)
       let lastStallKey = ''
       let stallCount = 0
-      // Chain tip observed at the moment the scan loop caught up (fullyScanned >=
-      // chainTip). Finalization (journal replay + persist) can take minutes on a
-      // large wallet, during which the live tip advances by a few blocks. The
-      // completion check must compare against this converged tip, not the freshly
-      // re-read live tip, otherwise a fully-scanned wallet is perpetually demoted
-      // to "partial" and never reports completed (tip-advance livelock).
-      let convergedTipHeight = 0
       const REORG_STALL_MAX = WALLET_CONFIG.SYNC.REORG_STALL_MAX_ATTEMPTS
-      // Tail convergence: a refresh=false batch only drains ranges queued at the
-      // last session setup, so it returns null even when the live tip advanced
-      // during a long historical scan. forceRefreshNext re-runs session setup on
-      // the next batch to re-queue that tail via the proven journal path, instead
-      // of misrouting a "null while behind tip" to the SDK single-batch fallback.
+      // Refresh when queued ranges end before this session's captured target.
       let forceRefreshNext = false
       let lastPrepareWasRefresh = false
 
@@ -4784,7 +4810,7 @@ export class BackgroundZcashWalletRuntime {
           )
           const noRangeSummary = wasmProgress.summary
 
-          if (wasmProgress.fullyScanned >= wasmProgress.chainTip) {
+          if (!wasmProgress.dirty && wasmProgress.fullyScanned >= syncTargetHeight) {
             const atTipWithPending =
               syncNeedsSettlement || this.summaryHasPendingBalance(noRangeSummary)
             if (atTipWithPending) {
@@ -4853,7 +4879,6 @@ export class BackgroundZcashWalletRuntime {
             }
 
             if (aborted) break
-            convergedTipHeight = Math.max(convergedTipHeight, latestHeight)
             if (totalRange > batchSize) {
               setSyncState({ syncProgress: 99, currentHeight: lastDisplayHeight })
               this.updateSyncProgressForWallet(syncWalletId, {
@@ -4951,8 +4976,7 @@ export class BackgroundZcashWalletRuntime {
               Math.min(lastSummaryHeight, latestHeight, lastDisplayHeight)
             )
 
-            if (afterFallback.fullyScanned >= afterFallback.chainTip) {
-              convergedTipHeight = Math.max(convergedTipHeight, afterFallback.chainTip)
+            if (!afterFallback.dirty && afterFallback.fullyScanned >= syncTargetHeight) {
               break
             }
             if (fallbackProcessed && afterFallback.fullyScanned < afterFallback.chainTip) {
@@ -5204,15 +5228,15 @@ export class BackgroundZcashWalletRuntime {
 
       const finalHeight = finalWasmProgress?.fullyScanned ?? lastSummaryHeight
       const finalTargetHeight = finalWasmProgress?.chainTip ?? latestHeight
-      // A large-wallet finalization (journal replay + persist) can run for minutes,
-      // during which the live chain tip advances by a few blocks. Treat the sync as
-      // complete when the scan loop already caught up to the tip it observed at
-      // convergence, even if newer blocks arrived during finalization (the next
-      // incremental sync scans those). This breaks the tip-advance livelock where a
-      // fully-scanned wallet was perpetually reported as partial and never completed.
-      const reachedTipInLoop = convergedTipHeight > 0 && finalHeight >= convergedTipHeight
-      const isActuallyComplete = finalHeight >= finalTargetHeight || reachedTipInLoop
       const dirtyAtEnd = finalWasmProgress?.dirty === true
+      // New blocks observed during finalization belong to the next incremental sync.
+      // A rewind or failed journal flush still leaves this job partial.
+      const isActuallyComplete =
+        finalWasmProgress !== null &&
+        !dirtyAtEnd &&
+        !snapshotFailed &&
+        !flushFailed &&
+        finalHeight >= syncTargetHeight
 
       if (!isActuallyComplete) {
         const partialHeight = Math.max(finalHeight, syncBase)
@@ -5353,32 +5377,26 @@ export class BackgroundZcashWalletRuntime {
         )
       }
 
-      if (
-        shouldMarkSyncJobInterrupted({
-          snapshotFailed,
-          flushFailed,
-          finalPersistFailed,
-          skippedFinalPersist: skipFinalPersist,
-          hasPendingJournal: smallSyncPendingJournal,
-          hasPendingBalanceSettlement: summaryPendingAtEnd || pendingSettlementUnresolved
-        })
-      ) {
+      const shouldKeepJobInterrupted = shouldMarkSyncJobInterrupted({
+        snapshotFailed,
+        flushFailed,
+        finalPersistFailed,
+        skippedFinalPersist: skipFinalPersist,
+        hasPendingJournal: smallSyncPendingJournal,
+        hasPendingBalanceSettlement: summaryPendingAtEnd || pendingSettlementUnresolved
+      })
+      if (shouldKeepJobInterrupted) {
         await syncJobStore.markInterrupted(syncWalletId, syncNetwork, finalHeight).catch(() => {})
       } else {
         await syncJobStore
-          .markCompleted(syncWalletId, syncNetwork, finalHeight, finalTargetHeight)
+          .markCompleted(syncWalletId, syncNetwork, finalHeight, syncTargetHeight)
           .catch(() => {})
       }
 
       const outcomeStatus =
-        snapshotFailed ||
-        flushFailed ||
-        finalPersistFailed ||
-        (skipFinalPersist && smallSyncPendingJournal)
+        shouldKeepJobInterrupted || summaryPendingAtEnd || pendingSettlementUnresolved
           ? 'partial'
-          : summaryPendingAtEnd || pendingSettlementUnresolved
-            ? 'partial'
-            : 'completed'
+          : 'completed'
 
       logSyncDone(
         syncLogPrefix,

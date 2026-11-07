@@ -1,4 +1,5 @@
 import { DEFAULT_NETWORK } from '@/lib/runtime-network'
+import { projectExternalShieldDepositActivityGraph } from '@/core/services/confidential-funding'
 import { supportsEvmPrivateExecution } from '@/core/chains/evm'
 import type { ChainEndpointSettings } from '@/core/chains/chain-endpoint-settings'
 import { keySourceSupportsChainFamily, resolveKeyDomain } from '@/core/accounts/application'
@@ -36,6 +37,7 @@ import { ACTIVITY_HISTORY_CACHE_ITEM_LIMIT, ActivityHistoryCache } from './activ
 import { getBitcoinAccountPreferences } from './bitcoin-account-preferences'
 import type { BitcoinSupportedAddressType } from '@/core/chains/bitcoin'
 import { credentialSession } from './credential-session'
+import { ChromeConfidentialFundingStore } from './confidential-funding-store'
 
 const ACTIVITY_REFRESH_TTL_MS = 5 * 60_000
 const PENDING_ACTIVITY_REFRESH_TTL_MS = 30_000
@@ -71,6 +73,21 @@ export function filterLocalGraphsForActiveBitcoinAddress(
 interface EvmExecutionAddresses {
   readonly main: string
   readonly privateAddress: string | null
+}
+
+export async function resolveOptionalEvmPrivateHistoryAddress(input: {
+  readonly includePrivate: boolean
+  readonly privateAvailable: boolean
+  readonly hasUnlockSession: () => Promise<boolean>
+  readonly deriveAddress: () => Promise<string>
+}): Promise<string | null> {
+  if (!input.includePrivate || !input.privateAvailable) return null
+  try {
+    if (!(await input.hasUnlockSession())) return null
+    return (await input.deriveAddress()).toLowerCase()
+  } catch {
+    return null
+  }
 }
 
 async function resolveEvmMainAddress(
@@ -113,16 +130,13 @@ async function resolveEvmExecutionAddresses(
 ): Promise<EvmExecutionAddresses | null> {
   const account = await resolveEvmMainAddress(storageRepository, scope)
   if (!account) return null
-  if (
-    !includePrivate ||
-    !account.privateAvailable ||
-    !(await credentialSession.hasUnlockSession())
-  ) {
-    return Object.freeze({ main: account.main, privateAddress: null })
-  }
-  const privateAddress = (
-    await signer.deriveGlobalPea(scope.keyDomainId, account.addressIndex)
-  ).address.toLowerCase()
+  const privateAddress = await resolveOptionalEvmPrivateHistoryAddress({
+    includePrivate,
+    privateAvailable: account.privateAvailable,
+    hasUnlockSession: () => credentialSession.hasUnlockSession(),
+    deriveAddress: async () =>
+      (await signer.deriveGlobalPea(scope.keyDomainId, account.addressIndex)).address
+  })
   return Object.freeze({ main: account.main, privateAddress })
 }
 
@@ -741,7 +755,27 @@ export function createBackgroundActivityCoordinator(
     scope: ActivityScope,
     graphs: readonly TransactionGraph[]
   ): Promise<readonly TransactionGraph[]> => {
-    if (!bitcoinDiscovery) return graphs
+    const externalRecords = graphs.some(
+      graph =>
+        graph.root.status === 'failed' && graph.root.id.startsWith('tx:confidential-external:')
+    )
+      ? await new ChromeConfidentialFundingStore().listExternalDeposits().catch(() => [])
+      : []
+    const externalByTransactionId = new Map(
+      externalRecords
+        .filter(
+          record =>
+            record.network === DEFAULT_NETWORK &&
+            record.keyDomainId === scope.keyDomainId &&
+            record.accountId === scope.accountId
+        )
+        .map(record => [record.transactionId, record] as const)
+    )
+    const projectedGraphs = graphs.map(graph => {
+      const record = externalByTransactionId.get(graph.root.id)
+      return record ? projectExternalShieldDepositActivityGraph(graph, record) : graph
+    })
+    if (!bitcoinDiscovery) return projectedGraphs
     const context = await loadActiveBitcoinDiscoveryContext(
       storageRepository,
       bitcoinNetwork.chainId
@@ -751,7 +785,11 @@ export function createBackgroundActivityCoordinator(
       context.chainAccount.scope.keyDomainId !== scope.keyDomainId ||
       context.chainAccount.scope.accountId !== scope.accountId
     ) {
-      return filterLocalGraphsForActiveBitcoinAddress(graphs, bitcoinNetwork.chainId, new Set())
+      return filterLocalGraphsForActiveBitcoinAddress(
+        projectedGraphs,
+        bitcoinNetwork.chainId,
+        new Set()
+      )
     }
     const [state, addressType] = await Promise.all([
       bitcoinDiscovery.get({
@@ -769,7 +807,11 @@ export function createBackgroundActivityCoordinator(
         .filter(observation => isActiveBitcoinAddressObservation(observation, addressType))
         .map(observation => observation.derived.address)
     )
-    return filterLocalGraphsForActiveBitcoinAddress(graphs, bitcoinNetwork.chainId, ownedAddresses)
+    return filterLocalGraphsForActiveBitcoinAddress(
+      projectedGraphs,
+      bitcoinNetwork.chainId,
+      ownedAddresses
+    )
   }
 
   return new ActivityCoordinator({

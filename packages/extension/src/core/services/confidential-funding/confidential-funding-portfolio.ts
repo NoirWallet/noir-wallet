@@ -1,4 +1,14 @@
-import type { PortfolioAssetView, PortfolioReadModel } from '@/core/portfolio'
+import Big from '@/lib/big'
+import type {
+  PortfolioAssetView,
+  PortfolioReadModel,
+  ConfidentialPortfolioView
+} from '@/core/portfolio'
+import type { AssetRegistry } from '@/core/chains/registry'
+import { getZcashChainId } from '@/core/chains/registry'
+import type { SwapToken } from '@/core/services/intents-api'
+import type { IntentsManagedAsset } from '@/core/services/intents-managed-assets'
+import type { Network } from '@/types'
 
 export interface ConfidentialPortfolioBalance {
   readonly tokenId: string
@@ -10,16 +20,104 @@ export interface ConfidentialPortfolioAssetMapping {
   readonly protocolAssetId: string
 }
 
-function findAvailableRaw(
+export function filterConfidentialPortfolioMappings(
+  mappings: readonly ConfidentialPortfolioAssetMapping[],
+  network: Network
+): readonly ConfidentialPortfolioAssetMapping[] {
+  const zcashAssetId = `${getZcashChainId(network)}/slip44:133`
+  return mappings.filter(
+    mapping => mapping.assetId.startsWith('eip155:') || mapping.assetId === zcashAssetId
+  )
+}
+
+// Mainnet uses this shared treasury namespace; arbitrary IMT suffix matches are not equivalent assets.
+// https://docs.near-intents.org/integration/market-makers/confidential-intents
+export const CONFIDENTIAL_PRIVATE_TREASURY_ACCOUNT_ID =
+  '51e8f94d77b5e90dc9852ca6113771e11e8382ce69473a75e313e41665de7cbe'
+
+export function confidentialPrivateTokenId(protocolAssetId: string): string {
+  return `imt:${CONFIDENTIAL_PRIVATE_TREASURY_ACCOUNT_ID}:${protocolAssetId}`
+}
+
+export function getConfidentialAvailableForAsset(
   balances: readonly ConfidentialPortfolioBalance[],
   protocolAssetId: string
-): string {
-  const suffix = `:${protocolAssetId}`
-  return (
-    balances.find(
-      balance => balance.tokenId === protocolAssetId || balance.tokenId.endsWith(suffix)
-    )?.available ?? '0'
-  )
+): string | null {
+  const row =
+    balances.find(balance => balance.tokenId === confidentialPrivateTokenId(protocolAssetId)) ??
+    balances.find(balance => balance.tokenId === protocolAssetId)
+  return row && /^(0|[1-9][0-9]*)$/.test(row.available) ? row.available : null
+}
+
+export function buildConfidentialPortfolioView(
+  balances: readonly ConfidentialPortfolioBalance[],
+  tokens: readonly SwapToken[],
+  managedAssets: readonly IntentsManagedAsset[],
+  mappings: readonly ConfidentialPortfolioAssetMapping[],
+  assets: AssetRegistry
+): ConfidentialPortfolioView {
+  const treasuryPrefix = `imt:${CONFIDENTIAL_PRIVATE_TREASURY_ACCOUNT_ID}:`
+  const byProtocolId = new Map<
+    string,
+    { balance: ConfidentialPortfolioBalance; priority: number }
+  >()
+  for (const balance of balances) {
+    if (!/^(0|[1-9][0-9]*)$/.test(balance.available)) {
+      throw new Error('Invalid Confidential balance')
+    }
+    const verifiedImt = balance.tokenId.startsWith(treasuryPrefix)
+    const protocolAssetId = verifiedImt
+      ? balance.tokenId.slice(treasuryPrefix.length)
+      : balance.tokenId
+    if (!protocolAssetId) throw new Error('Invalid Confidential token ID')
+    const priority = verifiedImt ? 1 : 0
+    const previous = byProtocolId.get(protocolAssetId)
+    if (previous && previous.priority === priority) {
+      throw new Error('Duplicate Confidential balance')
+    }
+    if (!previous || priority > previous.priority)
+      byProtocolId.set(protocolAssetId, { balance, priority })
+  }
+
+  const tokenById = new Map(tokens.map(token => [token.assetId, token]))
+  const managedById = new Map(managedAssets.map(asset => [asset.protocolAssetId, asset]))
+  const mappedById = new Map(mappings.map(mapping => [mapping.protocolAssetId, mapping.assetId]))
+  const entries = [...byProtocolId].flatMap(([protocolAssetId, { balance }]) => {
+    if (balance.available === '0') return []
+    const token = tokenById.get(protocolAssetId)
+    const managed = managedById.get(protocolAssetId)
+    const mappedAssetId = mappedById.get(protocolAssetId)
+    const registered = mappedAssetId ? assets.get(mappedAssetId) : undefined
+    const assetId = managed?.assetId ?? registered?.asset.id
+    const chainId = managed?.chainId ?? registered?.asset.chainId
+    const iconUrl = token ? (token.icon ?? token.coingeckoIcon ?? undefined) : undefined
+    const priceUsd = token && token.price > 0 ? new Big(token.price).toFixed() : undefined
+    return [
+      Object.freeze({
+        tokenId: balance.tokenId,
+        protocolAssetId,
+        availableRaw: balance.available,
+        ...(assetId ? { assetId } : {}),
+        ...(chainId ? { chainId } : {}),
+        ...(token
+          ? {
+              blockchain: token.blockchain,
+              symbol: token.symbol,
+              name: token.symbol,
+              decimals: token.decimals,
+              ...(iconUrl ? { iconUrl } : {}),
+              ...(priceUsd && priceUsd.length <= 128
+                ? {
+                    priceUsd,
+                    priceUpdatedAt: token.priceUpdatedAt
+                  }
+                : {})
+            }
+          : {})
+      })
+    ]
+  })
+  return Object.freeze({ status: 'ready', assets: Object.freeze(entries) })
 }
 
 function mergeAsset(
@@ -31,7 +129,7 @@ function mergeAsset(
   if (!mapping || asset.balance.mainRaw === undefined || asset.balance.privateRaw === undefined) {
     return asset
   }
-  const confidentialRaw = findAvailableRaw(balances, mapping.protocolAssetId)
+  const confidentialRaw = getConfidentialAvailableForAsset(balances, mapping.protocolAssetId) ?? '0'
   if (!/^\d+$/.test(confidentialRaw)) return asset
   const previousConfidential = BigInt(asset.balance.confidentialRaw ?? '0')
   const privateOnchain = BigInt(

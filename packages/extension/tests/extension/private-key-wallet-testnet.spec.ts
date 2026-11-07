@@ -8,6 +8,7 @@ import {
   waitForBackgroundWalletInitialization
 } from '../helpers/extension-fixtures'
 import { BUILTIN_EVM_NETWORKS } from '../../src/config/networks'
+import { mockReleasedEvmRpc, serveSdkExample } from '../helpers/release-default'
 
 const TEST_MNEMONIC_12 = `${'abandon '.repeat(11)}about`
 const TEST_PASSWORD = 'private-key-testnet-password'
@@ -20,6 +21,13 @@ const BITCOIN_TESTNET_CHAIN_ID = 'bip122:000000000933ea01ad0ee984209779ba'
 const SOLANA_PRIVATE_KEY = 'US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx'
 const SOLANA_DEVNET_CHAIN_ID = 'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1'
 const NEAR_PRIVATE_KEY = 'ed25519:cGfHiC6Kgg3FpFZvgwGcswsCRtp4aBP2fzuXRQPizuN'
+
+interface PrivateKeyDAppWindow extends Window {
+  noirwallet: {
+    ethereum: { request(input: { method: string; params?: unknown[] }): Promise<unknown> }
+    zcash: { request(input: { method: string }): Promise<unknown> }
+  }
+}
 
 async function importMnemonicWallet(page: Page): Promise<void> {
   await page.getByRole('button', { name: 'Import wallet' }).click()
@@ -98,6 +106,170 @@ async function readLegacyActiveScope(page: Page): Promise<{
     }
   })
 }
+
+test('preserves imported EVM Connect during Zcash discovery and cancels it on lock', async ({
+  context,
+  popup
+}) => {
+  test.setTimeout(180_000)
+  const evmRequests = await mockReleasedEvmRpc(context, 'testnet')
+  await waitForBackgroundWalletInitialization(popup)
+  await importMnemonicWallet(popup)
+  await popup.getByRole('button', { name: 'Choose wallet' }).click()
+  await popup.getByRole('button', { name: 'Accounts', exact: true }).click()
+  await importPrivateKeyWallet(popup, {
+    privateKey: EVM_PRIVATE_KEY,
+    name: 'Imported EVM Testnet',
+    family: 'EVM'
+  })
+  await popup.evaluate(() => chrome.runtime.sendMessage({ type: 'WALLET_LOCKED' }))
+  await popup.reload()
+  await popup.getByPlaceholder('Enter Password').fill(TEST_PASSWORD)
+  await popup.getByRole('button', { name: 'Unlock', exact: true }).click()
+  await expect(popup.getByRole('heading', { name: 'Portfolio' })).toBeVisible()
+
+  await context.route('https://private-key-sdk.noir.test/**', serveSdkExample)
+  const sdkDemo = await context.newPage()
+  await sdkDemo.goto('https://private-key-sdk.noir.test/example/')
+  await sdkDemo.waitForFunction(() => Boolean(Reflect.get(window, 'noirwallet')))
+  await sdkDemo.getByRole('button', { name: 'Testnet', exact: true }).click()
+  const sdkApprovalOpened = context.waitForEvent('page')
+  await sdkDemo.getByRole('button', { name: 'Connect all networks' }).click()
+  const sdkApproval = await sdkApprovalOpened
+  await sdkApproval.waitForURL(/#approval\?requestId=/)
+  await expect(sdkApproval.getByRole('button', { name: 'Connect', exact: true })).toBeVisible()
+  await sdkApproval.getByRole('button', { name: 'Connect', exact: true }).click()
+  await expect(sdkDemo.locator('.multichain-session-bar')).toContainText('1 networks authorized')
+
+  const sdkSession = await sdkDemo.evaluate(async () => {
+    const wallet = Reflect.get(window, 'noirwallet') as {
+      multichain: {
+        getSession(): Promise<{ scopes: Record<string, { accounts: string[] }> } | null>
+        invokeMethod(input: { scope: string; request: { method: string } }): Promise<unknown>
+      }
+    }
+    const session = await wallet.multichain.getSession()
+    const deniedScopes = [
+      'bip122:05a60a92d99d85997cce3b87616c089f',
+      'bip122:000000000933ea01ad0ee984209779ba',
+      'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1',
+      'near:testnet'
+    ]
+    const deniedCodes = await Promise.all(
+      deniedScopes.map(async scope => {
+        try {
+          await wallet.multichain.invokeMethod({ scope, request: { method: 'getAccounts' } })
+          return null
+        } catch (error) {
+          return error && typeof error === 'object' ? Reflect.get(error, 'code') : null
+        }
+      })
+    )
+    return { session, deniedCodes }
+  })
+  expect(sdkSession.session).not.toBeNull()
+  expect(Object.keys(sdkSession.session?.scopes ?? {})).toEqual(['eip155:11155111'])
+  expect(sdkSession.session?.scopes['eip155:11155111'].accounts).toEqual([
+    `eip155:11155111:${EVM_ADDRESS.toLowerCase()}`
+  ])
+  expect(sdkSession.deniedCodes).toEqual([4100, 4100, 4100, 4100])
+  await sdkDemo.getByRole('button', { name: 'Revoke session' }).click()
+  await expect(sdkDemo.getByRole('button', { name: 'Connect all networks' })).toBeVisible()
+
+  await context.route('https://private-key-dapp.example/**', route =>
+    route.fulfill({ contentType: 'text/html', body: '<html><body>EVM dApp</body></html>' })
+  )
+  const dapp = await context.newPage()
+  await dapp.goto('https://private-key-dapp.example/')
+  await dapp.waitForFunction(() => Boolean((window as PrivateKeyDAppWindow).noirwallet?.ethereum))
+  const zcashConnect = await dapp.evaluate(async () => {
+    try {
+      await (window as PrivateKeyDAppWindow).noirwallet.zcash.request({
+        method: 'zcash_requestAccounts'
+      })
+      return 'connected'
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error)
+    }
+  })
+  expect(zcashConnect).toContain('active Wallet does not support Zcash')
+  const approvalOpened = context.waitForEvent('page')
+  const connecting = dapp.evaluate(async () => {
+    try {
+      return await (window as PrivateKeyDAppWindow).noirwallet.ethereum.request({
+        method: 'eth_requestAccounts'
+      })
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : String(error) }
+    }
+  })
+  const approval = await approvalOpened
+  await approval.waitForURL(/#approval\?requestId=/)
+  expect(
+    await dapp.evaluate(() =>
+      (window as PrivateKeyDAppWindow).noirwallet.zcash.request({ method: 'zcash_getAccounts' })
+    )
+  ).toBeNull()
+  await approval.getByRole('button', { name: 'Connect', exact: true }).click()
+  expect(await connecting).toEqual([EVM_ADDRESS.toLowerCase()])
+
+  const reconnectOpened = context.waitForEvent('page')
+  const reconnecting = dapp.evaluate(async () => {
+    try {
+      return await (window as PrivateKeyDAppWindow).noirwallet.ethereum.request({
+        method: 'wallet_requestPermissions',
+        params: [{ eth_accounts: {} }]
+      })
+    } catch (error) {
+      return { code: error && typeof error === 'object' ? Reflect.get(error, 'code') : null }
+    }
+  })
+  const reconnectApproval = await reconnectOpened
+  await expect(
+    reconnectApproval.getByRole('button', { name: 'Connect', exact: true })
+  ).toBeVisible()
+  await popup.evaluate(() => chrome.runtime.sendMessage({ type: 'WALLET_LOCKED' }))
+  expect(await reconnecting).toEqual({ code: 4001 })
+  await expect.poll(() => reconnectApproval.isClosed()).toBe(true)
+
+  const unlockOpened = context.waitForEvent('page')
+  const lockedZcashConnect = dapp.evaluate(async () => {
+    try {
+      await (window as PrivateKeyDAppWindow).noirwallet.zcash.request({
+        method: 'zcash_requestAccounts'
+      })
+      return 'connected'
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error)
+    }
+  })
+  const unlock = await unlockOpened
+  await unlock.waitForURL(/#unlock\?from=dapp/)
+  await unlock.getByPlaceholder('Enter Password').fill(TEST_PASSWORD)
+  await unlock.getByRole('button', { name: 'Unlock', exact: true }).click()
+  expect(await lockedZcashConnect).toContain('active Wallet does not support Zcash')
+
+  await popup.evaluate(() => chrome.runtime.sendMessage({ type: 'WALLET_LOCKED' }))
+  const sdkUnlockOpened = context.waitForEvent('page')
+  await sdkDemo.getByRole('button', { name: 'Connect all networks' }).click()
+  const sdkUnlock = await sdkUnlockOpened
+  await sdkUnlock.waitForURL(/#unlock\?from=dapp/)
+  const sdkReconnectOpened = context.waitForEvent('page')
+  await sdkUnlock.getByPlaceholder('Enter Password').fill(TEST_PASSWORD)
+  await sdkUnlock.getByRole('button', { name: 'Unlock', exact: true }).click()
+  const sdkReconnect = await sdkReconnectOpened
+  await sdkReconnect.waitForURL(/#approval\?requestId=/)
+  await sdkReconnect.getByRole('button', { name: 'Connect', exact: true }).click()
+  await expect(sdkDemo.locator('.multichain-session-bar')).toContainText('1 networks authorized')
+  const restoredScopes = await sdkDemo.evaluate(async () => {
+    const wallet = Reflect.get(window, 'noirwallet') as {
+      multichain: { getSession(): Promise<{ scopes: Record<string, unknown> } | null> }
+    }
+    return (await wallet.multichain.getSession())?.scopes
+  })
+  expect(restoredScopes).toEqual(sdkSession.session?.scopes)
+  expect(evmRequests.some(request => request.endsWith(':eth_sendRawTransaction'))).toBe(false)
+})
 
 test('imports and exports EVM and Bitcoin private keys in Testnet Mode', async ({
   context,
@@ -255,7 +427,7 @@ test('imports and exports EVM and Bitcoin private keys in Testnet Mode', async (
   expect(restoredBitcoinAccount).toMatchObject({ active: true })
 
   await popup.getByRole('button', { name: 'Settings', exact: true }).click()
-  await popup.getByRole('button', { name: 'Security & Privacy', exact: true }).click()
+  await popup.getByRole('button', { name: 'Security', exact: true }).click()
   await popup.getByRole('button', { name: 'Change Password', exact: true }).click()
   await expect(popup.getByRole('heading', { name: 'Change Password' })).toBeVisible()
   await popup.getByPlaceholder('Current Password').fill(TEST_PASSWORD)

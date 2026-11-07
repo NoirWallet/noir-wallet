@@ -20,7 +20,13 @@ import {
   type LedgerTransport
 } from '@/lib/ledger/device'
 import type { LedgerPcztSignatures, LedgerSigningPayload } from '@/core/worker/types'
-import { readHardwareSignRequest, type HardwareSignRequest } from '@/lib/hardware-tab'
+import {
+  clearHardwareSignRequest,
+  HARDWARE_SIGN_REQUEST_TTL_MS,
+  isHardwareSignRequestFresh,
+  readHardwareSignRequest,
+  type HardwareSignRequest
+} from '@/lib/hardware-tab'
 import { base64ToBytes, bytesToBase64 } from '@/lib/bytes'
 import { zcashWalletRuntimeClient } from '@/popup/services/zcash-wallet-runtime-client'
 import { rheaSwapClient } from '@/popup/services/rhea-swap-client'
@@ -33,8 +39,6 @@ import {
 } from '@/popup/services/hardware-transaction-analytics'
 import { formatBaseUnitDecimalAmount } from '@/lib/number-format'
 import { ZEC_DECIMALS } from '@/config/wallet'
-import { MARGINAL_FEE_ZATS } from '@/config/fee'
-import { staticFeeFallbackZats } from '@/core/zcash/fee-policy'
 import { classifyError, getResponseErrorMessage } from '@/lib/errors'
 import { TimeoutError } from '@/lib/async-utils'
 import { isValidAddTransactionResponse } from '@/lib/transaction-record-response'
@@ -87,6 +91,9 @@ export function KeystoneSignPage() {
   const [transactionTimestamp, setTransactionTimestamp] = useState<number>()
   const [error, setError] = useState<string | null>(null)
   const [retryable, setRetryable] = useState(true)
+  const invalidated = useRef(false)
+  const submissionStarted = useRef(false)
+  const ledgerAbort = useRef<AbortController | null>(null)
 
   const network = useWalletStore(state => state.currentNetwork)
   const savedLedgerTransport = useSettingsStore(
@@ -124,14 +131,40 @@ export function KeystoneSignPage() {
             error
           })
   const startedRef = useRef(false)
-  // Real ZIP-317 fee returned by the build; fall back to the chosen tier's
-  // static estimate if the live estimate was unavailable.
-  const feeTier = (request?.marginalFeeZats ?? 0) >= MARGINAL_FEE_ZATS.fast ? 'fast' : 'standard'
-  const feeZec = formatBaseUnitDecimalAmount(
-    String(feeZats ?? staticFeeFallbackZats(feeTier)),
-    ZEC_DECIMALS
-  )
+  const feeZec = feeZats === null ? undefined : formatBaseUnitDecimalAmount(feeZats, ZEC_DECIMALS)
   const failedCopy = getStandardTransactionResultCopy('failed', { error })
+
+  const expire = useCallback(() => {
+    if (invalidated.current || submissionStarted.current) return
+    invalidated.current = true
+    ledgerAbort.current?.abort()
+    if (requestId) void clearHardwareSignRequest(requestId).catch(() => {})
+    setStep('invalid')
+  }, [requestId])
+
+  const cancelPending = async () => {
+    if (submissionStarted.current) return
+    invalidated.current = true
+    ledgerAbort.current?.abort()
+    if (requestId) await clearHardwareSignRequest(requestId).catch(() => {})
+    window.close()
+  }
+
+  useEffect(() => {
+    if (
+      !request ||
+      (step !== 'building' &&
+        step !== 'show-qr' &&
+        step !== 'scan' &&
+        step !== 'ledger-review' &&
+        step !== 'ledger-device' &&
+        step !== 'failed')
+    )
+      return
+    const deadline = request.createdAt + HARDWARE_SIGN_REQUEST_TTL_MS
+    const timer = window.setTimeout(expire, Math.max(0, deadline - Date.now()))
+    return () => window.clearTimeout(timer)
+  }, [request, step, expire])
 
   useEffect(() => {
     if ((step !== 'success' && step !== 'pending') || !resultAccountKey || !recordedTransactionId)
@@ -157,6 +190,10 @@ export function KeystoneSignPage() {
 
   const buildPczt = useCallback(
     async (req: HardwareSignRequest) => {
+      if (!isHardwareSignRequestFresh(req)) {
+        expire()
+        return
+      }
       setStep('building')
       setError(null)
       setReviewNotice(null)
@@ -176,10 +213,19 @@ export function KeystoneSignPage() {
           ...(req.to === undefined ? {} : { to: req.to }),
           ...(req.memo === undefined ? {} : { memo: req.memo }),
           ...(req.fundingSource === undefined ? {} : { fundingSource: req.fundingSource }),
-          ...(req.marginalFeeZats === undefined ? {} : { marginalFeeZats: req.marginalFeeZats })
+          ...(req.marginalFeeZats === undefined ? {} : { marginalFeeZats: req.marginalFeeZats }),
+          ...(req.feeQuoteId === undefined ? {} : { feeQuoteId: req.feeQuoteId })
         })
+        if (invalidated.current || !isHardwareSignRequestFresh(req)) {
+          expire()
+          if (requestId) await clearHardwareSignRequest(requestId).catch(() => {})
+          return
+        }
         if (!res?.success) {
           throw new Error(getResponseErrorMessage(res) || 'Failed to build transaction')
+        }
+        if (typeof res.feeZats !== 'string' || !/^[1-9]\d*$/.test(res.feeZats)) {
+          throw new Error('Network fee estimate is unavailable. Review the transaction again.')
         }
         if (res.vendor === 'ledger') {
           setLedgerPayload(parseLedgerSigningPayload(res.ledgerPayload))
@@ -204,10 +250,11 @@ export function KeystoneSignPage() {
         } else {
           throw new Error('Unknown hardware signing device')
         }
-        setFeeZats(res.feeZats ?? null)
+        setFeeZats(res.feeZats)
         setBuiltAmount(res.amount ?? req.amount)
         setStep(res.vendor === 'ledger' ? 'ledger-review' : 'show-qr')
       } catch (e) {
+        if (invalidated.current) return
         const raw = e instanceof Error ? e.message : ''
         if (raw.includes('SAPLING_UNSUPPORTED')) {
           setRetryable(false)
@@ -224,7 +271,7 @@ export function KeystoneSignPage() {
         setStep('failed')
       }
     },
-    [requestId]
+    [requestId, expire]
   )
 
   useEffect(() => {
@@ -233,6 +280,7 @@ export function KeystoneSignPage() {
 
     const start = async () => {
       const req = requestId ? await readHardwareSignRequest(requestId) : null
+      if (invalidated.current) return
       if (!req) {
         setStep('invalid')
         return
@@ -256,7 +304,12 @@ export function KeystoneSignPage() {
   const submitHardwareSignature = async (
     signed: { signedPcztBase64: string } | { signatures: LedgerPcztSignatures }
   ) => {
-    if (!request || !requestId) return
+    if (!request || !requestId || invalidated.current || submissionStarted.current) return
+    if (!isHardwareSignRequestFresh(request)) {
+      expire()
+      return
+    }
+    submissionStarted.current = true
     setScanError(null)
     setStep('broadcasting')
 
@@ -269,6 +322,9 @@ export function KeystoneSignPage() {
     let transactionId: string | null = null
     let broadcastHash: string | null = null
     try {
+      if (!feeZec) {
+        throw new Error('Network fee estimate is unavailable. Review the transaction again.')
+      }
       const addResponse = await chrome.runtime.sendMessage({
         type: 'ADD_TRANSACTION',
         accountKey,
@@ -463,6 +519,11 @@ export function KeystoneSignPage() {
       recordHardwareSignFailure(request.kind, 'broadcast')
       recordHardwareOperationOutcome(request, requestId, 'failed')
       reportDappResult(request, { success: false, error: classified.technicalMessage })
+      submissionStarted.current = false
+      if (!isHardwareSignRequestFresh(request)) {
+        expire()
+        return
+      }
       setError(classified.userMessage)
       setStep('failed')
     }
@@ -478,7 +539,13 @@ export function KeystoneSignPage() {
   }
 
   const handleLedgerSign = async (transport: LedgerTransport) => {
-    if (!ledgerPayload || !request) return
+    if (!ledgerPayload || !request || invalidated.current) return
+    if (!isHardwareSignRequestFresh(request)) {
+      expire()
+      return
+    }
+    const controller = new AbortController()
+    ledgerAbort.current = controller
     setDeviceMessage(
       transport === 'usb'
         ? 'Select your Ledger in the browser dialog'
@@ -487,17 +554,26 @@ export function KeystoneSignPage() {
     setStep('ledger-device')
     try {
       // Browser device prompts must start from the button's user gesture.
-      const devicePromise = discoverLedger(transport)
+      const devicePromise = discoverLedger(transport, controller.signal)
       const device = await devicePromise
+      controller.signal.throwIfAborted()
       const signatures = await signLedgerPczt({
         transport,
         payload: ledgerPayload,
         device,
+        signal: controller.signal,
         onInteraction: () => setDeviceMessage('Review and approve on your Ledger')
       })
+      controller.signal.throwIfAborted()
+      if (invalidated.current) return
+      if (!isHardwareSignRequestFresh(request)) {
+        expire()
+        return
+      }
       saveLedgerTransport(request.walletId, transport)
       await submitHardwareSignature({ signatures })
     } catch (cause) {
+      if (invalidated.current || controller.signal.aborted) return
       if (
         request.fundingSource === 'transparent' &&
         !transparentInputRebuiltRef.current &&
@@ -515,6 +591,8 @@ export function KeystoneSignPage() {
       recordHardwareSignFailure(request.kind, 'sign')
       recordHardwareOperationOutcome(request, requestId, 'failed')
       setStep('failed')
+    } finally {
+      if (ledgerAbort.current === controller) ledgerAbort.current = null
     }
   }
 
@@ -544,30 +622,37 @@ export function KeystoneSignPage() {
       )}
 
       {step === 'building' && (
-        <div className="page-content space-y-5 pt-5">
-          <HardwareSigningProgress title="Building transaction">
-            {request ? (
-              <HardwareTransactionSummary
-                request={request}
-                amountPending={request.maxTransfer === true && !builtAmount}
-              />
-            ) : (
-              <div className="space-y-4">
-                <div className="flex flex-col items-center gap-3 py-4">
-                  <Skeleton className="size-12 rounded-full" />
-                  <Skeleton className="h-8 w-32" />
+        <>
+          <div className="page-content space-y-5 pt-5">
+            <HardwareSigningProgress title="Building transaction">
+              {request ? (
+                <HardwareTransactionSummary
+                  request={request}
+                  amountPending={request.maxTransfer === true && !builtAmount}
+                />
+              ) : (
+                <div className="space-y-4">
+                  <div className="flex flex-col items-center gap-3 py-4">
+                    <Skeleton className="size-12 rounded-full" />
+                    <Skeleton className="h-8 w-32" />
+                  </div>
+                  <div className="space-y-3 rounded-lg bg-card p-4">
+                    <Skeleton className="h-4 w-full" />
+                    <Skeleton className="h-4 w-3/4" />
+                  </div>
                 </div>
-                <div className="space-y-3 rounded-lg bg-card p-4">
-                  <Skeleton className="h-4 w-full" />
-                  <Skeleton className="h-4 w-3/4" />
-                </div>
+              )}
+              <div className="flex justify-center pt-2">
+                <Skeleton className="size-52 rounded-lg" />
               </div>
-            )}
-            <div className="flex justify-center pt-2">
-              <Skeleton className="size-52 rounded-lg" />
-            </div>
-          </HardwareSigningProgress>
-        </div>
+            </HardwareSigningProgress>
+          </div>
+          <div className="page-footer">
+            <Button variant="outline" className="w-full" onClick={() => void cancelPending()}>
+              Cancel
+            </Button>
+          </div>
+        </>
       )}
 
       {step === 'show-qr' && request && pcztBytes && (
@@ -591,7 +676,11 @@ export function KeystoneSignPage() {
               <Icon icon="lucide:camera" width={16} height={16} className="mr-2" />
               Scan Signed Transaction
             </Button>
-            <Button variant="outline" onClick={() => window.close()} className="w-full h-[45px]">
+            <Button
+              variant="outline"
+              onClick={() => void cancelPending()}
+              className="w-full h-[45px]"
+            >
               Cancel
             </Button>
           </div>
@@ -636,7 +725,7 @@ export function KeystoneSignPage() {
                   Sign via {transport === 'usb' ? 'USB' : 'Bluetooth'}
                 </Button>
               ))}
-            <Button className="w-full" variant="ghost" onClick={() => window.close()}>
+            <Button className="w-full" variant="ghost" onClick={() => void cancelPending()}>
               Cancel
             </Button>
           </div>
@@ -644,15 +733,22 @@ export function KeystoneSignPage() {
       )}
 
       {step === 'ledger-device' && (
-        <div className="page-content flex flex-col items-center justify-center gap-4 text-center">
-          <Icon
-            icon="lucide:loader-2"
-            width={32}
-            height={32}
-            className="animate-spin text-primary"
-          />
-          <p className="text-sm">{deviceMessage}</p>
-        </div>
+        <>
+          <div className="page-content flex flex-col items-center justify-center gap-4 text-center">
+            <Icon
+              icon="lucide:loader-2"
+              width={32}
+              height={32}
+              className="animate-spin text-primary"
+            />
+            <p className="text-sm">{deviceMessage}</p>
+          </div>
+          <div className="page-footer">
+            <Button variant="outline" className="w-full" onClick={() => void cancelPending()}>
+              Cancel
+            </Button>
+          </div>
+        </>
       )}
 
       {step === 'scan' && (

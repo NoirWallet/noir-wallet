@@ -2,6 +2,7 @@ import type { Network } from '@/types'
 
 export interface ConfidentialFundingNetworkConfig {
   readonly oneClickApiUrl: string
+  readonly oneClickDirectApiUrl: string
   readonly rheaSwapApiUrl: string
 }
 
@@ -25,9 +26,10 @@ export function getConfidentialFundingNetworkConfig(
   if (network !== 'mainnet') return null
   return Object.freeze({
     oneClickApiUrl: parseServiceUrl(
-      __CONFIDENTIAL_ONE_CLICK_API_URL__ || 'https://1click.chaindefuser.com/v0',
+      __CONFIDENTIAL_ONE_CLICK_API_URL__ || 'https://api.rhea.finance/proxy/1click/v0',
       'Confidential Mainnet 1Click URL'
     ),
+    oneClickDirectApiUrl: 'https://1click.chaindefuser.com/v0',
     rheaSwapApiUrl: 'https://api.rhea.finance'
   })
 }
@@ -55,9 +57,6 @@ export interface IntentsAppFee {
 /** Swap app fee: 0.35% (35 bps), collected to noir's swap account. */
 export const NOIR_SWAP_APP_FEES: IntentsAppFee[] = [{ recipient: 'noir_swap.near', fee: 35 }]
 export const NOIR_SWAP_REFERRAL = 'noir_swap'
-
-/** Lending app fee disabled for now (0 bps); recipient prewired for easy enablement. */
-export const NOIR_LENDING_APP_FEES: IntentsAppFee[] = [{ recipient: 'noir_lending.near', fee: 0 }]
 
 const CONFIDENTIAL_TRANSFER_ESTIMATES: Readonly<Record<string, string>> = Object.freeze({
   eip155: '3-5 min'

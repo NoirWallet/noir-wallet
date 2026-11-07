@@ -6,7 +6,7 @@ import { evmWalletClient } from '@/popup/services/evm-wallet-client'
 import type { Network } from '@/types'
 import { Button } from '../ui/button'
 import { useSettingsStore } from '@/store/settings-store'
-import { useUserEvmAssets } from '@/popup/hooks/useUserEvmAssets'
+import { useActivityEvmAssets } from '@/popup/hooks/useActivityEvmAssets'
 import type { AccountNetworkView } from '@/popup/services/account-networks-client'
 import { formatChainAddressExplorerUrl } from '@/popup/services/chain-explorer'
 import { ListSkeleton } from '../ui/skeleton'
@@ -37,6 +37,7 @@ interface MultichainActivityPanelProps {
   readonly accountNetworks?: readonly AccountNetworkView[]
   readonly onItemClick?: (item: ActivityItem) => void
   readonly filterAssetId?: string
+  readonly filterDomain?: 'public' | 'private'
   readonly showToolbar?: boolean
   readonly maxItems?: number
   readonly compact?: boolean
@@ -93,6 +94,7 @@ export function MultichainActivityPanel({
   accountNetworks = EMPTY_ACCOUNT_NETWORKS,
   onItemClick,
   filterAssetId,
+  filterDomain,
   showToolbar = true,
   maxItems,
   compact = false,
@@ -118,14 +120,21 @@ export function MultichainActivityPanel({
   )
   const setPortfolioChainSelection = useSettingsStore(state => state.setPortfolioChainSelection)
   const endpointSettings = useSettingsStore(state => state.chainEndpointSettings)
-  const userEvmAssets = useUserEvmAssets()
+  const { userAssets: userEvmAssets, detectedAssets: detectedEvmAssets } = useActivityEvmAssets()
   const filteredChainId = filterAssetId
     ? portfolio?.assets.find(asset => asset.asset.id === filterAssetId)?.asset.chainId
     : undefined
 
   const { assetMetadata, chainMetadata } = useMemo(
-    () => buildActivityPresentationCatalog({ network, endpointSettings, userEvmAssets, portfolio }),
-    [endpointSettings, network, portfolio, userEvmAssets]
+    () =>
+      buildActivityPresentationCatalog({
+        network,
+        endpointSettings,
+        userEvmAssets,
+        detectedEvmAssets,
+        portfolio
+      }),
+    [endpointSettings, network, portfolio, userEvmAssets, detectedEvmAssets]
   )
   const executionAddressModes = useMemo(
     () => buildActivityExecutionAddressModes(accountNetworks),
@@ -144,8 +153,11 @@ export function MultichainActivityPanel({
     [selectableAccountNetworks]
   )
   const selectedChainIds = useMemo(
-    () => resolveAvailableActivityChainSelection(availableChainIds, persistedChainSelection),
-    [availableChainIds, persistedChainSelection]
+    () =>
+      filteredChainId && availableChainIds.includes(filteredChainId)
+        ? [filteredChainId]
+        : resolveAvailableActivityChainSelection(availableChainIds, persistedChainSelection),
+    [availableChainIds, filteredChainId, persistedChainSelection]
   )
   const selectedChainKey = selectedChainIds.join(',')
 
@@ -154,7 +166,8 @@ export function MultichainActivityPanel({
     olderRequestSequence.current += 1
     setOlderStatus('ready')
     setStatus('loading')
-    const chainIds = selectedChainKey ? selectedChainKey.split(',') : undefined
+    const chainIds =
+      !focusTransactionId && selectedChainKey ? selectedChainKey.split(',') : undefined
     let localModelAvailable = false
     try {
       const local = await evmWalletClient.getActivity(
@@ -176,7 +189,13 @@ export function MultichainActivityPanel({
       const refreshed = await evmWalletClient.getActivity(
         'refresh',
         'all',
-        filteredChainId ? { chainIds: [filteredChainId] } : chainIds ? { chainIds } : undefined
+        focusTransactionId
+          ? undefined
+          : filteredChainId
+            ? { chainIds: [filteredChainId] }
+            : chainIds
+              ? { chainIds }
+              : undefined
       )
       if (request !== requestSequence.current) return
       if (!isActivityModelForScope(refreshed, walletId, accountId)) {
@@ -189,7 +208,7 @@ export function MultichainActivityPanel({
       if (request !== requestSequence.current) return
       setStatus(localModelAvailable ? 'ready' : 'error')
     }
-  }, [accountId, filteredChainId, selectedChainKey, walletId])
+  }, [accountId, filteredChainId, focusTransactionId, selectedChainKey, walletId])
 
   useEffect(() => {
     const retainedModel = isActivityModelForScope(initialModel, walletId, accountId)
@@ -201,7 +220,10 @@ export function MultichainActivityPanel({
       setStatus('ready')
       return
     }
-    if (retainedModel) {
+    if (
+      retainedModel &&
+      (!focusTransactionId || retainedModel.items.some(item => item.id === focusTransactionId))
+    ) {
       setStatus('ready')
       return
     }
@@ -211,7 +233,7 @@ export function MultichainActivityPanel({
       requestSequence.current += 1
       olderRequestSequence.current += 1
     }
-  }, [walletId, accountId, network, initialModel, load])
+  }, [walletId, accountId, network, initialModel, focusTransactionId, load])
 
   useEffect(() => {
     if (!walletId || !accountId) return
@@ -257,10 +279,11 @@ export function MultichainActivityPanel({
     setVisibleLimit(ACTIVITY_DISPLAY_PAGE_SIZE)
     setOlderStatus('ready')
     olderRequestSequence.current += 1
-  }, [walletId, accountId, network, selectedChainKey, filterAssetId])
+  }, [walletId, accountId, network, selectedChainKey, filterAssetId, filterDomain])
   const selectedAddress = selectedNetwork?.addresses.find(address => address.preferredForReceive)
   const selectedHistoryAddress =
-    accountMode === 'private' && selectedNetwork?.privateExecutionAddress
+    (filterDomain === 'private' || (!filterDomain && accountMode === 'private')) &&
+    selectedNetwork?.privateExecutionAddress
       ? selectedNetwork.privateExecutionAddress
       : selectedAddress?.value
   const fullHistoryUrl =
@@ -272,17 +295,18 @@ export function MultichainActivityPanel({
       filterActivityItems({
         items: visibleModel?.items ?? [],
         selectedChainIds,
-        assetId: filterAssetId
+        assetId: filterAssetId,
+        domain: filterDomain
       }),
-    [filterAssetId, selectedChainIds, visibleModel]
+    [filterAssetId, filterDomain, selectedChainIds, visibleModel]
   )
   useEffect(() => {
     if (!focusTransactionId || !onItemClick) return
-    const item = visibleItems.find(candidate => candidate.id === focusTransactionId)
+    const item = visibleModel?.items.find(candidate => candidate.id === focusTransactionId)
     if (!item || focusedTransactionId.current === focusTransactionId) return
     focusedTransactionId.current = focusTransactionId
     onItemClick(item)
-  }, [focusTransactionId, onItemClick, visibleItems])
+  }, [focusTransactionId, onItemClick, visibleModel])
   const pendingEvmChainKey = useMemo(
     () =>
       [
@@ -387,11 +411,15 @@ export function MultichainActivityPanel({
         )
         return (
           <EvmNonceRecoveryBanner
-            key={`${accountId}:${chainId}:${accountMode ?? 'main'}`}
+            key={`${accountId}:${chainId}:${filterDomain ?? accountMode ?? 'main'}`}
             accountId={accountId}
             chainId={chainId}
             networkName={chainMetadata.get(chainId)?.displayName ?? 'EVM'}
-            executionMode={accountMode === 'private' ? 'private' : 'main'}
+            executionMode={
+              filterDomain === 'private' || (!filterDomain && accountMode === 'private')
+                ? 'private'
+                : 'main'
+            }
             feeSymbol={nativeAsset?.metadata.symbol ?? 'native'}
             feeDecimals={nativeAsset?.metadata.decimals ?? 18}
             activityItems={visibleModel?.items ?? []}
