@@ -47,7 +47,6 @@ import {
 } from '@/lib/runtime-network'
 import { inspectZcashTransparentAccountHistory } from '@/core/wallet/zcash-account-history'
 import { prepareTransparentSpend } from '@/core/wallet/transparent-spend-preflight'
-import { sanitizeMarginalFeeZats } from '@/core/zcash/fee-policy'
 import { closeAllPopupWindows } from './window-manager'
 import { pendingRequestsManager } from './pending-requests'
 import { getApprovalContext, estimateApprovalFee } from './approval-context'
@@ -99,7 +98,8 @@ import { isIntentsSettledTransaction } from '@/lib/cross-chain-transaction'
 import { buildAccountKey, type AccountScope } from '@/core/wallet/account-scope'
 import {
   applyZeroIndexerOptionsToActiveWorker,
-  forwardKeyringRpcToOffscreen
+  forwardKeyringRpcToOffscreen,
+  getWorkerClient
 } from '@/core/worker/client'
 import {
   addCustomZeroIndexerNode,
@@ -155,6 +155,15 @@ import {
 } from './evm-transaction-monitor'
 import { createBackgroundEvmPortfolioCoordinator } from './evm-portfolio'
 import { createBackgroundPortfolioCoordinator } from './portfolio'
+import { noirPublicRuntime, PUBLIC_TRANSACTION_MONITOR_ALARM } from './noir-protocol/public-runtime'
+import {
+  capturePublicContext,
+  capturePublicEvmContext,
+  publicInternalOrigin,
+  assertPublicContext
+} from './noir-protocol/public-context'
+import { PUBLIC_SESSION_METHODS } from './multichain-session-dapp-handler'
+import { selectPublicAccount } from './noir-protocol/public-account-selection'
 import { createBackgroundActivityCoordinator } from './activity'
 import {
   createBackgroundAssetMarketHistoryService,
@@ -229,7 +238,7 @@ import { createBackgroundAccountNetworksCoordinator } from './account-networks'
 import { WalletDAppConnectionCoordinator } from './wallet-dapp-connection'
 import { createBackgroundBitcoinAddressBalancesCoordinator } from './bitcoin-address-balances'
 import { createBackgroundEvmDAppHandler } from './evm-dapp'
-import { handleEvmDAppNetworkSwitch } from './evm-dapp-network-switch'
+import { EvmDAppNetworkSwitchCoordinator } from './evm-dapp-network-switch'
 import {
   type ParsedEip1193ChainRequest,
   Eip1193ProviderError,
@@ -256,7 +265,11 @@ import {
   BackgroundMultichainSessionDAppHandler,
   toCaip25ErrorShape
 } from './multichain-session-dapp-handler'
-import { caip25SessionAllowsMethod, type Caip25RuntimeMethod } from '@/core/dapp/caip25'
+import {
+  Caip25ProviderError,
+  caip25SessionAllowsMethod,
+  type Caip25RuntimeMethod
+} from '@/core/dapp/caip25'
 import {
   resolveNearRuntimeNetworkConfig,
   resolveSolanaRuntimeNetworkConfig
@@ -388,6 +401,22 @@ if (__MULTICHAIN_CONFORMANCE_RPC_ENABLED__) {
 }
 
 const runtimeNetworkReady = initializeRuntimeNetwork()
+
+noirPublicRuntime.setIdentityReadiness(restoreBackgroundZcashRuntimeFromSession)
+noirPublicRuntime.setPaymentExecutor(async payment => {
+  const { context } = payment
+  await handleBackgroundZcashTx({
+    action: 'send',
+    walletId: context.walletId,
+    accountId: context.accountId,
+    accountKey: buildAccountKey(context.network, context.walletId, context.accountId),
+    transactionId: payment.transactionId,
+    sendParams: { to: payment.depositAddress, amount: payment.amount, fundingSource: 'shielded' },
+    marginalFeeZats: payment.marginalFeeZats,
+    feeQuoteId: payment.feeQuoteId,
+    submissionDeadline: payment.expiresAt
+  })
+})
 
 const evmFeatureRuntimePolicy = resolveEvmFeatureRuntimePolicy(__ENABLED_CHAIN_FEATURE_FLAGS__)
 const bitcoinFeatureRuntimePolicy = resolveBitcoinFeatureRuntimePolicy(
@@ -524,6 +553,7 @@ let solanaDAppHandler: ReturnType<typeof createBackgroundSolanaDAppHandler> | nu
 let nearDAppHandler: ReturnType<typeof createBackgroundNearDAppHandler> | null = null
 let multichainSessionDAppHandler: BackgroundMultichainSessionDAppHandler | null = null
 const chainEndpointSettingsCoordinator = new ChainEndpointSettingsCoordinator()
+const evmDAppNetworkSwitchCoordinator = new EvmDAppNetworkSwitchCoordinator()
 
 function refreshAssetPrices(assetId?: string) {
   const service = assetPriceService
@@ -568,8 +598,37 @@ const walletDAppConnection = new WalletDAppConnectionCoordinator({
   loadActiveAccount: () => accountNetworksCoordinator.readActiveAccount(),
   getEvmChainId: () => evmDAppHandler.getCaip2ChainId(),
   getZcashChainId: () => getZcashChainId(DEFAULT_NETWORK),
-  connectEvm: origin => evmDAppHandler.connectCurrentAccountToDApp(origin),
+  supportsSessionChain: chainId => multichainSessionDAppHandler?.supportsChain(chainId) ?? false,
+  connectEvm: origin =>
+    accountContextTransition.runActiveOperation(() =>
+      evmDAppHandler.connectCurrentAccountToDApp(origin)
+    ),
   connectZcash: origin => dappHandler.connectCurrentAccountToDApp(origin),
+  connectSession: (origin, chainIds, account) =>
+    dappManager.addCaip25AuthorizedAccount(origin, chainIds, account),
+  notifyChainAccountsChanged: async (origin, chainIds) => {
+    if (chainIds.includes(evmDAppHandler.getCaip2ChainId())) {
+      await evmDAppHandler.notifyAccountsChanged(origin)
+    }
+    if (chainIds.includes(getBitcoinChainId(DEFAULT_NETWORK))) {
+      await bitcoinDAppHandler.notifyAccountsChanged(origin)
+    }
+    if (
+      solanaDAppHandler &&
+      chainIds.includes(resolveSolanaRuntimeNetworkConfig(DEFAULT_NETWORK).chainId)
+    ) {
+      await solanaDAppHandler.notifyAccountsChanged(origin)
+    }
+    if (
+      nearDAppHandler &&
+      chainIds.includes(resolveNearRuntimeNetworkConfig(DEFAULT_NETWORK).chainId)
+    ) {
+      await nearDAppHandler.notifyAccountsChanged(origin)
+    }
+  },
+  notifySessionChanged: async origin => {
+    await multichainSessionDAppHandler?.notifySessionChanged(origin)
+  },
   runActiveOperation: async operation => {
     await rehydrateWalletStore()
     await multichainRuntimeReady
@@ -591,6 +650,7 @@ async function notifyDAppExecutionModeChanged(scope: DAppExecutionModeScope): Pr
   dappHandler.cancelPendingApprovalsForContext(scope.keyDomainId, scope.accountId, 'evm')
   await multichainRuntimeReady
   await evmDAppHandler.notifyAccountsChanged()
+  await multichainSessionDAppHandler?.notifyAllSessionsChanged()
 }
 
 const dappExecutionModeTransitionCoordinator = new DAppExecutionModeTransitionCoordinator(
@@ -633,11 +693,53 @@ async function dispatchDAppChainRequest(
     readonly params?: readonly unknown[] | Readonly<Record<string, unknown>>
   },
   origin: string,
-  tabInfo: { readonly title?: string; readonly favIconUrl?: string; readonly pageUrl?: string }
+  tabInfo: { readonly title?: string; readonly favIconUrl?: string; readonly pageUrl?: string },
+  caip27Scope?: string
 ): Promise<unknown> {
+  if (PUBLIC_SESSION_METHODS.has(request.method)) {
+    if (!caip27Scope || (chainId !== 'evm' && chainId !== 'zcash'))
+      throw new Error('Public requires an authorized CAIP-27 scope')
+    const context =
+      chainId === 'evm'
+        ? await capturePublicEvmContext(origin, caip27Scope)
+        : await capturePublicContext(origin)
+    const params = Array.isArray(request.params) ? request.params : []
+    const approve = async (
+      action:
+        | 'publicActivate'
+        | 'publicTransaction'
+        | 'signMessage'
+        | 'evmMessage'
+        | 'evmTransaction',
+      data: unknown
+    ) => {
+      const decision = await dappHandler.requestExternalApproval(origin, action, {
+        ...(data as object),
+        ...(tabInfo.favIconUrl ? { favicon: tabInfo.favIconUrl } : {})
+      })
+      if (!decision.approved) throw new Caip25ProviderError(4001, 'User rejected the request.')
+      return decision
+    }
+    const result =
+      request.method === 'noir_getPublicAccount'
+        ? await noirPublicRuntime.getAccount(context)
+        : request.method === 'noir_getPublicAssets'
+          ? await noirPublicRuntime.getAssets(context)
+          : request.method === 'noir_getPublicTransaction'
+            ? await noirPublicRuntime.getTransaction(context, params[0])
+            : request.method === 'noir_activatePublicAccount'
+              ? await noirPublicRuntime.activate(context, approve, approve)
+              : request.method === 'noir_sendPublicTransaction'
+                ? await noirPublicRuntime.send(context, params[0], approve)
+                : request.method === 'noir_getPublicKey'
+                  ? await noirPublicRuntime.getPublicKey(context)
+                  : await noirPublicRuntime.signMessage(context, params[0], approve)
+    await assertPublicContext(context)
+    return result
+  }
   await assertCaip25MethodPermission(chainId, request.method, origin)
   if (chainId === 'evm') {
-    return evmDAppHandler.request(
+    const result = await evmDAppHandler.request(
       {
         method: request.method as EvmDAppRuntimeMethod,
         ...(request.params === undefined ? {} : { params: request.params })
@@ -645,6 +747,14 @@ async function dispatchDAppChainRequest(
       origin,
       tabInfo
     )
+    if (
+      request.method === 'eth_requestAccounts' ||
+      request.method === 'wallet_requestPermissions' ||
+      request.method === 'wallet_revokePermissions'
+    ) {
+      await multichainSessionDAppHandler?.notifySessionChanged(origin)
+    }
+    return result
   }
   const params = Array.isArray(request.params) ? request.params : undefined
   if (chainId === 'bitcoin') {
@@ -679,9 +789,11 @@ async function dispatchDAppChainRequest(
       tabInfo
     )
   }
-  return request.method === 'zcash_disconnect'
-    ? handleDAppDisconnect(origin)
-    : handleDAppRequest(request, origin, tabInfo)
+  if (request.method === 'zcash_disconnect') {
+    await handleDAppDisconnect(origin)
+    return null
+  }
+  return handleDAppRequest(request, origin, tabInfo)
 }
 
 const CAIP25_CONNECTION_METHODS = new Set([
@@ -704,6 +816,25 @@ async function assertCaip25MethodPermission(
   method: string,
   origin: string
 ): Promise<void> {
+  if (
+    family === 'zcash' &&
+    method === 'zcash_getAccounts' &&
+    (await dappManager.getAuthorization(origin)).accounts.length === 0
+  )
+    return
+  // Protocol business calls use the ordinary Zcash grant. They remain outside
+  // CAIP-25; wallet_invokeMethod rejects them before this dispatch.
+  if (
+    family === 'zcash' &&
+    [
+      'zcash_getPublicAccount',
+      'zcash_activatePublicAccount',
+      'zcash_getPublicAssets',
+      'zcash_sendPublicTransaction',
+      'zcash_getPublicTransaction'
+    ].includes(method)
+  )
+    return
   if (CAIP25_CONNECTION_METHODS.has(method)) return
   const chainId =
     family === 'zcash'
@@ -771,33 +902,37 @@ async function handleEvmDAppNetworkRequest(
     }
   }
   await validateRequest()
-  await handleEvmDAppNetworkSwitch(requested, origin, action, {
-    readSettings: () => chainEndpointSettingsCoordinator.read(),
-    validateRequest,
-    commitCustomNetwork: async network => {
-      await updateChainEndpointSettings(async () => {
-        await validateRequest()
-        return chainEndpointSettingsCoordinator.saveCustomEvmNetwork(
-          network,
-          undefined,
-          validateRequest
-        )
-      })
-    },
-    commitActiveChain: (chainId, approvalOrigin) =>
-      commitEvmDAppActiveChain(chainId, approvalOrigin, validateRequest),
-    requestApproval: (approvalOrigin, approvalAction, data) =>
-      dappHandler.requestExternalApproval(approvalOrigin, approvalAction, {
-        ...(typeof data === 'object' && data !== null && !Array.isArray(data) ? data : {}),
-        ...(tabInfo.favIconUrl === undefined ? {} : { favicon: tabInfo.favIconUrl }),
-        ...(tabInfo.pageUrl === undefined ? {} : { faviconPageUrl: tabInfo.pageUrl })
-      })
-  })
+  await evmDAppNetworkSwitchCoordinator.run(
+    requested,
+    origin,
+    action,
+    JSON.stringify([accountIdentity, sourceChainId, authorization, unlockEpoch]),
+    {
+      readSettings: () => chainEndpointSettingsCoordinator.read(),
+      validateRequest,
+      commitCustomNetwork: async network => {
+        await updateChainEndpointSettings(async () => {
+          await validateRequest()
+          return chainEndpointSettingsCoordinator.saveCustomEvmNetwork(
+            network,
+            undefined,
+            validateRequest
+          )
+        })
+      },
+      commitActiveChain: chainId => commitEvmDAppActiveChain(chainId, validateRequest),
+      requestApproval: (approvalOrigin, approvalAction, data) =>
+        dappHandler.requestExternalApproval(approvalOrigin, approvalAction, {
+          ...(typeof data === 'object' && data !== null && !Array.isArray(data) ? data : {}),
+          ...(tabInfo.favIconUrl === undefined ? {} : { favicon: tabInfo.favIconUrl }),
+          ...(tabInfo.pageUrl === undefined ? {} : { faviconPageUrl: tabInfo.pageUrl })
+        })
+    }
+  )
 }
 
 function commitEvmDAppActiveChain(
   chainId: string,
-  origin: string,
   validateRequest: () => Promise<void>
 ): Promise<void> {
   const previousReadiness = multichainRuntimeReady
@@ -807,13 +942,11 @@ function commitEvmDAppActiveChain(
     .then(() =>
       accountContextTransition.runActiveOperation(async () => {
         await validateRequest()
-        const sourceChainId = evmDAppHandler.getCaip2ChainId()
         const saved = await chainEndpointSettingsCoordinator.selectActiveEvmChain(
           chainId,
           validateRequest
         )
         reconfiguring = true
-        await dappManager.carryEvmAuthorizationToChain(origin, sourceChainId, chainId)
         await reloadMultichainRuntime(saved)
       })
     )
@@ -955,6 +1088,7 @@ async function reloadMultichainRuntime(
       : null
   evmTransferController = evmTransferRuntime?.activeController ?? null
   evmTransferRouter = evmTransferRuntime?.router ?? null
+  noirPublicRuntime.setEvmPaymentRouter(evmTransferRouter)
   confidentialFundingCoordinator = evmFeatureRuntimePolicy.newOperationsEnabled
     ? createBackgroundConfidentialFundingCoordinator(
         catalog,
@@ -1036,6 +1170,8 @@ async function reloadMultichainRuntime(
     analytics: trackEvent,
     network: DEFAULT_NETWORK,
     evmNetworks: catalog,
+    activeChainIds: async () =>
+      (await accountNetworksCoordinator.readActiveAccount())?.chainIds ?? [],
     manager: dappManager,
     approval: dappHandler,
     zcash: dappHandler,
@@ -1062,7 +1198,10 @@ async function reloadMultichainRuntime(
             iconChain: 'near'
           }
         }),
-    dispatch: dispatchDAppChainRequest
+    dispatch: (family, request, origin, tabInfo, scope) =>
+      dispatchDAppChainRequest(family, request, origin, tabInfo, scope),
+    selectPublicAccount: (origin, scopes) =>
+      selectPublicAccount(origin, scopes, context => noirPublicRuntime.getAccount(context))
   })
   assetPriceService = createBackgroundAssetPriceService(
     userAssets.definitions,
@@ -1564,6 +1703,7 @@ const backgroundNetworkServicesReady = multichainStartupReady
         ? transactionMonitor.init()
         : chrome.alarms.clear('transaction-monitor-alarm').then(() => undefined),
       zcashTxMonitor.init(),
+      noirPublicRuntime.resume().catch(() => {}),
       rheaSwapTransactionMonitor?.init().catch(error => {
         console.warn('[RHEA Swap Monitor] Startup poll failed:', error)
       }) ?? Promise.resolve()
@@ -1822,6 +1962,10 @@ async function isWalletUiContextOpen(): Promise<boolean> {
 void trustedStorageAccessReady.then(() => initializeAnalyticsReporting()).catch(() => {})
 
 chrome.alarms.onAlarm.addListener(alarm => {
+  if (alarm.name === PUBLIC_TRANSACTION_MONITOR_ALARM) {
+    void runtimeNetworkReady.then(() => noirPublicRuntime.resume()).catch(() => {})
+    return
+  }
   if (alarm.name === ANALYTICS_OUTBOX_ALARM) {
     void handleAnalyticsAlarm(alarm.name).catch(() => {})
     return
@@ -2127,9 +2271,14 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
             isRuntimeRecord(Reflect.get(request.params, 'scopes'))
               ? (Reflect.get(request.params, 'scopes') as Record<string, unknown>)
               : null
+          const activeAccount = await accountNetworksCoordinator.readActiveAccount()
           const needsZcashRuntime = Boolean(
             requestedScopes &&
-            Object.prototype.hasOwnProperty.call(requestedScopes, getZcashChainId(DEFAULT_NETWORK))
+            Object.prototype.hasOwnProperty.call(
+              requestedScopes,
+              getZcashChainId(DEFAULT_NETWORK)
+            ) &&
+            activeAccount?.chainIds.includes(getZcashChainId(DEFAULT_NETWORK))
           )
           if (unlockRequired) await promptUnlock({ restoreZcashRuntime: needsZcashRuntime })
         }
@@ -3260,6 +3409,43 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
             error instanceof Error && error.message.length <= 256
               ? error.message
               : 'Intents Token catalog could not be refreshed'
+        })
+      )
+    return true
+  }
+
+  if (
+    message.type === 'PUBLIC_GET_ACCOUNT' ||
+    message.type === 'PUBLIC_GET_ASSETS' ||
+    message.type === 'PUBLIC_ACTIVATE_ACCOUNT'
+  ) {
+    void (async () => {
+      await runtimeNetworkReady
+      if (
+        message.type === 'PUBLIC_ACTIVATE_ACCOUNT' &&
+        !(await restoreBackgroundZcashRuntimeFromSession())
+      )
+        throw new Error('Unlock the wallet to continue')
+      const origin = publicInternalOrigin()
+      const context = await capturePublicContext(origin, true)
+      if (message.type === 'PUBLIC_GET_ASSETS')
+        return {
+          success: true,
+          result: await noirPublicRuntime.getAssets(context, message.refresh !== false)
+        }
+      const account =
+        message.type === 'PUBLIC_GET_ACCOUNT'
+          ? await noirPublicRuntime.getAccount(context, false)
+          : await noirPublicRuntime.activate(context, (action, data) =>
+              dappHandler.requestExternalApproval(origin, action, data)
+            )
+      return { success: true, account }
+    })()
+      .then(sendResponse)
+      .catch(error =>
+        sendResponse({
+          success: false,
+          error: error instanceof Error ? error.message : 'Public operation failed'
         })
       )
     return true
@@ -4416,10 +4602,12 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
         withTxSyncPause(activeWalletId, async () => {
           await measure('background-prepare-wallet-core', prepareWalletCoreForTx)
           if (message.type === 'ESTIMATE_ZCASH_SHIELD_FEE') {
-            const feeZats = await measure('background-estimate-shield-fee', () =>
-              backgroundZcashWalletRuntime.estimateShieldFee(message.marginalFeeZats)
+            return measure('background-estimate-shield-fee', () =>
+              backgroundZcashWalletRuntime.estimateShieldFee(
+                message.marginalFeeZats,
+                message.feeQuoteId
+              )
             )
-            return { feeZats }
           }
           if (message.type === 'ESTIMATE_ZCASH_MAX_TRANSFER') {
             return measure('background-estimate-maximum', () =>
@@ -4428,21 +4616,22 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
                 message.memo,
                 message.marginalFeeZats,
                 message.fundingSource,
-                debugRequestId
+                debugRequestId,
+                message.feeQuoteId
               )
             )
           }
-          const feeZats = await measure('background-estimate-fee', () =>
+          return measure('background-estimate-fee', () =>
             backgroundZcashWalletRuntime.estimateTransferFee(
               message.to,
               message.amount,
               message.memo,
               message.marginalFeeZats,
               message.fundingSource,
-              debugRequestId
+              debugRequestId,
+              message.feeQuoteId
             )
           )
-          return { feeZats }
         })
       )
     )
@@ -4451,6 +4640,16 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
         sendResponse({
           error: error instanceof Error ? error.message : 'Unable to estimate Zcash transfer'
         })
+      )
+    return true
+  }
+
+  if (message.type === 'GET_ZCASH_FEE_QUOTE') {
+    accountContextTransition
+      .runActiveOperation(() => backgroundZcashWalletRuntime.getFeeQuote())
+      .then(feeQuote => sendResponse({ success: true, feeQuote }))
+      .catch(error =>
+        sendResponse({ error: error instanceof Error ? error.message : String(error) })
       )
     return true
   }
@@ -4798,8 +4997,12 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
       sendResponse({ error: 'Unauthorized approval fee request' })
       return true
     }
-    estimateApprovalFee(message.requestId)
-      .then(fee => sendResponse({ fee }))
+    estimateApprovalFee(message.requestId, {
+      marginalFeeZats: message.marginalFeeZats,
+      feeQuoteId: message.feeQuoteId,
+      feeTier: message.feeTier
+    })
+      .then(result => sendResponse(result))
       .catch(error => sendResponse({ error: error.message }))
     return true
   }
@@ -4857,7 +5060,8 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
           request.maxTransfer !== message.maxTransfer ||
           request.memo !== message.memo ||
           request.fundingSource !== message.fundingSource ||
-          request.marginalFeeZats !== message.marginalFeeZats
+          request.marginalFeeZats !== message.marginalFeeZats ||
+          request.feeQuoteId !== message.feeQuoteId
         ) {
           throw new Error('Hardware signing request expired or does not match this transaction.')
         }
@@ -5289,7 +5493,9 @@ async function ensureDAppHandlerReady(): Promise<void> {
 
   // If wallet is locked, clear permission cache and don't restore
   if (backgroundZcashWalletRuntime.isLocked()) {
-    dappHandler.clearPermissions()
+    // A cold Native runtime after SW restart is not a locked keyring session.
+    // Public cached reads and connection approvals must survive Native startup.
+    dappHandler.clearPermissions(false)
     return
   }
 
@@ -5346,20 +5552,38 @@ async function handleDAppRequest(
       return snapshot
     }
 
+    // Persisted Public account and operation reads do not need a Zcash sync or
+    // Worker restore. The Public runtime initializes signing only on a cache miss.
+    if (
+      ['zcash_getPublicAccount', 'zcash_getPublicAssets', 'zcash_getPublicTransaction'].includes(
+        request.method
+      )
+    ) {
+      return dappHandler.handleRequest({
+        method: request.method,
+        params: request.params,
+        origin,
+        tabInfo
+      })
+    }
+
     // Silent methods never trigger unlock
     const silentMethods = [
       'zcash_getAccounts',
       'zcash_getBalance',
       'zcash_getMaxTransfer',
       'zcash_getAddresses',
-      'zcash_getPublicKey'
+      'zcash_getPublicKey',
+      'zcash_getPublicAccount',
+      'zcash_getPublicAssets',
+      'zcash_getPublicTransaction'
     ]
     const isSilentMethod = silentMethods.includes(request.method)
 
     if (request.method === 'zcash_requestAccounts') {
       const hasWallet = useWalletStore.getState().wallets.length > 0
 
-      if (!hasWallet) {
+      if (!hasWallet && !(await credentialLifecycle.hasActiveWalletSet())) {
         return await dappHandler.handleRequest({
           method: request.method,
           params: request.params,
@@ -5376,9 +5600,28 @@ async function handleDAppRequest(
       })
 
       if (unlockRequired) {
-        await promptUnlock()
+        await promptUnlock({ restoreZcashRuntime: false })
         // After unlock, continue to process the request (don't throw error)
       }
+    }
+
+    if (
+      (await credentialSession.hasUnlockSession()) &&
+      (await credentialLifecycle.activeAccountSupportsChain('zcash')) === false
+    ) {
+      throw new Error('The active Wallet does not support Zcash.')
+    }
+
+    if (
+      request.method === 'zcash_requestAccounts' &&
+      useWalletStore.getState().wallets.length === 0
+    ) {
+      return dappHandler.handleRequest({
+        method: request.method,
+        params: request.params,
+        origin,
+        tabInfo
+      })
     }
 
     if (backgroundZcashWalletRuntime.isLocked()) {
@@ -5740,9 +5983,20 @@ function handleWalletCreated(
  * Preserves dApp connections (EIP-1193 standard: lock ≠ disconnect)
  */
 function handleWalletLock(): Promise<void> {
+  syncScheduler.pauseForTx()
+  syncScheduler.abortSync()
+  const walletId = useWalletStore.getState().currentWalletId
+  const syncQuiesced = (
+    walletId ? getWorkerClient(walletId).reconcileWallet(true) : Promise.resolve(true)
+  ).then(
+    () => ({ success: true as const }),
+    (error: unknown) => ({ success: false as const, error })
+  )
   return enqueueWalletSessionTransition(async () => {
+    const result = await syncQuiesced
+    if (!result.success) throw result.error
     await accountContextTransition.runActiveOperation(performWalletLockState)
-  })
+  }).finally(() => syncScheduler.resumeAfterTx())
 }
 
 async function performWalletLockState(): Promise<void> {
@@ -5754,7 +6008,7 @@ async function performWalletLockState(): Promise<void> {
 
     // Account restoration can still be in scheduler preflight after the scan
     // itself stops. Drain it before recreating workers, even if Zcash cleanup fails.
-    const [zcashResult] = await Promise.allSettled([
+    const [zcashResult, syncIdleResult] = await Promise.allSettled([
       backgroundZcashWalletRuntime.lock(),
       syncScheduler.waitForActiveSyncIdle(30_000)
     ])
@@ -5772,6 +6026,8 @@ async function performWalletLockState(): Promise<void> {
       }
     }
     if (zcashResult.status === 'rejected') throw zcashResult.reason
+    if (syncIdleResult.status === 'rejected') throw syncIdleResult.reason
+    if (!syncIdleResult.value) throw new Error('Wallet sync did not stop before lock')
 
     dappHandler.clearPermissions()
     await dappHandler.notifyAccountsChanged([])
@@ -6263,12 +6519,13 @@ async function handleHardwarePcztBuild(params: {
   memo?: string
   fundingSource?: 'shielded' | 'transparent'
   marginalFeeZats?: number
+  feeQuoteId?: string
 }): Promise<
   | {
       success: true
       full: string
       redacted: string
-      feeZats?: string
+      feeZats: string
       amount?: string
       vendor: 'keystone' | 'ledger'
       ledgerPayload?: LedgerSigningPayload
@@ -6287,7 +6544,8 @@ async function handleHardwarePcztBuild(params: {
     maxTransfer,
     memo,
     fundingSource,
-    marginalFeeZats
+    marginalFeeZats,
+    feeQuoteId
   } = params
   try {
     await assertActiveBackgroundAccountScope(walletId, accountId)
@@ -6316,8 +6574,10 @@ async function handleHardwarePcztBuild(params: {
         const estimate = await walletCore.estimateMaxTransfer(
           to,
           memo,
-          sanitizeMarginalFeeZats(marginalFeeZats),
-          fundingSource
+          marginalFeeZats,
+          fundingSource,
+          undefined,
+          feeQuoteId
         )
         effectiveAmount = formatBaseUnitDecimalAmount(estimate.maxAmountZats, ZEC_DECIMALS)
         if (!safeBig(effectiveAmount).gt(0)) {
@@ -6326,33 +6586,36 @@ async function handleHardwarePcztBuild(params: {
       }
       const pair =
         kind === 'shield'
-          ? await walletCore.pcztShieldCreate(marginalFeeZats)
+          ? await walletCore.pcztShieldCreate(marginalFeeZats, feeQuoteId)
           : await walletCore.pcztCreate({
               to: to!,
               amount: effectiveAmount!,
               memo,
               fundingSource,
               marginalFeeZats,
+              feeQuoteId,
               signer: vendor
             })
       const ledgerPayload =
         vendor === 'ledger'
           ? await walletCore.pcztLedgerPayload(pair.redacted, account.derivationIndex)
           : undefined
-      // Surface the real ZIP-317 fee for the chosen tier so the signing page can
-      // display and record it. Best-effort: a failed estimate must not block signing.
-      const feeZats = await (
-        kind === 'shield'
-          ? walletCore.estimateShieldFee(sanitizeMarginalFeeZats(marginalFeeZats))
-          : walletCore.estimateTransferFee(
-              to!,
-              effectiveAmount!,
-              memo,
-              sanitizeMarginalFeeZats(marginalFeeZats),
-              fundingSource
-            )
-      ).catch(() => undefined)
-      return { ...pair, feeZats, ledgerPayload, amount: effectiveAmount }
+      // The signing review and transaction record require the quoted proposal fee.
+      const feeEstimate = await (kind === 'shield'
+        ? walletCore.estimateShieldFee(marginalFeeZats, feeQuoteId)
+        : walletCore.estimateTransferFee(
+            to!,
+            effectiveAmount!,
+            memo,
+            marginalFeeZats,
+            fundingSource,
+            undefined,
+            feeQuoteId
+          ))
+      if (!/^[1-9]\d*$/.test(feeEstimate.feeZats)) {
+        throw new Error('Network fee estimate is unavailable. Review the transaction again.')
+      }
+      return { ...pair, feeZats: feeEstimate.feeZats, ledgerPayload, amount: effectiveAmount }
     })
     return {
       success: true,
@@ -6400,6 +6663,8 @@ async function handleBackgroundZcashTx(params: {
   txType?: TransactionType
   sendParams?: SendTransactionParams
   marginalFeeZats?: number
+  submissionDeadline?: number
+  feeQuoteId?: string
   monitorParams?: {
     depositAddress: string
     tokenInSymbol: string
@@ -6421,6 +6686,7 @@ async function handleBackgroundZcashTx(params: {
     txType,
     sendParams,
     marginalFeeZats,
+    feeQuoteId,
     monitorParams,
     analytics
   } = params
@@ -6464,7 +6730,8 @@ async function handleBackgroundZcashTx(params: {
         const shieldResult = await walletCore.shieldFunds(
           marginalFeeZats,
           undefined,
-          transactionContext
+          transactionContext,
+          feeQuoteId
         )
         txid = shieldResult.txid
         txHashes = [txid]
@@ -6473,13 +6740,15 @@ async function handleBackgroundZcashTx(params: {
           onChainAmount = shieldResult.amount
         }
       } else {
-        const submissionDeadline = await readRheaZcashTransferDeadline(
-          pendingRecord.quoteBinding,
-          sendParams!.to,
-          sendParams!.amount
-        )
+        const submissionDeadline =
+          params.submissionDeadline ??
+          (await readRheaZcashTransferDeadline(
+            pendingRecord.quoteBinding,
+            sendParams!.to,
+            sendParams!.amount
+          ))
         const transferResult = await walletCore.sendTransaction(
-          { ...sendParams!, marginalFeeZats },
+          { ...sendParams!, marginalFeeZats, feeQuoteId },
           submissionDeadline,
           undefined,
           transactionContext

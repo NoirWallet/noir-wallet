@@ -6,7 +6,7 @@ import { evmWalletClient } from '@/popup/services/evm-wallet-client'
 import type { Network } from '@/types'
 import { Button } from '../ui/button'
 import { useSettingsStore } from '@/store/settings-store'
-import { useUserEvmAssets } from '@/popup/hooks/useUserEvmAssets'
+import { useActivityEvmAssets } from '@/popup/hooks/useActivityEvmAssets'
 import type { AccountNetworkView } from '@/popup/services/account-networks-client'
 import { formatChainAddressExplorerUrl } from '@/popup/services/chain-explorer'
 import { ListSkeleton } from '../ui/skeleton'
@@ -118,14 +118,21 @@ export function MultichainActivityPanel({
   )
   const setPortfolioChainSelection = useSettingsStore(state => state.setPortfolioChainSelection)
   const endpointSettings = useSettingsStore(state => state.chainEndpointSettings)
-  const userEvmAssets = useUserEvmAssets()
+  const { userAssets: userEvmAssets, detectedAssets: detectedEvmAssets } = useActivityEvmAssets()
   const filteredChainId = filterAssetId
     ? portfolio?.assets.find(asset => asset.asset.id === filterAssetId)?.asset.chainId
     : undefined
 
   const { assetMetadata, chainMetadata } = useMemo(
-    () => buildActivityPresentationCatalog({ network, endpointSettings, userEvmAssets, portfolio }),
-    [endpointSettings, network, portfolio, userEvmAssets]
+    () =>
+      buildActivityPresentationCatalog({
+        network,
+        endpointSettings,
+        userEvmAssets,
+        detectedEvmAssets,
+        portfolio
+      }),
+    [endpointSettings, network, portfolio, userEvmAssets, detectedEvmAssets]
   )
   const executionAddressModes = useMemo(
     () => buildActivityExecutionAddressModes(accountNetworks),
@@ -139,9 +146,17 @@ export function MultichainActivityPanel({
       ),
     [accountNetworks]
   )
+  const publicChainId = network === 'mainnet' ? 'noir:mainnet' : 'noir:testnet'
+  const hasPublicActivity = Boolean(
+    isActivityModelForScope(model, walletId, accountId) &&
+    model.items.some(item => resolveActivityChainId(item) === publicChainId)
+  )
   const availableChainIds = useMemo(
-    () => selectableAccountNetworks.map(entry => entry.chain.id),
-    [selectableAccountNetworks]
+    () => [
+      ...selectableAccountNetworks.map(entry => entry.chain.id),
+      ...(hasPublicActivity ? [publicChainId] : [])
+    ],
+    [hasPublicActivity, publicChainId, selectableAccountNetworks]
   )
   const selectedChainIds = useMemo(
     () => resolveAvailableActivityChainSelection(availableChainIds, persistedChainSelection),
@@ -206,6 +221,12 @@ export function MultichainActivityPanel({
       return
     }
     setStatus('loading')
+  }, [walletId, accountId, network, initialModel])
+
+  useEffect(() => {
+    if (!walletId || !accountId || isActivityModelForScope(initialModel, walletId, accountId)) {
+      return
+    }
     void load()
     return () => {
       requestSequence.current += 1
@@ -406,7 +427,12 @@ export function MultichainActivityPanel({
       <div className="flex items-center justify-between gap-3">
         <NetworkFilter
           ariaLabelPrefix="Filter activity by network"
-          options={selectableAccountNetworks.map(entry => entry.chain)}
+          options={[
+            ...selectableAccountNetworks.map(entry => entry.chain),
+            ...(hasPublicActivity
+              ? [{ id: publicChainId, family: 'zcash', displayName: 'Zcash' }]
+              : [])
+          ]}
           selectedIds={selectedChainIds}
           onSelectionChange={chainIds =>
             setPortfolioChainSelection(
