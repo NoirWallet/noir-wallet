@@ -471,6 +471,9 @@ const TRUSTED_RUNTIME_SCHEMAS: Readonly<Record<string, RuntimeMessageSchema>> = 
       selectedNetworkFamilies: isSelectedNetworkFamilies
     }
   },
+  PREVIEW_SOFTWARE_WALLET_ADDRESSES: {
+    required: { mnemonic: isMnemonicPhrase, selectedNetworkFamilies: isSelectedNetworkFamilies }
+  },
   PREVIEW_PRIVATE_KEY_WALLET: {
     required: {
       privateKey: isPrivateKey,
@@ -984,6 +987,7 @@ const TRUSTED_RUNTIME_CONTEXTS: Readonly<Record<string, readonly OwnExtensionSen
     PROVISION_PRIMARY_SOFTWARE_WALLET: ['extension-page'],
     GENERATE_ADD_WALLET_MNEMONIC: ['extension-page'],
     ADD_SOFTWARE_WALLET: ['extension-page'],
+    PREVIEW_SOFTWARE_WALLET_ADDRESSES: ['extension-page'],
     PREVIEW_PRIVATE_KEY_WALLET: ['extension-page'],
     IMPORT_PRIVATE_KEY_WALLET: ['extension-page'],
     EXPORT_PRIVATE_KEY: ['extension-page'],

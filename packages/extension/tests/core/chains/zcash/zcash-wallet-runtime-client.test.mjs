@@ -113,6 +113,31 @@ test.describe('Zcash wallet Background client', () => {
     }
   })
 
+  test('rejects an address preview that omits a requested network', async () => {
+    const originalChrome = globalThis.chrome
+    globalThis.chrome = {
+      runtime: {
+        sendMessage: async () => ({
+          success: true,
+          addresses: [
+            { family: 'evm', chainId: 'eip155:1', address: '0x123' },
+            { family: 'evm', chainId: 'eip155:1', address: '0x123' }
+          ]
+        })
+      }
+    }
+    try {
+      await expect(
+        zcashWalletRuntimeClient.previewSoftwareWalletAddresses({
+          mnemonic: `${'abandon '.repeat(11)}about`,
+          selectedNetworkFamilies: ['zcash', 'evm']
+        })
+      ).rejects.toThrow(/invalid address previews/)
+    } finally {
+      globalThis.chrome = originalChrome
+    }
+  })
+
   test('rejects malformed or failed Background responses', async () => {
     const originalChrome = globalThis.chrome
     globalThis.chrome = {

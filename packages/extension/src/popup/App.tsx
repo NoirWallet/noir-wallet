@@ -34,7 +34,6 @@ import { ImportWordCountPage } from './pages/onboarding/ImportWordCountPage'
 import { CreateWordCountPage } from './pages/onboarding/CreateWordCountPage'
 import { ImportWalletPage } from './pages/onboarding/ImportWalletPage'
 import { ImportAccountsPage } from './pages/onboarding/ImportAccountsPage'
-import { ImportZcashHistoryPage } from './pages/onboarding/ImportZcashHistoryPage'
 import { ImportPasswordPage } from './pages/onboarding/ImportPasswordPage'
 import { UnlockPage } from './pages/onboarding/UnlockPage'
 
@@ -216,7 +215,6 @@ function AppRoutes() {
         <Route path="import-word-count" element={<ImportWordCountPage />} />
         <Route path="import" element={<ImportWalletPage />} />
         <Route path="import-accounts" element={<ImportAccountsPage />} />
-        <Route path="import-zcash-history" element={<ImportZcashHistoryPage />} />
         <Route path="import-password" element={<ImportPasswordPage />} />
       </Route>
 

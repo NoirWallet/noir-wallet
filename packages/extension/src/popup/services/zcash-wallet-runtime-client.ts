@@ -1,5 +1,6 @@
 import type { MnemonicWordCount } from '@/config/wallet'
 import type { AccountNetworkFamily } from '@/core/wallet/account-network-selection'
+import type { SoftwareWalletAddressPreview } from '@/background/software-wallet-provisioning'
 import { getResponseErrorMessage } from '@/lib/errors'
 import type { WalletBackupVerification } from '@/core/wallet/secret-phrase-backup'
 import type { AccountAddresses, FundingSource } from '@/types'
@@ -105,6 +106,42 @@ function requireFeeEstimate(response: RuntimeResponse): QuotedFeeEstimate {
 }
 
 export const zcashWalletRuntimeClient = Object.freeze({
+  async previewSoftwareWalletAddresses(input: {
+    readonly mnemonic: string
+    readonly selectedNetworkFamilies: readonly AccountNetworkFamily[]
+  }): Promise<readonly SoftwareWalletAddressPreview[]> {
+    const response = await expectSuccess(
+      {
+        type: 'PREVIEW_SOFTWARE_WALLET_ADDRESSES',
+        mnemonic: input.mnemonic,
+        selectedNetworkFamilies: input.selectedNetworkFamilies
+      },
+      'Address preview failed'
+    )
+    const seen = new Set<AccountNetworkFamily>()
+    if (
+      !Array.isArray(response.addresses) ||
+      response.addresses.length !== input.selectedNetworkFamilies.length ||
+      !response.addresses.every(value => {
+        const item = responseRecord(value)
+        if (!item || !input.selectedNetworkFamilies.includes(item.family as AccountNetworkFamily)) {
+          return false
+        }
+        const family = item.family as AccountNetworkFamily
+        if (seen.has(family)) return false
+        seen.add(family)
+        return (
+          typeof item.chainId === 'string' &&
+          item.chainId.length > 0 &&
+          typeof item.address === 'string' &&
+          item.address.length > 0
+        )
+      })
+    ) {
+      throw new Error('Wallet Background returned invalid address previews')
+    }
+    return response.addresses as SoftwareWalletAddressPreview[]
+  },
   async initialize(): Promise<void> {
     const response = await send({ type: 'GET_BACKGROUND_INITIALIZATION_STATE' })
     if (response.ready !== true) {

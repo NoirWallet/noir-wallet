@@ -292,6 +292,7 @@ import {
   addSoftwareWallet,
   generateAddWalletMnemonic,
   generatePrimaryWalletMnemonic,
+  previewSoftwareWalletAddresses,
   provisionPrimarySoftwareWallet,
   type SoftwareWalletProvisioningMode
 } from './software-wallet-provisioning'
@@ -4762,6 +4763,20 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
       .catch(error =>
         sendResponse({
           error: error instanceof Error ? error.message : 'Wallet setup failed'
+        })
+      )
+    return true
+  }
+
+  if (message.type === 'PREVIEW_SOFTWARE_WALLET_ADDRESSES') {
+    previewSoftwareWalletAddresses({
+      mnemonic: message.mnemonic as string,
+      selectedNetworkFamilies: parseSelectedNetworkFamilies(message.selectedNetworkFamilies)
+    })
+      .then(addresses => sendResponse({ success: true, addresses }))
+      .catch(error =>
+        sendResponse({
+          error: error instanceof Error ? error.message : 'Address preview failed'
         })
       )
     return true

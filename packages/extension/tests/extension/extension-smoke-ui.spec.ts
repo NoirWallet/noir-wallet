@@ -722,13 +722,17 @@ test('imports 12 words, preserves added-wallet backup, and changes the wallet pa
   ).toHaveCount(0)
   await popup.getByRole('button', { name: 'Continue' }).click()
 
+  await expect(popup.getByText('Import Accounts', { exact: true })).toBeVisible()
+  await popup.getByRole('checkbox', { name: 'Zcash', exact: true }).check()
+  await popup.getByRole('button', { name: 'Continue' }).click()
+
   const newToZcash = popup.getByRole('radio', { name: 'New to Zcash' })
   const restoreZcash = popup.getByRole('radio', { name: 'Restore Zcash history' })
   await expect(newToZcash).toHaveAttribute('aria-checked', 'true')
   await expect(restoreZcash).toHaveAttribute('aria-checked', 'false')
   await captureScreenshot(popup, 'extension-import-zcash-history-new.png')
   await restoreZcash.click()
-  await expect(popup.getByText('Approximate first ZEC transaction')).toBeVisible()
+  await expect(popup.getByText('First ZEC transaction', { exact: true })).toBeVisible()
   await expect(popup.getByRole('radio', { name: 'Date' })).toHaveAttribute('aria-checked', 'true')
   await expect(popup.getByRole('radio', { name: 'Full history' })).toHaveCount(0)
   await captureScreenshot(popup, 'extension-import-zcash-history-restore.png')
@@ -756,7 +760,11 @@ test('imports 12 words, preserves added-wallet backup, and changes the wallet pa
   await passwordInput.fill('')
 
   await popup.getByRole('button', { name: 'Back' }).click()
-  await expect(popup.getByText('Zcash history', { exact: true })).toBeVisible()
+  await expect(popup.getByText('Import Accounts', { exact: true })).toBeVisible()
+  await popup.getByRole('button', { name: 'Continue' }).click()
+  await expect(popup.getByRole('dialog', { name: 'Zcash history' })).toBeVisible()
+  await expect(popup.getByRole('textbox', { name: 'Zcash birthday height' })).toHaveValue('3000000')
+  await popup.getByRole('button', { name: 'Close', exact: true }).click()
   await popup.getByRole('button', { name: 'Back' }).click()
   await expect(popup.getByText('Import Secret Recovery Phrase', { exact: true })).toBeVisible()
   await expect(popup.locator('input[type="text"]').first()).toHaveValue('abandon')
@@ -826,7 +834,10 @@ test('imports 12 words, preserves added-wallet backup, and changes the wallet pa
   await expect(popup.getByRole('button', { name: 'Settings' })).toBeVisible()
   await popup.getByRole('button', { name: 'Close account drawer' }).click()
   await expect(popup.getByRole('tab', { name: 'Total assets' })).toBeVisible()
-  const totalValue = popup.getByTestId('home-total-assets').locator('p, button').first()
+  const totalValue = popup
+    .getByTestId('home-total-assets')
+    .locator('p, button:not([aria-pressed])')
+    .first()
   await expect(totalValue).toBeVisible({ timeout: 30_000 })
   const [totalValueBox, homeViewportWidth] = await Promise.all([
     totalValue.boundingBox(),

@@ -15,6 +15,32 @@ import {
   type AccountNetworkFamily
 } from '@/core/wallet/account-network-selection'
 import { isNewWalletFamilyEnabled } from '@/core/chains/feature-runtime-policy'
+import { MnemonicGenerator } from '@/core/wallet/mnemonic'
+import { mapWasmAccountAddresses } from '@/core/zcash/account-addresses'
+import {
+  createBuildAddressGatedChainRegistry,
+  createInitialProductChainRegistry,
+  getBitcoinChainId,
+  getZcashChainId
+} from '@/core/chains/registry'
+import {
+  getEvmNetworkConfig,
+  getNearNetworkConfig,
+  getSolanaNetworkConfig
+} from '@/config/networks'
+import { DEFAULT_NETWORK } from '@/lib/runtime-network'
+import {
+  parseCredentialGenerationId,
+  parseGlobalUnlockEpoch,
+  parseSessionKeyDomainId,
+  type KeyringCommandBinding,
+  type KeyringCommandPayload
+} from '@/core/keyring/ports'
+import { MultichainCommandClient } from '@/infrastructure/keyring/multichain/command-client'
+import {
+  parseRawEncryptedVault,
+  readRecord
+} from '@/infrastructure/keyring/multichain/raw-wallet-engine'
 
 export type SoftwareWalletProvisioningMode = 'create' | 'import'
 
@@ -37,6 +63,140 @@ export interface ProvisionPrimarySoftwareWalletInput {
   readonly accountName: string
   readonly birthdayHeight?: number
   readonly selectedNetworkFamilies?: readonly AccountNetworkFamily[]
+}
+
+export interface SoftwareWalletAddressPreview {
+  readonly family: AccountNetworkFamily
+  readonly chainId: string
+  readonly address: string
+}
+
+function parsePreviewAddress(value: unknown, chainId: string): string {
+  const account = readRecord(value, 'Preview account')
+  if (
+    account.chainId !== chainId ||
+    !Array.isArray(account.addresses) ||
+    account.addresses.length !== 1
+  ) {
+    throw new Error('Invalid preview account')
+  }
+  const address = readRecord(account.addresses[0], 'Preview address')
+  if (
+    typeof address.value !== 'string' ||
+    address.value.length === 0 ||
+    address.value.length > 256
+  ) {
+    throw new Error('Invalid preview address')
+  }
+  return address.value
+}
+
+export async function previewSoftwareWalletAddresses(input: {
+  readonly mnemonic: string
+  readonly selectedNetworkFamilies: readonly AccountNetworkFamily[]
+}): Promise<readonly SoftwareWalletAddressPreview[]> {
+  const mnemonic = normalizeMnemonic(input.mnemonic)
+  const families = importNetworkFamilies(input.selectedNetworkFamilies)
+  if (!families) throw new Error('Select at least one supported network')
+  const network = DEFAULT_NETWORK
+  const available = new Set(
+    createBuildAddressGatedChainRegistry(createInitialProductChainRegistry(network))
+      .list()
+      .map(chain => chain.family)
+  )
+  if (!families.every(family => available.has(family))) {
+    throw new Error('Selected network is unavailable')
+  }
+  const result: SoftwareWalletAddressPreview[] = []
+
+  if (families.includes('zcash')) {
+    const addresses = mapWasmAccountAddresses(
+      await MnemonicGenerator.toAddresses(mnemonic, 0, network)
+    )
+    if (!addresses.transparent) throw new Error('Unable to derive Zcash transparent address')
+    result.push({
+      family: 'zcash',
+      chainId: getZcashChainId(network),
+      address: addresses.transparent
+    })
+  }
+
+  const multichainFamilies = families.filter(family => family !== 'zcash')
+  if (multichainFamilies.length === 0) return result
+
+  const nonce = crypto.randomUUID()
+  const password = crypto.randomUUID()
+  const binding: Extract<KeyringCommandBinding, { readonly kind: 'credential' }> = {
+    kind: 'credential',
+    keyDomainId: parseSessionKeyDomainId(`wallet:mnemonic-preview:${nonce}`),
+    credentialGenerationId: parseCredentialGenerationId(
+      `credential-generation:mnemonic-preview:${nonce}`
+    ),
+    globalUnlockEpoch: parseGlobalUnlockEpoch(`global-unlock:${nonce}`)
+  }
+  const client = new MultichainCommandClient(new BackgroundMultichainTransport(), {
+    defaultTimeoutMs: 120_000,
+    maxTimeoutMs: 120_000
+  })
+  let operationError: unknown
+  try {
+    const vault = await client.execute(
+      { operation: 'credential.import', binding, payload: { mnemonic, password } },
+      parseRawEncryptedVault
+    )
+    await client.execute(
+      { operation: 'credential.unlock', binding, payload: { vault, password } },
+      value => value
+    )
+    for (const family of multichainFamilies) {
+      const chainId =
+        family === 'evm'
+          ? getEvmNetworkConfig(network).chainId
+          : family === 'bitcoin'
+            ? getBitcoinChainId(network)
+            : family === 'solana'
+              ? getSolanaNetworkConfig(network === 'mainnet' ? 'mainnet' : 'devnet').chainId
+              : family === 'near'
+                ? getNearNetworkConfig(network).chainId
+                : null
+      if (!chainId) throw new Error('Selected network is unavailable')
+      const payload: KeyringCommandPayload =
+        family === 'evm'
+          ? { family: 'evm', chainId, addressIndex: 0 }
+          : family === 'bitcoin'
+            ? {
+                family: 'bitcoin',
+                chainId,
+                addressType: 'p2wpkh',
+                accountIndex: 0,
+                change: false,
+                addressIndex: 0
+              }
+            : { family, chainId, accountIndex: 0 }
+      const address = await client.execute(
+        { operation: 'account.derive-public', binding, payload },
+        value => parsePreviewAddress(value, chainId)
+      )
+      result.push({ family, chainId, address })
+    }
+    return result
+  } catch (error) {
+    operationError = error
+    throw error
+  } finally {
+    let cleanupError: unknown
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        await client.execute({ operation: 'credential.lock', binding, payload: {} }, value => value)
+        cleanupError = undefined
+        break
+      } catch (error) {
+        cleanupError = error
+      }
+    }
+    await client.destroy()
+    if (cleanupError !== undefined && operationError === undefined) throw cleanupError
+  }
 }
 
 function importNetworkFamilies(

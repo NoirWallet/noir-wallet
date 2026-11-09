@@ -433,6 +433,13 @@ test.describe('Runtime message security', () => {
       isTrustedRuntimeMessageSender('ADD_SOFTWARE_WALLET', contentScriptSender, extensionId)
     ).toBe(false)
     expect(
+      isTrustedRuntimeMessageSender(
+        'PREVIEW_SOFTWARE_WALLET_ADDRESSES',
+        contentScriptSender,
+        extensionId
+      )
+    ).toBe(false)
+    expect(
       isTrustedRuntimeMessageSender('RESYNC_ZCASH_WALLET', contentScriptSender, extensionId)
     ).toBe(false)
     expect(
@@ -1072,6 +1079,21 @@ test.describe('Runtime message security', () => {
         birthdayHeight: 3_000_000
       })
     ).toMatchObject({ type: 'ADD_SOFTWARE_WALLET', mode: 'import' })
+    expect(
+      parseTrustedExtensionRuntimeMessage({
+        type: 'PREVIEW_SOFTWARE_WALLET_ADDRESSES',
+        mnemonic: `${'abandon '.repeat(11)}about`,
+        selectedNetworkFamilies: ['evm']
+      })
+    ).toMatchObject({ type: 'PREVIEW_SOFTWARE_WALLET_ADDRESSES' })
+    expect(() =>
+      parseTrustedExtensionRuntimeMessage({
+        type: 'PREVIEW_SOFTWARE_WALLET_ADDRESSES',
+        mnemonic: `${'abandon '.repeat(11)}about`,
+        selectedNetworkFamilies: ['evm'],
+        password: 'must-not-cross-the-preview-boundary'
+      })
+    ).toThrow(/schema/i)
     expect(
       parseTrustedExtensionRuntimeMessage({
         type: 'PREVIEW_PRIVATE_KEY_WALLET',

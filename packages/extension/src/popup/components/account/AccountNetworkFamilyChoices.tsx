@@ -1,7 +1,9 @@
 import { Checkbox } from '../ui/checkbox'
+import { Icon } from '@iconify/react'
 import { ChainIcon } from '../common/ChainIcon'
 import evmGroupIcon from '@/images/figma-evm-group.svg'
 import type { AccountNetworkFamily } from '@/core/wallet/account-network-selection'
+import { formatSortAddress } from '@/lib/format'
 
 const FAMILY_LABELS: Record<AccountNetworkFamily, string> = {
   zcash: 'Zcash',
@@ -16,48 +18,80 @@ export function AccountNetworkFamilyChoices({
   availableFamilies,
   selectedFamilies,
   onChange,
-  disabled = false
+  disabled = false,
+  showZcashSyncWarning = false,
+  addressPreviews,
+  addressesLoading = false
 }: {
   readonly availableFamilies: readonly AccountNetworkFamily[]
   readonly selectedFamilies: readonly AccountNetworkFamily[]
   readonly onChange: (families: readonly AccountNetworkFamily[]) => void
   readonly disabled?: boolean
+  readonly showZcashSyncWarning?: boolean
+  readonly addressPreviews?: Readonly<Partial<Record<AccountNetworkFamily, string>>>
+  readonly addressesLoading?: boolean
 }) {
   return (
     <div className="space-y-1" role="group" aria-label="Account networks">
       {availableFamilies.map(family => {
         const checked = selectedFamilies.includes(family)
         return (
-          <label
-            key={family}
-            className="flex min-h-14 cursor-pointer items-center gap-3 rounded-md px-1 hover:bg-white/5"
-          >
-            {family === 'evm' ? (
-              <img src={evmGroupIcon} alt="" aria-hidden="true" className="size-8 shrink-0" />
-            ) : (
-              <ChainIcon
-                chain={family}
-                showTooltip={false}
-                className="size-8 shrink-0 rounded-md"
+          <div key={family}>
+            <label className="flex min-h-14 cursor-pointer items-center gap-3 rounded-md px-1 hover:bg-white/5">
+              {family === 'evm' ? (
+                <img src={evmGroupIcon} alt="" aria-hidden="true" className="size-8 shrink-0" />
+              ) : (
+                <ChainIcon
+                  chain={family}
+                  showTooltip={false}
+                  className="size-8 shrink-0 rounded-md"
+                />
+              )}
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm font-medium">{FAMILY_LABELS[family]}</span>
+                {addressPreviews && (
+                  <span
+                    className="mt-0.5 block truncate font-mono text-xs text-muted"
+                    title={addressPreviews[family]}
+                    aria-label={`${FAMILY_LABELS[family]} address`}
+                  >
+                    {addressPreviews[family]
+                      ? formatSortAddress(addressPreviews[family])
+                      : addressesLoading
+                        ? 'Loading…'
+                        : '—'}
+                  </span>
+                )}
+              </span>
+              <Checkbox
+                checked={checked}
+                disabled={disabled}
+                onCheckedChange={value =>
+                  onChange(
+                    value === true
+                      ? availableFamilies.filter(
+                          item => item === family || selectedFamilies.includes(item)
+                        )
+                      : selectedFamilies.filter(item => item !== family)
+                  )
+                }
+                aria-label={FAMILY_LABELS[family] ?? family}
+                className="size-6 rounded-md data-[state=checked]:bg-foreground data-[state=checked]:text-background data-[state=checked]:border-foreground"
               />
+            </label>
+            {family === 'zcash' && showZcashSyncWarning && (
+              <div className="mb-2 mt-1 flex items-start gap-2 rounded-lg bg-warning/10 px-3 py-2.5 text-xs leading-5 text-warning">
+                <Icon
+                  icon="lucide:info"
+                  width={16}
+                  height={16}
+                  className="mt-0.5 shrink-0"
+                  aria-hidden="true"
+                />
+                <span>Zcash sync takes time. You can enable it later.</span>
+              </div>
             )}
-            <span className="min-w-0 flex-1 text-sm font-medium">{FAMILY_LABELS[family]}</span>
-            <Checkbox
-              checked={checked}
-              disabled={disabled}
-              onCheckedChange={value =>
-                onChange(
-                  value === true
-                    ? availableFamilies.filter(
-                        item => item === family || selectedFamilies.includes(item)
-                      )
-                    : selectedFamilies.filter(item => item !== family)
-                )
-              }
-              aria-label={FAMILY_LABELS[family] ?? family}
-              className="size-6 rounded-md data-[state=checked]:bg-foreground data-[state=checked]:text-background data-[state=checked]:border-foreground"
-            />
-          </label>
+          </div>
         )
       })}
     </div>

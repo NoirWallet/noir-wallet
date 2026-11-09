@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { Icon } from '@iconify/react'
-import { Button } from '../../components/ui/button'
-import { Input } from '../../components/ui/input'
-import { DatePicker } from '../../components/ui/date-picker'
-import { PageHeader } from '../../components/common/PageHeader'
-import { InlineError } from '../../components/common/InlineError'
+import { Button } from '../ui/button'
+import { Input } from '../ui/input'
+import { DatePicker } from '../ui/date-picker'
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../ui/dialog'
+import { InlineError } from '../common/InlineError'
 import { useNavigate } from '../../provider/Router'
 import { useOnboardingStore } from '@/store/onboarding-store'
 import { zcashWalletRuntimeClient } from '@/popup/services/zcash-wallet-runtime-client'
@@ -22,7 +22,7 @@ type RestoreMethod = 'date' | 'height'
 
 class ZcashHistoryValidationError extends Error {}
 
-export function ImportZcashHistoryPage() {
+export function ImportZcashHistorySheet({ onClose }: { readonly onClose: () => void }) {
   const { navigate, replace } = useNavigate()
   const {
     flowMode,
@@ -141,110 +141,113 @@ export function ImportZcashHistoryPage() {
   }
 
   return (
-    <div className="page-container">
-      <PageHeader title="Zcash history" showBack backDisabled={isImporting} />
-
-      <fieldset
-        disabled={flowMode === 'addWallet' && isImporting}
-        className="page-content min-w-0 py-5"
+    <Dialog
+      open
+      onOpenChange={open => {
+        if (!open && !(flowMode === 'addWallet' && isImporting)) onClose()
+      }}
+    >
+      <DialogContent
+        position="bottom"
+        className="max-h-[85vh] grid-rows-[auto_minmax(0,1fr)_auto] gap-0 p-0"
       >
-        <h1 className="text-lg font-semibold">Has this recovery phrase ever received ZEC?</h1>
-        <p className="mt-1.5 text-sm leading-relaxed text-muted">
-          This only changes where Zcash begins looking for older transactions. Other networks are
-          restored normally.
-        </p>
+        <DialogHeader className="px-5 pb-4 pt-5">
+          <DialogTitle>Zcash history</DialogTitle>
+          <DialogDescription>Has this phrase received ZEC before?</DialogDescription>
+        </DialogHeader>
 
-        <div role="radiogroup" aria-label="Zcash history" className="mt-5 space-y-3">
-          <HistoryChoice
-            title="New to Zcash"
-            description="Choose this for a phrase from a wallet that did not support Zcash."
-            selected={historyMode === 'new'}
-            onSelect={() => selectHistoryMode('new')}
-          />
-          <HistoryChoice
-            title="Restore Zcash history"
-            description="Choose this if this phrase previously received ZEC."
-            selected={historyMode === 'restore'}
-            onSelect={() => selectHistoryMode('restore')}
-          />
-        </div>
-
-        {historyMode === 'restore' && (
-          <div className="mt-5 space-y-3 border-t border-white/10 pt-4">
-            <div
-              role="radiogroup"
-              aria-label="Zcash history start"
-              className="grid grid-cols-2 gap-2"
-            >
-              <RestoreMethodChoice
-                label="Date"
-                icon="lucide:calendar-days"
-                selected={restoreMethod === 'date'}
-                onSelect={() => selectRestoreMethod('date')}
-              />
-              <RestoreMethodChoice
-                label="Block height"
-                icon="lucide:blocks"
-                selected={restoreMethod === 'height'}
-                onSelect={() => selectRestoreMethod('height')}
-              />
-            </div>
-            {restoreMethod === 'height' ? (
-              <div>
-                <label className="mb-2 block text-sm text-muted">Custom Zcash block height</label>
-                <Input
-                  type="text"
-                  inputMode="numeric"
-                  value={syncHeight}
-                  onChange={event => {
-                    resetPendingContinue()
-                    setSyncHeight(event.target.value)
-                  }}
-                  placeholder={`At least ${fullRecoveryHeight.toLocaleString()}`}
-                  aria-label="Zcash birthday height"
-                  className="h-[45px] rounded-xl font-mono"
-                />
-              </div>
-            ) : (
-              <div>
-                <label className="mb-2 block text-sm text-muted">
-                  Approximate first ZEC transaction
-                </label>
-                <DatePicker
-                  value={syncDate}
-                  onChange={value => {
-                    setSyncDate(value)
-                    selectRestoreMethod('date')
-                  }}
-                  ariaLabel="First ZEC transaction date"
-                  minDate={dayjs(DEFAULT_NETWORK === 'mainnet' ? '2018-10-01' : '2018-01-01')}
-                  placeholder="Select date"
-                />
-              </div>
-            )}
-          </div>
-        )}
-      </fieldset>
-
-      <div className="page-footer">
-        {error && (
-          <InlineError
-            message={error}
-            onRetry={error && retryable ? () => void handleContinue() : undefined}
-            retrying={isImporting}
-            className="mb-3"
-          />
-        )}
-        <Button
-          onClick={handleContinue}
-          disabled={isImporting}
-          isLoading={isImporting}
-          className="h-[45px] w-full"
+        <fieldset
+          disabled={flowMode === 'addWallet' && isImporting}
+          className="min-h-0 min-w-0 overflow-y-auto px-5 pb-4"
         >
-          Continue
-        </Button>
-      </div>
-    </div>
+          <div role="radiogroup" aria-label="Zcash history" className="space-y-2">
+            <HistoryChoice
+              title="New to Zcash"
+              selected={historyMode === 'new'}
+              onSelect={() => selectHistoryMode('new')}
+            />
+            <HistoryChoice
+              title="Restore Zcash history"
+              selected={historyMode === 'restore'}
+              onSelect={() => selectHistoryMode('restore')}
+            />
+          </div>
+
+          {historyMode === 'restore' && (
+            <div className="mt-4 space-y-3 border-t border-white/10 pt-4">
+              <div
+                role="radiogroup"
+                aria-label="Zcash history start"
+                className="grid grid-cols-2 gap-2"
+              >
+                <RestoreMethodChoice
+                  label="Date"
+                  icon="lucide:calendar-days"
+                  selected={restoreMethod === 'date'}
+                  onSelect={() => selectRestoreMethod('date')}
+                />
+                <RestoreMethodChoice
+                  label="Block height"
+                  icon="lucide:blocks"
+                  selected={restoreMethod === 'height'}
+                  onSelect={() => selectRestoreMethod('height')}
+                />
+              </div>
+              {restoreMethod === 'height' ? (
+                <div>
+                  <label className="mb-2 block text-sm text-muted">Block height</label>
+                  <Input
+                    type="text"
+                    inputMode="numeric"
+                    value={syncHeight}
+                    onChange={event => {
+                      resetPendingContinue()
+                      setSyncHeight(event.target.value)
+                    }}
+                    placeholder={`At least ${fullRecoveryHeight.toLocaleString()}`}
+                    aria-label="Zcash birthday height"
+                    className="h-[45px] rounded-xl font-mono"
+                  />
+                </div>
+              ) : (
+                <div>
+                  <label className="mb-2 block text-sm text-muted">First ZEC transaction</label>
+                  <DatePicker
+                    value={syncDate}
+                    onChange={value => {
+                      setSyncDate(value)
+                      selectRestoreMethod('date')
+                    }}
+                    ariaLabel="First ZEC transaction date"
+                    minDate={dayjs(DEFAULT_NETWORK === 'mainnet' ? '2018-10-01' : '2018-01-01')}
+                    placeholder="Select date"
+                  />
+                </div>
+              )}
+            </div>
+          )}
+        </fieldset>
+
+        <div className="px-5 pb-5 pt-2">
+          {error && (
+            <InlineError
+              message={error}
+              onRetry={error && retryable ? () => void handleContinue() : undefined}
+              retrying={isImporting}
+              className="mb-3"
+            />
+          )}
+          <Button
+            onClick={handleContinue}
+            disabled={isImporting}
+            isLoading={isImporting}
+            className="h-[45px] w-full"
+          >
+            Continue
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -282,12 +285,10 @@ function RestoreMethodChoice({
 
 function HistoryChoice({
   title,
-  description,
   selected,
   onSelect
 }: {
   readonly title: string
-  readonly description: string
   readonly selected: boolean
   readonly onSelect: () => void
 }) {
@@ -299,7 +300,7 @@ function HistoryChoice({
       aria-checked={selected}
       onClick={onSelect}
       className={cn(
-        'flex w-full items-start gap-3 rounded-xl border p-4 text-left transition-colors',
+        'flex min-h-12 w-full items-center gap-3 rounded-xl border px-4 py-3 text-left transition-colors',
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50',
         selected
           ? 'border-primary/60 bg-primary/5'
@@ -309,16 +310,13 @@ function HistoryChoice({
       <span
         aria-hidden="true"
         className={cn(
-          'mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full border-2',
+          'flex size-4 shrink-0 items-center justify-center rounded-full border-2',
           selected ? 'border-primary' : 'border-muted'
         )}
       >
         {selected && <span className="size-2 rounded-full bg-primary" />}
       </span>
-      <span>
-        <span className="block text-sm font-medium text-foreground">{title}</span>
-        <span className="mt-1 block text-xs leading-relaxed text-muted">{description}</span>
-      </span>
+      <span className="text-sm font-medium text-foreground">{title}</span>
     </button>
   )
 }
