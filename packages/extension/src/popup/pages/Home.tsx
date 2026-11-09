@@ -24,6 +24,7 @@ import { safeBig } from '@/lib/big'
 import { getAccountAddresses } from '@/core/wallet/account-addresses'
 import { AddressTypeLabel } from '../components/account/AddressType'
 import { useSpeedUp } from '../hooks/useSpeedUp'
+import { useResyncZcash } from '../hooks/useResyncZcash'
 import { Tooltip } from '../components/ui/tooltip'
 import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popover'
 import { BalanceWithPending } from '../components/balance/BalanceWithPending'
@@ -93,6 +94,7 @@ const multichainPortfolioEnabled =
   resolveBitcoinFeatureRuntimePolicy(__ENABLED_CHAIN_FEATURE_FLAGS__).newOperationsEnabled
 
 export function Home() {
+  const openResyncZcash = useResyncZcash()
   const navigate = useNavigate()
   const location = useLocation()
   const { copyToClipboard, showToast } = useCopyToClipboard()
@@ -119,7 +121,7 @@ export function Home() {
   const [assetPrices, setAssetPrices] = useState<AssetPriceReadModel | null>(null)
   const assetPricesRef = useRef<AssetPriceReadModel | null>(null)
   const [assetPriceStatus, setAssetPriceStatus] = useState<'loading' | 'ready' | 'error'>('loading')
-  const [syncRetrying, setSyncRetrying] = useState(false)
+  const [syncActionPending, setSyncActionPending] = useState(false)
   const [focusTransactionId, setFocusTransactionId] = useState<string | null>(() =>
     new URLSearchParams(location.search).get('transactionId')
   )
@@ -731,25 +733,38 @@ export function Home() {
   const syncIssue = supportsZcash && !isSyncing ? getHomeZcashSyncIssue(syncReason) : null
 
   const retryZcashSync = async () => {
-    if (syncRetrying) return
-    setSyncRetrying(true)
+    if (syncActionPending) return
+    setSyncActionPending(true)
     try {
       const response = await chrome.runtime.sendMessage({ type: 'BACKGROUND_SYNC' })
       if (response?.success !== true) throw new Error('Unable to retry Zcash sync')
     } catch {
       toast.error('Unable to retry Zcash sync')
     } finally {
-      setSyncRetrying(false)
+      setSyncActionPending(false)
     }
   }
 
-  const handleSyncIssueAction = () => {
+  const handleSyncIssueAction = async () => {
+    if (syncActionPending) return
     if (syncIssue?.action === 'retry') {
       void retryZcashSync()
-    } else if (syncIssue?.action === 'details' && currentWalletId && currentAccountId) {
-      navigate.navigate(
-        `/account-detail?walletId=${encodeURIComponent(currentWalletId)}&accountId=${encodeURIComponent(currentAccountId)}`
-      )
+    } else if (syncIssue?.action === 'restore' && currentWalletId && currentAccountId) {
+      setSyncActionPending(true)
+      try {
+        await openResyncZcash(
+          currentWalletId,
+          currentAccountId,
+          currentAccount?.birthdayHeight || 0,
+          {
+            recovery: true
+          }
+        )
+      } catch {
+        toast.error('Unable to open Zcash recovery')
+      } finally {
+        setSyncActionPending(false)
+      }
     }
   }
 
@@ -1010,27 +1025,38 @@ export function Home() {
             )}
           </div>
           {syncIssue && (
-            <div className="flex min-h-9 flex-wrap items-center justify-end gap-2 px-5 py-1">
-              <span
-                role="status"
-                className={`flex min-w-0 items-center gap-1 text-xs ${syncIssue.tone === 'warning' ? 'text-warning' : 'text-danger'}`}
-              >
-                <Icon icon={syncIssue.icon} width={13} height={13} className="shrink-0" />
-                {syncIssue.label}
-              </span>
-              {(syncIssue.action === 'retry' || Boolean(currentWalletId && currentAccountId)) && (
-                <button
-                  type="button"
-                  onClick={handleSyncIssueAction}
-                  disabled={syncIssue.action === 'retry' && syncRetrying}
-                  className="wallet-interactive shrink-0 rounded-sm px-2 py-1 text-xs font-medium text-primary enabled:hover:bg-primary/10 enabled:active:bg-primary/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 disabled:opacity-50"
+            <div
+              className={
+                syncIssue.description
+                  ? 'mx-5 mt-2 mb-3 rounded-xl border border-danger/20 bg-danger/5 px-3 py-2'
+                  : 'px-5 py-1'
+              }
+            >
+              <div className="flex min-h-7 flex-wrap items-center justify-end gap-2">
+                <span
+                  role="status"
+                  className={`flex min-w-0 items-center gap-1 text-xs ${syncIssue.description ? 'mr-auto' : ''} ${syncIssue.tone === 'warning' ? 'text-warning' : 'text-danger'}`}
                 >
-                  {syncIssue.action === 'details'
-                    ? 'Account details'
-                    : syncRetrying
-                      ? 'Retrying...'
-                      : 'Retry'}
-                </button>
+                  <Icon icon={syncIssue.icon} width={13} height={13} className="shrink-0" />
+                  {syncIssue.label}
+                </span>
+                {(syncIssue.action === 'retry' || Boolean(currentWalletId && currentAccountId)) && (
+                  <button
+                    type="button"
+                    onClick={handleSyncIssueAction}
+                    disabled={syncActionPending}
+                    className="wallet-interactive shrink-0 rounded-sm px-2 py-1 text-xs font-medium text-primary enabled:hover:bg-primary/10 enabled:active:bg-primary/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 disabled:opacity-50"
+                  >
+                    {syncIssue.action === 'restore'
+                      ? 'Restore'
+                      : syncActionPending
+                        ? 'Retrying...'
+                        : 'Retry'}
+                  </button>
+                )}
+              </div>
+              {syncIssue.description && (
+                <p className="mt-1 text-xs leading-4 text-muted">{syncIssue.description}</p>
               )}
             </div>
           )}

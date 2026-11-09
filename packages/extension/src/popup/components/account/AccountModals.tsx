@@ -23,6 +23,8 @@ interface ResyncZcashContentProps {
   walletId: string
   accountId: string
   birthdayHeight: number
+  recovery?: boolean
+  onGetHelp?: () => void
   onConfirm: (height: number) => Promise<void>
   close: () => void
 }
@@ -31,6 +33,8 @@ export function ResyncZcashContent({
   walletId,
   accountId,
   birthdayHeight,
+  recovery = false,
+  onGetHelp,
   onConfirm,
   close
 }: ResyncZcashContentProps) {
@@ -91,7 +95,9 @@ export function ResyncZcashContent({
       }
     }
 
-    void load()
+    void load().catch(error => {
+      if (!cancelled) setError(classifyError(error).userMessage)
+    })
 
     return () => {
       cancelled = true
@@ -136,6 +142,11 @@ export function ResyncZcashContent({
 
   return (
     <div className="space-y-4">
+      {recovery && (
+        <p className="text-sm text-muted">
+          Zcash data could not be loaded. Resync to restore your balance and transaction history.
+        </p>
+      )}
       <div className="p-3 bg-yellow-500/10 rounded-lg border border-yellow-500/20">
         <p className="text-xs text-yellow-500">
           This rebuilds local Zcash data for every account in this wallet. EVM and Bitcoin data are
@@ -214,7 +225,16 @@ export function ResyncZcashContent({
         )}
       </div>
 
-      {error && <p className="text-xs text-destructive">{error}</p>}
+      {error && (
+        <div role="alert" className="space-y-2">
+          <p className="text-xs text-destructive">{error}</p>
+          {onGetHelp && (
+            <button type="button" onClick={onGetHelp} className="text-xs text-primary">
+              Get help
+            </button>
+          )}
+        </div>
+      )}
 
       <div className="flex gap-3 pt-1">
         <Button variant="outline" onClick={close} disabled={isLoading} className="flex-1 h-[45px]">

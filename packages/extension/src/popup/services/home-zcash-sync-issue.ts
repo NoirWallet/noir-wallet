@@ -2,9 +2,10 @@ import type { SyncReason } from '@/types'
 
 type HomeZcashSyncIssue = {
   readonly label: string
+  readonly description?: string
   readonly icon: string
   readonly tone: 'warning' | 'danger'
-  readonly action: 'retry' | 'details'
+  readonly action: 'retry' | 'restore'
 }
 
 const issues: Record<SyncReason, HomeZcashSyncIssue> = {
@@ -27,10 +28,11 @@ const issues: Record<SyncReason, HomeZcashSyncIssue> = {
     action: 'retry'
   },
   wallet_state_error: {
-    label: 'Zcash data unavailable',
+    label: 'Could not load Zcash data',
+    description: 'Restore Zcash to resume syncing your balance and history.',
     icon: 'lucide:database',
     tone: 'danger',
-    action: 'details'
+    action: 'restore'
   }
 }
 
