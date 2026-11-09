@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from 'react'
 
 const SCROLL_HEIGHT_DESKTOP = 3000
 const SCROLL_HEIGHT_MOBILE = 1800
-const WALLET_HOME_IMAGE = 'https://assets.zknoir.com/images/home-banner.png'
 
 export function Features() {
   const sectionRef = useRef<HTMLElement>(null)
@@ -94,11 +93,9 @@ export function Features() {
                 }}
               >
                 <img
-                  src={WALLET_HOME_IMAGE}
-                  alt="Noir Wallet V2 home"
-                  width={375}
-                  height={750}
-                  className="h-full w-[322px] max-w-full object-contain mx-auto"
+                  src="/images/feature-center-11d5d6.png"
+                  alt="Privacy Terminal"
+                  className="h-full w-[322px] object-cover mx-auto"
                 />
               </div>
 
@@ -182,7 +179,7 @@ export function Features() {
           {/* Mobile: single column */}
           <div className="flex flex-col gap-4 pt-6 md:hidden">
             {/* Center image + title */}
-            <div className="relative flex aspect-[1/2] w-full items-center justify-center">
+            <div className="relative flex aspect-[322/596] w-full items-center justify-center">
               <div
                 className="absolute inset-0 overflow-hidden rounded-xl"
                 style={{
@@ -192,11 +189,9 @@ export function Features() {
                 }}
               >
                 <img
-                  src={WALLET_HOME_IMAGE}
-                  alt="Noir Wallet V2 home"
-                  width={375}
-                  height={750}
-                  className="h-full w-full object-contain mx-auto"
+                  src="/images/feature-center-11d5d6.png"
+                  alt="Privacy Terminal"
+                  className="h-full w-full object-cover mx-auto"
                 />
               </div>
 
