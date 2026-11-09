@@ -117,9 +117,7 @@ test('keeps the selected Shield withdrawal token when choosing its network', () 
   expect(selectShieldWithdrawDestinationForNetwork(options, baseUsdc, 'eip155:42161')).toBe(
     arbitrumUsdc
   )
-  expect(selectShieldWithdrawDestinationForNetwork(options, baseUsdc, 'eip155:137')).toBe(
-    polygonEth
-  )
+  expect(selectShieldWithdrawDestinationForNetwork(options, baseUsdc, 'eip155:137')).toBeNull()
 })
 
 test('uses independently held Shield tokens without adding them to Public assets', () => {

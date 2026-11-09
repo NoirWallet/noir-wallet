@@ -22,7 +22,23 @@ import {
 } from '../../../src/core/services/confidential-funding/confidential-funding-model.ts'
 import { confidentialPrivateTokenId } from '../../../src/core/services/confidential-funding/confidential-funding-portfolio.ts'
 import { getEvmNetworkConfigs } from '../../../src/config/networks.ts'
-import { depositStatusLabel } from '../../../src/popup/services/shield-deposit-options.ts'
+import {
+  depositStatusLabel,
+  depositTokenForNetwork
+} from '../../../src/popup/services/shield-deposit-options.ts'
+
+test('resolves the selected deposit token only on the explicitly selected network', () => {
+  const ethereum = { id: 'eip155:1' }
+  const base = { id: 'eip155:8453' }
+  const tokens = [
+    { assetId: 'nep141:eth-usdc', blockchain: 'eth', symbol: 'USDC' },
+    { assetId: 'nep141:base-usdc', blockchain: 'base', symbol: 'USDC' }
+  ]
+
+  expect(depositTokenForNetwork(tokens, 'USDC', null)).toBeNull()
+  expect(depositTokenForNetwork(tokens, 'USDC', ethereum)?.assetId).toBe('nep141:eth-usdc')
+  expect(depositTokenForNetwork(tokens, 'USDC', base)?.assetId).toBe('nep141:base-usdc')
+})
 
 const apiConfig = {
   oneClickApiUrl: 'https://example.test/1click',

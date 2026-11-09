@@ -73,6 +73,8 @@ export function formatChainName(blockchain: string): string {
     monad: 'Monad',
     plasma: 'Plasma',
     xlayer: 'X Layer',
+    robinhood: 'Robinhood Chain',
+    hyperevm: 'HyperEVM',
     zec: 'Zcash',
     zcash: 'Zcash'
   }

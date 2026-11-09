@@ -43,7 +43,7 @@ import {
 import { toast } from '@/store/toast-store'
 import { DetailRow } from '../common/DetailRow'
 import { AmountDisplay } from '../common/AmountDisplay'
-import { CopyToast, useCopyToClipboard } from '../common/CopyToast'
+import { CopyFeedbackIcon, CopyToast, useCopyToClipboard } from '../common/CopyToast'
 import { ChainIcon } from '../common/ChainIcon'
 import { AccountDomainBadge } from '../account/AccountDomainBadge'
 import { formatBaseUnitAmount } from '@/lib/number-format'
@@ -164,7 +164,7 @@ export function MultichainActivityDetail({
   const [zcashRecord, setZcashRecord] = useState<Transaction | null>(null)
   const [swapApprovalAvailable, setSwapApprovalAvailable] = useState(false)
   const { activeAccount: activeSwapAccount } = useActiveAccountNetworks()
-  const { copyToClipboard, showToast } = useCopyToClipboard()
+  const { copyToClipboard, showToast, isCopied } = useCopyToClipboard()
   const endpointSettings = useSettingsStore(state => state.chainEndpointSettings)
   const { userAssets: userEvmAssets, detectedAssets: detectedEvmAssets } = useActivityEvmAssets()
   const currentWalletId = useWalletStore(state => state.currentWalletId)
@@ -1038,7 +1038,7 @@ export function MultichainActivityDetail({
         {visibleItem.kind === 'shield' && !visibleItem.snapshot?.shield && (
           <DetailRow label="Privacy">
             <span className="flex items-center gap-1.5">
-              <AccountDomainBadge domain="public" />
+              <AccountDomainBadge domain="public" chainFamily="zcash" />
               <Icon icon="lucide:arrow-right" width={13} height={13} className="text-muted" />
               <AccountDomainBadge domain="shield" />
             </span>
@@ -1086,7 +1086,7 @@ export function MultichainActivityDetail({
                   if (swap.recipientAddress) void copyToClipboard(swap.recipientAddress)
                 }}
               >
-                <Icon icon="lucide:copy" width={14} height={14} />
+                <CopyFeedbackIcon copied={isCopied()} width={14} height={14} />
               </button>
             </span>
           </DetailRow>

@@ -48,7 +48,11 @@ import { parseEvmFeeSelection, type EvmFeeSelection } from '@/infrastructure/cha
 import { NETWORKS } from '@/config/networks'
 import { getBundledEvmAssetDefinitions } from '@/core/chains/registry/product-chain-definitions'
 import { ChainIcon } from '@/popup/components/common/ChainIcon'
-import { CopyToast, useCopyToClipboard } from '@/popup/components/common/CopyToast'
+import {
+  CopyFeedbackIcon,
+  CopyToast,
+  useCopyToClipboard
+} from '@/popup/components/common/CopyToast'
 import { useNavigate } from '@/popup/provider/Router'
 import {
   formatDAppHost,
@@ -193,7 +197,7 @@ export function ApprovalPage() {
   const [selectedScopes, setSelectedScopes] = useState<Record<string, string[]>>({})
   const [expandedScopeId, setExpandedScopeId] = useState<string | null>(null)
   const [editingAccounts, setEditingAccounts] = useState(false)
-  const { copyToClipboard, showToast: showCopyToast } = useCopyToClipboard()
+  const { copyToClipboard, showToast: showCopyToast, isCopied } = useCopyToClipboard()
   const dappDomain = formatDAppHost(origin)
   const dappPageUrl = resolveDAppFaviconPageUrl(data, origin)
 
@@ -1303,7 +1307,7 @@ export function ApprovalPage() {
                   className="flex size-7 items-center justify-center rounded-lg text-muted transition-colors hover:bg-foreground/10 hover:text-foreground"
                   onClick={() => void copyToClipboard(data.message)}
                 >
-                  <Icon icon="lucide:copy" className="size-4" />
+                  <CopyFeedbackIcon copied={isCopied()} className="size-4" />
                 </button>
               </div>
               <p className="max-h-40 overflow-y-auto whitespace-pre-wrap break-words font-mono text-sm leading-6 text-foreground">

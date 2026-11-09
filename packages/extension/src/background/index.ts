@@ -534,18 +534,8 @@ async function requireCurrentPrivateSwapQuote(
   if (!catalog && /^[1-9]\d*$/.test(quote.request.fromChain)) {
     throw new Error('Wallet accounts are unavailable')
   }
-  const privateSender =
-    catalog &&
-    resolveEvmAddressRole(
-      quote.request.sender,
-      `eip155:${quote.request.fromChain}`,
-      catalog.accounts
-    ) === 'confidential'
   if (!quote.scope) {
-    if (privateSender || executionMode === 'private') {
-      throw new Error('Private quote needs to be refreshed before signing.')
-    }
-    return
+    throw new Error('Swap quote needs to be refreshed before signing.')
   }
   const account = catalog?.accounts.find(candidate => candidate.active)
   assertPrivateQuoteRoute(
@@ -559,7 +549,13 @@ async function requireCurrentPrivateSwapQuote(
     executionAccount?.kind === 'pea' &&
     executionAccount.address.toLowerCase() === quote.request.sender.toLowerCase()
   const expectedExecutionMode =
-    quote.scope.purpose === 'public-private-send' || dappPrivateAccount ? 'main' : 'private'
+    quote.scope.purpose === 'public-private-send' ||
+    quote.scope.purpose === 'wallet-swap' ||
+    quote.scope.purpose === 'public-cross-chain-send' ||
+    quote.scope.purpose === 'confidential-funding' ||
+    dappPrivateAccount
+      ? 'main'
+      : 'private'
   if (
     executionMode &&
     (executionMode !== expectedExecutionMode ||
@@ -575,7 +571,8 @@ async function requireCurrentPrivateSwapQuote(
       ((quote.scope.purpose === 'private-transfer' ||
         quote.scope.purpose === 'private-cross-chain-send' ||
         quote.scope.purpose === 'private-dapp-transfer' ||
-        quote.scope.purpose === 'public-private-send') &&
+        quote.scope.purpose === 'public-private-send' ||
+        quote.scope.purpose === 'public-cross-chain-send') &&
         binding.userAction !== 'transfer')
     ) {
       throw new Error('Private quote execution does not match its reviewed route.')
@@ -3865,6 +3862,19 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
                   catalog.accounts
                 ) === 'confidential'
               const purpose = message.purpose as PrivateQuotePurpose | undefined
+              if (
+                purpose === 'wallet-swap' ||
+                purpose === 'public-cross-chain-send' ||
+                purpose === 'confidential-funding'
+              ) {
+                if (privateSender) throw new Error('Swap source mode changed.')
+                assertPrivateQuoteRoute(request, account ?? null, purpose)
+                return rheaSwapService.quote(request, undefined, {
+                  walletId: account!.walletId,
+                  accountId: account!.accountId,
+                  purpose
+                })
+              }
               if (purpose === 'public-private-send') {
                 if (privateSender)
                   throw new Error('Public Confidential Send requires Public funds.')
@@ -3875,7 +3885,7 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
                   purpose
                 })
               }
-              if (!privateSender && !purpose) return rheaSwapService.quote(request)
+              if (!purpose) throw new Error('Swap quote requires a reviewed route.')
               if (!privateSender || !purpose) {
                 throw new Error('Private quote needs a reviewed route.')
               }

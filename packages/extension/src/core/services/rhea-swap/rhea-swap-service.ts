@@ -91,6 +91,9 @@ export interface RheaSwapQuoteSessionRecord {
     walletId: string
     accountId: string
     purpose?:
+      | 'wallet-swap'
+      | 'public-cross-chain-send'
+      | 'confidential-funding'
       | 'private-swap'
       | 'private-transfer'
       | 'private-cross-chain-send'

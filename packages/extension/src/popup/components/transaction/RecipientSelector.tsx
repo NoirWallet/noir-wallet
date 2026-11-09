@@ -15,7 +15,11 @@ import { Input } from '../ui/input'
 import { ListSkeleton } from '../ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../ui/tabs'
 import { ExecutionAccountBadge } from '../account/ExecutionAccountSelector'
-import { buildMyAccountRecipientGroups, buildSavedRecipientList } from './recipient-selector-model'
+import {
+  buildMyAccountRecipientGroups,
+  buildMyWalletRecipientGroups,
+  buildSavedRecipientList
+} from './recipient-selector-model'
 
 const EMPTY_ADDRESSES: readonly string[] = Object.freeze([])
 const RECIPIENT_TAB_CLASS =
@@ -129,21 +133,33 @@ export function RecipientSelector({
     [chainId, contacts, excludeAddresses]
   )
   const normalizedQuery = query.trim().toLowerCase()
-  const visibleAccountGroups = accountGroups.filter(group => {
-    const displayName = getAccountDisplayName(
-      group.walletId,
-      group.accountId,
-      group.accountDisplayName,
-      accountDisplayNames
-    )
-    return `${displayName} ${group.walletDisplayName} ${group.addresses.map(address => address.value).join(' ')}`
-      .toLowerCase()
-      .includes(normalizedQuery)
+  const visibleWalletGroups = buildMyWalletRecipientGroups(accountGroups).flatMap(wallet => {
+    const walletMatches = wallet.walletDisplayName.toLowerCase().includes(normalizedQuery)
+    const accounts = walletMatches
+      ? wallet.accounts
+      : wallet.accounts.filter(account => {
+          const displayName = getAccountDisplayName(
+            account.walletId,
+            account.accountId,
+            account.accountDisplayName,
+            accountDisplayNames
+          )
+          return `${displayName} ${account.addresses.map(address => address.value).join(' ')}`
+            .toLowerCase()
+            .includes(normalizedQuery)
+        })
+    return accounts.length > 0 ? [{ ...wallet, accounts }] : []
   })
   const visibleRecipients = savedRecipients.filter(contact =>
     `${contact.name} ${contact.address}`.toLowerCase().includes(normalizedQuery)
   )
   const isEvm = chainId.startsWith('eip155:')
+  const walletAvatarIndex = new Map<string, number>()
+  for (const account of catalog?.accounts ?? []) {
+    if (!walletAvatarIndex.has(account.walletId)) {
+      walletAvatarIndex.set(account.walletId, walletAvatarIndex.size)
+    }
+  }
 
   return (
     <Tabs defaultValue="accounts" className="min-h-0 gap-0">
@@ -159,7 +175,7 @@ export function RecipientSelector({
       </div>
       <TabsList className="h-10 w-full justify-start rounded-none border-b border-border bg-transparent p-0">
         <TabsTrigger value="accounts" className={RECIPIENT_TAB_CLASS}>
-          My Accounts
+          My Wallets
         </TabsTrigger>
         <TabsTrigger value="address-book" className={RECIPIENT_TAB_CLASS}>
           Address Book
@@ -175,48 +191,18 @@ export function RecipientSelector({
             message="Unable to load accounts"
             onRetry={loadAccounts}
           />
-        ) : visibleAccountGroups.length === 0 ? (
+        ) : visibleWalletGroups.length === 0 ? (
           <EmptyState
             icon="lucide:wallet"
             title={normalizedQuery ? 'No matching accounts' : 'No other accounts'}
           />
         ) : (
           <div className="space-y-5 pb-1">
-            {visibleAccountGroups.map(group => {
-              const displayName = getAccountDisplayName(
-                group.walletId,
-                group.accountId,
-                group.accountDisplayName,
-                accountDisplayNames
-              )
-              const accountIndex =
-                catalog?.accounts.find(
-                  account =>
-                    account.walletId === group.walletId && account.accountId === group.accountId
-                )?.accountIndex ?? 0
-              if (group.addresses.length === 0) {
-                return (
-                  <button
-                    key={group.key}
-                    type="button"
-                    disabled
-                    className="flex w-full min-w-0 flex-col items-start gap-1 rounded-lg bg-card px-3 py-2.5 text-left opacity-60"
-                  >
-                    <span className="flex w-full min-w-0 items-center gap-2">
-                      <span className="min-w-0 truncate text-sm font-medium">{displayName}</span>
-                      {group.active && <span className="shrink-0 text-xs text-muted">Current</span>}
-                      {group.walletDisplayName && (
-                        <span className="ml-auto max-w-[42%] truncate text-xs text-muted">
-                          {group.walletDisplayName}
-                        </span>
-                      )}
-                    </span>
-                    <span className="text-xs text-muted">Unavailable on this network</span>
-                  </button>
-                )
-              }
+            {visibleWalletGroups.map(wallet => {
+              const firstAccount = wallet.accounts[0]!
+              const walletIndex = walletAvatarIndex.get(wallet.walletId) ?? 0
               return (
-                <section key={group.key}>
+                <section key={wallet.walletId}>
                   <div className="mb-2 flex min-w-0 items-center gap-2 px-1">
                     <img
                       src={
@@ -224,66 +210,109 @@ export function RecipientSelector({
                           '/icons/wallet-avatar-main.png',
                           '/icons/wallet-avatar-meme.png',
                           '/icons/wallet-avatar-nft.png'
-                        ][accountIndex % 3]
+                        ][walletIndex % 3]
                       }
                       alt=""
                       aria-hidden="true"
                       className="size-8 shrink-0 rounded-full object-cover"
                     />
                     <div className="min-w-0 flex-1">
-                      {group.walletDisplayName && (
-                        <p className="truncate text-xs text-muted">{group.walletDisplayName}</p>
+                      <p className="truncate text-xs text-muted">
+                        {wallet.walletDisplayName || 'Wallet'}
+                      </p>
+                      {wallet.accounts.length === 1 && (
+                        <p className="truncate text-sm font-medium">
+                          {getAccountDisplayName(
+                            firstAccount.walletId,
+                            firstAccount.accountId,
+                            firstAccount.accountDisplayName,
+                            accountDisplayNames
+                          )}
+                        </p>
                       )}
-                      <p className="truncate text-sm font-medium">{displayName}</p>
                     </div>
-                    {group.active && <span className="shrink-0 text-xs text-muted">Current</span>}
+                    {wallet.accounts.length === 1 && firstAccount.active && (
+                      <span className="shrink-0 text-xs text-muted">Current</span>
+                    )}
                   </div>
-                  <div className="space-y-2">
-                    {group.addresses.map(address => {
-                      const schemeLabel = addressSchemeLabel(address.scheme)
+                  <div className="space-y-3">
+                    {wallet.accounts.map(group => {
+                      const displayName = getAccountDisplayName(
+                        group.walletId,
+                        group.accountId,
+                        group.accountDisplayName,
+                        accountDisplayNames
+                      )
                       return (
-                        <button
-                          key={`${group.key}:${address.scheme}:${address.value}`}
-                          type="button"
-                          aria-label={`Send to ${displayName}${address.executionMode ? ` ${address.executionMode === 'private' ? 'Confidential' : 'Public'}` : schemeLabel ? ` ${schemeLabel}` : ''}`}
-                          onClick={() => onSelect(address.value, displayName)}
-                          className="flex w-full items-center gap-3 rounded-lg border border-transparent bg-card px-3 py-2.5 text-left transition-colors hover:border-primary/20 hover:bg-white/5"
-                        >
-                          {schemeLabel && (
-                            <span className="shrink-0 rounded-md bg-white/5 px-2 py-1 text-[10px] text-muted">
-                              {schemeLabel}
-                            </span>
+                        <div key={group.key} className="space-y-2">
+                          {wallet.accounts.length > 1 && (
+                            <div className="flex items-center gap-2 px-1 text-xs">
+                              <span className="min-w-0 flex-1 truncate font-medium">
+                                {displayName}
+                              </span>
+                              {group.active && <span className="text-muted">Current</span>}
+                            </div>
                           )}
-                          {isEvm && address.executionMode && (
-                            <span className="flex shrink-0 items-center gap-1.5 text-sm">
-                              {address.executionMode === 'private' ? (
-                                <ExecutionAccountBadge mode="private" iconOnly />
-                              ) : (
-                                <Icon
-                                  icon="lucide:eye"
-                                  width={16}
-                                  height={16}
-                                  className="text-muted"
-                                />
-                              )}
-                              {address.executionMode === 'private' ? 'Private' : 'Public'}
-                            </span>
+                          {group.addresses.length === 0 ? (
+                            <div className="rounded-lg bg-card px-3 py-2.5 text-xs text-muted opacity-60">
+                              Unavailable on this network
+                            </div>
+                          ) : (
+                            group.addresses.map(address => {
+                              const schemeLabel = addressSchemeLabel(address.scheme)
+                              return (
+                                <button
+                                  key={`${group.key}:${address.scheme}:${address.value}`}
+                                  type="button"
+                                  aria-label={`Send to ${displayName}${address.executionMode ? ` ${address.executionMode === 'private' ? 'Confidential' : 'Public'}` : schemeLabel ? ` ${schemeLabel}` : ''}`}
+                                  onClick={() => onSelect(address.value, displayName)}
+                                  className="flex w-full items-center gap-3 rounded-lg border border-transparent bg-card px-3 py-2.5 text-left transition-colors hover:border-primary/20 hover:bg-white/5"
+                                >
+                                  {schemeLabel && (
+                                    <span
+                                      className={
+                                        schemeLabel === 'Shielded'
+                                          ? 'shrink-0 rounded-md bg-success/10 px-2 py-1 text-[10px] text-success'
+                                          : 'shrink-0 rounded-md bg-white/5 px-2 py-1 text-[10px] text-muted'
+                                      }
+                                    >
+                                      {schemeLabel}
+                                    </span>
+                                  )}
+                                  {isEvm && address.executionMode && (
+                                    <span className="flex shrink-0 items-center gap-1.5 text-sm">
+                                      {address.executionMode === 'private' ? (
+                                        <ExecutionAccountBadge mode="private" iconOnly />
+                                      ) : (
+                                        <Icon
+                                          icon="lucide:eye"
+                                          width={16}
+                                          height={16}
+                                          className="text-muted"
+                                        />
+                                      )}
+                                      {address.executionMode === 'private' ? 'Private' : 'Public'}
+                                    </span>
+                                  )}
+                                  <p
+                                    className="min-w-0 flex-1 truncate font-mono text-xs text-foreground"
+                                    title={address.value}
+                                  >
+                                    {formatSortAddress(address.value)}
+                                  </p>
+                                  {!isEvm && (
+                                    <Icon
+                                      icon="lucide:arrow-right"
+                                      width={14}
+                                      height={14}
+                                      className="shrink-0 text-muted"
+                                    />
+                                  )}
+                                </button>
+                              )
+                            })
                           )}
-                          <p
-                            className="min-w-0 flex-1 truncate font-mono text-xs text-foreground"
-                            title={address.value}
-                          >
-                            {formatSortAddress(address.value)}
-                          </p>
-                          {!isEvm && (
-                            <Icon
-                              icon="lucide:arrow-right"
-                              width={14}
-                              height={14}
-                              className="shrink-0 text-muted"
-                            />
-                          )}
-                        </button>
+                        </div>
                       )
                     })}
                   </div>

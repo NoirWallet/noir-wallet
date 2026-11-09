@@ -15,7 +15,10 @@ import {
   summarizeKnownShieldFiat
 } from '../../../src/popup/services/asset-domains.ts'
 import { projectPortfolioForChains } from '../../../src/popup/services/portfolio-presentation.ts'
-import { resolveConfidentialDetailAssetId } from '../../../src/popup/services/near-confidential-holdings.ts'
+import {
+  resolveConfidentialDetailAssetId,
+  resolveNearConfidentialZecHolding
+} from '../../../src/popup/services/near-confidential-holdings.ts'
 import { getAssetDetailCategories } from '../../../src/popup/pages/portfolio/asset-detail-balance.ts'
 
 test('Home action source follows the selected balance domain', () => {
@@ -59,6 +62,58 @@ test('Home action source follows the selected balance domain', () => {
   expect(selectHomeActionSource(model, 'public', 'swap')?.asset.asset.id).toBe(zcash.asset.id)
   expect(selectHomeActionSource(model, 'private', 'swap')?.asset.asset.id).toBe(evm.asset.id)
   expect(selectHomeActionSource({ ...model, assets: [zcash] }, 'private', 'swap')).toBeNull()
+})
+
+test('NEAR Confidential ZEC stays separate from on-chain ZEC and inside its account and network', () => {
+  const assetId = 'bip122:00040fe8ec8471911baa1db1266ea15d/slip44:133'
+  const asset = {
+    asset: { id: assetId, chainId: 'bip122:00040fe8ec8471911baa1db1266ea15d' },
+    metadata: { decimals: 8, symbol: 'ZEC' },
+    balance: { totalRaw: '0', transparentRaw: '0', shieldedRaw: '0' }
+  }
+  const model = {
+    scope: { keyDomainId: 'wallet-a', accountId: 'account-a' },
+    assets: [asset],
+    confidential: {
+      status: 'ready',
+      assets: [
+        {
+          tokenId: 'private-zec',
+          protocolAssetId: 'nep141:zec.omft.near',
+          assetId,
+          chainId: asset.asset.chainId,
+          availableRaw: '125000000',
+          decimals: 8
+        }
+      ]
+    }
+  }
+  const input = { model, network: 'mainnet', walletId: 'wallet-a', accountId: 'account-a', assetId }
+  expect(resolveNearConfidentialZecHolding(input)).toEqual({
+    assetId,
+    protocolAssetId: 'nep141:zec.omft.near',
+    availableRaw: '125000000',
+    amount: '1.25'
+  })
+  expect(getAssetDetailCategories(asset, model, false).raw).toMatchObject({
+    all: '0',
+    public: '0',
+    shield: '0'
+  })
+  expect(resolveNearConfidentialZecHolding({ ...input, accountId: 'account-b' })).toBeNull()
+  expect(resolveNearConfidentialZecHolding({ ...input, network: 'testnet' })).toBeNull()
+  expect(
+    resolveNearConfidentialZecHolding({
+      ...input,
+      model: {
+        ...model,
+        confidential: {
+          ...model.confidential,
+          assets: [{ ...model.confidential.assets[0], protocolAssetId: 'nep141:other.near' }]
+        }
+      }
+    })
+  ).toBeNull()
 })
 
 test('Home total requires a complete current-account Portfolio and ready prices', () => {

@@ -26,7 +26,7 @@ export function FundingSourceSelector({
           <div key={type} className="space-y-2">
             <button
               type="button"
-              aria-label={type === 'transparent' ? 'Public account' : 'Zcash shield'}
+              aria-label={type === 'transparent' ? 'Transparent account' : 'Zcash shield'}
               aria-pressed={selectedType === option.type}
               disabled={Boolean(option.disabledReason)}
               title={option.disabledReason}
@@ -45,7 +45,7 @@ export function FundingSourceSelector({
                     width={16}
                     className={type === 'shielded' ? 'text-success' : ''}
                   />
-                  {type === 'transparent' ? 'Public account' : 'Shield'}
+                  {type === 'transparent' ? 'Transparent account' : 'Shield'}
                 </span>
                 <span className="mt-1 flex items-center gap-1.5 text-xs text-muted">
                   {type === 'shielded' && (

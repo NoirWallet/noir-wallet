@@ -707,7 +707,8 @@ function ShieldProviderContent() {
                           from: 'shield',
                           to: mode,
                           provider: 'near-confidential',
-                          mode
+                          mode,
+                          entry: 'asset-detail'
                         })
                         navigate(`/transfer?${query.toString()}`)
                       }}

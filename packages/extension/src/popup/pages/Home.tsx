@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Icon } from '@iconify/react'
 import { TokenIcon } from '../components/tokens/TokenIcon'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs'
-import { CopyToast, useCopyToClipboard } from '../components/common/CopyToast'
+import { CopyFeedbackIcon, CopyToast, useCopyToClipboard } from '../components/common/CopyToast'
 import { DAppConnectPrompt } from '../components/dapp/DAppConnectPrompt'
 import { WalletModeSwitch } from '../components/dapp/WalletModeSwitch'
 import { ConnectedDAppBar } from '../components/dapp/ConnectedDAppBar'
@@ -97,7 +97,7 @@ export function Home() {
   const openResyncZcash = useResyncZcash()
   const navigate = useNavigate()
   const location = useLocation()
-  const { copyToClipboard, showToast } = useCopyToClipboard()
+  const { copyToClipboard, showToast, isCopied } = useCopyToClipboard()
   const {
     currentDApp,
     currentAccountAuthorized,
@@ -1145,12 +1145,21 @@ export function Home() {
                             type="button"
                             onClick={e => {
                               e.stopPropagation()
-                              copyToClipboard(addr.address)
+                              void copyToClipboard(
+                                addr.address,
+                                `home-address-${currentWalletId}-${currentAccountId}-${addr.type}`
+                              )
                             }}
                             className="wallet-interactive cursor-pointer rounded-md text-muted hover:bg-white/10 hover:text-white active:bg-white/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2"
                             aria-label="Copy address"
                           >
-                            <Icon icon="lucide:copy" width={13} height={13} />
+                            <CopyFeedbackIcon
+                              copied={isCopied(
+                                `home-address-${currentWalletId}-${currentAccountId}-${addr.type}`
+                              )}
+                              width={13}
+                              height={13}
+                            />
                           </button>
                           <button
                             type="button"

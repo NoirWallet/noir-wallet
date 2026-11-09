@@ -48,6 +48,7 @@ interface SwapTransactionResult {
   signedOrder?: boolean
   sourceExecutionMode?: 'main' | 'private'
   rheaQuoteHandle?: string
+  router?: string
   approvalRequestIdAfterFunding?: string
   confidentialFunding?: Readonly<{
     planId: string

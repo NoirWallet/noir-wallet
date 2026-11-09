@@ -28,7 +28,11 @@ import { useSettingsStore } from '@/store/settings-store'
 import { PageHeader } from '@/popup/components/common/PageHeader'
 import { WalletActionIcon } from '@/popup/components/common/WalletActionIcon'
 import { InlineError } from '@/popup/components/common/InlineError'
-import { CopyToast, useCopyToClipboard } from '@/popup/components/common/CopyToast'
+import {
+  CopyFeedbackIcon,
+  CopyToast,
+  useCopyToClipboard
+} from '@/popup/components/common/CopyToast'
 import { TokenIcon } from '@/popup/components/tokens/TokenIcon'
 import { AccountDomainBadge } from '@/popup/components/account/AccountDomainBadge'
 import { AssetDomainSelector } from '@/popup/components/portfolio/AssetDomainSelector'
@@ -36,6 +40,8 @@ import { confidentialFundingClient } from '@/popup/services/confidential-funding
 import { swapTokenCatalogClient } from '@/popup/services/swap-token-catalog-client'
 import { resolveManagedIntentsCatalog } from '@/popup/services/intents-asset-manager-client'
 import { listShieldFundingAssets } from '@/popup/services/shield-transfer'
+import { resolveNearConfidentialZecHolding } from '@/popup/services/near-confidential-holdings'
+import nearLogo from '@/images/figma-near-confidential.svg'
 import type { SwapToken } from '@/core/services/intents-api'
 
 import { formatDisplayTokenAmount } from '@/popup/components/portfolio/portfolio-format'
@@ -114,7 +120,7 @@ export function AssetDetail() {
   const [shieldLoading, setShieldLoading] = useState(false)
   const [shieldError, setShieldError] = useState(false)
   const [shieldRetry, setShieldRetry] = useState(0)
-  const { copyToClipboard, showToast } = useCopyToClipboard()
+  const { copyToClipboard, showToast, isCopied } = useCopyToClipboard()
   const { isShielding, handleShieldFunds, shieldSheet } = useShieldFunds()
 
   const load = useCallback(
@@ -245,6 +251,15 @@ export function AssetDetail() {
           findAssetPrice(prices, asset.asset.id)?.priceUsd
         )
       : null
+  const nearConfidentialZec = asset
+    ? resolveNearConfidentialZecHolding({
+        model: visibleModel,
+        network: currentNetwork,
+        walletId: effectiveWalletId,
+        accountId: effectiveAccountId,
+        assetId: asset.asset.id
+      })
+    : null
   const detailDomain = categories?.domains.find(domain => domain === requestedDomain) ?? 'all'
   const nearShieldSelected = chain?.chain.family === 'evm' && detailDomain === 'shield'
   const canMoveZcashShield =
@@ -327,7 +342,7 @@ export function AssetDetail() {
     if (nearShieldSelected) {
       if (!shieldAssetSupported) return
       navigate(
-        `/transfer?${new URLSearchParams({ assetId: asset.asset.id, provider: 'near-confidential', from: 'shield', to: mode, mode })}`
+        `/transfer?${new URLSearchParams({ assetId: asset.asset.id, provider: 'near-confidential', from: 'shield', to: mode, mode, entry: 'asset-detail' })}`
       )
       return
     }
@@ -335,6 +350,7 @@ export function AssetDetail() {
     navigate(
       `/transfer?${new URLSearchParams({
         assetId: asset.asset.id,
+        entry: 'asset-detail',
         from,
         to: from === 'public' ? 'private' : 'public',
         mode: searchParams.get('mode') === 'private' ? 'private' : 'public'
@@ -670,7 +686,11 @@ export function AssetDetail() {
       : (preferredBitcoinAddress?.value ??
         accountNetwork?.addresses.find(address => address.preferredForReceive)?.value)
   const historyLinks = [
-    { domain: 'public', address: publicAddress, label: 'View Public address' },
+    {
+      domain: 'public',
+      address: publicAddress,
+      label: chain.chain.family === 'zcash' ? 'View Transparent address' : 'View Public address'
+    },
     {
       domain: 'private',
       address: accountNetwork?.privateExecutionAddress,
@@ -702,7 +722,11 @@ export function AssetDetail() {
             referrerPolicy="no-referrer"
             className="inline-flex items-center gap-1 font-medium text-primary hover:underline"
           >
-            {link.domain === 'public' ? 'Public' : 'Private'}
+            {link.domain === 'public'
+              ? chain.chain.family === 'zcash'
+                ? 'Transparent'
+                : 'Public'
+              : 'Private'}
             <Icon icon="lucide:external-link" width={12} height={12} />
           </a>
         </span>
@@ -767,10 +791,12 @@ export function AssetDetail() {
                 <button
                   type="button"
                   aria-label="Copy Bitcoin receive address"
-                  onClick={() => void copyToClipboard(preferredBitcoinAddress.value)}
+                  onClick={() =>
+                    void copyToClipboard(preferredBitcoinAddress.value, 'bitcoin-address')
+                  }
                   className="wallet-interactive flex size-8 shrink-0 items-center justify-center rounded-full text-muted hover:bg-white/10 hover:text-foreground"
                 >
-                  <Icon icon="lucide:copy" width={16} height={16} />
+                  <CopyFeedbackIcon copied={isCopied('bitcoin-address')} />
                 </button>
                 <button
                   type="button"
@@ -792,10 +818,10 @@ export function AssetDetail() {
                 <button
                   type="button"
                   aria-label="Copy contract address"
-                  onClick={() => void copyToClipboard(contractAddress)}
+                  onClick={() => void copyToClipboard(contractAddress, 'contract-address')}
                   className="wallet-interactive flex size-8 shrink-0 items-center justify-center rounded-full text-muted hover:bg-white/10 hover:text-foreground"
                 >
-                  <Icon icon="lucide:copy" width={16} height={16} />
+                  <CopyFeedbackIcon copied={isCopied('contract-address')} />
                 </button>
               </div>
             )}
@@ -1070,7 +1096,7 @@ export function AssetDetail() {
               )}
             </div>
             <div className="flex items-center justify-between gap-4 text-sm">
-              <AccountDomainBadge domain="public" />
+              <AccountDomainBadge domain="public" chainFamily="zcash" />
               {zcashDisplay ? (
                 <span
                   className="min-w-0 break-all text-right text-sm"
@@ -1087,6 +1113,41 @@ export function AssetDetail() {
                 <Skeleton className="h-4 w-20" />
               )}
             </div>
+            {nearConfidentialZec && (
+              <button
+                type="button"
+                onClick={() =>
+                  navigate(
+                    `/shield-swap?provider=near-confidential&assetId=${encodeURIComponent(asset.asset.id)}`
+                  )
+                }
+                className="flex w-full items-center justify-between gap-4 text-left text-sm hover:text-primary"
+                aria-label="Swap NEAR Confidential ZEC"
+              >
+                <span className="inline-flex min-w-0 items-center gap-1.5 text-xs">
+                  <img src={nearLogo} alt="" className="size-4 shrink-0 rounded" />
+                  <span className="min-w-0 truncate">NEAR Confidential Intents</span>
+                </span>
+                <span className="flex min-w-0 items-center gap-1.5">
+                  <span
+                    className="min-w-0 truncate text-right"
+                    title={`${nearConfidentialZec.amount} ZEC`}
+                  >
+                    {formatDisplayTokenAmount(
+                      nearConfidentialZec.availableRaw,
+                      asset.metadata.decimals
+                    )}{' '}
+                    ZEC
+                  </span>
+                  <Icon
+                    icon="lucide:chevron-right"
+                    width={14}
+                    height={14}
+                    className="shrink-0 text-muted"
+                  />
+                </span>
+              </button>
+            )}
           </section>
         )}
 

@@ -26,6 +26,7 @@ interface SwapStatusDisplayProps {
   amountIn: string
   amountOut: string
   actionName?: string
+  router?: string
   destinationChain?: string
   destinationConfirmations?: number | null
   originChain?: string
@@ -93,6 +94,7 @@ export function SwapStatusDisplay({
   amountIn,
   amountOut,
   actionName,
+  router,
   destinationChain: destinationChainHint,
   destinationConfirmations,
   originChain: originChainHint,
@@ -133,6 +135,7 @@ export function SwapStatusDisplay({
   const progress = getIntentsProgressPresentation({
     status: currentStatus,
     actionName: actionLabel,
+    router,
     originStatus,
     originTxHash: originTxHash ?? status?.swapDetails?.originChainTxHashes?.[0]?.hash,
     originConfirmations,

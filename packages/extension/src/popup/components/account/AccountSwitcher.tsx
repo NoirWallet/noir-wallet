@@ -20,7 +20,7 @@ import {
 import { switchWalletAccount } from '@/popup/services/account-switch'
 import { useNavigate } from '@/popup/provider/Router'
 import { useDialog } from '@/popup/hooks/useDialog'
-import { CopyToast, useCopyToClipboard } from '../common/CopyToast'
+import { CopyFeedbackIcon, CopyToast, useCopyToClipboard } from '../common/CopyToast'
 import { ChainIcon } from '../common/ChainIcon'
 import evmGroupIcon from '@/images/figma-evm-group.svg'
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover'
@@ -118,15 +118,20 @@ function AccountAvatar({
 function AccountAddressPopover({
   account,
   onCopy,
+  isCopied,
+  copyScope,
   onViewAll,
   className
 }: {
   readonly account: SwitcherAccount
-  readonly onCopy: (value: string) => void
+  readonly onCopy: (value: string, key: string) => void
+  readonly isCopied: (key: string) => boolean
+  readonly copyScope: string
   readonly onViewAll: () => void
   readonly className?: string
 }) {
   const [evmMode, setEvmMode] = useState<'public' | 'private'>('public')
+  const keyPrefix = `${copyScope}-${account.walletId}-${account.accountId}`
   const zcash = account.networks.find(network => network.chain.family === 'zcash')
   const evm = account.networks.filter(network => network.chain.family === 'evm')
   const evmAddresses = evmExecutionAddresses(evm)
@@ -184,10 +189,14 @@ function AccountAddressPopover({
                     type="button"
                     aria-label={`Copy Zcash ${address.privacy} address`}
                     title="Copy address"
-                    onClick={() => onCopy(address.value)}
+                    onClick={() => onCopy(address.value, `${keyPrefix}-zcash-${address.scheme}`)}
                     className="wallet-interactive flex size-6 shrink-0 items-center justify-center rounded-md text-muted hover:bg-white/8 hover:text-foreground active:bg-white/12 focus-visible:outline-2 focus-visible:outline-primary"
                   >
-                    <Icon icon="lucide:copy" width={14} height={14} />
+                    <CopyFeedbackIcon
+                      copied={isCopied(`${keyPrefix}-zcash-${address.scheme}`)}
+                      width={14}
+                      height={14}
+                    />
                   </button>
                 </span>
               </div>
@@ -259,10 +268,14 @@ function AccountAddressPopover({
                 type="button"
                 aria-label={`Copy EVM ${evmMode === 'private' ? 'Private' : 'Public'} address`}
                 title="Copy address"
-                onClick={() => onCopy(evmAddress)}
+                onClick={() => onCopy(evmAddress, `${keyPrefix}-evm-${evmMode}`)}
                 className="wallet-interactive flex size-6 shrink-0 items-center justify-center rounded-md text-muted hover:bg-white/8 hover:text-foreground active:bg-white/12 focus-visible:outline-2 focus-visible:outline-primary @max-[240px]:col-start-3 @max-[240px]:row-start-2"
               >
-                <Icon icon="lucide:copy" width={14} height={14} />
+                <CopyFeedbackIcon
+                  copied={isCopied(`${keyPrefix}-evm-${evmMode}`)}
+                  width={14}
+                  height={14}
+                />
               </button>
             )}
           </div>
@@ -289,10 +302,14 @@ function AccountAddressPopover({
             type="button"
             aria-label={`Copy ${network.chain.displayName} address`}
             title="Copy address"
-            onClick={() => onCopy(address.value)}
+            onClick={() => onCopy(address.value, `${keyPrefix}-${network.chain.id}`)}
             className="wallet-interactive flex size-6 shrink-0 items-center justify-center rounded-md text-muted hover:bg-white/8 hover:text-foreground active:bg-white/12 focus-visible:outline-2 focus-visible:outline-primary"
           >
-            <Icon icon="lucide:copy" width={14} height={14} />
+            <CopyFeedbackIcon
+              copied={isCopied(`${keyPrefix}-${network.chain.id}`)}
+              width={14}
+              height={14}
+            />
           </button>
         </div>
       ))}
@@ -319,7 +336,7 @@ export function AccountSwitcher({
 }) {
   const { navigate, replace } = useNavigate()
   const { confirm, alert } = useDialog()
-  const { copyToClipboard, showToast } = useCopyToClipboard()
+  const { copyToClipboard, showToast, isCopied } = useCopyToClipboard()
   const { wallets, accountDisplayNames, currentWalletId, currentAccountId } = useWalletStore()
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [addressesOpen, setAddressesOpen] = useState(false)
@@ -643,7 +660,9 @@ export function AccountSwitcher({
                   <AccountAddressPopover
                     account={previewAccount}
                     className="max-w-[calc(100vw-96px)]"
-                    onCopy={value => void copyToClipboard(value)}
+                    onCopy={(value, key) => void copyToClipboard(value, key)}
+                    isCopied={isCopied}
+                    copyScope="preview"
                     onViewAll={() => viewAddresses(previewAccount)}
                   />
                 </div>
@@ -687,7 +706,7 @@ export function AccountSwitcher({
           >
             <span className="min-w-0 truncate">{activeName}</span>
             <Icon
-              icon="lucide:copy"
+              icon="lucide:chevron-down"
               width={10}
               height={10}
               className="shrink-0 text-wallet-secondary"
@@ -713,7 +732,9 @@ export function AccountSwitcher({
           {activeAccount && (
             <AccountAddressPopover
               account={activeAccount}
-              onCopy={value => void copyToClipboard(value)}
+              onCopy={(value, key) => void copyToClipboard(value, key)}
+              isCopied={isCopied}
+              copyScope="active"
               onViewAll={() => viewAddresses(activeAccount)}
               className="!w-full"
             />

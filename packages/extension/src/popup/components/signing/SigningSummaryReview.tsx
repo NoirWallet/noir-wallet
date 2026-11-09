@@ -2,7 +2,11 @@ import type { ReactNode } from 'react'
 import { Icon } from '@iconify/react'
 import type { SigningSummary } from '@/core/keyring/domain'
 import { cn } from '@/lib/utils'
-import { CopyToast, useCopyToClipboard } from '@/popup/components/common/CopyToast'
+import {
+  CopyFeedbackIcon,
+  CopyToast,
+  useCopyToClipboard
+} from '@/popup/components/common/CopyToast'
 import { AmountDisplay } from '@/popup/components/common/AmountDisplay'
 import { ApprovalWindowLayout } from '@/popup/components/dapp/ApprovalWindowLayout'
 import {
@@ -182,7 +186,7 @@ function DAppMessageReview({
   readonly iconChain?: string
   readonly networkName: string
 }) {
-  const { copyToClipboard, showToast } = useCopyToClipboard()
+  const { copyToClipboard, showToast, isCopied } = useCopyToClipboard()
   const primaryRows = model.sections.flatMap(section => section.rows.filter(isPrimaryMessageRow))
   const fallbackRows = model.sections.find(section => section.title !== 'Request')?.rows ?? []
   const messageRows = primaryRows.length > 0 ? primaryRows : fallbackRows
@@ -207,7 +211,7 @@ function DAppMessageReview({
             className="flex size-7 items-center justify-center rounded-lg text-muted transition-colors hover:bg-foreground/10 hover:text-foreground"
             onClick={() => void copyToClipboard(copyValue)}
           >
-            <Icon icon="lucide:copy" width={16} height={16} />
+            <CopyFeedbackIcon copied={isCopied()} width={16} height={16} />
           </button>
         </div>
         {messageRows.length === 1 ? (

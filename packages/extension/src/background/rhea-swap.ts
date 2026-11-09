@@ -190,6 +190,9 @@ function parseStoredRecord(value: unknown): RheaSwapQuoteSessionRecord {
       typeof privateSwapScope.walletId !== 'string' ||
       typeof privateSwapScope.accountId !== 'string' ||
       (privateSwapScope.purpose !== undefined &&
+        privateSwapScope.purpose !== 'wallet-swap' &&
+        privateSwapScope.purpose !== 'public-cross-chain-send' &&
+        privateSwapScope.purpose !== 'confidential-funding' &&
         privateSwapScope.purpose !== 'private-swap' &&
         privateSwapScope.purpose !== 'private-transfer' &&
         privateSwapScope.purpose !== 'private-cross-chain-send' &&
@@ -295,6 +298,9 @@ function parseStoredRecord(value: unknown): RheaSwapQuoteSessionRecord {
               ? {}
               : {
                   purpose: privateSwapScope.purpose as
+                    | 'wallet-swap'
+                    | 'public-cross-chain-send'
+                    | 'confidential-funding'
                     | 'private-swap'
                     | 'private-transfer'
                     | 'private-cross-chain-send'

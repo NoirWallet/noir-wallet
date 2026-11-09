@@ -227,7 +227,7 @@ export function ShieldMoveSheet({
   const filteredRows = rows.filter(row => {
     const term = search.trim().toLowerCase()
     return (
-      (chainId === 'all' || row.chain.chain.id === chainId) &&
+      row.chain.chain.id === chainId &&
       (!term ||
         row.asset.metadata.symbol.toLowerCase().includes(term) ||
         row.asset.metadata.name.toLowerCase().includes(term) ||
@@ -252,7 +252,7 @@ export function ShieldMoveSheet({
     : evmNetworks
   const zcashVisible =
     showZcash &&
-    (chainId === 'all' || chainId === getZcashChainId(network)) &&
+    (source === 'zcash-shield' || chainId === getZcashChainId(network)) &&
     (search.trim() === '' || 'zec zcash'.includes(search.trim().toLowerCase()))
   const needsCatalog = source !== 'zcash-shield' && canNear
   const loading =
@@ -428,12 +428,7 @@ export function ShieldMoveSheet({
                     />
                   </div>
                   {networks.length > 0 && (
-                    <div className="mb-4 flex gap-2 overflow-x-auto pb-1">
-                      <FilterButton
-                        label="All"
-                        selected={chainId === 'all'}
-                        onClick={() => setChainId('all')}
-                      />
+                    <div className="mb-4 flex gap-2 overflow-x-auto pb-1" aria-label="Network">
                       {networks.map(([id, label]) => (
                         <FilterButton
                           key={id}
@@ -534,11 +529,15 @@ export function ShieldMoveSheet({
                   </button>
                 </div>
               )}
-              {!loading && !error && filteredRows.length === 0 && !zcashVisible && (
-                <p className="py-5 text-center text-sm text-wallet-secondary">
-                  No available tokens
-                </p>
-              )}
+              {!loading &&
+                !error &&
+                (source === 'zcash-shield' || chainId !== 'all' || networks.length === 0) &&
+                filteredRows.length === 0 &&
+                !zcashVisible && (
+                  <p className="py-5 text-center text-sm text-wallet-secondary">
+                    No available tokens
+                  </p>
+                )}
             </>
           )}
         </div>

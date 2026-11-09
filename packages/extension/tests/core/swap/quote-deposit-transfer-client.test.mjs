@@ -166,6 +166,53 @@ function nearIntentsBinding(source, depositAddress, amountRaw) {
 }
 
 test.describe('quote deposit transfer client', () => {
+  test('binds custom EVM native swaps to the enabled chain and scoped account', () => {
+    const chainId = 'eip155:999'
+    const model = portfolio()
+    const chain = {
+      chain: { id: chainId, family: 'evm', capabilities: { transaction: { status: 'available' } } }
+    }
+    const asset = {
+      asset: { id: `${chainId}/slip44:60`, chainId, kind: 'native' },
+      metadata: { symbol: 'HYPE', decimals: 18 }
+    }
+    model.chains.push(chain)
+    model.assets.push(asset)
+    const targets = {
+      ...receiveTargets,
+      targets: [
+        ...receiveTargets.targets,
+        {
+          chain: { id: chainId },
+          kind: 'evm',
+          address: '0x3333333333333333333333333333333333333333'
+        }
+      ]
+    }
+    const native = {
+      ...token(asset.asset.id, 'hyperevm', 18),
+      rheaChainId: '999',
+      isNative: true,
+      contractAddress: null
+    }
+    expect(resolveWalletOwnedQuoteAsset(native, model, targets, mappings)).toMatchObject({
+      asset,
+      chain,
+      refundAddress: targets.targets.at(-1).address
+    })
+    expect(resolveWalletOwnedQuoteAsset(native, model, receiveTargets, mappings)).toBeNull()
+    expect(
+      resolveWalletOwnedQuoteAsset(native, model, { ...targets, accountId: 'other' }, mappings)
+    ).toBeNull()
+    expect(
+      resolveWalletOwnedQuoteAsset(
+        { ...native, assetId: 'nep141:eth.omft.near' },
+        model,
+        targets,
+        mappings
+      )
+    ).toBeNull()
+  })
   test('wallet-funded swaps proceed through signing or transfer and never external deposit', () => {
     const base = {
       isZecSource: false,
@@ -903,6 +950,40 @@ test.describe('quote deposit transfer client', () => {
       address: '0x2222222222222222222222222222222222222222',
       chain: { id: BSC_CHAIN_ID }
     })
+
+    const customTarget = {
+      chain: { id: 'eip155:999' },
+      kind: 'evm',
+      address: '0x3333333333333333333333333333333333333333'
+    }
+    const customToken = {
+      ...token(`eip155:999/erc20:${USER_TOKEN_CONTRACT}`, 'hyperevm', 18),
+      rheaChainId: '999',
+      contractAddress: USER_TOKEN_CONTRACT
+    }
+    const customTargets = { ...receiveTargets, targets: [...receiveTargets.targets, customTarget] }
+    expect(
+      resolveWalletQuoteReceiveTarget(customToken, portfolio(), customTargets, mappings)
+    ).toEqual(customTarget)
+    expect(
+      resolveWalletQuoteReceiveTarget(customToken, portfolio(), receiveTargets, mappings)
+    ).toBeNull()
+    expect(
+      resolveWalletQuoteReceiveTarget(
+        customToken,
+        portfolio(),
+        { ...customTargets, accountId: 'other' },
+        mappings
+      )
+    ).toBeNull()
+    expect(
+      resolveWalletQuoteReceiveTarget(
+        { ...customToken, assetId: 'nep141:eth.omft.near' },
+        portfolio(),
+        customTargets,
+        mappings
+      )
+    ).toBeNull()
   })
 
   test('resolves the active wallet address for a native NEAR RHEA destination', () => {

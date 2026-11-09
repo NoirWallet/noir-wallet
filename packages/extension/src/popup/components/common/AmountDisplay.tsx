@@ -1,7 +1,6 @@
-import { Icon } from '@iconify/react'
 import { formatFeeAmount, formatReviewAmount } from '@/lib/number-format'
 import { cn } from '@/lib/utils'
-import { CopyToast, useCopyToClipboard } from './CopyToast'
+import { CopyFeedbackIcon, CopyToast, useCopyToClipboard } from './CopyToast'
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover'
 
 interface AmountDisplayProps {
@@ -19,7 +18,7 @@ export function AmountDisplay({
   profile = 'review',
   className
 }: AmountDisplayProps) {
-  const { copyToClipboard, showToast } = useCopyToClipboard()
+  const { copyToClipboard, showToast, copyFailed, copiedKey } = useCopyToClipboard()
   const review = formatReviewAmount(value)
   const display = profile === 'fee' ? formatFeeAmount(value) : review.display
 
@@ -78,12 +77,12 @@ export function AmountDisplay({
               title="Copy exact amount"
               onClick={() => void copyToClipboard(review.exact ?? '')}
             >
-              <Icon icon="lucide:copy" width={16} height={16} />
+              <CopyFeedbackIcon copied={copiedKey === 'default'} width={16} height={16} />
             </button>
           </div>
         </PopoverContent>
       </Popover>
-      <CopyToast show={showToast} message="Amount copied" />
+      <CopyToast show={showToast} error={copyFailed} message="Amount copied" />
     </>
   )
 }

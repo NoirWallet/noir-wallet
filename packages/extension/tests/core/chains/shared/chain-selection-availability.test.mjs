@@ -57,6 +57,10 @@ describe('Chain selection availability', () => {
   it('applies the same release choice to token and private-key import families', () => {
     assert.equal(isSelectableSwapBlockchain('eth', DEFAULT_ENABLED_CHAIN_FEATURE_FLAGS), true)
     assert.equal(isSelectableSwapBlockchain('base', DEFAULT_ENABLED_CHAIN_FEATURE_FLAGS), true)
+    for (const chain of ['robinhood', 'hyperevm']) {
+      assert.equal(isSelectableSwapBlockchain(chain, DEFAULT_ENABLED_CHAIN_FEATURE_FLAGS), true)
+      assert.equal(isSelectableSwapBlockchain(chain, []), false)
+    }
     assert.equal(isSelectableSwapBlockchain('zec', DEFAULT_ENABLED_CHAIN_FEATURE_FLAGS), true)
     assert.equal(isSelectableSwapBlockchain('btc', DEFAULT_ENABLED_CHAIN_FEATURE_FLAGS), false)
     assert.equal(isSelectableSwapBlockchain('sol', DEFAULT_ENABLED_CHAIN_FEATURE_FLAGS), false)

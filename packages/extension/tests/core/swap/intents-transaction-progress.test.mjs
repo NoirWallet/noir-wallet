@@ -72,7 +72,7 @@ test('an insufficient deposit warns while a refund remains pending', () => {
   })
   expect(progress.steps.map(step => [step.label, step.state, step.statusLabel])).toEqual([
     ['Source transaction', 'complete', 'Confirmed'],
-    ['Intents processing', 'warning', 'Amount too low'],
+    ['Swap processing', 'warning', 'Amount too low'],
     ['Refund transfer', 'pending', 'Pending']
   ])
 })
@@ -85,7 +85,7 @@ test('a submitted refund replaces the destination transfer step', () => {
   })
   expect(progress.steps.map(step => [step.label, step.state, step.statusLabel])).toEqual([
     ['Source transaction', 'complete', 'Confirmed'],
-    ['Intents processing', 'complete', 'Completed'],
+    ['Swap processing', 'complete', 'Completed'],
     ['Refund transfer', 'active', 'Submitted']
   ])
 })

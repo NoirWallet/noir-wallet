@@ -228,6 +228,9 @@ export function createRheaSwapClient(
     quote: async (
       requestValue: RheaSwapQuoteRequest,
       purpose?:
+        | 'wallet-swap'
+        | 'public-cross-chain-send'
+        | 'confidential-funding'
         | 'private-swap'
         | 'private-transfer'
         | 'private-cross-chain-send'

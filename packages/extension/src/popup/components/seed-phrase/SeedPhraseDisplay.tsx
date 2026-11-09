@@ -1,14 +1,22 @@
 import { Icon } from '@iconify/react'
 import { Button } from '../ui/button'
+import { CopyFeedbackIcon } from '../common/CopyToast'
 
 interface SeedPhraseDisplayProps {
   words: string[]
   blurred?: boolean
   onReveal?: () => void
   onCopy?: () => void
+  copied?: boolean
 }
 
-export function SeedPhraseDisplay({ words, blurred, onReveal, onCopy }: SeedPhraseDisplayProps) {
+export function SeedPhraseDisplay({
+  words,
+  blurred,
+  onReveal,
+  onCopy,
+  copied = false
+}: SeedPhraseDisplayProps) {
   return (
     <div className="relative group">
       <div
@@ -52,8 +60,8 @@ export function SeedPhraseDisplay({ words, blurred, onReveal, onCopy }: SeedPhra
             onClick={onCopy}
             className="flex items-center gap-2 h-8 bg-background border-border hover:bg-card text-xs"
           >
-            <Icon icon="lucide:copy" width={12} height={12} />
-            Copy
+            <CopyFeedbackIcon copied={copied} width={12} height={12} />
+            {copied ? 'Copied' : 'Copy'}
           </Button>
         </div>
       )}

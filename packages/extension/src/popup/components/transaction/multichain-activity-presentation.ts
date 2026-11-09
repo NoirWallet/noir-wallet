@@ -131,12 +131,12 @@ export function getActivityAccountRouteLabel(route: ActivitySwapPresentation): s
 export function getActivityRouteTitle(item: ActivityItem, route: ActivitySwapPresentation): string {
   if (item.snapshot?.shield) {
     return item.snapshot.shield.operation === 'cluster'
-      ? 'Cluster transfer'
+      ? 'Move'
       : item.snapshot.shield.operation === 'deposit'
-        ? 'Deposit'
+        ? 'Receive'
         : item.snapshot.shield.operation === 'swap'
           ? 'Swap'
-          : 'Withdraw'
+          : 'Send'
   }
   if (isAccountModeTransfer(item, route)) {
     return isOwnedAccountTransfer(route) ? 'Account Transfer' : 'Transfer'
@@ -435,12 +435,12 @@ function isSignedOrderOrigin(segment: ActivitySegment): boolean {
 export function getActivityDetailTitle(item: ActivityItem, interactionTitle?: string): string {
   if (item.snapshot?.shield)
     return item.snapshot.shield.operation === 'cluster'
-      ? 'Cluster transfer'
+      ? 'Move'
       : item.snapshot.shield.operation === 'deposit'
-        ? 'Deposit to Shield'
+        ? 'Receive'
         : item.snapshot.shield.operation === 'swap'
           ? 'Shield Swap'
-          : 'Withdraw from Shield'
+          : 'Send'
   if (isConfidentialFundingActivity(item)) return 'Add to Confidential'
   if (item.failureCode === 'refunded') return 'Refund'
   if (
@@ -814,12 +814,12 @@ export function getActivityProgressSteps(
 function getActivityTitle(item: ActivityItem, chainId?: string): string {
   if (item.snapshot?.shield)
     return item.snapshot.shield.operation === 'cluster'
-      ? 'Cluster transfer'
+      ? 'Move'
       : item.snapshot.shield.operation === 'deposit'
-        ? 'Deposit to Shield'
+        ? 'Receive'
         : item.snapshot.shield.operation === 'swap'
           ? 'Shield Swap'
-          : 'Withdraw from Shield'
+          : 'Send'
   if (isConfidentialFundingActivity(item)) return 'Added to Confidential'
   if (item.failureCode === 'refunded') return 'Refunded'
   const interaction = getActivityInteractionPresentation(item, chainId)

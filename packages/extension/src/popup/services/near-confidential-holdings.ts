@@ -1,8 +1,16 @@
 import type { PortfolioChainView, PortfolioReadModel } from '@/core/portfolio'
-import { parseAssetId } from '@/core/chains/registry'
+import {
+  createAssetRegistry,
+  createInitialProductChainRegistry,
+  getBundledInitialProductAssetDefinitions,
+  getZcashChainId,
+  parseAssetId
+} from '@/core/chains/registry'
 import { ASSET_PRICE_FRESH_MS, findAssetPrice, type AssetPriceReadModel } from '@/core/prices'
+import { getAssetProtocolSourceMappings } from '@/core/prices/asset-market-mappings'
 import Big from '@/lib/big'
 import { formatBaseUnitDecimalAmount } from '@/lib/number-format'
+import type { Network } from '@/types'
 
 type ConfidentialAsset = NonNullable<PortfolioReadModel['confidential']>['assets'][number]
 
@@ -24,6 +32,59 @@ export interface NearConfidentialSummary {
 export interface StandaloneNearConfidentialHolding {
   readonly entry: NearConfidentialHolding
   readonly chain: PortfolioChainView | undefined
+}
+
+export interface NearConfidentialZecHolding {
+  readonly assetId: string
+  readonly protocolAssetId: string
+  readonly availableRaw: string
+  readonly amount: string
+}
+
+export function resolveNearConfidentialZecHolding(input: {
+  readonly model: PortfolioReadModel | null
+  readonly network: Network
+  readonly walletId: string | null
+  readonly accountId: string | null
+  readonly assetId?: string
+}): NearConfidentialZecHolding | null {
+  const { model, network, walletId, accountId, assetId } = input
+  if (
+    network !== 'mainnet' ||
+    !walletId ||
+    !accountId ||
+    model?.scope.keyDomainId !== walletId ||
+    model.scope.accountId !== accountId ||
+    model.confidential?.status !== 'ready'
+  )
+    return null
+
+  const chains = createInitialProductChainRegistry(network)
+  const assets = createAssetRegistry(chains, getBundledInitialProductAssetDefinitions(network))
+  const zcashChainId = getZcashChainId(network)
+  const mapping = getAssetProtocolSourceMappings(network, assets).find(
+    entry => assets.get(entry.assetId)?.asset.chainId === zcashChainId
+  )
+  if (!mapping || (assetId && mapping.assetId !== assetId)) return null
+  const registeredAsset = assets.get(mapping.assetId)
+  if (!registeredAsset) return null
+  const matches = model.confidential.assets.filter(
+    holding => holding.protocolAssetId === mapping.protocolAssetId
+  )
+  if (matches.length !== 1) return null
+  const holding = matches[0]!
+  if (
+    (holding.assetId && holding.assetId !== mapping.assetId) ||
+    (holding.chainId && holding.chainId !== registeredAsset.asset.chainId) ||
+    (holding.decimals !== undefined && holding.decimals !== registeredAsset.metadata.decimals)
+  )
+    return null
+  return Object.freeze({
+    assetId: mapping.assetId,
+    protocolAssetId: mapping.protocolAssetId,
+    availableRaw: holding.availableRaw,
+    amount: formatBaseUnitDecimalAmount(holding.availableRaw, registeredAsset.metadata.decimals)
+  })
 }
 
 export function resolveConfidentialDetailAssetId(

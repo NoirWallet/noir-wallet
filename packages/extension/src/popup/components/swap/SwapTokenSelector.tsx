@@ -8,6 +8,10 @@ import { isPortfolioModelForScope, readCachedPortfolio } from '@/popup/services/
 import type { AdditionalReceiveTargetsView } from '@/popup/services/receive-targets-client'
 import { receiveTargetsClient } from '@/popup/services/receive-targets-client'
 import { buildWalletSwapSourceBalances } from '@/popup/services/swap-page-model'
+import { resolveNearConfidentialZecHolding } from '@/popup/services/near-confidential-holdings'
+import { TokenIcon } from '../tokens/TokenIcon'
+import { formatTokenQuantity } from '@/lib/number-format'
+import type { Network } from '@/types'
 
 interface SwapBalanceScope {
   readonly scopeKey: string
@@ -17,6 +21,7 @@ interface SwapBalanceScope {
   readonly receiveTargets: AdditionalReceiveTargetsView | null
   readonly zcashAvailable: string
   readonly evmExecutionMode: 'main' | 'private'
+  readonly network: Network
 }
 
 interface SwapTokenSelectorProps extends Omit<
@@ -30,6 +35,8 @@ interface SwapTokenSelectorProps extends Omit<
   ) => Promise<readonly RheaSwapToken[]>
   readonly onSelect: (token: RheaSwapToken, portfolio: PortfolioReadModel | null) => void
   readonly balanceScope?: SwapBalanceScope
+  readonly confidentialZecToken?: RheaSwapToken
+  readonly onSelectConfidentialZec?: (assetId: string) => void
 }
 
 export function SwapTokenSelector({
@@ -37,6 +44,8 @@ export function SwapTokenSelector({
   loadTokens,
   onSelect,
   balanceScope,
+  confidentialZecToken,
+  onSelectConfidentialZec,
   ...props
 }: SwapTokenSelectorProps) {
   const [tokens, setTokens] = useState(initialTokens)
@@ -66,6 +75,21 @@ export function SwapTokenSelector({
     receiveTargets?.keyDomainId === walletId && receiveTargets.accountId === accountId
       ? receiveTargets
       : null
+  const confidentialZec =
+    onSelectConfidentialZec && balanceScope
+      ? resolveNearConfidentialZecHolding({
+          model: scopedPortfolio,
+          network: balanceScope.network,
+          walletId,
+          accountId
+        })
+      : null
+  const zecToken = confidentialZec
+    ? (tokens.find(token => token.assetId === confidentialZec.protocolAssetId) ??
+      (confidentialZecToken?.assetId === confidentialZec.protocolAssetId
+        ? confidentialZecToken
+        : undefined))
+    : undefined
   const portfolioReadSequence = useRef(0)
   const readLatestPortfolio = useCallback(async () => {
     if (!walletId || !accountId) return
@@ -126,20 +150,38 @@ export function SwapTokenSelector({
   }, [loadTokens])
   if (loading && tokens.length === 0) return <ListSkeleton rows={5} label="Loading tokens" />
   return (
-    <TokenSelector
-      {...props}
-      networkFilterStyle="icons"
-      stableCatalogOrder
-      tokens={tokens}
-      balances={balances}
-      catalogLoading={loading}
-      onSelect={token => {
-        const selected = tokens.find(
-          candidate =>
-            candidate.assetId === token.assetId && candidate.blockchain === token.blockchain
-        )
-        if (selected) onSelect(selected, scopedPortfolio)
-      }}
-    />
+    <div className="flex h-full min-h-0 flex-col">
+      {confidentialZec && zecToken && /^[1-9]\d*$/.test(confidentialZec.availableRaw) && (
+        <button
+          type="button"
+          onClick={() => onSelectConfidentialZec?.(confidentialZec.assetId)}
+          className="flex min-w-0 shrink-0 items-center gap-3 border-b border-white/10 px-3 py-3 text-left hover:bg-card"
+        >
+          <TokenIcon token={zecToken} size={32} />
+          <span className="min-w-0 flex-1">
+            <span className="block text-sm font-medium">ZEC</span>
+            <span className="block text-xs text-muted">NEAR Confidential</span>
+          </span>
+          <span className="shrink-0 text-sm tabular-nums">
+            {formatTokenQuantity(confidentialZec.amount)}
+          </span>
+        </button>
+      )}
+      <TokenSelector
+        {...props}
+        networkFilterStyle="icons"
+        stableCatalogOrder
+        tokens={tokens}
+        balances={balances}
+        catalogLoading={loading}
+        onSelect={token => {
+          const selected = tokens.find(
+            candidate =>
+              candidate.assetId === token.assetId && candidate.blockchain === token.blockchain
+          )
+          if (selected) onSelect(selected, scopedPortfolio)
+        }}
+      />
+    </div>
   )
 }

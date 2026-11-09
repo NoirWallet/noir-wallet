@@ -69,6 +69,21 @@ export function availableDepositTokens(
   })
 }
 
+export function depositTokenForNetwork(
+  tokens: readonly SwapToken[],
+  symbol: string | null,
+  network: ChainDefinition | null
+): SwapToken | null {
+  if (!symbol || !network) return null
+  return (
+    tokens.find(
+      token =>
+        token.symbol.trim().toLowerCase() === symbol.trim().toLowerCase() &&
+        depositTokenChainId(token) === network.id
+    ) ?? null
+  )
+}
+
 export function defaultDepositRefundAddress(
   network: ChainDefinition | null,
   accountNetworks: readonly AccountNetworkView[]

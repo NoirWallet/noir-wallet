@@ -16,6 +16,7 @@ import type {
 } from '@/core/services/rhea-swap'
 import {
   getRheaSwapQuoteDeadline,
+  RHEA_SWAP_CHAIN_CATALOG,
   resolveRheaSwapCanonicalAssetId
 } from '@/core/services/rhea-swap'
 import {
@@ -221,6 +222,16 @@ export function resolveRheaSwapDestinationIdentity(
       assetId: mapped.asset.asset.id
     })
   }
+  if (/^[1-9]\d*$/.test(token.rheaChainId)) {
+    try {
+      const parsed = parseAssetId(token.assetId)
+      if (parsed.chainId === `eip155:${token.rheaChainId}`) {
+        return Object.freeze({ chainId: parsed.chainId, assetId: parsed.id })
+      }
+    } catch {
+      // Provider protocol IDs are resolved below.
+    }
+  }
   const canonicalAssetId = resolveRheaSwapCanonicalAssetId(token.assetId, DEFAULT_NETWORK)
   if (canonicalAssetId) {
     return Object.freeze({
@@ -250,6 +261,30 @@ function resolveUserEvmPortfolioAsset(
   token: SwapToken,
   portfolio: PortfolioReadModel
 ): PortfolioAssetView | null {
+  if ('rheaChainId' in token) {
+    if (typeof token.rheaChainId !== 'string' || !/^[1-9]\d*$/.test(token.rheaChainId)) {
+      return null
+    }
+    const chainId = `eip155:${token.rheaChainId}`
+    if (
+      !portfolio.chains.some(chain => chain.chain.id === chainId && chain.chain.family === 'evm')
+    ) {
+      return null
+    }
+    const native = 'isNative' in token && token.isNative === true
+    const contract = token.contractAddress?.toLowerCase()
+    return (
+      portfolio.assets.find(
+        candidate =>
+          candidate.asset.chainId === chainId &&
+          candidate.metadata.decimals === token.decimals &&
+          (native
+            ? candidate.asset.kind === 'native'
+            : candidate.asset.namespace === 'erc20' &&
+              candidate.asset.reference.toLowerCase() === contract)
+      ) ?? null
+    )
+  }
   if (!token.contractAddress || !/^0x[0-9a-fA-F]{40}$/.test(token.contractAddress)) return null
   const contractAddress = token.contractAddress.toLowerCase()
   const candidates = portfolio.assets.filter(
@@ -302,7 +337,15 @@ function resolveMappedPortfolioAsset(
     : protocolAsset
       ? portfolio.assets.find(candidate => candidate.asset.id === protocolAsset.assetId)
       : resolveUserEvmPortfolioAsset(token, portfolio)
-  if (!asset || asset.metadata.decimals !== token.decimals) return null
+  if (
+    !asset ||
+    asset.metadata.decimals !== token.decimals ||
+    ('rheaChainId' in token &&
+      typeof token.rheaChainId === 'string' &&
+      /^[1-9]\d*$/.test(token.rheaChainId) &&
+      asset.asset.chainId !== `eip155:${token.rheaChainId}`)
+  )
+    return null
   const chain = portfolio.chains.find(candidate => candidate.chain.id === asset.asset.chainId)
   const supportedFamily =
     chain?.chain.family === 'evm' ||
@@ -423,12 +466,29 @@ export function resolveWalletQuoteReceiveTarget(
 
   const mapped = resolveMappedPortfolioAsset(token, portfolio, mappings)
   const protocolAsset = resolveIntentsWalletAsset(token, DEFAULT_NETWORK)
-  const chainId =
+  const rheaEvmChain =
+    'rheaChainId' in token
+      ? RHEA_SWAP_CHAIN_CATALOG.find(
+          chain => chain.walletFamily === 'evm' && chain.apiChainId === token.rheaChainId
+        )
+      : undefined
+  const protocolMapping = mappings.find(candidate => candidate.protocolAssetId === token.assetId)
+  const mappedChainId =
     mapped?.chain.chain.id ??
     protocolAsset?.chainId ??
+    (protocolMapping ? parseAssetId(protocolMapping.assetId).chainId : undefined)
+  const rheaChainId = rheaEvmChain ? `eip155:${rheaEvmChain.apiChainId}` : null
+  if (rheaChainId && mappedChainId && rheaChainId !== mappedChainId) return null
+  const chainId =
+    mappedChainId ??
+    rheaChainId ??
     resolveIntentsEvmChainId(token.blockchain, getEvmNetworkConfigs(DEFAULT_NETWORK))
   if (!chainId) return null
-  return receiveTargets.targets.find(target => target.chain.id === chainId) ?? null
+  return (
+    receiveTargets.targets.find(
+      target => target.chain.id === chainId && (!rheaChainId || target.kind === 'evm')
+    ) ?? null
+  )
 }
 
 export function resolveWalletSwapSourceToken(

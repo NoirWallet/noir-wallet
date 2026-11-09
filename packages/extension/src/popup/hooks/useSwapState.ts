@@ -3,7 +3,7 @@ import { isZecToken } from '@/core/services/intents-api'
 import { type RheaSwapToken } from '@/core/services/rhea-swap'
 import { useSwapPreferences } from '@/store/swap-store'
 import {
-  WALLET_SOURCE_CHAIN_IDS,
+  getEnabledSwapChains,
   ALL_DESTINATION_CHAIN_IDS,
   mergeTokenCatalogs,
   readCachedTokenCatalogByChain,
@@ -34,7 +34,10 @@ export function useSwapState(
     preferenceScope ? useSwapPreferences.getState().tokenSelections[preferenceScope] : undefined
   )
   const [initialCatalogs] = useState(() => ({
-    sources: readCachedTokenCatalogByChain('from', WALLET_SOURCE_CHAIN_IDS),
+    sources: readCachedTokenCatalogByChain(
+      'from',
+      getEnabledSwapChains(options.enabledChains).map(chain => chain.tokenListChainId)
+    ),
     destinations: readCachedTokenCatalogByChain('cross-chain-to', ALL_DESTINATION_CHAIN_IDS)
   }))
   const initialSavedSourceAssetId = isSwapAssetOnEnabledChain(
@@ -180,7 +183,10 @@ export function useSwapState(
       const bypassCache = catalogRequestId > 0
       const cachedSources = bypassCache
         ? []
-        : readCachedTokenCatalogByChain('from', WALLET_SOURCE_CHAIN_IDS)
+        : readCachedTokenCatalogByChain(
+            'from',
+            getEnabledSwapChains(options.enabledChains).map(chain => chain.tokenListChainId)
+          )
       const cachedDestinations = bypassCache
         ? []
         : readCachedTokenCatalogByChain('cross-chain-to', ALL_DESTINATION_CHAIN_IDS)
@@ -291,7 +297,7 @@ export function useSwapState(
         await loadTokenCatalogByChain(
           direction,
           direction === 'from'
-            ? WALLET_SOURCE_CHAIN_IDS
+            ? getEnabledSwapChains(options.enabledChains).map(chain => chain.tokenListChainId)
             : ALL_DESTINATION_CHAIN_IDS.filter(chainId => chainId !== tokenIn?.tokenListChainId),
           false,
           next => {
@@ -308,7 +314,7 @@ export function useSwapState(
         ? loaded
         : getSwapDestinationTokens(tokenIn, sourceCatalog, loaded)
     },
-    [sourceCatalog, crossChainDestinationCatalog, tokenIn, tokenOut]
+    [sourceCatalog, crossChainDestinationCatalog, tokenIn, tokenOut, enabledChainKey]
   )
 
   const destinationTokens = useMemo(

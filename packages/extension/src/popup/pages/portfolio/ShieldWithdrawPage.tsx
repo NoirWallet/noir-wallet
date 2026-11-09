@@ -99,6 +99,7 @@ function ShieldWithdrawForm() {
   const [connecting, setConnecting] = useState(false)
   const [sourceId, setSourceId] = useState(params.get('assetId') ?? '')
   const [destinationId, setDestinationId] = useState('')
+  const [destinationNetworkId, setDestinationNetworkId] = useState<string | null>(null)
   const [amount, setAmount] = useState('')
   const [recipient, setRecipient] = useState('')
   const [slippageBps, setSlippageBps] = useState(50)
@@ -211,11 +212,21 @@ function ShieldWithdrawForm() {
   const source = sourceId
     ? (sources.find(item => item.asset.asset.id === sourceId) ?? null)
     : (sources[0] ?? null)
-  const destination = destinationId
+  const destinationToken = destinationId
     ? (destinations.find(item => item.asset.asset.id === destinationId) ?? null)
     : (destinations.find(
         item => item.managed.protocolAssetId === source?.managed.protocolAssetId
       ) ?? null)
+  const destination =
+    destinationToken && destinationNetworkId
+      ? selectShieldWithdrawDestinationForNetwork(
+          destinations,
+          destinationToken,
+          destinationNetworkId
+        )
+      : null
+  const destinationNetwork = destinations.find(item => item.chain.chain.id === destinationNetworkId)
+    ?.chain.chain
   const availableRaw = shieldFundingAvailableRaw(source, displayBalances)
   const amountState = source
     ? resolvePrivateBalanceTransferAmount({
@@ -610,18 +621,18 @@ function ShieldWithdrawForm() {
             className="wallet-interactive flex min-w-0 flex-1 items-center gap-3 text-left enabled:hover:text-primary focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 disabled:opacity-50"
             aria-label="Select destination token"
           >
-            {destination && (
+            {destinationToken && (
               <TokenIcon
-                assetId={destination.asset.asset.id}
-                symbol={destination.asset.metadata.symbol}
-                icon={destination.asset.metadata.iconUrl}
+                assetId={destinationToken.asset.asset.id}
+                symbol={destinationToken.asset.metadata.symbol}
+                icon={destinationToken.asset.metadata.iconUrl}
                 size={32}
               />
             )}
             <span className="min-w-0 flex-1">
               <span className="block text-xs text-muted">Token</span>
               <span className="block truncate text-sm">
-                {destination?.asset.metadata.symbol ?? 'Select token'}
+                {destinationToken?.asset.metadata.symbol ?? 'Select token'}
               </span>
             </span>
           </button>
@@ -648,13 +659,13 @@ function ShieldWithdrawForm() {
         </div>
         <button
           type="button"
-          disabled={busy}
+          disabled={busy || !destinationToken}
           onClick={() => setPicker('network')}
           className="wallet-interactive mb-3 flex w-full items-center gap-3 rounded-lg bg-wallet-surface p-3 text-left enabled:hover:bg-wallet-selected enabled:active:bg-white/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 disabled:opacity-50"
         >
-          {destination ? (
+          {destinationNetwork ? (
             <ChainIcon
-              chain={withdrawChainIconAlias(destination.chain.chain)}
+              chain={withdrawChainIconAlias(destinationNetwork)}
               width={32}
               height={32}
               className="shrink-0 rounded-md"
@@ -665,7 +676,7 @@ function ShieldWithdrawForm() {
           <span className="min-w-0 flex-1">
             <span className="block text-xs text-muted">Network</span>
             <span className="block truncate text-sm">
-              {destination?.chain.chain.displayName ?? 'Select network'}
+              {destinationNetwork?.displayName ?? 'Select network'}
             </span>
           </span>
           <Icon icon="lucide:chevron-down" width={17} height={17} />
@@ -843,54 +854,76 @@ function ShieldWithdrawForm() {
               }}
             />
           ) : picker === 'network' ? (
-            [...new Map(destinations.map(item => [item.chain.chain.id, item])).values()].map(
-              item => (
-                <button
-                  key={item.chain.chain.id}
-                  type="button"
-                  aria-pressed={destination?.chain.chain.id === item.chain.chain.id}
-                  onClick={() => {
-                    const next = selectShieldWithdrawDestinationForNetwork(
-                      destinations,
-                      destination,
-                      item.chain.chain.id
-                    )
-                    if (next && next.asset.asset.id !== destinationId) {
-                      setDestinationId(next.asset.asset.id)
-                      setRecipient('')
-                    }
-                    setPicker(null)
-                  }}
-                  className={`wallet-interactive flex w-full items-center gap-3 rounded-md px-2 py-3 text-left text-sm hover:bg-wallet-selected active:bg-white/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 ${destination?.chain.chain.id === item.chain.chain.id ? 'bg-wallet-selected' : ''}`}
-                >
-                  <ChainIcon
-                    chain={withdrawChainIconAlias(item.chain.chain)}
-                    width={28}
-                    height={28}
-                    className="shrink-0 rounded-md"
-                  />
-                  <span className="min-w-0 flex-1 truncate">{item.chain.chain.displayName}</span>
-                  {destination?.chain.chain.id === item.chain.chain.id && (
-                    <Icon icon="lucide:check" width={17} height={17} className="text-primary" />
-                  )}
-                </button>
-              )
-            )
+            [
+              ...new Map(
+                destinations
+                  .filter(
+                    item =>
+                      destinationToken &&
+                      item.asset.metadata.symbol === destinationToken.asset.metadata.symbol
+                  )
+                  .map(item => [item.chain.chain.id, item])
+              ).values()
+            ].map(item => (
+              <button
+                key={item.chain.chain.id}
+                type="button"
+                aria-pressed={destinationNetworkId === item.chain.chain.id}
+                onClick={() => {
+                  const next = selectShieldWithdrawDestinationForNetwork(
+                    destinations,
+                    destinationToken,
+                    item.chain.chain.id
+                  )
+                  if (next) {
+                    setDestinationId(next.asset.asset.id)
+                    if (destinationNetworkId !== item.chain.chain.id) setRecipient('')
+                    setDestinationNetworkId(item.chain.chain.id)
+                  }
+                  setPicker(null)
+                }}
+                className={`wallet-interactive flex w-full items-center gap-3 rounded-md px-2 py-3 text-left text-sm hover:bg-wallet-selected active:bg-white/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 ${destinationNetworkId === item.chain.chain.id ? 'bg-wallet-selected' : ''}`}
+              >
+                <ChainIcon
+                  chain={withdrawChainIconAlias(item.chain.chain)}
+                  width={28}
+                  height={28}
+                  className="shrink-0 rounded-md"
+                />
+                <span className="min-w-0 flex-1 truncate">{item.chain.chain.displayName}</span>
+                {destinationNetworkId === item.chain.chain.id && (
+                  <Icon icon="lucide:check" width={17} height={17} className="text-primary" />
+                )}
+              </button>
+            ))
           ) : (
             (picker === 'source'
               ? sources
-              : destinations.filter(
-                  item => !destination || item.chain.chain.id === destination.chain.chain.id
-                )
+              : [...new Map(destinations.map(item => [item.asset.metadata.symbol, item])).values()]
             ).map(item => (
               <button
                 key={item.asset.asset.id}
                 type="button"
                 onClick={() => {
                   if (picker === 'source') {
+                    if (!destinationId && destinationToken)
+                      setDestinationId(destinationToken.asset.asset.id)
                     setSourceId(item.asset.asset.id)
                     setAmount('')
-                  } else setDestinationId(item.asset.asset.id)
+                  } else {
+                    setDestinationId(item.asset.asset.id)
+                    if (
+                      destinationNetworkId &&
+                      !selectShieldWithdrawDestinationForNetwork(
+                        destinations,
+                        item,
+                        destinationNetworkId
+                      )
+                    ) {
+                      setDestinationNetworkId(null)
+                      setRecipient('')
+                    }
+                  }
                   setPicker(null)
                 }}
                 className="wallet-interactive flex w-full items-center gap-3 rounded-md px-2 py-2 text-left hover:bg-wallet-selected active:bg-white/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2"

@@ -579,7 +579,7 @@ test('renders and switches the released EVM catalog and chain-scoped endpoint se
   await popup.getByRole('button', { name: 'Select Recipient' }).click()
   const recipientDialog = popup.getByRole('dialog')
   await expect(recipientDialog.getByRole('heading', { name: 'Select Recipient' })).toBeVisible()
-  await expect(recipientDialog.getByRole('tab', { name: 'My Accounts' })).toHaveAttribute(
+  await expect(recipientDialog.getByRole('tab', { name: 'My Wallets' })).toHaveAttribute(
     'data-state',
     'active'
   )

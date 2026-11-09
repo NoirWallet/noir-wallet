@@ -11,7 +11,11 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger
 } from '@/popup/components/ui/dropdown-menu'
-import { CopyToast, useCopyToClipboard } from '@/popup/components/common/CopyToast'
+import {
+  CopyFeedbackIcon,
+  CopyToast,
+  useCopyToClipboard
+} from '@/popup/components/common/CopyToast'
 import { accountNetworksClient } from '@/popup/services/account-networks-client'
 import { AddAddressDialog } from '@/popup/components/address-book/AddAddressDialog'
 import {
@@ -32,7 +36,7 @@ export function AddressBook() {
   const contacts = useAddressBookStore(state => state.contacts)
   const renameContact = useAddressBookStore(state => state.renameContact)
   const removeContact = useAddressBookStore(state => state.removeContact)
-  const { copyToClipboard, showToast } = useCopyToClipboard()
+  const { copyToClipboard, showToast, isCopied } = useCopyToClipboard()
   const [editing, setEditing] = useState<AddressBookContact | null>(null)
   const [deleting, setDeleting] = useState<AddressBookContact | null>(null)
   const [adding, setAdding] = useState(false)
@@ -164,9 +168,15 @@ export function AddressBook() {
                     align="end"
                     className="w-[182px] rounded-md border-0 bg-wallet-selected p-1 shadow-xl"
                   >
-                    <DropdownMenuItem onClick={() => void copyToClipboard(contact.address)}>
-                      <Icon icon="lucide:copy" className="mr-2 size-4" />
-                      Copy address
+                    <DropdownMenuItem
+                      onSelect={event => event.preventDefault()}
+                      onClick={() => void copyToClipboard(contact.address, `contact-${contact.id}`)}
+                    >
+                      <CopyFeedbackIcon
+                        copied={isCopied(`contact-${contact.id}`)}
+                        className="mr-2 size-4"
+                      />
+                      {isCopied(`contact-${contact.id}`) ? 'Copied' : 'Copy address'}
                     </DropdownMenuItem>
                     <DropdownMenuItem onClick={() => beginEdit(contact)}>
                       <Icon icon="lucide:pencil" className="mr-2 size-4" />

@@ -206,7 +206,6 @@ export function selectShieldWithdrawDestinationForNetwork(
     candidates.find(
       option => option.asset.metadata.symbol === destination?.asset.metadata.symbol
     ) ??
-    candidates[0] ??
     null
   )
 }

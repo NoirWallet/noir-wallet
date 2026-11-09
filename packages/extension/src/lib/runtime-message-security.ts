@@ -604,6 +604,9 @@ const TRUSTED_RUNTIME_SCHEMAS: Readonly<Record<string, RuntimeMessageSchema>> = 
     required: { request: isRheaSwapQuoteRequest },
     optional: {
       purpose: (value: unknown) =>
+        value === 'wallet-swap' ||
+        value === 'public-cross-chain-send' ||
+        value === 'confidential-funding' ||
         value === 'private-swap' ||
         value === 'private-transfer' ||
         value === 'private-cross-chain-send' ||

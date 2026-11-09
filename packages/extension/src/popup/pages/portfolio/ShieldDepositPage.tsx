@@ -28,6 +28,7 @@ import {
   depositSourceAssetId,
   depositSourceNetworks,
   depositStatusLabel,
+  depositTokenForNetwork,
   formatDepositAmount,
   hasDepositSettlementShortfall,
   depositTokenChainId
@@ -41,7 +42,6 @@ import { useNavigate } from '@/popup/provider/Router'
 import { PageHeader } from '@/popup/components/common/PageHeader'
 import { ChainIcon } from '@/popup/components/common/ChainIcon'
 import { TokenIcon } from '@/popup/components/tokens/TokenIcon'
-import { TokenSelector } from '@/popup/components/tokens/TokenSelector'
 import {
   ShieldProviderLogo,
   SHIELD_PROVIDERS
@@ -49,7 +49,11 @@ import {
 import type { ShieldProvider } from '@/popup/services/asset-domains'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/popup/components/ui/dialog'
 import { Input } from '@/popup/components/ui/input'
-import { CopyToast, useCopyToClipboard } from '@/popup/components/common/CopyToast'
+import {
+  CopyFeedbackIcon,
+  CopyToast,
+  useCopyToClipboard
+} from '@/popup/components/common/CopyToast'
 import { InlineError } from '@/popup/components/common/InlineError'
 
 type Picker = 'token' | 'network' | 'provider' | null
@@ -97,10 +101,11 @@ function ShieldDepositContent() {
   const scopeRef = useRef(scopeKey)
   scopeRef.current = scopeKey
   const mounted = useRef(false)
-  const { copyToClipboard, showToast } = useCopyToClipboard()
+  const { copyToClipboard, showToast, isCopied } = useCopyToClipboard()
   const [catalog, setCatalog] = useState<readonly SwapToken[]>([])
   const [picker, setPicker] = useState<Picker>(null)
   const [tokenId, setTokenId] = useState<string | null | undefined>(undefined)
+  const [tokenSearch, setTokenSearch] = useState('')
   const [networkId, setNetworkId] = useState<string | null>(null)
   const [refundAddress, setRefundAddress] = useState('')
   const [refundEdited, setRefundEdited] = useState(false)
@@ -109,6 +114,7 @@ function ShieldDepositContent() {
   const [showAmountError, setShowAmountError] = useState(false)
   const [quoteAmountError, setQuoteAmountError] = useState<string | null>(null)
   const [provider, setProvider] = useState<ShieldProvider>('near-confidential')
+  const [providerSelected, setProviderSelected] = useState(false)
   const [records, setRecords] = useState<readonly ExternalShieldDeposit[]>([])
   const [viewRecordId, setViewRecordId] = useState<string | null>(null)
   const viewRecordIdRef = useRef(viewRecordId)
@@ -165,6 +171,7 @@ function ShieldDepositContent() {
     setTokenId(undefined)
     setNetworkId(null)
     setProvider('near-confidential')
+    setProviderSelected(false)
     setPicker(null)
     setRefundAddress('')
     setRefundEdited(false)
@@ -284,27 +291,32 @@ function ShieldDepositContent() {
 
   const networks = useMemo(() => depositSourceNetworks(), [account])
   const tokens = useMemo(() => availableDepositTokens(catalog, networks), [catalog, networks])
-  const availableNetworks = networks.filter(network =>
-    tokens.some(token => depositTokenChainId(token) === network.id)
+  const tokenChoices = Array.from(
+    new Map(tokens.map(token => [token.symbol.trim().toLowerCase(), token])).values()
   )
   const requestedAssetId = searchParams.get('assetId')
   const requestedTokenId = useMemo(() => {
     if (!requestedAssetId) return null
     const direct = tokens.find(token => token.assetId === requestedAssetId)
-    if (direct) return direct.assetId
+    if (direct) return direct.symbol.trim().toLowerCase()
     const mapped = tokens.find(token =>
       networks.some(network => depositSourceAssetId(token, network) === requestedAssetId)
     )
-    return mapped?.assetId ?? null
+    return mapped?.symbol.trim().toLowerCase() ?? null
   }, [requestedAssetId, tokens, networks])
-  const selectedToken =
-    tokens.find(token => token.assetId === (tokenId === undefined ? requestedTokenId : tokenId)) ??
-    null
-  const selectedNetwork =
-    networks.find(network => network.id === networkId) ??
-    networks.find(
-      network => network.id === (selectedToken && depositTokenChainId(selectedToken))
-    ) ??
+  const selectedSymbol = tokenId === undefined ? requestedTokenId : tokenId
+  const availableNetworks = networks.filter(network =>
+    tokens.some(
+      token =>
+        token.symbol.trim().toLowerCase() === selectedSymbol &&
+        depositTokenChainId(token) === network.id
+    )
+  )
+  const selectedNetwork = networks.find(network => network.id === networkId) ?? null
+  const selectedToken = depositTokenForNetwork(tokens, selectedSymbol, selectedNetwork)
+  const displayedToken =
+    selectedToken ??
+    tokenChoices.find(token => token.symbol.trim().toLowerCase() === selectedSymbol) ??
     null
   const defaultRefund = defaultDepositRefundAddress(selectedNetwork, account?.networks ?? [])
   const effectiveRefund = refundEdited ? refundAddress : defaultRefund
@@ -408,6 +420,7 @@ function ShieldDepositContent() {
       !accountId ||
       !selectedToken ||
       !selectedNetwork ||
+      !providerSelected ||
       !sourceAssetId ||
       !amountRaw ||
       refundError
@@ -424,6 +437,7 @@ function ShieldDepositContent() {
       !canManageNear ||
       !selectedToken ||
       !selectedNetwork ||
+      !providerSelected ||
       !sourceAssetId ||
       !amountRaw ||
       refundError ||
@@ -529,9 +543,9 @@ function ShieldDepositContent() {
   }
 
   const selectToken = (token: SwapToken) => {
-    const nextNetworkId = depositTokenChainId(token)
-    setTokenId(token.assetId)
-    setNetworkId(nextNetworkId)
+    setTokenId(token.symbol.trim().toLowerCase())
+    setNetworkId(null)
+    setProviderSelected(false)
     setRefundAddress('')
     setRefundEdited(false)
     setShowRefundError(false)
@@ -542,8 +556,8 @@ function ShieldDepositContent() {
     setPicker(null)
   }
   const selectNetwork = (network: ChainDefinition) => {
-    if (network.id !== selectedNetwork?.id) setTokenId(null)
     setNetworkId(network.id)
+    setProviderSelected(false)
     setRefundAddress('')
     setRefundEdited(false)
     setShowRefundError(false)
@@ -732,14 +746,21 @@ function ShieldDepositContent() {
                       <button
                         type="button"
                         aria-label="Copy address"
+                        disabled={!canPayShieldDeposit(viewedRecord, now)}
                         onClick={() => {
                           if (canPayShieldDeposit(viewedRecord, Date.now()))
-                            void copyToClipboard(viewedRecord.depositAddress)
+                            void copyToClipboard(
+                              viewedRecord.depositAddress,
+                              `deposit-address:${viewedRecord.depositId}`
+                            )
                         }}
-                        className="wallet-interactive flex h-8 shrink-0 items-center gap-1.5 rounded-md bg-white/10 px-2.5 text-xs hover:bg-white/15 active:bg-white/20 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2"
+                        className="wallet-interactive flex h-8 shrink-0 items-center gap-1.5 rounded-md bg-white/10 px-2.5 text-xs enabled:hover:bg-white/15 enabled:active:bg-white/20 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 disabled:opacity-45"
                       >
-                        <Icon icon="lucide:copy" width={14} height={14} />
-                        Copy
+                        <CopyFeedbackIcon
+                          copied={isCopied(`deposit-address:${viewedRecord.depositId}`)}
+                          width={14}
+                        />
+                        {isCopied(`deposit-address:${viewedRecord.depositId}`) ? 'Copied' : 'Copy'}
                       </button>
                     </div>
                     {viewedRecord.depositMemo && (
@@ -753,14 +774,21 @@ function ShieldDepositContent() {
                         <button
                           type="button"
                           aria-label="Copy memo"
+                          disabled={!canPayShieldDeposit(viewedRecord, now)}
                           onClick={() => {
                             if (canPayShieldDeposit(viewedRecord, Date.now()))
-                              void copyToClipboard(viewedRecord.depositMemo!)
+                              void copyToClipboard(
+                                viewedRecord.depositMemo!,
+                                `deposit-memo:${viewedRecord.depositId}`
+                              )
                           }}
-                          className="wallet-interactive flex h-8 shrink-0 items-center gap-1.5 rounded-md bg-white/10 px-2.5 text-xs hover:bg-white/15 active:bg-white/20 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2"
+                          className="wallet-interactive flex h-8 shrink-0 items-center gap-1.5 rounded-md bg-white/10 px-2.5 text-xs enabled:hover:bg-white/15 enabled:active:bg-white/20 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 disabled:opacity-45"
                         >
-                          <Icon icon="lucide:copy" width={14} height={14} />
-                          Copy
+                          <CopyFeedbackIcon
+                            copied={isCopied(`deposit-memo:${viewedRecord.depositId}`)}
+                            width={14}
+                          />
+                          {isCopied(`deposit-memo:${viewedRecord.depositId}`) ? 'Copied' : 'Copy'}
                         </button>
                       </div>
                     )}
@@ -809,14 +837,14 @@ function ShieldDepositContent() {
               <button
                 type="button"
                 onClick={() => setPicker('token')}
-                disabled={loading || tokens.length === 0}
+                disabled={loading || tokenChoices.length === 0}
                 className="wallet-interactive flex h-[62px] w-full items-center gap-2.5 rounded-lg bg-wallet-surface px-4 text-left enabled:hover:bg-wallet-selected enabled:active:bg-white/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 disabled:opacity-50"
               >
-                {selectedToken ? (
+                {displayedToken ? (
                   <TokenIcon
-                    assetId={selectedToken.assetId}
-                    symbol={selectedToken.symbol}
-                    icon={resolveSwapTokenIconUrl(selectedToken)}
+                    assetId={displayedToken.assetId}
+                    symbol={displayedToken.symbol}
+                    icon={resolveSwapTokenIconUrl(displayedToken)}
                     size={32}
                   />
                 ) : (
@@ -830,7 +858,7 @@ function ShieldDepositContent() {
                 <span className="min-w-0 flex-1">
                   <span className="block text-xs text-muted">Token</span>
                   <span className="block truncate text-sm">
-                    {selectedToken?.symbol ?? 'Select token'}
+                    {displayedToken?.symbol ?? 'Select token'}
                   </span>
                 </span>
                 <Icon icon="lucide:chevron-down" width={17} height={17} />
@@ -838,7 +866,7 @@ function ShieldDepositContent() {
               <button
                 type="button"
                 onClick={() => setPicker('network')}
-                disabled={loading || availableNetworks.length === 0}
+                disabled={loading || !displayedToken || availableNetworks.length === 0}
                 className="wallet-interactive flex h-[62px] w-full items-center gap-2.5 rounded-lg bg-wallet-surface px-4 text-left enabled:hover:bg-wallet-selected enabled:active:bg-white/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 disabled:opacity-50"
               >
                 {selectedNetwork ? (
@@ -865,7 +893,7 @@ function ShieldDepositContent() {
                 disabled={!selectedNetwork}
                 className="wallet-interactive flex h-[62px] w-full items-center gap-2.5 rounded-lg bg-wallet-surface px-4 text-left enabled:hover:bg-wallet-selected enabled:active:bg-white/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 disabled:opacity-50"
               >
-                {selectedNetwork ? (
+                {providerSelected ? (
                   <ShieldProviderLogo provider={provider} size={32} />
                 ) : (
                   <Icon icon="lucide:shield" width={32} height={32} className="text-muted" />
@@ -873,13 +901,13 @@ function ShieldDepositContent() {
                 <span className="min-w-0 flex-1">
                   <span className="block text-xs text-muted">Shield provider</span>
                   <span className="block truncate text-sm">
-                    {selectedNetwork ? SHIELD_PROVIDERS[provider].detailName : 'Select provider'}
+                    {providerSelected ? SHIELD_PROVIDERS[provider].detailName : 'Select provider'}
                   </span>
                 </span>
                 <Icon icon="lucide:chevron-down" width={17} height={17} />
               </button>
             </div>
-            {selectedToken && (
+            {selectedToken && selectedNetwork && providerSelected && (
               <div className="mt-6">
                 <label htmlFor="shield-deposit-amount" className="mb-2 block text-sm">
                   Amount to receive
@@ -1008,6 +1036,7 @@ function ShieldDepositContent() {
               busy ||
               !selectedToken ||
               !selectedNetwork ||
+              !providerSelected ||
               !sourceAssetId
             }
             className="wallet-interactive h-11 w-full rounded-lg bg-primary text-sm font-medium text-background enabled:hover:brightness-110 enabled:active:brightness-95 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 disabled:opacity-45"
@@ -1087,7 +1116,43 @@ function ShieldDepositContent() {
           </div>
           <DialogDescription className="sr-only">Choose deposit source</DialogDescription>
           {picker === 'token' && (
-            <TokenSelector tokens={tokens} onSelect={selectToken} fullHeight stableCatalogOrder />
+            <div className="min-h-0 overflow-y-auto px-4 pb-5">
+              <label className="relative mb-3 block">
+                <Icon
+                  icon="lucide:search"
+                  width={18}
+                  height={18}
+                  className="absolute left-3 top-1/2 -translate-y-1/2 text-muted"
+                />
+                <input
+                  aria-label="Search token"
+                  placeholder="Search token"
+                  value={tokenSearch}
+                  onChange={event => setTokenSearch(event.target.value)}
+                  className="h-12 w-full rounded-lg border border-white/10 bg-card pl-10 pr-3 text-sm outline-none focus:border-primary"
+                />
+              </label>
+              {tokenChoices
+                .filter(token =>
+                  token.symbol.toLowerCase().includes(tokenSearch.trim().toLowerCase())
+                )
+                .map(token => (
+                  <button
+                    key={token.symbol.trim().toLowerCase()}
+                    type="button"
+                    onClick={() => selectToken(token)}
+                    className="wallet-interactive flex h-16 w-full items-center gap-3 rounded-md px-1 text-left hover:bg-wallet-selected active:bg-white/15"
+                  >
+                    <TokenIcon
+                      assetId={token.assetId}
+                      symbol={token.symbol}
+                      icon={resolveSwapTokenIconUrl(token)}
+                      size={32}
+                    />
+                    <span className="truncate text-sm">{token.symbol}</span>
+                  </button>
+                ))}
+            </div>
           )}
           {picker === 'network' && (
             <div className="min-h-0 overflow-y-auto px-4 pb-5">
@@ -1113,18 +1178,19 @@ function ShieldDepositContent() {
             <div className="space-y-2 px-4 pb-5">
               <button
                 type="button"
-                aria-pressed={provider === 'near-confidential'}
+                aria-pressed={providerSelected && provider === 'near-confidential'}
                 onClick={() => {
                   setProvider('near-confidential')
+                  setProviderSelected(true)
                   setPicker(null)
                 }}
-                className={`wallet-interactive flex h-14 w-full items-center gap-3 rounded-lg border bg-wallet-surface px-3 text-left text-sm hover:bg-wallet-selected active:bg-white/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 ${provider === 'near-confidential' ? 'border-primary' : 'border-transparent'}`}
+                className={`wallet-interactive flex h-14 w-full items-center gap-3 rounded-lg border bg-wallet-surface px-3 text-left text-sm hover:bg-wallet-selected active:bg-white/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 ${providerSelected && provider === 'near-confidential' ? 'border-primary' : 'border-transparent'}`}
               >
                 <ShieldProviderLogo provider="near-confidential" size={30} />
                 <span className="min-w-0 flex-1 truncate">
                   {SHIELD_PROVIDERS['near-confidential'].detailName}
                 </span>
-                {provider === 'near-confidential' && (
+                {providerSelected && provider === 'near-confidential' && (
                   <Icon icon="lucide:check" width={18} height={18} className="text-primary" />
                 )}
               </button>

@@ -101,12 +101,8 @@ test('quotes ZEC Shield to the same Account Private ETH while Private mode is se
     }
     return { refund, recipient: evm.privateExecutionAddress as string }
   }, getZcashChainId('mainnet'))
-  const privateReceiveAccount = popup.getByRole('button', { name: 'Choose receive account' })
-  await expect(privateReceiveAccount).toHaveAttribute('title', addresses.recipient)
-  await privateReceiveAccount.click()
-  const receiveAt = popup.getByRole('dialog', { name: 'Receive at' })
-  await expect(receiveAt.getByRole('textbox', { name: 'Address' })).toHaveValue(addresses.recipient)
-  await receiveAt.getByRole('button', { name: 'Close', exact: true }).click()
+  await expect(popup.getByRole('button', { name: 'Choose receive account' })).toHaveCount(0)
+  await expect(popup.locator('input[id^="swap-recipient"]')).toHaveCount(0)
   await expect(
     popup.getByRole('button', { name: 'Choose source account, current private' })
   ).toHaveCount(0)
@@ -130,20 +126,6 @@ test('quotes ZEC Shield to the same Account Private ETH while Private mode is se
 
 function swapAssetDialog(popup: Page, _direction: 'From' | 'To') {
   return popup.getByRole('dialog', { name: 'Select Token' })
-}
-
-async function selectSwapWalletRecipient(popup: Page) {
-  await popup.getByRole('button', { name: 'Choose receive account' }).click()
-  await popup
-    .getByRole('dialog', { name: 'Receive at' })
-    .getByRole('button', { name: 'Select Recipient' })
-    .click()
-  return popup.getByRole('dialog', { name: 'Select Recipient' })
-}
-
-async function openSwapReceiveAt(popup: Page) {
-  await popup.getByRole('button', { name: 'Choose receive account' }).click()
-  return popup.getByRole('dialog', { name: 'Receive at' })
 }
 
 test('renders usable Swap assets while unrelated chain catalogs are pending', async ({
@@ -247,7 +229,7 @@ test('renders usable Swap assets while unrelated chain catalogs are pending', as
   }
 })
 
-test('uses a selected Zcash wallet recipient for Swap from an EVM-only wallet', async ({
+test('limits Swap to this Account Zcash recipients and disables a wallet without Zcash', async ({
   context,
   popup,
   extensionId
@@ -274,12 +256,31 @@ test('uses a selected Zcash wallet recipient for Swap from an EVM-only wallet', 
     .getByRole('button', { name: /^ZEC on Zcash/ })
     .first()
     .click()
-  const ownAddresses = await selectSwapWalletRecipient(popup)
-  await expect(ownAddresses.getByRole('button', { name: /Send to .* Shielded/ })).toHaveCount(1)
-  await expect(ownAddresses.getByRole('button', { name: /Send to .* Transparent/ })).toHaveCount(1)
+  await popup.getByRole('button', { name: 'Choose receive account' }).click()
+  const ownAddresses = popup.getByRole('dialog', { name: 'Receive at' })
+  await expect(ownAddresses.getByRole('button', { name: 'Receive at Shielded' })).toBeEnabled()
+  await expect(ownAddresses.getByRole('button', { name: 'Receive at Transparent' })).toBeEnabled()
+  await expect(ownAddresses.locator('input')).toHaveCount(0)
   await captureScreenshot(popup, 'swap-zec-own-addresses.png')
-  await ownAddresses.getByRole('button', { name: 'Close', exact: true }).click()
-  await popup.getByRole('button', { name: 'Back', exact: true }).click()
+  await ownAddresses.getByRole('button', { name: 'Receive at Transparent' }).click()
+  await popup.getByRole('textbox', { name: 'From amount' }).fill('0.01')
+  const transparentRecipient = await popup.evaluate(async zcashChainId => {
+    const response = await chrome.runtime.sendMessage({ type: 'GET_ACCOUNT_NETWORKS' })
+    const active = response?.result?.accounts?.find(
+      (account: { active?: unknown }) => account.active === true
+    )
+    return active?.networks
+      ?.find((network: { chainId?: unknown }) => network.chainId === zcashChainId)
+      ?.addresses?.find(
+        (address: { scheme?: unknown }) => address.scheme === 'zcash-transparent-p2pkh'
+      )?.value as string
+  }, getZcashChainId('mainnet'))
+  await expect.poll(() => api.getQuoteRequests().at(-1)?.recipient).toBe(transparentRecipient)
+  await popup.getByRole('button', { name: 'Choose receive account' }).click()
+  await popup
+    .getByRole('dialog', { name: 'Receive at' })
+    .getByRole('button', { name: 'Receive at Shielded' })
+    .click()
   const zcashRecipient = await popup.evaluate(async zcashChainId => {
     const response = await chrome.runtime.sendMessage({ type: 'GET_ACCOUNT_NETWORKS' })
     const active = response?.result?.accounts?.find(
@@ -293,6 +294,8 @@ test('uses a selected Zcash wallet recipient for Swap from an EVM-only wallet', 
     )?.value as string | undefined
   }, getZcashChainId('mainnet'))
   expect(zcashRecipient).toMatch(/^u1/)
+  await expect.poll(() => api.getQuoteRequests().at(-1)?.recipient).toBe(zcashRecipient)
+  await popup.goto(`chrome-extension://${extensionId}/index.html`)
   await popup.getByRole('button', { name: 'Choose wallet' }).click()
   await popup
     .getByRole('dialog', { name: 'Accounts' })
@@ -320,35 +323,15 @@ test('uses a selected Zcash wallet recipient for Swap from an EVM-only wallet', 
     .first()
     .click()
   await popup.getByRole('textbox', { name: 'From amount' }).fill('0.01')
-  await expect.poll(() => api.getQuoteRequests().at(-1)?.recipient).toBe(zcashRecipient)
-  const quotesBeforeInvalidRecipient = api.getQuoteRequests().length
-  const receiveAt = await openSwapReceiveAt(popup)
-  await expect(receiveAt.locator('input[id^="swap-recipient"]')).toBeVisible()
-  await receiveAt.locator('input[id^="swap-recipient"]').fill('not-a-zcash-address')
-  await expect(receiveAt.getByText('Enter a valid Zcash address.')).toBeVisible()
-  await receiveAt.getByRole('button', { name: 'Done' }).click()
+  await expect(popup.getByRole('button', { name: 'Choose receive account' })).toBeVisible()
+  await expect(popup.locator('input[id^="swap-recipient"]')).toHaveCount(0)
+  await expect(popup.getByText('Receive account unavailable for this asset.')).toBeVisible()
   await expect(popup.getByRole('button', { name: 'Swap', exact: true })).toBeDisabled()
-  await popup.waitForTimeout(1_000)
-  expect(api.getQuoteRequests()).toHaveLength(quotesBeforeInvalidRecipient)
-
-  const recipients = await selectSwapWalletRecipient(popup)
-  const unavailableAccount = recipients.getByRole('button', {
-    name: /Unavailable on this network/
-  })
-  await expect(unavailableAccount).toHaveCount(1)
-  await expect(unavailableAccount).toBeDisabled()
+  await popup.getByRole('button', { name: 'Choose receive account' }).click()
+  const unavailable = popup.getByRole('dialog', { name: 'Receive at' })
+  await expect(unavailable.getByRole('button', { name: 'Receive at Shielded' })).toBeDisabled()
+  await expect(unavailable.getByRole('button', { name: 'Receive at Transparent' })).toBeDisabled()
   await captureScreenshot(popup, 'swap-zec-unavailable-account.png')
-  await expect(recipients.getByRole('button', { name: /Send to .* Shielded/ })).toBeVisible()
-  await recipients.getByRole('button', { name: /Send to .* Shielded/ }).click()
-  await expect(popup.locator('input#swap-recipient-inline')).toHaveValue(zcashRecipient!)
-  await captureScreenshot(popup, 'swap-evm-only-zec-recipient.png')
-  await expect.poll(() => api.getQuoteRequests().at(-1)?.recipient).toBe(zcashRecipient)
-  const review = popup.getByRole('button', { name: 'Swap', exact: true })
-  await expect(review).toBeEnabled({ timeout: 30_000 })
-  await review.click()
-  await expect(popup.getByRole('heading', { name: 'Confirm Swap' })).toBeVisible()
-  await expect(popup.getByText(zcashRecipient!, { exact: true })).toBeVisible()
-  await captureScreenshot(popup, 'swap-evm-only-zec-review.png')
 })
 
 test('shows only the header title on the Swap review page in real MV3', async ({
@@ -808,7 +791,7 @@ test('reviews dApp gas funding from same-chain Main without the Swap input page'
   expect((await transactionPromise).code).toBe(4001)
 })
 
-test('keeps Private Swap within the Account and Public Swap supports external recipients in real MV3', async ({
+test('keeps Public and Private Swap within their own Account modes in real MV3', async ({
   context,
   popup,
   extensionId
@@ -856,27 +839,9 @@ test('keeps Private Swap within the Account and Public Swap supports external re
   await expect
     .poll(() => api.getQuoteRequests().at(-1)?.refundTo.toLowerCase())
     .toBe(addresses.main.toLowerCase())
-  await (await selectSwapWalletRecipient(popup))
-    .getByRole('button', { name: /Send to .* Confidential/ })
-    .click()
-  await expect(
-    popup.getByRole('button', { name: 'Choose source account, current main' })
-  ).toBeVisible()
-  await popup.getByRole('textbox', { name: 'From amount' }).fill('0.01')
-  await expect
-    .poll(() => api.getQuoteRequests().at(-1)?.recipient.toLowerCase())
-    .toBe(addresses.private.toLowerCase())
+  await expect(popup.getByRole('button', { name: 'Choose receive account' })).toHaveCount(0)
   await expectNoOverflow(popup)
-  await captureScreenshot(popup, 'swap-main-to-confidential.png')
-
-  const customAddress = '0x1111111111111111111111111111111111111111'
-  const receiveAt = await openSwapReceiveAt(popup)
-  await receiveAt.locator('input[id^="swap-recipient"]').fill(customAddress)
-  await receiveAt.getByRole('button', { name: 'Done' }).click()
-  await expect
-    .poll(() => api.getQuoteRequests().at(-1)?.recipient.toLowerCase())
-    .toBe(customAddress)
-  await captureScreenshot(popup, 'swap-custom-destination.png')
+  await captureScreenshot(popup, 'swap-main-own-public.png')
 
   await popup.getByRole('button', { name: 'Choose source account, current main' }).click()
   await popup
@@ -890,14 +855,7 @@ test('keeps Private Swap within the Account and Public Swap supports external re
   await expect
     .poll(() => api.getQuoteRequests().at(-1)?.refundTo.toLowerCase())
     .toBe(addresses.private.toLowerCase())
-  const privateReceiveAccount = popup.getByRole('button', { name: 'Choose receive account' })
-  await expect(privateReceiveAccount).toHaveAttribute('title', addresses.private)
-  await privateReceiveAccount.click()
-  const destinationAccounts = popup.getByRole('dialog', { name: 'Choose destination account' })
-  await expect(destinationAccounts.getByRole('radio', { name: /Public account/ })).toBeVisible()
-  await expect(destinationAccounts.getByRole('radio', { name: /Private account/ })).toBeChecked()
-  await expect(destinationAccounts.getByRole('button', { name: 'Custom address' })).toHaveCount(0)
-  await destinationAccounts.getByRole('radio', { name: /Private account/ }).click()
+  await expect(popup.getByRole('button', { name: 'Choose receive account' })).toHaveCount(0)
   await expect(popup.locator('input[id^="swap-recipient"]')).toHaveCount(0)
   await expectNoOverflow(popup)
   await captureScreenshot(popup, 'swap-private-account-fixed.png')
@@ -933,19 +891,13 @@ test('keeps Private Swap within the Account and Public Swap supports external re
         'title',
         addresses.private
       )
-      await expect(popup.getByRole('button', { name: 'Choose receive account' })).toHaveAttribute(
-        'title',
-        addresses.private
-      )
+      await expect(popup.getByRole('button', { name: 'Choose receive account' })).toHaveCount(0)
       await expect(popup.locator('input[id^="swap-recipient"]')).toHaveCount(0)
     } else {
       await expect(
         popup.getByRole('button', { name: `Choose source account, current ${mode}` })
       ).toBeVisible()
-      await expect(popup.getByRole('button', { name: 'Choose receive account' })).toHaveAttribute(
-        'title',
-        addresses.main
-      )
+      await expect(popup.getByRole('button', { name: 'Choose receive account' })).toHaveCount(0)
     }
     const notification = popup.getByRole('button', { name: 'Dismiss notification' })
     if (await notification.isVisible()) await notification.click()
@@ -1287,7 +1239,7 @@ test('prepares and rejects wallet-owned EVM Swap reviews in real MV3', async ({
     name: 'Choose source account, current private'
   })
   await expect(privateSwapSourceButton).toBeVisible()
-  await expect(popup.getByRole('button', { name: 'Choose receive account' })).toBeVisible()
+  await expect(popup.getByRole('button', { name: 'Choose receive account' })).toHaveCount(0)
   await expect(popup.locator('input[id^="swap-recipient"]')).toHaveCount(0)
   await captureScreenshot(popup, 'private-defi-swap-account-private.png')
   const privateSwapSourceAddress = await popup.evaluate(async () => {

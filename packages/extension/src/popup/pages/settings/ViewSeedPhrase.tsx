@@ -5,7 +5,7 @@ import { Input } from '../../components/ui/input'
 import { PageHeader } from '../../components/common/PageHeader'
 import { SeedPhraseDisplay } from '../../components/seed-phrase/SeedPhraseDisplay'
 import { BackupWordInputs } from '../../components/seed-phrase/BackupWordInputs'
-import { CopyToast, useCopyToClipboard } from '../../components/common/CopyToast'
+import { CopyFeedbackIcon, CopyToast, useCopyToClipboard } from '../../components/common/CopyToast'
 import { useWalletBackupVerification } from '../../hooks/useWalletBackupVerification'
 import { useLocation, useNavigate } from '../../provider/Router'
 import { zcashWalletRuntimeClient } from '@/popup/services/zcash-wallet-runtime-client'
@@ -63,7 +63,7 @@ function SeedPhraseContent({
   const mounted = useRef(false)
   const confirming = useRef(false)
   const verification = useWalletBackupVerification(targetWalletId)
-  const { copyToClipboard, showToast } = useCopyToClipboard()
+  const { copyToClipboard, showToast, copyFailed, copiedKey } = useCopyToClipboard()
 
   const returnToPage = () => {
     if (
@@ -248,7 +248,7 @@ function SeedPhraseContent({
   }
   return (
     <div className="page-container">
-      <CopyToast show={showToast} />
+      <CopyToast show={showToast} error={copyFailed} />
       <PageHeader title={title} showBack onBack={handleBack} />
       <div className="page-content">
         {backupMode && <p className="mb-3 text-sm font-medium break-words">{targetName}</p>}
@@ -265,10 +265,11 @@ function SeedPhraseContent({
       <div className="page-footer flex gap-2">
         <Button
           variant={backupMode ? 'outline' : 'default'}
-          onClick={() => copyToClipboard(phraseWords.join(' '))}
+          onClick={() => void copyToClipboard(phraseWords.join(' '))}
           className="h-[45px] flex-1"
         >
-          Copy
+          <CopyFeedbackIcon copied={copiedKey === 'default'} width={16} height={16} />
+          {copiedKey === 'default' ? 'Copied' : 'Copy'}
         </Button>
         {backupMode && (
           <Button onClick={handleContinue} className="h-[45px] flex-1">

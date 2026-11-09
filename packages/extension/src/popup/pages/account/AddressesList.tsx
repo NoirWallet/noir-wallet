@@ -5,7 +5,7 @@ import { QRCodeSVG } from 'qrcode.react'
 import { useNavigate } from '../../provider/Router'
 import { PageHeader } from '../../components/common/PageHeader'
 import { InlineError } from '../../components/common/InlineError'
-import { CopyToast, useCopyToClipboard } from '../../components/common/CopyToast'
+import { CopyFeedbackIcon, CopyToast, useCopyToClipboard } from '../../components/common/CopyToast'
 import {
   accountNetworkAddressLabel,
   accountNetworkIconChain,
@@ -100,20 +100,6 @@ function addressPrivacyLabel(address: AccountNetworkAddressView): string {
   return 'mixed'
 }
 
-function CopyIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 18 18" className="size-[18px]" fill="none">
-      <rect x="6" y="6" width="9" height="9" rx="1.5" stroke="currentColor" strokeWidth="1.5" />
-      <path
-        d="M12 6V3.5C12 2.67 11.33 2 10.5 2h-7C2.67 2 2 2.67 2 3.5v7c0 .83.67 1.5 1.5 1.5H6"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-      />
-    </svg>
-  )
-}
-
 function QrIcon() {
   return (
     <svg aria-hidden="true" viewBox="0 0 18 18" className="size-[18px]" fill="none">
@@ -136,16 +122,19 @@ function AddressActions({
   address,
   displayName,
   onCopy,
+  isCopied,
   onShowQr
 }: {
   readonly network: AccountNetworkView
   readonly address: AccountNetworkAddressView
   readonly displayName?: string
-  readonly onCopy: (address: string) => void
+  readonly onCopy: (address: string, key: string) => void
+  readonly isCopied: (key: string) => boolean
   readonly onShowQr: (target: AddressQrTarget) => void
 }) {
   const type = accountNetworkAddressLabel(network, address)
   const networkName = displayName ?? network.chain.displayName
+  const copyKey = `${network.chain.id}-${address.scheme}`
   return (
     <div className="ml-auto flex shrink-0 items-center">
       <button
@@ -153,9 +142,9 @@ function AddressActions({
         aria-label={`Copy ${networkName} ${type} address`}
         title={`Copy ${networkName} ${type} address`}
         className="wallet-interactive flex size-[26px] items-center justify-center rounded-lg text-foreground hover:bg-foreground/10 active:bg-foreground/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2"
-        onClick={() => onCopy(address.value)}
+        onClick={() => onCopy(address.value, copyKey)}
       >
-        <CopyIcon />
+        <CopyFeedbackIcon copied={isCopied(copyKey)} width={18} height={18} />
       </button>
       <button
         type="button"
@@ -175,12 +164,14 @@ function AddressRow({
   address,
   displayName,
   onCopy,
+  isCopied,
   onShowQr
 }: {
   readonly network: AccountNetworkView
   readonly address: AccountNetworkAddressView
   readonly displayName?: string
-  readonly onCopy: (address: string) => void
+  readonly onCopy: (address: string, key: string) => void
+  readonly isCopied: (key: string) => boolean
   readonly onShowQr: (target: AddressQrTarget) => void
 }) {
   const zcashType: AddressType | null =
@@ -211,6 +202,7 @@ function AddressRow({
         address={address}
         displayName={displayName}
         onCopy={onCopy}
+        isCopied={isCopied}
         onShowQr={onShowQr}
       />
     </div>
@@ -221,13 +213,15 @@ function AddressNetworkGroup({
   network,
   mode,
   onCopy,
+  isCopied,
   onCopyPrivateExecution,
   onShowQr,
   onOpenSettings
 }: {
   readonly network: AccountNetworkView
   readonly mode: 'public' | 'private'
-  readonly onCopy: (address: string) => void
+  readonly onCopy: (address: string, key: string) => void
+  readonly isCopied: (key: string) => boolean
   readonly onCopyPrivateExecution: (address: string) => void
   readonly onShowQr: (target: AddressQrTarget) => void
   readonly onOpenSettings?: () => void
@@ -336,6 +330,7 @@ function AddressNetworkGroup({
             address={singleAddress}
             displayName={displayName}
             onCopy={onCopy}
+            isCopied={isCopied}
             onShowQr={onShowQr}
           />
         </div>
@@ -372,6 +367,7 @@ function AddressNetworkGroup({
             address={address}
             displayName={displayName}
             onCopy={onCopy}
+            isCopied={isCopied}
             onShowQr={onShowQr}
           />
         ))}
@@ -382,7 +378,7 @@ function AddressNetworkGroup({
 
 export function AddressesList() {
   const { navigate } = useNavigate()
-  const { copyToClipboard, showToast } = useCopyToClipboard()
+  const { copyToClipboard, showToast, isCopied } = useCopyToClipboard()
   const [searchParams] = useSearchParams()
   const walletId = searchParams.get('walletId')
   const accountId = searchParams.get('accountId')
@@ -524,7 +520,8 @@ export function AddressesList() {
       key={network.chain.id}
       network={network}
       mode={activeMode}
-      onCopy={value => void copyToClipboard(value)}
+      onCopy={(value, key) => void copyToClipboard(value, key)}
+      isCopied={isCopied}
       onCopyPrivateExecution={address => setPrivateAddressAction({ address })}
       onShowQr={target =>
         target.confidential
@@ -693,11 +690,15 @@ export function AddressesList() {
                           onClick={() =>
                             mode === 'private'
                               ? setPrivateAddressAction({ address: evmAddress })
-                              : void copyToClipboard(evmAddress)
+                              : void copyToClipboard(evmAddress, 'evm-header')
                           }
                           className="wallet-interactive flex size-[26px] items-center justify-center rounded-md text-muted hover:bg-white/10 hover:text-foreground active:bg-white/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2"
                         >
-                          <Icon icon="lucide:copy" width={17} height={17} />
+                          <CopyFeedbackIcon
+                            copied={isCopied('evm-header')}
+                            width={17}
+                            height={17}
+                          />
                         </button>
                         <button
                           type="button"
@@ -825,10 +826,10 @@ export function AddressesList() {
                       type="button"
                       variant="secondary"
                       className="h-10 shrink-0 px-3"
-                      onClick={() => void copyToClipboard(qrTarget.address.value)}
+                      onClick={() => void copyToClipboard(qrTarget.address.value, 'qr-address')}
                     >
-                      <Icon icon="lucide:copy" width={17} height={17} />
-                      Copy
+                      <CopyFeedbackIcon copied={isCopied('qr-address')} width={17} height={17} />
+                      {isCopied('qr-address') ? 'Copied' : 'Copy'}
                     </Button>
                   </div>
                 </div>
@@ -870,11 +871,21 @@ export function AddressesList() {
               onClick={() => {
                 if (!privateAddressAction) return
                 if (privateAddressAction.qrTarget) setQrTarget(privateAddressAction.qrTarget)
-                else void copyToClipboard(privateAddressAction.address)
+                else {
+                  void copyToClipboard(privateAddressAction.address, 'private-confirm')
+                  return
+                }
                 setPrivateAddressAction(null)
               }}
             >
-              {privateAddressAction?.qrTarget ? 'Show QR code' : 'Copy anyway'}
+              {!privateAddressAction?.qrTarget && (
+                <CopyFeedbackIcon copied={isCopied('private-confirm')} width={16} height={16} />
+              )}
+              {privateAddressAction?.qrTarget
+                ? 'Show QR code'
+                : isCopied('private-confirm')
+                  ? 'Copied'
+                  : 'Copy anyway'}
             </Button>
           </DialogFooter>
         </DialogContent>

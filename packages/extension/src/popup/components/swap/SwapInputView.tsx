@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { Icon } from '@iconify/react'
 import type { AddressType } from '@/types'
 import type { SwapToken } from '@/core/services/intents-api'
@@ -196,10 +196,32 @@ function SwapAssetCard({
   balanceHelp = false,
   pendingBalance
 }: SwapAssetCardProps) {
-  if (tokenSelectDisabled) return <SwapAssetCardSkeleton direction={direction} />
-
   const hasAccountDetails = Boolean(accountAddress || accountFallbackLabel || accountBadge)
-  const longAmount = amount.length > 12
+  const amountField = useRef<HTMLInputElement>(null)
+  const [amountFontSize, setAmountFontSize] = useState(20)
+  useLayoutEffect(() => {
+    if (isReadOnly || !amountField.current) return
+    const input = amountField.current
+    const resize = () => {
+      const canvas = document.createElement('canvas')
+      const context = canvas.getContext('2d')
+      if (!context) return
+      const computed = window.getComputedStyle(input)
+      context.font = `600 20px ${computed.fontFamily}`
+      const textWidth = context.measureText(amount || '0').width
+      setAmountFontSize(
+        Math.max(
+          11,
+          Math.min(20, Math.floor(((input.clientWidth - 4) * 20) / Math.max(textWidth, 1)))
+        )
+      )
+    }
+    const observer = new ResizeObserver(resize)
+    observer.observe(input)
+    resize()
+    return () => observer.disconnect()
+  }, [amount, isReadOnly])
+  if (tokenSelectDisabled) return <SwapAssetCardSkeleton direction={direction} />
 
   return (
     <section className="min-h-[126px] py-3">
@@ -288,9 +310,7 @@ function SwapAssetCard({
 
       <div
         className={cn(
-          longAmount
-            ? 'flex flex-col items-stretch gap-2'
-            : 'flex items-center justify-between gap-3',
+          'flex items-center justify-between gap-3',
           validationMessage ? 'mt-2' : 'mt-4'
         )}
       >
@@ -299,12 +319,12 @@ function SwapAssetCard({
           onClick={onTokenSelect}
           disabled={tokenSelectLocked}
           aria-label={`${direction} asset`}
-          className="flex min-w-0 items-center gap-2 text-left transition-opacity enabled:hover:opacity-80"
+          className="flex max-w-[55%] min-w-0 shrink-0 items-center gap-2 text-left transition-opacity enabled:hover:opacity-80"
         >
           <TokenIcon token={token || undefined} size={30} />
           <span className="min-w-0">
-            <span className="flex items-center gap-1 text-xl font-semibold leading-[26px]">
-              {formatSymbol(token?.symbol) || 'Select'}
+            <span className="flex min-w-0 items-center gap-1 text-xl font-semibold leading-[26px]">
+              <span className="truncate">{formatSymbol(token?.symbol) || 'Select'}</span>
               {!tokenSelectLocked && (
                 <Icon icon="lucide:chevron-down" width={16} height={16} className="text-muted" />
               )}
@@ -322,7 +342,7 @@ function SwapAssetCard({
               aria-label={isEstimatedAmount && amount ? `Estimated output: ${amount}` : undefined}
               title={amount || undefined}
               className={cn(
-                'break-all font-sans text-xl font-semibold leading-[26px]',
+                'overflow-x-auto whitespace-nowrap font-sans text-xl font-semibold leading-[26px]',
                 isEstimatedAmount && 'text-muted'
               )}
             >
@@ -345,6 +365,7 @@ function SwapAssetCard({
             </p>
           ) : (
             <input
+              ref={amountField}
               type="text"
               inputMode="decimal"
               value={amount}
@@ -353,7 +374,8 @@ function SwapAssetCard({
               aria-label={`${direction} amount`}
               aria-invalid={Boolean(validationMessage) || undefined}
               aria-describedby={validationMessage ? 'swap-source-amount-error' : undefined}
-              className="w-full min-w-0 bg-transparent text-right font-sans text-xl font-semibold leading-[26px] outline-none placeholder:text-muted/60"
+              style={{ fontSize: amountFontSize }}
+              className="w-full min-w-0 bg-transparent text-right font-sans font-semibold leading-[26px] outline-none placeholder:text-muted/60"
             />
           )}
           <p
