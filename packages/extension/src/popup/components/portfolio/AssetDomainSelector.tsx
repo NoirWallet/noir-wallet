@@ -23,11 +23,13 @@ export function AssetDomainSelector({
   value,
   totals,
   balancesHidden,
+  domains = Object.keys(ASSET_DOMAIN_LABELS) as AssetDomain[],
   onChange
 }: {
   readonly value: AssetDomain
   readonly totals: Readonly<Record<AssetDomain, string | number | null>>
   readonly balancesHidden: boolean
+  readonly domains?: readonly AssetDomain[]
   readonly onChange: (domain: AssetDomain) => void
 }) {
   const [open, setOpen] = useState(false)
@@ -56,7 +58,7 @@ export function AssetDomainSelector({
         aria-label="Asset categories"
       >
         <div role="radiogroup" aria-label="Asset category">
-          {(Object.keys(ASSET_DOMAIN_LABELS) as AssetDomain[]).map(domain => (
+          {domains.map(domain => (
             <button
               key={domain}
               type="button"

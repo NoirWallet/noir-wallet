@@ -4,6 +4,7 @@ import { confidentialPrivateTokenId } from './confidential-funding-portfolio'
 export const CONFIDENTIAL_WITHDRAW_MIN_COUNT = 2
 export const CONFIDENTIAL_WITHDRAW_MAX_COUNT = 5
 export const CONFIDENTIAL_WITHDRAW_DEFAULT_COUNT = 3
+export const CONFIDENTIAL_SESSION_REQUIRED_ERROR = 'Refresh Shield balances to continue.'
 
 export type ConfidentialFundingPhase =
   | 'prepared'

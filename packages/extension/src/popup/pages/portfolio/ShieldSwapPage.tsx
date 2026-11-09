@@ -162,6 +162,7 @@ function ShieldSwapForm() {
     setBalances(null)
     setBalanceScope('')
     if (!account || !canManageNear) return
+    setConnecting(true)
     void confidentialFundingClient
       .refreshBalances(
         {
@@ -169,7 +170,7 @@ function ShieldSwapForm() {
           keyDomainId: account.walletId,
           accountId: account.accountId
         },
-        false
+        true
       )
       .then(value => {
         if (active) {
@@ -178,7 +179,12 @@ function ShieldSwapForm() {
           void refresh(true)
         }
       })
-      .catch(() => {})
+      .catch(() => {
+        if (active) setError('Unable to load Shield balances. Please try again.')
+      })
+      .finally(() => {
+        if (active) setConnecting(false)
+      })
     return () => {
       active = false
     }
@@ -194,10 +200,7 @@ function ShieldSwapForm() {
   const from = fromId
     ? (sources.find(asset => asset.asset.asset.id === fromId) ?? null)
     : (sources[0] ?? null)
-  const to = toId
-    ? (options.find(asset => asset.asset.asset.id === toId) ?? null)
-    : (options.find(asset => asset.managed.protocolAssetId !== from?.managed.protocolAssetId) ??
-      null)
+  const to = toId ? (options.find(asset => asset.asset.asset.id === toId) ?? null) : null
   const canReverse = Boolean(
     to && sources.some(asset => asset.asset.asset.id === to.asset.asset.id)
   )
@@ -534,7 +537,7 @@ function ShieldSwapForm() {
                 type="button"
                 className="wallet-interactive rounded text-foreground enabled:hover:bg-white/10 enabled:active:bg-white/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 disabled:opacity-40"
                 disabled={busy || connecting || currentBalance === null || currentBalance === '0'}
-                title={!currentBalances ? 'Connect Shield to use Max' : 'Use maximum balance'}
+                title={!currentBalances ? 'Shield balance unavailable' : 'Use maximum balance'}
                 onClick={() => {
                   if (!from || currentBalance === null) return
                   if (!fromId) setFromId(from.asset.asset.id)
@@ -699,7 +702,11 @@ function ShieldSwapForm() {
             role="alert"
             className="mt-3 flex items-center justify-between gap-2 text-xs text-warning"
           >
-            <span>{previewError}</span>
+            <span>
+              {previewError === CONFIDENTIAL_PREVIEW_CONNECTION_ERROR
+                ? 'Refresh Shield balances to get a quote.'
+                : previewError}
+            </span>
             <button
               type="button"
               disabled={connecting}
@@ -710,7 +717,9 @@ function ShieldSwapForm() {
               }
               className="shrink-0 text-primary disabled:opacity-45"
             >
-              {previewError === CONFIDENTIAL_PREVIEW_CONNECTION_ERROR ? 'Connect Shield' : 'Retry'}
+              {previewError === CONFIDENTIAL_PREVIEW_CONNECTION_ERROR
+                ? 'Refresh balances'
+                : 'Retry'}
             </button>
           </div>
         )}
@@ -719,21 +728,24 @@ function ShieldSwapForm() {
             {error}
           </p>
         )}
-        {status === 'error' && (
+        {status === 'error' && currentBalances && (
           <Button variant="ghost" onClick={() => void refresh(true)} className="w-full">
             Refresh Shield balances
           </Button>
         )}
-        {!currentBalances && (
+        {!currentBalances && canManageNear && connecting && (
+          <p role="status" className="mt-4 text-center text-sm text-muted">
+            Loading Shield balances…
+          </p>
+        )}
+        {!currentBalances && canManageNear && !connecting && error && (
           <Button
             variant="outline"
             size="wallet"
-            isLoading={connecting}
-            disabled={!canManageNear}
             onClick={() => void refreshBalances()}
             className="mt-4 w-full"
           >
-            Connect Shield
+            Retry
           </Button>
         )}
       </div>

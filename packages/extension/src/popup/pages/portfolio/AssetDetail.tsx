@@ -1,6 +1,6 @@
 import { isZcashHardwareKeySource } from '@/core/wallet/hardware-wallet-data'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Navigate, useSearchParams } from 'react-router-dom'
+import { useSearchParams } from 'react-router-dom'
 import { Icon } from '@iconify/react'
 import Big from '@/lib/big'
 import type { PortfolioReadModel } from '@/core/portfolio'
@@ -16,13 +16,12 @@ import {
   formatPercentage,
   formatFiatAmount,
   formatTokenPrice,
-  formatBaseUnitAmount,
-  formatBaseUnitDecimalAmount
+  formatBaseUnitAmount
 } from '@/lib/number-format'
 
 import { resolveChainIconAlias } from '@/lib/chain-icon'
 import { cn } from '@/lib/utils'
-import { getZcashPrivacyBalanceDisplay } from './asset-detail-balance'
+import { getAssetDetailCategories, getZcashPrivacyBalanceDisplay } from './asset-detail-balance'
 import { getChainEndpointRuntimeKey } from '@/core/chains/chain-endpoint-settings'
 import { useWalletStore } from '@/store/wallet-store'
 import { useSettingsStore } from '@/store/settings-store'
@@ -32,6 +31,12 @@ import { InlineError } from '@/popup/components/common/InlineError'
 import { CopyToast, useCopyToClipboard } from '@/popup/components/common/CopyToast'
 import { TokenIcon } from '@/popup/components/tokens/TokenIcon'
 import { AccountDomainBadge } from '@/popup/components/account/AccountDomainBadge'
+import { AssetDomainSelector } from '@/popup/components/portfolio/AssetDomainSelector'
+import { confidentialFundingClient } from '@/popup/services/confidential-funding-client'
+import { swapTokenCatalogClient } from '@/popup/services/swap-token-catalog-client'
+import { resolveManagedIntentsCatalog } from '@/popup/services/intents-asset-manager-client'
+import { listShieldFundingAssets } from '@/popup/services/shield-transfer'
+import type { SwapToken } from '@/core/services/intents-api'
 
 import { formatDisplayTokenAmount } from '@/popup/components/portfolio/portfolio-format'
 import {
@@ -41,7 +46,10 @@ import {
 } from '@/popup/services/portfolio-cache'
 import { assetPriceClient } from '@/popup/services/asset-price-client'
 import { assetMarketHistoryClient } from '@/popup/services/asset-market-history-client'
-import { formatChainAssetExplorerUrl } from '@/popup/services/chain-explorer'
+import {
+  formatChainAddressExplorerUrl,
+  formatChainAssetExplorerUrl
+} from '@/popup/services/chain-explorer'
 import { useNavigate } from '@/popup/provider/Router'
 import { useActiveAccountNetworks } from '@/popup/hooks/useActiveAccountNetworks'
 import { ListSkeleton, Skeleton } from '@/popup/components/ui/skeleton'
@@ -55,13 +63,9 @@ import {
   bitcoinAddressBalancesClient,
   type BitcoinAddressBalanceCatalogView
 } from '@/popup/services/bitcoin-address-balances-client'
-import {
-  BitcoinAccountTypeSelector,
-  bitcoinAccountTypeDescription
-} from '@/popup/components/bitcoin/BitcoinAccountTypeSelector'
+import { BitcoinAccountTypeSelector } from '@/popup/components/bitcoin/BitcoinAccountTypeSelector'
 import { useShieldFunds } from '@/popup/hooks/useShieldFunds'
 import { resolveEffectiveActiveAccountIdentity } from '@/popup/lib/effective-active-account'
-import { getAssetDomainRaw } from '@/popup/services/asset-domains'
 import { getFundingSourceUnavailableReason } from '@/core/wallet/funding-source'
 
 export function AssetDetail() {
@@ -104,6 +108,10 @@ export function AssetDetail() {
   )
   const [bitcoinAccountSwitching, setBitcoinAccountSwitching] = useState(false)
   const [bitcoinAccountError, setBitcoinAccountError] = useState<string | null>(null)
+  const [shieldTokens, setShieldTokens] = useState<readonly SwapToken[]>([])
+  const [shieldLoading, setShieldLoading] = useState(false)
+  const [shieldError, setShieldError] = useState(false)
+  const [shieldRetry, setShieldRetry] = useState(0)
   const { copyToClipboard, showToast } = useCopyToClipboard()
   const { isShielding, handleShieldFunds, shieldSheet } = useShieldFunds()
 
@@ -226,7 +234,69 @@ export function AssetDetail() {
     evmMainAddress
   )
   const requestedDomain = searchParams.get('domain')
-  const detailDomain = requestedDomain ?? 'all'
+  const categories =
+    asset && visibleModel
+      ? getAssetDetailCategories(
+          asset,
+          visibleModel,
+          privateTransferEligible,
+          findAssetPrice(prices, asset.asset.id)?.priceUsd
+        )
+      : null
+  const detailDomain = categories?.domains.find(domain => domain === requestedDomain) ?? 'all'
+  const nearShieldSelected = chain?.chain.family === 'evm' && detailDomain === 'shield'
+  const shieldAssetSupported = listShieldFundingAssets(
+    visibleModel,
+    resolveManagedIntentsCatalog(shieldTokens),
+    shieldTokens,
+    currentNetwork
+  ).some(source => source.asset.asset.id === asset?.asset.id)
+  useEffect(() => {
+    if (
+      !nearShieldSelected ||
+      !privateTransferEligible ||
+      !effectiveWalletId ||
+      !effectiveAccountId
+    )
+      return
+    let active = true
+    setShieldLoading(true)
+    setShieldError(false)
+    void Promise.allSettled([
+      confidentialFundingClient
+        .refreshBalances(
+          {
+            network: currentNetwork,
+            keyDomainId: effectiveWalletId,
+            accountId: effectiveAccountId
+          },
+          true
+        )
+        .then(async () => {
+          if (active) await readLatest()
+        }),
+      swapTokenCatalogClient.refresh().then(tokens => {
+        if (active) setShieldTokens(tokens)
+      })
+    ])
+      .then(results => {
+        if (!active) return
+        setShieldError(results.some(result => result.status === 'rejected'))
+      })
+      .finally(() => {
+        if (active) setShieldLoading(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [
+    nearShieldSelected,
+    privateTransferEligible,
+    effectiveWalletId,
+    effectiveAccountId,
+    currentNetwork,
+    shieldRetry
+  ])
   const activityFilterDomain =
     (chain?.chain.family === 'evm' || chain?.chain.family === 'zcash') &&
     (detailDomain === 'public' || detailDomain === 'shield' || detailDomain === 'private')
@@ -241,6 +311,13 @@ export function AssetDetail() {
 
   const handleMove = () => {
     if (!asset || !privateTransferEligible) return
+    if (nearShieldSelected) {
+      if (!shieldAssetSupported) return
+      navigate(
+        `/transfer?${new URLSearchParams({ assetId: asset.asset.id, provider: 'near-confidential', from: 'shield', to: 'private' })}`
+      )
+      return
+    }
     const from = actionDomain === 'private' ? 'private' : 'public'
     navigate(
       `/transfer?${new URLSearchParams({
@@ -253,8 +330,8 @@ export function AssetDetail() {
   }
   useEffect(() => {
     let cancelled = false
+    setBitcoinCatalog(null)
     if (chain?.chain.family !== 'bitcoin') {
-      setBitcoinCatalog(null)
       return () => {
         cancelled = true
       }
@@ -262,7 +339,13 @@ export function AssetDetail() {
     bitcoinAddressBalancesClient
       .getActiveCatalog()
       .then(value => {
-        if (!cancelled) setBitcoinCatalog(value)
+        if (
+          !cancelled &&
+          value?.walletId === effectiveWalletId &&
+          value.accountId === effectiveAccountId &&
+          value.chainId === chain.chain.id
+        )
+          setBitcoinCatalog(value)
       })
       .catch(() => {
         if (!cancelled) setBitcoinCatalog(null)
@@ -369,6 +452,13 @@ export function AssetDetail() {
 
   const handleSend = () => {
     if (!asset || !chain || !canSend) return
+    if (nearShieldSelected) {
+      if (privateTransferEligible && shieldAssetSupported)
+        navigate(
+          `/shield-withdraw?provider=near-confidential&assetId=${encodeURIComponent(asset.asset.id)}`
+        )
+      return
+    }
     const domain = chain?.chain.family === 'evm' ? actionDomain : detailDomain
     if (chain.chain.family === 'evm' && domain === 'private') {
       handleMove()
@@ -394,6 +484,13 @@ export function AssetDetail() {
 
   const handleReceive = () => {
     if (!chain || !canReceive || !effectiveWalletId || !effectiveAccountId) return
+    if (nearShieldSelected) {
+      if (asset && privateTransferEligible && shieldAssetSupported)
+        navigate(
+          `/shield-deposit?provider=near-confidential&assetId=${encodeURIComponent(asset.asset.id)}`
+        )
+      return
+    }
     const query = new URLSearchParams({
       walletId: effectiveWalletId,
       accountId: effectiveAccountId,
@@ -429,6 +526,13 @@ export function AssetDetail() {
 
   const handleSwap = () => {
     if (!asset || !canSwap) return
+    if (nearShieldSelected) {
+      if (privateTransferEligible && shieldAssetSupported)
+        navigate(
+          `/shield-swap?provider=near-confidential&assetId=${encodeURIComponent(asset.asset.id)}`
+        )
+      return
+    }
     const query = new URLSearchParams({ source: asset.asset.id })
     if (chain?.chain.family === 'evm' && effectiveWalletId && effectiveAccountId) {
       query.set('sourceMode', actionDomain === 'private' ? 'private' : 'main')
@@ -525,21 +629,10 @@ export function AssetDetail() {
     chain.chain.displayName,
     chain.chain.id
   )
-  if (chain.chain.family === 'evm' && requestedDomain === 'shield') {
-    return <Navigate to="/shield-provider?provider=near-confidential" replace />
-  }
-  const displayRaw =
-    detailDomain === 'public' || detailDomain === 'shield' || detailDomain === 'private'
-      ? getAssetDomainRaw(asset, detailDomain)
-      : asset.balance.totalRaw
+  const displayRaw = categories?.raw[detailDomain] ?? null
   const detailAmount =
     displayRaw === null ? '—' : formatDisplayTokenAmount(displayRaw, asset.metadata.decimals)
-  const detailFiat =
-    displayRaw === null || !quote
-      ? null
-      : new Big(formatBaseUnitDecimalAmount(displayRaw, asset.metadata.decimals))
-          .times(quote.priceUsd)
-          .toFixed()
+  const detailFiat = categories?.fiat[detailDomain] ?? null
   const contractAddress = asset.asset.kind === 'token' ? asset.asset.reference : null
   const isZcashAsset = chain.chain.family === 'zcash'
   const hasPendingBalance = asset.balance.pendingRaw !== '0'
@@ -549,19 +642,169 @@ export function AssetDetail() {
     : null
   const visibleHistory =
     history?.assetId === asset.asset.id && history.range === historyRange ? history : null
-  const preferredBitcoinAddress = bitcoinCatalog?.addresses.find(
-    address => !address.change && address.addressIndex === 0
+  const preferredBitcoinAddress =
+    bitcoinCatalog?.walletId === effectiveWalletId &&
+    bitcoinCatalog.accountId === effectiveAccountId &&
+    bitcoinCatalog.chainId === chain.chain.id
+      ? bitcoinCatalog.addresses.find(address => !address.change && address.addressIndex === 0)
+      : undefined
+  const accountNetwork = storageV2Account?.networks.find(
+    network => network.chain.id === chain.chain.id
+  )
+  const publicAddress =
+    chain.chain.family === 'zcash'
+      ? accountNetwork?.addresses.find(address => address.privacy === 'transparent')?.value
+      : (preferredBitcoinAddress?.value ??
+        accountNetwork?.addresses.find(address => address.preferredForReceive)?.value)
+  const historyLinks = [
+    { domain: 'public', address: publicAddress, label: 'View Public address' },
+    {
+      domain: 'private',
+      address: accountNetwork?.privateExecutionAddress,
+      label: 'View Private address'
+    }
+  ].flatMap(({ domain, address, label }) => {
+    if (!address || (detailDomain !== 'all' && detailDomain !== domain)) return []
+    const href = formatChainAddressExplorerUrl(chain.chain.id, address, currentNetwork)
+    return href ? [{ domain, label, href }] : []
+  })
+  const historyFooter = (
+    <div className="flex flex-col items-center gap-3 border-t border-border/60 px-5 py-4">
+      {historyLinks.map(link => (
+        <a
+          key={link.domain}
+          href={link.href}
+          target="_blank"
+          rel="noopener noreferrer"
+          referrerPolicy="no-referrer"
+          className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:underline"
+        >
+          {link.label}
+          <Icon icon="lucide:external-link" width={13} height={13} />
+        </a>
+      ))}
+      {detailDomain === 'all' && categories?.domains.includes('shield') && (
+        <button
+          type="button"
+          className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:underline"
+          onClick={() => {
+            const query = new URLSearchParams(searchParams)
+            query.set('domain', 'shield')
+            navigate(`/asset-detail?${query}`, { replace: true })
+          }}
+        >
+          Shield history
+          <Icon icon="lucide:chevron-right" width={13} height={13} />
+        </button>
+      )}
+    </div>
   )
   const hardware = storageV2Account
     ? storageV2Account.walletSource.kind === 'hardware'
     : isZcashHardwareKeySource(currentWallet?.keySource)
+  if (searchParams.get('view') === 'info') {
+    return (
+      <div className="page-container">
+        <CopyToast show={showToast} />
+        <PageHeader title="Token details" showBack onBack={goBack} />
+        <div className="page-content">
+          <div className="flex items-center gap-3 py-5">
+            <TokenIcon
+              assetId={asset.asset.id}
+              symbol={asset.metadata.symbol}
+              icon={asset.metadata.iconUrl}
+              size={48}
+            />
+            <div>
+              <p className="font-medium">{asset.metadata.name}</p>
+              <p className="text-sm text-muted">{asset.metadata.symbol}</p>
+            </div>
+          </div>
+          <dl className="divide-y divide-border/60">
+            <div className="flex justify-between gap-4 py-4 text-sm">
+              <dt className="text-muted">{nearShieldSelected ? 'Shield provider' : 'Network'}</dt>
+              <dd>{nearShieldSelected ? 'NEAR Confidential' : chain.chain.displayName}</dd>
+            </div>
+            {preferredBitcoinAddress && (
+              <div className="flex items-center gap-3 py-4">
+                <div className="min-w-0 flex-1">
+                  <dt className="text-xs text-muted">Receive address</dt>
+                  <dd className="mt-2 break-all font-mono text-sm">
+                    {preferredBitcoinAddress.value}
+                  </dd>
+                </div>
+                <button
+                  type="button"
+                  aria-label="Copy Bitcoin receive address"
+                  onClick={() => void copyToClipboard(preferredBitcoinAddress.value)}
+                  className="wallet-interactive flex size-8 shrink-0 items-center justify-center rounded-full text-muted hover:bg-white/10 hover:text-foreground"
+                >
+                  <Icon icon="lucide:copy" width={16} height={16} />
+                </button>
+                <button
+                  type="button"
+                  aria-label="Receive Bitcoin"
+                  onClick={handleReceive}
+                  disabled={!canReceive}
+                  className="wallet-interactive flex size-8 shrink-0 items-center justify-center rounded-full text-muted hover:bg-white/10 hover:text-foreground"
+                >
+                  <Icon icon="lucide:chevron-right" width={17} height={17} />
+                </button>
+              </div>
+            )}
+            {contractAddress && !nearShieldSelected && (
+              <div className="flex items-center gap-3 py-4">
+                <div className="min-w-0 flex-1">
+                  <dt className="text-xs text-muted">Contract address</dt>
+                  <dd className="mt-2 break-all font-mono text-sm">{contractAddress}</dd>
+                </div>
+                <button
+                  type="button"
+                  aria-label="Copy contract address"
+                  onClick={() => void copyToClipboard(contractAddress)}
+                  className="wallet-interactive flex size-8 shrink-0 items-center justify-center rounded-full text-muted hover:bg-white/10 hover:text-foreground"
+                >
+                  <Icon icon="lucide:copy" width={16} height={16} />
+                </button>
+              </div>
+            )}
+          </dl>
+          {explorerUrl && !nearShieldSelected && (
+            <a
+              href={explorerUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              referrerPolicy="no-referrer"
+              className="mt-3 inline-flex items-center gap-1.5 text-sm text-primary hover:underline"
+            >
+              {contractAddress ? 'View token on explorer' : 'View network explorer'}
+              <Icon icon="lucide:external-link" width={15} height={15} />
+            </a>
+          )}
+        </div>
+      </div>
+    )
+  }
   return (
     <div
       className="page-container"
       data-wallet-mode={searchParams.get('mode') === 'private' ? 'private' : 'public'}
     >
       <CopyToast show={showToast} />
-      <PageHeader title={asset.metadata.symbol} showBack onBack={goBack} />
+      <PageHeader
+        title={asset.metadata.symbol}
+        showBack
+        onBack={goBack}
+        action={{
+          ariaLabel: 'Token details',
+          icon: <Icon icon="lucide:info" width={19} height={19} />,
+          onClick: () => {
+            const query = new URLSearchParams(searchParams)
+            query.set('view', 'info')
+            navigate(`/asset-detail?${query}`)
+          }
+        }}
+      />
 
       <div className="page-content pb-5 pt-0">
         <section className="flex flex-col items-center py-5 text-center">
@@ -584,12 +827,33 @@ export function AssetDetail() {
           >
             {detailAmount} {asset.metadata.symbol}
           </p>
-          {(detailDomain === 'public' ||
-            detailDomain === 'private' ||
-            detailDomain === 'shield') && (
+          {categories && categories.domains.length > 1 && (
             <div className="mt-2">
-              <AccountDomainBadge domain={detailDomain} />
+              <AssetDomainSelector
+                value={detailDomain}
+                domains={categories.domains}
+                totals={categories.fiat}
+                balancesHidden={false}
+                onChange={domain => {
+                  const query = new URLSearchParams(searchParams)
+                  query.set('domain', domain)
+                  navigate(`/asset-detail?${query}`, { replace: true })
+                }}
+              />
             </div>
+          )}
+          {nearShieldSelected && <p className="mt-1 text-xs text-muted">NEAR Confidential</p>}
+          {nearShieldSelected && shieldLoading && displayRaw === null && (
+            <Skeleton className="mt-2 h-4 w-20" />
+          )}
+          {nearShieldSelected && shieldError && (
+            <button
+              type="button"
+              onClick={() => setShieldRetry(value => value + 1)}
+              className="mt-2 text-xs text-primary"
+            >
+              Retry
+            </button>
           )}
           {priceStatus === 'loading' && detailFiat === null ? (
             <Skeleton className="mt-2 h-4 w-20" />
@@ -598,24 +862,26 @@ export function AssetDetail() {
               {detailFiat === null ? '—' : formatFiatAmount(detailFiat, { showSign: true })}
             </p>
           )}
-          {isZcashAsset && BigInt(asset.balance.shieldableRaw ?? '0') > 0n && (
-            <button
-              type="button"
-              onClick={handleShieldFunds}
-              disabled={isShielding}
-              aria-label="Shield transparent ZEC"
-              className="wallet-interactive mt-3 inline-flex h-8 items-center justify-center gap-1.5 rounded-full border border-primary/20 bg-primary/8 px-3.5 text-xs font-medium text-primary/90 enabled:hover:border-primary/30 enabled:hover:bg-primary/12 enabled:active:bg-primary/16 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <Icon icon="lucide:shield" width={12} height={12} />
-              <span>{isShielding ? 'Shielding...' : 'Shield'}</span>
-            </button>
-          )}
+          {isZcashAsset &&
+            detailDomain !== 'shield' &&
+            BigInt(asset.balance.shieldableRaw ?? '0') > 0n && (
+              <button
+                type="button"
+                onClick={handleShieldFunds}
+                disabled={isShielding}
+                aria-label="Shield transparent ZEC"
+                className="wallet-interactive mt-3 inline-flex h-8 items-center justify-center gap-1.5 rounded-full border border-primary/20 bg-primary/8 px-3.5 text-xs font-medium text-primary/90 enabled:hover:border-primary/30 enabled:hover:bg-primary/12 enabled:active:bg-primary/16 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Icon icon="lucide:shield" width={12} height={12} />
+                <span>{isShielding ? 'Shielding...' : 'Shield'}</span>
+              </button>
+            )}
         </section>
 
         <div
           className={cn(
             'flex justify-center pb-5',
-            chain.chain.family === 'evm' && actionDomain === 'public' ? 'gap-2' : 'gap-8'
+            chain.chain.family === 'evm' && actionDomain !== 'private' ? 'gap-2' : 'gap-8'
           )}
         >
           <WalletActionButton
@@ -629,6 +895,11 @@ export function AssetDetail() {
             label={actionDomain === 'private' && chain.chain.family === 'evm' ? 'Move' : 'Send'}
             disabled={
               !canSend ||
+              (nearShieldSelected &&
+                (!privateTransferEligible ||
+                  !shieldAssetSupported ||
+                  displayRaw === null ||
+                  displayRaw === '0')) ||
               (actionDomain === 'private' &&
                 chain.chain.family === 'evm' &&
                 !privateTransferEligible)
@@ -640,15 +911,22 @@ export function AssetDetail() {
             <WalletActionButton
               icon={<WalletActionIcon action="receive" />}
               label="Receive"
-              disabled={!canReceive}
+              disabled={
+                !canReceive ||
+                (nearShieldSelected && (!privateTransferEligible || !shieldAssetSupported))
+              }
               onClick={handleReceive}
             />
           )}
-          {chain.chain.family === 'evm' && actionDomain === 'public' && (
+          {chain.chain.family === 'evm' && actionDomain !== 'private' && (
             <WalletActionButton
               icon={<WalletActionIcon action="move" />}
               label="Move"
-              disabled={!privateTransferEligible}
+              disabled={
+                !privateTransferEligible ||
+                (nearShieldSelected &&
+                  (!shieldAssetSupported || displayRaw === null || displayRaw === '0'))
+              }
               onClick={handleMove}
             />
           )}
@@ -657,6 +935,11 @@ export function AssetDetail() {
             label="Swap"
             disabled={
               !canSwap ||
+              (nearShieldSelected &&
+                (!privateTransferEligible ||
+                  !shieldAssetSupported ||
+                  displayRaw === null ||
+                  displayRaw === '0')) ||
               (chain.chain.family === 'evm' &&
                 actionDomain === 'private' &&
                 !privateTransferEligible)
@@ -669,25 +952,27 @@ export function AssetDetail() {
         {chain.chain.family === 'evm' && detailDomain === 'all' && (
           <section className="space-y-3 border-t border-border py-4" aria-label="Account balances">
             <h2 className="text-sm font-semibold">Account balances</h2>
-            {(['public', 'private'] as const).map(domain => {
-              const raw = getAssetDomainRaw(asset, domain)
-              return (
-                <div key={domain} className="flex items-center justify-between gap-4 text-sm">
-                  <AccountDomainBadge domain={domain} />
-                  <span
-                    className="min-w-0 truncate text-right"
-                    title={
-                      raw === null
-                        ? undefined
-                        : `${formatBaseUnitAmount(raw, asset.metadata.decimals)} ${asset.metadata.symbol}`
-                    }
-                  >
-                    {raw === null ? '—' : formatDisplayTokenAmount(raw, asset.metadata.decimals)}{' '}
-                    {asset.metadata.symbol}
-                  </span>
-                </div>
-              )
-            })}
+            {categories?.domains
+              .filter(domain => domain !== 'all')
+              .map(domain => {
+                const raw = categories.raw[domain]
+                return (
+                  <div key={domain} className="flex items-center justify-between gap-4 text-sm">
+                    <AccountDomainBadge domain={domain} />
+                    <span
+                      className="min-w-0 truncate text-right"
+                      title={
+                        raw === null
+                          ? undefined
+                          : `${formatBaseUnitAmount(raw, asset.metadata.decimals)} ${asset.metadata.symbol}`
+                      }
+                    >
+                      {raw === null ? '—' : formatDisplayTokenAmount(raw, asset.metadata.decimals)}{' '}
+                      {asset.metadata.symbol}
+                    </span>
+                  </div>
+                )
+              })}
           </section>
         )}
 
@@ -802,7 +1087,7 @@ export function AssetDetail() {
           />
         )}
 
-        {hasPendingBalance && !isZcashAsset && (
+        {hasPendingBalance && !isZcashAsset && !nearShieldSelected && (
           <section className="space-y-3 border-t border-border py-4" aria-label="Balance breakdown">
             <h2 className="text-sm font-semibold">Balance</h2>
             <div className="flex items-center justify-between gap-4 text-sm">
@@ -818,25 +1103,7 @@ export function AssetDetail() {
         )}
 
         <section className="border-t border-border pt-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-sm font-semibold">Recent activity</h2>
-            <button
-              type="button"
-              onClick={() =>
-                navigate(
-                  `/?${new URLSearchParams({
-                    tab: 'activity',
-                    assetId: asset.asset.id,
-                    domain: activityFilterDomain ?? 'all',
-                    mode: searchParams.get('mode') === 'private' ? 'private' : 'public'
-                  })}`
-                )
-              }
-              className="text-xs font-medium text-primary hover:underline"
-            >
-              View all
-            </button>
-          </div>
+          <h2 className="text-sm font-semibold">Activity</h2>
           <div className="-mx-5 mt-2">
             <MultichainActivityPanel
               walletId={effectiveWalletId}
@@ -850,84 +1117,19 @@ export function AssetDetail() {
                 chain.chain.family === 'evm' && actionDomain === 'private' ? 'private' : 'main'
               }
               showToolbar={false}
-              maxItems={3}
+              pageSize={5}
+              localPagination
+              historyFooter={
+                historyLinks.length > 0 ||
+                (detailDomain === 'all' && categories?.domains.includes('shield'))
+                  ? historyFooter
+                  : null
+              }
               compact
               onItemClick={item => void handleActivityClick(item)}
             />
           </div>
         </section>
-
-        {(preferredBitcoinAddress || contractAddress || explorerUrl) && (
-          <section className="border-t border-border py-4">
-            <h2 className="text-sm font-semibold">Details</h2>
-            <div className="mt-2 divide-y divide-border/60">
-              {preferredBitcoinAddress && (
-                <div className="flex items-center gap-3 py-3">
-                  <div className="min-w-0 flex-1">
-                    <h3 className="text-sm font-medium">Receive address</h3>
-                    <p className="mt-0.5 text-[11px] text-muted">
-                      {bitcoinAccountTypeDescription(preferredBitcoinAddress.addressType)}
-                    </p>
-                    <p
-                      className="mt-1 truncate font-mono text-xs text-muted"
-                      title={preferredBitcoinAddress.value}
-                    >
-                      {preferredBitcoinAddress.value}
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    aria-label="Copy Bitcoin receive address"
-                    onClick={() => void copyToClipboard(preferredBitcoinAddress.value)}
-                    className="wallet-interactive flex size-8 shrink-0 items-center justify-center rounded-full text-muted enabled:hover:bg-white/10 enabled:hover:text-foreground enabled:active:bg-white/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2"
-                  >
-                    <Icon icon="lucide:copy" width={16} height={16} />
-                  </button>
-                  <button
-                    type="button"
-                    aria-label="Receive Bitcoin"
-                    onClick={handleReceive}
-                    disabled={!canReceive}
-                    className="wallet-interactive flex size-8 shrink-0 items-center justify-center rounded-full text-muted hover:bg-white/10 hover:text-foreground active:bg-white/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2"
-                  >
-                    <Icon icon="lucide:chevron-right" width={17} height={17} />
-                  </button>
-                </div>
-              )}
-
-              {contractAddress && (
-                <div className="flex items-center gap-3 py-3">
-                  <div className="min-w-0 flex-1">
-                    <p className="text-xs text-muted">Contract address</p>
-                    <p className="mt-1 truncate font-mono text-sm" title={contractAddress}>
-                      {contractAddress}
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    aria-label="Copy contract address"
-                    onClick={() => void copyToClipboard(contractAddress)}
-                    className="wallet-interactive flex size-8 shrink-0 items-center justify-center rounded-full text-muted hover:bg-white/10 hover:text-foreground active:bg-white/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2"
-                  >
-                    <Icon icon="lucide:copy" width={16} height={16} />
-                  </button>
-                </div>
-              )}
-
-              {explorerUrl && (
-                <a
-                  href={explorerUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center justify-between gap-3 py-3 text-sm transition-colors hover:text-primary"
-                >
-                  <span>View on explorer</span>
-                  <Icon icon="lucide:external-link" width={15} height={15} className="text-muted" />
-                </a>
-              )}
-            </div>
-          </section>
-        )}
       </div>
       {shieldSheet}
     </div>

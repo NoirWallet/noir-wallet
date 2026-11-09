@@ -689,7 +689,7 @@ test.describe('confidential funding persisted recovery', () => {
       'account or network changed'
     )
     h.state.session.expiresAt = h.state.now + 60_000
-    await expect(h.coordinator.preview(send)).rejects.toThrow('Connect Shield')
+    await expect(h.coordinator.preview(send)).rejects.toThrow('Refresh Shield balances')
     expect(h.plans.size).toBe(0)
     expect(h.state.formalQuotes).toBe(0)
     expect(h.state.signatures).toBe(0)

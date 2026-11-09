@@ -708,14 +708,27 @@ test('renders and switches the released EVM catalog and chain-scoped endpoint se
     })
   })
   const zcashSyncProgress = popup.getByRole('status', { name: 'Zcash sync progress: 42%' })
+  await expect(zcashSyncProgress).toHaveCount(1)
   await expect(zcashSyncProgress).toBeVisible()
   const syncProgressBox = await zcashSyncProgress.boundingBox()
-  const tokenViewBox = await popup.getByRole('button', { name: 'Show token view' }).boundingBox()
-  if (!syncProgressBox || !tokenViewBox) {
-    throw new Error('Portfolio sync progress or token view control is not measurable')
+  const activityTabBox = await popup
+    .getByRole('tab', { name: 'Activity', exact: true })
+    .boundingBox()
+  if (!syncProgressBox || !activityTabBox) {
+    throw new Error('Zcash sync progress or Activity tab is not measurable')
   }
-  expect(syncProgressBox.x + syncProgressBox.width).toBeLessThan(tokenViewBox.x)
+  expect(syncProgressBox.x).toBeGreaterThan(activityTabBox.x + activityTabBox.width)
+  expect(
+    Math.abs(
+      syncProgressBox.y + syncProgressBox.height / 2 - activityTabBox.y - activityTabBox.height / 2
+    )
+  ).toBeLessThan(2)
   await captureScreenshot(popup, 'release-default-home-zcash-sync-progress.png')
+  await popup.getByRole('tab', { name: 'Activity', exact: true }).click()
+  await expect(zcashSyncProgress).toHaveCount(1)
+  await expect(zcashSyncProgress).toBeVisible()
+  await captureScreenshot(popup, 'release-default-home-activity-zcash-sync-progress.png')
+  await popup.getByRole('tab', { name: 'Total assets', exact: true }).click()
   await syncWorker.evaluate(async () => {
     await chrome.runtime.sendMessage({ type: 'SYNC_PROGRESS', isSyncing: false })
   })

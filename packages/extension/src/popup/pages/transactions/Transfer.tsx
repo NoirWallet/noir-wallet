@@ -335,6 +335,8 @@ function TransferForm() {
     key: string
     review: ConfidentialFundingReview
   } | null>(null)
+  const canLoadShield =
+    getPrivateTransferChainIds(activeAccount, currentNetwork === 'mainnet').length > 0
 
   useEffect(() => {
     let cancelled = false
@@ -385,14 +387,14 @@ function TransferForm() {
     let cancelled = false
     setShieldSnapshot(null)
     setShieldConnection('checking')
-    if (!effective) return
+    if (!effective || !canLoadShield) return
     const scope = {
       network: currentNetwork,
       keyDomainId: effective.walletId,
       accountId: effective.accountId
     }
     void confidentialFundingClient
-      .refreshBalances(scope, false)
+      .refreshBalances(scope, true)
       .then(balances => {
         if (cancelled) return
         setShieldSnapshot({ key: scopeKey, balances })
@@ -400,12 +402,15 @@ function TransferForm() {
         void refreshPortfolio(true)
       })
       .catch(() => {
-        if (!cancelled) setShieldConnection('required')
+        if (!cancelled) {
+          setShieldConnection('required')
+          setShieldError('Unable to load Shield balances. Please try again.')
+        }
       })
     return () => {
       cancelled = true
     }
-  }, [scopeKey])
+  }, [scopeKey, canLoadShield])
 
   useEffect(() => {
     const draft = initialMoveDraft({
@@ -954,7 +959,9 @@ function TransferForm() {
     } catch (error) {
       if (!scopeStillCurrent()) return
       setShieldConnection('required')
-      setShieldError(error instanceof Error ? error.message : 'Shield could not connect')
+      setShieldError(
+        error instanceof Error ? error.message : 'Unable to load Shield balances. Please try again.'
+      )
     }
   }
   const prepareShield = async () => {
@@ -1430,7 +1437,9 @@ function TransferForm() {
           }
         >
           {fundingRoute && shieldConnection !== 'connected'
-            ? 'Connect Shield'
+            ? shieldConnection === 'required'
+              ? 'Retry'
+              : 'Loading balances…'
             : clusterSelected
               ? 'Review Cluster'
               : shieldPair

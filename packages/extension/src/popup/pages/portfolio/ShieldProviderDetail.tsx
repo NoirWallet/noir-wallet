@@ -238,7 +238,7 @@ function ShieldProviderContent() {
         : '—'
       : formatFiatAmount(providerFiat, { showSign: true })
   const mode = searchParams.get('mode')
-  const connectShield = async () => {
+  const refreshShieldBalances = async () => {
     if (!account || !canManageNear || connecting || !mounted.current) return
     setConnecting(true)
     setConnectionError(null)
@@ -267,6 +267,10 @@ function ShieldProviderContent() {
       if (mounted.current && latestScope.current === scopeKey) setConnecting(false)
     }
   }
+
+  useEffect(() => {
+    if (provider === 'near-confidential' && canManageNear) void refreshShieldBalances()
+  }, [scopeKey, provider, canManageNear])
 
   const transferPath = (
     assetId: string | null,
@@ -511,7 +515,7 @@ function ShieldProviderContent() {
                   type="button"
                   title="Refresh Shield balance"
                   aria-label="Refresh Shield balance"
-                  onClick={() => void connectShield()}
+                  onClick={() => void refreshShieldBalances()}
                   disabled={connecting}
                   className="wallet-interactive rounded-md text-primary enabled:hover:bg-primary/10 enabled:active:bg-primary/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 disabled:opacity-50"
                 >
@@ -524,16 +528,19 @@ function ShieldProviderContent() {
                 </button>
               )}
             </div>
-            {provider === 'near-confidential' && near.status === 'unavailable' && canManageNear && (
-              <button
-                type="button"
-                onClick={() => void connectShield()}
-                disabled={connecting}
-                className="wallet-interactive mt-2 rounded-md text-sm font-medium text-primary enabled:hover:bg-primary/10 enabled:active:bg-primary/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 disabled:opacity-50"
-              >
-                {connecting ? 'Connecting…' : 'Connect Shield'}
-              </button>
-            )}
+            {provider === 'near-confidential' &&
+              connectionError &&
+              canManageNear &&
+              !connecting && (
+                <button
+                  type="button"
+                  onClick={() => void refreshShieldBalances()}
+                  disabled={connecting}
+                  className="wallet-interactive mt-2 rounded-md text-sm font-medium text-primary enabled:hover:bg-primary/10 enabled:active:bg-primary/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 disabled:opacity-50"
+                >
+                  Retry
+                </button>
+              )}
             {connectionError && (
               <p role="alert" className="px-4 pt-2 text-xs text-warning">
                 {connectionError}
@@ -568,8 +575,10 @@ function ShieldProviderContent() {
                 />
               ))}
             </div>
-          ) : status === 'loading' ? (
-            <p className="px-4 py-5 text-center text-sm text-muted">Loading balances…</p>
+          ) : status === 'loading' || (provider === 'near-confidential' && connecting) ? (
+            <p role="status" className="px-4 py-5 text-center text-sm text-muted">
+              Loading balances…
+            </p>
           ) : nearBalanceEmpty ? (
             <div className="flex flex-col items-center gap-3 px-4 py-5">
               <button

@@ -172,6 +172,7 @@ function ShieldWithdrawForm() {
     setBalances(null)
     setBalanceScope('')
     if (!account || !canManageNear) return
+    setConnecting(true)
     void confidentialFundingClient
       .refreshBalances(
         {
@@ -179,7 +180,7 @@ function ShieldWithdrawForm() {
           keyDomainId: account.walletId,
           accountId: account.accountId
         },
-        false
+        true
       )
       .then(value => {
         if (active) {
@@ -188,7 +189,12 @@ function ShieldWithdrawForm() {
           void refresh(true)
         }
       })
-      .catch(() => {})
+      .catch(() => {
+        if (active) setError('Unable to load Shield balances. Please try again.')
+      })
+      .finally(() => {
+        if (active) setConnecting(false)
+      })
     return () => {
       active = false
     }
@@ -583,7 +589,7 @@ function ShieldWithdrawForm() {
             <button
               type="button"
               disabled={busy || connecting || !source || !currentBalances || availableRaw === '0'}
-              title={!currentBalances ? 'Connect Shield to use Max' : 'Use maximum balance'}
+              title={!currentBalances ? 'Shield balance unavailable' : 'Use maximum balance'}
               onClick={() => {
                 if (!source) return
                 if (!sourceId) setSourceId(source.asset.asset.id)
@@ -731,7 +737,11 @@ function ShieldWithdrawForm() {
             role="alert"
             className="mt-3 flex items-center justify-between gap-2 text-xs text-warning"
           >
-            <span>{previewError}</span>
+            <span>
+              {previewError === CONFIDENTIAL_PREVIEW_CONNECTION_ERROR
+                ? 'Refresh Shield balances to get a quote.'
+                : previewError}
+            </span>
             <button
               type="button"
               disabled={connecting}
@@ -742,7 +752,9 @@ function ShieldWithdrawForm() {
               }
               className="shrink-0 text-primary disabled:opacity-45"
             >
-              {previewError === CONFIDENTIAL_PREVIEW_CONNECTION_ERROR ? 'Connect Shield' : 'Retry'}
+              {previewError === CONFIDENTIAL_PREVIEW_CONNECTION_ERROR
+                ? 'Refresh balances'
+                : 'Retry'}
             </button>
           </div>
         )}
@@ -761,16 +773,19 @@ function ShieldWithdrawForm() {
             {error}
           </p>
         )}
-        {!currentBalances && (
+        {!currentBalances && canManageNear && connecting && (
+          <p role="status" className="mt-4 text-center text-sm text-muted">
+            Loading Shield balances…
+          </p>
+        )}
+        {!currentBalances && canManageNear && !connecting && error && (
           <Button
             variant="outline"
             size="wallet"
-            isLoading={connecting}
-            disabled={!canManageNear}
             onClick={() => void refreshBalances()}
             className="mt-4 w-full"
           >
-            Connect Shield
+            Retry
           </Button>
         )}
       </div>
@@ -811,7 +826,11 @@ function ShieldWithdrawForm() {
           <DialogDescription className="sr-only">Choose a withdrawal {picker}</DialogDescription>
           {picker === 'source' && sources.length === 0 && (
             <p className="py-6 text-center text-sm text-muted">
-              {currentBalances ? 'No Shield tokens available' : 'Connect Shield to view tokens'}
+              {currentBalances
+                ? 'No Shield tokens available'
+                : connecting
+                  ? 'Loading balances…'
+                  : 'Balance unavailable'}
             </p>
           )}
           {picker === 'recipient' && destination ? (

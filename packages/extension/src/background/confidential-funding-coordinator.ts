@@ -17,6 +17,7 @@ import { parseAssetId, parseChainId } from '@/core/chains/registry'
 import { getZcashChainId } from '@/core/chains/registry'
 import {
   CONFIDENTIAL_WITHDRAW_DEFAULT_COUNT,
+  CONFIDENTIAL_SESSION_REQUIRED_ERROR,
   buildConfidentialPortfolioView,
   aggregateConfidentialSettlement,
   assertDirectConfidentialWithdrawIntentBinding,
@@ -1062,7 +1063,7 @@ export class ConfidentialFundingCoordinator {
       input.accountId
     )
     if (!session || session.expiresAt <= this.now() + SESSION_REFRESH_BUFFER_MS) {
-      throw new Error('Connect Shield before requesting a quote')
+      throw new Error(CONFIDENTIAL_SESSION_REQUIRED_ERROR)
     }
     const recipient =
       input.externalRecipient ??
@@ -1424,7 +1425,7 @@ export class ConfidentialFundingCoordinator {
     }
 
     const session = await this.readUsableSession(sourceIdentity)
-    if (!session) throw new Error('Connect Shield before preparing a transfer')
+    if (!session) throw new Error(CONFIDENTIAL_SESSION_REQUIRED_ERROR)
     const balances = await this.readAndCacheBalances(sourceIdentity, session.accessToken)
     const baseline = getConfidentialAvailableForAsset(balances, input.source.protocolAssetId) ?? '0'
     const sourceAddress =
@@ -1618,7 +1619,7 @@ export class ConfidentialFundingCoordinator {
       return reviewFromPlan(duplicate, this.options.assets)
 
     const session = await this.readUsableSession(sourceIdentity)
-    if (!session) throw new Error('Connect Shield before preparing a transfer')
+    if (!session) throw new Error(CONFIDENTIAL_SESSION_REQUIRED_ERROR)
     const balances = await this.readAndCacheBalances(sourceIdentity, session.accessToken)
     const baseline = getConfidentialAvailableForAsset(balances, input.source.protocolAssetId) ?? '0'
     const requiresDeposit = input.sourceDomain !== 'shield'

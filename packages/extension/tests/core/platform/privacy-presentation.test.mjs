@@ -15,6 +15,8 @@ import {
   summarizeKnownShieldFiat
 } from '../../../src/popup/services/asset-domains.ts'
 import { projectPortfolioForChains } from '../../../src/popup/services/portfolio-presentation.ts'
+import { resolveConfidentialDetailAssetId } from '../../../src/popup/services/near-confidential-holdings.ts'
+import { getAssetDetailCategories } from '../../../src/popup/pages/portfolio/asset-detail-balance.ts'
 
 test('Home action source follows the selected balance domain', () => {
   const evm = {
@@ -373,6 +375,96 @@ test('home asset domains count each EVM and Zcash balance once', () => {
     shieldUsdPartial: false,
     privateUsd: '0'
   })
+})
+
+test('asset detail uses a unique Confidential identity without adding it to the Home row total', () => {
+  const asset = {
+    asset: { id: 'eip155:1/slip44:60', chainId: 'eip155:1' },
+    metadata: { decimals: 0 },
+    balance: {
+      totalRaw: '100',
+      mainRaw: '50',
+      privateRaw: '50',
+      privateOnchainRaw: '30',
+      confidentialRaw: '20'
+    }
+  }
+  const holding = {
+    tokenId: 'private-eth',
+    assetId: asset.asset.id,
+    chainId: asset.asset.chainId,
+    decimals: 0,
+    availableRaw: '20',
+    priceUsd: '3'
+  }
+  const model = { assets: [asset], confidential: { status: 'ready', assets: [holding] } }
+  const categories = getAssetDetailCategories(asset, model, true, '2')
+  expect(categories.domains).toEqual(['all', 'public', 'shield', 'private'])
+  expect(categories.raw).toEqual({ all: '100', public: '50', shield: '20', private: '30' })
+  expect(categories.fiat).toEqual({ all: '200', public: '100', shield: '40', private: '60' })
+  expect(getAssetDetailCategories(asset, model, true).fiat).toEqual({
+    all: null,
+    public: null,
+    shield: '60',
+    private: null
+  })
+  expect(
+    getAssetDetailCategories(
+      asset,
+      {
+        ...model,
+        confidential: { status: 'ready', assets: [{ ...holding, priceUsd: 'invalid' }] }
+      },
+      true
+    ).fiat.shield
+  ).toBeNull()
+  expect(resolveConfidentialDetailAssetId(model, holding.tokenId)).toBe(asset.asset.id)
+  expect(
+    resolveConfidentialDetailAssetId(
+      {
+        ...model,
+        confidential: { status: 'ready', assets: [holding, { ...holding, tokenId: 'other' }] }
+      },
+      holding.tokenId
+    )
+  ).toBeNull()
+
+  expect(
+    getAssetDetailCategories(asset, { confidential: { status: 'unavailable', assets: [] } }, true)
+      .raw.shield
+  ).toBeNull()
+  expect(
+    getAssetDetailCategories(asset, { confidential: { status: 'unavailable', assets: [] } }, true)
+      .fiat.shield
+  ).toBeNull()
+  expect(
+    getAssetDetailCategories(
+      asset,
+      { confidential: { status: 'ready', assets: [holding, holding] } },
+      true
+    ).raw.shield
+  ).toBeNull()
+  expect(
+    getAssetDetailCategories(
+      asset,
+      { confidential: { status: 'ready', assets: [holding, holding] } },
+      true
+    ).fiat.shield
+  ).toBeNull()
+  expect(
+    getAssetDetailCategories(
+      asset,
+      { confidential: { status: 'ready', assets: [{ ...holding, chainId: 'eip155:42161' }] } },
+      true
+    ).raw.shield
+  ).toBeNull()
+  expect(
+    getAssetDetailCategories(
+      { ...asset, balance: { ...asset.balance, confidentialRaw: '0' } },
+      { confidential: { status: 'ready', assets: [] } },
+      true
+    ).raw.shield
+  ).toBe('0')
 })
 
 test('Activity details show the outgoing hash before destination settlement', () => {

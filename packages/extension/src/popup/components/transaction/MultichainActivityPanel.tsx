@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Icon } from '@iconify/react'
 import type { ActivityItem, ActivityReadModel } from '@/core/activity'
 import type { PortfolioReadModel } from '@/core/portfolio'
@@ -41,6 +41,9 @@ interface MultichainActivityPanelProps {
   readonly confidentialIntentsOnly?: boolean
   readonly showToolbar?: boolean
   readonly maxItems?: number
+  readonly pageSize?: number
+  readonly localPagination?: boolean
+  readonly historyFooter?: ReactNode
   readonly compact?: boolean
   readonly accountMode?: DAppExecutionMode
   readonly focusTransactionId?: string | null
@@ -99,6 +102,9 @@ export function MultichainActivityPanel({
   confidentialIntentsOnly = false,
   showToolbar = true,
   maxItems,
+  pageSize = ACTIVITY_DISPLAY_PAGE_SIZE,
+  localPagination = false,
+  historyFooter,
   compact = false,
   accountMode,
   focusTransactionId
@@ -113,7 +119,7 @@ export function MultichainActivityPanel({
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>(
     scopedInitialModel ? 'ready' : 'loading'
   )
-  const [visibleLimit, setVisibleLimit] = useState(ACTIVITY_DISPLAY_PAGE_SIZE)
+  const [visibleLimit, setVisibleLimit] = useState(pageSize)
   const [olderStatus, setOlderStatus] = useState<'ready' | 'loading' | 'error'>('ready')
   const historyPageCount = useRef(1)
   const scopeKey = JSON.stringify([walletId ?? '', accountId ?? ''])
@@ -278,10 +284,19 @@ export function MultichainActivityPanel({
       : undefined
   useEffect(() => {
     historyPageCount.current = 1
-    setVisibleLimit(ACTIVITY_DISPLAY_PAGE_SIZE)
+    setVisibleLimit(pageSize)
     setOlderStatus('ready')
     olderRequestSequence.current += 1
-  }, [walletId, accountId, network, selectedChainKey, filterAssetId, filterDomain, accountMode])
+  }, [
+    walletId,
+    accountId,
+    network,
+    selectedChainKey,
+    filterAssetId,
+    filterDomain,
+    accountMode,
+    pageSize
+  ])
   const selectedAddress = selectedNetwork?.addresses.find(address => address.preferredForReceive)
   const selectedHistoryAddress =
     (filterDomain === 'private' || (!filterDomain && accountMode === 'private')) &&
@@ -379,13 +394,16 @@ export function MultichainActivityPanel({
   const canLoadOlder =
     maxItems === undefined &&
     (visibleItems.length > visibleLimit ||
-      (visibleModel?.hasMore === true && historyPageCount.current < MAX_HISTORY_PAGE_COUNT))
+      (!localPagination &&
+        visibleModel?.hasMore === true &&
+        historyPageCount.current < MAX_HISTORY_PAGE_COUNT))
   const loadOlder = async () => {
     if (olderStatus === 'loading') return
     if (visibleItems.length > visibleLimit) {
-      setVisibleLimit(limit => limit + ACTIVITY_DISPLAY_PAGE_SIZE)
+      setVisibleLimit(limit => limit + pageSize)
       return
     }
+    if (localPagination) return
     const request = ++olderRequestSequence.current
     const refreshRequest = requestSequence.current
     const nextPageCount = historyPageCount.current + 1
@@ -401,7 +419,7 @@ export function MultichainActivityPanel({
         throw new Error('Activity is unavailable')
       historyPageCount.current = nextPageCount
       setModel(next)
-      setVisibleLimit(limit => limit + ACTIVITY_DISPLAY_PAGE_SIZE)
+      setVisibleLimit(limit => limit + pageSize)
       setOlderStatus('ready')
     } catch {
       if (request === olderRequestSequence.current) setOlderStatus('error')
@@ -460,20 +478,25 @@ export function MultichainActivityPanel({
     </div>
   ) : null
 
-  const fullHistoryLink = fullHistoryUrl ? (
-    <div className="border-t border-border/60 px-5 py-3 text-center">
-      <a
-        href={fullHistoryUrl}
-        target="_blank"
-        rel="noopener noreferrer"
-        referrerPolicy="no-referrer"
-        className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:underline"
-      >
-        Full history
-        <Icon icon="lucide:external-link" width={13} height={13} />
-      </a>
-    </div>
-  ) : null
+  const fullHistoryLink =
+    historyFooter !== undefined ? (
+      !canLoadOlder && status !== 'loading' ? (
+        historyFooter
+      ) : null
+    ) : fullHistoryUrl ? (
+      <div className="border-t border-border/60 px-5 py-3 text-center">
+        <a
+          href={fullHistoryUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          referrerPolicy="no-referrer"
+          className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:underline"
+        >
+          Full history
+          <Icon icon="lucide:external-link" width={13} height={13} />
+        </a>
+      </div>
+    ) : null
 
   const olderControl = canLoadOlder ? (
     <div className="px-5 pb-4 text-center">

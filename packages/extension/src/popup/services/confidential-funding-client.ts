@@ -18,7 +18,7 @@ export type ConfidentialBalance = Readonly<{ tokenId: string; available: string;
 export type ExternalShieldDeposit = Omit<StoredExternalShieldDeposit, 'quote'>
 export type { CreateExternalShieldDepositInput, ExternalShieldDepositScope }
 
-export const CONFIDENTIAL_PREVIEW_CONNECTION_ERROR = 'Connect Shield before requesting a quote'
+export { CONFIDENTIAL_SESSION_REQUIRED_ERROR as CONFIDENTIAL_PREVIEW_CONNECTION_ERROR } from '@/core/services/confidential-funding'
 
 export interface PrepareConfidentialFundingRequest {
   readonly network: Network

@@ -39,7 +39,7 @@ import {
 import { WalletActionIcon } from '@/popup/components/common/WalletActionIcon'
 import { InlineError } from '@/popup/components/common/InlineError'
 import { MultichainPortfolioPanel } from '../components/portfolio/MultichainPortfolioPanel'
-import { isPortfolioModelForScope } from '../services/portfolio-cache'
+import { resolveConfidentialDetailAssetId } from '../services/near-confidential-holdings'
 import { getHomeZcashSyncIssue } from '../services/home-zcash-sync-issue'
 import { MultichainActivityPanel } from '../components/transaction/MultichainActivityPanel'
 import { Skeleton } from '../components/ui/skeleton'
@@ -80,7 +80,7 @@ import {
   projectPortfolioForChains,
   resolvePortfolioChainSelection
 } from '../services/portfolio-presentation'
-import { selectHomeActionSource } from '../services/asset-domains'
+import { selectHomeActionSource, type AssetDomain } from '../services/asset-domains'
 import { selectShieldActions, type ShieldAction } from '../services/shield-action-selection'
 import { getPrivateTransferChainIds } from '../services/private-balance-transfer'
 
@@ -277,24 +277,44 @@ export function Home() {
   const previousActivityFilterContext = useRef<{
     scope: string
     mode: DAppExecutionMode | null
+    publicDomain: AssetDomain
   } | null>(null)
   useEffect(() => {
     if (!activityFilterScope) return
     const previous = previousActivityFilterContext.current
-    if (
-      previous &&
-      (previous.scope !== activityFilterScope ||
-        (previous.mode && activityExecutionMode && previous.mode !== activityExecutionMode)) &&
-      activityFilterAssetId
-    ) {
+    const sameScope = previous?.scope === activityFilterScope
+    const modeChanged =
+      sameScope && previous.mode && activityExecutionMode && previous.mode !== activityExecutionMode
+    const publicDomain =
+      modeChanged && previous.mode === 'main'
+        ? assetDomain
+        : sameScope
+          ? previous.publicDomain
+          : 'all'
+    if (modeChanged) {
+      navigate.replace(
+        homeAssetDomainPath(
+          location.search,
+          activityExecutionMode === 'private' ? 'private' : publicDomain
+        )
+      )
+    } else if (previous && !sameScope && activityFilterAssetId) {
       navigate.replace(clearHomeActivityAssetFilter(location.search))
     }
     previousActivityFilterContext.current = {
       scope: activityFilterScope,
+      publicDomain,
       mode:
         activityExecutionMode ?? (previous?.scope === activityFilterScope ? previous.mode : null)
     }
-  }, [activityExecutionMode, activityFilterAssetId, activityFilterScope, location.search, navigate])
+  }, [
+    activityExecutionMode,
+    activityFilterAssetId,
+    activityFilterScope,
+    assetDomain,
+    location.search,
+    navigate
+  ])
   const openTransfer = () => {
     if (assetDomain === 'all') {
       navigate.navigate('/transfer?mode=private')
@@ -707,14 +727,7 @@ export function Home() {
     }
   }
 
-  const showInlineSyncProgress =
-    supportsZcash &&
-    isSyncing &&
-    (!multichainPortfolioEnabled ||
-      privateMode ||
-      activeTab !== 'assets' ||
-      assetDomain === 'shield' ||
-      !isPortfolioModelForScope(multichainPortfolio, effectiveWalletId, effectiveAccountId))
+  const showInlineSyncProgress = supportsZcash && isSyncing
   const syncIssue = supportsZcash && !isSyncing ? getHomeZcashSyncIssue(syncReason) : null
 
   const retryZcashSync = async () => {
@@ -942,18 +955,16 @@ export function Home() {
                 disabled={shieldActions.providersFor(action).length === 0}
               />
             ))}
-          {!isTestnet && supportsSwap && (
-            <WalletActionButton
-              icon={<WalletActionIcon action="swap" />}
-              label="Swap"
-              onClick={openSwap}
-              disabled={
-                assetDomain === 'shield'
-                  ? shieldActions.providersFor('swap').length === 0
-                  : assetDomain !== 'all' && !canOpenSwapSource
-              }
-            />
-          )}
+          {!isTestnet &&
+            supportsSwap &&
+            (assetDomain !== 'shield' || shieldActions.providersFor('swap').length > 0) && (
+              <WalletActionButton
+                icon={<WalletActionIcon action="swap" />}
+                label="Swap"
+                onClick={openSwap}
+                disabled={assetDomain !== 'all' && assetDomain !== 'shield' && !canOpenSwapSource}
+              />
+            )}
           <WalletActionButton
             icon={<WalletShieldFundsIcon />}
             label="Shield Funds"
@@ -973,55 +984,53 @@ export function Home() {
           }}
           className="relative w-full gap-0"
         >
-          <TabsList className="sticky top-0 z-30 isolate h-10 w-full justify-start gap-7 rounded-none border-b border-white/8 bg-background! px-5 py-0">
-            <TabsTrigger
-              value="assets"
-              className="tab-trigger-custom h-full flex-0 rounded-none px-0 py-0 text-base font-normal text-wallet-secondary data-[state=active]:text-white after:max-w-11"
-            >
-              {ASSET_DOMAIN_LABELS[assetDomain]}
-            </TabsTrigger>
-            <TabsTrigger
-              value="activity"
-              className="tab-trigger-custom h-full flex-0 rounded-none px-0 py-0 text-base font-normal text-wallet-secondary data-[state=active]:text-white after:max-w-11"
-            >
-              Activity
-            </TabsTrigger>
-          </TabsList>
-          {(showInlineSyncProgress || syncIssue) && (
+          <div className="sticky top-0 z-30 isolate flex h-10 items-center gap-3 border-b border-white/8 bg-background px-5">
+            <TabsList className="h-full min-w-0 flex-1 justify-start gap-7 rounded-none bg-transparent! p-0">
+              <TabsTrigger
+                value="assets"
+                className="tab-trigger-custom h-full flex-0 rounded-none px-0 py-0 text-base font-normal text-wallet-secondary data-[state=active]:text-white after:max-w-11"
+              >
+                {ASSET_DOMAIN_LABELS[assetDomain]}
+              </TabsTrigger>
+              <TabsTrigger
+                value="activity"
+                className="tab-trigger-custom h-full flex-0 rounded-none px-0 py-0 text-base font-normal text-wallet-secondary data-[state=active]:text-white after:max-w-11"
+              >
+                Activity
+              </TabsTrigger>
+            </TabsList>
+            {showInlineSyncProgress && (
+              <ZcashSyncProgress
+                className="shrink-0"
+                syncProgress={syncProgress}
+                currentHeight={currentHeight}
+                latestHeight={latestHeight}
+                etaMs={etaMs}
+              />
+            )}
+          </div>
+          {syncIssue && (
             <div className="flex min-h-9 flex-wrap items-center justify-end gap-2 px-5 py-1">
-              {showInlineSyncProgress && (
-                <ZcashSyncProgress
-                  syncProgress={syncProgress}
-                  currentHeight={currentHeight}
-                  latestHeight={latestHeight}
-                  etaMs={etaMs}
-                />
-              )}
-              {syncIssue && (
-                <>
-                  <span
-                    role="status"
-                    className={`flex min-w-0 items-center gap-1 text-xs ${syncIssue.tone === 'warning' ? 'text-warning' : 'text-danger'}`}
-                  >
-                    <Icon icon={syncIssue.icon} width={13} height={13} className="shrink-0" />
-                    {syncIssue.label}
-                  </span>
-                  {(syncIssue.action === 'retry' ||
-                    Boolean(currentWalletId && currentAccountId)) && (
-                    <button
-                      type="button"
-                      onClick={handleSyncIssueAction}
-                      disabled={syncIssue.action === 'retry' && syncRetrying}
-                      className="wallet-interactive shrink-0 rounded-sm px-2 py-1 text-xs font-medium text-primary enabled:hover:bg-primary/10 enabled:active:bg-primary/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 disabled:opacity-50"
-                    >
-                      {syncIssue.action === 'details'
-                        ? 'Account details'
-                        : syncRetrying
-                          ? 'Retrying...'
-                          : 'Retry'}
-                    </button>
-                  )}
-                </>
+              <span
+                role="status"
+                className={`flex min-w-0 items-center gap-1 text-xs ${syncIssue.tone === 'warning' ? 'text-warning' : 'text-danger'}`}
+              >
+                <Icon icon={syncIssue.icon} width={13} height={13} className="shrink-0" />
+                {syncIssue.label}
+              </span>
+              {(syncIssue.action === 'retry' || Boolean(currentWalletId && currentAccountId)) && (
+                <button
+                  type="button"
+                  onClick={handleSyncIssueAction}
+                  disabled={syncIssue.action === 'retry' && syncRetrying}
+                  className="wallet-interactive shrink-0 rounded-sm px-2 py-1 text-xs font-medium text-primary enabled:hover:bg-primary/10 enabled:active:bg-primary/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 disabled:opacity-50"
+                >
+                  {syncIssue.action === 'details'
+                    ? 'Account details'
+                    : syncRetrying
+                      ? 'Retrying...'
+                      : 'Retry'}
+                </button>
               )}
             </div>
           )}
@@ -1039,30 +1048,21 @@ export function Home() {
                 prices={assetPrices}
                 priceStatus={assetPriceStatus}
                 balancesHidden={balancesHidden}
-                zcashSyncState={
-                  supportsZcash && isSyncing
-                    ? { syncProgress, currentHeight, latestHeight, etaMs }
-                    : undefined
-                }
                 onRefresh={refreshPortfolio}
                 onRetryPrices={refreshAssetPrices}
                 onSelectAsset={assetId => {
-                  const asset = multichainPortfolio?.assets.find(item => item.asset.id === assetId)
-                  if (assetDomain === 'shield' && asset?.asset.chainId.startsWith('eip155:')) {
-                    navigate.navigate(
-                      `/shield-provider?provider=near-confidential&assetId=${encodeURIComponent(assetId)}&mode=${privateMode ? 'private' : 'public'}`
-                    )
-                    return
-                  }
                   navigate.navigate(
                     `/asset-detail?assetId=${encodeURIComponent(assetId)}&domain=${assetDomain}&mode=${privateMode ? 'private' : 'public'}`
                   )
                 }}
-                onSelectConfidentialAsset={tokenId =>
+                onSelectConfidentialAsset={tokenId => {
+                  const assetId = resolveConfidentialDetailAssetId(multichainPortfolio, tokenId)
                   navigate.navigate(
-                    `/shield-provider?provider=near-confidential&assetId=${encodeURIComponent(tokenId)}&mode=${privateMode ? 'private' : 'public'}`
+                    assetId
+                      ? `/asset-detail?assetId=${encodeURIComponent(assetId)}&domain=shield&mode=${privateMode ? 'private' : 'public'}`
+                      : `/shield-provider?provider=near-confidential&assetId=${encodeURIComponent(tokenId)}&mode=${privateMode ? 'private' : 'public'}`
                   )
-                }
+                }}
                 onManageTokens={() => navigate.navigate('/manage-tokens')}
               />
             ) : assetDomain === 'private' ? (

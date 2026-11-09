@@ -118,10 +118,7 @@ async function openShieldEthTransfer(
     .getByRole('button', { name: /^To: .* Change account$/ })
     .getAttribute('aria-label')
   expect(initialFrom?.replace('From:', '')).not.toBe(initialTo?.replace('To:', ''))
-  const connectShield = async () => {
-    const connect = page.getByRole('button', { name: 'Connect Shield' })
-    await expect(connect).toBeVisible({ timeout: 30_000 })
-    await connect.click()
+  const waitForShieldBalances = async () => {
     await expect(page.getByRole('button', { name: 'Refresh Shield balance' })).toBeVisible({
       timeout: 30_000
     })
@@ -136,7 +133,7 @@ async function openShieldEthTransfer(
       .getByRole('button', { name: `Select ${from} account` })
       .click()
   } else {
-    await connectShield()
+    await waitForShieldBalances()
   }
   await expect(page.getByRole('button', { name: 'Select transfer asset' })).not.toContainText('ZEC')
   await page.getByRole('button', { name: 'Select transfer asset' }).click()
@@ -166,7 +163,7 @@ async function openShieldEthTransfer(
     .getByRole('button', { name: `Select ${to} ${to === 'Shield' ? 'balance' : 'account'}` })
     .click()
   if (cluster) await page.getByRole('radio', { name: /^Cluster/ }).click()
-  if (from !== 'Shield') await connectShield()
+  if (from !== 'Shield') await waitForShieldBalances()
 }
 
 async function openNearShieldAction(page: Page, action: 'Move' | 'Send' | 'Swap' | 'Receive') {
@@ -579,6 +576,11 @@ for (const source of ['Public', 'Private'] as const) {
     expect(api.getConfidentialAuthSignerIds().length).toBeGreaterThan(0)
     expect(rpc.getBroadcastCount()).toBe(0)
 
+    await context.route('https://api.rhea.finance/api/swap/order-status**', async route => {
+      // Publish the credit with the fixture's settled deposit response.
+      if (rpc.getBroadcastCount() > 0) api.setConfidentialBalanceRaw('10000000000000000')
+      await route.fallback()
+    })
     await popup.getByRole('button', { name: 'Move', exact: true }).click()
     await expect.poll(rpc.getBroadcastCount, { timeout: 30_000 }).toBe(1)
     const [rawTransaction] = rpc.getBroadcastRawTransactions()
@@ -587,7 +589,6 @@ for (const source of ['Public', 'Private'] as const) {
         await recoverTransactionAddress({ serializedTransaction: rawTransaction as Hex })
       ).toLowerCase() === sourceAddress.toLowerCase()
     ).toBe(true)
-    api.setConfidentialBalanceRaw('10000000000000000')
     await expect
       .poll(async () => (await readStoredShieldPlan(popup))?.phase, {
         timeout: 90_000
@@ -712,7 +713,6 @@ test('withdraws Shield ETH to an external EVM recipient and restores the settled
   const identity = await readShieldTransferIdentity(popup)
   const recipient = '0x3333333333333333333333333333333333333333'
   await openNearShieldAction(popup, 'Send')
-  await popup.getByRole('button', { name: 'Connect Shield' }).click()
   await expect(popup.getByRole('button', { name: 'Send', exact: true })).toBeDisabled()
   await popup.getByRole('button', { name: 'Network Select network', exact: true }).click()
   await popup
@@ -778,7 +778,6 @@ test('swaps a Shield-only holding to Shield USDC without adding a Public asset a
   await expect(popup.getByRole('button', { name: 'Shield Funds' })).toBeVisible({ timeout: 30_000 })
   const identity = await readShieldTransferIdentity(popup)
   await openNearShieldAction(popup, 'Swap')
-  await popup.getByRole('button', { name: 'Connect Shield' }).click()
   const publicAssetIds = await popup.evaluate(async () => {
     const response = await chrome.runtime.sendMessage({ type: 'GET_PORTFOLIO', action: 'read' })
     if (response?.error) throw new Error('Portfolio read failed')

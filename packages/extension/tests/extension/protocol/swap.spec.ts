@@ -64,6 +64,8 @@ test('quotes ZEC Shield to the same Account Private ETH while Private mode is se
     )
     .toBe('2')
   await popup.getByRole('radio', { name: 'Private mode' }).click()
+  await popup.getByRole('button', { name: 'Asset category: Private assets', exact: true }).click()
+  await popup.getByRole('radio', { name: /Total assets/ }).click()
   await popup.getByRole('button', { name: 'Swap', exact: true }).click()
 
   const fromAsset = popup.getByRole('button', { name: 'From asset' })

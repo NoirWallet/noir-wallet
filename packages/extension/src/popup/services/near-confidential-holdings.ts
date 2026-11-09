@@ -26,6 +26,26 @@ export interface StandaloneNearConfidentialHolding {
   readonly chain: PortfolioChainView | undefined
 }
 
+export function resolveConfidentialDetailAssetId(
+  model: PortfolioReadModel | null,
+  tokenId: string
+): string | null {
+  if (model?.confidential?.status !== 'ready') return null
+  const matches = model.confidential.assets.filter(entry => entry.tokenId === tokenId)
+  if (matches.length !== 1) return null
+  const holding = matches[0]!
+  if (model.confidential.assets.filter(entry => entry.assetId === holding.assetId).length !== 1) {
+    return null
+  }
+  const asset = model.assets.find(item => item.asset.id === holding.assetId)
+  return asset &&
+    asset.asset.chainId.startsWith('eip155:') &&
+    holding.chainId === asset.asset.chainId &&
+    holding.decimals === asset.metadata.decimals
+    ? asset.asset.id
+    : null
+}
+
 export function getNearConfidentialChainId(asset: ConfidentialAsset): string | null {
   if (asset.chainId) return asset.chainId
   if (!asset.assetId) return null

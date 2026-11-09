@@ -5,7 +5,6 @@ import { PortfolioShell } from './PortfolioShell'
 import { resolvePortfolioChainSelection } from '@/popup/services/portfolio-presentation'
 import type { AssetPriceReadModel } from '@/core/prices'
 import { ListSkeleton } from '../ui/skeleton'
-import type { ZcashSyncProgressState } from '../common/ZcashSyncProgress'
 import { useSettingsStore } from '@/store/settings-store'
 import { getPortfolioRecoveryDelayMs, hasPortfolioBalanceRefreshIssue } from './portfolio-recovery'
 import { hasRetryablePortfolioPriceGap, summarizePortfolioFiat } from './portfolio-prices'
@@ -27,7 +26,6 @@ interface MultichainPortfolioPanelProps {
   prices: AssetPriceReadModel | null
   priceStatus?: 'loading' | 'ready' | 'error'
   balancesHidden?: boolean
-  zcashSyncState?: ZcashSyncProgressState
   onRefresh: (forceDiscovery?: boolean) => Promise<void>
   onRetryPrices?: () => Promise<void>
   onSelectAsset?: (assetId: string) => void
@@ -65,7 +63,6 @@ export function MultichainPortfolioPanel({
   prices,
   priceStatus,
   balancesHidden,
-  zcashSyncState,
   onRefresh: load,
   onRetryPrices,
   onSelectAsset,
@@ -188,7 +185,6 @@ export function MultichainPortfolioPanel({
       prices={prices}
       priceStatus={priceStatus}
       balancesHidden={balancesHidden}
-      zcashSyncState={zcashSyncState}
       view={portfolioViewMode}
       onViewChange={setPortfolioViewMode}
       refreshing={status === 'loading' || priceStatus === 'loading' || recoveryNeeded}
