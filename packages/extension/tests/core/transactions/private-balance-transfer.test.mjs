@@ -8,9 +8,13 @@ import {
 } from '../../../src/popup/services/private-balance-transfer.ts'
 import { createInitialProductChainRegistry } from '../../../src/core/chains/registry/index.ts'
 import { ZCASH_CHAIN_IDS } from '../../../src/core/chains/registry/chain-ids.ts'
+import { getEvmNetworkConfigs } from '../../../src/config/networks.ts'
+import { resolveManagedIntentsAssets } from '../../../src/core/services/intents-managed-assets.ts'
 import {
   buildExternalShieldWithdrawRequest,
+  buildShieldTransferRequest,
   listShieldFundingAssets,
+  listShieldMoveDestinations,
   selectShieldWithdrawDestinationForNetwork,
   shieldFundingSources,
   shieldPortfolioBalances
@@ -260,5 +264,164 @@ test('uses independently held Shield tokens without adding them to Public assets
   ).toMatchObject({
     source: { assetId: zcashAssetId, protocolAssetId: zcashProtocolId, amountRaw: '100000' },
     destination: { chainId: 'eip155:1', protocolAssetId: destinationProtocolId }
+  })
+})
+
+test('binds a Shield ETH Move to the selected EVM destination asset', () => {
+  const chains = createInitialProductChainRegistry('mainnet')
+  const ethereum = chains.resolve('eip155:1')
+  const base = chains.resolve('eip155:8453')
+  const fakeAssetId = `eip155:8453/erc20:0x${'a'.repeat(40)}`
+  const fakeProtocolId = 'nep141:fake-eth.omft.near'
+  const model = {
+    chains: [ethereum, base].map(chain => ({ chain, status: 'ready', assets: [], errorCodes: [] })),
+    assets: [],
+    confidential: {
+      status: 'ready',
+      assets: [
+        {
+          tokenId: 'nep141:eth.omft.near',
+          protocolAssetId: 'nep141:eth.omft.near',
+          availableRaw: '1000000000000000000'
+        }
+      ]
+    }
+  }
+  const managed = [
+    {
+      assetId: fakeAssetId,
+      chainId: 'eip155:8453',
+      protocolAssetId: fakeProtocolId,
+      blockchain: 'base',
+      symbol: 'ETH',
+      decimals: 18,
+      management: 'evm'
+    }
+  ]
+  const tokens = [
+    { assetId: 'nep141:eth.omft.near', blockchain: 'eth', symbol: 'ETH', decimals: 18 },
+    { assetId: 'nep141:base.omft.near', blockchain: 'base', symbol: 'ETH', decimals: 18 },
+    { assetId: fakeProtocolId, blockchain: 'base', symbol: 'ETH', decimals: 18 }
+  ]
+  const options = listShieldFundingAssets(model, managed, tokens, 'mainnet')
+  const source = options.find(item => item.asset.asset.id === 'eip155:1/slip44:60')
+  const destination = options.find(item => item.asset.asset.id === 'eip155:8453/slip44:60')
+  expect(source).toBeDefined()
+  expect(destination).toBeDefined()
+  expect(
+    listShieldMoveDestinations(source, options, 'mainnet').map(item => item.asset.asset.id)
+  ).toEqual([source.asset.asset.id, destination.asset.asset.id])
+  expect(destination.asset.metadata.decimals).toBe(18)
+
+  const input = {
+    network: 'mainnet',
+    keyDomainId: 'wallet',
+    accountId: 'account',
+    from: 'shield',
+    to: 'private',
+    method: 'directly',
+    amountRaw: '1000000000000000000',
+    asset: source.asset,
+    chain: source.chain,
+    managed: source.managed
+  }
+  expect(buildShieldTransferRequest({ ...input, destination })).toMatchObject({
+    operation: 'withdraw',
+    sourceDomain: 'shield',
+    destinationDomain: 'private',
+    source: {
+      chainId: 'eip155:1',
+      assetId: 'eip155:1/slip44:60',
+      protocolAssetId: 'nep141:eth.omft.near',
+      amountRaw: '1000000000000000000'
+    },
+    destination: {
+      chainId: 'eip155:8453',
+      assetId: 'eip155:8453/slip44:60',
+      protocolAssetId: 'nep141:base.omft.near'
+    }
+  })
+  expect(buildShieldTransferRequest(input).destination).toEqual({
+    chainId: 'eip155:1',
+    chainName: 'eth',
+    assetId: 'eip155:1/slip44:60',
+    protocolAssetId: 'nep141:eth.omft.near'
+  })
+  const fake = options.find(item => item.asset.asset.id === fakeAssetId)
+  expect(fake).toBeDefined()
+  expect(() => buildShieldTransferRequest({ ...input, destination: fake })).toThrow(
+    'Shield transfer is unavailable'
+  )
+  expect(() => buildShieldTransferRequest({ ...input, method: 'cluster', destination })).toThrow(
+    'Shield transfer is unavailable'
+  )
+  expect(() => buildShieldTransferRequest({ ...input, method: 'cluster' })).toThrow(
+    'Shield transfer is unavailable'
+  )
+})
+
+test('lists official cross-network USDC destinations from the managed catalog', () => {
+  const chains = createInitialProductChainRegistry('mainnet')
+  const sourceProtocolId = 'nep141:eth-0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48.omft.near'
+  const destinationProtocolId = 'nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near'
+  const sourceAssetId = 'eip155:1/erc20:0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48'
+  const destinationAssetId = 'eip155:8453/erc20:0x833589fcd6edb6e08f4c7c32d4f71b54bda02913'
+  const tokens = [
+    {
+      assetId: sourceProtocolId,
+      blockchain: 'eth',
+      contractAddress: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48',
+      symbol: 'USDC',
+      decimals: 6
+    },
+    {
+      assetId: destinationProtocolId,
+      blockchain: 'base',
+      contractAddress: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
+      symbol: 'USDC',
+      decimals: 6
+    }
+  ]
+  const managed = resolveManagedIntentsAssets(tokens, 'mainnet', getEvmNetworkConfigs('mainnet'))
+  const model = {
+    chains: ['eip155:1', 'eip155:8453'].map(id => ({
+      chain: chains.resolve(id),
+      status: 'ready',
+      assets: [],
+      errorCodes: []
+    })),
+    assets: [],
+    confidential: {
+      status: 'ready',
+      assets: [
+        { tokenId: sourceProtocolId, protocolAssetId: sourceProtocolId, availableRaw: '20000' }
+      ]
+    }
+  }
+  const options = listShieldFundingAssets(model, managed, tokens, 'mainnet')
+  const source = options.find(item => item.asset.asset.id === sourceAssetId)
+  expect(source).toBeDefined()
+  expect(
+    listShieldMoveDestinations(source, options, 'mainnet').map(item => item.asset.asset.id)
+  ).toEqual([sourceAssetId, destinationAssetId])
+  const destination = options.find(item => item.asset.asset.id === destinationAssetId)
+  expect(destination.asset.metadata.decimals).toBe(6)
+  expect(
+    buildShieldTransferRequest({
+      network: 'mainnet',
+      keyDomainId: 'wallet',
+      accountId: 'account',
+      from: 'shield',
+      to: 'public',
+      method: 'directly',
+      amountRaw: '10000',
+      asset: source.asset,
+      chain: source.chain,
+      managed: source.managed,
+      destination
+    })
+  ).toMatchObject({
+    source: { protocolAssetId: sourceProtocolId, amountRaw: '10000' },
+    destination: { chainId: 'eip155:8453', protocolAssetId: destinationProtocolId }
   })
 })

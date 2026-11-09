@@ -67,6 +67,7 @@ import { BitcoinAccountTypeSelector } from '@/popup/components/bitcoin/BitcoinAc
 import { useShieldFunds } from '@/popup/hooks/useShieldFunds'
 import { resolveEffectiveActiveAccountIdentity } from '@/popup/lib/effective-active-account'
 import { getFundingSourceUnavailableReason } from '@/core/wallet/funding-source'
+import { resolveZcashSelfMove } from '@/popup/services/zcash-self-move'
 
 export function AssetDetail() {
   const [searchParams] = useSearchParams()
@@ -75,6 +76,7 @@ export function AssetDetail() {
   const currentWalletId = useWalletStore(state => state.currentWalletId)
   const currentAccountId = useWalletStore(state => state.currentAccountId)
   const currentWallet = useWalletStore(state => state.getCurrentWallet())
+  const currentAccount = useWalletStore(state => state.getCurrentAccount())
   const currentNetwork = useWalletStore(state => state.currentNetwork)
   const { activeAccount: storageV2Account } = useActiveAccountNetworks()
   const effectiveAccount = resolveEffectiveActiveAccountIdentity({
@@ -245,6 +247,11 @@ export function AssetDetail() {
       : null
   const detailDomain = categories?.domains.find(domain => domain === requestedDomain) ?? 'all'
   const nearShieldSelected = chain?.chain.family === 'evm' && detailDomain === 'shield'
+  const canMoveZcashShield =
+    chain?.chain.family === 'zcash' &&
+    detailDomain === 'shield' &&
+    resolveZcashSelfMove(currentAccount?.addresses, 'shielded', currentNetwork) !== null &&
+    !getFundingSourceUnavailableReason(currentWallet?.keySource, 'shielded')
   const shieldAssetSupported = listShieldFundingAssets(
     visibleModel,
     resolveManagedIntentsCatalog(shieldTokens),
@@ -310,11 +317,17 @@ export function AssetDetail() {
       : detailDomain
 
   const handleMove = () => {
-    if (!asset || !privateTransferEligible) return
+    if (!asset) return
+    const mode = searchParams.get('mode') === 'private' ? 'private' : 'public'
+    if (canMoveZcashShield) {
+      navigate(`/send/zcash?move=1&from=shielded&mode=${mode}`)
+      return
+    }
+    if (!privateTransferEligible) return
     if (nearShieldSelected) {
       if (!shieldAssetSupported) return
       navigate(
-        `/transfer?${new URLSearchParams({ assetId: asset.asset.id, provider: 'near-confidential', from: 'shield', to: 'private' })}`
+        `/transfer?${new URLSearchParams({ assetId: asset.asset.id, provider: 'near-confidential', from: 'shield', to: mode, mode })}`
       )
       return
     }
@@ -936,14 +949,17 @@ export function AssetDetail() {
               onClick={handleReceive}
             />
           )}
-          {chain.chain.family === 'evm' && actionDomain !== 'private' && (
+          {((chain.chain.family === 'evm' && actionDomain !== 'private') ||
+            (chain.chain.family === 'zcash' && detailDomain === 'shield')) && (
             <WalletActionButton
               icon={<WalletActionIcon action="move" />}
               label="Move"
               disabled={
-                !privateTransferEligible ||
+                (chain.chain.family === 'evm' && !privateTransferEligible) ||
                 (nearShieldSelected &&
-                  (!shieldAssetSupported || displayRaw === null || displayRaw === '0'))
+                  (!shieldAssetSupported || displayRaw === null || displayRaw === '0')) ||
+                (chain.chain.family === 'zcash' &&
+                  (!canMoveZcashShield || displayRaw === null || displayRaw === '0'))
               }
               onClick={handleMove}
             />

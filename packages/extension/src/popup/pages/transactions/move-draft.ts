@@ -7,6 +7,7 @@ import {
 export interface MoveDraft {
   readonly scope: string
   readonly assetId: string | null
+  readonly destinationAssetId?: string | null
   readonly from: TransferDomain
   readonly to: TransferDomain
   readonly amount: string
@@ -27,6 +28,9 @@ export function readMoveDraft(state: unknown, scope: string): MoveDraft | null {
     draft.from === draft.to ||
     !('assetId' in draft) ||
     (draft.assetId !== null && typeof draft.assetId !== 'string') ||
+    ('destinationAssetId' in draft &&
+      draft.destinationAssetId !== null &&
+      typeof draft.destinationAssetId !== 'string') ||
     !('amount' in draft) ||
     typeof draft.amount !== 'string' ||
     normalizePrivateBalanceTransferInput(draft.amount) !== draft.amount ||
@@ -36,7 +40,10 @@ export function readMoveDraft(state: unknown, scope: string): MoveDraft | null {
     typeof draft.maxSelected !== 'boolean'
   )
     return null
-  return draft as MoveDraft
+  return {
+    ...(draft as MoveDraft),
+    method: draft.from === 'shield' || draft.to === 'shield' ? 'directly' : draft.method
+  }
 }
 
 export function initialMoveDraft(input: {

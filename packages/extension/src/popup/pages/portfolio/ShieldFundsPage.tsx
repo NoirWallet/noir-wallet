@@ -6,7 +6,6 @@ import type { AssetPriceReadModel } from '@/core/prices'
 import { useWalletStore } from '@/store/wallet-store'
 import { useAccountDataStore } from '@/store/account-data-store'
 import { useSettingsStore } from '@/store/settings-store'
-import type { FundingSource } from '@/types/wallet'
 import { useActiveAccountNetworks } from '@/popup/hooks/useActiveAccountNetworks'
 import { useHomePortfolio } from '@/popup/hooks/useHomePortfolio'
 import { resolveEffectiveActiveAccountIdentity } from '@/popup/lib/effective-active-account'
@@ -25,6 +24,7 @@ import {
   SHIELD_PROVIDERS
 } from '@/popup/components/portfolio/ShieldPortfolioView'
 import { TokenIcon } from '@/popup/components/tokens/TokenIcon'
+import { ShieldMoveSheet } from '@/popup/components/transaction/ShieldMoveSheet'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/popup/components/ui/dialog'
 
 export function ShieldFundsPage() {
@@ -57,12 +57,12 @@ function ShieldFundsContent() {
   const [prices, setPrices] = useState<AssetPriceReadModel | null>(null)
   const [pricesLoading, setPricesLoading] = useState(true)
   const [pendingAction, setPendingAction] = useState<ShieldAction | null>(null)
-  const [zcashMoveOpen, setZcashMoveOpen] = useState(false)
+  const [moveOpen, setMoveOpen] = useState(false)
   const handledActionQuery = useRef<string | null>(null)
 
   useEffect(() => {
     setPendingAction(null)
-    setZcashMoveOpen(false)
+    setMoveOpen(false)
   }, [account?.walletId, account?.accountId, currentNetwork])
 
   useEffect(() => {
@@ -96,8 +96,7 @@ function ShieldFundsContent() {
     zcashBalance,
     zcashKeySource
   })
-  const { near, canManageNear, hasMovableNear, hasZcash, zcashMoveSources, providersFor } =
-    shieldActions
+  const { near, canManageNear, hasZcash, providersFor } = shieldActions
   const zcash = useMemo(
     () =>
       model
@@ -120,23 +119,28 @@ function ShieldFundsContent() {
         ? '…'
         : '—'
       : formatFiatAmount(total, { showSign: true })
-  const availableProviders = providersFor
+  const availableProviders = (action: ShieldAction): readonly ShieldProvider[] =>
+    action === 'move'
+      ? [
+          ...(canManageNear ? (['near-confidential'] as const) : []),
+          ...(hasZcash ? (['zcash-shield'] as const) : [])
+        ]
+      : providersFor(action)
+  const mode = new URLSearchParams(location.search).get('mode') === 'private' ? 'private' : 'public'
   const runAction = (provider: ShieldProvider, action: ShieldAction, auto = false) => {
     setPendingAction(null)
     const go = auto ? replace : navigate
+    if (action === 'move') {
+      if (auto) replace(`/shield-funds?mode=${mode}`)
+      setMoveOpen(true)
+      return
+    }
     if (action === 'swap') {
       go('/shield-swap?provider=near-confidential')
       return
     }
     if (provider === 'zcash-shield') {
-      if (action === 'move') {
-        if (zcashMoveSources.length === 1) {
-          go(`/send/zcash?move=1&from=${zcashMoveSources[0]}`)
-        } else if (zcashMoveSources.length > 1) {
-          if (auto) replace('/shield-funds')
-          setZcashMoveOpen(true)
-        }
-      } else if (action === 'send') go('/send/zcash?from=shielded')
+      if (action === 'send') go('/send/zcash?from=shielded')
       else if (account) {
         go(
           `/addresses-list?walletId=${encodeURIComponent(account.walletId)}&accountId=${encodeURIComponent(account.accountId)}&chain=zcash&privacy=shielded`
@@ -144,21 +148,17 @@ function ShieldFundsContent() {
       }
       return
     }
-    if (action === 'move') {
-      go(
-        hasMovableNear || near.status !== 'ready'
-          ? '/transfer?from=shield&to=private&provider=near-confidential'
-          : '/transfer?from=public&to=shield&provider=near-confidential'
-      )
-    } else {
-      go(
-        action === 'send'
-          ? '/shield-withdraw?provider=near-confidential'
-          : '/shield-deposit?provider=near-confidential'
-      )
-    }
+    go(
+      action === 'send'
+        ? '/shield-withdraw?provider=near-confidential'
+        : '/shield-deposit?provider=near-confidential'
+    )
   }
   const openAction = (action: ShieldAction) => {
+    if (action === 'move') {
+      setMoveOpen(true)
+      return
+    }
     const providers = availableProviders(action)
     if (providers.length === 1) runAction(providers[0], action)
     else if (providers.length > 1) setPendingAction(action)
@@ -182,7 +182,10 @@ function ShieldFundsContent() {
       return
     handledActionQuery.current = location.search
     const providers = availableProviders(requestedAction)
-    if (providers.length === 1) runAction(providers[0]!, requestedAction, true)
+    if (requestedAction === 'move' && providers.length > 0) {
+      replace(`/shield-funds?mode=${mode}`)
+      setMoveOpen(true)
+    } else if (providers.length === 1) runAction(providers[0]!, requestedAction, true)
     else {
       replace('/shield-funds')
       if (providers.length > 1) setPendingAction(requestedAction)
@@ -247,7 +250,7 @@ function ShieldFundsContent() {
                 <button
                   key={provider}
                   type="button"
-                  onClick={() => navigate(`/shield-provider?provider=${provider}`)}
+                  onClick={() => navigate(`/shield-provider?provider=${provider}&mode=${mode}`)}
                   className="wallet-interactive flex h-[154px] min-w-0 flex-col overflow-hidden rounded-lg bg-wallet-surface text-left hover:brightness-110 active:brightness-95 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary"
                 >
                   <span
@@ -346,25 +349,7 @@ function ShieldFundsContent() {
             ))}
         </DialogContent>
       </Dialog>
-      <Dialog open={zcashMoveOpen} onOpenChange={setZcashMoveOpen}>
-        <DialogContent position="bottom" className="gap-2 bg-wallet-surface p-4 pb-6">
-          <DialogTitle className="text-base font-medium">Move ZEC</DialogTitle>
-          <DialogDescription className="sr-only">Choose a balance to move from</DialogDescription>
-          {zcashMoveSources.map((source: FundingSource) => (
-            <button
-              key={source}
-              type="button"
-              onClick={() => {
-                setZcashMoveOpen(false)
-                navigate(`/send/zcash?move=1&from=${source}`)
-              }}
-              className="wallet-interactive h-12 rounded-lg bg-background px-3 text-left text-sm hover:bg-white/10 active:bg-white/15 focus-visible:outline-2 focus-visible:outline-primary"
-            >
-              {source === 'transparent' ? 'Move to Shield' : 'Move to Public'}
-            </button>
-          ))}
-        </DialogContent>
-      </Dialog>
+      <ShieldMoveSheet open={moveOpen} onOpenChange={setMoveOpen} mode={mode} />
     </div>
   )
 }

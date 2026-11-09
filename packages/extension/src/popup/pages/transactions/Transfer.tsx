@@ -3,7 +3,7 @@ import { useLocation, useNavigate as useRouterNavigate, useSearchParams } from '
 import { Icon } from '@iconify/react'
 import type { PortfolioAssetView, PortfolioChainView } from '@/core/portfolio'
 import type { AssetPriceReadModel } from '@/core/prices'
-import { formatBaseUnitAmount, formatTokenQuantity } from '@/lib/number-format'
+import { formatBaseUnitAmount, formatTokenQuantity, formatFiatAmount } from '@/lib/number-format'
 import { formatSortAddress, getAccountDisplayName } from '@/lib/format'
 import { getChainEndpointRuntimeKey } from '@/core/chains/chain-endpoint-settings'
 import { resolveChainIconAlias } from '@/lib/chain-icon'
@@ -55,6 +55,7 @@ import {
   isUnsignedShieldTerminal,
   isShieldTransferRoute,
   listShieldFundingAssets,
+  listShieldMoveDestinations,
   matchesShieldReview,
   resolveShieldManagedAsset,
   shieldFundingSources,
@@ -95,115 +96,99 @@ function DomainCard({
   accountName,
   domain,
   address,
-  balance,
   network,
   networkName,
   onNetworkClick,
   onAccountClick,
-  onMax,
-  maxDisabled,
-  maxLoading,
+  showNetwork = false,
   disabled
 }: {
   label: 'From' | 'To'
   accountName: string
   domain: TransferDomain
   address: string
-  balance: string
   network: string
   networkName: string
   onNetworkClick: () => void
   onAccountClick: () => void
-  onMax?: () => void
-  maxDisabled?: boolean
-  maxLoading?: boolean
+  showNetwork?: boolean
   disabled?: boolean
 }) {
   return (
-    <div className="flex min-h-[104px] w-full flex-col justify-between rounded-lg border border-white/10 bg-wallet-surface px-3 py-3">
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-sm font-medium leading-[18px] text-muted">{label}</span>
+    <div className="w-full rounded-xl border border-white/5 bg-wallet-surface px-4 py-4">
+      <p className="mb-3 text-xs font-medium text-muted">{label}</p>
+      <button
+        type="button"
+        onClick={onAccountClick}
+        disabled={disabled}
+        aria-label={`${label}: ${domainLabel(domain)}. Change account`}
+        className="wallet-interactive flex w-full min-w-0 items-center gap-3 rounded text-left focus-visible:outline-2 focus-visible:outline-primary"
+      >
+        {domain === 'shield' ? (
+          <img src={nearLogo} alt="" aria-hidden="true" className="size-7 shrink-0 rounded" />
+        ) : (
+          <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-white/10 text-muted">
+            <Icon icon="lucide:wallet" width={19} height={19} />
+          </span>
+        )}
+        <span className="min-w-0 flex-1">
+          {domain === 'shield' ? (
+            <>
+              <span className="block text-xs text-muted">Shield</span>
+              <span className="block truncate text-base font-medium">
+                NEAR Confidential Intents
+              </span>
+            </>
+          ) : (
+            <>
+              <span className="flex min-w-0 items-center gap-2 text-xs text-muted">
+                <span className="truncate">{accountName}</span>
+                <span
+                  className={cn(
+                    'shrink-0 rounded-md px-2 py-0.5',
+                    domain === 'private' ? 'bg-warning/10 text-warning' : 'bg-white/10 text-muted'
+                  )}
+                >
+                  {domainLabel(domain)}
+                </span>
+              </span>
+              <span className="mt-1 block truncate text-base font-medium" title={address}>
+                {address ? formatSortAddress(address) : '—'}
+              </span>
+            </>
+          )}
+        </span>
+        <Icon icon="lucide:chevron-down" width={15} height={15} className="shrink-0 text-muted" />
+      </button>
+      {showNetwork && domain !== 'shield' && (
         <button
           type="button"
           onClick={onNetworkClick}
           disabled={disabled}
-          aria-label={`Select ${label.toLowerCase()} asset and network`}
-          className="wallet-interactive flex min-w-0 max-w-[60%] items-center gap-1 rounded text-xs text-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-primary"
+          aria-label={`Select ${label.toLowerCase()} network`}
+          className="wallet-interactive mt-4 flex w-full items-center gap-3 rounded text-left focus-visible:outline-2 focus-visible:outline-primary"
         >
-          {domain === 'shield' ? (
-            <img
-              src={nearLogo}
-              alt=""
-              aria-hidden="true"
-              className="size-4 shrink-0 rounded-[3px]"
-            />
-          ) : (
-            <ChainIcon
-              chain={network}
-              width={16}
-              height={16}
-              showTooltip={false}
-              alt=""
-              aria-hidden="true"
-              className="shrink-0 rounded-[4px]"
-            />
-          )}
-          <span className="truncate">
-            {domain === 'shield' ? 'NEAR Confidential' : networkName || 'Select network'}
+          <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-white/10 text-muted">
+            <Icon icon="lucide:globe" width={19} height={19} />
           </span>
-          <Icon icon="lucide:chevron-down" width={13} height={13} />
+          <span className="min-w-0 flex-1">
+            <span className="block text-xs text-muted">Network</span>
+            <span className="mt-1 flex items-center gap-1.5 text-base font-medium">
+              <ChainIcon
+                chain={network}
+                width={16}
+                height={16}
+                showTooltip={false}
+                alt=""
+                aria-hidden="true"
+                className="shrink-0 rounded"
+              />
+              <span className="truncate">{networkName || 'Select network'}</span>
+            </span>
+          </span>
+          <Icon icon="lucide:chevron-down" width={15} height={15} className="shrink-0 text-muted" />
         </button>
-      </div>
-      <div className="mt-1.5 flex min-w-0 items-center justify-between gap-2">
-        <button
-          type="button"
-          onClick={onAccountClick}
-          disabled={disabled}
-          aria-label={`${label}: ${domainLabel(domain)}. Change account`}
-          className="wallet-interactive flex min-w-0 items-center gap-1.5 rounded text-left hover:bg-white/5 focus-visible:outline-2 focus-visible:outline-primary"
-        >
-          <span className="min-w-0 truncate text-sm font-medium leading-[18px]">{accountName}</span>
-          <span
-            className={cn(
-              'shrink-0 rounded px-2 py-0.5 text-xs leading-4',
-              domain === 'shield'
-                ? 'bg-success/10 text-success'
-                : domain === 'private'
-                  ? 'bg-warning/10 text-warning'
-                  : 'bg-white/10 text-muted'
-            )}
-          >
-            {domainLabel(domain)}
-          </span>
-          <Icon icon="lucide:chevron-down" width={12} height={12} className="shrink-0 text-muted" />
-        </button>
-        <div className="max-w-[43%] min-w-0 text-right">
-          <span
-            className="block max-w-full truncate text-right text-sm font-medium leading-[18px]"
-            title={balance}
-          >
-            {formatTokenQuantity(balance)}
-          </span>
-        </div>
-      </div>
-      <div className="mt-1 flex min-w-0 items-center justify-between gap-2">
-        {domain !== 'shield' && (
-          <span className="min-w-0 truncate font-mono text-xs text-muted" title={address}>
-            {address ? formatSortAddress(address) : '—'}
-          </span>
-        )}
-        {onMax && (
-          <button
-            type="button"
-            onClick={onMax}
-            disabled={maxDisabled || maxLoading}
-            aria-label="Max"
-            className="wallet-interactive ml-auto shrink-0 rounded bg-white/10 px-1.5 text-xs font-medium leading-4 text-muted enabled:hover:bg-white/20 focus-visible:outline-2 focus-visible:outline-primary disabled:opacity-40"
-          >
-            {maxLoading ? '…' : 'Max'}
-          </button>
-        )}
-      </div>
+      )}
     </div>
   )
 }
@@ -225,15 +210,21 @@ function MethodCard({
     <button
       type="button"
       role="radio"
+      aria-label={title}
       aria-checked={selected}
       disabled={disabled}
       onClick={onClick}
       className={cn(
-        'relative flex min-h-[75px] flex-col rounded-lg border bg-wallet-surface px-3 py-3 text-left text-xs font-medium leading-4',
+        'relative flex min-h-[150px] flex-col rounded-xl border bg-wallet-surface px-3 py-4 text-left text-xs leading-4',
         selected ? 'border-primary/60' : 'border-white/10',
         disabled && 'opacity-60'
       )}
     >
+      {title === 'Cluster' && (
+        <span className="absolute -top-2.5 left-3 rounded-full bg-primary px-2 py-0.5 text-[10px] text-primary-foreground">
+          Recommended
+        </span>
+      )}
       <span className="flex items-center justify-between gap-1 text-sm font-medium leading-[18px]">
         <span>{title}</span>
         <Icon
@@ -244,6 +235,18 @@ function MethodCard({
         />
       </span>
       <span className="mt-2 text-muted">{detail}</span>
+      <span className="mt-4 flex justify-between gap-2">
+        <span className="text-muted">Privacy</span>
+        <span>{title === 'Cluster' ? 'Strong' : 'Standard'}</span>
+      </span>
+      <span className="mt-2 flex justify-between gap-2">
+        <span className="text-muted">Time</span>
+        <span>—</span>
+      </span>
+      <span className="mt-2 flex justify-between gap-2">
+        <span className="text-muted">Fee</span>
+        <span>—</span>
+      </span>
     </button>
   )
 }
@@ -302,6 +305,13 @@ function TransferForm() {
   } = useHomePortfolio(effective?.walletId ?? null, effective?.accountId ?? null)
   const [retry, setRetry] = useState(0)
   const [assetPickerOpen, setAssetPickerOpen] = useState(false)
+  const [assetSearch, setAssetSearch] = useState('')
+  const [assetChainId, setAssetChainId] = useState('all')
+  const [networkPickerOpen, setNetworkPickerOpen] = useState(false)
+  const [networkSearch, setNetworkSearch] = useState('')
+  const [destinationAssetId, setDestinationAssetId] = useState<string | null>(
+    initialDraft.destinationAssetId ?? null
+  )
   const [assetPrices, setAssetPrices] = useState<AssetPriceReadModel | null>(null)
   const [domainPicker, setDomainPicker] = useState<'from' | 'to' | null>(null)
   const [pickerAccountId, setPickerAccountId] = useState<string | null>(null)
@@ -366,6 +376,8 @@ function TransferForm() {
 
   useEffect(() => {
     if (!assetPickerOpen) return
+    setAssetSearch('')
+    setAssetChainId('all')
     let cancelled = false
     const apply = (prices: AssetPriceReadModel | null) => {
       if (!cancelled && prices) setAssetPrices(prices)
@@ -425,6 +437,7 @@ function TransferForm() {
     setFrom(draft.from)
     setTo(draft.to)
     setSelectedAssetId(draft.assetId)
+    setDestinationAssetId(draft.destinationAssetId ?? null)
     setAmount(draft.amount)
     setMethod(draft.method)
     setMaxSelected(draft.maxSelected)
@@ -434,6 +447,7 @@ function TransferForm() {
     setShieldError(null)
     setConfirmUncertain(false)
     setAssetPickerOpen(false)
+    setNetworkPickerOpen(false)
     setDomainPicker(null)
     setPickerAccountId(null)
   }, [scopeKey])
@@ -451,6 +465,7 @@ function TransferForm() {
         moveDraft: {
           scope: scopeKey,
           assetId: selectedAssetId,
+          destinationAssetId,
           from,
           to,
           amount,
@@ -465,6 +480,7 @@ function TransferForm() {
     draftScope,
     scopeKey,
     selectedAssetId,
+    destinationAssetId,
     from,
     to,
     amount,
@@ -562,7 +578,6 @@ function TransferForm() {
   const publicRaw = selected ? getTransferDomainBalanceRaw(selected.asset, 'public') : null
   const privateRaw = selected ? getTransferDomainBalanceRaw(selected.asset, 'private') : null
   const sourceRaw = selected ? getTransferDomainBalanceRaw(selected.asset, from) : null
-  const targetRaw = selected ? getTransferDomainBalanceRaw(selected.asset, to) : null
   const nativeFeeAsset =
     selected?.chain.chain.family === 'evm'
       ? portfolio?.assets.find(
@@ -599,6 +614,52 @@ function TransferForm() {
         : null,
     [selected?.asset, managedAssets, catalogTokens, currentNetwork]
   )
+  const destinationOptions = useMemo(() => {
+    if (from !== 'shield' || !selected || !managedAsset) return []
+    const options = listShieldFundingAssets(
+      portfolio,
+      managedAssets,
+      catalogTokens,
+      currentNetwork
+    ).filter(item =>
+      activeAccount?.networks.some(
+        network =>
+          network.chain.id === item.chain.chain.id &&
+          network.addresses.some(address => address.preferredForReceive) &&
+          (to === 'public' || Boolean(network.privateExecutionAddress))
+      )
+    )
+    return listShieldMoveDestinations(
+      { ...selected, managed: managedAsset },
+      options,
+      currentNetwork
+    )
+  }, [
+    from,
+    to,
+    activeAccount,
+    selected,
+    managedAsset,
+    portfolio,
+    managedAssets,
+    catalogTokens,
+    currentNetwork,
+    eligibleChainIds
+  ])
+  const destination =
+    from === 'shield'
+      ? (destinationOptions.find(
+          item => item.asset.asset.id === (destinationAssetId ?? selected?.asset.asset.id)
+        ) ?? null)
+      : null
+  const targetAsset = from === 'shield' ? destination : selected
+  const targetNetwork = activeAccount?.networks.find(
+    item => item.chain.id === targetAsset?.chain.chain.id
+  )
+  const targetAddress =
+    to === 'private'
+      ? (targetNetwork?.privateExecutionAddress ?? '')
+      : (targetNetwork?.addresses.find(address => address.preferredForReceive)?.value ?? '')
   const hasShieldSnapshot = shieldSnapshot?.key === scopeKey
   const refreshedShieldRaw =
     managedAsset && hasShieldSnapshot
@@ -606,8 +667,7 @@ function TransferForm() {
         '0')
       : null
   const shieldSourceRaw = from === 'shield' ? refreshedShieldRaw : sourceRaw
-  const shieldTargetRaw = to === 'shield' ? refreshedShieldRaw : targetRaw
-  const routeKey = `${scopeKey}:${selected?.asset.asset.id ?? ''}:${from}:${to}`
+  const routeKey = `${scopeKey}:${selected?.asset.asset.id ?? ''}:${from}:${to}:${destination?.asset.asset.id ?? ''}`
   const routeState = routeSnapshot?.key === routeKey ? routeSnapshot.status : 'loading'
   const methodAvailable = supportedPair && routeState === 'supported'
 
@@ -798,6 +858,7 @@ function TransferForm() {
     selected &&
     eligible &&
     managedAsset &&
+    (from !== 'shield' || (destination && targetAddress)) &&
     effective &&
     shieldConnection === 'connected' &&
     shieldSourceRaw !== null &&
@@ -820,6 +881,8 @@ function TransferForm() {
       if (domain === from) setFrom(to)
     }
     setAmount('')
+    setDestinationAssetId(null)
+    if (domain === 'shield' || from === 'shield' || to === 'shield') setMethod('directly')
     setMaxSelected(false)
     setDomainPicker(null)
   }
@@ -857,13 +920,6 @@ function TransferForm() {
     selected && (shieldPair ? shieldSourceRaw : sourceRaw) !== null
       ? formatBaseUnitAmount(
           (shieldPair ? shieldSourceRaw : sourceRaw)!,
-          selected.asset.metadata.decimals
-        )
-      : '—'
-  const targetBalance =
-    selected && (shieldPair ? shieldTargetRaw : targetRaw) !== null
-      ? formatBaseUnitAmount(
-          (shieldPair ? shieldTargetRaw : targetRaw)!,
           selected.asset.metadata.decimals
         )
       : '—'
@@ -988,7 +1044,8 @@ function TransferForm() {
         amountRaw: shieldAmountState.amountRaw,
         asset: selected.asset,
         chain: selected.chain,
-        managed: managedAsset
+        managed: managedAsset,
+        ...(from === 'shield' && destination ? { destination } : {})
       })
       const result = await confidentialFundingClient.prepare(request)
       if (!scopeStillCurrent() || latestShieldReviewKey.current !== key) {
@@ -1108,13 +1165,16 @@ function TransferForm() {
   if (activeShieldReview && selected) {
     const output = formatBaseUnitAmount(
       activeShieldReview.expectedOutputRaw,
-      selected.asset.metadata.decimals
+      targetAsset?.asset.metadata.decimals ?? selected.asset.metadata.decimals
     )
     const minimum = formatBaseUnitAmount(
       activeShieldReview.minimumOutputRaw,
-      selected.asset.metadata.decimals
+      targetAsset?.asset.metadata.decimals ?? selected.asset.metadata.decimals
     )
-    const quoteFeeRaw = shieldQuoteFeeRaw(activeShieldReview)
+    const quoteFeeRaw =
+      targetAsset && targetAsset.asset.metadata.decimals !== selected.asset.metadata.decimals
+        ? null
+        : shieldQuoteFeeRaw(activeShieldReview)
     const fee =
       quoteFeeRaw !== null ? (
         <AmountDisplay
@@ -1160,7 +1220,7 @@ function TransferForm() {
                   `${accountName} · Shield · NEAR Confidential`
                 ) : (
                   <span>
-                    {accountName} · {domainLabel(to)} · {selected.chain.chain.displayName}
+                    {accountName} · {domainLabel(to)} · {targetAsset?.chain.chain.displayName}
                     <span className="ml-auto mt-1 block w-[22ch] max-w-full break-all font-mono text-xs text-balance">
                       {activeShieldReview.destinationAddress}
                     </span>
@@ -1169,11 +1229,21 @@ function TransferForm() {
             },
             {
               label: 'Estimated receive',
-              content: <AmountDisplay value={output} symbol={symbol} />
+              content: (
+                <AmountDisplay
+                  value={output}
+                  symbol={targetAsset?.asset.metadata.symbol ?? symbol}
+                />
+              )
             },
             {
               label: 'Minimum receive',
-              content: <AmountDisplay value={minimum} symbol={symbol} />
+              content: (
+                <AmountDisplay
+                  value={minimum}
+                  symbol={targetAsset?.asset.metadata.symbol ?? symbol}
+                />
+              )
             },
             ...(Number.isSafeInteger(activeShieldReview.quoteTimeEstimateSeconds) &&
             (activeShieldReview.quoteTimeEstimateSeconds ?? 0) > 0
@@ -1270,7 +1340,7 @@ function TransferForm() {
         }
       />
       <div className="page-content flex min-h-0 flex-col !px-4 !pb-2 !pt-3">
-        <div className="flex h-[122px] shrink-0 flex-col items-center justify-center gap-2 pt-2">
+        <div className="flex min-h-[155px] shrink-0 flex-col items-center justify-center gap-2 py-3">
           <input
             id="transfer-amount"
             aria-label="Transfer amount"
@@ -1303,6 +1373,7 @@ function TransferForm() {
                 assetId={selected.asset.asset.id}
                 symbol={symbol}
                 icon={selected.asset.metadata.iconUrl}
+                {...(from !== 'shield' ? { blockchain: networkIcon } : {})}
                 size={26}
               />
             ) : (
@@ -1311,53 +1382,78 @@ function TransferForm() {
             <span className="max-w-32 truncate">{symbol || 'Select asset'}</span>
             <Icon icon="lucide:chevron-down" width={14} height={14} />
           </button>
+          <div className="flex max-w-full items-center gap-2 text-xs text-muted">
+            <span className="truncate" title={sourceBalance}>
+              {formatTokenQuantity(sourceBalance)}
+            </span>
+            <button
+              type="button"
+              onClick={handleMax}
+              disabled={!selected || maxDisabled || maximum.loading}
+              aria-label="Max"
+              className="wallet-interactive shrink-0 rounded bg-white/10 px-1.5 py-0.5 disabled:opacity-40"
+            >
+              {maximum.loading ? '…' : 'Max'}
+            </button>
+          </div>
         </div>
-        <div className="relative mt-4 grid shrink-0 grid-rows-2 gap-2.5">
+        <div className="mt-4 shrink-0">
           <DomainCard
             label="From"
             accountName={accountName}
             domain={from}
             address={addressFor(from)}
-            balance={sourceBalance}
             networkName={selected?.chain.chain.displayName ?? ''}
             network={from === 'shield' ? 'near' : networkIcon}
             onNetworkClick={() => setAssetPickerOpen(true)}
             onAccountClick={() => openDomainPicker('from')}
             disabled={!selected}
-            onMax={selected ? handleMax : undefined}
-            maxDisabled={maxDisabled}
-            maxLoading={maximum.loading}
           />
+          <div className="relative h-2.5">
+            <button
+              type="button"
+              onClick={() => {
+                if (from === 'shield' && destination) setSelectedAssetId(destination.asset.asset.id)
+                else if (selected) setSelectedAssetId(selected.asset.asset.id)
+                setDestinationAssetId(null)
+                setFrom(to)
+                setTo(from)
+                setAmount('')
+                setMaxSelected(false)
+              }}
+              aria-label="Switch transfer direction"
+              disabled={!selected}
+              className={cn(
+                'wallet-interactive absolute left-1/2 top-1/2 z-10 flex size-8 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-lg border border-white/10 bg-card hover:bg-wallet-selected active:brightness-95 focus-visible:outline-2 focus-visible:outline-primary',
+                walletMode === 'private' ? 'text-private' : 'text-foreground'
+              )}
+            >
+              <Icon icon="lucide:arrow-up-down" width={18} height={18} />
+            </button>
+          </div>
           <DomainCard
             label="To"
             accountName={accountName}
             domain={to}
-            address={addressFor(to)}
-            balance={targetBalance}
-            networkName={selected?.chain.chain.displayName ?? ''}
-            network={to === 'shield' ? 'near' : networkIcon}
-            onNetworkClick={() => setAssetPickerOpen(true)}
+            address={to === 'shield' ? '' : targetAddress}
+            networkName={targetAsset?.chain.chain.displayName ?? 'Select network'}
+            network={
+              targetAsset
+                ? resolveChainIconAlias(
+                    targetAsset.chain.chain.family,
+                    targetAsset.chain.chain.displayName,
+                    targetAsset.chain.chain.id
+                  )
+                : networkIcon
+            }
+            onNetworkClick={() => {
+              setNetworkSearch('')
+              setNetworkPickerOpen(true)
+            }}
+            showNetwork={from === 'shield'}
             onAccountClick={() => openDomainPicker('to')}
             disabled={!selected}
           />
-          <button
-            type="button"
-            onClick={() => {
-              if (selected) setSelectedAssetId(selected.asset.asset.id)
-              setFrom(to)
-              setTo(from)
-              setAmount('')
-              setMaxSelected(false)
-            }}
-            aria-label="Switch transfer direction"
-            disabled={!selected}
-            className={cn(
-              'wallet-interactive absolute left-1/2 top-1/2 z-10 flex size-8 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-lg border border-white/10 bg-card hover:bg-wallet-selected active:brightness-95 focus-visible:outline-2 focus-visible:outline-primary',
-              walletMode === 'private' ? 'text-private' : 'text-foreground'
-            )}
-          >
-            <Icon icon="lucide:arrow-up-down" width={18} height={18} />
-          </button>
         </div>
         {!selected && loadState !== 'loading' && loadState !== 'error' && (
           <p role="status" className="mt-3 text-center text-sm text-muted">
@@ -1373,18 +1469,18 @@ function TransferForm() {
           <div
             role="radiogroup"
             aria-label="Transfer method"
-            className="mt-auto grid shrink-0 grid-cols-2 gap-[11px] pt-3"
+            className="mt-auto grid shrink-0 grid-cols-2 gap-2.5 pt-6"
           >
             <MethodCard
               title="Cluster"
-              detail="Multiple transfers"
+              detail="Multiple transactions"
               selected={method === 'cluster'}
               disabled={!eligible || !managedAsset}
               onClick={() => setMethod('cluster')}
             />
             <MethodCard
               title="Directly"
-              detail="NEAR Confidential"
+              detail="One transaction"
               selected={method === 'directly'}
               disabled={supportedPair && !methodAvailable}
               onClick={() => setMethod('directly')}
@@ -1444,7 +1540,7 @@ function TransferForm() {
               ? 'Review Cluster'
               : shieldPair
                 ? 'Move'
-                : 'Transfer'}
+                : 'Move'}
         </Button>
       </div>
 
@@ -1458,38 +1554,101 @@ function TransferForm() {
             <DialogTitle>Select asset</DialogTitle>
             <DialogDescription className="sr-only">Choose an asset to transfer.</DialogDescription>
           </DialogHeader>
-          <div className="space-y-1">
-            {pickerRows.map(item => (
+          <input
+            aria-label="Search tokens"
+            placeholder="Search token"
+            value={assetSearch}
+            onChange={event => setAssetSearch(event.target.value)}
+            className="h-12 w-full rounded-lg border border-white/5 bg-card px-3 text-sm outline-none focus:border-primary"
+          />
+          <div className="flex gap-2 overflow-x-auto pb-1">
+            <button
+              type="button"
+              aria-label="All networks"
+              aria-pressed={assetChainId === 'all'}
+              onClick={() => setAssetChainId('all')}
+              className={cn(
+                'wallet-interactive h-10 shrink-0 rounded-md border bg-card px-2 text-sm',
+                assetChainId === 'all' ? 'border-primary' : 'border-white/10'
+              )}
+            >
+              All
+            </button>
+            {Array.from(
+              new Map(pickerRows.map(item => [item.chain.chain.id, item.chain])).values()
+            ).map(chain => (
               <button
-                key={item.asset.asset.id}
+                key={chain.chain.id}
                 type="button"
-                onClick={() => {
-                  setSelectedAssetId(item.asset.asset.id)
-                  setAmount('')
-                  setMaxSelected(false)
-                  setAssetPickerOpen(false)
-                }}
-                className="flex w-full items-center gap-3 rounded-lg bg-card p-3 text-left hover:bg-accent"
+                aria-label={chain.chain.displayName}
+                aria-pressed={assetChainId === chain.chain.id}
+                onClick={() => setAssetChainId(chain.chain.id)}
+                className={cn(
+                  'wallet-interactive flex size-10 shrink-0 items-center justify-center rounded-md border bg-card',
+                  assetChainId === chain.chain.id ? 'border-primary' : 'border-white/10'
+                )}
               >
-                <TokenIcon
-                  assetId={item.asset.asset.id}
-                  symbol={item.asset.metadata.symbol}
-                  icon={item.asset.metadata.iconUrl}
-                  size={30}
-                />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm">{item.asset.metadata.symbol}</span>
-                  <span className="block truncate text-xs text-muted">
-                    {item.chain.chain.displayName}
-                  </span>
-                </span>
-                <span className="min-w-0 max-w-[45%] break-all text-right font-sans text-xs tabular-nums">
-                  {formatTokenQuantity(
-                    formatBaseUnitAmount(item.sourceRaw, item.asset.metadata.decimals)
+                <ChainIcon
+                  chain={resolveChainIconAlias(
+                    chain.chain.family,
+                    chain.chain.displayName,
+                    chain.chain.id
                   )}
-                </span>
+                  width={28}
+                  height={28}
+                />
               </button>
             ))}
+          </div>
+          <div className="space-y-1">
+            {pickerRows
+              .filter(
+                item =>
+                  (assetChainId === 'all' || item.chain.chain.id === assetChainId) &&
+                  `${item.asset.metadata.symbol} ${item.asset.metadata.name} ${item.chain.chain.displayName}`
+                    .toLowerCase()
+                    .includes(assetSearch.trim().toLowerCase())
+              )
+              .map(item => (
+                <button
+                  key={item.asset.asset.id}
+                  type="button"
+                  onClick={() => {
+                    setSelectedAssetId(item.asset.asset.id)
+                    setDestinationAssetId(null)
+                    setAmount('')
+                    setMaxSelected(false)
+                    setAssetPickerOpen(false)
+                  }}
+                  className="flex min-h-[70px] w-full items-center gap-3 rounded-lg text-left hover:bg-accent"
+                >
+                  <TokenIcon
+                    assetId={item.asset.asset.id}
+                    symbol={item.asset.metadata.symbol}
+                    icon={item.asset.metadata.iconUrl}
+                    blockchain={resolveChainIconAlias(
+                      item.chain.chain.family,
+                      item.chain.chain.displayName,
+                      item.chain.chain.id
+                    )}
+                    size={32}
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-base">{item.asset.metadata.symbol}</span>
+                    <span className="block truncate text-xs text-muted">
+                      {item.chain.chain.displayName}
+                    </span>
+                  </span>
+                  <span className="min-w-0 max-w-[45%] truncate text-right text-base tabular-nums">
+                    {formatTokenQuantity(
+                      formatBaseUnitAmount(item.sourceRaw, item.asset.metadata.decimals)
+                    )}
+                    <span className="block truncate text-xs text-muted">
+                      {item.valueUsd !== null ? formatFiatAmount(item.valueUsd) : '—'}
+                    </span>
+                  </span>
+                </button>
+              ))}
             {pickerRows.length === 0 && (
               <p className="py-4 text-center text-sm text-muted">
                 {loadState === 'loading' || (from === 'shield' && shieldConnection === 'checking')
@@ -1497,6 +1656,66 @@ function TransferForm() {
                   : 'No assets available'}
               </p>
             )}
+          </div>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={networkPickerOpen} onOpenChange={setNetworkPickerOpen}>
+        <DialogContent
+          position="bottom"
+          showCloseButton={false}
+          data-wallet-mode={walletMode}
+          className="inset-0 flex h-full flex-col gap-4 rounded-none border-0 bg-background p-0 shadow-none"
+        >
+          <DialogTitle className="sr-only">Select Network</DialogTitle>
+          <DialogDescription className="sr-only">
+            Choose the network to receive your funds.
+          </DialogDescription>
+          <PageHeader title="Select Network" showBack onBack={() => setNetworkPickerOpen(false)} />
+          <div className="min-h-0 overflow-y-auto px-4 pb-4">
+            <input
+              aria-label="Search networks"
+              placeholder="Search network"
+              value={networkSearch}
+              onChange={event => setNetworkSearch(event.target.value)}
+              className="mb-4 h-12 w-full rounded-lg border border-white/5 bg-card px-3 text-sm outline-none focus:border-primary"
+            />
+            <p className="mb-2 text-xs text-muted">Networks for {symbol}</p>
+            <div className="space-y-1">
+              {destinationOptions
+                .filter(item =>
+                  item.chain.chain.displayName
+                    .toLowerCase()
+                    .includes(networkSearch.trim().toLowerCase())
+                )
+                .map(item => (
+                  <button
+                    type="button"
+                    key={item.asset.asset.id}
+                    aria-label={item.chain.chain.displayName}
+                    aria-pressed={destination?.asset.asset.id === item.asset.asset.id}
+                    onClick={() => {
+                      setDestinationAssetId(item.asset.asset.id)
+                      setNetworkPickerOpen(false)
+                      setShieldError(null)
+                    }}
+                    className={cn(
+                      'wallet-interactive flex h-16 w-full items-center gap-3 rounded-lg px-3 text-left text-base hover:bg-wallet-selected',
+                      destination?.asset.asset.id === item.asset.asset.id && 'bg-wallet-selected'
+                    )}
+                  >
+                    <ChainIcon
+                      chain={resolveChainIconAlias(
+                        item.chain.chain.family,
+                        item.chain.chain.displayName,
+                        item.chain.chain.id
+                      )}
+                      width={28}
+                      height={28}
+                    />
+                    <span>{item.chain.chain.displayName}</span>
+                  </button>
+                ))}
+            </div>
           </div>
         </DialogContent>
       </Dialog>

@@ -663,6 +663,16 @@ async function mockProtocolApis(
           symbol: 'USDC'
         },
         {
+          assetId: BASE_USDC_ASSET,
+          blockchain: 'base',
+          contractAddress: BASE_USDC_CONTRACT,
+          coingeckoId: 'usd-coin',
+          decimals: 6,
+          price: 1,
+          priceUpdatedAt,
+          symbol: 'USDC'
+        },
+        {
           assetId: POL_ASSET,
           blockchain: 'polygon',
           contractAddress: null,
@@ -1238,7 +1248,9 @@ async function mockProtocolApis(
         intent: {
           standard: 'erc191',
           payload: JSON.stringify(
-            quote.originAsset === ETH_ASSET || quote.originAsset === TRIAL_ASSET
+            quote.originAsset === ETH_ASSET ||
+              quote.originAsset === TRIAL_ASSET ||
+              quote.originAsset === USDC_ASSET
               ? {
                   signer_id: quote.signerId,
                   verifying_contract: 'intents.far',

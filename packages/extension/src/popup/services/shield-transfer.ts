@@ -8,7 +8,10 @@ import {
   getBundledInitialProductAssetDefinitions,
   parseAssetId
 } from '@/core/chains/registry'
-import { getAssetProtocolSourceMappings } from '@/core/prices/asset-market-mappings'
+import {
+  getAssetMarketMappings,
+  getAssetProtocolSourceMappings
+} from '@/core/prices/asset-market-mappings'
 import type { Network } from '@/types'
 import { isAddress } from 'viem'
 import type { PrepareConfidentialFundingRequest } from './confidential-funding-client'
@@ -273,11 +276,52 @@ export function isShieldTransferRoute(from: TransferDomain, to: TransferDomain):
 }
 
 export function isClusterTransferRoute(from: TransferDomain, to: TransferDomain): boolean {
-  return (
-    (from === 'public' && to === 'private') ||
-    (from === 'private' && to === 'public') ||
-    (from === 'shield' && (to === 'public' || to === 'private'))
+  return (from === 'public' && to === 'private') || (from === 'private' && to === 'public')
+}
+
+function isShieldMoveDestination(
+  source: ShieldFundingAsset,
+  destination: ShieldFundingAsset,
+  network: Network
+): boolean {
+  const valid = (item: ShieldFundingAsset) =>
+    item.chain.chain.family === 'evm' &&
+    item.chain.chain.capabilities.transaction.status === 'available' &&
+    item.asset.asset.chainId === item.chain.chain.id &&
+    item.managed.assetId === item.asset.asset.id &&
+    item.managed.chainId === item.chain.chain.id
+  if (!valid(source) || !valid(destination)) return false
+  if (source.asset.asset.id === destination.asset.asset.id) {
+    return source.managed.protocolAssetId === destination.managed.protocolAssetId
+  }
+  if (source.chain.chain.id === destination.chain.chain.id) return false
+
+  const chains = createInitialProductChainRegistry(network)
+  const assets = createAssetRegistry(chains, getBundledInitialProductAssetDefinitions(network))
+  const marketIds = new Map(
+    getAssetMarketMappings(network, assets).map(mapping => [mapping.assetId, mapping.marketAssetId])
   )
+  const protocolIds = new Map(
+    getAssetProtocolSourceMappings(network, assets).map(mapping => [
+      mapping.assetId,
+      mapping.protocolAssetId
+    ])
+  )
+  const sourceMarketId = marketIds.get(source.asset.asset.id)
+  return Boolean(
+    sourceMarketId &&
+    sourceMarketId === marketIds.get(destination.asset.asset.id) &&
+    protocolIds.get(source.asset.asset.id) === source.managed.protocolAssetId &&
+    protocolIds.get(destination.asset.asset.id) === destination.managed.protocolAssetId
+  )
+}
+
+export function listShieldMoveDestinations(
+  source: ShieldFundingAsset,
+  options: readonly ShieldFundingAsset[],
+  network: Network
+): readonly ShieldFundingAsset[] {
+  return options.filter(option => isShieldMoveDestination(source, option, network))
 }
 
 export function matchesShieldReview(
@@ -418,8 +462,15 @@ export function buildShieldTransferRequest(
     asset: PortfolioAssetView
     chain: PortfolioChainView
     managed: ShieldTransferAsset
+    destination?: ShieldFundingAsset
   }>
 ): PrepareConfidentialFundingRequest {
+  const source: ShieldFundingAsset = {
+    asset: input.asset,
+    chain: input.chain,
+    managed: input.managed
+  }
+  const destination = input.destination ?? source
   if (
     !(input.method === 'cluster'
       ? isClusterTransferRoute(input.from, input.to)
@@ -427,15 +478,26 @@ export function buildShieldTransferRequest(
     input.chain.chain.family !== 'evm' ||
     input.managed.assetId !== input.asset.asset.id ||
     input.managed.chainId !== input.chain.chain.id ||
+    (input.destination !== undefined &&
+      (input.from !== 'shield' ||
+        (input.to !== 'public' && input.to !== 'private') ||
+        input.method === 'cluster' ||
+        !isShieldMoveDestination(source, destination, input.network))) ||
     !/^[1-9]\d*$/.test(input.amountRaw)
   ) {
     throw new Error('Shield transfer is unavailable')
   }
-  const routeAsset = Object.freeze({
+  const sourceRoute = Object.freeze({
     chainId: input.chain.chain.id,
     chainName: input.managed.blockchain,
     assetId: input.managed.assetId,
     protocolAssetId: input.managed.protocolAssetId
+  })
+  const destinationRoute = Object.freeze({
+    chainId: destination.chain.chain.id,
+    chainName: destination.managed.blockchain,
+    assetId: destination.managed.assetId,
+    protocolAssetId: destination.managed.protocolAssetId
   })
   return Object.freeze({
     network: input.network,
@@ -445,8 +507,8 @@ export function buildShieldTransferRequest(
       input.method === 'cluster' ? 'cluster' : input.to === 'shield' ? 'deposit' : 'withdraw',
     sourceDomain: input.from,
     destinationDomain: input.to,
-    source: Object.freeze({ ...routeAsset, amountRaw: input.amountRaw }),
-    destination: routeAsset,
+    source: Object.freeze({ ...sourceRoute, amountRaw: input.amountRaw }),
+    destination: destinationRoute,
     slippageBps: 50
   })
 }

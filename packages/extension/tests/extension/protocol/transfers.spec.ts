@@ -44,8 +44,19 @@ async function readStoredShieldPlan(page: Page) {
           accountId: string
           sourceDomain: string
           destinationDomain: string
-          source: { amountRaw: string; address: string }
-          destination: { address: string }
+          source: {
+            amountRaw: string
+            address: string
+            assetId: string
+            protocolAssetId: string
+            chainId: string
+          }
+          destination: {
+            address: string
+            assetId: string
+            protocolAssetId: string
+            chainId: string
+          }
           signerId: string
           requiresDeposit: boolean
           withdraws: readonly { amountRaw: string }[]
@@ -65,7 +76,13 @@ async function readStoredShieldPlan(page: Page) {
       destinationDomain: stored.destinationDomain,
       sourceAmountRaw: stored.source.amountRaw,
       sourceAddress: stored.source.address,
+      sourceAssetId: stored.source.assetId,
+      sourceProtocolAssetId: stored.source.protocolAssetId,
+      sourceChainId: stored.source.chainId,
       destinationAddress: stored.destination.address,
+      destinationAssetId: stored.destination.assetId,
+      destinationProtocolAssetId: stored.destination.protocolAssetId,
+      destinationChainId: stored.destination.chainId,
       signerId: stored.signerId,
       requiresDeposit: stored.requiresDeposit,
       withdrawCount: stored.withdraws.length,
@@ -91,12 +108,19 @@ async function readShieldTransferIdentity(page: Page) {
     const ethereum = account.networks.find(
       (entry: { chainId: string }) => entry.chainId === 'eip155:1'
     )
+    const base = account.networks.find(
+      (entry: { chainId: string }) => entry.chainId === 'eip155:8453'
+    )
     return {
       walletId: account.walletId as string,
       accountId: account.accountId as string,
       main: ethereum.addresses.find(
         (entry: { preferredForReceive: boolean }) => entry.preferredForReceive
       ).value as string,
+      base:
+        (base?.addresses.find(
+          (entry: { preferredForReceive: boolean }) => entry.preferredForReceive
+        )?.value as string | undefined) ?? null,
       private: ethereum.privateExecutionAddress as string
     }
   })
@@ -104,13 +128,34 @@ async function readShieldTransferIdentity(page: Page) {
   return identity
 }
 
-async function openShieldEthTransfer(
+async function openShieldTransfer(
   page: Page,
   from: 'Public' | 'Private' | 'Shield',
   to: 'Public' | 'Private' | 'Shield',
-  cluster = false
+  cluster = false,
+  symbol = 'ETH'
 ) {
   await openNearShieldAction(page, 'Move')
+  const sources = page.getByRole('dialog', { name: 'Move from' })
+  await expect(sources.getByRole('button', { name: 'Public account' })).toBeVisible()
+  await expect(sources.getByRole('button', { name: 'Private account' })).toBeVisible()
+  await expect(sources.getByRole('button', { name: 'NEAR Confidential Intents' })).toBeVisible()
+  await captureScreenshot(page, `shield-${from.toLowerCase()}-move-source-picker.png`)
+  await sources
+    .getByRole('button', {
+      name: from === 'Shield' ? 'NEAR Confidential Intents' : `${from} account`
+    })
+    .click()
+  const picker = page.getByRole('dialog', { name: /^Select token/ })
+  const token = picker
+    .getByRole('button')
+    .filter({ has: page.getByText(symbol, { exact: true }) })
+    .filter({ has: page.getByText('Ethereum', { exact: true }) })
+  await expect(token).toHaveCount(1, { timeout: 30_000 })
+  await captureScreenshot(page, `shield-${from.toLowerCase()}-move-token-picker.png`)
+  await token.click()
+  await expect(page.getByRole('heading', { name: 'Move', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Select transfer asset' })).toContainText(symbol)
   const initialFrom = await page
     .getByRole('button', { name: /^From: .* Change account$/ })
     .getAttribute('aria-label')
@@ -123,47 +168,20 @@ async function openShieldEthTransfer(
       timeout: 30_000
     })
   }
-  if (from !== 'Shield') {
-    const fromAccount = page.getByRole('button', { name: /^From: .* Change account$/ })
-    await expect(fromAccount).toBeEnabled({ timeout: 30_000 })
-    await fromAccount.click()
+  await expect(page.getByRole('button', { name: `From: ${from}. Change account` })).toBeVisible()
+  if (from === 'Shield') await waitForShieldBalances()
+  if (to !== (from === 'Shield' ? 'Public' : 'Shield')) {
+    await page.getByRole('button', { name: /^To: .* Change account$/ }).click()
     await page
       .getByRole('dialog')
       .filter({ has: page.getByRole('tablist', { name: 'Wallet accounts' }) })
-      .getByRole('button', { name: `Select ${from} account` })
-      .click()
-  } else {
-    await waitForShieldBalances()
-  }
-  await expect(page.getByRole('button', { name: 'Select transfer asset' })).not.toContainText('ZEC')
-  await page.getByRole('button', { name: 'Select transfer asset' }).click()
-  const picker = page.getByRole('dialog', { name: 'Select asset' })
-  await expect(picker.getByText('ZEC', { exact: true })).toHaveCount(0)
-  const eth = picker
-    .getByRole('button')
-    .filter({ has: page.getByText('ETH', { exact: true }) })
-    .filter({ has: page.getByText('Ethereum', { exact: true }) })
-  await expect(eth).toHaveCount(1, { timeout: 30_000 })
-  await expect(eth.getByText('ETH', { exact: true })).toHaveCount(1)
-  await eth.click()
-  if (from === 'Shield') {
-    await page.getByRole('button', { name: /^From: .* Change account$/ }).click()
-    await page
-      .getByRole('dialog')
-      .filter({ has: page.getByRole('tablist', { name: 'Wallet accounts' }) })
-      .getByRole('button', { name: 'Select Shield balance' })
+      .getByRole('button', { name: `Select ${to} ${to === 'Shield' ? 'balance' : 'account'}` })
       .click()
   }
-  await page.getByRole('button', { name: /^To: .* Change account$/ }).click()
-  await page
-    .getByRole('dialog')
-    .filter({
-      has: page.getByRole('tablist', { name: 'Wallet accounts' })
-    })
-    .getByRole('button', { name: `Select ${to} ${to === 'Shield' ? 'balance' : 'account'}` })
-    .click()
+  await expect(page.getByRole('button', { name: `To: ${to}. Change account` })).toBeVisible()
   if (cluster) await page.getByRole('radio', { name: /^Cluster/ }).click()
   if (from !== 'Shield') await waitForShieldBalances()
+  await captureScreenshot(page, `shield-${from.toLowerCase()}-to-${to.toLowerCase()}-move-form.png`)
 }
 
 async function openNearShieldAction(page: Page, action: 'Move' | 'Send' | 'Swap' | 'Receive') {
@@ -236,35 +254,48 @@ test('ZEC Move locks the current account as the destination in real MV3', async 
   })
 
   for (const [source, destination] of [
-    ['Move to Shield', addresses.shielded],
-    ['Move to Public', addresses.transparent]
+    ['Public account', addresses.shielded],
+    ['Zcash Shield', addresses.transparent]
   ] as const) {
     await popup.goto(`chrome-extension://${extensionId}/index.html`)
     await popup.getByRole('button', { name: 'Shield Funds' }).click()
     await expect(popup.getByRole('button', { name: /NEAR Confidential/ })).toBeVisible()
     await expect(popup.getByRole('button', { name: /Zcash shield/ })).toBeVisible()
     await popup.getByLabel('Shield actions').getByRole('button', { name: 'Move' }).click()
-    await popup
-      .getByRole('dialog', { name: 'Move in' })
-      .getByRole('button', { name: /Zcash/ })
-      .click()
-    const sources = popup.getByRole('dialog', { name: 'Move ZEC' })
-    await expect(sources.getByRole('button', { name: 'Move to Shield' })).toBeVisible()
-    await expect(sources.getByRole('button', { name: 'Move to Public' })).toBeVisible()
+    const sources = popup.getByRole('dialog', { name: 'Move from' })
+    await expect(sources.getByRole('button', { name: 'Public account' })).toBeVisible()
+    await expect(sources.getByRole('button', { name: 'Zcash Shield' })).toBeVisible()
     await captureScreenshot(popup, 'shield-zec-move-source-picker.png')
     await sources.getByRole('button', { name: source }).click()
+    const picker = popup.getByRole('dialog', { name: /^Select token/ })
+    if (source === 'Zcash Shield') {
+      await expect(picker.getByText('ETH', { exact: true })).toHaveCount(0)
+    }
+    await expect(picker.getByText('ZEC', { exact: true })).toBeVisible()
+    await captureScreenshot(popup, 'shield-zec-move-token-picker.png')
+    await picker
+      .getByRole('button')
+      .filter({ has: popup.getByText('ZEC', { exact: true }) })
+      .click()
     await expect(popup.getByRole('heading', { name: 'Move', exact: true })).toBeVisible()
     await expect(popup.locator('#zcash-send-recipient')).toHaveCount(0)
     await expect(popup.locator(`[title="${destination}"]`)).toBeVisible()
-    if (source === 'Move to Shield') {
-      await expect(popup.getByText('Public balance').first().locator('..')).toContainText('2 ZEC')
-      await expect(popup.getByRole('textbox', { name: 'Amount' })).toHaveCount(0)
+    await expect(popup.getByRole('button', { name: 'Switch move direction' })).toBeVisible()
+    if (source === 'Public account') {
+      await expect(popup.locator('[title="2"]')).toBeVisible()
+      await expect(popup.getByRole('textbox', { name: 'ZEC amount' })).toHaveCount(0)
       await captureScreenshot(popup, 'shield-zec-move-to-shield.png')
-      await popup.getByRole('button', { name: 'Review Shield' }).click()
+      await popup.getByRole('button', { name: 'Move', exact: true }).click()
       await expect(popup.getByRole('dialog', { name: 'Shield Funds' })).toBeVisible()
       await expect(popup.getByRole('button', { name: 'Shield Now' })).toBeVisible()
     } else {
-      await expect(popup.getByRole('button', { name: 'Choose send source' })).toBeDisabled()
+      const amount = popup.getByRole('textbox', { name: 'ZEC amount' })
+      await expect(amount).toBeVisible()
+      await amount.fill('0.1')
+      await popup.getByRole('button', { name: 'Switch move direction' }).click()
+      await expect(popup.getByRole('textbox', { name: 'ZEC amount' })).toHaveCount(0)
+      await popup.getByRole('button', { name: 'Switch move direction' }).click()
+      await expect(popup.getByRole('textbox', { name: 'ZEC amount' })).toHaveValue('')
       await captureScreenshot(popup, 'shield-zec-move-to-public.png')
     }
   }
@@ -539,7 +570,7 @@ for (const source of ['Public', 'Private'] as const) {
     const identity = await readShieldTransferIdentity(popup)
     const sourceAddress = source === 'Public' ? identity.main : identity.private
 
-    await openShieldEthTransfer(popup, source, 'Shield')
+    await openShieldTransfer(popup, source, 'Shield')
     await popup.getByRole('textbox', { name: 'Transfer amount' }).fill('0.01')
     await expect(popup.getByRole('button', { name: 'Move', exact: true })).toBeEnabled()
     await popup.getByRole('button', { name: 'Move', exact: true }).click()
@@ -559,7 +590,12 @@ for (const source of ['Public', 'Private'] as const) {
     })
     expect(plan?.sourceAddress.toLowerCase() === sourceAddress.toLowerCase()).toBe(true)
     expect(plan?.signerId.toLowerCase() === identity.main.toLowerCase()).toBe(true)
-    const quote = api.getQuoteRequests().at(-1)
+    const quote = api
+      .getQuoteRequests()
+      .filter(
+        request => request.depositType === 'ORIGIN_CHAIN' && request.amount === '10000000000000000'
+      )
+      .at(-1)
     expect(quote).toMatchObject({
       originAsset: ETH_ASSET,
       amount: '10000000000000000',
@@ -608,8 +644,31 @@ for (const source of ['Public', 'Private'] as const) {
   })
 }
 
-for (const destination of ['Public', 'Private'] as const) {
-  test(`withdraws part of an existing Shield ETH balance to ${destination} without an EVM broadcast`, async ({
+for (const route of [
+  {
+    destination: 'Public',
+    symbol: 'USDC',
+    sourceAssetId: 'eip155:1/erc20:0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48',
+    sourceProtocolAssetId: 'nep141:eth-0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48.omft.near',
+    destinationAssetId: 'eip155:8453/erc20:0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
+    destinationProtocolAssetId: 'nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near',
+    network: 'Base',
+    balanceRaw: '20000',
+    amountRaw: '10000'
+  },
+  {
+    destination: 'Private',
+    symbol: 'ETH',
+    sourceAssetId: 'eip155:1/slip44:60',
+    sourceProtocolAssetId: ETH_ASSET,
+    destinationAssetId: 'eip155:1/slip44:60',
+    destinationProtocolAssetId: ETH_ASSET,
+    network: 'Ethereum',
+    balanceRaw: '20000000000000000',
+    amountRaw: '10000000000000000'
+  }
+] as const) {
+  test(`withdraws part of an existing Shield ${route.symbol} balance to ${route.destination} on ${route.network} without an EVM broadcast`, async ({
     context,
     popup,
     extensionId
@@ -618,7 +677,8 @@ for (const destination of ['Public', 'Private'] as const) {
     const rpc = await mockEvmNetwork(context, { allowBroadcast: true })
     await mockBitcoinNetwork(context)
     const api = await mockProtocolApis(context, {
-      confidentialBalanceRaw: '20000000000000000'
+      confidentialBalanceRaw: route.balanceRaw,
+      confidentialAssetId: route.sourceProtocolAssetId
     })
     await waitForBackgroundWalletInitialization(popup)
     await importTestWallet(popup)
@@ -627,10 +687,34 @@ for (const destination of ['Public', 'Private'] as const) {
       timeout: 30_000
     })
     const identity = await readShieldTransferIdentity(popup)
-    const destinationAddress = destination === 'Public' ? identity.main : identity.private
+    if (route.network === 'Base' && !identity.base) throw new Error('Base account unavailable')
+    const destinationAddress = route.destination === 'Public' ? identity.base! : identity.private
 
-    await openShieldEthTransfer(popup, 'Shield', destination)
+    await openShieldTransfer(popup, 'Shield', route.destination, false, route.symbol)
+    if (route.destination === 'Public') {
+      await popup.getByRole('button', { name: 'Select to network' }).click()
+      const networks = popup.getByRole('dialog', { name: 'Select Network' })
+      await expect(networks.getByRole('button', { name: 'Base' })).toBeVisible()
+      await captureScreenshot(popup, 'shield-usdc-destination-networks.png')
+      await networks.getByRole('button', { name: 'Base' }).click()
+      await expect(popup.getByRole('button', { name: 'Select to network' })).toContainText('Base')
+      await captureScreenshot(popup, 'shield-usdc-to-base-move-form.png')
+    } else {
+      const amount = popup.getByRole('textbox', { name: 'Transfer amount' })
+      await amount.fill('0.01')
+      await popup.getByRole('button', { name: 'Switch transfer direction' }).click()
+      await expect(amount).toHaveValue('')
+      await expect(
+        popup.getByRole('button', { name: 'From: Private. Change account' })
+      ).toBeVisible()
+      await popup.getByRole('button', { name: 'Switch transfer direction' }).click()
+      await expect(
+        popup.getByRole('button', { name: 'From: Shield. Change account' })
+      ).toBeVisible()
+      await expect(amount).toHaveValue('')
+    }
     await popup.getByRole('textbox', { name: 'Transfer amount' }).fill('0.01')
+    await expect(popup.getByRole('radio', { name: /^Cluster/ })).toHaveCount(0)
     await expect(popup.getByRole('button', { name: 'Move', exact: true })).toBeEnabled()
     await popup.getByRole('button', { name: 'Move', exact: true }).click()
     await expect(popup.getByRole('heading', { name: 'Confirm Move' })).toBeVisible()
@@ -642,23 +726,38 @@ for (const destination of ['Public', 'Private'] as const) {
       keyDomainId: identity.walletId,
       accountId: identity.accountId,
       sourceDomain: 'shield',
-      destinationDomain: destination.toLowerCase(),
-      sourceAmountRaw: '10000000000000000',
+      destinationDomain: route.destination.toLowerCase(),
+      sourceAmountRaw: route.amountRaw,
+      sourceAssetId: route.sourceAssetId,
+      sourceProtocolAssetId: route.sourceProtocolAssetId,
+      destinationAssetId: route.destinationAssetId,
+      destinationProtocolAssetId: route.destinationProtocolAssetId,
+      destinationChainId: route.destination === 'Public' ? 'eip155:8453' : 'eip155:1',
       requiresDeposit: false,
       withdrawCount: 1,
-      withdrawAmounts: ['10000000000000000']
+      withdrawAmounts: [route.amountRaw]
     })
     expect(plan?.signerId.toLowerCase() === identity.main.toLowerCase()).toBe(true)
     expect(plan?.destinationAddress.toLowerCase() === destinationAddress.toLowerCase()).toBe(true)
-    expect(api.getQuoteRequests().at(-1)).toMatchObject({
-      amount: '10000000000000000',
+    const quote = api
+      .getQuoteRequests()
+      .filter(
+        request =>
+          request.depositType === 'CONFIDENTIAL_INTENTS' &&
+          request.recipientType === 'DESTINATION_CHAIN' &&
+          request.amount === route.amountRaw &&
+          request.destinationAsset === route.destinationProtocolAssetId
+      )
+      .at(-1)
+    expect(quote).toMatchObject({
+      originAsset: route.sourceProtocolAssetId,
+      destinationAsset: route.destinationProtocolAssetId,
+      amount: route.amountRaw,
       depositType: 'CONFIDENTIAL_INTENTS',
       recipientType: 'DESTINATION_CHAIN',
       dry: true
     })
-    expect(
-      api.getQuoteRequests().at(-1)?.recipient.toLowerCase() === destinationAddress.toLowerCase()
-    ).toBe(true)
+    expect(quote?.recipient.toLowerCase() === destinationAddress.toLowerCase()).toBe(true)
     expect(
       api
         .getConfidentialAuthSignerIds()
@@ -669,7 +768,8 @@ for (const destination of ['Public', 'Private'] as const) {
 
     await popup.getByRole('button', { name: 'Move', exact: true }).click()
     await expect.poll(api.getConfidentialIntentSubmitCount, { timeout: 60_000 }).toBe(1)
-    api.setConfidentialBalanceRaw('10000000000000000')
+    const remainingRaw = (BigInt(route.balanceRaw) - BigInt(route.amountRaw)).toString()
+    api.setConfidentialBalanceRaw(remainingRaw)
     await expect
       .poll(async () => (await readStoredShieldPlan(popup))?.phase, {
         timeout: 90_000
@@ -681,7 +781,7 @@ for (const destination of ['Public', 'Private'] as const) {
     await popup.getByRole('button', { name: /NEAR Confidential/ }).click()
     await popup.getByRole('button', { name: 'Refresh Shield balance' }).click()
     await expect
-      .poll(() => hasStoredShieldBalance(popup, '10000000000000000'), {
+      .poll(() => hasStoredShieldBalance(popup, remainingRaw), {
         timeout: 30_000
       })
       .toBe(true)
@@ -691,7 +791,7 @@ for (const destination of ['Public', 'Private'] as const) {
       phase: 'ready',
       withdrawCount: 1
     })
-    expect(await hasStoredShieldBalance(popup, '10000000000000000')).toBe(true)
+    expect(await hasStoredShieldBalance(popup, remainingRaw)).toBe(true)
     expect(api.getConfidentialIntentSubmitCount()).toBe(1)
     expect(rpc.getBroadcastCount()).toBe(0)
   })
@@ -853,113 +953,93 @@ test('swaps a Shield-only holding to Shield USDC without adding a Public asset a
   expect(JSON.stringify(publicAssetState.userAssets)).not.toContain(TRIAL_CONTRACT)
 })
 
-for (const source of ['Public', 'Shield'] as const) {
-  test(`submits ${source} Cluster as one scheduled batch to one destination and restores its completion`, async ({
-    context,
-    popup,
-    extensionId
-  }) => {
-    test.setTimeout(180_000)
-    const rpc = await mockEvmNetwork(context, { allowBroadcast: true })
-    await mockBitcoinNetwork(context)
-    const api = await mockProtocolApis(context, {
-      confidentialBalanceRaw: source === 'Shield' ? '20000000000000000' : '0'
-    })
-    await waitForBackgroundWalletInitialization(popup)
-    await importTestWallet(popup)
-    await popup.goto(`chrome-extension://${extensionId}/index.html`)
-    await expect(popup.getByRole('button', { name: 'View ETH details on Ethereum' })).toBeVisible({
-      timeout: 30_000
-    })
-    const identity = await readShieldTransferIdentity(popup)
-    const destination = source === 'Public' ? 'Private' : 'Public'
-    const destinationAddress = destination === 'Private' ? identity.private : identity.main
-    await openShieldEthTransfer(popup, source, destination, true)
-    await popup.getByRole('textbox', { name: 'Transfer amount' }).fill('0.01')
-    await popup.getByRole('button', { name: 'Review Cluster', exact: true }).click()
-    await expect(popup.getByRole('heading', { name: 'Cluster transfer' })).toBeVisible()
-    const plan = await readStoredShieldPlan(popup)
-    expect(plan).toMatchObject({
-      operation: 'cluster',
-      phase: 'prepared',
-      withdrawCount: 3,
-      sourceDomain: source.toLowerCase(),
-      destinationDomain: destination.toLowerCase(),
-      requiresDeposit: source !== 'Shield'
-    })
-    if (source === 'Public') {
-      await captureScreenshot(popup, 'cluster-public-review.png')
-    } else {
-      await captureScreenshot(popup, 'cluster-shield-review.png')
-    }
-    await popup.getByRole('button', { name: 'Confirm Cluster', exact: true }).click()
-    if (source === 'Public') {
-      await expect.poll(rpc.getBroadcastCount, { timeout: 30_000 }).toBe(1)
-      api.setConfidentialBalanceRaw('10000000000000000')
-    }
-    await expect.poll(() => api.getConfidentialBatchRequests().length, { timeout: 60_000 }).toBe(1)
-    const [batch] = api.getConfidentialBatchRequests()
-    expect(batch.withdraws).toHaveLength(3)
-    expect(batch.signer_id.toLowerCase()).toBe(identity.main.toLowerCase())
-    expect(new Set(batch.withdraws.map(row => row.destination_address.toLowerCase()))).toEqual(
-      new Set([destinationAddress.toLowerCase()])
-    )
-    expect(new Set(batch.withdraws.map(row => row.deposit_address)).size).toBe(3)
-    expect(batch.withdraws.reduce((sum, row) => sum + BigInt(row.amount), 0n)).toBe(
-      10000000000000000n
-    )
-    for (const row of batch.withdraws) {
-      const payload = JSON.parse(row.signed_payload.payload)
-      expect(payload.signer_id.toLowerCase()).toBe(identity.main.toLowerCase())
-      expect(payload.intents[0].receiver_id).toBe(row.deposit_address)
-      expect(row.signed_payload.signature).toMatch(/^secp256k1:/)
-    }
-    await expect
-      .poll(async () => (await readStoredShieldPlan(popup))?.orderId)
-      .toBe('protocol-cluster-1')
-    expect((await readStoredShieldPlan(popup))?.phase).not.toBe('ready')
-    if (source === 'Public') {
-      await captureScreenshot(popup, 'cluster-public-scheduled.png')
-    } else {
-      await captureScreenshot(popup, 'cluster-shield-scheduled.png')
-    }
-    await popup.reload()
-    expect(api.getConfidentialBatchRequests()).toHaveLength(1)
-    api.setConfidentialBalanceRaw(source === 'Shield' ? '10000000000000000' : '0')
-    api.setConfidentialBatchCompleted()
-    await expect
-      .poll(
-        async () => {
-          await popup.evaluate(
-            async planId =>
-              chrome.runtime.sendMessage({ type: 'GET_CONFIDENTIAL_FUNDING', planId }),
-            plan!.planId
-          )
-          return (await readStoredShieldPlan(popup))?.phase
-        },
-        { timeout: 90_000 }
-      )
-      .toBe('ready')
-    expect(api.getConfidentialBatchRequests()).toHaveLength(1)
-    expect(rpc.getBroadcastCount()).toBe(source === 'Public' ? 1 : 0)
-    await expect
-      .poll(() => hasStoredShieldBalance(popup, source === 'Shield' ? '10000000000000000' : '0'), {
-        timeout: 30_000
-      })
-      .toBe(true)
-    await popup.goto(`chrome-extension://${extensionId}/index.html`)
-    await popup.getByRole('tab', { name: 'Activity', exact: true }).click()
-    await popup.locator(`[data-activity-id="tx:confidential:${plan!.planId}"]`).click()
-    await expect(popup.locator('[data-activity-status-value]')).toHaveText('Received', {
-      timeout: 30_000
-    })
-    if (source === 'Public') {
-      await captureScreenshot(popup, 'cluster-public-completed.png')
-    } else {
-      await captureScreenshot(popup, 'cluster-shield-completed.png')
-    }
+test('submits Public Cluster as one scheduled batch to one destination and restores its completion', async ({
+  context,
+  popup,
+  extensionId
+}) => {
+  test.setTimeout(180_000)
+  const rpc = await mockEvmNetwork(context, { allowBroadcast: true })
+  await mockBitcoinNetwork(context)
+  const api = await mockProtocolApis(context, { confidentialBalanceRaw: '0' })
+  await waitForBackgroundWalletInitialization(popup)
+  await importTestWallet(popup)
+  await popup.goto(`chrome-extension://${extensionId}/index.html`)
+  await expect(popup.getByRole('button', { name: 'View ETH details on Ethereum' })).toBeVisible({
+    timeout: 30_000
   })
-}
+  const identity = await readShieldTransferIdentity(popup)
+  const destinationAddress = identity.private
+  await openShieldTransfer(popup, 'Public', 'Private', true)
+  await popup.getByRole('textbox', { name: 'Transfer amount' }).fill('0.01')
+  await popup.getByRole('button', { name: 'Review Cluster', exact: true }).click()
+  await expect(popup.getByRole('heading', { name: 'Cluster transfer' })).toBeVisible()
+  const plan = await readStoredShieldPlan(popup)
+  expect(plan).toMatchObject({
+    operation: 'cluster',
+    phase: 'prepared',
+    withdrawCount: 3,
+    sourceDomain: 'public',
+    destinationDomain: 'private',
+    requiresDeposit: true
+  })
+  await captureScreenshot(popup, 'cluster-public-review.png')
+  await popup.getByRole('button', { name: 'Confirm Cluster', exact: true }).click()
+  await expect.poll(rpc.getBroadcastCount, { timeout: 30_000 }).toBe(1)
+  api.setConfidentialBalanceRaw('10000000000000000')
+  await expect.poll(() => api.getConfidentialBatchRequests().length, { timeout: 60_000 }).toBe(1)
+  const [batch] = api.getConfidentialBatchRequests()
+  expect(batch.withdraws).toHaveLength(3)
+  expect(batch.signer_id.toLowerCase()).toBe(identity.main.toLowerCase())
+  expect(new Set(batch.withdraws.map(row => row.destination_address.toLowerCase()))).toEqual(
+    new Set([destinationAddress.toLowerCase()])
+  )
+  expect(new Set(batch.withdraws.map(row => row.deposit_address)).size).toBe(3)
+  expect(batch.withdraws.reduce((sum, row) => sum + BigInt(row.amount), 0n)).toBe(
+    10000000000000000n
+  )
+  for (const row of batch.withdraws) {
+    const payload = JSON.parse(row.signed_payload.payload)
+    expect(payload.signer_id.toLowerCase()).toBe(identity.main.toLowerCase())
+    expect(payload.intents[0].receiver_id).toBe(row.deposit_address)
+    expect(row.signed_payload.signature).toMatch(/^secp256k1:/)
+  }
+  await expect
+    .poll(async () => (await readStoredShieldPlan(popup))?.orderId)
+    .toBe('protocol-cluster-1')
+  expect((await readStoredShieldPlan(popup))?.phase).not.toBe('ready')
+  await captureScreenshot(popup, 'cluster-public-scheduled.png')
+  await popup.reload()
+  expect(api.getConfidentialBatchRequests()).toHaveLength(1)
+  api.setConfidentialBalanceRaw('0')
+  api.setConfidentialBatchCompleted()
+  await expect
+    .poll(
+      async () => {
+        await popup.evaluate(
+          async planId => chrome.runtime.sendMessage({ type: 'GET_CONFIDENTIAL_FUNDING', planId }),
+          plan!.planId
+        )
+        return (await readStoredShieldPlan(popup))?.phase
+      },
+      { timeout: 90_000 }
+    )
+    .toBe('ready')
+  expect(api.getConfidentialBatchRequests()).toHaveLength(1)
+  expect(rpc.getBroadcastCount()).toBe(1)
+  await expect
+    .poll(() => hasStoredShieldBalance(popup, '0'), {
+      timeout: 30_000
+    })
+    .toBe(true)
+  await popup.goto(`chrome-extension://${extensionId}/index.html`)
+  await popup.getByRole('tab', { name: 'Activity', exact: true }).click()
+  await popup.locator(`[data-activity-id="tx:confidential:${plan!.planId}"]`).click()
+  await expect(popup.locator('[data-activity-status-value]')).toHaveText('Received', {
+    timeout: 30_000
+  })
+  await captureScreenshot(popup, 'cluster-public-completed.png')
+})
 
 test('routes a dApp Private transfer through Confidential and returns the destination hash', async ({
   context,
@@ -1116,7 +1196,7 @@ test('keeps transfer input free of warnings while route readiness is pending', a
     await popup.getByRole('button', { name: 'Move', exact: true }).click()
     await expect(popup.getByRole('heading', { name: 'Move', exact: true })).toBeVisible()
     const amount = popup.getByRole('textbox', { name: 'Transfer amount' })
-    const review = popup.getByRole('button', { name: 'Transfer', exact: true })
+    const review = popup.getByRole('button', { name: 'Move', exact: true })
     await expect(review).toBeDisabled()
     await expect(popup.getByRole('alert')).toHaveCount(0)
     await amount.fill('0.')
@@ -1206,7 +1286,7 @@ for (const direction of ['main-to-private', 'private-to-main'] as const) {
     } else {
       await captureScreenshot(popup, 'transfer-native-max-private-to-main-available.png')
     }
-    await popup.getByRole('button', { name: 'Transfer', exact: true }).click()
+    await popup.getByRole('button', { name: 'Move', exact: true }).click()
     await expect(popup.getByRole('button', { name: 'Confirm', exact: true })).toBeEnabled({
       timeout: 60_000
     })
@@ -1471,10 +1551,10 @@ test('reviews and submits Public to Private from AssetDetail Move', async ({
   await expect(popup.getByRole('button', { name: 'To: Private. Change account' })).toBeVisible()
   await captureScreenshot(popup, 'balance-transfer-public-confidential-addresses.png')
   await popup.getByRole('textbox', { name: 'Transfer amount' }).fill('0.01')
-  await expect(popup.getByRole('button', { name: 'Transfer', exact: true })).toBeEnabled({
+  await expect(popup.getByRole('button', { name: 'Move', exact: true })).toBeEnabled({
     timeout: 30_000
   })
-  await popup.getByRole('button', { name: 'Transfer', exact: true }).click()
+  await popup.getByRole('button', { name: 'Move', exact: true }).click()
 
   try {
     await expect(popup.getByRole('button', { name: 'Confirm', exact: true })).toBeDisabled({
@@ -1569,10 +1649,10 @@ test('reviews and submits Private to Public from AssetDetail Move', async ({
   await expect(popup.getByRole('button', { name: 'From: Private. Change account' })).toBeVisible()
   await expect(popup.getByRole('button', { name: 'To: Public. Change account' })).toBeVisible()
   await popup.getByRole('textbox', { name: 'Transfer amount' }).fill('0.01')
-  await expect(popup.getByRole('button', { name: 'Transfer', exact: true })).toBeEnabled({
+  await expect(popup.getByRole('button', { name: 'Move', exact: true })).toBeEnabled({
     timeout: 30_000
   })
-  await popup.getByRole('button', { name: 'Transfer', exact: true }).click()
+  await popup.getByRole('button', { name: 'Move', exact: true }).click()
 
   await expect(popup.getByRole('button', { name: 'Confirm', exact: true })).toBeVisible({
     timeout: 30_000

@@ -250,7 +250,7 @@ export function Home() {
       return
     }
     if (assetDomain === 'shield') {
-      navigate.navigate('/shield-funds?action=swap')
+      navigate.navigate(`/shield-funds?action=swap&mode=${privateMode ? 'private' : 'public'}`)
       return
     }
     if (!swapSource || !canOpenSwapSource) return
@@ -331,7 +331,7 @@ export function Home() {
     )
   }
   const openShieldAction = (action: ShieldAction) =>
-    navigate.navigate(`/shield-funds?action=${action}`)
+    navigate.navigate(`/shield-funds?action=${action}&mode=${privateMode ? 'private' : 'public'}`)
   const storeBalance = getCurrentBalance()
   const { isSyncing, syncProgress, currentHeight, latestHeight, etaMs, syncReason } =
     getCurrentSyncState()
@@ -983,7 +983,9 @@ export function Home() {
           <WalletActionButton
             icon={<WalletShieldFundsIcon />}
             label="Shield Funds"
-            onClick={() => navigate.navigate('/shield-funds')}
+            onClick={() =>
+              navigate.navigate(`/shield-funds?mode=${privateMode ? 'private' : 'public'}`)
+            }
           />
         </div>
 
