@@ -321,7 +321,7 @@ export function ShieldMoveSheet({
               onClick={() => selectSource(null)}
               className="wallet-interactive flex size-6 items-center justify-center rounded-md hover:bg-white/10"
             >
-              <Icon icon="lucide:arrow-left" width={18} height={18} />
+              <Icon icon="lucide:chevron-left" width={18} height={18} />
             </button>
           )}
           <DialogTitle className={`min-w-0 flex-1 font-medium ${source ? 'text-base' : 'text-lg'}`}>
