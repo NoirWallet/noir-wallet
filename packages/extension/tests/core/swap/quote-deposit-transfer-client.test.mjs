@@ -1023,6 +1023,16 @@ test.describe('quote deposit transfer client', () => {
     ).toBe(false)
     expect(
       isPrivateSwapDestinationSupported(
+        zec,
+        portfolio(),
+        receiveTargets,
+        privateAddresses,
+        'private',
+        { shielded: 'u1own', transparent: 't1own' }
+      )
+    ).toBe(true)
+    expect(
+      isPrivateSwapDestinationSupported(
         evm,
         portfolio(),
         receiveTargets,

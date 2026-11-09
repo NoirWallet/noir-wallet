@@ -15,7 +15,7 @@ import {
   getEvmNativeProtocolAssetId
 } from '@/config/asset-market-assets'
 import { NOIR_SWAP_REFERRAL } from '@/config/intents'
-import { createInitialProductChainRegistry } from '@/core/chains/registry'
+import { createInitialProductChainRegistry, getZcashChainId } from '@/core/chains/registry'
 
 const RAW_AMOUNT_PATTERN = /^(0|[1-9][0-9]{0,77})$/
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/
@@ -173,6 +173,15 @@ export function assertPrivateQuoteRoute(
       )
     ) {
       throw new Error('Private Move must stay in this Account and asset.')
+    }
+    return
+  }
+  if (purpose === 'private-swap' && request.toChain === 'zcash') {
+    const destination = account.networks.find(
+      network => network.chainId === getZcashChainId('mainnet')
+    )
+    if (!destination?.addresses?.some(address => address.value === request.recipient)) {
+      throw new Error('Private Swap must stay in this Account.')
     }
     return
   }

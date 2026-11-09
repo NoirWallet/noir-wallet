@@ -170,6 +170,26 @@ test('Private Swap quote remains bound to the same Account and its managed desti
       }
     ]
   }
+  for (const recipient of ['u1own', 't1own']) {
+    expect(() =>
+      assertPrivateQuoteRoute(
+        { ...route, toChain: 'zcash', recipient },
+        zcashAccount,
+        'private-swap',
+        account
+      )
+    ).not.toThrow()
+  }
+  for (const recipient of ['u1external', 'U1OWN']) {
+    expect(() =>
+      assertPrivateQuoteRoute(
+        { ...route, toChain: 'zcash', recipient },
+        zcashAccount,
+        'private-swap',
+        account
+      )
+    ).toThrow(/this Account/)
+  }
   expect(() =>
     assertPrivateQuoteRoute(
       {

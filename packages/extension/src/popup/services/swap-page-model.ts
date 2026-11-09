@@ -313,9 +313,11 @@ export function isPrivateSwapDestinationSupported(
   portfolio: PortfolioReadModel | null,
   receiveTargets: AdditionalReceiveTargetsView | null,
   privateExecutionAddresses: ReadonlyMap<string, string>,
-  mode: 'main' | 'private' = 'private'
+  mode: 'main' | 'private' = 'private',
+  zcashAddresses?: Readonly<{ shielded: string; transparent: string }>
 ): boolean {
   if (!portfolio || !isConfidentialSwapDestinationSupported(token)) return false
+  if (isZecToken(token)) return Boolean(zcashAddresses?.shielded && zcashAddresses.transparent)
   const target = resolveWalletQuoteReceiveTarget(token, portfolio, receiveTargets)
   if (target?.kind !== 'evm') return false
   if (mode === 'main') return /^0x[0-9a-fA-F]{40}$/.test(target.address)
