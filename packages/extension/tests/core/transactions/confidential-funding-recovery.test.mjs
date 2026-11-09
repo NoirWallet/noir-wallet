@@ -367,6 +367,9 @@ function directPreparationHarness(protocolTokens) {
     signingChains: [],
     formalQuotes: 0,
     formalQuoteAppFees: undefined,
+    identityAccount: scope.accountId,
+    quoteCalls: [],
+    quoteOverride: undefined,
     lastQuoteAmountRaw: undefined,
     lastQuoteDeadline: undefined,
     session: {
@@ -383,6 +386,11 @@ function directPreparationHarness(protocolTokens) {
     'nep141:eth-0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48.omft.near'
   const zcashAssetId = `${ZCASH_CHAIN_IDS.mainnet}/slip44:133`
   const zcashProtocolId = 'nep141:zec.omft.near'
+  const nativeAsset = {
+    asset: { id: assetId, chainId: 'eip155:1', kind: 'native', namespace: 'slip44' },
+    metadata: { symbol: 'ETH', decimals: 18 },
+    verification: 'verified'
+  }
   const store = {
     getPlan: async id => structuredClone(plans.get(id) ?? null),
     listPlans: async () => [...plans.values()].map(value => structuredClone(value)),
@@ -403,7 +411,7 @@ function directPreparationHarness(protocolTokens) {
         address: signerId,
         peaAddress,
         addressIndex: 0,
-        context: { chainAccount: { scope: { ...scope, chainId } } }
+        context: { chainAccount: { scope: { ...scope, accountId: state.identityAccount, chainId } } }
       }
     },
     signMessage: async input => {
@@ -427,6 +435,7 @@ function directPreparationHarness(protocolTokens) {
     ],
     quote: async input => {
       state.lastQuoteRequest = input
+      state.quoteCalls.push(input)
       if (!input.dry) {
         state.formalQuotes += 1
         if (input.recipientType !== 'CONFIDENTIAL_INTENTS' && !state.formalQuoteAppFees) {
@@ -443,7 +452,7 @@ function directPreparationHarness(protocolTokens) {
           originAsset: input.originAsset,
           destinationAsset: input.destinationAsset,
           amount: input.amountRaw,
-          refundTo: input.signerId,
+          refundTo: input.refundTo ?? input.signerId,
           depositType: input.depositType,
           refundType: input.refundType,
           recipient: input.recipient,
@@ -462,7 +471,8 @@ function directPreparationHarness(protocolTokens) {
           amountOut: input.amountRaw,
           minAmountOut: input.amountRaw,
           depositAddress: 'deposit.near',
-          deadline: state.lastQuoteDeadline
+          deadline: state.lastQuoteDeadline,
+          ...(state.quoteOverride?.(input) ?? {})
         }
       }
     },
@@ -495,7 +505,13 @@ function directPreparationHarness(protocolTokens) {
     store,
     signer,
     repository: new InMemoryTransactionRepository(),
-    assets: { get: id => ({ metadata: { decimals: id === zcashAssetId ? 8 : 18 } }) },
+    assets: {
+      get: id =>
+        id === assetId
+          ? nativeAsset
+          : { metadata: { decimals: id === zcashAssetId ? 8 : 18 } },
+      list: () => [nativeAsset]
+    },
     evmNetworks: [],
     ...(protocolTokens ? { protocolTokens } : {}),
     assetMappings: [
@@ -692,6 +708,107 @@ test.describe('confidential funding persisted recovery', () => {
     await expect(h.coordinator.preview(send)).rejects.toThrow('Refresh Shield balances')
     expect(h.plans.size).toBe(0)
     expect(h.state.formalQuotes).toBe(0)
+    expect(h.state.signatures).toBe(0)
+  })
+
+  test('previews Cluster from dry deposit and split quotes without preparing or reserving funds', async () => {
+    const h = directPreparationHarness()
+    h.state.quoteOverride = input =>
+      input.depositType === 'ORIGIN_CHAIN'
+        ? {
+            amountOut: '57',
+            minAmountOut: '56',
+            deadline: new Date(h.state.now + 30_000).toISOString(),
+            timeEstimate: 8
+          }
+        : {
+            amountOut: (BigInt(input.amountRaw) - 1n).toString(),
+            minAmountOut: (BigInt(input.amountRaw) - 2n).toString(),
+            timeEstimate: 17
+          }
+    const cluster = {
+      ...h.request('60'),
+      operation: 'cluster',
+      sourceDomain: 'public'
+    }
+    const preview = await h.coordinator.preview(cluster)
+    expect(preview).toEqual({
+      amountOutRaw: '54',
+      minimumOutputRaw: '51',
+      expiresAt: h.state.now + 30_000,
+      timeEstimateSeconds: 25
+    })
+    expect(h.state.quoteCalls).toHaveLength(4)
+    expect(h.state.quoteCalls.every(quote => quote.dry)).toBe(true)
+    expect(h.state.quoteCalls[0]).toMatchObject({
+      amountRaw: '60',
+      depositType: 'ORIGIN_CHAIN',
+      recipientType: 'CONFIDENTIAL_INTENTS'
+    })
+    expect(h.state.quoteCalls.slice(1)).toHaveLength(3)
+    expect(
+      h.state.quoteCalls
+        .slice(1)
+        .reduce((sum, quote) => sum + BigInt(quote.amountRaw), 0n)
+    ).toBe(57n)
+    expect(h.state.formalQuotes).toBe(0)
+    expect(h.state.signatures).toBe(0)
+    expect(h.plans.size).toBe(0)
+
+    h.state.quoteCalls.length = 0
+    const shieldPreview = await h.coordinator.preview({
+      ...cluster,
+      sourceDomain: 'shield'
+    })
+    expect(shieldPreview).toMatchObject({
+      amountOutRaw: '57',
+      minimumOutputRaw: '54',
+      timeEstimateSeconds: 17
+    })
+    expect(h.state.quoteCalls).toHaveLength(3)
+    expect(h.state.quoteCalls.every(quote => quote.dry)).toBe(true)
+    expect(h.plans.size).toBe(0)
+
+    h.state.quoteOverride = input => ({
+      ...(input.depositType === 'ORIGIN_CHAIN'
+        ? { depositAddress: '0x3333333333333333333333333333333333333333', timeEstimate: 8 }
+        : { timeEstimate: 17 })
+    })
+    h.coordinator.rpcByChain.set('eip155:1', {
+      assertExpectedChain: async () => {},
+      getNativeBalance: async () => '1000000000000000000',
+      getMaximumPriorityFeePerGas: async () => '1000000000',
+      getLatestBlockFee: async () => ({ baseFeePerGas: '1000000000', blockNumber: '1' }),
+      simulateCall: async () => '0x',
+      estimateGas: async () => '21000'
+    })
+    const privateCluster = { ...cluster, sourceDomain: 'private', destinationDomain: 'public' }
+    const feePreview = await h.coordinator.preview(privateCluster)
+    expect(feePreview.sourceNetworkFee).toMatchObject({ symbol: 'ETH', decimals: 18 })
+    expect(BigInt(feePreview.sourceNetworkFee.raw)).toBeGreaterThan(0n)
+    h.coordinator.rpcByChain.clear()
+    const noRpcPreview = await h.coordinator.preview(privateCluster)
+    expect(noRpcPreview).toMatchObject({
+      amountOutRaw: '60',
+      minimumOutputRaw: '60',
+      timeEstimateSeconds: 25
+    })
+    expect(noRpcPreview.sourceNetworkFee).toBeUndefined()
+
+    h.state.quoteOverride = input =>
+      input.depositType === 'ORIGIN_CHAIN' ? { timeEstimate: 8 } : {}
+    const missingTimePreview = await h.coordinator.preview(privateCluster)
+    expect(missingTimePreview.timeEstimateSeconds).toBeUndefined()
+
+    await expect(h.coordinator.preview({ ...cluster, accountId: 'account:other' })).rejects.toThrow(
+      'account or network changed'
+    )
+    h.state.quoteOverride = input => {
+      if (input.depositType === 'CONFIDENTIAL_INTENTS') h.state.identityAccount = 'account:other'
+      return {}
+    }
+    await expect(h.coordinator.preview(cluster)).rejects.toThrow('same Account')
+    expect(h.plans.size).toBe(0)
     expect(h.state.signatures).toBe(0)
   })
 

@@ -14,6 +14,13 @@ import { useNavigate } from '@/popup/provider/Router'
 import { useActiveAccountNetworks } from '@/popup/hooks/useActiveAccountNetworks'
 import { useHomePortfolio } from '@/popup/hooks/useHomePortfolio'
 import { useTransferMaximum } from '@/popup/hooks/useTransferMaximum'
+import { useMoveMethodEstimate } from '@/popup/hooks/useMoveMethodEstimate'
+import {
+  clusterMoveEstimate,
+  estimateDirectMove,
+  formatMoveMethodFee,
+  type MoveMethodEstimate
+} from '@/popup/services/move-method-estimate'
 import { PageHeader } from '@/popup/components/common/PageHeader'
 import { InlineError } from '@/popup/components/common/InlineError'
 import { AmountDisplay } from '@/popup/components/common/AmountDisplay'
@@ -198,12 +205,18 @@ function MethodCard({
   detail,
   selected,
   disabled,
+  estimate,
+  fee,
+  loading,
   onClick
 }: {
   title: 'Cluster' | 'Directly'
   detail: string
   selected: boolean
   disabled: boolean
+  estimate: MoveMethodEstimate | null
+  fee: { value: string; detail: string | null }
+  loading: boolean
   onClick: () => void
 }) {
   return (
@@ -239,13 +252,23 @@ function MethodCard({
         <span className="text-muted">Privacy</span>
         <span>{title === 'Cluster' ? 'Strong' : 'Standard'}</span>
       </span>
-      <span className="mt-2 flex justify-between gap-2">
-        <span className="text-muted">Time</span>
-        <span>—</span>
+      <span className="mt-2 flex justify-between gap-2" aria-busy={loading}>
+        <span className="shrink-0 text-muted">Time (est.)</span>
+        <span className="min-w-0 text-right">
+          <span className="block">{loading ? '…' : (estimate?.time ?? '—')}</span>
+          {estimate?.time !== '—' && estimate && (
+            <span className="block text-[10px] text-muted">{estimate.timeScope}</span>
+          )}
+        </span>
       </span>
-      <span className="mt-2 flex justify-between gap-2">
-        <span className="text-muted">Fee</span>
-        <span>—</span>
+      <span className="mt-2 flex justify-between gap-2" aria-busy={loading}>
+        <span className="shrink-0 text-muted">Fee (est.)</span>
+        <span className="min-w-0 break-words text-right">
+          <span className="block">{loading ? '…' : fee.value}</span>
+          {!loading && fee.detail && (
+            <span className="block text-[10px] text-muted">{fee.detail}</span>
+          )}
+        </span>
       </span>
     </button>
   )
@@ -829,6 +852,65 @@ function TransferForm() {
     ((fundingRoute ? shieldAmountState?.amountRaw : amountState?.amountRaw)
       ? tokenFeeBalanceError
       : null)
+  const methodAmount =
+    selected && source && clusterPair
+      ? resolvePrivateBalanceTransferAmount({
+          amount: currentAmount,
+          decimals: selected.asset.metadata.decimals,
+          availableRaw: source.availableRaw,
+          sourceLabel: source.sourceLabel
+        })
+      : null
+  const estimateAmountRaw = methodAmount?.error ? null : methodAmount?.amountRaw
+  const methodEstimateKey = `${routeKey}:${estimateAmountRaw ?? ''}:${source?.sender}:${source?.recipient}:${source?.executionMode}:${source?.availableRaw}:${retry}`
+  const canEstimateMethods = Boolean(
+    draftScope === scopeKey &&
+    clusterPair &&
+    selected &&
+    eligible &&
+    source &&
+    estimateAmountRaw &&
+    !tokenFeeBalanceError &&
+    !preparingShield &&
+    !preparedShield
+  )
+  const directEstimate = useMoveMethodEstimate({
+    enabled: canEstimateMethods && methodAvailable,
+    requestKey: methodEstimateKey,
+    estimate: signal =>
+      estimateDirectMove({
+        asset: selected!.asset,
+        chain: selected!.chain,
+        nativeFeeAsset: nativeFeeAsset ?? null,
+        amountRaw: estimateAmountRaw!,
+        sender: source!.sender,
+        recipient: source!.recipient,
+        executionMode: source!.executionMode,
+        signal
+      })
+  })
+  const clusterEstimate = useMoveMethodEstimate({
+    enabled:
+      canEstimateMethods && Boolean(managedAsset && effective && shieldConnection === 'connected'),
+    requestKey: `${methodEstimateKey}:${shieldConnection}`,
+    estimate: async signal => {
+      const request = buildShieldTransferRequest({
+        network: currentNetwork,
+        keyDomainId: effective!.walletId,
+        accountId: effective!.accountId,
+        from,
+        to,
+        method: 'cluster',
+        amountRaw: estimateAmountRaw!,
+        asset: selected!.asset,
+        chain: selected!.chain,
+        managed: managedAsset!
+      })
+      const preview = await confidentialFundingClient.preview(request)
+      signal.throwIfAborted()
+      return clusterMoveEstimate(estimateAmountRaw!, preview)
+    }
+  })
   const shieldReviewKey = `${routeKey}:${method}:${currentAmount}:${shieldAmountState?.amountRaw ?? ''}`
   const latestShieldReviewKey = useRef(shieldReviewKey)
   latestShieldReviewKey.current = shieldReviewKey
@@ -1513,6 +1595,9 @@ function TransferForm() {
               detail="Multiple transactions"
               selected={method === 'cluster'}
               disabled={!eligible || !managedAsset}
+              estimate={clusterEstimate.value}
+              fee={formatMoveMethodFee(clusterEstimate.value, selected.asset)}
+              loading={clusterEstimate.loading}
               onClick={() => setMethod('cluster')}
             />
             <MethodCard
@@ -1520,6 +1605,9 @@ function TransferForm() {
               detail="One transaction"
               selected={method === 'directly'}
               disabled={supportedPair && !methodAvailable}
+              estimate={directEstimate.value}
+              fee={formatMoveMethodFee(directEstimate.value, selected.asset)}
+              loading={directEstimate.loading}
               onClick={() => setMethod('directly')}
             />
           </div>

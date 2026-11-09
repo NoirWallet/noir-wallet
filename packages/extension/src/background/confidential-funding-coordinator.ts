@@ -59,6 +59,7 @@ import {
   broadcastSignedEvmTransaction,
   createConfiguredEvmRpcClient,
   createEvmTransactionSegmentEvent,
+  estimateEvmTransferFee,
   observeEvmTransaction,
   parsePreparedEvmTransfer,
   type EvmBroadcastRpc,
@@ -1036,7 +1037,11 @@ export class ConfidentialFundingCoordinator {
 
   async preview(value: PrepareConfidentialFundingInput): Promise<ConfidentialFundingPreview> {
     const input = this.parseInput(value)
-    if (input.operation !== 'withdraw' && input.operation !== 'swap') {
+    if (
+      input.operation !== 'withdraw' &&
+      input.operation !== 'swap' &&
+      input.operation !== 'cluster'
+    ) {
       throw new Error('Confidential preview route is invalid')
     }
     const sourceSigningChain =
@@ -1064,6 +1069,9 @@ export class ConfidentialFundingCoordinator {
     )
     if (!session || session.expiresAt <= this.now() + SESSION_REFRESH_BUFFER_MS) {
       throw new Error(CONFIDENTIAL_SESSION_REQUIRED_ERROR)
+    }
+    if (input.operation === 'cluster') {
+      return this.previewCluster(input, sourceIdentity, destinationIdentity, sourceSigningChain)
     }
     const recipient =
       input.externalRecipient ??
@@ -1104,6 +1112,117 @@ export class ConfidentialFundingCoordinator {
       ...(validQuoteTimeEstimateSeconds(quote.quote.timeEstimate)
         ? { timeEstimateSeconds: quote.quote.timeEstimate }
         : {})
+    })
+  }
+
+  private async previewCluster(
+    input: Extract<PrepareConfidentialFundingInput, { operation: 'cluster' }>,
+    sourceIdentity: ConfidentialSigningIdentity,
+    destinationIdentity: ConfidentialSigningIdentity,
+    sourceSigningChain: ChainId
+  ): Promise<ConfidentialFundingPreview> {
+    const sourceAddress =
+      input.sourceDomain === 'private'
+        ? sourceIdentity.peaAddress.toLowerCase()
+        : sourceIdentity.address
+    const destinationAddress =
+      input.destinationDomain === 'private'
+        ? destinationIdentity.peaAddress
+        : destinationIdentity.address
+    const depositBinding = {
+      originAsset: input.source.protocolAssetId,
+      destinationAsset: input.source.protocolAssetId,
+      amountRaw: input.source.amountRaw,
+      signerId: sourceIdentity.address,
+      refundTo: sourceAddress,
+      recipient: sourceIdentity.address,
+      depositType: 'ORIGIN_CHAIN' as const,
+      refundType: 'ORIGIN_CHAIN' as const,
+      recipientType: 'CONFIDENTIAL_INTENTS' as const,
+      slippageBps: input.slippageBps
+    }
+    const depositQuote =
+      input.sourceDomain === 'shield'
+        ? undefined
+        : await this.options.api.quote({ ...depositBinding, dry: true })
+    if (depositQuote) assertConfidentialQuoteBinding(depositQuote, depositBinding, this.now())
+    const previews = await this.prepareWithdrawPreviews({
+      sourceAsset: input.source.protocolAssetId,
+      destinationAsset: input.destination.protocolAssetId,
+      spendRaw: depositQuote?.quote.amountOut ?? input.source.amountRaw,
+      signerId: sourceIdentity.address,
+      recipient: destinationAddress,
+      slippageBps: input.slippageBps
+    })
+    const currentIdentity = await this.options.signer.resolveIdentity(sourceSigningChain)
+    this.assertSameAccount(sourceIdentity, currentIdentity)
+    const expiresAt = Math.min(
+      ...(depositQuote ? [quoteDeadline(depositQuote)] : []),
+      ...previews.quotes.map(quoteDeadline)
+    )
+    if (!Number.isSafeInteger(expiresAt) || expiresAt <= this.now()) {
+      throw new Error('Confidential quote has expired')
+    }
+    const quoteTimes = previews.quotes.map(quote => quote.quote.timeEstimate)
+    const validWithdrawTimes = quoteTimes.filter(validQuoteTimeEstimateSeconds)
+    const depositTime = depositQuote?.quote.timeEstimate
+    const timeEstimateSeconds =
+      validWithdrawTimes.length === previews.quotes.length &&
+      (!depositQuote || validQuoteTimeEstimateSeconds(depositTime))
+        ? (depositTime ?? 0) + Math.max(...validWithdrawTimes)
+        : undefined
+    let sourceNetworkFee: ConfidentialFundingPreview['sourceNetworkFee']
+    if (depositQuote && isAddress(depositQuote.quote.depositAddress)) {
+      try {
+        const fee = await estimateEvmTransferFee({
+          chainId: parseChainId(input.source.chainId).id,
+          chainAccount: sourceIdentity.context.chainAccount,
+          ...(input.sourceDomain === 'private'
+            ? {
+                executionAccount: {
+                  kind: 'pea' as const,
+                  address: sourceIdentity.peaAddress,
+                  addressIndex: sourceIdentity.addressIndex
+                }
+              }
+            : {}),
+          assets: this.options.assets,
+          intent: {
+            assetId: input.source.assetId,
+            recipient: depositQuote.quote.depositAddress,
+            amountRaw: input.source.amountRaw
+          },
+          rpc: this.requireRpc(input.source.chainId),
+          feeTier: input.feeTier
+        })
+        const feeAsset = this.options.assets
+          .list(parseChainId(input.source.chainId).id)
+          .find(entry => entry.asset.kind === 'native')
+        if (feeAsset) {
+          sourceNetworkFee = Object.freeze({
+            raw: fee.maximumFeeWei,
+            symbol: feeAsset.metadata.symbol,
+            decimals: feeAsset.metadata.decimals
+          })
+        }
+      } catch {
+        // Fee availability must not invalidate a bound route quote.
+      }
+    }
+    const finalIdentity = await this.options.signer.resolveIdentity(sourceSigningChain)
+    this.assertSameAccount(sourceIdentity, finalIdentity)
+    return Object.freeze({
+      amountOutRaw: previews.quotes
+        .reduce((sum, quote) => sum + BigInt(quote.quote.amountOut), 0n)
+        .toString(),
+      minimumOutputRaw: previews.quotes
+        .reduce((sum, quote) => sum + BigInt(quote.quote.minAmountOut), 0n)
+        .toString(),
+      expiresAt,
+      ...(timeEstimateSeconds !== undefined && validQuoteTimeEstimateSeconds(timeEstimateSeconds)
+        ? { timeEstimateSeconds }
+        : {}),
+      ...(sourceNetworkFee ? { sourceNetworkFee } : {})
     })
   }
 

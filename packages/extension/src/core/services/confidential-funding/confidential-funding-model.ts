@@ -244,6 +244,11 @@ export interface ConfidentialFundingPreview {
   readonly expiresAt: number
   readonly appFeeBps?: number
   readonly timeEstimateSeconds?: number
+  readonly sourceNetworkFee?: Readonly<{
+    raw: string
+    symbol: string
+    decimals: number
+  }>
 }
 
 export interface ConfidentialFundingProgress {
