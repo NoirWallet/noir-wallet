@@ -1,3 +1,17 @@
+import { ZEC_ZCASH_ASSET } from '@/config/intents'
+import { Switch } from '../../components/ui/switch'
+import {
+  buildPublicPrivateEvmSendPath,
+  parsePublicPrivateEvmSendDraft,
+  isPublicPrivateSendRecipient
+} from './evm-send-validation'
+import { rheaSwapClient, getRheaSwapErrorMessage } from '@/popup/services/rhea-swap-client'
+import { isRheaSwapQuoteFresh, getRheaSwapQuoteDeadline } from '@/popup/services/swap-page-model'
+import type { RheaSwapQuoteView } from '@/core/services/rhea-swap'
+import {
+  buildZcashPublicPrivateSendPreviewRequest,
+  getPublicPrivateSendRouteCost
+} from '@/popup/services/public-private-send-preview'
 import { isZcashHardwareKeySource } from '@/core/wallet/hardware-wallet-data'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Icon } from '@iconify/react'
@@ -177,6 +191,14 @@ export function Send() {
       ? 'shielded'
       : 'transparent'
   })
+  const [privateSendScope, setPrivateSendScope] = useState<string | null>(null)
+  const [privatePreview, setPrivatePreview] = useState<{
+    key: string
+    quote: RheaSwapQuoteView
+    amountRaw: string
+  } | null>(null)
+  const [privatePreviewError, setPrivatePreviewError] = useState<string | null>(null)
+  const [privatePreviewRetry, setPrivatePreviewRetry] = useState(0)
   const [sourcePickerOpen, setSourcePickerOpen] = useState(false)
   const [toAddress, setToAddress] = useState('')
   const [selectedRecipient, setSelectedRecipient] = useState<{
@@ -272,13 +294,106 @@ export function Send() {
 
   const isTransparentRecipient = isTransparentZcashAddress(effectiveToAddress)
   const effectiveMemo = isSelfMove ? '' : sanitizeMemoForRecipient(effectiveToAddress, memo)
+  const privacyScope = JSON.stringify([currentNetwork, currentWalletId, currentAccountId])
+  const privateSendAvailable =
+    !isSelfMove &&
+    currentNetwork === 'mainnet' &&
+    fundingSource === 'transparent' &&
+    (!effectiveToAddress || isTransparentZcashAddress(effectiveToAddress)) &&
+    !getFundingSourceUnavailableReason(currentWallet?.keySource, 'transparent')
+  const sendPrivately = privateSendAvailable && privateSendScope === privacyScope
+  const previewKey =
+    sendPrivately &&
+    currentWalletId &&
+    currentAccountId &&
+    fromAddress &&
+    isPublicPrivateSendRecipient(ZEC_ZCASH_ASSET, effectiveToAddress) &&
+    safeBig(amount || '0').gt(0) &&
+    safeBig(amount || '0').lte(sourceBalance.available)
+      ? JSON.stringify([privacyScope, fromAddress, effectiveToAddress, amount, feeTier])
+      : null
+  const currentPreviewKey = useRef(previewKey)
+  currentPreviewKey.current = previewKey
+  const privatePreviewReady = Boolean(
+    previewKey && privatePreview?.key === previewKey && isRheaSwapQuoteFresh(privatePreview.quote)
+  )
+  useEffect(() => {
+    if (isSelfMove || !currentWalletId || !currentAccountId) return
+    const draft = parsePublicPrivateEvmSendDraft(new URLSearchParams(location.search), {
+      walletId: currentWalletId,
+      accountId: currentAccountId,
+      network: currentNetwork,
+      assetId: ZEC_ZCASH_ASSET
+    })
+    if (!draft) return
+    setFundingSource('transparent')
+    setToAddress(draft.recipient)
+    setAmount(draft.amount)
+    setMaxSelected(draft.maximum)
+    setPrivateSendScope(privacyScope)
+  }, [location.search, currentWalletId, currentAccountId, currentNetwork, isSelfMove, privacyScope])
+  useEffect(() => {
+    setPrivatePreview(null)
+    setPrivatePreviewError(null)
+    if (!previewKey) return
+    let cancelled = false
+    let quoteHandle: string | null = null
+    let expiryTimer: number | undefined
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const [source, destination] = await Promise.all([
+            rheaSwapClient.listTokens({ direction: 'from', tokenListChainIds: [900010] }),
+            rheaSwapClient.listTokens({ direction: 'cross-chain-to', tokenListChainIds: [900010] })
+          ])
+          if (cancelled) return
+          const request = buildZcashPublicPrivateSendPreviewRequest({
+            sourceTokens: source.tokens,
+            destinationTokens: destination.tokens,
+            amount,
+            slippage: 1,
+            sender: fromAddress,
+            recipient: effectiveToAddress
+          })
+          if (!request) throw new Error('Confidential route unavailable')
+          const quote = await rheaSwapClient.quote(request.request, 'public-private-send')
+          if (cancelled || currentPreviewKey.current !== previewKey) {
+            void rheaSwapClient.discard(quote.quoteHandle).catch(() => {})
+            return
+          }
+          quoteHandle = quote.quoteHandle
+          if (!isRheaSwapQuoteFresh(quote) || quote.recipient !== effectiveToAddress)
+            throw new Error('Quote expired. Try again.')
+          setPrivatePreview({ key: previewKey, quote, amountRaw: request.amount })
+          expiryTimer = window.setTimeout(
+            () => {
+              setPrivatePreview(null)
+              setPrivatePreviewError('Quote expired. Try again.')
+              if (quoteHandle) void rheaSwapClient.discard(quoteHandle).catch(() => {})
+              quoteHandle = null
+            },
+            Math.max(0, getRheaSwapQuoteDeadline(quote) - Date.now())
+          )
+        } catch (error) {
+          if (!cancelled && currentPreviewKey.current === previewKey)
+            setPrivatePreviewError(getRheaSwapErrorMessage(error))
+        }
+      })()
+    }, 800)
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+      if (expiryTimer !== undefined) window.clearTimeout(expiryTimer)
+      if (quoteHandle) void rheaSwapClient.discard(quoteHandle).catch(() => {})
+    }
+  }, [previewKey, privatePreviewRetry])
 
   const maxTransfer = useMaxTransferEstimate({
     to: effectiveToAddress,
     memo: effectiveMemo,
     feeTier,
     fundingSource,
-    enabled: !isWholeBalanceShield && !!effectiveToAddress && !!fromAddress
+    enabled: !sendPrivately && !isWholeBalanceShield && !!effectiveToAddress && !!fromAddress
   })
   const isMaxTransferAmount =
     !!maxTransfer.maxAmount && safeBig(amount || '0').eq(maxTransfer.maxAmount)
@@ -298,6 +413,7 @@ export function Send() {
       sourceBalance.pending
     ]),
     enabled:
+      !sendPrivately &&
       !isWholeBalanceShield &&
       safeBig(amount || '0').gt(0) &&
       !!effectiveToAddress &&
@@ -418,6 +534,7 @@ export function Send() {
       )
     )
       return
+    setPrivateSendScope(null)
     setFundingSource(source)
     setSourcePickerOpen(false)
     setAmount('')
@@ -445,6 +562,21 @@ export function Send() {
   }
 
   const handleContinue = () => {
+    if (sendPrivately) {
+      if (!privatePreviewReady || !currentWalletId || !currentAccountId || !isValidAmount) return
+      navigate(
+        buildPublicPrivateEvmSendPath({
+          assetId: ZEC_ZCASH_ASSET,
+          recipient: effectiveToAddress,
+          amount,
+          maximum: maxSelected,
+          walletId: currentWalletId,
+          accountId: currentAccountId,
+          network: currentNetwork
+        })
+      )
+      return
+    }
     if (
       effectiveToAddress &&
       !moveUnavailable &&
@@ -916,19 +1048,21 @@ export function Send() {
             />
           )}
 
-          <div className="flex min-h-5 items-center justify-between gap-2 text-xs">
-            <span className="text-muted">Fee</span>
-            <FeeTierPicker
-              tier={feeTier}
-              onTierChange={setFeeTier}
-              feeByTier={displayedFeeByTier}
-              loadingByTier={displayedFeeLoadingByTier}
-              loading={displayedFeeLoading}
-              allowFallback={!feeRequired}
-              hideLabel
-            />
-          </div>
-          {feeError && (
+          {!sendPrivately && (
+            <div className="flex min-h-5 items-center justify-between gap-2 text-xs">
+              <span className="text-muted">Fee</span>
+              <FeeTierPicker
+                tier={feeTier}
+                onTierChange={setFeeTier}
+                feeByTier={displayedFeeByTier}
+                loadingByTier={displayedFeeLoadingByTier}
+                loading={displayedFeeLoading}
+                allowFallback={!feeRequired}
+                hideLabel
+              />
+            </div>
+          )}
+          {!sendPrivately && feeError && (
             <InlineError
               className="px-1"
               message="Could not estimate network fee"
@@ -936,7 +1070,45 @@ export function Send() {
             />
           )}
 
-          {isSelfMove ? null : showMemo ? (
+          {sendPrivately && previewKey && !privatePreview && !privatePreviewError && (
+            <p role="status" className="text-xs text-muted">
+              Getting quote…
+            </p>
+          )}
+          {sendPrivately && privatePreviewReady && privatePreview && (
+            <div className="space-y-2 text-xs">
+              <div className="flex justify-between">
+                <span className="text-muted">Recipient receives</span>
+                <AmountDisplay
+                  value={formatBaseUnitDecimalAmount(
+                    privatePreview.quote.estimatedOut,
+                    ZEC_DECIMALS
+                  )}
+                  symbol="ZEC"
+                />
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted">Route cost</span>
+                <AmountDisplay
+                  value={
+                    getPublicPrivateSendRouteCost({
+                      amountInRaw: privatePreview.amountRaw,
+                      estimatedOutRaw: privatePreview.quote.estimatedOut,
+                      decimals: ZEC_DECIMALS
+                    }) ?? '—'
+                  }
+                  symbol="ZEC"
+                />
+              </div>
+            </div>
+          )}
+          {sendPrivately && privatePreviewError && (
+            <InlineError
+              message={privatePreviewError}
+              onRetry={() => setPrivatePreviewRetry(value => value + 1)}
+            />
+          )}
+          {isSelfMove || sendPrivately ? null : showMemo ? (
             <div>
               <label htmlFor="zcash-send-memo" className="mb-1.5 block px-1 text-xs text-muted">
                 Memo (optional)
@@ -988,6 +1160,23 @@ export function Send() {
       </div>
 
       <div className="page-footer">
+        {privateSendAvailable && (
+          <button
+            type="button"
+            role="switch"
+            aria-label="Send privately"
+            aria-checked={sendPrivately}
+            onClick={() => {
+              setPrivateSendScope(sendPrivately ? null : privacyScope)
+              setMaxSelected(false)
+            }}
+            className={`mb-4 flex w-full items-center justify-center gap-1.5 text-sm ${sendPrivately ? 'text-primary' : 'text-muted'}`}
+          >
+            <Icon icon="lucide:shield-check" width={15} height={15} className="text-primary" />
+            Send privately
+            <Switch checked={sendPrivately} size="sm" />
+          </button>
+        )}
         <Button
           size="wallet"
           disabled={
@@ -996,7 +1185,7 @@ export function Send() {
             !amount ||
             !isValidAmount ||
             reviewInsufficient ||
-            !feeReady ||
+            (sendPrivately ? !privatePreviewReady : !feeReady) ||
             (isSelfMove && syncState.isSyncing) ||
             (!isSelfMove && zns.loading)
           }

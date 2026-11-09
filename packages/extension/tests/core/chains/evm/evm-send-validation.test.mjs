@@ -103,6 +103,33 @@ test.describe('EVM send validation', () => {
     })
   })
 
+  test('binds Zcash Confidential Send to transparent funding and the original account', () => {
+    const scope = {
+      walletId: 'wallet-1',
+      accountId: 'account-1',
+      network: 'mainnet',
+      assetId: 'nep141:zec.omft.near'
+    }
+    const recipient = `t1${'B'.repeat(33)}`
+    const route = new URL(
+      buildPublicPrivateEvmSendPath({ ...scope, recipient, amount: '0.1' }),
+      'https://wallet.invalid'
+    )
+    expect(route.searchParams.get('fundingSource')).toBe('transparent')
+    expect(parsePublicPrivateEvmSwapRoute(route.searchParams, scope)?.recipient).toBe(recipient)
+    expect(
+      parsePublicPrivateEvmSwapRoute(route.searchParams, { ...scope, accountId: 'other' })
+    ).toBeNull()
+    route.searchParams.set('fundingSource', 'shielded')
+    expect(parsePublicPrivateEvmSwapRoute(route.searchParams, scope)).toBeNull()
+    route.searchParams.set('fundingSource', 'transparent')
+    route.searchParams.set('recipient', `tm${'B'.repeat(33)}`)
+    expect(parsePublicPrivateEvmSwapRoute(route.searchParams, scope)).toBeNull()
+    expect(() =>
+      buildPublicPrivateEvmSendPath({ ...scope, recipient: `u1${'q'.repeat(80)}`, amount: '0.1' })
+    ).toThrow()
+  })
+
   test('binds Public Confidential Send and its return draft to the selected account', () => {
     const scope = {
       walletId: 'wallet-1',

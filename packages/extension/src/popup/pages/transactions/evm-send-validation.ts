@@ -1,3 +1,5 @@
+import { ZEC_ZCASH_ASSET } from '@/config/intents'
+import { parseZcashAddress } from '@/core/address-book/address-book'
 import { EvmWalletClientError } from '@/popup/services/evm-wallet-client'
 
 export type EvmSendSourceMode = 'main' | 'private'
@@ -117,6 +119,21 @@ export function buildPrivateEvmTransferPath(input: {
   return `/swap?${query.toString()}`
 }
 
+export function isPublicPrivateSendRecipient(assetId: string, recipient: string): boolean {
+  if (assetId === ZEC_ZCASH_ASSET) {
+    try {
+      return parseZcashAddress(recipient, 'mainnet').scheme.startsWith('zcash-transparent-')
+    } catch {
+      return false
+    }
+  }
+  return (
+    /^eip155:[1-9][0-9]*\//.test(assetId) &&
+    /^0x[0-9a-fA-F]{40}$/.test(recipient) &&
+    !/^0x0{40}$/i.test(recipient)
+  )
+}
+
 export function buildPublicPrivateEvmSendPath(input: {
   readonly assetId: string
   readonly recipient: string
@@ -128,9 +145,7 @@ export function buildPublicPrivateEvmSendPath(input: {
 }): string {
   assertRoutableAssetId(input.assetId)
   if (
-    !/^eip155:[1-9][0-9]*\//.test(input.assetId) ||
-    !/^0x[0-9a-fA-F]{40}$/.test(input.recipient) ||
-    /^0x0{40}$/i.test(input.recipient) ||
+    !isPublicPrivateSendRecipient(input.assetId, input.recipient) ||
     !isPositiveRouteAmount(input.amount) ||
     !input.walletId ||
     !input.accountId ||
@@ -153,6 +168,7 @@ export function buildPublicPrivateEvmSendPath(input: {
     amount: input.amount,
     review: '1'
   })
+  if (input.assetId === ZEC_ZCASH_ASSET) query.set('fundingSource', 'transparent')
   if (input.maximum) query.set('maximum', '1')
   return `/swap?${query.toString()}`
 }
@@ -193,8 +209,11 @@ function parseScopedPublicPrivacyDraft(
     searchParams.get(assetKey) !== scope.assetId ||
     searchParams.get('sourceMode') !== 'main' ||
     searchParams.get(privacyKey) !== '1' ||
-    !/^0x[0-9a-fA-F]{40}$/.test(recipient) ||
-    /^0x0{40}$/i.test(recipient) ||
+    !isPublicPrivateSendRecipient(scope.assetId, recipient) ||
+    (scope.assetId === ZEC_ZCASH_ASSET &&
+      privacyKey === 'publicPrivacySend' &&
+      (searchParams.getAll('fundingSource').length !== 1 ||
+        searchParams.get('fundingSource') !== 'transparent')) ||
     !isPositiveRouteAmount(amount) ||
     (searchParams.has('maximum') && searchParams.get('maximum') !== '1')
   ) {

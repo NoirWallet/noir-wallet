@@ -328,6 +328,47 @@ test('Private Swap quote remains bound to the same Account and its managed desti
     recipient: `0x${'5'.repeat(40)}`
   }
   expect(() => assertPrivateQuoteRoute(publicRoute, account, 'public-private-send')).not.toThrow()
+  const publicZcash = {
+    ...quoteRequest,
+    fromChain: 'zcash',
+    toChain: 'zcash',
+    tokenOut: sourceAsset,
+    sender: `t1${'A'.repeat(33)}`,
+    recipient: `t1${'B'.repeat(33)}`,
+    confidentiality: 'basic'
+  }
+  const publicZcashAccount = {
+    ...account,
+    networks: [{ chainId: getZcashChainId('mainnet'), addresses: [{ value: publicZcash.sender }] }]
+  }
+  expect(() =>
+    assertPrivateQuoteRoute(publicZcash, publicZcashAccount, 'public-private-send')
+  ).not.toThrow()
+  for (const changed of [
+    { sender: `t1${'C'.repeat(33)}` },
+    { recipient: `u1${'q'.repeat(80)}` },
+    { recipient: `tm${'B'.repeat(33)}` },
+    { toChain: 'near' },
+    { tokenOut: destinationAsset },
+    { confidentiality: undefined }
+  ]) {
+    expect(() =>
+      assertPrivateQuoteRoute(
+        { ...publicZcash, ...changed },
+        publicZcashAccount,
+        'public-private-send'
+      )
+    ).toThrow()
+  }
+  expect(() =>
+    assertPrivateQuoteRoute(
+      publicZcash,
+      { ...publicZcashAccount, accountId: 'other' },
+      'public-private-send',
+      publicZcashAccount
+    )
+  ).toThrow(/account changed/)
+
   expect(() =>
     assertPrivateQuoteRoute({ ...publicRoute, sender: source }, account, 'public-private-send')
   ).toThrow(/route is invalid/)

@@ -809,13 +809,16 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
     readonly source: FundingSource
   } | null>(null)
   const requestedFundingSource =
-    ordinarySwapRequested && swap.isZecSource
-      ? zecFundingSelection?.scope === walletSourcesScope && zecFundingSelection.mode === sourceMode
-        ? zecFundingSelection.source
-        : sourceMode === 'private'
-          ? 'shielded'
-          : 'transparent'
-      : selectedFundingSource
+    publicPrivacySendRequested && swap.isZecSource
+      ? 'transparent'
+      : ordinarySwapRequested && swap.isZecSource
+        ? zecFundingSelection?.scope === walletSourcesScope &&
+          zecFundingSelection.mode === sourceMode
+          ? zecFundingSelection.source
+          : sourceMode === 'private'
+            ? 'shielded'
+            : 'transparent'
+        : selectedFundingSource
   const fundingSource = getFundingSourceUnavailableReason(
     currentWallet?.keySource,
     requestedFundingSource
@@ -1234,7 +1237,10 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
   const publicPrivacySendRecipientReady =
     !publicPrivacySendRequested ||
     (publicPrivacySendRoute !== null &&
-      resolvedRecipientAddress.toLowerCase() === publicPrivacySendRoute.recipient.toLowerCase())
+      (swap.isZecSource
+        ? resolvedRecipientAddress === publicPrivacySendRoute.recipient
+        : resolvedRecipientAddress.toLowerCase() ===
+          publicPrivacySendRoute.recipient.toLowerCase()))
   const resolvedRefundAddress = swap.isZecSource
     ? currentAccount?.addresses.transparent || ''
     : !isPrivateFunding && executionSourceMode === 'private'
@@ -1242,9 +1248,13 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
       : walletSourceQuoteTarget?.address || ''
   const publicPrivacySendFundingReady =
     !publicPrivacySendRequested ||
-    (walletOwnedSource?.family === 'evm' &&
-      executionSourceMode === 'main' &&
-      walletOwnedSource.refundAddress.toLowerCase() === resolvedRefundAddress.toLowerCase())
+    (executionSourceMode === 'main' &&
+      (swap.isZecSource
+        ? fundingSource === 'transparent' &&
+          Boolean(currentAccount?.addresses.transparent) &&
+          !getFundingSourceUnavailableReason(currentWallet?.keySource, 'transparent')
+        : walletOwnedSource?.family === 'evm' &&
+          walletOwnedSource.refundAddress.toLowerCase() === resolvedRefundAddress.toLowerCase()))
   const canSwitchTokens = Boolean(
     !isPrivateFunding &&
     !privateTransferRequested &&
@@ -1566,6 +1576,19 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
         sourceToken &&
         destinationToken
       ) {
+        if (publicPrivacySendRequested && isZecToken(destinationToken)) {
+          if (
+            !publicPrivacySendRouteReady ||
+            !walletSourcesScope ||
+            !isValidSwapZcashRecipient(privateTransferRecipient, currentNetwork)
+          ) {
+            return
+          }
+          setZecRecipientSelection({
+            scope: walletSourcesScope,
+            address: privateTransferRecipient
+          })
+        }
         initializedPrivateTransferScope.current = initializationScope
         swap.setRecipientAddress(privateTransferRecipient)
         swap.updateAmountIn(privateTransferAmount)
@@ -1677,6 +1700,9 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
     privateTransferRequested,
     privateTransferRecipient,
     privateTransferAmount,
+    publicPrivacySendRequested,
+    publicPrivacySendRouteReady,
+    currentNetwork,
     requestedSourceAssetId,
     requestedSourceToken?.assetId,
     lockedSourceToken,
@@ -4108,7 +4134,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
       sourceNetwork: currentNetwork
     })
     if (maxSelected) query.set('maximum', '1')
-    navigate(`/send?${query.toString()}`, { replace: true })
+    navigate(`${swap.isZecSource ? '/send/zcash' : '/send'}?${query.toString()}`, { replace: true })
   }
 
   const handleSourceModeChange = (mode: QuoteDepositExecutionMode) => {

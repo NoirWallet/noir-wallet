@@ -1,3 +1,4 @@
+import { parseZcashAddress } from '@/core/address-book/address-book'
 import type {
   AssetRef,
   ChainRef,
@@ -56,20 +57,42 @@ export function assertPrivateQuoteRoute(
     (scope && (account.walletId !== scope.walletId || account.accountId !== scope.accountId)) ||
     (purpose !== 'wallet-swap' &&
       purpose !== 'public-cross-chain-send' &&
-      (!/^[1-9]\d*$/.test(request.fromChain) || request.confidentiality !== 'basic'))
+      ((!/^[1-9]\d*$/.test(request.fromChain) &&
+        !(purpose === 'public-private-send' && request.fromChain === 'zcash')) ||
+        request.confidentiality !== 'basic'))
   ) {
     throw new Error('Private quote account changed. Get a new quote.')
   }
   const source = account.networks.find(network => network.chainId === `eip155:${request.fromChain}`)
   if (purpose === 'public-private-send') {
+    const zcashSource =
+      request.fromChain === 'zcash'
+        ? account.networks.find(network => network.chainId === getZcashChainId('mainnet'))
+        : null
+    let validZcashRecipient = false
+    if (zcashSource) {
+      try {
+        validZcashRecipient = parseZcashAddress(
+          request.recipient ?? '',
+          'mainnet'
+        ).scheme.startsWith('zcash-transparent-')
+      } catch {
+        /* Reject malformed recipients. */
+      }
+    }
     if (
       request.fromChain !== request.toChain ||
       request.tokenIn.address.toLowerCase() !== request.tokenOut.address.toLowerCase() ||
-      !source?.addresses?.some(
-        address => address.value.toLowerCase() === request.sender.toLowerCase()
-      ) ||
-      !/^0x[0-9a-fA-F]{40}$/.test(request.recipient ?? '') ||
-      /^0x0{40}$/i.test(request.recipient ?? '')
+      (request.fromChain === 'zcash'
+        ? !validZcashRecipient ||
+          !zcashSource?.addresses?.some(
+            address => address.value === request.sender && /^t[13]/.test(address.value)
+          )
+        : !source?.addresses?.some(
+            address => address.value.toLowerCase() === request.sender.toLowerCase()
+          ) ||
+          !/^0x[0-9a-fA-F]{40}$/.test(request.recipient ?? '') ||
+          /^0x0{40}$/i.test(request.recipient ?? ''))
     ) {
       throw new Error('Public Confidential Send route is invalid.')
     }

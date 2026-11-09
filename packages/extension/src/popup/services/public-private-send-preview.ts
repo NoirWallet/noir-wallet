@@ -1,3 +1,4 @@
+import { ZEC_ZCASH_ASSET } from '@/config/intents'
 import type { PortfolioReadModel } from '@/core/portfolio'
 import type { RheaSwapToken } from '@/core/services/rhea-swap'
 import { formatBaseUnitDecimalAmount } from '@/lib/number-format'
@@ -56,6 +57,33 @@ export function resolvePublicPrivateSendQuotePair(input: {
       isConfidentialSwapDestinationSupported(token)
   )
   return destinationToken ? Object.freeze({ sourceToken, destinationToken }) : null
+}
+
+export function buildZcashPublicPrivateSendPreviewRequest(input: {
+  readonly sourceTokens: readonly RheaSwapToken[]
+  readonly destinationTokens: readonly RheaSwapToken[]
+  readonly amount: string
+  readonly sender: string
+  readonly recipient: string
+  readonly slippage: number
+}): ReturnType<typeof buildLiveSwapQuoteRequest> {
+  const tokenIn = input.sourceTokens.find(
+    token => token.assetId === ZEC_ZCASH_ASSET && token.blockchain === 'zec'
+  )
+  const tokenOut = input.destinationTokens.find(
+    token => token.assetId === ZEC_ZCASH_ASSET && token.blockchain === 'zec'
+  )
+  if (!tokenIn || !tokenOut) return null
+  return buildLiveSwapQuoteRequest({
+    tokenIn,
+    tokenOut,
+    amountIn: input.amount,
+    slippage: input.slippage,
+    refundAddress: input.sender,
+    recipientAddress: input.recipient,
+    confidentiality: 'basic',
+    blocked: false
+  })
 }
 
 export interface PublicPrivateSendPreviewIdentity {
