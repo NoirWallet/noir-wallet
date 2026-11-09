@@ -153,6 +153,7 @@ function harness(options = {}) {
     now: () => 1_000,
     createId: () => `test-${++id}`,
     onPendingBroadcast: options.onPendingBroadcast,
+    canBroadcastSigned: options.canBroadcastSigned,
     onMonitoringRequired: options.onMonitoringRequired
   })
   return { orchestrator, repository, pendingStore, calls }
@@ -241,6 +242,54 @@ test('persists signed bytes before broadcast and resumes without signing twice',
   expect(analytics[0].options.idempotencyKey).toBe(`send-broadcast:${approval.graph.root.id}`)
   expect(calls.filter(call => call[0] === 'confirm')).toHaveLength(1)
   expect(pendingBroadcastCalls).toBe(1)
+})
+
+test('keeps signed NEAR recovery pending while its account network is disabled', async () => {
+  let networkEnabled = true
+  let broadcastCalls = 0
+  const checkedScopes = []
+  const { orchestrator, pendingStore, repository } = harness({
+    canBroadcastSigned: candidateScope => {
+      checkedScopes.push(candidateScope)
+      return networkEnabled
+    },
+    rpc: rpc({
+      broadcastSignedTransaction: async () => {
+        broadcastCalls += 1
+        if (broadcastCalls === 1) throw new Error('response lost')
+        return blockHash
+      }
+    })
+  })
+  const approval = await prepare(orchestrator)
+  const first = await orchestrator.approve({
+    scope,
+    transactionId: approval.graph.root.id,
+    payloadFingerprint: approval.signing.payloadFingerprint.digestHex
+  })
+  expect(first.status).toBe('signed-pending-broadcast')
+
+  networkEnabled = false
+  expect(await orchestrator.resumePendingBroadcasts()).toEqual({
+    attempted: 1,
+    broadcast: 0,
+    pending: 1,
+    errors: 0
+  })
+  expect(broadcastCalls).toBe(1)
+  expect((await pendingStore.get(approval.graph.root.id)).phase).toBe('signed')
+  expect((await repository.get(scope, approval.graph.root.id)).root.status).toBe('signed')
+
+  networkEnabled = true
+  expect(await orchestrator.resumePendingBroadcasts()).toEqual({
+    attempted: 1,
+    broadcast: 1,
+    pending: 0,
+    errors: 0
+  })
+  expect(broadcastCalls).toBe(2)
+  expect(checkedScopes).toEqual([scope, scope, scope])
+  await expect(pendingStore.get(approval.graph.root.id)).resolves.toBeNull()
 })
 
 test('rejects a tampered persisted approval before consuming the signing command', async () => {

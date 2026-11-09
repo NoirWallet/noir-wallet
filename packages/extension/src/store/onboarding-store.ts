@@ -16,6 +16,7 @@ import {
 } from '@/popup/utils/recovery-phrase-confirmation'
 import { DEFAULT_ACCOUNT_NAME, normalizeAccountName } from '@/core/wallet/account-name'
 import type { ImportZcashHistorySelection } from '@/popup/services/import-zcash-history-selection'
+import type { AccountNetworkFamily } from '@/core/wallet/account-network-selection'
 
 export type FlowMode = 'onboarding' | 'addWallet'
 
@@ -28,6 +29,7 @@ export interface OnboardingState {
   confirmPassword: string
   seedPhrase: string[]
   importedSeedPhrase: string
+  selectedNetworkFamilies: readonly AccountNetworkFamily[] | null
   birthdayHeight?: number
   importZcashHistorySelection: ImportZcashHistorySelection | null
   agreedToTerms: boolean
@@ -48,6 +50,7 @@ export interface OnboardingState {
   setConfirmPassword: (password: string) => void
   setSeedPhrase: (phrase: string[]) => void
   setImportedSeedPhrase: (phrase: string) => void
+  setSelectedNetworkFamilies: (families: readonly AccountNetworkFamily[] | null) => void
   setBirthdayHeight: (height?: number) => void
   setImportZcashHistorySelection: (selection: ImportZcashHistorySelection | null) => void
   setAgreedToTerms: (agreed: boolean) => void
@@ -74,6 +77,7 @@ function clearedSensitiveOnboardingState(): Pick<
   | 'confirmPassword'
   | 'seedPhrase'
   | 'importedSeedPhrase'
+  | 'selectedNetworkFamilies'
   | 'birthdayHeight'
   | 'importZcashHistorySelection'
   | 'acknowledgedWarning'
@@ -88,6 +92,7 @@ function clearedSensitiveOnboardingState(): Pick<
     confirmPassword: '',
     seedPhrase: [],
     importedSeedPhrase: '',
+    selectedNetworkFamilies: null,
     birthdayHeight: undefined,
     importZcashHistorySelection: null,
     acknowledgedWarning: false,
@@ -108,6 +113,7 @@ export const useOnboardingStore = create<OnboardingState>((set, get) => ({
   confirmPassword: '',
   seedPhrase: [],
   importedSeedPhrase: '',
+  selectedNetworkFamilies: null,
   birthdayHeight: undefined,
   importZcashHistorySelection: null,
   agreedToTerms: false,
@@ -121,11 +127,17 @@ export const useOnboardingStore = create<OnboardingState>((set, get) => ({
 
   setFlowMode: flowMode => {
     generationAttempts.invalidate()
-    set({ flowMode, seedPhrase: [], verificationPassed: false, importZcashHistorySelection: null })
+    set({
+      flowMode,
+      seedPhrase: [],
+      verificationPassed: false,
+      selectedNetworkFamilies: null,
+      importZcashHistorySelection: null
+    })
   },
   setMode: mode => {
     generationAttempts.invalidate()
-    set({ mode, seedPhrase: [], verificationPassed: false })
+    set({ mode, seedPhrase: [], verificationPassed: false, selectedNetworkFamilies: null })
   },
   setMnemonicWordCount: mnemonicWordCount => {
     importAttempts.invalidate()
@@ -134,6 +146,7 @@ export const useOnboardingStore = create<OnboardingState>((set, get) => ({
       mnemonicWordCount,
       seedPhrase: [],
       importedSeedPhrase: '',
+      selectedNetworkFamilies: null,
       selectedVerificationWords: [],
       verificationIndices: [],
       verificationPassed: false,
@@ -151,10 +164,13 @@ export const useOnboardingStore = create<OnboardingState>((set, get) => ({
     importAttempts.invalidate()
     set({
       importedSeedPhrase,
+      selectedNetworkFamilies:
+        importedSeedPhrase === get().importedSeedPhrase ? get().selectedNetworkFamilies : null,
       error: null,
       isLoading: false
     })
   },
+  setSelectedNetworkFamilies: selectedNetworkFamilies => set({ selectedNetworkFamilies }),
   setBirthdayHeight: birthdayHeight => set({ birthdayHeight }),
   setImportZcashHistorySelection: importZcashHistorySelection =>
     set({ importZcashHistorySelection }),
@@ -270,12 +286,14 @@ export const useOnboardingStore = create<OnboardingState>((set, get) => ({
     const importAttemptId = importAttempts.begin()
     set({ isLoading: true, error: null })
     try {
-      const { importedSeedPhrase, password, birthdayHeight, accountName } = get()
+      const { importedSeedPhrase, password, birthdayHeight, accountName, selectedNetworkFamilies } =
+        get()
       await zcashWalletRuntimeClient.provisionPrimarySoftwareWallet({
         mnemonic: importedSeedPhrase,
         password,
         accountName: normalizeAccountName(accountName),
-        ...(birthdayHeight === undefined ? {} : { birthdayHeight })
+        ...(birthdayHeight === undefined ? {} : { birthdayHeight }),
+        ...(selectedNetworkFamilies === null ? {} : { selectedNetworkFamilies })
       })
       await rehydrateWalletStore()
 
@@ -331,6 +349,7 @@ export const useOnboardingStore = create<OnboardingState>((set, get) => ({
       confirmPassword: '',
       seedPhrase: [],
       importedSeedPhrase: '',
+      selectedNetworkFamilies: null,
       birthdayHeight: undefined,
       importZcashHistorySelection: null,
       agreedToTerms: false,
@@ -372,12 +391,13 @@ export const useOnboardingStore = create<OnboardingState>((set, get) => ({
     const importAttemptId = importAttempts.begin()
     set({ isLoading: true, error: null })
     try {
-      const { importedSeedPhrase, birthdayHeight, accountName } = get()
+      const { importedSeedPhrase, birthdayHeight, accountName, selectedNetworkFamilies } = get()
       await provisionAdditionalSoftwareWallet({
         mode: 'import',
         mnemonic: importedSeedPhrase,
         accountName: normalizeAccountName(accountName),
-        ...(birthdayHeight === undefined ? {} : { birthdayHeight })
+        ...(birthdayHeight === undefined ? {} : { birthdayHeight }),
+        ...(selectedNetworkFamilies === null ? {} : { selectedNetworkFamilies })
       })
       await rehydrateWalletStore()
 

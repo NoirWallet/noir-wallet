@@ -74,6 +74,7 @@ export interface NearTransferOrchestratorOptions {
   readonly now?: () => number
   readonly createId?: () => string
   readonly onPendingBroadcast?: () => Promise<void> | void
+  readonly canBroadcastSigned?: (scope: TransactionAccountScope) => Promise<boolean> | boolean
   readonly onMonitoringRequired?: (
     graph: TransactionGraph,
     recovered: boolean
@@ -170,6 +171,7 @@ export class NearTransferOrchestrator {
   private readonly now: () => number
   private readonly createId: () => string
   private readonly onPendingBroadcast?: () => Promise<void> | void
+  private readonly canBroadcastSigned?: NearTransferOrchestratorOptions['canBroadcastSigned']
   private readonly onMonitoringRequired?: (
     graph: TransactionGraph,
     recovered: boolean
@@ -184,6 +186,7 @@ export class NearTransferOrchestrator {
     this.now = options.now ?? Date.now
     this.createId = options.createId ?? (() => crypto.randomUUID())
     this.onPendingBroadcast = options.onPendingBroadcast
+    this.canBroadcastSigned = options.canBroadcastSigned
     this.onMonitoringRequired = options.onMonitoringRequired
   }
 
@@ -516,6 +519,10 @@ export class NearTransferOrchestrator {
     currentGraph?: TransactionGraph
   ): Promise<NearTransferSubmission> {
     const signedGraph = await this.persistSignedGraph(pending, currentGraph)
+    if ((await this.canBroadcastSigned?.(pending.scope)) === false) {
+      await Promise.resolve(this.onPendingBroadcast?.()).catch(() => {})
+      return Object.freeze({ status: 'signed-pending-broadcast', graph: signedGraph })
+    }
     let accepted = false
     try {
       accepted =

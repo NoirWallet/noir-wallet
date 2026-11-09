@@ -15,6 +15,8 @@ import {
 import { bitcoinAccountRootFromPath } from '@/infrastructure/chains/bitcoin/bitcoin-transaction-model'
 import { isFixedSingleAddressBitcoinCheckpoint } from '@/infrastructure/chains/bitcoin/bitcoin-discovery-persistence-model'
 import { IndexedDbStorageV2Repository } from '@/infrastructure/persistence/repositories'
+import type { KeyDomainSource } from '@/core/keyring/domain'
+import { isStoredAccountNetworkEnabledForSource } from '@/lib/wallet-metadata-storage'
 import {
   DEFAULT_BITCOIN_ADDRESS_TYPE,
   getBitcoinAccountPreferences,
@@ -165,12 +167,34 @@ export class BitcoinAddressBalancesCoordinator {
     > = getBitcoinAccountPreferences(),
     private readonly scanAddressType: (
       addressType: BitcoinSupportedAddressType
-    ) => Promise<BitcoinDiscoveryState | null> = scanBackgroundBitcoinAddressType
+    ) => Promise<BitcoinDiscoveryState | null> = scanBackgroundBitcoinAddressType,
+    private readonly isNetworkEnabled: (
+      source: KeyDomainSource,
+      walletId: string,
+      accountId: string
+    ) => Promise<boolean> = (source, walletId, accountId) =>
+      isStoredAccountNetworkEnabledForSource(
+        source,
+        walletId,
+        accountId,
+        DEFAULT_NETWORK,
+        'bitcoin'
+      )
   ) {}
+
+  private accountNetworkEnabled(
+    context: NonNullable<Awaited<ReturnType<typeof loadActiveBitcoinDiscoveryContext>>>
+  ) {
+    return this.isNetworkEnabled(
+      context.keyDomainSource,
+      context.chainAccount.scope.keyDomainId,
+      context.chainAccount.scope.accountId
+    )
+  }
 
   async readActive(): Promise<BitcoinAddressBalanceCatalog | null> {
     const context = await loadActiveBitcoinDiscoveryContext(this.storageRepository, this.chainId)
-    if (!context) return null
+    if (!context || !(await this.accountNetworkEnabled(context))) return null
     const state = await this.discoveryRepository.get({
       chainAccount: context.chainAccount,
       accountIndex: context.accountIndex
@@ -208,6 +232,7 @@ export class BitcoinAddressBalancesCoordinator {
         !bitcoinDiscoveryAddressTypeComplete(state, 'p2wpkh'))
     )
       return null
+    if (!(await this.accountNetworkEnabled(context))) return null
     return projectBitcoinAddressBalanceCatalog(
       state,
       unavailableOutpoints,
@@ -229,6 +254,9 @@ export class BitcoinAddressBalancesCoordinator {
     ) {
       throw new Error('Bitcoin account preference does not match the active Account')
     }
+    if (!(await this.accountNetworkEnabled(context))) {
+      throw new Error('Bitcoin is not enabled for this Account')
+    }
     const addressType = parseBitcoinAddressType(input.addressType)
     if (context.keyDomainSource.kind === 'hardware' && addressType !== 'p2wpkh') {
       throw new Error('Keystone Bitcoin accounts support only Native SegWit')
@@ -240,6 +268,9 @@ export class BitcoinAddressBalancesCoordinator {
       !bitcoinDiscoveryAddressTypeComplete(state, addressType)
     ) {
       throw new Error('Bitcoin account discovery did not complete')
+    }
+    if (!(await this.accountNetworkEnabled(context))) {
+      throw new Error('Bitcoin is not enabled for this Account')
     }
     await this.preferences.set(
       {

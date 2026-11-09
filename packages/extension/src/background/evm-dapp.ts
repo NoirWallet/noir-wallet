@@ -16,7 +16,11 @@ import { dappHandler } from './dapp-handler'
 import { BackgroundEvmDAppHandler, type EvmDAppTabInfo } from './evm-dapp-handler'
 import type { ParsedEip1193ChainRequest } from '@/core/dapp/eip1193'
 import { parseChainId } from '@/core/chains/registry'
-import { listDAppChainAccounts } from './dapp-chain-account-catalog'
+import {
+  filterEnabledDAppContext,
+  isDAppNetworkEnabled,
+  listDAppChainAccounts
+} from './dapp-chain-account-catalog'
 import { parseEvmAccountBinding } from '@/infrastructure/chains/evm/evm-account'
 import { PrivateExecutionUnavailableError } from '@/core/dapp/dapp-execution-mode'
 import { dappExecutionModeCoordinator } from './dapp-execution-mode'
@@ -73,12 +77,17 @@ export function createBackgroundEvmDAppHandler(
     network,
     manager: dappManager,
     approval: dappHandler,
-    loadActiveContext: () => loadActiveEvmPortfolioContext(storageRepository, network.chainId),
+    loadActiveContext: async () =>
+      filterEnabledDAppContext(
+        await loadActiveEvmPortfolioContext(storageRepository, network.chainId),
+        'evm'
+      ),
     listAccounts: () =>
       listDAppChainAccounts({
         repository: storageRepository,
         chainId: network.chainId,
         family: 'evm',
+        isNetworkEnabled: isDAppNetworkEnabled,
         resolveAddress: ({ chainAccount }) =>
           parseEvmAccountBinding(
             chainAccount,

@@ -73,6 +73,7 @@ export interface SolanaTransferOrchestratorOptions {
   readonly now?: () => number
   readonly createId?: () => string
   readonly onPendingBroadcast?: () => Promise<void> | void
+  readonly canBroadcastSigned?: (scope: TransactionAccountScope) => Promise<boolean> | boolean
   readonly onMonitoringRequired?: (
     graph: TransactionGraph,
     recovered: boolean
@@ -171,6 +172,7 @@ export class SolanaTransferOrchestrator {
   private readonly now: () => number
   private readonly createId: () => string
   private readonly onPendingBroadcast?: () => Promise<void> | void
+  private readonly canBroadcastSigned?: SolanaTransferOrchestratorOptions['canBroadcastSigned']
   private readonly onMonitoringRequired?: (
     graph: TransactionGraph,
     recovered: boolean
@@ -185,6 +187,7 @@ export class SolanaTransferOrchestrator {
     this.now = options.now ?? Date.now
     this.createId = options.createId ?? (() => crypto.randomUUID())
     this.onPendingBroadcast = options.onPendingBroadcast
+    this.canBroadcastSigned = options.canBroadcastSigned
     this.onMonitoringRequired = options.onMonitoringRequired
   }
 
@@ -510,6 +513,10 @@ export class SolanaTransferOrchestrator {
     currentGraph?: TransactionGraph
   ): Promise<SolanaTransferSubmission> {
     const signedGraph = await this.persistSignedGraph(pending, currentGraph)
+    if ((await this.canBroadcastSigned?.(pending.scope)) === false) {
+      await Promise.resolve(this.onPendingBroadcast?.()).catch(() => {})
+      return Object.freeze({ status: 'signed-pending-broadcast', graph: signedGraph })
+    }
     let accepted = false
     try {
       accepted =

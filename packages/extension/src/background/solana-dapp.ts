@@ -18,7 +18,11 @@ import { dappHandler } from './dapp-handler'
 import { BackgroundNativeTransferDAppHandler } from './native-transfer-dapp-handler'
 import { BackgroundSolanaDAppHandler } from './solana-dapp-handler'
 import { loadActiveSolanaTransferContext } from './solana-transfer'
-import { listDAppChainAccounts } from './dapp-chain-account-catalog'
+import {
+  filterEnabledDAppContext,
+  isDAppNetworkEnabled,
+  listDAppChainAccounts
+} from './dapp-chain-account-catalog'
 
 export function createBackgroundSolanaDAppHandler(
   endpointSettings?: ChainEndpointSettings
@@ -35,12 +39,17 @@ export function createBackgroundSolanaDAppHandler(
     connectApprovalAction: 'solanaConnect',
     manager: dappManager,
     approval: dappHandler,
-    loadActiveContext: () => loadActiveSolanaTransferContext(storageRepository, network.chainId),
+    loadActiveContext: async () =>
+      filterEnabledDAppContext(
+        await loadActiveSolanaTransferContext(storageRepository, network.chainId),
+        'solana'
+      ),
     listAccounts: () =>
       listDAppChainAccounts({
         repository: storageRepository,
         chainId: network.chainId,
         family: 'solana',
+        isNetworkEnabled: isDAppNetworkEnabled,
         resolveAddress: ({ chainAccount }) =>
           chainAccount.identity.kind === 'account-identifier'
             ? parseSolanaPublicKey(chainAccount.identity.value)
@@ -68,7 +77,10 @@ export function createBackgroundSolanaDAppHandler(
       if (!(await credentialSession.hasUnlockSession())) {
         throw new NativeTransferProviderError(4100, 'Unlock Noir Wallet before signing.')
       }
-      const context = await loadActiveSolanaTransferContext(storageRepository, network.chainId)
+      const context = await filterEnabledDAppContext(
+        await loadActiveSolanaTransferContext(storageRepository, network.chainId),
+        'solana'
+      )
       if (!context || context.chainAccount.identity.kind !== 'account-identifier') {
         throw new NativeTransferProviderError(4100, 'The active wallet has no Solana account.')
       }

@@ -20,6 +20,33 @@ import {
 const extensionId = 'abcdefghijklmnopabcdefghijklmnop'
 
 test.describe('Runtime message security', () => {
+  test('limits account network changes to extension pages and valid family selections', () => {
+    const message = {
+      type: 'SET_ACCOUNT_NETWORK_SELECTION',
+      walletId: 'wallet-1',
+      accountId: 'account-1',
+      families: ['evm', 'zcash']
+    }
+    expect(parseTrustedExtensionRuntimeMessage(message)).toEqual(message)
+    expect(
+      isTrustedRuntimeMessageSender(
+        message.type,
+        { id: extensionId, url: `chrome-extension://${extensionId}/index.html` },
+        extensionId
+      )
+    ).toBe(true)
+    expect(
+      isTrustedRuntimeMessageSender(
+        message.type,
+        { id: extensionId, url: 'https://example.com', tab: { id: 1 } },
+        extensionId
+      )
+    ).toBe(false)
+    for (const families of [[], ['evm', 'evm'], ['unknown']]) {
+      expect(() => parseTrustedExtensionRuntimeMessage({ ...message, families })).toThrow()
+    }
+  })
+
   test('site network selection accepts only an extension page with a complete binding', () => {
     const message = {
       type: 'SET_CURRENT_DAPP_EVM_NETWORK',

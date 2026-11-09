@@ -21,6 +21,8 @@ import {
   DEFAULT_BITCOIN_ADDRESS_TYPE,
   getBitcoinAccountPreferences
 } from './bitcoin-account-preferences'
+import type { AccountNetworkFamily } from '@/core/wallet/account-network-selection'
+import { isStoredAccountNetworkEnabled } from '@/lib/wallet-metadata-storage'
 
 type ReceiveTargetsRepository = Pick<StorageV2ReadRepository, 'getActivePointer' | 'getSnapshot'>
 
@@ -52,6 +54,13 @@ export interface AdditionalReceiveTargetsSnapshot {
 export interface AdditionalReceiveTargetsCoordinatorOptions {
   readonly repository: ReceiveTargetsRepository
   readonly chains: AddressGatedChainRegistry
+  readonly isNetworkEnabled?: (
+    scope: {
+      readonly keyDomainId: KeyDomainId
+      readonly accountId: AccountId
+    },
+    family: AccountNetworkFamily
+  ) => boolean | Promise<boolean>
   readonly getBitcoinReceiveTarget: (scope: {
     readonly keyDomainId: KeyDomainId
     readonly accountId: AccountId
@@ -108,8 +117,22 @@ export class AdditionalReceiveTargetsCoordinator {
         (releaseOrder.get(left.chain.id) ?? Number.MAX_SAFE_INTEGER) -
         (releaseOrder.get(right.chain.id) ?? Number.MAX_SAFE_INTEGER)
     )
+    const selectedAccount = active.activeAccount
+    const isSoftwareWallet =
+      active.catalog.keyDomains.find(item => item.id === selectedAccount.keyDomainId)?.source
+        .kind === 'software'
     for (const available of orderedChainAccounts) {
       if (available.chain.family === 'zcash') continue
+      if (
+        isSoftwareWallet &&
+        this.options.isNetworkEnabled &&
+        !(await this.options.isNetworkEnabled(
+          { keyDomainId: selectedAccount.keyDomainId, accountId: selectedAccount.id },
+          available.chain.family
+        ))
+      ) {
+        continue
+      }
       if (chainIds.has(available.chain.id)) {
         throw new Error('Active receive targets contain a duplicate chain')
       }
@@ -205,6 +228,8 @@ export function createBackgroundAdditionalReceiveTargetsCoordinator(
     chains: createBuildAddressGatedChainRegistry(
       createInitialProductChainRegistry(DEFAULT_NETWORK, customEvmNetworks)
     ),
+    isNetworkEnabled: (scope, family) =>
+      isStoredAccountNetworkEnabled(scope.keyDomainId, scope.accountId, DEFAULT_NETWORK, family),
     getBitcoinReceiveTarget: async scope => {
       const activeAddressType = await bitcoinPreferences.get({
         network: DEFAULT_NETWORK,

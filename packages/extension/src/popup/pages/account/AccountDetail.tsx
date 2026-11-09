@@ -22,6 +22,8 @@ import { getAccountDisplayName } from '@/lib/format'
 import { toast } from '@/store/toast-store'
 import { useResyncZcash } from '../../hooks/useResyncZcash'
 import { accountNetworksClient } from '../../services/account-networks-client'
+import { isAccountNetworkEnabled } from '@/core/wallet/account-network-selection'
+import { DEFAULT_NETWORK } from '@/lib/runtime-network'
 
 export function AccountDetail() {
   const { navigate, goBack } = useNavigate()
@@ -74,6 +76,17 @@ export function AccountDetail() {
       icon: <Icon icon="lucide:chevron-right" width={16} height={16} />,
       action: () => navigate(`/addresses-list?accountId=${accountId}&walletId=${walletId}`)
     },
+    !isHardwareWallet && wallet.keySource !== 'private-key'
+      ? {
+          label: 'Networks',
+          value: undefined,
+          icon: <Icon icon="lucide:chevron-right" width={16} height={16} />,
+          action: () =>
+            navigate(
+              `/account-networks?accountId=${encodeURIComponent(accountId!)}&walletId=${encodeURIComponent(walletId!)}`
+            )
+        }
+      : null,
     // Hardware wallets are watch-only: there is no seed phrase on this device
     isHardwareWallet
       ? {
@@ -125,7 +138,7 @@ export function AccountDetail() {
         }
       }
     },
-    ...(isCurrentAccount
+    ...(isCurrentAccount && isAccountNetworkEnabled(account, DEFAULT_NETWORK, 'zcash')
       ? [
           {
             label: 'Resync Zcash',
@@ -272,11 +285,13 @@ export function AccountDetail() {
                   icon={
                     item.label === 'Address'
                       ? 'lucide:layers-3'
-                      : item.label === 'Seed Phrase'
-                        ? 'lucide:panel-left'
-                        : item.label === 'Private Key'
-                          ? 'lucide:key-round'
-                          : 'lucide:hard-drive'
+                      : item.label === 'Networks'
+                        ? 'lucide:network'
+                        : item.label === 'Seed Phrase'
+                          ? 'lucide:panel-left'
+                          : item.label === 'Private Key'
+                            ? 'lucide:key-round'
+                            : 'lucide:hard-drive'
                   }
                   width={20}
                   height={20}

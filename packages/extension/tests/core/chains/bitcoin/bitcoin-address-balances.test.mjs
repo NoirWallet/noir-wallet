@@ -273,7 +273,13 @@ test('persists an address-type switch only after the target scan completes', asy
     getActivePointer: async () => pointer,
     getSnapshot: async () => snapshot
   }
-  const discoveryRepository = { get: async () => state }
+  let discoveryReads = 0
+  const discoveryRepository = {
+    get: async () => {
+      discoveryReads++
+      return state
+    }
+  }
   const inputReservations = {
     list: async scope => {
       expect(scope.addressType).toBe('p2tr')
@@ -281,6 +287,7 @@ test('persists an address-type switch only after the target scan completes', asy
     }
   }
   let selected = 'p2wpkh'
+  let networkEnabled = true
   const writes = []
   const preferences = {
     get: async () => selected,
@@ -298,7 +305,8 @@ test('persists an address-type switch only after the target scan completes', asy
     preferences,
     async () => {
       throw new Error('provider unavailable')
-    }
+    },
+    async () => networkEnabled
   )
 
   await expect(
@@ -321,7 +329,8 @@ test('persists an address-type switch only after the target scan completes', asy
       expect(addressType).toBe('p2tr')
       expect(writes).toEqual([])
       return state
-    }
+    },
+    async () => networkEnabled
   )
   await expect(
     successful.setActive({
@@ -334,5 +343,18 @@ test('persists an address-type switch only after the target scan completes', asy
     confirmedRaw: '560',
     availableRaw: '560'
   })
+  expect(writes).toEqual(['p2tr'])
+
+  networkEnabled = false
+  const readsBeforeDisabled = discoveryReads
+  await expect(successful.readActive()).resolves.toBeNull()
+  await expect(
+    successful.setActive({
+      walletId: chainAccount.scope.keyDomainId,
+      accountId: chainAccount.scope.accountId,
+      addressType: 'p2wpkh'
+    })
+  ).rejects.toThrow(/not enabled/)
+  expect(discoveryReads).toBe(readsBeforeDisabled)
   expect(writes).toEqual(['p2tr'])
 })

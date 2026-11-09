@@ -40,6 +40,7 @@ import { getBitcoinAccountPreferences } from './bitcoin-account-preferences'
 import { credentialSession } from './credential-session'
 import { recordRheaSwapGraphBroadcast } from './rhea-swap'
 import { reportBackgroundSendBroadcast } from './analytics/send-broadcast'
+import { requireSelectedTransferNetwork } from './transfer-account-network-selection'
 
 export { BackgroundBitcoinTransferController } from './bitcoin-transfer-controller'
 export type {
@@ -171,7 +172,11 @@ function createBackgroundBitcoinRuntime(customRpcUrl?: string): BackgroundBitcoi
   const controller = new BackgroundBitcoinTransferController({
     preparation,
     orchestrator,
-    loadActiveContext: () => loadActiveBitcoinDiscoveryContext(storageRepository, network.chainId),
+    loadActiveContext: async () =>
+      requireSelectedTransferNetwork(
+        await loadActiveBitcoinDiscoveryContext(storageRepository, network.chainId),
+        'bitcoin'
+      ),
     scanActive: addressType => discovery.scanActive({ addressType }),
     getAddressType,
     resolveLedgerSigner: async context => {

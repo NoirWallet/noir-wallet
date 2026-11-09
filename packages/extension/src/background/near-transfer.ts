@@ -26,6 +26,10 @@ import { nearLedgerSigningBridge } from './ledger-signing-bridge'
 import { NEAR_TRANSACTION_MONITOR_ALARM } from './near-transaction-monitor'
 import { reportBackgroundSendBroadcast } from './analytics/send-broadcast'
 import {
+  isSelectedTransferScope,
+  requireSelectedTransferNetwork
+} from './transfer-account-network-selection'
+import {
   BackgroundNearTransferController,
   type ActiveNearTransferContext
 } from './near-transfer-controller'
@@ -100,6 +104,7 @@ export function createBackgroundNearTransferController(
     }),
     rpc: createConfiguredNearRpcClient({ chainId: network.chainId, rpcUrl: network.rpcUrl }),
     assets,
+    canBroadcastSigned: scope => isSelectedTransferScope(storageRepository, scope, 'near'),
     onPendingBroadcast: () =>
       chrome.alarms.create(NEAR_TRANSACTION_MONITOR_ALARM, { delayInMinutes: 0.1 }),
     onMonitoringRequired: (graph, recovered) => {
@@ -109,7 +114,11 @@ export function createBackgroundNearTransferController(
   })
   return new BackgroundNearTransferController({
     orchestrator,
-    loadActiveContext: () => loadActiveNearTransferContext(storageRepository, network.chainId)
+    loadActiveContext: async () =>
+      requireSelectedTransferNetwork(
+        await loadActiveNearTransferContext(storageRepository, network.chainId),
+        'near'
+      )
   })
 }
 

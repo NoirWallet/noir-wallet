@@ -10,6 +10,11 @@ import { credentialLifecycle } from './credential-lifecycle'
 import { credentialSession } from './credential-session'
 import { syncScheduler } from './sync-scheduler'
 import { normalizeAccountName } from '@/core/wallet/account-name'
+import {
+  parseSelectedNetworkFamilies,
+  type AccountNetworkFamily
+} from '@/core/wallet/account-network-selection'
+import { isNewWalletFamilyEnabled } from '@/core/chains/feature-runtime-policy'
 
 export type SoftwareWalletProvisioningMode = 'create' | 'import'
 
@@ -18,6 +23,7 @@ export interface AddSoftwareWalletInput {
   readonly mnemonic: string
   readonly accountName: string
   readonly birthdayHeight?: number
+  readonly selectedNetworkFamilies?: readonly AccountNetworkFamily[]
 }
 
 export interface AddSoftwareWalletResult {
@@ -30,6 +36,20 @@ export interface ProvisionPrimarySoftwareWalletInput {
   readonly password: string
   readonly accountName: string
   readonly birthdayHeight?: number
+  readonly selectedNetworkFamilies?: readonly AccountNetworkFamily[]
+}
+
+function importNetworkFamilies(
+  value: readonly AccountNetworkFamily[] | undefined
+): readonly AccountNetworkFamily[] | undefined {
+  if (value === undefined) return undefined
+  const families = parseSelectedNetworkFamilies(value)
+  if (
+    !families.every(family => isNewWalletFamilyEnabled(family, __ENABLED_CHAIN_FEATURE_FLAGS__))
+  ) {
+    throw new Error('Selected network is unavailable')
+  }
+  return families
 }
 
 function normalizeMnemonic(value: string): string {
@@ -98,6 +118,7 @@ export async function provisionPrimarySoftwareWallet(
   const mnemonic = normalizeMnemonic(input.mnemonic)
   const birthdayHeight = validateBirthdayHeight(input.birthdayHeight)
   const accountName = normalizeAccountName(input.accountName)
+  const selectedNetworkFamilies = importNetworkFamilies(input.selectedNetworkFamilies)
 
   syncScheduler.pauseForTx()
   syncScheduler.abortSync()
@@ -108,7 +129,8 @@ export async function provisionPrimarySoftwareWallet(
       mnemonic,
       input.password,
       accountName,
-      birthdayHeight
+      birthdayHeight,
+      selectedNetworkFamilies
     )
 
     const credentials = await credentialLifecycle.synchronizeRetainedV1(input.password)
@@ -129,7 +151,7 @@ export async function provisionPrimarySoftwareWallet(
     }
     await synchronizeNetworkMetadata?.()
 
-    syncScheduler.onRequestSync()
+    if (selectedNetworkFamilies?.includes('zcash') !== false) syncScheduler.onRequestSync()
     return Object.freeze({ walletId: currentWalletId, credentialStatus: credentials.status })
   } catch (error) {
     await lockProvisioningSession()
@@ -146,6 +168,8 @@ export async function addSoftwareWallet(
   const mnemonic = normalizeMnemonic(input.mnemonic)
   const birthdayHeight = validateBirthdayHeight(input.birthdayHeight)
   const accountName = normalizeAccountName(input.accountName)
+  const selectedNetworkFamilies =
+    input.mode === 'import' ? importNetworkFamilies(input.selectedNetworkFamilies) : undefined
   const password = await requireProvisioningPassword()
 
   syncScheduler.pauseForTx()
@@ -160,7 +184,8 @@ export async function addSoftwareWallet(
             mnemonic,
             undefined,
             birthdayHeight,
-            accountName
+            accountName,
+            selectedNetworkFamilies
           )
 
     const credentials = await credentialLifecycle.synchronizeRetainedV1(password)
@@ -185,7 +210,7 @@ export async function addSoftwareWallet(
     }
     await synchronizeNetworkMetadata?.()
 
-    syncScheduler.onRequestSync()
+    if (selectedNetworkFamilies?.includes('zcash') !== false) syncScheduler.onRequestSync()
     return Object.freeze({ walletId, credentialStatus: credentials.status })
   } catch (error) {
     await lockProvisioningSession()

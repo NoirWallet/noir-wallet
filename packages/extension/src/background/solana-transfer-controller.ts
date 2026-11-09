@@ -223,7 +223,9 @@ export class BackgroundSolanaTransferController {
   }
 
   recoverSignedTransfers() {
-    return this.options.orchestrator.resumePendingBroadcasts()
+    return accountContextTransition.runActiveOperation(() =>
+      this.options.orchestrator.resumePendingBroadcasts()
+    )
   }
 
   private async requireActiveContext(): Promise<ActiveSolanaTransferContext> {

@@ -16,6 +16,7 @@ import { recordRpcFailure, recordRpcSuccess } from '@/infrastructure/chains/rpc-
 import { shouldResumeInterruptedSync, shouldSchedulePassiveSync } from './passive-sync-policy'
 import { isRpcEndpointError } from '@/lib/errors'
 import type { SyncReason, ZcashBalance } from '@/types'
+import { isAccountNetworkEnabled } from '@/core/wallet/account-network-selection'
 
 export type SyncStateSnapshot = {
   isSyncing: boolean
@@ -37,6 +38,15 @@ function getWalletSyncKey(walletId?: string): string {
 
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+function isZcashSyncEnabled(walletId: string, accountId?: string | null): boolean {
+  const state = useWalletStore.getState()
+  const wallet = state.getWallet(walletId)
+  const account = accountId
+    ? wallet?.accounts.find(candidate => candidate.id === accountId)
+    : wallet?.accounts[0]
+  return !!account && isAccountNetworkEnabled(account, state.currentNetwork, 'zcash')
 }
 
 export class SyncScheduler {
@@ -84,6 +94,18 @@ export class SyncScheduler {
     const { currentWalletId, currentAccountId } = useWalletStore.getState()
     const targetWalletId = walletId ?? currentWalletId
     const targetAccountId = accountId ?? currentAccountId
+    if (targetWalletId && targetAccountId && !isZcashSyncEnabled(targetWalletId, targetAccountId)) {
+      return {
+        isSyncing: false,
+        syncProgress: 0,
+        currentHeight: 0,
+        latestHeight: 0,
+        etaMs: null,
+        syncReason: null,
+        walletId: targetWalletId,
+        accountId: targetAccountId
+      }
+    }
     const key = getWalletSyncKey(targetWalletId ?? undefined)
     const cached = this.syncStates.get(key) || { isSyncing: false, syncProgress: 0 }
     return {
@@ -264,6 +286,10 @@ export class SyncScheduler {
   }
 
   onAccountSwitched(walletId: string): void {
+    if (!isZcashSyncEnabled(walletId, useWalletStore.getState().currentAccountId)) {
+      this.onZcashAccountUnavailable()
+      return
+    }
     this.pendingPassiveRun = false
     if (this.foregroundWalletId && this.foregroundWalletId !== walletId) {
       backgroundZcashWalletRuntime.finishSyncPreflight(this.foregroundWalletId)
@@ -291,16 +317,24 @@ export class SyncScheduler {
   onRequestSync(): void {
     this.pendingPassiveRun = false
     const { currentWalletId } = useWalletStore.getState()
-    if (currentWalletId) {
+    if (
+      currentWalletId &&
+      isZcashSyncEnabled(currentWalletId, useWalletStore.getState().currentAccountId)
+    ) {
       this.foregroundWalletId = currentWalletId
       this.cancelledPreflightWalletIds.delete(currentWalletId)
-    }
+    } else return
     this.scheduleRun()
   }
 
   requestPassiveSync(maxAgeMs: number): boolean {
     const { currentWalletId, currentNetwork } = useWalletStore.getState()
-    if (!currentWalletId || this.removedWalletIds.has(currentWalletId)) return false
+    if (
+      !currentWalletId ||
+      this.removedWalletIds.has(currentWalletId) ||
+      !isZcashSyncEnabled(currentWalletId, useWalletStore.getState().currentAccountId)
+    )
+      return false
 
     const syncState = useAccountDataStore
       .getState()
@@ -325,7 +359,13 @@ export class SyncScheduler {
   async resumeInterrupted(): Promise<void> {
     const network = backgroundZcashWalletRuntime.getNetwork()
     const { wallets } = useWalletStore.getState()
-    await Promise.all(wallets.map(wallet => getWorkerClient(wallet.id).reconcileWallet()))
+    await Promise.all(
+      wallets
+        .filter(wallet =>
+          wallet.accounts.some(account => isAccountNetworkEnabled(account, network, 'zcash'))
+        )
+        .map(wallet => getWorkerClient(wallet.id).reconcileWallet())
+    )
 
     const allJobs = await chrome.storage.local.get('sync_jobs')
     const jobs: Record<string, any> = allJobs['sync_jobs'] || {}
@@ -349,8 +389,8 @@ export class SyncScheduler {
       }
     }
 
-    const remaining = (await syncJobStore.getInterrupted(network)).filter(j =>
-      activeWalletIds.has(j.walletId)
+    const remaining = (await syncJobStore.getInterrupted(network)).filter(
+      j => activeWalletIds.has(j.walletId) && isZcashSyncEnabled(j.walletId)
     )
     if (remaining.length === 0) return
 
@@ -461,6 +501,11 @@ export class SyncScheduler {
         const { currentWalletId: scheduledWalletId } = useWalletStore.getState()
         if (
           scheduledWalletId &&
+          !isZcashSyncEnabled(scheduledWalletId, useWalletStore.getState().currentAccountId)
+        )
+          return
+        if (
+          scheduledWalletId &&
           !this.removedWalletIds.has(scheduledWalletId) &&
           (await this.blockQuarantinedSync(scheduledWalletId))
         ) {
@@ -560,7 +605,12 @@ export class SyncScheduler {
   }
 
   async runTransactionCatchUp(walletId: string, accountId: string): Promise<SyncOutcome['status']> {
-    if (this.removedWalletIds.has(walletId) || this.txPauseDepth > 0) return 'skipped'
+    if (
+      this.removedWalletIds.has(walletId) ||
+      this.txPauseDepth > 0 ||
+      !isZcashSyncEnabled(walletId, accountId)
+    )
+      return 'skipped'
     const key = getWalletSyncKey(walletId)
     const existing = this.transactionCatchUps.get(key)
     if (existing) {
@@ -598,6 +648,7 @@ export class SyncScheduler {
     passive = false,
     transaction = false
   ): Promise<SyncOutcome['status']> {
+    if (!isZcashSyncEnabled(walletId, accountId)) return 'skipped'
     const key = getWalletSyncKey(walletId)
     if (this.activeSyncPromises.has(key)) {
       return this.activeSyncPromises.get(key)!
@@ -627,6 +678,7 @@ export class SyncScheduler {
     passive: boolean,
     transaction: boolean
   ): Promise<SyncOutcome['status']> {
+    if (!isZcashSyncEnabled(walletId, accountId)) return 'skipped'
     this.runningWalletId = walletId
     try {
       await backgroundZcashWalletRuntime.ensureWalletReadyForSync(

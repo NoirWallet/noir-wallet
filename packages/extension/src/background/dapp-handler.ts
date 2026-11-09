@@ -56,6 +56,7 @@ import { switchActiveAccountPersistently } from './account-switch'
 import { credentialSession } from './credential-session'
 import { accountContextTransition } from './account-context-transition'
 import { DEFAULT_NETWORK } from '@/lib/runtime-network'
+import { isStoredAccountNetworkEnabled } from '@/lib/wallet-metadata-storage'
 import { getZcashChainId } from '@/core/chains/registry'
 import { Caip25ProviderError } from '@/core/dapp/caip25'
 import {
@@ -397,9 +398,12 @@ export class DAppHandler {
   ): Promise<{ transparent: string; shielded: string; accounts: BatchAccount[] } | null> {
     const authorization = await dappManager.getAuthorization(origin)
     const { currentWalletId, currentAccountId } = useWalletStore.getState()
+    const wallet = useWalletStore.getState().wallets.find(item => item.id === currentWalletId)
     if (
       backgroundZcashWalletRuntime.isLocked() ||
       currentAccountId !== account.id ||
+      !wallet ||
+      !(await this.isZcashEnabled(wallet, account)) ||
       !authorization.accounts.some(
         ref => ref.walletId === currentWalletId && ref.accountId === account.id
       )
@@ -504,12 +508,16 @@ export class DAppHandler {
     const accounts = await this.resolveAccountBalances(origin)
     const latestAuthorization = await dappManager.getAuthorization(origin)
     const currentState = useWalletStore.getState()
+    const currentWallet = currentState.wallets.find(wallet => wallet.id === walletId)
+    const currentAccount = currentWallet?.accounts.find(account => account.id === currentAccountId)
     if (
       backgroundZcashWalletRuntime.isLocked() ||
       currentState.currentNetwork !== network ||
       currentState.currentWalletId !== walletId ||
       backgroundZcashWalletRuntime.getCurrentAccount()?.id !== currentAccountId ||
-      !currentState.getAccount(walletId, currentAccountId) ||
+      !currentWallet ||
+      !currentAccount ||
+      !(await this.isZcashEnabled(currentWallet, currentAccount)) ||
       latestAuthorization.revision !== authorization.revision ||
       !latestAuthorization.accounts.some(
         account => account.walletId === walletId && account.accountId === currentAccountId
@@ -517,13 +525,21 @@ export class DAppHandler {
     ) {
       throw new Error('Wallet account or site connection changed. Reconnect and try again.')
     }
-    const authorizedAccounts = accounts.filter(
-      account =>
-        !!currentState.getAccount(account.walletId, account.accountId) &&
+    const authorizedAccounts: BatchAccountBalance[] = []
+    for (const account of accounts) {
+      const wallet = currentState.wallets.find(item => item.id === account.walletId)
+      const storedAccount = wallet?.accounts.find(item => item.id === account.accountId)
+      if (
+        wallet &&
+        storedAccount &&
+        (await this.isZcashEnabled(wallet, storedAccount)) &&
         latestAuthorization.accounts.some(
           ref => ref.walletId === account.walletId && ref.accountId === account.accountId
         )
-    )
+      ) {
+        authorizedAccounts.push(account)
+      }
+    }
 
     // `accountId` is the `${walletId}:${accountId}` key from `accounts`. When the
     // dApp targets a specific authorized account, surface that as the primary;
@@ -622,13 +638,20 @@ export class DAppHandler {
     }
   }
 
+  private isZcashEnabled(wallet: WalletItem, account: AccountData): Promise<boolean> {
+    return isZcashHardwareKeySource(wallet.keySource) || wallet.keySource === 'private-key'
+      ? Promise.resolve(true)
+      : isStoredAccountNetworkEnabled(wallet.id, account.id, DEFAULT_NETWORK, 'zcash')
+  }
+
   /** Every non-hidden account across all wallets — populates the batch approval picker. */
-  private buildAllSelectableAccounts(): BatchAccount[] {
+  private async buildAllSelectableAccounts(): Promise<BatchAccount[]> {
     const { wallets, accountDisplayNames } = useWalletStore.getState()
     const out: BatchAccount[] = []
     for (const wallet of wallets) {
       const visible = wallet.accounts.filter(a => !a.isHidden)
       for (const account of visible) {
+        if (!(await this.isZcashEnabled(wallet, account))) continue
         out.push(
           this.mapToBatchAccount(wallet, account, wallets, accountDisplayNames, visible.length > 1)
         )
@@ -638,11 +661,12 @@ export class DAppHandler {
   }
 
   /** Every account across all wallets for the first-party zkNoir application. */
-  private buildAllWalletAccounts(): BatchAccount[] {
+  private async buildAllWalletAccounts(): Promise<BatchAccount[]> {
     const { wallets, accountDisplayNames } = useWalletStore.getState()
     const out: BatchAccount[] = []
     for (const wallet of wallets) {
       for (const account of wallet.accounts) {
+        if (!(await this.isZcashEnabled(wallet, account))) continue
         out.push(
           this.mapToBatchAccount(
             wallet,
@@ -668,9 +692,22 @@ export class DAppHandler {
     }
     const authorizationRevision = await dappManager.getAuthorizationRevision(origin)
     await rehydrateWalletStore()
-    const accounts = this.buildAllWalletAccounts()
+    const accounts = await this.buildAllWalletAccounts()
     if (accounts.length === 0) {
       throw new Error('No wallets available to authorize')
+    }
+    const { currentWalletId } = useWalletStore.getState()
+    const current = backgroundZcashWalletRuntime.getCurrentAccount()
+    const activeWallet = useWalletStore
+      .getState()
+      .wallets.find(wallet => wallet.id === currentWalletId)
+    if (
+      !currentWalletId ||
+      !current ||
+      !activeWallet ||
+      !(await this.isZcashEnabled(activeWallet, current))
+    ) {
+      throw new Error('The active Zcash account is unavailable.')
     }
 
     const existingConnection = await dappManager.getConnection(origin)
@@ -683,8 +720,6 @@ export class DAppHandler {
       existingIds.size !== accounts.length || accounts.some(account => !existingIds.has(account.id))
 
     if (!existingConnection || accountSetChanged) {
-      const { currentWalletId } = useWalletStore.getState()
-      const current = backgroundZcashWalletRuntime.getCurrentAccount()
       const binding =
         accounts.find(
           account => account.walletId === currentWalletId && account.accountId === current?.id
@@ -692,10 +727,8 @@ export class DAppHandler {
       await this.persistAuthorized(origin, accounts, binding, {}, { automatic: true })
     }
 
-    const { currentWalletId } = useWalletStore.getState()
-    const current = backgroundZcashWalletRuntime.getCurrentAccount()
-    if (!currentWalletId || !current) {
-      throw new Error('No account available')
+    if (!activeWallet || !(await this.isZcashEnabled(activeWallet, current))) {
+      throw new Error('The active Zcash account is unavailable.')
     }
 
     if (
@@ -729,6 +762,7 @@ export class DAppHandler {
       const wallet = wallets.find(w => w.id === walletId)
       const account = wallet?.accounts.find(a => a.id === accountId)
       if (!wallet || !account) continue
+      if (!(await this.isZcashEnabled(wallet, account))) continue
       const multiAccount = wallet.accounts.filter(a => !a.isHidden).length > 1
       out.push(this.mapToBatchAccount(wallet, account, wallets, accountDisplayNames, multiAccount))
     }
@@ -750,7 +784,7 @@ export class DAppHandler {
     const { currentWalletId: walletId, wallets, accountDisplayNames } = useWalletStore.getState()
     if (!account || !walletId) return []
     const wallet = wallets.find(w => w.id === walletId)
-    if (!wallet) return []
+    if (!wallet || !(await this.isZcashEnabled(wallet, account))) return []
     const multiAccount = wallet.accounts.filter(a => !a.isHidden).length > 1
     return [this.mapToBatchAccount(wallet, account, wallets, accountDisplayNames, multiAccount)]
   }
@@ -788,7 +822,7 @@ export class DAppHandler {
     tabInfo: { readonly title?: string; readonly favIconUrl?: string; readonly pageUrl?: string }
   ): Promise<BatchAccount[]> {
     await rehydrateWalletStore()
-    const available = this.buildAllSelectableAccounts()
+    const available = await this.buildAllSelectableAccounts()
     if (available.length === 0) {
       throw new Error('No wallets available to authorize')
     }
@@ -824,6 +858,12 @@ export class DAppHandler {
     if (chosen.length === 0) {
       throw new Error('No accounts selected')
     }
+    const stillAvailable = new Set(
+      (await this.buildAllSelectableAccounts()).map(account => account.id)
+    )
+    if (chosen.some(account => !stillAvailable.has(account.id))) {
+      throw new Error('The selected Zcash accounts changed. Review the connection request again.')
+    }
     return chosen
   }
 
@@ -835,7 +875,7 @@ export class DAppHandler {
     const currentWalletId = useWalletStore.getState().currentWalletId
     const current = backgroundZcashWalletRuntime.getCurrentAccount()
     if (!currentWalletId || !current) throw new Error('The active wallet has no Zcash account.')
-    const available = this.buildAllSelectableAccounts()
+    const available = await this.buildAllSelectableAccounts()
     const active = available.find(
       account => account.walletId === currentWalletId && account.accountId === current.id
     )
@@ -892,6 +932,10 @@ export class DAppHandler {
     ) {
       throw new Error('The active Zcash account changed. Review the connection request again.')
     }
+    const available = new Set((await this.buildAllSelectableAccounts()).map(account => account.id))
+    if (selectedIds.some(id => !available.has(id))) {
+      throw new Error('The selected Zcash accounts changed. Review the connection request again.')
+    }
     return selectDAppSessionAccounts(proposal, selectedIds)
   }
 
@@ -932,6 +976,10 @@ export class DAppHandler {
     tabInfo: { readonly title?: string; readonly favIconUrl?: string; readonly pageUrl?: string },
     expectedRevision: number
   ): Promise<void> {
+    const available = new Set((await this.buildAllSelectableAccounts()).map(account => account.id))
+    if (chosen.some(account => !available.has(account.id))) {
+      throw new Error('The selected Zcash accounts changed. Review the connection request again.')
+    }
     const { currentWalletId } = useWalletStore.getState()
     const current = backgroundZcashWalletRuntime.getCurrentAccount()
     const target =
@@ -1798,7 +1846,8 @@ export class DAppHandler {
     if (!connection) return true
     const { currentWalletId } = useWalletStore.getState()
     const account = backgroundZcashWalletRuntime.getCurrentAccount()
-    if (!account || !currentWalletId) {
+    const wallet = useWalletStore.getState().wallets.find(item => item.id === currentWalletId)
+    if (!account || !currentWalletId || !wallet || !(await this.isZcashEnabled(wallet, account))) {
       return true
     }
     return !connectionAuthorizesAccount(connection, {
@@ -1828,7 +1877,7 @@ export class DAppHandler {
 
     const wallet = wallets.find(item => item.id === currentWalletId)
     const account = wallet?.accounts.find(item => item.id === currentAccountId)
-    if (!wallet || !account) return null
+    if (!wallet || !account || !(await this.isZcashEnabled(wallet, account))) return null
 
     const authorizedAccounts = await this.buildBatchAccounts(origin)
     const accounts =
@@ -1843,6 +1892,8 @@ export class DAppHandler {
               wallet.accounts.filter(item => !item.isHidden).length > 1
             )
           ]
+
+    if (!(await this.isZcashEnabled(wallet, account))) return null
 
     return {
       transparent: account.addresses.transparent,
@@ -1869,9 +1920,12 @@ export class DAppHandler {
 
     const { currentWalletId } = useWalletStore.getState()
     const account = backgroundZcashWalletRuntime.getCurrentAccount()
+    const wallet = useWalletStore.getState().wallets.find(item => item.id === currentWalletId)
     if (
       !account ||
       !currentWalletId ||
+      !wallet ||
+      !(await this.isZcashEnabled(wallet, account)) ||
       !connectionAuthorizesAccount(connection, {
         walletId: currentWalletId,
         accountId: account.id
@@ -1909,6 +1963,9 @@ export class DAppHandler {
       throw new Error('The active account changed. Review the request again.')
     }
     const wallet = state.getWallet(walletId)
+    if (!wallet || !(await this.isZcashEnabled(wallet, account))) {
+      throw new Error('The active Zcash account is unavailable.')
+    }
     if (
       !isZcashHardwareKeySource(wallet?.keySource) &&
       (backgroundZcashWalletRuntime.isLocked() || !(await credentialSession.hasUnlockSession()))

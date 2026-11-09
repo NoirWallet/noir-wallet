@@ -40,6 +40,7 @@ import { useAccountDataStore } from '@/store/account-data-store'
 import { useWalletStore } from '@/store/wallet-store'
 import { createBackgroundBitcoinPortfolioCoordinator } from './bitcoin-transfer'
 import { credentialSession } from './credential-session'
+import { isStoredAccountNetworkEnabled } from '@/lib/wallet-metadata-storage'
 
 export function createBackgroundPortfolioCoordinator(
   evmNetworks: readonly EvmNetworkConfig[],
@@ -65,6 +66,10 @@ export function createBackgroundPortfolioCoordinator(
     )
   )
   const peaSigner = new EvmMultichainSigningClient({ credentials: credentialSession })
+  const isNetworkEnabled = (
+    scope: { readonly keyDomainId: string; readonly accountId: string },
+    family: Parameters<typeof isStoredAccountNetworkEnabled>[3]
+  ) => isStoredAccountNetworkEnabled(scope.keyDomainId, scope.accountId, DEFAULT_NETWORK, family)
   const evmPortfolios = evmNetworks.flatMap(evmNetwork => {
     const chainId = parseChainId(evmNetwork.chainId).id
     if (!chains.get(chainId)) return []
@@ -108,6 +113,7 @@ export function createBackgroundPortfolioCoordinator(
         assets,
         chainId: solanaNetwork.chainId,
         family: 'solana',
+        isNetworkEnabled,
         readSource: input => readSolanaPortfolioSource({ ...input, rpc: solanaRpc })
       })
     : undefined
@@ -125,6 +131,7 @@ export function createBackgroundPortfolioCoordinator(
         assets,
         chainId: nearNetwork.chainId,
         family: 'near',
+        isNetworkEnabled,
         readSource: input =>
           readNearPortfolioSource({ ...input, rpc: nearRpc, tokenInventory: nearTokenInventory })
       })
@@ -134,6 +141,7 @@ export function createBackgroundPortfolioCoordinator(
     storageRepository,
     chains,
     assets,
+    isNetworkEnabled,
     evmPortfolios,
     bitcoinPortfolio,
     solanaPortfolio,

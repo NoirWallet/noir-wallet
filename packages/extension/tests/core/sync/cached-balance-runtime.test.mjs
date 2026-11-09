@@ -8,6 +8,7 @@ import {
   runWithSpendabilityRecovery
 } from '../../../src/core/wallet/spendability-recovery.ts'
 import { safeBig } from '../../../src/lib/big.ts'
+import { isAccountNetworkEnabled } from '../../../src/core/wallet/account-network-selection.ts'
 
 const require = createRequire(import.meta.url)
 const typescript = require('typescript')
@@ -97,6 +98,7 @@ function createRuntime() {
       runWithSpendabilityRecovery
     },
     '@/lib/big': { safeBig },
+    '@/core/wallet/account-network-selection': { isAccountNetworkEnabled },
     '@/config/wallet': { ZEC_DECIMALS: 8 },
     './sync-status-policy': {
       isSyncOccupyingWallet: (operationActive, persistedSyncing, preflight) =>
@@ -268,7 +270,8 @@ test('a stale summary cannot overwrite a balance after a runtime or selection ch
     'reload',
     'lock',
     'wallet-switch',
-    'account-switch'
+    'account-switch',
+    'network-disabled'
   ]) {
     const fixture = createRuntime()
     const summary = withSummary(fixture)
@@ -287,6 +290,8 @@ test('a stale summary cannot overwrite a balance after a runtime or selection ch
       fixture.walletState.currentWalletId = 'other-wallet'
     } else if (transition === 'account-switch') {
       fixture.walletState.currentAccountId = 'other-account'
+    } else if (transition === 'network-disabled') {
+      fixture.walletState.wallets[0].accounts[0].networkSelections = { mainnet: ['evm'] }
     } else if (transition === 'preflight') {
       fixture.runtime.notifySyncStarting('wallet')
     } else {

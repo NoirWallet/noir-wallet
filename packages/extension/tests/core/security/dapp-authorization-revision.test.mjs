@@ -163,6 +163,7 @@ function balanceHandlerFixture(manager) {
     addresses: { transparent: 't-second', shielded: 'zs-second' }
   }
   const wallet = { id: account.walletId, name: 'Wallet', accounts: [first, second] }
+  const enabled = new Set([first.id, second.id])
   const state = {
     currentWalletId: wallet.id,
     currentAccountId: first.id,
@@ -203,11 +204,20 @@ function balanceHandlerFixture(manager) {
   })
   const module = { exports: {} }
   const dependencies = {
+    '@/core/wallet/hardware-wallet-data': {
+      isZcashHardwareKeySource: keySource => keySource === 'keystone' || keySource === 'ledger'
+    },
     '../core/dapp/dapp-manager': { dappManager: manager, connectionAuthorizesAccount },
     '@/core/dapp/first-party-policy': { shouldAutoConnectDApp: () => false },
     './zcash-wallet-runtime': { backgroundZcashWalletRuntime: runtime },
     './sync-scheduler': { syncScheduler: { requestPassiveSync() {} } },
-    '@/store/wallet-store': { useWalletStore: { getState: () => state } },
+    '@/store/wallet-store': {
+      useWalletStore: { getState: () => state },
+      rehydrateWalletStore: async () => {}
+    },
+    '@/lib/wallet-metadata-storage': {
+      isStoredAccountNetworkEnabled: async (_walletId, accountId) => enabled.has(accountId)
+    },
     '@/store/account-data-store': {
       useAccountDataStore: { getState: () => ({ getBalance: () => balance }) }
     },
@@ -223,15 +233,45 @@ function balanceHandlerFixture(manager) {
     module,
     module.exports
   )
-  return { handler: new module.exports.DAppHandler(), state, runtime, balance }
+  return { handler: new module.exports.DAppHandler(), state, runtime, balance, enabled }
 }
 
+test('Zcash batch authorization omits accounts disabled after site approval', async () => {
+  const { manager } = managerFixture()
+  await manager.setAuthorizedAccounts(
+    origin,
+    {},
+    [account, { walletId: account.walletId, accountId: 'account-2' }],
+    account
+  )
+  const { handler, enabled } = balanceHandlerFixture(manager)
+  const snapshot = () => handler.getAuthorizedActiveAccountSnapshot(origin)
+
+  assert.deepEqual(
+    (await snapshot()).accounts.map(item => item.accountId),
+    ['account-1', 'account-2']
+  )
+  enabled.delete('account-2')
+  assert.deepEqual(
+    (await snapshot()).accounts.map(item => item.accountId),
+    ['account-1']
+  )
+  enabled.delete('account-1')
+  assert.equal(await snapshot(), null)
+  enabled.add('account-1')
+  enabled.add('account-2')
+  assert.deepEqual(
+    (await snapshot()).accounts.map(item => item.accountId),
+    ['account-1', 'account-2']
+  )
+})
+
 test('Zcash balance reads recheck the authorized context after account resolution', async t => {
-  for (const change of ['none', 'revoke', 'account', 'lock', 'network']) {
+  for (const change of ['none', 'revoke', 'account', 'lock', 'network', 'selection']) {
     await t.test(change, async () => {
       const { manager } = managerFixture()
       await manager.setAuthorizedAccounts(origin, {}, [account], account)
-      const { handler, state, runtime, balance } = balanceHandlerFixture(manager)
+      const { handler, state, runtime, balance, enabled } = balanceHandlerFixture(manager)
       await handler.initialize()
 
       let signalResolved
@@ -257,6 +297,7 @@ test('Zcash balance reads recheck the authorized context after account resolutio
         if (change === 'account') state.currentAccountId = 'account-2'
         if (change === 'lock') runtime.locked = true
         if (change === 'network') state.currentNetwork = 'testnet'
+        if (change === 'selection') enabled.delete(account.accountId)
       } finally {
         releaseResolution()
       }

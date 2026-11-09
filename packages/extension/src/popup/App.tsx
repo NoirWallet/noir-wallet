@@ -33,6 +33,7 @@ import { CongratulationsPage } from './pages/onboarding/CongratulationsPage'
 import { ImportWordCountPage } from './pages/onboarding/ImportWordCountPage'
 import { CreateWordCountPage } from './pages/onboarding/CreateWordCountPage'
 import { ImportWalletPage } from './pages/onboarding/ImportWalletPage'
+import { ImportAccountsPage } from './pages/onboarding/ImportAccountsPage'
 import { ImportZcashHistoryPage } from './pages/onboarding/ImportZcashHistoryPage'
 import { ImportPasswordPage } from './pages/onboarding/ImportPasswordPage'
 import { UnlockPage } from './pages/onboarding/UnlockPage'
@@ -40,6 +41,7 @@ import { UnlockPage } from './pages/onboarding/UnlockPage'
 // Account Pages
 import { AccountList } from './pages/account/AccountList'
 import { AccountDetail } from './pages/account/AccountDetail'
+import { ManageAccountNetworksPage } from './pages/account/ManageAccountNetworksPage'
 import { AddressesList } from './pages/account/AddressesList'
 import { ZcashSettings } from './pages/account/ZcashSettings'
 import { ImportPrivateKey } from './pages/account/ImportPrivateKey'
@@ -213,6 +215,7 @@ function AppRoutes() {
         <Route path="congratulations" element={<CongratulationsPage />} />
         <Route path="import-word-count" element={<ImportWordCountPage />} />
         <Route path="import" element={<ImportWalletPage />} />
+        <Route path="import-accounts" element={<ImportAccountsPage />} />
         <Route path="import-zcash-history" element={<ImportZcashHistoryPage />} />
         <Route path="import-password" element={<ImportPasswordPage />} />
       </Route>
@@ -246,6 +249,7 @@ function AppRoutes() {
       <Route path="/asset-detail" element={<AssetDetail />} />
       <Route path="/account-list" element={<AccountList />} />
       <Route path="/account-detail" element={<AccountDetail />} />
+      <Route path="/account-networks" element={<ManageAccountNetworksPage />} />
       <Route path="/add-wallet" element={<AddWalletEntry />} />
       <Route path="/import-wallet" element={<ImportWalletEntry />} />
       <Route path="/import-private-key" element={<ImportPrivateKey />} />

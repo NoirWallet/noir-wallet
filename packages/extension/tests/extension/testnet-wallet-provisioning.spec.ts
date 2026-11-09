@@ -179,9 +179,6 @@ test('imports 24 words and extends the testnet wallet tree without crossing netw
   test.setTimeout(300_000)
 
   await popup.getByRole('button', { name: 'Import wallet' }).click()
-  await expect(
-    popup.getByText('This recovery phrase will restore accounts for every supported network.')
-  ).toBeVisible()
   await popup.getByLabel('Account name').fill('Imported Test Account')
   await expect(popup.getByRole('radio', { name: '24 words' })).toHaveAttribute(
     'aria-checked',
@@ -197,11 +194,7 @@ test('imports 24 words and extends the testnet wallet tree without crossing netw
   await expect(popup.getByRole('heading', { name: 'Congratulations!' })).toBeVisible({
     timeout: 60_000
   })
-  await expect(
-    popup.getByText(
-      'Your wallet is ready. Accounts for every supported network were restored from this recovery phrase.'
-    )
-  ).toBeVisible()
+  await expect(popup.getByText('Your wallet is ready.')).toBeVisible()
 
   const imported = await openProvisioningInspector(popup, extensionId)
   expect(imported.keyDomainIds).toHaveLength(1)

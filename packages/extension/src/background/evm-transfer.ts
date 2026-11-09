@@ -35,6 +35,7 @@ import { recordRheaSwapGraphBroadcast } from './rhea-swap'
 import { reportBackgroundSendBroadcast } from './analytics/send-broadcast'
 import { readEvmTokenAllowance } from '@/infrastructure/chains/evm/evm-token-allowance'
 import { createBackgroundEvmTransferAssetRegistry } from './evm-transfer-assets'
+import { requireSelectedTransferNetwork } from './transfer-account-network-selection'
 
 export { BackgroundEvmTransferController } from './evm-transfer-controller'
 export { BackgroundEvmTransferRouter } from './evm-transfer-router'
@@ -116,7 +117,11 @@ export function createBackgroundEvmTransferController(
     orchestrator: createBackgroundEvmTransferOrchestrator(network, userEvmAssets),
     readTokenAllowance: (token, owner, spender) =>
       readEvmTokenAllowance(allowanceRpc, token, owner, spender),
-    loadActiveContext: () => loadActiveEvmPortfolioContext(storageRepository, network.chainId),
+    loadActiveContext: async () =>
+      requireSelectedTransferNetwork(
+        await loadActiveEvmPortfolioContext(storageRepository, network.chainId),
+        'evm'
+      ),
     resolveExternalSigner: chainAccount => externalSigner.resolve(chainAccount),
     resolvePrivateExecutionAccount: async context => {
       const binding = parseEvmAccountBinding(

@@ -3,6 +3,11 @@ import { expect } from '@playwright/test'
 
 import { AccountNetworksCoordinator } from '../../../src/background/account-networks.ts'
 import {
+  getDefaultImportNetworkFamilies,
+  isAccountNetworkEnabled,
+  parseSelectedNetworkFamilies
+} from '../../../src/core/wallet/account-network-selection.ts'
+import {
   createAddressGatedChainRegistry,
   createInitialProductChainRegistry
 } from '../../../src/core/chains/registry/index.ts'
@@ -163,6 +168,36 @@ function repository(value = snapshot()) {
 }
 
 test.describe('Account networks coordinator', () => {
+  test('uses 12-word defaults and hides unselected Zcash from catalog and dApp chains', async () => {
+    const defaults = getDefaultImportNetworkFamilies(12, ['zcash', 'evm', 'bitcoin'])
+    expect(defaults).toEqual(['evm', 'bitcoin'])
+    expect(getDefaultImportNetworkFamilies(24, ['zcash', 'evm', 'bitcoin'])).toEqual([
+      'zcash',
+      'evm',
+      'bitcoin'
+    ])
+    expect(getDefaultImportNetworkFamilies(12, ['zcash'])).toEqual([])
+    expect(() => parseSelectedNetworkFamilies(['evm', 'evm'])).toThrow()
+    const account = { networkSelections: { testnet: defaults } }
+    expect(isAccountNetworkEnabled(account, 'testnet', 'zcash')).toBe(false)
+    expect(isAccountNetworkEnabled({}, 'testnet', 'zcash')).toBe(true)
+    let enabled = false
+    const coordinator = new AccountNetworksCoordinator({
+      repository: repository(),
+      chains,
+      isNetworkEnabled: (_scope, family) => family !== 'zcash' || enabled
+    })
+    expect((await coordinator.readActiveAccount()).chainIds).not.toContain(zcashChainId)
+    expect(
+      (await coordinator.readCatalog()).accounts[0].networks.map(item => item.chainId)
+    ).not.toContain(zcashChainId)
+    enabled = true
+    expect((await coordinator.readActiveAccount()).chainIds).toContain(zcashChainId)
+    expect(
+      (await coordinator.readCatalog()).accounts[0].networks.map(item => item.chainId)
+    ).toContain(zcashChainId)
+  })
+
   test('uses the selected Zcash receive address after rotation and history selection without changing identity', async () => {
     const stored = snapshot()
     const before = structuredClone(stored)

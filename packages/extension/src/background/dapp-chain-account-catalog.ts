@@ -4,6 +4,10 @@ import type { ChainDefinition } from '@/core/chains/registry'
 import type { AccountRef } from '@/core/dapp/dapp-manager'
 import { formatWalletNameAtIndex, getAccountDisplayName } from '@/lib/format'
 import type { StorageV2ReadRepository, StorageV2Snapshot } from '@/ports/repositories'
+import type { KeyDomainSource } from '@/core/keyring/domain'
+import type { AccountNetworkFamily } from '@/core/wallet/account-network-selection'
+import { isStoredAccountNetworkEnabledForSource } from '@/lib/wallet-metadata-storage'
+import { DEFAULT_NETWORK } from '@/lib/runtime-network'
 
 type DAppAccountCatalogRepository = Pick<
   StorageV2ReadRepository,
@@ -29,10 +33,42 @@ interface ListDAppChainAccountsOptions {
   readonly repository: DAppAccountCatalogRepository
   readonly chainId: string
   readonly family: ChainDefinition['family']
+  readonly isNetworkEnabled?: (
+    source: KeyDomainSource,
+    walletId: string,
+    accountId: string,
+    family: AccountNetworkFamily
+  ) => boolean | Promise<boolean>
   readonly resolveAddress: (
     context: DAppChainAccountAddressContext
   ) => string | null | Promise<string | null>
 }
+
+export async function filterEnabledDAppContext<
+  T extends {
+    readonly chainAccount: ChainAccount
+    readonly keyDomainSource: KeyDomainSource
+  }
+>(context: T | null, family: AccountNetworkFamily): Promise<T | null> {
+  if (!context) return null
+  return (await isStoredAccountNetworkEnabledForSource(
+    context.keyDomainSource,
+    context.chainAccount.scope.keyDomainId,
+    context.chainAccount.scope.accountId,
+    DEFAULT_NETWORK,
+    family
+  ))
+    ? context
+    : null
+}
+
+export const isDAppNetworkEnabled = (
+  source: KeyDomainSource,
+  walletId: string,
+  accountId: string,
+  family: AccountNetworkFamily
+): Promise<boolean> =>
+  isStoredAccountNetworkEnabledForSource(source, walletId, accountId, DEFAULT_NETWORK, family)
 
 function descriptorId(reference: AccountRef): string {
   return JSON.stringify([reference.walletId, reference.accountId])
@@ -70,6 +106,17 @@ export async function listDAppChainAccounts(
     if (candidates.length === 0) continue
     if (candidates.length !== 1) {
       throw new Error(`${account.displayName} has ambiguous ${options.family} ChainAccounts`)
+    }
+    if (
+      options.isNetworkEnabled &&
+      !(await options.isNetworkEnabled(
+        keyDomain.source,
+        account.keyDomainId,
+        account.id,
+        options.family
+      ))
+    ) {
+      continue
     }
     const chainAccount = candidates[0]
     const address = await options.resolveAddress({

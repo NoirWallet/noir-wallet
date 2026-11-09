@@ -17,6 +17,11 @@ import {
 } from '@/core/dapp/beta-invite-policy'
 import { isZcashHardwareKeySource } from '@/core/wallet/hardware-wallet-data'
 import {
+  isAccountNetworkEnabled,
+  parseSelectedNetworkFamilies
+} from '@/core/wallet/account-network-selection'
+import { setAccountNetworkSelection } from '@/lib/wallet-metadata-storage'
+import {
   saveSwapApprovalContinuation,
   readSwapApprovalContinuation,
   continueSwapAfterApproval,
@@ -2035,11 +2040,13 @@ async function restoreStuckWithdrawMonitors(): Promise<void> {
 function getZcashAccountScopes(): AccountScope[] {
   const { wallets, currentNetwork } = useWalletStore.getState()
   return wallets.flatMap(wallet =>
-    wallet.accounts.map(account => ({
-      accountKey: `${currentNetwork}_${wallet.id}_${account.id}`,
-      walletId: wallet.id,
-      accountId: account.id
-    }))
+    wallet.accounts
+      .filter(account => isAccountNetworkEnabled(account, currentNetwork, 'zcash'))
+      .map(account => ({
+        accountKey: `${currentNetwork}_${wallet.id}_${account.id}`,
+        walletId: wallet.id,
+        accountId: account.id
+      }))
   )
 }
 
@@ -2088,6 +2095,13 @@ async function requestPeriodicBalanceSync(): Promise<'scheduled' | 'skipped' | '
   await Promise.all([rehydrateWalletStore(), useAccountDataStore.persist.rehydrate()])
   const { currentWalletId, currentNetwork } = useWalletStore.getState()
   if (!currentWalletId) return 'skipped'
+  const currentAccountId = useWalletStore.getState().currentAccountId
+  const currentAccount = currentAccountId
+    ? useWalletStore.getState().getAccount(currentWalletId, currentAccountId)
+    : null
+  if (!currentAccount || !isAccountNetworkEnabled(currentAccount, currentNetwork, 'zcash')) {
+    return 'skipped'
+  }
 
   const syncState = useAccountDataStore
     .getState()
@@ -4697,7 +4711,14 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
             accountName: message.accountName as string,
             ...(message.birthdayHeight === undefined
               ? {}
-              : { birthdayHeight: message.birthdayHeight as number })
+              : { birthdayHeight: message.birthdayHeight as number }),
+            ...(message.selectedNetworkFamilies === undefined
+              ? {}
+              : {
+                  selectedNetworkFamilies: parseSelectedNetworkFamilies(
+                    message.selectedNetworkFamilies
+                  )
+                })
           },
           synchronizeCurrentSoftwareWalletNetworkMetadata
         )
@@ -4724,7 +4745,14 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
             accountName: message.accountName as string,
             ...(message.birthdayHeight === undefined
               ? {}
-              : { birthdayHeight: message.birthdayHeight as number })
+              : { birthdayHeight: message.birthdayHeight as number }),
+            ...(message.selectedNetworkFamilies === undefined
+              ? {}
+              : {
+                  selectedNetworkFamilies: parseSelectedNetworkFamilies(
+                    message.selectedNetworkFamilies
+                  )
+                })
           },
           synchronizeCurrentSoftwareWalletNetworkMetadata
         )
@@ -4959,7 +4987,10 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
 
   if (message.type === 'GET_ZCASH_FEE_QUOTE') {
     accountContextTransition
-      .runActiveOperation(() => backgroundZcashWalletRuntime.getFeeQuote())
+      .runActiveOperation(async () => {
+        await assertCurrentZcashNetworkEnabled()
+        return backgroundZcashWalletRuntime.getFeeQuote()
+      })
       .then(feeQuote => sendResponse({ success: true, feeQuote }))
       .catch(error =>
         sendResponse({ error: error instanceof Error ? error.message : String(error) })
@@ -4970,6 +5001,7 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
   if (message.type === 'WAIT_FOR_ZCASH_ACCOUNT_READY') {
     accountContextTransition
       .runActiveOperation(async () => {
+        await assertCurrentZcashNetworkEnabled()
         await rehydrateWalletStore()
         await backgroundZcashWalletRuntime.initialize()
         if (
@@ -5151,6 +5183,101 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
       .catch(error =>
         sendResponse({
           error: error instanceof Error ? error.message : 'Account setup failed'
+        })
+      )
+    return true
+  }
+
+  if (message.type === 'SET_ACCOUNT_NETWORK_SELECTION') {
+    const walletId = message.walletId as string
+    const accountId = message.accountId as string
+    accountContextTransition
+      .runScopedMutation([{ walletId, accountId }], async () => {
+        const families = parseSelectedNetworkFamilies(message.families)
+        if (
+          !families.every(family =>
+            isNewWalletFamilyEnabled(family, __ENABLED_CHAIN_FEATURE_FLAGS__)
+          )
+        ) {
+          throw new Error('Selected network is unavailable')
+        }
+        await rehydrateWalletStore()
+        const state = useWalletStore.getState()
+        if (state.currentWalletId !== walletId || state.currentAccountId !== accountId) {
+          throw new Error('Active account changed. Review this action again.')
+        }
+        const wallet = state.getWallet(walletId)
+        const account = wallet?.accounts.find(candidate => candidate.id === accountId)
+        if (!account || (wallet?.keySource !== undefined && wallet.keySource !== 'software')) {
+          throw new Error('Software wallet account is unavailable')
+        }
+        if (!(await credentialSession.hasUnlockSession())) {
+          throw new Error('Wallet is locked. Please unlock and try again.')
+        }
+
+        const zcashWasEnabled = isAccountNetworkEnabled(account, DEFAULT_NETWORK, 'zcash')
+        const enableZcash = !zcashWasEnabled && families.includes('zcash')
+        const disableZcash = zcashWasEnabled && !families.includes('zcash')
+        const existingBirthday = account.networkBirthdayHeights?.[DEFAULT_NETWORK] ?? 0
+        const zcashHistoryConfigured =
+          existingBirthday > 0 || account.networkZcashHistoryConfigured?.[DEFAULT_NETWORK] === true
+        if (message.birthdayHeight !== undefined && (!enableZcash || zcashHistoryConfigured)) {
+          throw new Error('Zcash birthday height is only used when first enabling Zcash')
+        }
+
+        pendingRequestsManager.cancelContext(walletId, accountId)
+        await cancelAllLedgerSigning('Account network changed. Review this action again.')
+        syncScheduler.pauseForTx()
+        try {
+          if (disableZcash || enableZcash) {
+            if (!(await syncScheduler.quiesceWalletForMutation(walletId))) {
+              throw new Error('Wallet sync did not stop before changing networks')
+            }
+          }
+          const birthdayHeight = enableZcash
+            ? zcashHistoryConfigured
+              ? undefined
+              : message.birthdayHeight === undefined
+                ? await backgroundZcashWalletRuntime.resolveNewZcashBirthdayHeight()
+                : (message.birthdayHeight as number)
+            : undefined
+          await setAccountNetworkSelection(
+            walletId,
+            accountId,
+            DEFAULT_NETWORK,
+            families,
+            birthdayHeight
+          )
+          await rehydrateWalletStore()
+          if (disableZcash) syncScheduler.onZcashAccountUnavailable()
+          if (enableZcash) syncScheduler.onRequestSync()
+          void handleAccountSwitched({ refreshPortfolio: false }).catch(error => {
+            console.warn('[Background] Account network notification failed:', error)
+          })
+          void portfolioCoordinator
+            ?.refreshActive()
+            .then(async model => {
+              if (!model) return
+              await chrome.runtime
+                .sendMessage({
+                  type: 'PORTFOLIO_UPDATED',
+                  walletId,
+                  accountId
+                })
+                .catch(() => {})
+            })
+            .catch(error => {
+              console.warn('[Portfolio] Account network refresh failed:', error)
+            })
+          return { families }
+        } finally {
+          syncScheduler.resumeAfterTx()
+        }
+      })
+      .then(result => sendResponse({ success: true, ...result }))
+      .catch(error =>
+        sendResponse({
+          error: error instanceof Error ? error.message : 'Unable to update account networks'
         })
       )
     return true
@@ -5885,6 +6012,13 @@ async function handleDAppRequest(
     await ensureDAppHandlerReady()
 
     if (request.method === 'zcash_getAccounts') {
+      await rehydrateWalletStore()
+      const { currentWalletId, currentAccountId, currentNetwork } = useWalletStore.getState()
+      const account =
+        currentWalletId && currentAccountId
+          ? useWalletStore.getState().getAccount(currentWalletId, currentAccountId)
+          : null
+      if (!account || !isAccountNetworkEnabled(account, currentNetwork, 'zcash')) return null
       const snapshot = await dappHandler.getAuthorizedActiveAccountSnapshot(origin)
       if (!snapshot) return null
 
@@ -6428,7 +6562,7 @@ async function handleAccountSwitched({
   try {
     const account = backgroundZcashWalletRuntime.getCurrentAccount()
 
-    if (account) {
+    if (account && isAccountNetworkEnabled(account, DEFAULT_NETWORK, 'zcash')) {
       await dappHandler.notifyAccountsChanged({
         transparent: account.addresses.transparent,
         shielded: account.addresses.shielded
@@ -6718,16 +6852,29 @@ async function handleImportPrivateKeyWallet(input: {
  */
 async function prepareWalletCoreForTx(walletId?: string, accountId?: string) {
   await rehydrateWalletStore()
+  const state = useWalletStore.getState()
+  const targetWalletId = walletId || state.currentWalletId
+  const targetAccountId = accountId || state.currentAccountId
+  if (!targetWalletId) throw new Error('Wallet not initialized')
+  if (!targetAccountId) throw new Error('Account not found')
+  const selectedAccount = state.getAccount(targetWalletId, targetAccountId)
+  if (
+    !selectedAccount ||
+    !isAccountNetworkEnabled(selectedAccount, state.currentNetwork, 'zcash')
+  ) {
+    throw new Error('Zcash is not enabled for this account')
+  }
+  await credentialLifecycle.assertActiveAccountSupportsChain(
+    targetWalletId,
+    targetAccountId,
+    'zcash'
+  )
   await backgroundZcashWalletRuntime.initialize()
 
   if (!(await credentialSession.hasUnlockSession())) {
     if (!backgroundZcashWalletRuntime.isLocked()) await backgroundZcashWalletRuntime.lock()
     throw new Error('Wallet locked and no attested credential session is available')
   }
-  const state = useWalletStore.getState()
-  const targetWalletId = walletId || state.currentWalletId
-  const targetAccountId = accountId || state.currentAccountId
-  if (!targetWalletId) throw new Error('Wallet not initialized')
   const targetWallet = state.getWallet(targetWalletId)
   if (!targetWallet) throw new Error('Wallet not found')
 
@@ -6758,6 +6905,23 @@ async function prepareWalletCoreForTx(walletId?: string, accountId?: string) {
   await backgroundZcashWalletRuntime.waitForAccountReady(30000)
 
   return backgroundZcashWalletRuntime.getWalletCore(targetWalletId, targetAccountId || undefined)
+}
+
+async function assertCurrentZcashNetworkEnabled(): Promise<void> {
+  await rehydrateWalletStore()
+  const { currentWalletId, currentAccountId, currentNetwork } = useWalletStore.getState()
+  const account =
+    currentWalletId && currentAccountId
+      ? useWalletStore.getState().getAccount(currentWalletId, currentAccountId)
+      : null
+  if (!account || !isAccountNetworkEnabled(account, currentNetwork, 'zcash')) {
+    throw new Error('Zcash is not enabled for this account')
+  }
+  await credentialLifecycle.assertActiveAccountSupportsChain(
+    currentWalletId!,
+    currentAccountId!,
+    'zcash'
+  )
 }
 
 async function assertActiveBackgroundAccountScope(

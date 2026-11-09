@@ -44,7 +44,7 @@ export function CongratulationsPage() {
 
         <p className="text-base text-muted text-center leading-relaxed">
           {mode === 'import'
-            ? 'Your wallet is ready. Accounts for every supported network were restored from this recovery phrase.'
+            ? 'Your wallet is ready.'
             : 'Your wallet is ready. You can now securely receive, store, and send digital assets.'}
         </p>
       </div>

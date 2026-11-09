@@ -19,6 +19,7 @@ import { parseRheaSwapTransactionBinding } from '@/core/transactions/domain'
 import { isZcashOperationAnalyticsContext } from './analytics/operations'
 import { isDiagnosticContextId } from './diagnostic-log'
 import type { ZcashTransactionContext } from '@/core/worker/types'
+import { parseSelectedNetworkFamilies } from '@/core/wallet/account-network-selection'
 
 export interface RuntimeMessageSenderLike {
   readonly id?: string
@@ -199,6 +200,14 @@ const isLegacyPasswordString: RuntimeFieldValidator = value =>
 const isNullableShortString: RuntimeFieldValidator = value => value === null || isShortString(value)
 const isRecord: RuntimeFieldValidator = value => isRuntimeRecord(value)
 const isArray: RuntimeFieldValidator = value => Array.isArray(value)
+const isSelectedNetworkFamilies: RuntimeFieldValidator = value => {
+  try {
+    parseSelectedNetworkFamilies(value)
+    return true
+  } catch {
+    return false
+  }
+}
 const isChainIdArray: RuntimeFieldValidator = value =>
   Array.isArray(value) &&
   value.length > 0 &&
@@ -445,7 +454,10 @@ const TRUSTED_RUNTIME_SCHEMAS: Readonly<Record<string, RuntimeMessageSchema>> = 
       password: isLegacyPasswordString,
       accountName: isShortString
     },
-    optional: { birthdayHeight: isBirthdayHeight }
+    optional: {
+      birthdayHeight: isBirthdayHeight,
+      selectedNetworkFamilies: isSelectedNetworkFamilies
+    }
   },
   GENERATE_ADD_WALLET_MNEMONIC: { required: { wordCount: isMnemonicWordCount } },
   ADD_SOFTWARE_WALLET: {
@@ -454,7 +466,10 @@ const TRUSTED_RUNTIME_SCHEMAS: Readonly<Record<string, RuntimeMessageSchema>> = 
       mnemonic: isMnemonicPhrase,
       accountName: isShortString
     },
-    optional: { birthdayHeight: isBirthdayHeight }
+    optional: {
+      birthdayHeight: isBirthdayHeight,
+      selectedNetworkFamilies: isSelectedNetworkFamilies
+    }
   },
   PREVIEW_PRIVATE_KEY_WALLET: {
     required: {
@@ -820,6 +835,14 @@ const TRUSTED_RUNTIME_SCHEMAS: Readonly<Record<string, RuntimeMessageSchema>> = 
       expectedDerivationIndex: isBirthdayHeight
     }
   },
+  SET_ACCOUNT_NETWORK_SELECTION: {
+    required: {
+      walletId: isShortString,
+      accountId: isShortString,
+      families: isSelectedNetworkFamilies
+    },
+    optional: { birthdayHeight: isPositiveBirthdayHeight }
+  },
   SWITCH_ACCOUNT: {
     required: { walletId: isShortString, accountId: isShortString }
   },
@@ -1086,6 +1109,7 @@ const TRUSTED_RUNTIME_CONTEXTS: Readonly<Record<string, readonly OwnExtensionSen
     RESUME_BITCOIN_TRANSFER: ['extension-page'],
     INSPECT_NEXT_ZCASH_ACCOUNT_HISTORY: ['extension-page'],
     ADD_ACCOUNT: ['extension-page'],
+    SET_ACCOUNT_NETWORK_SELECTION: ['extension-page'],
     SWITCH_ACCOUNT: ['extension-page'],
     REMOVE_ACCOUNT: ['extension-page'],
     GET_WALLET_BACKUP_WORD_INDICES: ['extension-page'],

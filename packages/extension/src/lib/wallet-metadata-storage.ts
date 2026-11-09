@@ -1,4 +1,9 @@
-import type { WalletItem } from '@/types'
+import type { Network, WalletItem } from '@/types'
+import {
+  isAccountNetworkEnabled,
+  parseSelectedNetworkFamilies,
+  type AccountNetworkFamily
+} from '@/core/wallet/account-network-selection'
 
 export const WALLET_STATE_KEY = 'wallet_state'
 const DELETED_WALLETS_KEY = 'wallet_deleted_ids'
@@ -202,6 +207,69 @@ function preserveRetainedNames(
   }
 }
 
+function preserveAccountNetworkSelections(
+  incoming: WalletSnapshot,
+  current: WalletSnapshot | null
+): WalletSnapshot {
+  if (!current) return incoming
+  const priorWallets = new Map(current.state.wallets.map(wallet => [wallet.id, wallet]))
+  return {
+    ...incoming,
+    state: {
+      ...incoming.state,
+      wallets: incoming.state.wallets.map(wallet => {
+        const saved = priorWallets.get(wallet.id)
+        if (
+          !saved ||
+          saved.createdAt !== wallet.createdAt ||
+          saved.seedPhraseKey !== wallet.seedPhraseKey
+        ) {
+          return wallet
+        }
+        const priorAccounts = new Map(saved.accounts.map(account => [account.id, account]))
+        return {
+          ...wallet,
+          accounts: wallet.accounts.map(account => {
+            const prior = priorAccounts.get(account.id)
+            if (!prior?.networkSelections) return account
+            const activeNetwork = incoming.state.currentNetwork
+            const networkBirthdayHeights = { ...account.networkBirthdayHeights }
+            for (const network of ['mainnet', 'testnet'] as const) {
+              const savedSelection = prior.networkSelections[network]
+              const incomingSelection = account.networkSelections?.[network]
+              if (
+                savedSelection &&
+                (!incomingSelection ||
+                  savedSelection.length !== incomingSelection.length ||
+                  savedSelection.some(family => !incomingSelection.includes(family))) &&
+                (prior.networkBirthdayHeights?.[network] ?? 0) > 0
+              ) {
+                networkBirthdayHeights[network] = prior.networkBirthdayHeights![network]
+              }
+            }
+            return {
+              ...account,
+              networkZcashHistoryConfigured: {
+                ...account.networkZcashHistoryConfigured,
+                ...prior.networkZcashHistoryConfigured
+              },
+              networkBirthdayHeights,
+              ...((activeNetwork === 'mainnet' || activeNetwork === 'testnet') &&
+              networkBirthdayHeights[activeNetwork] !== undefined
+                ? { birthdayHeight: networkBirthdayHeights[activeNetwork] }
+                : {}),
+              networkSelections: {
+                ...account.networkSelections,
+                ...prior.networkSelections
+              }
+            }
+          })
+        }
+      })
+    }
+  }
+}
+
 export async function withMetadataLock<T>(operation: () => Promise<T>): Promise<T> {
   if (!navigator.locks) throw new Error('Wallet storage coordination is unavailable')
   return navigator.locks.request(METADATA_LOCK, operation)
@@ -247,6 +315,32 @@ export function readWalletMetadata(): Promise<WalletSnapshot | null> {
   })
 }
 
+export async function isStoredAccountNetworkEnabled(
+  walletId: string,
+  accountId: string,
+  network: Network,
+  family: AccountNetworkFamily
+): Promise<boolean> {
+  const snapshot = await readWalletMetadata()
+  const account = snapshot?.state.wallets
+    .find(wallet => wallet.id === walletId)
+    ?.accounts.find(item => item.id === accountId)
+  if (!account) throw new Error('Software Wallet Account metadata is unavailable')
+  return isAccountNetworkEnabled(account, network, family)
+}
+
+export function isStoredAccountNetworkEnabledForSource(
+  source: { readonly kind: string },
+  walletId: string,
+  accountId: string,
+  network: Network,
+  family: AccountNetworkFamily
+): Promise<boolean> {
+  return source.kind === 'software'
+    ? isStoredAccountNetworkEnabled(walletId, accountId, network, family)
+    : Promise.resolve(true)
+}
+
 export function writeWalletMetadata(value: unknown): Promise<void> {
   const snapshot = parseSnapshot(value)
   if (!snapshot) return Promise.reject(new Error('Wallet metadata is unavailable'))
@@ -259,10 +353,89 @@ export function writeWalletMetadata(value: unknown): Promise<void> {
     const current = parseSnapshot(saved[WALLET_STATE_KEY])
     await chrome.storage.local.set({
       [WALLET_STATE_KEY]: filterDeleted(
-        preserveRetainedNames(preserveBackupVerification(snapshot, current), current),
+        preserveAccountNetworkSelections(
+          preserveRetainedNames(preserveBackupVerification(snapshot, current), current),
+          current
+        ),
         parseDeletedIds(saved[DELETED_WALLETS_KEY]),
         parseDeletedIds(saved[DELETED_ACCOUNTS_KEY])
       )
+    })
+  })
+}
+
+export function setAccountNetworkSelection(
+  walletId: string,
+  accountId: string,
+  network: Network,
+  families: readonly AccountNetworkFamily[],
+  birthdayHeight?: number
+): Promise<void> {
+  if (network !== 'mainnet' && network !== 'testnet') {
+    return Promise.reject(new Error('Invalid wallet network'))
+  }
+  if (
+    birthdayHeight !== undefined &&
+    (!families.includes('zcash') ||
+      !Number.isSafeInteger(birthdayHeight) ||
+      birthdayHeight <= 0 ||
+      birthdayHeight > 0xffffffff)
+  ) {
+    return Promise.reject(new Error('Invalid Zcash birthday height'))
+  }
+  const selected = parseSelectedNetworkFamilies(families)
+  return withUndeletedWalletAccountMetadata(walletId, accountId, network, async () => {
+    const saved = await chrome.storage.local.get(WALLET_STATE_KEY)
+    const snapshot = parseSnapshot(saved[WALLET_STATE_KEY])
+    const wallet = snapshot?.state.wallets.find(item => item.id === walletId)
+    if (!snapshot || !wallet?.accounts.some(account => account.id === accountId)) {
+      throw new Error('Wallet Account metadata is unavailable')
+    }
+    await chrome.storage.local.set({
+      [WALLET_STATE_KEY]: {
+        ...snapshot,
+        state: {
+          ...snapshot.state,
+          wallets: snapshot.state.wallets.map(item =>
+            item.id === walletId
+              ? {
+                  ...item,
+                  accounts: item.accounts.map(account =>
+                    account.id === accountId
+                      ? {
+                          ...account,
+                          ...(!selected.includes('zcash') &&
+                          isAccountNetworkEnabled(account, network, 'zcash')
+                            ? {
+                                networkZcashHistoryConfigured: {
+                                  ...account.networkZcashHistoryConfigured,
+                                  [network]: true
+                                }
+                              }
+                            : {}),
+                          networkSelections: {
+                            ...account.networkSelections,
+                            [network]: selected
+                          },
+                          ...(birthdayHeight === undefined
+                            ? {}
+                            : {
+                                networkBirthdayHeights: {
+                                  ...account.networkBirthdayHeights,
+                                  [network]: birthdayHeight
+                                },
+                                ...(snapshot.state.currentNetwork === network
+                                  ? { birthdayHeight }
+                                  : {})
+                              })
+                        }
+                      : account
+                  )
+                }
+              : item
+          )
+        }
+      }
     })
   })
 }

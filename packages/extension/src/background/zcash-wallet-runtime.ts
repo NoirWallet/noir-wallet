@@ -129,6 +129,10 @@ import { clearIdentityCache } from '@/core/wallet/identity-cache'
 import type { BirthdayHeightSource } from '@/lib/zcash-birthday'
 import { hasPendingZcashTxForWallet } from '@/core/wallet/pending-zcash-tx'
 import {
+  isAccountNetworkEnabled,
+  type AccountNetworkFamily
+} from '@/core/wallet/account-network-selection'
+import {
   mergeShieldedReceiveAddressHistory,
   selectShieldedReceiveAddress,
   shieldedReceiveAddress
@@ -1103,6 +1107,12 @@ export class BackgroundZcashWalletRuntime {
     walletId: string,
     options?: { currentHeight?: number; latestHeight?: number }
   ): void {
+    const wallet = this.store.getWallet(walletId)
+    if (
+      !wallet?.accounts.some(account => isAccountNetworkEnabled(account, this.network, 'zcash'))
+    ) {
+      return
+    }
     const currentSyncState = this.accountDataStore.getWalletSyncState(this.network, walletId)
     const syncState = {
       isSyncing: true,
@@ -1342,16 +1352,22 @@ export class BackgroundZcashWalletRuntime {
     const runtimeGeneration = this.walletRuntimeGeneration.get(walletId) ?? 0
     const passwordGeneration = this.passwordGeneration
     const network = this.network
-    const canApply = () =>
-      this.walletCores.get(walletId) === core &&
-      this.store.currentWalletId === walletId &&
-      this.store.currentAccountId === accountId &&
-      !this.purgingWalletIds.has(walletId) &&
-      !this.activeSyncWalletIds.has(walletId) &&
-      (this.walletRuntimeGeneration.get(walletId) ?? 0) === runtimeGeneration &&
-      this.passwordGeneration === passwordGeneration &&
-      this.network === network &&
-      (duringSyncReadiness || !this.isWalletActivelySyncing(walletId))
+    const canApply = () => {
+      const selected = this.store.getAccount(walletId, accountId)
+      return (
+        !!selected &&
+        isAccountNetworkEnabled(selected, network, 'zcash') &&
+        this.walletCores.get(walletId) === core &&
+        this.store.currentWalletId === walletId &&
+        this.store.currentAccountId === accountId &&
+        !this.purgingWalletIds.has(walletId) &&
+        !this.activeSyncWalletIds.has(walletId) &&
+        (this.walletRuntimeGeneration.get(walletId) ?? 0) === runtimeGeneration &&
+        this.passwordGeneration === passwordGeneration &&
+        this.network === network &&
+        (duringSyncReadiness || !this.isWalletActivelySyncing(walletId))
+      )
+    }
 
     await this.withWalletCoreLock(walletId, async () => {
       if (!canApply() || core.hasAccount()) return
@@ -1371,7 +1387,8 @@ export class BackgroundZcashWalletRuntime {
     walletName?: string,
     shouldReset = false,
     skipInit = false,
-    birthdayHeight?: number
+    birthdayHeight?: number,
+    selectedNetworkFamilies?: readonly AccountNetworkFamily[]
   ): Promise<WalletItem> {
     const walletId = crypto.randomUUID()
     const previousWalletId = this.currentWalletId
@@ -1424,6 +1441,14 @@ export class BackgroundZcashWalletRuntime {
         addresses,
         derivationIndex: 0,
         birthdayHeight: effectiveBirthdayHeight,
+        ...(selectedNetworkFamilies === undefined
+          ? {}
+          : {
+              networkSelections: {
+                mainnet: selectedNetworkFamilies,
+                testnet: selectedNetworkFamilies
+              }
+            }),
         isPinned: false,
         isHidden: false
       }
@@ -1499,7 +1524,8 @@ export class BackgroundZcashWalletRuntime {
     seedPhrase: string,
     password: string,
     accountName: string = 'Account 1',
-    birthdayHeight?: number
+    birthdayHeight?: number,
+    selectedNetworkFamilies?: readonly AccountNetworkFamily[]
   ): Promise<void> {
     if (!this.isInitialized) {
       throw new Error('Zcash wallet runtime not initialized')
@@ -1535,8 +1561,9 @@ export class BackgroundZcashWalletRuntime {
       accountName,
       'Wallet 1',
       true,
-      false, // skipInit
-      birthdayHeight
+      selectedNetworkFamilies?.includes('zcash') === false, // skipInit
+      birthdayHeight,
+      selectedNetworkFamilies
     )
 
     await this.setPrimaryWalletState(wallet, password)
@@ -1790,6 +1817,16 @@ export class BackgroundZcashWalletRuntime {
       await SecureStorage.saveLastActivityTime()
       this.setSessionPassword(password)
       this.sessionCredentialWalletId = null
+
+      if (!isAccountNetworkEnabled(currentAccount, this.network, 'zcash')) {
+        logger.refreshCache(this.store.wallets)
+        return {
+          success: true,
+          ...(recovered
+            ? { recoveredWalletId: storeWalletId, recoveredAccountId: currentAccount.id }
+            : {})
+        }
+      }
 
       // Optimistic Unlock: Do not await WASM heavy operations, allow immediate UI access
       // createAccount runs in background Worker, UI will show cached balance/addresses initially
@@ -2691,6 +2728,26 @@ export class BackgroundZcashWalletRuntime {
     }
   }
 
+  async resolveNewZcashBirthdayHeight(): Promise<number> {
+    const cachedChainTip = selectCachedChainTipHeight(
+      this.store.wallets.flatMap(wallet => {
+        const state = this.accountDataStore.getWalletSyncState(this.network, wallet.id)
+        return [state.latestHeight, state.currentHeight]
+      })
+    )
+    if (cachedChainTip !== null) return getSafeNewWalletBirthdayHeight(cachedChainTip)
+    const core = this.getOrCreateWalletCore(`__height_query_${this.network}`)
+    await core.ensureInitialized()
+    const chainTip = await withTimeout(
+      core.getLatestBlock(),
+      OPTIONAL_NEW_WALLET_CHAIN_TIP_TIMEOUT_MS,
+      'new Zcash account chain tip'
+    )
+    const validatedTip = selectCachedChainTipHeight([chainTip])
+    if (validatedTip === null) throw new Error('Unable to load the Zcash chain height')
+    return getSafeNewWalletBirthdayHeight(validatedTip)
+  }
+
   private async resolveWasmAccountId(
     walletId: string,
     accountId: string,
@@ -2728,6 +2785,8 @@ export class BackgroundZcashWalletRuntime {
         ? this.store.currentAccountId
         : this.store.getWallet(wid)?.accounts[0]?.id)
     if (!aid) return []
+    const account = this.store.getAccount(wid, aid)
+    if (!account || !isAccountNetworkEnabled(account, this.network, 'zcash')) return []
 
     const cacheKey = this.transactionHistoryCacheKey(wid, aid)
     if (this.isWalletActivelySyncing(wid)) {
@@ -2757,7 +2816,7 @@ export class BackgroundZcashWalletRuntime {
     if (!core?.hasAccount()) return
 
     const account = this.store.getAccount(walletId, accountId)
-    if (!account) return
+    if (!account || !isAccountNetworkEnabled(account, this.network, 'zcash')) return
 
     try {
       const wasmAccountId = await this.resolveWasmAccountId(walletId, accountId, core)
@@ -2971,7 +3030,10 @@ export class BackgroundZcashWalletRuntime {
     if (this.isLocked()) return
 
     const wallet = this.store.getWallet(walletId)
-    if (!wallet || wallet.accounts.length === 0) return
+    const enabledAccounts = wallet?.accounts.filter(account =>
+      isAccountNetworkEnabled(account, this.network, 'zcash')
+    )
+    if (!wallet || !enabledAccounts?.length) return
 
     const core = this.getOrCreateWalletCore(walletId)
     const dbKey = `${this.network}_${walletId}`
@@ -2984,7 +3046,7 @@ export class BackgroundZcashWalletRuntime {
 
     const missingAccounts: AccountData[] = []
 
-    for (const account of wallet.accounts) {
+    for (const account of enabledAccounts) {
       try {
         const restored = await core.restoreFromDB(account.derivationIndex)
         if (!restored) {
@@ -3022,7 +3084,9 @@ export class BackgroundZcashWalletRuntime {
       }
     }
 
-    const firstAccount = wallet.accounts[0]
+    const firstAccount =
+      enabledAccounts.find(account => account.id === this.store.currentAccountId) ??
+      enabledAccounts[0]
     if (firstAccount && core.accountIndex !== firstAccount.derivationIndex) {
       if (credential) {
         this.bindCredentialToCore(core, credential, firstAccount.derivationIndex)
@@ -3148,6 +3212,7 @@ export class BackgroundZcashWalletRuntime {
         account = wallet?.accounts[0] || null
       }
       if (!account) return
+      if (!isAccountNetworkEnabled(account, this.network, 'zcash')) return
 
       if (core.hasAccount() && core.accountIndex === account.derivationIndex) {
         if (!core.isReady() && !this.isLocked()) {
@@ -3467,7 +3532,8 @@ export class BackgroundZcashWalletRuntime {
     seedPhrase: string,
     walletName?: string,
     birthdayHeight?: number,
-    accountName: string = 'Account 1'
+    accountName: string = 'Account 1',
+    selectedNetworkFamilies?: readonly AccountNetworkFamily[]
   ): Promise<string> {
     if (!this.password) {
       throw new Error('Wallet is locked. Please unlock and try again.')
@@ -3507,7 +3573,8 @@ export class BackgroundZcashWalletRuntime {
       walletName || `Wallet ${Date.now()}`,
       false, // shouldReset (ignored if skipInit)
       true, // skipInit
-      birthdayHeight
+      birthdayHeight,
+      selectedNetworkFamilies
     )
 
     await this.addWalletToList(wallet)
@@ -4005,6 +4072,11 @@ export class BackgroundZcashWalletRuntime {
         syncWalletId || undefined,
         syncAccountId || undefined
       )
+      return { status: 'skipped' }
+    }
+
+    const syncAccount = this.store.getAccount(syncWalletId, syncAccountId)
+    if (!syncAccount || !isAccountNetworkEnabled(syncAccount, syncNetwork, 'zcash')) {
       return { status: 'skipped' }
     }
 
@@ -5522,6 +5594,12 @@ export class BackgroundZcashWalletRuntime {
     forceUpdate = false,
     options?: { localOnly: true; canApply: () => boolean }
   ): Promise<void> {
+    const wallet = this.store.getWallet(walletId)
+    if (
+      !wallet?.accounts.some(account => isAccountNetworkEnabled(account, this.network, 'zcash'))
+    ) {
+      return
+    }
     const core = this.walletCores.get(walletId)
     if (!core || !core.hasAccount()) {
       logger.log('WalletCore not ready, skipping balance refresh', walletId)
@@ -5635,6 +5713,7 @@ export class BackgroundZcashWalletRuntime {
           )
           continue
         }
+        if (!isAccountNetworkEnabled(matchedAccount, this.network, 'zcash')) continue
 
         if (options && !options.canApply()) return
 

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { test } from 'node:test'
+import { isAccountNetworkEnabled } from '../../../src/core/wallet/account-network-selection.ts'
 
 const require = createRequire(import.meta.url)
 const typescript = require('typescript')
@@ -40,17 +41,27 @@ function createSchedulerHarness() {
     },
     isLocked: () => true
   }
+  const wallet = { id: 'wallet-a', accounts: [{ id: 'account-a' }] }
   const dependencies = {
     './zcash-wallet-runtime': { backgroundZcashWalletRuntime: runtime },
     '@/lib/indexed-db': { getWalletPersistenceQuarantine: async () => quarantine },
     '@/store/wallet-store': {
       prepareWalletStoreForUse: async () => {},
-      useWalletStore: { getState: () => ({ currentWalletId: 'wallet-a' }) }
+      useWalletStore: {
+        getState: () => ({
+          currentWalletId: 'wallet-a',
+          currentAccountId: 'account-a',
+          currentNetwork: 'mainnet',
+          getWallet: id => (id === wallet.id ? wallet : null)
+        })
+      }
     },
+    '@/core/wallet/account-network-selection': { isAccountNetworkEnabled },
     '@/store/account-data-store': {
       useAccountDataStore: {
         getState: () => ({
           getWalletSyncState: () => ({ syncReason: null }),
+          getBalance: () => null,
           setWalletSyncStateFor: (_network, _walletId, state) => syncStates.push(state)
         })
       }
@@ -63,6 +74,7 @@ function createSchedulerHarness() {
   }
   return {
     scheduler: loadScheduler(dependencies),
+    wallet,
     setQuarantine: value => {
       quarantine = value
     },
@@ -74,6 +86,17 @@ function createSchedulerHarness() {
     messages
   }
 }
+
+test('a wallet with Zcash disabled cannot start foreground or transaction catch-up sync', async () => {
+  const { scheduler, wallet } = createSchedulerHarness()
+  wallet.accounts[0].networkSelections = { mainnet: ['evm'] }
+  let scheduled = 0
+  scheduler.scheduleRun = () => scheduled++
+
+  scheduler.onRequestSync()
+  assert.equal(scheduled, 0)
+  assert.equal(await scheduler.runTransactionCatchUp('wallet-a', 'account-a'), 'skipped')
+})
 
 test('quarantined wallet stays idle until explicit recovery removes its marker', async () => {
   const harness = createSchedulerHarness()
@@ -124,7 +147,16 @@ test('another confirmed transaction during catch-up triggers a subsequent wallet
 })
 
 test('sync snapshot reads the current background balance for the requested account and network', () => {
-  const selected = { currentWalletId: 'wallet-a', currentAccountId: 'account-a' }
+  const wallets = [
+    { id: 'wallet-a', accounts: [{ id: 'account-a' }, { id: 'account-b' }] },
+    { id: 'wallet-b', accounts: [{ id: 'account-a' }] }
+  ]
+  const selected = {
+    currentWalletId: 'wallet-a',
+    currentAccountId: 'account-a',
+    currentNetwork: 'mainnet',
+    getWallet: id => wallets.find(wallet => wallet.id === id) ?? null
+  }
   const balances = new Map([
     ['mainnet_wallet-a_account-a', { total: '0' }],
     ['mainnet_wallet-a_account-b', { total: '9' }],
@@ -134,6 +166,7 @@ test('sync snapshot reads the current background balance for the requested accou
   const scheduler = loadScheduler({
     './zcash-wallet-runtime': { backgroundZcashWalletRuntime: { getNetwork: () => 'mainnet' } },
     '@/store/wallet-store': { useWalletStore: { getState: () => selected } },
+    '@/core/wallet/account-network-selection': { isAccountNetworkEnabled },
     '@/store/account-data-store': {
       useAccountDataStore: {
         getState: () => ({
@@ -153,8 +186,12 @@ test('sync snapshot reads the current background balance for the requested accou
   assert.equal(scheduler.getSyncState('wallet-a', 'account-a').balance.total, '0')
   assert.equal(scheduler.getSyncState('wallet-a', 'account-b').balance.total, '9')
   assert.equal(scheduler.getSyncState('wallet-b', 'account-a').balance.total, '6')
-  assert.equal(scheduler.getSyncState('wallet-a', 'missing').balance, null)
+  assert.equal('balance' in scheduler.getSyncState('wallet-a', 'missing'), false)
   assert.equal(scheduler.getSyncState().balance.total, '0')
+
+  wallets[0].accounts[0].networkSelections = { mainnet: ['evm'] }
+  assert.equal('balance' in scheduler.getSyncState('wallet-a', 'account-a'), false)
+  assert.equal(scheduler.getSyncState('wallet-a', 'account-a').isSyncing, false)
 
   selected.currentAccountId = null
   assert.equal('balance' in scheduler.getSyncState(), false)
@@ -180,6 +217,7 @@ function createPauseScheduler(overrides = {}) {
     ...overrides.runtime
   }
   const noop = () => {}
+  const wallet = { id: 'wallet', accounts: [{ id: 'account' }] }
   return loadScheduler({
     './zcash-wallet-runtime': { backgroundZcashWalletRuntime: runtime },
     '@/lib/logger': { logger: { log: noop, warn: noop, error: noop } },
@@ -188,7 +226,17 @@ function createPauseScheduler(overrides = {}) {
       signalSyncAbort: async () => {}
     },
     '@/config/wallet': { WALLET_CONFIG: { SYNC: { INIT_READY_TIMEOUT_MS: 1000 } } },
-    '@/store/wallet-store': { useWalletStore: { getState: () => ({ currentWalletId: 'wallet' }) } },
+    '@/store/wallet-store': {
+      useWalletStore: {
+        getState: () => ({
+          currentWalletId: 'wallet',
+          currentAccountId: 'account',
+          currentNetwork: 'testnet',
+          getWallet: id => (id === wallet.id ? wallet : null)
+        })
+      }
+    },
+    '@/core/wallet/account-network-selection': { isAccountNetworkEnabled },
     '../core/wallet/pending-zcash-tx': {
       hasPendingZcashTxForWallet: overrides.hasPendingZcashTxForWallet ?? (async () => false)
     },

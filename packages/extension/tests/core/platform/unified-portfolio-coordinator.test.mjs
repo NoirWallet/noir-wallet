@@ -165,6 +165,37 @@ function coordinator(overrides = {}) {
 }
 
 test.describe('Unified active Portfolio coordinator', () => {
+  test('excludes unselected cached assets and restores them after enabling', async () => {
+    let evmEnabled = false
+    let reads = 0
+    const portfolio = coordinator({
+      isNetworkEnabled: (_scope, family) => family !== 'evm' || evmEnabled,
+      evmPortfolios: [
+        {
+          chainId: evmChainId,
+          portfolio: {
+            readCachedActiveSource: async () => {
+              reads += 1
+              return evmSource()
+            },
+            refreshActiveSource: async () => {
+              reads += 1
+              return evmSource()
+            }
+          }
+        }
+      ]
+    })
+    const disabled = await portfolio.readCachedActive()
+    expect(disabled?.chains.map(item => item.chain.family)).toEqual(['zcash'])
+    expect(disabled?.assets.map(item => item.metadata.symbol)).toEqual(['ZEC'])
+    expect(reads).toBe(0)
+    evmEnabled = true
+    const enabled = await portfolio.readCachedActive()
+    expect(enabled?.assets.map(item => item.metadata.symbol)).toEqual(['ZEC', 'ETH', 'USDC'])
+    expect(reads).toBe(1)
+  })
+
   test('rejects a retained read model after the visible wallet scope changes', () => {
     const retained = {
       scope: { keyDomainId, accountId }

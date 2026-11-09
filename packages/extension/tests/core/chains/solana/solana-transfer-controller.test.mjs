@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import { expect } from '@playwright/test'
 
 import { BackgroundSolanaTransferController } from '../../../../src/background/solana-transfer-controller.ts'
+import { accountContextTransition } from '../../../../src/background/account-context-transition.ts'
 
 const chainId = 'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1'
 const sender = 'HAgk14JpMQLgt6rVgv7cBQFJWFto5Dqxi472uT3DKpqk'
@@ -155,4 +156,45 @@ test('resolves the active scope for approval and signed broadcast recovery', asy
     ['reject', { scope: chainAccount.scope, transactionId: 'transaction:solana:rejected' }],
     ['resume', { scope: chainAccount.scope, transactionId: 'transaction:solana:resumed' }]
   ])
+})
+
+test('serializes automatic signed recovery with account network changes', async () => {
+  const events = []
+  let signalStarted
+  let finishRecovery
+  const started = new Promise(resolve => {
+    signalStarted = resolve
+  })
+  const held = new Promise(resolve => {
+    finishRecovery = resolve
+  })
+  const controller = new BackgroundSolanaTransferController({
+    orchestrator: {
+      resumePendingBroadcasts: async () => {
+        events.push('checked selection')
+        signalStarted()
+        await held
+        events.push('broadcast')
+        return { attempted: 1, broadcast: 1, pending: 0, errors: 0 }
+      }
+    },
+    loadActiveContext: async () => activeContext
+  })
+  const recovery = controller.recoverSignedTransfers()
+  try {
+    await started
+    const mutation = accountContextTransition.runScopedMutation(
+      [{ walletId: chainAccount.scope.keyDomainId, accountId: chainAccount.scope.accountId }],
+      async () => {
+        events.push('selection saved')
+      }
+    )
+    await Promise.resolve()
+    expect(events).toEqual(['checked selection'])
+    finishRecovery()
+    await Promise.all([recovery, mutation])
+    expect(events).toEqual(['checked selection', 'broadcast', 'selection saved'])
+  } finally {
+    finishRecovery()
+  }
 })

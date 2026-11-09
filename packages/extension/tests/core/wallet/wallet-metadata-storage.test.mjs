@@ -7,6 +7,7 @@ import {
   readWalletMetadata,
   renameRetainedAccountMetadata,
   renameRetainedWalletMetadata,
+  setAccountNetworkSelection,
   writeWalletMetadata
 } from '../../../src/lib/wallet-metadata-storage.ts'
 
@@ -206,6 +207,69 @@ test.describe('Wallet metadata persistence', () => {
       expect(state.accountDisplayNames).toEqual({
         'wallet:retained_account:0': 'Renamed account'
       })
+    } finally {
+      storage.restore()
+    }
+  })
+
+  test('retains a committed network selection across stale store writes and rejects removed accounts', async () => {
+    const otherAccount = {
+      id: 'account:1',
+      birthdayHeight: 2_000_000,
+      networkBirthdayHeights: { testnet: 2_000_000 },
+      networkSelections: { testnet: ['zcash'] }
+    }
+    const original = {
+      state: {
+        wallets: [{ ...wallet, accounts: [wallet.accounts[0], otherAccount] }],
+        currentNetwork: 'testnet',
+        zecPrice: 1
+      }
+    }
+    const storage = mockStorage({ wallet_state: original })
+    try {
+      await setAccountNetworkSelection(
+        wallet.id,
+        'account:0',
+        'testnet',
+        ['evm', 'zcash'],
+        3_000_000
+      )
+      await writeWalletMetadata({
+        state: { ...original.state, zecPrice: 2 }
+      })
+      const account = storage.values.wallet_state.state.wallets[0].accounts[0]
+      expect(account.networkSelections).toEqual({ testnet: ['evm', 'zcash'] })
+      expect(account.networkBirthdayHeights).toEqual({ testnet: 3_000_000 })
+      expect(account.birthdayHeight).toBe(3_000_000)
+      expect(storage.values.wallet_state.state.wallets[0].accounts[1]).toMatchObject(otherAccount)
+      expect(storage.values.wallet_state.state.zecPrice).toBe(2)
+
+      await commitWalletMetadataDeletion(wallet.id)
+      await expect(
+        setAccountNetworkSelection(wallet.id, 'account:0', 'testnet', ['zcash'])
+      ).rejects.toThrow('metadata is unavailable')
+    } finally {
+      storage.restore()
+    }
+  })
+
+  test('remembers a prior Zcash scan even when its birthday height is zero', async () => {
+    const storage = mockStorage({
+      wallet_state: {
+        state: {
+          wallets: [{ ...wallet, accounts: [{ id: 'account:0', birthdayHeight: 0 }] }],
+          currentNetwork: 'mainnet'
+        }
+      }
+    })
+    try {
+      await setAccountNetworkSelection(wallet.id, 'account:0', 'mainnet', ['evm'])
+      await setAccountNetworkSelection(wallet.id, 'account:0', 'mainnet', ['evm', 'zcash'])
+      const account = storage.values.wallet_state.state.wallets[0].accounts[0]
+      expect(account.networkZcashHistoryConfigured).toEqual({ mainnet: true })
+      expect(account.birthdayHeight).toBe(0)
+      expect(account.networkBirthdayHeights).toBeUndefined()
     } finally {
       storage.restore()
     }

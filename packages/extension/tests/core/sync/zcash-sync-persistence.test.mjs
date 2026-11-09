@@ -5,6 +5,7 @@ import { test } from 'node:test'
 import { WALLET_CONFIG } from '../../../src/config/wallet.ts'
 import { withTimeout } from '../../../src/lib/async-utils.ts'
 import { shouldMarkSyncJobInterrupted } from '../../../src/lib/sync-job-store.ts'
+import { isAccountNetworkEnabled } from '../../../src/core/wallet/account-network-selection.ts'
 
 const require = createRequire(import.meta.url)
 const typescript = require('typescript')
@@ -44,7 +45,8 @@ function createSync({
     wallets: [wallet],
     currentWalletId: wallet.id,
     currentAccountId: 'account',
-    getWallet: () => wallet
+    getWallet: () => wallet,
+    getAccount: (_walletId, accountId) => wallet.accounts.find(account => account.id === accountId)
   }
   const jobs = {
     async get() {
@@ -76,6 +78,7 @@ function createSync({
       }
     },
     '@/lib/runtime-network': { DEFAULT_NETWORK: 'mainnet' },
+    '@/core/wallet/account-network-selection': { isAccountNetworkEnabled },
     '@/lib/logger': {
       logger: {
         log() {},

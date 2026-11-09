@@ -184,6 +184,34 @@ function repository(activeSnapshot = snapshot()) {
 }
 
 test.describe('Additional receive targets coordinator', () => {
+  test('omits unselected receive targets and restores them after enabling', async () => {
+    let evmEnabled = false
+    let bitcoinReads = 0
+    const coordinator = new AdditionalReceiveTargetsCoordinator({
+      repository: repository(),
+      chains,
+      isNetworkEnabled: (_scope, family) =>
+        (family !== 'evm' && family !== 'bitcoin') || evmEnabled,
+      getBitcoinReceiveTarget: async () => {
+        bitcoinReads += 1
+        return getBitcoinReceiveTarget()
+      }
+    })
+    expect((await coordinator.readCurrentActive()).targets.map(target => target.kind)).toEqual([
+      'solana',
+      'near'
+    ])
+    expect(bitcoinReads).toBe(0)
+    evmEnabled = true
+    expect((await coordinator.readCurrentActive()).targets.map(target => target.kind)).toEqual([
+      'evm',
+      'bitcoin',
+      'solana',
+      'near'
+    ])
+    expect(bitcoinReads).toBe(1)
+  })
+
   test('returns enabled non-Zcash targets in registry order and binds the active Account', async () => {
     let requestedBitcoinScope = null
     const coordinator = new AdditionalReceiveTargetsCoordinator({

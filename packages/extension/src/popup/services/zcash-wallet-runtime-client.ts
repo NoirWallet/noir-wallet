@@ -1,4 +1,5 @@
 import type { MnemonicWordCount } from '@/config/wallet'
+import type { AccountNetworkFamily } from '@/core/wallet/account-network-selection'
 import { getResponseErrorMessage } from '@/lib/errors'
 import type { WalletBackupVerification } from '@/core/wallet/secret-phrase-backup'
 import type { AccountAddresses, FundingSource } from '@/types'
@@ -174,6 +175,7 @@ export const zcashWalletRuntimeClient = Object.freeze({
     readonly password: string
     readonly accountName: string
     readonly birthdayHeight?: number
+    readonly selectedNetworkFamilies?: readonly AccountNetworkFamily[]
   }): Promise<void> {
     await expectSuccess(
       {
@@ -181,7 +183,10 @@ export const zcashWalletRuntimeClient = Object.freeze({
         mnemonic: input.mnemonic,
         password: input.password,
         accountName: input.accountName,
-        ...(input.birthdayHeight === undefined ? {} : { birthdayHeight: input.birthdayHeight })
+        ...(input.birthdayHeight === undefined ? {} : { birthdayHeight: input.birthdayHeight }),
+        ...(input.selectedNetworkFamilies === undefined
+          ? {}
+          : { selectedNetworkFamilies: input.selectedNetworkFamilies })
       },
       'Wallet setup failed'
     )
