@@ -669,33 +669,51 @@ export function AssetDetail() {
     return href ? [{ domain, label, href }] : []
   })
   const historyFooter = (
-    <div className="flex flex-col items-center gap-3 border-t border-border/60 px-5 py-4">
-      {historyLinks.map(link => (
-        <a
-          key={link.domain}
-          href={link.href}
-          target="_blank"
-          rel="noopener noreferrer"
-          referrerPolicy="no-referrer"
-          className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:underline"
-        >
-          {link.label}
-          <Icon icon="lucide:external-link" width={13} height={13} />
-        </a>
+    <div
+      aria-label="Asset history links"
+      className="flex items-center justify-center gap-2 whitespace-nowrap border-t border-border/60 px-5 py-4 text-xs"
+    >
+      <span className="text-muted">View</span>
+      {historyLinks.map((link, index) => (
+        <span key={link.domain} className="inline-flex items-center gap-2">
+          {index > 0 && (
+            <span aria-hidden="true" className="text-muted">
+              ·
+            </span>
+          )}
+          <a
+            href={link.href}
+            aria-label={link.label}
+            target="_blank"
+            rel="noopener noreferrer"
+            referrerPolicy="no-referrer"
+            className="inline-flex items-center gap-1 font-medium text-primary hover:underline"
+          >
+            {link.domain === 'public' ? 'Public' : 'Private'}
+            <Icon icon="lucide:external-link" width={12} height={12} />
+          </a>
+        </span>
       ))}
       {detailDomain === 'all' && categories?.domains.includes('shield') && (
-        <button
-          type="button"
-          className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:underline"
-          onClick={() => {
-            const query = new URLSearchParams(searchParams)
-            query.set('domain', 'shield')
-            navigate(`/asset-detail?${query}`, { replace: true })
-          }}
-        >
-          Shield history
-          <Icon icon="lucide:chevron-right" width={13} height={13} />
-        </button>
+        <>
+          {historyLinks.length > 0 && (
+            <span aria-hidden="true" className="text-muted">
+              ·
+            </span>
+          )}
+          <button
+            type="button"
+            className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:underline"
+            onClick={() => {
+              const query = new URLSearchParams(searchParams)
+              query.set('domain', 'shield')
+              navigate(`/asset-detail?${query}`, { replace: true })
+            }}
+          >
+            Shield history
+            <Icon icon="lucide:chevron-right" width={13} height={13} />
+          </button>
+        </>
       )}
     </div>
   )
