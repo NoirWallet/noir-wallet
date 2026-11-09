@@ -3,11 +3,13 @@ import { useEffect, useRef, useState } from 'react'
 const SCROLL_HEIGHT_DESKTOP = 3000
 const SCROLL_HEIGHT_MOBILE = 1800
 const WALLET_HOME_IMAGE = 'https://assets.zknoir.com/images/home-banner.png'
+const LOCAL_WALLET_HOME_IMAGE = '/images/home-banner-v2.png'
 
 export function Features() {
   const sectionRef = useRef<HTMLElement>(null)
   const [progress, setProgress] = useState(0)
   const [isMobile, setIsMobile] = useState(false)
+  const [walletHomeImage, setWalletHomeImage] = useState(WALLET_HOME_IMAGE)
 
   useEffect(() => {
     const checkMobile = () => setIsMobile(window.innerWidth < 768)
@@ -94,7 +96,8 @@ export function Features() {
                 }}
               >
                 <img
-                  src={WALLET_HOME_IMAGE}
+                  src={walletHomeImage}
+                  onError={() => setWalletHomeImage(LOCAL_WALLET_HOME_IMAGE)}
                   alt="Noir Wallet V2 home"
                   width={375}
                   height={750}
@@ -192,7 +195,8 @@ export function Features() {
                 }}
               >
                 <img
-                  src={WALLET_HOME_IMAGE}
+                  src={walletHomeImage}
+                  onError={() => setWalletHomeImage(LOCAL_WALLET_HOME_IMAGE)}
                   alt="Noir Wallet V2 home"
                   width={375}
                   height={750}
