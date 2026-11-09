@@ -8,15 +8,21 @@ import { cn } from '@/lib/utils'
 import nearLogo from '@/images/figma-near-confidential.svg'
 import zcashShieldLogo from '@/images/figma-zcash-shield.svg'
 
+export const fundingSourceSheetClassName =
+  'border-0 bg-popover px-4 pt-5 [&_[data-slot=dialog-header]]:text-left [&_[data-slot=dialog-title]]:text-base [&_[data-slot=dialog-title]]:font-medium'
+
 export function FundingSourceSelector({
   options,
   selectedType,
-  onSelect
+  onSelect,
+  purpose = 'funding'
 }: {
   readonly options: readonly FundingSourceOption[]
   readonly selectedType: FundingSource
   readonly onSelect: (type: FundingSource) => void
+  readonly purpose?: 'funding' | 'receive'
 }) {
+  const receiving = purpose === 'receive'
   return (
     <div className="space-y-2 py-1">
       {(['transparent', 'shielded'] as const).map(type => {
@@ -26,7 +32,13 @@ export function FundingSourceSelector({
           <div key={type} className="space-y-2">
             <button
               type="button"
-              aria-label={type === 'transparent' ? 'Transparent account' : 'Zcash shield'}
+              aria-label={
+                receiving
+                  ? `Receive at ${type === 'shielded' ? 'Shielded' : 'Transparent'}`
+                  : type === 'transparent'
+                    ? 'Transparent'
+                    : 'Zcash shield'
+              }
               aria-pressed={selectedType === option.type}
               disabled={Boolean(option.disabledReason)}
               title={option.disabledReason}
@@ -45,29 +57,41 @@ export function FundingSourceSelector({
                     width={16}
                     className={type === 'shielded' ? 'text-success' : ''}
                   />
-                  {type === 'transparent' ? 'Transparent account' : 'Shield'}
+                  {type === 'transparent' ? 'Transparent' : 'Shield'}
                 </span>
                 <span className="mt-1 flex items-center gap-1.5 text-xs text-muted">
                   {type === 'shielded' && (
                     <img src={zcashShieldLogo} alt="" className="size-4 rounded" />
                   )}
-                  <span className="truncate">
-                    {type === 'shielded' ? 'Zcash shield' : formatSortAddress(option.address)}
+                  <span className="truncate" title={option.address}>
+                    {type === 'shielded' && !receiving
+                      ? 'Zcash shield'
+                      : formatSortAddress(option.address)}
                   </span>
                 </span>
               </span>
-              <span className="shrink-0 text-right">
-                <span className="block text-sm" title={option.available}>
-                  {formatTokenQuantity(option.available)}
-                </span>
-                {safeBig(option.pending).gt(0) && (
-                  <span className="mt-0.5 block text-[11px] text-muted">
-                    {formatTokenQuantity(option.pending)} ZEC pending
+              {selectedType === option.type && (
+                <Icon
+                  icon="lucide:check"
+                  width={16}
+                  className="shrink-0 text-primary"
+                  aria-hidden="true"
+                />
+              )}
+              {!receiving && (
+                <span className="shrink-0 text-right">
+                  <span className="block text-sm" title={option.available}>
+                    {formatTokenQuantity(option.available)}
                   </span>
-                )}
-              </span>
+                  {safeBig(option.pending).gt(0) && (
+                    <span className="mt-0.5 block text-[11px] text-muted">
+                      {formatTokenQuantity(option.pending)} ZEC pending
+                    </span>
+                  )}
+                </span>
+              )}
             </button>
-            {type === 'transparent' && (
+            {type === 'transparent' && !receiving && (
               <button
                 type="button"
                 disabled

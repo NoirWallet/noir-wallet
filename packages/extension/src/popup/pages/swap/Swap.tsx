@@ -64,7 +64,10 @@ import {
   isCrossChainSendDestination,
   isCrossChainSendRecipientValid
 } from '@/popup/services/cross-chain-send-assets'
-import { FundingSourceSelector } from '../../components/transaction/FundingSourceSelector'
+import {
+  FundingSourceSelector,
+  fundingSourceSheetClassName
+} from '../../components/transaction/FundingSourceSelector'
 import { RecipientSelector } from '../../components/transaction/RecipientSelector'
 import { getActiveAccountScopeKey } from '@/popup/lib/active-account-scope'
 import {
@@ -4160,8 +4163,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
           const scope = getActiveAccountScopeKey()
           void openModal<FundingSource>({
             title: 'Funding source',
-            className:
-              'border-0 bg-popover px-4 pt-5 [&_[data-slot=dialog-header]]:text-left [&_[data-slot=dialog-title]]:text-base [&_[data-slot=dialog-title]]:font-medium',
+            className: fundingSourceSheetClassName,
             body: resolve => (
               <FundingSourceSelector
                 options={getFundingSourceOptions(
@@ -4848,53 +4850,32 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
         onSelectDestinationAccount={
           ordinarySwapRequested && isZecDestination
             ? () => {
-                void openModal({
+                void openModal<FundingSource>({
                   title: 'Receive at',
-                  showCloseButton: true,
-                  body: (_resolve, close) => (
-                    <div className="space-y-2 px-5 pb-5">
-                      {(['shielded', 'transparent'] as const).map(type => {
-                        const address = currentAccount?.addresses[type]
-                        return (
-                          <button
-                            key={type}
-                            type="button"
-                            disabled={!hasManagedZcashDestination || !address}
-                            aria-label={`Receive at ${type === 'shielded' ? 'Shielded' : 'Transparent'}`}
-                            aria-pressed={zecDestinationType === type}
-                            onClick={() => {
-                              reviewAfterQuoteRefresh.current = null
-                              setUseCustomRecipient(false)
-                              if (walletSourcesScope && swap.tokenOut) {
-                                setZecDestinationSelection({
-                                  scope: walletSourcesScope,
-                                  mode: sourceMode,
-                                  assetId: swap.tokenOut.assetId,
-                                  type
-                                })
-                              }
-                              close()
-                            }}
-                            className="flex min-h-14 w-full items-center gap-3 rounded-md border border-border bg-card px-3 text-left disabled:opacity-45"
-                          >
-                            <Icon
-                              icon={type === 'shielded' ? 'lucide:shield-check' : 'lucide:eye'}
-                              width={18}
-                            />
-                            <span className="min-w-0 flex-1">
-                              <span className="block text-sm">
-                                {type === 'shielded' ? 'Shielded' : 'Transparent'}
-                              </span>
-                              {address && (
-                                <span className="block truncate font-mono text-xs text-muted">
-                                  {formatSortAddress(address)}
-                                </span>
-                              )}
-                            </span>
-                          </button>
-                        )
-                      })}
-                    </div>
+                  className: fundingSourceSheetClassName,
+                  body: resolve => (
+                    <FundingSourceSelector
+                      purpose="receive"
+                      options={getFundingSourceOptions(
+                        null,
+                        hasManagedZcashDestination ? (currentAccount?.addresses ?? {}) : {},
+                        undefined
+                      )}
+                      selectedType={zecDestinationType}
+                      onSelect={type => {
+                        reviewAfterQuoteRefresh.current = null
+                        setUseCustomRecipient(false)
+                        if (walletSourcesScope && swap.tokenOut) {
+                          setZecDestinationSelection({
+                            scope: walletSourcesScope,
+                            mode: sourceMode,
+                            assetId: swap.tokenOut.assetId,
+                            type
+                          })
+                        }
+                        resolve(type)
+                      }}
+                    />
                   )
                 })
               }
