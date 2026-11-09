@@ -41,11 +41,7 @@ describe('custom EVM network settings', () => {
   it('registers custom native assets without treating network artwork as asset metadata', () => {
     for (const [chainId, numericChainId, iconUrl] of [
       ['eip155:31337', 31337, undefined],
-      [
-        'eip155:57073',
-        57073,
-        'https://assets-cdn.trustwallet.com/blockchains/ethereum/info/logo.png'
-      ]
+      ['eip155:57073', 57073, undefined]
     ]) {
       const custom = { ...network, chainId, numericChainId }
       const settings = saveCustomEvmNetworkSettings(DEFAULT_CHAIN_ENDPOINT_SETTINGS, custom)

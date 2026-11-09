@@ -569,15 +569,10 @@ test('discovers, signs, broadcasts, monitors, and records a BIP-84 transfer in r
   await bitcoinActivityRow.click()
   const detail = popup.locator('[data-activity-detail-id]')
   await expect(detail.getByRole('heading', { name: 'Send', exact: true })).toBeVisible()
-  const bitcoinIcon = detail.getByRole('img', { name: 'BTC' })
+  const bitcoinIcon = detail.locator('[data-slot="token-icon"]').first()
   await expect(bitcoinIcon).toBeVisible()
-  await expect(bitcoinIcon).toHaveAttribute(
-    'src',
-    'https://assets-cdn.trustwallet.com/blockchains/bitcoin/info/logo.png'
-  )
-  await expect
-    .poll(() => bitcoinIcon.evaluate(image => (image as HTMLImageElement).naturalWidth))
-    .toBeGreaterThan(0)
+  await expect(bitcoinIcon.getByRole('img', { name: 'BTC' })).toHaveCount(0)
+  await expect(bitcoinIcon.locator('span').first()).toHaveText('B')
   await expect(detail.getByText('Status', { exact: true })).toBeVisible()
   await expect(detail.getByText('From', { exact: true })).toBeVisible()
   await expect(detail.getByText('To', { exact: true })).toBeVisible()

@@ -2775,15 +2775,10 @@ test('prepares, signs, broadcasts, monitors, and records a Sepolia transfer in r
   const activityDetail = popup.locator(`[data-activity-detail-id="${result.id}"]`)
   await expect(activityDetail).toBeVisible()
   await expect(activityDetail.getByText('−0.001 ETH', { exact: true })).toBeVisible()
-  const ethereumIcon = activityDetail.getByRole('img', { name: 'ETH' })
+  const ethereumIcon = activityDetail.locator('[data-slot="token-icon"]').first()
   await expect(ethereumIcon).toBeVisible()
-  await expect(ethereumIcon).toHaveAttribute(
-    'src',
-    'https://assets-cdn.trustwallet.com/blockchains/ethereum/info/logo.png'
-  )
-  await expect
-    .poll(() => ethereumIcon.evaluate(image => (image as HTMLImageElement).naturalWidth))
-    .toBeGreaterThan(0)
+  await expect(ethereumIcon.getByRole('img', { name: 'ETH' })).toHaveCount(0)
+  await expect(ethereumIcon.locator('span').first()).toHaveText('E')
   await expect(activityDetail.getByText('Ethereum Sepolia', { exact: true })).toHaveCount(1)
   await expect(activityDetail.getByText('Confirmed', { exact: true })).toBeVisible()
   await expect(activityDetail.getByText('From', { exact: true })).toBeVisible()

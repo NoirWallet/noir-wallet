@@ -132,8 +132,7 @@ test.describe('initial multichain product definitions', () => {
           metadata: {
             name: 'Bitcoin',
             symbol: 'BTC',
-            decimals: 8,
-            iconUrl: 'https://assets-cdn.trustwallet.com/blockchains/bitcoin/info/logo.png'
+            decimals: 8
           },
           verification: 'trusted'
         })

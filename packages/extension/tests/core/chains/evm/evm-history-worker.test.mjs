@@ -8,8 +8,7 @@ import { evmHistoryWorker } from '../../../../../evm-history-worker/src/index.ts
 const ADDRESS = `0x${'1'.repeat(40)}`
 const CONTRACT = `0x${'2'.repeat(40)}`
 const TRANSACTION_HASH = `0x${'a'.repeat(64)}`
-const TOKEN_ICON_SOURCE =
-  'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0x2222222222222222222222222222222222222222/logo.png'
+const TOKEN_ICON_SOURCE = 'https://assets.zknoir.com/token/ethereum/example.png'
 
 function rpcResponse(result) {
   return new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result }), {
@@ -119,7 +118,7 @@ test.describe('EVM history Worker', () => {
               headers: { Location: 'https://other.example/' }
             })
           }
-          if (new URL(request.url).hostname === 'raw.githubusercontent.com') {
+          if (new URL(request.url).hostname === new URL(TOKEN_ICON_SOURCE).hostname) {
             return new RuntimeResponse(new Uint8Array([137, 80, 78, 71]), {
               headers: { 'Content-Type': 'image/png' }
             })
@@ -176,9 +175,9 @@ test.describe('EVM history Worker', () => {
       expect((await runtime.dispatchFetch(iconUrl)).status).toBe(502)
       expect(calls).toEqual([
         ...Array(6).fill('rpc.ankr.com'),
-        'raw.githubusercontent.com',
+        new URL(TOKEN_ICON_SOURCE).hostname,
         'rpc.ankr.com',
-        'raw.githubusercontent.com'
+        new URL(TOKEN_ICON_SOURCE).hostname
       ])
     } finally {
       await runtime.dispose()

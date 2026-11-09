@@ -9,7 +9,7 @@ import {
   recordTokenIconUrlFailure
 } from '../../../src/popup/components/tokens/token-icon-failure-cache.ts'
 
-test('falls back to the native asset icon when the Swap provider has no icon', () => {
+test('leaves native assets without metadata images to the local placeholder', () => {
   expect(
     getTokenIconCandidates({
       token: {
@@ -18,7 +18,7 @@ test('falls back to the native asset icon when the Swap provider has no icon', (
         icon: null
       }
     })
-  ).toEqual(['https://assets-cdn.trustwallet.com/blockchains/bitcoin/info/logo.png'])
+  ).toEqual([])
 
   expect(
     getTokenIconCandidates({
@@ -28,7 +28,7 @@ test('falls back to the native asset icon when the Swap provider has no icon', (
         icon: null
       }
     })
-  ).toEqual(['https://assets-cdn.trustwallet.com/blockchains/avalanchec/info/logo.png'])
+  ).toEqual([])
 
   expect(
     getTokenIconCandidates({
@@ -37,10 +37,10 @@ test('falls back to the native asset icon when the Swap provider has no icon', (
         icon: null
       }
     })
-  ).toEqual(['https://assets-cdn.trustwallet.com/blockchains/bitcoin/info/logo.png'])
+  ).toEqual([])
 })
 
-test('keeps provider, Trust Wallet, and CoinGecko fallbacks in order', () => {
+test('keeps provider and supplied CoinGecko metadata in order', () => {
   expect(
     getTokenIconCandidates({
       token: {
@@ -49,10 +49,7 @@ test('keeps provider, Trust Wallet, and CoinGecko fallbacks in order', () => {
         icon: 'https://tokens.example/btc.png'
       }
     })
-  ).toEqual([
-    'https://tokens.example/btc.png',
-    'https://assets-cdn.trustwallet.com/blockchains/bitcoin/info/logo.png'
-  ])
+  ).toEqual(['https://tokens.example/btc.png'])
 
   expect(
     getTokenIconCandidates({
@@ -64,13 +61,18 @@ test('keeps provider, Trust Wallet, and CoinGecko fallbacks in order', () => {
           'https://coin-images.coingecko.com/coins/images/6319/large/usdc.png?1696506694'
       }
     })
-  ).toEqual([
-    'https://coin-images.coingecko.com/coins/images/6319/large/usdc.png?1696506694',
-    'https://assets-cdn.trustwallet.com/blockchains/ethereum/assets/0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48/logo.png'
-  ])
+  ).toEqual(['https://coin-images.coingecko.com/coins/images/6319/large/usdc.png?1696506694'])
 })
 
-test('uses Trust Wallet verbatim addresses and CoinGecko for unsupported chains', () => {
+test('does not derive contract image URLs and accepts supplied CoinGecko metadata', () => {
+  const retiredUrl = 'https://assets-cdn.trustwallet.com/blockchains/ethereum/info/logo.png'
+  for (const icon of [
+    retiredUrl,
+    'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/info/logo.png',
+    `https://history.example/token-icon?source=${encodeURIComponent(retiredUrl)}`
+  ]) {
+    expect(getTokenIconCandidates({ icon, token: { icon, blockchain: 'eth' } })).toEqual([])
+  }
   expect(
     getTokenIconCandidates({
       token: {
@@ -79,9 +81,7 @@ test('uses Trust Wallet verbatim addresses and CoinGecko for unsupported chains'
         icon: null
       }
     })
-  ).toEqual([
-    'https://assets-cdn.trustwallet.com/blockchains/solana/assets/EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm/logo.png'
-  ])
+  ).toEqual([])
 
   expect(
     getTokenIconCandidates({
@@ -96,20 +96,20 @@ test('uses Trust Wallet verbatim addresses and CoinGecko for unsupported chains'
   ).toEqual(['https://coin-images.coingecko.com/coins/images/54725/large/fogo.png?1749218789'])
 })
 
-test('derives native and discovered token fallbacks from canonical wallet asset IDs', () => {
+test('does not infer image URLs from canonical wallet asset IDs', () => {
   expect(
     getTokenIconCandidates({
       assetId: 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp/slip44:501',
       blockchain: 'solana'
     })
-  ).toEqual(['https://assets-cdn.trustwallet.com/blockchains/solana/info/logo.png'])
+  ).toEqual([])
 
   expect(
     getTokenIconCandidates({
       assetId: 'near:mainnet/slip44:397',
       blockchain: 'near'
     })
-  ).toEqual(['https://assets-cdn.trustwallet.com/blockchains/near/info/logo.png'])
+  ).toEqual([])
 
   expect(
     getTokenIconCandidates({
@@ -117,21 +117,17 @@ test('derives native and discovered token fallbacks from canonical wallet asset 
         'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp/token:EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
       blockchain: 'sol'
     })
-  ).toEqual([
-    'https://assets-cdn.trustwallet.com/blockchains/solana/assets/EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v/logo.png'
-  ])
+  ).toEqual([])
 
   expect(
     getTokenIconCandidates({
       assetId: 'near:mainnet/nep141:token%5Fcontract.near',
       blockchain: 'near'
     })
-  ).toEqual([
-    'https://assets-cdn.trustwallet.com/blockchains/near/assets/token_contract.near/logo.png'
-  ])
+  ).toEqual([])
 })
 
-test('uses a cached CoinGecko metadata icon before a derived Trust Wallet asset icon', () => {
+test('uses a cached CoinGecko metadata icon without deriving another image URL', () => {
   expect(
     getTokenIconCandidates({
       assetId:
@@ -139,10 +135,7 @@ test('uses a cached CoinGecko metadata icon before a derived Trust Wallet asset 
       blockchain: 'sol',
       icon: 'https://coin-images.coingecko.com/coins/images/6319/large/usdc.png'
     })
-  ).toEqual([
-    'https://coin-images.coingecko.com/coins/images/6319/large/usdc.png',
-    'https://assets-cdn.trustwallet.com/blockchains/solana/assets/EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v/logo.png'
-  ])
+  ).toEqual(['https://coin-images.coingecko.com/coins/images/6319/large/usdc.png'])
 })
 
 test('does not load token icons directly from public IPFS gateways', () => {
@@ -155,10 +148,7 @@ test('does not load token icons directly from public IPFS gateways', () => {
         coingeckoIcon: 'https://coin-images.coingecko.com/coins/images/1/large/token.png'
       }
     })
-  ).toEqual([
-    'https://coin-images.coingecko.com/coins/images/1/large/token.png',
-    'https://assets-cdn.trustwallet.com/blockchains/solana/assets/EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm/logo.png'
-  ])
+  ).toEqual(['https://coin-images.coingecko.com/coins/images/1/large/token.png'])
 })
 
 test('shares failed icon URLs across component instances and retries them after expiry', () => {

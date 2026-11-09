@@ -16,7 +16,6 @@ import {
   type NearNetworkConfig,
   type SolanaNetworkConfig
 } from '@/config/networks'
-import { formatNativeTokenIconUrl } from '@/config/icons'
 import { BITCOIN_ADDRESS_POLICY } from '@/core/chains/bitcoin'
 import type { AssetDefinitionInput } from './asset-registry'
 import type { ChainDefinitionInput } from './chain-registry'
@@ -246,7 +245,6 @@ export function getBitcoinChainId(network: Network): string {
 }
 
 export function getEvmAssetDefinitions(config: EvmNetworkConfig): readonly AssetDefinitionInput[] {
-  const nativeIconUrl = formatNativeTokenIconUrl(config.iconChain)
   return Object.freeze([
     Object.freeze({
       chainId: config.chainId,
@@ -256,8 +254,7 @@ export function getEvmAssetDefinitions(config: EvmNetworkConfig): readonly Asset
       metadata: {
         name: config.nativeCurrency.name,
         symbol: config.nativeCurrency.symbol,
-        decimals: config.nativeCurrency.decimals,
-        ...(nativeIconUrl ? { iconUrl: nativeIconUrl } : {})
+        decimals: config.nativeCurrency.decimals
       },
       source: 'bundled',
       verification: 'trusted'
@@ -294,8 +291,7 @@ export function getBundledBitcoinAssetDefinitions(
       metadata: {
         name: 'Bitcoin',
         symbol: 'BTC',
-        decimals: 8,
-        iconUrl: formatNativeTokenIconUrl('bitcoin')
+        decimals: 8
       },
       source: 'bundled',
       verification: 'trusted'
@@ -316,8 +312,7 @@ export function getBundledInitialProductAssetDefinitions(
       metadata: {
         name: 'Zcash',
         symbol: 'ZEC',
-        decimals: 8,
-        iconUrl: formatNativeTokenIconUrl('zcash')
+        decimals: 8
       },
       source: 'bundled',
       verification: 'trusted'
@@ -336,8 +331,7 @@ export function getBundledInitialProductAssetDefinitions(
       metadata: {
         name: 'Solana',
         symbol: 'SOL',
-        decimals: 9,
-        iconUrl: formatNativeTokenIconUrl('solana')
+        decimals: 9
       },
       source: 'bundled',
       verification: 'trusted'
@@ -350,8 +344,7 @@ export function getBundledInitialProductAssetDefinitions(
       metadata: {
         name: 'NEAR',
         symbol: 'NEAR',
-        decimals: 24,
-        iconUrl: formatNativeTokenIconUrl('near')
+        decimals: 24
       },
       source: 'bundled',
       verification: 'trusted'

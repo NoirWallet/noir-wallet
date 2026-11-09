@@ -3,7 +3,7 @@ import type { ChainDefinition } from '@/core/chains/registry'
 import { rheaSwapClient } from './rhea-swap-client'
 import { getChainFromAssetId } from '@/lib/format'
 import { createDebugRequestId, logDebugTiming, traceDebugStage } from '@/lib/debug-performance'
-import { formatNativeTokenIconUrl, resolveEvmChainIconAlias } from '@/config/icons'
+import { resolveEvmChainIconAlias } from '@/config/icons'
 import { BITCOIN_CHAIN_IDS, ZCASH_CHAIN_IDS } from '@/core/chains/registry/chain-ids'
 
 export interface SwapInitialCatalogOptions {
@@ -185,11 +185,7 @@ export function mergeTokenCatalogs(
   const tokens = new Map<string, RheaSwapToken>()
   for (const catalog of catalogs) {
     for (const token of catalog) {
-      const nativeIcon = token.isNative ? formatNativeTokenIconUrl(token.blockchain) : undefined
-      tokens.set(
-        `${token.rheaChainId}:${token.rheaAddress}`,
-        nativeIcon && nativeIcon !== token.icon ? { ...token, icon: nativeIcon } : token
-      )
+      tokens.set(`${token.rheaChainId}:${token.rheaAddress}`, token)
     }
   }
   return Object.freeze([...tokens.values()])

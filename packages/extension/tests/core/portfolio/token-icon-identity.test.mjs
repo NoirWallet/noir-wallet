@@ -10,7 +10,7 @@ const candidates = (assetId, blockchain = 'arb', contractAddress = null) =>
     icon: 'https://tokens.example/cached-eth.png'
   })
 
-test('wallet and Swap ETH identities share the same icons across directions and networks', () => {
+test('wallet and Swap ETH identities preserve supplied token artwork across networks', () => {
   const expected = candidates('eip155:1/slip44:60', 'eth')
   for (const assetId of [
     'eip155:42161/slip44:60',
@@ -23,23 +23,20 @@ test('wallet and Swap ETH identities share the same icons across directions and 
   ]) {
     assert.deepEqual(candidates(assetId), expected, assetId)
   }
-  assert.deepEqual(expected, [
-    'https://assets-cdn.trustwallet.com/blockchains/ethereum/info/logo.png'
-  ])
-  assert.ok(!expected.includes(providerIcon))
+  assert.deepEqual(expected, [providerIcon, 'https://tokens.example/cached-eth.png'])
   assert.deepEqual(
     getTokenIconCandidates({
       assetId: 'nep141:arb.omft.near',
       token: { blockchain: 'arb', contractAddress: null, icon: 'https://tokens.example/to.png' }
     }),
-    expected
+    ['https://tokens.example/to.png']
   )
 })
 
 test('native asset fallbacks never use chain badge artwork', () => {
   for (const blockchain of ['eth', 'arb', 'base', 'op', 'btc', 'sol', 'near']) {
     const icons = getTokenIconCandidates({ token: { blockchain, contractAddress: null } })
-    assert.ok(icons.length > 0, blockchain)
+    assert.deepEqual(icons, [], blockchain)
     assert.ok(
       icons.every(icon => !icon.startsWith('https://assets.zknoir.com/chain/')),
       blockchain

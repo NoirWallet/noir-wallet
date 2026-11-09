@@ -1,8 +1,4 @@
-import { formatNativeTokenIconUrl, formatTrustWalletTokenIconUrl } from '@/config/icons'
-import { parseAssetId } from '@/core/chains/registry'
 import type { SwapToken } from '@/core/services/intents-api'
-import { MARKET_ASSETS } from '@/config/asset-market-assets'
-import { findBundledWalletMarketAssetId } from './token-display-policy'
 
 interface TokenIconCandidateInput {
   readonly token?: Pick<SwapToken, 'blockchain' | 'contractAddress' | 'icon' | 'coingeckoIcon'>
@@ -42,68 +38,41 @@ function isPublicIpfsIconUrl(value: string | undefined): boolean {
   }
 }
 
-function parseIconAsset(
-  assetId: string | undefined
-): Readonly<{ namespace: string; reference: string; chainFamily: string }> | undefined {
-  if (!assetId) return undefined
+function isRetiredIconSource(value: string, depth = 0): boolean {
+  if (depth > 3) return true
   try {
-    const parsed = parseAssetId(assetId)
-    return Object.freeze({
-      namespace: parsed.namespace,
-      reference: decodeURIComponent(parsed.reference),
-      chainFamily: parsed.chainId.slice(0, parsed.chainId.indexOf(':'))
-    })
+    const url = new URL(value)
+    const host = url.hostname.toLowerCase()
+    if (host === 'trustwallet.com' || host.endsWith('.trustwallet.com')) return true
+    if (
+      ['github.com', 'raw.githubusercontent.com', 'cdn.jsdelivr.net'].includes(host) &&
+      /(?:^|\/)trustwallet\/assets(?:@|\/|$)/i.test(url.pathname)
+    )
+      return true
+    // Previously cached history icons can wrap the original URL in our proxy.
+    const source = url.searchParams.get('source')
+    return source ? isRetiredIconSource(source, depth + 1) : false
   } catch {
-    return undefined
+    return false
   }
 }
 
 export function getTokenIconCandidates({
   token,
   icon,
-  assetId,
-  blockchain,
-  nativeChain,
   bundledIcon
 }: TokenIconCandidateInput): readonly string[] {
-  // Keep native ETH identical across catalogs and L2s; the badge identifies its chain.
-  if (assetId && findBundledWalletMarketAssetId(assetId) === MARKET_ASSETS.eth) {
-    return Object.freeze(
-      [formatNativeTokenIconUrl('eth')].filter((candidate): candidate is string => !!candidate)
-    )
-  }
-  const parsedAsset = parseIconAsset(assetId)
-  const assetBlockchain = blockchain ?? parsedAsset?.chainFamily
-  const nativeBlockchain = token && token.contractAddress == null ? token.blockchain : undefined
-  const nativeAssetBlockchain = parsedAsset?.namespace === 'slip44' ? assetBlockchain : undefined
-  const assetTokenIcon =
-    parsedAsset && parsedAsset.namespace !== 'slip44' && assetBlockchain
-      ? formatTrustWalletTokenIconUrl(assetBlockchain, parsedAsset.reference)
-      : undefined
-  const trustWalletTokenIcon =
-    token?.contractAddress != null
-      ? formatTrustWalletTokenIconUrl(token.blockchain, token.contractAddress)
-      : undefined
   const providerIcon = isPublicIpfsIconUrl(token?.icon ?? undefined) ? undefined : token?.icon
   const metadataIcon = isCoinGeckoIconUrl(icon) || isPublicIpfsIconUrl(icon) ? undefined : icon
   const coinGeckoIcon = isCoinGeckoIconUrl(icon) ? icon : token?.coingeckoIcon
-  const candidates = [
-    bundledIcon,
-    providerIcon,
-    metadataIcon,
-    coinGeckoIcon,
-    trustWalletTokenIcon,
-    assetTokenIcon,
-    nativeChain ? formatNativeTokenIconUrl(nativeChain) : undefined,
-    nativeBlockchain ? formatNativeTokenIconUrl(nativeBlockchain) : undefined,
-    nativeAssetBlockchain ? formatNativeTokenIconUrl(nativeAssetBlockchain) : undefined
-  ]
+  const candidates = [bundledIcon, providerIcon, metadataIcon, coinGeckoIcon]
 
   return Object.freeze(
     candidates.filter(
       (candidate, index): candidate is string =>
         typeof candidate === 'string' &&
         candidate.length > 0 &&
+        !isRetiredIconSource(candidate) &&
         candidates.indexOf(candidate) === index
     )
   )

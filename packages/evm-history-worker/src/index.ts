@@ -40,10 +40,7 @@ const MAX_REQUEST_CHAINS = 16
 const MAX_DISCOVERED_TOKEN_COUNT = 512
 const MAX_TOKEN_ICON_BYTES = 256 * 1024
 const TOKEN_ICON_TIMEOUT_MS = 10_000
-const TRUSTED_TOKEN_ICON_HOSTS = new Set([
-  'assets-cdn.trustwallet.com',
-  'raw.githubusercontent.com'
-])
+const TRUSTED_TOKEN_ICON_HOSTS = new Set(['assets.zknoir.com'])
 function corsHeaders(allowedOrigin: string): Record<string, string> {
   return {
     'Access-Control-Allow-Origin': allowedOrigin,
@@ -264,12 +261,6 @@ function parseTrustedTokenIconSource(value: unknown): URL | null {
     url.password.length > 0 ||
     url.hash.length > 0 ||
     !TRUSTED_TOKEN_ICON_HOSTS.has(url.hostname)
-  ) {
-    return null
-  }
-  if (
-    url.hostname === 'raw.githubusercontent.com' &&
-    !url.pathname.startsWith('/trustwallet/assets/')
   ) {
     return null
   }
