@@ -2,10 +2,33 @@
 
 All notable user-facing changes to Noir Wallet are documented in this file.
 
-## [2.0.0-beta.2] - 2026-11-03
+## [2.0.0-beta.2] - 2026-11-10
+
+### Added
+
+- Added Shield Funds for NEAR Confidential balances and native Zcash shielded balances, with Send, Receive, Move, and supported Swap routes.
+- Added external Shield deposits with receiving addresses, editable refund addresses, and deposit tracking.
+- Added Directly and Cluster options for Public/Private transfers, with route fees and estimated arrival times before confirmation.
+- Added an optional private route for supported dApp transfers from Private accounts, with quotes for the amount the recipient should receive.
+
+### Changed
+
+- Redesigned Home, asset details, account management, Send, Receive, Move, Swap, and Settings for the V2 interface, including side-panel layouts.
+- Separated Total, Public, Shield, and Private asset views on Home and asset details, with matching balances and activity filters.
+- Updated Shield Move to select a funding source and asset first, support direction switching, and offer supported EVM destination networks for the same token.
+- Updated wallet import with network selection and address previews, while retaining Zcash recovery and synchronization controls.
+- Added all-EVM and single-network contacts, compact address previews, and a warning before copying Private addresses.
+- Updated the default Swap token list to use RHEA's curated catalog while retaining held assets and token search.
+- Simplified connected dApp account and network selection, and removed the built-in Lending views and valuations.
 
 ### Fixed
 
+- Fixed wallet switching getting stuck behind Zcash synchronization requests.
+- Fixed backup reminders appearing for newly imported wallets or referring to a different wallet.
+- Fixed Shield balance loading, asset classification, and action routing; stopped repeated checks for expired, unfunded deposit requests.
+- Fixed Send, Move, and Swap Max controls and stale fee estimates, and made quote failures and retries clearer.
+- Fixed Zcash Swap funding selection in Private mode and preserved the selected recipient and funding source through confirmation.
+- Fixed transaction progress and activity recovery after reopening the wallet, including interrupted hardware-wallet Swap approvals.
 - Fixed Swap asset selection and address lists when custom EVM networks are configured.
 - Fixed network labels and duplicate Zcash account counts in connected dApp permissions.
 - Fixed stale recovery-date requests and import errors appearing after changing Zcash history options.
@@ -53,6 +76,104 @@ All notable user-facing changes to Noir Wallet are documented in this file.
 - Kept recovery words hidden until revealed, preserved site disconnections across restarts, and cancelled stale synchronization work when locking the wallet.
 - Removed sensitive identifiers and Zcash pool balances from exported diagnostics while retaining actionable failure details.
 - Preserved V1 1.0.40 encrypted credentials, passwords, Zcash data, account metadata, and transaction state during V2 migration, including late Zcash broadcast results.
+
+## [1.0.40] - 2026-10-25
+
+### Fixed
+
+- Show the full quoted recipient before confirming a swap and keep Confirm visible when long addresses wrap.
+- Keep recovery words out of readable page content and the accessibility tree until the backup phrase is revealed.
+- Respect transaction pauses before queued synchronization starts and between synchronization stages, without starting follow-up balance or history requests after a paused scan.
+- Clear wallet snapshots, transactions, balance caches, voting data, and sessions according to the reset or deletion scope. Stop background writes from restoring deleted data, allow cleanup failures to retry, and preserve other accounts' records.
+- Preserve explicit dApp disconnection across restarts, including first-party sites, and require user approval to reconnect.
+- Keep approval display, fee estimation, transaction execution, and current-account message signing bound to the requested account when switching accounts or refreshing the approval window.
+- Apply network deadlines to complete response-body reads, limit response sizes, and release cancelled or failed requests so they can be retried.
+
+## [1.0.39] - 2026-10-16
+
+### Added
+
+- Add a default-enabled ZeroIndexer toggle under Security & Privacy. Transactions containing Orchard try the configured ZeroIndexer broadcast endpoints in order and fall back to the ordinary wallet RPC if every attempt fails, across software and hardware signing flows.
+- Add a separate ZeroIndexer node manager with automatic official-node selection, fixed node selection, custom nodes, and read-only network and reachability checks. Keep node choices per network and preserve them when broadcasting is disabled.
+
+### Changed
+
+- Keep synchronization, compact-block CDN downloads, history, and confirmation queries on their existing providers. Remove ZeroIndexer from the synchronization RPC list.
+- Align Available balance with transaction selection at three confirmations. Activity continues to show external incoming transfers as pending until ten confirmations.
+- Build PR previews automatically and separate production candidate construction from publication of the accepted ZIPs. Verify the committed WASM package during builds and require explicit package updates.
+
+### Fixed
+
+- Migrate ZeroIndexer synchronization preferences from the earlier beta back to ordinary automatic RPC selection while preserving other explicitly selected providers and the broadcast preference.
+- Refresh spendable balances after wallet reload and catch-up sync, keep Max current when available funds change, and distinguish pending funds, insufficient balance, and fee failures.
+- Recover missing transparent recipients from unambiguous matching transaction outputs, preserve known recipients during history refresh, and avoid labeling unknown recipients as shielded.
+- Read wallet snapshot manifests and chunks in one IndexedDB transaction to prevent concurrent saves from causing false missing-chunk errors. Abort failed writes and retain the previous snapshot when serialization or persistence fails.
+- Retry snapshot integrity checks in a fresh transaction before recommending Resync. Reserve that recovery path for confirmed incomplete or corrupt snapshots rather than transient initialization, balance, or sync failures.
+- Include privacy-redacted original error details with formatted failures so support screenshots retain the actionable cause.
+
+## [1.0.38] - 2026-10-05
+
+### Added
+
+- Added recovery phrase backup verification, reminders for existing software wallets, and backup checks before wallet removal.
+- Added mainnet compact-block CDN support and an additional Singapore RPC endpoint.
+
+### Changed
+
+- Kept the voting entry hidden for this release.
+
+### Fixed
+
+- Preserved recovery phrases through wallet creation and import, and clarified which wallet is being backed up.
+- Fixed deleted wallets reappearing after writes from another extension context, and recovered unlock access when the selected wallet's credentials are missing but another wallet's credentials can be verified.
+- Preserved hardware wallet names during import and existing credentials when initialization fails after import.
+- Recovered confirmed Zcash Activity records and corrected stale confirmation status handling.
+- Fixed wallet sync errors with Zcash RPC servers that return successful empty gRPC-Web streams.
+
+### Known Issues
+
+- A sync stall was reported after switching accounts and using Swap; manual Resync restored synchronization. The cause remains unconfirmed, and this release does not include a fix for that report.
+
+## [1.0.37] - 2026-09-23
+
+### Added
+
+- Added Ledger Zcash account import and hardware transaction signing over USB and Bluetooth.
+- Added configurable hardware account indexes, visible derivation paths, and shared signing flows for Ledger and Keystone.
+- Added shielded address history, address rotation, QR codes, and cached address loading across Receive and Addresses.
+- Added automatic RPC selection, additional EU endpoints, and downloadable privacy-safe diagnostic logs.
+- Added exact wallet birthday dates for faster, more precise restore and rescan setup.
+- Added a Send warning for exchanges that may not support shielded deposits.
+
+### Changed
+
+- Separated balance-query and transaction-selection confirmation policies so external funds remain Pending until 10 confirmations while eligible manual transfers can use them after 3.
+- Improved Send and Swap funding details so Available excludes Pending, Max stays within confirmed funds, and warnings identify the affected funding source.
+- Improved cross-chain progress recovery, account switching, token and network verification, and deposit confirmation safeguards.
+
+### Fixed
+
+- Fixed Ledger import waiting on an unused address confirmation and the side panel remaining on Welcome after import.
+- Fixed Bluetooth discovery permissions, PCZT Map serialization, and transaction preview visibility during Ledger signing.
+- Fixed explicit transparent and shielded sends being treated as Max transfers, including TEX Max availability.
+- Fixed transient spendability metadata errors triggering unnecessary full wallet rescans during active sync.
+- Fixed Swap progress stopping after account changes and terminal Intents results remaining in a confirming state.
+- Fixed stale balances across routes and clarified actionable RPC, network, and upstream service errors.
+
+## [1.0.36] - 2026-09-09
+
+### Added
+
+- Added a promotional banner to the wallet Home screen.
+- Added GitHub, X, and Telegram links to wallet Settings and About.
+
+### Changed
+
+- New installations now open Noir Wallet in Chrome's side panel by default.
+
+### Fixed
+
+- Fixed transparent change from dApp transactions becoming stale or unspendable, allowing normal sync to recover it without a full resync.
 
 ## [1.0.35] - 2026-09-07
 

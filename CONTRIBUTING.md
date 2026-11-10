@@ -51,9 +51,7 @@ Keep browser test builds in `packages/extension/e2e-dist/` and screenshots, trac
 
 ## Pull Request Targets
 
-Target `main` for V1 maintenance and `v2` for V2 development. Only PRs targeting `v2` receive the `v2` version label; changing the target to `main` removes it. V1 PRs have no version label. Other labels such as `bug`, `enhancement`, and `documentation` are unaffected.
-
-When a fix is needed in both versions, open one pull request from each target branch and link them to each other. Use English Conventional Commit titles and describe the behavior and verification relevant to that version.
+Target `main` for V2 development. `v1` is a frozen archive; do not target it for new releases. Temporary `release/**` branches hold reviewed production candidates. Use English Conventional Commit titles and describe the behavior and verification relevant to the change.
 
 Pull requests changing extension code, tests, WASM, or related build inputs run **Extension CI**. Its development ZIP is not a release candidate; see [V2 preview downloads](./docs/release-workflow.md#routine-previews) for the current process.
 

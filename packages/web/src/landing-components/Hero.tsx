@@ -64,6 +64,23 @@ export function Hero() {
       >
         {text}
       </h1>
+
+      <div className="mt-6 flex flex-wrap items-center justify-center gap-3 md:mt-8">
+        <a
+          href="https://app.zknoir.com/"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex h-12 min-w-[150px] items-center justify-center rounded-[14px] border border-white px-7 text-sm font-normal text-white transition-colors hover:bg-white/10"
+        >
+          Launch App
+        </a>
+        <a
+          href="/v2/beta"
+          className="flex h-12 min-w-[150px] items-center justify-center rounded-[14px] bg-primary px-7 text-sm font-medium text-black transition-opacity hover:opacity-80"
+        >
+          Try V2 Beta
+        </a>
+      </div>
     </section>
   )
 }

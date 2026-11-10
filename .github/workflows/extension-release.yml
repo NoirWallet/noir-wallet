@@ -1,115 +1,193 @@
-name: '[Manual] Prepare V2 Extension Beta'
-run-name: V2 Beta by @${{ github.actor }}
+name: '[Manual] Prepare Extension Release'
+run-name: ${{ inputs.mode }} from ${{ inputs.source_ref }} by @${{ github.actor }}
 
 on:
   workflow_dispatch:
     inputs:
       mode:
-        description: V2 Beta build
+        description: Beta release or production candidate for acceptance
+        required: true
         type: choice
         default: beta
-        options: [beta]
+        options: [beta, candidate]
       source_ref:
-        description: v2 (builds the dispatched commit)
+        description: main or its exact SHA for Beta; candidates require release/X.Y.Z
+        required: true
         type: string
-        default: v2
+        default: main
       publish_beta:
-        description: Publish to GitHub Releases
+        description: Publish beta to GitHub Releases (ignored for candidates)
+        required: true
         type: boolean
         default: true
       confirm_sha:
-        description: Optional reviewed V2 commit SHA
+        description: Full reviewed source SHA (required for Beta and candidates)
+        required: true
         type: string
 
 concurrency:
-  group: extension-v2-beta
+  group: extension-manual-${{ inputs.mode }}-${{ inputs.source_ref }}
   cancel-in-progress: false
 
 permissions:
   contents: read
+  actions: read
 
 env:
   HUSKY: 0
 
 jobs:
-  build:
-    if: github.ref == 'refs/heads/v2' && inputs.mode == 'beta'
+  prepare:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
-      version: ${{ steps.version.outputs.version }}
-      zip_sha: ${{ steps.package.outputs.zip_sha }}
-      artifact_id: ${{ steps.artifact.outputs.artifact-id }}
+      source_sha: ${{ steps.source.outputs.source_sha }}
+      source_ref: ${{ steps.source.outputs.source_ref }}
+      version: ${{ steps.source.outputs.version }}
+      source_profile: ${{ steps.source.outputs.source_profile }}
+      commits_json: ${{ steps.source.outputs.commits_json }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
-          ref: ${{ github.sha }}
           persist-credentials: false
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version-file: .node-version
           package-manager-cache: false
-      - name: Check Beta version and source
-        id: version
+      - name: Pin and validate the selected source
+        id: source
         env:
-          SOURCE_REF: ${{ inputs.source_ref }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_MODE: ${{ inputs.mode }}
+          SOURCE_INPUT: ${{ inputs.source_ref }}
           CONFIRM_SHA: ${{ inputs.confirm_sha }}
+        run: node scripts/extension-release-gates.mjs resolve
+      - name: Show source for review
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
+          SOURCE_REF: ${{ steps.source.outputs.source_ref }}
         run: |
-          node --input-type=module <<'NODE'
-          import { appendFileSync, readFileSync } from 'node:fs'
-          const { version } = JSON.parse(readFileSync('packages/extension/package.json', 'utf8'))
-          const match = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-beta\.([1-9]\d*)$/.exec(version)
-          if (!match || Number(match[1]) < 2 || !match.slice(1).every(part => Number.isSafeInteger(Number(part)))) {
-            throw new Error('Expected a V2 package version such as 2.0.0-beta.1')
-          }
-          const { SOURCE_REF, CONFIRM_SHA, GITHUB_SHA } = process.env
-          if ((SOURCE_REF !== 'v2' && SOURCE_REF !== GITHUB_SHA) || (CONFIRM_SHA && CONFIRM_SHA !== GITHUB_SHA)) {
-            throw new Error('The selected source must match the dispatched v2 commit')
-          }
-          appendFileSync(process.env.GITHUB_OUTPUT, `version=${version}\n`)
-          NODE
+          printf '## Selected wallet source\n\n`%s` at `%s`\n' "$SOURCE_REF" "$SOURCE_SHA" >> "$GITHUB_STEP_SUMMARY"
+
+  build:
+    needs: prepare
+    runs-on: ubuntu-latest
+    outputs:
+      artifact_id: ${{ steps.artifact.outputs.artifact-id }}
+    steps:
+      # Selected wallet code runs here; trusted packaging uses a fresh job below.
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          path: release-tools
+          persist-credentials: false
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ needs.prepare.outputs.source_sha }}
+          path: wallet
+          persist-credentials: false
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v5
+        with:
+          package_json_file: release-tools/package.json
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
-          node-version-file: .node-version
+          node-version-file: release-tools/.node-version
           cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @noir-wallet/evm-history-worker type-check
-      - run: pnpm test
-      - name: Build V2 Beta
+          cache-dependency-path: wallet/pnpm-lock.yaml
+      - name: Verify pinned checkout
+        working-directory: wallet
         env:
-          BUILD_CHANNEL: beta
-          BETA_INVITE_REQUIRED: '1'
+          SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
+        run: test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+      - run: pnpm install --frozen-lockfile
+        working-directory: wallet
+      - name: Type-check V2 EVM history Worker
+        run: pnpm --filter @noir-wallet/evm-history-worker type-check
+        working-directory: wallet
+      - run: pnpm test
+        working-directory: wallet
+      - name: Build extension
+        working-directory: wallet
+        env:
+          BUILD_CHANNEL: ${{ inputs.mode == 'candidate' && 'production' || 'beta' }}
+          BETA_INVITE_REQUIRED: ${{ inputs.mode == 'beta' && '1' || '0' }}
+          GA_API_SECRET: ${{ inputs.mode == 'candidate' && secrets.GA_API_SECRET || '' }}
+          CUSTOM_ANALYTICS_PASSWORD: ${{ inputs.mode == 'candidate' && secrets.CUSTOM_ANALYTICS_PASSWORD || '' }}
           EVM_HISTORY_API_ORIGIN: ${{ vars.EVM_HISTORY_API_ORIGIN }}
           RHEA_SWAP_ACCESS_TOKEN: ${{ secrets.RHEA_SWAP_ACCESS_TOKEN }}
         run: pnpm build:extension
-      - name: Package Beta ZIP and release notes
-        id: package
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
+      - name: Stage wallet ZIPs
         run: |
-          set -euo pipefail
-          zips=(packages/extension/dist/*.zip)
-          test "${#zips[@]}" -eq 1 && test -f "${zips[0]}"
-          mkdir release-assets
-          zip_name="noir-wallet-v${VERSION}.zip"
-          cp "${zips[0]}" "release-assets/${zip_name}"
-          node scripts/extract-changelog.mjs "$VERSION" CHANGELOG.md > release-assets/release-body.md
-          printf '\nSource commit: [%s](https://github.com/%s/commit/%s)\n' "$GITHUB_SHA" "$GITHUB_REPOSITORY" "$GITHUB_SHA" >> release-assets/release-body.md
-          cd release-assets
-          sha256sum "$zip_name" > SHA256SUMS
-          echo "zip_sha=$(sha256sum "$zip_name" | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+          mkdir -p raw-zips/dist
+          cp wallet/packages/extension/dist/*.zip raw-zips/dist/
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         id: artifact
         with:
-          name: noir-wallet-v${{ steps.version.outputs.version }}
+          name: wallet-network-zips-${{ github.run_id }}-${{ github.run_attempt }}
+          path: raw-zips/
+          retention-days: 1
+          if-no-files-found: error
+          compression-level: 0
+
+  package:
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    outputs:
+      artifact_id: ${{ steps.artifact.outputs.artifact-id }}
+      prerelease_tag: ${{ steps.package.outputs.artifact_label }}
+    steps:
+      # No selected-source programs execute in the trusted packaging job.
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          path: release-tools
+          persist-credentials: false
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ needs.prepare.outputs.source_sha }}
+          path: wallet
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version-file: release-tools/.node-version
+          package-manager-cache: false
+      - name: Create isolated ZIP input directory
+        run: mkdir raw-zips
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.build.outputs.artifact_id }}
+          path: raw-zips
+      - name: Package the exact acceptance artifacts
+        id: package
+        env:
+          RELEASE_MODE: ${{ inputs.mode }}
+          SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
+          SOURCE_REF: ${{ needs.prepare.outputs.source_ref }}
+          WORKFLOW_SHA: ${{ github.sha }}
+          SOURCE_PROFILE: ${{ needs.prepare.outputs.source_profile }}
+          COMMIT_HISTORY: ${{ needs.prepare.outputs.commits_json }}
+        run: node release-tools/scripts/extension-release.mjs package wallet release-assets raw-zips
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        id: artifact
+        with:
+          name: noir-wallet-${{ steps.package.outputs.artifact_label }}
           path: release-assets/
           retention-days: 30
           if-no-files-found: error
           compression-level: 0
+      - name: Show candidate acceptance details
+        env:
+          SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
+        run: |
+          printf '## Acceptance build\n\nRun ID: `%s`\n\nAttempt: `%s`\n\nSource SHA: `%s`\n\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$SOURCE_SHA" >> "$GITHUB_STEP_SUMMARY"
+          cat release-assets/SHA256SUMS >> "$GITHUB_STEP_SUMMARY"
 
-  publish:
-    if: inputs.publish_beta && github.repository == 'NoirWallet/noir-wallet'
-    needs: build
+  publish_prerelease:
+    if: >-
+      (inputs.mode == 'candidate' || (inputs.mode == 'beta' && inputs.publish_beta)) &&
+      github.ref == 'refs/heads/main' &&
+      github.event.repository.fork == false &&
+      github.repository == 'NoirWallet/noir-wallet'
+    needs: [prepare, package]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -117,32 +195,42 @@ jobs:
       group: extension-release-publication
       cancel-in-progress: false
     steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          artifact-ids: ${{ needs.build.outputs.artifact_id }}
+          artifact-ids: ${{ needs.package.outputs.artifact_id }}
           path: release-assets
-      - name: Verify published ZIP
-        working-directory: release-assets
+      - name: Verify prerelease artifact identity and checksums
         env:
-          VERSION: ${{ needs.build.outputs.version }}
-          ZIP_SHA: ${{ needs.build.outputs.zip_sha }}
-        run: |
-          set -euo pipefail
-          files=(*)
-          test "${#files[@]}" -eq 3
-          test -f release-body.md
-          printf '%s  noir-wallet-v%s.zip\n' "$ZIP_SHA" "$VERSION" | cmp - SHA256SUMS
-          sha256sum --check SHA256SUMS
-      - name: Publish Beta
+          EXPECTED_MODE: ${{ inputs.mode }}
+          EXPECTED_REPOSITORY: ${{ github.repository }}
+          EXPECTED_RUN_ID: ${{ github.run_id }}
+          EXPECTED_RUN_ATTEMPT: ${{ github.run_attempt }}
+          EXPECTED_WORKFLOW_SHA: ${{ github.sha }}
+          EXPECTED_SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
+          EXPECTED_VERSION: ${{ needs.prepare.outputs.version }}
+        run: node scripts/extension-release.mjs verify release-assets
+      - name: Prepare prerelease download notes
+        run: node scripts/extension-release.mjs prerelease-notes release-assets > prerelease-notes.md
+      - name: Publish prerelease for download
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          VERSION: ${{ needs.build.outputs.version }}
+          TAG: ${{ needs.package.outputs.prerelease_tag }}
+          SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
         run: |
           set -euo pipefail
-          tag="v${VERSION}"
-          gh api --method POST "repos/${GH_REPO}/git/refs" -f "ref=refs/tags/${tag}" -f "sha=${GITHUB_SHA}" >/dev/null
-          gh release create "$tag" --repo "$GH_REPO" --verify-tag \
-            --title "Noir Wallet $tag" --prerelease --latest=false \
-            --notes-file release-assets/release-body.md \
-            "release-assets/noir-wallet-v${VERSION}.zip" release-assets/SHA256SUMS
+          gh api --method POST "repos/${GH_REPO}/git/refs" \
+            -f "ref=refs/tags/${TAG}" -f "sha=${SOURCE_SHA}" >/dev/null
+          RELEASE_URL=$(gh release create "$TAG" --repo "$GH_REPO" \
+            --title "Noir Wallet $TAG" --prerelease --latest=false --verify-tag \
+            --notes-file prerelease-notes.md \
+            release-assets/*.zip release-assets/SHA256SUMS)
+          printf '## Download prerelease\n\n[%s](%s)\n\n' "$TAG" "$RELEASE_URL" >> "$GITHUB_STEP_SUMMARY"
+          cat prerelease-notes.md >> "$GITHUB_STEP_SUMMARY"

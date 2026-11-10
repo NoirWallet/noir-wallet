@@ -1,6 +1,6 @@
 # Contributing
 
-The SDK and example live in `packages/sdk/` of the Noir Wallet workspace. Submit SDK and example changes through the wallet repository's `main` or `v2` branch, as appropriate.
+The SDK and example live in `packages/sdk/` of the Noir Wallet workspace. Submit SDK and example changes through the wallet repository's `main` branch.
 
 ## Development
 

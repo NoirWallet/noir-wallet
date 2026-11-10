@@ -4,12 +4,12 @@ Typed TypeScript SDK for connecting web apps to Noir Wallet's Zcash and optional
 
 - [Integration guide](https://docs.zknoir.com/developers)
 - [Provider API reference](https://docs.zknoir.com/developers/provider-api)
-- [Example dApp](https://github.com/NoirWallet/noir-wallet/tree/v2/packages/sdk/example)
+- [Example dApp](https://github.com/NoirWallet/noir-wallet/tree/main/packages/sdk/example)
 - [Install Noir Wallet](https://chromewebstore.google.com/detail/noir-wallet/mfoghjbpfanobmnoemoepenjjcmfpmdn)
-- [V2 Beta download instructions](https://github.com/NoirWallet/noir-wallet/blob/v2/docs/release-workflow.md#routine-previews)
+- [V2 Beta download instructions](https://github.com/NoirWallet/noir-wallet/blob/main/docs/release-workflow.md#routine-previews)
 - [Legacy V1 releases](https://github.com/NoirWallet/noir-wallet-sdk/releases)
 - [Questions and bug reports](https://github.com/NoirWallet/noir-wallet/issues)
-- [Private security reports](https://github.com/NoirWallet/noir-wallet/blob/v2/SECURITY.md)
+- [Private security reports](https://github.com/NoirWallet/noir-wallet/blob/main/SECURITY.md)
 
 ## What the SDK does
 
@@ -78,7 +78,7 @@ async function connectEvmWallet() {
 
 EVM account access is shared across configured EVM networks, including custom networks. Adding or switching networks still requires wallet confirmation. CAIP-25 sessions retain their approved chain, method, and account limits. Explicitly reauthorizing through `eth_requestAccounts` or `wallet_requestPermissions` clears the session's EVM scopes; create a new session to use them again. Revoking `eth_accounts` removes the site's EVM account access across networks while preserving its other provider permissions.
 
-The package also exports `getBitcoinProvider()` / `detectBitcoinProvider()`, `getSolanaProvider()` / `detectSolanaProvider()`, and `getNearProvider()` / `detectNearProvider()`. Synchronous getters return `null` when unavailable; asynchronous discovery rejects if no provider appears before its timeout. Use `addEvmNetwork()` and `switchEvmChain()` for the [EVM network requests](https://github.com/NoirWallet/noir-wallet/blob/v2/packages/docs/content/docs/developers/provider-api.mdx#evm-network-requests) supported by the installed wallet; they do not change the global Mainnet/Testnet Mode.
+The package also exports `getBitcoinProvider()` / `detectBitcoinProvider()`, `getSolanaProvider()` / `detectSolanaProvider()`, and `getNearProvider()` / `detectNearProvider()`. Synchronous getters return `null` when unavailable; asynchronous discovery rejects if no provider appears before its timeout. Use `addEvmNetwork()` and `switchEvmChain()` for the [EVM network requests](https://github.com/NoirWallet/noir-wallet/blob/main/packages/docs/content/docs/developers/provider-api.mdx#evm-network-requests) supported by the installed wallet; they do not change the global Mainnet/Testnet Mode.
 
 ## Zcash quick start
 
@@ -348,4 +348,4 @@ For parameter definitions, return types, privacy considerations, and provider RP
 
 ## License
 
-The SDK and its example are licensed under [MIT](./LICENSE). The wallet application is licensed separately under [Business Source License 1.1](https://github.com/NoirWallet/noir-wallet/blob/v2/LICENSE).
+The SDK and its example are licensed under [MIT](./LICENSE). The wallet application is licensed separately under [Business Source License 1.1](https://github.com/NoirWallet/noir-wallet/blob/main/LICENSE).
