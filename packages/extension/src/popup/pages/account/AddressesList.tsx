@@ -509,7 +509,12 @@ export function AddressesList() {
           return addresses.length > 0 ? [{ ...network, addresses }] : []
         }
         if (requestedPrivacy) return []
-        if (requestedMode === 'private' && !network.privateExecutionAddress) return []
+        if (
+          network.chain.family === 'evm' &&
+          requestedMode === 'private' &&
+          !network.privateExecutionAddress
+        )
+          return []
         return [network]
       }
       if (shieldedZcashOnly) {
@@ -517,7 +522,8 @@ export function AddressesList() {
         const addresses = network.addresses.filter(address => address.privacy === 'shielded')
         return addresses.length > 0 ? [{ ...network, addresses }] : []
       }
-      return (mode === 'public' ||
+      return (receiveView ||
+        mode === 'public' ||
         network.chain.family === 'zcash' ||
         (network.chain.family === 'evm' && Boolean(network.privateExecutionAddress))) &&
         (!query ||
@@ -534,6 +540,7 @@ export function AddressesList() {
     requestedMode,
     requestedZcashMode,
     requestedPrivacy,
+    receiveView,
     scopedChainId,
     scopedReceive,
     shieldedZcashOnly
