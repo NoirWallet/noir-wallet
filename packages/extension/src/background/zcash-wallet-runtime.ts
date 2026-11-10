@@ -111,11 +111,11 @@ import {
 } from '@/core/wallet/spendability-recovery'
 import { isSyncOccupyingWallet } from './sync-status-policy'
 import { clearSyncAbort, signalSyncAbort } from '@/lib/sync-abort'
-import { withTimeout, TimeoutError } from '@/lib/async-utils'
+import { withTimeout, TimeoutError, waitForDelayOrAbort } from '@/lib/async-utils'
 import { TransactionRecipientRecovery } from './transaction-recipient-recovery'
 import { lookupBlockHeightByTime } from '@/core/zcash/date-block-lookup'
 import { mapWasmAccountAddresses, mergeAccountAddresses } from '@/core/zcash/account-addresses'
-import { fetchBlockTime } from '@/infrastructure/chains/rpc-registry-client'
+import { fetchBlockTime, fetchLatestBlockHeight } from '@/infrastructure/chains/rpc-registry-client'
 import { withRetry, isRpcEndpointError } from '@/lib/errors'
 import {
   getWorkerClient,
@@ -173,6 +173,7 @@ function normalizeSupportedMnemonic(seedPhrase: string): string {
 }
 
 export type SyncBlocksOptions = {
+  signal?: AbortSignal
   force?: boolean
   priority?: 'foreground' | 'background'
   waitForTipAdvance?: boolean
@@ -905,8 +906,9 @@ export class BackgroundZcashWalletRuntime {
   private async getCachedWalletSummary(
     walletId: string,
     core: ZcashWalletCore,
-    options?: { force?: boolean; ttlMs?: number; allowDuringSync?: boolean }
+    options?: { force?: boolean; ttlMs?: number; allowDuringSync?: boolean; signal?: AbortSignal }
   ): Promise<WalletSummaryCacheEntry & { summaryError?: string }> {
+    options?.signal?.throwIfAborted()
     const ttlMs = options?.ttlMs ?? SUMMARY_CACHE_TTL_MS
     const cached = this.walletSummaryCache.get(walletId)
     if (!options?.force && cached && Date.now() - cached.fetchedAt < ttlMs) {
@@ -927,9 +929,17 @@ export class BackgroundZcashWalletRuntime {
     }
 
     const [latestResult, summaryResult] = await Promise.allSettled([
-      core.getLatestHeight(),
+      // Network reads must not occupy the wallet's serialized WASM queue: a
+      // stalled endpoint would also block the local summary and account switch.
+      fetchLatestBlockHeight(
+        getNetworkConfig(this.network).rpcUrl,
+        undefined,
+        undefined,
+        options?.signal
+      ),
       core.getWalletSummary({ allowDuringSync: options?.allowDuringSync })
     ])
+    options?.signal?.throwIfAborted()
     const latestHeight =
       latestResult.status === 'fulfilled' ? latestResult.value : (cached?.latestHeight ?? 0)
     const summary =
@@ -953,7 +963,7 @@ export class BackgroundZcashWalletRuntime {
   private async readSyncProgressFromWasm(
     walletId: string,
     core: ZcashWalletCore,
-    options?: { forSyncDecision?: boolean }
+    options?: { forSyncDecision?: boolean; signal?: AbortSignal }
   ): Promise<{
     fullyScanned: number
     chainTip: number
@@ -965,7 +975,8 @@ export class BackgroundZcashWalletRuntime {
     }
     const entry = await this.getCachedWalletSummary(walletId, core, {
       force: true,
-      allowDuringSync: true
+      allowDuringSync: true,
+      signal: options?.signal
     })
     const summary = entry.summary
     const fullyScanned = summary?.fully_scanned_height ?? 0
@@ -4153,10 +4164,23 @@ export class BackgroundZcashWalletRuntime {
       let fullyScannedHeight = 0
       const hasPersistedSnapshot = await hasWalletDb(`${syncNetwork}_${syncWalletId}`)
 
+      const abortBeforeScan = (): SyncOutcome => {
+        setSyncState({ isSyncing: false, etaMs: null })
+        this.updateSyncProgressForWallet(syncWalletId, {
+          isSyncing: false,
+          syncProgress: 0,
+          etaMs: null
+        })
+        return { status: 'aborted' }
+      }
+      if (isAborted?.() || options?.signal?.aborted) return abortBeforeScan()
+
       try {
         const wasmProgress = await this.readSyncProgressFromWasm(syncWalletId, core, {
-          forSyncDecision: true
+          forSyncDecision: true,
+          signal: options?.signal
         })
+        if (isAborted?.() || options?.signal?.aborted) return abortBeforeScan()
         latestHeight = wasmProgress.chainTip
         fullyScannedHeight = wasmProgress.fullyScanned
 
@@ -4168,6 +4192,7 @@ export class BackgroundZcashWalletRuntime {
           throw new Error('Failed to resolve chain height from network and wallet summary')
         }
       } catch (e) {
+        if (isAborted?.() || options?.signal?.aborted) return abortBeforeScan()
         logger.warn('Failed to fetch latest height', syncWalletId, syncAccountId, e)
         this.updateSyncProgressForWallet(syncWalletId, {
           isSyncing: false,
@@ -4189,17 +4214,6 @@ export class BackgroundZcashWalletRuntime {
           reason: 'network_error',
           ...(endpointFailure ? { rpcFailureCount: 1 } : {})
         }
-      }
-
-      if (isAborted?.()) {
-        logger.log('Aborted before sync start', syncWalletId, syncAccountId)
-        setSyncState({ isSyncing: false })
-        this.updateSyncProgressForWallet(syncWalletId, {
-          isSyncing: false,
-          syncProgress: 0,
-          etaMs: null
-        })
-        return { status: 'aborted' }
       }
 
       const syncThreshold = WALLET_CONFIG.SYNC.SILENT_SYNC_THRESHOLD_BLOCKS
@@ -4384,15 +4398,23 @@ export class BackgroundZcashWalletRuntime {
         if (shouldCatchUp) {
           const baselineTip = latestHeight
           for (let attempt = 0; attempt < 12 && fullyScannedHeight >= latestHeight; attempt++) {
-            if (isAborted?.() || backgroundBudgetReached()) break
-            await new Promise(r => setTimeout(r, 5000))
+            if (isAborted?.() || options?.signal?.aborted || backgroundBudgetReached()) break
+            await waitForDelayOrAbort(5000, options?.signal)
+            if (isAborted?.() || options?.signal?.aborted || backgroundBudgetReached()) break
             try {
-              latestHeight = await core.getLatestHeight()
+              latestHeight = await fetchLatestBlockHeight(
+                getNetworkConfig(syncNetwork).rpcUrl,
+                undefined,
+                undefined,
+                options?.signal
+              )
               if (latestHeight > baselineTip) break
             } catch {
               /* retry on next attempt */
             }
           }
+
+          if (isAborted?.() || options?.signal?.aborted) return finishAborted()
 
           if (fullyScannedHeight >= latestHeight) {
             try {
@@ -4694,6 +4716,10 @@ export class BackgroundZcashWalletRuntime {
           }
           consecutiveErrors = 0
         } catch (batchErr: any) {
+          if (isAborted?.() || options?.signal?.aborted) {
+            aborted = true
+            break
+          }
           consecutiveErrors++
           const errMsg = batchErr?.message || String(batchErr)
           const isRpcTimeout =
@@ -4739,7 +4765,7 @@ export class BackgroundZcashWalletRuntime {
                 reinitErr
               )
             }
-            await new Promise(r => setTimeout(r, 2000))
+            await waitForDelayOrAbort(2000, options?.signal)
             continue
           }
           if (isRpcTimeout) {
@@ -4838,7 +4864,7 @@ export class BackgroundZcashWalletRuntime {
                 reinitErr
               )
             }
-            await new Promise(r => setTimeout(r, 2000))
+            await waitForDelayOrAbort(2000, options?.signal)
             continue
           }
 
@@ -4867,7 +4893,7 @@ export class BackgroundZcashWalletRuntime {
               latestHeight
             })
           }
-          await new Promise(r => setTimeout(r, 3000))
+          await waitForDelayOrAbort(3000, options?.signal)
           continue
         }
 
@@ -4935,7 +4961,7 @@ export class BackgroundZcashWalletRuntime {
                   pendingRemaining = this.summaryHasPendingBalance(settlementSummary)
                   if (!pendingRemaining) break
                   if (attempt + 1 < settlementMaxAttempts && !backgroundBudgetReached()) {
-                    await new Promise(r => setTimeout(r, settlementIntervalMs))
+                    await waitForDelayOrAbort(settlementIntervalMs, options?.signal)
                   }
                 }
 

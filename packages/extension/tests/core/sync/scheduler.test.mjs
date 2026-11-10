@@ -207,41 +207,57 @@ function deferred() {
 
 function createPauseScheduler(overrides = {}) {
   const runtime = {
+    finishSyncPreflight: () => {},
     ensureWalletReadyForSync: async () => true,
     waitForWalletReady: async () => true,
     syncBlocks: async () => ({ status: 'completed' }),
     refreshBalances: async () => {},
     refreshWalletTransactionHistoriesFromWasm: async () => {},
+    initialize: async () => {},
+    isLocked: () => false,
     getNetwork: () => 'testnet',
     isWalletSyncing: () => false,
     ...overrides.runtime
   }
   const noop = () => {}
-  const wallet = { id: 'wallet', accounts: [{ id: 'account' }] }
+  const wallets = [
+    { id: 'wallet', accounts: [{ id: 'account' }] },
+    { id: 'wallet-other', accounts: [{ id: 'other-account' }] }
+  ]
   return loadScheduler({
     './zcash-wallet-runtime': { backgroundZcashWalletRuntime: runtime },
-    '@/lib/logger': { logger: { log: noop, warn: noop, error: noop } },
+    '@/lib/logger': {
+      logger: { log: noop, warn: noop, error: noop, getWalletLabel: id => id }
+    },
+    '@/lib/indexed-db': { getWalletPersistenceQuarantine: async () => null },
     '@/lib/sync-abort': {
       clearSyncAbort: overrides.clearSyncAbort ?? (async () => {}),
       signalSyncAbort: async () => {}
     },
     '@/config/wallet': { WALLET_CONFIG: { SYNC: { INIT_READY_TIMEOUT_MS: 1000 } } },
     '@/store/wallet-store': {
+      prepareWalletStoreForUse: async () => {},
       useWalletStore: {
         getState: () => ({
           currentWalletId: 'wallet',
           currentAccountId: 'account',
           currentNetwork: 'testnet',
-          getWallet: id => (id === wallet.id ? wallet : null)
+          wallets,
+          getWallet: id => wallets.find(wallet => wallet.id === id) ?? null
         })
       }
     },
     '@/core/wallet/account-network-selection': { isAccountNetworkEnabled },
+    './credential-session': { credentialSession: { hasUnlockSession: async () => true } },
     '../core/wallet/pending-zcash-tx': {
       hasPendingZcashTxForWallet: overrides.hasPendingZcashTxForWallet ?? (async () => false)
     },
     '@/core/zcash/wallet-core': { isRetryableWalletRpcError: () => false },
-    '@/lib/errors': { isRpcEndpointError: () => false }
+    '@/lib/errors': { isRpcEndpointError: overrides.isRpcEndpointError ?? (() => false) },
+    '@/infrastructure/chains/rpc-failover': {
+      recordRpcFailure: overrides.recordRpcFailure ?? (async () => null),
+      recordRpcSuccess: overrides.recordRpcSuccess ?? (async () => null)
+    }
   })
 }
 
@@ -299,6 +315,201 @@ test('a pause during balance refresh prevents later history I/O', async () => {
   done.resolve()
   assert.equal(await task, 'completed')
   assert.equal(historyRefreshes, 0)
+  assert.equal(await scheduler.waitForWalletSyncIdle('wallet', 100), true)
+})
+
+test('wallet abort signals are scoped and idle waits for the unfinished scan', async () => {
+  const started = deferred()
+  const scans = new Map([
+    ['wallet', deferred()],
+    ['wallet-other', deferred()]
+  ])
+  const signals = new Map()
+  const scheduler = createPauseScheduler({
+    runtime: {
+      syncBlocks: async (_isAborted, walletId, _accountId, options) => {
+        signals.set(walletId, options.signal)
+        if (signals.size === 2) started.resolve()
+        return scans.get(walletId).promise
+      }
+    }
+  })
+
+  const first = scheduler.runSyncForWallet('wallet', 'account')
+  const second = scheduler.runSyncForWallet('wallet-other', 'other-account')
+  await started.promise
+
+  scheduler.abortSync('wallet')
+  assert.equal(signals.get('wallet').aborted, true)
+  assert.equal(signals.get('wallet-other').aborted, false)
+  assert.equal(await scheduler.waitForWalletSyncIdle('wallet', 20), false)
+
+  scheduler.abortNonCurrentSyncs('wallet')
+  assert.equal(signals.get('wallet-other').aborted, true)
+  scans.get('wallet').resolve({ status: 'aborted' })
+  scans.get('wallet-other').resolve({ status: 'aborted' })
+  assert.deepEqual(await Promise.all([first, second]), ['aborted', 'aborted'])
+  assert.equal(await scheduler.waitForWalletSyncIdle('wallet', 100), true)
+  assert.equal(await scheduler.waitForWalletSyncIdle('wallet-other', 100), true)
+
+  const previousSignal = signals.get('wallet')
+  assert.equal(await scheduler.runSyncForWallet('wallet', 'account'), 'aborted')
+  assert.notEqual(signals.get('wallet'), previousSignal)
+  assert.equal(signals.get('wallet').aborted, false)
+})
+
+for (const failure of ['outcome', 'throw']) {
+  test(`a paused ${failure} skips RPC failover after the scan settles`, async () => {
+    const started = deferred()
+    const done = deferred()
+    let failoverCalls = 0
+    const scheduler = createPauseScheduler({
+      runtime: {
+        getNetwork: () => 'mainnet',
+        syncBlocks: async () => {
+          started.resolve()
+          await done.promise
+          if (failure === 'throw') throw new Error('gRPC transport error')
+          return { status: 'failed', reason: 'network_error', rpcFailureCount: 1 }
+        }
+      },
+      isRpcEndpointError: error => String(error).includes('gRPC'),
+      recordRpcFailure: async () => {
+        failoverCalls++
+        return null
+      }
+    })
+    const task = scheduler.runSyncForWallet('wallet', 'account')
+    await started.promise
+    scheduler.pauseForTx()
+    scheduler.abortSync('wallet')
+    assert.equal(await scheduler.waitForWalletSyncIdle('wallet', 20), false)
+    done.resolve()
+    assert.equal(await task, 'failed')
+    assert.equal(failoverCalls, 0)
+    assert.equal(await scheduler.waitForWalletSyncIdle('wallet', 100), true)
+    scheduler.scheduleRun = () => {}
+    scheduler.resumeAfterTx()
+  })
+}
+
+for (const transitionSource of ['failure', 'success']) {
+  test(`a ${transitionSource} transition recorded during pause reloads before the next scan`, async () => {
+    const recordStarted = deferred()
+    const finishRecord = deferred()
+    const events = []
+    const reason = transitionSource === 'failure' ? 'failover' : 'recovery'
+    const scheduler = createPauseScheduler({
+      runtime: {
+        getNetwork: () => 'mainnet',
+        syncBlocks: async () =>
+          transitionSource === 'failure'
+            ? { status: 'failed', reason: 'network_error', rpcFailureCount: 1 }
+            : { status: 'completed' },
+        applyAutomaticRpcEndpointChange: async appliedReason => {
+          events.push(`reload:${appliedReason}`)
+        }
+      },
+      recordRpcFailure: async () => {
+        recordStarted.resolve()
+        await finishRecord.promise
+        return { reason }
+      },
+      recordRpcSuccess: async () => {
+        recordStarted.resolve()
+        await finishRecord.promise
+        return { reason }
+      }
+    })
+    const task = scheduler.runSyncForWallet('wallet', 'account')
+    await recordStarted.promise
+    scheduler.pauseForTx()
+    scheduler.abortSync('wallet')
+    finishRecord.resolve()
+    await task
+    assert.deepEqual(events, [])
+    assert.equal(await scheduler.waitForWalletSyncIdle('wallet', 100), true)
+    assert.equal(await scheduler.runSyncForWallet('wallet', 'account'), 'skipped')
+
+    globalThis.chrome = { alarms: { create: () => {}, clear: () => {} } }
+    scheduler.runSyncForWallet = async () => {
+      events.push('sync')
+      return 'skipped'
+    }
+    scheduler.onRequestSync()
+    let resumedRun
+    scheduler.scheduleRun = () => {
+      resumedRun = scheduler.run()
+    }
+    scheduler.resumeAfterTx()
+    await resumedRun
+    assert.deepEqual(events, [`reload:${reason}`, 'sync'])
+  })
+}
+
+test('a deferred mainnet reload is discarded after network mode changes', async () => {
+  const recordStarted = deferred()
+  const finishRecord = deferred()
+  let network = 'mainnet'
+  let reloads = 0
+  const scheduler = createPauseScheduler({
+    runtime: {
+      getNetwork: () => network,
+      syncBlocks: async () => ({ status: 'failed', reason: 'network_error', rpcFailureCount: 1 }),
+      applyAutomaticRpcEndpointChange: async () => reloads++
+    },
+    recordRpcFailure: async () => {
+      recordStarted.resolve()
+      await finishRecord.promise
+      return { reason: 'failover' }
+    }
+  })
+  const task = scheduler.runSyncForWallet('wallet', 'account')
+  await recordStarted.promise
+  scheduler.pauseForTx()
+  scheduler.abortSync('wallet')
+  network = 'testnet'
+  finishRecord.resolve()
+  assert.equal(await task, 'failed')
+
+  globalThis.chrome = { alarms: { create: () => {}, clear: () => {} } }
+  let scans = 0
+  scheduler.runSyncForWallet = async () => {
+    scans++
+    return 'skipped'
+  }
+  scheduler.onRequestSync()
+  let resumedRun
+  scheduler.scheduleRun = () => {
+    resumedRun = scheduler.run()
+  }
+  scheduler.resumeAfterTx()
+  await resumedRun
+  assert.equal(reloads, 0)
+  assert.equal(scans, 1)
+})
+
+test('a reload already started before pause still blocks sync idle', async () => {
+  const reloadStarted = deferred()
+  const finishReload = deferred()
+  const scheduler = createPauseScheduler({
+    runtime: {
+      getNetwork: () => 'mainnet',
+      syncBlocks: async () => ({ status: 'failed', reason: 'network_error', rpcFailureCount: 1 }),
+      applyAutomaticRpcEndpointChange: async () => {
+        reloadStarted.resolve()
+        await finishReload.promise
+      }
+    },
+    recordRpcFailure: async () => ({ reason: 'failover' })
+  })
+  const task = scheduler.runSyncForWallet('wallet', 'account')
+  await reloadStarted.promise
+  scheduler.pauseForTx()
+  scheduler.abortSync('wallet')
+  assert.equal(await scheduler.waitForWalletSyncIdle('wallet', 20), false)
+  finishReload.resolve()
+  assert.equal(await task, 'failed')
   assert.equal(await scheduler.waitForWalletSyncIdle('wallet', 100), true)
 })
 

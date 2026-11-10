@@ -9,6 +9,7 @@ import {
 } from '../../../src/core/wallet/spendability-recovery.ts'
 import { safeBig } from '../../../src/lib/big.ts'
 import { isAccountNetworkEnabled } from '../../../src/core/wallet/account-network-selection.ts'
+import { fetchLatestBlockHeight } from '../../../src/infrastructure/chains/rpc-registry-client.ts'
 
 const require = createRequire(import.meta.url)
 const typescript = require('typescript')
@@ -21,7 +22,7 @@ function deferred() {
   return { promise, resolve }
 }
 
-function createRuntime() {
+function createRuntime(overrides = {}) {
   const wallet = { id: 'wallet', accounts: [{ id: 'account', derivationIndex: 0 }] }
   const walletState = {
     wallets: [wallet],
@@ -84,6 +85,9 @@ function createRuntime() {
     },
     '@/infrastructure/chains/rpc-endpoints': { async ensureRpcEndpointPreferencesLoaded() {} },
     '@/infrastructure/chains/rpc-failover': { async ensureRpcFailoverStateLoaded() {} },
+    '@/infrastructure/chains/rpc-registry-client': {
+      fetchLatestBlockHeight: overrides.fetchLatestBlockHeight ?? (async () => 100)
+    },
     '@/lib/logger': {
       logger: {
         log() {},
@@ -176,6 +180,79 @@ function withSummary(fixture) {
     release: () => release.resolve(snapshot)
   }
 }
+
+test('cancelled chain-height reads abort transport, drain the summary and preserve cached state', async () => {
+  const started = deferred()
+  const summary = deferred()
+  let abortedTransport = false
+  const fixture = createRuntime({
+    fetchLatestBlockHeight: (url, _fetch, _timeout, signal) =>
+      fetchLatestBlockHeight(
+        url,
+        async (_input, init) => {
+          started.resolve()
+          return new Promise((_resolve, reject) => {
+            init.signal.addEventListener(
+              'abort',
+              () => {
+                abortedTransport = true
+                reject(new DOMException('Aborted', 'AbortError'))
+              },
+              { once: true }
+            )
+          })
+        },
+        5000,
+        signal
+      )
+  })
+  const cached = { latestHeight: 90, summary: { fully_scanned_height: 89 }, fetchedAt: 1 }
+  fixture.runtime.walletSummaryCache.set('wallet', cached)
+  const controller = new AbortController()
+  const read = fixture.runtime.getCachedWalletSummary(
+    'wallet',
+    {
+      getLatestHeight() {
+        throw new Error('Network reads must not block the WASM queue')
+      },
+      getWalletSummary: () => summary.promise
+    },
+    { force: true, signal: controller.signal }
+  )
+  const rejected = assert.rejects(read, { name: 'AbortError' })
+  await started.promise
+  controller.abort()
+  assert.equal(abortedTransport, true)
+  assert.equal(
+    await Promise.race([
+      read.then(
+        () => 'done',
+        () => 'done'
+      ),
+      new Promise(resolve => setImmediate(() => resolve('draining')))
+    ]),
+    'draining'
+  )
+  summary.resolve({ fully_scanned_height: 100 })
+  await rejected
+  assert.strictEqual(fixture.runtime.walletSummaryCache.get('wallet'), cached)
+
+  fixture.runtime.walletSummaryCache.delete('wallet')
+  const fresh = createRuntime()
+  const localSummary = { fully_scanned_height: 99 }
+  const result = await fresh.runtime.getCachedWalletSummary(
+    'wallet',
+    {
+      getLatestHeight() {
+        throw new Error('Network reads must not block the WASM queue')
+      },
+      getWalletSummary: async () => localSummary
+    },
+    { force: true }
+  )
+  assert.equal(result.latestHeight, 100)
+  assert.strictEqual(result.summary, localSummary)
+})
 
 test('startup returns before WASM init and refreshes after account cache hydration', async () => {
   const fixture = createRuntime()

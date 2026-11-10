@@ -180,6 +180,20 @@ export class TimeoutError extends Error {
   }
 }
 
+/** Ends a polling delay early on cancellation; the caller handles the abort. */
+export function waitForDelayOrAbort(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.resolve()
+  return new Promise(resolve => {
+    const finish = () => {
+      clearTimeout(timer)
+      signal?.removeEventListener('abort', finish)
+      resolve()
+    }
+    const timer = setTimeout(finish, ms)
+    signal?.addEventListener('abort', finish, { once: true })
+  })
+}
+
 /**
  * Rejects with {@link TimeoutError} if `operation` does not settle within `ms`.
  *
