@@ -26,6 +26,7 @@ export class DetectedEvmAssetCoordinator {
       readonly repository: ChromeDetectedEvmAssetCatalogRepository
       readonly discovery: EvmTokenDiscoveryClient
       readonly resolveRpc: (chainId: string) => EvmContractRpc
+      readonly resolveIconUrl?: (assetId: string) => Promise<string | undefined>
       readonly isExcluded?: (assetId: string) => boolean
       readonly now?: () => number
     }
@@ -72,12 +73,16 @@ export class DetectedEvmAssetCoordinator {
         const candidate = uniqueCandidates[nextIndex++]
         const previous = existing.get(candidate.assetId)
         if (previous) {
+          const iconUrl =
+            candidate.iconUrl ??
+            previous.metadata.iconUrl ??
+            (await this.options.resolveIconUrl?.(candidate.assetId).catch(() => undefined))
           records.push(
             createDetectedEvmAssetRecord(this.options.chains, {
               ...previous,
               metadata:
-                candidate.iconUrl && candidate.iconUrl !== previous.metadata.iconUrl
-                  ? { ...previous.metadata, iconUrl: candidate.iconUrl }
+                iconUrl && iconUrl !== previous.metadata.iconUrl
+                  ? { ...previous.metadata, iconUrl }
                   : previous.metadata,
               lastSeenAt: now
             })
@@ -89,12 +94,15 @@ export class DetectedEvmAssetCoordinator {
             this.options.resolveRpc(candidate.chainId),
             candidate.contractAddress
           )
+          const iconUrl =
+            candidate.iconUrl ??
+            (await this.options.resolveIconUrl?.(candidate.assetId).catch(() => undefined))
           records.push(
             createDetectedEvmAssetRecord(this.options.chains, {
               ...candidate,
               metadata: {
                 ...metadata,
-                ...(candidate.iconUrl ? { iconUrl: candidate.iconUrl } : {})
+                ...(iconUrl ? { iconUrl } : {})
               },
               detectedAt: now,
               lastSeenAt: now

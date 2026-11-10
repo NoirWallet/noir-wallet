@@ -26,6 +26,125 @@ async function openManageTokens(popup: Page): Promise<void> {
   await popup.getByRole('menuitem', { name: 'Manage tokens' }).click()
 }
 
+test('loads Four.Meme prices through Background and shows the same BNB token value on Home and detail', async ({
+  context,
+  popup
+}) => {
+  test.setTimeout(180_000)
+  const assetId = `eip155:56/erc20:${CUSTOM_TOKEN_CONTRACT}`
+  const icon = 'https://static.four.meme/market/example.png'
+  await mockExternalAssetIcons(context)
+  await mockReleasedEvmRpc(context)
+  await mockReleasedBitcoinEsplora(context)
+  await mockEvmHistoryProxy(context)
+  await context.route('https://static.four.meme/market/**', route =>
+    route.fulfill({
+      contentType: 'image/svg+xml',
+      body: '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><circle cx="16" cy="16" r="16" fill="#00d18a"/></svg>'
+    })
+  )
+  await context.route('https://four.meme/meme-api/v1/**', route => {
+    const url = new URL(route.request().url())
+    return route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        code: 0,
+        data: url.pathname.endsWith('/public/config')
+          ? [
+              {
+                symbol: 'BNB',
+                symbolAddress: '0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c',
+                networkCode: 'BSC',
+                decimals: 18
+              }
+            ]
+          : {
+              address: CUSTOM_TOKEN_CONTRACT,
+              networkCode: 'BSC',
+              status: 'PUBLISH',
+              symbol: 'BNB',
+              image: icon,
+              tokenPrice: { price: '0.005', modifyDate: String(Date.now()) }
+            }
+      })
+    })
+  })
+  await context.route('https://1click.chaindefuser.com/v0/tokens', route =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify([
+        {
+          assetId: ASSET_PRICE_SOURCE_ASSETS.bnb,
+          blockchain: 'bsc',
+          symbol: 'BNB',
+          decimals: 18,
+          price: 600,
+          priceUpdatedAt: new Date().toISOString()
+        }
+      ])
+    })
+  )
+  await context.route('https://api.dexscreener.com/**', route =>
+    route.fulfill({ contentType: 'application/json', body: '[]' })
+  )
+  await waitForBackgroundWalletInitialization(popup)
+  await importTestWallet(popup)
+  await stopImportedZcashSync(popup)
+  await openManageTokens(popup)
+  await popup.getByRole('button', { name: 'Add Token', exact: true }).click()
+  const dialog = popup.getByRole('dialog')
+  await dialog.getByRole('button', { name: 'Token network' }).click()
+  await popup.getByRole('menuitemradio', { name: /BNB Chain/ }).click()
+  await dialog.getByLabel('EVM contract address').fill(CUSTOM_TOKEN_CONTRACT)
+  await dialog.getByRole('button', { name: 'Verify Token' }).click()
+  await expect(dialog.getByText('Example Token', { exact: true })).toBeVisible()
+  await dialog.getByRole('button', { name: 'Add Token', exact: true }).click()
+  await expect(dialog).toBeHidden()
+  await expect
+    .poll(
+      () =>
+        popup.evaluate(
+          id =>
+            chrome.runtime.sendMessage({
+              type: 'GET_ASSET_PRICES',
+              action: 'refresh',
+              assetId: id
+            }),
+          assetId
+        ),
+      { timeout: 30_000 }
+    )
+    .toMatchObject({
+      result: {
+        quotes: expect.arrayContaining([
+          expect.objectContaining({ assetId, source: 'four-meme', priceUsd: '3' })
+        ])
+      }
+    })
+  await popup.goto(new URL('/index.html', popup.url()).toString())
+  const row = popup.getByRole('button', { name: 'View USDC details on BNB Chain', exact: true })
+  await expect(row).toBeVisible({ timeout: 30_000 })
+  await expect(row).toContainText('$3.00')
+  await expect(row).toContainText('$6.00')
+  await expect(row.locator('img[src="' + icon + '"]')).toBeVisible()
+  await captureScreenshot(popup, 'four-meme-home-token-price.png')
+  await row.click()
+  await expect(popup.getByText('$3.00', { exact: true }).first()).toBeVisible()
+  await expect(popup.getByText('$6.00', { exact: true }).first()).toBeVisible()
+  await expect(
+    popup.getByTestId('asset-detail-token-icon').locator('img[src="' + icon + '"]')
+  ).toBeVisible()
+  await captureScreenshot(popup, 'four-meme-token-detail-price.png')
+  await expect(
+    popup.evaluate(async id => {
+      const cached = await chrome.storage.local.get('four_meme_price_cache_v1')
+      return cached.four_meme_price_cache_v1.quotes.find(
+        (quote: { assetId: string }) => quote.assetId === id
+      )?.priceUsd
+    }, assetId)
+  ).resolves.toBe('3')
+})
+
 test('loads Home totals when Token activity opens before the Assets tab', async ({
   context,
   popup

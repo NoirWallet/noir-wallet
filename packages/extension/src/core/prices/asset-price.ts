@@ -4,7 +4,8 @@ import Big from '@/lib/big'
 export const ASSET_PRICE_SOURCE = 'wallet-market-data' as const
 export const ASSET_PRICE_QUOTE_SOURCES = Object.freeze({
   dexScreener: 'dex-screener',
-  oneClick: 'near-intents-1click'
+  oneClick: 'near-intents-1click',
+  fourMeme: 'four-meme'
 } as const)
 export const ASSET_MARKET_CHANGE_SOURCES = Object.freeze({
   dexScreener: 'dex-screener',
@@ -97,7 +98,8 @@ function readQuote(value: unknown): AssetPriceQuote {
     ) ||
     typeof value.assetId !== 'string' ||
     (value.source !== ASSET_PRICE_QUOTE_SOURCES.dexScreener &&
-      value.source !== ASSET_PRICE_QUOTE_SOURCES.oneClick) ||
+      value.source !== ASSET_PRICE_QUOTE_SOURCES.oneClick &&
+      value.source !== ASSET_PRICE_QUOTE_SOURCES.fourMeme) ||
     typeof value.priceUsd !== 'string' ||
     !DECIMAL_PRICE_PATTERN.test(value.priceUsd) ||
     new Big(value.priceUsd).lte(0) ||

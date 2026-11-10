@@ -30,6 +30,9 @@ import {
   ChromeUserAssetDexPoolCacheRepository,
   ChromeUserAssetMarketCacheRepository,
   ChromeUserAssetOneClickPriceCacheRepository,
+  ChromeFourMemePriceCacheRepository,
+  FourMemeAssetPriceService,
+  FourMemeMarketClient,
   DexScreenerMarketChangeService,
   DefiLlamaMarketChangeService,
   AssetMarketHistoryService,
@@ -229,6 +232,9 @@ export function createBackgroundAssetPriceService(
     asset => `${asset.chainId}/${asset.namespace}:${asset.reference}`
   )
   const oneClickMappings = getUserAssetOneClickPriceMappings(userEvmAssets)
+  const bnbTokenIds = userAssetIds.filter(assetId =>
+    /^eip155:56\/erc20:0x[0-9a-f]{40}$/.test(assetId)
+  )
   const assets = createAssetRegistry(
     chains,
     filterAssetDefinitionsForChains(
@@ -282,6 +288,16 @@ export function createBackgroundAssetPriceService(
           }),
           poolCache,
           marketCache: new ChromeUserAssetMarketCacheRepository(),
+          ...(DEFAULT_NETWORK !== 'mainnet' || bnbTokenIds.length === 0
+            ? {}
+            : {
+                fourMeme: new FourMemeAssetPriceService({
+                  assetIds: bnbTokenIds,
+                  client: new FourMemeMarketClient(),
+                  cache: new ChromeFourMemePriceCacheRepository(),
+                  quotePriceCache: new ChromeFourMemePriceCacheRepository('quotes')
+                })
+              }),
           ...(oneClickMappings.length === 0
             ? {}
             : {

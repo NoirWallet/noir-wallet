@@ -159,22 +159,33 @@ test('refreshes a newly added Token without requesting older Tokens or losing th
     })),
     cache: {
       get: async () => fallbackSnapshot,
-      put: async value => { fallbackSnapshot = value }
+      put: async value => {
+        fallbackSnapshot = value
+      }
     },
     now: () => NOW,
     fetch: async () => {
       fallbackRequests.push('tokens')
-      return new Response(JSON.stringify([
-        {
-          assetId: 'old', blockchain: 'eth', contractAddress: oldToken,
-          decimals: 18, price: fallbackRequests.length === 1 ? -1 : 1.1,
-          priceUpdatedAt: new Date(NOW).toISOString()
-        },
-        {
-          assetId: 'new', blockchain: 'eth', contractAddress: TOKEN,
-          decimals: 18, price: 1.25, priceUpdatedAt: new Date(NOW).toISOString()
-        }
-      ]))
+      return new Response(
+        JSON.stringify([
+          {
+            assetId: 'old',
+            blockchain: 'eth',
+            contractAddress: oldToken,
+            decimals: 18,
+            price: fallbackRequests.length === 1 ? -1 : 1.1,
+            priceUpdatedAt: new Date(NOW).toISOString()
+          },
+          {
+            assetId: 'new',
+            blockchain: 'eth',
+            contractAddress: TOKEN,
+            decimals: 18,
+            price: 1.25,
+            priceUpdatedAt: new Date(NOW).toISOString()
+          }
+        ])
+      )
     }
   })
   const service = new UserAssetDexPriceService({
@@ -188,29 +199,37 @@ test('refreshes a newly added Token without requesting older Tokens or losing th
       }
     },
     poolCache: {
-      get: async assetId => assetId === ASSET_ID ? discoveredPool : null,
+      get: async assetId => (assetId === ASSET_ID ? discoveredPool : null),
       put: async () => {},
       delete: async () => {}
     },
     marketCache: {
       get: async () => marketSnapshot,
-      put: async value => { marketSnapshot = value }
+      put: async value => {
+        marketSnapshot = value
+      }
     },
     fallback,
     now: () => NOW,
     fetch: async url => {
       pairRequests.push(String(url))
-      return new Response(JSON.stringify({ pairs: [{
-        chainId: pool.dexScreenerChainId,
-        dexId: pool.dexId,
-        pairAddress: pool.pairAddress,
-        baseToken: { address: pool.baseTokenAddress },
-        quoteToken: { address: pool.quoteTokenAddress },
-        priceUsd: '1.24',
-        priceChange: { h24: 2.5 },
-        liquidity: { usd: 500_000 },
-        volume: { h24: 50_000 }
-      }] }))
+      return new Response(
+        JSON.stringify({
+          pairs: [
+            {
+              chainId: pool.dexScreenerChainId,
+              dexId: pool.dexId,
+              pairAddress: pool.pairAddress,
+              baseToken: { address: pool.baseTokenAddress },
+              quoteToken: { address: pool.quoteTokenAddress },
+              priceUsd: '1.24',
+              priceChange: { h24: 2.5 },
+              liquidity: { usd: 500_000 },
+              volume: { h24: 50_000 }
+            }
+          ]
+        })
+      )
     }
   })
 
@@ -225,9 +244,9 @@ test('refreshes a newly added Token without requesting older Tokens or losing th
   expect(pairRequests).toEqual([`${DEX_SCREENER_PAIR_URL}/ethereum/${PAIR}`])
   expect(fallbackRequests).toEqual(['tokens'])
   expect(fallbackSnapshot.fetchedAt).toBe(NOW - 61_000)
-  expect(fallbackSnapshot.quotes).toEqual(expect.arrayContaining([
-    expect.objectContaining({ assetId: oldAssetId, priceUsd: '1.1' })
-  ]))
+  expect(fallbackSnapshot.quotes).toEqual(
+    expect.arrayContaining([expect.objectContaining({ assetId: oldAssetId, priceUsd: '1.1' })])
+  )
   expect(marketSnapshot.quotes).toHaveLength(2)
   await fallback.refresh()
   expect(fallbackRequests).toEqual(['tokens', 'tokens'])
@@ -432,4 +451,49 @@ test('merges built-in and custom price models without allowing duplicate AssetId
   expect(() =>
     mergeAssetPriceModels(primary, { ...custom, quotes: primary.quotes, missingAssetIds: [] })
   ).toThrow(/duplicate AssetIds/)
+})
+
+test('uses Four.Meme only to fill a missing or stale custom price', async () => {
+  const assetId = `eip155:56/erc20:${TOKEN}`
+  const quote = (source, priceUsd, freshness = 'fresh') => ({
+    assetId,
+    source,
+    priceUsd,
+    freshness,
+    fetchedAt: NOW,
+    sourceUpdatedAt: NOW
+  })
+  const model = quotes => ({
+    source: 'wallet-market-data',
+    status: quotes.length ? 'ready' : 'error',
+    fetchedAt: NOW,
+    quotes,
+    missingAssetIds: quotes.length ? [] : [assetId]
+  })
+  let primary = model([quote('near-intents-1click', '2')])
+  const caches = createCaches()
+  const service = new UserAssetDexPriceService({
+    assetIds: [assetId],
+    resolvePolicy: getUserAssetDexPoolDiscoveryPolicy,
+    discovery: { discover: async () => ({ status: 'unavailable' }) },
+    poolCache: caches.pool,
+    marketCache: caches.market,
+    now: () => NOW,
+    fallback: { readCached: async () => primary },
+    fourMeme: { readCached: async () => model([quote('four-meme', '1')]) }
+  })
+  expect((await service.readCached()).quotes[0]).toMatchObject({
+    source: 'near-intents-1click',
+    priceUsd: '2'
+  })
+  primary = model([quote('near-intents-1click', '2', 'stale')])
+  expect((await service.readCached()).quotes[0]).toMatchObject({
+    source: 'four-meme',
+    priceUsd: '1'
+  })
+  primary = model([])
+  expect((await service.readCached()).quotes[0]).toMatchObject({
+    source: 'four-meme',
+    priceUsd: '1'
+  })
 })

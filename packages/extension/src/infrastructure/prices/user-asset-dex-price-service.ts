@@ -17,6 +17,7 @@ import {
 } from './dex-screener-pool-discovery-service'
 import type { MarketChangeCacheRepository } from './dex-screener-market-change-service'
 import type { OneClickAssetPriceService } from './one-click-asset-price-service'
+import type { FourMemeAssetPriceService } from './four-meme-asset-price-service'
 import Big from '@/lib/big'
 
 const MAXIMUM_USER_ASSET_COUNT = 512
@@ -31,6 +32,7 @@ export interface UserAssetDexPriceServiceOptions {
   readonly poolCache: UserAssetDexPoolCacheRepository
   readonly marketCache: MarketChangeCacheRepository
   readonly fallback?: OneClickAssetPriceService
+  readonly fourMeme?: FourMemeAssetPriceService
   readonly fetch?: typeof fetch
   readonly now?: () => number
 }
@@ -279,11 +281,51 @@ export class UserAssetDexPriceService {
 
   async readCached(): Promise<AssetPriceReadModel> {
     const now = this.readNow()
-    const [dex, fallback] = await Promise.all([
+    const [dex, fallback, fourMeme] = await Promise.all([
       this.readCachedMappings(now).then(mappings => this.materialize(mappings, 'read', now)),
-      this.options.fallback?.readCached()
+      this.options.fallback?.readCached(),
+      this.options.fourMeme?.readCached()
     ])
-    return fallback ? preferUserAssetDexPrices(this.assetIds, dex, fallback) : dex
+    return this.withFourMemePrices(
+      fallback ? preferUserAssetDexPrices(this.assetIds, dex, fallback) : dex,
+      fourMeme
+    )
+  }
+
+  private withFourMemePrices(
+    primary: AssetPriceReadModel,
+    fourMeme?: AssetPriceReadModel
+  ): AssetPriceReadModel {
+    if (!fourMeme) return primary
+    const fallback = new Map(fourMeme.quotes.map(quote => [quote.assetId, quote]))
+    const primaryQuotes = new Map(primary.quotes.map(quote => [quote.assetId, quote]))
+    const quotes = Object.freeze(
+      this.assetIds.flatMap(assetId => {
+        const quote = primaryQuotes.get(assetId)
+        const curve = fallback.get(assetId)
+        const selected =
+          quote?.freshness === 'fresh'
+            ? quote
+            : curve?.freshness === 'fresh'
+              ? curve
+              : (quote ?? curve)
+        return selected ? [selected] : []
+      })
+    )
+    const quoted = new Set(quotes.map(quote => quote.assetId))
+    const missingAssetIds = Object.freeze(this.assetIds.filter(assetId => !quoted.has(assetId)))
+    return Object.freeze({
+      source: ASSET_PRICE_SOURCE,
+      status:
+        quotes.length === 0
+          ? 'error'
+          : missingAssetIds.length || quotes.some(quote => quote.freshness === 'stale')
+            ? 'partial'
+            : 'ready',
+      fetchedAt: Math.max(primary.fetchedAt, fourMeme.fetchedAt),
+      quotes,
+      missingAssetIds
+    })
   }
 
   async refresh(assetId?: string): Promise<AssetPriceReadModel> {
@@ -298,14 +340,19 @@ export class UserAssetDexPriceService {
         this.discoverMappings(now, targetIds).then(mappings =>
           this.materialize(mappings, 'refresh', now, targetIds, true)
         ),
-        this.options.fallback?.refresh(target)
+        this.options.fallback?.refresh(target),
+        this.options.fourMeme?.hasAsset(target) ? this.options.fourMeme.refresh(target) : undefined
       ])
       return this.readCached()
     }
-    const [dex, fallback] = await Promise.all([
+    const [dex, fallback, fourMeme] = await Promise.all([
       this.discoverMappings(now).then(mappings => this.materialize(mappings, 'refresh', now)),
-      this.options.fallback?.refresh()
+      this.options.fallback?.refresh(),
+      this.options.fourMeme?.refresh()
     ])
-    return fallback ? preferUserAssetDexPrices(this.assetIds, dex, fallback) : dex
+    return this.withFourMemePrices(
+      fallback ? preferUserAssetDexPrices(this.assetIds, dex, fallback) : dex,
+      fourMeme
+    )
   }
 }
