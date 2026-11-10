@@ -41,7 +41,7 @@ export function readMoveAssetHint(
   }
 }
 
-function readMoveDraft(state: unknown, scope: string): MoveDraft | null {
+export function readMoveDraft(state: unknown, scope: string): MoveDraft | null {
   if (!state || typeof state !== 'object' || !('moveDraft' in state)) return null
   const draft = state.moveDraft
   if (!draft || typeof draft !== 'object' || !('scope' in draft) || draft.scope !== scope)
@@ -79,13 +79,14 @@ export function initialMoveDraft(input: {
   readonly routeFrom: string | null
   readonly routeTo: string | null
   readonly routeAssetId: string | null
+  readonly entry?: string | null
 }): MoveDraft {
   const restored = readMoveDraft(input.state, input.scope)
   if (restored) return restored
   const domains = resolveTransferDomains({
     mode: input.mode,
-    from: input.routeFrom,
-    to: input.routeTo
+    from: input.routeFrom ?? (input.entry === 'shield' ? 'public' : null),
+    to: input.routeTo ?? (input.entry === 'shield' ? 'shield' : null)
   })
   return {
     scope: input.scope,

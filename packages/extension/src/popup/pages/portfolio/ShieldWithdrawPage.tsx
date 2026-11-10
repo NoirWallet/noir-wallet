@@ -208,7 +208,12 @@ function ShieldWithdrawForm() {
   const destinations = options.filter(item => item.chain.chain.family === 'evm')
   const currentBalances = balanceScope === scopeKey ? balances : null
   const displayBalances = currentBalances ?? shieldPortfolioBalances(model)
-  const sources = shieldFundingSources(options, displayBalances)
+  const fundedSources = shieldFundingSources(options, displayBalances)
+  const fundedAssetIds = new Set(fundedSources.map(item => item.asset.asset.id))
+  const sources = [
+    ...fundedSources,
+    ...options.filter(item => !fundedAssetIds.has(item.asset.asset.id))
+  ]
   const source = sourceId
     ? (sources.find(item => item.asset.asset.id === sourceId) ?? null)
     : (sources[0] ?? null)
@@ -774,6 +779,32 @@ function ShieldWithdrawForm() {
           <p role="alert" className="mt-3 text-xs text-warning">
             {amountState.error}
           </p>
+        )}
+        {currentBalances && source && availableRaw === '0' && (
+          <div className="mt-4 flex justify-center gap-4 text-sm">
+            <button
+              type="button"
+              onClick={() =>
+                navigate(
+                  `/transfer?entry=shield&provider=near-confidential&assetId=${encodeURIComponent(source.asset.asset.id)}`
+                )
+              }
+              className="wallet-interactive rounded-md px-2 py-1 text-primary hover:bg-primary/10 focus-visible:outline-2 focus-visible:outline-primary"
+            >
+              Move funds
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                navigate(
+                  `/shield-deposit?provider=near-confidential&assetId=${encodeURIComponent(source.asset.asset.id)}`
+                )
+              }
+              className="wallet-interactive rounded-md px-2 py-1 text-primary hover:bg-primary/10 focus-visible:outline-2 focus-visible:outline-primary"
+            >
+              Receive funds
+            </button>
+          </div>
         )}
         {recipient && !recipientValid && (
           <p role="alert" className="mt-3 text-xs text-warning">

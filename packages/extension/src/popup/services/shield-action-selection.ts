@@ -1,7 +1,6 @@
 import type { PortfolioReadModel } from '@/core/portfolio'
 import type { AssetPriceReadModel } from '@/core/prices'
 import { getZcashChainId } from '@/core/chains/registry'
-import { getFundingBalance } from '@/core/wallet/funding-balance'
 import { safeBig } from '@/lib/big'
 import type { AccountAddresses, KeySource, Network, ZcashBalance } from '@/types/wallet'
 import type { AccountNetworksView } from './account-networks-client'
@@ -49,23 +48,9 @@ export function selectShieldActions(input: {
         network
       })
     : []
-  const canSendZcash =
-    hasZcash && safeBig(getFundingBalance(zcashBalance, 'shielded').available).gt(0)
   const providersFor = (action: ShieldAction): readonly ShieldProvider[] => {
-    const nearAvailable =
-      canManageNear &&
-      (action === 'receive' ||
-        action === 'move' ||
-        (action === 'send' && near.status !== 'ready') ||
-        hasSpendableNear)
-    const zcashAvailable =
-      action === 'swap'
-        ? false
-        : action === 'send'
-          ? canSendZcash
-          : action === 'receive'
-            ? hasZcash
-            : zcashMoveSources.length > 0
+    const nearAvailable = canManageNear
+    const zcashAvailable = action !== 'swap' && hasZcash
     return [
       ...(nearAvailable ? (['near-confidential'] as const) : []),
       ...(zcashAvailable ? (['zcash-shield'] as const) : [])

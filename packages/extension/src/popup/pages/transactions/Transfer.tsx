@@ -90,7 +90,13 @@ import {
   buildMoveToMainEvmPath,
   getEvmTokenFeeBalanceError
 } from './evm-send-validation'
-import { initialMoveDraft, readMoveAssetHint } from './move-draft'
+import { initialMoveDraft, readMoveAssetHint, readMoveDraft } from './move-draft'
+import {
+  readShieldMovePreference,
+  selectShieldMoveAssetId,
+  shieldMovePreferenceKey,
+  type ShieldMovePreference
+} from './move-preference'
 
 type TransferAsset = { asset: PortfolioAssetView; chain: PortfolioChainView }
 
@@ -283,6 +289,11 @@ function TransferForm() {
   const walletMode = params.get('mode') === 'private' ? 'private' : 'public'
   const routeFrom = params.get('from')
   const routeTo = params.get('to')
+  const routeAssetId = params.get('assetId')
+  const entry = params.get('entry')
+  const shieldEntry =
+    entry === 'shield' &&
+    (params.get('provider') === null || params.get('provider') === 'near-confidential')
   const fromAssetDetail = params.get('entry') === 'asset-detail'
   const { goBack, navigate } = useNavigate()
   const currentWalletId = useWalletStore(state => state.currentWalletId)
@@ -300,14 +311,30 @@ function TransferForm() {
     nativeAccount: activeAccount
   })
   const scopeKey = `${currentNetwork}:${effective?.walletId ?? ''}:${effective?.accountId ?? ''}:${endpointRuntimeKey}`
+  const preferenceKey =
+    shieldEntry && effective
+      ? shieldMovePreferenceKey(currentNetwork, effective.walletId, effective.accountId)
+      : null
   const initialDraft = initialMoveDraft({
     state: location.state,
     scope: scopeKey,
     mode: walletMode,
     routeFrom,
     routeTo,
-    routeAssetId: params.get('assetId')
+    routeAssetId,
+    entry
   })
+  const initialRouteState = useRef(location.state).current
+  const launchDraft = initialMoveDraft({
+    state: initialRouteState,
+    scope: scopeKey,
+    mode: walletMode,
+    routeFrom,
+    routeTo,
+    routeAssetId,
+    entry
+  })
+  const launchHasDraft = readMoveDraft(initialRouteState, scopeKey) !== null
   const moveAssetHint = readMoveAssetHint(location.state, scopeKey, initialDraft.assetId)
   const latestScopeKey = useRef(scopeKey)
   latestScopeKey.current = scopeKey
@@ -343,6 +370,15 @@ function TransferForm() {
   const [amount, setAmount] = useState(initialDraft.amount)
   const [method, setMethod] = useState<'cluster' | 'directly'>(initialDraft.method)
   const [maxSelected, setMaxSelected] = useState(initialDraft.maxSelected)
+  const [loadedPreference, setLoadedPreference] = useState<{
+    key: string
+    value: ShieldMovePreference | null
+  } | null>(null)
+  const rememberedMove = loadedPreference?.key === preferenceKey ? loadedPreference.value : null
+  const preferenceReady = loadedPreference?.key === preferenceKey
+  const [preferenceAppliedScope, setPreferenceAppliedScope] = useState<string | null>(null)
+  const userEditedMove = useRef(false)
+  const [catalogReady, setCatalogReady] = useState(false)
   const [routeSnapshot, setRouteSnapshot] = useState<{
     key: string
     status: 'supported' | 'unsupported' | 'error'
@@ -371,6 +407,7 @@ function TransferForm() {
 
   useEffect(() => {
     let cancelled = false
+    setCatalogReady(false)
     void (async () => {
       try {
         const cached = await swapTokenCatalogClient.readCached()
@@ -388,12 +425,34 @@ function TransferForm() {
           setCatalogTokens([])
           setManagedAssets([])
         }
+      } finally {
+        if (!cancelled) setCatalogReady(true)
       }
     })()
     return () => {
       cancelled = true
     }
   }, [currentNetwork, endpointRuntimeKey])
+
+  useEffect(() => {
+    if (!preferenceKey) return
+    let cancelled = false
+    void chrome.storage.local
+      .get(preferenceKey)
+      .then(result => {
+        if (cancelled) return
+        setLoadedPreference({
+          key: preferenceKey,
+          value: readShieldMovePreference(result[preferenceKey])
+        })
+      })
+      .catch(() => {
+        if (!cancelled) setLoadedPreference({ key: preferenceKey, value: null })
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [preferenceKey])
 
   useEffect(() => {
     if (!assetPickerOpen) return
@@ -446,13 +505,15 @@ function TransferForm() {
   }, [scopeKey, canLoadShield])
 
   useEffect(() => {
+    userEditedMove.current = false
     const draft = initialMoveDraft({
       state: location.state,
       scope: scopeKey,
       mode: walletMode,
       routeFrom,
       routeTo,
-      routeAssetId: params.get('assetId')
+      routeAssetId,
+      entry
     })
     setDraftScope(scopeKey)
     setFrom(draft.from)
@@ -516,6 +577,13 @@ function TransferForm() {
     () => getPrivateTransferChainIds(activeAccount, currentNetwork === 'mainnet'),
     [activeAccount, currentNetwork]
   )
+  const currentShieldBalances = useMemo(
+    () =>
+      shieldSnapshot?.key === scopeKey
+        ? shieldSnapshot.balances
+        : shieldPortfolioBalances(portfolio),
+    [shieldSnapshot, scopeKey, portfolio]
+  )
   const assets = useMemo<TransferAsset[]>(() => {
     if (!portfolio) return []
     const chains = new Map(portfolio.chains.map(chain => [chain.chain.id, chain]))
@@ -527,18 +595,19 @@ function TransferForm() {
         ? [{ asset, chain }]
         : []
     })
-    const shieldBalances =
-      shieldSnapshot?.key === scopeKey
-        ? shieldSnapshot.balances
-        : shieldPortfolioBalances(portfolio)
-    const heldShieldAssets = shieldFundingSources(
-      listShieldFundingAssets(portfolio, managedAssets, catalogTokens, currentNetwork),
-      shieldBalances
+    const shieldAssets = listShieldFundingAssets(
+      portfolio,
+      managedAssets,
+      catalogTokens,
+      currentNetwork
     )
+    const fallbackAssets = shieldEntry
+      ? shieldAssets
+      : shieldFundingSources(shieldAssets, currentShieldBalances)
     const existing = new Set(publicAssets.map(item => item.asset.asset.id))
     return [
       ...publicAssets,
-      ...heldShieldAssets
+      ...fallbackAssets
         .filter(
           item =>
             eligibleChainIds.includes(item.chain.chain.id) && !existing.has(item.asset.asset.id)
@@ -547,17 +616,112 @@ function TransferForm() {
     ]
   }, [
     portfolio,
-    shieldSnapshot,
-    scopeKey,
+    currentShieldBalances,
     managedAssets,
     catalogTokens,
     currentNetwork,
-    eligibleChainIds
+    eligibleChainIds,
+    shieldEntry
   ])
   const defaultAssetId = useMemo(
-    () => selectDefaultTransferAssetId({ assets, from, to, eligibleChainIds }),
-    [assets, from, to, eligibleChainIds]
+    () =>
+      shieldEntry
+        ? selectShieldMoveAssetId({
+            assets,
+            from,
+            eligibleChainIds,
+            managedAssets,
+            catalogTokens,
+            network: currentNetwork,
+            shieldBalances: currentShieldBalances
+          })
+        : selectDefaultTransferAssetId({ assets, from, to, eligibleChainIds }),
+    [
+      assets,
+      from,
+      to,
+      eligibleChainIds,
+      shieldEntry,
+      managedAssets,
+      catalogTokens,
+      currentNetwork,
+      currentShieldBalances
+    ]
   )
+  useEffect(() => {
+    if (
+      !shieldEntry ||
+      !effective ||
+      !preferenceReady ||
+      !catalogReady ||
+      !portfolioSettled ||
+      assets.length === 0 ||
+      (rememberedMove?.from === 'shield' && shieldConnection === 'checking') ||
+      preferenceAppliedScope === scopeKey ||
+      draftScope !== scopeKey
+    )
+      return
+    if (!userEditedMove.current && !launchHasDraft) {
+      const useRememberedDomains = !routeFrom && !routeTo && rememberedMove !== null
+      const preferredFrom = useRememberedDomains ? rememberedMove.from : launchDraft.from
+      const preferredTo = useRememberedDomains ? rememberedMove.to : launchDraft.to
+      const preferredAssetId = routeAssetId ?? rememberedMove?.assetId ?? null
+      const preferredAsset = selectShieldMoveAssetId({
+        assets,
+        from: preferredFrom,
+        eligibleChainIds,
+        managedAssets,
+        catalogTokens,
+        network: currentNetwork,
+        shieldBalances: currentShieldBalances,
+        preferredAssetId
+      })
+      const fallbackToPublic = preferredFrom === 'shield' && !preferredAsset
+      const nextFrom = fallbackToPublic ? 'public' : preferredFrom
+      const nextTo = fallbackToPublic ? 'shield' : preferredTo
+      const nextAsset = fallbackToPublic
+        ? selectShieldMoveAssetId({
+            assets,
+            from: 'public',
+            eligibleChainIds,
+            managedAssets,
+            catalogTokens,
+            network: currentNetwork,
+            preferredAssetId: routeAssetId
+          })
+        : preferredAsset
+      if (!nextAsset && !routeAssetId) return
+      setFrom(nextFrom)
+      setTo(nextTo)
+      if (!routeAssetId) setSelectedAssetId(nextAsset)
+      setDestinationAssetId(
+        !routeAssetId && nextFrom === 'shield' ? (rememberedMove?.destinationAssetId ?? null) : null
+      )
+    }
+    setPreferenceAppliedScope(scopeKey)
+  }, [
+    shieldEntry,
+    effective,
+    preferenceReady,
+    catalogReady,
+    portfolioSettled,
+    shieldConnection,
+    currentShieldBalances,
+    preferenceAppliedScope,
+    draftScope,
+    scopeKey,
+    launchHasDraft,
+    launchDraft,
+    routeFrom,
+    routeTo,
+    routeAssetId,
+    rememberedMove,
+    assets,
+    eligibleChainIds,
+    managedAssets,
+    catalogTokens,
+    currentNetwork
+  ])
   const selected =
     assets.find(item => item.asset.asset.id === (selectedAssetId ?? defaultAssetId)) ?? null
   const requestedChainId = selectedAssetId?.split('/')[0]
@@ -588,10 +752,7 @@ function TransferForm() {
         network: currentNetwork,
         prices: assetPrices,
         portfolio,
-        shieldBalances:
-          shieldSnapshot?.key === scopeKey
-            ? shieldSnapshot.balances
-            : shieldPortfolioBalances(portfolio),
+        shieldBalances: currentShieldBalances,
         managedAssets,
         catalogTokens
       }),
@@ -601,8 +762,7 @@ function TransferForm() {
       currentNetwork,
       assetPrices,
       portfolio,
-      shieldSnapshot,
-      scopeKey,
+      currentShieldBalances,
       managedAssets,
       catalogTokens
     ]
@@ -689,10 +849,53 @@ function TransferForm() {
   ])
   const destination =
     from === 'shield'
-      ? (destinationOptions.find(
-          item => item.asset.asset.id === (destinationAssetId ?? selected?.asset.asset.id)
-        ) ?? null)
+      ? (destinationOptions.find(item => item.asset.asset.id === destinationAssetId) ??
+        destinationOptions.find(item => item.asset.asset.id === selected?.asset.asset.id) ??
+        null)
       : null
+  useEffect(() => {
+    if (
+      !preferenceKey ||
+      preferenceAppliedScope !== scopeKey ||
+      !userEditedMove.current ||
+      !catalogReady ||
+      !portfolioSettled ||
+      !selected ||
+      !eligible ||
+      !managedAsset ||
+      !isShieldTransferRoute(from, to) ||
+      (from === 'shield' && !destination) ||
+      (from === 'shield'
+        ? !currentShieldBalances ||
+          BigInt(
+            getConfidentialAvailableForAsset(currentShieldBalances, managedAsset.protocolAssetId) ??
+              '0'
+          ) === 0n
+        : getTransferDomainBalanceRaw(selected.asset, from) === null)
+    )
+      return
+    const preference: ShieldMovePreference = {
+      provider: 'near-confidential',
+      assetId: selected.asset.asset.id,
+      destinationAssetId: from === 'shield' ? (destination?.asset.asset.id ?? null) : null,
+      from,
+      to
+    }
+    void chrome.storage.local.set({ [preferenceKey]: preference }).catch(() => {})
+  }, [
+    preferenceKey,
+    preferenceAppliedScope,
+    scopeKey,
+    catalogReady,
+    portfolioSettled,
+    selected,
+    eligible,
+    managedAsset,
+    destination,
+    from,
+    to,
+    currentShieldBalances
+  ])
   const targetAsset = from === 'shield' ? destination : selected
   const targetNetwork = activeAccount?.networks.find(
     item => item.chain.id === targetAsset?.chain.chain.id
@@ -1005,6 +1208,7 @@ function TransferForm() {
   )
   const selectDomain = (domain: TransferDomain, side: 'from' | 'to') => {
     if (pickerAccountId !== effective?.accountId) return
+    userEditedMove.current = true
     if (selected) setSelectedAssetId(selected.asset.asset.id)
     if (side === 'from') {
       setFrom(domain)
@@ -1501,6 +1705,7 @@ function TransferForm() {
             onChange={event => {
               const next = normalizePrivateBalanceTransferInput(event.target.value)
               if (next !== null) {
+                userEditedMove.current = true
                 if (selected) setSelectedAssetId(selected.asset.asset.id)
                 setAmount(next)
                 setMaxSelected(false)
@@ -1595,6 +1800,7 @@ function TransferForm() {
             <button
               type="button"
               onClick={() => {
+                userEditedMove.current = true
                 if (from === 'shield' && destination) setSelectedAssetId(destination.asset.asset.id)
                 else if (selected) setSelectedAssetId(selected.asset.asset.id)
                 setDestinationAssetId(null)
@@ -1817,6 +2023,7 @@ function TransferForm() {
                   key={item.asset.asset.id}
                   type="button"
                   onClick={() => {
+                    userEditedMove.current = true
                     setSelectedAssetId(item.asset.asset.id)
                     setDestinationAssetId(null)
                     setAmount('')
@@ -1897,6 +2104,7 @@ function TransferForm() {
                     aria-label={item.chain.chain.displayName}
                     aria-pressed={destination?.asset.asset.id === item.asset.asset.id}
                     onClick={() => {
+                      userEditedMove.current = true
                       setDestinationAssetId(item.asset.asset.id)
                       setNetworkPickerOpen(false)
                       setShieldError(null)

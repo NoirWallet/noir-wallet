@@ -21,7 +21,6 @@ import { PageHeader } from '@/popup/components/common/PageHeader'
 import { WalletActionIcon } from '@/popup/components/common/WalletActionIcon'
 import { ShieldProviderLogo, SHIELD_PROVIDERS } from '@/popup/components/portfolio/shield-providers'
 import { TokenIcon } from '@/popup/components/tokens/TokenIcon'
-import { ShieldMoveSheet } from '@/popup/components/transaction/ShieldMoveSheet'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/popup/components/ui/dialog'
 
 export function ShieldFundsPage() {
@@ -54,12 +53,10 @@ function ShieldFundsContent() {
   const [prices, setPrices] = useState<AssetPriceReadModel | null>(null)
   const [pricesLoading, setPricesLoading] = useState(true)
   const [pendingAction, setPendingAction] = useState<ShieldAction | null>(null)
-  const [moveOpen, setMoveOpen] = useState(false)
   const handledActionQuery = useRef<string | null>(null)
 
   useEffect(() => {
     setPendingAction(null)
-    setMoveOpen(false)
   }, [account?.walletId, account?.accountId, currentNetwork])
 
   useEffect(() => {
@@ -128,8 +125,15 @@ function ShieldFundsContent() {
     setPendingAction(null)
     const go = auto ? replace : navigate
     if (action === 'move') {
-      if (auto) replace(`/shield-funds?mode=${mode}`)
-      setMoveOpen(true)
+      go(
+        provider === 'zcash-shield'
+          ? '/send/zcash?move=1&from=transparent'
+          : '/transfer?entry=shield&provider=near-confidential'
+      )
+      return
+    }
+    if (action === 'receive') {
+      go('/shield-deposit')
       return
     }
     if (action === 'swap') {
@@ -138,11 +142,6 @@ function ShieldFundsContent() {
     }
     if (provider === 'zcash-shield') {
       if (action === 'send') go('/send/zcash?from=shielded')
-      else if (account) {
-        go(
-          `/addresses-list?walletId=${encodeURIComponent(account.walletId)}&accountId=${encodeURIComponent(account.accountId)}&chain=zcash&privacy=shielded`
-        )
-      }
       return
     }
     go(
@@ -153,7 +152,11 @@ function ShieldFundsContent() {
   }
   const openAction = (action: ShieldAction) => {
     if (action === 'move') {
-      setMoveOpen(true)
+      navigate(canManageNear ? '/transfer?entry=shield' : '/send/zcash?move=1&from=transparent')
+      return
+    }
+    if (action === 'receive') {
+      navigate('/shield-deposit')
       return
     }
     const providers = availableProviders(action)
@@ -171,8 +174,8 @@ function ShieldFundsContent() {
         requestedAction !== 'receive' &&
         requestedAction !== 'move' &&
         requestedAction !== 'swap') ||
-      !model ||
-      status === 'loading' ||
+      ((requestedAction === 'send' || requestedAction === 'swap') &&
+        (!model || status === 'loading')) ||
       accountLoading ||
       handledActionQuery.current === location.search
     )
@@ -180,8 +183,9 @@ function ShieldFundsContent() {
     handledActionQuery.current = location.search
     const providers = availableProviders(requestedAction)
     if (requestedAction === 'move' && providers.length > 0) {
-      replace(`/shield-funds?mode=${mode}`)
-      setMoveOpen(true)
+      replace(canManageNear ? '/transfer?entry=shield' : '/send/zcash?move=1&from=transparent')
+    } else if (requestedAction === 'receive' && providers.length > 0) {
+      replace('/shield-deposit')
     } else if (providers.length === 1) runAction(providers[0]!, requestedAction, true)
     else {
       replace('/shield-funds')
@@ -346,7 +350,6 @@ function ShieldFundsContent() {
             ))}
         </DialogContent>
       </Dialog>
-      <ShieldMoveSheet open={moveOpen} onOpenChange={setMoveOpen} mode={mode} />
     </div>
   )
 }
