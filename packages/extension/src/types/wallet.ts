@@ -145,6 +145,7 @@ export type TransactionStatus = 'pending' | 'confirming' | 'relay_confirmed' | '
 
 export interface QuoteBinding {
   provider?: 'near-intents' | 'rhea-cross-chain-dex'
+  userAction?: 'transfer'
   quoteHandle?: string
   executionId?: string
   router?: string

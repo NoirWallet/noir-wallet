@@ -379,6 +379,22 @@ export class RheaSwapTransactionMonitor {
       await this.finish(value)
       return
     }
+    if (transaction.quoteBinding.userAction === undefined) {
+      try {
+        const privateSwap = await this.service.readPrivateSwapRequest?.(value.quoteHandle)
+        if (
+          privateSwap?.scope.purpose === 'public-private-send' &&
+          privateSwap.scope.walletId === value.walletId &&
+          privateSwap.scope.accountId === value.accountId
+        ) {
+          await this.updateZcashTransaction(value.accountKey, value.transactionId, {
+            quoteBinding: { ...transaction.quoteBinding, userAction: 'transfer' }
+          })
+        }
+      } catch {
+        // Display classification must not interrupt submission recovery.
+      }
+    }
     await this.service.recordTransactionSubmission(value.quoteHandle, transaction.txHash)
     let reported = false
     try {

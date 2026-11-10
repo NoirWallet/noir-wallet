@@ -216,8 +216,9 @@ export function getActivitySwapPresentation(
     item.kind !== 'swap' &&
     !(
       item.kind === 'transfer' &&
-      item.snapshot?.protocol?.provider === 'rhea-cross-chain-dex' &&
-      item.snapshot.protocol.userAction === 'transfer'
+      ((item.snapshot?.protocol?.provider === 'rhea-cross-chain-dex' &&
+        item.snapshot.protocol.userAction === 'transfer') ||
+        (item.source === 'zcash-v1' && item.segments.some(segment => segment.role === 'relay')))
     )
   ) {
     return null

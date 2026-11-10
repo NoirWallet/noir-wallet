@@ -128,6 +128,7 @@ function parseQuoteBinding(value: unknown): QuoteBinding | undefined {
       [],
       [
         'provider',
+        'userAction',
         'quoteHandle',
         'executionId',
         'router',
@@ -159,11 +160,15 @@ function parseQuoteBinding(value: unknown): QuoteBinding | undefined {
   ) {
     throw new Error('Invalid hardware quote provider')
   }
+  if (value.userAction !== undefined && value.userAction !== 'transfer') {
+    throw new Error('Invalid hardware quote action')
+  }
   if (value.isCrossChain !== undefined && typeof value.isCrossChain !== 'boolean') {
     throw new Error('Invalid hardware quote route kind')
   }
   return {
     ...(value.provider === undefined ? {} : { provider: value.provider }),
+    ...(value.userAction === undefined ? {} : { userAction: 'transfer' as const }),
     ...(value.quoteHandle === undefined
       ? {}
       : { quoteHandle: parseString(value.quoteHandle, 'hardware quote handle', 160) }),

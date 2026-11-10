@@ -367,6 +367,8 @@ test.describe('Hardware sign request handoff', () => {
         to: 'u1deposit',
         displayTo: '0xrecipient',
         quoteBinding: {
+          provider: 'rhea-cross-chain-dex',
+          userAction: 'transfer',
           depositAddress: 'u1deposit',
           originAsset: 'nep141:zec',
           destinationAsset: 'nep141:eth',
@@ -381,7 +383,11 @@ test.describe('Hardware sign request handoff', () => {
           actionName: 'Swap'
         }
       })
-    ).toMatchObject({ kind: 'swap', displayTo: '0xrecipient' })
+    ).toMatchObject({
+      kind: 'swap',
+      displayTo: '0xrecipient',
+      quoteBinding: { userAction: 'transfer' }
+    })
   })
 
   test('deletes corrupted prepared session state instead of returning it', async () => {

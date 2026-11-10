@@ -31,8 +31,14 @@ function decimalToRaw(value: string): string {
   return raw
 }
 
-function mapKind(type: TransactionType): TransactionKind {
-  return type === 'send' || type === 'unshield' ? 'transfer' : type
+function mapKind(transaction: Transaction): TransactionKind {
+  return transaction.type === 'send' ||
+    transaction.type === 'unshield' ||
+    (transaction.type === 'swap' &&
+      transaction.quoteBinding?.provider === 'rhea-cross-chain-dex' &&
+      transaction.quoteBinding.userAction === 'transfer')
+    ? 'transfer'
+    : transaction.type
 }
 
 function mapStatus(transaction: Transaction): TransactionLifecycleStatus {
@@ -330,7 +336,7 @@ export function mapZcashV1TransactionToActivityItem(
       keyDomainId: scope.keyDomainId,
       accountId: scope.accountId
     }),
-    kind: mapKind(transaction.type),
+    kind: mapKind(transaction),
     status,
     snapshot: Object.freeze({
       schemaVersion: 1,

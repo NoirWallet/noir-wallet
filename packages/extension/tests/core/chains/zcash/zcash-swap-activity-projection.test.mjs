@@ -3,7 +3,9 @@ import { test } from 'node:test'
 import { mapZcashV1TransactionToActivityItem } from '../../../../src/infrastructure/activity/zcash-v1-activity-source.ts'
 import {
   getActivityProgressSteps,
-  getActivitySwapPresentation
+  getActivitySwapPresentation,
+  getActivityRouteTitle,
+  getActivityDetailTitle
 } from '../../../../src/popup/components/transaction/multichain-activity-presentation.ts'
 
 const destinationAsset = 'eip155:42161/erc20:0xaf88d065e77c8cc2239327c5edb3a432268e5831'
@@ -70,4 +72,43 @@ test('a source deposit alone is never presented as the final recipient', () => {
   )
   assert.equal(item.snapshot.recipient, undefined)
   assert.equal(getActivitySwapPresentation(item, new Map(), new Map()).recipientAddress, undefined)
+})
+
+test('a bound ZEC private send remains a monitored route but appears as a transfer', () => {
+  const privateSend = {
+    ...transaction,
+    quoteBinding: {
+      ...transaction.quoteBinding,
+      provider: 'rhea-cross-chain-dex',
+      userAction: 'transfer',
+      destinationAsset: 'nep141:zec.omft.near',
+      destinationChain: 'Zcash',
+      recipient: 't1recipient'
+    }
+  }
+  const item = mapZcashV1TransactionToActivityItem(privateSend, scope)
+  const assets = new Map([
+    ['zcash:mainnet/slip44:133', { metadata: { symbol: 'ZEC', decimals: 8 } }]
+  ])
+  const chains = new Map([['zcash:mainnet', { displayName: 'Zcash' }]])
+  const route = getActivitySwapPresentation(item, assets, chains)
+
+  assert.equal(item.kind, 'transfer')
+  assert.deepEqual(
+    item.segments.map(segment => segment.role),
+    ['origin', 'relay', 'destination']
+  )
+  assert.equal(item.snapshot.recipient.address, 't1recipient')
+  assert.equal(getActivityRouteTitle(item, route), 'Transfer')
+  assert.equal(getActivityDetailTitle(item), 'Send')
+
+  const unmarked = mapZcashV1TransactionToActivityItem(
+    { ...privateSend, quoteBinding: { ...privateSend.quoteBinding, userAction: undefined } },
+    scope
+  )
+  assert.equal(unmarked.kind, 'swap')
+  assert.equal(
+    getActivityRouteTitle(unmarked, getActivitySwapPresentation(unmarked, assets, chains)),
+    'Swap'
+  )
 })

@@ -3247,6 +3247,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
           quoteResult && rheaReview
             ? {
                 provider: 'rhea-cross-chain-dex' as const,
+                ...(publicPrivacySendRequested ? { userAction: 'transfer' as const } : {}),
                 quoteHandle: quoteResult.quoteHandle,
                 executionId: rheaReview.executionId,
                 router: rheaReview.router,
