@@ -32,6 +32,20 @@ export interface MyAccountRecipientGroupOptions {
   readonly includeCurrentAccount?: boolean
 }
 
+export function getMyAccountRecipientUnavailableReason(
+  address: Pick<MyAccountRecipientAddress, 'value' | 'executionMode'>,
+  sendingAddress: string | undefined,
+  disablePrivateExecutionAddresses = false
+): string | null {
+  if (disablePrivateExecutionAddresses && address.executionMode === 'private') {
+    return 'Private execution addresses cannot be selected for Send.'
+  }
+  if (sendingAddress && address.value.toLowerCase() === sendingAddress.toLowerCase()) {
+    return 'This is the sending address.'
+  }
+  return null
+}
+
 function normalizedAddress(chainId: string, address: string): string {
   return chainId.startsWith('eip155:') ? address.toLowerCase() : address
 }

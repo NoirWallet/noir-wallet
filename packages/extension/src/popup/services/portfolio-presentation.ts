@@ -197,7 +197,12 @@ export function partitionPortfolioAssets(
 }> {
   const lowValueAssets = assets.filter(asset => {
     const fiat = getPortfolioAssetUsdValue(asset, prices)
-    return asset.asset.kind === 'token' && fiat !== null && new Big(fiat).lt(lowValueUsdThreshold)
+    return (
+      asset.asset.kind === 'token' &&
+      asset.source !== 'user-added' &&
+      fiat !== null &&
+      new Big(fiat).lt(lowValueUsdThreshold)
+    )
   })
   return Object.freeze({
     primaryAssets: Object.freeze(assets.filter(asset => !lowValueAssets.includes(asset))),
@@ -309,7 +314,12 @@ export function partitionPortfolioAssetGroups(
   for (const group of groups) {
     const fiat = getCompletePortfolioAssetGroupUsdValue(group, prices)
     const onlyTokens = group.entries.every(entry => entry.asset.asset.kind === 'token')
-    if (onlyTokens && fiat !== null && new Big(fiat).lt(lowValueUsdThreshold)) {
+    if (
+      onlyTokens &&
+      group.entries.every(entry => entry.asset.source !== 'user-added') &&
+      fiat !== null &&
+      new Big(fiat).lt(lowValueUsdThreshold)
+    ) {
       lowValueAssetGroups.push(group)
     } else {
       primaryAssetGroups.push(group)

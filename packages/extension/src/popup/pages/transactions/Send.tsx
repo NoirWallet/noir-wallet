@@ -939,7 +939,9 @@ export function Send() {
                 )}
               </div>
               <div className="flex min-w-0 items-center justify-between gap-2 text-xs">
-                <span className="shrink-0 text-muted">From</span>
+                <span className="shrink-0 text-sm font-medium leading-[18px] text-foreground/80">
+                  From
+                </span>
                 <button
                   type="button"
                   aria-label="Choose send source"

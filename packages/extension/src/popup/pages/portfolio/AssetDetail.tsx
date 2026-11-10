@@ -335,6 +335,12 @@ export function AssetDetail() {
   const handleMove = () => {
     if (!asset) return
     const mode = searchParams.get('mode') === 'private' ? 'private' : 'public'
+    const moveAssetHint = {
+      scope: `${currentNetwork}:${effectiveWalletId ?? ''}:${effectiveAccountId ?? ''}:${chainEndpointRuntimeKey}`,
+      assetId: asset.asset.id,
+      symbol: asset.metadata.symbol,
+      iconUrl: asset.metadata.iconUrl
+    }
     if (canMoveZcashShield) {
       navigate(`/send/zcash?move=1&from=shielded&mode=${mode}`)
       return
@@ -343,7 +349,8 @@ export function AssetDetail() {
     if (nearShieldSelected) {
       if (!shieldAssetSupported) return
       navigate(
-        `/transfer?${new URLSearchParams({ assetId: asset.asset.id, provider: 'near-confidential', from: 'shield', to: mode, mode, entry: 'asset-detail' })}`
+        `/transfer?${new URLSearchParams({ assetId: asset.asset.id, provider: 'near-confidential', from: 'shield', to: mode, mode, entry: 'asset-detail' })}`,
+        { state: { moveAssetHint } }
       )
       return
     }
@@ -355,7 +362,8 @@ export function AssetDetail() {
         from,
         to: from === 'public' ? 'private' : 'public',
         mode: searchParams.get('mode') === 'private' ? 'private' : 'public'
-      })}`
+      })}`,
+      { state: { moveAssetHint } }
     )
   }
   useEffect(() => {
@@ -509,7 +517,17 @@ export function AssetDetail() {
     if (chain.chain.family === 'evm') {
       if (domain === 'public') query.set('sourceMode', 'main')
     }
-    navigate(`/send?${query.toString()}`, { state: { sendEntry: 'asset-detail' } })
+    navigate(`/send?${query.toString()}`, {
+      state: {
+        sendEntry: 'asset-detail',
+        initialPortfolio: visibleModel,
+        initialPrices: prices,
+        walletId: effectiveWalletId,
+        accountId: effectiveAccountId,
+        network: currentNetwork,
+        endpointRuntimeKey: chainEndpointRuntimeKey
+      }
+    })
   }
 
   const handleReceive = () => {

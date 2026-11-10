@@ -387,7 +387,24 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
   const getCurrentBalance = useAccountDataStore(state => state.getCurrentBalance)
   const storeBalance = getCurrentBalance()
 
-  const swapPreferenceScope = createSwapTokenPreferenceScope(effectiveWalletId, effectiveAccountId)
+  const privateExecutionSupported = Boolean(
+    storageV2Account?.networks.some(
+      network => network.chain.family === 'evm' && network.privateExecutionAddress
+    )
+  )
+  const walletActionMode = useWalletActionExecutionMode(
+    privateExecutionSupported,
+    effectiveWalletId,
+    effectiveAccountId
+  )
+  const swapPreferenceScope = walletActionMode.loading
+    ? null
+    : createSwapTokenPreferenceScope(
+        effectiveWalletId,
+        effectiveAccountId,
+        currentNetwork,
+        walletActionMode.mode
+      )
   const savedTokenSelection = useSwapPreferences(state =>
     swapPreferenceScope ? state.tokenSelections[swapPreferenceScope] : undefined
   )
@@ -514,16 +531,6 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
   const initializedPrivateFundingAmountScope = useRef<string | null>(null)
   const initializedPrivateTransferScope = useRef<string | null>(null)
   const autoReviewStartedScope = useRef<string | null>(null)
-  const privateExecutionSupported = Boolean(
-    storageV2Account?.networks.some(
-      network => network.chain.family === 'evm' && network.privateExecutionAddress
-    )
-  )
-  const walletActionMode = useWalletActionExecutionMode(
-    privateExecutionSupported,
-    effectiveWalletId,
-    effectiveAccountId
-  )
   const [sourceModeSelection, setSourceModeSelection] = useState<{
     readonly scope: string
     readonly mode: QuoteDepositExecutionMode
@@ -4786,11 +4793,11 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
                 : 'Max is unavailable for this route'
         }
         catalogError={swap.catalogError}
-        sourceAssetsLoading={swap.sourceTokens.length === 0}
+        sourceAssetsLoading={swap.areTokensLoading && swap.sourceTokens.length === 0}
         destinationAssetsLoading={
           crossChainSendRequested
             ? swap.destinationTokensLoading && swap.destinationTokens.length === 0
-            : swap.destinationTokens.length === 0
+            : swap.destinationTokensLoading && swap.destinationTokens.length === 0
         }
         canGetQuote={
           canGetQuote &&

@@ -16,6 +16,7 @@ export function useHomePortfolio(walletId: string | null, accountId: string | nu
   const mountedScopeKey = useRef(scopeKey)
   const [model, setModel] = useState<PortfolioReadModel | null>(null)
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
+  const [settled, setSettled] = useState(false)
   const chainEndpointRuntimeKey = useSettingsStore(state =>
     getChainEndpointRuntimeKey(state.chainEndpointSettings)
   )
@@ -24,10 +25,14 @@ export function useHomePortfolio(walletId: string | null, accountId: string | nu
     async (forceDiscovery = false) => {
       const request = ++requestSequence.current
       setStatus('loading')
+      setSettled(false)
       let cachedModel: PortfolioReadModel | null = null
       let nextStatus: 'ready' | 'error' = 'error'
       try {
-        if (!walletId || !accountId) return
+        if (!walletId || !accountId) {
+          setSettled(true)
+          return
+        }
         cachedModel = await readCachedPortfolio({ walletId, accountId })
         if (request !== requestSequence.current) return
         if (cachedModel) {
@@ -59,6 +64,7 @@ export function useHomePortfolio(walletId: string | null, accountId: string | nu
 
       if (request !== requestSequence.current) return
       setStatus(nextStatus)
+      setSettled(true)
     },
     [accountId, chainEndpointRuntimeKey, walletId]
   )
@@ -81,8 +87,10 @@ export function useHomePortfolio(walletId: string | null, accountId: string | nu
     const scopeChanged = mountedScopeKey.current !== scopeKey
     mountedScopeKey.current = scopeKey
     if (scopeChanged) setModel(null)
+    if (scopeChanged) setSettled(false)
     if (!walletId || !accountId) {
       setStatus('ready')
+      setSettled(true)
       return
     }
     let active = true
@@ -105,6 +113,7 @@ export function useHomePortfolio(walletId: string | null, accountId: string | nu
   return {
     model: isPortfolioModelForScope(model, walletId, accountId) ? model : null,
     status,
+    settled,
     refresh: load
   }
 }

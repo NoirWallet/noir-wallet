@@ -34,11 +34,15 @@ export function useSwapState(
     preferenceScope ? useSwapPreferences.getState().tokenSelections[preferenceScope] : undefined
   )
   const [initialCatalogs] = useState(() => ({
-    sources: readCachedTokenCatalogByChain(
-      'from',
-      getEnabledSwapChains(options.enabledChains).map(chain => chain.tokenListChainId)
-    ),
-    destinations: readCachedTokenCatalogByChain('cross-chain-to', ALL_DESTINATION_CHAIN_IDS)
+    sources: options.enabledChains
+      ? readCachedTokenCatalogByChain(
+          'from',
+          getEnabledSwapChains(options.enabledChains).map(chain => chain.tokenListChainId)
+        )
+      : [],
+    destinations: options.enabledChains
+      ? readCachedTokenCatalogByChain('cross-chain-to', ALL_DESTINATION_CHAIN_IDS)
+      : []
   }))
   const initialSavedSourceAssetId = isSwapAssetOnEnabledChain(
     initialSelection?.tokenInId,
@@ -52,13 +56,25 @@ export function useSwapState(
       options.sourceAssetId !== initialSavedSourceAssetId)
       ? undefined
       : getSavedSwapDestinationAssetId(initialSelection, initialSavedSourceAssetId)
+  const initialPlan = buildInitialSwapCatalogPlan({
+    ...options,
+    savedSourceAssetId: initialSavedSourceAssetId,
+    savedDestinationAssetId: initialDestinationAssetId
+  })
 
-  const initialTokenIn =
-    initialCatalogs.sources?.find(token => token.assetId === initialSavedSourceAssetId) ?? null
-  const initialTokenOut =
-    initialCatalogs.destinations?.find(token => token.assetId === initialDestinationAssetId) ??
-    initialCatalogs.sources?.find(token => token.assetId === initialDestinationAssetId) ??
-    null
+  const initialTokenIn = preferenceScope
+    ? pickProvisionalSwapSource(
+        initialCatalogs.sources.filter(token =>
+          initialPlan.sourceChainIds.includes(token.tokenListChainId)
+        ),
+        initialSavedSourceAssetId
+      )
+    : null
+  const initialTokenOut = initialTokenIn
+    ? (initialCatalogs.destinations.find(token => token.assetId === initialDestinationAssetId) ??
+      initialCatalogs.sources.find(token => token.assetId === initialDestinationAssetId) ??
+      null)
+    : null
   const [tokenIn, setTokenIn] = useState<RheaSwapToken | null>(initialTokenIn)
   const [selectedSourceAssetId, setSelectedSourceAssetId] = useState<string | null>(null)
   const [tokenOut, setTokenOut] = useState<RheaSwapToken | null>(
@@ -116,6 +132,10 @@ export function useSwapState(
     setTokenIn(null)
     setSelectedSourceAssetId(null)
     setTokenOut(null)
+    setSourceCatalog([])
+    setCrossChainDestinationCatalog([])
+    setAreTokensLoading(true)
+    setDestinationTokensLoading(true)
     setAmountIn('')
     setAmountOut('')
     setRecipientAddressState('')
@@ -180,25 +200,33 @@ export function useSwapState(
         setDestinationTokensLoading(false)
         return
       }
-      const bypassCache = catalogRequestId > 0
-      const cachedSources = bypassCache
-        ? []
-        : readCachedTokenCatalogByChain(
-            'from',
-            getEnabledSwapChains(options.enabledChains).map(chain => chain.tokenListChainId)
-          )
-      const cachedDestinations = bypassCache
-        ? []
-        : readCachedTokenCatalogByChain('cross-chain-to', ALL_DESTINATION_CHAIN_IDS)
+      const cachedSources = readCachedTokenCatalogByChain(
+        'from',
+        getEnabledSwapChains(options.enabledChains).map(chain => chain.tokenListChainId)
+      )
+      const cachedPlannedSources = cachedSources.filter(token =>
+        plan.sourceChainIds.includes(token.tokenListChainId)
+      )
+      const cachedDestinations = readCachedTokenCatalogByChain(
+        'cross-chain-to',
+        ALL_DESTINATION_CHAIN_IDS
+      )
       setAreTokensLoading(true)
       setDestinationTokensLoading(true)
       setCatalogError(false)
       setSourceCatalog(cachedSources ?? [])
       setCrossChainDestinationCatalog(cachedDestinations ?? [])
+      setTokenIn(previous =>
+        previous && isSwapAssetOnEnabledChain(previous.assetId, options.enabledChains)
+          ? previous
+          : preferenceScope
+            ? pickProvisionalSwapSource(cachedPlannedSources, readSavedSourceAssetId())
+            : null
+      )
       const destinationsRequest = loadTokenCatalogByChain(
         'cross-chain-to',
         plan.destinationChainIds,
-        bypassCache,
+        catalogRequestId > 0 || cachedDestinations.length > 0,
         tokens => {
           setCrossChainDestinationCatalog(previous => mergeTokenCatalogs(previous, tokens))
           setTokenOut(
@@ -216,32 +244,43 @@ export function useSwapState(
         const sources = await loadTokenCatalogByChain(
           'from',
           plan.sourceChainIds,
-          bypassCache,
+          catalogRequestId > 0 || cachedSources.length > 0,
           tokens => {
             setSourceCatalog(previous => mergeTokenCatalogs(previous, tokens))
             setTokenIn(
-              previous => previous ?? pickProvisionalSwapSource(tokens, readSavedSourceAssetId())
+              previous =>
+                previous ??
+                (preferenceScope
+                  ? pickProvisionalSwapSource(tokens, readSavedSourceAssetId())
+                  : null)
             )
           },
           () => cancelled
         )
         if (cancelled) return
-        if (sources.length === 0) {
+        if (sources.length === 0 && cachedPlannedSources.length === 0) {
           throw new Error('RHEA Swap source assets are unavailable')
         }
         setSourceCatalog(previous => mergeTokenCatalogs(previous, sources))
         setTokenIn(
-          previous => previous ?? pickProvisionalSwapSource(sources, readSavedSourceAssetId())
+          previous =>
+            previous ??
+            (preferenceScope
+              ? pickProvisionalSwapSource(
+                  sources.length > 0 ? sources : cachedPlannedSources,
+                  readSavedSourceAssetId()
+                )
+              : null)
         )
         setAreTokensLoading(false)
       } catch {
         if (!cancelled) {
-          setSourceCatalog([])
-          setCrossChainDestinationCatalog([])
-          setTokenIn(null)
-          setTokenOut(null)
-          setAmountOut('')
-          setQuoteError(null)
+          if (cachedPlannedSources.length === 0) {
+            setSourceCatalog([])
+            setTokenIn(null)
+            setAmountOut('')
+            setQuoteError(null)
+          }
           setCatalogError(true)
         }
       } finally {

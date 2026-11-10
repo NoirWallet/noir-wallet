@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Icon } from '@iconify/react'
 import { formatSortAddress, getAccountDisplayName } from '@/lib/format'
+import { resolveEvmAddressRole } from '@/core/accounts/evm-address-role'
 import { DEFAULT_NETWORK } from '@/lib/runtime-network'
 import {
   accountNetworksClient,
@@ -19,11 +20,13 @@ import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import { ListSkeleton } from '../ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../ui/tabs'
+import { Tooltip } from '../ui/tooltip'
 import { ExecutionAccountBadge } from '../account/ExecutionAccountSelector'
 import {
   buildMyAccountRecipientGroups,
   buildMyWalletRecipientGroups,
-  buildSavedRecipientList
+  buildSavedRecipientList,
+  getMyAccountRecipientUnavailableReason
 } from './recipient-selector-model'
 
 const EMPTY_ADDRESSES: readonly string[] = Object.freeze([])
@@ -72,12 +75,18 @@ export function RecipientSelector({
   excludeAddresses = EMPTY_ADDRESSES,
   includeUnavailableAccounts = false,
   includeCurrentAccount = false,
+  sendingAddress,
+  disablePrivateExecutionAddresses = false,
+  onMoveToPrivate,
   onSelect
 }: {
   readonly chainId: string
   readonly excludeAddresses?: readonly string[]
   readonly includeUnavailableAccounts?: boolean
   readonly includeCurrentAccount?: boolean
+  readonly sendingAddress?: string
+  readonly disablePrivateExecutionAddresses?: boolean
+  readonly onMoveToPrivate?: (address: string) => void
   readonly onSelect: (address: string, displayName?: string) => void
 }) {
   const contacts = useAddressBookStore(state => state.contacts)
@@ -249,7 +258,9 @@ export function RecipientSelector({
                       )}
                     </div>
                     {wallet.accounts.length === 1 && firstAccount.active && (
-                      <span className="shrink-0 text-xs text-muted">Current</span>
+                      <span className="shrink-0 rounded bg-wallet-selected px-2 py-0.5 text-xs font-medium text-foreground">
+                        Current
+                      </span>
                     )}
                   </div>
                   <div className="space-y-3">
@@ -267,7 +278,11 @@ export function RecipientSelector({
                               <span className="min-w-0 flex-1 truncate font-medium">
                                 {displayName}
                               </span>
-                              {group.active && <span className="text-muted">Current</span>}
+                              {group.active && (
+                                <span className="shrink-0 rounded bg-wallet-selected px-2 py-0.5 font-medium text-foreground">
+                                  Current
+                                </span>
+                              )}
                             </div>
                           )}
                           {group.addresses.length === 0 ? (
@@ -277,13 +292,24 @@ export function RecipientSelector({
                           ) : (
                             group.addresses.map(address => {
                               const schemeLabel = addressSchemeLabel(address.scheme)
-                              return (
+                              const unavailableReason = getMyAccountRecipientUnavailableReason(
+                                address,
+                                sendingAddress,
+                                disablePrivateExecutionAddresses
+                              )
+                              const canMove =
+                                group.active &&
+                                address.executionMode === 'private' &&
+                                Boolean(onMoveToPrivate)
+                              const addressButton = (
                                 <button
-                                  key={`${group.key}:${address.scheme}:${address.value}`}
                                   type="button"
-                                  aria-label={`Send to ${displayName}${address.executionMode ? ` ${address.executionMode === 'private' ? 'Confidential' : 'Public'}` : schemeLabel ? ` ${schemeLabel}` : ''}`}
-                                  onClick={() => onSelect(address.value, displayName)}
-                                  className="flex w-full items-center gap-3 rounded-lg border border-transparent bg-card px-3 py-2.5 text-left transition-colors hover:border-primary/20 hover:bg-white/5"
+                                  aria-label={`${unavailableReason ? 'Unavailable: ' : 'Send to '}${displayName}${address.executionMode ? ` ${address.executionMode === 'private' ? 'Confidential' : 'Public'}` : schemeLabel ? ` ${schemeLabel}` : ''}${unavailableReason ? `. ${unavailableReason}` : ''}`}
+                                  aria-disabled={unavailableReason ? true : undefined}
+                                  onClick={() => {
+                                    if (!unavailableReason) onSelect(address.value, displayName)
+                                  }}
+                                  className={`flex min-w-0 flex-1 items-center gap-3 rounded-lg border border-transparent bg-card px-3 py-2.5 text-left transition-colors focus-visible:outline-2 focus-visible:outline-primary ${unavailableReason ? 'cursor-not-allowed opacity-65' : 'hover:border-primary/20 hover:bg-white/5'}`}
                                 >
                                   {schemeLabel && (
                                     <span
@@ -326,6 +352,37 @@ export function RecipientSelector({
                                     />
                                   )}
                                 </button>
+                              )
+                              return (
+                                <div
+                                  key={`${group.key}:${address.scheme}:${address.value}`}
+                                  className="flex items-center gap-1"
+                                >
+                                  {unavailableReason ? (
+                                    <Tooltip content={unavailableReason} side="top">
+                                      {addressButton}
+                                    </Tooltip>
+                                  ) : (
+                                    addressButton
+                                  )}
+                                  {canMove && (
+                                    <button
+                                      type="button"
+                                      onClick={() => onMoveToPrivate?.(address.value)}
+                                      aria-label={`Move to ${displayName} Private`}
+                                      title="Move to Private"
+                                      className="flex h-11 shrink-0 items-center gap-1 rounded-lg px-2 text-xs font-medium text-primary hover:bg-primary/10 focus-visible:outline-2 focus-visible:outline-primary"
+                                    >
+                                      <Icon
+                                        icon="lucide:arrow-right-left"
+                                        width={14}
+                                        height={14}
+                                        aria-hidden="true"
+                                      />
+                                      Move
+                                    </button>
+                                  )}
+                                </div>
                               )
                             })
                           )}
@@ -370,34 +427,58 @@ export function RecipientSelector({
                 Add address
               </button>
             )}
-            {visibleRecipients.map(contact => (
-              <button
-                key={contact.id}
-                type="button"
-                aria-label={`Send to ${contact.name}`}
-                onClick={() => onSelect(contact.address, contact.name)}
-                className="flex w-full items-center gap-3 rounded-lg border border-transparent bg-card px-3 py-2.5 text-left transition-colors hover:border-primary/20 hover:bg-white/5"
-              >
-                <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary/12 text-sm font-semibold text-primary">
-                  {contact.name.slice(0, 1).toUpperCase()}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium">{contact.name}</p>
-                  <p
-                    className="mt-0.5 truncate font-mono text-xs text-foreground"
-                    title={contact.address}
-                  >
-                    {formatSortAddress(contact.address)}
-                  </p>
-                </div>
-                <Icon
-                  icon="lucide:arrow-right"
-                  width={14}
-                  height={14}
-                  className="shrink-0 text-muted"
-                />
-              </button>
-            ))}
+            {visibleRecipients.map(contact => {
+              const privateAddress =
+                isEvm &&
+                disablePrivateExecutionAddresses &&
+                resolveEvmAddressRole(contact.address, chainId, catalog?.accounts) ===
+                  'confidential'
+              const unavailableReason = getMyAccountRecipientUnavailableReason(
+                {
+                  value: contact.address,
+                  executionMode: privateAddress ? 'private' : undefined
+                },
+                sendingAddress,
+                disablePrivateExecutionAddresses
+              )
+              const addressButton = (
+                <button
+                  type="button"
+                  aria-label={`${unavailableReason ? 'Unavailable: ' : 'Send to '}${contact.name}${unavailableReason ? `. ${unavailableReason}` : ''}`}
+                  aria-disabled={unavailableReason ? true : undefined}
+                  onClick={() => {
+                    if (!unavailableReason) onSelect(contact.address, contact.name)
+                  }}
+                  className={`flex w-full items-center gap-3 rounded-lg border border-transparent bg-card px-3 py-2.5 text-left transition-colors focus-visible:outline-2 focus-visible:outline-primary ${unavailableReason ? 'cursor-not-allowed opacity-65' : 'hover:border-primary/20 hover:bg-white/5'}`}
+                >
+                  <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary/12 text-sm font-semibold text-primary">
+                    {contact.name.slice(0, 1).toUpperCase()}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium">{contact.name}</p>
+                    <p
+                      className="mt-0.5 truncate font-mono text-xs text-foreground"
+                      title={contact.address}
+                    >
+                      {formatSortAddress(contact.address)}
+                    </p>
+                  </div>
+                  <Icon
+                    icon="lucide:arrow-right"
+                    width={14}
+                    height={14}
+                    className="shrink-0 text-muted"
+                  />
+                </button>
+              )
+              return unavailableReason ? (
+                <Tooltip key={contact.id} content={unavailableReason} side="top">
+                  {addressButton}
+                </Tooltip>
+              ) : (
+                <div key={contact.id}>{addressButton}</div>
+              )
+            })}
           </div>
         )}
       </TabsContent>

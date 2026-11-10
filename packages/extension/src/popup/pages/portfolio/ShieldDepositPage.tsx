@@ -70,6 +70,7 @@ export function ShieldDepositPage() {
 
 function ShieldDepositContent() {
   const [searchParams] = useSearchParams()
+  const requestedProviderIsNear = searchParams.get('provider') === 'near-confidential'
   const { navigate, replace } = useNavigate()
   const currentWalletId = useWalletStore(state => state.currentWalletId)
   const currentAccountId = useWalletStore(state => state.currentAccountId)
@@ -111,7 +112,7 @@ function ShieldDepositContent() {
   const [showAmountError, setShowAmountError] = useState(false)
   const [quoteAmountError, setQuoteAmountError] = useState<string | null>(null)
   const [provider, setProvider] = useState<ShieldProvider>('near-confidential')
-  const [providerSelected, setProviderSelected] = useState(false)
+  const [providerSelected, setProviderSelected] = useState(requestedProviderIsNear)
   const [records, setRecords] = useState<readonly ExternalShieldDeposit[]>([])
   const [viewRecordId, setViewRecordId] = useState<string | null>(null)
   const viewRecordIdRef = useRef(viewRecordId)
@@ -168,7 +169,7 @@ function ShieldDepositContent() {
     setTokenId(undefined)
     setNetworkId(null)
     setProvider('near-confidential')
-    setProviderSelected(false)
+    setProviderSelected(requestedProviderIsNear)
     setPicker(null)
     setRefundAddress('')
     setRefundEdited(false)
@@ -185,7 +186,7 @@ function ShieldDepositContent() {
     checkInFlightRef.current = false
     setError(null)
     requestIdRef.current = null
-  }, [walletId, accountId, currentNetwork])
+  }, [walletId, accountId, currentNetwork, requestedProviderIsNear])
 
   useEffect(() => {
     checkAttemptRef.current += 1
@@ -528,7 +529,7 @@ function ShieldDepositContent() {
   const selectToken = (choice: (typeof tokenChoices)[number]) => {
     setTokenId(choice.id)
     setNetworkId(null)
-    setProviderSelected(false)
+    setProviderSelected(requestedProviderIsNear)
     setRefundAddress('')
     setRefundEdited(false)
     setShowRefundError(false)
@@ -540,7 +541,7 @@ function ShieldDepositContent() {
   }
   const selectNetwork = (network: ChainDefinition) => {
     setNetworkId(network.id)
-    setProviderSelected(false)
+    setProviderSelected(requestedProviderIsNear)
     setRefundAddress('')
     setRefundEdited(false)
     setShowRefundError(false)

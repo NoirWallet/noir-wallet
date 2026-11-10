@@ -4,7 +4,7 @@ import { Icon } from '@iconify/react'
 import type { PortfolioAssetView, PortfolioChainView } from '@/core/portfolio'
 import type { AssetPriceReadModel } from '@/core/prices'
 import { formatBaseUnitAmount, formatTokenQuantity, formatFiatAmount } from '@/lib/number-format'
-import { formatSortAddress, getAccountDisplayName } from '@/lib/format'
+import { formatSortAddress, formatWalletNameAtIndex, getAccountDisplayName } from '@/lib/format'
 import { getChainEndpointRuntimeKey } from '@/core/chains/chain-endpoint-settings'
 import { resolveChainIconAlias } from '@/lib/chain-icon'
 import { cn } from '@/lib/utils'
@@ -90,7 +90,7 @@ import {
   buildMoveToMainEvmPath,
   getEvmTokenFeeBalanceError
 } from './evm-send-validation'
-import { initialMoveDraft } from './move-draft'
+import { initialMoveDraft, readMoveAssetHint } from './move-draft'
 
 type TransferAsset = { asset: PortfolioAssetView; chain: PortfolioChainView }
 
@@ -203,20 +203,18 @@ function DomainCard({
 function MethodCard({
   title,
   detail,
+  recommended,
   selected,
-  disabled,
   estimate,
   fee,
-  loading,
   onClick
 }: {
   title: 'Cluster' | 'Directly'
   detail: string
+  recommended: boolean
   selected: boolean
-  disabled: boolean
-  estimate: MoveMethodEstimate | null
+  estimate: MoveMethodEstimate
   fee: { value: string; detail: string | null }
-  loading: boolean
   onClick: () => void
 }) {
   return (
@@ -225,15 +223,13 @@ function MethodCard({
       role="radio"
       aria-label={title}
       aria-checked={selected}
-      disabled={disabled}
       onClick={onClick}
       className={cn(
         'relative flex min-h-[150px] flex-col rounded-xl border bg-wallet-surface px-3 py-4 text-left text-xs leading-4',
-        selected ? 'border-primary/60' : 'border-white/10',
-        disabled && 'opacity-60'
+        selected ? 'border-primary/60' : 'border-white/10'
       )}
     >
-      {title === 'Cluster' && (
+      {recommended && (
         <span className="absolute -top-2.5 left-3 rounded-full bg-primary px-2 py-0.5 text-[10px] text-primary-foreground">
           Recommended
         </span>
@@ -252,22 +248,20 @@ function MethodCard({
         <span className="text-muted">Privacy</span>
         <span>{title === 'Cluster' ? 'Strong' : 'Standard'}</span>
       </span>
-      <span className="mt-2 flex justify-between gap-2" aria-busy={loading}>
-        <span className="shrink-0 text-muted">Time (est.)</span>
-        <span className="min-w-0 text-right">
-          <span className="block">{loading ? '…' : (estimate?.time ?? '—')}</span>
-          {estimate?.time !== '—' && estimate && (
+      {estimate.time !== '—' && (
+        <span className="mt-2 flex justify-between gap-2">
+          <span className="shrink-0 text-muted">Time (est.)</span>
+          <span className="min-w-0 text-right">
+            <span className="block">{estimate.time}</span>
             <span className="block text-[10px] text-muted">{estimate.timeScope}</span>
-          )}
+          </span>
         </span>
-      </span>
-      <span className="mt-2 flex justify-between gap-2" aria-busy={loading}>
+      )}
+      <span className="mt-2 flex justify-between gap-2">
         <span className="shrink-0 text-muted">Fee (est.)</span>
         <span className="min-w-0 break-words text-right">
-          <span className="block">{loading ? '…' : fee.value}</span>
-          {!loading && fee.detail && (
-            <span className="block text-[10px] text-muted">{fee.detail}</span>
-          )}
+          <span className="block">{fee.value}</span>
+          {fee.detail && <span className="block text-[10px] text-muted">{fee.detail}</span>}
         </span>
       </span>
     </button>
@@ -293,6 +287,7 @@ function TransferForm() {
   const { goBack, navigate } = useNavigate()
   const currentWalletId = useWalletStore(state => state.currentWalletId)
   const currentAccountId = useWalletStore(state => state.currentAccountId)
+  const wallets = useWalletStore(state => state.wallets)
   const accountDisplayNames = useWalletStore(state => state.accountDisplayNames)
   const currentNetwork = useWalletStore(state => state.currentNetwork)
   const endpointRuntimeKey = useSettingsStore(state =>
@@ -313,6 +308,7 @@ function TransferForm() {
     routeTo,
     routeAssetId: params.get('assetId')
   })
+  const moveAssetHint = readMoveAssetHint(location.state, scopeKey, initialDraft.assetId)
   const latestScopeKey = useRef(scopeKey)
   latestScopeKey.current = scopeKey
   const mounted = useRef(true)
@@ -325,6 +321,7 @@ function TransferForm() {
   const {
     model: portfolio,
     status: loadState,
+    settled: portfolioSettled,
     refresh: refreshPortfolio
   } = useHomePortfolio(effective?.walletId ?? null, effective?.accountId ?? null)
   const [retry, setRetry] = useState(0)
@@ -563,6 +560,26 @@ function TransferForm() {
   )
   const selected =
     assets.find(item => item.asset.asset.id === (selectedAssetId ?? defaultAssetId)) ?? null
+  const requestedChainId = selectedAssetId?.split('/')[0]
+  const requestedChain = portfolio?.chains.find(chain => chain.chain.id === requestedChainId)
+  const requestedAssetKnown =
+    portfolio?.assets.some(asset => asset.asset.id === selectedAssetId) ||
+    portfolio?.confidential?.assets.some(asset => asset.assetId === selectedAssetId)
+  const requestedAssetUnavailable = Boolean(
+    portfolioSettled &&
+    portfolio &&
+    activeAccount &&
+    selectedAssetId &&
+    (!requestedChain ||
+      (requestedChain.status === 'ready' &&
+        (!eligibleChainIds.includes(requestedChain.chain.id) ||
+          requestedChain.chain.capabilities.transaction.status !== 'available' ||
+          !requestedAssetKnown)))
+  )
+  const pendingAssetHint =
+    !selected && !requestedAssetUnavailable && selectedAssetId === initialDraft.assetId
+      ? moveAssetHint
+      : null
   const pickerRows = useMemo(
     () =>
       listMoveAssetPickerRows({
@@ -911,6 +928,37 @@ function TransferForm() {
       return clusterMoveEstimate(estimateAmountRaw!, preview)
     }
   })
+  const clusterQuoted = Boolean(
+    canEstimateMethods &&
+    managedAsset &&
+    shieldConnection === 'connected' &&
+    clusterEstimate.value?.routeFeeRaw !== null &&
+    clusterEstimate.value &&
+    clusterEstimate.value.expiresAt > Date.now()
+  )
+  const directQuoted = Boolean(
+    canEstimateMethods &&
+    methodAvailable &&
+    directEstimate.value?.routeFeeRaw !== null &&
+    directEstimate.value &&
+    directEstimate.value.expiresAt > Date.now()
+  )
+  const clusterReady = clusterQuoted && clusterEstimate.value?.time !== '—'
+  const directReady = directQuoted && directEstimate.value?.time !== '—'
+  const directTimeUnavailable = directQuoted && !directReady
+  const clusterTimeUnavailable = clusterQuoted && !clusterReady
+  useEffect(() => {
+    if (
+      method === 'cluster' &&
+      clusterPair &&
+      directQuoted &&
+      !clusterReady &&
+      !clusterEstimate.loading &&
+      shieldConnection !== 'checking' &&
+      shieldConnection !== 'busy'
+    )
+      setMethod('directly')
+  }, [method, clusterPair, clusterReady, directQuoted, clusterEstimate.loading, shieldConnection])
   const shieldReviewKey = `${routeKey}:${method}:${currentAmount}:${shieldAmountState?.amountRaw ?? ''}`
   const latestShieldReviewKey = useRef(shieldReviewKey)
   latestShieldReviewKey.current = shieldReviewKey
@@ -927,6 +975,7 @@ function TransferForm() {
     eligible &&
     supportedPair &&
     routeState === 'supported' &&
+    (!clusterPair || (method === 'directly' && directQuoted)) &&
     !tokenFeeBalanceError &&
     (direction === 'main-to-private' ? publicRaw !== null : privateRaw !== null) &&
     (!maxSelected || (available?.display === currentAmount && amount === currentAmount)) &&
@@ -938,6 +987,7 @@ function TransferForm() {
   const canReviewShield = Boolean(
     draftScope === scopeKey &&
     fundingRoute &&
+    (!clusterSelected || clusterQuoted) &&
     selected &&
     eligible &&
     managedAsset &&
@@ -1028,6 +1078,20 @@ function TransferForm() {
     (activeAccount ? [activeAccount] : [])
   const pickerAccount =
     walletAccounts.find(account => account.accountId === pickerAccountId) ?? activeAccount
+  const walletIndexInStore = wallets.findIndex(wallet => wallet.id === effective?.walletId)
+  const walletIndex =
+    walletIndexInStore >= 0
+      ? walletIndexInStore
+      : Math.max(
+          0,
+          [...new Set(catalog?.accounts.map(account => String(account.walletId)) ?? [])].indexOf(
+            effective?.walletId ?? ''
+          )
+        )
+  const walletDisplayName = formatWalletNameAtIndex(
+    pickerAccount?.walletDisplayName ?? activeAccount?.walletDisplayName ?? 'Wallet',
+    walletIndex
+  )
   const pickerAccountName = pickerAccount
     ? getAccountDisplayName(
         pickerAccount.walletId,
@@ -1448,21 +1512,26 @@ function TransferForm() {
           <button
             type="button"
             onClick={() => setAssetPickerOpen(true)}
+            disabled={!selected && loadState === 'loading'}
             className="wallet-interactive flex h-9 max-w-full items-center gap-2 rounded-full bg-card px-2 text-base font-medium leading-[21px] hover:bg-wallet-selected active:brightness-95 focus-visible:outline-2 focus-visible:outline-primary"
             aria-label="Select transfer asset"
           >
-            {selected ? (
+            {selected || pendingAssetHint ? (
               <TokenIcon
-                assetId={selected.asset.asset.id}
-                symbol={symbol}
-                icon={selected.asset.metadata.iconUrl}
+                assetId={selected?.asset.asset.id ?? selectedAssetId!}
+                symbol={symbol || pendingAssetHint!.symbol}
+                icon={selected?.asset.metadata.iconUrl ?? pendingAssetHint?.iconUrl}
                 {...(from !== 'shield' ? { blockchain: networkIcon } : {})}
                 size={26}
               />
             ) : (
               <Icon icon="lucide:coins" width={20} height={20} />
             )}
-            <span className="max-w-32 truncate">{symbol || 'Select asset'}</span>
+            <span className="max-w-32 truncate">
+              {symbol ||
+                pendingAssetHint?.symbol ||
+                (loadState === 'loading' ? '…' : 'Select asset')}
+            </span>
             <Icon icon="lucide:chevron-down" width={14} height={14} />
           </button>
           <div className="flex max-w-full items-center gap-2 text-xs text-muted">
@@ -1568,7 +1637,7 @@ function TransferForm() {
             disabled={!selected}
           />
         </div>
-        {!selected && loadState !== 'loading' && loadState !== 'error' && (
+        {!selected && !pendingAssetHint && loadState !== 'loading' && loadState !== 'error' && (
           <p role="status" className="mt-3 text-center text-sm text-muted">
             No transferable assets
           </p>
@@ -1578,33 +1647,48 @@ function TransferForm() {
             {transferError}
           </p>
         )}
-        {selected?.chain.chain.family === 'evm' && clusterPair && (
+        {selected?.chain.chain.family === 'evm' && clusterPair && (clusterReady || directReady) && (
           <div
             role="radiogroup"
             aria-label="Transfer method"
-            className="mt-auto grid shrink-0 grid-cols-2 gap-2.5 pt-6"
+            className={cn(
+              'mt-auto grid shrink-0 gap-2.5 pt-6',
+              clusterReady && directReady ? 'grid-cols-2' : 'grid-cols-1'
+            )}
           >
-            <MethodCard
-              title="Cluster"
-              detail="Multiple transactions"
-              selected={method === 'cluster'}
-              disabled={!eligible || !managedAsset}
-              estimate={clusterEstimate.value}
-              fee={formatMoveMethodFee(clusterEstimate.value, selected.asset)}
-              loading={clusterEstimate.loading}
-              onClick={() => setMethod('cluster')}
-            />
-            <MethodCard
-              title="Directly"
-              detail="One transaction"
-              selected={method === 'directly'}
-              disabled={supportedPair && !methodAvailable}
-              estimate={directEstimate.value}
-              fee={formatMoveMethodFee(directEstimate.value, selected.asset)}
-              loading={directEstimate.loading}
-              onClick={() => setMethod('directly')}
-            />
+            {clusterReady && clusterEstimate.value && (
+              <MethodCard
+                title="Cluster"
+                detail="Multiple transactions"
+                recommended
+                selected={method === 'cluster'}
+                estimate={clusterEstimate.value}
+                fee={formatMoveMethodFee(clusterEstimate.value, selected.asset)}
+                onClick={() => setMethod('cluster')}
+              />
+            )}
+            {directReady && directEstimate.value && (
+              <MethodCard
+                title="Directly"
+                detail="One transaction"
+                recommended={false}
+                selected={method === 'directly'}
+                estimate={directEstimate.value}
+                fee={formatMoveMethodFee(directEstimate.value, selected.asset)}
+                onClick={() => setMethod('directly')}
+              />
+            )}
           </div>
+        )}
+        {directTimeUnavailable && (
+          <p role="status" className="mt-2 text-xs text-muted">
+            Directly: time estimate unavailable
+          </p>
+        )}
+        {clusterTimeUnavailable && (
+          <p role="status" className="mt-2 text-xs text-muted">
+            Cluster: time estimate unavailable
+          </p>
         )}
         {method === 'directly' &&
           selected &&
@@ -1851,15 +1935,12 @@ function TransferForm() {
         >
           <DialogHeader className="text-left">
             <DialogTitle className="text-sm font-medium leading-[18px]">
-              Move {domainPicker === 'from' ? 'from' : 'to'}
+              Move {domainPicker === 'from' ? 'from' : 'to'} · {walletDisplayName}
             </DialogTitle>
             <DialogDescription className="sr-only">
               Select an account and balance.
             </DialogDescription>
           </DialogHeader>
-          <p className="text-xs text-muted">
-            {activeAccount?.walletDisplayName ?? 'Wallet'} · {pickerAccountName}
-          </p>
           <div
             role="tablist"
             aria-label="Wallet accounts"

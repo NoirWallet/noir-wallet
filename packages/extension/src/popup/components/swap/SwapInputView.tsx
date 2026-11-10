@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { Icon } from '@iconify/react'
 import type { AddressType } from '@/types'
 import type { SwapToken } from '@/core/services/intents-api'
@@ -141,36 +141,6 @@ function ReceiveAddressSkeleton() {
   )
 }
 
-function SwapInputSkeleton() {
-  return (
-    <>
-      <div
-        className="min-h-0 flex-1 overflow-hidden px-5 pb-3 pt-4"
-        role="status"
-        aria-label="Loading swap assets"
-      >
-        <div className="relative">
-          <SwapAssetCardSkeleton direction="From" />
-          <Skeleton className="absolute left-1/2 top-[109px] z-10 size-7 -translate-x-1/2 rounded-md bg-card" />
-          <div className="border-t border-white/10 pt-3">
-            <SwapAssetCardSkeleton direction="To" />
-          </div>
-        </div>
-        <div className="mt-5">
-          <ReceiveAddressSkeleton />
-        </div>
-        <div className="mt-5 flex items-center justify-between py-1">
-          <Skeleton className="h-3.5 w-20" />
-          <Skeleton className="h-3.5 w-24 bg-white/[0.05]" />
-        </div>
-      </div>
-      <div className="page-footer">
-        <Skeleton className="h-[45px] w-full rounded-lg" />
-      </div>
-    </>
-  )
-}
-
 function SwapAssetCard({
   direction,
   token,
@@ -198,6 +168,7 @@ function SwapAssetCard({
 }: SwapAssetCardProps) {
   const hasAccountDetails = Boolean(accountAddress || accountFallbackLabel || accountBadge)
   const amountField = useRef<HTMLInputElement>(null)
+  const amountInputId = useId()
   const [amountFontSize, setAmountFontSize] = useState(20)
   useLayoutEffect(() => {
     if (isReadOnly || !amountField.current) return
@@ -335,8 +306,8 @@ function SwapAssetCard({
           </span>
         </button>
 
-        <div className="min-w-0 flex-1 text-right">
-          {isReadOnly ? (
+        {isReadOnly ? (
+          <div className="min-w-0 flex-1 text-right">
             <p
               aria-live="polite"
               aria-label={isEstimatedAmount && amount ? `Estimated output: ${amount}` : undefined}
@@ -363,8 +334,35 @@ function SwapAssetCard({
                 '—'
               )}
             </p>
-          ) : (
+            <p className="mt-0.5 truncate text-xs leading-4 text-muted">
+              {isEstimatedAmount ? (
+                <span className="inline-flex items-center justify-end gap-1">
+                  {isAmountLoading && (
+                    <Icon
+                      icon="lucide:loader-circle"
+                      width={11}
+                      height={11}
+                      className="animate-spin"
+                      aria-hidden="true"
+                    />
+                  )}
+                  <span>
+                    {fiatValue
+                      ? `≈${formatFiatAmount(fiatValue, { showSign: true })}`
+                      : 'Estimated'}
+                  </span>
+                </span>
+              ) : fiatValue ? (
+                formatFiatAmount(fiatValue, { showSign: true })
+              ) : (
+                '—'
+              )}
+            </p>
+          </div>
+        ) : (
+          <label htmlFor={amountInputId} className="min-w-0 flex-1 cursor-text text-right">
             <input
+              id={amountInputId}
               ref={amountField}
               type="text"
               inputMode="decimal"
@@ -377,35 +375,11 @@ function SwapAssetCard({
               style={{ fontSize: amountFontSize }}
               className="w-full min-w-0 bg-transparent text-right font-sans font-semibold leading-[26px] outline-none placeholder:text-muted/60"
             />
-          )}
-          <p
-            className={cn(
-              'mt-0.5 truncate text-xs leading-4 text-muted',
-              isEstimatedAmount && 'opacity-70'
-            )}
-          >
-            {isEstimatedAmount ? (
-              <span className="inline-flex items-center justify-end gap-1">
-                {isAmountLoading && (
-                  <Icon
-                    icon="lucide:loader-circle"
-                    width={11}
-                    height={11}
-                    className="animate-spin"
-                    aria-hidden="true"
-                  />
-                )}
-                <span>
-                  {fiatValue ? `≈${formatFiatAmount(fiatValue, { showSign: true })}` : 'Estimated'}
-                </span>
-              </span>
-            ) : fiatValue ? (
-              formatFiatAmount(fiatValue, { showSign: true })
-            ) : (
-              '—'
-            )}
-          </p>
-        </div>
+            <p className="mt-0.5 truncate text-xs leading-4 text-muted">
+              {fiatValue ? formatFiatAmount(fiatValue, { showSign: true }) : '—'}
+            </p>
+          </label>
+        )}
       </div>
       {pendingBalance != null && safeBig(pendingBalance).gt(0) && (
         <div className="mt-1 flex items-center justify-end gap-1 text-xs text-muted">
@@ -491,20 +465,6 @@ export function SwapInputView({
       (feeIsApproximate ? 'Insufficient balance' : `Insufficient balance (Fee: ${networkFee} ZEC)`)
     : undefined
   const hasQuoteDetails = Boolean(estimatedOut) && rate !== '...' && rate !== '0'
-
-  if (catalogError) {
-    return (
-      <div className="flex min-h-0 flex-1 items-center px-8">
-        <InlineError
-          message="Unable to load assets"
-          onRetry={onRetryTokenCatalog}
-          className="w-full"
-        />
-      </div>
-    )
-  }
-
-  if (sourceAssetsLoading) return <SwapInputSkeleton />
 
   return (
     <>
@@ -618,6 +578,14 @@ export function SwapInputView({
             />
           </div>
         </div>
+
+        {catalogError && (
+          <InlineError
+            message="Unable to load assets"
+            onRetry={onRetryTokenCatalog}
+            className="mt-2 px-1 leading-5"
+          />
+        )}
 
         {quoteError && (
           <InlineError

@@ -110,6 +110,12 @@ test.describe('account-scoped Swap token selection', () => {
     expect(createSwapTokenPreferenceScope('wallet-a', 'account-1')).toBe('wallet-a:account-1')
     expect(createSwapTokenPreferenceScope('wallet-a', 'account-2')).toBe('wallet-a:account-2')
     expect(createSwapTokenPreferenceScope(null, 'account-1')).toBeNull()
+    expect(createSwapTokenPreferenceScope('wallet-a', 'account-1', 'mainnet', 'main')).not.toBe(
+      createSwapTokenPreferenceScope('wallet-a', 'account-1', 'testnet', 'main')
+    )
+    expect(createSwapTokenPreferenceScope('wallet-a', 'account-1', 'mainnet', 'main')).not.toBe(
+      createSwapTokenPreferenceScope('wallet-a', 'account-1', 'mainnet', 'private')
+    )
   })
 
   test('ignores source history that is not available to the current account', () => {

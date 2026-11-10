@@ -35,9 +35,13 @@ export function compareSwapTokenSearchRelevance(
 
 export function createSwapTokenPreferenceScope(
   walletId: string | null,
-  accountId: string | null
+  accountId: string | null,
+  network?: string,
+  mode?: string
 ): string | null {
-  return walletId && accountId ? `${walletId}:${accountId}` : null
+  return walletId && accountId
+    ? [network, walletId, accountId, mode].filter(Boolean).join(':')
+    : null
 }
 
 export function getSavedSwapDestinationAssetId(

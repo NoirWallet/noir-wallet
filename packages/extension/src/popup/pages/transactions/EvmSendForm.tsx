@@ -325,8 +325,13 @@ export function EvmSendForm({
   const intentKey = createEvmSendIntentKey({ ...reviewContext, recipient, amountRaw })
   const currentIntent = useRef<string | null>(intentKey)
   currentIntent.current = intentKey
-  const handleMoveRecipient = async () => {
-    if (!canMoveRecipient || !recipientPolicyError || currentIntent.current !== intentKey) return
+  const handleMoveRecipient = async (targetAddress = recipient) => {
+    if (
+      !onFundPrivate ||
+      !isCurrentAccountPrivateEvmAddress(targetAddress, chain.chain.id, activeAccount) ||
+      currentIntent.current !== intentKey
+    )
+      return
     try {
       const latestCatalog = await accountNetworksClient.getCatalog()
       if (!latestCatalog) throw new Error('Account directory unavailable')
@@ -347,7 +352,7 @@ export function EvmSendForm({
         latestIdentity?.walletId !== walletId ||
         latestIdentity.accountId !== accountId ||
         !latestAccount?.active ||
-        !isCurrentAccountPrivateEvmAddress(recipient, chain.chain.id, latestAccount)
+        !isCurrentAccountPrivateEvmAddress(targetAddress, chain.chain.id, latestAccount)
       ) {
         return
       }
@@ -649,7 +654,16 @@ export function EvmSendForm({
       body: resolve => (
         <RecipientSelector
           chainId={chain.chain.id}
-          excludeAddresses={sourceAddress ? [sourceAddress] : []}
+          sendingAddress={sourceAddress}
+          disablePrivateExecutionAddresses
+          onMoveToPrivate={
+            sourceMode === 'main' && onFundPrivate
+              ? address => {
+                  resolve(undefined)
+                  void handleMoveRecipient(address)
+                }
+              : undefined
+          }
           onSelect={(address, name) => {
             invalidateMaximum()
             if (maxSelected) setAmount('')
@@ -1059,7 +1073,9 @@ export function EvmSendForm({
         />
 
         <div className="flex min-w-0 items-center justify-between gap-2 text-xs">
-          <span className="shrink-0 text-muted">From</span>
+          <span className="shrink-0 text-sm font-medium leading-[18px] text-foreground/80">
+            From
+          </span>
           <button
             type="button"
             onClick={() => onSourceSelectorOpenChange(true)}

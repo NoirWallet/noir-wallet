@@ -3,7 +3,8 @@ import { expect } from '@playwright/test'
 
 import {
   buildMyAccountRecipientGroups,
-  buildSavedRecipientList
+  buildSavedRecipientList,
+  getMyAccountRecipientUnavailableReason
 } from '../../../src/popup/components/transaction/recipient-selector-model.ts'
 import {
   ALL_EVM_NETWORKS_CHAIN_ID,
@@ -136,6 +137,25 @@ test('includes the current EVM account alternate execution address and excludes 
   expect(buildMyAccountRecipientGroups(scope, EVM).flatMap(group => group.addresses)).toHaveLength(
     1
   )
+})
+
+test('keeps current EVM addresses visible while marking only unavailable recipients', () => {
+  const current = account('1', '0', true, '1')
+  current.networks.find(item => item.chain.id === EVM).privateExecutionAddress =
+    `0x${'a'.repeat(40)}`
+  const scope = { generationId: 'generation-1', accounts: [current, account('2', '0', false, '2')] }
+  const groups = buildMyAccountRecipientGroups(scope, EVM)
+  const sender = `0x${'1'.repeat(40)}`
+
+  expect(groups[0].addresses.map(item => item.executionMode)).toEqual(['main', 'private'])
+  expect(getMyAccountRecipientUnavailableReason(groups[0].addresses[0], sender)).toBe(
+    'This is the sending address.'
+  )
+  expect(getMyAccountRecipientUnavailableReason(groups[0].addresses[1], sender, true)).toContain(
+    'cannot be selected'
+  )
+  expect(getMyAccountRecipientUnavailableReason(groups[0].addresses[1], sender)).toBeNull()
+  expect(getMyAccountRecipientUnavailableReason(groups[1].addresses[0], sender)).toBeNull()
 })
 
 test('keeps saved external recipients in a separate chain-scoped alphabetical list', () => {

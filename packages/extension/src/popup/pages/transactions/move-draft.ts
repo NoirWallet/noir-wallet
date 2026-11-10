@@ -15,6 +15,32 @@ export interface MoveDraft {
   readonly maxSelected: boolean
 }
 
+export function readMoveAssetHint(
+  state: unknown,
+  scope: string,
+  assetId: string | null
+): { symbol: string; iconUrl: string | undefined } | null {
+  if (!state || typeof state !== 'object' || !('moveAssetHint' in state)) return null
+  const hint = state.moveAssetHint
+  if (
+    !hint ||
+    typeof hint !== 'object' ||
+    !('scope' in hint) ||
+    hint.scope !== scope ||
+    !('assetId' in hint) ||
+    hint.assetId !== assetId ||
+    !('symbol' in hint) ||
+    typeof hint.symbol !== 'string' ||
+    !hint.symbol ||
+    ('iconUrl' in hint && hint.iconUrl !== undefined && typeof hint.iconUrl !== 'string')
+  )
+    return null
+  return {
+    symbol: hint.symbol,
+    iconUrl: 'iconUrl' in hint ? (hint.iconUrl as string | undefined) : undefined
+  }
+}
+
 function readMoveDraft(state: unknown, scope: string): MoveDraft | null {
   if (!state || typeof state !== 'object' || !('moveDraft' in state)) return null
   const draft = state.moveDraft
@@ -67,7 +93,7 @@ export function initialMoveDraft(input: {
     from: domains.from,
     to: domains.to,
     amount: '',
-    method: 'directly',
+    method: domains.from === 'shield' || domains.to === 'shield' ? 'directly' : 'cluster',
     maxSelected: false
   }
 }

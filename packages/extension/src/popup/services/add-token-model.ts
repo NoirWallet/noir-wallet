@@ -5,6 +5,8 @@ import {
 } from '@/config/networks'
 import type { UserEvmAssetCandidate } from '@/core/chains/user-assets'
 import type { IntentsManagedAsset } from '@/core/services/intents-managed-assets'
+import { parseNearAccountId } from '@/core/chains/near'
+import { parseSolanaPublicKey } from '@/core/chains/solana'
 import type { Network } from '@/types'
 import {
   DEFAULT_ENABLED_CHAIN_FEATURE_FLAGS,
@@ -82,6 +84,26 @@ export function getAddTokenReferencePresentation(network: AddTokenNetwork | unde
     return Object.freeze({ label: 'SPL Token mint address', placeholder: 'Token mint address' })
   }
   return Object.freeze({ label: 'NEP-141 contract account', placeholder: 'token.near' })
+}
+
+export function isAddTokenReferenceSearch(
+  query: string,
+  network: AddTokenNetwork | undefined
+): boolean {
+  if (!network || network.disabled) return false
+  const reference = query.trim()
+  if (network.family === 'evm') {
+    return /^0x[0-9a-fA-F]{40}$/.test(reference) && !/^0x0{40}$/i.test(reference)
+  }
+  try {
+    if (network.family === 'solana') return parseSolanaPublicKey(reference) === reference
+    if (network.family === 'near' && reference.includes('.')) {
+      return parseNearAccountId(reference) === reference
+    }
+  } catch {
+    return false
+  }
+  return false
 }
 
 export function getVerifiedTokenPresentation(candidate: AddTokenCandidate | null): Readonly<{
