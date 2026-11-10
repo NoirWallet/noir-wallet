@@ -511,6 +511,15 @@ export class BackgroundMultichainSessionDAppHandler {
         ? [evmProposal]
         : []
     })
+    const accountLabels = new Map(
+      prepared
+        .filter(item => item.supported.family !== 'zcash')
+        .flatMap(item => item.proposal.accounts)
+        .map(account => [
+          JSON.stringify([account.reference.walletId, account.reference.accountId]),
+          account.label
+        ])
+    )
     const decision = await this.options.approval.requestExternalApproval(
       origin,
       'multichainConnect',
@@ -519,9 +528,24 @@ export class BackgroundMultichainSessionDAppHandler {
           chainId: proposal.chainId,
           chainName: proposal.chainName,
           iconChain: proposal.iconChain,
+          networks: prepared
+            .filter(item =>
+              proposal.chainId === 'evm'
+                ? item.supported.family === 'evm'
+                : item.supported.chainId === proposal.chainId
+            )
+            .map(({ supported }) => ({
+              chainId: supported.chainId,
+              chainName: supported.chainName,
+              iconChain: supported.iconChain
+            })),
           accounts: proposal.accounts.map(account => ({
             id: account.id,
-            label: account.label,
+            accountKey: JSON.stringify([account.reference.walletId, account.reference.accountId]),
+            label:
+              accountLabels.get(
+                JSON.stringify([account.reference.walletId, account.reference.accountId])
+              ) ?? account.label,
             address: account.address,
             required: account.required
           })),

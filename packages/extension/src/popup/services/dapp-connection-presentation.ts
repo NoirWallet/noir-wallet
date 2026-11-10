@@ -22,6 +22,91 @@ interface DAppPermissionContext {
   readonly account?: AccountRef | null
 }
 
+export interface MultichainConnectionAccountOption {
+  readonly id: string
+  readonly accountKey?: string
+  readonly label: string
+  readonly address: string
+  readonly required?: boolean
+}
+
+export interface MultichainConnectionNetwork {
+  readonly chainId: string
+  readonly chainName: string
+  readonly iconChain: string
+}
+
+export interface MultichainConnectionScope extends MultichainConnectionNetwork {
+  readonly accounts: readonly MultichainConnectionAccountOption[]
+  readonly preselectedIds: readonly string[]
+  readonly networks?: readonly MultichainConnectionNetwork[]
+}
+
+export interface MultichainConnectionAccount {
+  readonly key: string
+  readonly label: string
+  readonly permissions: readonly {
+    readonly scope: MultichainConnectionScope
+    readonly account: MultichainConnectionAccountOption
+  }[]
+  readonly networks: readonly MultichainConnectionNetwork[]
+}
+
+export function groupMultichainConnectionAccounts(
+  scopes: readonly MultichainConnectionScope[]
+): readonly MultichainConnectionAccount[] {
+  const groups = new Map<string, MultichainConnectionAccount>()
+  for (const scope of scopes) {
+    for (const account of scope.accounts) {
+      // Older pending requests without an identity must remain separate across scopes.
+      const key = account.accountKey ?? JSON.stringify([scope.chainId, account.id])
+      const previous = groups.get(key)
+      const networks = new Map(
+        [...(previous?.networks ?? []), ...(scope.networks ?? [scope])].map(network => [
+          network.chainId,
+          network
+        ])
+      )
+      groups.set(key, {
+        key,
+        label: previous?.label ?? account.label,
+        permissions: [...(previous?.permissions ?? []), { scope, account }],
+        networks: [...networks.values()]
+      })
+    }
+  }
+  return [...groups.values()]
+}
+
+export function getMultichainConnectionAccountSelection(
+  account: MultichainConnectionAccount,
+  selections: Readonly<Record<string, readonly string[]>>
+): 'none' | 'some' | 'all' {
+  const count = account.permissions.filter(permission =>
+    selections[permission.scope.chainId]?.includes(permission.account.id)
+  ).length
+  return count === 0 ? 'none' : count === account.permissions.length ? 'all' : 'some'
+}
+
+export function toggleMultichainConnectionAccount(
+  account: MultichainConnectionAccount,
+  selections: Readonly<Record<string, readonly string[]>>
+): Record<string, string[]> {
+  const select = getMultichainConnectionAccountSelection(account, selections) !== 'all'
+  const next = Object.fromEntries(
+    Object.entries(selections).map(([scope, ids]) => [scope, [...ids]])
+  )
+  for (const permission of account.permissions) {
+    const { scope, account: option } = permission
+    const ids = next[scope.chainId] ?? []
+    next[scope.chainId] =
+      select || option.required
+        ? [...new Set([...ids, option.id])]
+        : ids.filter(id => id !== option.id)
+  }
+  return next
+}
+
 export function presentDAppPermissions(
   dapp: ConnectedDApp,
   { network, endpointSettings, account }: DAppPermissionContext

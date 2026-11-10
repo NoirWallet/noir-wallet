@@ -27,6 +27,11 @@ import {
 } from '@/core/zcash/shielding'
 import { getOwnExtensionSenderContext } from '@/lib/runtime-message-security'
 import { ApprovalWindowLayout } from '@/popup/components/dapp/ApprovalWindowLayout'
+import { MultichainConnectionAccounts } from '@/popup/components/dapp/MultichainConnectionAccounts'
+import {
+  toggleMultichainConnectionAccount,
+  type MultichainConnectionScope as MultichainScopeOption
+} from '@/popup/services/dapp-connection-presentation'
 import { EvmAddNetworkDetails } from '@/popup/components/dapp/EvmAddNetworkDetails'
 import {
   ApprovalDetailCard,
@@ -47,7 +52,6 @@ import { parseNetworkFeeTier, type NetworkFeeTier } from '@/core/transactions/do
 import { parseEvmFeeSelection, type EvmFeeSelection } from '@/infrastructure/chains/evm'
 import { NETWORKS } from '@/config/networks'
 import { getBundledEvmAssetDefinitions } from '@/core/chains/registry/product-chain-definitions'
-import { ChainIcon } from '@/popup/components/common/ChainIcon'
 import {
   CopyFeedbackIcon,
   CopyToast,
@@ -76,14 +80,6 @@ interface ChainAccountOption {
   label: string
   address: string
   required?: boolean
-}
-
-interface MultichainScopeOption {
-  chainId: string
-  chainName: string
-  iconChain: string
-  accounts: ChainAccountOption[]
-  preselectedIds: string[]
 }
 
 const MULTI_ACCOUNT_CONNECT_ACTIONS = new Set([
@@ -195,7 +191,6 @@ export function ApprovalPage() {
   >(null)
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [selectedScopes, setSelectedScopes] = useState<Record<string, string[]>>({})
-  const [expandedScopeId, setExpandedScopeId] = useState<string | null>(null)
   const [editingAccounts, setEditingAccounts] = useState(false)
   const { copyToClipboard, showToast: showCopyToast, isCopied } = useCopyToClipboard()
   const dappDomain = formatDAppHost(origin)
@@ -748,139 +743,18 @@ export function ApprovalPage() {
                 Array.isArray(Reflect.get(scope, 'preselectedIds'))
             )
           : []
-        const selectedAccountCount = scopes.reduce(
-          (total, scope) => total + (selectedScopes[scope.chainId]?.length ?? 0),
-          0
-        )
         return (
           <div className="space-y-5">
             <DAppConnectionHeader domain={dappDomain} pageUrl={dappPageUrl} />
 
-            <section
-              aria-label="Accounts"
-              className="overflow-hidden rounded-2xl border border-border bg-card/35"
-            >
-              <div className="flex items-center justify-between border-b border-border px-4 py-3">
-                <div>
-                  <h2 className="text-sm font-medium">Accounts</h2>
-                  <p className="mt-0.5 text-[11px] text-muted">{selectedAccountCount} selected</p>
-                </div>
-                <div className="flex items-center gap-1" aria-hidden="true">
-                  {scopes.slice(0, 5).map(scope => (
-                    <ChainIcon
-                      key={scope.chainId}
-                      chain={scope.iconChain}
-                      width={24}
-                      height={24}
-                      showTooltip={false}
-                      className="size-6 rounded-full border-2 border-card"
-                    />
-                  ))}
-                </div>
-              </div>
-              {scopes.map(scope => {
-                const selected = selectedScopes[scope.chainId] ?? []
-                const selectedAccounts = scope.accounts.filter(account =>
-                  selected.includes(account.id)
-                )
-                const expanded = expandedScopeId === scope.chainId
-                const accountSummary =
-                  selectedAccounts.length === 1
-                    ? formatSortAddress(selectedAccounts[0].address)
-                    : `${selectedAccounts.length} accounts`
-                return (
-                  <div
-                    key={scope.chainId}
-                    data-caip25-scope={scope.chainId}
-                    className="border-b border-border last:border-b-0"
-                  >
-                    <button
-                      type="button"
-                      aria-expanded={expanded}
-                      onClick={() => setExpandedScopeId(expanded ? null : scope.chainId)}
-                      className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-white/[0.025]"
-                    >
-                      <ChainIcon
-                        chain={scope.iconChain}
-                        width={32}
-                        height={32}
-                        showTooltip={false}
-                        className="size-8 shrink-0 rounded-full"
-                      />
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate text-sm font-medium">
-                          {scope.chainName}
-                        </span>
-                        <span className="block truncate font-mono text-[11px] text-muted">
-                          {accountSummary}
-                        </span>
-                      </span>
-                      <span
-                        className={cn(
-                          'flex size-5 shrink-0 items-center justify-center rounded-full',
-                          selectedAccounts.length > 0
-                            ? 'bg-primary text-background'
-                            : 'border border-muted text-transparent'
-                        )}
-                      >
-                        <ApprovalCheckIcon />
-                      </span>
-                      <Icon
-                        icon="lucide:chevron-down"
-                        className={cn(
-                          'size-4 shrink-0 text-muted transition-transform',
-                          expanded && 'rotate-180'
-                        )}
-                      />
-                    </button>
-                    {expanded && (
-                      <div className="space-y-1.5 bg-background/20 px-4 pb-3 pt-1">
-                        {scope.accounts.map(account => {
-                          const checked = selected.includes(account.id)
-                          return (
-                            <button
-                              key={account.id}
-                              type="button"
-                              disabled={account.required}
-                              aria-pressed={checked}
-                              data-caip25-account={account.id}
-                              onClick={() => toggleScopeAccount(scope, account)}
-                              className={cn(
-                                'flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors',
-                                checked ? 'bg-primary/8' : 'hover:bg-white/[0.025]',
-                                account.required && 'cursor-default'
-                              )}
-                            >
-                              <span
-                                className={cn(
-                                  'flex size-5 shrink-0 items-center justify-center rounded-md border',
-                                  checked
-                                    ? 'border-primary bg-primary text-background'
-                                    : 'border-muted text-transparent'
-                                )}
-                              >
-                                <ApprovalCheckIcon />
-                              </span>
-                              <span className="min-w-0 flex-1">
-                                <span className="block truncate text-xs font-medium">
-                                  {account.label}
-                                </span>
-                                <span className="block truncate font-mono text-[10px] text-muted">
-                                  {formatSortAddress(account.address)}
-                                </span>
-                              </span>
-                              {account.required && (
-                                <span className="text-[10px] text-muted">Current</span>
-                              )}
-                            </button>
-                          )
-                        })}
-                      </div>
-                    )}
-                  </div>
-                )
-              })}
-            </section>
+            <MultichainConnectionAccounts
+              scopes={scopes}
+              selections={selectedScopes}
+              onToggleAccount={account =>
+                setSelectedScopes(previous => toggleMultichainConnectionAccount(account, previous))
+              }
+              onTogglePermission={toggleScopeAccount}
+            />
 
             <ConnectionPermissionSummary />
           </div>

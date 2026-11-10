@@ -152,6 +152,13 @@ test('creates one shared EVM approval while preserving atomic chain scopes and m
   expect(approvals[0].data.faviconPageUrl).toBe('https://dapp.example/swap')
   expect(approvals[0].data.scopes).toHaveLength(1)
   expect(approvals[0].data.scopes[0]).toMatchObject({ chainId: 'evm', chainName: 'EVM' })
+  expect(approvals[0].data.scopes[0].accounts[0].accountKey).toBe(
+    JSON.stringify([reference.walletId, reference.accountId])
+  )
+  expect(approvals[0].data.scopes[0].networks.map(network => network.chainId)).toEqual([
+    ethereum,
+    custom
+  ])
   expect(session.scopes[ethereum].accounts).toEqual([`${ethereum}:${address}`])
   expect(session.scopes[custom].accounts).toEqual([`${custom}:${address}`])
   expect(getStored().scopes.map(scope => scope.accounts)).toEqual([[reference], [reference]])

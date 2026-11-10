@@ -1,6 +1,11 @@
 import { test } from 'node:test'
 import { expect } from '@playwright/test'
-import { presentDAppPermissions } from '../../../src/popup/services/dapp-connection-presentation.ts'
+import {
+  getMultichainConnectionAccountSelection,
+  groupMultichainConnectionAccounts,
+  presentDAppPermissions,
+  toggleMultichainConnectionAccount
+} from '../../../src/popup/services/dapp-connection-presentation.ts'
 import { parseChainEndpointSettings } from '../../../src/core/chains/chain-endpoint-settings.ts'
 
 const context = {
@@ -19,6 +24,80 @@ const context = {
     ]
   })
 }
+
+test('account-level connection selection joins chain-specific IDs without joining same-name wallets', () => {
+  const first = JSON.stringify(['wallet-1', 'account-1'])
+  const second = JSON.stringify(['wallet-2', 'account-1'])
+  const option = (accountKey, id) => ({
+    accountKey,
+    id,
+    label: 'Account 1',
+    address: 'public-fixture'
+  })
+  const scopes = [
+    {
+      chainId: 'zcash',
+      chainName: 'Zcash',
+      iconChain: 'zec',
+      accounts: [option(first, 'wallet-1:account-1'), option(second, 'wallet-2:account-1')]
+    },
+    {
+      chainId: 'evm',
+      chainName: 'EVM',
+      iconChain: 'evm',
+      accounts: [option(first, first), option(second, second)]
+    }
+  ]
+  const groups = groupMultichainConnectionAccounts(scopes)
+  expect(groups).toHaveLength(2)
+  const selected = toggleMultichainConnectionAccount(groups[0], { evm: [second] })
+  expect(selected).toEqual({ zcash: ['wallet-1:account-1'], evm: [second, first] })
+  expect(getMultichainConnectionAccountSelection(groups[0], selected)).toBe('all')
+  expect(getMultichainConnectionAccountSelection(groups[1], selected)).toBe('some')
+  expect(toggleMultichainConnectionAccount(groups[0], selected)).toEqual({
+    zcash: [],
+    evm: [second]
+  })
+  expect(
+    groupMultichainConnectionAccounts(
+      scopes.map(scope => ({
+        ...scope,
+        accounts: scope.accounts.map(({ accountKey, ...account }) => account)
+      }))
+    )
+  ).toHaveLength(4)
+})
+
+test('account-level connection selection preserves required scope accounts and completes partial grants', () => {
+  const accountKey = JSON.stringify(['wallet-1', 'account-1'])
+  const groups = groupMultichainConnectionAccounts([
+    {
+      chainId: 'zcash',
+      chainName: 'Zcash',
+      iconChain: 'zec',
+      accounts: [
+        {
+          accountKey,
+          id: 'zcash-account',
+          label: 'Account 1',
+          address: 'u1fixture',
+          required: true
+        }
+      ]
+    },
+    {
+      chainId: 'evm',
+      chainName: 'EVM',
+      iconChain: 'evm',
+      accounts: [{ accountKey, id: 'evm-account', label: 'Account 1', address: '0xfixture' }]
+    }
+  ])
+  const partial = { zcash: ['zcash-account'], evm: [] }
+  expect(getMultichainConnectionAccountSelection(groups[0], partial)).toBe('some')
+  const all = toggleMultichainConnectionAccount(groups[0], partial)
+  expect(all).toEqual({ zcash: ['zcash-account'], evm: ['evm-account'] })
+  expect(toggleMultichainConnectionAccount(groups[0], all)).toEqual(partial)
+})
 
 function connection(overrides = {}) {
   return {
