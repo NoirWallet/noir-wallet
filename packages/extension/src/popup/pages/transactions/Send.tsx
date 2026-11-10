@@ -217,7 +217,7 @@ export function Send() {
     isShielding: isMigrating,
     handleShieldFunds: handleMigrateNow,
     shieldSheet: migrateSheet
-  } = useShieldFunds()
+  } = useShieldFunds(PAGE_IDS.SEND)
 
   const currentAccount = useWalletStore(state => state.getCurrentAccount())
   const currentNetwork = useWalletStore(state => state.currentNetwork)

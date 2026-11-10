@@ -154,7 +154,8 @@ function createBackgroundBitcoinRuntime(customRpcUrl?: string): BackgroundBitcoi
     inputReservations,
     onPendingBroadcast: scheduleMonitor,
     onBroadcastAccepted: async (input, recovered) => {
-      if (recovered) reportBackgroundSendBroadcast(input.graph)
+      if (recovered || input.graph.root.intent?.protocol?.provider === 'rhea-cross-chain-dex')
+        reportBackgroundSendBroadcast(input.graph)
       const result = await balanceUpdater.applyBroadcast(input)
       if (result.errors > 0) {
         logger.warn(

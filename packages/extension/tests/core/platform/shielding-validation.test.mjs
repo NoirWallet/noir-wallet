@@ -110,7 +110,7 @@ describe('Shielding minimum balance regressions', () => {
     assert.match(assetDetailSource, /<AccountDomainBadge domain="public" chainFamily="zcash" \/>/)
     assert.match(assetDetailSource, /BigInt\(asset\.balance\.shieldableRaw \?\? '0'\) > 0n/)
     assert.match(assetDetailSource, /aria-label="Shield transparent ZEC"/)
-    assert.match(assetDetailSource, /useShieldFunds\(\)/)
+    assert.match(assetDetailSource, /useShieldFunds\(PAGE_IDS\.ASSET_DETAIL\)/)
   })
 
   it('blocks dApp approval and both background execution paths below the minimum', () => {

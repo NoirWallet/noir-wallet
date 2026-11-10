@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Icon } from '@iconify/react'
 import Big from '@/lib/big'
+import { PAGE_IDS } from '@/lib/analytics'
 import type { PortfolioReadModel } from '@/core/portfolio'
 import { supportsEvmPrivateExecution } from '@/core/chains/evm'
 import type { ActivityItem } from '@/core/activity'
@@ -121,7 +122,7 @@ export function AssetDetail() {
   const [shieldError, setShieldError] = useState(false)
   const [shieldRetry, setShieldRetry] = useState(0)
   const { copyToClipboard, showToast, isCopied } = useCopyToClipboard()
-  const { isShielding, handleShieldFunds, shieldSheet } = useShieldFunds()
+  const { isShielding, handleShieldFunds, shieldSheet } = useShieldFunds(PAGE_IDS.ASSET_DETAIL)
 
   const load = useCallback(
     async (forceRefresh = false) => {

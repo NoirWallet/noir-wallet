@@ -359,17 +359,16 @@ export class TransactionMonitor {
       return
     }
 
-    trackEvent(ANALYTICS_EVENTS.SWAP_COMPLETED, {
-      chain: 'zcash',
-      hasTransaction: 1,
-      idempotencyKey: `intents-terminal:${pendingTx.accountKey}:${pendingTx.transactionId}:${status.status}`,
-      inputSymbol: pendingTx.tokenInSymbol,
-      outputSymbol: pendingTx.tokenOutSymbol,
-      extra: {
-        status: status.status,
-        action: pendingTx.actionName || 'Swap'
-      }
-    })
+    if (pendingTx.actionName === 'Swap') {
+      trackEvent(ANALYTICS_EVENTS.SWAP_COMPLETED, {
+        chain: 'zcash',
+        hasTransaction: 1,
+        idempotencyKey: `intents-terminal:${pendingTx.accountKey}:${pendingTx.transactionId}:${status.status}`,
+        inputSymbol: pendingTx.tokenInSymbol,
+        outputSymbol: pendingTx.tokenOutSymbol,
+        extra: { status: status.status, action: 'Swap' }
+      })
+    }
     const currentEntry = this.pendingTransactions.get(pendingTx.depositAddress)
     this.pendingTransactions.delete(pendingTx.depositAddress)
     try {

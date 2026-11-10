@@ -7,7 +7,6 @@ import { useWalletStore } from '@/store/wallet-store'
 import { useNavigate } from '../provider/Router'
 import { openHardwareSignAndWait, openHardwareSignTab } from '@/lib/hardware-tab'
 import { ShieldConfirmSheet } from '../components/transaction/ShieldConfirmSheet'
-import { PAGE_IDS } from '@/lib/analytics'
 import type { Transaction } from '@/types/wallet'
 import { safeBig } from '@/lib/big'
 import { classifyError, getResponseErrorMessage } from '@/lib/errors'
@@ -42,7 +41,7 @@ interface UseShieldFundsResult {
  * operation to the background service worker so it completes even if the popup
  * closes.
  */
-export function useShieldFunds(): UseShieldFundsResult {
+export function useShieldFunds(pageId: string): UseShieldFundsResult {
   const [isShielding, setIsShielding] = useState(false)
   const [sheetOpen, setSheetOpen] = useState(false)
   const [sheetBalance, setSheetBalance] = useState('0')
@@ -304,7 +303,7 @@ export function useShieldFunds(): UseShieldFundsResult {
             marginalFeeZats,
             feeQuoteId,
             feeTier,
-            analytics: { pageId: PAGE_IDS.SEND }
+            analytics: { pageId }
           })
           if (startResponse?.success !== true) {
             throw new Error(
@@ -369,7 +368,7 @@ export function useShieldFunds(): UseShieldFundsResult {
         setIsShielding(false)
       }
     },
-    [navigate, setResult, sheetBalance]
+    [navigate, pageId, setResult, sheetBalance]
   )
 
   const shieldSheet = (

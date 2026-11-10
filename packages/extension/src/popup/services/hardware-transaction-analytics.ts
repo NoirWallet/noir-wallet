@@ -1,5 +1,8 @@
 import { sendAnalyticsEvent, ANALYTICS_EVENTS, PAGE_IDS } from '@/lib/analytics'
-import { projectZcashOperationEvent } from '@/lib/analytics/operations'
+import {
+  projectZcashOperationEvent,
+  resolveZcashAnalyticsOperation
+} from '@/lib/analytics/operations'
 import type { HardwareSignRequest } from '@/lib/hardware-tab'
 
 export function recordHardwareOperationOutcome(
@@ -10,7 +13,7 @@ export function recordHardwareOperationOutcome(
 ): void {
   if (request.dappRequestId) return
   const event = projectZcashOperationEvent(
-    request.kind,
+    resolveZcashAnalyticsOperation(request.kind, request.quoteBinding?.userAction),
     outcome,
     {
       pageId: PAGE_IDS.HARDWARE_SIGN,

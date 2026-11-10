@@ -11,7 +11,10 @@ export function reportBackgroundSendBroadcast(
 ): void {
   const chainId = graph.root.intent?.sender?.chainId
   const chain = chainId ? transactionAnalyticsFamily(chainId) : null
-  if (!chain || graph.root.kind !== 'transfer' || graph.root.intent?.protocol) return
+  const binding = graph.root.intent?.protocol
+  const rheaTransfer =
+    binding?.provider === 'rhea-cross-chain-dex' && binding.userAction === 'transfer'
+  if (!chain || (!rheaTransfer && (graph.root.kind !== 'transfer' || binding))) return
   if (!transactionBroadcasted(graph)) return
   try {
     void Promise.resolve(
@@ -19,7 +22,10 @@ export function reportBackgroundSendBroadcast(
         pageId: PAGE_IDS.BACKGROUND,
         chain,
         hasTransaction: 1,
-        idempotencyKey: `send-broadcast:${graph.root.id}`
+        idempotencyKey: rheaTransfer
+          ? `rhea-origin:${binding.quoteHandle}`
+          : `send-broadcast:${graph.root.id}`,
+        ...(rheaTransfer ? { extra: { kind: 'transfer' } } : {})
       })
     ).catch(() => {})
   } catch {

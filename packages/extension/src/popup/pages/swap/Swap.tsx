@@ -51,6 +51,7 @@ import {
   resolveSwapAnalyticsContext
 } from '@/popup/services/swap-event-model'
 import { IndexedDbTransactionRepository } from '@/infrastructure/persistence/repositories'
+import { transactionFailedBeforeBroadcast } from '@/core/transactions/transaction-analytics'
 
 import { SwapTokenSelector } from '../../components/swap/SwapTokenSelector'
 import { SlippageSettingContent } from '../../components/swap/SlippageSetting'
@@ -3142,7 +3143,6 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
         }
       )
       setIsSending(true)
-      let executionResolved = false
       try {
         const signedOrder = await (rheaSigningReview.kind === 'evm-signature'
           ? rheaSwapClient.confirmEvmSignature(
@@ -3158,7 +3158,6 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
                 signingReview.quoteHandle,
                 signingReview.payloadFingerprint
               ))
-        executionResolved = true
         pendingRheaSigningQuote.current = null
         setRheaSigningReview(null)
         if (!isTransferAnalyticsFlow && hasSubmittedRheaOrigin(signedOrder.graph)) {
@@ -3175,19 +3174,6 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
           rheaSigningReview.kind === 'evm-signature'
         )
       } catch (error) {
-        if (!executionResolved) {
-          sendAnalyticsEvent(
-            isTransferAnalyticsFlow ? ANALYTICS_EVENTS.SEND_FAILED : ANALYTICS_EVENTS.SWAP_FAILED,
-            {
-              ...submitBase,
-              idempotencyKey: `quote-submission-failed:${signingReview.quoteHandle}`,
-              extra: {
-                ...submitBase.extra,
-                ...(isTransferAnalyticsFlow ? { kind: transferAnalyticsKind } : {})
-              }
-            }
-          )
-        }
         if (isPrivateFunding) {
           setIsPrivateFundingSubmitting(false)
         }
@@ -3247,7 +3233,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
           quoteResult && rheaReview
             ? {
                 provider: 'rhea-cross-chain-dex' as const,
-                ...(publicPrivacySendRequested ? { userAction: 'transfer' as const } : {}),
+                ...(isTransferAnalyticsFlow ? { userAction: 'transfer' as const } : {}),
                 quoteHandle: quoteResult.quoteHandle,
                 executionId: rheaReview.executionId,
                 router: rheaReview.router,
@@ -3308,11 +3294,21 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
         }
 
         const submitBase = swapEventBase()
-        sendAnalyticsEvent(ANALYTICS_EVENTS.SWAP_SUBMITTED, {
-          ...submitBase,
-          hasTransaction: 1,
-          extra: { ...submitBase.extra, hardware: isHardwareWallet, funding_source: fundingSource }
-        })
+        sendAnalyticsEvent(
+          isTransferAnalyticsFlow
+            ? ANALYTICS_EVENTS.SEND_SUBMITTED
+            : ANALYTICS_EVENTS.SWAP_SUBMITTED,
+          {
+            ...submitBase,
+            hasTransaction: 1,
+            extra: {
+              ...submitBase.extra,
+              hardware: isHardwareWallet,
+              funding_source: fundingSource,
+              ...(isTransferAnalyticsFlow ? { kind: transferAnalyticsKind } : {})
+            }
+          }
+        )
 
         // Hardware wallets sign the deposit transfer via QR in a dedicated tab
         if (isHardwareWallet) {
@@ -3384,7 +3380,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
                 sourceFamily: 'zcash',
                 destinationBlockchain: swap.tokenOut?.blockchain,
                 destinationChainId: swap.tokenOut?.rheaChainId,
-                isTransfer: false,
+                isTransfer: isTransferAnalyticsFlow,
                 executionSourceMode
               }).direction
             },
@@ -3601,13 +3597,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
           const latest = await new IndexedDbTransactionRepository()
             .get(reviewGraph.root.scope, reviewGraph.root.id)
             .catch(() => null)
-          const origin = latest?.segments.find(segment => segment.role === 'origin')
-          if (
-            latest &&
-            latest.root.status !== 'signed' &&
-            !origin?.evidence?.transactionHash &&
-            !origin?.evidence?.externalReference
-          ) {
+          if (latest && transactionFailedBeforeBroadcast(latest)) {
             sendAnalyticsEvent(
               isTransferAnalyticsFlow ? ANALYTICS_EVENTS.SEND_FAILED : ANALYTICS_EVENTS.SWAP_FAILED,
               {

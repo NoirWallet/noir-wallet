@@ -108,7 +108,8 @@ export function createBackgroundNearTransferController(
     onPendingBroadcast: () =>
       chrome.alarms.create(NEAR_TRANSACTION_MONITOR_ALARM, { delayInMinutes: 0.1 }),
     onMonitoringRequired: (graph, recovered) => {
-      if (recovered) reportBackgroundSendBroadcast(graph)
+      if (recovered || graph.root.intent?.protocol?.provider === 'rhea-cross-chain-dex')
+        reportBackgroundSendBroadcast(graph)
       return chrome.alarms.create(NEAR_TRANSACTION_MONITOR_ALARM, { delayInMinutes: 0.1 })
     }
   })

@@ -1,4 +1,9 @@
 import type { Network } from '@/types'
+import { trackEvent } from '@/background/analytics/reporter'
+import {
+  projectConfidentialPlanResult,
+  projectExternalDepositResult
+} from '@/lib/analytics/operations'
 import {
   hasExternalShieldDepositFunding,
   shouldAutoRefreshExternalShieldDeposit
@@ -741,6 +746,7 @@ export class ConfidentialFundingCoordinator {
           status.settledAmountOutRaw &&
           isPositiveRaw(status.settledAmountOutRaw)
         ) {
+          const previous = record
           record = Object.freeze({
             ...record,
             settledOutputRaw: status.settledAmountOutRaw,
@@ -751,6 +757,8 @@ export class ConfidentialFundingCoordinator {
             updatedAt: this.now()
           })
           await this.options.store.putExternalDeposit(record)
+          const event = projectExternalDepositResult(previous, record)
+          if (event) trackEvent(event.name, event.options)
         } else {
           await this.scheduleMonitoring()
         }
@@ -839,6 +847,7 @@ export class ConfidentialFundingCoordinator {
       fundingObservedAt !== record.fundingObservedAt ||
       newlySettled
     ) {
+      const previous = record
       record = Object.freeze({
         ...record,
         phase: nextPhase,
@@ -854,6 +863,8 @@ export class ConfidentialFundingCoordinator {
         updatedAt: this.now()
       })
       await this.options.store.putExternalDeposit(record)
+      const event = projectExternalDepositResult(previous, record)
+      if (event) trackEvent(event.name, event.options)
     }
     await this.updateExternalDepositGraph(record)
     if (record.phase === 'ready') record = await this.refreshExternalDepositBalance(record)
@@ -4022,6 +4033,8 @@ export class ConfidentialFundingCoordinator {
   ): Promise<ConfidentialFundingPlan> {
     const next = Object.freeze({ ...plan, ...changes, updatedAt: this.now() })
     await this.options.store.putPlan(next)
+    const event = projectConfidentialPlanResult(plan, next)
+    if (event) trackEvent(event.name, event.options)
     this.notifyActivityChanged(next)
     return next
   }

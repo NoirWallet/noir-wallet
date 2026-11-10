@@ -105,3 +105,46 @@ test('recovered Send broadcast reports once without waiting for the analytics si
   )
   assert.equal(events.length, 1)
 })
+
+test('a persisted RHEA transfer reports only an onchain origin broadcast', () => {
+  const graph = {
+    ...transfer('broadcast', 'broadcast', '0x1234'),
+    root: {
+      id: 'tx:rhea-transfer',
+      status: 'broadcast',
+      kind: 'swap',
+      intent: {
+        sender: { chainId: 'eip155:1' },
+        protocol: {
+          provider: 'rhea-cross-chain-dex',
+          userAction: 'transfer',
+          quoteHandle: 'local-quote'
+        }
+      }
+    }
+  }
+  const events = []
+  const sink = (name, options) => events.push({ name, options })
+  reportBackgroundSendBroadcast(graph, sink)
+  assert.equal(events.length, 1)
+  assert.equal(events[0].name, 'transaction_sent')
+  assert.equal(events[0].options.idempotencyKey, 'rhea-origin:local-quote')
+  assert.deepEqual(events[0].options.extra, { kind: 'transfer' })
+  for (const changed of [
+    { ...graph, segments: transfer('signed', 'signed', '0x1234').segments },
+    { ...graph, segments: transfer('broadcast', 'broadcast').segments },
+    {
+      ...graph,
+      root: {
+        ...graph.root,
+        intent: {
+          ...graph.root.intent,
+          protocol: { ...graph.root.intent.protocol, userAction: undefined }
+        }
+      }
+    },
+    { ...graph, root: { ...graph.root, status: 'signed' } }
+  ])
+    reportBackgroundSendBroadcast(changed, sink)
+  assert.equal(events.length, 1)
+})

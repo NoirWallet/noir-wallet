@@ -2,14 +2,19 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
   isZcashOperationAnalyticsContext,
-  projectZcashOperationEvent
+  projectConfidentialPlanResult,
+  projectExternalDepositResult,
+  projectZcashOperationEvent,
+  resolveZcashAnalyticsOperation
 } from '../../../src/lib/analytics/operations.ts'
 import { ANALYTICS_EVENTS } from '../../../src/lib/analytics/constants.ts'
+import { ZCASH_CHAIN_IDS } from '../../../src/core/chains/registry/chain-ids.ts'
 
 test('the execution outcome selects Send, Shield and Swap events independently of UI metadata', () => {
   const operations = [
     ['send', ANALYTICS_EVENTS.SEND_SUCCEEDED, ANALYTICS_EVENTS.SEND_FAILED],
     ['unshield', ANALYTICS_EVENTS.SEND_SUCCEEDED, ANALYTICS_EVENTS.SEND_FAILED],
+    ['transfer', ANALYTICS_EVENTS.SEND_SUCCEEDED, ANALYTICS_EVENTS.SEND_FAILED],
     ['shield', ANALYTICS_EVENTS.SHIELD_SUCCEEDED, ANALYTICS_EVENTS.SHIELD_FAILED],
     ['swap', ANALYTICS_EVENTS.SWAP_DEPOSIT_SENT, ANALYTICS_EVENTS.SWAP_FAILED]
   ]
@@ -28,6 +33,88 @@ test('the execution outcome selects Send, Shield and Swap events independently o
     assert.ok(!JSON.stringify(event).includes('987654321'))
     assert.ok(!JSON.stringify(event).includes('private-address'))
   }
+})
+
+test('Shield results follow persisted, settled confidential transitions', () => {
+  const plan = {
+    planId: 'private-plan-id',
+    phase: 'processing',
+    operation: 'swap',
+    source: { chainId: 'eip155:1' },
+    requiresDeposit: false
+  }
+  const ready = { ...plan, phase: 'ready' }
+  const result = projectConfidentialPlanResult(plan, ready)
+  assert.equal(result?.name, ANALYTICS_EVENTS.SHIELD_OPERATION_RESULT)
+  assert.deepEqual(result?.options.extra, { operation: 'swap', status: 'success' })
+  assert.equal(result?.options.hasTransaction, 1)
+  assert.equal(result?.options.chain, 'evm')
+  assert.equal(
+    projectConfidentialPlanResult(plan, {
+      ...ready,
+      source: { chainId: ZCASH_CHAIN_IDS.mainnet }
+    })?.options.chain,
+    'zcash'
+  )
+  assert.equal(projectConfidentialPlanResult(ready, ready), null)
+  assert.equal(projectConfidentialPlanResult(plan, { ...plan, phase: 'partial' }), null)
+  for (const phase of ['refunded', 'failed', 'expired', 'cancelled']) {
+    const terminal = projectConfidentialPlanResult(plan, { ...plan, phase })
+    assert.deepEqual(terminal?.options.extra, { operation: 'swap', status: phase })
+    assert.equal(terminal?.options.hasTransaction, phase === 'refunded' ? 1 : 0)
+  }
+  assert.equal(
+    projectConfidentialPlanResult(plan, {
+      ...plan,
+      phase: 'failed',
+      errorStatus: 'LOCAL_PROCESSING_FAILED',
+      requiresDeposit: true,
+      preparedDeposit: { transactionHash: 'private-hash' }
+    }),
+    null
+  )
+  assert.deepEqual(
+    projectConfidentialPlanResult(
+      { ...plan, operation: undefined },
+      { ...ready, operation: undefined }
+    )?.options.extra,
+    { operation: 'cluster', status: 'success' }
+  )
+
+  const deposit = {
+    depositId: 'private-deposit-id',
+    phase: 'awaiting-payment',
+    source: { chainId: 'eip155:1' }
+  }
+  assert.equal(projectExternalDepositResult(deposit, { ...deposit, phase: 'failed' }), null)
+  assert.equal(projectExternalDepositResult(deposit, { ...deposit, phase: 'ready' }), null)
+  assert.equal(
+    projectExternalDepositResult(deposit, { ...deposit, phase: 'ready', settledOutputRaw: '0' }),
+    null
+  )
+  const settled = { ...deposit, phase: 'ready', settledOutputRaw: '1200' }
+  assert.deepEqual(projectExternalDepositResult(deposit, settled)?.options.extra, {
+    operation: 'deposit',
+    status: 'success'
+  })
+  assert.equal(projectExternalDepositResult(deposit, settled)?.options.hasTransaction, 1)
+  assert.equal(projectExternalDepositResult(settled, settled), null)
+  assert.deepEqual(
+    projectExternalDepositResult({ ...deposit, phase: 'failed' }, { ...deposit, phase: 'refunded' })
+      ?.options.extra,
+    { operation: 'deposit', status: 'refunded' }
+  )
+})
+
+test('a persisted transfer binding classifies a Zcash quote as Send', () => {
+  const operation = resolveZcashAnalyticsOperation('swap', 'transfer')
+  const broadcast = projectZcashOperationEvent(operation, 'broadcast')
+  const failed = projectZcashOperationEvent(operation, 'failed')
+  assert.equal(broadcast.name, ANALYTICS_EVENTS.SEND_SUCCEEDED)
+  assert.deepEqual(broadcast.options.extra, { funding_source: undefined, kind: 'transfer' })
+  assert.equal(failed.name, ANALYTICS_EVENTS.SEND_FAILED)
+  assert.equal(resolveZcashAnalyticsOperation('swap'), 'swap')
+  assert.equal(resolveZcashAnalyticsOperation('unshield'), 'unshield')
 })
 
 test('Zcash outcomes preserve controlled hardware, funding and Swap asset context', () => {

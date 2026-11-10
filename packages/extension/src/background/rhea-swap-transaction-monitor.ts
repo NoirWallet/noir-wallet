@@ -379,6 +379,8 @@ export class RheaSwapTransactionMonitor {
       await this.finish(value)
       return
     }
+    let isTransfer = transaction.quoteBinding.userAction === 'transfer'
+    let classificationResolved = true
     if (transaction.quoteBinding.userAction === undefined) {
       try {
         const privateSwap = await this.service.readPrivateSwapRequest?.(value.quoteHandle)
@@ -387,11 +389,13 @@ export class RheaSwapTransactionMonitor {
           privateSwap.scope.walletId === value.walletId &&
           privateSwap.scope.accountId === value.accountId
         ) {
+          isTransfer = true
           await this.updateZcashTransaction(value.accountKey, value.transactionId, {
             quoteBinding: { ...transaction.quoteBinding, userAction: 'transfer' }
           })
         }
       } catch {
+        classificationResolved = false
         // Display classification must not interrupt submission recovery.
       }
     }
@@ -465,15 +469,18 @@ export class RheaSwapTransactionMonitor {
         notified: true
       })
     }
-    trackEvent(ANALYTICS_EVENTS.SWAP_COMPLETED, {
-      chain: 'zcash',
-      hasTransaction: 1,
-      idempotencyKey: `rhea-completed:${value.quoteHandle}`,
-      extra: {
-        status: status === 'completed' ? 'SUCCESS' : status === 'refunded' ? 'REFUNDED' : 'FAILED',
-        action: 'Swap'
-      }
-    })
+    if (!isTransfer && classificationResolved) {
+      trackEvent(ANALYTICS_EVENTS.SWAP_COMPLETED, {
+        chain: 'zcash',
+        hasTransaction: 1,
+        idempotencyKey: `rhea-completed:${value.quoteHandle}`,
+        extra: {
+          status:
+            status === 'completed' ? 'SUCCESS' : status === 'refunded' ? 'REFUNDED' : 'FAILED',
+          action: 'Swap'
+        }
+      })
+    }
     if (reported) {
       await this.finish(value)
     } else {
@@ -710,25 +717,18 @@ export class RheaSwapTransactionMonitor {
     if (!latest || binding?.provider !== 'rhea-cross-chain-dex') return
     if (
       (status === 'SUCCESS' || status === 'FAILED' || status === 'REFUNDED') &&
+      binding.userAction !== 'transfer' &&
       graph.root.status !== 'final' &&
       graph.root.status !== 'failed'
     ) {
       const chain = transactionAnalyticsFamily(binding.origin.chainId)
       if (chain) {
-        const transfer = binding.userAction === 'transfer'
-        trackEvent(
-          transfer
-            ? status === 'SUCCESS'
-              ? ANALYTICS_EVENTS.SEND_SUCCEEDED
-              : ANALYTICS_EVENTS.SEND_FAILED
-            : ANALYTICS_EVENTS.SWAP_COMPLETED,
-          {
-            chain,
-            hasTransaction: 1,
-            idempotencyKey: `rhea-terminal:${binding.quoteHandle}`,
-            extra: transfer ? { kind: 'transfer' } : { status, action: 'Swap', sourceFamily: chain }
-          }
-        )
+        trackEvent(ANALYTICS_EVENTS.SWAP_COMPLETED, {
+          chain,
+          hasTransaction: 1,
+          idempotencyKey: `rhea-terminal:${binding.quoteHandle}`,
+          extra: { status, action: 'Swap', sourceFamily: chain }
+        })
       }
     }
     const value = getRheaSwapProgressStatus(latest.segments, {

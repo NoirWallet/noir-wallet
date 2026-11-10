@@ -39,6 +39,8 @@ import { parseEvmTransferIntent } from '@/infrastructure/chains/evm'
 
 import {
   projectZcashOperationEvent,
+  resolveZcashAnalyticsOperation,
+  type ZcashAnalyticsOperation,
   type ZcashOperationAnalyticsContext
 } from '@/lib/analytics/operations'
 import { dappHandler } from './dapp-handler'
@@ -7204,6 +7206,7 @@ async function handleBackgroundZcashTx(params: {
   const actionLabel = action === 'shield' ? 'Shield' : 'Send'
   let onChainAmount = sendParams?.amount
   let broadcastTxHash: string | undefined
+  let analyticsOperation: ZcashAnalyticsOperation | null = null
   logger.info(`Starting ${actionLabel} operation`, walletId, accountId)
 
   try {
@@ -7213,6 +7216,10 @@ async function handleBackgroundZcashTx(params: {
       if (!pendingRecord || pendingRecord.status !== 'pending' || pendingRecord.txHash) {
         throw new Error('Transaction record is unavailable or already submitted')
       }
+      analyticsOperation = resolveZcashAnalyticsOperation(
+        action === 'shield' ? 'shield' : pendingRecord.type === 'swap' ? 'swap' : 'send',
+        pendingRecord.quoteBinding?.userAction
+      )
       const walletCore = await prepareWalletCoreForTx(walletId, accountId)
       if (action === 'shield') {
         if (!walletId || !accountId) {
@@ -7349,9 +7356,9 @@ async function handleBackgroundZcashTx(params: {
           .catch(() => {})
       }
 
-      if (analytics) {
+      if (analytics && analyticsOperation) {
         const event = projectZcashOperationEvent(
-          action === 'shield' ? 'shield' : txType === 'swap' ? 'swap' : 'send',
+          analyticsOperation,
           'broadcast',
           analytics,
           `zcash:${accountKey}:${transactionId}:broadcast`
@@ -7432,9 +7439,9 @@ async function handleBackgroundZcashTx(params: {
     const rawMessage = error?.message || `${actionLabel} failed`
     const userMessage = getRetryableWalletRpcUserMessage(rawMessage)
 
-    if (analytics) {
+    if (analytics && analyticsOperation) {
       const event = projectZcashOperationEvent(
-        action === 'shield' ? 'shield' : txType === 'swap' ? 'swap' : 'send',
+        analyticsOperation,
         'failed',
         analytics,
         `zcash:${accountKey}:${transactionId}:failed`

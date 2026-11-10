@@ -42,6 +42,7 @@ test('runtime metadata is coarse and event policy still drops exact amounts and 
     getAnalyticsDeviceMetadata({ language: 'zh-cn', userAgent: 'Macintosh Chrome/150.1' }),
     {
       browser: 'Chrome',
+      browser_major_version: '150',
       operating_system: 'macOS',
       language: 'zh-CN',
       device_category: 'desktop'

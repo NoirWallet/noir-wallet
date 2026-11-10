@@ -78,7 +78,8 @@ export function createBackgroundEvmTransferOrchestrator(
     networkMode: DEFAULT_NETWORK,
     onPendingBroadcast: scheduleMonitor,
     onBroadcastAccepted: (graph, recovered) => {
-      if (recovered) reportBackgroundSendBroadcast(graph)
+      if (recovered || graph.root.intent?.protocol?.provider === 'rhea-cross-chain-dex')
+        reportBackgroundSendBroadcast(graph)
       return recordRheaSwapGraphBroadcast(graph)
     },
     onMonitoringRequired: scheduleMonitor
