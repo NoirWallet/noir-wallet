@@ -1,6 +1,6 @@
 {
   "name": "@noir-wallet/sdk",
-  "version": "2.0.0-beta.1",
+  "version": "2.0.0-beta.2",
   "description": "TypeScript SDK for Noir Wallet dApp integration",
   "rdns": "com.zknoir",
   "main": "./dist/index.js",
