@@ -25,7 +25,6 @@ import { getAccountAddresses } from '@/core/wallet/account-addresses'
 import { AddressTypeLabel } from '../components/account/AddressType'
 import { useSpeedUp } from '../hooks/useSpeedUp'
 import { useResyncZcash } from '../hooks/useResyncZcash'
-import { Tooltip } from '../components/ui/tooltip'
 import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popover'
 import { BalanceWithPending } from '../components/balance/BalanceWithPending'
 import { ExtensionUpdateBanner } from '../components/common/ExtensionUpdateBanner'
@@ -596,18 +595,11 @@ export function Home() {
     !balancesHidden && multichainPortfolioEnabled && portfolioTotalStatus === 'loading'
   const totalBalanceUnavailable =
     !balancesHidden && multichainPortfolioEnabled && portfolioTotalStatus === 'unavailable'
-  const totalBalanceApproximate = multichainPortfolioEnabled && portfolioTotalStatus === 'partial'
   const domainTotals = {
     all: totalBalanceUnavailable ? null : displayedTotalUsd,
     public: assetBreakdown?.publicUsd ?? null,
     shield: assetBreakdown?.shieldUsd ?? null,
     private: assetBreakdown?.privateUsd ?? null
-  }
-  const domainTotalsPartial = {
-    all: totalBalanceApproximate,
-    public: assetBreakdown?.publicUsdPartial ?? false,
-    shield: assetBreakdown?.shieldUsdPartial ?? false,
-    private: assetBreakdown?.privateUsdPartial ?? false
   }
   const selectedDomainTotal = domainTotals[assetDomain]
 
@@ -850,73 +842,18 @@ export function Home() {
                   <Skeleton className="my-1.5 h-8 w-40" />
                 </div>
               ) : totalBalanceUnavailable || (!balancesHidden && selectedDomainTotal === null) ? (
-                <Tooltip content="Unable to value your assets. Refresh the asset list to retry.">
-                  <button
-                    type="button"
-                    aria-label="Total assets unavailable"
-                    className="rounded-sm text-[40px] font-semibold leading-[37.4px] text-muted focus-visible:outline-2 focus-visible:outline-primary"
-                  >
-                    —
-                  </button>
-                </Tooltip>
-              ) : assetBreakdown && !balancesHidden ? (
-                <Tooltip
-                  side="bottom"
-                  sideOffset={24}
-                  className="max-w-[260px] whitespace-nowrap"
-                  content={
-                    <div className="min-w-36 space-y-1">
-                      {totalBalanceApproximate && (
-                        <p className="max-w-56 whitespace-normal text-xs text-muted">
-                          Some balances or prices are unavailable or out of date.
-                        </p>
-                      )}
-                      <div className="flex justify-between gap-4">
-                        <span>Public</span>
-                        <span className="tabular-nums">
-                          {formatAssetDomainFiat(
-                            assetBreakdown.publicUsd,
-                            assetBreakdown.publicUsdPartial
-                          )}
-                        </span>
-                      </div>
-                      <div className="flex justify-between gap-4">
-                        <span>Shield</span>
-                        <span className="tabular-nums">
-                          {formatAssetDomainFiat(
-                            assetBreakdown.shieldUsd,
-                            assetBreakdown.shieldUsdPartial
-                          )}
-                        </span>
-                      </div>
-                      <div className="flex justify-between gap-4">
-                        <span>Private</span>
-                        <span className="tabular-nums">
-                          {formatAssetDomainFiat(
-                            assetBreakdown.privateUsd,
-                            assetBreakdown.privateUsdPartial
-                          )}
-                        </span>
-                      </div>
-                    </div>
-                  }
+                <p
+                  aria-label="Total assets unavailable"
+                  className="text-[40px] font-semibold leading-[37.4px] text-muted"
                 >
-                  <button
-                    type="button"
-                    aria-label={`${domainTotalsPartial[assetDomain] ? 'Estimated ' : ''}${ASSET_DOMAIN_LABELS[assetDomain]} ${formatAssetDomainFiat(selectedDomainTotal, domainTotalsPartial[assetDomain])}, show asset breakdown`}
-                    className="max-w-[calc(100vw-4rem)] break-all rounded-sm text-[40px] font-semibold leading-[37.4px] tabular-nums focus-visible:outline-2 focus-visible:outline-primary"
-                  >
-                    {formatAssetDomainFiat(selectedDomainTotal, domainTotalsPartial[assetDomain])}
-                  </button>
-                </Tooltip>
+                  —
+                </p>
               ) : (
                 <p
                   className="max-w-[calc(100vw-4rem)] break-all text-[40px] font-semibold leading-[37.4px] tabular-nums"
                   aria-label={balancesHidden ? 'Total balance hidden' : undefined}
                 >
-                  {balancesHidden
-                    ? '••••'
-                    : formatAssetDomainFiat(selectedDomainTotal, domainTotalsPartial[assetDomain])}
+                  {balancesHidden ? '••••' : formatAssetDomainFiat(selectedDomainTotal)}
                 </p>
               )}
               <button
@@ -937,7 +874,6 @@ export function Home() {
               <AssetDomainSelector
                 value={assetDomain}
                 totals={domainTotals}
-                partialTotals={domainTotalsPartial}
                 balancesHidden={balancesHidden}
                 onChange={domain => navigate.replace(homeAssetDomainPath(location.search, domain))}
               />
