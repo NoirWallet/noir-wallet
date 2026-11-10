@@ -84,6 +84,7 @@ function AccountTotalValue({
 }
 
 function SelectedAccountIndicator({ selected }: { selected: boolean }) {
+  if (!selected) return null
   return (
     <span
       aria-label={selected ? 'Current account' : undefined}
@@ -244,7 +245,7 @@ export function AccountList() {
   const handleAddWallet = async () => {
     const action = await openModal<AddWalletAction | undefined>({
       className:
-        'gap-5 p-5 [&>[data-slot=dialog-close]]:right-5 [&>[data-slot=dialog-close]]:top-5',
+        'flex max-h-[calc(100%-16px)] flex-col gap-6 rounded-t-[20px] border-0 bg-popover px-4 pb-10 pt-5 [&>[data-slot=dialog-close]]:right-3 [&>[data-slot=dialog-close]]:top-4 [&>[data-slot=dialog-close]]:opacity-100 [&>[data-slot=dialog-close]>svg]:size-6',
       body: resolve => <AddWalletContent onSelect={resolve} />
     })
 
@@ -661,7 +662,7 @@ function NativeAccountItem({
     <div>
       <div
         className={cn(
-          'relative flex min-h-[67px] w-full flex-col justify-center px-5 py-2',
+          'relative flex min-h-[67px] w-full flex-col justify-center pl-5 pr-3 py-2',
           account.active ? 'bg-wallet-surface' : ''
         )}
       >
@@ -716,6 +717,7 @@ function NativeAccountItem({
             )}
           </div>
           <div className="pointer-events-auto flex shrink-0 items-center gap-1">
+            <SelectedAccountIndicator selected={account.active} />
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button
@@ -724,7 +726,7 @@ function NativeAccountItem({
                   aria-label={`Account actions for ${account.accountDisplayName}`}
                   onClick={event => event.stopPropagation()}
                   disabled={removing}
-                  className="size-7 text-muted"
+                  className="size-6 text-muted"
                 >
                   <Icon icon="lucide:ellipsis" width={16} height={16} />
                 </Button>
@@ -764,7 +766,6 @@ function NativeAccountItem({
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
-            <SelectedAccountIndicator selected={account.active} />
           </div>
         </div>
       </div>
@@ -821,7 +822,7 @@ function AccountItem({
     <div className="relative">
       <div
         className={cn(
-          'relative flex min-h-[60px] w-full flex-col justify-center px-5 py-2',
+          'relative flex min-h-[60px] w-full flex-col justify-center pl-5 pr-3 py-2',
           isActiveAccount ? 'bg-wallet-surface' : ''
         )}
       >
@@ -877,13 +878,14 @@ function AccountItem({
               ))}
           </div>
           <div className="pointer-events-auto flex shrink-0 items-center gap-1">
+            <SelectedAccountIndicator selected={isActiveAccount} />
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button
                   variant="ghost"
                   size="icon-sm"
                   aria-label={`Account actions for ${displayName}`}
-                  className="size-7 text-muted"
+                  className="size-6 text-muted"
                 >
                   <Icon icon="lucide:ellipsis" width={16} height={16} />
                 </Button>
@@ -961,7 +963,6 @@ function AccountItem({
                 )}
               </DropdownMenuContent>
             </DropdownMenu>
-            <SelectedAccountIndicator selected={isActiveAccount} />
           </div>
         </div>
       </div>

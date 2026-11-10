@@ -10,6 +10,7 @@ import type { AssetPriceReadModel } from '@/core/prices'
 import { resolveChainIconAlias } from '@/lib/chain-icon'
 import { Skeleton } from '@/popup/components/ui/skeleton'
 import { ChainIcon } from '@/popup/components/common/ChainIcon'
+import { TokenIcon } from '@/popup/components/tokens/TokenIcon'
 import { Tooltip } from '@/popup/components/ui/tooltip'
 import {
   DropdownMenu,
@@ -21,7 +22,12 @@ import { NetworkFilter } from '@/popup/components/common/NetworkFilter'
 import { isSelectableChainFamily } from '@/popup/services/chain-selection-availability'
 import type { AssetDomain } from '@/popup/services/asset-domains'
 import { resolveLowValueUsdThreshold } from './portfolio-prices'
-import { PortfolioAssetGroupCard, PortfolioChainAssetRow } from './PortfolioAssetGroupCard'
+import {
+  PortfolioAssetGroupCard,
+  PortfolioChainAssetRow,
+  PortfolioAssetRowContent,
+  portfolioAssetRowClassName
+} from './PortfolioAssetGroupCard'
 import { NearConfidentialHoldingRow } from './NearConfidentialHoldingRow'
 import {
   listStandaloneNearConfidentialHoldings,
@@ -137,14 +143,60 @@ function BalanceReadError({
 
 function UnloadedChainBalance({
   chain,
+  balancesHidden = false,
   onRetry,
   disabled
 }: {
   readonly chain: PortfolioChainView
+  readonly balancesHidden?: boolean
   readonly onRetry?: () => void
   readonly disabled?: boolean
 }) {
   const unavailable = getPortfolioChainBalanceStatus(chain) === 'unavailable'
+  if (chain.chain.family === 'zcash') {
+    return (
+      <div
+        role="status"
+        aria-label={`ZEC balance ${unavailable ? 'unavailable' : 'loading'}`}
+        className={portfolioAssetRowClassName}
+      >
+        <PortfolioAssetRowContent
+          icon={
+            <TokenIcon
+              symbol="ZEC"
+              nativeChain="zcash"
+              blockchain="zcash"
+              size={36}
+              className="shrink-0"
+            />
+          }
+          title={<p className="truncate text-base font-medium">ZEC</p>}
+          subtitle={
+            unavailable ? (
+              <BalanceReadError chain={chain} onRetry={onRetry} disabled={disabled} />
+            ) : (
+              <Skeleton className="mt-1 h-3 w-20" />
+            )
+          }
+          balance={
+            balancesHidden ? (
+              <>
+                <p className="text-base font-medium">••••</p>
+                <p className="mt-0.5 text-xs text-muted">••••</p>
+              </>
+            ) : unavailable ? (
+              <span className="text-muted">—</span>
+            ) : (
+              <>
+                <Skeleton className="ml-auto h-4 w-16" />
+                <Skeleton className="ml-auto mt-1 h-3 w-20" />
+              </>
+            )
+          }
+        />
+      </div>
+    )
+  }
   return (
     <div
       role="status"
@@ -451,6 +503,7 @@ export function PortfolioShell({
               <UnloadedChainBalance
                 key={chain.chain.id}
                 chain={chain}
+                balancesHidden={balancesHidden}
                 onRetry={onRefresh}
                 disabled={refreshDisabled}
               />
@@ -579,6 +632,7 @@ export function PortfolioShell({
                     getPortfolioChainBalanceStatus(chain) !== 'ready' && (
                       <UnloadedChainBalance
                         chain={chain}
+                        balancesHidden={balancesHidden}
                         onRetry={onRefresh}
                         disabled={refreshDisabled}
                       />

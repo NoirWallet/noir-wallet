@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Button } from '../../components/ui/button'
 import { PageHeader } from '../../components/common/PageHeader'
 import { useNavigate } from '../../provider/Router'
@@ -10,6 +10,7 @@ import { ImportZcashHistorySheet } from '@/popup/components/onboarding/ImportZca
 import { InlineError } from '@/popup/components/common/InlineError'
 import { zcashWalletRuntimeClient } from '@/popup/services/zcash-wallet-runtime-client'
 import type { AccountNetworkFamily } from '@/core/wallet/account-network-selection'
+import { Checkbox } from '../../components/ui/checkbox'
 
 export function ImportAccountsPage() {
   const { navigate, replace } = useNavigate()
@@ -34,6 +35,7 @@ export function ImportAccountsPage() {
   const [previewAttempt, setPreviewAttempt] = useState(0)
   const selected =
     selectedNetworkFamilies ?? getDefaultImportNetworkFamilies(mnemonicWordCount, availableFamilies)
+  const previousSelection = useRef(selected)
 
   useEffect(() => {
     if (!importedSeedPhrase) replace('/onboarding/import')
@@ -85,8 +87,32 @@ export function ImportAccountsPage() {
   return (
     <div className="page-container">
       <PageHeader title="Import Accounts" showBack backDisabled={isLoading} />
-      <div className="page-content min-w-0 px-4 py-5">
-        <div className="rounded-lg bg-card px-4 py-4">
+      <div className="page-content min-w-0 px-4 pb-5 !pt-3">
+        <p className="mb-1.5 px-1 text-sm leading-5 text-muted">We found 1 account</p>
+        <label className="mb-3.5 flex min-h-[46px] cursor-pointer items-center justify-between gap-3 rounded-lg bg-popover px-4">
+          <span className="text-base font-medium">
+            {selected.length > 0 ? '1 account selected' : '0 accounts selected'}
+          </span>
+          <Checkbox
+            aria-label="Select account"
+            checked={selected.length > 0}
+            disabled={isLoading}
+            onCheckedChange={checked => {
+              if (checked) {
+                setSelectedNetworkFamilies(
+                  previousSelection.current.length > 0
+                    ? previousSelection.current
+                    : getDefaultImportNetworkFamilies(mnemonicWordCount, availableFamilies)
+                )
+              } else {
+                previousSelection.current = selected
+                setSelectedNetworkFamilies([])
+              }
+            }}
+            className="size-5 rounded-md data-[state=checked]:border-foreground data-[state=checked]:bg-foreground data-[state=checked]:text-background"
+          />
+        </label>
+        <div className="rounded-lg bg-popover px-4 py-4">
           <h1 className="truncate text-base font-medium">{accountName.trim() || 'Account 1'}</h1>
           <div className="mt-3">
             <AccountNetworkFamilyChoices
@@ -97,6 +123,7 @@ export function ImportAccountsPage() {
               showZcashSyncWarning
               addressPreviews={addressPreviews}
               addressesLoading={addressesLoading}
+              variant="import"
             />
             {previewFailed && (
               <InlineError
@@ -115,6 +142,7 @@ export function ImportAccountsPage() {
           </p>
         )}
         <Button
+          size="wallet"
           onClick={() => void handleContinue()}
           disabled={isLoading || selected.length === 0}
           isLoading={isLoading}

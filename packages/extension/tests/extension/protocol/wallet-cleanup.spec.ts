@@ -67,14 +67,13 @@ test.describe('authenticated wallet removal', () => {
     await popup.getByRole('button', { name: 'Back' }).click()
 
     await popup.getByRole('button', { name: 'Add Wallet', exact: true }).click()
-    await popup.getByRole('button', { name: 'Import Wallet', exact: true }).click()
-    await popup.getByRole('button', { name: 'Private Key', exact: true }).click()
-    await popup.getByLabel('Wallet name').fill('Independent EVM wallet')
+    await popup.getByRole('button', { name: 'Import private key', exact: true }).click()
     await popup.getByLabel('Private key', { exact: true }).fill(TEST_PRIVATE_KEY)
-    await popup.getByRole('button', { name: 'Continue', exact: true }).click()
+    await popup.getByRole('button', { name: 'Confirm', exact: true }).click()
     await expect(popup.getByText('EVM address preview', { exact: true })).toBeVisible({
       timeout: 30_000
     })
+    await popup.getByLabel('Wallet name').fill('Independent EVM wallet')
     await popup.getByRole('button', { name: 'Import wallet', exact: true }).click()
     await expect(popup.getByRole('heading', { name: 'Portfolio' })).toBeVisible({ timeout: 60_000 })
 

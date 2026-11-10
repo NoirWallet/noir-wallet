@@ -80,8 +80,7 @@ async function revealSelectedPrivateKey(page: Page): Promise<string> {
 async function openPrivateKeyImport(page: Page): Promise<void> {
   await openAccountList(page)
   await page.getByRole('button', { name: 'Add Wallet', exact: true }).click()
-  await page.getByRole('button', { name: 'Import Wallet', exact: true }).click()
-  await page.getByRole('button', { name: 'Private Key', exact: true }).click()
+  await page.getByRole('button', { name: 'Import private key', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'Import private key' })).toBeVisible()
 }
 
@@ -94,14 +93,14 @@ async function importPrivateKeyWallet(
   }>
 ): Promise<void> {
   await openPrivateKeyImport(page)
-  await page.getByLabel('Wallet name').fill(input.name)
   await page.getByLabel('Private key', { exact: true }).fill(input.privateKey)
   await expect(page.getByText('Detected network', { exact: true })).toBeVisible()
   await expect(page.getByText(input.family, { exact: true })).toBeVisible()
-  await page.getByRole('button', { name: 'Continue', exact: true }).click()
+  await page.getByRole('button', { name: 'Confirm', exact: true }).click()
   await expect(page.getByText(`${input.family} address preview`, { exact: true })).toBeVisible({
     timeout: 30_000
   })
+  await page.getByLabel('Wallet name').fill(input.name)
   await page.getByRole('button', { name: 'Import wallet', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'Portfolio' })).toBeVisible({ timeout: 60_000 })
 }
@@ -354,20 +353,19 @@ test('imports and exports EVM and Bitcoin private keys in Testnet Mode', async (
   })
 
   await openPrivateKeyImport(popup)
-  await popup.getByLabel('Wallet name').fill('Wrong Bitcoin Network')
   await popup.getByLabel('Private key', { exact: true }).fill(BITCOIN_MAINNET_WIF)
   await expect(popup.getByText('Bitcoin', { exact: true })).toBeVisible()
-  await popup.getByRole('button', { name: 'Continue', exact: true }).click()
+  await popup.getByRole('button', { name: 'Confirm', exact: true }).click()
   await expect(popup.locator('p.text-danger')).toBeVisible({ timeout: 30_000 })
   await expect(popup.getByText('Bitcoin address preview', { exact: true })).toHaveCount(0)
   await popup.getByLabel('Private key', { exact: true }).fill(BITCOIN_TESTNET_WIF)
-  await popup.getByLabel('Wallet name').fill('Imported Bitcoin Testnet')
-  await popup.getByRole('button', { name: 'Continue', exact: true }).click()
+  await popup.getByRole('button', { name: 'Confirm', exact: true }).click()
   await expect(popup.getByText('Bitcoin address preview', { exact: true })).toBeVisible({
     timeout: 30_000
   })
   await expect(popup.locator('p.font-mono')).toContainText(/^tb1q/)
   await captureScreenshot(popup, 'private-key-testnet-bitcoin-preview.png')
+  await popup.getByLabel('Wallet name').fill('Imported Bitcoin Testnet')
   await popup.getByRole('button', { name: 'Import wallet', exact: true }).click()
   await expect(popup.getByRole('heading', { name: 'Portfolio' })).toBeVisible({ timeout: 60_000 })
 

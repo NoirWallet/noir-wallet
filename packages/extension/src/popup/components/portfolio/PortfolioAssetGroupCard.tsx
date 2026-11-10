@@ -1,4 +1,5 @@
 import { Icon } from '@iconify/react'
+import type { ReactNode } from 'react'
 import Big from '@/lib/big'
 import {
   formatPercentage,
@@ -24,6 +25,32 @@ import {
   type PortfolioAssetGroupEntry
 } from '@/popup/services/portfolio-presentation'
 import type { AssetDomain } from '@/popup/services/asset-domains'
+
+export const portfolioAssetRowClassName =
+  'flex min-h-[72px] w-full min-w-0 items-center gap-3 px-4 py-2.5 text-left'
+
+export function PortfolioAssetRowContent({
+  icon,
+  title,
+  subtitle,
+  balance
+}: {
+  readonly icon: ReactNode
+  readonly title: ReactNode
+  readonly subtitle: ReactNode
+  readonly balance: ReactNode
+}) {
+  return (
+    <>
+      {icon}
+      <div className="min-w-0 flex-1">
+        <div className="flex min-w-0 items-center gap-1.5">{title}</div>
+        {subtitle}
+      </div>
+      <div className="min-w-0 max-w-[142px] shrink-0 text-right">{balance}</div>
+    </>
+  )
+}
 
 interface PortfolioAssetGroupCardProps {
   readonly domain?: AssetDomain
@@ -241,58 +268,67 @@ export function PortfolioAssetGroupCard({
           directAsset ? onSelectAsset?.(group.entries[0].asset.asset.id) : onToggle?.()
         }
         className={cn(
-          'wallet-interactive flex min-h-[72px] w-full min-w-0 items-center gap-3 px-4 py-2.5 text-left hover:bg-white/[0.05] active:bg-white/10 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary',
+          portfolioAssetRowClassName,
+          'wallet-interactive hover:bg-white/[0.05] active:bg-white/10 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary',
           !balancesHidden && pendingAmount.gt(0) && 'pb-0'
         )}
       >
-        <TokenIcon
-          assetId={group.representativeAssetId}
-          symbol={group.symbol}
-          icon={group.iconUrl}
-          blockchain={
-            directAsset && group.entries[0]
-              ? resolveChainIconAlias(
-                  group.entries[0].chain.chain.family,
-                  group.entries[0].chain.chain.displayName,
-                  group.entries[0].chain.chain.id
-                )
-              : undefined
+        <PortfolioAssetRowContent
+          icon={
+            <TokenIcon
+              assetId={group.representativeAssetId}
+              symbol={group.symbol}
+              icon={group.iconUrl}
+              blockchain={
+                directAsset && group.entries[0]
+                  ? resolveChainIconAlias(
+                      group.entries[0].chain.chain.family,
+                      group.entries[0].chain.chain.displayName,
+                      group.entries[0].chain.chain.id
+                    )
+                  : undefined
+              }
+              size={36}
+              className="shrink-0"
+            />
           }
-          size={36}
-          className="shrink-0"
+          title={
+            <>
+              <p className="truncate text-base font-medium">{group.symbol}</p>
+              {!group.bundled && (
+                <span className="shrink-0 rounded bg-white/8 px-1.5 py-0.5 text-[9px] text-muted">
+                  Custom
+                </span>
+              )}
+            </>
+          }
+          subtitle={
+            <UnitPrice
+              price={unitQuote?.priceUsd ?? null}
+              percent24h={unitQuote?.percent24h}
+              changeFreshness={unitQuote?.changeFreshness}
+              loading={pricesLoading}
+            />
+          }
+          balance={
+            <>
+              {!balancesHidden && fiat === null && pricesLoading ? (
+                <Skeleton className="ml-auto h-4 w-16" />
+              ) : (
+                <p className="break-all text-base font-medium">
+                  {balancesHidden
+                    ? '••••'
+                    : fiat === null
+                      ? '—'
+                      : formatFiatAmount(fiat, { showSign: true })}
+                </p>
+              )}
+              <p className="mt-0.5 break-all text-xs text-muted">
+                {balancesHidden ? '••••' : `${formatDisplayAmount(totalAmount)} ${group.symbol}`}
+              </p>
+            </>
+          }
         />
-        <div className="min-w-0 flex-1">
-          <div className="flex min-w-0 items-center gap-1.5">
-            <p className="truncate text-base font-medium">{group.symbol}</p>
-            {!group.bundled && (
-              <span className="shrink-0 rounded bg-white/8 px-1.5 py-0.5 text-[9px] text-muted">
-                Custom
-              </span>
-            )}
-          </div>
-          <UnitPrice
-            price={unitQuote?.priceUsd ?? null}
-            percent24h={unitQuote?.percent24h}
-            changeFreshness={unitQuote?.changeFreshness}
-            loading={pricesLoading}
-          />
-        </div>
-        <div className="min-w-0 max-w-[142px] shrink-0 text-right">
-          {!balancesHidden && fiat === null && pricesLoading ? (
-            <Skeleton className="ml-auto h-4 w-16" />
-          ) : (
-            <p className="break-all text-base font-medium">
-              {balancesHidden
-                ? '••••'
-                : fiat === null
-                  ? '—'
-                  : formatFiatAmount(fiat, { showSign: true })}
-            </p>
-          )}
-          <p className="mt-0.5 break-all text-xs text-muted">
-            {balancesHidden ? '••••' : `${formatDisplayAmount(totalAmount)} ${group.symbol}`}
-          </p>
-        </div>
         {!directAsset && (
           <Icon
             icon="lucide:chevron-down"

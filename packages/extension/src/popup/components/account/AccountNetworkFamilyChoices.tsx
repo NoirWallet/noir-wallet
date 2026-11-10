@@ -4,6 +4,7 @@ import { ChainIcon } from '../common/ChainIcon'
 import evmGroupIcon from '@/images/figma-evm-group.svg'
 import type { AccountNetworkFamily } from '@/core/wallet/account-network-selection'
 import { formatSortAddress } from '@/lib/format'
+import { cn } from '@/lib/utils'
 
 const FAMILY_LABELS: Record<AccountNetworkFamily, string> = {
   zcash: 'Zcash',
@@ -21,7 +22,8 @@ export function AccountNetworkFamilyChoices({
   disabled = false,
   showZcashSyncWarning = false,
   addressPreviews,
-  addressesLoading = false
+  addressesLoading = false,
+  variant = 'default'
 }: {
   readonly availableFamilies: readonly AccountNetworkFamily[]
   readonly selectedFamilies: readonly AccountNetworkFamily[]
@@ -30,6 +32,7 @@ export function AccountNetworkFamilyChoices({
   readonly showZcashSyncWarning?: boolean
   readonly addressPreviews?: Readonly<Partial<Record<AccountNetworkFamily, string>>>
   readonly addressesLoading?: boolean
+  readonly variant?: 'default' | 'import'
 }) {
   return (
     <div className="space-y-1" role="group" aria-label="Account networks">
@@ -37,7 +40,12 @@ export function AccountNetworkFamilyChoices({
         const checked = selectedFamilies.includes(family)
         return (
           <div key={family}>
-            <label className="flex min-h-14 cursor-pointer items-center gap-3 rounded-md px-1 hover:bg-white/5">
+            <label
+              className={cn(
+                'flex min-h-14 cursor-pointer items-center gap-3 rounded-md px-1 hover:bg-white/5',
+                variant === 'import' && 'min-h-[66px] px-0'
+              )}
+            >
               {family === 'evm' ? (
                 <img src={evmGroupIcon} alt="" aria-hidden="true" className="size-8 shrink-0" />
               ) : (
@@ -48,7 +56,11 @@ export function AccountNetworkFamilyChoices({
                 />
               )}
               <span className="min-w-0 flex-1">
-                <span className="block text-sm font-medium">{FAMILY_LABELS[family]}</span>
+                <span
+                  className={cn('block text-sm font-medium', variant === 'import' && 'text-base')}
+                >
+                  {FAMILY_LABELS[family]}
+                </span>
                 {addressPreviews && (
                   <span
                     className="mt-0.5 block truncate font-mono text-xs text-muted"
@@ -76,11 +88,19 @@ export function AccountNetworkFamilyChoices({
                   )
                 }
                 aria-label={FAMILY_LABELS[family] ?? family}
-                className="size-6 rounded-md data-[state=checked]:bg-foreground data-[state=checked]:text-background data-[state=checked]:border-foreground"
+                className={cn(
+                  'size-6 rounded-md data-[state=checked]:bg-foreground data-[state=checked]:text-background data-[state=checked]:border-foreground',
+                  variant === 'import' && 'size-5'
+                )}
               />
             </label>
             {family === 'zcash' && showZcashSyncWarning && (
-              <div className="mb-2 mt-1 flex items-start gap-2 rounded-lg bg-warning/10 px-3 py-2.5 text-xs leading-5 text-warning">
+              <div
+                className={cn(
+                  'mb-2 mt-1 flex items-start gap-2 rounded-lg bg-warning/10 px-3 py-2.5 text-xs leading-5 text-warning',
+                  variant === 'import' && 'text-sm'
+                )}
+              >
                 <Icon
                   icon="lucide:info"
                   width={16}
@@ -88,7 +108,10 @@ export function AccountNetworkFamilyChoices({
                   className="mt-0.5 shrink-0"
                   aria-hidden="true"
                 />
-                <span>Zcash sync takes time. You can enable it later.</span>
+                <span>
+                  Zcash synchronization takes time. Uncheck Zcash if you don’t need it now. You can
+                  add it later.
+                </span>
               </div>
             )}
           </div>

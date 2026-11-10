@@ -5,7 +5,7 @@ import { Icon } from '@iconify/react'
 import { PageHeader } from '../../components/common/PageHeader'
 import { Button } from '../../components/ui/button'
 import { Input } from '../../components/ui/input'
-import { WarningBox } from '../../components/ui/WarningBox'
+import { cn } from '@/lib/utils'
 import { useNavigate } from '../../provider/Router'
 import {
   detectPrivateKeyImport,
@@ -49,16 +49,6 @@ const AVAILABLE_FAMILIES = FAMILY_OPTIONS.filter(option => option.enabled).map(
   option => option.family
 )
 const AVAILABLE_FAMILY_SET = new Set<PrivateKeyImportChainFamily>(AVAILABLE_FAMILIES)
-const ED25519_IMPORT_ENABLED = AVAILABLE_FAMILIES.some(
-  family => family === 'solana' || family === 'near'
-)
-const PRIVATE_KEY_PLACEHOLDER = ED25519_IMPORT_ENABLED
-  ? `Paste an ${AVAILABLE_FAMILIES.map(family => FAMILY_PRESENTATION[family].label).join(', ')} key`
-  : 'Paste an EVM private key'
-const PRIVATE_KEY_PROMPT = ED25519_IMPORT_ENABLED
-  ? `Enter a supported ${AVAILABLE_FAMILIES.map(family => FAMILY_PRESENTATION[family].label).join(', ')} private key. `
-  : 'Enter a supported EVM private key. '
-
 export function ImportPrivateKey() {
   const { replace } = useNavigate()
   const [privateKey, setPrivateKey] = useState('')
@@ -157,55 +147,65 @@ export function ImportPrivateKey() {
   return (
     <div className="page-container">
       <PageHeader title="Import private key" showBack />
-      <div className="page-content space-y-5">
-        <div>
-          <label htmlFor="private-key-wallet-name" className="mb-2 block text-sm text-muted">
-            Wallet name
-          </label>
-          <Input
-            id="private-key-wallet-name"
-            value={displayName}
-            maxLength={128}
-            onChange={event => {
-              setDisplayName(event.target.value)
-              setNameEdited(true)
-            }}
-            className="h-[46px] rounded-xl"
-          />
-        </div>
-
-        <div>
-          <label htmlFor="private-key-value" className="mb-2 block text-sm text-muted">
-            Private key
-          </label>
-          <Input
-            id="private-key-value"
-            type={visible ? 'text' : 'password'}
-            value={privateKey}
-            maxLength={512}
-            spellCheck={false}
-            autoComplete="off"
-            onChange={event => {
-              setPrivateKey(event.target.value)
-              setFamilyOverride(null)
-              setShowFamilyPicker(false)
-              setPreview(null)
-              setError(null)
-            }}
-            placeholder={PRIVATE_KEY_PLACEHOLDER}
-            className="h-[46px] rounded-xl font-mono text-xs"
-            endContent={
-              <button
-                type="button"
-                aria-label={visible ? 'Hide private key' : 'Show private key'}
-                onClick={() => setVisible(value => !value)}
-                className="text-muted"
-              >
-                <Icon icon={visible ? 'lucide:eye-off' : 'lucide:eye'} width={18} height={18} />
-              </button>
-            }
-          />
-        </div>
+      <div className="page-content space-y-5 !pt-8">
+        {!preview && (
+          <div>
+            <label htmlFor="private-key-value" className="mb-5 block text-sm leading-5 text-muted">
+              Private key
+            </label>
+            <div className="relative">
+              <textarea
+                id="private-key-value"
+                value={privateKey}
+                maxLength={512}
+                spellCheck={false}
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="none"
+                disabled={previewing || submitting}
+                onChange={event => {
+                  setPrivateKey(event.target.value)
+                  setFamilyOverride(null)
+                  setShowFamilyPicker(false)
+                  setPreview(null)
+                  setError(null)
+                }}
+                placeholder="Paste or type in your private key"
+                className={cn(
+                  'block h-[142px] w-full resize-none rounded-lg border-0 bg-popover px-3 py-3 pr-10 text-sm leading-5 placeholder:text-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60',
+                  !visible && privateKey && '[-webkit-text-security:disc]'
+                )}
+              />
+              {privateKey && (
+                <button
+                  type="button"
+                  aria-label={visible ? 'Hide private key' : 'Show private key'}
+                  onClick={() => setVisible(value => !value)}
+                  className="absolute right-2 top-2 flex size-7 items-center justify-center rounded text-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-primary/60"
+                >
+                  <Icon icon={visible ? 'lucide:eye-off' : 'lucide:eye'} width={18} height={18} />
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+        {preview && (
+          <div>
+            <label htmlFor="private-key-wallet-name" className="mb-2 block text-sm text-muted">
+              Wallet name
+            </label>
+            <Input
+              id="private-key-wallet-name"
+              value={displayName}
+              maxLength={128}
+              onChange={event => {
+                setDisplayName(event.target.value)
+                setNameEdited(true)
+              }}
+              className="h-[46px] rounded-xl"
+            />
+          </div>
+        )}
 
         {privateKey.trim() && !preview && (
           <div className="rounded-2xl border border-border bg-card p-4">
@@ -291,24 +291,23 @@ export function ImportPrivateKey() {
           </div>
         )}
 
-        <WarningBox>
-          {presentation
-            ? `This key will be imported as ${presentation.label}. `
-            : PRIVATE_KEY_PROMPT}
-          It will not create a Zcash account. Anyone with the key can move its funds.
-        </WarningBox>
         {error && <p className="text-sm text-danger">{error}</p>}
       </div>
       <div className="page-footer">
         <Button
+          size="wallet"
           className="h-[45px] w-full"
           disabled={
-            !privateKey.trim() || !displayName.trim() || !chainFamily || previewing || submitting
+            !privateKey.trim() ||
+            (preview !== null && !displayName.trim()) ||
+            !chainFamily ||
+            previewing ||
+            submitting
           }
           isLoading={previewing || submitting}
           onClick={preview ? submit : previewKey}
         >
-          {preview ? 'Import wallet' : 'Continue'}
+          {preview ? 'Import wallet' : 'Confirm'}
         </Button>
       </div>
     </div>

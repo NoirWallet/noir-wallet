@@ -302,13 +302,12 @@ test('limits Swap to this Account Zcash recipients and disables a wallet without
     .getByRole('button', { name: 'Accounts', exact: true })
     .click()
   await popup.getByRole('button', { name: 'Add Wallet', exact: true }).click()
-  await popup.getByRole('button', { name: 'Import Wallet', exact: true }).click()
-  await popup.getByRole('button', { name: 'Private Key', exact: true }).click()
-  await popup.getByLabel('Wallet name').fill('Synthetic EVM')
+  await popup.getByRole('button', { name: 'Import private key', exact: true }).click()
   await popup.getByLabel('Private key', { exact: true }).fill(`0x${'00'.repeat(31)}01`)
   await expect(popup.getByText('Detected network', { exact: true })).toBeVisible()
-  await popup.getByRole('button', { name: 'Continue', exact: true }).click()
+  await popup.getByRole('button', { name: 'Confirm', exact: true }).click()
   await expect(popup.getByText('EVM address preview', { exact: true })).toBeVisible()
+  await popup.getByLabel('Wallet name').fill('Synthetic EVM')
   await popup.getByRole('button', { name: 'Import wallet', exact: true }).click()
   await expect(popup.getByRole('button', { name: 'View ETH details on Ethereum' })).toBeVisible({
     timeout: 60_000

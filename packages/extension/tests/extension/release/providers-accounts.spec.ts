@@ -1365,12 +1365,11 @@ test('uses an unlisted EVM network with an imported key and intercepted transact
     .getByRole('button', { name: 'Accounts', exact: true })
     .click()
   await popup.getByRole('button', { name: 'Add Wallet', exact: true }).click()
-  await popup.getByRole('button', { name: 'Import Wallet', exact: true }).click()
-  await popup.getByRole('button', { name: 'Private Key', exact: true }).click()
-  await popup.getByLabel('Wallet name').fill('Robinhood synthetic EVM')
+  await popup.getByRole('button', { name: 'Import private key', exact: true }).click()
   await popup.getByLabel('Private key', { exact: true }).fill(`0x${'00'.repeat(31)}01`)
-  await popup.getByRole('button', { name: 'Continue', exact: true }).click()
+  await popup.getByRole('button', { name: 'Confirm', exact: true }).click()
   await expect(popup.getByText('EVM address preview', { exact: true })).toBeVisible()
+  await popup.getByLabel('Wallet name').fill('Robinhood synthetic EVM')
   await popup.getByRole('button', { name: 'Import wallet', exact: true }).click()
   await expect(popup.getByRole('heading', { name: 'Portfolio' })).toBeVisible()
 
@@ -2110,14 +2109,12 @@ test('imports and exports scoped EVM and Bitcoin private-key Wallets across Work
       await expect(addWallet).toBeVisible({ timeout: 30_000 })
     }
     await addWallet.click()
-    await popup.getByRole('button', { name: 'Import Wallet', exact: true }).click()
-    await popup.getByRole('button', { name: 'Private Key', exact: true }).click()
+    await popup.getByRole('button', { name: 'Import private key', exact: true }).click()
     await expect(popup.getByRole('heading', { name: 'Import private key' })).toBeVisible()
     const accountCountBeforePreview = await popup.evaluate(async () => {
       const response = await chrome.runtime.sendMessage({ type: 'GET_ACCOUNT_NETWORKS' })
       return response.result?.accounts?.length ?? 0
     })
-    await popup.getByLabel('Wallet name').fill(walletName)
     await popup
       .getByLabel('Private key', { exact: true })
       .fill(family === 'EVM' ? evmPrivateKey : bitcoinPrivateKey)
@@ -2134,7 +2131,7 @@ test('imports and exports scoped EVM and Bitcoin private-key Wallets across Work
       await expect(popup.getByText('Detected network', { exact: true })).toBeVisible()
       await expect(popup.getByText('EVM', { exact: true })).toBeVisible()
     }
-    await popup.getByRole('button', { name: 'Continue', exact: true }).click()
+    await popup.getByRole('button', { name: 'Confirm', exact: true }).click()
     await expect(popup.getByText(`${family} address preview`, { exact: true })).toBeVisible({
       timeout: 30_000
     })
@@ -2162,6 +2159,7 @@ test('imports and exports scoped EVM and Bitcoin private-key Wallets across Work
     } else {
       await captureScreenshot(popup, 'release-default-import-bitcoin-private-key.png')
     }
+    await popup.getByLabel('Wallet name').fill(walletName)
     await popup.getByRole('button', { name: 'Import wallet', exact: true }).click()
     if (family === 'Bitcoin') {
       await expect(popup.getByRole('button', { name: 'Expand low value assets' })).toHaveCount(0)
