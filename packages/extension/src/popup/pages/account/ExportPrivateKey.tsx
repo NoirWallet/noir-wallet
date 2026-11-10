@@ -87,7 +87,7 @@ export function ExportPrivateKey() {
   const [loadAttempt, setLoadAttempt] = useState(0)
   const [exporting, setExporting] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const { copyToClipboard, showToast, copyFailed, copiedKey } = useCopyToClipboard()
+  const { copyToClipboard, showToast, copiedKey } = useCopyToClipboard()
 
   useEffect(() => {
     let cancelled = false
@@ -183,7 +183,7 @@ export function ExportPrivateKey() {
   if (privateKey) {
     return (
       <div className="page-container">
-        <CopyToast show={showToast} error={copyFailed} />
+        <CopyToast show={showToast} />
         <PageHeader title="Private key" showBack />
         <div className="page-content space-y-5">
           <WarningBox>

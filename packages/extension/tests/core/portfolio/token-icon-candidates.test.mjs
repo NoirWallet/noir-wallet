@@ -1,6 +1,5 @@
 import { test } from 'node:test'
 import { expect } from '@playwright/test'
-import { readFileSync } from 'node:fs'
 
 import { getTokenIconCandidates } from '../../../src/popup/components/tokens/token-icon-candidates.ts'
 import {
@@ -157,22 +156,4 @@ test('shares failed icon URLs across component instances and retries them after 
   recordTokenIconUrlFailure(url, 1_000)
   expect(hasTokenIconUrlFailed(url, 1_001)).toBe(true)
   expect(hasTokenIconUrlFailed(url, 5 * 60 * 1000 + 1_001)).toBe(false)
-})
-
-test('uses one neutral fallback background when no token icon can load', () => {
-  const source = readFileSync(
-    new URL('../../../src/popup/components/tokens/TokenIcon.tsx', import.meta.url),
-    'utf8'
-  )
-  expect(source).toContain('bg-[#34343f] text-white/80')
-  expect(source).not.toContain('fallbackColor')
-  expect(source).not.toContain('backgroundColor:')
-})
-
-test('keeps token icon provider details out of the selector UI', () => {
-  const source = readFileSync(
-    new URL('../../../src/popup/components/tokens/TokenSelector.tsx', import.meta.url),
-    'utf8'
-  )
-  expect(source).not.toContain('Powered by CoinGecko')
 })

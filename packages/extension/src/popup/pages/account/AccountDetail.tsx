@@ -24,6 +24,7 @@ import { useResyncZcash } from '../../hooks/useResyncZcash'
 import { accountNetworksClient } from '../../services/account-networks-client'
 import { isAccountNetworkEnabled } from '@/core/wallet/account-network-selection'
 import { DEFAULT_NETWORK } from '@/lib/runtime-network'
+import { ACCOUNT_AVATARS } from '@/popup/lib/account-avatars'
 
 export function AccountDetail() {
   const { navigate, goBack } = useNavigate()
@@ -58,16 +59,11 @@ export function AccountDetail() {
 
   const isHardwareWallet = isZcashHardwareKeySource(wallet?.keySource)
   const isCurrentAccount = wallet.id === currentWalletId && account.id === currentAccountId
-  const avatarIndex =
-    Math.max(
-      0,
-      wallet.accounts.findIndex(item => item.id === account.id)
-    ) % 3
-  const avatarSrc = [
-    '/icons/wallet-avatar-main.png',
-    '/icons/wallet-avatar-meme.png',
-    '/icons/wallet-avatar-nft.png'
-  ][avatarIndex]
+  const avatarIndex = Math.max(
+    0,
+    wallet.accounts.findIndex(item => item.id === account.id)
+  )
+  const avatarSrc = ACCOUNT_AVATARS[avatarIndex % ACCOUNT_AVATARS.length]
 
   const menuItems = [
     {

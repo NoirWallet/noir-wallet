@@ -2,10 +2,8 @@ import type { PortfolioAssetView, PortfolioChainView, PortfolioReadModel } from 
 
 import { type AssetPriceReadModel, findAssetPrice } from '@/core/prices'
 import Big from '@/lib/big'
-import { formatBaseUnitDecimalAmount } from '@/lib/number-format'
 import { getPortfolioAssetUsdValue } from '@/popup/components/portfolio/portfolio-prices'
 import { isAssetVisibleInAssetView } from '@/popup/components/portfolio/portfolio-asset-visibility'
-import { getAssetDomainRaw, getAssetShieldProvider } from './asset-domains'
 import { getNearConfidentialChainId } from './near-confidential-holdings'
 import type { ChainFeatureFlagValue } from '@/config/multichain-feature-flags'
 import { isSelectableChainFamily } from './chain-selection-availability'
@@ -65,13 +63,6 @@ export interface PortfolioAssetGroup {
   readonly bundled: boolean
   readonly representativeAssetId: string
   readonly iconUrl?: string
-}
-
-export interface PortfolioAccountBalanceBreakdown {
-  readonly publicBalance: Big
-  readonly shield: Big
-  readonly privateBalance: Big
-  readonly hasPrivate: boolean
 }
 
 export function getPortfolioChainBalanceStatus(
@@ -328,26 +319,4 @@ export function partitionPortfolioAssetGroups(
     primaryAssetGroups: Object.freeze(primaryAssetGroups),
     lowValueAssetGroups: Object.freeze(lowValueAssetGroups)
   })
-}
-
-export function calculatePortfolioAccountBalanceBreakdown(
-  entries: readonly PortfolioAssetGroupEntry[]
-): PortfolioAccountBalanceBreakdown | null {
-  let publicBalance = new Big(0)
-  let shield = new Big(0)
-  let privateBalance = new Big(0)
-  let hasPrivate = false
-  for (const entry of entries) {
-    if (!getAssetShieldProvider(entry.asset)) return null
-    const publicRaw = getAssetDomainRaw(entry.asset, 'public')
-    const shieldRaw = getAssetDomainRaw(entry.asset, 'shield')
-    const privateRaw = getAssetDomainRaw(entry.asset, 'private')
-    if (publicRaw === null || shieldRaw === null || privateRaw === null) return null
-    const decimals = entry.asset.metadata.decimals
-    hasPrivate ||= entry.chain.chain.family === 'evm'
-    publicBalance = publicBalance.plus(formatBaseUnitDecimalAmount(publicRaw, decimals))
-    shield = shield.plus(formatBaseUnitDecimalAmount(shieldRaw, decimals))
-    privateBalance = privateBalance.plus(formatBaseUnitDecimalAmount(privateRaw, decimals))
-  }
-  return Object.freeze({ publicBalance, shield, privateBalance, hasPrivate })
 }

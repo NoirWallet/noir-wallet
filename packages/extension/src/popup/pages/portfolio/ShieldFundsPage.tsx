@@ -19,10 +19,7 @@ import { selectShieldActions, type ShieldAction } from '@/popup/services/shield-
 import { useLocation, useNavigate } from '@/popup/provider/Router'
 import { PageHeader } from '@/popup/components/common/PageHeader'
 import { WalletActionIcon } from '@/popup/components/common/WalletActionIcon'
-import {
-  ShieldProviderLogo,
-  SHIELD_PROVIDERS
-} from '@/popup/components/portfolio/ShieldPortfolioView'
+import { ShieldProviderLogo, SHIELD_PROVIDERS } from '@/popup/components/portfolio/shield-providers'
 import { TokenIcon } from '@/popup/components/tokens/TokenIcon'
 import { ShieldMoveSheet } from '@/popup/components/transaction/ShieldMoveSheet'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/popup/components/ui/dialog'

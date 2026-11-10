@@ -29,12 +29,12 @@ export interface NearConfidentialSummary {
   readonly fiat: string | null
 }
 
-export interface StandaloneNearConfidentialHolding {
+interface StandaloneNearConfidentialHolding {
   readonly entry: NearConfidentialHolding
   readonly chain: PortfolioChainView | undefined
 }
 
-export interface NearConfidentialZecHolding {
+interface NearConfidentialZecHolding {
   readonly assetId: string
   readonly protocolAssetId: string
   readonly availableRaw: string

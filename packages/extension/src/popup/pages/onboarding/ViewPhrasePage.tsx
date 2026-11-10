@@ -23,7 +23,7 @@ export function ViewPhrasePage() {
   } = useOnboardingStore()
 
   const [isBlurred, setIsBlurred] = useState(true)
-  const { copyToClipboard, showToast, copyFailed, copiedKey } = useCopyToClipboard()
+  const { copyToClipboard, showToast, copiedKey } = useCopyToClipboard()
 
   useEffect(() => {
     if (seedPhrase.length === 0) {
@@ -77,7 +77,7 @@ export function ViewPhrasePage() {
 
   return (
     <div className="page-container">
-      <CopyToast show={showToast} error={copyFailed} />
+      <CopyToast show={showToast} />
       <PageHeader title="View Secret Phrase" showBack />
 
       <div className="flex-1 px-5 pt-3 overflow-y-auto">

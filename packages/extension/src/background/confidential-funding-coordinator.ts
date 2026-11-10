@@ -1,5 +1,6 @@
 import type { Network } from '@/types'
 import { trackEvent } from '@/background/analytics/reporter'
+import { SerialTaskQueue } from '@/lib/async-utils'
 import {
   projectConfidentialPlanResult,
   projectExternalDepositResult
@@ -444,8 +445,8 @@ export class ConfidentialFundingCoordinator {
   private readonly refreshingExternalDeposits = new Map<string, Promise<ExternalShieldDeposit>>()
   private readonly externalBalanceRefreshQueues = new Map<string, Promise<void>>()
   private readonly reconciledTerminalExternalDeposits = new Set<string>()
-  private prepareQueue: Promise<void> = Promise.resolve()
-  private reservationQueue: Promise<void> = Promise.resolve()
+  private readonly prepareQueue = new SerialTaskQueue()
+  private readonly reservationQueue = new SerialTaskQueue()
   private readonly now: () => number
   private readonly createId: () => string
 
@@ -460,17 +461,7 @@ export class ConfidentialFundingCoordinator {
   async createExternalDeposit(
     input: CreateExternalShieldDepositInput
   ): Promise<ExternalShieldDeposit> {
-    const previous = this.prepareQueue.catch(() => {})
-    let release!: () => void
-    this.prepareQueue = new Promise<void>(resolve => {
-      release = resolve
-    })
-    await previous
-    try {
-      return await this.createExternalDepositExclusive(input)
-    } finally {
-      release()
-    }
+    return this.prepareQueue.run(() => this.createExternalDepositExclusive(input))
   }
 
   private async createExternalDepositExclusive(
@@ -1032,20 +1023,6 @@ export class ConfidentialFundingCoordinator {
     else await this.scheduleMonitoring()
   }
 
-  private async withReservationLock<T>(work: () => Promise<T>): Promise<T> {
-    const previous = this.reservationQueue.catch(() => {})
-    let release!: () => void
-    this.reservationQueue = new Promise<void>(resolve => {
-      release = resolve
-    })
-    await previous
-    try {
-      return await work()
-    } finally {
-      release()
-    }
-  }
-
   async preview(value: PrepareConfidentialFundingInput): Promise<ConfidentialFundingPreview> {
     const input = this.parseInput(value)
     if (
@@ -1238,17 +1215,7 @@ export class ConfidentialFundingCoordinator {
   }
 
   async prepare(value: PrepareConfidentialFundingInput): Promise<ConfidentialFundingReview> {
-    const previous = this.prepareQueue.catch(() => {})
-    let release!: () => void
-    this.prepareQueue = new Promise<void>(resolve => {
-      release = resolve
-    })
-    await previous
-    try {
-      return await this.prepareExclusive(value)
-    } finally {
-      release()
-    }
+    return this.prepareQueue.run(() => this.prepareExclusive(value))
   }
 
   private async prepareExclusive(
@@ -1273,7 +1240,7 @@ export class ConfidentialFundingCoordinator {
         input.accountId !== sourceIdentity.context.chainAccount.scope.accountId
       )
         throw new Error('Confidential funding account or network changed')
-      return this.withReservationLock(() =>
+      return this.reservationQueue.run(() =>
         input.operation === 'cluster'
           ? this.prepareCluster(input, sourceIdentity, destinationIdentity)
           : this.prepareDirect(input, sourceIdentity, destinationIdentity)
@@ -2495,7 +2462,7 @@ export class ConfidentialFundingCoordinator {
         return plan
       }
       if (plan.operation === 'cluster') {
-        plan = await this.withReservationLock(async () => {
+        plan = await this.reservationQueue.run(async () => {
           const active = (await this.options.store.listPlans()).filter(
             other =>
               other.network === plan.network &&

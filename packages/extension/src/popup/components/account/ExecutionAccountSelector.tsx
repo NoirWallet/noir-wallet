@@ -14,7 +14,7 @@ import {
   DialogTitle
 } from '@/popup/components/ui/dialog'
 
-export function PrivateExecutionIcon({
+function PrivateExecutionIcon({
   size = 16,
   className,
   ariaLabel
@@ -31,51 +31,6 @@ export function PrivateExecutionIcon({
       className={className}
       aria-label={ariaLabel}
     />
-  )
-}
-
-export function PrivateExecutionModeIconButton({
-  mode,
-  ariaLabel,
-  title,
-  busy = false,
-  disabled = false,
-  onClick
-}: {
-  readonly mode: DAppExecutionMode
-  readonly ariaLabel: string
-  readonly title: string
-  readonly busy?: boolean
-  readonly disabled?: boolean
-  readonly onClick: () => void
-}) {
-  const privateMode = mode === 'private'
-
-  return (
-    <button
-      type="button"
-      aria-label={ariaLabel}
-      aria-haspopup="dialog"
-      aria-busy={busy}
-      title={title}
-      disabled={disabled}
-      onClick={onClick}
-      className={cn(
-        'relative flex size-8 shrink-0 items-center justify-center rounded-lg transition-colors disabled:pointer-events-none disabled:opacity-50',
-        privateMode
-          ? 'bg-private/10 text-private hover:bg-private/15'
-          : 'bg-card/60 text-foreground/70 hover:bg-accent hover:text-foreground'
-      )}
-    >
-      <PrivateExecutionIcon size={18} />
-      <span
-        aria-hidden="true"
-        className={cn(
-          'absolute right-0.5 top-0.5 size-1.5 rounded-full ring-2 ring-background',
-          privateMode ? 'bg-private' : 'bg-muted/50'
-        )}
-      />
-    </button>
   )
 }
 
@@ -174,7 +129,7 @@ interface ExecutionAccountOption {
   readonly balance?: string
 }
 
-export function ExecutionAccountOptionRow({
+function ExecutionAccountOptionRow({
   mode,
   selected,
   disabled = false,

@@ -129,10 +129,6 @@ interface PrivateSendPreview {
   readonly estimatedReceive: string
 }
 
-export function evmSendNetworkLabel(chain: PortfolioChainView): string {
-  return formatPortfolioNetworkName(chain)
-}
-
 export function EvmSendForm({
   walletMode,
   onSelectAsset,
@@ -1335,7 +1331,7 @@ export function EvmSendForm({
               }}
               amount={review.amount}
               fiatValue={reviewFiat}
-              network={evmSendNetworkLabel(chain)}
+              network={formatPortfolioNetworkName(chain)}
               notice={
                 review.privacyWarning || (summary.review.level === 'caution' && !bundledAsset) ? (
                   <div className="mb-3 flex items-start gap-2 rounded-xl border border-warning/25 bg-warning/10 px-3 py-2.5 text-xs leading-5 text-warning">
@@ -1379,7 +1375,7 @@ export function EvmSendForm({
                   label: 'To',
                   content: <SendRecipientAddress address={review.recipient} name={recipientName} />
                 },
-                { label: 'Network', content: evmSendNetworkLabel(chain) },
+                { label: 'Network', content: formatPortfolioNetworkName(chain) },
                 {
                   label: 'Network fee',
                   content: (

@@ -9,7 +9,6 @@ import {
   RHEA_SWAP_CHAIN_CATALOG,
   RheaSwapService,
   assertPrivateQuoteRoute,
-  assertPrivateSwapAccountRoute,
   parseRheaSwapQuoteRequest,
   toSdkQuoteRequest,
   toRheaSwapToken
@@ -118,13 +117,18 @@ test('Private Swap quote remains bound to the same Account and its managed desti
     tokenIn: { address: 'native' },
     tokenOut: { address: 'native' }
   }
-  expect(() => assertPrivateSwapAccountRoute(route, account, account)).not.toThrow()
+  expect(() => assertPrivateQuoteRoute(route, account, 'private-swap', account)).not.toThrow()
   const publicDestination = account.networks[1].addresses[0].value
   expect(() =>
-    assertPrivateSwapAccountRoute({ ...route, recipient: publicDestination }, account, account)
+    assertPrivateQuoteRoute(
+      { ...route, recipient: publicDestination },
+      account,
+      'private-swap',
+      account
+    )
   ).toThrow(/this Account/)
   expect(() =>
-    assertPrivateSwapAccountRoute(
+    assertPrivateQuoteRoute(
       { ...route, recipient: publicDestination },
       {
         ...account,
@@ -133,6 +137,7 @@ test('Private Swap quote remains bound to the same Account and its managed desti
           { chainId: 'eip155:56', addresses: [{ value: publicDestination }] }
         ]
       },
+      'private-swap',
       account
     )
   ).toThrow(/this Account/)
@@ -260,16 +265,16 @@ test('Private Swap quote remains bound to the same Account and its managed desti
       account
     )
   ).toThrow(/funding/)
-  expect(() => assertPrivateSwapAccountRoute({ ...route, recipient: undefined }, account)).toThrow(
-    /this Account/
-  )
   expect(() =>
-    assertPrivateSwapAccountRoute({ ...route, recipient: `0x${'3'.repeat(40)}` }, account)
+    assertPrivateQuoteRoute({ ...route, recipient: undefined }, account, 'private-swap')
   ).toThrow(/this Account/)
   expect(() =>
-    assertPrivateSwapAccountRoute(route, account, { ...account, accountId: 'account-2' })
+    assertPrivateQuoteRoute({ ...route, recipient: `0x${'3'.repeat(40)}` }, account, 'private-swap')
+  ).toThrow(/this Account/)
+  expect(() =>
+    assertPrivateQuoteRoute(route, account, 'private-swap', { ...account, accountId: 'account-2' })
   ).toThrow(/account changed/)
-  expect(() => assertPrivateSwapAccountRoute(route, null)).toThrow(/account changed/)
+  expect(() => assertPrivateQuoteRoute(route, null, 'private-swap')).toThrow(/account changed/)
   const main = account.networks[0].addresses[0].value
   expect(() =>
     assertPrivateQuoteRoute(

@@ -22,7 +22,7 @@ import type {
 import { getConfidentialAvailableForAsset } from '@/core/services/confidential-funding'
 import type { TransferDomain } from './private-balance-transfer'
 
-export type ShieldTransferAsset = Pick<
+type ShieldTransferAsset = Pick<
   IntentsManagedAsset,
   'assetId' | 'chainId' | 'protocolAssetId' | 'blockchain'
 >

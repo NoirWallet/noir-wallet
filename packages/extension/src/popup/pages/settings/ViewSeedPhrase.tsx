@@ -63,7 +63,7 @@ function SeedPhraseContent({
   const mounted = useRef(false)
   const confirming = useRef(false)
   const verification = useWalletBackupVerification(targetWalletId)
-  const { copyToClipboard, showToast, copyFailed, copiedKey } = useCopyToClipboard()
+  const { copyToClipboard, showToast, copiedKey } = useCopyToClipboard()
 
   const returnToPage = () => {
     if (
@@ -248,7 +248,7 @@ function SeedPhraseContent({
   }
   return (
     <div className="page-container">
-      <CopyToast show={showToast} error={copyFailed} />
+      <CopyToast show={showToast} />
       <PageHeader title={title} showBack onBack={handleBack} />
       <div className="page-content">
         {backupMode && <p className="mb-3 text-sm font-medium break-words">{targetName}</p>}

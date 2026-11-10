@@ -69,7 +69,7 @@ export function availableDepositTokens(
   })
 }
 
-export interface DepositTokenChoice {
+interface DepositTokenChoice {
   readonly id: string
   readonly token: SwapToken
   readonly assetIds: readonly string[]
@@ -218,7 +218,7 @@ export function depositStatusLabel(record: ExternalShieldDeposit, now: number): 
   }
 }
 
-export function depositRemainingRaw(record: ExternalShieldDeposit): string {
+function depositRemainingRaw(record: ExternalShieldDeposit): string {
   const remaining = BigInt(record.amountRaw) - BigInt(record.depositedAmountRaw ?? '0')
   return remaining > 0n ? remaining.toString() : '0'
 }

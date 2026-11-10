@@ -1220,7 +1220,7 @@ export function MultichainActivityDetail({
           <Icon icon="lucide:arrow-up-right" width={15} height={15} />
         </a>
       )}
-      <CopyToast show={showToast} message="Address copied" />
+      <CopyToast show={showToast} />
 
       {isCrossChain && (
         <TransactionProgressSteps

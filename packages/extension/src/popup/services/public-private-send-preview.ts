@@ -86,7 +86,7 @@ export function buildZcashPublicPrivateSendPreviewRequest(input: {
   })
 }
 
-export interface PublicPrivateSendPreviewIdentity {
+interface PublicPrivateSendPreviewIdentity {
   readonly network: 'mainnet' | 'testnet'
   readonly walletId: string
   readonly accountId: string

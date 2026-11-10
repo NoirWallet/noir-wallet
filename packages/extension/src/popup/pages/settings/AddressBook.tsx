@@ -112,7 +112,7 @@ export function AddressBook() {
 
   return (
     <div className="page-container">
-      <CopyToast show={showToast} message="Address copied" />
+      <CopyToast show={showToast} />
       <PageHeader title="Address Book" showBack />
       <div className="page-content min-h-0 !px-0 !pt-3">
         {loadError && sortedContacts.length > 0 && (

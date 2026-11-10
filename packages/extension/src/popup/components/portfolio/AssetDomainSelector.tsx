@@ -12,7 +12,7 @@ export const ASSET_DOMAIN_LABELS: Record<AssetDomain, string> = {
   private: 'Private assets'
 }
 
-export const ASSET_DOMAIN_ICONS: Record<AssetDomain, string> = {
+const ASSET_DOMAIN_ICONS: Record<AssetDomain, string> = {
   all: 'noir:total-assets',
   public: 'lucide:eye',
   shield: 'lucide:shield-check',

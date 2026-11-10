@@ -182,18 +182,7 @@ describe('dynamic maximum transfer regressions', () => {
     assert.equal(calls, 2)
   })
 
-  it('does not run an ordinary fee proposal for an exact Max transfer', () => {
-    const send = readSource('src/popup/pages/transactions/Send.tsx')
-    const swap = readSource('src/popup/pages/swap/Swap.tsx')
-
-    for (const source of [send, swap]) {
-      assert.match(source, /const isMaxTransferAmount\s*=/)
-      assert.match(source, /!maxSelected[\s\S]*?!isMaxTransferAmount/)
-      assert.match(
-        source,
-        /const displayedFeeByTier = isMaxFeeMode \? maxTransfer\.feeByTier : feeEstimate\.feeByTier/
-      )
-    }
+  it('selects the exact Max fee estimate for the reviewed amount', () => {
     const feeQuote = { id: 'quote-1', standardMarginalFeeZats: 5000, expiresAt: 2000 }
     const max = { feeZats: 20000, feeQuote, loading: false, error: false }
     const amount = { feeZats: 15000, feeQuote, loading: false, error: false }

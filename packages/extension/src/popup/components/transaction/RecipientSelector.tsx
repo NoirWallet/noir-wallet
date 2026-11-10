@@ -7,6 +7,7 @@ import {
 } from '@/popup/services/account-networks-client'
 import { useAddressBookStore } from '@/store/address-book-store'
 import { useWalletStore } from '@/store/wallet-store'
+import { ACCOUNT_AVATARS } from '@/popup/lib/account-avatars'
 import { AddAddressDialog } from '../address-book/AddAddressDialog'
 import { getAddressBookNetworkChoice } from '../address-book/address-book-network'
 import { InlineError } from '../common/InlineError'
@@ -205,13 +206,7 @@ export function RecipientSelector({
                 <section key={wallet.walletId}>
                   <div className="mb-2 flex min-w-0 items-center gap-2 px-1">
                     <img
-                      src={
-                        [
-                          '/icons/wallet-avatar-main.png',
-                          '/icons/wallet-avatar-meme.png',
-                          '/icons/wallet-avatar-nft.png'
-                        ][walletIndex % 3]
-                      }
+                      src={ACCOUNT_AVATARS[walletIndex % ACCOUNT_AVATARS.length]}
                       alt=""
                       aria-hidden="true"
                       className="size-8 shrink-0 rounded-full object-cover"

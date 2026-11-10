@@ -15,7 +15,7 @@ export interface MoveDraft {
   readonly maxSelected: boolean
 }
 
-export function readMoveDraft(state: unknown, scope: string): MoveDraft | null {
+function readMoveDraft(state: unknown, scope: string): MoveDraft | null {
   if (!state || typeof state !== 'object' || !('moveDraft' in state)) return null
   const draft = state.moveDraft
   if (!draft || typeof draft !== 'object' || !('scope' in draft) || draft.scope !== scope)

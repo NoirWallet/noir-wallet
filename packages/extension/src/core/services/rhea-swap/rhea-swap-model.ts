@@ -221,16 +221,6 @@ export function assertPrivateQuoteRoute(
   }
 }
 
-export function assertPrivateSwapAccountRoute(
-  request: Pick<
-    QuoteRequest,
-    'fromChain' | 'toChain' | 'tokenIn' | 'tokenOut' | 'sender' | 'recipient' | 'confidentiality'
-  >,
-  account: PrivateSwapAccountRoute | null,
-  scope?: Pick<PrivateSwapAccountRoute, 'walletId' | 'accountId'>
-): void {
-  assertPrivateQuoteRoute(request, account, 'private-swap', scope)
-}
 const RHEA_NATIVE_QUOTE_ADDRESSES = Object.freeze(
   new Map<string, string>([
     ['btc:nep141:btc.omft.near', 'btc'],

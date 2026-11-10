@@ -283,7 +283,7 @@ export function ZcashSettings() {
 
   return (
     <div className="page-container">
-      <CopyToast show={showToast} message="Copied" />
+      <CopyToast show={showToast} />
       <PageHeader title="Zcash settings" showBack />
       <ShieldedAddressHistorySheet
         open={historyOpen}

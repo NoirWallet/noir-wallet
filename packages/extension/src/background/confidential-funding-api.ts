@@ -250,12 +250,16 @@ function parsePrivateOrder(value: unknown): ConfidentialPrivateOrder {
     ) {
       throw new Error('Private withdrawal sequence is invalid')
     }
+    const executionType = optionalString(item, 'execution_type')
+    const scheduledAt = optionalTimestamp(item.scheduled_at, 'Private withdrawal schedule')
+    const deadline = optionalTimestamp(item.payload_deadline, 'Private withdrawal deadline')
+    const errorStatus = optionalString(item, 'error_status')
+    const intentHash = optionalString(item, 'intent_hash')
+    const transactionHash = optionalString(item, 'chain_tx_hash')
     return Object.freeze({
       ...(sequence !== undefined && sequence !== null ? { sequence: sequence as number } : {}),
       transactionType,
-      ...(optionalString(item, 'execution_type')
-        ? { executionType: optionalString(item, 'execution_type') }
-        : {}),
+      ...(executionType ? { executionType } : {}),
       amount: withdraw
         ? positiveRaw(item.amount, 'Private withdrawal amount')
         : (optionalRaw(item.amount) ?? ''),
@@ -274,21 +278,11 @@ function parsePrivateOrder(value: unknown): ConfidentialPrivateOrder {
       status: withdraw
         ? requiredString(item, 'status', 'Private withdrawal status')
         : (optionalString(item, 'status') ?? ''),
-      ...(optionalTimestamp(item.scheduled_at, 'Private withdrawal schedule') !== undefined
-        ? { scheduledAt: optionalTimestamp(item.scheduled_at, 'Private withdrawal schedule') }
-        : {}),
-      ...(optionalTimestamp(item.payload_deadline, 'Private withdrawal deadline') !== undefined
-        ? { deadline: optionalTimestamp(item.payload_deadline, 'Private withdrawal deadline') }
-        : {}),
-      ...(optionalString(item, 'error_status')
-        ? { errorStatus: optionalString(item, 'error_status') }
-        : {}),
-      ...(optionalString(item, 'intent_hash')
-        ? { intentHash: optionalString(item, 'intent_hash') }
-        : {}),
-      ...(optionalString(item, 'chain_tx_hash')
-        ? { transactionHash: optionalString(item, 'chain_tx_hash') }
-        : {})
+      ...(scheduledAt !== undefined ? { scheduledAt } : {}),
+      ...(deadline !== undefined ? { deadline } : {}),
+      ...(errorStatus ? { errorStatus } : {}),
+      ...(intentHash ? { intentHash } : {}),
+      ...(transactionHash ? { transactionHash } : {})
     })
   })
   const sequenced = rows.filter(row => row.sequence !== undefined)
@@ -298,18 +292,18 @@ function parsePrivateOrder(value: unknown): ConfidentialPrivateOrder {
   ) {
     throw new Error('Private withdrawal sequences are duplicated')
   }
+  const mode = optionalString(order, 'mode')
+  const fromAmount = optionalRaw(order.from_amount)
+  const fromChain = optionalString(order, 'from_chain')
+  const fromToken = optionalString(order, 'from_token')
   return Object.freeze({
     orderId: requiredString(order, 'order_id', 'Private order ID'),
     signerId: requiredString(order, 'signer_id', 'Private order signer'),
     status: requiredString(order, 'status', 'Private order status'),
-    ...(optionalString(order, 'mode') ? { mode: optionalString(order, 'mode') } : {}),
-    ...(optionalRaw(order.from_amount) ? { fromAmount: optionalRaw(order.from_amount) } : {}),
-    ...(optionalString(order, 'from_chain')
-      ? { fromChain: optionalString(order, 'from_chain') }
-      : {}),
-    ...(optionalString(order, 'from_token')
-      ? { fromToken: optionalString(order, 'from_token') }
-      : {}),
+    ...(mode ? { mode } : {}),
+    ...(fromAmount ? { fromAmount } : {}),
+    ...(fromChain ? { fromChain } : {}),
+    ...(fromToken ? { fromToken } : {}),
     transactions: Object.freeze(
       rows.sort(
         (left, right) =>
@@ -404,6 +398,9 @@ function parseQuote(value: unknown): ConfidentialQuote {
   if (!deadline || !Number.isFinite(Date.parse(deadline))) {
     throw new Error('Confidential quote deadline is invalid')
   }
+  const depositMemo = optionalDepositMemo(quote)
+  const withdrawFee = optionalRaw(quote.withdrawFee)
+  const refundFee = optionalRaw(quote.refundFee)
   return Object.freeze({
     correlationId: requiredString(value, 'correlationId', 'Confidential correlation ID'),
     quoteRequest: Object.freeze({ ...value.quoteRequest }),
@@ -415,10 +412,10 @@ function parseQuote(value: unknown): ConfidentialQuote {
         'Confidential minimum output'
       ),
       depositAddress: optionalString(quote, 'depositAddress') ?? '',
-      ...(optionalDepositMemo(quote) ? { depositMemo: optionalDepositMemo(quote) } : {}),
+      ...(depositMemo ? { depositMemo } : {}),
       deadline,
-      ...(optionalRaw(quote.withdrawFee) ? { withdrawFee: optionalRaw(quote.withdrawFee) } : {}),
-      ...(optionalRaw(quote.refundFee) ? { refundFee: optionalRaw(quote.refundFee) } : {}),
+      ...(withdrawFee ? { withdrawFee } : {}),
+      ...(refundFee ? { refundFee } : {}),
       ...(typeof quote.timeEstimate === 'number' &&
       Number.isFinite(quote.timeEstimate) &&
       quote.timeEstimate >= 0
@@ -1017,20 +1014,18 @@ export class ConfidentialFundingApi {
     const transactionHash = readRheaDestinationHash(value)
     const quoteResponse = isRecord(value.quoteResponse) ? value.quoteResponse : {}
     const statusQuote = isRecord(quoteResponse.quote) ? quoteResponse.quote : {}
+    const settledAmountOutRaw = optionalRaw(details.amountOut)
+    const errorStatus = optionalString(details, 'refundReason')
     const amountOutRaw =
-      optionalRaw(details.amountOut) ??
+      settledAmountOutRaw ??
       optionalRaw(details.depositedAmount) ??
       optionalRaw(statusQuote.amountOut)
     return Object.freeze({
       status: requiredString(value, 'status', 'Confidential status'),
       ...(transactionHash ? { transactionHash } : {}),
       ...(amountOutRaw ? { amountOutRaw } : {}),
-      ...(optionalRaw(details.amountOut)
-        ? { settledAmountOutRaw: optionalRaw(details.amountOut) }
-        : {}),
-      ...(optionalString(details, 'refundReason')
-        ? { errorStatus: optionalString(details, 'refundReason') }
-        : {})
+      ...(settledAmountOutRaw ? { settledAmountOutRaw } : {}),
+      ...(errorStatus ? { errorStatus } : {})
     })
   }
 
@@ -1060,13 +1055,12 @@ export class ConfidentialFundingApi {
     const details = isRecord(value.swapDetails) ? value.swapDetails : {}
     const settledAmountOutRaw = optionalRaw(details.amountOut)
     const depositedAmountRaw = optionalRaw(details.depositedAmount)
+    const errorStatus = optionalString(details, 'refundReason')
     return Object.freeze({
       status: requiredString(value, 'status', 'Shield swap status'),
       ...(settledAmountOutRaw ? { amountOutRaw: settledAmountOutRaw, settledAmountOutRaw } : {}),
       ...(depositedAmountRaw ? { depositedAmountRaw } : {}),
-      ...(optionalString(details, 'refundReason')
-        ? { errorStatus: optionalString(details, 'refundReason') }
-        : {})
+      ...(errorStatus ? { errorStatus } : {})
     })
   }
 }

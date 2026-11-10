@@ -25,12 +25,7 @@ import { ChainIcon } from '../common/ChainIcon'
 import evmGroupIcon from '@/images/figma-evm-group.svg'
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover'
 import { cn } from '@/lib/utils'
-
-const AVATARS = [
-  '/icons/wallet-avatar-main.png',
-  '/icons/wallet-avatar-meme.png',
-  '/icons/wallet-avatar-nft.png'
-]
+import { ACCOUNT_AVATARS } from '@/popup/lib/account-avatars'
 
 function SidebarIcon({ kind }: { readonly kind: 'back' | 'accounts' | 'settings' }) {
   if (kind === 'back')
@@ -99,7 +94,7 @@ function AccountAvatar({
 }) {
   return (
     <img
-      src={AVATARS[index % AVATARS.length]}
+      src={ACCOUNT_AVATARS[index % ACCOUNT_AVATARS.length]}
       alt=""
       aria-hidden="true"
       width={size}
@@ -539,7 +534,7 @@ export function AccountSwitcher({
 
   return (
     <div className={cn('flex min-w-0 items-center gap-[7px]', className)}>
-      <CopyToast show={showToast} message="Address copied" />
+      <CopyToast show={showToast} />
       <DialogPrimitive.Root
         open={drawerOpen}
         onOpenChange={open => {

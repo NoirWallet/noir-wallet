@@ -44,10 +44,7 @@ import { ChainIcon } from '@/popup/components/common/ChainIcon'
 import { resolveChainIconAlias } from '@/lib/chain-icon'
 import { PortfolioChainAssetRow } from '@/popup/components/portfolio/PortfolioAssetGroupCard'
 import { getPortfolioAssetUsdValue } from '@/popup/components/portfolio/portfolio-prices'
-import {
-  ShieldProviderLogo,
-  SHIELD_PROVIDERS
-} from '@/popup/components/portfolio/ShieldPortfolioView'
+import { ShieldProviderLogo, SHIELD_PROVIDERS } from '@/popup/components/portfolio/shield-providers'
 import { TokenIcon } from '@/popup/components/tokens/TokenIcon'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/popup/components/ui/dialog'
 import { MultichainActivityPanel } from '@/popup/components/transaction/MultichainActivityPanel'

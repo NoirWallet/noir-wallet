@@ -18,7 +18,7 @@ export function AmountDisplay({
   profile = 'review',
   className
 }: AmountDisplayProps) {
-  const { copyToClipboard, showToast, copyFailed, copiedKey } = useCopyToClipboard()
+  const { copyToClipboard, showToast, copiedKey } = useCopyToClipboard()
   const review = formatReviewAmount(value)
   const display = profile === 'fee' ? formatFeeAmount(value) : review.display
 
@@ -82,7 +82,7 @@ export function AmountDisplay({
           </div>
         </PopoverContent>
       </Popover>
-      <CopyToast show={showToast} error={copyFailed} message="Amount copied" />
+      <CopyToast show={showToast} />
     </>
   )
 }

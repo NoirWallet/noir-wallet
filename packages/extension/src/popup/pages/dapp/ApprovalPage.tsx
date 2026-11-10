@@ -1296,7 +1296,7 @@ export function ApprovalPage() {
         return (
           <div className="space-y-5">
             <DAppRequestHeader domain={dappDomain} pageUrl={dappPageUrl} action="Sign message" />
-            <CopyToast show={showCopyToast} message="Message copied" />
+            <CopyToast show={showCopyToast} />
             <ApprovalDetailCard ariaLabel="Message">
               <div className="flex items-center justify-between gap-3">
                 <h2 className="text-sm text-foreground/80">Message</h2>

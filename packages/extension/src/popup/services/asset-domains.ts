@@ -68,28 +68,6 @@ export function selectHomeActionSource(
   return selected ? { asset: selected.asset, chain: selected.chain } : null
 }
 
-export function selectNearShieldActionAssetId(
-  model: PortfolioReadModel,
-  from: 'public' | 'shield'
-): string | null {
-  const chainIds = new Set(
-    model.chains
-      .filter(
-        chain =>
-          chain.chain.family === 'evm' &&
-          chain.chain.network.kind === 'mainnet' &&
-          chain.chain.capabilities.transaction.status === 'available'
-      )
-      .map(chain => chain.chain.id)
-  )
-  const assets = model.assets.filter(asset => chainIds.has(asset.asset.chainId))
-  return (
-    assets.find(asset => BigInt(getAssetDomainRaw(asset, from) ?? '0') > 0n)?.asset.id ??
-    assets[0]?.asset.id ??
-    null
-  )
-}
-
 function projectDisplayAsset(asset: PortfolioAssetView, totalRaw: string): PortfolioAssetView {
   return Object.freeze({
     ...asset,
@@ -128,7 +106,7 @@ export function projectPortfolioForDomain(
   })
 }
 
-export interface ShieldProviderGroup {
+interface ShieldProviderGroup {
   readonly id: ShieldProvider
   readonly entries: readonly Readonly<{
     asset: PortfolioAssetView
@@ -191,11 +169,6 @@ export function buildShieldProviderGroups(
   })
 }
 
-export function sumShieldProviderFiat(groups: readonly ShieldProviderGroup[]): string | null {
-  if (groups.some(group => group.fiat === null)) return null
-  return groups.reduce((sum, group) => sum.plus(group.fiat ?? '0'), new Big(0)).toFixed()
-}
-
 export function summarizeKnownShieldFiat(
   near: NearConfidentialSummary | null,
   assetShieldUsd: string | null | undefined
@@ -213,7 +186,7 @@ export function summarizeKnownShieldFiat(
   })
 }
 
-export interface AssetDomainFiatSummary {
+interface AssetDomainFiatSummary {
   readonly publicUsd: string
   readonly shieldUsd: string | null
   readonly shieldUsdPartial: boolean

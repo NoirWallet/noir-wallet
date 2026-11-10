@@ -200,7 +200,7 @@ function DAppMessageReview({
 
   return (
     <>
-      <CopyToast show={showToast} message="Message copied" />
+      <CopyToast show={showToast} />
       <section aria-label="Message" className="rounded-2xl bg-card/70 p-4">
         <div className="mb-3 flex items-center justify-between gap-3">
           <h2 className="text-sm text-foreground/80">Message</h2>

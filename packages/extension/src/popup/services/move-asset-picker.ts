@@ -12,8 +12,7 @@ import { resolveShieldManagedAsset } from './shield-transfer'
 type MoveAsset = Readonly<{ asset: PortfolioAssetView; chain: PortfolioChainView }>
 type ShieldBalance = Readonly<{ tokenId: string; available: string }>
 
-export type MoveAssetPickerRow = MoveAsset &
-  Readonly<{ sourceRaw: string; valueUsd: string | null }>
+type MoveAssetPickerRow = MoveAsset & Readonly<{ sourceRaw: string; valueUsd: string | null }>
 
 export function listMoveAssetPickerRows(input: {
   readonly assets: readonly MoveAsset[]

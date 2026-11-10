@@ -1,8 +1,6 @@
 export {
   CONFIDENTIAL_SESSION_REQUIRED_ERROR,
   CONFIDENTIAL_WITHDRAW_DEFAULT_COUNT,
-  CONFIDENTIAL_WITHDRAW_MAX_COUNT,
-  CONFIDENTIAL_WITHDRAW_MIN_COUNT,
   aggregateConfidentialSettlement,
   assertDirectConfidentialWithdrawIntentBinding,
   assertConfidentialIntentBinding,

@@ -43,10 +43,7 @@ import { useNavigate } from '@/popup/provider/Router'
 import { PageHeader } from '@/popup/components/common/PageHeader'
 import { ChainIcon } from '@/popup/components/common/ChainIcon'
 import { TokenIcon } from '@/popup/components/tokens/TokenIcon'
-import {
-  ShieldProviderLogo,
-  SHIELD_PROVIDERS
-} from '@/popup/components/portfolio/ShieldPortfolioView'
+import { ShieldProviderLogo, SHIELD_PROVIDERS } from '@/popup/components/portfolio/shield-providers'
 import type { ShieldProvider } from '@/popup/services/asset-domains'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/popup/components/ui/dialog'
 import { Input } from '@/popup/components/ui/input'

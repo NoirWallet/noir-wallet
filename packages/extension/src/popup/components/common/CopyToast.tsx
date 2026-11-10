@@ -4,8 +4,6 @@ import { Icon } from '@iconify/react'
 
 interface CopyToastProps {
   show: boolean
-  message?: string
-  error?: boolean
 }
 
 export function CopyToast({ show }: CopyToastProps) {
@@ -48,7 +46,6 @@ export function CopyFeedbackIcon({
 
 export function useCopyToClipboard() {
   const [showToast, setShowToast] = useState(false)
-  const [copyFailed, setCopyFailed] = useState(false)
   const [copiedKey, setCopiedKey] = useState<string | null>(null)
   const [copiedKeys, setCopiedKeys] = useState<ReadonlySet<string>>(() => new Set())
   const timers = useRef(new Map<string, ReturnType<typeof setTimeout>>())
@@ -76,7 +73,6 @@ export function useCopyToClipboard() {
     try {
       await navigator.clipboard.writeText(text)
       if (!mounted.current || currentRequest !== requests.current.get(key)) return true
-      setCopyFailed(false)
       setCopiedKey(key)
       setCopiedKeys(current => new Set(current).add(key))
       timers.current.set(
@@ -100,7 +96,6 @@ export function useCopyToClipboard() {
           return next
         })
         setCopiedKey(current => (current === key ? null : current))
-        setCopyFailed(true)
         setShowToast(true)
         errorTimer.current = setTimeout(() => {
           setShowToast(false)
@@ -115,7 +110,6 @@ export function useCopyToClipboard() {
     copyToClipboard,
     showToast,
     copiedKey,
-    isCopied: (key = 'default') => copiedKeys.has(key),
-    copyFailed
+    isCopied: (key = 'default') => copiedKeys.has(key)
   }
 }

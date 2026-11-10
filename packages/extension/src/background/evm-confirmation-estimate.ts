@@ -15,7 +15,7 @@ const SAMPLE_BLOCKS = 20
 const quantityPattern = /^0x(?:0|[1-9a-fA-F][0-9a-fA-F]{0,63})$/
 const weiPattern = /^(?:0|[1-9][0-9]{0,77})$/
 
-export function isEvmConfirmationFeeCap(value: unknown): value is string {
+function isEvmConfirmationFeeCap(value: unknown): value is string {
   if (typeof value !== 'string' || !weiPattern.test(value)) return false
   return BigInt(value) <= (1n << 256n) - 1n
 }

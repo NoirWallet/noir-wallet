@@ -36,6 +36,7 @@ import { cn } from '@/lib/utils'
 import { formatSortAddress } from '@/lib/format'
 import { DEFAULT_NETWORK } from '@/lib/runtime-network'
 import { useWalletStore } from '@/store/wallet-store'
+import { ACCOUNT_AVATARS } from '@/popup/lib/account-avatars'
 
 interface AddressQrTarget {
   readonly network: AccountNetworkView
@@ -554,7 +555,7 @@ export function AddressesList() {
 
   return (
     <div className="page-container">
-      <CopyToast show={showToast} message="Address copied" />
+      <CopyToast show={showToast} />
       <PageHeader title={pageTitle} showBack />
 
       <div className="page-content min-h-0 !px-4 !pt-2">
@@ -765,13 +766,7 @@ export function AddressesList() {
                 <div className="mx-auto flex max-w-[440px] flex-col items-center">
                   <div className="mt-6 flex w-full items-center justify-center gap-3">
                     <img
-                      src={
-                        [
-                          '/icons/wallet-avatar-main.png',
-                          '/icons/wallet-avatar-meme.png',
-                          '/icons/wallet-avatar-nft.png'
-                        ][(accountIdentity?.index ?? 0) % 3]
-                      }
+                      src={ACCOUNT_AVATARS[(accountIdentity?.index ?? 0) % ACCOUNT_AVATARS.length]}
                       alt=""
                       aria-hidden="true"
                       className="size-10 shrink-0 rounded-full object-cover"

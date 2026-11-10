@@ -130,7 +130,6 @@ function mergeAsset(
     return asset
   }
   const confidentialRaw = getConfidentialAvailableForAsset(balances, mapping.protocolAssetId) ?? '0'
-  if (!/^\d+$/.test(confidentialRaw)) return asset
   const previousConfidential = BigInt(asset.balance.confidentialRaw ?? '0')
   const privateOnchain = BigInt(
     asset.balance.privateOnchainRaw ??

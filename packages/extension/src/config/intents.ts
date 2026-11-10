@@ -34,12 +34,8 @@ export function getConfidentialFundingNetworkConfig(
   })
 }
 
-/**
- * ZEC Omni / Intents asset ids (match multichain token list for zec). Not on `config_near`.
- */
-export const ZEC_NEAR_TOKEN_ID = 'zec.omft.near'
+/** ZEC Intents asset ID from the multichain token list. */
 export const ZEC_ZCASH_ASSET = 'nep141:zec.omft.near'
-export const ZEC_NEAR_ASSET = '1cs_v1:near:nep141:zec.omft.near'
 
 /** Native NEAR (wrapped) intents asset — the canonical default swap-to token. */
 export const WNEAR_NEAR_ASSET = 'nep141:wrap.near'
