@@ -373,7 +373,7 @@ test('creates a 12-word phrase with the pinned Multichain WASM at 375x600', asyn
   await popup.getByRole('button', { name: 'Start backup' }).click()
   await expect(popup.getByText('Store these 12 words securely')).toBeVisible({ timeout: 60_000 })
   await popup.getByRole('button', { name: 'Click to reveal seed phrase' }).click()
-  const words = await popup.locator('div.grid.grid-cols-3 > div > div').allTextContents()
+  const words = await popup.locator('div.grid.grid-cols-2 > div > div.w-full').allTextContents()
   expect(words).toHaveLength(12)
   await expect(
     popup.evaluate(
@@ -403,18 +403,17 @@ test('creates a 12-word phrase with the pinned Multichain WASM at 375x600', asyn
   )
   expect(verificationIndices).toHaveLength(2)
 
-  const expectedWords = verificationIndices.map(index => words[index])
-  const wrongWords =
-    expectedWords[0] === expectedWords[1]
-      ? [expectedWords[0], words.find(word => word !== expectedWords[1])]
-      : [expectedWords[1], expectedWords[0]]
-  const [firstWrongWord, secondWrongWord] = wrongWords
-  if (typeof firstWrongWord !== 'string' || typeof secondWrongWord !== 'string') {
-    throw new Error('Generated recovery phrase does not provide a mismatched confirmation pair')
-  }
-  for (const word of [firstWrongWord, secondWrongWord]) {
-    await popup.getByRole('button', { name: word, exact: true, pressed: false }).first().click()
-  }
+  const candidateButtons = popup.locator('.flex.flex-wrap.gap-2 button')
+  const candidateWords = await candidateButtons.allTextContents()
+  expect(candidateWords.filter(word => words.includes(word))).toHaveLength(2)
+  const wrongIndex = candidateWords.findIndex(word => !words.includes(word))
+  expect(wrongIndex).toBeGreaterThanOrEqual(0)
+  await candidateButtons.nth(wrongIndex).click()
+  const firstExpectedIndex = candidateWords.findIndex(
+    word => word === words[verificationIndices[0]]
+  )
+  expect(firstExpectedIndex).toBeGreaterThanOrEqual(0)
+  await candidateButtons.nth(firstExpectedIndex).click()
   await popup.getByRole('button', { name: 'Confirm', exact: true }).click()
   await expect(
     popup.getByText('Selected words do not match. Please try again.', { exact: true })

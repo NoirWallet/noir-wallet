@@ -4756,8 +4756,8 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
   }
 
   if (message.type === 'ADD_SOFTWARE_WALLET') {
-    enqueueWalletSessionTransition(() =>
-      accountContextTransition.runActiveOperation(() =>
+    enqueueWalletSessionTransition(async () => {
+      const result = await accountContextTransition.runActiveOperation(() =>
         addSoftwareWallet(
           {
             mode: message.mode as SoftwareWalletProvisioningMode,
@@ -4777,7 +4777,11 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
           synchronizeCurrentSoftwareWalletNetworkMetadata
         )
       )
-    )
+      const accountId = useWalletStore.getState().getWallet(result.walletId)?.accounts[0]?.id
+      if (!accountId) throw new Error('Wallet setup produced no account')
+      await handleSwitchWalletAccount(result.walletId, accountId)
+      return result
+    })
       .then(result => sendResponse({ success: true, ...result }))
       .catch(error =>
         sendResponse({

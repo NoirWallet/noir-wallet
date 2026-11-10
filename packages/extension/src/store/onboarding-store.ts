@@ -180,10 +180,15 @@ export const useOnboardingStore = create<OnboardingState>((set, get) => ({
 
   selectVerificationWord: option =>
     set(state => {
+      const isDistractor =
+        option.optionId < 0 &&
+        option.optionId >= 2 - state.seedPhrase.length &&
+        typeof option.word === 'string' &&
+        option.word.length > 0 &&
+        !state.seedPhrase.includes(option.word)
       if (
         !Number.isSafeInteger(option.optionId) ||
-        option.optionId < 0 ||
-        state.seedPhrase[option.optionId] !== option.word
+        (!isDistractor && state.seedPhrase[option.optionId] !== option.word)
       ) {
         return state
       }

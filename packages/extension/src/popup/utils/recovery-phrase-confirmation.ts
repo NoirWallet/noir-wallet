@@ -1,3 +1,5 @@
+import { wordlist } from '@scure/bip39/wordlists/english'
+
 export interface VerificationWordOption {
   readonly optionId: number
   readonly word: string
@@ -86,9 +88,33 @@ export function selectDifferentVerificationIndices(
 
 export function shuffleVerificationWordOptions(
   words: readonly string[],
+  verificationIndices: readonly number[],
   randomIndex: RandomIndex = secureRandomIndex
 ): VerificationWordOption[] {
-  const options = words.map((word, optionId) => ({ optionId, word }))
+  if (
+    verificationIndices.length !== 2 ||
+    verificationIndices.some(
+      index => !Number.isSafeInteger(index) || index < 0 || index >= words.length
+    ) ||
+    verificationIndices[0] === verificationIndices[1]
+  ) {
+    throw new Error('Recovery phrase verification range is invalid')
+  }
+
+  const phraseWords = new Set(words)
+  const distractors = wordlist.filter(word => !phraseWords.has(word))
+  const options: VerificationWordOption[] = verificationIndices.map(optionId => ({
+    optionId,
+    word: words[optionId]
+  }))
+  const distractorCount = words.length - verificationIndices.length
+  for (let index = 0; index < distractorCount; index += 1) {
+    const swapIndex = index + readRandomIndex(randomIndex, distractors.length - index)
+    const word = distractors[index]
+    distractors[index] = distractors[swapIndex]
+    distractors[swapIndex] = word
+    options.push({ optionId: -index - 1, word: distractors[index] })
+  }
 
   for (let index = options.length - 1; index > 0; index -= 1) {
     const swapIndex = readRandomIndex(randomIndex, index + 1)
