@@ -26,6 +26,7 @@ import evmGroupIcon from '@/images/figma-evm-group.svg'
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover'
 import { cn } from '@/lib/utils'
 import { ACCOUNT_AVATARS } from '@/popup/lib/account-avatars'
+import { PrivateAddressWarningDialog } from './PrivateAddressWarningDialog'
 
 function SidebarIcon({ kind }: { readonly kind: 'back' | 'accounts' | 'settings' }) {
   if (kind === 'back')
@@ -113,6 +114,7 @@ function AccountAvatar({
 function AccountAddressPopover({
   account,
   onCopy,
+  onCopyPrivate,
   isCopied,
   copyScope,
   onViewAll,
@@ -120,6 +122,7 @@ function AccountAddressPopover({
 }: {
   readonly account: SwitcherAccount
   readonly onCopy: (value: string, key: string) => void
+  readonly onCopyPrivate: (value: string, key: string) => void
   readonly isCopied: (key: string) => boolean
   readonly copyScope: string
   readonly onViewAll: () => void
@@ -144,7 +147,7 @@ function AccountAddressPopover({
   return (
     <div
       className={cn(
-        '@container z-[70] w-[281px] rounded-md bg-wallet-surface p-3 shadow-2xl',
+        '@container z-[70] w-[281px] rounded-md border border-white/10 bg-wallet-surface p-3 shadow-2xl',
         className
       )}
     >
@@ -174,10 +177,7 @@ function AccountAddressPopover({
                   {address.privacy === 'shielded' ? 'Shield' : 'Transparent'}
                 </span>
                 <span className="ml-auto flex shrink-0 items-center gap-1">
-                  <span
-                    className="shrink-0 whitespace-nowrap font-mono text-xs leading-[18px] text-muted"
-                    title={address.value}
-                  >
+                  <span className="shrink-0 whitespace-nowrap font-mono text-xs leading-[18px] text-muted">
                     {formatSortAddress(address.value)}
                   </span>
                   <button
@@ -252,10 +252,7 @@ function AccountAddressPopover({
               <br />
               &amp; EVM
             </span>
-            <span
-              className="whitespace-nowrap font-mono text-xs leading-[18px] text-muted @max-[240px]:col-start-2 @max-[240px]:row-start-2"
-              title={evmAddress}
-            >
+            <span className="whitespace-nowrap font-mono text-xs leading-[18px] text-muted @max-[240px]:col-start-2 @max-[240px]:row-start-2">
               {evmAddress ? formatSortAddress(evmAddress) : '—'}
             </span>
             {evmAddress && (
@@ -263,7 +260,12 @@ function AccountAddressPopover({
                 type="button"
                 aria-label={`Copy EVM ${evmMode === 'private' ? 'Private' : 'Public'} address`}
                 title="Copy address"
-                onClick={() => onCopy(evmAddress, `${keyPrefix}-evm-${evmMode}`)}
+                onClick={() =>
+                  (evmMode === 'private' ? onCopyPrivate : onCopy)(
+                    evmAddress,
+                    `${keyPrefix}-evm-${evmMode}`
+                  )
+                }
                 className="wallet-interactive flex size-6 shrink-0 items-center justify-center rounded-md text-muted hover:bg-white/8 hover:text-foreground active:bg-white/12 focus-visible:outline-2 focus-visible:outline-primary @max-[240px]:col-start-3 @max-[240px]:row-start-2"
               >
                 <CopyFeedbackIcon
@@ -289,7 +291,7 @@ function AccountAddressPopover({
           />
           <span className="min-w-0 flex-1 text-xs">
             <span className="block truncate">{accountNetworkLabel(network)}</span>
-            <span className="block truncate font-mono text-muted" title={address.value}>
+            <span className="block truncate font-mono text-muted">
               {formatSortAddress(address.value)}
             </span>
           </span>
@@ -331,7 +333,8 @@ export function AccountSwitcher({
 }) {
   const { navigate, replace } = useNavigate()
   const { confirm, alert } = useDialog()
-  const { copyToClipboard, showToast, isCopied } = useCopyToClipboard()
+  const { copyToClipboard, showToast, isCopied, copyFailed } = useCopyToClipboard()
+  const [privateCopy, setPrivateCopy] = useState<{ address: string; key: string } | null>(null)
   const { wallets, accountDisplayNames, currentWalletId, currentAccountId } = useWalletStore()
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [addressesOpen, setAddressesOpen] = useState(false)
@@ -534,7 +537,19 @@ export function AccountSwitcher({
 
   return (
     <div className={cn('flex min-w-0 items-center gap-[7px]', className)}>
-      <CopyToast show={showToast} />
+      <CopyToast show={showToast} error={copyFailed} message="Address copied" />
+      <PrivateAddressWarningDialog
+        address={privateCopy?.address ?? null}
+        onClose={() => setPrivateCopy(null)}
+        onConfirm={() => {
+          if (!privateCopy) return
+          void copyToClipboard(privateCopy.address, privateCopy.key, { toastOnSuccess: true }).then(
+            copied => {
+              if (copied) setPrivateCopy(null)
+            }
+          )
+        }}
+      />
       <DialogPrimitive.Root
         open={drawerOpen}
         onOpenChange={open => {
@@ -648,14 +663,18 @@ export function AccountSwitcher({
                 ref={previewElement}
                 role="group"
                 aria-label={`${previewAccount.name} address preview`}
-                className="fixed left-[84px] top-0 z-[62] motion-safe:transition-transform motion-safe:duration-180 motion-safe:ease-out"
+                className="fixed left-[102px] top-0 z-[62] motion-safe:transition-transform motion-safe:duration-180 motion-safe:ease-out"
                 style={{ transform: `translateY(${previewTop}px)` }}
               >
                 <div className="animate-in fade-in-0 slide-in-from-left-1 duration-140 motion-reduce:animate-none">
                   <AccountAddressPopover
                     account={previewAccount}
-                    className="max-w-[calc(100vw-96px)]"
+                    className="max-w-[calc(100vw-114px)]"
                     onCopy={(value, key) => void copyToClipboard(value, key)}
+                    onCopyPrivate={(address, key) => {
+                      setDrawerOpen(false)
+                      setPrivateCopy({ address, key })
+                    }}
                     isCopied={isCopied}
                     copyScope="preview"
                     onViewAll={() => viewAddresses(previewAccount)}
@@ -728,6 +747,11 @@ export function AccountSwitcher({
             <AccountAddressPopover
               account={activeAccount}
               onCopy={(value, key) => void copyToClipboard(value, key)}
+              onCopyPrivate={(address, key) => {
+                cancelAddressesClose()
+                setAddressesOpen(false)
+                setPrivateCopy({ address, key })
+              }}
               isCopied={isCopied}
               copyScope="active"
               onViewAll={() => viewAddresses(activeAccount)}

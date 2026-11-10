@@ -48,7 +48,8 @@ export function ChainIcon({
         'bg-card object-cover',
         !isLoaded && 'animate-pulse',
         className,
-        chain.trim().toLowerCase() === 'evm' && 'rounded-none bg-transparent'
+        chain.trim().toLowerCase() === 'evm' && 'bg-transparent',
+        'rounded-[20%]'
       )}
       title={showTooltip ? chainName : undefined}
       onLoad={event => {

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { PrivateAddressWarningDialog } from '../account/PrivateAddressWarningDialog'
 import { Icon } from '@iconify/react'
 import {
   getActivityAssetEffects,
@@ -164,7 +165,8 @@ export function MultichainActivityDetail({
   const [zcashRecord, setZcashRecord] = useState<Transaction | null>(null)
   const [swapApprovalAvailable, setSwapApprovalAvailable] = useState(false)
   const { activeAccount: activeSwapAccount } = useActiveAccountNetworks()
-  const { copyToClipboard, showToast, isCopied } = useCopyToClipboard()
+  const { copyToClipboard, showToast, isCopied, copyFailed } = useCopyToClipboard()
+  const [privateCopyAddress, setPrivateCopyAddress] = useState<string | null>(null)
   const endpointSettings = useSettingsStore(state => state.chainEndpointSettings)
   const { userAssets: userEvmAssets, detectedAssets: detectedEvmAssets } = useActivityEvmAssets()
   const currentWalletId = useWalletStore(state => state.currentWalletId)
@@ -1083,7 +1085,12 @@ export function MultichainActivityDetail({
                 title="Copy recipient address"
                 className="shrink-0 text-muted hover:text-foreground"
                 onClick={() => {
-                  if (swap.recipientAddress) void copyToClipboard(swap.recipientAddress)
+                  if (!swap.recipientAddress) return
+                  if (swap.destinationAccountMode === 'Confidential') {
+                    setPrivateCopyAddress(swap.recipientAddress)
+                  } else {
+                    void copyToClipboard(swap.recipientAddress)
+                  }
                 }}
               >
                 <CopyFeedbackIcon copied={isCopied()} width={14} height={14} />
@@ -1220,7 +1227,19 @@ export function MultichainActivityDetail({
           <Icon icon="lucide:arrow-up-right" width={15} height={15} />
         </a>
       )}
-      <CopyToast show={showToast} />
+      <CopyToast show={showToast} error={copyFailed} message="Address copied" />
+      <PrivateAddressWarningDialog
+        address={privateCopyAddress}
+        onClose={() => setPrivateCopyAddress(null)}
+        onConfirm={() => {
+          if (!privateCopyAddress) return
+          void copyToClipboard(privateCopyAddress, 'default', { toastOnSuccess: true }).then(
+            copied => {
+              if (copied) setPrivateCopyAddress(null)
+            }
+          )
+        }}
+      />
 
       {isCrossChain && (
         <TransactionProgressSteps

@@ -7,6 +7,10 @@ import { PageHeader } from '../../components/common/PageHeader'
 import { InlineError } from '../../components/common/InlineError'
 import { CopyFeedbackIcon, CopyToast, useCopyToClipboard } from '../../components/common/CopyToast'
 import {
+  PRIVATE_ADDRESS_WARNING,
+  PrivateAddressWarningDialog
+} from '../../components/account/PrivateAddressWarningDialog'
+import {
   accountNetworkAddressLabel,
   accountNetworkIconChain,
   accountNetworkLabel
@@ -20,7 +24,6 @@ import {
   DialogClose,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle
 } from '../../components/ui/dialog'
@@ -45,12 +48,9 @@ interface AddressQrTarget {
   readonly confidential?: boolean
 }
 
-const PRIVATE_ADDRESS_RISK =
-  'Direct on-chain transfers can publicly link this private execution address to the funding address and reduce your privacy.'
-
 function PrivateAddressRisk() {
   return (
-    <Tooltip content={PRIVATE_ADDRESS_RISK} side="bottom">
+    <Tooltip content={PRIVATE_ADDRESS_WARNING} side="bottom">
       <button
         type="button"
         aria-label="Private address privacy risk"
@@ -64,20 +64,14 @@ function PrivateAddressRisk() {
 
 function AddressValue({
   value,
-  compact = false,
   className
 }: {
   readonly value: string
-  readonly compact?: boolean
   readonly className?: string
 }) {
   return (
-    <span
-      className={cn('block min-w-0 break-all whitespace-normal', className)}
-      title={value}
-      aria-label={value}
-    >
-      {compact ? formatSortAddress(value) : value}
+    <span className={cn('block min-w-0 truncate', className)} title={value} aria-label={value}>
+      {formatSortAddress(value)}
     </span>
   )
 }
@@ -194,7 +188,6 @@ function AddressRow({
       )}
       <AddressValue
         value={address.value}
-        compact={network.chain.family === 'zcash'}
         className={cn('text-xs leading-4 text-muted', !zcashType && 'flex-1')}
       />
       {zcashType && <ZcashAddressLabel type={zcashType} />}
@@ -379,7 +372,7 @@ function AddressNetworkGroup({
 
 export function AddressesList() {
   const { navigate } = useNavigate()
-  const { copyToClipboard, showToast, isCopied } = useCopyToClipboard()
+  const { copyToClipboard, showToast, isCopied, copyFailed } = useCopyToClipboard()
   const [searchParams] = useSearchParams()
   const walletId = searchParams.get('walletId')
   const accountId = searchParams.get('accountId')
@@ -413,6 +406,7 @@ export function AddressesList() {
   const [privateAddressAction, setPrivateAddressAction] = useState<{
     readonly address: string
     readonly qrTarget?: AddressQrTarget
+    readonly copyKey?: string
   } | null>(null)
 
   useEffect(() => {
@@ -510,7 +504,7 @@ export function AddressesList() {
   const otherNetworks = filteredNetworks.filter(network => network.chain.family !== 'evm')
   const otherChainNetworks = otherNetworks.filter(network => network.chain.family !== 'zcash')
   const showOtherChains =
-    !shieldedZcashOnly && networks.some(network => network.chain.family !== 'zcash')
+    !shieldedZcashOnly && (evmNetworks.length > 0 || otherChainNetworks.length > 0)
   const firstEvm = evmNetworks[0]
   const evmAddress =
     firstEvm &&
@@ -555,7 +549,7 @@ export function AddressesList() {
 
   return (
     <div className="page-container">
-      <CopyToast show={showToast} />
+      <CopyToast show={showToast} error={copyFailed} message="Address copied" />
       <PageHeader title={pageTitle} showBack />
 
       <div className="page-content min-h-0 !px-4 !pt-2">
@@ -759,7 +753,7 @@ export function AddressesList() {
                   </button>
                 </DialogClose>
                 <DialogTitle className="text-lg font-medium leading-[23px]">
-                  Receiving Address
+                  {qrTarget.confidential ? 'Private Address' : 'Receiving Address'}
                 </DialogTitle>
               </DialogHeader>
               <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-5">
@@ -805,10 +799,11 @@ export function AddressesList() {
                     address
                   </h2>
                   <DialogDescription className="mt-1 max-w-[320px] text-center leading-5 text-muted">
-                    {!qrTarget.confidential &&
-                    addressPrivacyLabel(qrTarget.address) === 'transparent'
-                      ? 'This address and its activity are publicly visible on-chain.'
-                      : 'Scan this code to receive funds to this account.'}
+                    {qrTarget.confidential
+                      ? PRIVATE_ADDRESS_WARNING
+                      : addressPrivacyLabel(qrTarget.address) === 'transparent'
+                        ? 'This address and its activity are publicly visible on-chain.'
+                        : 'Scan this code to receive funds to this account.'}
                   </DialogDescription>
                   <div className="mt-6 flex w-full min-w-0 items-center gap-3 rounded-xl border border-white/10 bg-wallet-surface p-3">
                     <p
@@ -821,7 +816,16 @@ export function AddressesList() {
                       type="button"
                       variant="secondary"
                       className="h-10 shrink-0 px-3"
-                      onClick={() => void copyToClipboard(qrTarget.address.value, 'qr-address')}
+                      onClick={() =>
+                        qrTarget.confidential
+                          ? setPrivateAddressAction({
+                              address: qrTarget.address.value,
+                              copyKey: 'qr-address'
+                            })
+                          : void copyToClipboard(qrTarget.address.value, 'qr-address', {
+                              toastOnSuccess: true
+                            })
+                      }
                     >
                       <CopyFeedbackIcon copied={isCopied('qr-address')} width={17} height={17} />
                       {isCopied('qr-address') ? 'Copied' : 'Copy'}
@@ -834,57 +838,26 @@ export function AddressesList() {
         </DialogContent>
       </Dialog>
 
-      <Dialog
-        open={privateAddressAction !== null}
-        onOpenChange={open => {
-          if (!open) setPrivateAddressAction(null)
+      <PrivateAddressWarningDialog
+        address={privateAddressAction?.address ?? null}
+        showQr={Boolean(privateAddressAction?.qrTarget)}
+        onClose={() => setPrivateAddressAction(null)}
+        onConfirm={() => {
+          if (!privateAddressAction) return
+          if (privateAddressAction.qrTarget) {
+            setQrTarget(privateAddressAction.qrTarget)
+            setPrivateAddressAction(null)
+          } else {
+            void copyToClipboard(
+              privateAddressAction.address,
+              privateAddressAction.copyKey ?? 'private-confirm',
+              { toastOnSuccess: true }
+            ).then(copied => {
+              if (copied) setPrivateAddressAction(null)
+            })
+          }
         }}
-      >
-        <DialogContent position="center" className="max-w-[343px] rounded-2xl p-5">
-          <DialogHeader>
-            <div className="mb-1 flex size-10 items-center justify-center rounded-full bg-private/12 text-private">
-              <Icon icon="lucide:shield-alert" width={21} height={21} />
-            </div>
-            <DialogTitle>
-              {privateAddressAction?.qrTarget ? 'Show' : 'Copy'} private execution address?
-            </DialogTitle>
-            <DialogDescription className="leading-relaxed">
-              {PRIVATE_ADDRESS_RISK}
-            </DialogDescription>
-          </DialogHeader>
-          {privateAddressAction && (
-            <p className="break-all rounded-lg bg-card p-2.5 font-mono text-[11px] leading-relaxed text-muted">
-              {privateAddressAction.address}
-            </p>
-          )}
-          <DialogFooter className="grid grid-cols-2">
-            <Button type="button" variant="secondary" onClick={() => setPrivateAddressAction(null)}>
-              Cancel
-            </Button>
-            <Button
-              type="button"
-              onClick={() => {
-                if (!privateAddressAction) return
-                if (privateAddressAction.qrTarget) setQrTarget(privateAddressAction.qrTarget)
-                else {
-                  void copyToClipboard(privateAddressAction.address, 'private-confirm')
-                  return
-                }
-                setPrivateAddressAction(null)
-              }}
-            >
-              {!privateAddressAction?.qrTarget && (
-                <CopyFeedbackIcon copied={isCopied('private-confirm')} width={16} height={16} />
-              )}
-              {privateAddressAction?.qrTarget
-                ? 'Show QR code'
-                : isCopied('private-confirm')
-                  ? 'Copied'
-                  : 'Copy anyway'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      />
     </div>
   )
 }
