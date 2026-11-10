@@ -8,6 +8,7 @@ import {
   parseStoredDAppConnection
 } from '../../../src/core/dapp/dapp-manager.ts'
 import { initializeEvmSiteNetworks } from '../../../src/background/wallet-dapp-evm-networks.ts'
+import { shouldAutoConnectDApp } from '../../../src/core/dapp/first-party-policy.ts'
 
 const require = createRequire(import.meta.url)
 const typescript = require('typescript')
@@ -185,6 +186,7 @@ function balanceHandlerFixture(manager) {
       return state.getAccount(state.currentWalletId, state.currentAccountId)
     }
   }
+  const session = { unlocked: true }
   const balance = {
     transparent: '1',
     shielded: '2',
@@ -208,7 +210,10 @@ function balanceHandlerFixture(manager) {
       isZcashHardwareKeySource: keySource => keySource === 'keystone' || keySource === 'ledger'
     },
     '../core/dapp/dapp-manager': { dappManager: manager, connectionAuthorizesAccount },
-    '@/core/dapp/first-party-policy': { shouldAutoConnectDApp: () => false },
+    '@/core/dapp/first-party-policy': { shouldAutoConnectDApp },
+    './credential-session': {
+      credentialSession: { hasUnlockSession: async () => session.unlocked }
+    },
     './zcash-wallet-runtime': { backgroundZcashWalletRuntime: runtime },
     './sync-scheduler': { syncScheduler: { requestPassiveSync() {} } },
     '@/store/wallet-store': {
@@ -233,8 +238,57 @@ function balanceHandlerFixture(manager) {
     module,
     module.exports
   )
-  return { handler: new module.exports.DAppHandler(), state, runtime, balance, enabled }
+  return { handler: new module.exports.DAppHandler(), state, runtime, session, balance, enabled }
 }
+
+test('first-party silent account reads authorize without restoring the Zcash runtime', async t => {
+  for (const site of ['https://app.zknoir.com', 'https://noirdevelop.refburrow.top']) {
+    await t.test(site, async () => {
+      const { manager } = managerFixture()
+      const { handler, runtime } = balanceHandlerFixture(manager)
+      runtime.locked = true
+      const result = await handler.getSilentAccounts(site)
+      assert.deepEqual(
+        result.accounts.map(item => item.accountId),
+        ['account-1', 'account-2']
+      )
+      assert.equal(runtime.locked, true)
+      assert.deepEqual(await manager.getAuthorizedAccounts(site), [
+        account,
+        { walletId: account.walletId, accountId: 'account-2' }
+      ])
+    })
+  }
+})
+
+test('silent auto-connect respects site consent, unlock, and Zcash availability', async t => {
+  const site = 'https://noirdevelop.refburrow.top'
+  for (const boundary of ['third-party', 'revoked', 'selected-account', 'locked', 'disabled']) {
+    await t.test(boundary, async () => {
+      const { manager } = managerFixture()
+      const { handler, session, enabled } = balanceHandlerFixture(manager)
+      const requestOrigin = boundary === 'third-party' ? origin : site
+      if (boundary === 'revoked') await manager.removeConnection(site)
+      if (boundary === 'selected-account')
+        await manager.setAuthorizedAccounts(site, {}, [account], account)
+      if (boundary === 'locked') session.unlocked = false
+      if (boundary === 'disabled') enabled.clear()
+      const result = await handler.getSilentAccounts(requestOrigin)
+      if (boundary === 'selected-account') {
+        assert.deepEqual(
+          result.accounts.map(item => item.accountId),
+          ['account-1']
+        )
+      } else {
+        assert.equal(result, null)
+      }
+      assert.deepEqual(
+        await manager.getAuthorizedAccounts(requestOrigin),
+        boundary === 'selected-account' ? [account] : []
+      )
+    })
+  }
+})
 
 test('Zcash batch authorization omits accounts disabled after site approval', async () => {
   const { manager } = managerFixture()

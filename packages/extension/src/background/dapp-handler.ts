@@ -391,6 +391,30 @@ export class DAppHandler {
     return null
   }
 
+  /** Restore first-party consent from public metadata without waking the Zcash core. */
+  async getSilentAccounts(
+    origin: string
+  ): Promise<{ transparent: string; shielded: string; accounts: BatchAccount[] } | null> {
+    if (!(await credentialSession.hasUnlockSession())) return null
+    await rehydrateWalletStore()
+    const { currentWalletId, currentAccountId, currentNetwork, wallets } = useWalletStore.getState()
+    const wallet = wallets.find(item => item.id === currentWalletId)
+    const account = wallet?.accounts.find(item => item.id === currentAccountId)
+    if (!wallet || !account || !(await this.isZcashEnabled(wallet, account))) return null
+
+    if (shouldAutoConnectDApp(origin) && (await dappManager.canAutoConnect(origin))) {
+      await this.authorizeAllWalletAccounts(origin)
+    }
+    const snapshot = await this.getAuthorizedActiveAccountSnapshot(origin)
+    if (!(await credentialSession.hasUnlockSession())) return null
+    const state = useWalletStore.getState()
+    return state.currentWalletId === currentWalletId &&
+      state.currentAccountId === currentAccountId &&
+      state.currentNetwork === currentNetwork
+      ? snapshot
+      : null
+  }
+
   private async authorizedAccountResponse(
     origin: string,
     account: AccountData,
@@ -683,7 +707,7 @@ export class DAppHandler {
 
   /** Keep the trusted first-party connection synchronized without opening Connect approval. */
   private async authorizeAllWalletAccounts(origin: string): Promise<BatchAccount[]> {
-    if (backgroundZcashWalletRuntime.isLocked()) {
+    if (!(await credentialSession.hasUnlockSession())) {
       throw new Error('Wallet is locked')
     }
 
@@ -696,11 +720,9 @@ export class DAppHandler {
     if (accounts.length === 0) {
       throw new Error('No wallets available to authorize')
     }
-    const { currentWalletId } = useWalletStore.getState()
-    const current = backgroundZcashWalletRuntime.getCurrentAccount()
-    const activeWallet = useWalletStore
-      .getState()
-      .wallets.find(wallet => wallet.id === currentWalletId)
+    const { currentWalletId, currentAccountId, currentNetwork, wallets } = useWalletStore.getState()
+    const activeWallet = wallets.find(wallet => wallet.id === currentWalletId)
+    const current = activeWallet?.accounts.find(account => account.id === currentAccountId)
     if (
       !currentWalletId ||
       !current ||
@@ -724,7 +746,16 @@ export class DAppHandler {
         accounts.find(
           account => account.walletId === currentWalletId && account.accountId === current?.id
         ) ?? accounts[0]
-      await this.persistAuthorized(origin, accounts, binding, {}, { automatic: true })
+      await this.persistAuthorized(
+        origin,
+        accounts,
+        binding,
+        {},
+        {
+          automatic: true,
+          expectedRevision: authorizationRevision
+        }
+      )
     }
 
     if (!activeWallet || !(await this.isZcashEnabled(activeWallet, current))) {
@@ -747,6 +778,16 @@ export class DAppHandler {
       current.id,
       authorizationRevision
     )
+    const unlocked = await credentialSession.hasUnlockSession()
+    const state = useWalletStore.getState()
+    if (
+      !unlocked ||
+      state.currentWalletId !== currentWalletId ||
+      state.currentAccountId !== currentAccountId ||
+      state.currentNetwork !== currentNetwork
+    ) {
+      throw new Error('Wallet account changed. Reconnect and try again.')
+    }
     this.setPermissionForAccount(origin, current)
     return accounts
   }

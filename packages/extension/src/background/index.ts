@@ -6044,9 +6044,6 @@ async function handleDAppRequest(
           ? useWalletStore.getState().getAccount(currentWalletId, currentAccountId)
           : null
       if (!account || !isAccountNetworkEnabled(account, currentNetwork, 'zcash')) return null
-      const snapshot = await dappHandler.getAuthorizedActiveAccountSnapshot(origin)
-      if (!snapshot) return null
-
       // This silent read needs only an attested unlock session and persisted
       // public addresses. Avoid restoring WASM here: an existing wallet sync
       // may legitimately hold the core lock while the service worker restarts.
@@ -6056,7 +6053,7 @@ async function handleDAppRequest(
       ) {
         return null
       }
-      return snapshot
+      return dappHandler.getSilentAccounts(origin)
     }
 
     // Silent methods never trigger unlock
