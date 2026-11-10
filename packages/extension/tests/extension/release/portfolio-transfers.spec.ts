@@ -562,7 +562,7 @@ test('shows Shield on positive transparent ZEC and uses the readable modal backd
   await captureScreenshot(popup, 'REF-13213-yellow-unspendable-balance.png')
   await captureScreenshot(popup, 'release-default-zcash-balance-and-shield.png')
   await shieldButton.click()
-  await expect(popup.getByRole('dialog', { name: 'Shield Funds' })).toBeVisible()
+  await expect(popup.getByRole('dialog', { name: 'Shielded' })).toBeVisible()
   await captureScreenshot(popup, 'release-default-shield-modal-backdrop.png')
 })
 

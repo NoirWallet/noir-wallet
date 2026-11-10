@@ -330,7 +330,7 @@ export function ShieldMoveSheet({
               : source === 'private'
                 ? 'Select token in private account'
                 : source === 'near-confidential' || source === 'zcash-shield'
-                  ? 'Select token in Shield Funds'
+                  ? 'Select shielded token'
                   : 'Move from'}
           </DialogTitle>
           <DialogDescription className="sr-only">Choose a source and token</DialogDescription>
@@ -371,7 +371,7 @@ export function ShieldMoveSheet({
                       height={18}
                       className="text-primary"
                     />
-                    <span>Shield Funds</span>
+                    <span>Shielded</span>
                   </div>
                   <div className="space-y-3">
                     {canNear && (

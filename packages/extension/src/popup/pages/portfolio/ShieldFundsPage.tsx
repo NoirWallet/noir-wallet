@@ -192,7 +192,7 @@ function ShieldFundsContent() {
   return (
     <div className="page-container min-h-0 overflow-hidden">
       <div className="shrink-0 border-b border-white/[0.08]">
-        <PageHeader title="Shield Funds" showBack />
+        <PageHeader title="Shielded" showBack />
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-6">
         <div className="pb-5 pt-4 text-center">

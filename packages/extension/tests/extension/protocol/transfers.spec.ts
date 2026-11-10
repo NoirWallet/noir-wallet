@@ -185,7 +185,7 @@ async function openShieldTransfer(
 }
 
 async function openNearShieldAction(page: Page, action: 'Move' | 'Send' | 'Swap' | 'Receive') {
-  await page.getByRole('button', { name: 'Shield Funds' }).click()
+  await page.getByRole('button', { name: 'Shielded' }).click()
   await page.getByRole('button', { name: /NEAR Confidential/ }).click()
   await page.getByRole('button', { name: action, exact: true }).click()
 }
@@ -257,7 +257,7 @@ test('ZEC Move locks the current account as the destination in real MV3', async 
     ['Zcash Shield', addresses.transparent]
   ] as const) {
     await popup.goto(`chrome-extension://${extensionId}/index.html`)
-    await popup.getByRole('button', { name: 'Shield Funds' }).click()
+    await popup.getByRole('button', { name: 'Shielded' }).click()
     await expect(popup.getByRole('button', { name: /NEAR Confidential/ })).toBeVisible()
     await expect(popup.getByRole('button', { name: /Zcash shield/ })).toBeVisible()
     await popup.getByLabel('Shield actions').getByRole('button', { name: 'Move' }).click()
@@ -285,7 +285,7 @@ test('ZEC Move locks the current account as the destination in real MV3', async 
       await expect(popup.getByRole('textbox', { name: 'ZEC amount' })).toHaveCount(0)
       await captureScreenshot(popup, 'shield-zec-move-to-shield.png')
       await popup.getByRole('button', { name: 'Move', exact: true }).click()
-      await expect(popup.getByRole('dialog', { name: 'Shield Funds' })).toBeVisible()
+      await expect(popup.getByRole('dialog', { name: 'Shielded' })).toBeVisible()
       await expect(popup.getByRole('button', { name: 'Shield Now' })).toBeVisible()
     } else {
       const amount = popup.getByRole('textbox', { name: 'ZEC amount' })
@@ -338,7 +338,7 @@ test('receives an external Shield deposit without spending local funds and resto
   await waitForBackgroundWalletInitialization(popup)
   await importTestWallet(popup)
   await popup.goto(`chrome-extension://${extensionId}/index.html`)
-  await popup.getByRole('button', { name: 'Shield Funds' }).click()
+  await popup.getByRole('button', { name: 'Shielded' }).click()
   await expect(popup.getByRole('button', { name: /NEAR Confidential/ })).toBeVisible()
   await expect(popup.getByRole('button', { name: /Zcash shield/ })).toBeVisible()
   const actions = popup.getByLabel('Shield actions')
@@ -356,7 +356,7 @@ test('receives an external Shield deposit without spending local funds and resto
   await popup.goto(`chrome-extension://${extensionId}/index.html`)
   await importNativeOnlyEvmWallet(popup)
   const identity = await readShieldTransferIdentity(popup)
-  await popup.getByRole('button', { name: 'Shield Funds' }).click()
+  await popup.getByRole('button', { name: 'Shielded' }).click()
   await popup.getByRole('button', { name: /NEAR Confidential/ }).click()
   for (const action of ['Send', 'Receive', 'Move', 'Swap']) {
     await expect(popup.getByRole('button', { name: action, exact: true })).toBeVisible()
@@ -776,7 +776,7 @@ for (const route of [
       .toBe('ready')
     expect(rpc.getBroadcastCount()).toBe(0)
     await popup.goto(`chrome-extension://${extensionId}/index.html`)
-    await popup.getByRole('button', { name: 'Shield Funds' }).click()
+    await popup.getByRole('button', { name: 'Shielded' }).click()
     await popup.getByRole('button', { name: /NEAR Confidential/ }).click()
     await popup.getByRole('button', { name: 'Refresh Shield balance' }).click()
     await expect
@@ -808,7 +808,7 @@ test('withdraws Shield ETH to an external EVM recipient and restores the settled
   await waitForBackgroundWalletInitialization(popup)
   await importTestWallet(popup)
   await popup.goto(`chrome-extension://${extensionId}/index.html`)
-  await expect(popup.getByRole('button', { name: 'Shield Funds' })).toBeVisible({ timeout: 30_000 })
+  await expect(popup.getByRole('button', { name: 'Shielded' })).toBeVisible({ timeout: 30_000 })
   const identity = await readShieldTransferIdentity(popup)
   const recipient = '0x3333333333333333333333333333333333333333'
   await openNearShieldAction(popup, 'Send')
@@ -874,7 +874,7 @@ test('swaps a Shield-only holding to Shield USDC without adding a Public asset a
   await waitForBackgroundWalletInitialization(popup)
   await importTestWallet(popup)
   await popup.goto(`chrome-extension://${extensionId}/index.html`)
-  await expect(popup.getByRole('button', { name: 'Shield Funds' })).toBeVisible({ timeout: 30_000 })
+  await expect(popup.getByRole('button', { name: 'Shielded' })).toBeVisible({ timeout: 30_000 })
   const identity = await readShieldTransferIdentity(popup)
   await openNearShieldAction(popup, 'Swap')
   const publicAssetIds = await popup.evaluate(async () => {
@@ -932,7 +932,7 @@ test('swaps a Shield-only holding to Shield USDC without adding a Public asset a
     phase: 'ready'
   })
   expect(api.getConfidentialIntentSubmitCount()).toBe(1)
-  await popup.getByRole('button', { name: 'Shield Funds' }).click()
+  await popup.getByRole('button', { name: 'Shielded' }).click()
   await captureScreenshot(popup, 'shield-independent-funds.png')
   await popup.getByRole('button', { name: /NEAR Confidential/ }).click()
   await expect(popup.getByText('TRIAL', { exact: true })).toBeVisible()

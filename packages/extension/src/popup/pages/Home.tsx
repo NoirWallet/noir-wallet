@@ -982,7 +982,7 @@ export function Home() {
             )}
           <WalletActionButton
             icon={<WalletShieldFundsIcon />}
-            label="Shield Funds"
+            label="Shielded"
             onClick={() =>
               navigate.navigate(`/shield-funds?mode=${privateMode ? 'private' : 'public'}`)
             }

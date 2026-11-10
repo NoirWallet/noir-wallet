@@ -82,8 +82,8 @@ export function ViewPhrasePage() {
 
       <div className="flex-1 px-5 pt-3 overflow-y-auto">
         <p className="text-sm text-muted mb-4">
-          Store these {mnemonicWordCount} words securely to restore your wallet anytime. Sharing
-          your seed phrase may cause you to lose your assets.
+          Store these {mnemonicWordCount} words securely to restore your wallet anytime. Never share
+          them, or you could lose your assets.
         </p>
 
         <div className="relative mb-4">

@@ -2277,7 +2277,7 @@ test('prepares, signs, broadcasts, monitors, and records a Sepolia transfer in r
   const [actionsBounds, sendBounds, shieldFundsBounds] = await Promise.all([
     homeActions.boundingBox(),
     homeActions.getByRole('button', { name: 'Send', exact: true }).boundingBox(),
-    homeActions.getByRole('button', { name: 'Shield Funds', exact: true }).boundingBox()
+    homeActions.getByRole('button', { name: 'Shielded', exact: true }).boundingBox()
   ])
   if (!actionsBounds || !sendBounds || !shieldFundsBounds) {
     throw new Error('Testnet action buttons are not visible')
