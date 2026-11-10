@@ -893,6 +893,17 @@ test.describe('Popup EVM wallet client', () => {
       message: 'Wallet is locked'
     })
 
+    const expiredQuote = createEvmWalletClient(async () => ({
+      error: {
+        code: 'quote-expired',
+        message: 'RHEA Swap quote expired. Get a new quote and review it again.'
+      }
+    }))
+    await expect(expiredQuote.getTransferActivity(graph('broadcast'))).rejects.toMatchObject({
+      code: 'quote-expired',
+      message: 'RHEA Swap quote expired. Get a new quote and review it again.'
+    })
+
     const unavailable = createEvmWalletClient(async () => ({
       error: { code: 'request-failed', message: 'The EVM wallet request failed' }
     }))

@@ -328,4 +328,30 @@ test.describe('RHEA CrossChainDex transaction binding', () => {
       })
     ).toThrow(/minimum amount exceeds/)
   })
+
+  test('reports an expired quote after validating the prepared source transfer', () => {
+    const segmentIds = {
+      relay: parseTransactionSegmentId('segment:rhea:relay'),
+      destination: parseTransactionSegmentId('segment:rhea:destination'),
+      refund: parseTransactionSegmentId('segment:rhea:refund')
+    }
+    for (const now of [10_000, 10_001]) {
+      expect(() =>
+        bindRheaSwapTransactionGraph({
+          graph: sourceGraph(),
+          binding: rheaBinding(),
+          segmentIds,
+          now
+        })
+      ).toThrow('RHEA Swap quote expired. Get a new quote and review it again.')
+    }
+    expect(() =>
+      bindRheaSwapTransactionGraph({
+        graph: sourceGraph(),
+        binding: { ...rheaBinding(), originAmountRaw: '999' },
+        segmentIds,
+        now: 10_000
+      })
+    ).toThrow('RHEA Swap binding does not match the source transfer')
+  })
 })

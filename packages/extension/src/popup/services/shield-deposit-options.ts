@@ -69,19 +69,59 @@ export function availableDepositTokens(
   })
 }
 
+export interface DepositTokenChoice {
+  readonly id: string
+  readonly token: SwapToken
+  readonly assetIds: readonly string[]
+  readonly distinguish: boolean
+}
+
+export function listDepositTokenChoices(
+  tokens: readonly SwapToken[]
+): readonly DepositTokenChoice[] {
+  const groups = new Map<string, SwapToken[]>()
+  for (const token of tokens) {
+    const symbol = token.symbol.trim().toLowerCase()
+    const group = groups.get(symbol)
+    if (group) group.push(token)
+    else groups.set(symbol, [token])
+  }
+  return [...groups].flatMap<DepositTokenChoice>(([symbol, group]) => {
+    const chainIds = group.map(depositTokenChainId)
+    if (new Set(chainIds).size === group.length) {
+      return [
+        {
+          id: `symbol:${symbol}`,
+          token: group[0]!,
+          assetIds: group.map(token => token.assetId),
+          distinguish: false
+        }
+      ]
+    }
+    return group.map(token => ({
+      id: `asset:${token.assetId}`,
+      token,
+      assetIds: [token.assetId],
+      distinguish: true
+    }))
+  })
+}
+
 export function depositTokenForNetwork(
   tokens: readonly SwapToken[],
-  symbol: string | null,
+  selectionId: string | null,
   network: ChainDefinition | null
 ): SwapToken | null {
-  if (!symbol || !network) return null
-  return (
-    tokens.find(
-      token =>
-        token.symbol.trim().toLowerCase() === symbol.trim().toLowerCase() &&
-        depositTokenChainId(token) === network.id
-    ) ?? null
+  if (!selectionId || !network) return null
+  const matches = tokens.filter(
+    token =>
+      depositTokenChainId(token) === network.id &&
+      (selectionId.startsWith('asset:')
+        ? token.assetId === selectionId.slice(6)
+        : selectionId.startsWith('symbol:') &&
+          token.symbol.trim().toLowerCase() === selectionId.slice(7))
   )
+  return matches.length === 1 ? matches[0]! : null
 }
 
 export function defaultDepositRefundAddress(

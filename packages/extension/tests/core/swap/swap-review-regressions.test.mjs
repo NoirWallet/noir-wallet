@@ -370,6 +370,14 @@ it('keeps provider minimums from multiple route failures without returning provi
   assert.equal(getRheaSwapMinimumAmountMessage(runtimeMessage), runtimeMessage)
   assert.equal(getRheaSwapErrorMessage(new RheaSwapClientError(runtimeMessage)), runtimeMessage)
   assert.equal(getSafeRheaSwapRuntimeErrorMessage(new Error(runtimeMessage)), runtimeMessage)
+  const bridgeFailure =
+    'No confidential route available: Cross-chain quote failed: nearintents: NearIntents quote failed (400): {"message":"Amount is too low for bridge, try at least 133602","correlationId":"provider-reference","timestamp":"2026-11-09T15:49:49Z","path":"/v0/quote"}'
+  const bridgeMessage = 'Amount is below the route minimum. Increase the amount and try again.'
+  const safeBridgeMessage = getSafeRheaSwapRuntimeErrorMessage(new Error(bridgeFailure))
+  assert.equal(safeBridgeMessage, bridgeMessage)
+  assert.equal(getRheaSwapErrorMessage(new RheaSwapClientError(bridgeFailure)), bridgeMessage)
+  assert.equal(getRheaSwapErrorMessage(new RheaSwapClientError(safeBridgeMessage)), bridgeMessage)
+  assert.equal(classifyError(new RheaSwapClientError(safeBridgeMessage)).retryable, false)
   assert.equal(
     getRheaSwapMinimumAmountMessage('Minimum swap amount is $1,000.125.'),
     'Minimum swap amount is $1,000.125.'

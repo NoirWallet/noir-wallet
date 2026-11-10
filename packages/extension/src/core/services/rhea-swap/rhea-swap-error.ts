@@ -1,7 +1,12 @@
 const MINIMUM_SWAP_AMOUNT_PATTERN =
   /minimum (?:swap )?amount(?:\s+is|\s+of|:)?\s*(\$(?:\d{1,12}|\d{1,3}(?:,\d{3}){1,4})(?:\.\d{1,6})?)(?![\w,]|\.[\w,.])/i
+const BRIDGE_MINIMUM_MESSAGE =
+  'Amount is below the route minimum. Increase the amount and try again.'
 
 export function getRheaSwapMinimumAmountMessage(message: string): string | null {
+  if (message === BRIDGE_MINIMUM_MESSAGE || /\bamount is too low for bridge\b/i.test(message)) {
+    return BRIDGE_MINIMUM_MESSAGE
+  }
   const minimum = message.match(MINIMUM_SWAP_AMOUNT_PATTERN)?.[1]
   return minimum ? `Minimum swap amount is ${minimum}.` : null
 }

@@ -6,6 +6,7 @@ import {
   RheaSwapClientError
 } from '../../../src/popup/services/rhea-swap-client.ts'
 import { RHEA_SWAP_CHAIN_CATALOG } from '../../../src/core/services/rhea-swap/index.ts'
+import { EvmWalletClientError } from '../../../src/popup/services/evm-wallet-client.ts'
 
 function token() {
   return {
@@ -33,6 +34,14 @@ test('shows the useful minimum from RHEA quote and swap errors', () => {
   expect(getRheaSwapErrorMessage(new Error('Minimum swap amount is $1,000'))).toBe(
     'Amount is below the current minimum for this Swap route.'
   )
+  expect(
+    getRheaSwapErrorMessage(
+      new EvmWalletClientError(
+        'quote-expired',
+        'RHEA Swap quote expired. Get a new quote and review it again.'
+      )
+    )
+  ).toBe('Swap quote expired. Get a new quote and review it again.')
 })
 
 test('retains both directions for every supported chain without evicting source catalogs', async () => {

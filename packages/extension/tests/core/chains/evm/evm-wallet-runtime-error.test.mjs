@@ -59,6 +59,18 @@ test.describe('EVM wallet runtime error mapping', () => {
       code: 'expired',
       message: 'The EVM signing request expired'
     })
+    expect(
+      mapEvmWalletRuntimeError(
+        new Error('RHEA Swap quote expired. Get a new quote and review it again.')
+      )
+    ).toEqual({
+      code: 'quote-expired',
+      message: 'RHEA Swap quote expired. Get a new quote and review it again.'
+    })
+    expect(mapEvmWalletRuntimeError(new Error('RHEA Swap quote expired'))).toEqual({
+      code: 'expired',
+      message: 'The EVM signing request expired'
+    })
     expect(mapEvmWalletRuntimeError(new KeyringError('SIGNING_COMMAND_EXPIRED'))).toEqual({
       code: 'expired',
       message: 'The EVM signing request expired'

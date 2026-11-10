@@ -24,7 +24,8 @@ import { confidentialPrivateTokenId } from '../../../src/core/services/confident
 import { getEvmNetworkConfigs } from '../../../src/config/networks.ts'
 import {
   depositStatusLabel,
-  depositTokenForNetwork
+  depositTokenForNetwork,
+  listDepositTokenChoices
 } from '../../../src/popup/services/shield-deposit-options.ts'
 
 test('resolves the selected deposit token only on the explicitly selected network', () => {
@@ -35,9 +36,25 @@ test('resolves the selected deposit token only on the explicitly selected networ
     { assetId: 'nep141:base-usdc', blockchain: 'base', symbol: 'USDC' }
   ]
 
-  expect(depositTokenForNetwork(tokens, 'USDC', null)).toBeNull()
-  expect(depositTokenForNetwork(tokens, 'USDC', ethereum)?.assetId).toBe('nep141:eth-usdc')
-  expect(depositTokenForNetwork(tokens, 'USDC', base)?.assetId).toBe('nep141:base-usdc')
+  const choice = listDepositTokenChoices(tokens)[0]
+  expect(choice.assetIds).toEqual(['nep141:eth-usdc', 'nep141:base-usdc'])
+  expect(depositTokenForNetwork(tokens, choice.id, null)).toBeNull()
+  expect(depositTokenForNetwork(tokens, choice.id, ethereum)?.assetId).toBe('nep141:eth-usdc')
+  expect(depositTokenForNetwork(tokens, choice.id, base)?.assetId).toBe('nep141:base-usdc')
+
+  const sameChainToken = { assetId: 'nep141:base-other-usdc', blockchain: 'base', symbol: 'USDC' }
+  const collidingTokens = [...tokens, sameChainToken]
+  const choices = listDepositTokenChoices(collidingTokens)
+  expect(choices.map(item => item.assetIds)).toEqual([
+    ['nep141:eth-usdc'],
+    ['nep141:base-usdc'],
+    ['nep141:base-other-usdc']
+  ])
+  expect(depositTokenForNetwork(collidingTokens, choices[2].id, base)?.assetId).toBe(
+    sameChainToken.assetId
+  )
+  expect(depositTokenForNetwork(collidingTokens, choices[2].id, ethereum)).toBeNull()
+  expect(depositTokenForNetwork(collidingTokens, 'symbol:usdc', base)).toBeNull()
 })
 
 const apiConfig = {

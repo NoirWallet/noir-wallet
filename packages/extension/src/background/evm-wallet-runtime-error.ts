@@ -41,6 +41,12 @@ export function mapEvmWalletRuntimeError(error: unknown): EvmWalletRuntimeError 
       return createEvmWalletRuntimeError('review-unavailable')
     }
   }
+  if (
+    error instanceof Error &&
+    error.message === 'RHEA Swap quote expired. Get a new quote and review it again.'
+  ) {
+    return createEvmWalletRuntimeError('quote-expired')
+  }
   if (error instanceof Error && /expired/i.test(error.message)) {
     return createEvmWalletRuntimeError('expired')
   }

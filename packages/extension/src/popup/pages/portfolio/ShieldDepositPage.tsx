@@ -29,6 +29,7 @@ import {
   depositSourceNetworks,
   depositStatusLabel,
   depositTokenForNetwork,
+  listDepositTokenChoices,
   formatDepositAmount,
   hasDepositSettlementShortfall,
   depositTokenChainId
@@ -291,33 +292,27 @@ function ShieldDepositContent() {
 
   const networks = useMemo(() => depositSourceNetworks(), [account])
   const tokens = useMemo(() => availableDepositTokens(catalog, networks), [catalog, networks])
-  const tokenChoices = Array.from(
-    new Map(tokens.map(token => [token.symbol.trim().toLowerCase(), token])).values()
-  )
+  const tokenChoices = useMemo(() => listDepositTokenChoices(tokens), [tokens])
   const requestedAssetId = searchParams.get('assetId')
   const requestedTokenId = useMemo(() => {
     if (!requestedAssetId) return null
-    const direct = tokens.find(token => token.assetId === requestedAssetId)
-    if (direct) return direct.symbol.trim().toLowerCase()
-    const mapped = tokens.find(token =>
-      networks.some(network => depositSourceAssetId(token, network) === requestedAssetId)
+    const requested =
+      tokens.find(token => token.assetId === requestedAssetId) ??
+      tokens.find(token =>
+        networks.some(network => depositSourceAssetId(token, network) === requestedAssetId)
+      )
+    return (
+      tokenChoices.find(choice => choice.assetIds.includes(requested?.assetId ?? ''))?.id ?? null
     )
-    return mapped?.symbol.trim().toLowerCase() ?? null
-  }, [requestedAssetId, tokens, networks])
-  const selectedSymbol = tokenId === undefined ? requestedTokenId : tokenId
-  const availableNetworks = networks.filter(network =>
-    tokens.some(
-      token =>
-        token.symbol.trim().toLowerCase() === selectedSymbol &&
-        depositTokenChainId(token) === network.id
-    )
+  }, [requestedAssetId, tokens, networks, tokenChoices])
+  const selectedChoiceId = tokenId === undefined ? requestedTokenId : tokenId
+  const availableNetworks = networks.filter(
+    network => depositTokenForNetwork(tokens, selectedChoiceId, network) !== null
   )
   const selectedNetwork = networks.find(network => network.id === networkId) ?? null
-  const selectedToken = depositTokenForNetwork(tokens, selectedSymbol, selectedNetwork)
+  const selectedToken = depositTokenForNetwork(tokens, selectedChoiceId, selectedNetwork)
   const displayedToken =
-    selectedToken ??
-    tokenChoices.find(token => token.symbol.trim().toLowerCase() === selectedSymbol) ??
-    null
+    selectedToken ?? tokenChoices.find(choice => choice.id === selectedChoiceId)?.token ?? null
   const defaultRefund = defaultDepositRefundAddress(selectedNetwork, account?.networks ?? [])
   const effectiveRefund = refundEdited ? refundAddress : defaultRefund
   const refundError = depositRefundAddressError(effectiveRefund, selectedNetwork)
@@ -542,8 +537,8 @@ function ShieldDepositContent() {
     }
   }
 
-  const selectToken = (token: SwapToken) => {
-    setTokenId(token.symbol.trim().toLowerCase())
+  const selectToken = (choice: (typeof tokenChoices)[number]) => {
+    setTokenId(choice.id)
     setNetworkId(null)
     setProviderSelected(false)
     setRefundAddress('')
@@ -1133,23 +1128,39 @@ function ShieldDepositContent() {
                 />
               </label>
               {tokenChoices
-                .filter(token =>
-                  token.symbol.toLowerCase().includes(tokenSearch.trim().toLowerCase())
+                .filter(choice =>
+                  choice.token.symbol.toLowerCase().includes(tokenSearch.trim().toLowerCase())
                 )
-                .map(token => (
+                .map(choice => (
                   <button
-                    key={token.symbol.trim().toLowerCase()}
+                    key={choice.id}
                     type="button"
-                    onClick={() => selectToken(token)}
+                    onClick={() => selectToken(choice)}
                     className="wallet-interactive flex h-16 w-full items-center gap-3 rounded-md px-1 text-left hover:bg-wallet-selected active:bg-white/15"
                   >
                     <TokenIcon
-                      assetId={token.assetId}
-                      symbol={token.symbol}
-                      icon={resolveSwapTokenIconUrl(token)}
+                      assetId={choice.token.assetId}
+                      symbol={choice.token.symbol}
+                      icon={resolveSwapTokenIconUrl(choice.token)}
                       size={32}
                     />
-                    <span className="truncate text-sm">{token.symbol}</span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm">{choice.token.symbol}</span>
+                      {choice.distinguish && (
+                        <span
+                          className="block truncate text-xs text-muted"
+                          title={choice.token.assetId}
+                        >
+                          {networks.find(
+                            network => network.id === depositTokenChainId(choice.token)
+                          )?.displayName ?? choice.token.blockchain}{' '}
+                          ·{' '}
+                          {choice.token.contractAddress
+                            ? `${choice.token.contractAddress.slice(0, 8)}...${choice.token.contractAddress.slice(-6)}`
+                            : choice.token.assetId}
+                        </span>
+                      )}
+                    </span>
                   </button>
                 ))}
             </div>
