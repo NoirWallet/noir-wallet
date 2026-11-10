@@ -284,6 +284,7 @@ import {
   BackgroundMultichainSessionDAppHandler,
   toCaip25ErrorShape
 } from './multichain-session-dapp-handler'
+import { readFirstPartyDAppSessionSnapshot } from './first-party-dapp-session'
 import { caip25SessionAllowsMethod, type Caip25RuntimeMethod } from '@/core/dapp/caip25'
 import {
   resolveNearRuntimeNetworkConfig,
@@ -1352,6 +1353,7 @@ async function reloadMultichainRuntime(
     evmNetworks: catalog,
     activeChainIds: async () =>
       (await accountNetworksCoordinator.readActiveAccount())?.chainIds ?? [],
+    readFirstPartySnapshot: () => readFirstPartyDAppSessionSnapshot(accountNetworksCoordinator),
     manager: dappManager,
     approval: dappHandler,
     zcash: dappHandler,
@@ -2488,7 +2490,12 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
               ? (Reflect.get(request.params, 'scopes') as Record<string, unknown>)
               : null
           const activeAccount = await accountNetworksCoordinator.readActiveAccount()
+          const automaticSession =
+            chainId === 'multichain' &&
+            request.method === 'wallet_createSession' &&
+            (await dappManager.canAutoConnectSession(origin))
           const needsZcashRuntime = Boolean(
+            !automaticSession &&
             requestedScopes &&
             Object.prototype.hasOwnProperty.call(
               requestedScopes,

@@ -122,7 +122,10 @@ export class AccountNetworksCoordinator {
     return (await this.options.isNetworkEnabled?.(scope, family)) ?? true
   }
 
-  async readCatalog(): Promise<AccountNetworksCatalog | null> {
+  async readCatalog(
+    options: Readonly<{ deriveMissingAddresses?: boolean }> = {}
+  ): Promise<AccountNetworksCatalog | null> {
+    const deriveMissingAddresses = options.deriveMissingAddresses ?? true
     const pointer = await this.options.repository.getActivePointer()
     if (!pointer) return null
 
@@ -204,7 +207,8 @@ export class AccountNetworksCoordinator {
                 if (
                   chain.family === 'bitcoin' &&
                   keyDomain.source.kind === 'software' &&
-                  bitcoinDerivation
+                  bitcoinDerivation &&
+                  deriveMissingAddresses
                 ) {
                   try {
                     const persistedAddresses = addresses
@@ -256,7 +260,8 @@ export class AccountNetworksCoordinator {
                 if (
                   chain.family === 'evm' &&
                   supportsEvmPrivateExecution(keyDomain.source) &&
-                  evmPeaDerivation
+                  evmPeaDerivation &&
+                  deriveMissingAddresses
                 ) {
                   const binding = parseEvmAccountBinding(chainAccount, chain.id)
                   try {

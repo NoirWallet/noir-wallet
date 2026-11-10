@@ -349,6 +349,19 @@ test.describe('Account networks coordinator', () => {
     ])
     expect(derivationRequests.every(request => request.keyDomainId === walletId)).toBe(true)
     expect(peaDerivationRequests).toEqual([{ keyDomainId: walletId, addressIndex: 0 }])
+
+    const persistedOnly = await coordinator.readCatalog({ deriveMissingAddresses: false })
+    expect(
+      persistedOnly.accounts[0].networks
+        .find(network => network.chainId === bitcoinChainId)
+        .addresses.map(address => address.value)
+    ).toEqual([bitcoinAddress])
+    expect(
+      persistedOnly.accounts[0].networks.find(network => network.chainId === evmChainId)
+        .privateExecutionAddress
+    ).toBeUndefined()
+    expect(derivationRequests).toHaveLength(3)
+    expect(peaDerivationRequests).toHaveLength(1)
   })
 
   test('keeps normal EVM addresses visible while the Private Execution credential is locked', async () => {

@@ -3,6 +3,7 @@ import { expect } from '@playwright/test'
 
 import { BackgroundMultichainSessionDAppHandler } from '../../../src/background/multichain-session-dapp-handler.ts'
 import { selectDAppSessionAccounts } from '../../../src/background/dapp-session-accounts.ts'
+import { DAppManager } from '../../../src/core/dapp/dapp-manager.ts'
 
 const ethereum = 'eip155:1'
 const custom = 'eip155:4663'
@@ -30,7 +31,10 @@ function proposal(scope = { chainId: ethereum, chainName: 'Ethereum', iconChain:
 function createHandler({
   selectedIds = ['account-1'],
   prepareProposal = proposal,
-  activeChainIds
+  activeChainIds,
+  manager,
+  readFirstPartySnapshot,
+  executionAccounts = [address]
 } = {}) {
   let stored = null
   const approvals = []
@@ -39,6 +43,7 @@ function createHandler({
   const handler = new BackgroundMultichainSessionDAppHandler({
     network: 'mainnet',
     ...(activeChainIds === undefined ? {} : { activeChainIds }),
+    ...(readFirstPartySnapshot === undefined ? {} : { readFirstPartySnapshot }),
     evmNetworks: [ethereum, custom].map(chainId => ({
       networkMode: 'mainnet',
       chainId,
@@ -55,7 +60,8 @@ function createHandler({
       rpcUrl: 'https://rpc.example',
       explorerUrl: 'https://explorer.example'
     })),
-    manager: {
+    manager: manager ?? {
+      canAutoConnectSession: async () => false,
       getAllConnections: async () => [],
       getAuthorizationRevision: async () => 4,
       getCaip25Session: async () => stored,
@@ -96,7 +102,7 @@ function createHandler({
     evm: {
       prepareSessionAccountSelection: async (_origin, scope) => prepareProposal(scope),
       resolveSessionAccountSelection: async (value, ids) => selectDAppSessionAccounts(value, ids),
-      getSessionAccounts: async () => [address],
+      getSessionAccounts: async () => executionAccounts,
       getCaip2ChainId: () => ethereum
     },
     bitcoin: {
@@ -271,4 +277,154 @@ test('shared EVM selection cannot widen a scope with a narrower account request'
   ).rejects.toMatchObject({ code: 4100 })
   expect(approvals[0].data.scopes[0].accounts.map(account => account.id)).toEqual(['account-1'])
   expect(getStored()).toBeNull()
+})
+
+function firstPartyFixture({ executionAccounts, executionMode = 'main' } = {}) {
+  const values = new Map()
+  let writes = 0
+  const manager = new DAppManager({
+    get: async keys =>
+      Object.fromEntries((Array.isArray(keys) ? keys : [keys]).map(key => [key, values.get(key)])),
+    set: async entries => {
+      writes++
+      for (const [key, value] of Object.entries(entries)) values.set(key, value)
+    }
+  })
+  const other = { walletId: 'wallet-2', accountId: 'account-2' }
+  const zcash = 'bip122:00040fe8ec8471911baa1db1266ea15d'
+  const bitcoin = 'bip122:000000000019d6689c085ae165831e93'
+  const state = {
+    snapshot: {
+      identity: 'unlocked-generation-1',
+      executionMode,
+      activeReference: reference,
+      accounts: {
+        [ethereum]: [{ reference, address }],
+        [custom]: [{ reference, address }],
+        [zcash]: [{ reference: other, address: 'u1publicfixture' }],
+        [bitcoin]: [{ reference: other, address: 'bc1publicfixture' }]
+      }
+    }
+  }
+  const options = {
+    manager,
+    // First-party sessions also include enabled chains belonging to other wallets.
+    activeChainIds: async () => [ethereum],
+    readFirstPartySnapshot: async () => state.snapshot,
+    ...(executionAccounts === undefined ? {} : { executionAccounts })
+  }
+  return {
+    ...createHandler(options),
+    manager,
+    state,
+    other,
+    zcash,
+    bitcoin,
+    createAgain: () => createHandler(options).handler,
+    getWrites: () => writes
+  }
+}
+
+test('first-party session reads connect every enabled network and synchronize account changes', async () => {
+  for (const origin of ['https://app.zknoir.com', 'https://noirdevelop.refburrow.top']) {
+    const { handler, manager, state, other, zcash, bitcoin, approvals, getWrites, createAgain } =
+      firstPartyFixture()
+    const read = () => handler.request({ method: 'wallet_getSession' }, origin, {})
+    const [session, concurrent] = await Promise.all([read(), read()])
+    expect(concurrent).toEqual(session)
+    expect(Object.keys(session.scopes)).toEqual([zcash, ethereum, custom, bitcoin])
+    expect(session.scopes[zcash].accounts).toEqual([`${zcash}:u1publicfixture`])
+    expect((await manager.getChainAuthorization(origin, bitcoin)).accounts).toEqual([other])
+    expect(approvals).toHaveLength(0)
+    const writes = getWrites()
+    await read()
+    expect(getWrites()).toBe(writes)
+
+    state.snapshot = {
+      ...state.snapshot,
+      identity: 'unlocked-generation-2',
+      accounts: {
+        ...state.snapshot.accounts,
+        [ethereum]: [
+          ...state.snapshot.accounts[ethereum],
+          { reference: other, address: '0x2222222222222222222222222222222222222222' }
+        ]
+      }
+    }
+    const updated = await read()
+    expect(updated.scopes[ethereum].accounts).toHaveLength(2)
+    expect((await manager.getEvmAuthorization(origin)).accounts).toEqual([reference, other])
+    expect(await createAgain().request({ method: 'wallet_getSession' }, origin, {})).toEqual(
+      updated
+    )
+
+    state.snapshot = null
+    expect(await read()).toBeNull()
+    expect(approvals).toHaveLength(0)
+  }
+})
+
+test('official Connect all skips connection approval while third-party Connect retains it', async () => {
+  const { handler, manager, approvals, zcash } = firstPartyFixture()
+  const request = {
+    method: 'wallet_createSession',
+    params: {
+      properties: { application: 'Official application' },
+      scopes: {
+        [ethereum]: { methods: ['eth_accounts'], notifications: [] }
+      }
+    }
+  }
+  const origin = 'https://noirdevelop.refburrow.top'
+  const [, session] = await Promise.all([
+    handler.request({ method: 'wallet_getSession' }, origin, {}),
+    handler.request(request, origin, {})
+  ])
+  expect(session.properties).toEqual({ application: 'Official application' })
+  expect(session.scopes[zcash].accounts).toHaveLength(1)
+  expect(approvals).toHaveLength(0)
+  expect(await manager.canAutoConnectSession(origin)).toBe(true)
+  expect(
+    await handler.request({ method: 'wallet_getSession' }, 'https://untrusted.example', {})
+  ).toBeNull()
+  await handler.request(request, 'https://untrusted.example', {})
+  expect(approvals).toHaveLength(1)
+})
+
+test('automatic refresh preserves chain revocation and declines changed or locked snapshots', async () => {
+  const { handler, manager, bitcoin, state } = firstPartyFixture()
+  const origin = 'https://app.zknoir.com'
+  await handler.request({ method: 'wallet_getSession' }, origin, {})
+  await manager.removeChainAuthorization(origin, bitcoin)
+  const retained = await handler.request({ method: 'wallet_getSession' }, origin, {})
+  expect(retained.scopes[bitcoin]).toBeUndefined()
+  expect(await manager.getChainAuthorization(origin, bitcoin)).toBeNull()
+  await manager.removeConnection(origin)
+  expect(await handler.request({ method: 'wallet_getSession' }, origin, {})).toBeNull()
+
+  const fresh = firstPartyFixture()
+  let reads = 0
+  const changed = createHandler({
+    manager: fresh.manager,
+    readFirstPartySnapshot: async () => ({ ...state.snapshot, identity: `changed-${reads++}` })
+  }).handler
+  expect(await changed.request({ method: 'wallet_getSession' }, origin, {})).toBeNull()
+  expect(await fresh.manager.getCaip25Session(origin)).toBeNull()
+})
+
+test('first-party sessions retain the current Private EVM identity without a Main fallback', async () => {
+  const privateAddress = '0x3333333333333333333333333333333333333333'
+  for (const executionAccounts of [[privateAddress], [], [address]]) {
+    const { handler } = firstPartyFixture({ executionAccounts, executionMode: 'private' })
+    const session = await handler.request(
+      { method: 'wallet_getSession' },
+      'https://app.zknoir.com',
+      {}
+    )
+    for (const chainId of [ethereum, custom]) {
+      expect(session.scopes[chainId].accounts).toEqual(
+        executionAccounts[0] === privateAddress ? [`${chainId}:${privateAddress}`] : []
+      )
+    }
+  }
 })

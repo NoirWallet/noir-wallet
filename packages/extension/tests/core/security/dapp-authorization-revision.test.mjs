@@ -711,6 +711,113 @@ test('EVM-only revoke advances its revision without consuming Zcash auto-connect
   assert.equal(await manager.canAutoConnect(origin), true)
 })
 
+test('first-party automatic sessions can refresh without consuming Zcash auto-connect', async () => {
+  const { manager, storage } = managerFixture()
+  const site = 'https://app.zknoir.com'
+  const zcash = 'bip122:00040fe8ec8471911baa1db1266ea15d'
+  const authorizations = [
+    { chainId: zcash, accounts: [account], binding: account },
+    { chainId: 'eip155:1', accounts: [account], binding: account }
+  ]
+  const session = {
+    scopes: [
+      { chainId: zcash, methods: ['zcash_getBalance'], notifications: [] },
+      { chainId: 'eip155:1', methods: ['eth_accounts'], notifications: [] }
+    ]
+  }
+  await manager.setAuthorizedAccounts(site, {}, [account], account, { automatic: true })
+  assert.equal(await manager.canAutoConnectSession(site), true)
+  await assert.rejects(
+    manager.setCaip25Session(site, {}, authorizations, session, undefined, undefined, {
+      automatic: true
+    }),
+    /authorization changed/
+  )
+  for (let refresh = 0; refresh < 2; refresh++) {
+    await manager.setCaip25Session(
+      site,
+      {},
+      authorizations,
+      session,
+      { accounts: [account], binding: account },
+      await manager.getAuthorizationRevision(site),
+      { automatic: true }
+    )
+  }
+  const restored = new DAppManager(storage)
+  assert.equal(await restored.canAutoConnectSession(site), true)
+  assert.equal(await restored.canAutoConnect(site), true)
+  assert.deepEqual(
+    (await restored.getCaip25Session(site)).scopes.map(scope => scope.chainId),
+    [zcash, 'eip155:1']
+  )
+  await restored.addCaip25AuthorizedAccount(site, ['eip155:1'], {
+    walletId: 'wallet-2',
+    accountId: 'account-2'
+  })
+  assert.equal(await restored.canAutoConnectSession(site), false)
+  assert.equal(await restored.canAutoConnect(site), true)
+})
+
+test('automatic sessions respect exact origins, old manual grants, and explicit choices', async () => {
+  const { manager, storage } = managerFixture()
+  const site = 'https://noirdevelop.refburrow.top'
+  const authorization = [{ chainId: 'eip155:1', accounts: [account], binding: account }]
+  const session = {
+    scopes: [{ chainId: 'eip155:1', methods: ['eth_accounts'], notifications: [] }]
+  }
+  for (const untrusted of [origin, 'https://app.zknoir.com.evil.example']) {
+    assert.equal(await manager.canAutoConnectSession(untrusted), false)
+    await assert.rejects(
+      manager.setCaip25Session(untrusted, {}, authorization, session, undefined, 0, {
+        automatic: true
+      }),
+      /authorization changed/
+    )
+  }
+
+  await manager.setEvmAuthorizedAccounts(site, {}, [account], account)
+  assert.equal(await new DAppManager(storage).canAutoConnectSession(site), false)
+  await assert.rejects(
+    manager.setCaip25Session(site, {}, authorization, session, undefined, 0, {
+      automatic: true
+    }),
+    /authorization changed/
+  )
+  await manager.setCaip25Session(site, {}, authorization, session)
+  assert.equal(await manager.canAutoConnectSession(site), false)
+  await manager.removeEvmAuthorization(site)
+  assert.equal(await manager.canAutoConnectSession(site), false)
+  assert.equal(await manager.canAutoConnect(site), true)
+  await manager.removeConnection(site)
+  assert.equal(await manager.canAutoConnectSession(site), false)
+  assert.equal(await manager.canAutoConnect(site), false)
+})
+
+test('chain revocation invalidates an in-flight automatic session without blocking Zcash auto-connect', async () => {
+  const { manager } = managerFixture()
+  const site = 'https://app.zknoir.com'
+  const authorization = [{ chainId: 'eip155:1', accounts: [account], binding: account }]
+  const session = {
+    scopes: [{ chainId: 'eip155:1', methods: ['eth_accounts'], notifications: [] }]
+  }
+  const pendingRevision = await manager.getAuthorizationRevision(site)
+  await manager.setCaip25Session(site, {}, authorization, session, undefined, pendingRevision, {
+    automatic: true
+  })
+  await manager.removeChainAuthorization(site, 'eip155:1')
+  assert.equal(await manager.getAuthorizationRevision(site), pendingRevision + 1)
+  assert.equal(await manager.canAutoConnect(site), true)
+  assert.equal(await manager.canAutoConnectSession(site), false)
+  await assert.rejects(
+    manager.setCaip25Session(site, {}, authorization, session, undefined, pendingRevision, {
+      automatic: true
+    }),
+    /authorization changed/
+  )
+  assert.equal(await manager.getCaip25Session(site), null)
+})
+
 test('account deletion cannot widen a CAIP-25 scope to another shared EVM account', async () => {
   const { storage, values } = managerFixture()
   const other = { walletId: 'wallet-2', accountId: 'account-2' }
