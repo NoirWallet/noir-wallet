@@ -44,7 +44,13 @@ export function ChainIcon({
       src={displayedIconUrl}
       alt={alt || chainName}
       crossOrigin={crossOrigin}
-      className={cn('bg-card object-cover', !isLoaded && 'animate-pulse', className)}
+      className={cn(
+        'bg-card object-cover',
+        !isLoaded && 'animate-pulse',
+        className,
+        chain.trim().toLowerCase() === 'evm' && 'bg-transparent',
+        'rounded-[20%]'
+      )}
       title={showTooltip ? chainName : undefined}
       onLoad={event => {
         setLoadedIconUrl(displayedIconUrl)

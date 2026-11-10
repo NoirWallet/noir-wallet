@@ -22,8 +22,9 @@ export function ConfirmPhrasePage() {
   } = useOnboardingStore()
 
   const shuffledWordOptions = useMemo(() => {
-    return shuffleVerificationWordOptions(seedPhrase)
-  }, [seedPhrase])
+    if (seedPhrase.length === 0 || verificationIndices.length !== 2) return []
+    return shuffleVerificationWordOptions(seedPhrase, verificationIndices)
+  }, [seedPhrase, verificationIndices])
 
   const ordinalSuffix = (n: number) => {
     const s = ['th', 'st', 'nd', 'rd']

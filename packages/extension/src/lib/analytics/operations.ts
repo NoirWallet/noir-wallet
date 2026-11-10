@@ -1,7 +1,11 @@
 import { ANALYTICS_EVENTS, PAGE_IDS, type AnalyticsEventName } from './constants'
+import { transactionAnalyticsFamily } from '@/core/transactions/transaction-analytics'
+import { ZCASH_CHAIN_IDS } from '@/core/chains/registry/chain-ids'
+import type { ConfidentialFundingPlan } from '@/core/services/confidential-funding/confidential-funding-model'
+import type { ExternalShieldDeposit } from '@/core/services/confidential-funding/confidential-external-deposit'
 import type { TrackOptions } from './types'
 
-export type ZcashAnalyticsOperation = 'send' | 'unshield' | 'shield' | 'swap'
+export type ZcashAnalyticsOperation = 'send' | 'unshield' | 'shield' | 'swap' | 'transfer'
 export type AnalyticsSwapDirection = 'zec_to_other' | 'other_to_zec' | 'same_chain' | 'cross_chain'
 
 /** Operation context only; the execution owner determines the event and outcome. */
@@ -16,6 +20,13 @@ export interface ZcashOperationAnalyticsContext {
 export interface OperationAnalyticsEvent {
   readonly name: AnalyticsEventName
   readonly options: TrackOptions
+}
+
+export function resolveZcashAnalyticsOperation(
+  kind: ZcashAnalyticsOperation,
+  userAction?: 'transfer'
+): ZcashAnalyticsOperation {
+  return kind === 'swap' && userAction === 'transfer' ? 'transfer' : kind
 }
 
 export function isZcashOperationAnalyticsContext(
@@ -82,9 +93,84 @@ export function projectZcashOperationEvent(
       extra:
         operation === 'swap'
           ? { direction: context.direction, sourceFamily: 'zcash' }
-          : operation === 'send' || operation === 'unshield'
-            ? { funding_source: context.fundingSource, kind: 'send' }
+          : operation === 'send' || operation === 'unshield' || operation === 'transfer'
+            ? {
+                funding_source: context.fundingSource,
+                kind: operation === 'transfer' ? 'transfer' : 'send'
+              }
             : undefined
     }
   }
+}
+
+function confidentialResultEvent(
+  operation: NonNullable<ConfidentialFundingPlan['operation']>,
+  status: 'success' | 'refunded' | 'failed' | 'expired' | 'cancelled',
+  sourceChainId: string,
+  idempotencyKey: string
+): OperationAnalyticsEvent {
+  return {
+    name: ANALYTICS_EVENTS.SHIELD_OPERATION_RESULT,
+    options: {
+      pageId: PAGE_IDS.BACKGROUND,
+      chain:
+        sourceChainId === ZCASH_CHAIN_IDS.mainnet || sourceChainId === ZCASH_CHAIN_IDS.testnet
+          ? 'zcash'
+          : (transactionAnalyticsFamily(sourceChainId) ?? 'near'),
+      hasTransaction: status === 'success' || status === 'refunded' ? 1 : 0,
+      idempotencyKey,
+      extra: { operation, status }
+    }
+  }
+}
+
+export function projectConfidentialPlanResult(
+  previous: ConfidentialFundingPlan,
+  next: ConfidentialFundingPlan
+): OperationAnalyticsEvent | null {
+  if (previous.phase === next.phase) return null
+  const status = next.phase === 'ready' ? 'success' : next.phase
+  if (
+    status !== 'success' &&
+    status !== 'refunded' &&
+    status !== 'failed' &&
+    status !== 'expired' &&
+    status !== 'cancelled'
+  )
+    return null
+  if (
+    status === 'failed' &&
+    next.errorStatus === 'LOCAL_PROCESSING_FAILED' &&
+    next.requiresDeposit &&
+    Boolean(next.preparedDeposit?.transactionHash)
+  )
+    return null
+  return confidentialResultEvent(
+    next.operation ?? 'cluster',
+    status,
+    next.source.chainId,
+    `shield-plan:${next.planId}`
+  )
+}
+
+export function projectExternalDepositResult(
+  previous: ExternalShieldDeposit,
+  next: ExternalShieldDeposit
+): OperationAnalyticsEvent | null {
+  const settled = (record: ExternalShieldDeposit) =>
+    record.phase === 'refunded'
+      ? 'refunded'
+      : record.phase === 'ready' &&
+          record.settledOutputRaw !== undefined &&
+          /^[1-9]\d*$/.test(record.settledOutputRaw)
+        ? 'success'
+        : null
+  const status = settled(next)
+  if (!status || status === settled(previous)) return null
+  return confidentialResultEvent(
+    'deposit',
+    status,
+    next.source.chainId,
+    `shield-deposit:${next.depositId}`
+  )
 }

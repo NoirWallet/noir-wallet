@@ -24,6 +24,10 @@ import { solanaLedgerSigningBridge } from './ledger-signing-bridge'
 import { SOLANA_TRANSACTION_MONITOR_ALARM } from './solana-transaction-monitor'
 import { reportBackgroundSendBroadcast } from './analytics/send-broadcast'
 import {
+  isSelectedTransferScope,
+  requireSelectedTransferNetwork
+} from './transfer-account-network-selection'
+import {
   BackgroundSolanaTransferController,
   type ActiveSolanaTransferContext
 } from './solana-transfer-controller'
@@ -91,16 +95,22 @@ export function createBackgroundSolanaTransferController(
     }),
     rpc: createConfiguredSolanaRpcClient({ chainId: network.chainId, rpcUrl: network.rpcUrl }),
     assets,
+    canBroadcastSigned: scope => isSelectedTransferScope(storageRepository, scope, 'solana'),
     onPendingBroadcast: () =>
       chrome.alarms.create(SOLANA_TRANSACTION_MONITOR_ALARM, { delayInMinutes: 0.1 }),
     onMonitoringRequired: (graph, recovered) => {
-      if (recovered) reportBackgroundSendBroadcast(graph)
+      if (recovered || graph.root.intent?.protocol?.provider === 'rhea-cross-chain-dex')
+        reportBackgroundSendBroadcast(graph)
       return chrome.alarms.create(SOLANA_TRANSACTION_MONITOR_ALARM, { delayInMinutes: 0.1 })
     }
   })
   return new BackgroundSolanaTransferController({
     orchestrator,
-    loadActiveContext: () => loadActiveSolanaTransferContext(storageRepository, network.chainId)
+    loadActiveContext: async () =>
+      requireSelectedTransferNetwork(
+        await loadActiveSolanaTransferContext(storageRepository, network.chainId),
+        'solana'
+      )
   })
 }
 

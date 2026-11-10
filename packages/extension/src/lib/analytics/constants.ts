@@ -11,7 +11,8 @@
  * - Only event-specific allowlisted enums, booleans, page IDs and asset labels leave the extension
  *
  * wallet_address semantics:
- * - Always `anon_<uuid>`, a random per-install identifier also used for GA.
+ * - Always `anon_<uuid>`, a random per-install identifier. GA derives a stable
+ *   numeric client ID from the same stored identifier.
  * - A wallet or account address is never used as the analytics identifier.
  */
 
@@ -52,6 +53,7 @@ export const PAGE_IDS = {
   ONBOARDING_CONGRATULATIONS: 'noir_onboarding_congratulations',
   /** Onboarding: import existing seed phrase */
   ONBOARDING_IMPORT: 'noir_onboarding_import',
+  ONBOARDING_IMPORT_ACCOUNTS: 'noir_onboarding_import_accounts',
   /** Onboarding: select imported seed phrase length */
   ONBOARDING_IMPORT_WORD_COUNT: 'noir_onboarding_import_word_count',
   ONBOARDING_CREATE_WORD_COUNT: 'noir_onboarding_create_word_count',
@@ -63,6 +65,7 @@ export const PAGE_IDS = {
   UNLOCK: 'noir_unlock',
   /** Send ZEC form + review */
   SEND: 'noir_send',
+  TRANSFER: 'noir_transfer',
   SEND_CROSS_CHAIN: 'noir_send_cross_chain',
   SEND_ZCASH: 'noir_send_zcash',
   /** Transaction pending/success/failure result page */
@@ -72,6 +75,7 @@ export const PAGE_IDS = {
   ACCOUNT_LIST: 'noir_account_list',
   /** Single account detail */
   ACCOUNT_DETAIL: 'noir_account_detail',
+  ACCOUNT_NETWORKS: 'noir_account_networks',
   /** Add wallet entry (create / import / hardware) */
   ADD_WALLET: 'noir_add_wallet',
   /** Import wallet entry (inside an unlocked wallet) */
@@ -82,6 +86,12 @@ export const PAGE_IDS = {
   ADDRESSES_LIST: 'noir_addresses_list',
   /** Zcash-only account addresses and sync settings */
   ZCASH_SETTINGS: 'noir_zcash_settings',
+  DAPP_CONNECTIONS: 'noir_dapp_connections',
+  SHIELD_PROVIDER: 'noir_shield_provider',
+  SHIELD_FUNDS: 'noir_shield_funds',
+  SHIELD_WITHDRAW: 'noir_shield_withdraw',
+  SHIELD_DEPOSIT: 'noir_shield_deposit',
+  SHIELD_SWAP: 'noir_shield_swap',
   VOTING: 'noir_voting',
   VOTING_ROUND: 'noir_voting_round',
   /** Keystone hardware wallet connect (full tab) */
@@ -95,6 +105,8 @@ export const PAGE_IDS = {
   HARDWARE_SIGN: 'noir_hardware_sign',
   /** Settings root */
   SETTINGS: 'noir_settings',
+  DEFAULT_EVM_WALLET: 'noir_default_evm_wallet',
+  EVM_WALLET_CHOICE: 'noir_evm_wallet_choice',
   /** Settings: general (auto-lock, currency…) */
   SETTINGS_GENERAL: 'noir_settings_general',
   /** Settings: network configuration */
@@ -143,22 +155,31 @@ const ROUTE_PAGE_IDS: Record<string, string> = {
   '/onboarding/import-word-count': PAGE_IDS.ONBOARDING_IMPORT_WORD_COUNT,
   '/onboarding/create-word-count': PAGE_IDS.ONBOARDING_CREATE_WORD_COUNT,
   '/onboarding/import': PAGE_IDS.ONBOARDING_IMPORT,
+  '/onboarding/import-accounts': PAGE_IDS.ONBOARDING_IMPORT_ACCOUNTS,
   '/onboarding/import-zcash-history': PAGE_IDS.ONBOARDING_IMPORT_ZCASH_HISTORY,
   '/onboarding/import-password': PAGE_IDS.ONBOARDING_IMPORT_PASSWORD,
   '/unlock': PAGE_IDS.UNLOCK,
   '/send': PAGE_IDS.SEND,
+  '/transfer': PAGE_IDS.TRANSFER,
   '/send/cross-chain': PAGE_IDS.SEND_CROSS_CHAIN,
   '/send/zcash': PAGE_IDS.SEND_ZCASH,
   '/transaction-result': PAGE_IDS.TRANSACTION_RESULT,
   '/asset-detail': PAGE_IDS.ASSET_DETAIL,
   '/account-list': PAGE_IDS.ACCOUNT_LIST,
   '/account-detail': PAGE_IDS.ACCOUNT_DETAIL,
+  '/account-networks': PAGE_IDS.ACCOUNT_NETWORKS,
   '/add-wallet': PAGE_IDS.ADD_WALLET,
   '/import-wallet': PAGE_IDS.IMPORT_WALLET,
   '/import-private-key': PAGE_IDS.IMPORT_PRIVATE_KEY,
   '/export-private-key': PAGE_IDS.EXPORT_PRIVATE_KEY,
   '/addresses-list': PAGE_IDS.ADDRESSES_LIST,
   '/zcash-settings': PAGE_IDS.ZCASH_SETTINGS,
+  '/dapp-connections': PAGE_IDS.DAPP_CONNECTIONS,
+  '/shield-provider': PAGE_IDS.SHIELD_PROVIDER,
+  '/shield-funds': PAGE_IDS.SHIELD_FUNDS,
+  '/shield-withdraw': PAGE_IDS.SHIELD_WITHDRAW,
+  '/shield-deposit': PAGE_IDS.SHIELD_DEPOSIT,
+  '/shield-swap': PAGE_IDS.SHIELD_SWAP,
   '/voting': PAGE_IDS.VOTING,
   '/voting/round': PAGE_IDS.VOTING_ROUND,
   '/hardware/connect': PAGE_IDS.HARDWARE_CONNECT,
@@ -169,6 +190,8 @@ const ROUTE_PAGE_IDS: Record<string, string> = {
   '/hardware/ledger-sign': PAGE_IDS.HARDWARE_LEDGER_SIGN,
   '/hardware/sign': PAGE_IDS.HARDWARE_SIGN,
   '/settings': PAGE_IDS.SETTINGS,
+  '/default-evm-wallet': PAGE_IDS.DEFAULT_EVM_WALLET,
+  '/evm-wallet-choice': PAGE_IDS.EVM_WALLET_CHOICE,
   '/general': PAGE_IDS.SETTINGS_GENERAL,
   '/networks': PAGE_IDS.SETTINGS_NETWORKS,
   '/zero-indexer-nodes': PAGE_IDS.SETTINGS_ZERO_INDEXER_NODES,
@@ -245,6 +268,8 @@ export const ANALYTICS_EVENTS = {
   SHIELD_SUCCEEDED: 'shield_succeeded',
   /** Shield failed; raw errors are not reported. */
   SHIELD_FAILED: 'shield_failed',
+  /** Persisted terminal result of a confidential Shield operation. */
+  SHIELD_OPERATION_RESULT: 'shield_operation_result',
 
   // ── Swap execution ─────────────────────────────
   /** Swap quote received successfully (funnel start) */

@@ -370,6 +370,7 @@ test.describe('Solana and NEAR address-only Portfolio', () => {
       getActivePointer: async () => pointer(),
       getSnapshot: async () => snapshot()
     }
+    let solanaEnabled = true
     const solanaPortfolio = new SingleChainPortfolioCoordinator({
       storageRepository,
       cacheRepository,
@@ -377,6 +378,7 @@ test.describe('Solana and NEAR address-only Portfolio', () => {
       assets,
       chainId: solanaChainId,
       family: 'solana',
+      isNetworkEnabled: () => solanaEnabled,
       now: () => 2_000,
       readSource: input => readSolanaPortfolioSource({ ...input, rpc: solanaRpc() })
     })
@@ -397,6 +399,13 @@ test.describe('Solana and NEAR address-only Portfolio', () => {
     })
     await expect(solanaPortfolio.refreshActiveSource()).resolves.toMatchObject({
       generationId,
+      source: { status: 'ready', balances: [{ totalRaw: '1234567890' }] }
+    })
+    solanaEnabled = false
+    await expect(solanaPortfolio.readCachedActiveSource()).resolves.toBeNull()
+    await expect(solanaPortfolio.refreshActiveSource()).resolves.toBeNull()
+    solanaEnabled = true
+    await expect(solanaPortfolio.readCachedActiveSource()).resolves.toMatchObject({
       source: { status: 'ready', balances: [{ totalRaw: '1234567890' }] }
     })
 

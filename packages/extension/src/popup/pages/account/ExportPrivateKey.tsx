@@ -7,7 +7,7 @@ import { InlineError } from '../../components/common/InlineError'
 import { Button } from '../../components/ui/button'
 import { Input } from '../../components/ui/input'
 import { WarningBox } from '../../components/ui/WarningBox'
-import { CopyToast, useCopyToClipboard } from '../../components/common/CopyToast'
+import { CopyFeedbackIcon, CopyToast, useCopyToClipboard } from '../../components/common/CopyToast'
 import { ChainIcon } from '../../components/common/ChainIcon'
 import { accountNetworkIconChain } from '@/popup/services/account-network-presentation'
 import {
@@ -87,7 +87,7 @@ export function ExportPrivateKey() {
   const [loadAttempt, setLoadAttempt] = useState(0)
   const [exporting, setExporting] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const { copyToClipboard, showToast } = useCopyToClipboard()
+  const { copyToClipboard, showToast, copiedKey } = useCopyToClipboard()
 
   useEffect(() => {
     let cancelled = false
@@ -218,8 +218,9 @@ export function ExportPrivateKey() {
           </div>
         </div>
         <div className="page-footer">
-          <Button className="h-[45px] w-full" onClick={() => copyToClipboard(privateKey)}>
-            Copy private key
+          <Button className="h-[45px] w-full" onClick={() => void copyToClipboard(privateKey)}>
+            <CopyFeedbackIcon copied={copiedKey === 'default'} width={16} height={16} />
+            {copiedKey === 'default' ? 'Copied' : 'Copy private key'}
           </Button>
         </div>
       </div>

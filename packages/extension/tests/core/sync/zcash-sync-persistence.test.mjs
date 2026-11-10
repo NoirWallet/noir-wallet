@@ -3,7 +3,9 @@ import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { test } from 'node:test'
 import { WALLET_CONFIG } from '../../../src/config/wallet.ts'
-import { withTimeout } from '../../../src/lib/async-utils.ts'
+import { withTimeout, waitForDelayOrAbort } from '../../../src/lib/async-utils.ts'
+import { shouldMarkSyncJobInterrupted } from '../../../src/lib/sync-job-store.ts'
+import { isAccountNetworkEnabled } from '../../../src/core/wallet/account-network-selection.ts'
 
 const require = createRequire(import.meta.url)
 const typescript = require('typescript')
@@ -17,14 +19,22 @@ const { outputText } = typescript.transpileModule(
   }
 )
 
-function createSync({ snapshot = false, pendingJournal = 0, failPersistAt = 0 } = {}) {
+function createSync({
+  snapshot = false,
+  pendingJournal = 0,
+  failPersistAt = 0,
+  chainTip = 3000,
+  completeWithPendingBalance = false
+} = {}) {
   const events = []
+  const progressUpdates = []
   const state = {
     snapshot,
     pendingJournal,
     aborted: false,
-    scannedHeight: 99,
-    persistedHeight: snapshot ? 99 : null,
+    scannedHeight: completeWithPendingBalance ? 2999 : 99,
+    persistedHeight: snapshot ? (completeWithPendingBalance ? 2999 : 99) : null,
+    pendingBalance: false,
     quarantine: null,
     job: null,
     sync: { isSyncing: false },
@@ -35,7 +45,8 @@ function createSync({ snapshot = false, pendingJournal = 0, failPersistAt = 0 } 
     wallets: [wallet],
     currentWalletId: wallet.id,
     currentAccountId: 'account',
-    getWallet: () => wallet
+    getWallet: () => wallet,
+    getAccount: (_walletId, accountId) => wallet.accounts.find(account => account.id === accountId)
   }
   const jobs = {
     async get() {
@@ -49,6 +60,12 @@ function createSync({ snapshot = false, pendingJournal = 0, failPersistAt = 0 } 
     },
     async markFailed() {
       state.job = { status: 'failed' }
+    },
+    async markInterrupted() {
+      state.job = { status: 'interrupted' }
+    },
+    async markCompleted() {
+      state.job = { status: 'completed' }
     }
   }
   const dependencies = {
@@ -64,6 +81,7 @@ function createSync({ snapshot = false, pendingJournal = 0, failPersistAt = 0 } 
       }
     },
     '@/lib/runtime-network': { DEFAULT_NETWORK: 'mainnet' },
+    '@/core/wallet/account-network-selection': { isAccountNetworkEnabled },
     '@/lib/logger': {
       logger: {
         log() {},
@@ -93,10 +111,10 @@ function createSync({ snapshot = false, pendingJournal = 0, failPersistAt = 0 } 
         return input
       }
     },
-    '@/lib/sync-job-store': { syncJobStore: jobs },
+    '@/lib/sync-job-store': { syncJobStore: jobs, shouldMarkSyncJobInterrupted },
     '@/core/wallet/pending-zcash-tx': { hasPendingZcashTxForWallet: async () => false },
     '@/config/wallet': { WALLET_CONFIG },
-    '@/lib/async-utils': { withTimeout },
+    '@/lib/async-utils': { withTimeout, waitForDelayOrAbort },
     '@/lib/errors': { isRpcEndpointError: () => false },
     './transaction-recipient-recovery': { TransactionRecipientRecovery: class {} }
   }
@@ -107,7 +125,11 @@ function createSync({ snapshot = false, pendingJournal = 0, failPersistAt = 0 } 
     module.exports
   )
   const runtime = new module.exports.BackgroundZcashWalletRuntime()
-  const summary = () => ({ fully_scanned_height: state.scannedHeight, chain_tip_height: 3000 })
+  const summary = () => ({
+    fully_scanned_height: state.scannedHeight,
+    chain_tip_height: chainTip,
+    account_balances: state.pendingBalance ? [[1, { pending_balance: 10 }]] : []
+  })
   const core = {
     hasAccount: () => true,
     getWalletSummary: async () => summary(),
@@ -117,14 +139,20 @@ function createSync({ snapshot = false, pendingJournal = 0, failPersistAt = 0 } 
     async syncSessionSetup() {},
     async endSyncSession() {
       events.push('end-session')
+      if (completeWithPendingBalance) state.pendingBalance = true
     },
     async prepareSyncBatchWithJournal() {
       events.push('prepare-batch')
+      if (completeWithPendingBalance) {
+        state.scannedHeight = 3000
+        return null
+      }
       state.pendingJournal += 1
-      state.scannedHeight = 1099
+      const rangeEnd = Math.min(1100, chainTip)
+      state.scannedHeight = rangeEnd - 1
       // The stop arrives after the very first completed journal batch.
       state.aborted = true
-      return { rangeStart: 100, rangeEnd: 1100, journalSize: 32 }
+      return { rangeStart: 100, rangeEnd, journalSize: 32 }
     },
     async replayJournalEntries(_network, _walletId, options) {
       if (state.aborted && options?.allowAfterAbort !== true) throw new Error('Sync aborted')
@@ -143,19 +171,62 @@ function createSync({ snapshot = false, pendingJournal = 0, failPersistAt = 0 } 
   }
   runtime.currentWalletId = wallet.id
   runtime.walletCores.set(wallet.id, core)
-  runtime.updateSyncProgressForWallet = (_walletId, patch) => Object.assign(state.sync, patch)
+  runtime.updateSyncProgressForWallet = (_walletId, patch) => {
+    progressUpdates.push(patch)
+    Object.assign(state.sync, patch)
+  }
   runtime.readSyncProgressFromWasm = async () => ({
     fullyScanned: state.scannedHeight,
-    chainTip: 3000,
-    dirty: false
+    chainTip,
+    dirty: false,
+    summary: summary()
   })
-  runtime.getCachedWalletSummary = async () => ({ summary: summary(), latestHeight: 3000 })
+  runtime.getCachedWalletSummary = async () => ({ summary: summary(), latestHeight: chainTip })
   return {
+    runtime,
     state,
     events,
-    run: () => runtime.syncBlocks(() => state.aborted, wallet.id, 'account')
+    progressUpdates,
+    run: options => runtime.syncBlocks(() => state.aborted, wallet.id, 'account', options)
   }
 }
+
+test('cancellation ends the chain-tip polling delay without waiting for the next poll', async () => {
+  const { state, run } = createSync({ snapshot: true, chainTip: 99 })
+  const controller = new AbortController()
+  const operation = run({ signal: controller.signal, waitForTipAdvance: true })
+  const timer = setTimeout(() => controller.abort(), 0)
+  try {
+    assert.deepEqual(await withTimeout(operation, 1000), { status: 'aborted' })
+    assert.equal(state.snapshot, true)
+    assert.equal(state.persistCalls, 0)
+    assert.equal(state.sync.isSyncing, false)
+  } finally {
+    clearTimeout(timer)
+  }
+})
+
+test('cancelled initial chain reads leave the snapshot and journal intact without marking failure', async () => {
+  const { runtime, state, events, run } = createSync({ snapshot: true, pendingJournal: 2 })
+  const controller = new AbortController()
+  runtime.readSyncProgressFromWasm = async (_walletId, _core, options) => {
+    assert.strictEqual(options.signal, controller.signal)
+    controller.abort()
+    throw new DOMException('Aborted', 'AbortError')
+  }
+  assert.deepEqual(await run({ signal: controller.signal }), { status: 'aborted' })
+  assert.equal(state.snapshot, true)
+  assert.equal(state.pendingJournal, 2)
+  assert.equal(state.job, null)
+  assert.equal(state.sync.isSyncing, false)
+  assert.deepEqual(events, [])
+})
+
+test('a one-batch scan reports active sync while it runs', async () => {
+  const { run, progressUpdates } = createSync({ chainTip: 300 })
+  await run()
+  assert.ok(progressUpdates.some(update => update.isSyncing === true))
+})
 
 test('anchors the first scan and saves its completed journal batch when interrupted', async () => {
   const { state, events, run } = createSync()
@@ -211,4 +282,12 @@ test('does not manufacture a base snapshot for an existing unanchored journal', 
   assert.equal(state.pendingJournal, 3)
   assert.equal(state.snapshot, false)
   assert.deepEqual(events, [])
+})
+
+test('returns partial for pending settlement after durable scan completion', async () => {
+  const { state, run } = createSync({ snapshot: true, completeWithPendingBalance: true })
+  const result = await run()
+
+  assert.equal(result.status, 'partial')
+  assert.equal(state.job.status, 'completed')
 })

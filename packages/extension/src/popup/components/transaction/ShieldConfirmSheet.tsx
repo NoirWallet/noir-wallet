@@ -4,8 +4,10 @@ import { TokenIcon } from '../tokens/TokenIcon'
 import { FeeTierPicker } from './FeeTierPicker'
 import { useFeeEstimate } from '../../hooks/useFeeEstimate'
 import { useSettingsStore } from '@/store/settings-store'
-import { deriveFeeByTier, marginalFeeForTier } from '@/core/zcash/fee-policy'
+import { marginalFeeForTier } from '@/core/zcash/fee-policy'
+import type { FeeTier } from '@/config/fee'
 import { AmountDisplay } from '../common/AmountDisplay'
+import { safeBig } from '@/lib/big'
 import {
   hasEnoughTransparentBalanceToShield,
   MIN_SHIELDING_BALANCE_MESSAGE
@@ -14,10 +16,15 @@ import {
 interface ShieldConfirmSheetProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  transparentBalance: number
+  transparentBalance: string
   isShielding?: boolean
-  /** Invoked with the selected tier's marginal fee (zatoshis). */
-  onConfirm: (marginalFeeZats: number) => void
+  feeRefreshRevision?: number
+  onConfirm: (params: {
+    marginalFeeZats: number
+    feeQuoteId: string
+    feeTier: FeeTier
+    feeZats: number
+  }) => void
 }
 
 /**
@@ -29,20 +36,37 @@ export function ShieldConfirmSheet({
   onOpenChange,
   transparentBalance,
   isShielding,
+  feeRefreshRevision,
   onConfirm
 }: ShieldConfirmSheetProps) {
   const feeTier = useSettingsStore(state => state.feeTier)
   const setFeeTier = useSettingsStore(state => state.setFeeTier)
   const hasEnoughBalance = hasEnoughTransparentBalanceToShield(transparentBalance)
 
-  const estimate = useFeeEstimate({ type: 'shield', enabled: open && hasEnoughBalance })
-  const feeByTier = deriveFeeByTier(estimate.feeZats, estimate.error)
+  const estimate = useFeeEstimate({
+    type: 'shield',
+    feeTier,
+    enabled: open && hasEnoughBalance,
+    scopeKey: String(feeRefreshRevision ?? 0)
+  })
+  const netAmount =
+    estimate.feeZats === null
+      ? null
+      : safeBig(transparentBalance).minus(safeBig(estimate.feeZats).div(1e8))
+  const feeReady =
+    !!estimate.feeQuote &&
+    estimate.feeQuote.expiresAt > Date.now() &&
+    estimate.feeZats !== null &&
+    !estimate.loading &&
+    !estimate.error &&
+    netAmount !== null &&
+    netAmount.gt(0)
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent position="bottom" showCloseButton={false} className="p-0 gap-0">
         <DialogHeader className="px-5 pt-5 pb-4">
-          <DialogTitle className="text-center">Shield Funds</DialogTitle>
+          <DialogTitle className="text-center">Shielded</DialogTitle>
           <DialogDescription className="sr-only">
             Move transparent funds into the private pool
           </DialogDescription>
@@ -52,21 +76,40 @@ export function ShieldConfirmSheet({
           <div className="mb-3">
             <TokenIcon symbol="ZEC" nativeChain="zcash" size="xl" />
           </div>
+          <span className="mb-1 text-xs text-muted">Public balance</span>
           <div className="max-w-full text-center text-2xl font-bold">
             <AmountDisplay value={transparentBalance} symbol="ZEC" />
           </div>
-          <p className="text-sm text-muted mt-0.5 px-8 text-center">
-            Move transparent funds into the private pool for enhanced privacy.
-          </p>
         </div>
 
         <div className="mx-5 bg-card rounded-xl p-4">
           <FeeTierPicker
             tier={feeTier}
-            onTierChange={setFeeTier}
-            feeByTier={feeByTier}
+            onTierChange={next => {
+              if (!isShielding) setFeeTier(next)
+            }}
+            feeByTier={estimate.feeByTier}
+            loadingByTier={estimate.loadingByTier}
             loading={estimate.loading}
+            allowFallback={false}
           />
+          <div className="mt-3 flex items-center justify-between gap-3 text-sm">
+            <span className="text-muted">Estimated to Shield</span>
+            {netAmount !== null && netAmount.gt(0) ? (
+              <AmountDisplay value={netAmount.toFixed()} symbol="ZEC" />
+            ) : (
+              <span>—</span>
+            )}
+          </div>
+          {estimate.error && (
+            <button
+              type="button"
+              className="mt-2 text-xs text-destructive"
+              onClick={estimate.retry}
+            >
+              Fee estimate unavailable. Retry
+            </button>
+          )}
         </div>
 
         {!hasEnoughBalance && (
@@ -80,9 +123,20 @@ export function ShieldConfirmSheet({
             Cancel
           </Button>
           <Button
-            onClick={() => onConfirm(marginalFeeForTier(feeTier))}
+            onClick={() => {
+              if (!feeReady || !estimate.feeQuote || estimate.feeZats === null) return
+              onConfirm({
+                marginalFeeZats: marginalFeeForTier(
+                  feeTier,
+                  estimate.feeQuote.standardMarginalFeeZats
+                ),
+                feeQuoteId: estimate.feeQuote.id,
+                feeTier,
+                feeZats: estimate.feeZats
+              })
+            }}
             isLoading={isShielding}
-            disabled={!hasEnoughBalance}
+            disabled={!hasEnoughBalance || !feeReady}
             className="flex-1 h-[45px]"
           >
             Shield Now

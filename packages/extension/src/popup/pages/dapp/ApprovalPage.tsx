@@ -2,19 +2,22 @@ import { InlineError } from '@/popup/components/common/InlineError'
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Button } from '../../components/ui/button'
+import { Switch } from '../../components/ui/switch'
 import { WarningBox } from '../../components/ui/WarningBox'
 import { useWalletStore } from '@/store/wallet-store'
 import { useTransactionResultStore } from '@/store/transaction-result-store'
 import { zcashWalletRuntimeClient } from '@/popup/services/zcash-wallet-runtime-client'
 import { Icon } from '@iconify/react'
 import { AddressTypeLabel } from '@/popup/components/account/AddressType'
+import { ExecutionAccountBadge } from '@/popup/components/account/ExecutionAccountSelector'
 import { formatAccountName, getAccountDisplayName, formatSortAddress } from '@/lib/format'
 import { AmountDisplay } from '@/popup/components/common/AmountDisplay'
 import { StandardTransactionResult } from '../../components/transaction/StandardTransactionResult'
 import { FeeTierPicker } from '../../components/transaction/FeeTierPicker'
 import { useFeeEstimate } from '../../hooks/useFeeEstimate'
 import { useSettingsStore } from '@/store/settings-store'
-import { deriveFeeByTier, marginalFeeForTier } from '@/core/zcash/fee-policy'
+import { marginalFeeForTier } from '@/core/zcash/fee-policy'
+import type { FeeTier, QuotedFeeEstimate } from '@/config/fee'
 import type { AddressType } from '@/types/wallet'
 
 import { cn } from '@/lib/utils'
@@ -26,6 +29,11 @@ import {
 } from '@/core/zcash/shielding'
 import { getOwnExtensionSenderContext } from '@/lib/runtime-message-security'
 import { ApprovalWindowLayout } from '@/popup/components/dapp/ApprovalWindowLayout'
+import { MultichainConnectionAccounts } from '@/popup/components/dapp/MultichainConnectionAccounts'
+import {
+  toggleMultichainConnectionAccount,
+  type MultichainConnectionScope as MultichainScopeOption
+} from '@/popup/services/dapp-connection-presentation'
 import { EvmAddNetworkDetails } from '@/popup/components/dapp/EvmAddNetworkDetails'
 import {
   ApprovalDetailCard,
@@ -46,8 +54,11 @@ import { parseNetworkFeeTier, type NetworkFeeTier } from '@/core/transactions/do
 import { parseEvmFeeSelection, type EvmFeeSelection } from '@/infrastructure/chains/evm'
 import { NETWORKS } from '@/config/networks'
 import { getBundledEvmAssetDefinitions } from '@/core/chains/registry/product-chain-definitions'
-import { ChainIcon } from '@/popup/components/common/ChainIcon'
-import { CopyToast, useCopyToClipboard } from '@/popup/components/common/CopyToast'
+import {
+  CopyFeedbackIcon,
+  CopyToast,
+  useCopyToClipboard
+} from '@/popup/components/common/CopyToast'
 import { useNavigate } from '@/popup/provider/Router'
 import {
   formatDAppHost,
@@ -71,16 +82,6 @@ interface ChainAccountOption {
   label: string
   address: string
   required?: boolean
-}
-
-interface MultichainScopeOption {
-  chainId: string
-  chainName: string
-  iconChain: string
-  methods: string[]
-  notifications: string[]
-  accounts: ChainAccountOption[]
-  preselectedIds: string[]
 }
 
 const MULTI_ACCOUNT_CONNECT_ACTIONS = new Set([
@@ -184,6 +185,10 @@ export function ApprovalPage() {
   const [canRetryLoad, setCanRetryLoad] = useState(false)
   const [requestLoaded, setRequestLoaded] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
+  const [privacyUpdateError, setPrivacyUpdateError] = useState('')
+  const [privacyRetryEnabled, setPrivacyRetryEnabled] = useState<boolean | null>(null)
+  const [privacyNow, setPrivacyNow] = useState(Date.now())
+  const decisionInFlight = useRef(false)
   const [showResult, setShowResult] = useState(false)
   const [walletReady, setWalletReady] = useState(false)
   const resultListenerRef = useRef<
@@ -191,9 +196,8 @@ export function ApprovalPage() {
   >(null)
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [selectedScopes, setSelectedScopes] = useState<Record<string, string[]>>({})
-  const [expandedScopeId, setExpandedScopeId] = useState<string | null>(null)
   const [editingAccounts, setEditingAccounts] = useState(false)
-  const { copyToClipboard, showToast: showCopyToast } = useCopyToClipboard()
+  const { copyToClipboard, showToast: showCopyToast, isCopied } = useCopyToClipboard()
   const dappDomain = formatDAppHost(origin)
   const dappPageUrl = resolveDAppFaviconPageUrl(data, origin)
 
@@ -242,6 +246,30 @@ export function ApprovalPage() {
     data.executionMode === 'private' || data.executionMode === 'main'
       ? data.executionMode
       : undefined
+  const privacyTransferEligible =
+    isEvmTransaction && evmExecutionMode === 'private' && typeof data.sendPrivately === 'boolean'
+  const privacyTransferAvailable = privacyTransferEligible && data.privacyTransferAvailable === true
+  const sendPrivately = privacyTransferAvailable && data.sendPrivately === true
+  const selectedPrivateTransfer = sendPrivately
+    ? parseEvmPrivateTransferApproval(data.privateTransfer)
+    : null
+  const privacyRevisionReady =
+    !privacyTransferEligible ||
+    (Number.isSafeInteger(data.transferPrivacyRevision) && data.transferPrivacyRevision >= 0)
+  const privateTransferReady =
+    selectedPrivateTransfer?.exactOutput === true &&
+    selectedPrivateTransfer.expiresAt > Math.max(Date.now(), privacyNow) &&
+    privacyRevisionReady &&
+    !data.privacyError &&
+    !privacyUpdateError
+  useEffect(() => {
+    if (!sendPrivately || !selectedPrivateTransfer) return
+    const timeout = setTimeout(
+      () => setPrivacyNow(Date.now()),
+      Math.max(0, selectedPrivateTransfer.expiresAt - Date.now())
+    )
+    return () => clearTimeout(timeout)
+  }, [sendPrivately, selectedPrivateTransfer?.expiresAt])
   const bitcoinSigningSummary = isBitcoinTransaction
     ? parseBitcoinSigningSummary(data.review?.summary, 'transaction')
     : isBitcoinMessage
@@ -264,24 +292,53 @@ export function ApprovalPage() {
   const fundingSource: AddressType =
     data.fundingSource === 'transparent' ? 'transparent' : 'shielded'
   const hasEnoughShieldingBalance = !isShield || hasEnoughTransparentBalanceToShield(data.amount)
-  const estimateApprovalFee = useCallback(async (): Promise<string> => {
-    if (!requestId) throw new Error('Approval request is unavailable')
-    const response = await chrome.runtime.sendMessage({ type: 'ESTIMATE_APPROVAL_FEE', requestId })
-    if (response?.error || typeof response?.fee !== 'string') {
-      throw new Error(getResponseErrorMessage(response) || 'Fee estimation failed')
-    }
-    return response.fee
-  }, [requestId])
+  const estimateApprovalFee = useCallback(
+    async (tier: FeeTier): Promise<QuotedFeeEstimate> => {
+      if (!requestId) throw new Error('Approval request is unavailable')
+      const response = await chrome.runtime.sendMessage({
+        type: 'ESTIMATE_APPROVAL_FEE',
+        requestId,
+        feeTier: tier
+      })
+      if (
+        response?.error ||
+        typeof response?.fee !== 'string' ||
+        typeof response?.marginalFeeZats !== 'string' ||
+        !response.feeQuote
+      ) {
+        throw new Error(getResponseErrorMessage(response) || 'Fee estimation failed')
+      }
+      return {
+        feeZats: response.fee,
+        marginalFeeZats: response.marginalFeeZats,
+        feeQuote: response.feeQuote
+      }
+    },
+    [requestId]
+  )
   const feeEstimate = useFeeEstimate({
     type: isShield ? 'shield' : 'send',
     to: data.to,
     amount: data.amount,
     memo: data.memo,
     fundingSource,
+    feeTier,
     estimate: isSend || isShield ? estimateApprovalFee : undefined,
     enabled: (isSend || isShield) && walletReady && hasEnoughShieldingBalance
   })
-  const feeByTier = deriveFeeByTier(feeEstimate.feeZats, feeEstimate.error)
+  const feeByTier = feeEstimate.feeByTier
+  const feeReady =
+    !!feeEstimate.feeQuote &&
+    feeEstimate.feeQuote.expiresAt > Date.now() &&
+    feeEstimate.feeZats !== null &&
+    !feeEstimate.loading &&
+    !feeEstimate.error
+  const latestFee = useRef({
+    feeQuote: feeEstimate.feeQuote,
+    feeZats: feeEstimate.feeZats,
+    feeTier
+  })
+  latestFee.current = { feeQuote: feeEstimate.feeQuote, feeZats: feeEstimate.feeZats, feeTier }
 
   const handleNetworkFeeTierChange = async (nextTier: NetworkFeeTier) => {
     if (!requestId) throw new Error('Approval request is unavailable')
@@ -326,6 +383,37 @@ export function ApprovalPage() {
         throw new Error('The wallet returned an invalid fee review')
       }
       setData(updatedData)
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const handleEvmTransferPrivacyChange = async (enabled: boolean) => {
+    if (!requestId || isLoading) return
+    setPrivacyUpdateError('')
+    setIsLoading(true)
+    try {
+      const response = (await chrome.runtime.sendMessage({
+        type: 'DAPP_EVM_TRANSFER_PRIVACY_CHANGE',
+        requestId,
+        enabled
+      })) as unknown
+      if (typeof response !== 'object' || response === null || Array.isArray(response)) {
+        throw new Error('The transfer route could not be updated')
+      }
+      const responseError = Reflect.get(response, 'error')
+      if (typeof responseError === 'string') throw new Error(responseError)
+      const updatedData = Reflect.get(response, 'data')
+      if (typeof updatedData !== 'object' || updatedData === null || Array.isArray(updatedData)) {
+        throw new Error('The wallet returned an invalid transfer review')
+      }
+      setData(updatedData)
+      setPrivacyRetryEnabled(null)
+    } catch (cause) {
+      setPrivacyRetryEnabled(enabled)
+      setPrivacyUpdateError(
+        cause instanceof Error ? cause.message : 'The transfer route could not be updated'
+      )
     } finally {
       setIsLoading(false)
     }
@@ -454,6 +542,16 @@ export function ApprovalPage() {
   const handleDecision = async (approved: boolean) => {
     setCanRetryLoad(false)
     if (approved && !requestLoaded) return
+    if (
+      approved &&
+      (isLoading ||
+        !!privacyUpdateError ||
+        !privacyRevisionReady ||
+        (sendPrivately && !privateTransferReady))
+    )
+      return
+    if (decisionInFlight.current) return
+    decisionInFlight.current = true
 
     if (!approved) {
       setIsLoading(true)
@@ -483,6 +581,32 @@ export function ApprovalPage() {
       }
 
       if (action === 'sendTransaction' || action === 'shieldFunds') {
+        if (!feeReady || !feeEstimate.feeQuote || feeEstimate.feeZats === null) {
+          throw new Error('Network fee estimate is unavailable. Please try again.')
+        }
+        const marginalFeeZats = marginalFeeForTier(
+          feeTier,
+          feeEstimate.feeQuote.standardMarginalFeeZats
+        )
+        const approvalFee = await chrome.runtime.sendMessage({
+          type: 'ESTIMATE_APPROVAL_FEE',
+          requestId,
+          marginalFeeZats,
+          feeQuoteId: feeEstimate.feeQuote.id
+        })
+        if (
+          latestFee.current.feeQuote?.id !== feeEstimate.feeQuote.id ||
+          latestFee.current.feeZats !== feeEstimate.feeZats ||
+          latestFee.current.feeTier !== feeTier ||
+          approvalFee?.error ||
+          approvalFee?.feeQuote?.id !== feeEstimate.feeQuote.id ||
+          approvalFee?.fee !== String(feeEstimate.feeZats)
+        ) {
+          feeEstimate.retry()
+          setIsLoading(false)
+          decisionInFlight.current = false
+          return
+        }
         setResult(
           {
             type: 'zcash',
@@ -515,8 +639,10 @@ export function ApprovalPage() {
           type: 'DAPP_APPROVAL_RESULT',
           requestId,
           success: true,
-          marginalFeeZats: marginalFeeForTier(feeTier),
-          feeZats: feeByTier[feeTier] ?? undefined
+          marginalFeeZats,
+          feeQuoteId: feeEstimate.feeQuote.id,
+          feeTier,
+          feeZats: feeEstimate.feeZats
         })
         if (response?.success !== true)
           throw new Error(
@@ -527,6 +653,9 @@ export function ApprovalPage() {
           type: 'DAPP_APPROVAL_RESULT',
           requestId,
           success: true,
+          ...(privacyTransferEligible
+            ? { transferPrivacyRevision: data.transferPrivacyRevision }
+            : {}),
           ...(MULTI_ACCOUNT_CONNECT_ACTIONS.has(action) && (data.accounts?.length ?? 0) > 0
             ? { selectedIds }
             : {}),
@@ -547,6 +676,7 @@ export function ApprovalPage() {
       console.error('Failed to send decision:', err)
       setError(classifyError(err).userMessage)
       setIsLoading(false)
+      decisionInFlight.current = false
     }
   }
 
@@ -680,147 +810,22 @@ export function ApprovalPage() {
                 typeof Reflect.get(scope, 'chainId') === 'string' &&
                 typeof Reflect.get(scope, 'chainName') === 'string' &&
                 typeof Reflect.get(scope, 'iconChain') === 'string' &&
-                Array.isArray(Reflect.get(scope, 'methods')) &&
-                Array.isArray(Reflect.get(scope, 'notifications')) &&
                 Array.isArray(Reflect.get(scope, 'accounts')) &&
                 Array.isArray(Reflect.get(scope, 'preselectedIds'))
             )
           : []
-        const selectedAccountCount = scopes.reduce(
-          (total, scope) => total + (selectedScopes[scope.chainId]?.length ?? 0),
-          0
-        )
         return (
           <div className="space-y-5">
             <DAppConnectionHeader domain={dappDomain} pageUrl={dappPageUrl} />
 
-            <section
-              aria-label="Accounts and networks"
-              className="overflow-hidden rounded-2xl border border-border bg-card/35"
-            >
-              <div className="flex items-center justify-between border-b border-border px-4 py-3">
-                <div>
-                  <h2 className="text-sm font-medium">Accounts and networks</h2>
-                  <p className="mt-0.5 text-[11px] text-muted">
-                    {scopes.length} networks · {selectedAccountCount} selected
-                  </p>
-                </div>
-                <div className="flex -space-x-2" aria-hidden="true">
-                  {scopes.slice(0, 5).map(scope => (
-                    <ChainIcon
-                      key={scope.chainId}
-                      chain={scope.iconChain}
-                      width={24}
-                      height={24}
-                      showTooltip={false}
-                      className="size-6 rounded-full border-2 border-card"
-                    />
-                  ))}
-                </div>
-              </div>
-              {scopes.map(scope => {
-                const selected = selectedScopes[scope.chainId] ?? []
-                const selectedAccounts = scope.accounts.filter(account =>
-                  selected.includes(account.id)
-                )
-                const expanded = expandedScopeId === scope.chainId
-                const accountSummary =
-                  selectedAccounts.length === 1
-                    ? formatSortAddress(selectedAccounts[0].address)
-                    : `${selectedAccounts.length} accounts`
-                return (
-                  <div
-                    key={scope.chainId}
-                    data-caip25-scope={scope.chainId}
-                    className="border-b border-border last:border-b-0"
-                  >
-                    <button
-                      type="button"
-                      aria-expanded={expanded}
-                      onClick={() => setExpandedScopeId(expanded ? null : scope.chainId)}
-                      className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-white/[0.025]"
-                    >
-                      <ChainIcon
-                        chain={scope.iconChain}
-                        width={32}
-                        height={32}
-                        showTooltip={false}
-                        className="size-8 shrink-0 rounded-full"
-                      />
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate text-sm font-medium">
-                          {scope.chainName}
-                        </span>
-                        <span className="block truncate font-mono text-[11px] text-muted">
-                          {accountSummary}
-                        </span>
-                      </span>
-                      <span
-                        className={cn(
-                          'flex size-5 shrink-0 items-center justify-center rounded-full',
-                          selectedAccounts.length > 0
-                            ? 'bg-primary text-background'
-                            : 'border border-muted text-transparent'
-                        )}
-                      >
-                        <ApprovalCheckIcon />
-                      </span>
-                      <Icon
-                        icon="lucide:chevron-down"
-                        className={cn(
-                          'size-4 shrink-0 text-muted transition-transform',
-                          expanded && 'rotate-180'
-                        )}
-                      />
-                    </button>
-                    {expanded && (
-                      <div className="space-y-1.5 bg-background/20 px-4 pb-3 pt-1">
-                        {scope.accounts.map(account => {
-                          const checked = selected.includes(account.id)
-                          return (
-                            <button
-                              key={account.id}
-                              type="button"
-                              disabled={account.required}
-                              aria-pressed={checked}
-                              data-caip25-account={account.id}
-                              onClick={() => toggleScopeAccount(scope, account)}
-                              className={cn(
-                                'flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors',
-                                checked ? 'bg-primary/8' : 'hover:bg-white/[0.025]',
-                                account.required && 'cursor-default'
-                              )}
-                            >
-                              <span
-                                className={cn(
-                                  'flex size-5 shrink-0 items-center justify-center rounded-md border',
-                                  checked
-                                    ? 'border-primary bg-primary text-background'
-                                    : 'border-muted text-transparent'
-                                )}
-                              >
-                                <ApprovalCheckIcon />
-                              </span>
-                              <span className="min-w-0 flex-1">
-                                <span className="block truncate text-xs font-medium">
-                                  {account.label}
-                                </span>
-                                <span className="block truncate font-mono text-[10px] text-muted">
-                                  {formatSortAddress(account.address)}
-                                </span>
-                              </span>
-                              {account.required && (
-                                <span className="text-[10px] text-muted">Current</span>
-                              )}
-                            </button>
-                          )
-                        })}
-                      </div>
-                    )}
-                  </div>
-                )
-              })}
-            </section>
+            <MultichainConnectionAccounts
+              scopes={scopes}
+              selections={selectedScopes}
+              onToggleAccount={account =>
+                setSelectedScopes(previous => toggleMultichainConnectionAccount(account, previous))
+              }
+              onTogglePermission={toggleScopeAccount}
+            />
 
             <ConnectionPermissionSummary />
           </div>
@@ -934,7 +939,7 @@ export function ApprovalPage() {
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
                     <span className="text-xs text-muted-foreground">
-                      {selectedAccounts.length} selected{' '}
+                      {selectedAccounts.length} selected{isEvmConnect ? ' EVM' : ''}{' '}
                       {selectedAccounts.length === 1 ? 'account' : 'accounts'}
                     </span>
                     {canEdit && (
@@ -1162,7 +1167,7 @@ export function ApprovalPage() {
               </WarningBox>
             )}
 
-            {!editingAccounts && <ConnectionPermissionSummary includesActivity />}
+            {!editingAccounts && <ConnectionPermissionSummary />}
           </div>
         )
       }
@@ -1179,7 +1184,7 @@ export function ApprovalPage() {
               <div className="space-y-3">
                 <div className="grid grid-cols-[88px_minmax(0,1fr)] gap-3">
                   <span className="text-xs text-muted">Amount</span>
-                  <span className="text-right font-mono text-xs text-foreground/90">
+                  <span className="text-right font-sans text-xs tabular-nums text-foreground/90">
                     <AmountDisplay value={data.amount} symbol="ZEC" />
                   </span>
                 </div>
@@ -1219,11 +1224,16 @@ export function ApprovalPage() {
                   tier={feeTier}
                   onTierChange={setFeeTier}
                   feeByTier={feeByTier}
+                  loadingByTier={feeEstimate.loadingByTier}
                   loading={feeEstimate.loading}
+                  allowFallback={false}
                   hideLabel
                 />
               }
             />
+            {feeEstimate.error && (
+              <InlineError message="Could not estimate network fee" onRetry={feeEstimate.retry} />
+            )}
           </div>
         )
 
@@ -1231,7 +1241,7 @@ export function ApprovalPage() {
         return (
           <div className="space-y-5">
             <DAppRequestHeader domain={dappDomain} pageUrl={dappPageUrl} action="Sign message" />
-            <CopyToast show={showCopyToast} message="Message copied" />
+            <CopyToast show={showCopyToast} />
             <ApprovalDetailCard ariaLabel="Message">
               <div className="flex items-center justify-between gap-3">
                 <h2 className="text-sm text-foreground/80">Message</h2>
@@ -1242,7 +1252,7 @@ export function ApprovalPage() {
                   className="flex size-7 items-center justify-center rounded-lg text-muted transition-colors hover:bg-foreground/10 hover:text-foreground"
                   onClick={() => void copyToClipboard(data.message)}
                 >
-                  <Icon icon="lucide:copy" className="size-4" />
+                  <CopyFeedbackIcon copied={isCopied()} className="size-4" />
                 </button>
               </div>
               <p className="max-h-40 overflow-y-auto whitespace-pre-wrap break-words font-mono text-sm leading-6 text-foreground">
@@ -1265,7 +1275,7 @@ export function ApprovalPage() {
               <div className="space-y-3">
                 <div className="grid grid-cols-[88px_minmax(0,1fr)] gap-3">
                   <span className="text-xs text-muted">Amount</span>
-                  <span className="text-right font-mono text-xs text-foreground/90">
+                  <span className="text-right font-sans text-xs tabular-nums text-foreground/90">
                     <AmountDisplay value={data.amount} symbol="ZEC" />
                   </span>
                 </div>
@@ -1283,11 +1293,16 @@ export function ApprovalPage() {
                   tier={feeTier}
                   onTierChange={setFeeTier}
                   feeByTier={feeByTier}
+                  loadingByTier={feeEstimate.loadingByTier}
                   loading={feeEstimate.loading}
+                  allowFallback={false}
                   hideLabel
                 />
               }
             />
+            {feeEstimate.error && (
+              <InlineError message="Could not estimate network fee" onRetry={feeEstimate.retry} />
+            )}
 
             {!hasEnoughShieldingBalance && (
               <p className="text-xs text-destructive text-center">
@@ -1342,6 +1357,147 @@ export function ApprovalPage() {
     )
   }
 
+  const evmPrivacyControl = privacyTransferEligible ? (
+    <section aria-label="Transfer privacy" className="space-y-2">
+      {privacyTransferAvailable && (
+        <button
+          type="button"
+          role="switch"
+          aria-checked={sendPrivately}
+          disabled={isLoading}
+          onClick={() => void handleEvmTransferPrivacyChange(!sendPrivately)}
+          className="flex w-full items-center justify-between gap-3 rounded-lg border border-border bg-card/35 px-3 py-2.5 text-sm text-foreground disabled:opacity-50"
+        >
+          <span>Send privately</span>
+          <Switch checked={sendPrivately} size="sm" />
+        </button>
+      )}
+      {!sendPrivately && !privacyUpdateError && (
+        <p className="px-1 text-xs leading-5 text-warning">
+          This transfer is public and links your Private address to the recipient.
+        </p>
+      )}
+      {(privacyUpdateError || (sendPrivately && data.privacyError)) && (
+        <InlineError
+          message={privacyUpdateError || data.privacyError}
+          onRetry={() => void handleEvmTransferPrivacyChange(privacyRetryEnabled ?? true)}
+          retrying={isLoading}
+        />
+      )}
+    </section>
+  ) : undefined
+
+  if (isEvmTransaction && sendPrivately) {
+    const transfer = selectedPrivateTransfer
+    const formatAsset = (raw: string) =>
+      transfer ? formatBaseUnitDecimalAmount(raw, transfer.asset.decimals) : ''
+    return (
+      <ApprovalWindowLayout
+        footer={
+          <div className="flex gap-3">
+            <Button
+              variant="outline"
+              className="flex-1"
+              onClick={() => void handleDecision(false)}
+              disabled={isLoading}
+              size="lg"
+            >
+              Reject
+            </Button>
+            <Button
+              className="flex-1 bg-primary hover:bg-primary/90"
+              onClick={() => void handleDecision(true)}
+              isLoading={isLoading}
+              disabled={!privateTransferReady || isLoading || !!privacyUpdateError}
+              size="lg"
+            >
+              Confirm
+            </Button>
+          </div>
+        }
+      >
+        <div className="space-y-4">
+          <DAppRequestHeader
+            domain={dappDomain}
+            pageUrl={dappPageUrl}
+            action="Confidential transfer"
+          />
+          {evmPrivacyControl}
+          {transfer?.exactOutput &&
+          transfer.nativeCurrency &&
+          transfer.networkFeeRaw !== undefined ? (
+            <>
+              <DAppNetworkCard
+                chain={transfer.iconChain}
+                network={transfer.chainName}
+                chainId={String(transfer.chainId)}
+              />
+              <ApprovalDetailCard title="Transfer">
+                <div className="space-y-3 text-sm">
+                  <div className="flex justify-between gap-3">
+                    <span className="text-muted">Recipient receives</span>
+                    <span className="font-sans font-medium tabular-nums">
+                      <AmountDisplay
+                        value={formatAsset(transfer.estimatedOutputRaw)}
+                        symbol={transfer.asset.symbol}
+                      />
+                    </span>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <span className="text-muted">Total sent</span>
+                    <span className="font-sans font-medium tabular-nums">
+                      <AmountDisplay
+                        value={formatAsset(transfer.amountRaw)}
+                        symbol={transfer.asset.symbol}
+                      />
+                    </span>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <span className="text-muted">From</span>
+                    <span
+                      className="flex min-w-0 flex-col items-end gap-1 font-mono"
+                      title={transfer.sourceAddress}
+                    >
+                      {formatSortAddress(transfer.sourceAddress)}
+                      <ExecutionAccountBadge mode="private" />
+                    </span>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <span className="text-muted">To</span>
+                    <span className="font-mono" title={transfer.recipient}>
+                      {formatSortAddress(transfer.recipient)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <span className="text-muted">Network fee</span>
+                    <span className="font-sans tabular-nums">
+                      <AmountDisplay
+                        value={formatBaseUnitDecimalAmount(
+                          transfer.networkFeeRaw,
+                          transfer.nativeCurrency.decimals
+                        )}
+                        symbol={transfer.nativeCurrency.symbol}
+                      />
+                    </span>
+                  </div>
+                </div>
+              </ApprovalDetailCard>
+            </>
+          ) : !data.privacyError && !privacyUpdateError ? (
+            <WarningBox>The private transfer review is unavailable.</WarningBox>
+          ) : null}
+          {transfer && transfer.expiresAt <= privacyNow && !data.privacyError && (
+            <InlineError
+              message="The private transfer quote expired."
+              onRetry={() => void handleEvmTransferPrivacyChange(true)}
+              retrying={isLoading}
+            />
+          )}
+        </div>
+      </ApprovalWindowLayout>
+    )
+  }
+
   if (isEvmTransaction && evmTransactionSummary) {
     const nativeDecimals =
       Number.isSafeInteger(data.nativeCurrency?.decimals) &&
@@ -1366,6 +1522,8 @@ export function ApprovalPage() {
         source={{ kind: 'dapp', domain: dappDomain, pageUrl: dappPageUrl }}
         accountMode={evmExecutionMode}
         isSubmitting={isLoading}
+        confirmDisabled={!!privacyUpdateError || !privacyRevisionReady}
+        notice={evmPrivacyControl}
         evmPresentation={{
           nativeCurrency: { symbol: nativeSymbol, decimals: nativeDecimals },
           directContract: data.privacyRoute === 'direct-contract',
@@ -1448,7 +1606,7 @@ export function ApprovalPage() {
                 <div className="space-y-3 text-sm">
                   <div className="flex justify-between gap-3">
                     <span className="text-muted">Amount</span>
-                    <span className="font-mono font-medium">
+                    <span className="font-sans font-medium tabular-nums">
                       <AmountDisplay
                         value={formatAsset(evmPrivateTransfer.amountRaw)}
                         symbol={evmPrivateTransfer.asset.symbol}
@@ -1473,7 +1631,7 @@ export function ApprovalPage() {
                   </div>
                   <div className="flex justify-between gap-3">
                     <span className="text-muted">Minimum received</span>
-                    <span className="font-mono">
+                    <span className="font-sans tabular-nums">
                       <AmountDisplay
                         value={formatAsset(evmPrivateTransfer.minimumOutputRaw)}
                         symbol={evmPrivateTransfer.asset.symbol}
@@ -1571,6 +1729,7 @@ export function ApprovalPage() {
             disabled={
               isLoading ||
               !hasEnoughShieldingBalance ||
+              ((isSend || isShield) && !feeReady) ||
               (isEvmTransaction && evmTransactionSummary === null) ||
               (isEvmNetwork && data.action === 'add' && evmAddNetwork === null) ||
               (isEvmMessage && evmMessageSummary === null) ||

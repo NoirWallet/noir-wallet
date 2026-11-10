@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { createJSONStorage, persist } from 'zustand/middleware'
 import { createChromeStorageAdapter } from '@/lib/chrome-storage-adapter'
+import { DEFAULT_NETWORK } from '@/lib/runtime-network'
 import {
   ADDRESS_BOOK_MAX_CONTACTS,
   createAddressBookContact,
@@ -8,6 +9,7 @@ import {
   normalizeAddressBookAddress,
   parseAddressBookContacts,
   readLegacyContactsStorage,
+  selectAddressBookContactsForChain,
   type AddressBookContact,
   type CreateAddressBookContactInput
 } from '@/core/address-book/address-book'
@@ -29,6 +31,7 @@ interface AddressBookStore {
   renameContact: (id: string, name: string) => void
   removeContact: (id: string) => void
   getContact: (chainId: string, address: string) => AddressBookContact | undefined
+  getExactContact: (chainId: string, address: string) => AddressBookContact | undefined
   getContactsForChain: (chainId: string) => readonly AddressBookContact[]
   importLegacyContacts: (
     contacts: readonly AddressBookContact[],
@@ -79,7 +82,7 @@ export const useAddressBookStore = create<AddressBookStore>()(
       legacyMigration: null,
 
       addContact: input => {
-        const current = get().getContact(input.chainId, input.address)
+        const current = get().getExactContact(input.chainId, input.address)
         const contact = createAddressBookContact({
           ...input,
           ...(current
@@ -110,6 +113,16 @@ export const useAddressBookStore = create<AddressBookStore>()(
       },
 
       getContact: (chainId, address) => {
+        const normalized = normalizeAddressBookAddress(
+          chainId.startsWith('eip155:') ? 'evm' : 'zcash',
+          address.trim()
+        )
+        return selectAddressBookContactsForChain(get().contacts, chainId, DEFAULT_NETWORK).find(
+          contact => contact.normalizedAddress === normalized
+        )
+      },
+
+      getExactContact: (chainId, address) => {
         const parsed = get().contacts.find(contact => contact.chainId === chainId)
         if (!parsed) return undefined
         const normalized = normalizeAddressBookAddress(parsed.chainFamily, address.trim())
@@ -119,9 +132,9 @@ export const useAddressBookStore = create<AddressBookStore>()(
       },
 
       getContactsForChain: chainId =>
-        get()
-          .contacts.filter(contact => contact.chainId === chainId)
-          .sort((left, right) => left.name.localeCompare(right.name)),
+        [...selectAddressBookContactsForChain(get().contacts, chainId, DEFAULT_NETWORK)].sort(
+          (left, right) => left.name.localeCompare(right.name)
+        ),
 
       importLegacyContacts: (contacts, skippedCount, completedAt = Date.now()) => {
         if (get().legacyMigration) return

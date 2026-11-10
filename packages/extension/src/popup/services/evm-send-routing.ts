@@ -34,14 +34,28 @@ export function resolveEvmSendAvailableRaw(
 
 export function resolveEvmSendRoute(
   sourceMode: 'main' | 'private',
-  support: ConfidentialAssetSupport
+  support: ConfidentialAssetSupport,
+  sendPrivately = false
 ): EvmSendRoute {
+  if (sendPrivately) return support === 'supported' ? 'confidential' : 'pending'
   if (sourceMode === 'main') return 'onchain'
   return support === 'supported'
     ? 'confidential'
     : support === 'unsupported'
       ? 'onchain'
       : 'pending'
+}
+
+export function getEvmSendRecipientError(
+  sourceMode: 'main' | 'private',
+  recipientRole: EvmAddressRole,
+  sendPrivately = false,
+  canMove = false
+): string | null {
+  if (sourceMode !== 'main' || recipientRole !== 'confidential' || sendPrivately) return null
+  return canMove
+    ? 'This is your Private address.'
+    : 'Turn on Send privately to send to this Private address.'
 }
 
 export function getEvmSendPrivacyWarning(

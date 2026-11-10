@@ -14,6 +14,7 @@ export function ImportWalletPage() {
     setImportedSeedPhrase,
     setBirthdayHeight,
     setImportZcashHistorySelection,
+    setSelectedNetworkFamilies,
     error
   } = useOnboardingStore()
 
@@ -85,7 +86,8 @@ export function ImportWalletPage() {
       setImportedSeedPhrase(seedPhrase)
       setBirthdayHeight(undefined)
       setImportZcashHistorySelection(null)
-      navigate('/onboarding/import-zcash-history')
+      setSelectedNetworkFamilies(null)
+      navigate('/onboarding/import-accounts')
     }
   }
 

@@ -2,10 +2,9 @@ import { useEffect, useState } from 'react'
 import { Icon } from '@iconify/react'
 import type { PortfolioReadModel } from '@/core/portfolio'
 import { PortfolioShell } from './PortfolioShell'
-import { isSelectableChainFamily } from '@/popup/services/chain-selection-availability'
+import { resolvePortfolioChainSelection } from '@/popup/services/portfolio-presentation'
 import type { AssetPriceReadModel } from '@/core/prices'
 import { ListSkeleton } from '../ui/skeleton'
-import type { ZcashSyncProgressState } from '../common/ZcashSyncProgress'
 import { useSettingsStore } from '@/store/settings-store'
 import { getPortfolioRecoveryDelayMs, hasPortfolioBalanceRefreshIssue } from './portfolio-recovery'
 import { hasRetryablePortfolioPriceGap, summarizePortfolioFiat } from './portfolio-prices'
@@ -13,10 +12,13 @@ import {
   isPortfolioModelForScope,
   shouldRefreshPortfolioFromNetwork
 } from '@/popup/services/portfolio-cache'
+import { projectPortfolioForDomain, type AssetDomain } from '@/popup/services/asset-domains'
 
 const FAST_TRANSACTION_RECHECK_INTERVAL_MS = 5_000
 
 interface MultichainPortfolioPanelProps {
+  domain?: AssetDomain
+  hideToolbar?: boolean
   walletId: string | null
   accountId: string | null
   model: PortfolioReadModel | null
@@ -24,10 +26,10 @@ interface MultichainPortfolioPanelProps {
   prices: AssetPriceReadModel | null
   priceStatus?: 'loading' | 'ready' | 'error'
   balancesHidden?: boolean
-  zcashSyncState?: ZcashSyncProgressState
   onRefresh: (forceDiscovery?: boolean) => Promise<void>
   onRetryPrices?: () => Promise<void>
   onSelectAsset?: (assetId: string) => void
+  onSelectConfidentialAsset?: (tokenId: string) => void
   onManageTokens?: () => void
 }
 
@@ -52,6 +54,8 @@ function PortfolioState({
 }
 
 export function MultichainPortfolioPanel({
+  domain = 'all',
+  hideToolbar = false,
   walletId,
   accountId,
   model,
@@ -59,10 +63,10 @@ export function MultichainPortfolioPanel({
   prices,
   priceStatus,
   balancesHidden,
-  zcashSyncState,
   onRefresh: load,
   onRetryPrices,
   onSelectAsset,
+  onSelectConfidentialAsset,
   onManageTokens
 }: MultichainPortfolioPanelProps) {
   const scopeKey = JSON.stringify([walletId ?? '', accountId ?? ''])
@@ -94,16 +98,16 @@ export function MultichainPortfolioPanel({
   }, [accountId, walletId])
 
   const visibleModel = isPortfolioModelForScope(model, walletId, accountId) ? model : null
-  const availableChainIds =
-    visibleModel?.chains
-      .filter(chain => isSelectableChainFamily(chain.chain.family, __ENABLED_CHAIN_FEATURE_FLAGS__))
-      .map(chain => chain.chain.id) ?? []
-  const availableChainIdSet = new Set<string>(availableChainIds)
-  const persistedAvailableChainIds = persistedChainSelection?.filter(chainId =>
-    availableChainIdSet.has(chainId)
+  const availableChainIds = resolvePortfolioChainSelection(
+    visibleModel,
+    null,
+    __ENABLED_CHAIN_FEATURE_FLAGS__
   )
-  const selectedChainIds =
-    persistedAvailableChainIds?.length === 1 ? persistedAvailableChainIds : availableChainIds
+  const selectedChainIds = resolvePortfolioChainSelection(
+    visibleModel,
+    hideToolbar ? null : persistedChainSelection,
+    __ENABLED_CHAIN_FEATURE_FLAGS__
+  )
   const balanceRecoveryNeeded =
     status === 'error' ||
     (visibleModel !== null &&
@@ -174,11 +178,13 @@ export function MultichainPortfolioPanel({
 
   return (
     <PortfolioShell
-      model={visibleModel}
+      model={projectPortfolioForDomain(visibleModel, domain)}
+      sourceModel={visibleModel}
+      domain={domain}
+      hideToolbar={hideToolbar}
       prices={prices}
       priceStatus={priceStatus}
       balancesHidden={balancesHidden}
-      zcashSyncState={zcashSyncState}
       view={portfolioViewMode}
       onViewChange={setPortfolioViewMode}
       refreshing={status === 'loading' || priceStatus === 'loading' || recoveryNeeded}
@@ -191,6 +197,7 @@ export function MultichainPortfolioPanel({
         )
       }
       onSelectAsset={onSelectAsset}
+      onSelectConfidentialAsset={onSelectConfidentialAsset}
       onRefresh={() => void load(true)}
       onManageTokens={onManageTokens}
     />

@@ -20,6 +20,101 @@ import {
 const extensionId = 'abcdefghijklmnopabcdefghijklmnop'
 
 test.describe('Runtime message security', () => {
+  test('limits account network changes to extension pages and valid family selections', () => {
+    const message = {
+      type: 'SET_ACCOUNT_NETWORK_SELECTION',
+      walletId: 'wallet-1',
+      accountId: 'account-1',
+      families: ['evm', 'zcash']
+    }
+    expect(parseTrustedExtensionRuntimeMessage(message)).toEqual(message)
+    expect(
+      isTrustedRuntimeMessageSender(
+        message.type,
+        { id: extensionId, url: `chrome-extension://${extensionId}/index.html` },
+        extensionId
+      )
+    ).toBe(true)
+    expect(
+      isTrustedRuntimeMessageSender(
+        message.type,
+        { id: extensionId, url: 'https://example.com', tab: { id: 1 } },
+        extensionId
+      )
+    ).toBe(false)
+    for (const families of [[], ['evm', 'evm'], ['unknown']]) {
+      expect(() => parseTrustedExtensionRuntimeMessage({ ...message, families })).toThrow()
+    }
+  })
+
+  test('site network selection accepts only an extension page with a complete binding', () => {
+    const message = {
+      type: 'SET_CURRENT_DAPP_EVM_NETWORK',
+      chainId: 'eip155:56',
+      selectionContext: {
+        origin: 'https://example.com',
+        walletId: 'wallet-1',
+        accountId: 'account-1',
+        networkMode: 'mainnet',
+        activeChainId: 'eip155:1',
+        authorizationRevision: 1,
+        authorizationSnapshot: 'grant',
+        unlockEpoch: 'epoch-1',
+        runtimeKey: '1ce7f129-1677-4f03-9b28-9df64a503ed7'
+      }
+    }
+    expect(parseTrustedExtensionRuntimeMessage(message)).toEqual(message)
+    expect(
+      isTrustedRuntimeMessageSender(
+        message.type,
+        { id: extensionId, url: `chrome-extension://${extensionId}/index.html` },
+        extensionId
+      )
+    ).toBe(true)
+    expect(
+      isTrustedRuntimeMessageSender(
+        message.type,
+        { id: extensionId, url: 'https://example.com', tab: { id: 1 } },
+        extensionId
+      )
+    ).toBe(false)
+    expect(() =>
+      parseTrustedExtensionRuntimeMessage({
+        ...message,
+        selectionContext: { ...message.selectionContext, origin: undefined }
+      })
+    ).toThrow()
+    expect(() =>
+      parseTrustedExtensionRuntimeMessage({
+        ...message,
+        selectionContext: { ...message.selectionContext, runtimeKey: 'x'.repeat(4097) }
+      })
+    ).toThrow()
+  })
+
+  test('limits confidential funding preview requests to extension pages', () => {
+    const message = {
+      type: 'PREVIEW_CONFIDENTIAL_FUNDING',
+      request: { network: 'mainnet', keyDomainId: 'wallet:one', accountId: 'account:one' }
+    }
+    expect(parseTrustedExtensionRuntimeMessage(message)).toEqual(message)
+    expect(
+      isTrustedRuntimeMessageSender(
+        message.type,
+        { id: extensionId, url: `chrome-extension://${extensionId}/index.html` },
+        extensionId
+      )
+    ).toBe(true)
+    expect(
+      isTrustedRuntimeMessageSender(
+        message.type,
+        { id: extensionId, url: 'https://dapp.example/' },
+        extensionId
+      )
+    ).toBe(false)
+    expect(() => parseTrustedExtensionRuntimeMessage({ ...message, request: null })).toThrow()
+  })
+
   test('keeps backup verification inside extension pages and bounds its word payload', () => {
     const verification = { wordIndices: [0, 11], words: ['abandon', 'about'] }
     const message = { type: 'CONFIRM_WALLET_BACKUP', walletId: 'wallet:1', verification }
@@ -78,6 +173,21 @@ test.describe('Runtime message security', () => {
     expect(() =>
       parseTrustedExtensionRuntimeMessage({ ...feeRequest, debugRequestId: 'x'.repeat(10_000) })
     ).toThrow()
+    const quotedRequest = { ...feeRequest, feeQuoteId: 'quote-1' }
+    expect(parseTrustedExtensionRuntimeMessage(quotedRequest)).toEqual(quotedRequest)
+    expect(() =>
+      parseTrustedExtensionRuntimeMessage({ ...quotedRequest, feeQuoteId: 'x'.repeat(10_000) })
+    ).toThrow()
+    expect(parseTrustedExtensionRuntimeMessage({ type: 'GET_ZCASH_FEE_QUOTE' })).toEqual({
+      type: 'GET_ZCASH_FEE_QUOTE'
+    })
+    expect(
+      isTrustedRuntimeMessageSender(
+        'GET_ZCASH_FEE_QUOTE',
+        { id: extensionId, url: 'https://dapp.example/' },
+        extensionId
+      )
+    ).toBe(false)
     expect(
       parseTrustedExtensionRuntimeMessage({
         type: 'PREPARE_EVM_TRANSFER',
@@ -203,14 +313,40 @@ test.describe('Runtime message security', () => {
     ).toBe(false)
     expect(isTrustedRuntimeMessageSender('GET_PORTFOLIO', popupSender, extensionId)).toBe(true)
     expect(isTrustedRuntimeMessageSender('GET_ACTIVITY', popupSender, extensionId)).toBe(true)
+    const shieldRefresh = {
+      type: 'REFRESH_CONFIDENTIAL_BALANCES',
+      scope: { network: 'mainnet', keyDomainId: 'wallet:1', accountId: 'account:1' },
+      authorize: true
+    }
+    expect(parseTrustedExtensionRuntimeMessage(shieldRefresh)).toEqual(shieldRefresh)
+    expect(() =>
+      parseTrustedExtensionRuntimeMessage({ ...shieldRefresh, authorize: 'true' })
+    ).toThrow()
+    expect(isTrustedRuntimeMessageSender(shieldRefresh.type, popupSender, extensionId)).toBe(true)
+    expect(
+      isTrustedRuntimeMessageSender(shieldRefresh.type, contentScriptSender, extensionId)
+    ).toBe(false)
+    expect(
+      isTrustedRuntimeMessageSender(shieldRefresh.type, serviceWorkerSender, extensionId)
+    ).toBe(false)
+    const submissionCheck = {
+      type: 'CHECK_CONFIDENTIAL_FUNDING_SUBMISSION',
+      planId: 'funding-plan:1'
+    }
+    expect(parseTrustedExtensionRuntimeMessage(submissionCheck)).toEqual(submissionCheck)
+    expect(() => parseTrustedExtensionRuntimeMessage({ type: submissionCheck.type })).toThrow()
+    for (const [sender, allowed] of [
+      [popupSender, true],
+      [contentScriptSender, false],
+      [{ id: 'other-extension', url: 'https://wallet.example/app' }, false]
+    ]) {
+      expect(isTrustedRuntimeMessageSender(submissionCheck.type, sender, extensionId)).toBe(allowed)
+    }
     expect(isTrustedRuntimeMessageSender('GET_BITCOIN_ACTIVITY', popupSender, extensionId)).toBe(
       true
     )
     expect(
       isTrustedRuntimeMessageSender('GET_BITCOIN_WALLET_IDENTITY', popupSender, extensionId)
-    ).toBe(true)
-    expect(
-      isTrustedRuntimeMessageSender('GET_ZCASH_LENDING_PUBLIC_KEY', popupSender, extensionId)
     ).toBe(true)
     expect(isTrustedRuntimeMessageSender('ADD_SOFTWARE_WALLET', popupSender, extensionId)).toBe(
       true
@@ -234,6 +370,12 @@ test.describe('Runtime message security', () => {
     expect(isTrustedRuntimeMessageSender('PREPARE_EVM_TRANSFER', popupSender, extensionId)).toBe(
       true
     )
+    expect(
+      isTrustedRuntimeMessageSender('ESTIMATE_EVM_TRANSFER_FEE', popupSender, extensionId)
+    ).toBe(true)
+    expect(
+      isTrustedRuntimeMessageSender('ESTIMATE_EVM_TRANSFER_FEE', contentScriptSender, extensionId)
+    ).toBe(false)
     expect(isTrustedRuntimeMessageSender('PREPARE_SOLANA_TRANSFER', popupSender, extensionId)).toBe(
       true
     )
@@ -288,14 +430,14 @@ test.describe('Runtime message security', () => {
       isTrustedRuntimeMessageSender('GET_BITCOIN_WALLET_IDENTITY', contentScriptSender, extensionId)
     ).toBe(false)
     expect(
+      isTrustedRuntimeMessageSender('ADD_SOFTWARE_WALLET', contentScriptSender, extensionId)
+    ).toBe(false)
+    expect(
       isTrustedRuntimeMessageSender(
-        'GET_ZCASH_LENDING_PUBLIC_KEY',
+        'PREVIEW_SOFTWARE_WALLET_ADDRESSES',
         contentScriptSender,
         extensionId
       )
-    ).toBe(false)
-    expect(
-      isTrustedRuntimeMessageSender('ADD_SOFTWARE_WALLET', contentScriptSender, extensionId)
     ).toBe(false)
     expect(
       isTrustedRuntimeMessageSender('RESYNC_ZCASH_WALLET', contentScriptSender, extensionId)
@@ -920,6 +1062,7 @@ test.describe('Runtime message security', () => {
     expect(
       parseTrustedExtensionRuntimeMessage({
         type: 'PROVISION_PRIMARY_SOFTWARE_WALLET',
+        mode: 'import',
         mnemonic: `${'abandon '.repeat(11)}about`,
         password: 'legacy-compatible-password',
         accountName: 'Primary Account'
@@ -937,6 +1080,21 @@ test.describe('Runtime message security', () => {
         birthdayHeight: 3_000_000
       })
     ).toMatchObject({ type: 'ADD_SOFTWARE_WALLET', mode: 'import' })
+    expect(
+      parseTrustedExtensionRuntimeMessage({
+        type: 'PREVIEW_SOFTWARE_WALLET_ADDRESSES',
+        mnemonic: `${'abandon '.repeat(11)}about`,
+        selectedNetworkFamilies: ['evm']
+      })
+    ).toMatchObject({ type: 'PREVIEW_SOFTWARE_WALLET_ADDRESSES' })
+    expect(() =>
+      parseTrustedExtensionRuntimeMessage({
+        type: 'PREVIEW_SOFTWARE_WALLET_ADDRESSES',
+        mnemonic: `${'abandon '.repeat(11)}about`,
+        selectedNetworkFamilies: ['evm'],
+        password: 'must-not-cross-the-preview-boundary'
+      })
+    ).toThrow(/schema/i)
     expect(
       parseTrustedExtensionRuntimeMessage({
         type: 'PREVIEW_PRIVATE_KEY_WALLET',
@@ -1041,27 +1199,6 @@ test.describe('Runtime message security', () => {
     expect(parseTrustedExtensionRuntimeMessage({ type: 'GET_BITCOIN_WALLET_IDENTITY' })).toEqual({
       type: 'GET_BITCOIN_WALLET_IDENTITY'
     })
-    expect(
-      parseTrustedExtensionRuntimeMessage({
-        type: 'GET_ZCASH_LENDING_PUBLIC_KEY',
-        walletId: 'wallet-1',
-        accountId: 'account-1',
-        signingMode: 'derived'
-      })
-    ).toEqual({
-      type: 'GET_ZCASH_LENDING_PUBLIC_KEY',
-      walletId: 'wallet-1',
-      accountId: 'account-1',
-      signingMode: 'derived'
-    })
-    expect(() =>
-      parseTrustedExtensionRuntimeMessage({
-        type: 'GET_ZCASH_LENDING_PUBLIC_KEY',
-        walletId: 'wallet-1',
-        accountId: 'account-1',
-        signingMode: 'current'
-      })
-    ).toThrow(/schema/i)
     expect(() =>
       parseTrustedExtensionRuntimeMessage({ type: 'GET_ACTIVITY', accountId: 'account-1' })
     ).toThrow(/schema/i)
@@ -1201,6 +1338,26 @@ test.describe('Runtime message security', () => {
       recipient: '0x2222222222222222222222222222222222222222',
       amountRaw: '1'
     }
+    expect(
+      parseTrustedExtensionRuntimeMessage({
+        type: 'ESTIMATE_EVM_TRANSFER_FEE',
+        intent: transferIntent,
+        feeSelection: { kind: 'tier', tier: 'fast' },
+        executionMode: 'main'
+      })
+    ).toEqual({
+      type: 'ESTIMATE_EVM_TRANSFER_FEE',
+      intent: transferIntent,
+      feeSelection: { kind: 'tier', tier: 'fast' },
+      executionMode: 'main'
+    })
+    expect(() =>
+      parseTrustedExtensionRuntimeMessage({
+        type: 'ESTIMATE_EVM_TRANSFER_FEE',
+        intent: transferIntent,
+        nearIntentsBinding: {}
+      })
+    ).toThrow(/schema/i)
     const nearIntentsBinding = {
       schemaVersion: 1,
       provider: 'near-intents',
@@ -1537,6 +1694,39 @@ test.describe('Runtime message security', () => {
           type: 'DAPP_APPROVAL_RESULT',
           requestId: 'request-1',
           success: true,
+          marginalFeeZats: 5000,
+          feeQuoteId: 'quote-1',
+          feeTier: 'standard',
+          feeZats: 10000,
+          transferPrivacyRevision: 0
+        },
+        'request-1'
+      )
+    ).toMatchObject({
+      feeQuoteId: 'quote-1',
+      feeTier: 'standard',
+      marginalFeeZats: 5000,
+      transferPrivacyRevision: 0
+    })
+    for (const transferPrivacyRevision of [-1, 0.5, '1']) {
+      expect(() =>
+        parseDAppApprovalResultMessage(
+          {
+            type: 'DAPP_APPROVAL_RESULT',
+            requestId: 'request-1',
+            success: true,
+            transferPrivacyRevision
+          },
+          'request-1'
+        )
+      ).toThrow(/revision/i)
+    }
+    expect(
+      parseDAppApprovalResultMessage(
+        {
+          type: 'DAPP_APPROVAL_RESULT',
+          requestId: 'request-1',
+          success: true,
           selectedIds: ['account-1']
         },
         'request-1'
@@ -1549,6 +1739,17 @@ test.describe('Runtime message security', () => {
           requestId: 'request-1',
           success: false,
           selectedIds: ['account-1']
+        },
+        'request-1'
+      )
+    ).toThrow(/rejected/i)
+    expect(() =>
+      parseDAppApprovalResultMessage(
+        {
+          type: 'DAPP_APPROVAL_RESULT',
+          requestId: 'request-1',
+          success: false,
+          feeQuoteId: 'quote-1'
         },
         'request-1'
       )
@@ -1616,6 +1817,21 @@ test.describe('Runtime message security', () => {
       type: 'QUOTE_RHEA_SWAP',
       request
     })
+    expect(
+      parseTrustedExtensionRuntimeMessage({
+        type: 'QUOTE_RHEA_SWAP',
+        request,
+        purpose: 'private-swap'
+      })
+    ).toMatchObject({ purpose: 'private-swap' })
+    for (const purpose of ['private-transfer', 'private-cross-chain-send', 'public-private-send']) {
+      expect(
+        parseTrustedExtensionRuntimeMessage({ type: 'QUOTE_RHEA_SWAP', request, purpose })
+      ).toMatchObject({ purpose })
+    }
+    expect(() =>
+      parseTrustedExtensionRuntimeMessage({ type: 'QUOTE_RHEA_SWAP', request, purpose: 'transfer' })
+    ).toThrow(/schema/i)
     expect(
       parseTrustedExtensionRuntimeMessage({
         type: 'PREPARE_RHEA_SWAP',

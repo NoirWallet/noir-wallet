@@ -20,6 +20,7 @@ import {
 } from '../../../src/lib/analytics/constants.ts'
 import { buildPayload, sanitizeAnalyticsMetadata } from '../../../src/lib/analytics/payload.ts'
 import { sanitizeAnalyticsEvent } from '../../../src/lib/analytics/policy.ts'
+import { toGaClientId } from '../../../src/lib/analytics/ga.ts'
 import { CUSTOM_ANALYTICS_CONFIG } from '../../../src/config/analytics.ts'
 
 const PASSWORD = 'analytics-test-password'
@@ -233,6 +234,254 @@ describe('Google Analytics preference: default-on and persisted opt-out', () => 
       globalThis.chrome = originalChrome
     }
   })
+
+  it('keeps a newer opt-out when the initial storage read resolves or fails later', async () => {
+    const originalChrome = globalThis.chrome
+    try {
+      for (const outcome of ['resolve', 'reject']) {
+        let resolveRead
+        let rejectRead
+        let storageChanged
+        globalThis.chrome = {
+          storage: {
+            local: {
+              get: () =>
+                new Promise((resolve, reject) => {
+                  resolveRead = resolve
+                  rejectRead = reject
+                })
+            },
+            onChanged: {
+              addListener: listener => {
+                storageChanged = listener
+              }
+            }
+          }
+        }
+        const { isGoogleAnalyticsEnabled, onGoogleAnalyticsPreferenceChange } = await import(
+          `../../../src/lib/analytics/preferences.ts?stale-read-${outcome}`
+        )
+        const observed = []
+        onGoogleAnalyticsPreferenceChange(enabled => observed.push(enabled))
+        const initialRead = isGoogleAnalyticsEnabled()
+        storageChanged({ anonymous_analytics_enabled: { newValue: false } }, 'local')
+        if (outcome === 'resolve') resolveRead({ anonymous_analytics_enabled: true })
+        else rejectRead(new Error('stale read failed'))
+        assert.equal(await initialRead, false)
+        assert.equal(await isGoogleAnalyticsEnabled(), false)
+        assert.deepEqual(observed, [false])
+      }
+    } finally {
+      globalThis.chrome = originalChrome
+    }
+  })
+
+  it('does not roll back a newer storage change when a local preference write fails', async () => {
+    const originalChrome = globalThis.chrome
+    let rejectWrite
+    let storageChanged
+    globalThis.chrome = {
+      storage: {
+        local: {
+          get: async () => ({ anonymous_analytics_enabled: true }),
+          set: () =>
+            new Promise((_, reject) => {
+              rejectWrite = reject
+            })
+        },
+        onChanged: {
+          addListener: listener => {
+            storageChanged = listener
+          }
+        }
+      }
+    }
+
+    try {
+      const { isGoogleAnalyticsEnabled, setGoogleAnalyticsEnabled } =
+        await import('../../../src/lib/analytics/preferences.ts?stale-rollback')
+      assert.equal(await isGoogleAnalyticsEnabled(), true)
+      const pendingWrite = setGoogleAnalyticsEnabled(false)
+      const rejected = assert.rejects(pendingWrite, /write failed/)
+      storageChanged({ anonymous_analytics_enabled: { newValue: false } }, 'local')
+      rejectWrite(new Error('write failed'))
+      await rejected
+      assert.equal(await isGoogleAnalyticsEnabled(), false)
+    } finally {
+      globalThis.chrome = originalChrome
+    }
+  })
+})
+
+it('derives a stable numeric GA ID from the installation ID', async () => {
+  const installId = '12345678-1234-1234-1234-123456789abc'
+  const gaId = await toGaClientId(installId)
+  assert.match(gaId, /^\d+\.\d+$/)
+  assert.equal(await toGaClientId(installId), gaId)
+  assert.equal(await toGaClientId('123.456'), '123.456')
+})
+
+it('bounds and caches country lookup, then cancels it on GA opt-out', async () => {
+  const previousChrome = globalThis.chrome
+  const previousFetch = globalThis.fetch
+  const previousSecret = globalThis.__GA_API_SECRET__
+  const local = {}
+  const session = {}
+  let requests = 0
+  let resolvePending
+  let pendingSignal
+  let stopLookup
+  globalThis.__GA_API_SECRET__ = 'local-test-secret'
+  globalThis.chrome = {
+    storage: {
+      local: {
+        get: async key => ({ [key]: local[key] }),
+        set: async values => Object.assign(local, values)
+      },
+      session: {
+        get: async key => ({ [key]: session[key] }),
+        set: async values => Object.assign(session, values),
+        remove: async key => {
+          delete session[key]
+        }
+      },
+      onChanged: { addListener: () => {} }
+    }
+  }
+
+  try {
+    const { setGoogleAnalyticsEnabled } = await import('../../../src/lib/analytics/preferences.ts')
+    const { getAnalyticsCountry, stopAnalyticsCountryLookup } =
+      await import('../../../src/lib/analytics/geo.ts')
+    stopLookup = stopAnalyticsCountryLookup
+    await setGoogleAnalyticsEnabled(true)
+    globalThis.fetch = async (url, options) => {
+      requests++
+      assert.equal(url, 'https://rpc.zknoir.com/cdn-cgi/trace')
+      assert.equal(options.credentials, 'omit')
+      assert.equal(options.referrerPolicy, 'no-referrer')
+      return new Response('loc=CA\n')
+    }
+    assert.equal(await getAnalyticsCountry(), 'CA')
+    assert.equal(await getAnalyticsCountry(), 'CA')
+    assert.equal(requests, 1)
+
+    session.ga_country_cache.expiresAt = 0
+    globalThis.fetch = async () => {
+      requests++
+      return new Response('loc=UNKNOWN\n')
+    }
+    const failureStart = Date.now()
+    assert.equal(await getAnalyticsCountry(), undefined)
+    assert.ok(session.ga_country_cache.expiresAt - failureStart <= 61_000)
+    assert.ok(session.ga_country_cache.expiresAt - failureStart >= 59_000)
+
+    session.ga_country_cache.expiresAt = 0
+    globalThis.fetch = (_url, options) => {
+      requests++
+      pendingSignal = options.signal
+      return new Promise(resolve => {
+        resolvePending = resolve
+      })
+    }
+    const pending = getAnalyticsCountry()
+    await new Promise(resolve => setImmediate(resolve))
+    await setGoogleAnalyticsEnabled(false)
+    await stopAnalyticsCountryLookup()
+    assert.equal(pendingSignal.aborted, true)
+    resolvePending(new Response('loc=US\n'))
+    assert.equal(await pending, undefined)
+    assert.equal(session.ga_country_cache, undefined)
+    assert.equal(await getAnalyticsCountry(), undefined)
+    assert.equal(requests, 3)
+  } finally {
+    await stopLookup?.()
+    globalThis.chrome = previousChrome
+    globalThis.fetch = previousFetch
+    if (previousSecret === undefined) delete globalThis.__GA_API_SECRET__
+    else globalThis.__GA_API_SECRET__ = previousSecret
+  }
+})
+
+it('sends coarse GA location and device data without replacing the collector ID', async () => {
+  const previousChrome = globalThis.chrome
+  const previousFetch = globalThis.fetch
+  const previousSecret = globalThis.__GA_API_SECRET__
+  const previousVersion = globalThis.__APP_VERSION__
+  const previousChannel = globalThis.__BUILD_CHANNEL__
+  const previousNetwork = globalThis.__NETWORK_MODE__
+  const local = {}
+  const session = {}
+  let gaBody
+  let stopReporting
+  globalThis.__GA_API_SECRET__ = 'local-test-secret'
+  globalThis.__APP_VERSION__ = '2.0.0-beta.2'
+  globalThis.__BUILD_CHANNEL__ = 'production'
+  globalThis.__NETWORK_MODE__ = 'mainnet'
+  globalThis.chrome = {
+    storage: {
+      local: {
+        get: async key => ({ [key]: local[key] }),
+        set: async values => Object.assign(local, values)
+      },
+      session: {
+        get: async key => ({ [key]: session[key] }),
+        set: async values => Object.assign(session, values),
+        remove: async keys => {
+          for (const key of Array.isArray(keys) ? keys : [keys]) delete session[key]
+        }
+      },
+      onChanged: { addListener: () => {} }
+    }
+  }
+
+  try {
+    const { setGoogleAnalyticsEnabled } = await import('../../../src/lib/analytics/preferences.ts')
+    const { sendGaEvent, stopGoogleAnalyticsReporting } =
+      await import('../../../src/lib/analytics/ga.ts')
+    stopReporting = stopGoogleAnalyticsReporting
+    await setGoogleAnalyticsEnabled(true)
+    globalThis.fetch = async (url, options) => {
+      if (url === 'https://rpc.zknoir.com/cdn-cgi/trace') return new Response('loc=US\n')
+      gaBody = JSON.parse(options.body)
+      return new Response('', { status: 204 })
+    }
+    await sendGaEvent(
+      'page_view',
+      {
+        browser: 'Chrome',
+        browser_major_version: '150',
+        device_category: 'desktop',
+        language: 'en-US',
+        operating_system: 'macOS',
+        page_id: PAGE_IDS.HOME,
+        page_location: 'https://noir-wallet.extension/noir_home',
+        page_title: PAGE_IDS.HOME
+      },
+      { foreground: true }
+    )
+    assert.equal(gaBody.user_location.country_id, 'US')
+    assert.match(gaBody.client_id, /^\d+\.\d+$/)
+    assert.equal(gaBody.device.browser_version, '150')
+    assert.equal(gaBody.device.model, 'Desktop')
+    assert.equal(gaBody.events[0].params.browser, undefined)
+    assert.equal(gaBody.events[0].params.page_id, PAGE_IDS.HOME)
+    assert.equal(gaBody.events[0].params.extension_version, '2.0.0-beta.2')
+    assert.match(local.ga_client_id, /^[0-9a-f-]{36}$/)
+    assert.notEqual(local.ga_client_id, gaBody.client_id)
+  } finally {
+    await stopReporting?.()
+    globalThis.chrome = previousChrome
+    globalThis.fetch = previousFetch
+    if (previousSecret === undefined) delete globalThis.__GA_API_SECRET__
+    else globalThis.__GA_API_SECRET__ = previousSecret
+    if (previousVersion === undefined) delete globalThis.__APP_VERSION__
+    else globalThis.__APP_VERSION__ = previousVersion
+    if (previousChannel === undefined) delete globalThis.__BUILD_CHANNEL__
+    else globalThis.__BUILD_CHANNEL__ = previousChannel
+    if (previousNetwork === undefined) delete globalThis.__NETWORK_MODE__
+    else globalThis.__NETWORK_MODE__ = previousNetwork
+  }
 })
 
 describe('privacy policy: outbound event minimization', () => {

@@ -79,6 +79,7 @@ import type { NetworkAccountMetadataInput } from '@/infrastructure/keyring/netwo
 import type { KeyringCommandBinding, KeyringCommandPayload } from '@/core/keyring/ports'
 import { BackgroundMultichainTransport } from '@/infrastructure/keyring/multichain/background-transport'
 import { parseRawExportedPrivateKey } from '@/infrastructure/keyring/multichain/raw-wallet-engine'
+import { isStoredAccountNetworkEnabled } from '@/lib/wallet-metadata-storage'
 
 // This migration-only profile anchors identities; it does not enable chain runtime capabilities.
 function getProvisioningChainProfile(): RetainedV1MigrationChainProfile {
@@ -372,6 +373,11 @@ export class CredentialLifecycleCoordinator {
     if (!keySourceSupportsChainFamily(keyDomain.source, family)) {
       throw new Error(`The active Wallet does not support ${family}`)
     }
+    if (keyDomain.source.kind === 'software') {
+      if (!(await isStoredAccountNetworkEnabled(keyDomainId, accountId, DEFAULT_NETWORK, family))) {
+        throw new Error(`The active Wallet has not enabled ${family}`)
+      }
+    }
   }
 
   async activeAccountSupportsChain(family: ChainDefinition['family']): Promise<boolean | null> {
@@ -389,7 +395,14 @@ export class CredentialLifecycleCoordinator {
     const active = snapshot.manifest.activeAccount
     if (!active) throw new Error('Active Wallet has no selected Account')
     const keyDomain = resolveKeyDomain(snapshot.keyDomains, active.keyDomainId)
-    return keySourceSupportsChainFamily(keyDomain.source, family)
+    if (!keySourceSupportsChainFamily(keyDomain.source, family)) return false
+    if (keyDomain.source.kind !== 'software') return true
+    return isStoredAccountNetworkEnabled(
+      active.keyDomainId,
+      active.accountId,
+      DEFAULT_NETWORK,
+      family
+    )
   }
 
   provisionKeystoneHardware(

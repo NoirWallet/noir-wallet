@@ -8,6 +8,7 @@ import {
 } from '@/config/multichain-feature-flags'
 import { getEvmNetworkConfigs } from '@/config/networks'
 import { resolveIntentsEvmChainId } from '@/core/services/intents-evm-assets'
+import { RHEA_SWAP_CHAIN_CATALOG } from '@/core/services/rhea-swap/rhea-swap-model'
 
 export type SelectableChainFamily = 'zcash' | 'evm' | 'bitcoin' | 'solana' | 'near'
 
@@ -64,6 +65,9 @@ export function isSelectableSwapBlockchain(
   if (normalized === 'near') return isSelectableChainFamily('near', enabledFlags)
   return (
     isSelectableChainFamily('evm', enabledFlags) &&
-    resolveIntentsEvmChainId(normalized, getEvmNetworkConfigs('mainnet')) !== null
+    (RHEA_SWAP_CHAIN_CATALOG.some(
+      chain => chain.walletFamily === 'evm' && chain.blockchain === normalized
+    ) ||
+      resolveIntentsEvmChainId(normalized, getEvmNetworkConfigs('mainnet')) !== null)
   )
 }

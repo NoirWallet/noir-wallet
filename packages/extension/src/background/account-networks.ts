@@ -20,6 +20,8 @@ import { IndexedDbStorageV2Repository } from '@/infrastructure/persistence/repos
 import type { BitcoinAddressDerivationPort } from '@/infrastructure/keyring/multichain/bitcoin-derivation-client'
 import { parseEvmAccountBinding } from '@/infrastructure/chains/evm'
 import type { StorageV2GenerationId, StorageV2ReadRepository } from '@/ports/repositories'
+import type { AccountNetworkFamily } from '@/core/wallet/account-network-selection'
+import { isStoredAccountNetworkEnabled } from '@/lib/wallet-metadata-storage'
 
 type AccountNetworksRepository = Pick<StorageV2ReadRepository, 'getActivePointer' | 'getSnapshot'>
 
@@ -64,6 +66,13 @@ export interface AccountNetworksCatalog {
 export interface AccountNetworksCoordinatorOptions {
   readonly repository: AccountNetworksRepository
   readonly chains: AddressGatedChainRegistry
+  readonly isNetworkEnabled?: (
+    scope: {
+      readonly keyDomainId: KeyDomainId
+      readonly accountId: AccountId
+    },
+    family: AccountNetworkFamily
+  ) => boolean | Promise<boolean>
   readonly getZcashShieldedReceiveAddress?: (scope: {
     readonly keyDomainId: KeyDomainId
     readonly accountId: AccountId
@@ -90,11 +99,33 @@ export class AccountNetworksCoordinator {
     if (!selection) return null
     return {
       reference: { walletId: selection.keyDomainId, accountId: selection.accountId },
-      chainIds: active.availableChainAccounts.map(item => item.chain.id)
+      chainIds: (
+        await Promise.all(
+          active.availableChainAccounts.map(async item =>
+            (await this.networkEnabled(selection, item.chain.family, active.catalog.keyDomains))
+              ? item.chain.id
+              : null
+          )
+        )
+      ).flatMap(chainId => (chainId === null ? [] : [chainId]))
     }
   }
 
-  async readCatalog(): Promise<AccountNetworksCatalog | null> {
+  private async networkEnabled(
+    scope: { readonly keyDomainId: KeyDomainId; readonly accountId: AccountId },
+    family: AccountNetworkFamily,
+    keyDomains: readonly { readonly id: KeyDomainId; readonly source: { readonly kind: string } }[]
+  ): Promise<boolean> {
+    if (keyDomains.find(item => item.id === scope.keyDomainId)?.source.kind !== 'software') {
+      return true
+    }
+    return (await this.options.isNetworkEnabled?.(scope, family)) ?? true
+  }
+
+  async readCatalog(
+    options: Readonly<{ deriveMissingAddresses?: boolean }> = {}
+  ): Promise<AccountNetworksCatalog | null> {
+    const deriveMissingAddresses = options.deriveMissingAddresses ?? true
     const pointer = await this.options.repository.getActivePointer()
     if (!pointer) return null
 
@@ -127,6 +158,14 @@ export class AccountNetworksCoordinator {
               .map(async chainAccount => {
                 const chain = this.options.chains.get(chainAccount.scope.chainId)
                 if (!chain || !keySourceSupportsAddressFamily(keyDomain.source, chain.family))
+                  return []
+                if (
+                  !(await this.networkEnabled(
+                    chainAccount.scope,
+                    chain.family,
+                    snapshot.keyDomains
+                  ))
+                )
                   return []
                 if (seenChains.has(chain.id)) {
                   throw new Error('Account has duplicate enabled ChainAccounts')
@@ -168,7 +207,8 @@ export class AccountNetworksCoordinator {
                 if (
                   chain.family === 'bitcoin' &&
                   keyDomain.source.kind === 'software' &&
-                  bitcoinDerivation
+                  bitcoinDerivation &&
+                  deriveMissingAddresses
                 ) {
                   try {
                     const persistedAddresses = addresses
@@ -220,7 +260,8 @@ export class AccountNetworksCoordinator {
                 if (
                   chain.family === 'evm' &&
                   supportsEvmPrivateExecution(keyDomain.source) &&
-                  evmPeaDerivation
+                  evmPeaDerivation &&
+                  deriveMissingAddresses
                 ) {
                   const binding = parseEvmAccountBinding(chainAccount, chain.id)
                   try {
@@ -321,6 +362,8 @@ export function createBackgroundAccountNetworksCoordinator(
     ),
     bitcoinDerivation,
     evmPeaDerivation,
-    getZcashShieldedReceiveAddress
+    getZcashShieldedReceiveAddress,
+    isNetworkEnabled: (scope, family) =>
+      isStoredAccountNetworkEnabled(scope.keyDomainId, scope.accountId, DEFAULT_NETWORK, family)
   })
 }

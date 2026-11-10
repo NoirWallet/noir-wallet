@@ -161,6 +161,7 @@ function parseStoredRecord(value: unknown): RheaSwapQuoteSessionRecord {
     'quoteRaw',
     'receivedAt',
     'expiresAt',
+    'privateSwapScope',
     'build',
     'submission'
   ])
@@ -179,6 +180,27 @@ function parseStoredRecord(value: unknown): RheaSwapQuoteSessionRecord {
     throw new Error('Stored RHEA Swap quote session metadata is invalid')
   }
   const request = parseStoredRequest(value.request)
+  const privateSwapScope = value.privateSwapScope
+  if (
+    privateSwapScope !== undefined &&
+    (!isRecord(privateSwapScope) ||
+      Object.keys(privateSwapScope).some(
+        key => !['walletId', 'accountId', 'purpose'].includes(key)
+      ) ||
+      typeof privateSwapScope.walletId !== 'string' ||
+      typeof privateSwapScope.accountId !== 'string' ||
+      (privateSwapScope.purpose !== undefined &&
+        privateSwapScope.purpose !== 'wallet-swap' &&
+        privateSwapScope.purpose !== 'public-cross-chain-send' &&
+        privateSwapScope.purpose !== 'confidential-funding' &&
+        privateSwapScope.purpose !== 'private-swap' &&
+        privateSwapScope.purpose !== 'private-transfer' &&
+        privateSwapScope.purpose !== 'private-cross-chain-send' &&
+        privateSwapScope.purpose !== 'private-dapp-transfer' &&
+        privateSwapScope.purpose !== 'public-private-send'))
+  ) {
+    throw new Error('Stored Private Swap scope is invalid')
+  }
   const quoteRaw = value.quoteRaw as SwapQuoteDataRaw
   normalizeQuote(request, quoteRaw, value.receivedAt as number)
   let build: RheaSwapQuoteSessionRecord['build']
@@ -266,6 +288,27 @@ function parseStoredRecord(value: unknown): RheaSwapQuoteSessionRecord {
     schemaVersion: 1,
     quoteHandle: value.quoteHandle,
     request,
+    ...(privateSwapScope === undefined
+      ? {}
+      : {
+          privateSwapScope: Object.freeze({
+            walletId: readStoredString(privateSwapScope.walletId, 'Private Swap wallet ID', 160),
+            accountId: readStoredString(privateSwapScope.accountId, 'Private Swap Account ID', 160),
+            ...(privateSwapScope.purpose === undefined
+              ? {}
+              : {
+                  purpose: privateSwapScope.purpose as
+                    | 'wallet-swap'
+                    | 'public-cross-chain-send'
+                    | 'confidential-funding'
+                    | 'private-swap'
+                    | 'private-transfer'
+                    | 'private-cross-chain-send'
+                    | 'private-dapp-transfer'
+                    | 'public-private-send'
+                })
+          })
+        }),
     quoteRaw,
     receivedAt: value.receivedAt as number,
     expiresAt: value.expiresAt as number | null,

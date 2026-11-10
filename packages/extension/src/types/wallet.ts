@@ -4,6 +4,8 @@
 
 export type Network = 'mainnet' | 'testnet'
 
+import type { AccountNetworkFamily } from '@/core/wallet/account-network-selection'
+
 export type AddressType = 'transparent' | 'shielded'
 export type FundingSource = AddressType
 
@@ -51,6 +53,10 @@ export interface AccountData {
   networkAddresses?: Partial<Record<Network, AccountAddresses>>
   /** Network-scoped scan birthday. `birthdayHeight` is the active-network projection. */
   networkBirthdayHeights?: Partial<Record<Network, number>>
+  /** Network-scoped enabled chain families; absent selections retain legacy behavior. */
+  networkSelections?: Partial<Record<Network, readonly AccountNetworkFamily[]>>
+  /** A prior Zcash enablement keeps its scan history when the network is selected again. */
+  networkZcashHistoryConfigured?: Partial<Record<Network, true>>
   /** Network-scoped receive addresses, including earlier rotated addresses. */
   networkShieldedReceiveAddressHistory?: Partial<Record<Network, ShieldedReceiveAddress[]>>
   /** V1 migration input; promoted into the network-scoped history on hydration. */
@@ -88,6 +94,8 @@ export interface WalletItem {
   createdAt: number
   isPinned: boolean
   keySource?: KeySource
+  /** Recorded when the mnemonic enters the wallet; absent for legacy metadata. */
+  secretPhraseOrigin?: 'created' | 'imported'
   /** A positive revision distinguishes generated wallets created after backup confirmation became mandatory. */
   secretPhraseCreationRevision?: number
   secretPhraseBackupVerifiedAt?: number
@@ -139,6 +147,7 @@ export type TransactionStatus = 'pending' | 'confirming' | 'relay_confirmed' | '
 
 export interface QuoteBinding {
   provider?: 'near-intents' | 'rhea-cross-chain-dex'
+  userAction?: 'transfer'
   quoteHandle?: string
   executionId?: string
   router?: string
@@ -204,6 +213,7 @@ export interface SendTransactionParams {
   fundingSource?: FundingSource
   /** ZIP-317 marginal fee per action (zatoshis); omitted = standard tier. */
   marginalFeeZats?: number
+  feeQuoteId?: string
 }
 
 /**

@@ -26,9 +26,10 @@ function rankToken(
 export function sortTokensByBalanceValue(
   tokens: readonly SwapToken[],
   balances?: ReadonlyMap<string, string>,
-  previousOrder?: ReadonlyMap<string, number>
+  previousOrder?: ReadonlyMap<string, number>,
+  defaultOrder?: ReadonlyMap<string, number>
 ): readonly SwapToken[] {
-  if (!balances && !previousOrder) return tokens
+  if (!balances && !previousOrder && !defaultOrder) return tokens
 
   return Object.freeze(
     tokens
@@ -49,6 +50,13 @@ export function sortTokensByBalanceValue(
         }
         if (left.amount && right.amount && !left.amount.eq(right.amount)) {
           return left.amount.gt(right.amount) ? -1 : 1
+        }
+        if (defaultOrder) {
+          const leftOrder =
+            defaultOrder.get(`${left.token.blockchain}:${left.token.assetId}`) ?? Infinity
+          const rightOrder =
+            defaultOrder.get(`${right.token.blockchain}:${right.token.assetId}`) ?? Infinity
+          if (leftOrder !== rightOrder) return leftOrder < rightOrder ? -1 : 1
         }
         const symbolOrder = left.token.symbol.localeCompare(right.token.symbol)
         if (symbolOrder !== 0) return symbolOrder

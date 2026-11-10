@@ -1,12 +1,54 @@
-import type { PortfolioAssetView, PortfolioChainView } from '@/core/portfolio'
+import type { PortfolioAssetView, PortfolioChainView, PortfolioReadModel } from '@/core/portfolio'
 
 import { type AssetPriceReadModel, findAssetPrice } from '@/core/prices'
 import Big from '@/lib/big'
-import { formatBaseUnitDecimalAmount } from '@/lib/number-format'
 import { getPortfolioAssetUsdValue } from '@/popup/components/portfolio/portfolio-prices'
 import { isAssetVisibleInAssetView } from '@/popup/components/portfolio/portfolio-asset-visibility'
+import { getNearConfidentialChainId } from './near-confidential-holdings'
+import type { ChainFeatureFlagValue } from '@/config/multichain-feature-flags'
+import { isSelectableChainFamily } from './chain-selection-availability'
 
 const ASSET_FALLBACK_ORDER = ['USDC', 'USDT', 'ZEC', 'BTC', 'ETH', 'SOL', 'NEAR'] as const
+
+export function resolvePortfolioChainSelection(
+  model: PortfolioReadModel | null,
+  persistedSelection: readonly string[] | null | undefined,
+  enabledFlags: readonly ChainFeatureFlagValue[]
+): readonly string[] {
+  const available: readonly string[] =
+    model?.chains
+      .filter(chain => isSelectableChainFamily(chain.chain.family, enabledFlags))
+      .map(chain => chain.chain.id) ?? []
+  const selected = persistedSelection?.filter(chainId => available.includes(chainId))
+  return selected?.length === 1 ? selected : available
+}
+
+export function projectPortfolioForChains(
+  model: PortfolioReadModel | null,
+  selectedChainIds: readonly string[]
+): PortfolioReadModel | null {
+  if (!model) return null
+  const selected = new Set(selectedChainIds)
+  const chains = model.chains.filter(chain => selected.has(chain.chain.id))
+  if (chains.length === model.chains.length) return model
+  return {
+    ...model,
+    chains,
+    assets: chains.flatMap(chain => chain.assets),
+    ...(model.confidential
+      ? {
+          confidential: {
+            ...model.confidential,
+            assets: model.confidential.assets.filter(asset => {
+              const chainId = getNearConfidentialChainId(asset)
+              return chainId !== null && selected.has(chainId)
+            })
+          }
+        }
+      : {}),
+    status: chains.length === 0 ? 'empty' : chains.length === 1 ? chains[0]!.status : model.status
+  }
+}
 
 export interface PortfolioAssetGroupEntry {
   readonly asset: PortfolioAssetView
@@ -21,11 +63,6 @@ export interface PortfolioAssetGroup {
   readonly bundled: boolean
   readonly representativeAssetId: string
   readonly iconUrl?: string
-}
-
-export interface PortfolioAccountBalanceBreakdown {
-  readonly main: Big
-  readonly privateBalance: Big
 }
 
 export function getPortfolioChainBalanceStatus(
@@ -160,7 +197,12 @@ export function partitionPortfolioAssets(
 }> {
   const lowValueAssets = assets.filter(asset => {
     const fiat = getPortfolioAssetUsdValue(asset, prices)
-    return asset.asset.kind === 'token' && fiat !== null && new Big(fiat).lt(lowValueUsdThreshold)
+    return (
+      asset.asset.kind === 'token' &&
+      asset.source !== 'user-added' &&
+      fiat !== null &&
+      new Big(fiat).lt(lowValueUsdThreshold)
+    )
   })
   return Object.freeze({
     primaryAssets: Object.freeze(assets.filter(asset => !lowValueAssets.includes(asset))),
@@ -272,7 +314,12 @@ export function partitionPortfolioAssetGroups(
   for (const group of groups) {
     const fiat = getCompletePortfolioAssetGroupUsdValue(group, prices)
     const onlyTokens = group.entries.every(entry => entry.asset.asset.kind === 'token')
-    if (onlyTokens && fiat !== null && new Big(fiat).lt(lowValueUsdThreshold)) {
+    if (
+      onlyTokens &&
+      group.entries.every(entry => entry.asset.source !== 'user-added') &&
+      fiat !== null &&
+      new Big(fiat).lt(lowValueUsdThreshold)
+    ) {
       lowValueAssetGroups.push(group)
     } else {
       primaryAssetGroups.push(group)
@@ -282,19 +329,4 @@ export function partitionPortfolioAssetGroups(
     primaryAssetGroups: Object.freeze(primaryAssetGroups),
     lowValueAssetGroups: Object.freeze(lowValueAssetGroups)
   })
-}
-
-export function calculatePortfolioAccountBalanceBreakdown(
-  entries: readonly PortfolioAssetGroupEntry[]
-): PortfolioAccountBalanceBreakdown | null {
-  let main = new Big(0)
-  let privateBalance = new Big(0)
-  for (const entry of entries) {
-    const { mainRaw, privateRaw } = entry.asset.balance
-    if (mainRaw === undefined || privateRaw === undefined) return null
-    const decimals = entry.asset.metadata.decimals
-    main = main.plus(formatBaseUnitDecimalAmount(mainRaw, decimals))
-    privateBalance = privateBalance.plus(formatBaseUnitDecimalAmount(privateRaw, decimals))
-  }
-  return Object.freeze({ main, privateBalance })
 }

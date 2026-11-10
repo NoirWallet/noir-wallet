@@ -1,9 +1,11 @@
 import { type SwapToken } from '@/core/services/intents-api'
 import zecIcon from '@/images/zec.svg'
 import usdcIcon from '@/images/usdc.svg'
+import ethIcon from '@/images/eth.svg'
 import { cn } from '@/lib/utils'
-import { isBundledWalletAsset } from './token-display-policy'
-import { getTokenIconCandidates } from './token-icon-candidates'
+import { findBundledWalletMarketAssetId, isBundledWalletAsset } from './token-display-policy'
+import { MARKET_ASSETS } from '@/config/asset-market-assets'
+import { getTokenIconCandidates, isBundledEthIconIdentity } from './token-icon-candidates'
 import {
   clearTokenIconUrlFailure,
   hasTokenIconUrlFailed,
@@ -54,10 +56,19 @@ export function TokenIcon({
   const assetId = token?.assetId || assetIdProp
   const blockchain = token?.blockchain || blockchainProp
   const bundledIconForSymbol = bundledTokenIcons[symbol.toUpperCase()]
+  const marketAsset = assetId ? findBundledWalletMarketAssetId(assetId) : null
+  const mappedIcon = isBundledEthIconIdentity(assetId, token)
+    ? ethIcon
+    : marketAsset === MARKET_ASSETS.usdc
+      ? usdcIcon
+      : marketAsset === MARKET_ASSETS.zec
+        ? zecIcon
+        : undefined
   const nativeToken =
     (token !== undefined && token.contractAddress == null) || nativeChain !== undefined
   const bundledIcon =
-    (assetId && isBundledWalletAsset(assetId)) || nativeToken ? bundledIconForSymbol : undefined
+    mappedIcon ??
+    ((assetId && isBundledWalletAsset(assetId)) || nativeToken ? bundledIconForSymbol : undefined)
   const iconCandidates = getTokenIconCandidates({
     token,
     icon: iconProp,

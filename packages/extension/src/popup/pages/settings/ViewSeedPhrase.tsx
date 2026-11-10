@@ -5,7 +5,7 @@ import { Input } from '../../components/ui/input'
 import { PageHeader } from '../../components/common/PageHeader'
 import { SeedPhraseDisplay } from '../../components/seed-phrase/SeedPhraseDisplay'
 import { BackupWordInputs } from '../../components/seed-phrase/BackupWordInputs'
-import { CopyToast, useCopyToClipboard } from '../../components/common/CopyToast'
+import { CopyFeedbackIcon, CopyToast, useCopyToClipboard } from '../../components/common/CopyToast'
 import { useWalletBackupVerification } from '../../hooks/useWalletBackupVerification'
 import { useLocation, useNavigate } from '../../provider/Router'
 import { zcashWalletRuntimeClient } from '@/popup/services/zcash-wallet-runtime-client'
@@ -13,7 +13,7 @@ import { getWalletsNeedingSecretPhraseBackup } from '@/core/wallet/secret-phrase
 import { didCredentialSessionEnd } from '@/core/wallet/credential-session-state'
 import { rehydrateWalletStore, useWalletStore } from '@/store/wallet-store'
 import { classifyError } from '@/lib/errors'
-import { formatWalletBackupName } from '@/lib/format'
+import { formatWalletName } from '@/lib/format'
 
 type BackupStep = 'password' | 'phrase' | 'confirm'
 
@@ -38,12 +38,11 @@ function SeedPhraseContent({
   backupMode: boolean
 }) {
   const wallets = useWalletStore(state => state.wallets)
-  const displayNames = useWalletStore(state => state.accountDisplayNames)
   const targetWalletId = useRef(walletId ?? useWalletStore.getState().currentWalletId).current
   const targetWallet = targetWalletId
     ? wallets.find(wallet => wallet.id === targetWalletId)
     : undefined
-  const targetName = targetWallet ? formatWalletBackupName(targetWallet, wallets, displayNames) : ''
+  const targetName = targetWallet ? formatWalletName(targetWallet, wallets) : ''
   const backupTarget =
     backupMode &&
     Boolean(
@@ -63,7 +62,7 @@ function SeedPhraseContent({
   const mounted = useRef(false)
   const confirming = useRef(false)
   const verification = useWalletBackupVerification(targetWalletId)
-  const { copyToClipboard, showToast } = useCopyToClipboard()
+  const { copyToClipboard, showToast, copiedKey } = useCopyToClipboard()
 
   const returnToPage = () => {
     if (
@@ -265,10 +264,11 @@ function SeedPhraseContent({
       <div className="page-footer flex gap-2">
         <Button
           variant={backupMode ? 'outline' : 'default'}
-          onClick={() => copyToClipboard(phraseWords.join(' '))}
+          onClick={() => void copyToClipboard(phraseWords.join(' '))}
           className="h-[45px] flex-1"
         >
-          Copy
+          <CopyFeedbackIcon copied={copiedKey === 'default'} width={16} height={16} />
+          {copiedKey === 'default' ? 'Copied' : 'Copy'}
         </Button>
         {backupMode && (
           <Button onClick={handleContinue} className="h-[45px] flex-1">

@@ -32,6 +32,32 @@ const zcashCatalogRow = Object.freeze({
   platform: 'nearIntents'
 })
 
+it('keeps custom EVM native assets distinct while quoting their native sentinel', () => {
+  for (const chain of [4663, 999]) {
+    const [row] = normalizeFromTokenList(
+      {
+        native: {
+          chainId: chain,
+          address: `0x${'0'.repeat(40)}`,
+          symbol: 'NATIVE',
+          decimals: 18,
+          isNative: true
+        }
+      },
+      chain
+    )
+    const token = toRheaSwapToken(row)
+    assert.equal(token.assetId, `eip155:${chain}/slip44:60`)
+    assert.equal(token.rheaAddress, `0x${'0'.repeat(40)}`)
+    assert.equal(token.contractAddress, null)
+    const [destination] = normalizeCrossChainToTokenList(
+      { tokens: [{ ...row.raw, assetId: 'nep141:hood.omft.near' }] },
+      chain
+    )
+    assert.equal(toRheaSwapToken(destination).assetId, token.assetId)
+  }
+})
+
 it('quotes Zcash catalog aliases in both directions without changing the wallet asset identity', async () => {
   const legacyRow = { ...zcashCatalogRow, assetId: 'nep141:zec.omft.near', address: 'zec' }
   const rows = [zcashCatalogRow, legacyRow]

@@ -15,15 +15,22 @@ export function getWalletsNeedingSecretPhraseBackup(wallets: readonly WalletItem
   return wallets
     .filter(wallet => {
       if (
-        !Number.isSafeInteger(wallet.createdAt) ||
-        wallet.createdAt < LEGACY_CREATION_START ||
         (wallet.keySource !== undefined && wallet.keySource !== 'software') ||
-        !/^Wallet \d{13}$/.test(wallet.name) ||
+        wallet.secretPhraseOrigin === 'imported' ||
         isPositiveSafeInteger(wallet.secretPhraseCreationRevision) ||
         isPositiveSafeInteger(wallet.secretPhraseBackupVerifiedAt)
       ) {
         return false
       }
+      if (wallet.secretPhraseOrigin === 'created') return true
+      // Legacy metadata has no reliable provenance. Preserve its existing reminder
+      // eligibility without inventing either an import origin or backup verification.
+      if (
+        !Number.isSafeInteger(wallet.createdAt) ||
+        wallet.createdAt < LEGACY_CREATION_START ||
+        !/^Wallet \d{13}$/.test(wallet.name)
+      )
+        return false
       const primary = wallet.accounts.filter(account => account.derivationIndex === 0)
       return primary.length === 1 && primary[0].name === 'Account 1'
     })

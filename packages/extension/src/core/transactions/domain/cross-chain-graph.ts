@@ -393,7 +393,7 @@ export function bindNearIntentsTransactionGraph(input: {
   return parseTransactionGraph({
     root: {
       ...graph.root,
-      kind: binding.kind,
+      kind: getTransactionProtocolIntentKind(binding),
       segmentIds: [
         origin.id,
         input.segmentIds.relay,
@@ -475,8 +475,7 @@ export function bindRheaSwapTransactionGraph(input: {
     graph.segments.length !== 1 ||
     graph.root.segmentIds.length !== 1 ||
     !intent?.sender ||
-    !intent.recipient ||
-    binding.expiresAt <= input.now
+    !intent.recipient
   ) {
     throw new Error('RHEA Swap binding requires a fresh prepared source transaction')
   }
@@ -494,6 +493,9 @@ export function bindRheaSwapTransactionGraph(input: {
     intent.recipient.address !== binding.sourceTarget
   ) {
     throw new Error('RHEA Swap binding does not match the source transfer')
+  }
+  if (binding.expiresAt <= input.now) {
+    throw new Error('RHEA Swap quote expired. Get a new quote and review it again.')
   }
   const uniqueIds = new Set([
     origin.id,

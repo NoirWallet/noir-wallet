@@ -1,7 +1,6 @@
 import { test } from 'node:test'
 import { expect } from '@playwright/test'
 import {
-  createNearIntentsSupplyBinding,
   createNearIntentsSwapBinding,
   createQuoteDepositTransferClient,
   createRheaSwapBinding,
@@ -15,6 +14,7 @@ import {
 import { parseAssetId } from '../../../src/core/chains/registry/asset-id.ts'
 import {
   isPreparedSwapFeeUnaffordable,
+  isPrivateSwapDestinationSupported,
   resolveConfidentialFundingDestinationToken,
   resolveLockedWalletSwapSourceToken,
   resolveSwapReviewAction
@@ -166,6 +166,53 @@ function nearIntentsBinding(source, depositAddress, amountRaw) {
 }
 
 test.describe('quote deposit transfer client', () => {
+  test('binds custom EVM native swaps to the enabled chain and scoped account', () => {
+    const chainId = 'eip155:999'
+    const model = portfolio()
+    const chain = {
+      chain: { id: chainId, family: 'evm', capabilities: { transaction: { status: 'available' } } }
+    }
+    const asset = {
+      asset: { id: `${chainId}/slip44:60`, chainId, kind: 'native' },
+      metadata: { symbol: 'HYPE', decimals: 18 }
+    }
+    model.chains.push(chain)
+    model.assets.push(asset)
+    const targets = {
+      ...receiveTargets,
+      targets: [
+        ...receiveTargets.targets,
+        {
+          chain: { id: chainId },
+          kind: 'evm',
+          address: '0x3333333333333333333333333333333333333333'
+        }
+      ]
+    }
+    const native = {
+      ...token(asset.asset.id, 'hyperevm', 18),
+      rheaChainId: '999',
+      isNative: true,
+      contractAddress: null
+    }
+    expect(resolveWalletOwnedQuoteAsset(native, model, targets, mappings)).toMatchObject({
+      asset,
+      chain,
+      refundAddress: targets.targets.at(-1).address
+    })
+    expect(resolveWalletOwnedQuoteAsset(native, model, receiveTargets, mappings)).toBeNull()
+    expect(
+      resolveWalletOwnedQuoteAsset(native, model, { ...targets, accountId: 'other' }, mappings)
+    ).toBeNull()
+    expect(
+      resolveWalletOwnedQuoteAsset(
+        { ...native, assetId: 'nep141:eth.omft.near' },
+        model,
+        targets,
+        mappings
+      )
+    ).toBeNull()
+  })
   test('wallet-funded swaps proceed through signing or transfer and never external deposit', () => {
     const base = {
       isZecSource: false,
@@ -445,7 +492,7 @@ test.describe('quote deposit transfer client', () => {
     }
   })
 
-  test('reserves 25% of the EVM fee cap beyond the live signing fee and rejects the preflight', async () => {
+  test('reserves 25% of the EVM fee cap from a read-only estimate', async () => {
     const calls = []
     const source = {
       family: 'evm',
@@ -457,17 +504,9 @@ test.describe('quote deposit transfer client', () => {
     }
     const client = createQuoteDepositTransferClient({
       evm: {
-        prepareTransfer: async (intent, options) => {
-          calls.push(['prepare', intent, options])
-          return {
-            graph: { root: { id: 'transaction:evm:max' } },
-            review: {
-              summary: {
-                schema: 'evm.transaction.v1',
-                fields: { maximumFeeWei: '21000' }
-              }
-            }
-          }
+        estimateTransferFee: async (intent, options) => {
+          calls.push(['estimate', intent, options])
+          return { maximumFeeWei: '21000', amountIndependent: true }
         },
         approveTransfer: async () => {
           throw new Error('unexpected approve')
@@ -500,19 +539,20 @@ test.describe('quote deposit transfer client', () => {
       amountRaw: '73750',
       networkFeeRaw: '21000',
       networkFeeSymbol: 'POL',
-      networkFeeDecimals: 18
+      networkFeeDecimals: 18,
+      expiresAt: expect.any(Number),
+      evmFeeEstimate: { maximumFeeWei: '21000', amountIndependent: true }
     })
     expect(calls).toEqual([
       [
-        'prepare',
+        'estimate',
         {
           assetId: EVM_ASSET_ID,
           recipient: '0x2222222222222222222222222222222222222222',
           amountRaw: '1'
         },
         { feeTier: 'fast' }
-      ],
-      ['reject', 'transaction:evm:max']
+      ]
     ])
   })
 
@@ -588,12 +628,9 @@ test.describe('quote deposit transfer client', () => {
   test('can estimate native Max even when the live fee consumes most of the source balance', async () => {
     const client = createQuoteDepositTransferClient({
       evm: {
-        prepareTransfer: async intent => {
+        estimateTransferFee: async intent => {
           if (BigInt(intent.amountRaw) + 700n > 1000n) throw new Error('Insufficient funds')
-          return {
-            graph: { root: { id: 'tiny-balance' } },
-            review: { summary: { schema: 'evm.transaction.v1', fields: { maximumFeeWei: '700' } } }
-          }
+          return { maximumFeeWei: '700' }
         },
         rejectTransfer: async () => {}
       }
@@ -629,20 +666,12 @@ test.describe('quote deposit transfer client', () => {
       }
       const client = createQuoteDepositTransferClient({
         evm: {
-          prepareTransfer: async () => {
+          estimateTransferFee: async () => {
             throw new Error('must not estimate a plain transfer')
           },
-          prepareContractCall: async (intent, options) => {
+          estimateContractCallFee: async (intent, options) => {
             calls.push([intent, options])
-            return {
-              graph: { root: { id: 'actual-call' } },
-              review: {
-                summary: {
-                  schema: 'evm.transaction.v1',
-                  fields: { maximumFeeWei: '300000' }
-                }
-              }
-            }
+            return { maximumFeeWei: '300000' }
           },
           rejectTransfer: async id => {
             calls.push(id)
@@ -670,12 +699,11 @@ test.describe('quote deposit transfer client', () => {
             calldata: transaction.data
           },
           { executionMode: mode, feeTier: 'fast' }
-        ],
-        'actual-call'
+        ]
       ])
       source.asset.balance.availableRaw = '100'
       await expect(client.estimateMaximum(input)).rejects.toThrow('does not cover')
-      expect(calls.at(-1)).toBe('actual-call')
+      expect(calls.at(-1)[0].calldata).toBe(transaction.data)
       await expect(
         client.estimateMaximum({ ...input, evmTransaction: { ...transaction, chainId: 56 } })
       ).rejects.toThrow('does not match')
@@ -686,19 +714,11 @@ test.describe('quote deposit transfer client', () => {
     const calls = []
     const client = createQuoteDepositTransferClient({
       evm: {
-        prepareTransfer: async intent => {
+        estimateTransferFee: async intent => {
           calls.push(intent)
-          return {
-            graph: { root: { id: 'plain-route' } },
-            review: {
-              summary: {
-                schema: 'evm.transaction.v1',
-                fields: { maximumFeeWei: '63000' }
-              }
-            }
-          }
+          return { maximumFeeWei: '63000' }
         },
-        prepareContractCall: async () => {
+        estimateContractCallFee: async () => {
           throw new Error('not a contract call')
         },
         rejectTransfer: async id => {
@@ -733,8 +753,7 @@ test.describe('quote deposit transfer client', () => {
         assetId: EVM_ASSET_ID,
         recipient: '0x2222222222222222222222222222222222222222',
         amountRaw: '500100'
-      },
-      'plain-route'
+      }
     ])
   })
 
@@ -931,6 +950,40 @@ test.describe('quote deposit transfer client', () => {
       address: '0x2222222222222222222222222222222222222222',
       chain: { id: BSC_CHAIN_ID }
     })
+
+    const customTarget = {
+      chain: { id: 'eip155:999' },
+      kind: 'evm',
+      address: '0x3333333333333333333333333333333333333333'
+    }
+    const customToken = {
+      ...token(`eip155:999/erc20:${USER_TOKEN_CONTRACT}`, 'hyperevm', 18),
+      rheaChainId: '999',
+      contractAddress: USER_TOKEN_CONTRACT
+    }
+    const customTargets = { ...receiveTargets, targets: [...receiveTargets.targets, customTarget] }
+    expect(
+      resolveWalletQuoteReceiveTarget(customToken, portfolio(), customTargets, mappings)
+    ).toEqual(customTarget)
+    expect(
+      resolveWalletQuoteReceiveTarget(customToken, portfolio(), receiveTargets, mappings)
+    ).toBeNull()
+    expect(
+      resolveWalletQuoteReceiveTarget(
+        customToken,
+        portfolio(),
+        { ...customTargets, accountId: 'other' },
+        mappings
+      )
+    ).toBeNull()
+    expect(
+      resolveWalletQuoteReceiveTarget(
+        { ...customToken, assetId: 'nep141:eth.omft.near' },
+        portfolio(),
+        customTargets,
+        mappings
+      )
+    ).toBeNull()
   })
 
   test('resolves the active wallet address for a native NEAR RHEA destination', () => {
@@ -949,6 +1002,43 @@ test.describe('quote deposit transfer client', () => {
       address: 'alice.near',
       chain: { id: NEAR_CHAIN_ID }
     })
+  })
+
+  test('allows Private swap destinations at the Account EVM Main or PEA address', () => {
+    const evm = { ...token('nep141:eth.omft.near', 'eth', 18), sources: ['nearintents'] }
+    const zec = { ...token('nep141:zec.omft.near', 'zec', 8), sources: ['nearintents'] }
+    const privateAddresses = new Map([[EVM_CHAIN_ID, '0x3333333333333333333333333333333333333333']])
+
+    expect(
+      isPrivateSwapDestinationSupported(evm, portfolio(), receiveTargets, privateAddresses)
+    ).toBe(true)
+    expect(
+      isPrivateSwapDestinationSupported(evm, portfolio(), receiveTargets, new Map(), 'main')
+    ).toBe(true)
+    expect(
+      isPrivateSwapDestinationSupported(zec, portfolio(), receiveTargets, privateAddresses)
+    ).toBe(false)
+    expect(
+      isPrivateSwapDestinationSupported(zec, portfolio(), receiveTargets, privateAddresses, 'main')
+    ).toBe(false)
+    expect(
+      isPrivateSwapDestinationSupported(
+        zec,
+        portfolio(),
+        receiveTargets,
+        privateAddresses,
+        'private',
+        { shielded: 'u1own', transparent: 't1own' }
+      )
+    ).toBe(true)
+    expect(
+      isPrivateSwapDestinationSupported(
+        evm,
+        portfolio(),
+        receiveTargets,
+        new Map([[EVM_CHAIN_ID, '0x1111111111111111111111111111111111111111']])
+      )
+    ).toBe(false)
   })
 
   test('maps an Asset details wallet ID back to its Intents Swap source', () => {
@@ -1208,64 +1298,6 @@ test.describe('quote deposit transfer client', () => {
 
     expect(() => create({ amountIn: '999' })).toThrow(/does not match/)
     expect(() => create({ deadline: '2026-08-10T23:59:59.000Z' })).toThrow(/expired/)
-  })
-
-  test('binds an existing-MCA EVM supply quote to the RHEA position and exact source transfer', () => {
-    const source = resolveWalletOwnedQuoteAsset(
-      token('nep141:eth.omft.near', 'eth', 18),
-      portfolio(),
-      receiveTargets,
-      mappings
-    )
-    const quote = {
-      depositAddress: '0x2222222222222222222222222222222222222222',
-      expectedReceived: '0.009',
-      minAmountOut: '0.0089',
-      amountInRaw: '1000000000000000',
-      amountOutRaw: '900000',
-      minAmountOutRaw: '890000',
-      deadline: '2026-08-11T01:00:00.000Z'
-    }
-    const binding = createNearIntentsSupplyBinding({
-      source,
-      amountInRaw: quote.amountInRaw,
-      mcaId: 'rhea00000x.multica.near',
-      quote,
-      destinationAsset: 'nep141:eth.bridge.near',
-      now: Date.parse('2026-08-11T00:00:00.000Z')
-    })
-
-    expect(binding).toEqual({
-      schemaVersion: 1,
-      provider: 'near-intents',
-      kind: 'supply',
-      depositAddress: quote.depositAddress,
-      refundAddress: source.refundAddress,
-      expiresAt: Date.parse(quote.deadline),
-      origin: {
-        chainId: EVM_CHAIN_ID,
-        assetId: EVM_ASSET_ID,
-        protocolAssetId: 'nep141:eth.omft.near'
-      },
-      destination: {
-        chainId: EVM_CHAIN_ID,
-        assetId: EVM_ASSET_ID,
-        protocolAssetId: 'nep141:eth.bridge.near',
-        recipient: 'rhea00000x.multica.near',
-        expectedAmountRaw: '900000',
-        minimumAmountRaw: '890000'
-      }
-    })
-    expect(() =>
-      createNearIntentsSupplyBinding({
-        source,
-        amountInRaw: '999',
-        mcaId: 'rhea00000x.multica.near',
-        quote,
-        destinationAsset: 'nep141:eth.bridge.near',
-        now: Date.parse('2026-08-11T00:00:00.000Z')
-      })
-    ).toThrow(/does not match/)
   })
 
   test('routes Bitcoin quote deposits as exact-value PSBT transfers', async () => {

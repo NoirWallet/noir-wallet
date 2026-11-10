@@ -49,6 +49,7 @@ export interface AssetMarketHistorySourceMapping {
   readonly marketAssetId: MarketAssetId
   readonly primary: GeckoTerminalPoolSource | null
   readonly fallback: AssetMarketHistoryFallbackSource
+  readonly backupCoinGeckoId?: MarketAssetId
 }
 
 export interface AssetMarketHistoryPriceMapping {
@@ -115,7 +116,14 @@ export function getAssetMarketHistorySourceMappings(
             token: gecko.token
           })
         : null
-    return Object.freeze({ ...mapping, primary, fallback: historyFallback(mapping.marketAssetId) })
+    return Object.freeze({
+      ...mapping,
+      primary,
+      fallback: historyFallback(mapping.marketAssetId),
+      ...(mapping.marketAssetId === MARKET_ASSETS.bnb
+        ? { backupCoinGeckoId: createMarketAssetId('binancecoin') }
+        : {})
+    })
   })
   const registeredAssetIds = new Set(assets.list().map(entry => entry.asset.id as string))
   const mappingByAssetId = new Map(mappings.map(mapping => [mapping.assetId, mapping]))
@@ -135,7 +143,8 @@ export function getAssetMarketHistorySourceMappings(
       primary: shared?.primary ?? null,
       fallback:
         shared?.fallback ??
-        Object.freeze({ source: 'coingecko' as const, coinId: mapping.marketAssetId })
+        Object.freeze({ source: 'coingecko' as const, coinId: mapping.marketAssetId }),
+      ...(shared?.backupCoinGeckoId ? { backupCoinGeckoId: shared.backupCoinGeckoId } : {})
     })
     mappingByAssetId.set(mapping.assetId, historyMapping)
     mappingByMarketAssetId.set(mapping.marketAssetId, historyMapping)

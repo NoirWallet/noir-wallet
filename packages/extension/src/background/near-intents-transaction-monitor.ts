@@ -14,6 +14,8 @@ import {
 } from '@/infrastructure/persistence/repositories'
 import { getRequiredConfirmations } from '@/lib/transaction-status'
 import { lookupTransaction } from '@/lib/zcash-node-rpc'
+import { getConfidentialFundingNetworkConfig } from '@/config/intents'
+import { ConfidentialFundingApi } from './confidential-funding-api'
 
 export const NEAR_INTENTS_TRANSACTION_MONITOR_ALARM = 'near-intents-transaction-monitor-alarm'
 const POLL_DELAY_MINUTES = 0.5
@@ -25,7 +27,30 @@ export class BackgroundNearIntentsTransactionMonitor {
   constructor() {
     this.monitor = new NearIntentsTransactionMonitor({
       repository: new IndexedDbTransactionRepository(),
-      fetchStatus: async depositAddress => {
+      fetchStatus: async (depositAddress, binding) => {
+        if (binding.userAction === 'transfer') {
+          const config = getConfidentialFundingNetworkConfig(DEFAULT_NETWORK)
+          if (!config) return null
+          const status = await new ConfidentialFundingApi(
+            config,
+            '',
+            __RHEA_SWAP_ACCESS_TOKEN__
+          ).getOneClickStatus(depositAddress)
+          const normalized = status.status.toUpperCase()
+          return parseNearIntentsStatusObservation({
+            status:
+              normalized === 'SUCCESS' || normalized === 'COMPLETED'
+                ? 'SUCCESS'
+                : normalized === 'REFUNDED' || normalized === 'FAILED'
+                  ? normalized
+                  : 'PENDING',
+            ...(status.settledAmountOutRaw === undefined
+              ? {}
+              : { amountOutRaw: status.settledAmountOutRaw }),
+            originTransactionHashes: [],
+            destinationTransactionHashes: status.transactionHash ? [status.transactionHash] : []
+          })
+        }
         const status = await fetchSwapStatus(depositAddress)
         if (!status) return null
         return parseNearIntentsStatusObservation({
@@ -108,6 +133,9 @@ export class BackgroundNearIntentsTransactionMonitor {
     scopes: readonly TransactionAccountScope[]
   ): Promise<NearIntentsTransactionMonitorResult> {
     const result = await this.monitor.poll(scopes)
+    if (result.applied > 0) {
+      await chrome.runtime.sendMessage({ type: 'TRANSACTION_STATUS_UPDATED' }).catch(() => {})
+    }
     if (result.errors > 0) {
       console.warn(`[Near Intents Transaction Monitor] ${result.errors} observation(s) failed`)
     }

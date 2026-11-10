@@ -39,6 +39,13 @@ export interface SingleChainPortfolioCoordinatorOptions {
   readonly assets: AssetRegistry
   readonly chainId: string
   readonly family: AddressOnlyPortfolioFamily
+  readonly isNetworkEnabled?: (
+    scope: {
+      readonly keyDomainId: ChainAccount['scope']['keyDomainId']
+      readonly accountId: ChainAccount['scope']['accountId']
+    },
+    family: AddressOnlyPortfolioFamily
+  ) => boolean | Promise<boolean>
   readonly readSource: (
     input: ReadSingleChainPortfolioSourceInput
   ) => Promise<PortfolioSourceSnapshot>
@@ -144,10 +151,22 @@ export class SingleChainPortfolioCoordinator {
       chainRegistry: this.options.chains
     })
     if (!active?.activeAccount) return null
+    const selectedAccount = active.activeAccount
     const candidates = active.availableChainAccounts.filter(
       candidate => candidate.chain.id === this.options.chainId
     )
     if (candidates.length === 0) return null
+    if (
+      active.catalog.keyDomains.find(item => item.id === selectedAccount.keyDomainId)?.source
+        .kind === 'software' &&
+      this.options.isNetworkEnabled &&
+      !(await this.options.isNetworkEnabled(
+        { keyDomainId: selectedAccount.keyDomainId, accountId: selectedAccount.id },
+        this.options.family
+      ))
+    ) {
+      return null
+    }
     if (candidates.length !== 1) {
       throw new Error('Active Account has ambiguous single-chain Portfolio metadata')
     }

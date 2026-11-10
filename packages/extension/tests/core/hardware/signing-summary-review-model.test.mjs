@@ -564,6 +564,6 @@ test.describe('Signing summary review model', () => {
 
     expect(source).not.toMatch(/\bany\b|chrome\.|postMessage|WORKER_RPC|wasm-pkg/i)
     expect(source).not.toMatch(/@\/store|zcash-wallet-runtime/)
-    expect(source).toMatch(/disabled=\{isBlocked\}/)
+    expect(source).toMatch(/disabled=\{isBlocked \|\| confirmDisabled\}/)
   })
 })

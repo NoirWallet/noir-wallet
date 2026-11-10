@@ -64,6 +64,21 @@ test.describe('account-scoped Swap token selection', () => {
       tokenOut: ETH
     })
   })
+
+  test('keeps the selected source when Private destination eligibility filters the same-chain catalog', () => {
+    expect(
+      resolveSwapTokenSelection({
+        tokens: [ETH, ETH_USDC, ZEC],
+        sourceTokens: [ETH, ETH_USDC],
+        sameChainDestinationTokens: [ETH_USDC],
+        crossChainDestinationTokens: [],
+        walletSourceTokens: [ETH_USDC, ETH],
+        selectedSourceAssetId: ETH.assetId,
+        savedSelection: { tokenInId: ETH.assetId, tokenOutId: ZEC.assetId },
+        enabledChains: [ethereumChain, zcashChain]
+      })
+    ).toEqual({ tokenIn: ETH, tokenOut: ETH_USDC })
+  })
   test('fuzzy-matches symbols but requires a complete contract address', () => {
     expect(matchesSwapTokenSearch(ETH_USDC, 'usd')).toBe(true)
     expect(matchesSwapTokenSearch(ETH_USDC, 'sDc')).toBe(true)
@@ -95,6 +110,12 @@ test.describe('account-scoped Swap token selection', () => {
     expect(createSwapTokenPreferenceScope('wallet-a', 'account-1')).toBe('wallet-a:account-1')
     expect(createSwapTokenPreferenceScope('wallet-a', 'account-2')).toBe('wallet-a:account-2')
     expect(createSwapTokenPreferenceScope(null, 'account-1')).toBeNull()
+    expect(createSwapTokenPreferenceScope('wallet-a', 'account-1', 'mainnet', 'main')).not.toBe(
+      createSwapTokenPreferenceScope('wallet-a', 'account-1', 'testnet', 'main')
+    )
+    expect(createSwapTokenPreferenceScope('wallet-a', 'account-1', 'mainnet', 'main')).not.toBe(
+      createSwapTokenPreferenceScope('wallet-a', 'account-1', 'mainnet', 'private')
+    )
   })
 
   test('ignores source history that is not available to the current account', () => {
@@ -131,6 +152,36 @@ test.describe('account-scoped Swap token selection', () => {
         enabledChains: [zcashChain, ethereumChain]
       })
     ).toMatchObject({ tokenIn: ETH_USDC })
+  })
+
+  test('selects an asset-detail destination without using that token as the source', () => {
+    expect(
+      resolveSwapTokenSelection({
+        tokens: TOKENS,
+        sourceTokens: [ETH, ETH_USDC],
+        sameChainDestinationTokens: [ETH, ETH_USDC],
+        crossChainDestinationTokens: [ZEC],
+        walletSourceTokens: [ETH_USDC, ETH],
+        selectedSourceAssetId: ETH_USDC.assetId,
+        savedSelection: { tokenInId: ETH_USDC.assetId, tokenOutId: ZEC.assetId },
+        requestedDestinationAssetId: ETH_USDC.assetId,
+        enabledChains: [ethereumChain, zcashChain]
+      })
+    ).toEqual({ tokenIn: ETH, tokenOut: ETH_USDC })
+  })
+
+  test('leaves the source empty when only the requested destination is owned', () => {
+    expect(
+      resolveSwapTokenSelection({
+        tokens: TOKENS,
+        sourceTokens: [ZEC, ETH],
+        sameChainDestinationTokens: [ZEC, ETH],
+        crossChainDestinationTokens: [ZEC, ETH],
+        walletSourceTokens: [ZEC],
+        requestedDestinationAssetId: ZEC.assetId,
+        enabledChains: [zcashChain, ethereumChain]
+      })
+    ).toEqual({ tokenIn: null, tokenOut: ZEC })
   })
 
   test('keeps an asset-detail deep link authoritative while wallet balances are loading', () => {

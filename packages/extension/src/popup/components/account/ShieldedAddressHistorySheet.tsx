@@ -1,4 +1,5 @@
 import { Icon } from '@iconify/react'
+import { CopyFeedbackIcon } from '../common/CopyToast'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../ui/dialog'
 import { orderShieldedReceiveAddresses } from '@/core/wallet/shielded-address-history'
 import { formatSortAddress } from '@/lib/format'
@@ -14,7 +15,8 @@ interface ShieldedAddressHistorySheetProps {
   selectingAddress: string | null
   error: string | null
   onSelect: (address: string) => void
-  onCopy: (address: string) => void
+  onCopy: (address: string, index: number) => void
+  isCopied: (index: number) => boolean
 }
 
 export function ShieldedAddressHistorySheet({
@@ -26,7 +28,8 @@ export function ShieldedAddressHistorySheet({
   selectingAddress,
   error,
   onSelect,
-  onCopy
+  onCopy,
+  isCopied
 }: ShieldedAddressHistorySheetProps) {
   const ordered = orderShieldedReceiveAddresses(addresses, current)
 
@@ -52,7 +55,7 @@ export function ShieldedAddressHistorySheet({
               {error}
             </p>
           )}
-          {ordered.map(address => {
+          {ordered.map((address, index) => {
             const isCurrent = address.shielded === current.shielded
             const isSelecting = selectingAddress === address.shielded
             return (
@@ -94,10 +97,10 @@ export function ShieldedAddressHistorySheet({
                   type="button"
                   aria-label="Copy shielded address"
                   disabled={selectingAddress !== null}
-                  onClick={() => onCopy(address.shielded)}
+                  onClick={() => onCopy(address.shielded, index)}
                   className="flex size-8 shrink-0 items-center justify-center rounded-lg text-muted hover:bg-foreground/10 hover:text-foreground disabled:opacity-40"
                 >
-                  <Icon icon="lucide:copy" width={17} height={17} />
+                  <CopyFeedbackIcon copied={isCopied(index)} width={17} height={17} />
                 </button>
               </div>
             )

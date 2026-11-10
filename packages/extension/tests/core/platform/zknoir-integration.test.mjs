@@ -1,10 +1,7 @@
 import { test as it } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import {
-  shouldAutoConnectDApp,
-  ZKNOIR_LENDING_URL
-} from '../../../src/core/dapp/first-party-policy.ts'
+import { shouldAutoConnectDApp } from '../../../src/core/dapp/first-party-policy.ts'
 
 const describe = it.describe
 
@@ -12,19 +9,21 @@ const handlerSource = readFileSync(
   new URL('../../../src/background/dapp-handler.ts', import.meta.url),
   'utf-8'
 )
-const homeSource = readFileSync(
-  new URL('../../../src/popup/pages/Home.tsx', import.meta.url),
-  'utf-8'
-)
-const appSource = readFileSync(new URL('../../../src/popup/App.tsx', import.meta.url), 'utf-8')
 
 describe('zkNoir application integration', () => {
-  it('auto-connects only the exact first-party application origin', () => {
-    assert.equal(shouldAutoConnectDApp('https://app.zknoir.com'), true)
-    assert.equal(shouldAutoConnectDApp('http://app.zknoir.com'), false)
-    assert.equal(shouldAutoConnectDApp('https://evil.app.zknoir.com'), false)
-    assert.equal(shouldAutoConnectDApp('https://app.zknoir.com.evil.example'), false)
-    assert.equal(shouldAutoConnectDApp('https://app.zknoir.com/lending'), false)
+  it('auto-connects only the exact first-party application origins', () => {
+    for (const host of ['app.zknoir.com', 'noirdevelop.refburrow.top']) {
+      assert.equal(shouldAutoConnectDApp(`https://${host}`), true)
+      for (const origin of [
+        `http://${host}`,
+        `https://evil.${host}`,
+        `https://${host}.evil.example`,
+        `https://${host}:8443`,
+        `https://${host}/lending`
+      ]) {
+        assert.equal(shouldAutoConnectDApp(origin), false)
+      }
+    }
   })
 
   it('synchronizes every wallet account without bypassing action approvals', () => {
@@ -53,16 +52,5 @@ describe('zkNoir application integration', () => {
       handlerSource,
       /private async shieldFunds[\s\S]*?requestUserApprovalWithId\([\s\S]*?origin,[\s\S]*?'shieldFunds'/
     )
-  })
-
-  it('opens Home lending entry points in the zkNoir application and keeps balances', () => {
-    assert.equal(ZKNOIR_LENDING_URL, 'https://app.zknoir.com/lending')
-    assert.match(homeSource, /chrome\.tabs\.create\(\{ url: ZKNOIR_LENDING_URL \}\)/)
-    assert.doesNotMatch(homeSource, /navigate\.navigate\('\/lending'\)/)
-    assert.match(homeSource, /safeBig\(walletUsd\)\.plus\(lendingSuppliedUsd\)/)
-    assert.match(homeSource, /<TabsContent value="lending"/)
-    assert.match(homeSource, /formatFiatAmount\(market\.suppliedUsd/)
-    assert.doesNotMatch(appSource, /pages\/lending/)
-    assert.doesNotMatch(appSource, /path="\/(?:lending|supply|withdraw)"/)
   })
 })

@@ -21,7 +21,6 @@ const shieldBannerSource = readSource(
   '../../../src/popup/components/transaction/ShieldFundsBanner.tsx'
 )
 const shieldHookSource = readSource('../../../src/popup/hooks/useShieldFunds.tsx')
-const assetDetailSource = readSource('../../../src/popup/pages/portfolio/AssetDetail.tsx')
 const sendSource = readSource('../../../src/popup/pages/transactions/Send.tsx')
 const approvalSource = readSource('../../../src/popup/pages/dapp/ApprovalPage.tsx')
 const backgroundSource = readSource('../../../src/background/index.ts')
@@ -94,7 +93,7 @@ describe('Shielding minimum balance regressions', () => {
 
   it('blocks the built-in shield action and fee estimate below the minimum', () => {
     assert.match(shieldSheetSource, /enabled:\s*open && hasEnoughBalance/)
-    assert.match(shieldSheetSource, /disabled=\{!hasEnoughBalance\}/)
+    assert.match(shieldSheetSource, /disabled=\{!hasEnoughBalance \|\| !feeReady\}/)
     assert.match(shieldSheetSource, /MIN_SHIELDING_BALANCE_MESSAGE/)
 
     const validation = shieldHookSource.indexOf(
@@ -102,15 +101,6 @@ describe('Shielding minimum balance regressions', () => {
     )
     const transactionCreation = shieldHookSource.indexOf("type: 'ADD_TRANSACTION'")
     assert.ok(validation !== -1 && validation < transactionCreation)
-  })
-
-  it('shows a shield action only when the Zcash transparent balance is positive', () => {
-    assert.match(assetDetailSource, /aria-label="Zcash balance breakdown"/)
-    assert.match(assetDetailSource, />Shielded</)
-    assert.match(assetDetailSource, />Transparent</)
-    assert.match(assetDetailSource, /BigInt\(asset\.balance\.shieldableRaw \?\? '0'\) > 0n/)
-    assert.match(assetDetailSource, /aria-label="Shield transparent ZEC"/)
-    assert.match(assetDetailSource, /useShieldFunds\(\)/)
   })
 
   it('blocks dApp approval and both background execution paths below the minimum', () => {

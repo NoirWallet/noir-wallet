@@ -8,6 +8,8 @@ import {
   runWithSpendabilityRecovery
 } from '../../../src/core/wallet/spendability-recovery.ts'
 import { safeBig } from '../../../src/lib/big.ts'
+import { isAccountNetworkEnabled } from '../../../src/core/wallet/account-network-selection.ts'
+import { fetchLatestBlockHeight } from '../../../src/infrastructure/chains/rpc-registry-client.ts'
 
 const require = createRequire(import.meta.url)
 const typescript = require('typescript')
@@ -20,7 +22,7 @@ function deferred() {
   return { promise, resolve }
 }
 
-function createRuntime() {
+function createRuntime(overrides = {}) {
   const wallet = { id: 'wallet', accounts: [{ id: 'account', derivationIndex: 0 }] }
   const walletState = {
     wallets: [wallet],
@@ -53,7 +55,17 @@ function createRuntime() {
   const dependencies = {
     '@/store/wallet-store': {
       useWalletStore: { getState: () => walletState },
-      async prepareWalletStoreForUse() {}
+      async prepareWalletStoreForUse() {},
+      async flushWalletStore() {}
+    },
+    '@/core/wallet/secure-storage': {
+      SecureStorage: {
+        async getLoginAttempts() {
+          return { isLocked: false }
+        },
+        async resetLoginAttempts() {},
+        async saveLastActivityTime() {}
+      }
     },
     '@/store/account-data-store': {
       useAccountDataStore: {
@@ -73,6 +85,9 @@ function createRuntime() {
     },
     '@/infrastructure/chains/rpc-endpoints': { async ensureRpcEndpointPreferencesLoaded() {} },
     '@/infrastructure/chains/rpc-failover': { async ensureRpcFailoverStateLoaded() {} },
+    '@/infrastructure/chains/rpc-registry-client': {
+      fetchLatestBlockHeight: overrides.fetchLatestBlockHeight ?? (async () => 100)
+    },
     '@/lib/logger': {
       logger: {
         log() {},
@@ -87,6 +102,7 @@ function createRuntime() {
       runWithSpendabilityRecovery
     },
     '@/lib/big': { safeBig },
+    '@/core/wallet/account-network-selection': { isAccountNetworkEnabled },
     '@/config/wallet': { ZEC_DECIMALS: 8 },
     './sync-status-policy': {
       isSyncOccupyingWallet: (operationActive, persistedSyncing, preflight) =>
@@ -165,6 +181,79 @@ function withSummary(fixture) {
   }
 }
 
+test('cancelled chain-height reads abort transport, drain the summary and preserve cached state', async () => {
+  const started = deferred()
+  const summary = deferred()
+  let abortedTransport = false
+  const fixture = createRuntime({
+    fetchLatestBlockHeight: (url, _fetch, _timeout, signal) =>
+      fetchLatestBlockHeight(
+        url,
+        async (_input, init) => {
+          started.resolve()
+          return new Promise((_resolve, reject) => {
+            init.signal.addEventListener(
+              'abort',
+              () => {
+                abortedTransport = true
+                reject(new DOMException('Aborted', 'AbortError'))
+              },
+              { once: true }
+            )
+          })
+        },
+        5000,
+        signal
+      )
+  })
+  const cached = { latestHeight: 90, summary: { fully_scanned_height: 89 }, fetchedAt: 1 }
+  fixture.runtime.walletSummaryCache.set('wallet', cached)
+  const controller = new AbortController()
+  const read = fixture.runtime.getCachedWalletSummary(
+    'wallet',
+    {
+      getLatestHeight() {
+        throw new Error('Network reads must not block the WASM queue')
+      },
+      getWalletSummary: () => summary.promise
+    },
+    { force: true, signal: controller.signal }
+  )
+  const rejected = assert.rejects(read, { name: 'AbortError' })
+  await started.promise
+  controller.abort()
+  assert.equal(abortedTransport, true)
+  assert.equal(
+    await Promise.race([
+      read.then(
+        () => 'done',
+        () => 'done'
+      ),
+      new Promise(resolve => setImmediate(() => resolve('draining')))
+    ]),
+    'draining'
+  )
+  summary.resolve({ fully_scanned_height: 100 })
+  await rejected
+  assert.strictEqual(fixture.runtime.walletSummaryCache.get('wallet'), cached)
+
+  fixture.runtime.walletSummaryCache.delete('wallet')
+  const fresh = createRuntime()
+  const localSummary = { fully_scanned_height: 99 }
+  const result = await fresh.runtime.getCachedWalletSummary(
+    'wallet',
+    {
+      getLatestHeight() {
+        throw new Error('Network reads must not block the WASM queue')
+      },
+      getWalletSummary: async () => localSummary
+    },
+    { force: true }
+  )
+  assert.equal(result.latestHeight, 100)
+  assert.strictEqual(result.summary, localSummary)
+})
+
 test('startup returns before WASM init and refreshes after account cache hydration', async () => {
   const fixture = createRuntime()
   const initialized = deferred()
@@ -198,6 +287,38 @@ test('startup init completion after a lock does not start a cached refresh', asy
   assert.deepEqual(fixture.events, ['rehydrate'])
 })
 
+test('unlock reloads a retained wallet core using its persisted snapshot key', async () => {
+  const fixture = createRuntime()
+  let initializedKey
+  const core = {
+    accountIndex: 0,
+    hasAccount: () => false,
+    async ensureInitialized(dbKey) {
+      initializedKey = dbKey
+    },
+    async restoreFromDB() {
+      assert.equal(initializedKey, 'mainnet_wallet')
+      return true
+    },
+    async getAddresses() {
+      return {}
+    }
+  }
+  fixture.runtime.walletCores.set('wallet', core)
+  fixture.runtime.inspectWalletCredential = async () => ({
+    status: 'valid',
+    credential: { kind: 'seed', seedPhrase: 'synthetic test phrase' }
+  })
+  fixture.runtime.cancelActiveRestore = () => {}
+  fixture.runtime.bindCredentialToCore = () => {}
+  fixture.runtime.refreshCachedBalancesAfterReady = async () => {}
+  fixture.runtime.requestSync = () => {}
+
+  assert.equal((await fixture.runtime.unlock('test password')).success, true)
+  await fixture.runtime.activeRestorePromise
+  assert.equal(initializedKey, 'mainnet_wallet')
+})
+
 test('local persisted summary refreshes a cached balance without a network summary read', async () => {
   const fixture = createRuntime()
   const summary = withSummary(fixture)
@@ -226,7 +347,8 @@ test('a stale summary cannot overwrite a balance after a runtime or selection ch
     'reload',
     'lock',
     'wallet-switch',
-    'account-switch'
+    'account-switch',
+    'network-disabled'
   ]) {
     const fixture = createRuntime()
     const summary = withSummary(fixture)
@@ -245,6 +367,8 @@ test('a stale summary cannot overwrite a balance after a runtime or selection ch
       fixture.walletState.currentWalletId = 'other-wallet'
     } else if (transition === 'account-switch') {
       fixture.walletState.currentAccountId = 'other-account'
+    } else if (transition === 'network-disabled') {
+      fixture.walletState.wallets[0].accounts[0].networkSelections = { mainnet: ['evm'] }
     } else if (transition === 'preflight') {
       fixture.runtime.notifySyncStarting('wallet')
     } else {

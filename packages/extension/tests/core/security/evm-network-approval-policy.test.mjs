@@ -9,10 +9,8 @@ import {
 } from '../../../src/core/chains/chain-endpoint-settings.ts'
 import { parseEvmAddNetworkApproval } from '../../../src/popup/services/dapp-approval-summary.ts'
 import { resolveEvmNetworkCatalog } from '../../../src/core/chains/evm-runtime-config.ts'
-import {
-  formatConfiguredChainIconUrl,
-  formatNativeTokenIconUrl
-} from '../../../src/config/icons.ts'
+import { formatConfiguredChainIconUrl } from '../../../src/config/icons.ts'
+import { getEvmAssetDefinitions } from '../../../src/core/chains/registry/product-chain-definitions.ts'
 
 const origin = 'https://dapp.example'
 const request = (chainId = '0x7a69') =>
@@ -158,7 +156,7 @@ test('approved add reviews and saves only the selected endpoint without switchin
     chainName: 'Local EVM',
     iconChain: 'eip155:31337'
   })
-  assert.deepEqual(state.switches, [['eip155:31337', origin]])
+  assert.deepEqual(state.switches, [['eip155:31337', origin, true]])
 })
 
 test('rejection and invalid metadata never save a custom network', async () => {
@@ -257,10 +255,7 @@ test('network icons follow chain identity through approval and saved settings, i
   assert.equal(saved.nativeCurrency.symbol, 'LETH')
   assert.equal(saved.displayName, 'Local EVM')
   assert.equal(formatConfiguredChainIconUrl(saved.iconChain), '/icons/chains/network.svg')
-  assert.equal(
-    formatNativeTokenIconUrl(saved.iconChain),
-    'https://assets-cdn.trustwallet.com/blockchains/ethereum/info/logo.png'
-  )
+  assert.equal(getEvmAssetDefinitions(saved)[0].metadata.iconUrl, undefined)
 
   const unknown = harness()
   await handleEvmDAppNetworkSwitch(request(), origin, 'add', unknown.options)

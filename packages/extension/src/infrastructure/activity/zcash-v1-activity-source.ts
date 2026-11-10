@@ -31,8 +31,14 @@ function decimalToRaw(value: string): string {
   return raw
 }
 
-function mapKind(type: TransactionType): TransactionKind {
-  return type === 'send' || type === 'unshield' ? 'transfer' : type
+function mapKind(transaction: Transaction): TransactionKind {
+  return transaction.type === 'send' ||
+    transaction.type === 'unshield' ||
+    (transaction.type === 'swap' &&
+      transaction.quoteBinding?.provider === 'rhea-cross-chain-dex' &&
+      transaction.quoteBinding.userAction === 'transfer')
+    ? 'transfer'
+    : transaction.type
 }
 
 function mapStatus(transaction: Transaction): TransactionLifecycleStatus {
@@ -53,6 +59,15 @@ function direction(type: TransactionType): 'incoming' | 'outgoing' | 'self' {
   if (type === 'receive' || type === 'withdraw' || type === 'claim') return 'incoming'
   if (type === 'shield' || type === 'unshield') return 'self'
   return 'outgoing'
+}
+
+function assetDomains(transaction: Transaction): readonly ('public' | 'shield')[] | undefined {
+  if (transaction.type === 'shield' || transaction.type === 'unshield') {
+    return Object.freeze(['public', 'shield'] as const)
+  }
+  if (transaction.fromType === 'transparent') return Object.freeze(['public'] as const)
+  if (transaction.fromType === 'shielded') return Object.freeze(['shield'] as const)
+  return undefined
 }
 
 function isCrossChain(type: TransactionType): type is 'swap' | 'supply' | 'withdraw' | 'claim' {
@@ -312,14 +327,16 @@ export function mapZcashV1TransactionToActivityItem(
           ...(failureCode ? { failureCode } : {})
         })
       ])
+  const domains = assetDomains(transaction)
   return Object.freeze({
     id: transaction.id,
     source: 'zcash-v1',
+    ...(domains ? { assetDomains: domains } : {}),
     scope: Object.freeze({
       keyDomainId: scope.keyDomainId,
       accountId: scope.accountId
     }),
-    kind: mapKind(transaction.type),
+    kind: mapKind(transaction),
     status,
     snapshot: Object.freeze({
       schemaVersion: 1,

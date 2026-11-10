@@ -48,6 +48,7 @@ import {
   buildAddTokenNetworks,
   getAddTokenReferencePresentation,
   getVerifiedTokenPresentation,
+  isAddTokenReferenceSearch,
   type AddTokenCandidate
 } from '@/popup/services/add-token-model'
 import { isSelectableChainFamily } from '@/popup/services/chain-selection-availability'
@@ -124,19 +125,21 @@ export function ManageTokens() {
     [chainByChainId, managedAssets, networkByChainId]
   )
 
-  const networkFilterOptions = useMemo(
-    () =>
-      Array.from(new Set(availableManagedAssets.map(asset => asset.chainId))).map(assetChainId => {
-        const chain = chainByChainId.get(assetChainId)
-        const network = networkByChainId.get(assetChainId)
-        return {
-          id: assetChainId,
-          family: chain?.family ?? network?.iconChain ?? assetChainId,
-          displayName: chain?.displayName ?? network?.displayName ?? assetChainId
-        }
-      }),
-    [availableManagedAssets, chainByChainId, networkByChainId]
-  )
+  const networkFilterOptions = useMemo(() => {
+    const chainIds = new Set(availableManagedAssets.map(asset => asset.chainId))
+    for (const network of addTokenNetworks) {
+      if (!network.disabled) chainIds.add(network.chainId)
+    }
+    return Array.from(chainIds).map(assetChainId => {
+      const chain = chainByChainId.get(assetChainId)
+      const network = networkByChainId.get(assetChainId)
+      return {
+        id: assetChainId,
+        family: chain?.family ?? network?.iconChain ?? assetChainId,
+        displayName: chain?.displayName ?? network?.displayName ?? assetChainId
+      }
+    })
+  }, [addTokenNetworks, availableManagedAssets, chainByChainId, networkByChainId])
   const selectedNetworkId =
     selectedNetworkIds.length === 1 &&
     networkFilterOptions.some(option => option.id === selectedNetworkIds[0])
@@ -199,6 +202,16 @@ export function ManageTokens() {
     setInspecting(false)
     setAdding(false)
     setChainId(addTokenNetworks.find(network => !network.disabled)?.chainId ?? '')
+  }
+
+  const openAddToken = () => {
+    const network =
+      addTokenNetworks.find(item => item.chainId === selectedNetworkId && !item.disabled) ??
+      selectedNetwork
+    setChainId(network?.chainId ?? '')
+    setContractAddress(isAddTokenReferenceSearch(searchQuery, network) ? searchQuery.trim() : '')
+    setCandidate(null)
+    setAddOpen(true)
   }
 
   const setAddDialogOpen = (open: boolean) => {
@@ -384,29 +397,27 @@ export function ManageTokens() {
           <InlineError message="Custom Tokens could not be loaded." onRetry={load} />
         )}
 
-        {!loading && !loadError && availableManagedAssets.length === 0 && (
-          <div className="flex min-h-48 flex-col items-center justify-center rounded-2xl border border-dashed border-border/70 px-6 text-center">
+        {!loading && !loadError && filteredManagedAssets.length === 0 && (
+          <div className="flex min-h-40 flex-col items-center justify-center rounded-2xl border border-dashed border-border/70 px-6 text-center">
             <div className="mb-3 flex size-11 items-center justify-center rounded-full bg-card">
-              <Icon icon="lucide:coins" className="size-5 text-muted" />
+              <Icon
+                icon={availableManagedAssets.length === 0 ? 'lucide:coins' : 'lucide:search-x'}
+                className="size-5 text-muted"
+              />
             </div>
-            <p className="text-sm font-medium">No Tokens found</p>
+            <p className="text-sm font-medium">
+              {selectedNetworkId && !searchQuery.trim()
+                ? 'No Tokens on this network'
+                : searchQuery.trim() || availableManagedAssets.length > 0
+                  ? 'No matching Tokens'
+                  : 'No Tokens found'}
+            </p>
+            <Button variant="outline" className="mt-4 h-9" onClick={openAddToken}>
+              <Icon icon="lucide:plus" className="size-4" />
+              Add Token
+            </Button>
           </div>
         )}
-
-        {!loading &&
-          !loadError &&
-          availableManagedAssets.length > 0 &&
-          filteredManagedAssets.length === 0 && (
-            <div className="flex min-h-40 flex-col items-center justify-center rounded-2xl border border-dashed border-border/70 px-6 text-center">
-              <div className="mb-3 flex size-11 items-center justify-center rounded-full bg-card">
-                <Icon icon="lucide:search-x" className="size-5 text-muted" />
-              </div>
-              <p className="text-sm font-medium">No matching Tokens</p>
-              <p className="mt-1 text-xs leading-5 text-muted">
-                Try another symbol, exact contract address, or network.
-              </p>
-            </div>
-          )}
 
         {!loading && !loadError && filteredManagedAssets.length > 0 && (
           <div className="space-y-2">
@@ -484,11 +495,7 @@ export function ManageTokens() {
       </div>
 
       <div className="page-footer">
-        <Button
-          className="h-[45px] w-full"
-          disabled={loading || loadError}
-          onClick={() => setAddOpen(true)}
-        >
+        <Button className="h-[45px] w-full" disabled={loading || loadError} onClick={openAddToken}>
           <Icon icon="lucide:plus" className="size-4" />
           Add Token
         </Button>
@@ -568,7 +575,7 @@ export function ManageTokens() {
                 setCandidate(null)
               }}
               placeholder={referencePresentation.placeholder}
-              className="h-11 rounded-xl font-mono text-xs"
+              className="h-11 rounded-xl font-mono text-xs text-foreground"
             />
           </label>
 
@@ -598,7 +605,7 @@ export function ManageTokens() {
 
           <div className="flex gap-2 rounded-xl border border-warning/25 bg-warning/10 px-3 py-2.5 text-xs leading-5 text-warning">
             <Icon icon="lucide:triangle-alert" className="mt-0.5 size-4 shrink-0" />
-            <span>Anyone can create a Token. Only add contracts you trust.</span>
+            <span>Anyone can create a Token. Only add tokens you trust.</span>
           </div>
 
           {candidate ? (

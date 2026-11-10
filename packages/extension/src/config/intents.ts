@@ -2,6 +2,7 @@ import type { Network } from '@/types'
 
 export interface ConfidentialFundingNetworkConfig {
   readonly oneClickApiUrl: string
+  readonly oneClickDirectApiUrl: string
   readonly rheaSwapApiUrl: string
 }
 
@@ -25,19 +26,16 @@ export function getConfidentialFundingNetworkConfig(
   if (network !== 'mainnet') return null
   return Object.freeze({
     oneClickApiUrl: parseServiceUrl(
-      __CONFIDENTIAL_ONE_CLICK_API_URL__ || 'https://1click.chaindefuser.com/v0',
+      __CONFIDENTIAL_ONE_CLICK_API_URL__ || 'https://api.rhea.finance/proxy/1click/v0',
       'Confidential Mainnet 1Click URL'
     ),
+    oneClickDirectApiUrl: 'https://1click.chaindefuser.com/v0',
     rheaSwapApiUrl: 'https://api.rhea.finance'
   })
 }
 
-/**
- * ZEC Omni / Intents asset ids (match multichain token list for zec). Not on `config_near`.
- */
-export const ZEC_NEAR_TOKEN_ID = 'zec.omft.near'
+/** ZEC Intents asset ID from the multichain token list. */
 export const ZEC_ZCASH_ASSET = 'nep141:zec.omft.near'
-export const ZEC_NEAR_ASSET = '1cs_v1:near:nep141:zec.omft.near'
 
 /** Native NEAR (wrapped) intents asset — the canonical default swap-to token. */
 export const WNEAR_NEAR_ASSET = 'nep141:wrap.near'
@@ -55,14 +53,3 @@ export interface IntentsAppFee {
 /** Swap app fee: 0.35% (35 bps), collected to noir's swap account. */
 export const NOIR_SWAP_APP_FEES: IntentsAppFee[] = [{ recipient: 'noir_swap.near', fee: 35 }]
 export const NOIR_SWAP_REFERRAL = 'noir_swap'
-
-/** Lending app fee disabled for now (0 bps); recipient prewired for easy enablement. */
-export const NOIR_LENDING_APP_FEES: IntentsAppFee[] = [{ recipient: 'noir_lending.near', fee: 0 }]
-
-const CONFIDENTIAL_TRANSFER_ESTIMATES: Readonly<Record<string, string>> = Object.freeze({
-  eip155: '3-5 min'
-})
-
-export function getConfidentialTransferEstimate(chainId: string): string | null {
-  return CONFIDENTIAL_TRANSFER_ESTIMATES[chainId.split(':', 1)[0]] ?? null
-}

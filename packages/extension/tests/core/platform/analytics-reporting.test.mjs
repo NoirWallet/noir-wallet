@@ -69,6 +69,8 @@ test('trackEvent returns immediately while the collector queues and deduplicates
   let preferenceListeners = 0
   let alarmCreates = 0
   let networkRequests = 0
+  let countryRequests = 0
+  let gaRequests = 0
   let hangOutboxWrites = false
   globalThis.__APP_VERSION__ = '2.0.0'
   globalThis.__BUILD_CHANNEL__ = 'production'
@@ -101,8 +103,10 @@ test('trackEvent returns immediately while the collector queues and deduplicates
     configurable: true,
     value: { language: 'en-US', userAgent: 'Chrome/150.0 Macintosh' }
   })
-  globalThis.fetch = async () => {
+  globalThis.fetch = async url => {
     networkRequests++
+    if (url === 'https://rpc.zknoir.com/cdn-cgi/trace') countryRequests++
+    if (String(url).startsWith('https://www.google-analytics.com/mp/collect')) gaRequests++
     throw new Error('network must not be called by this test')
   }
 
@@ -159,8 +163,9 @@ test('trackEvent returns immediately while the collector queues and deduplicates
     const blockedOptions = { ...options, idempotencyKey: 'blocked-collector-write' }
     trackEvent(ANALYTICS_EVENTS.SEND_SUBMITTED, blockedOptions)
     trackEvent(ANALYTICS_EVENTS.SEND_SUBMITTED, blockedOptions)
-    await t.waitFor(() => assert.equal(networkRequests, 1), { timeout: 5_000 })
-    assert.equal(networkRequests, 1)
+    await t.waitFor(() => assert.equal(gaRequests, 1), { timeout: 5_000 })
+    assert.equal(countryRequests, 1)
+    assert.equal(gaRequests, 1)
   } finally {
     globalThis.chrome = previousChrome
     globalThis.fetch = previousFetch

@@ -1,9 +1,12 @@
 import type { MnemonicWordCount } from '@/config/wallet'
+import type { AccountNetworkFamily } from '@/core/wallet/account-network-selection'
+import type { SoftwareWalletAddressPreview } from '@/background/software-wallet-provisioning'
 import { getResponseErrorMessage } from '@/lib/errors'
 import type { WalletBackupVerification } from '@/core/wallet/secret-phrase-backup'
 import type { AccountAddresses, FundingSource } from '@/types'
 import type { BirthdayHeightSource } from '@/lib/zcash-birthday'
 import type { BallotDecision } from '@/core/worker/types'
+import { isValidMarginalFeeZats, type FeeQuote, type QuotedFeeEstimate } from '@/config/fee'
 
 type RuntimeResponse = Record<string, unknown>
 
@@ -23,6 +26,8 @@ export interface UnlockResult {
 export interface MaxTransferEstimate {
   readonly maxAmountZats: string
   readonly feeZats: string
+  readonly marginalFeeZats: string
+  readonly feeQuote: FeeQuote
 }
 
 export interface ResolvedBirthdayHeight {
@@ -69,7 +74,74 @@ function requireFiniteNumber(response: RuntimeResponse, key: string, fallback: s
   return value
 }
 
+function requireFeeQuote(response: RuntimeResponse): FeeQuote {
+  const value = response.feeQuote
+  const quote = responseRecord(value)
+  if (
+    !quote ||
+    typeof quote.id !== 'string' ||
+    !quote.id ||
+    !isValidMarginalFeeZats(quote.standardMarginalFeeZats) ||
+    typeof quote.expiresAt !== 'number' ||
+    !Number.isSafeInteger(quote.expiresAt)
+  )
+    throw new Error('Wallet Background returned an invalid network fee quote')
+  return {
+    id: quote.id,
+    standardMarginalFeeZats: quote.standardMarginalFeeZats,
+    expiresAt: quote.expiresAt
+  }
+}
+
+function requireFeeEstimate(response: RuntimeResponse): QuotedFeeEstimate {
+  return {
+    feeZats: requireString(response, 'feeZats', 'Wallet Background returned an invalid fee'),
+    marginalFeeZats: requireString(
+      response,
+      'marginalFeeZats',
+      'Wallet Background returned an invalid marginal fee'
+    ),
+    feeQuote: requireFeeQuote(response)
+  }
+}
+
 export const zcashWalletRuntimeClient = Object.freeze({
+  async previewSoftwareWalletAddresses(input: {
+    readonly mnemonic: string
+    readonly selectedNetworkFamilies: readonly AccountNetworkFamily[]
+  }): Promise<readonly SoftwareWalletAddressPreview[]> {
+    const response = await expectSuccess(
+      {
+        type: 'PREVIEW_SOFTWARE_WALLET_ADDRESSES',
+        mnemonic: input.mnemonic,
+        selectedNetworkFamilies: input.selectedNetworkFamilies
+      },
+      'Address preview failed'
+    )
+    const seen = new Set<AccountNetworkFamily>()
+    if (
+      !Array.isArray(response.addresses) ||
+      response.addresses.length !== input.selectedNetworkFamilies.length ||
+      !response.addresses.every(value => {
+        const item = responseRecord(value)
+        if (!item || !input.selectedNetworkFamilies.includes(item.family as AccountNetworkFamily)) {
+          return false
+        }
+        const family = item.family as AccountNetworkFamily
+        if (seen.has(family)) return false
+        seen.add(family)
+        return (
+          typeof item.chainId === 'string' &&
+          item.chainId.length > 0 &&
+          typeof item.address === 'string' &&
+          item.address.length > 0
+        )
+      })
+    ) {
+      throw new Error('Wallet Background returned invalid address previews')
+    }
+    return response.addresses as SoftwareWalletAddressPreview[]
+  },
   async initialize(): Promise<void> {
     const response = await send({ type: 'GET_BACKGROUND_INITIALIZATION_STATE' })
     if (response.ready !== true) {
@@ -79,6 +151,9 @@ export const zcashWalletRuntimeClient = Object.freeze({
 
   async unlock(password: string): Promise<UnlockResult> {
     const response = await send({ type: 'WALLET_UNLOCK', password })
+    if (response.failure === 'network_initialization_failed') {
+      return { success: false, failure: 'operation_failed' }
+    }
     if (typeof response.error === 'string' && response.success !== false) {
       return { success: false, upgradeFailed: true }
     }
@@ -133,18 +208,24 @@ export const zcashWalletRuntimeClient = Object.freeze({
   },
 
   async provisionPrimarySoftwareWallet(input: {
+    readonly mode: 'create' | 'import'
     readonly mnemonic: string
     readonly password: string
     readonly accountName: string
     readonly birthdayHeight?: number
+    readonly selectedNetworkFamilies?: readonly AccountNetworkFamily[]
   }): Promise<void> {
     await expectSuccess(
       {
         type: 'PROVISION_PRIMARY_SOFTWARE_WALLET',
+        mode: input.mode,
         mnemonic: input.mnemonic,
         password: input.password,
         accountName: input.accountName,
-        ...(input.birthdayHeight === undefined ? {} : { birthdayHeight: input.birthdayHeight })
+        ...(input.birthdayHeight === undefined ? {} : { birthdayHeight: input.birthdayHeight }),
+        ...(input.selectedNetworkFamilies === undefined
+          ? {}
+          : { selectedNetworkFamilies: input.selectedNetworkFamilies })
       },
       'Wallet setup failed'
     )
@@ -226,27 +307,37 @@ export const zcashWalletRuntimeClient = Object.freeze({
     return { height, source }
   },
 
+  async getFeeQuote(): Promise<FeeQuote> {
+    const response = await expectSuccess(
+      { type: 'GET_ZCASH_FEE_QUOTE' },
+      'Unable to get the Zcash network fee'
+    )
+    return requireFeeQuote(response)
+  },
+
   async estimateTransferFee(input: {
     readonly to: string
     readonly amount: string
     readonly memo?: string
     readonly marginalFeeZats: number
     readonly fundingSource?: FundingSource
+    readonly feeQuoteId?: string
     readonly debugRequestId?: string
-  }): Promise<string> {
+  }): Promise<QuotedFeeEstimate> {
     const response = await expectSuccess(
       {
         type: 'ESTIMATE_ZCASH_TRANSFER_FEE',
         to: input.to,
         amount: input.amount,
         marginalFeeZats: input.marginalFeeZats,
+        ...(input.feeQuoteId === undefined ? {} : { feeQuoteId: input.feeQuoteId }),
         fundingSource: input.fundingSource ?? 'shielded',
         ...(input.debugRequestId === undefined ? {} : { debugRequestId: input.debugRequestId }),
         ...(input.memo === undefined ? {} : { memo: input.memo })
       },
       'Unable to estimate Zcash transfer fee'
     )
-    return requireString(response, 'feeZats', 'Wallet Background returned an invalid fee')
+    return requireFeeEstimate(response)
   },
 
   async estimateMaxTransfer(input: {
@@ -254,6 +345,7 @@ export const zcashWalletRuntimeClient = Object.freeze({
     readonly memo?: string
     readonly marginalFeeZats: number
     readonly fundingSource?: FundingSource
+    readonly feeQuoteId?: string
     readonly debugRequestId?: string
   }): Promise<MaxTransferEstimate> {
     const response = await expectSuccess(
@@ -261,6 +353,7 @@ export const zcashWalletRuntimeClient = Object.freeze({
         type: 'ESTIMATE_ZCASH_MAX_TRANSFER',
         to: input.to,
         marginalFeeZats: input.marginalFeeZats,
+        ...(input.feeQuoteId === undefined ? {} : { feeQuoteId: input.feeQuoteId }),
         fundingSource: input.fundingSource ?? 'shielded',
         ...(input.debugRequestId === undefined ? {} : { debugRequestId: input.debugRequestId }),
         ...(input.memo === undefined ? {} : { memo: input.memo })
@@ -273,16 +366,23 @@ export const zcashWalletRuntimeClient = Object.freeze({
         'maxAmountZats',
         'Wallet Background returned an invalid maximum amount'
       ),
-      feeZats: requireString(response, 'feeZats', 'Wallet Background returned an invalid fee')
+      ...requireFeeEstimate(response)
     }
   },
 
-  async estimateShieldFee(marginalFeeZats: number): Promise<string> {
+  async estimateShieldFee(
+    marginalFeeZats: number,
+    feeQuoteId?: string
+  ): Promise<QuotedFeeEstimate> {
     const response = await expectSuccess(
-      { type: 'ESTIMATE_ZCASH_SHIELD_FEE', marginalFeeZats },
+      {
+        type: 'ESTIMATE_ZCASH_SHIELD_FEE',
+        marginalFeeZats,
+        ...(feeQuoteId === undefined ? {} : { feeQuoteId })
+      },
       'Unable to estimate shielding fee'
     )
-    return requireString(response, 'feeZats', 'Wallet Background returned an invalid fee')
+    return requireFeeEstimate(response)
   },
 
   async waitForAccountReady(timeoutMs = 30_000): Promise<void> {

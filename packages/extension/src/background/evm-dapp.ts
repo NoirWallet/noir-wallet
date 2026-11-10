@@ -16,7 +16,11 @@ import { dappHandler } from './dapp-handler'
 import { BackgroundEvmDAppHandler, type EvmDAppTabInfo } from './evm-dapp-handler'
 import type { ParsedEip1193ChainRequest } from '@/core/dapp/eip1193'
 import { parseChainId } from '@/core/chains/registry'
-import { listDAppChainAccounts } from './dapp-chain-account-catalog'
+import {
+  filterEnabledDAppContext,
+  isDAppNetworkEnabled,
+  listDAppChainAccounts
+} from './dapp-chain-account-catalog'
 import { parseEvmAccountBinding } from '@/infrastructure/chains/evm/evm-account'
 import { PrivateExecutionUnavailableError } from '@/core/dapp/dapp-execution-mode'
 import { dappExecutionModeCoordinator } from './dapp-execution-mode'
@@ -24,6 +28,18 @@ import { evmDAppOperationStore } from './evm-dapp-operation-store'
 import type { RheaSwapService } from '@/core/services/rhea-swap'
 import type { RheaSwapEvmSignatureCoordinator } from './rhea-swap-evm-signature'
 import { EvmDAppPrivateTransferCoordinator } from './evm-dapp-private-transfer'
+import { EVM_TRANSACTION_MONITOR_ALARM } from './evm-transaction-monitor'
+import { NEAR_INTENTS_TRANSACTION_MONITOR_ALARM } from './near-intents-transaction-monitor'
+
+async function notifyTransactionSubmitted(confidential = false): Promise<void> {
+  await Promise.all([
+    chrome.alarms.create(EVM_TRANSACTION_MONITOR_ALARM, { when: Date.now() + 100 }),
+    ...(confidential
+      ? [chrome.alarms.create(NEAR_INTENTS_TRANSACTION_MONITOR_ALARM, { when: Date.now() + 100 })]
+      : []),
+    chrome.runtime.sendMessage({ type: 'TRANSACTION_ADDED' }).catch(() => {})
+  ])
+}
 
 async function readPrivateTransferSlippageBps(): Promise<number> {
   const stored = (await chrome.storage.local.get('swap_preferences')).swap_preferences
@@ -65,7 +81,8 @@ export function createBackgroundEvmDAppHandler(
           signatureCoordinator: rhea.signatureCoordinator,
           transferController,
           approval: dappHandler,
-          readSlippageBps: readPrivateTransferSlippageBps
+          readSlippageBps: readPrivateTransferSlippageBps,
+          onExactOutputSubmitted: () => notifyTransactionSubmitted(true)
         })
       : undefined
   return new BackgroundEvmDAppHandler({
@@ -73,12 +90,17 @@ export function createBackgroundEvmDAppHandler(
     network,
     manager: dappManager,
     approval: dappHandler,
-    loadActiveContext: () => loadActiveEvmPortfolioContext(storageRepository, network.chainId),
+    loadActiveContext: async () =>
+      filterEnabledDAppContext(
+        await loadActiveEvmPortfolioContext(storageRepository, network.chainId),
+        'evm'
+      ),
     listAccounts: () =>
       listDAppChainAccounts({
         repository: storageRepository,
         chainId: network.chainId,
         family: 'evm',
+        isNetworkEnabled: isDAppNetworkEnabled,
         resolveAddress: ({ chainAccount }) =>
           parseEvmAccountBinding(
             chainAccount,
@@ -88,6 +110,7 @@ export function createBackgroundEvmDAppHandler(
     hasUnlockSession: () => credentialSession.hasUnlockSession(),
     runActiveOperation: operation => accountContextTransition.runActiveOperation(operation),
     transferController,
+    onTransactionSubmitted: () => notifyTransactionSubmitted(),
     ...(privateTransfer === undefined ? {} : { privateTransfer }),
     operationStore: evmDAppOperationStore,
     signer,

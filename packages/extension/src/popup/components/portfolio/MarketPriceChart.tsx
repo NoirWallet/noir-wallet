@@ -1,5 +1,4 @@
 import { useCallback, useId, useMemo, useRef, useState } from 'react'
-import { Icon } from '@iconify/react'
 import type { AssetMarketHistoryPoint, AssetMarketHistoryRange } from '@/core/prices'
 import { formatTimestamp } from '@/lib/format'
 import { formatTokenPrice } from '@/lib/number-format'
@@ -33,7 +32,7 @@ interface MarketPriceChartProps {
   readonly priceLabel: string | null
   readonly changeLabel: string | null
   readonly changeDirection: 'positive' | 'negative' | 'neutral'
-  readonly delayed: boolean
+  readonly priceAsOf?: number
   readonly showRanges?: boolean
   readonly availableRanges: readonly AssetMarketHistoryRange[]
   readonly onRangeChange: (range: AssetMarketHistoryRange) => void
@@ -47,7 +46,7 @@ export function MarketPriceChart({
   priceLabel,
   changeLabel,
   changeDirection,
-  delayed,
+  priceAsOf,
   showRanges = true,
   availableRanges,
   onRangeChange
@@ -83,12 +82,16 @@ export function MarketPriceChart({
         INTRADAY_RANGES.has(range) ? 'MMM D · HH:mm' : 'MMM D, YYYY'
       )
     : null
+  const priceAsOfLabel = priceAsOf ? formatTimestamp(priceAsOf, 'MMM D · HH:mm') : null
 
   return (
     <div>
       <div
         ref={surfaceRef}
-        className="relative h-[148px] touch-none overflow-hidden"
+        className={cn(
+          'relative touch-none overflow-hidden',
+          chart || loading ? 'h-[148px]' : 'h-16'
+        )}
         aria-live="polite"
         onPointerMove={event => {
           if (chart) updateActiveFromPointer(event.clientX)
@@ -98,7 +101,7 @@ export function MarketPriceChart({
         }}
         onPointerLeave={() => setActiveIndex(null)}
       >
-        <div className="absolute left-0 top-0 z-10">
+        <div className="absolute inset-x-0 top-0 z-10">
           {priceLoading && !priceLabel ? (
             <>
               <Skeleton className="h-7 w-24" />
@@ -111,36 +114,42 @@ export function MarketPriceChart({
                   ? formatTokenPrice(active.priceUsd, { showSign: true })
                   : (priceLabel ?? '—')}
               </p>
-              <div className="mt-1.5 flex items-center gap-1.5 text-xs">
+              <div className="mt-1.5 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs">
                 {active ? (
                   <span className="text-muted">{hoverDateLabel}</span>
                 ) : (
                   <>
-                    <span
-                      className={cn(
-                        'font-medium',
-                        changeDirection === 'positive'
-                          ? 'text-success'
-                          : changeDirection === 'negative'
-                            ? 'text-danger'
-                            : 'text-muted'
-                      )}
-                    >
-                      {changeLabel ?? '—'}
-                    </span>
-                    <span className="text-muted">24h</span>
+                    {changeLabel && (
+                      <span className="flex items-center gap-1.5">
+                        <span
+                          className={cn(
+                            'font-medium',
+                            changeDirection === 'positive'
+                              ? 'text-success'
+                              : changeDirection === 'negative'
+                                ? 'text-danger'
+                                : 'text-muted'
+                          )}
+                        >
+                          {changeLabel}
+                        </span>
+                        <span className="text-muted">24h</span>
+                      </span>
+                    )}
+                    {priceAsOfLabel && (
+                      <span
+                        className="text-muted"
+                        title={priceAsOf ? `Price as of ${formatTimestamp(priceAsOf)}` : undefined}
+                      >
+                        Price as of {priceAsOfLabel}
+                      </span>
+                    )}
                   </>
                 )}
               </div>
             </>
           )}
         </div>
-        {delayed && !active && (
-          <span className="absolute right-0 top-1 z-10 flex items-center gap-1 text-[11px] text-muted">
-            <Icon icon="lucide:clock-3" width={12} height={12} />
-            Delayed
-          </span>
-        )}
         {loading && !chart ? (
           <Skeleton className="absolute inset-x-0 bottom-0 h-[92px] rounded-xl" />
         ) : chart ? (
@@ -208,7 +217,7 @@ export function MarketPriceChart({
               aria-pressed={range === item}
               onClick={() => onRangeChange(item)}
               className={cn(
-                'h-7 flex-1 rounded-md text-[11px] font-medium transition-colors',
+                'wallet-interactive h-7 flex-1 rounded-md text-[11px] font-medium active:bg-white/10 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2',
                 range === item
                   ? 'bg-white/10 text-foreground'
                   : 'text-muted hover:bg-white/5 hover:text-foreground'

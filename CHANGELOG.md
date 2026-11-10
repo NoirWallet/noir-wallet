@@ -2,6 +2,40 @@
 
 All notable user-facing changes to Noir Wallet are documented in this file.
 
+## [2.0.0-beta.2] - 2026-11-10
+
+### Added
+
+- Added Shield Funds for NEAR Confidential balances and native Zcash shielded balances, with Send, Receive, Move, and supported Swap routes.
+- Added external Shield deposits with receiving addresses, editable refund addresses, and deposit tracking.
+- Added Directly and Cluster options for Public/Private transfers, with route fees and estimated arrival times before confirmation.
+- Added an optional private route for supported dApp transfers from Private accounts, with quotes for the amount the recipient should receive.
+
+### Changed
+
+- Redesigned Home, asset details, account management, Send, Receive, Move, Swap, and Settings for the V2 interface, including side-panel layouts.
+- Separated Total, Public, Shield, and Private asset views on Home and asset details, with matching balances and activity filters.
+- Updated Shield Move to select a funding source and asset first, support direction switching, and offer supported EVM destination networks for the same token.
+- Updated wallet import with network selection and address previews, while retaining Zcash recovery and synchronization controls.
+- Added all-EVM and single-network contacts, compact address previews, and a warning before copying Private addresses.
+- Updated the default Swap token list to use RHEA's curated catalog while retaining held assets and token search.
+- Simplified connected dApp account and network selection, and removed the built-in Lending views and valuations.
+
+### Fixed
+
+- Fixed wallet switching getting stuck behind Zcash synchronization requests.
+- Fixed backup reminders appearing for newly imported wallets or referring to a different wallet.
+- Fixed Shield balance loading, asset classification, and action routing; stopped repeated checks for expired, unfunded deposit requests.
+- Fixed Send, Move, and Swap Max controls and stale fee estimates, and made quote failures and retries clearer.
+- Fixed Zcash Swap funding selection in Private mode and preserved the selected recipient and funding source through confirmation.
+- Fixed transaction progress and activity recovery after reopening the wallet, including interrupted hardware-wallet Swap approvals.
+- Fixed Swap asset selection and address lists when custom EVM networks are configured.
+- Fixed network labels and duplicate Zcash account counts in connected dApp permissions.
+- Fixed stale recovery-date requests and import errors appearing after changing Zcash history options.
+- Fixed Public-to-Confidential Max transfers opening confirmation before the current route's gas estimate was ready.
+- Fixed wallet snapshot recovery after locking and unlocking when the Zcash Worker had restarted.
+- Fixed Swap rates displaying both equality and approximation symbols at the same time.
+
 ## [2.0.0-beta.1] - 2026-11-02
 
 ### Added

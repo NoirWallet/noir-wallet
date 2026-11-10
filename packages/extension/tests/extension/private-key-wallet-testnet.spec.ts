@@ -8,6 +8,7 @@ import {
   waitForBackgroundWalletInitialization
 } from '../helpers/extension-fixtures'
 import { BUILTIN_EVM_NETWORKS } from '../../src/config/networks'
+import { mockReleasedEvmRpc, serveSdkExample } from '../helpers/release-default'
 
 const TEST_MNEMONIC_12 = `${'abandon '.repeat(11)}about`
 const TEST_PASSWORD = 'private-key-testnet-password'
@@ -20,6 +21,13 @@ const BITCOIN_TESTNET_CHAIN_ID = 'bip122:000000000933ea01ad0ee984209779ba'
 const SOLANA_PRIVATE_KEY = 'US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx'
 const SOLANA_DEVNET_CHAIN_ID = 'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1'
 const NEAR_PRIVATE_KEY = 'ed25519:cGfHiC6Kgg3FpFZvgwGcswsCRtp4aBP2fzuXRQPizuN'
+
+interface PrivateKeyDAppWindow extends Window {
+  noirwallet: {
+    ethereum: { request(input: { method: string; params?: unknown[] }): Promise<unknown> }
+    zcash: { request(input: { method: string }): Promise<unknown> }
+  }
+}
 
 async function importMnemonicWallet(page: Page): Promise<void> {
   await page.getByRole('button', { name: 'Import wallet' }).click()
@@ -40,11 +48,25 @@ async function importMnemonicWallet(page: Page): Promise<void> {
 }
 
 async function openMnemonicPrivateKeyExport(page: Page): Promise<void> {
-  await page.getByRole('button', { name: 'Choose wallet' }).click()
+  await openAccountList(page)
   await page.getByRole('button', { name: 'Account actions for Account 1' }).click()
   await page.getByRole('menuitem', { name: 'Account details' }).click()
-  await page.getByText('Export private key', { exact: true }).click()
+  await page.getByRole('button', { name: 'Private Key' }).click()
   await expect(page.getByRole('heading', { name: 'Export private key' })).toBeVisible()
+}
+
+async function openAccountList(page: Page): Promise<void> {
+  const accountListHeading = page.getByRole('heading', { name: 'Accounts' })
+  const chooseWallet = page.getByRole('button', { name: 'Choose wallet' })
+  if (!(await accountListHeading.isVisible())) {
+    await expect(chooseWallet).toBeVisible({ timeout: 30_000 })
+    await chooseWallet.click()
+    await page
+      .getByRole('dialog', { name: 'Accounts' })
+      .getByRole('button', { name: 'Accounts' })
+      .click()
+  }
+  await expect(accountListHeading).toBeVisible()
 }
 
 async function revealSelectedPrivateKey(page: Page): Promise<string> {
@@ -56,11 +78,9 @@ async function revealSelectedPrivateKey(page: Page): Promise<string> {
 }
 
 async function openPrivateKeyImport(page: Page): Promise<void> {
-  const chooseWallet = page.getByRole('button', { name: 'Choose wallet' })
-  if (await chooseWallet.isVisible()) await chooseWallet.click()
+  await openAccountList(page)
   await page.getByRole('button', { name: 'Add Wallet', exact: true }).click()
-  await page.getByRole('button', { name: 'Import Wallet', exact: true }).click()
-  await page.getByRole('button', { name: 'Private Key', exact: true }).click()
+  await page.getByRole('button', { name: 'Import private key', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'Import private key' })).toBeVisible()
 }
 
@@ -73,14 +93,14 @@ async function importPrivateKeyWallet(
   }>
 ): Promise<void> {
   await openPrivateKeyImport(page)
-  await page.getByLabel('Wallet name').fill(input.name)
   await page.getByLabel('Private key', { exact: true }).fill(input.privateKey)
   await expect(page.getByText('Detected network', { exact: true })).toBeVisible()
   await expect(page.getByText(input.family, { exact: true })).toBeVisible()
-  await page.getByRole('button', { name: 'Continue', exact: true }).click()
+  await page.getByRole('button', { name: 'Confirm', exact: true }).click()
   await expect(page.getByText(`${input.family} address preview`, { exact: true })).toBeVisible({
     timeout: 30_000
   })
+  await page.getByLabel('Wallet name').fill(input.name)
   await page.getByRole('button', { name: 'Import wallet', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'Portfolio' })).toBeVisible({ timeout: 60_000 })
 }
@@ -99,6 +119,170 @@ async function readLegacyActiveScope(page: Page): Promise<{
   })
 }
 
+test('preserves imported EVM Connect during Zcash discovery and cancels it on lock', async ({
+  context,
+  popup
+}) => {
+  test.setTimeout(180_000)
+  const evmRequests = await mockReleasedEvmRpc(context, 'testnet')
+  await waitForBackgroundWalletInitialization(popup)
+  await importMnemonicWallet(popup)
+  await popup.getByRole('button', { name: 'Choose wallet' }).click()
+  await popup.getByRole('button', { name: 'Accounts', exact: true }).click()
+  await importPrivateKeyWallet(popup, {
+    privateKey: EVM_PRIVATE_KEY,
+    name: 'Imported EVM Testnet',
+    family: 'EVM'
+  })
+  await popup.evaluate(() => chrome.runtime.sendMessage({ type: 'WALLET_LOCKED' }))
+  await popup.reload()
+  await popup.getByPlaceholder('Enter Password').fill(TEST_PASSWORD)
+  await popup.getByRole('button', { name: 'Unlock', exact: true }).click()
+  await expect(popup.getByRole('heading', { name: 'Portfolio' })).toBeVisible()
+
+  await context.route('https://private-key-sdk.noir.test/**', serveSdkExample)
+  const sdkDemo = await context.newPage()
+  await sdkDemo.goto('https://private-key-sdk.noir.test/example/')
+  await sdkDemo.waitForFunction(() => Boolean(Reflect.get(window, 'noirwallet')))
+  await sdkDemo.getByRole('button', { name: 'Testnet', exact: true }).click()
+  const sdkApprovalOpened = context.waitForEvent('page')
+  await sdkDemo.getByRole('button', { name: 'Connect all networks' }).click()
+  const sdkApproval = await sdkApprovalOpened
+  await sdkApproval.waitForURL(/#approval\?requestId=/)
+  await expect(sdkApproval.getByRole('button', { name: 'Connect', exact: true })).toBeVisible()
+  await sdkApproval.getByRole('button', { name: 'Connect', exact: true }).click()
+  await expect(sdkDemo.locator('.multichain-session-bar')).toContainText('1 networks authorized')
+
+  const sdkSession = await sdkDemo.evaluate(async () => {
+    const wallet = Reflect.get(window, 'noirwallet') as {
+      multichain: {
+        getSession(): Promise<{ scopes: Record<string, { accounts: string[] }> } | null>
+        invokeMethod(input: { scope: string; request: { method: string } }): Promise<unknown>
+      }
+    }
+    const session = await wallet.multichain.getSession()
+    const deniedScopes = [
+      'bip122:05a60a92d99d85997cce3b87616c089f',
+      'bip122:000000000933ea01ad0ee984209779ba',
+      'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1',
+      'near:testnet'
+    ]
+    const deniedCodes = await Promise.all(
+      deniedScopes.map(async scope => {
+        try {
+          await wallet.multichain.invokeMethod({ scope, request: { method: 'getAccounts' } })
+          return null
+        } catch (error) {
+          return error && typeof error === 'object' ? Reflect.get(error, 'code') : null
+        }
+      })
+    )
+    return { session, deniedCodes }
+  })
+  expect(sdkSession.session).not.toBeNull()
+  expect(Object.keys(sdkSession.session?.scopes ?? {})).toEqual(['eip155:11155111'])
+  expect(sdkSession.session?.scopes['eip155:11155111'].accounts).toEqual([
+    `eip155:11155111:${EVM_ADDRESS.toLowerCase()}`
+  ])
+  expect(sdkSession.deniedCodes).toEqual([4100, 4100, 4100, 4100])
+  await sdkDemo.getByRole('button', { name: 'Revoke session' }).click()
+  await expect(sdkDemo.getByRole('button', { name: 'Connect all networks' })).toBeVisible()
+
+  await context.route('https://private-key-dapp.example/**', route =>
+    route.fulfill({ contentType: 'text/html', body: '<html><body>EVM dApp</body></html>' })
+  )
+  const dapp = await context.newPage()
+  await dapp.goto('https://private-key-dapp.example/')
+  await dapp.waitForFunction(() => Boolean((window as PrivateKeyDAppWindow).noirwallet?.ethereum))
+  const zcashConnect = await dapp.evaluate(async () => {
+    try {
+      await (window as PrivateKeyDAppWindow).noirwallet.zcash.request({
+        method: 'zcash_requestAccounts'
+      })
+      return 'connected'
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error)
+    }
+  })
+  expect(zcashConnect).toContain('active Wallet does not support Zcash')
+  const approvalOpened = context.waitForEvent('page')
+  const connecting = dapp.evaluate(async () => {
+    try {
+      return await (window as PrivateKeyDAppWindow).noirwallet.ethereum.request({
+        method: 'eth_requestAccounts'
+      })
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : String(error) }
+    }
+  })
+  const approval = await approvalOpened
+  await approval.waitForURL(/#approval\?requestId=/)
+  expect(
+    await dapp.evaluate(() =>
+      (window as PrivateKeyDAppWindow).noirwallet.zcash.request({ method: 'zcash_getAccounts' })
+    )
+  ).toBeNull()
+  await approval.getByRole('button', { name: 'Connect', exact: true }).click()
+  expect(await connecting).toEqual([EVM_ADDRESS.toLowerCase()])
+
+  const reconnectOpened = context.waitForEvent('page')
+  const reconnecting = dapp.evaluate(async () => {
+    try {
+      return await (window as PrivateKeyDAppWindow).noirwallet.ethereum.request({
+        method: 'wallet_requestPermissions',
+        params: [{ eth_accounts: {} }]
+      })
+    } catch (error) {
+      return { code: error && typeof error === 'object' ? Reflect.get(error, 'code') : null }
+    }
+  })
+  const reconnectApproval = await reconnectOpened
+  await expect(
+    reconnectApproval.getByRole('button', { name: 'Connect', exact: true })
+  ).toBeVisible()
+  await popup.evaluate(() => chrome.runtime.sendMessage({ type: 'WALLET_LOCKED' }))
+  expect(await reconnecting).toEqual({ code: 4001 })
+  await expect.poll(() => reconnectApproval.isClosed()).toBe(true)
+
+  const unlockOpened = context.waitForEvent('page')
+  const lockedZcashConnect = dapp.evaluate(async () => {
+    try {
+      await (window as PrivateKeyDAppWindow).noirwallet.zcash.request({
+        method: 'zcash_requestAccounts'
+      })
+      return 'connected'
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error)
+    }
+  })
+  const unlock = await unlockOpened
+  await unlock.waitForURL(/#unlock\?from=dapp/)
+  await unlock.getByPlaceholder('Enter Password').fill(TEST_PASSWORD)
+  await unlock.getByRole('button', { name: 'Unlock', exact: true }).click()
+  expect(await lockedZcashConnect).toContain('active Wallet does not support Zcash')
+
+  await popup.evaluate(() => chrome.runtime.sendMessage({ type: 'WALLET_LOCKED' }))
+  const sdkUnlockOpened = context.waitForEvent('page')
+  await sdkDemo.getByRole('button', { name: 'Connect all networks' }).click()
+  const sdkUnlock = await sdkUnlockOpened
+  await sdkUnlock.waitForURL(/#unlock\?from=dapp/)
+  const sdkReconnectOpened = context.waitForEvent('page')
+  await sdkUnlock.getByPlaceholder('Enter Password').fill(TEST_PASSWORD)
+  await sdkUnlock.getByRole('button', { name: 'Unlock', exact: true }).click()
+  const sdkReconnect = await sdkReconnectOpened
+  await sdkReconnect.waitForURL(/#approval\?requestId=/)
+  await sdkReconnect.getByRole('button', { name: 'Connect', exact: true }).click()
+  await expect(sdkDemo.locator('.multichain-session-bar')).toContainText('1 networks authorized')
+  const restoredScopes = await sdkDemo.evaluate(async () => {
+    const wallet = Reflect.get(window, 'noirwallet') as {
+      multichain: { getSession(): Promise<{ scopes: Record<string, unknown> } | null> }
+    }
+    return (await wallet.multichain.getSession())?.scopes
+  })
+  expect(restoredScopes).toEqual(sdkSession.session?.scopes)
+  expect(evmRequests.some(request => request.endsWith(':eth_sendRawTransaction'))).toBe(false)
+})
+
 test('imports and exports EVM and Bitcoin private keys in Testnet Mode', async ({
   context,
   popup
@@ -114,13 +298,13 @@ test('imports and exports EVM and Bitcoin private keys in Testnet Mode', async (
   const mnemonicEvmKey = await revealSelectedPrivateKey(popup)
   expect(mnemonicEvmKey).toMatch(/^0x[0-9a-f]{64}$/)
   await popup.getByRole('button', { name: 'Back' }).click()
-  await popup.getByText('Export private key', { exact: true }).click()
+  await popup.getByRole('button', { name: 'Private Key' }).click()
   await popup.getByRole('button', { name: 'Bitcoin Testnet', exact: true }).click()
   const mnemonicBitcoinKey = await revealSelectedPrivateKey(popup)
   expect(mnemonicBitcoinKey).toMatch(/^c[1-9A-HJ-NP-Za-km-z]{51}$/)
   await popup.getByRole('button', { name: 'Back' }).click()
   await popup.getByRole('button', { name: 'Back' }).click()
-  await popup.getByRole('button', { name: 'Back' }).click()
+  await popup.getByRole('button', { name: 'Close', exact: true }).click()
   await expect(popup.getByRole('heading', { name: 'Portfolio' })).toBeVisible()
 
   await importPrivateKeyWallet(popup, {
@@ -169,20 +353,19 @@ test('imports and exports EVM and Bitcoin private keys in Testnet Mode', async (
   })
 
   await openPrivateKeyImport(popup)
-  await popup.getByLabel('Wallet name').fill('Wrong Bitcoin Network')
   await popup.getByLabel('Private key', { exact: true }).fill(BITCOIN_MAINNET_WIF)
   await expect(popup.getByText('Bitcoin', { exact: true })).toBeVisible()
-  await popup.getByRole('button', { name: 'Continue', exact: true }).click()
+  await popup.getByRole('button', { name: 'Confirm', exact: true }).click()
   await expect(popup.locator('p.text-danger')).toBeVisible({ timeout: 30_000 })
   await expect(popup.getByText('Bitcoin address preview', { exact: true })).toHaveCount(0)
   await popup.getByLabel('Private key', { exact: true }).fill(BITCOIN_TESTNET_WIF)
-  await popup.getByLabel('Wallet name').fill('Imported Bitcoin Testnet')
-  await popup.getByRole('button', { name: 'Continue', exact: true }).click()
+  await popup.getByRole('button', { name: 'Confirm', exact: true }).click()
   await expect(popup.getByText('Bitcoin address preview', { exact: true })).toBeVisible({
     timeout: 30_000
   })
   await expect(popup.locator('p.font-mono')).toContainText(/^tb1q/)
   await captureScreenshot(popup, 'private-key-testnet-bitcoin-preview.png')
+  await popup.getByLabel('Wallet name').fill('Imported Bitcoin Testnet')
   await popup.getByRole('button', { name: 'Import wallet', exact: true }).click()
   await expect(popup.getByRole('heading', { name: 'Portfolio' })).toBeVisible({ timeout: 60_000 })
 
@@ -204,7 +387,7 @@ test('imports and exports EVM and Bitcoin private keys in Testnet Mode', async (
   })
   expect(bitcoinAccount.networks[0].addresses).toHaveLength(4)
 
-  await popup.getByRole('button', { name: 'Choose wallet' }).click()
+  await openAccountList(popup)
   const privateKeyGroup = popup.locator('section[aria-label="Wallet group Imported Private Key"]')
   await expect(privateKeyGroup).toBeVisible()
   await expect(privateKeyGroup.locator('[aria-label^="Account actions for "]')).toHaveCount(2)
@@ -214,14 +397,14 @@ test('imports and exports EVM and Bitcoin private keys in Testnet Mode', async (
   await expect(privateKeyGroup.getByRole('button', { name: /^Rename wallet / })).toHaveCount(0)
   await privateKeyGroup.scrollIntoViewIfNeeded()
   await captureScreenshot(popup, 'private-key-account-group.png')
-  await popup.getByRole('button', { name: 'Back' }).click()
+  await popup.getByRole('button', { name: 'Close', exact: true }).click()
 
   await terminateExtensionServiceWorker(context, popup)
   await popup.reload()
   // A Service Worker restart does not end the browser-scoped chrome.storage.session unlock.
   // Browser restart, extension reload/update, explicit lock, and network-mode restart do.
   await expect(popup.getByRole('heading', { name: 'Portfolio' })).toBeVisible({ timeout: 15_000 })
-  await popup.getByRole('button', { name: 'Choose wallet' }).click()
+  await openAccountList(popup)
   await privateKeyGroup
     .getByRole('button', { name: `Account actions for ${bitcoinAccount.accountDisplayName}` })
     .last()
@@ -254,8 +437,9 @@ test('imports and exports EVM and Bitcoin private keys in Testnet Mode', async (
   })
   expect(restoredBitcoinAccount).toMatchObject({ active: true })
 
+  await popup.getByRole('button', { name: 'Open menu' }).click()
   await popup.getByRole('button', { name: 'Settings', exact: true }).click()
-  await popup.getByRole('button', { name: 'Security & Privacy', exact: true }).click()
+  await popup.getByRole('button', { name: 'Security', exact: true }).click()
   await popup.getByRole('button', { name: 'Change Password', exact: true }).click()
   await expect(popup.getByRole('heading', { name: 'Change Password' })).toBeVisible()
   await popup.getByPlaceholder('Current Password').fill(TEST_PASSWORD)
@@ -277,7 +461,7 @@ test('imports and exports EVM and Bitcoin private keys in Testnet Mode', async (
   await popup.getByRole('button', { name: 'Unlock', exact: true }).click()
   await expect(popup.getByRole('heading', { name: 'Portfolio' })).toBeVisible({ timeout: 30_000 })
 
-  await popup.getByRole('button', { name: 'Choose wallet' }).click()
+  await openAccountList(popup)
   const importedGroup = popup.locator('section[aria-label="Wallet group Imported Private Key"]')
   await importedGroup
     .getByRole('button', { name: `Account actions for ${evmAccount.accountDisplayName}` })
@@ -300,7 +484,7 @@ test('imports and exports EVM and Bitcoin private keys in Testnet Mode', async (
     importedGroup.getByRole('button', { name: 'Account actions for EVM Reserve' })
   ).toBeVisible()
   await popup.reload()
-  await popup.getByRole('button', { name: 'Choose wallet' }).click()
+  await openAccountList(popup)
   await expect(
     importedGroup.getByRole('button', { name: 'Account actions for EVM Reserve' })
   ).toBeVisible()
@@ -352,7 +536,7 @@ test('imports and exports EVM and Bitcoin private keys in Testnet Mode', async (
     })
     .not.toContain(evmAccount.walletId)
   await popup.reload()
-  await popup.getByRole('button', { name: 'Choose wallet' }).click()
+  await openAccountList(popup)
   await expect(importedGroup.locator('[aria-label^="Account actions for "]')).toHaveCount(1)
 })
 
@@ -421,7 +605,7 @@ test('imports Solana and NEAR private-key Wallets behind the Beta chain gates', 
   })
   expect(nearAccount.networks[0].addresses[0].value).toMatch(/^[0-9a-f]{64}$/)
 
-  await popup.getByRole('button', { name: 'Choose wallet' }).click()
+  await openAccountList(popup)
   await popup
     .getByRole('button', { name: `Account actions for ${nearAccount.accountDisplayName}` })
     .last()

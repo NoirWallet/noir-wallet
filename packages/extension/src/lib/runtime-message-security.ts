@@ -19,6 +19,7 @@ import { parseRheaSwapTransactionBinding } from '@/core/transactions/domain'
 import { isZcashOperationAnalyticsContext } from './analytics/operations'
 import { isDiagnosticContextId } from './diagnostic-log'
 import type { ZcashTransactionContext } from '@/core/worker/types'
+import { parseSelectedNetworkFamilies } from '@/core/wallet/account-network-selection'
 
 export interface RuntimeMessageSenderLike {
   readonly id?: string
@@ -45,7 +46,6 @@ export const ZCASH_DAPP_RUNTIME_METHODS = Object.freeze([
   'zcash_sendTransaction',
   'zcash_signMessage',
   'zcash_shieldFunds',
-  'zcash_getTransactionHistory',
   'zcash_switchNetwork',
   'zcash_checkLendingMcaAccount',
   'zcash_disconnect'
@@ -115,9 +115,12 @@ export interface DAppApprovalResultMessage {
   readonly requestId: string
   readonly success: boolean
   readonly marginalFeeZats?: number
+  readonly feeQuoteId?: string
+  readonly feeTier?: 'standard' | 'fast'
   readonly feeZats?: number
   readonly selectedIds?: readonly string[]
   readonly selectedScopes?: Readonly<Record<string, readonly string[]>>
+  readonly transferPrivacyRevision?: number
 }
 
 export type HardwareSignResultMessage =
@@ -185,6 +188,10 @@ const isWalletBackupVerification: RuntimeFieldValidator = value => {
 }
 const isEvmAddress: RuntimeFieldValidator = value =>
   typeof value === 'string' && /^0x[0-9a-fA-F]{40}$/.test(value)
+const isEvmWeiFeeCap: RuntimeFieldValidator = value =>
+  typeof value === 'string' &&
+  /^(?:0|[1-9][0-9]{0,77})$/.test(value) &&
+  BigInt(value) <= (1n << 256n) - 1n
 const isBoundedString: RuntimeFieldValidator = value =>
   typeof value === 'string' && value.length <= 4_096
 const isLegacyPasswordString: RuntimeFieldValidator = value =>
@@ -194,6 +201,14 @@ const isLegacyPasswordString: RuntimeFieldValidator = value =>
 const isNullableShortString: RuntimeFieldValidator = value => value === null || isShortString(value)
 const isRecord: RuntimeFieldValidator = value => isRuntimeRecord(value)
 const isArray: RuntimeFieldValidator = value => Array.isArray(value)
+const isSelectedNetworkFamilies: RuntimeFieldValidator = value => {
+  try {
+    parseSelectedNetworkFamilies(value)
+    return true
+  } catch {
+    return false
+  }
+}
 const isChainIdArray: RuntimeFieldValidator = value =>
   Array.isArray(value) &&
   value.length > 0 &&
@@ -272,8 +287,6 @@ const isAssetMarketHistoryRange: RuntimeFieldValidator = value =>
   value === 'all'
 const isNetworkMode: RuntimeFieldValidator = value => value === 'mainnet' || value === 'testnet'
 const isDAppExecutionMode: RuntimeFieldValidator = value => value === 'main' || value === 'private'
-const isZcashLendingSigningMode: RuntimeFieldValidator = value =>
-  value === 'derived' || value === 'legacy' || value === 'legacy_index0'
 const isEvmPayloadFingerprint: RuntimeFieldValidator = value =>
   typeof value === 'string' && /^[0-9a-f]{64}$/.test(value)
 const isCanonicalBitcoinPsbtBase64: RuntimeFieldValidator = value =>
@@ -395,6 +408,36 @@ const TRUSTED_RUNTIME_SCHEMAS: Readonly<Record<string, RuntimeMessageSchema>> = 
   },
   GET_CONNECTED_DAPPS: {},
   GET_CURRENT_TAB_DAPP: {},
+  GET_CURRENT_DAPP_EVM_NETWORKS: {},
+  SET_CURRENT_DAPP_EVM_NETWORK: {
+    required: {
+      chainId: value => typeof value === 'string' && /^eip155:[1-9][0-9]*$/.test(value),
+      selectionContext: value =>
+        isRuntimeRecord(value) &&
+        hasExactRuntimeKeys(value, [
+          'origin',
+          'walletId',
+          'accountId',
+          'networkMode',
+          'activeChainId',
+          'authorizationRevision',
+          'authorizationSnapshot',
+          'unlockEpoch',
+          'runtimeKey'
+        ]) &&
+        isShortString(value.origin) &&
+        isShortString(value.walletId) &&
+        isShortString(value.accountId) &&
+        (value.networkMode === 'mainnet' || value.networkMode === 'testnet') &&
+        typeof value.activeChainId === 'string' &&
+        /^eip155:[1-9][0-9]*$/.test(value.activeChainId) &&
+        Number.isSafeInteger(value.authorizationRevision) &&
+        Number(value.authorizationRevision) >= 0 &&
+        isBoundedString(value.authorizationSnapshot) &&
+        isShortString(value.unlockEpoch) &&
+        isShortString(value.runtimeKey)
+    }
+  },
   GET_DAPP_EXECUTION_MODE: {},
   SET_DAPP_EXECUTION_MODE: {
     required: { mode: isDAppExecutionMode },
@@ -408,11 +451,15 @@ const TRUSTED_RUNTIME_SCHEMAS: Readonly<Record<string, RuntimeMessageSchema>> = 
   },
   PROVISION_PRIMARY_SOFTWARE_WALLET: {
     required: {
+      mode: isSoftwareWalletProvisioningMode,
       mnemonic: isMnemonicPhrase,
       password: isLegacyPasswordString,
       accountName: isShortString
     },
-    optional: { birthdayHeight: isBirthdayHeight }
+    optional: {
+      birthdayHeight: isBirthdayHeight,
+      selectedNetworkFamilies: isSelectedNetworkFamilies
+    }
   },
   GENERATE_ADD_WALLET_MNEMONIC: { required: { wordCount: isMnemonicWordCount } },
   ADD_SOFTWARE_WALLET: {
@@ -421,7 +468,13 @@ const TRUSTED_RUNTIME_SCHEMAS: Readonly<Record<string, RuntimeMessageSchema>> = 
       mnemonic: isMnemonicPhrase,
       accountName: isShortString
     },
-    optional: { birthdayHeight: isBirthdayHeight }
+    optional: {
+      birthdayHeight: isBirthdayHeight,
+      selectedNetworkFamilies: isSelectedNetworkFamilies
+    }
+  },
+  PREVIEW_SOFTWARE_WALLET_ADDRESSES: {
+    required: { mnemonic: isMnemonicPhrase, selectedNetworkFamilies: isSelectedNetworkFamilies }
   },
   PREVIEW_PRIVATE_KEY_WALLET: {
     required: {
@@ -461,6 +514,7 @@ const TRUSTED_RUNTIME_SCHEMAS: Readonly<Record<string, RuntimeMessageSchema>> = 
   RESOLVE_ZCASH_BIRTHDAY_HEIGHT: {
     required: { walletId: isShortString, accountId: isShortString }
   },
+  GET_ZCASH_FEE_QUOTE: {},
   ESTIMATE_ZCASH_TRANSFER_FEE: {
     required: {
       to: isShortString,
@@ -468,7 +522,7 @@ const TRUSTED_RUNTIME_SCHEMAS: Readonly<Record<string, RuntimeMessageSchema>> = 
       marginalFeeZats: isPositiveSafeInteger,
       fundingSource: isFundingSource
     },
-    optional: { memo: isBoundedString, debugRequestId: isShortString }
+    optional: { memo: isBoundedString, debugRequestId: isShortString, feeQuoteId: isShortString }
   },
   ESTIMATE_ZCASH_MAX_TRANSFER: {
     required: {
@@ -476,9 +530,12 @@ const TRUSTED_RUNTIME_SCHEMAS: Readonly<Record<string, RuntimeMessageSchema>> = 
       marginalFeeZats: isPositiveSafeInteger,
       fundingSource: isFundingSource
     },
-    optional: { memo: isBoundedString, debugRequestId: isShortString }
+    optional: { memo: isBoundedString, debugRequestId: isShortString, feeQuoteId: isShortString }
   },
-  ESTIMATE_ZCASH_SHIELD_FEE: { required: { marginalFeeZats: isPositiveSafeInteger } },
+  ESTIMATE_ZCASH_SHIELD_FEE: {
+    required: { marginalFeeZats: isPositiveSafeInteger },
+    optional: { feeQuoteId: isShortString }
+  },
   WAIT_FOR_ZCASH_ACCOUNT_READY: { required: { timeoutMs: isAccountReadyTimeout } },
   ROTATE_ZCASH_SHIELDED_ADDRESS: {
     required: { walletId: isShortString, accountId: isShortString }
@@ -535,13 +592,6 @@ const TRUSTED_RUNTIME_SCHEMAS: Readonly<Record<string, RuntimeMessageSchema>> = 
   },
   GET_BITCOIN_ACTIVITY: { optional: { action: isPortfolioAction } },
   GET_BITCOIN_WALLET_IDENTITY: {},
-  GET_ZCASH_LENDING_PUBLIC_KEY: {
-    required: {
-      walletId: isShortString,
-      accountId: isShortString,
-      signingMode: isZcashLendingSigningMode
-    }
-  },
   GET_ASSET_PRICES: {
     required: { action: isPortfolioAction },
     optional: { assetId: isShortString }
@@ -552,7 +602,19 @@ const TRUSTED_RUNTIME_SCHEMAS: Readonly<Record<string, RuntimeMessageSchema>> = 
       tokenListChainIds: isRheaSwapTokenListChainIdArray
     }
   },
-  QUOTE_RHEA_SWAP: { required: { request: isRheaSwapQuoteRequest } },
+  QUOTE_RHEA_SWAP: {
+    required: { request: isRheaSwapQuoteRequest },
+    optional: {
+      purpose: (value: unknown) =>
+        value === 'wallet-swap' ||
+        value === 'public-cross-chain-send' ||
+        value === 'confidential-funding' ||
+        value === 'private-swap' ||
+        value === 'private-transfer' ||
+        value === 'private-cross-chain-send' ||
+        value === 'public-private-send'
+    }
+  },
   PREPARE_RHEA_SWAP: { required: { quoteHandle: isRheaSwapQuoteHandle } },
   GET_RHEA_SWAP_EVM_PLAN: { required: { quoteHandle: isRheaSwapQuoteHandle } },
   GET_RHEA_SWAP_EVM_SIGNATURE_PLAN: { required: { quoteHandle: isRheaSwapQuoteHandle } },
@@ -586,11 +648,18 @@ const TRUSTED_RUNTIME_SCHEMAS: Readonly<Record<string, RuntimeMessageSchema>> = 
   START_RHEA_SWAP_MONITOR: { required: { transaction: isRecord } },
   DISCARD_RHEA_SWAP: { required: { quoteHandle: isRheaSwapQuoteHandle } },
   PREPARE_CONFIDENTIAL_FUNDING: { required: { request: isRecord } },
+  PREVIEW_CONFIDENTIAL_FUNDING: { required: { request: isRecord } },
+  CREATE_EXTERNAL_SHIELD_DEPOSIT: { required: { request: isRecord } },
+  GET_EXTERNAL_SHIELD_DEPOSIT: { required: { depositId: isShortString } },
+  LIST_EXTERNAL_SHIELD_DEPOSITS: { required: { scope: isRecord } },
+  REFRESH_EXTERNAL_SHIELD_DEPOSIT: { required: { depositId: isShortString } },
   CONFIRM_CONFIDENTIAL_FUNDING: {
     required: { planId: isShortString, payloadFingerprint: isEvmPayloadFingerprint }
   },
   GET_CONFIDENTIAL_FUNDING: { required: { planId: isShortString } },
+  CHECK_CONFIDENTIAL_FUNDING_SUBMISSION: { required: { planId: isShortString } },
   CANCEL_CONFIDENTIAL_FUNDING: { required: { planId: isShortString } },
+  REFRESH_CONFIDENTIAL_BALANCES: { required: { scope: isRecord, authorize: isBoolean } },
   GET_ASSET_MARKET_HISTORY: {
     required: {
       assetId: isShortString,
@@ -638,6 +707,13 @@ const TRUSTED_RUNTIME_SCHEMAS: Readonly<Record<string, RuntimeMessageSchema>> = 
     optional: { forceDiscovery: isBoolean, chainIds: isChainIdArray }
   },
   GET_EVM_PORTFOLIO: { required: { action: isPortfolioAction } },
+  GET_EVM_CONFIRMATION_ESTIMATE: {
+    required: {
+      chainId: isShortString,
+      maxFeePerGasWei: isEvmWeiFeeCap,
+      maxPriorityFeePerGasWei: isEvmWeiFeeCap
+    }
+  },
   GET_EVM_TOKEN_ALLOWANCE: {
     required: {
       chainId: isShortString,
@@ -656,6 +732,20 @@ const TRUSTED_RUNTIME_SCHEMAS: Readonly<Record<string, RuntimeMessageSchema>> = 
       feeSelection: isEvmFeeSelection,
       executionMode: value => value === 'main' || value === 'private',
       debugRequestId: isShortString
+    }
+  },
+  ESTIMATE_EVM_TRANSFER_FEE: {
+    required: { intent: isRecord },
+    optional: {
+      feeSelection: isEvmFeeSelection,
+      executionMode: value => value === 'main' || value === 'private'
+    }
+  },
+  ESTIMATE_EVM_CONTRACT_CALL_FEE: {
+    required: { intent: isRecord },
+    optional: {
+      feeSelection: isEvmFeeSelection,
+      executionMode: value => value === 'main' || value === 'private'
     }
   },
   PREPARE_EVM_CONTRACT_CALL: {
@@ -753,6 +843,14 @@ const TRUSTED_RUNTIME_SCHEMAS: Readonly<Record<string, RuntimeMessageSchema>> = 
       expectedDerivationIndex: isBirthdayHeight
     }
   },
+  SET_ACCOUNT_NETWORK_SELECTION: {
+    required: {
+      walletId: isShortString,
+      accountId: isShortString,
+      families: isSelectedNetworkFamilies
+    },
+    optional: { birthdayHeight: isPositiveBirthdayHeight }
+  },
   SWITCH_ACCOUNT: {
     required: { walletId: isShortString, accountId: isShortString }
   },
@@ -789,7 +887,14 @@ const TRUSTED_RUNTIME_SCHEMAS: Readonly<Record<string, RuntimeMessageSchema>> = 
   },
   RPC_ENDPOINT_CHANGED: { required: { preferences: isRecord } },
   GET_PENDING_REQUEST: { required: { requestId: isShortString } },
-  ESTIMATE_APPROVAL_FEE: { required: { requestId: isShortString } },
+  ESTIMATE_APPROVAL_FEE: {
+    required: { requestId: isShortString },
+    optional: {
+      feeTier: value => value === 'standard' || value === 'fast',
+      marginalFeeZats: isPositiveSafeInteger,
+      feeQuoteId: isShortString
+    }
+  },
   GET_SYNC_STATE: {
     optional: { walletId: isShortString, accountId: isShortString }
   },
@@ -807,6 +912,8 @@ const TRUSTED_RUNTIME_SCHEMAS: Readonly<Record<string, RuntimeMessageSchema>> = 
       txType: isShortString,
       sendParams: isRecord,
       marginalFeeZats: isFiniteNumber,
+      feeQuoteId: isShortString,
+      feeTier: value => value === 'standard' || value === 'fast',
       monitorParams: isRecord,
       analytics: isZcashOperationAnalyticsContext
     }
@@ -824,7 +931,8 @@ const TRUSTED_RUNTIME_SCHEMAS: Readonly<Record<string, RuntimeMessageSchema>> = 
       memo: value => typeof value === 'string' && value.length <= 4_096,
       fundingSource: isFundingSource,
       maxTransfer: value => typeof value === 'boolean',
-      marginalFeeZats: isFiniteNumber
+      marginalFeeZats: isFiniteNumber,
+      feeQuoteId: isShortString
     }
   },
   SUBMIT_HARDWARE_PCZT: {
@@ -875,6 +983,8 @@ const TRUSTED_RUNTIME_CONTEXTS: Readonly<Record<string, readonly OwnExtensionSen
     CHANGE_WALLET_PASSWORD: ['extension-page'],
     GET_CONNECTED_DAPPS: ['extension-page'],
     GET_CURRENT_TAB_DAPP: ['extension-page'],
+    GET_CURRENT_DAPP_EVM_NETWORKS: ['extension-page'],
+    SET_CURRENT_DAPP_EVM_NETWORK: ['extension-page'],
     CONNECT_CURRENT_ACCOUNT_TO_DAPP: ['extension-page'],
     DISCONNECT_DAPP: ['extension-page'],
     WALLET_CREATED: ['extension-page'],
@@ -882,6 +992,7 @@ const TRUSTED_RUNTIME_CONTEXTS: Readonly<Record<string, readonly OwnExtensionSen
     PROVISION_PRIMARY_SOFTWARE_WALLET: ['extension-page'],
     GENERATE_ADD_WALLET_MNEMONIC: ['extension-page'],
     ADD_SOFTWARE_WALLET: ['extension-page'],
+    PREVIEW_SOFTWARE_WALLET_ADDRESSES: ['extension-page'],
     PREVIEW_PRIVATE_KEY_WALLET: ['extension-page'],
     IMPORT_PRIVATE_KEY_WALLET: ['extension-page'],
     EXPORT_PRIVATE_KEY: ['extension-page'],
@@ -890,6 +1001,7 @@ const TRUSTED_RUNTIME_CONTEXTS: Readonly<Record<string, readonly OwnExtensionSen
     GET_ZCASH_BLOCK_BY_TIME: ['extension-page'],
     GET_ZCASH_BLOCK_TIME: ['extension-page'],
     RESOLVE_ZCASH_BIRTHDAY_HEIGHT: ['extension-page'],
+    GET_ZCASH_FEE_QUOTE: ['extension-page'],
     ESTIMATE_ZCASH_TRANSFER_FEE: ['extension-page'],
     ESTIMATE_ZCASH_MAX_TRANSFER: ['extension-page'],
     ESTIMATE_ZCASH_SHIELD_FEE: ['extension-page'],
@@ -921,7 +1033,6 @@ const TRUSTED_RUNTIME_CONTEXTS: Readonly<Record<string, readonly OwnExtensionSen
     GET_ACTIVITY: ['extension-page'],
     GET_BITCOIN_ACTIVITY: ['extension-page'],
     GET_BITCOIN_WALLET_IDENTITY: ['extension-page'],
-    GET_ZCASH_LENDING_PUBLIC_KEY: ['extension-page'],
     GET_ASSET_PRICES: ['extension-page'],
     GET_RHEA_SWAP_TOKENS: ['extension-page'],
     QUOTE_RHEA_SWAP: ['extension-page'],
@@ -943,9 +1054,16 @@ const TRUSTED_RUNTIME_CONTEXTS: Readonly<Record<string, readonly OwnExtensionSen
     START_RHEA_SWAP_MONITOR: ['extension-page'],
     DISCARD_RHEA_SWAP: ['extension-page'],
     PREPARE_CONFIDENTIAL_FUNDING: ['extension-page'],
+    PREVIEW_CONFIDENTIAL_FUNDING: ['extension-page'],
+    CREATE_EXTERNAL_SHIELD_DEPOSIT: ['extension-page'],
+    GET_EXTERNAL_SHIELD_DEPOSIT: ['extension-page'],
+    LIST_EXTERNAL_SHIELD_DEPOSITS: ['extension-page'],
+    REFRESH_EXTERNAL_SHIELD_DEPOSIT: ['extension-page'],
     CONFIRM_CONFIDENTIAL_FUNDING: ['extension-page'],
     GET_CONFIDENTIAL_FUNDING: ['extension-page'],
+    CHECK_CONFIDENTIAL_FUNDING_SUBMISSION: ['extension-page'],
     CANCEL_CONFIDENTIAL_FUNDING: ['extension-page'],
+    REFRESH_CONFIDENTIAL_BALANCES: ['extension-page'],
     GET_ASSET_MARKET_HISTORY: ['extension-page'],
     GET_ADDITIONAL_RECEIVE_TARGETS: ['extension-page'],
     GET_ACCOUNT_NETWORKS: ['extension-page'],
@@ -966,8 +1084,11 @@ const TRUSTED_RUNTIME_CONTEXTS: Readonly<Record<string, readonly OwnExtensionSen
     REFRESH_INTENTS_PROTOCOL_ASSETS: ['extension-page'],
     GET_PORTFOLIO: ['extension-page'],
     GET_EVM_PORTFOLIO: ['extension-page'],
+    GET_EVM_CONFIRMATION_ESTIMATE: ['extension-page'],
     GET_EVM_TOKEN_ALLOWANCE: ['extension-page'],
     PREPARE_EVM_TRANSFER: ['extension-page'],
+    ESTIMATE_EVM_TRANSFER_FEE: ['extension-page'],
+    ESTIMATE_EVM_CONTRACT_CALL_FEE: ['extension-page'],
     PREPARE_EVM_CONTRACT_CALL: ['extension-page'],
     PREPARE_EVM_CANCEL: ['extension-page'],
     GET_EVM_NONCE_RECOVERY: ['extension-page'],
@@ -997,6 +1118,7 @@ const TRUSTED_RUNTIME_CONTEXTS: Readonly<Record<string, readonly OwnExtensionSen
     RESUME_BITCOIN_TRANSFER: ['extension-page'],
     INSPECT_NEXT_ZCASH_ACCOUNT_HISTORY: ['extension-page'],
     ADD_ACCOUNT: ['extension-page'],
+    SET_ACCOUNT_NETWORK_SELECTION: ['extension-page'],
     SWITCH_ACCOUNT: ['extension-page'],
     REMOVE_ACCOUNT: ['extension-page'],
     GET_WALLET_BACKUP_WORD_INDICES: ['extension-page'],
@@ -1503,9 +1625,12 @@ export function parseDAppApprovalResultMessage(
     'requestId',
     'success',
     'marginalFeeZats',
+    'feeQuoteId',
+    'feeTier',
     'feeZats',
     'selectedIds',
-    'selectedScopes'
+    'selectedScopes',
+    'transferPrivacyRevision'
   ])
   if (
     Object.keys(value).some(key => !allowedKeys.has(key)) ||
@@ -1517,15 +1642,31 @@ export function parseDAppApprovalResultMessage(
   }
   if (
     value.marginalFeeZats !== undefined &&
-    (!Number.isSafeInteger(value.marginalFeeZats) || (value.marginalFeeZats as number) < 0)
+    (!Number.isSafeInteger(value.marginalFeeZats) || (value.marginalFeeZats as number) <= 0)
   ) {
     throw new Error('Invalid approval fee')
+  }
+  if (
+    (value.feeQuoteId !== undefined &&
+      (typeof value.feeQuoteId !== 'string' ||
+        value.feeQuoteId.length === 0 ||
+        value.feeQuoteId.length > 256)) ||
+    (value.feeTier !== undefined && value.feeTier !== 'standard' && value.feeTier !== 'fast')
+  ) {
+    throw new Error('Invalid approval fee quote')
   }
   if (
     value.feeZats !== undefined &&
     (!Number.isSafeInteger(value.feeZats) || (value.feeZats as number) <= 0)
   ) {
     throw new Error('Invalid approval fee')
+  }
+  if (
+    value.transferPrivacyRevision !== undefined &&
+    (!Number.isSafeInteger(value.transferPrivacyRevision) ||
+      (value.transferPrivacyRevision as number) < 0)
+  ) {
+    throw new Error('Invalid transfer privacy revision')
   }
   if (
     value.selectedIds !== undefined &&
@@ -1560,9 +1701,12 @@ export function parseDAppApprovalResultMessage(
   if (
     value.success === false &&
     (value.marginalFeeZats !== undefined ||
+      value.feeQuoteId !== undefined ||
+      value.feeTier !== undefined ||
       value.feeZats !== undefined ||
       value.selectedIds !== undefined ||
-      value.selectedScopes !== undefined)
+      value.selectedScopes !== undefined ||
+      value.transferPrivacyRevision !== undefined)
   ) {
     throw new Error('Rejected approval cannot include approval data')
   }
@@ -1574,11 +1718,16 @@ export function parseDAppApprovalResultMessage(
     ...(value.marginalFeeZats === undefined
       ? {}
       : { marginalFeeZats: value.marginalFeeZats as number }),
+    ...(value.feeQuoteId === undefined ? {} : { feeQuoteId: value.feeQuoteId as string }),
+    ...(value.feeTier === undefined ? {} : { feeTier: value.feeTier as 'standard' | 'fast' }),
     ...(value.feeZats === undefined ? {} : { feeZats: value.feeZats as number }),
     ...(value.selectedIds === undefined
       ? {}
       : { selectedIds: Object.freeze([...(value.selectedIds as string[])]) }),
-    ...(selectedScopes === undefined ? {} : { selectedScopes })
+    ...(selectedScopes === undefined ? {} : { selectedScopes }),
+    ...(value.transferPrivacyRevision === undefined
+      ? {}
+      : { transferPrivacyRevision: value.transferPrivacyRevision as number })
   }
 }
 

@@ -12,7 +12,8 @@ const ASSET_PRICE_CACHE_STORAGE_KEYS = new Set([
   'asset_market_change_cache_v1',
   'defi_llama_market_change_cache_v1',
   'user_asset_market_cache_v1',
-  'user_asset_one_click_price_cache_v1'
+  'user_asset_one_click_price_cache_v1',
+  'four_meme_price_cache_v1'
 ])
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -9,6 +9,7 @@ export type ExampleChainIcon =
   | 'berachain'
   | 'bitcoin'
   | 'bsc'
+  | 'custom-evm'
   | 'ethereum'
   | 'gnosis'
   | 'monad'
@@ -29,6 +30,7 @@ const EXAMPLE_CHAIN_ICON_URLS: Readonly<Record<ExampleChainIcon, string>> = Obje
   berachain: chainIconUrl('berachain'),
   bitcoin: chainIconUrl('bitcoin'),
   bsc: chainIconUrl('bsc'),
+  'custom-evm': new URL('./network.svg', import.meta.url).href,
   ethereum: chainIconUrl('ethereum'),
   gnosis: chainIconUrl('gnosis'),
   monad: chainIconUrl('monad'),
@@ -50,6 +52,56 @@ export interface EvmNetworkExample {
   readonly label: string
   readonly iconUrl: string
   readonly request: AddEvmNetworkParameters
+}
+
+export function parseEvmNetworkChainId(input: string): string {
+  const value: unknown = JSON.parse(input)
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error('Enter network parameters with a chainId.')
+  }
+  const chainId: unknown = Reflect.get(value, 'chainId')
+  if (typeof chainId !== 'string') {
+    throw new Error('Enter an EVM chainId.')
+  }
+  return chainId
+}
+
+export function parseEvmNetworkRequest(input: string): AddEvmNetworkParameters {
+  const value: unknown = JSON.parse(input)
+  const isRecord = (candidate: unknown): candidate is Record<string, unknown> =>
+    typeof candidate === 'object' && candidate !== null && !Array.isArray(candidate)
+  const isStringArray = (candidate: unknown): candidate is string[] =>
+    Array.isArray(candidate) && candidate.every(item => typeof item === 'string')
+
+  if (
+    !isRecord(value) ||
+    typeof value.chainId !== 'string' ||
+    typeof value.chainName !== 'string' ||
+    !isRecord(value.nativeCurrency) ||
+    typeof value.nativeCurrency.name !== 'string' ||
+    typeof value.nativeCurrency.symbol !== 'string' ||
+    typeof value.nativeCurrency.decimals !== 'number' ||
+    !isStringArray(value.rpcUrls) ||
+    (value.blockExplorerUrls !== undefined && !isStringArray(value.blockExplorerUrls)) ||
+    (value.iconUrls !== undefined && !isStringArray(value.iconUrls))
+  ) {
+    throw new Error('Enter valid EIP-3085 network parameters.')
+  }
+
+  return {
+    chainId: value.chainId,
+    chainName: value.chainName,
+    nativeCurrency: {
+      name: value.nativeCurrency.name,
+      symbol: value.nativeCurrency.symbol,
+      decimals: value.nativeCurrency.decimals
+    },
+    rpcUrls: value.rpcUrls,
+    ...(value.blockExplorerUrls === undefined
+      ? {}
+      : { blockExplorerUrls: value.blockExplorerUrls }),
+    ...(value.iconUrls === undefined ? {} : { iconUrls: value.iconUrls })
+  }
 }
 
 function network(

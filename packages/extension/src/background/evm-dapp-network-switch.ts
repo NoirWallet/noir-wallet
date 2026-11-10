@@ -11,8 +11,13 @@ import { Eip1193ProviderError, type ParsedEip1193ChainRequest } from '@/core/dap
 
 export interface EvmDAppNetworkSwitchOptions {
   readonly readSettings: () => Promise<ChainEndpointSettings>
-  readonly commitActiveChain: (chainId: string, origin: string) => Promise<void>
+  readonly commitActiveChain: (
+    chainId: string,
+    origin: string,
+    approvedByUser: boolean
+  ) => Promise<void>
   readonly commitCustomNetwork: (network: CustomEvmNetwork, origin: string) => Promise<void>
+  readonly isChainAuthorized?: (chainId: string, origin: string) => Promise<boolean>
   readonly validateRequest?: () => Promise<void>
   readonly requestApproval: (
     origin: string,
@@ -27,6 +32,30 @@ export interface EvmDAppNetworkSwitchOptions {
       explorerUrl?: string
     }>
   ) => Promise<{ readonly approved: boolean }>
+}
+
+export class EvmDAppNetworkSwitchCoordinator {
+  private readonly pending = new Map<string, Promise<void>>()
+
+  run(
+    requested: ParsedEip1193ChainRequest,
+    origin: string,
+    action: 'switch' | 'add',
+    context: string,
+    options: EvmDAppNetworkSwitchOptions
+  ): Promise<void> {
+    const key = JSON.stringify([origin, action, requested, context])
+    const existing = this.pending.get(key)
+    if (existing) return existing
+
+    const operation = handleEvmDAppNetworkSwitch(requested, origin, action, options)
+    this.pending.set(key, operation)
+    const clear = () => {
+      if (this.pending.get(key) === operation) this.pending.delete(key)
+    }
+    void operation.then(clear, clear)
+    return operation
+  }
 }
 
 export async function handleEvmDAppNetworkSwitch(
@@ -107,6 +136,19 @@ export async function handleEvmDAppNetworkSwitch(
     throw new Eip1193ProviderError(4902, 'The requested EVM chain is not configured.')
   }
 
+  await options.validateRequest?.()
+  let authorized = false
+  try {
+    authorized = (await options.isChainAuthorized?.(requestedChainId, origin)) ?? false
+  } catch {
+    // An authorization read failure must require an explicit approval.
+  }
+  await options.validateRequest?.()
+  if (authorized) {
+    await options.commitActiveChain(requestedChainId, origin, false)
+    return
+  }
+
   const decision = await options.requestApproval(origin, 'evmNetwork', {
     action: 'switch',
     chainId: requestedChainId,
@@ -118,5 +160,5 @@ export async function handleEvmDAppNetworkSwitch(
   }
 
   await options.validateRequest?.()
-  await options.commitActiveChain(requestedChainId, origin)
+  await options.commitActiveChain(requestedChainId, origin, true)
 }

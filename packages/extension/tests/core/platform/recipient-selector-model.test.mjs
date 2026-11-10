@@ -3,8 +3,14 @@ import { expect } from '@playwright/test'
 
 import {
   buildMyAccountRecipientGroups,
-  buildSavedRecipientList
+  buildSavedRecipientList,
+  getMyAccountRecipientUnavailableReason
 } from '../../../src/popup/components/transaction/recipient-selector-model.ts'
+import {
+  ALL_EVM_NETWORKS_CHAIN_ID,
+  ALL_EVM_NETWORKS_NAME,
+  createAddressBookContact
+} from '../../../src/core/address-book/address-book.ts'
 
 const ZCASH = 'bip122:0000000000000000000000000000000000000000000000000000000000000000'
 const EVM = 'eip155:1'
@@ -133,6 +139,25 @@ test('includes the current EVM account alternate execution address and excludes 
   )
 })
 
+test('keeps current EVM addresses visible while marking only unavailable recipients', () => {
+  const current = account('1', '0', true, '1')
+  current.networks.find(item => item.chain.id === EVM).privateExecutionAddress =
+    `0x${'a'.repeat(40)}`
+  const scope = { generationId: 'generation-1', accounts: [current, account('2', '0', false, '2')] }
+  const groups = buildMyAccountRecipientGroups(scope, EVM)
+  const sender = `0x${'1'.repeat(40)}`
+
+  expect(groups[0].addresses.map(item => item.executionMode)).toEqual(['main', 'private'])
+  expect(getMyAccountRecipientUnavailableReason(groups[0].addresses[0], sender)).toBe(
+    'This is the sending address.'
+  )
+  expect(getMyAccountRecipientUnavailableReason(groups[0].addresses[1], sender, true)).toContain(
+    'cannot be selected'
+  )
+  expect(getMyAccountRecipientUnavailableReason(groups[0].addresses[1], sender)).toBeNull()
+  expect(getMyAccountRecipientUnavailableReason(groups[1].addresses[0], sender)).toBeNull()
+})
+
 test('keeps saved external recipients in a separate chain-scoped alphabetical list', () => {
   const contacts = [
     { id: '2', chainId: EVM, address: `0x${'2'.repeat(40)}`, name: 'Bob' },
@@ -140,11 +165,43 @@ test('keeps saved external recipients in a separate chain-scoped alphabetical li
     { id: '3', chainId: BITCOIN, address: 'bc1qexternal', name: 'Bitcoin contact' }
   ]
 
-  expect(buildSavedRecipientList(contacts, EVM).map(contact => contact.name)).toEqual([
+  expect(buildSavedRecipientList(contacts, EVM, 'mainnet').map(contact => contact.name)).toEqual([
     'Alice',
     'Bob'
   ])
-  expect(buildSavedRecipientList(contacts, EVM, [`0x${'1'.repeat(40).toUpperCase()}`])).toEqual([
-    contacts[0]
-  ])
+  expect(
+    buildSavedRecipientList(contacts, EVM, 'mainnet', [`0x${'1'.repeat(40).toUpperCase()}`])
+  ).toEqual([contacts[0]])
+})
+
+test('shows an all-EVM recipient on each EVM chain and prefers a scoped contact for the same address', () => {
+  const shared = createAddressBookContact(
+    {
+      chainId: ALL_EVM_NETWORKS_CHAIN_ID,
+      chainFamily: 'evm',
+      network: 'mainnet',
+      networkName: ALL_EVM_NETWORKS_NAME,
+      address: `0x${'1'.repeat(40)}`,
+      name: 'Shared'
+    },
+    100
+  )
+  const ethereum = createAddressBookContact(
+    {
+      chainId: EVM,
+      chainFamily: 'evm',
+      network: 'mainnet',
+      networkName: 'Ethereum',
+      address: `0x${'1'.repeat(40)}`,
+      name: 'Ethereum only'
+    },
+    100
+  )
+  expect(buildSavedRecipientList([shared], EVM, 'mainnet')).toEqual([shared])
+  expect(buildSavedRecipientList([shared], 'eip155:8453', 'mainnet')).toEqual([shared])
+  expect(buildSavedRecipientList([shared], 'eip155:1234567', 'mainnet')).toEqual([shared])
+  expect(buildSavedRecipientList([shared, ethereum], EVM, 'mainnet')).toEqual([ethereum])
+  expect(buildSavedRecipientList([shared, ethereum], 'eip155:8453', 'mainnet')).toEqual([shared])
+  expect(buildSavedRecipientList([shared], 'eip155:11155111', 'testnet')).toEqual([])
+  expect(buildSavedRecipientList([shared, ethereum], BITCOIN, 'mainnet')).toEqual([])
 })

@@ -1,3 +1,4 @@
+import { parseZcashAddress } from '@/core/address-book/address-book'
 import type {
   AssetRef,
   ChainRef,
@@ -15,11 +16,211 @@ import {
   getEvmNativeProtocolAssetId
 } from '@/config/asset-market-assets'
 import { NOIR_SWAP_REFERRAL } from '@/config/intents'
+import { createInitialProductChainRegistry, getZcashChainId } from '@/core/chains/registry'
 
 const RAW_AMOUNT_PATTERN = /^(0|[1-9][0-9]{0,77})$/
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/
 const MAXIMUM_STRING_LENGTH = 512
 export const RHEA_SWAP_TOKEN_CATALOG_TTL_MS = 10 * 60 * 1_000
+
+export interface PrivateSwapAccountRoute {
+  readonly walletId: string
+  readonly accountId: string
+  readonly networks: readonly {
+    readonly chainId: string
+    readonly privateExecutionAddress?: string
+    readonly addresses?: readonly { readonly value: string }[]
+  }[]
+}
+
+export type PrivateQuotePurpose =
+  | 'wallet-swap'
+  | 'public-cross-chain-send'
+  | 'confidential-funding'
+  | 'private-swap'
+  | 'private-transfer'
+  | 'private-cross-chain-send'
+  | 'private-dapp-transfer'
+  | 'public-private-send'
+
+export function assertPrivateQuoteRoute(
+  request: Pick<
+    QuoteRequest,
+    'fromChain' | 'toChain' | 'tokenIn' | 'tokenOut' | 'sender' | 'recipient' | 'confidentiality'
+  >,
+  account: PrivateSwapAccountRoute | null,
+  purpose: PrivateQuotePurpose,
+  scope?: Pick<PrivateSwapAccountRoute, 'walletId' | 'accountId'>
+): void {
+  if (
+    !account ||
+    (scope && (account.walletId !== scope.walletId || account.accountId !== scope.accountId)) ||
+    (purpose !== 'wallet-swap' &&
+      purpose !== 'public-cross-chain-send' &&
+      ((!/^[1-9]\d*$/.test(request.fromChain) &&
+        !(purpose === 'public-private-send' && request.fromChain === 'zcash')) ||
+        request.confidentiality !== 'basic'))
+  ) {
+    throw new Error('Private quote account changed. Get a new quote.')
+  }
+  const source = account.networks.find(network => network.chainId === `eip155:${request.fromChain}`)
+  if (purpose === 'public-private-send') {
+    const zcashSource =
+      request.fromChain === 'zcash'
+        ? account.networks.find(network => network.chainId === getZcashChainId('mainnet'))
+        : null
+    let validZcashRecipient = false
+    if (zcashSource) {
+      try {
+        validZcashRecipient = parseZcashAddress(
+          request.recipient ?? '',
+          'mainnet'
+        ).scheme.startsWith('zcash-transparent-')
+      } catch {
+        /* Reject malformed recipients. */
+      }
+    }
+    if (
+      request.fromChain !== request.toChain ||
+      request.tokenIn.address.toLowerCase() !== request.tokenOut.address.toLowerCase() ||
+      (request.fromChain === 'zcash'
+        ? !validZcashRecipient ||
+          !zcashSource?.addresses?.some(
+            address => address.value === request.sender && /^t[13]/.test(address.value)
+          )
+        : !source?.addresses?.some(
+            address => address.value.toLowerCase() === request.sender.toLowerCase()
+          ) ||
+          !/^0x[0-9a-fA-F]{40}$/.test(request.recipient ?? '') ||
+          /^0x0{40}$/i.test(request.recipient ?? ''))
+    ) {
+      throw new Error('Public Confidential Send route is invalid.')
+    }
+    return
+  }
+  if (
+    purpose === 'wallet-swap' ||
+    purpose === 'public-cross-chain-send' ||
+    purpose === 'confidential-funding'
+  ) {
+    const chains = createInitialProductChainRegistry('mainnet').list()
+    const chainId = (apiChainId: string) => {
+      if (/^[1-9]\d*$/.test(apiChainId)) return `eip155:${apiChainId}`
+      const family = RHEA_SWAP_CHAIN_CATALOG.find(
+        chain => chain.apiChainId === apiChainId
+      )?.walletFamily
+      return chains.find(chain => chain.family === family)?.id
+    }
+    const sourceNetwork = account.networks.find(
+      network => network.chainId === chainId(request.fromChain)
+    )
+    const destinationNetwork = account.networks.find(
+      network => network.chainId === chainId(request.toChain)
+    )
+    const matches = (address: string, candidate: string | undefined, apiChainId: string) =>
+      candidate !== undefined &&
+      (/^[1-9]\d*$/.test(apiChainId)
+        ? address.toLowerCase() === candidate.toLowerCase()
+        : address === candidate)
+    const sourceIsPublic = sourceNetwork?.addresses?.some(address =>
+      matches(request.sender, address.value, request.fromChain)
+    )
+    if (purpose === 'public-cross-chain-send') {
+      if (!sourceIsPublic || request.fromChain === request.toChain || !request.recipient) {
+        throw new Error('Public cross-chain Send route is invalid.')
+      }
+      return
+    }
+    if (purpose === 'confidential-funding') {
+      if (
+        !sourceIsPublic ||
+        !destinationNetwork?.privateExecutionAddress ||
+        !matches(
+          request.recipient ?? '',
+          destinationNetwork.privateExecutionAddress,
+          request.toChain
+        )
+      ) {
+        throw new Error('Confidential funding must stay in this Account.')
+      }
+      return
+    }
+    const evmPair = /^[1-9]\d*$/.test(request.fromChain) && /^[1-9]\d*$/.test(request.toChain)
+    const recipient = request.recipient ?? ''
+    if (
+      !sourceIsPublic ||
+      !destinationNetwork ||
+      !recipient ||
+      !(
+        destinationNetwork.addresses?.some(address =>
+          matches(recipient, address.value, request.toChain)
+        ) ||
+        (!evmPair &&
+          matches(recipient, destinationNetwork.privateExecutionAddress, request.toChain))
+      ) ||
+      (evmPair && request.confidentiality !== undefined)
+    ) {
+      throw new Error('Swap must stay in this Account.')
+    }
+    return
+  }
+  if (
+    !source?.privateExecutionAddress ||
+    source.privateExecutionAddress.toLowerCase() !== request.sender.toLowerCase()
+  ) {
+    throw new Error('Private quote source does not match this Account.')
+  }
+  if (purpose === 'private-cross-chain-send') {
+    if (request.fromChain === request.toChain || !request.recipient) {
+      throw new Error('Private cross-chain Send route is invalid.')
+    }
+    return
+  }
+  if (purpose === 'private-dapp-transfer') {
+    if (
+      request.fromChain !== request.toChain ||
+      request.tokenIn.address.toLowerCase() !== request.tokenOut.address.toLowerCase() ||
+      !/^0x[0-9a-fA-F]{40}$/.test(request.recipient ?? '') ||
+      /^0x0{40}$/i.test(request.recipient ?? '')
+    ) {
+      throw new Error('Private dApp transfer route is invalid.')
+    }
+    return
+  }
+  if (purpose === 'private-transfer') {
+    if (
+      request.fromChain !== request.toChain ||
+      request.tokenIn.address.toLowerCase() !== request.tokenOut.address.toLowerCase() ||
+      !source.addresses?.some(
+        address => address.value.toLowerCase() === request.recipient?.toLowerCase()
+      )
+    ) {
+      throw new Error('Private Move must stay in this Account and asset.')
+    }
+    return
+  }
+  if (purpose === 'private-swap' && request.toChain === 'zcash') {
+    const destination = account.networks.find(
+      network => network.chainId === getZcashChainId('mainnet')
+    )
+    if (!destination?.addresses?.some(address => address.value === request.recipient)) {
+      throw new Error('Private Swap must stay in this Account.')
+    }
+    return
+  }
+  const destination = account.networks.find(
+    network => network.chainId === `eip155:${request.toChain}`
+  )
+  if (
+    !destination ||
+    !/^0x[0-9a-fA-F]{40}$/.test(request.recipient ?? '') ||
+    /^0x0{40}$/i.test(request.recipient ?? '') ||
+    destination.privateExecutionAddress?.toLowerCase() !== request.recipient?.toLowerCase()
+  ) {
+    throw new Error('Private Swap must stay in this Account.')
+  }
+}
+
 const RHEA_NATIVE_QUOTE_ADDRESSES = Object.freeze(
   new Map<string, string>([
     ['btc:nep141:btc.omft.near', 'btc'],
@@ -65,7 +266,15 @@ export const RHEA_SWAP_CHAIN_CATALOG: readonly RheaSwapChainDescriptor[] = Objec
     apiChainId: '4663',
     tokenListChainId: 4663,
     blockchain: 'robinhood',
-    displayName: 'Robinhood Chain'
+    displayName: 'Robinhood Chain',
+    walletFamily: 'evm'
+  },
+  {
+    apiChainId: '999',
+    tokenListChainId: 999,
+    blockchain: 'hyperevm',
+    displayName: 'HyperEVM',
+    walletFamily: 'evm'
   },
   { apiChainId: '747474', tokenListChainId: 747474, blockchain: 'katana', displayName: 'Katana' },
   { apiChainId: '146', tokenListChainId: 146, blockchain: 'sonic', displayName: 'Sonic' },
@@ -484,7 +693,13 @@ export function toRheaSwapToken(item: SwapTokenListItem): RheaSwapToken {
     item.isNative ||
     nativeQuoteAddress !== undefined ||
     (evmNativeAssetId !== null && catalogAssetId === evmNativeAssetId)
-  const assetId = isNative ? (evmNativeAssetId ?? catalogAssetId) : catalogAssetId
+  const chainScopedCatalogAssetId =
+    isEvmChain && !evmNativeAssetId
+      ? `eip155:${descriptor.apiChainId}/${isNative ? 'slip44:60' : `erc20:${readEvmQuoteAddress(item)}`}`
+      : catalogAssetId
+  const assetId = isNative
+    ? (evmNativeAssetId ?? chainScopedCatalogAssetId)
+    : chainScopedCatalogAssetId
   const quoteAddress = nativeQuoteAddress
     ? nativeQuoteAddress
     : isEvmChain && !isNative

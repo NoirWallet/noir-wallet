@@ -4,7 +4,7 @@ import { Icon } from '@iconify/react'
 import { AddressTypeLabel } from '../../components/account/AddressType'
 import { ShieldedAddressHistorySheet } from '../../components/account/ShieldedAddressHistorySheet'
 import { ChainIcon } from '../../components/common/ChainIcon'
-import { CopyToast, useCopyToClipboard } from '../../components/common/CopyToast'
+import { CopyFeedbackIcon, CopyToast, useCopyToClipboard } from '../../components/common/CopyToast'
 import { PageHeader } from '../../components/common/PageHeader'
 import { Button } from '../../components/ui/button'
 import { Skeleton } from '../../components/ui/skeleton'
@@ -22,6 +22,7 @@ import { zcashWalletRuntimeClient } from '@/popup/services/zcash-wallet-runtime-
 import { classifyError } from '@/lib/errors'
 import { getAccountDisplayName } from '@/lib/format'
 import { getBirthdayDateFromBlockTimestamp } from '@/lib/zcash-birthday'
+import { getOwnExtensionSenderContext } from '@/lib/runtime-message-security'
 import { useWalletStore } from '@/store/wallet-store'
 import { DEFAULT_NETWORK } from '@/lib/runtime-network'
 import { getZcashDerivationPaths } from '@/lib/zcash-derivation'
@@ -36,7 +37,7 @@ export function ZcashSettings() {
   const walletId = searchParams.get('walletId')
   const accountId = searchParams.get('accountId')
   const { wallets, currentWalletId, currentAccountId, accountDisplayNames } = useWalletStore()
-  const { copyToClipboard, showToast } = useCopyToClipboard()
+  const { copyToClipboard, showToast, isCopied } = useCopyToClipboard()
   const [network, setNetwork] = useState<AccountNetworkView | null>(null)
   const [addressLoading, setAddressLoading] = useState(true)
   const [addressError, setAddressError] = useState<string | null>(null)
@@ -46,6 +47,7 @@ export function ZcashSettings() {
   const [activeAccount, setActiveAccount] = useState(false)
   const [canRotateShielded, setCanRotateShielded] = useState(false)
   const [isRotatingShielded, setIsRotatingShielded] = useState(false)
+  const [waitingForSync, setWaitingForSync] = useState<boolean | null>(null)
   const [rotationError, setRotationError] = useState<string | null>(null)
   const [historyOpen, setHistoryOpen] = useState(false)
   const [selectingAddress, setSelectingAddress] = useState<string | null>(null)
@@ -177,6 +179,42 @@ export function ZcashSettings() {
     }
   }, [walletId, accountId, account?.birthdayHeight])
 
+  useEffect(() => {
+    if (!isRotatingShielded || !walletId || !accountId) return
+    let cancelled = false
+    let progressEvents = 0
+    const onSyncProgress = (
+      message: { type?: string; walletId?: string; isSyncing?: boolean },
+      sender: chrome.runtime.MessageSender
+    ) => {
+      if (
+        getOwnExtensionSenderContext(sender, chrome.runtime.id) !== 'service-worker' ||
+        message.type !== 'SYNC_PROGRESS' ||
+        message.walletId !== walletId ||
+        typeof message.isSyncing !== 'boolean'
+      ) {
+        return
+      }
+      progressEvents += 1
+      setWaitingForSync(message.isSyncing)
+    }
+
+    chrome.runtime.onMessage.addListener(onSyncProgress)
+    void chrome.runtime
+      .sendMessage({ type: 'GET_SYNC_STATE', walletId, accountId })
+      .then(snapshot => {
+        if (!cancelled && progressEvents === 0 && typeof snapshot?.isSyncing === 'boolean') {
+          setWaitingForSync(snapshot.isSyncing)
+        }
+      })
+      .catch(() => {})
+
+    return () => {
+      cancelled = true
+      chrome.runtime.onMessage.removeListener(onSyncProgress)
+    }
+  }, [isRotatingShielded, walletId, accountId])
+
   if (!walletId || !accountId || !wallet || !account) {
     return (
       <div className="page-container">
@@ -191,6 +229,7 @@ export function ZcashSettings() {
   const rotateShieldedAddress = async () => {
     if (!activeAccount || !canRotateShielded || isRotatingShielded || selectingAddress) return
     setRotationError(null)
+    setWaitingForSync(null)
     setIsRotatingShielded(true)
     try {
       const addresses = await zcashWalletRuntimeClient.rotateShieldedReceiveAddress(
@@ -244,7 +283,7 @@ export function ZcashSettings() {
 
   return (
     <div className="page-container">
-      <CopyToast show={showToast} message="Copied" />
+      <CopyToast show={showToast} />
       <PageHeader title="Zcash settings" showBack />
       <ShieldedAddressHistorySheet
         open={historyOpen}
@@ -255,7 +294,8 @@ export function ZcashSettings() {
         selectingAddress={selectingAddress}
         error={historyError}
         onSelect={address => void selectHistoryAddress(address)}
-        onCopy={address => void copyToClipboard(address)}
+        onCopy={(address, index) => void copyToClipboard(address, `history-${index}`)}
+        isCopied={index => isCopied(`history-${index}`)}
       />
 
       <div className="page-content space-y-5 pt-5">
@@ -300,10 +340,10 @@ export function ZcashSettings() {
                       type="button"
                       aria-label="Copy birthday height"
                       className="flex shrink-0 items-center gap-1 rounded-lg px-2 py-1 font-mono text-xs text-muted transition-colors hover:bg-foreground/5"
-                      onClick={() => void copyToClipboard(String(birthdayHeight))}
+                      onClick={() => void copyToClipboard(String(birthdayHeight), 'birthday')}
                     >
                       #{birthdayHeight.toLocaleString()}
-                      <Icon icon="lucide:copy" width={13} height={13} />
+                      <CopyFeedbackIcon copied={isCopied('birthday')} width={13} height={13} />
                     </button>
                   </>
                 ) : (
@@ -346,9 +386,13 @@ export function ZcashSettings() {
                       aria-label={`Copy Zcash ${address.privacy} address`}
                       title={`Copy ${privacyLabel(address)} address`}
                       className="flex size-8 shrink-0 items-center justify-center rounded-lg text-muted transition-colors hover:bg-foreground/10 hover:text-foreground"
-                      onClick={() => void copyToClipboard(address.value)}
+                      onClick={() => void copyToClipboard(address.value, `zcash-${address.scheme}`)}
                     >
-                      <Icon icon="lucide:copy" width={17} height={17} />
+                      <CopyFeedbackIcon
+                        copied={isCopied(`zcash-${address.scheme}`)}
+                        width={17}
+                        height={17}
+                      />
                     </button>
                   </div>
                   <p
@@ -372,7 +416,15 @@ export function ZcashSettings() {
                 onClick={() => void rotateShieldedAddress()}
               >
                 <Icon icon="lucide:refresh-cw" width={17} height={17} />
-                Generate new shielded address
+                <span aria-live="polite">
+                  {isRotatingShielded
+                    ? waitingForSync === null
+                      ? 'Preparing address...'
+                      : waitingForSync
+                        ? 'Waiting for sync...'
+                        : 'Generating address...'
+                    : 'Generate new shielded address'}
+                </span>
               </Button>
               {rotationError && (
                 <p role="alert" className="mt-2 text-xs text-destructive">
@@ -408,20 +460,27 @@ export function ZcashSettings() {
               <button
                 type="button"
                 className="flex w-full items-center justify-between gap-3 rounded-md bg-card px-4 py-3 text-left"
-                onClick={() => void copyToClipboard(derivationPaths.account!)}
+                onClick={() => void copyToClipboard(derivationPaths.account!, 'account-path')}
                 aria-label="Copy Zcash account derivation path"
               >
                 <span className="min-w-0">
                   <span className="block text-xs text-muted">Account derivation path</span>
                   <span className="break-all font-mono text-xs">{derivationPaths.account}</span>
                 </span>
-                <Icon icon="lucide:copy" width={15} height={15} className="shrink-0 text-muted" />
+                <CopyFeedbackIcon
+                  copied={isCopied('account-path')}
+                  width={15}
+                  height={15}
+                  className="shrink-0 text-muted"
+                />
               </button>
               {derivationPaths.transparent && (
                 <button
                   type="button"
                   className="flex w-full items-center justify-between gap-3 rounded-md bg-card px-4 py-3 text-left"
-                  onClick={() => void copyToClipboard(derivationPaths.transparent!)}
+                  onClick={() =>
+                    void copyToClipboard(derivationPaths.transparent!, 'transparent-path')
+                  }
                   aria-label="Copy Zcash transparent address derivation path"
                 >
                   <span className="min-w-0">
@@ -432,7 +491,12 @@ export function ZcashSettings() {
                       {derivationPaths.transparent}
                     </span>
                   </span>
-                  <Icon icon="lucide:copy" width={15} height={15} className="shrink-0 text-muted" />
+                  <CopyFeedbackIcon
+                    copied={isCopied('transparent-path')}
+                    width={15}
+                    height={15}
+                    className="shrink-0 text-muted"
+                  />
                 </button>
               )}
             </div>

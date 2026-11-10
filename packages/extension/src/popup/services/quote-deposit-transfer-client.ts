@@ -1,5 +1,5 @@
 import type { PortfolioAssetView, PortfolioChainView, PortfolioReadModel } from '@/core/portfolio'
-import type { EvmFeeSelection } from '@/infrastructure/chains/evm'
+import type { EvmFeeEstimate, EvmFeeSelection } from '@/infrastructure/chains/evm'
 import type { NetworkFeeTier, TransactionGraph } from '@/core/transactions/domain'
 import {
   parseNearIntentsTransactionBinding,
@@ -8,7 +8,6 @@ import {
   type RheaSwapTransactionBinding
 } from '@/core/transactions/domain'
 import type { QuoteResult, SwapToken } from '@/core/services/intents-api'
-import type { SupplyQuoteResult } from '@/core/services/lending-supply-quote'
 import type {
   RheaSwapQuoteView,
   RheaSwapEvmCallView,
@@ -17,6 +16,7 @@ import type {
 } from '@/core/services/rhea-swap'
 import {
   getRheaSwapQuoteDeadline,
+  RHEA_SWAP_CHAIN_CATALOG,
   resolveRheaSwapCanonicalAssetId
 } from '@/core/services/rhea-swap'
 import {
@@ -68,7 +68,6 @@ import {
   type NearTransferSubmission,
   type NearWalletClient
 } from './near-wallet-client'
-import type { NearLendingSupplyBinding } from '@/core/services/lending-near-supply'
 
 export type QuoteDepositSourceFamily = 'evm' | 'bitcoin' | 'solana' | 'near'
 export type QuoteDepositExecutionMode = 'main' | 'private'
@@ -116,6 +115,8 @@ export interface QuoteDepositMaximum {
   readonly networkFeeRaw: string
   readonly networkFeeSymbol: string
   readonly networkFeeDecimals: number
+  readonly expiresAt?: number
+  readonly evmFeeEstimate?: EvmFeeEstimate
 }
 
 export interface QuoteDepositTransferClient {
@@ -125,7 +126,6 @@ export interface QuoteDepositTransferClient {
     readonly feeTier?: NetworkFeeTier
     readonly feeSelection?: EvmFeeSelection
     readonly executionMode?: QuoteDepositExecutionMode
-    readonly nearLendingSupplyBinding?: NearLendingSupplyBinding
     readonly evmTransaction?: RheaSwapEvmCallView
     readonly quotedAmountRaw?: string
   }) => Promise<QuoteDepositMaximum>
@@ -134,7 +134,6 @@ export interface QuoteDepositTransferClient {
     readonly depositAddress: string
     readonly amountRaw: string
     readonly nearIntentsBinding?: NearIntentsTransactionBinding
-    readonly nearLendingSupplyBinding?: NearLendingSupplyBinding
     readonly rheaSwapBinding?: RheaSwapTransactionBinding
     readonly feeTier?: NetworkFeeTier
     readonly executionMode?: QuoteDepositExecutionMode
@@ -223,6 +222,16 @@ export function resolveRheaSwapDestinationIdentity(
       assetId: mapped.asset.asset.id
     })
   }
+  if (/^[1-9]\d*$/.test(token.rheaChainId)) {
+    try {
+      const parsed = parseAssetId(token.assetId)
+      if (parsed.chainId === `eip155:${token.rheaChainId}`) {
+        return Object.freeze({ chainId: parsed.chainId, assetId: parsed.id })
+      }
+    } catch {
+      // Provider protocol IDs are resolved below.
+    }
+  }
   const canonicalAssetId = resolveRheaSwapCanonicalAssetId(token.assetId, DEFAULT_NETWORK)
   if (canonicalAssetId) {
     return Object.freeze({
@@ -252,6 +261,30 @@ function resolveUserEvmPortfolioAsset(
   token: SwapToken,
   portfolio: PortfolioReadModel
 ): PortfolioAssetView | null {
+  if ('rheaChainId' in token) {
+    if (typeof token.rheaChainId !== 'string' || !/^[1-9]\d*$/.test(token.rheaChainId)) {
+      return null
+    }
+    const chainId = `eip155:${token.rheaChainId}`
+    if (
+      !portfolio.chains.some(chain => chain.chain.id === chainId && chain.chain.family === 'evm')
+    ) {
+      return null
+    }
+    const native = 'isNative' in token && token.isNative === true
+    const contract = token.contractAddress?.toLowerCase()
+    return (
+      portfolio.assets.find(
+        candidate =>
+          candidate.asset.chainId === chainId &&
+          candidate.metadata.decimals === token.decimals &&
+          (native
+            ? candidate.asset.kind === 'native'
+            : candidate.asset.namespace === 'erc20' &&
+              candidate.asset.reference.toLowerCase() === contract)
+      ) ?? null
+    )
+  }
   if (!token.contractAddress || !/^0x[0-9a-fA-F]{40}$/.test(token.contractAddress)) return null
   const contractAddress = token.contractAddress.toLowerCase()
   const candidates = portfolio.assets.filter(
@@ -304,7 +337,15 @@ function resolveMappedPortfolioAsset(
     : protocolAsset
       ? portfolio.assets.find(candidate => candidate.asset.id === protocolAsset.assetId)
       : resolveUserEvmPortfolioAsset(token, portfolio)
-  if (!asset || asset.metadata.decimals !== token.decimals) return null
+  if (
+    !asset ||
+    asset.metadata.decimals !== token.decimals ||
+    ('rheaChainId' in token &&
+      typeof token.rheaChainId === 'string' &&
+      /^[1-9]\d*$/.test(token.rheaChainId) &&
+      asset.asset.chainId !== `eip155:${token.rheaChainId}`)
+  )
+    return null
   const chain = portfolio.chains.find(candidate => candidate.chain.id === asset.asset.chainId)
   const supportedFamily =
     chain?.chain.family === 'evm' ||
@@ -425,12 +466,29 @@ export function resolveWalletQuoteReceiveTarget(
 
   const mapped = resolveMappedPortfolioAsset(token, portfolio, mappings)
   const protocolAsset = resolveIntentsWalletAsset(token, DEFAULT_NETWORK)
-  const chainId =
+  const rheaEvmChain =
+    'rheaChainId' in token
+      ? RHEA_SWAP_CHAIN_CATALOG.find(
+          chain => chain.walletFamily === 'evm' && chain.apiChainId === token.rheaChainId
+        )
+      : undefined
+  const protocolMapping = mappings.find(candidate => candidate.protocolAssetId === token.assetId)
+  const mappedChainId =
     mapped?.chain.chain.id ??
     protocolAsset?.chainId ??
+    (protocolMapping ? parseAssetId(protocolMapping.assetId).chainId : undefined)
+  const rheaChainId = rheaEvmChain ? `eip155:${rheaEvmChain.apiChainId}` : null
+  if (rheaChainId && mappedChainId && rheaChainId !== mappedChainId) return null
+  const chainId =
+    mappedChainId ??
+    rheaChainId ??
     resolveIntentsEvmChainId(token.blockchain, getEvmNetworkConfigs(DEFAULT_NETWORK))
   if (!chainId) return null
-  return receiveTargets.targets.find(target => target.chain.id === chainId) ?? null
+  return (
+    receiveTargets.targets.find(
+      target => target.chain.id === chainId && (!rheaChainId || target.kind === 'evm')
+    ) ?? null
+  )
 }
 
 export function resolveWalletSwapSourceToken(
@@ -550,45 +608,6 @@ export function createNearIntentsSwapBinding(input: {
   })
 }
 
-export function createNearIntentsSupplyBinding(input: {
-  readonly source: WalletOwnedQuoteAsset
-  readonly amountInRaw: string
-  readonly mcaId: string
-  readonly quote: SupplyQuoteResult
-  readonly destinationAsset: string
-  readonly now?: number
-}): NearIntentsTransactionBinding {
-  if (input.quote.amountInRaw !== input.amountInRaw || input.quote.depositAddress.length === 0) {
-    throw new Error('RHEA supply quote does not match the wallet source asset')
-  }
-  const expiresAt = Date.parse(input.quote.deadline)
-  const now = input.now ?? Date.now()
-  if (!Number.isSafeInteger(expiresAt) || expiresAt <= now) {
-    throw new Error('RHEA supply quote is expired or has an invalid deadline')
-  }
-  return parseNearIntentsTransactionBinding({
-    schemaVersion: 1,
-    provider: 'near-intents',
-    kind: 'supply',
-    depositAddress: input.quote.depositAddress,
-    refundAddress: input.source.refundAddress,
-    expiresAt,
-    origin: {
-      chainId: input.source.chain.chain.id,
-      assetId: input.source.asset.asset.id,
-      protocolAssetId: input.source.sourceAssetId
-    },
-    destination: {
-      chainId: input.source.chain.chain.id,
-      assetId: input.source.asset.asset.id,
-      protocolAssetId: input.destinationAsset,
-      recipient: input.mcaId,
-      expectedAmountRaw: input.quote.amountOutRaw,
-      minimumAmountRaw: input.quote.minAmountOutRaw
-    }
-  })
-}
-
 function assertAmountRaw(value: string): string {
   if (!/^[1-9][0-9]{0,77}$/.test(value)) {
     throw new Error('Quote deposit amount must be a positive base-unit integer')
@@ -599,7 +618,12 @@ function assertAmountRaw(value: string): string {
 export function createQuoteDepositTransferClient(options: {
   readonly evm: Pick<
     EvmWalletClient,
-    'prepareTransfer' | 'prepareContractCall' | 'approveTransfer' | 'rejectTransfer'
+    | 'estimateTransferFee'
+    | 'estimateContractCallFee'
+    | 'prepareTransfer'
+    | 'prepareContractCall'
+    | 'approveTransfer'
+    | 'rejectTransfer'
   >
   readonly bitcoin: Pick<
     BitcoinWalletClient,
@@ -644,9 +668,9 @@ export function createQuoteDepositTransferClient(options: {
         if (additionalValueRaw < 0n) {
           throw new Error('The EVM maximum plan does not match its native source amount')
         }
-        const review =
+        let estimate =
           transaction && transaction.data !== '0x'
-            ? await options.evm.prepareContractCall(
+            ? await options.evm.estimateContractCallFee(
                 {
                   chainId: input.source.chain.chain.id,
                   contractAddress: transaction.to,
@@ -655,7 +679,7 @@ export function createQuoteDepositTransferClient(options: {
                 },
                 prepareOptions
               )
-            : await options.evm.prepareTransfer(
+            : await options.evm.estimateTransferFee(
                 {
                   assetId: input.source.asset.asset.id,
                   recipient: transaction?.to ?? input.depositAddress,
@@ -663,49 +687,60 @@ export function createQuoteDepositTransferClient(options: {
                 },
                 prepareOptions
               )
-        try {
-          const summary = review.review.summary
-          if (summary.schema !== 'evm.transaction.v1') {
-            throw new Error('The EVM maximum estimate has an invalid signing summary')
+        if (isNative && !transaction && estimate.amountIndependent !== true) {
+          const initialFee = BigInt(estimate.maximumFeeWei)
+          const initialMaximum = availableRaw - initialFee - (initialFee + 3n) / 4n
+          let candidate = initialMaximum < availableRaw / 2n ? initialMaximum : availableRaw / 2n
+          let settled = false
+          for (let attempt = 0; attempt < 4; attempt += 1) {
+            if (candidate <= 0n) break
+            const checked = await options.evm.estimateTransferFee(
+              {
+                assetId: input.source.asset.asset.id,
+                recipient: input.depositAddress,
+                amountRaw: candidate.toString()
+              },
+              prepareOptions
+            )
+            const fee = BigInt(checked.maximumFeeWei)
+            const next = availableRaw - fee - (fee + 3n) / 4n
+            if (next === candidate) {
+              estimate = checked
+              settled = true
+              break
+            }
+            candidate = next
           }
-          const feeRaw = BigInt(summary.fields.maximumFeeWei)
-          // Max needs room for a fresh RHEA quote and EVM fee calculation before signing.
-          const feeHeadroomRaw = (feeRaw + 3n) / 4n
-          const amountRaw = isNative
-            ? availableRaw - feeRaw - feeHeadroomRaw - additionalValueRaw
-            : availableRaw
-          if (amountRaw <= 0n) {
-            throw new Error('The source wallet balance does not cover the network fee')
-          }
-          return Object.freeze({
-            amountRaw: amountRaw.toString(),
-            networkFeeRaw: feeRaw.toString(),
-            networkFeeSymbol: input.source.networkFeeAsset.metadata.symbol,
-            networkFeeDecimals: input.source.networkFeeAsset.metadata.decimals
-          })
-        } finally {
-          await options.evm.rejectTransfer(review.graph.root.id)
+          if (!settled) throw new Error('Unable to calculate a spendable EVM maximum')
         }
+        const feeRaw = BigInt(estimate.maximumFeeWei)
+        // Max needs room for a fresh RHEA quote and EVM fee calculation before signing.
+        const feeHeadroomRaw = (feeRaw + 3n) / 4n
+        const amountRaw = isNative
+          ? availableRaw - feeRaw - feeHeadroomRaw - additionalValueRaw
+          : availableRaw
+        if (amountRaw <= 0n) {
+          throw new Error('The source wallet balance does not cover the network fee')
+        }
+        return Object.freeze({
+          amountRaw: amountRaw.toString(),
+          networkFeeRaw: feeRaw.toString(),
+          networkFeeSymbol: input.source.networkFeeAsset.metadata.symbol,
+          networkFeeDecimals: input.source.networkFeeAsset.metadata.decimals,
+          expiresAt: Date.now() + 30_000,
+          evmFeeEstimate: estimate
+        })
       }
 
       if (input.source.family === 'solana' || input.source.family === 'near') {
         const isNative = input.source.asset.asset.kind === 'native'
-        const probeAmountRaw = isNative
-          ? input.nearLendingSupplyBinding
-            ? (availableRaw / 2n > 0n ? availableRaw / 2n : availableRaw).toString()
-            : '1'
-          : availableRaw.toString()
+        const probeAmountRaw = isNative ? '1' : availableRaw.toString()
         const wallet = input.source.family === 'solana' ? options.solana : options.near
-        const review = await wallet.prepareTransfer(
-          {
-            assetId: input.source.asset.asset.id,
-            recipient: input.depositAddress,
-            amountRaw: probeAmountRaw
-          },
-          input.source.family === 'near' && input.nearLendingSupplyBinding
-            ? { nearLendingSupplyBinding: input.nearLendingSupplyBinding }
-            : undefined
-        )
+        const review = await wallet.prepareTransfer({
+          assetId: input.source.asset.asset.id,
+          recipient: input.depositAddress,
+          amountRaw: probeAmountRaw
+        })
         try {
           const maximumFeeRaw =
             'debit' in review
@@ -777,19 +812,12 @@ export function createQuoteDepositTransferClient(options: {
     },
     prepare: async input => {
       const amountRaw = assertAmountRaw(input.amountRaw)
-      const bindingCount = [
-        input.nearIntentsBinding,
-        input.nearLendingSupplyBinding,
-        input.rheaSwapBinding
-      ].filter(Boolean).length
+      const bindingCount = [input.nearIntentsBinding, input.rheaSwapBinding].filter(Boolean).length
       if (bindingCount !== 1) {
         throw new Error('Quote deposit transfer requires exactly one protocol binding')
       }
       if (input.rheaSwapBinding && input.source.family !== 'bitcoin') {
         throw new Error('This RHEA Swap execution requires a chain-native coordinator')
-      }
-      if (input.nearLendingSupplyBinding && input.source.family !== 'near') {
-        throw new Error('Direct NEAR Lending Supply requires a NEAR wallet source')
       }
       const nearIntentsBinding = input.nearIntentsBinding
       if (input.source.family === 'evm') {
@@ -821,7 +849,7 @@ export function createQuoteDepositTransferClient(options: {
         return Object.freeze({ family: 'solana' as const, source: input.source, review })
       }
       if (input.source.family === 'near') {
-        if (!nearIntentsBinding && !input.nearLendingSupplyBinding) {
+        if (!nearIntentsBinding) {
           throw new Error('NEAR transfer protocol binding is missing')
         }
         const review = await options.near.prepareTransfer(
@@ -830,12 +858,7 @@ export function createQuoteDepositTransferClient(options: {
             recipient: input.depositAddress,
             amountRaw
           },
-          {
-            ...(nearIntentsBinding === undefined ? {} : { nearIntentsBinding }),
-            ...(input.nearLendingSupplyBinding === undefined
-              ? {}
-              : { nearLendingSupplyBinding: input.nearLendingSupplyBinding })
-          }
+          { nearIntentsBinding }
         )
         return Object.freeze({ family: 'near' as const, source: input.source, review })
       }

@@ -33,13 +33,14 @@ import { CongratulationsPage } from './pages/onboarding/CongratulationsPage'
 import { ImportWordCountPage } from './pages/onboarding/ImportWordCountPage'
 import { CreateWordCountPage } from './pages/onboarding/CreateWordCountPage'
 import { ImportWalletPage } from './pages/onboarding/ImportWalletPage'
-import { ImportZcashHistoryPage } from './pages/onboarding/ImportZcashHistoryPage'
+import { ImportAccountsPage } from './pages/onboarding/ImportAccountsPage'
 import { ImportPasswordPage } from './pages/onboarding/ImportPasswordPage'
 import { UnlockPage } from './pages/onboarding/UnlockPage'
 
 // Account Pages
 import { AccountList } from './pages/account/AccountList'
 import { AccountDetail } from './pages/account/AccountDetail'
+import { ManageAccountNetworksPage } from './pages/account/ManageAccountNetworksPage'
 import { AddressesList } from './pages/account/AddressesList'
 import { ZcashSettings } from './pages/account/ZcashSettings'
 import { ImportPrivateKey } from './pages/account/ImportPrivateKey'
@@ -48,8 +49,14 @@ import { ExportPrivateKey } from './pages/account/ExportPrivateKey'
 // Transaction Pages
 import { Send } from './pages/transactions/Send'
 import { MultichainSend } from './pages/transactions/MultichainSend'
+import { Transfer } from './pages/transactions/Transfer'
 import { TransactionResultPage } from './pages/transactions/TransactionResultPage'
 import { AssetDetail } from './pages/portfolio/AssetDetail'
+import { ShieldProviderDetail } from './pages/portfolio/ShieldProviderDetail'
+import { ShieldFundsPage } from './pages/portfolio/ShieldFundsPage'
+import { ShieldWithdrawPage } from './pages/portfolio/ShieldWithdrawPage'
+import { ShieldDepositPage } from './pages/portfolio/ShieldDepositPage'
+import { ShieldSwapPage } from './pages/portfolio/ShieldSwapPage'
 
 // Swap Page
 import { Swap } from './pages/swap/Swap'
@@ -64,6 +71,7 @@ import { KeystoneEvmSignPage } from './pages/hardware/KeystoneEvmSignPage'
 // DApp Pages
 import { ApprovalPage } from './pages/dapp/ApprovalPage'
 import { EvmWalletChoice } from './pages/dapp/EvmWalletChoice'
+import { DAppConnections } from './pages/dapp/DAppConnections'
 
 // Settings Pages
 import { Settings } from './pages/settings/Settings'
@@ -206,12 +214,13 @@ function AppRoutes() {
         <Route path="congratulations" element={<CongratulationsPage />} />
         <Route path="import-word-count" element={<ImportWordCountPage />} />
         <Route path="import" element={<ImportWalletPage />} />
-        <Route path="import-zcash-history" element={<ImportZcashHistoryPage />} />
+        <Route path="import-accounts" element={<ImportAccountsPage />} />
         <Route path="import-password" element={<ImportPasswordPage />} />
       </Route>
 
       <Route path="/unlock" element={<UnlockPage />} />
       <Route path="/send" element={multichainSendEnabled ? <MultichainSend /> : <Send />} />
+      <Route path="/transfer" element={<Transfer />} />
       {multichainSendEnabled && (
         <Route
           path="/send/cross-chain"
@@ -238,6 +247,7 @@ function AppRoutes() {
       <Route path="/asset-detail" element={<AssetDetail />} />
       <Route path="/account-list" element={<AccountList />} />
       <Route path="/account-detail" element={<AccountDetail />} />
+      <Route path="/account-networks" element={<ManageAccountNetworksPage />} />
       <Route path="/add-wallet" element={<AddWalletEntry />} />
       <Route path="/import-wallet" element={<ImportWalletEntry />} />
       <Route path="/import-private-key" element={<ImportPrivateKey />} />
@@ -284,6 +294,12 @@ function AppRoutes() {
       <Route path="/hardware/bitcoin-sign" element={<KeystoneBitcoinSignPage />} />
       <Route path="/hardware/evm-sign" element={<KeystoneEvmSignPage />} />
 
+      <Route path="/dapp-connections" element={<DAppConnections />} />
+      <Route path="/shield-provider" element={<ShieldProviderDetail />} />
+      <Route path="/shield-funds" element={<ShieldFundsPage />} />
+      <Route path="/shield-withdraw" element={<ShieldWithdrawPage />} />
+      <Route path="/shield-deposit" element={<ShieldDepositPage />} />
+      <Route path="/shield-swap" element={<ShieldSwapPage />} />
       <Route path="/settings" element={<Settings />} />
       <Route path="/default-evm-wallet" element={<DefaultEvmWallet />} />
       <Route path="/general" element={<General />} />

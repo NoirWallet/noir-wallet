@@ -17,11 +17,7 @@ export function ImportWordCountPage() {
       <PageHeader title="Import wallet" showBack />
 
       <div className="page-content pt-6">
-        <p className="text-sm leading-relaxed text-muted">
-          This recovery phrase will restore accounts for every supported network.
-        </p>
-
-        <div className="mt-5">
+        <div className="mt-1">
           <OnboardingAccountNameField value={accountName} onChange={setAccountName} />
         </div>
 

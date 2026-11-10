@@ -1,4 +1,6 @@
 import { parseChainId } from '@/core/chains/registry'
+import type { AccountRef } from './dapp-manager'
+import { getDAppSessionScopeLimit } from './first-party-policy'
 
 export const CAIP25_RUNTIME_METHODS = Object.freeze([
   'wallet_createSession',
@@ -37,6 +39,7 @@ export interface Caip25StoredScope {
   readonly chainId: string
   readonly methods: readonly string[]
   readonly notifications: readonly string[]
+  readonly accounts?: readonly AccountRef[]
 }
 
 export interface Caip25StoredSession {
@@ -62,12 +65,12 @@ export class Caip25ProviderError extends Error {
   }
 }
 
-const MAX_SCOPES = 16
 const MAX_SCOPE_VALUES = 128
 const MAX_METHOD_LENGTH = 128
 const MAX_NOTIFICATION_LENGTH = 128
 const MAX_PROPERTIES = 64
 const MAX_PROPERTY_KEY_LENGTH = 128
+const MAX_STORED_ACCOUNT_REFS = 100
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
@@ -211,7 +214,10 @@ export function parseCaip25ScopeRequest(chainIdValue: string, value: unknown): C
   })
 }
 
-export function parseCaip25CreateSessionRequest(value: unknown): Caip25CreateSessionRequest {
+export function parseCaip25CreateSessionRequest(
+  value: unknown,
+  origin?: string
+): Caip25CreateSessionRequest {
   if (
     !isRecord(value) ||
     !hasOnlyKeys(value, ['scopes', 'properties']) ||
@@ -220,7 +226,7 @@ export function parseCaip25CreateSessionRequest(value: unknown): Caip25CreateSes
     throw new Caip25ProviderError(-32602, 'Invalid wallet_createSession parameters.')
   }
   const entries = Object.entries(value.scopes)
-  if (entries.length === 0 || entries.length > MAX_SCOPES) {
+  if (entries.length === 0 || entries.length > getDAppSessionScopeLimit(origin)) {
     throw new Caip25ProviderError(-32602, 'A session requires a bounded non-empty scope set.')
   }
   const scopes: Record<string, Caip25ScopeRequest> = Object.create(null)
@@ -278,7 +284,7 @@ export function parseCaip27InvokeMethodRequest(value: unknown): Caip27InvokeMeth
   })
 }
 
-export function parseStoredCaip25Session(value: unknown): Caip25StoredSession {
+export function parseStoredCaip25Session(value: unknown, origin?: string): Caip25StoredSession {
   if (
     !isRecord(value) ||
     !hasOnlyKeys(value, ['scopes', 'properties']) ||
@@ -286,16 +292,51 @@ export function parseStoredCaip25Session(value: unknown): Caip25StoredSession {
   ) {
     throw new Error('Invalid stored CAIP-25 session')
   }
-  if (value.scopes.length === 0 || value.scopes.length > MAX_SCOPES) {
+  if (value.scopes.length === 0 || value.scopes.length > getDAppSessionScopeLimit(origin)) {
     throw new Error('Invalid stored CAIP-25 scopes')
   }
   const scopes = value.scopes.map(candidate => {
-    if (!isRecord(candidate) || !hasOnlyKeys(candidate, ['chainId', 'methods', 'notifications'])) {
+    if (
+      !isRecord(candidate) ||
+      !hasOnlyKeys(candidate, ['chainId', 'methods', 'notifications', 'accounts'])
+    ) {
       throw new Error('Invalid stored CAIP-25 scope')
     }
     if (typeof candidate.chainId !== 'string') throw new Error('Invalid stored CAIP-25 chain')
+    let accounts: readonly AccountRef[] | undefined
+    if (candidate.accounts !== undefined) {
+      if (
+        !Array.isArray(candidate.accounts) ||
+        candidate.accounts.length > MAX_STORED_ACCOUNT_REFS
+      ) {
+        throw new Error('Invalid stored CAIP-25 scope accounts')
+      }
+      const seen = new Set<string>()
+      accounts = Object.freeze(
+        candidate.accounts.map((account: unknown) => {
+          if (
+            !isRecord(account) ||
+            !hasOnlyKeys(account, ['walletId', 'accountId']) ||
+            Object.keys(account).length !== 2 ||
+            typeof account.walletId !== 'string' ||
+            account.walletId.length === 0 ||
+            account.walletId.length > 256 ||
+            typeof account.accountId !== 'string' ||
+            account.accountId.length === 0 ||
+            account.accountId.length > 256
+          ) {
+            throw new Error('Invalid stored CAIP-25 scope account')
+          }
+          const key = JSON.stringify([account.walletId, account.accountId])
+          if (seen.has(key)) throw new Error('Duplicate stored CAIP-25 scope account')
+          seen.add(key)
+          return Object.freeze({ walletId: account.walletId, accountId: account.accountId })
+        })
+      )
+    }
     return Object.freeze({
       chainId: parseChainId(candidate.chainId).id,
+      ...(accounts === undefined ? {} : { accounts }),
       methods: parseUniqueStrings(candidate.methods, 'stored scope methods', {
         allowEmpty: false,
         maxLength: MAX_METHOD_LENGTH

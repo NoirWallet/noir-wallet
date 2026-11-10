@@ -26,7 +26,9 @@ export function useAppRouting() {
   const { replace } = useNavigate()
   const location = useLocation()
   const [isLoading, setIsLoading] = useState(true)
-  const [hasAnyWallet, setHasAnyWallet] = useState(false)
+  const hasProjectedWallet = useWalletStore(state => state.wallets.length > 0)
+  const [hasCatalogWallet, setHasCatalogWallet] = useState(false)
+  const hasAnyWallet = hasProjectedWallet || hasCatalogWallet
   const [initializationFailure, setInitializationFailure] = useState<'upgrade' | 'startup' | null>(
     null
   )
@@ -78,14 +80,21 @@ export function useAppRouting() {
   }, [betaInviteStatus.state.phase, isLoading, location.pathname, location.search, replace])
 
   const routeToUnlock = useCallback(() => {
-    if (!hasAnyWallet || location.pathname === '/unlock') return
+    // Import/create can complete without remounting the app. Read the current
+    // projection as well as the startup catalog when the session ends.
+    if (
+      (!useWalletStore.getState().wallets.length && !hasCatalogWallet) ||
+      location.pathname === '/unlock'
+    ) {
+      return
+    }
     if (isDApp.current) {
       window.close()
       return
     }
     const target = `${location.pathname}${location.search || ''}`
     replace(`/unlock?redirect=${encodeURIComponent(target)}`)
-  }, [hasAnyWallet, location.pathname, location.search, replace])
+  }, [hasCatalogWallet, location.pathname, location.search, replace])
 
   // Auto-lock handler
   const handleAutoLock = useCallback(async () => {
@@ -130,27 +139,28 @@ export function useAppRouting() {
 
   // Idle detection: lock after autoLockMs of no user interaction while popup is open
   useEffect(() => {
-    if (autoLockMs <= 0 || !hasAnyWallet) return
+    if (autoLockMs <= 0 || !hasAnyWallet || isLoading || location.pathname === '/unlock') return
 
     let idleTimer: ReturnType<typeof setTimeout>
 
-    const resetIdleTimer = () => {
+    const resetIdleTimer = (recordActivity = true) => {
       clearTimeout(idleTimer)
-      SecureStorage.saveLastActivityTime().catch(() => {})
+      if (recordActivity) SecureStorage.saveLastActivityTime().catch(() => {})
       idleTimer = setTimeout(() => {
         handleAutoLock()
       }, autoLockMs)
     }
 
     const events = ['mousedown', 'keydown', 'scroll', 'touchstart', 'click']
-    events.forEach(e => document.addEventListener(e, resetIdleTimer, { passive: true }))
-    resetIdleTimer()
+    const recordActivity = () => resetIdleTimer()
+    events.forEach(e => document.addEventListener(e, recordActivity, { passive: true }))
+    resetIdleTimer(false)
 
     return () => {
       clearTimeout(idleTimer)
-      events.forEach(e => document.removeEventListener(e, resetIdleTimer))
+      events.forEach(e => document.removeEventListener(e, recordActivity))
     }
-  }, [autoLockMs, hasAnyWallet, handleAutoLock])
+  }, [autoLockMs, hasAnyWallet, handleAutoLock, isLoading, location.pathname])
 
   // Load settings
   useEffect(() => {
@@ -214,12 +224,10 @@ export function useAppRouting() {
         return
       }
 
-      await zcashWalletRuntimeClient.initialize()
-
       const hasRetainedV1Wallet = useWalletStore.getState().wallets.length > 0
-      const storageV2Catalog = hasRetainedV1Wallet ? null : await accountNetworksClient.getCatalog()
-      setHasAnyWallet(hasRetainedV1Wallet || (storageV2Catalog?.accounts.length ?? 0) > 0)
-      if (!hasRetainedV1Wallet && (storageV2Catalog?.accounts.length ?? 0) === 0) {
+      const hasNativeWallet = hasRetainedV1Wallet ? false : await accountNetworksClient.hasWallet()
+      setHasCatalogWallet(hasNativeWallet)
+      if (!hasRetainedV1Wallet && !hasNativeWallet) {
         // Hardware connect tab handles the first-wallet case itself
         // (collects a password during setup)
         if (isHardwareTab.current) {
@@ -265,8 +273,15 @@ export function useAppRouting() {
         }
 
         replace(`/unlock?${redirectParams.toString()}`)
+        void zcashWalletRuntimeClient.lock().catch(() => {})
         return
       }
+
+      if (hasNativeWallet) {
+        const catalog = await accountNetworksClient.getCatalog()
+        setHasCatalogWallet((catalog?.accounts.length ?? 0) > 0)
+      }
+      await zcashWalletRuntimeClient.initialize()
 
       {
         const { currentWalletId: cwid, currentAccountId: caid } = useWalletStore.getState()

@@ -4,7 +4,11 @@ import { safeBig } from '@/lib/big'
 import { formatWalletName, getAccountDisplayName } from '@/lib/format'
 import { buildAccountKey } from '@/store/account-data-store'
 import type { AccountData, WalletItem, ZcashBalance } from '@/types'
-import type { AccountNetworksCatalogView, AccountNetworksView } from './account-networks-client'
+import type {
+  AccountNetworksCatalogView,
+  AccountNetworksView,
+  AccountNetworkView
+} from './account-networks-client'
 import { isZcashHardwareKeySource } from '@/core/wallet/hardware-wallet-data'
 
 export interface AccountListItem {
@@ -31,6 +35,80 @@ export interface RegularAccountEntry {
   readonly hardwareVendor: string | null
   readonly addAccount: WalletAddAccountAction | null
   readonly accounts: readonly RegularAccountItem[]
+}
+
+export interface SwitcherAccount {
+  readonly walletId: string
+  readonly accountId: string
+  readonly name: string
+  readonly networks: readonly AccountNetworkView[]
+  readonly active: boolean
+}
+
+export interface SwitcherGroup {
+  readonly id: string
+  readonly name: string
+  readonly accounts: readonly SwitcherAccount[]
+}
+
+const IMPORTED_PRIVATE_KEY_GROUP_ID = 'imported-private-key'
+const IMPORTED_PRIVATE_KEY_GROUP_NAME = 'Imported Private Key'
+
+export function buildAccountSwitcherGroups(input: {
+  readonly wallets: WalletItem[]
+  readonly catalogAccounts: readonly AccountNetworksView[]
+  readonly accountDisplayNames: Readonly<Record<string, string>>
+  readonly currentWalletId: string | null
+  readonly currentAccountId: string | null
+}): readonly SwitcherGroup[] {
+  const { wallets, catalogAccounts, accountDisplayNames, currentWalletId, currentAccountId } = input
+  const hasRetainedSelection = Boolean(currentWalletId && currentAccountId)
+  const groups = new Map<string, { name: string; accounts: SwitcherAccount[] }>()
+  const catalogByKey = new Map(
+    catalogAccounts.map(account => [accountListKey(account.walletId, account.accountId), account])
+  )
+  const retained = new Set<string>()
+  for (const wallet of wallets) {
+    const group = { name: formatWalletName(wallet, wallets), accounts: [] as SwitcherAccount[] }
+    for (const account of wallet.accounts) {
+      const key = accountListKey(wallet.id, account.id)
+      retained.add(key)
+      if (account.isHidden) continue
+      group.accounts.push({
+        walletId: wallet.id,
+        accountId: account.id,
+        name: getAccountDisplayName(wallet.id, account.id, account.name, accountDisplayNames),
+        networks: catalogByKey.get(key)?.networks ?? [],
+        active: wallet.id === currentWalletId && account.id === currentAccountId
+      })
+    }
+    groups.set(`wallet:${wallet.id}`, group)
+  }
+  for (const account of catalogAccounts) {
+    if (retained.has(accountListKey(account.walletId, account.accountId))) continue
+    const isPrivateKey = account.walletSource.kind === 'private-key'
+    const groupId = isPrivateKey ? IMPORTED_PRIVATE_KEY_GROUP_ID : `wallet:${account.walletId}`
+    const group = groups.get(groupId) ?? {
+      name: isPrivateKey ? IMPORTED_PRIVATE_KEY_GROUP_NAME : account.walletDisplayName,
+      accounts: []
+    }
+    group.accounts.push({
+      walletId: account.walletId,
+      accountId: account.accountId,
+      name: getAccountDisplayName(
+        account.walletId,
+        account.accountId,
+        account.accountDisplayName,
+        accountDisplayNames
+      ),
+      networks: account.networks,
+      active: account.active && !hasRetainedSelection
+    })
+    groups.set(groupId, group)
+  }
+  return [...groups]
+    .filter(([, group]) => group.accounts.length > 0)
+    .map(([id, group]) => ({ id, ...group }))
 }
 
 export function accountListKey(walletId: string, accountId: string): string {
@@ -82,6 +160,7 @@ export function resolveAccountPortfolioValue(
   const balance = zcashBalances.get(key)
   if (!balance || zecPrice <= 0) return null
   return Object.freeze({
+    valuationBasis: 'wallet-assets-v2',
     totalUsd: safeBig(balance.total).times(zecPrice).toFixed(),
     updatedAt: 0,
     complete: false
@@ -221,14 +300,14 @@ export function buildVisibleAccountList(input: {
       ensureWalletGroup(account.walletId, account).accounts.push({ kind: 'native', account })
       continue
     }
-    const id = 'imported-private-key'
+    const id = IMPORTED_PRIVATE_KEY_GROUP_ID
     let group = groups.get(id)
     if (!group) {
       group = {
         kind: 'private-key',
         id,
         walletId: null,
-        displayName: 'Imported Private Key',
+        displayName: IMPORTED_PRIVATE_KEY_GROUP_NAME,
         hardwareVendor: null,
         addAccount: null,
         createdAt: Number.MAX_SAFE_INTEGER,

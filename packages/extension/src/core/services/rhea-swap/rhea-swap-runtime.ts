@@ -410,7 +410,10 @@ export function parseRheaSwapCatalogResult(value: unknown): RheaSwapCatalogResul
   if (!Array.isArray(value.tokens) || value.tokens.length > 16_384) {
     throw new Error('RHEA Swap token catalog is invalid')
   }
-  if (!Array.isArray(value.failedChainIds) || value.failedChainIds.length > 25) {
+  if (
+    !Array.isArray(value.failedChainIds) ||
+    value.failedChainIds.length > RHEA_SWAP_CHAIN_CATALOG.length
+  ) {
     throw new Error('RHEA Swap failed chain list is invalid')
   }
   const supported = new Set(RHEA_SWAP_CHAIN_CATALOG.map(chain => chain.tokenListChainId))

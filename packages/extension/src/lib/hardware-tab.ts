@@ -6,6 +6,7 @@
  */
 
 import type { QuoteBinding } from '@/types'
+import type { FeeTier } from '@/config/fee'
 import type { TransactionId } from '@/core/transactions/domain'
 import { launchHardwareSignSurface, type HardwareSignPresentation } from './hardware-sign-launcher'
 import { waitForHardwareSignResult, type HardwareSignResult } from './hardware-sign-result'
@@ -49,6 +50,8 @@ export interface HardwareSignRequest {
   origin?: string
   /** ZIP-317 marginal fee (zatoshis) for the selected fee tier; defaults to Standard. */
   marginalFeeZats?: number
+  feeQuoteId?: string
+  feeTier?: FeeTier
   fundingSource?: 'shielded' | 'transparent'
   createdAt: number
 }
@@ -125,6 +128,7 @@ function parseQuoteBinding(value: unknown): QuoteBinding | undefined {
       [],
       [
         'provider',
+        'userAction',
         'quoteHandle',
         'executionId',
         'router',
@@ -156,11 +160,15 @@ function parseQuoteBinding(value: unknown): QuoteBinding | undefined {
   ) {
     throw new Error('Invalid hardware quote provider')
   }
+  if (value.userAction !== undefined && value.userAction !== 'transfer') {
+    throw new Error('Invalid hardware quote action')
+  }
   if (value.isCrossChain !== undefined && typeof value.isCrossChain !== 'boolean') {
     throw new Error('Invalid hardware quote route kind')
   }
   return {
     ...(value.provider === undefined ? {} : { provider: value.provider }),
+    ...(value.userAction === undefined ? {} : { userAction: 'transfer' as const }),
     ...(value.quoteHandle === undefined
       ? {}
       : { quoteHandle: parseString(value.quoteHandle, 'hardware quote handle', 160) }),
@@ -271,6 +279,8 @@ export function parseHardwareSignRequest(value: unknown): HardwareSignRequest {
         'reportToOrigin',
         'origin',
         'marginalFeeZats',
+        'feeQuoteId',
+        'feeTier',
         'fundingSource',
         'maxTransfer'
       ]
@@ -294,6 +304,8 @@ export function parseHardwareSignRequest(value: unknown): HardwareSignRequest {
   const reportToOrigin = value.reportToOrigin
   const origin = parseDappOrigin(value.origin)
   const marginalFeeZats = value.marginalFeeZats
+  const feeQuoteId = parseOptionalString(value.feeQuoteId, 'hardware fee quote ID', 256)
+  const feeTier = value.feeTier
   const fundingSource = value.fundingSource
   const maxTransfer = value.maxTransfer
   if (maxTransfer !== undefined && (kind !== 'send' || typeof maxTransfer !== 'boolean')) {
@@ -311,6 +323,9 @@ export function parseHardwareSignRequest(value: unknown): HardwareSignRequest {
     (!Number.isSafeInteger(marginalFeeZats) || (marginalFeeZats as number) < 0)
   ) {
     throw new Error('Invalid hardware marginal fee')
+  }
+  if (feeTier !== undefined && feeTier !== 'standard' && feeTier !== 'fast') {
+    throw new Error('Invalid hardware network fee tier')
   }
   if (
     (dappRequestId === undefined) !== (origin === undefined) ||
@@ -351,6 +366,8 @@ export function parseHardwareSignRequest(value: unknown): HardwareSignRequest {
     ...(reportToOrigin === undefined ? {} : { reportToOrigin }),
     ...(origin === undefined ? {} : { origin }),
     ...(marginalFeeZats === undefined ? {} : { marginalFeeZats: marginalFeeZats as number }),
+    ...(feeQuoteId === undefined ? {} : { feeQuoteId }),
+    ...(feeTier === undefined ? {} : { feeTier: feeTier as FeeTier }),
     ...(fundingSource === undefined
       ? {}
       : { fundingSource: fundingSource as 'shielded' | 'transparent' }),

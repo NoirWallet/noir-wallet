@@ -65,6 +65,16 @@ function setup(active = activeContext) {
     })
   }
   const orchestrator = {
+    estimateFee: async input => {
+      calls.push(['estimate', input])
+      return {
+        chainId: 'eip155:1',
+        maximumFeeWei: '63000',
+        gasLimit: '21000',
+        maxFeePerGasWei: '3',
+        maxPriorityFeePerGasWei: '1'
+      }
+    },
     prepare: async input => {
       calls.push(['prepare', input])
       return results.prepare
@@ -108,6 +118,41 @@ function setup(active = activeContext) {
 }
 
 test.describe('Background EVM transfer controller', () => {
+  test('estimates only for the active chain and selected execution account without preparing a review', async () => {
+    const { calls, controller } = setup()
+    const intent = {
+      assetId: 'eip155:1/slip44:60',
+      recipient: '0x2222222222222222222222222222222222222222',
+      amountRaw: '1'
+    }
+    await expect(controller.estimateTransferFee(intent, 'fast', 'private')).resolves.toMatchObject({
+      maximumFeeWei: '63000'
+    })
+    expect(calls).toEqual([
+      ['resolve-private', activeContext],
+      [
+        'estimate',
+        {
+          chainAccount,
+          intent,
+          executionAccount: privateExecutionAccount,
+          feeSelection: { kind: 'tier', tier: 'fast' }
+        }
+      ]
+    ])
+    await expect(
+      controller.estimateTransferFee({ ...intent, assetId: 'eip155:8453/slip44:60' })
+    ).rejects.toThrow(/active network/)
+    await expect(
+      controller.estimateContractCallFee({
+        chainId: 'eip155:8453',
+        contractAddress: intent.recipient,
+        valueRaw: '0',
+        calldata: '0x1234'
+      })
+    ).rejects.toThrow(/active network/)
+    expect(calls).toHaveLength(2)
+  })
   test('reads allowance only for the selected active execution account', async () => {
     const { calls, controller } = setup()
     const token = '0x2222222222222222222222222222222222222222'
@@ -358,6 +403,7 @@ test.describe('Background EVM transfer controller', () => {
     await expect(controller.resumeBroadcast('transaction:evm:3')).resolves.toBe(results.resume)
     expect(calls).toEqual([
       ['get-pending', { scope: chainAccount.scope, transactionId: 'transaction:evm:0' }],
+      ['get-pending', { scope: chainAccount.scope, transactionId: 'transaction:evm:1' }],
       [
         'approve',
         {
@@ -366,6 +412,7 @@ test.describe('Background EVM transfer controller', () => {
           payloadFingerprint: fingerprint
         }
       ],
+      ['get-pending', { scope: chainAccount.scope, transactionId: 'transaction:evm:dapp' }],
       [
         'approve',
         {
@@ -387,6 +434,38 @@ test.describe('Background EVM transfer controller', () => {
       ],
       ['resume', { scope: chainAccount.scope, transactionId: 'transaction:evm:3' }]
     ])
+  })
+
+  test('checks a persisted RHEA quote before approving an already prepared EVM transaction', async () => {
+    const binding = {
+      provider: 'rhea-cross-chain-dex',
+      quoteHandle: 'rhea-quote:legacy',
+      sender: privateExecutionAccount.address,
+      destination: { recipient: chainAccount.identity.value }
+    }
+    let approved = false
+    const controller = new BackgroundEvmTransferController({
+      orchestrator: {
+        getPendingApproval: async () => ({ graph: { root: { intent: { protocol: binding } } } }),
+        approve: async () => {
+          approved = true
+          return { status: 'broadcast' }
+        }
+      },
+      loadActiveContext: async () => activeContext,
+      resolveExternalSigner: async () => {
+        throw new Error('unexpected signer')
+      },
+      readTokenAllowance: async () => '0',
+      validateRheaSwapQuote: async quoteHandle => {
+        expect(quoteHandle).toBe(binding.quoteHandle)
+        throw new Error('Private quote needs to be refreshed before signing.')
+      }
+    })
+    await expect(controller.approve('transaction:evm:legacy', 'a'.repeat(64))).rejects.toThrow(
+      /refreshed/
+    )
+    expect(approved).toBe(false)
   })
 
   test('fails closed when the active Account has no EVM ChainAccount', async () => {

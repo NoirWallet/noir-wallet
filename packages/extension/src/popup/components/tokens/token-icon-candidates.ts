@@ -1,8 +1,6 @@
-import { formatNativeTokenIconUrl, formatTrustWalletTokenIconUrl } from '@/config/icons'
-import { parseAssetId } from '@/core/chains/registry'
 import type { SwapToken } from '@/core/services/intents-api'
 import { MARKET_ASSETS } from '@/config/asset-market-assets'
-import { findBundledWalletMarketAssetId } from './token-display-policy'
+import { findBundledWalletMarketAssetId, isBundledWalletAsset } from './token-display-policy'
 
 interface TokenIconCandidateInput {
   readonly token?: Pick<SwapToken, 'blockchain' | 'contractAddress' | 'icon' | 'coingeckoIcon'>
@@ -11,6 +9,54 @@ interface TokenIconCandidateInput {
   readonly blockchain?: string
   readonly nativeChain?: string
   readonly bundledIcon?: string
+}
+
+const nativeAssetIconUrls: Readonly<Record<string, string>> = Object.freeze({
+  [MARKET_ASSETS.bnb]:
+    'https://coin-images.coingecko.com/coins/images/825/large/bnb-icon2_2x.png?1696501970',
+  [MARKET_ASSETS.pol]:
+    'https://coin-images.coingecko.com/coins/images/32440/large/pol.png?1759114181',
+  [MARKET_ASSETS.avax]:
+    'https://coin-images.coingecko.com/coins/images/12559/large/Avalanche_Circle_RedWhite_Trans.png?1696512369',
+  [MARKET_ASSETS.mon]:
+    'https://coin-images.coingecko.com/coins/images/38927/large/mon.png?1766029057',
+  [MARKET_ASSETS.xdai]:
+    'https://coin-images.coingecko.com/coins/images/11062/large/Identity-Primary-DarkBG.png?1696511004',
+  [MARKET_ASSETS.xpl]:
+    'https://coin-images.coingecko.com/coins/images/66489/large/Plasma-symbol-green-1.png?1755142558',
+  [MARKET_ASSETS.okb]:
+    'https://coin-images.coingecko.com/coins/images/4463/large/WeChat_Image_20220118095654.png?1696505053',
+  [MARKET_ASSETS.bera]:
+    'https://coin-images.coingecko.com/coins/images/25235/large/BERA.png?1738822008',
+  [MARKET_ASSETS.btc]:
+    'https://coin-images.coingecko.com/coins/images/1/large/bitcoin.png?1696501400',
+  [MARKET_ASSETS.sol]:
+    'https://coin-images.coingecko.com/coins/images/4128/large/solana.png?1718769756',
+  [MARKET_ASSETS.near]:
+    'https://coin-images.coingecko.com/coins/images/10365/large/near.jpg?1696510367'
+})
+
+function getBundledNativeIconFallback(
+  assetId: string | undefined,
+  token?: Pick<SwapToken, 'contractAddress'>
+): string | undefined {
+  if (!assetId || (token !== undefined && token.contractAddress != null)) return undefined
+  if (!(isBundledWalletAsset(assetId) && assetId.includes('/slip44:')) && !token) {
+    return undefined
+  }
+  const marketAsset = findBundledWalletMarketAssetId(assetId)
+  return marketAsset ? nativeAssetIconUrls[marketAsset] : undefined
+}
+
+export function isBundledEthIconIdentity(
+  assetId: string | undefined,
+  token?: Pick<SwapToken, 'contractAddress'>
+): boolean {
+  if (!assetId || findBundledWalletMarketAssetId(assetId) !== MARKET_ASSETS.eth) return false
+  if (/^eip155:[1-9][0-9]*\/slip44:60$/.test(assetId)) {
+    return token === undefined || token.contractAddress == null
+  }
+  return token?.contractAddress == null && token !== undefined
 }
 
 function isCoinGeckoIconUrl(value: string | undefined): boolean {
@@ -42,19 +88,22 @@ function isPublicIpfsIconUrl(value: string | undefined): boolean {
   }
 }
 
-function parseIconAsset(
-  assetId: string | undefined
-): Readonly<{ namespace: string; reference: string; chainFamily: string }> | undefined {
-  if (!assetId) return undefined
+function isRetiredIconSource(value: string, depth = 0): boolean {
+  if (depth > 3) return true
   try {
-    const parsed = parseAssetId(assetId)
-    return Object.freeze({
-      namespace: parsed.namespace,
-      reference: decodeURIComponent(parsed.reference),
-      chainFamily: parsed.chainId.slice(0, parsed.chainId.indexOf(':'))
-    })
+    const url = new URL(value)
+    const host = url.hostname.toLowerCase()
+    if (host === 'trustwallet.com' || host.endsWith('.trustwallet.com')) return true
+    if (
+      ['github.com', 'raw.githubusercontent.com', 'cdn.jsdelivr.net'].includes(host) &&
+      /(?:^|\/)trustwallet\/assets(?:@|\/|$)/i.test(url.pathname)
+    )
+      return true
+    // Previously cached history icons can wrap the original URL in our proxy.
+    const source = url.searchParams.get('source')
+    return source ? isRetiredIconSource(source, depth + 1) : false
   } catch {
-    return undefined
+    return false
   }
 }
 
@@ -62,28 +111,8 @@ export function getTokenIconCandidates({
   token,
   icon,
   assetId,
-  blockchain,
-  nativeChain,
   bundledIcon
 }: TokenIconCandidateInput): readonly string[] {
-  // Keep native ETH identical across catalogs and L2s; the badge identifies its chain.
-  if (assetId && findBundledWalletMarketAssetId(assetId) === MARKET_ASSETS.eth) {
-    return Object.freeze(
-      [formatNativeTokenIconUrl('eth')].filter((candidate): candidate is string => !!candidate)
-    )
-  }
-  const parsedAsset = parseIconAsset(assetId)
-  const assetBlockchain = blockchain ?? parsedAsset?.chainFamily
-  const nativeBlockchain = token && token.contractAddress == null ? token.blockchain : undefined
-  const nativeAssetBlockchain = parsedAsset?.namespace === 'slip44' ? assetBlockchain : undefined
-  const assetTokenIcon =
-    parsedAsset && parsedAsset.namespace !== 'slip44' && assetBlockchain
-      ? formatTrustWalletTokenIconUrl(assetBlockchain, parsedAsset.reference)
-      : undefined
-  const trustWalletTokenIcon =
-    token?.contractAddress != null
-      ? formatTrustWalletTokenIconUrl(token.blockchain, token.contractAddress)
-      : undefined
   const providerIcon = isPublicIpfsIconUrl(token?.icon ?? undefined) ? undefined : token?.icon
   const metadataIcon = isCoinGeckoIconUrl(icon) || isPublicIpfsIconUrl(icon) ? undefined : icon
   const coinGeckoIcon = isCoinGeckoIconUrl(icon) ? icon : token?.coingeckoIcon
@@ -92,11 +121,7 @@ export function getTokenIconCandidates({
     providerIcon,
     metadataIcon,
     coinGeckoIcon,
-    trustWalletTokenIcon,
-    assetTokenIcon,
-    nativeChain ? formatNativeTokenIconUrl(nativeChain) : undefined,
-    nativeBlockchain ? formatNativeTokenIconUrl(nativeBlockchain) : undefined,
-    nativeAssetBlockchain ? formatNativeTokenIconUrl(nativeAssetBlockchain) : undefined
+    getBundledNativeIconFallback(assetId, token)
   ]
 
   return Object.freeze(
@@ -104,6 +129,7 @@ export function getTokenIconCandidates({
       (candidate, index): candidate is string =>
         typeof candidate === 'string' &&
         candidate.length > 0 &&
+        !isRetiredIconSource(candidate) &&
         candidates.indexOf(candidate) === index
     )
   )

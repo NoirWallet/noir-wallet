@@ -8,7 +8,7 @@ import { useBetaInviteBinding } from '../../hooks/useBetaInviteBinding'
 
 export function CongratulationsPage() {
   const { replace } = useNavigate()
-  const { flowMode, mode, dappRequestId, reset } = useOnboardingStore()
+  const { flowMode, dappRequestId, reset } = useOnboardingStore()
   const { status, changeCode, error, busy, activate } = useBetaInviteBinding()
   const activationPending = status.required && status.state.phase !== 'activated'
 
@@ -43,9 +43,7 @@ export function CongratulationsPage() {
         <h1 className="text-lg font-semibold text-center mb-3">Congratulations!</h1>
 
         <p className="text-base text-muted text-center leading-relaxed">
-          {mode === 'import'
-            ? 'Your wallet is ready. Accounts for every supported network were restored from this recovery phrase.'
-            : 'Your wallet is ready. You can now securely receive, store, and send digital assets.'}
+          Your wallet is ready. You can now securely send, receive, and store digital assets.
         </p>
       </div>
 

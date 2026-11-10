@@ -28,9 +28,25 @@ export interface IntentsProgressPresentation {
   readonly steps: readonly TransactionProgressStep[]
 }
 
+function getSwapProcessingLabel(router: string | undefined, actionName: string): string {
+  const name = router?.trim()
+  if (
+    !name ||
+    name.length > 32 ||
+    !/^[a-zA-Z0-9 ._-]+$/.test(name) ||
+    name.toLowerCase() === 'unknown'
+  ) {
+    return `${actionName} processing`
+  }
+  const provider =
+    name.toLowerCase() === 'nearintents' ? 'Intents' : name.toLowerCase() === 'okx' ? 'OKX' : name
+  return `${provider} processing`
+}
+
 interface IntentsProgressInput {
   readonly status: SwapStatusType
   readonly actionName?: string
+  readonly router?: string
   readonly originStatus?: TransactionLifecycleStatus
   readonly originTxHash?: string
   readonly originConfirmations?: number
@@ -44,6 +60,7 @@ interface IntentsProgressInput {
 export function getIntentsProgressPresentation({
   status,
   actionName = 'Swap',
+  router,
   originStatus,
   originTxHash,
   originConfirmations,
@@ -117,7 +134,7 @@ export function getIntentsProgressPresentation({
     },
     {
       id: 'intents',
-      label: 'Intents processing',
+      label: getSwapProcessingLabel(router, actionName),
       detail: relayFailed
         ? copy.description
         : relayState === 'active' && status !== 'PROCESSING'
@@ -179,10 +196,10 @@ export function getIntentsProgressPresentation({
           : copy.title,
     description: sourceConfirmedButUnrecognized
       ? signedOrder
-        ? 'The order was submitted. Intents is waiting for the required confirmations before processing; do not submit again.'
-        : 'The source transaction is confirmed. Intents is waiting for the required confirmations before processing; do not send again.'
+        ? 'The order was submitted. Waiting for the required confirmations before processing; do not submit again.'
+        : 'The source transaction is confirmed. Waiting for the required confirmations before processing; do not send again.'
       : sourceBroadcastButUnrecognized
-        ? 'The source transaction was submitted. Intents will process it after the required chain confirmations; do not send again.'
+        ? 'The source transaction was submitted. Processing will start after the required chain confirmations; do not send again.'
         : sourceNotYetBroadcast
           ? 'Waiting for the source transaction to be submitted or detected.'
           : (copy.description ?? ''),
@@ -201,6 +218,7 @@ export function getLegacyIntentsProgressPresentation(
   return getIntentsProgressPresentation({
     status: progress.status,
     actionName: progress.actionName,
+    router: 'Intents',
     originStatus: outboundFromZcash
       ? getZcashIntentsOriginStatus(transaction)
       : !transaction.txHash

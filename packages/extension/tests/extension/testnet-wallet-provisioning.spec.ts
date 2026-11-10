@@ -179,9 +179,6 @@ test('imports 24 words and extends the testnet wallet tree without crossing netw
   test.setTimeout(300_000)
 
   await popup.getByRole('button', { name: 'Import wallet' }).click()
-  await expect(
-    popup.getByText('This recovery phrase will restore accounts for every supported network.')
-  ).toBeVisible()
   await popup.getByLabel('Account name').fill('Imported Test Account')
   await expect(popup.getByRole('radio', { name: '24 words' })).toHaveAttribute(
     'aria-checked',
@@ -197,11 +194,7 @@ test('imports 24 words and extends the testnet wallet tree without crossing netw
   await expect(popup.getByRole('heading', { name: 'Congratulations!' })).toBeVisible({
     timeout: 60_000
   })
-  await expect(
-    popup.getByText(
-      'Your wallet is ready. Accounts for every supported network were restored from this recovery phrase.'
-    )
-  ).toBeVisible()
+  await expect(popup.getByText('Your wallet is ready.')).toBeVisible()
 
   const imported = await openProvisioningInspector(popup, extensionId)
   expect(imported.keyDomainIds).toHaveLength(1)
@@ -238,12 +231,16 @@ test('imports 24 words and extends the testnet wallet tree without crossing netw
 
   await popup.goto(`chrome-extension://${extensionId}/index.html`)
   await popup.getByRole('button', { name: 'Choose wallet' }).click()
+  await popup
+    .getByRole('dialog', { name: 'Accounts' })
+    .getByRole('button', { name: 'Accounts' })
+    .click()
   const removeZcashHistoryMock = await mockUnknownZcashAccountHistory(context)
-  await popup.getByRole('button', { name: 'Add Account', exact: true }).click()
+  await popup.getByRole('button', { name: 'Add account', exact: true }).click()
   await selectNewZcashAccountHistory(popup)
   await expect(popup.getByText('Account 2', { exact: true })).toBeVisible({ timeout: 60_000 })
   await removeZcashHistoryMock()
-  await expect(popup.getByRole('button', { name: 'Add Account', exact: true })).toBeEnabled({
+  await expect(popup.getByRole('button', { name: 'Add account', exact: true })).toBeEnabled({
     timeout: 60_000
   })
 
@@ -256,8 +253,7 @@ test('imports 24 words and extends the testnet wallet tree without crossing netw
     .toEqual({ active: true })
 
   await popup.getByRole('button', { name: 'Add Wallet' }).click()
-  await popup.getByRole('button', { name: 'Import Wallet', exact: true }).click()
-  await popup.getByRole('button', { name: 'Secret Recovery Phrase', exact: true }).click()
+  await popup.getByRole('button', { name: 'Import recovery phrase', exact: true }).click()
   await popup.getByRole('radio', { name: '12 words' }).click()
   await popup.getByRole('button', { name: 'Continue' }).click()
   await enterMnemonic(popup, TEST_MNEMONIC_12)
@@ -324,6 +320,10 @@ test('imports 24 words and extends the testnet wallet tree without crossing netw
 
   await popup.goto(`chrome-extension://${extensionId}/index.html`)
   await popup.getByRole('button', { name: 'Choose wallet' }).click()
+  await popup
+    .getByRole('dialog', { name: 'Accounts' })
+    .getByRole('button', { name: 'Accounts' })
+    .click()
   await popup.getByRole('button', { name: 'Add Wallet' }).click()
   await popup.getByRole('button', { name: 'Create New Wallet' }).click()
   await expect(popup.getByRole('radio', { name: '24 words' })).toHaveAttribute(

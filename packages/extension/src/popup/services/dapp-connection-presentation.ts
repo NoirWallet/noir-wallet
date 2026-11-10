@@ -1,6 +1,13 @@
-import { BITCOIN_NETWORKS, BUILTIN_EVM_NETWORKS, type EvmNetworkConfig } from '@/config/networks'
-import type { ConnectedDApp } from '@/core/dapp/dapp-manager'
-import { parseChainId } from '@/core/chains/registry'
+import { resolveEvmChainIconAlias } from '@/config/icons'
+import type { ChainEndpointSettings } from '@/core/chains/chain-endpoint-settings'
+import { resolveEvmNetworkCatalog } from '@/core/chains/evm-runtime-config'
+import {
+  createInitialProductChainRegistry,
+  getZcashChainId,
+  parseChainId
+} from '@/core/chains/registry'
+import type { AccountRef, ConnectedDApp } from '@/core/dapp/dapp-manager'
+import type { Network } from '@/types'
 
 export interface DAppPermissionPresentation {
   readonly chainId: string
@@ -9,70 +16,158 @@ export interface DAppPermissionPresentation {
   readonly accountCount: number
 }
 
-const EVM_NETWORKS_BY_CHAIN_ID: ReadonlyMap<string, EvmNetworkConfig> = new Map(
-  [...BUILTIN_EVM_NETWORKS.mainnet, ...BUILTIN_EVM_NETWORKS.testnet].map(network => [
-    network.chainId,
-    network
-  ])
-)
-
-const BITCOIN_NETWORKS_BY_CHAIN_ID = new Map(
-  Object.values(BITCOIN_NETWORKS).map(network => [network.chainId, network])
-)
-
-function hasZcashAuthorization(dapp: ConnectedDApp): boolean {
-  return (
-    (Array.isArray(dapp.authorizedAccounts) && dapp.authorizedAccounts.length > 0) ||
-    (typeof dapp.boundWalletId === 'string' && typeof dapp.boundAccountId === 'string')
-  )
+interface DAppPermissionContext {
+  readonly network: Network
+  readonly endpointSettings: ChainEndpointSettings
+  readonly account?: AccountRef | null
 }
 
-export function presentDAppPermissions(dapp: ConnectedDApp): readonly DAppPermissionPresentation[] {
-  const permissions: DAppPermissionPresentation[] = []
+export interface MultichainConnectionAccountOption {
+  readonly id: string
+  readonly accountKey?: string
+  readonly label: string
+  readonly address: string
+  readonly required?: boolean
+}
 
-  if (hasZcashAuthorization(dapp)) {
-    permissions.push({
-      chainId: 'zcash',
-      label: 'Zcash',
-      iconChain: 'zcash',
-      accountCount: dapp.authorizedAccounts?.length ?? 1
-    })
+export interface MultichainConnectionNetwork {
+  readonly chainId: string
+  readonly chainName: string
+  readonly iconChain: string
+}
+
+export interface MultichainConnectionScope extends MultichainConnectionNetwork {
+  readonly accounts: readonly MultichainConnectionAccountOption[]
+  readonly preselectedIds: readonly string[]
+  readonly networks?: readonly MultichainConnectionNetwork[]
+}
+
+export interface MultichainConnectionAccount {
+  readonly key: string
+  readonly label: string
+  readonly permissions: readonly {
+    readonly scope: MultichainConnectionScope
+    readonly account: MultichainConnectionAccountOption
+  }[]
+  readonly networks: readonly MultichainConnectionNetwork[]
+}
+
+export function groupMultichainConnectionAccounts(
+  scopes: readonly MultichainConnectionScope[]
+): readonly MultichainConnectionAccount[] {
+  const groups = new Map<string, MultichainConnectionAccount>()
+  for (const scope of scopes) {
+    for (const account of scope.accounts) {
+      // Older pending requests without an identity must remain separate across scopes.
+      const key = account.accountKey ?? JSON.stringify([scope.chainId, account.id])
+      const previous = groups.get(key)
+      const networks = new Map(
+        [...(previous?.networks ?? []), ...(scope.networks ?? [scope])].map(network => [
+          network.chainId,
+          network
+        ])
+      )
+      groups.set(key, {
+        key,
+        label: previous?.label ?? account.label,
+        permissions: [...(previous?.permissions ?? []), { scope, account }],
+        networks: [...networks.values()]
+      })
+    }
+  }
+  return [...groups.values()]
+}
+
+export function getMultichainConnectionAccountSelection(
+  account: MultichainConnectionAccount,
+  selections: Readonly<Record<string, readonly string[]>>
+): 'none' | 'some' | 'all' {
+  const count = account.permissions.filter(permission =>
+    selections[permission.scope.chainId]?.includes(permission.account.id)
+  ).length
+  return count === 0 ? 'none' : count === account.permissions.length ? 'all' : 'some'
+}
+
+export function toggleMultichainConnectionAccount(
+  account: MultichainConnectionAccount,
+  selections: Readonly<Record<string, readonly string[]>>
+): Record<string, string[]> {
+  const select = getMultichainConnectionAccountSelection(account, selections) !== 'all'
+  const next = Object.fromEntries(
+    Object.entries(selections).map(([scope, ids]) => [scope, [...ids]])
+  )
+  for (const permission of account.permissions) {
+    const { scope, account: option } = permission
+    const ids = next[scope.chainId] ?? []
+    next[scope.chainId] =
+      select || option.required
+        ? [...new Set([...ids, option.id])]
+        : ids.filter(id => id !== option.id)
+  }
+  return next
+}
+
+export function presentDAppPermissions(
+  dapp: ConnectedDApp,
+  { network, endpointSettings, account }: DAppPermissionContext
+): readonly DAppPermissionPresentation[] {
+  const evmNetworks = resolveEvmNetworkCatalog(network, endpointSettings)
+  const chains = createInitialProductChainRegistry(
+    network,
+    evmNetworks.filter(config => config.source === 'custom')
+  )
+  const accountsByChain = new Map<string, Set<string>>()
+  const addAccounts = (chainId: string, accounts: readonly AccountRef[]) => {
+    const visibleAccounts =
+      account === undefined
+        ? accounts
+        : accounts.filter(
+            candidate =>
+              account !== null &&
+              candidate.walletId === account.walletId &&
+              candidate.accountId === account.accountId
+          )
+    if (visibleAccounts.length === 0) return
+    const uniqueAccounts = accountsByChain.get(chainId) ?? new Set<string>()
+    for (const visibleAccount of visibleAccounts) {
+      uniqueAccounts.add(JSON.stringify([visibleAccount.walletId, visibleAccount.accountId]))
+    }
+    accountsByChain.set(chainId, uniqueAccounts)
+  }
+
+  if (dapp.authorizedAccounts?.length) {
+    addAccounts(getZcashChainId(network), dapp.authorizedAccounts)
+  } else if (dapp.boundWalletId && dapp.boundAccountId) {
+    addAccounts(getZcashChainId(network), [
+      { walletId: dapp.boundWalletId, accountId: dapp.boundAccountId }
+    ])
   }
 
   for (const authorization of dapp.chainAuthorizations ?? []) {
-    const evm = EVM_NETWORKS_BY_CHAIN_ID.get(authorization.chainId)
-    if (evm) {
-      permissions.push({
-        chainId: authorization.chainId,
-        label: evm.displayName,
-        iconChain: evm.iconChain,
-        accountCount: authorization.accounts.length
-      })
+    if (dapp.evmAuthorization && parseChainId(authorization.chainId).namespace === 'eip155') {
       continue
     }
-
-    const bitcoin = BITCOIN_NETWORKS_BY_CHAIN_ID.get(authorization.chainId)
-    if (bitcoin) {
-      permissions.push({
-        chainId: authorization.chainId,
-        label: bitcoin.displayName,
-        iconChain: 'bitcoin',
-        accountCount: authorization.accounts.length
-      })
-      continue
-    }
-
-    const parsed = parseChainId(authorization.chainId)
-    permissions.push({
-      chainId: authorization.chainId,
-      label:
-        parsed.namespace === 'eip155'
-          ? `EVM ${parsed.reference}`
-          : `Bitcoin ${parsed.reference.slice(0, 8)}…`,
-      iconChain: parsed.namespace === 'eip155' ? 'evm' : 'bitcoin',
-      accountCount: authorization.accounts.length
-    })
+    addAccounts(authorization.chainId, authorization.accounts)
+  }
+  if (dapp.evmAuthorization) {
+    addAccounts('evm', dapp.evmAuthorization.accounts)
   }
 
-  return permissions
+  return [...accountsByChain].map(([chainId, accounts]) => {
+    if (chainId === 'evm') {
+      return { chainId, label: 'EVM', iconChain: 'evm', accountCount: accounts.size }
+    }
+    const parsed = parseChainId(chainId)
+    const chain = chains.get(parsed.id)
+    return {
+      chainId,
+      label:
+        chain?.displayName ?? (parsed.namespace === 'eip155' ? `EVM ${parsed.reference}` : chainId),
+      iconChain:
+        parsed.namespace === 'eip155'
+          ? resolveEvmChainIconAlias(chainId)
+          : (chain?.family ?? 'custom-evm'),
+      accountCount: accounts.size
+    }
+  })
 }

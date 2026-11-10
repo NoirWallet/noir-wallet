@@ -1,15 +1,16 @@
 import { Icon } from '@iconify/react'
 import { getWalletsNeedingSecretPhraseBackup } from '@/core/wallet/secret-phrase-backup'
-import { formatWalletBackupName } from '@/lib/format'
+import { formatWalletName } from '@/lib/format'
 import { useWalletStore } from '@/store/wallet-store'
 import { useNavigate } from '../../provider/Router'
 
 export function SecretPhraseBackupBanner() {
   const wallets = useWalletStore(state => state.wallets)
-  const displayNames = useWalletStore(state => state.accountDisplayNames)
+  const currentWalletId = useWalletStore(state => state.currentWalletId)
   const { navigate } = useNavigate()
-  const pending = getWalletsNeedingSecretPhraseBackup(wallets)
-  const wallet = pending[0]
+  const wallet = getWalletsNeedingSecretPhraseBackup(wallets).find(
+    candidate => candidate.id === currentWalletId
+  )
   if (!wallet) return null
 
   return (
@@ -20,11 +21,8 @@ export function SecretPhraseBackupBanner() {
       <Icon icon="lucide:triangle-alert" width={18} height={18} className="shrink-0 text-warning" />
       <div className="min-w-0 flex-1">
         <p className="break-words text-xs leading-4 text-foreground">
-          Back up the secret phrase for {formatWalletBackupName(wallet, wallets, displayNames)}.
+          Back up the secret phrase for {formatWalletName(wallet, wallets)}.
         </p>
-        {pending.length > 1 && (
-          <p className="text-xs text-muted">{pending.length - 1} more to back up</p>
-        )}
       </div>
       <button
         type="button"

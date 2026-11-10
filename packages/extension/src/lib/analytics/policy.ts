@@ -40,6 +40,7 @@ const EVENT_FIELD_POLICIES = {
   },
   [ANALYTICS_EVENTS.SHIELD_SUCCEEDED]: { params: [], extra: [] },
   [ANALYTICS_EVENTS.SHIELD_FAILED]: { params: [], extra: [] },
+  [ANALYTICS_EVENTS.SHIELD_OPERATION_RESULT]: { params: [], extra: ['operation', 'status'] },
   [ANALYTICS_EVENTS.SWAP_QUOTED]: { params: [], extra: ['direction', 'sourceFamily'] },
   [ANALYTICS_EVENTS.SWAP_SUBMITTED]: {
     params: [],
@@ -134,6 +135,8 @@ const kinds = new Set([
 ])
 const phases = new Set(['build', 'sign', 'broadcast', 'submit'])
 const terminalStatuses = new Set(['SUCCESS', 'FAILED', 'REFUNDED'])
+const shieldOperations = new Set(['deposit', 'withdraw', 'cluster', 'swap'])
+const shieldResults = new Set(['success', 'refunded', 'failed', 'expired', 'cancelled'])
 
 function isSafeValue(value: unknown): value is SafeAnalyticsValue {
   if (typeof value === 'boolean') return true
@@ -156,6 +159,16 @@ function isAllowedFieldValue(
   if (key === 'source') return typeof value === 'string' && connectionSources.has(value)
   if (key === 'kind') return typeof value === 'string' && kinds.has(value)
   if (key === 'phase') return typeof value === 'string' && phases.has(value)
+  if (key === 'operation') {
+    return (
+      eventName === ANALYTICS_EVENTS.SHIELD_OPERATION_RESULT &&
+      typeof value === 'string' &&
+      shieldOperations.has(value)
+    )
+  }
+  if (key === 'status' && eventName === ANALYTICS_EVENTS.SHIELD_OPERATION_RESULT) {
+    return typeof value === 'string' && shieldResults.has(value)
+  }
   if (key === 'status') return typeof value === 'string' && terminalStatuses.has(value)
   if (key === 'signing_mode') {
     return value === 'derived' || value === 'current' || value === 'legacy_index0'

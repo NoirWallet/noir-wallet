@@ -16,6 +16,8 @@ import {
 } from '../../../../src/infrastructure/chains/solana/index.ts'
 import { InMemoryTransactionRepository } from '../../../../src/infrastructure/persistence/repositories/index.ts'
 import { reportBackgroundSendBroadcast } from '../../../../src/background/analytics/send-broadcast.ts'
+import { isSelectedTransferScope } from '../../../../src/background/transfer-account-network-selection.ts'
+import { DEFAULT_NETWORK } from '../../../../src/lib/runtime-network.ts'
 
 const chainId = parseChainId('solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1').id
 const sender = 'HAgk14JpMQLgt6rVgv7cBQFJWFto5Dqxi472uT3DKpqk'
@@ -188,6 +190,7 @@ function harness(options = {}) {
     now: () => 1_000,
     createId: () => `test-${++id}`,
     onPendingBroadcast: options.onPendingBroadcast,
+    canBroadcastSigned: options.canBroadcastSigned,
     onMonitoringRequired: options.onMonitoringRequired
   })
   return { orchestrator, repository, pendingStore, calls }
@@ -270,6 +273,114 @@ test('persists a signed transaction before broadcast and resumes without signing
   expect(analytics[0].options.idempotencyKey).toBe(`send-broadcast:${approval.graph.root.id}`)
   expect(calls.filter(call => call[0] === 'confirm')).toHaveLength(1)
   expect(pendingBroadcastCalls).toBe(1)
+})
+
+test('keeps signed Solana recovery pending while its account network is disabled', async () => {
+  let networkEnabled = true
+  let broadcastCalls = 0
+  const checkedScopes = []
+  const { orchestrator, pendingStore, repository } = harness({
+    canBroadcastSigned: candidateScope => {
+      checkedScopes.push(candidateScope)
+      return networkEnabled
+    },
+    rpc: rpc({
+      broadcastSignedTransaction: async transactionBase64 => {
+        broadcastCalls += 1
+        if (broadcastCalls === 1) throw new Error('response lost')
+        return base58(Buffer.from(transactionBase64, 'base64').subarray(1, 65))
+      }
+    })
+  })
+  const approval = await prepare(orchestrator)
+  const first = await orchestrator.approve({
+    scope,
+    transactionId: approval.graph.root.id,
+    payloadFingerprint: approval.signing.payloadFingerprint.digestHex
+  })
+  expect(first.status).toBe('signed-pending-broadcast')
+
+  networkEnabled = false
+  expect(await orchestrator.resumePendingBroadcasts()).toEqual({
+    attempted: 1,
+    broadcast: 0,
+    pending: 1,
+    errors: 0
+  })
+  expect(broadcastCalls).toBe(1)
+  expect((await pendingStore.get(approval.graph.root.id)).phase).toBe('signed')
+  expect((await repository.get(scope, approval.graph.root.id)).root.status).toBe('signed')
+
+  networkEnabled = true
+  expect(await orchestrator.resumePendingBroadcasts()).toEqual({
+    attempted: 1,
+    broadcast: 1,
+    pending: 0,
+    errors: 0
+  })
+  expect(broadcastCalls).toBe(2)
+  expect(checkedScopes).toEqual([scope, scope, scope])
+  await expect(pendingStore.get(approval.graph.root.id)).resolves.toBeNull()
+})
+
+test('checks the signed transaction account selection when another account is active', async () => {
+  const activeScope = { keyDomainId: scope.keyDomainId, accountId: 'account:solana:active' }
+  const metadata = {
+    state: {
+      wallets: [
+        {
+          id: scope.keyDomainId,
+          accounts: [
+            { id: activeScope.accountId, networkSelections: { [DEFAULT_NETWORK]: ['solana'] } },
+            { id: scope.accountId, networkSelections: { [DEFAULT_NETWORK]: ['evm'] } }
+          ]
+        }
+      ]
+    }
+  }
+  const pointer = { generationId: 'generation:solana', sourceFingerprint: 'fingerprint' }
+  const snapshot = {
+    manifest: {
+      status: 'verified',
+      ...pointer,
+      activeAccount: activeScope
+    },
+    accounts: [
+      { id: activeScope.accountId, keyDomainId: activeScope.keyDomainId },
+      { id: scope.accountId, keyDomainId: scope.keyDomainId }
+    ],
+    keyDomains: [{ id: scope.keyDomainId, source: { kind: 'software', mnemonicWordCount: 24 } }]
+  }
+  const repository = {
+    getActivePointer: async () => pointer,
+    getSnapshot: async () => snapshot
+  }
+  const originalChrome = Object.getOwnPropertyDescriptor(globalThis, 'chrome')
+  const originalNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator')
+  Object.defineProperty(globalThis, 'chrome', {
+    configurable: true,
+    value: {
+      storage: {
+        local: {
+          get: async () => ({ wallet_state: metadata })
+        }
+      }
+    }
+  })
+  Object.defineProperty(globalThis, 'navigator', {
+    configurable: true,
+    value: { locks: { request: async (_name, action) => action() } }
+  })
+  try {
+    await expect(isSelectedTransferScope(repository, scope, 'solana')).resolves.toBe(false)
+    metadata.state.wallets[0].accounts[1].networkSelections[DEFAULT_NETWORK] = ['solana']
+    await expect(isSelectedTransferScope(repository, scope, 'solana')).resolves.toBe(true)
+  } finally {
+    if (originalChrome) Object.defineProperty(globalThis, 'chrome', originalChrome)
+    else Reflect.deleteProperty(globalThis, 'chrome')
+    if (originalNavigator) Object.defineProperty(globalThis, 'navigator', originalNavigator)
+    else Reflect.deleteProperty(globalThis, 'navigator')
+  }
 })
 
 test('fails an expired blockhash before consuming the signing command', async () => {

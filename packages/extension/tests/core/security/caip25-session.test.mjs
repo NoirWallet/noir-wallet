@@ -7,6 +7,7 @@ import {
   parseCaip27InvokeMethodRequest
 } from '../../../src/core/dapp/caip25.ts'
 import {
+  DAppManager,
   parseStoredDAppConnection,
   pruneDAppAccountReferences,
   replaceDAppCaip25Session
@@ -82,6 +83,7 @@ test.describe('CAIP-25 sessions', () => {
     const connection = replaceDAppCaip25Session(undefined, {
       origin: 'https://session.example',
       id: 'session-example',
+      favicon: `data:image/x-icon;base64,${'a'.repeat(20_000)}`,
       authorizations: [
         { chainId: ethereum, accounts: [account], binding: account },
         { chainId: bitcoin, accounts: [account], binding: account }
@@ -95,7 +97,9 @@ test.describe('CAIP-25 sessions', () => {
       now: 1_700_000_000_000
     })
 
-    expect(parseStoredDAppConnection(connection).caip25Session?.scopes).toHaveLength(2)
+    const restored = parseStoredDAppConnection(structuredClone(connection))
+    expect(restored.caip25Session?.scopes).toHaveLength(2)
+    expect(restored.favicon).toBe('https://session.example/favicon.ico')
     const pruned = pruneDAppAccountReferences([connection], account)
     expect(pruned.connections).toEqual([])
     expect(pruned.disconnectedOrigins).toEqual(['https://session.example'])
@@ -114,6 +118,111 @@ test.describe('CAIP-25 sessions', () => {
         now: 1_700_000_000_000
       })
     ).toThrow(/requires a chain authorization/)
+  })
+
+  test('retains the full official network catalog without widening third-party limits', async () => {
+    const account = { walletId: 'wallet-1', accountId: 'account-1' }
+    const otherAccount = { walletId: 'wallet-2', accountId: 'account-2' }
+    const scopes = Array.from({ length: 44 }, (_, index) => ({
+      chainId: `eip155:${index + 1}`,
+      methods: ['eth_accounts'],
+      notifications: ['wallet_sessionChanged']
+    }))
+    const request = {
+      scopes: Object.fromEntries(scopes.map(({ chainId, ...scope }) => [chainId, scope]))
+    }
+    for (const origin of ['https://app.zknoir.com', 'https://noirdevelop.refburrow.top']) {
+      expect(Object.keys(parseCaip25CreateSessionRequest(request, origin).scopes)).toHaveLength(44)
+      const connection = replaceDAppCaip25Session(undefined, {
+        origin,
+        id: 'official-session',
+        authorizations: scopes.map(({ chainId }) => ({
+          chainId,
+          accounts: [account],
+          binding: account
+        })),
+        session: { scopes },
+        now: 1_700_000_000_000
+      })
+      const restored = parseStoredDAppConnection(structuredClone(connection))
+      expect(restored.caip25Session.scopes).toHaveLength(44)
+      expect(restored.evmNetworkState.approvedChainIds).toHaveLength(44)
+      const values = new Map()
+      const storage = {
+        async get(keys) {
+          return Object.fromEntries(
+            (Array.isArray(keys) ? keys : [keys])
+              .filter(key => values.has(key))
+              .map(key => [key, structuredClone(values.get(key))])
+          )
+        },
+        async set(items) {
+          for (const [key, value] of Object.entries(items)) {
+            values.set(key, structuredClone(value))
+          }
+        }
+      }
+      const manager = new DAppManager(storage)
+      await manager.setCaip25Session(
+        origin,
+        {},
+        scopes.map(({ chainId }) => ({ chainId, accounts: [account], binding: account })),
+        { scopes }
+      )
+      await manager.addCaip25AuthorizedAccount(
+        origin,
+        scopes.map(scope => scope.chainId),
+        otherAccount
+      )
+      const reloaded = new DAppManager(storage)
+      expect((await reloaded.getConnection(origin)).chainAuthorizations).toHaveLength(44)
+      expect((await reloaded.getChainAuthorization(origin, scopes[43].chainId)).accounts).toEqual([
+        account,
+        otherAccount
+      ])
+      await reloaded.removeChainAuthorization(origin, scopes[0].chainId)
+      const afterRemoval = await new DAppManager(storage).getConnection(origin)
+      expect(afterRemoval.chainAuthorizations).toHaveLength(43)
+      expect(afterRemoval.caip25Session.scopes).toHaveLength(43)
+      expect(afterRemoval.evmNetworkState.approvedChainIds).toHaveLength(43)
+      expect(afterRemoval.evmNetworkState.approvedChainIds).not.toContain(scopes[0].chainId)
+      const oversized = {
+        scopes: Object.fromEntries(
+          Array.from({ length: 65 }, (_, index) => [
+            `eip155:${index + 1}`,
+            { methods: ['eth_accounts'], notifications: [] }
+          ])
+        )
+      }
+      expect(() => parseCaip25CreateSessionRequest(oversized, origin)).toThrow(/bounded/)
+      const thirdPartyRequest = {
+        scopes: Object.fromEntries(
+          scopes
+            .slice(0, 17)
+            .map(({ chainId, methods, notifications }) => [chainId, { methods, notifications }])
+        )
+      }
+      for (const thirdParty of [
+        'https://untrusted.example',
+        'https://app.zknoir.com.untrusted.example'
+      ]) {
+        expect(() => parseCaip25CreateSessionRequest(thirdPartyRequest, thirdParty)).toThrow(
+          /bounded/
+        )
+        expect(() =>
+          parseStoredDAppConnection({
+            ...connection,
+            origin: thirdParty,
+            host: new URL(thirdParty).host,
+            caip25Session: { scopes: connection.caip25Session.scopes.slice(0, 17) },
+            evmNetworkState: {
+              ...connection.evmNetworkState,
+              approvedChainIds: connection.evmNetworkState.approvedChainIds.slice(0, 17)
+            }
+          })
+        ).toThrow()
+      }
+    }
   })
 
   test('limits legacy chain calls to methods granted by a matching session scope', () => {

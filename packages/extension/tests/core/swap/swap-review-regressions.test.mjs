@@ -14,7 +14,28 @@ import {
   getRheaSwapMinimumAmountMessage,
   getSafeRheaSwapRuntimeErrorMessage
 } from '../../../src/core/services/rhea-swap/rhea-swap-error.ts'
+import { createRheaSwapFetch } from '../../../src/core/services/rhea-swap/rhea-swap-fetch.ts'
 import { classifyError } from '../../../src/lib/errors.ts'
+import { selectSwapFeeEstimate } from '../../../src/lib/swap-fee.ts'
+import {
+  buildPublicPrivateSendPreviewRequest,
+  createPublicPrivateSendPreviewKey,
+  getPublicPrivateSendRouteCost
+} from '../../../src/popup/services/public-private-send-preview.ts'
+
+it('rejects a stale Zcash Max fee when a refreshed Max amount differs', () => {
+  const feeQuote = { id: 'quote-1', standardMarginalFeeZats: 5000, expiresAt: 2000 }
+  const max = { feeZats: 15000, feeQuote, loading: false, error: false }
+  const amount = { feeZats: 10000, feeQuote, loading: false, error: false }
+  assert.deepEqual(selectSwapFeeEstimate('0.9', true, '0.8', max, amount, 1000), {
+    feeZats: null,
+    feeQuote: null,
+    ready: false,
+    staleMax: true
+  })
+  assert.equal(selectSwapFeeEstimate('0.8', true, '0.8', max, amount, 1000).ready, true)
+  assert.equal(selectSwapFeeEstimate('0.8', true, '0.8', max, amount, 2000).ready, false)
+})
 
 function source(balance = '1000000') {
   return {
@@ -105,25 +126,106 @@ it('retains the reviewed sender, recipient, amount and privacy mode when a quote
     amountIn: '0.5',
     slippage: 1,
     refundAddress: 'sender',
-    recipientAddress: 'recipient',
+    recipientAddress: `0x${'2'.repeat(40)}`,
     confidentiality: 'basic',
     blocked: false
   }
   const quote = buildLiveSwapQuoteRequest(input)
   assert.equal(quote.request.amountIn, '500000')
   assert.equal(quote.request.sender, 'sender')
-  assert.equal(quote.request.recipient, 'recipient')
+  assert.equal(quote.request.recipient, input.recipientAddress)
   const changedRecipient = buildLiveSwapQuoteRequest({
     ...input,
-    recipientAddress: 'other-recipient'
+    recipientAddress: `0x${'6'.repeat(40)}`
   })
-  assert.equal(changedRecipient.request.recipient, 'other-recipient')
+  assert.equal(changedRecipient.request.recipient, `0x${'6'.repeat(40)}`)
   assert.notEqual(changedRecipient.key, quote.key)
+  assert.notEqual(changedRecipient.scopeKey, quote.scopeKey)
+  assert.equal(
+    buildLiveSwapQuoteRequest({ ...input, privateRecipientAddress: 'different-private-address' }),
+    null
+  )
   assert.equal(quote.request.confidentiality, 'basic')
   assert.equal(quote.request.slippageBps, 100)
   assert.equal(buildLiveSwapQuoteRequest({ ...input, amountIn: '0.0000001' }), null)
   assert.equal(buildLiveSwapQuoteRequest({ ...input, amountIn: '0.5000001' }), null)
   assert.equal(buildLiveSwapQuoteRequest({ ...input, amountIn: '0.000001' }).request.amountIn, '1')
+})
+
+it('binds the Public to Private preview to its account, quote inputs and fee context', () => {
+  const token = {
+    assetId: 'eip155:56/native',
+    rheaChainId: '56',
+    rheaAddress: 'native',
+    blockchain: 'bsc',
+    symbol: 'BNB',
+    decimals: 6,
+    isNative: true,
+    sources: ['nearIntents']
+  }
+  const input = {
+    network: 'mainnet',
+    walletId: 'wallet-a',
+    accountId: 'account-a',
+    endpointKey: 'rpc-a',
+    portfolioWalletId: 'wallet-a',
+    portfolioAccountId: 'account-a',
+    assetId: token.assetId,
+    assetReference: 'native',
+    assetDecimals: 6,
+    chainId: 'eip155:56',
+    sender: `0x${'1'.repeat(40)}`,
+    recipient: `0x${'2'.repeat(40)}`,
+    amount: '0.5',
+    amountRaw: '500000',
+    slippage: 1,
+    feeSelectionKey: 'standard',
+    sourceToken: token,
+    destinationToken: token
+  }
+  const preview = buildPublicPrivateSendPreviewRequest(input)
+  assert.equal(preview.key, createPublicPrivateSendPreviewKey(input))
+  assert.equal(preview.request.confidentiality, 'basic')
+  assert.equal(preview.request.amountIn, '500000')
+  for (const changed of [
+    { walletId: 'wallet-b' },
+    { accountId: 'account-b' },
+    { portfolioWalletId: 'wallet-b' },
+    { endpointKey: 'rpc-b' },
+    { assetReference: 'another-asset' },
+    { assetDecimals: 18 },
+    { chainId: 'eip155:1' },
+    { recipient: `0x${'3'.repeat(40)}` },
+    { amount: '0.6', amountRaw: '600000' },
+    { slippage: 2 },
+    { feeSelectionKey: 'fast' }
+  ]) {
+    assert.notEqual(createPublicPrivateSendPreviewKey({ ...input, ...changed }), preview.key)
+  }
+  assert.equal(buildPublicPrivateSendPreviewRequest({ ...input, network: 'testnet' }), null)
+  assert.equal(
+    buildPublicPrivateSendPreviewRequest({
+      ...input,
+      destinationToken: { ...token, decimals: 18 }
+    }),
+    null
+  )
+  assert.equal(
+    getPublicPrivateSendRouteCost({
+      amountInRaw: '500000',
+      estimatedOutRaw: '490000',
+      decimals: 6
+    }),
+    '0.01'
+  )
+  assert.equal(
+    getPublicPrivateSendRouteCost({
+      amountInRaw: '500000',
+      estimatedOutRaw: '510000',
+      decimals: 6
+    }),
+    null
+  )
 })
 
 it('accepts a Zcash recipient only for its selected account scope and network', () => {
@@ -162,7 +264,7 @@ it('keeps minimum amounts while removing nested provider metadata without changi
     getRheaSwapErrorMessage(
       new RheaSwapClientError('{"message":"Request timed out","path":"/internal"}')
     ),
-    'No route found for this swap.'
+    'Request timed out.'
   )
   assert.equal(
     getRheaSwapErrorMessage(new RheaSwapClientError('Unsupported destination token')),
@@ -174,7 +276,7 @@ it('keeps minimum amounts while removing nested provider metadata without changi
         'No confidential route available: quote failed (400): {"msg":"transport timeout","code":"QUOTE_TIMEOUT","reason":"quote_timeout","retryAfter":6500}'
       )
     ),
-    'No route found for this swap.'
+    'Request timed out.'
   )
   assert.equal(
     getRheaSwapErrorMessage(
@@ -190,7 +292,15 @@ it('keeps minimum amounts while removing nested provider metadata without changi
         'No confidential route available: quote failed (400): {"msg":"No route found","error":{"reason":"quote_timeout"}}'
       )
     ),
-    'No route found for this swap.'
+    'Request timed out.'
+  )
+  assert.equal(
+    getRheaSwapErrorMessage(
+      new RheaSwapClientError(
+        'Cross-chain quote failed: {"code":-1,"errorCode":"QUOTE_TIMEOUT","reason":"quote_timeout","msg":"Cross-chain quote failed: nearintents: quote transport timeout after 6s; preswap: pre-swap route does not yet support fromChain=zcash","retryAfterMs":6500}'
+      )
+    ),
+    'Request timed out.'
   )
   assert.equal(
     getRheaSwapErrorMessage(
@@ -216,6 +326,31 @@ it('keeps minimum amounts while removing nested provider metadata without changi
   )
 })
 
+it('keeps a quote timeout retryable when a successful HTTP response also mentions an unsupported route', async () => {
+  const fetchQuote = createRheaSwapFetch(
+    async () =>
+      new Response(
+        JSON.stringify({
+          code: -1,
+          errorCode: 'QUOTE_TIMEOUT',
+          reason: 'quote_timeout',
+          msg: 'Cross-chain quote failed: nearintents: quote transport timeout after 6s; preswap: pre-swap route does not yet support fromChain=zcash',
+          retryAfterMs: 6500
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } }
+      )
+  )
+  await assert.rejects(fetchQuote('https://api.rhea.finance/api/swap/quote'), error => {
+    assert.equal(error.code, 'REQUEST_TIMEOUT')
+    const runtimeMessage = getSafeRheaSwapRuntimeErrorMessage(error)
+    assert.equal(runtimeMessage, 'quote_timeout')
+    const popupError = new RheaSwapClientError(runtimeMessage)
+    assert.equal(getRheaSwapErrorMessage(popupError), 'Request timed out.')
+    assert.equal(classifyError(popupError).retryable, true)
+    return true
+  })
+})
+
 it('keeps provider minimums from multiple route failures without returning provider metadata', () => {
   const providerFailure =
     'NearIntents quote failed (400): {"message":"Temporary swap limits: minimum swap amount is $1,000","correlationId":"provider-reference"}'
@@ -235,6 +370,14 @@ it('keeps provider minimums from multiple route failures without returning provi
   assert.equal(getRheaSwapMinimumAmountMessage(runtimeMessage), runtimeMessage)
   assert.equal(getRheaSwapErrorMessage(new RheaSwapClientError(runtimeMessage)), runtimeMessage)
   assert.equal(getSafeRheaSwapRuntimeErrorMessage(new Error(runtimeMessage)), runtimeMessage)
+  const bridgeFailure =
+    'No confidential route available: Cross-chain quote failed: nearintents: NearIntents quote failed (400): {"message":"Amount is too low for bridge, try at least 133602","correlationId":"provider-reference","timestamp":"2026-11-09T15:49:49Z","path":"/v0/quote"}'
+  const bridgeMessage = 'Amount is below the route minimum. Increase the amount and try again.'
+  const safeBridgeMessage = getSafeRheaSwapRuntimeErrorMessage(new Error(bridgeFailure))
+  assert.equal(safeBridgeMessage, bridgeMessage)
+  assert.equal(getRheaSwapErrorMessage(new RheaSwapClientError(bridgeFailure)), bridgeMessage)
+  assert.equal(getRheaSwapErrorMessage(new RheaSwapClientError(safeBridgeMessage)), bridgeMessage)
+  assert.equal(classifyError(new RheaSwapClientError(safeBridgeMessage)).retryable, false)
   assert.equal(
     getRheaSwapMinimumAmountMessage('Minimum swap amount is $1,000.125.'),
     'Minimum swap amount is $1,000.125.'
@@ -252,7 +395,7 @@ it('keeps provider minimums from multiple route failures without returning provi
   assert.equal(getRheaSwapMinimumAmountMessage('minimum swap amount is $1,000.1234567'), null)
   assert.equal(
     getRheaSwapErrorMessage(new RheaSwapClientError('Request timed out')),
-    'No route found for this swap.'
+    'Request timed out.'
   )
 })
 

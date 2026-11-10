@@ -1,4 +1,5 @@
 import { getActivityAssetEffects, type ActivityItem, type ActivityReadModel } from '@/core/activity'
+import { parseAssetId } from '@/core/chains/registry'
 import { resolveActivityChainId } from '@/popup/components/transaction/activity-chain'
 
 export function isActivityModelForScope(
@@ -28,17 +29,75 @@ export function filterActivityItems(input: {
   readonly items: readonly ActivityItem[]
   readonly selectedChainIds: readonly string[]
   readonly assetId?: string
+  readonly domain?: 'public' | 'private' | 'shield'
+  readonly accountMode?: 'main' | 'private'
+  readonly confidentialIntentsOnly?: boolean
+  readonly executionAddressModes?: ReadonlyMap<string, 'Public' | 'Confidential'>
 }): readonly ActivityItem[] {
   const selectedChainIdSet = new Set(input.selectedChainIds)
+  let requestedAssetChainId: string | undefined
+  if (input.assetId) {
+    try {
+      requestedAssetChainId = parseAssetId(input.assetId).chainId
+    } catch {
+      return []
+    }
+  }
   return input.items.filter(item => {
-    const chainId = resolveActivityChainId(item)
+    const primaryAssetId = item.snapshot?.primaryAmount?.assetId
+    const counterAssetId = item.snapshot?.counterAmount?.assetId
+    const assetMatches =
+      !input.assetId ||
+      primaryAssetId === input.assetId ||
+      counterAssetId === input.assetId ||
+      getActivityAssetEffects(item)?.changes.some(change => change.assetId === input.assetId)
+    const chainId =
+      requestedAssetChainId && assetMatches ? requestedAssetChainId : resolveActivityChainId(item)
+    const shield = item.snapshot?.shield
+    const senderMode = item.snapshot?.sender?.address
+      ? input.executionAddressModes?.get(item.snapshot.sender.address.toLowerCase())
+      : undefined
+    const recipientMode = item.snapshot?.recipient?.address
+      ? input.executionAddressModes?.get(item.snapshot.recipient.address.toLowerCase())
+      : undefined
+    const crossModeMove =
+      (shield?.sourceDomain === 'public' && shield.destinationDomain === 'private') ||
+      (shield?.sourceDomain === 'private' && shield.destinationDomain === 'public') ||
+      (item.kind === 'transfer' &&
+        senderMode !== undefined &&
+        recipientMode !== undefined &&
+        senderMode !== recipientMode)
+    const shieldActivity =
+      shield?.sourceDomain === 'shield' || shield?.destinationDomain === 'shield'
+    // Shield activity belongs to a separate asset domain, independent of EVM execution mode.
+    const modeMatches =
+      input.accountMode === undefined ||
+      !chainId?.startsWith('eip155:') ||
+      shieldActivity ||
+      (input.accountMode === 'private'
+        ? item.accountMode === 'private'
+        : item.accountMode !== 'private') ||
+      crossModeMove
     return (
       chainId !== undefined &&
-      selectedChainIdSet.has(chainId) &&
-      (!input.assetId ||
-        item.snapshot?.primaryAmount?.assetId === input.assetId ||
-        item.snapshot?.counterAmount?.assetId === input.assetId ||
-        getActivityAssetEffects(item)?.changes.some(change => change.assetId === input.assetId))
+      (input.confidentialIntentsOnly || selectedChainIdSet.has(chainId)) &&
+      (!input.confidentialIntentsOnly ||
+        item.segments.some(
+          segment =>
+            segment.target.kind === 'protocol' && segment.target.provider === 'Confidential Intents'
+        )) &&
+      (input.domain !== undefined || modeMatches) &&
+      (input.domain === undefined ||
+        (input.domain === 'shield'
+          ? shieldActivity || item.assetDomains?.includes('shield') === true
+          : shield
+            ? shield.sourceDomain === input.domain || shield.destinationDomain === input.domain
+            : item.source === 'zcash-v1'
+              ? input.domain === 'public' && item.assetDomains?.includes('public') === true
+              : input.domain === 'private'
+                ? item.accountMode === 'private'
+                : item.accountMode !== 'private')) &&
+      assetMatches
     )
   })
 }

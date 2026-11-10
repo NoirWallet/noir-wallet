@@ -16,7 +16,11 @@ import { dappHandler } from './dapp-handler'
 import { BackgroundNativeTransferDAppHandler } from './native-transfer-dapp-handler'
 import { BackgroundNearDAppHandler } from './near-dapp-handler'
 import { loadActiveNearTransferContext } from './near-transfer'
-import { listDAppChainAccounts } from './dapp-chain-account-catalog'
+import {
+  filterEnabledDAppContext,
+  isDAppNetworkEnabled,
+  listDAppChainAccounts
+} from './dapp-chain-account-catalog'
 
 export function createBackgroundNearDAppHandler(
   endpointSettings?: ChainEndpointSettings
@@ -33,12 +37,17 @@ export function createBackgroundNearDAppHandler(
     connectApprovalAction: 'nearConnect',
     manager: dappManager,
     approval: dappHandler,
-    loadActiveContext: () => loadActiveNearTransferContext(storageRepository, network.chainId),
+    loadActiveContext: async () =>
+      filterEnabledDAppContext(
+        await loadActiveNearTransferContext(storageRepository, network.chainId),
+        'near'
+      ),
     listAccounts: () =>
       listDAppChainAccounts({
         repository: storageRepository,
         chainId: network.chainId,
         family: 'near',
+        isNetworkEnabled: isDAppNetworkEnabled,
         resolveAddress: ({ chainAccount }) =>
           chainAccount.identity.kind === 'account-identifier'
             ? parseNearAccountId(chainAccount.identity.value)
@@ -65,7 +74,10 @@ export function createBackgroundNearDAppHandler(
       if (!(await credentialSession.hasUnlockSession())) {
         throw new NativeTransferProviderError(4100, 'Unlock Noir Wallet before signing.')
       }
-      const context = await loadActiveNearTransferContext(storageRepository, network.chainId)
+      const context = await filterEnabledDAppContext(
+        await loadActiveNearTransferContext(storageRepository, network.chainId),
+        'near'
+      )
       if (!context || context.chainAccount.identity.kind !== 'account-identifier') {
         throw new NativeTransferProviderError(4100, 'The active wallet has no NEAR account.')
       }

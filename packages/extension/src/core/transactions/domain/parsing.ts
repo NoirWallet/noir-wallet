@@ -167,7 +167,16 @@ export function parseTransactionIntentSnapshot(value: unknown): TransactionInten
     !hasExactKeys(
       value,
       ['schemaVersion', 'direction'],
-      ['primaryAmount', 'counterAmount', 'feeLimit', 'sender', 'recipient', 'protocol', 'evm']
+      [
+        'primaryAmount',
+        'counterAmount',
+        'feeLimit',
+        'sender',
+        'recipient',
+        'protocol',
+        'shield',
+        'evm'
+      ]
     ) ||
     value.schemaVersion !== 1 ||
     typeof value.direction !== 'string' ||
@@ -194,6 +203,50 @@ export function parseTransactionIntentSnapshot(value: unknown): TransactionInten
     ...(value.protocol === undefined
       ? {}
       : { protocol: parseTransactionProtocolBinding(value.protocol) }),
+    ...(value.shield === undefined
+      ? {}
+      : {
+          shield: (() => {
+            const shield = value.shield
+            if (
+              !isRecord(shield) ||
+              !hasExactKeys(shield, [
+                'schemaVersion',
+                'operation',
+                'sourceDomain',
+                'destinationDomain'
+              ]) ||
+              shield.schemaVersion !== 1 ||
+              !(
+                (shield.operation === 'deposit' &&
+                  (shield.sourceDomain === 'public' || shield.sourceDomain === 'private') &&
+                  shield.destinationDomain === 'shield') ||
+                (shield.operation === 'withdraw' &&
+                  shield.sourceDomain === 'shield' &&
+                  (shield.destinationDomain === 'public' ||
+                    shield.destinationDomain === 'private')) ||
+                (shield.operation === 'swap' &&
+                  shield.sourceDomain === 'shield' &&
+                  shield.destinationDomain === 'shield') ||
+                (shield.operation === 'cluster' &&
+                  (shield.sourceDomain === 'public' ||
+                    shield.sourceDomain === 'private' ||
+                    shield.sourceDomain === 'shield') &&
+                  (shield.destinationDomain === 'public' ||
+                    shield.destinationDomain === 'private') &&
+                  shield.sourceDomain !== shield.destinationDomain)
+              )
+            ) {
+              throw new Error('Invalid Shield transfer intent')
+            }
+            return Object.freeze({
+              schemaVersion: 1 as const,
+              operation: shield.operation as 'deposit' | 'withdraw' | 'cluster' | 'swap',
+              sourceDomain: shield.sourceDomain as 'public' | 'private' | 'shield',
+              destinationDomain: shield.destinationDomain as 'public' | 'private' | 'shield'
+            })
+          })()
+        }),
     ...(value.evm === undefined
       ? {}
       : {
@@ -267,6 +320,7 @@ export function parseTransactionSegmentEvidence(value: unknown): TransactionSegm
       [
         'transactionHash',
         'assetEffects',
+        'settledAmount',
         'replacementTransactionHash',
         'externalReference',
         'blockHash',
@@ -290,6 +344,9 @@ export function parseTransactionSegmentEvidence(value: unknown): TransactionSegm
     ...(value.assetEffects === undefined
       ? {}
       : { assetEffects: parseTransactionAssetEffects(value.assetEffects) }),
+    ...(value.settledAmount === undefined
+      ? {}
+      : { settledAmount: parseAssetAmount(value.settledAmount, 'settledAmount') }),
     ...(value.replacementTransactionHash === undefined
       ? {}
       : {
@@ -489,6 +546,15 @@ export function parseTransactionSegment(value: unknown): TransactionSegment {
       }
     }
   }
+  if (
+    segment.evidence?.settledAmount &&
+    (segment.role !== 'destination' ||
+      segment.target.kind !== 'protocol' ||
+      segment.status !== 'final' ||
+      segment.evidence.settledAmount.amountRaw === '0')
+  ) {
+    throw new Error('Settled amount requires a final protocol destination')
+  }
   assertTransactionSegmentState(segment)
   return segment
 }
@@ -506,6 +572,14 @@ export function parseTransactionGraph(value: unknown): TransactionGraph {
     root: parseTransactionRoot(value.root),
     segments: Object.freeze(value.segments.map(parseTransactionSegment))
   })
+  for (const segment of graph.segments) {
+    if (
+      segment.evidence?.settledAmount &&
+      segment.evidence.settledAmount.assetId !== graph.root.intent?.counterAmount?.assetId
+    ) {
+      throw new Error('Settled amount asset does not match reviewed destination')
+    }
+  }
   validateTransactionGraph(graph.root, graph.segments)
   return graph
 }

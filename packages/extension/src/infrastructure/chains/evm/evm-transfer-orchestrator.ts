@@ -45,7 +45,10 @@ import {
   createEvmSigningPreparePayload,
   createEvmSigningSummary,
   EvmTransactionError,
+  estimateEvmContractCallFee,
+  estimateEvmTransferFee,
   type EvmContractCallIntent,
+  type EvmFeeEstimate,
   type PeaEvmExecutionAccount,
   type EvmTransferIntent
 } from './evm-transaction-builder'
@@ -262,6 +265,27 @@ export class EvmTransferOrchestrator {
     ).address.toLowerCase()
     const key = this.senderKey(input.chainAccount.scope.chainId, sender)
     return this.runSenderPreparationExclusive(key, () => this.prepareExclusive(input, sender))
+  }
+
+  async estimateFee(
+    input: Pick<
+      PrepareEvmTransferInput,
+      'chainAccount' | 'intent' | 'executionAccount' | 'feeSelection' | 'feeTier' | 'signal'
+    >
+  ): Promise<EvmFeeEstimate> {
+    const buildInput = {
+      chainId: input.chainAccount.scope.chainId,
+      chainAccount: input.chainAccount,
+      assets: this.assets,
+      rpc: this.rpc,
+      ...(input.executionAccount === undefined ? {} : { executionAccount: input.executionAccount }),
+      ...(input.feeSelection === undefined ? {} : { feeSelection: input.feeSelection }),
+      ...(input.feeTier === undefined ? {} : { feeTier: input.feeTier }),
+      signal: input.signal
+    }
+    return 'calldata' in input.intent
+      ? estimateEvmContractCallFee({ ...buildInput, intent: input.intent })
+      : estimateEvmTransferFee({ ...buildInput, intent: input.intent })
   }
 
   async prepareCancel(input: PrepareEvmCancelInput): Promise<PreparedEvmTransferApproval> {
@@ -518,7 +542,9 @@ export class EvmTransferOrchestrator {
         throw new EvmTransactionError('stale-nonce', 'EVM nonce recovery state changed')
       }
       if (
-        (await this.pendingStore.list()).some(
+        (
+          await this.listUnexpiredPendingTransfers(input.chainAccount.scope.chainId, sender)
+        ).active.some(
           pending =>
             pending.phase !== 'signed' &&
             pending.prepared.chainId === input.chainAccount.scope.chainId &&
@@ -778,7 +804,8 @@ export class EvmTransferOrchestrator {
   private async readLocalNonceFloor(
     scope: TransactionAccountScope,
     chainId: ChainId,
-    sender: string
+    sender: string,
+    protectedTransactionId?: TransactionId
   ): Promise<string | undefined> {
     await this.rpc.assertExpectedChain()
     const pendingNonce = BigInt(await this.rpc.getPendingNonce(sender))
@@ -806,7 +833,11 @@ export class EvmTransferOrchestrator {
       include(nonce.toString())
     }
 
-    const pendingRecords = await this.pendingStore.list()
+    const { active: pendingRecords } = await this.listUnexpiredPendingTransfers(
+      chainId,
+      sender,
+      protectedTransactionId
+    )
     for (const pending of pendingRecords) {
       if (pending.phase === 'signed') {
         const graph = await this.pendingStore.getReviewGraph(pending.transactionId)
@@ -835,6 +866,33 @@ export class EvmTransferOrchestrator {
     })
     for (const graph of persisted) includeGraph(graph)
     return highest === null ? undefined : (highest + 1n).toString()
+  }
+
+  private async listUnexpiredPendingTransfers(
+    chainId: ChainId,
+    sender: string,
+    protectedTransactionId?: TransactionId
+  ): Promise<{
+    active: readonly PendingEvmTransfer[]
+    expired: readonly PendingEvmSigningTransfer[]
+  }> {
+    const active: PendingEvmTransfer[] = []
+    const expired: PendingEvmSigningTransfer[] = []
+    for (const candidate of await this.pendingStore.list()) {
+      if (
+        candidate.phase !== 'signed' &&
+        candidate.transactionId !== protectedTransactionId &&
+        candidate.prepared.chainId === chainId &&
+        candidate.prepared.from.toLowerCase() === sender.toLowerCase() &&
+        this.now() >= candidate.expiresAt
+      ) {
+        await this.failAwaitingApproval(candidate)
+        expired.push(candidate)
+      } else {
+        active.push(candidate)
+      }
+    }
+    return { active, expired }
   }
 
   async getPendingApproval(
@@ -1081,7 +1139,13 @@ export class EvmTransferOrchestrator {
       ) {
         throw new EvmTransactionError('stale-nonce', 'EVM nonce recovery state changed')
       }
-      for (const candidate of await this.pendingStore.list()) {
+      for (const candidate of (
+        await this.listUnexpiredPendingTransfers(
+          prepared.chainId,
+          prepared.from,
+          pending.transactionId
+        )
+      ).active) {
         if (candidate.transactionId === pending.transactionId) continue
         if (candidate.phase === 'signed') {
           const signedGraph = await this.pendingStore.getReviewGraph(candidate.transactionId)
@@ -1130,7 +1194,15 @@ export class EvmTransferOrchestrator {
     }
     await assertEvmTransferFresh(prepared, this.rpc, signal)
     const preparedNonce = BigInt(prepared.transaction.nonce)
-    for (const candidate of await this.pendingStore.list()) {
+    const { active, expired } = await this.listUnexpiredPendingTransfers(
+      prepared.chainId,
+      prepared.from,
+      pending.transactionId
+    )
+    if (expired.some(candidate => BigInt(candidate.prepared.transaction.nonce) < preparedNonce)) {
+      throw new EvmTransactionError('stale-nonce', 'An earlier EVM review expired. Review again')
+    }
+    for (const candidate of active) {
       if (
         candidate.transactionId !== pending.transactionId &&
         candidate.phase !== 'signed' &&
@@ -1141,7 +1213,12 @@ export class EvmTransferOrchestrator {
         throw new EvmTransactionError('stale-nonce', 'Approve the earlier EVM nonce first')
       }
     }
-    await this.readLocalNonceFloor(pending.scope, prepared.chainId, prepared.from)
+    await this.readLocalNonceFloor(
+      pending.scope,
+      prepared.chainId,
+      prepared.from,
+      pending.transactionId
+    )
   }
 
   private async runSenderApprovalExclusive<T>(

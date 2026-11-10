@@ -15,6 +15,7 @@ import type { ActiveSingleChainPortfolioSource } from './single-chain-portfolio-
 import { readZcashPortfolioSource } from '@/infrastructure/chains/zcash'
 import type { StorageV2GenerationId, StorageV2ReadRepository } from '@/ports/repositories'
 import type { ZcashBalance } from '@/types'
+import type { AccountNetworkFamily } from '@/core/wallet/account-network-selection'
 
 type UnifiedPortfolioStorageRepository = Pick<
   StorageV2ReadRepository,
@@ -54,6 +55,13 @@ export interface UnifiedPortfolioCoordinatorOptions {
   readonly storageRepository: UnifiedPortfolioStorageRepository
   readonly chains: AddressGatedChainRegistry
   readonly assets: AssetRegistry
+  readonly isNetworkEnabled?: (
+    scope: {
+      readonly keyDomainId: KeyDomainId
+      readonly accountId: AccountId
+    },
+    family: AccountNetworkFamily
+  ) => boolean | Promise<boolean>
   readonly evmPortfolios?: readonly EvmPortfolioSourceRegistration[]
   readonly bitcoinPortfolio?: BitcoinPortfolioSourceReader
   readonly solanaPortfolio?: SingleChainPortfolioSourceReader
@@ -187,11 +195,27 @@ export class UnifiedPortfolioCoordinator {
       keyDomainId: active.activeAccount.keyDomainId,
       accountId: active.activeAccount.id
     })
+    const isSoftwareWallet =
+      active.catalog.keyDomains.find(item => item.id === scope.keyDomainId)?.source.kind ===
+      'software'
+    const availableChainAccounts = await atStage('active-wallet', async () =>
+      (
+        await Promise.all(
+          active.availableChainAccounts.map(async item =>
+            !isSoftwareWallet ||
+            !this.options.isNetworkEnabled ||
+            (await this.options.isNetworkEnabled(scope, item.chain.family))
+              ? item
+              : null
+          )
+        )
+      ).flatMap(item => (item === null ? [] : [item]))
+    )
     const refreshChainIds = chainIds ? new Set(chainIds) : null
     const shouldRefreshChain = (chainId: string) =>
       action === 'refresh' && (refreshChainIds === null || refreshChainIds.has(chainId))
     const sources: PortfolioSourceSnapshot[] = []
-    const zcashAccount = active.availableChainAccounts.find(item => item.chain.family === 'zcash')
+    const zcashAccount = availableChainAccounts.find(item => item.chain.family === 'zcash')
     if (zcashAccount) {
       sources.push(
         atSynchronousStage('zcash-source', () => {
@@ -207,7 +231,7 @@ export class UnifiedPortfolioCoordinator {
       )
     }
 
-    const evmAccounts = active.availableChainAccounts.filter(item => item.chain.family === 'evm')
+    const evmAccounts = availableChainAccounts.filter(item => item.chain.family === 'evm')
     if (evmAccounts.length > 0) {
       const registrations = new Map<string, EvmPortfolioSourceReader>()
       for (const registration of this.options.evmPortfolios ?? []) {
@@ -242,9 +266,7 @@ export class UnifiedPortfolioCoordinator {
       }
     }
 
-    const bitcoinAccount = active.availableChainAccounts.find(
-      item => item.chain.family === 'bitcoin'
-    )
+    const bitcoinAccount = availableChainAccounts.find(item => item.chain.family === 'bitcoin')
     if (bitcoinAccount) {
       const bitcoinPortfolio = this.options.bitcoinPortfolio
       if (!bitcoinPortfolio) {
@@ -271,8 +293,8 @@ export class UnifiedPortfolioCoordinator {
       }
     }
 
-    const solanaAccount = active.availableChainAccounts.find(item => item.chain.family === 'solana')
-    const nearAccount = active.availableChainAccounts.find(item => item.chain.family === 'near')
+    const solanaAccount = availableChainAccounts.find(item => item.chain.family === 'solana')
+    const nearAccount = availableChainAccounts.find(item => item.chain.family === 'near')
     const [solanaSource, nearSource] = await Promise.all([
       solanaAccount
         ? atStage('solana-source', () => {

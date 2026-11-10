@@ -95,6 +95,10 @@ export async function selectImportedZcashHistory(
   page: Page,
   options: { readonly birthdayHeight?: number } = {}
 ): Promise<void> {
+  await expect(page.getByText('Import Accounts')).toBeVisible()
+  const zcash = page.getByRole('checkbox', { name: 'Zcash' })
+  if ((await zcash.getAttribute('data-state')) !== 'checked') await zcash.click()
+  await page.getByRole('button', { name: 'Continue' }).click()
   await expect(page.getByRole('radio', { name: 'New to Zcash' })).toBeVisible()
   if (options.birthdayHeight === undefined) {
     await page.getByRole('radio', { name: 'New to Zcash' }).click()

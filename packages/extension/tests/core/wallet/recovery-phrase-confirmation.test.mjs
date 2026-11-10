@@ -18,14 +18,43 @@ test.describe('Recovery phrase confirmation', () => {
   })
 
   test('keeps repeated words as separately selectable options', () => {
-    const options = shuffleVerificationWordOptions(['same', 'middle', 'same'], () => 0)
-    expect(options.map(option => option.word).sort()).toEqual(['middle', 'same', 'same'])
+    const options = shuffleVerificationWordOptions(['same', 'middle', 'same'], [0, 2], () => 0)
+    expect(options).toHaveLength(3)
+    expect(options.filter(option => option.word === 'same')).toHaveLength(2)
+    expect(options.some(option => option.word === 'middle')).toBe(false)
     expect(
       options
         .filter(option => option.word === 'same')
         .map(option => option.optionId)
         .sort()
     ).toEqual([0, 2])
+  })
+
+  test('reveals only challenged phrase words among distinct distractors', () => {
+    const words = [
+      'abandon',
+      'ability',
+      'able',
+      'about',
+      'above',
+      'absent',
+      'absorb',
+      'abstract',
+      'absurd',
+      'abuse',
+      'access',
+      'accident'
+    ]
+    const options = shuffleVerificationWordOptions(words, [2, 8], () => 0)
+    expect(options).toHaveLength(words.length)
+    expect(
+      options
+        .filter(option => words.includes(option.word))
+        .map(option => option.optionId)
+        .sort((a, b) => a - b)
+    ).toEqual([2, 8])
+    expect(new Set(options.map(option => option.word)).size).toBe(options.length)
+    expect(options.filter(option => option.optionId < 0)).toHaveLength(words.length - 2)
   })
 
   test('changes the requested positions when the confirmation page is revisited', () => {
@@ -38,7 +67,10 @@ test.describe('Recovery phrase confirmation', () => {
     expect(() => selectVerificationIndices(12, 2, upperExclusive => upperExclusive)).toThrow(
       /out-of-range/i
     )
-    expect(() => shuffleVerificationWordOptions(['one', 'two'], () => -1)).toThrow(/out-of-range/i)
+    expect(() => shuffleVerificationWordOptions(['one', 'two'], [0, 1], () => -1)).toThrow(
+      /out-of-range/i
+    )
+    expect(() => shuffleVerificationWordOptions(['one', 'two'], [0, 0])).toThrow(/range/i)
   })
 })
 
@@ -56,6 +88,13 @@ test.describe('Wallet backup verification', () => {
     expect(
       getWalletsNeedingSecretPhraseBackup([
         legacyWallet,
+        { ...legacyWallet, id: 'explicit-import', secretPhraseOrigin: 'imported' },
+        {
+          ...legacyWallet,
+          id: 'renamed-created',
+          name: 'Daily wallet',
+          secretPhraseOrigin: 'created'
+        },
         { ...legacyWallet, id: 'new-v2', secretPhraseCreationRevision: 1 },
         { ...legacyWallet, id: 'verified', secretPhraseBackupVerifiedAt: 1791000000001 },
         { ...legacyWallet, id: 'keystone', keySource: 'keystone' },
@@ -66,7 +105,7 @@ test.describe('Wallet backup verification', () => {
           accounts: [{ id: 'primary', name: 'Imported Account', derivationIndex: 0 }]
         }
       ]).map(wallet => wallet.id)
-    ).toEqual(['legacy-generated'])
+    ).toEqual(['legacy-generated', 'renamed-created'])
   })
 
   test('checks both positions, even when the phrase repeats a word', () => {

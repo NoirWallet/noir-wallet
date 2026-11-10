@@ -625,6 +625,7 @@ export function TransactionResultPage() {
           amountIn={data.amountIn}
           amountOut={data.amountOut}
           actionName={data.actionName}
+          router={data.router}
           destinationChain={data.destinationChain}
           destinationConfirmations={destinationConfirmations}
           originChain={data.originChain}

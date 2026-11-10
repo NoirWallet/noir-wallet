@@ -1,3 +1,4 @@
+import type { Page } from '@playwright/test'
 import {
   ASSET_PRICE_SOURCE_ASSETS,
   CUSTOM_TOKEN_CONTRACT,
@@ -15,9 +16,134 @@ import {
   nearEnabled,
   seedFreshAssetPrices,
   solanaEnabled,
+  stopImportedZcashSync,
   test,
   waitForBackgroundWalletInitialization
 } from '../../helpers/release-default'
+
+async function openManageTokens(popup: Page): Promise<void> {
+  await popup.getByRole('button', { name: 'Portfolio options' }).click()
+  await popup.getByRole('menuitem', { name: 'Manage tokens' }).click()
+}
+
+test('loads Four.Meme prices through Background and shows the same BNB token value on Home and detail', async ({
+  context,
+  popup
+}) => {
+  test.setTimeout(180_000)
+  const assetId = `eip155:56/erc20:${CUSTOM_TOKEN_CONTRACT}`
+  const icon = 'https://static.four.meme/market/example.png'
+  await mockExternalAssetIcons(context)
+  await mockReleasedEvmRpc(context)
+  await mockReleasedBitcoinEsplora(context)
+  await mockEvmHistoryProxy(context)
+  await context.route('https://static.four.meme/market/**', route =>
+    route.fulfill({
+      contentType: 'image/svg+xml',
+      body: '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><circle cx="16" cy="16" r="16" fill="#00d18a"/></svg>'
+    })
+  )
+  await context.route('https://four.meme/meme-api/v1/**', route => {
+    const url = new URL(route.request().url())
+    return route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        code: 0,
+        data: url.pathname.endsWith('/public/config')
+          ? [
+              {
+                symbol: 'BNB',
+                symbolAddress: '0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c',
+                networkCode: 'BSC',
+                decimals: 18
+              }
+            ]
+          : {
+              address: CUSTOM_TOKEN_CONTRACT,
+              networkCode: 'BSC',
+              status: 'PUBLISH',
+              symbol: 'BNB',
+              image: icon,
+              tokenPrice: { price: '0.005', modifyDate: String(Date.now()) }
+            }
+      })
+    })
+  })
+  await context.route('https://1click.chaindefuser.com/v0/tokens', route =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify([
+        {
+          assetId: ASSET_PRICE_SOURCE_ASSETS.bnb,
+          blockchain: 'bsc',
+          symbol: 'BNB',
+          decimals: 18,
+          price: 600,
+          priceUpdatedAt: new Date().toISOString()
+        }
+      ])
+    })
+  )
+  await context.route('https://api.dexscreener.com/**', route =>
+    route.fulfill({ contentType: 'application/json', body: '[]' })
+  )
+  await waitForBackgroundWalletInitialization(popup)
+  await importTestWallet(popup)
+  await stopImportedZcashSync(popup)
+  await openManageTokens(popup)
+  await popup.getByRole('button', { name: 'Add Token', exact: true }).click()
+  const dialog = popup.getByRole('dialog')
+  await dialog.getByRole('button', { name: 'Token network' }).click()
+  await popup.getByRole('menuitemradio', { name: /BNB Chain/ }).click()
+  await dialog.getByLabel('EVM contract address').fill(CUSTOM_TOKEN_CONTRACT)
+  await dialog.getByRole('button', { name: 'Verify Token' }).click()
+  await expect(dialog.getByText('Example Token', { exact: true })).toBeVisible()
+  await dialog.getByRole('button', { name: 'Add Token', exact: true }).click()
+  await expect(dialog).toBeHidden()
+  await expect
+    .poll(
+      () =>
+        popup.evaluate(
+          id =>
+            chrome.runtime.sendMessage({
+              type: 'GET_ASSET_PRICES',
+              action: 'refresh',
+              assetId: id
+            }),
+          assetId
+        ),
+      { timeout: 30_000 }
+    )
+    .toMatchObject({
+      result: {
+        quotes: expect.arrayContaining([
+          expect.objectContaining({ assetId, source: 'four-meme', priceUsd: '3' })
+        ])
+      }
+    })
+  await popup.goto(new URL('/index.html', popup.url()).toString())
+  const row = popup.getByRole('button', { name: 'View USDC details on BNB Chain', exact: true })
+  await expect(row).toBeVisible({ timeout: 30_000 })
+  await expect(row).toContainText('$3.00')
+  await expect(row).toContainText('$6.00')
+  await expect(row.locator('img[src="' + icon + '"]')).toBeVisible()
+  await captureScreenshot(popup, 'four-meme-home-token-price.png')
+  await row.click()
+  await expect(popup.getByText('$3.00', { exact: true }).first()).toBeVisible()
+  await expect(popup.getByText('$6.00', { exact: true }).first()).toBeVisible()
+  await expect(
+    popup.getByTestId('asset-detail-token-icon').locator('img[src="' + icon + '"]')
+  ).toBeVisible()
+  await captureScreenshot(popup, 'four-meme-token-detail-price.png')
+  await expect(
+    popup.evaluate(async id => {
+      const cached = await chrome.storage.local.get('four_meme_price_cache_v1')
+      return cached.four_meme_price_cache_v1.quotes.find(
+        (quote: { assetId: string }) => quote.assetId === id
+      )?.priceUsd
+    }, assetId)
+  ).resolves.toBe('3')
+})
 
 test('loads Home totals when Token activity opens before the Assets tab', async ({
   context,
@@ -60,11 +186,22 @@ test('loads Home totals when Token activity opens before the Assets tab', async 
   await expect(popup.getByRole('status', { name: 'Loading total assets' })).toHaveCount(0)
   await captureScreenshot(popup, 'home-token-activity-total.png')
 
-  await popup.getByRole('tab', { name: 'Lending', exact: true }).click()
+  await popup.getByRole('button', { name: 'Asset category: Total assets' }).click()
+  await popup.getByRole('radio', { name: /Shield assets/ }).click()
+  await expect(popup.getByRole('tab', { name: 'Shield assets' })).toBeVisible()
+  await expect(popup.getByRole('tab', { name: 'Activity' })).toHaveAttribute(
+    'aria-selected',
+    'true'
+  )
+  await popup.getByRole('button', { name: 'Asset category: Shield assets' }).click()
+  await popup.getByRole('radio', { name: /Total assets/ }).click()
   await expect(total).toHaveText(initialTotal)
-  await captureScreenshot(popup, 'home-lending-total-after-activity.png')
-  await popup.getByRole('tab', { name: 'Assets', exact: true }).click()
-  await expect(popup.getByRole('heading', { name: 'Portfolio' })).toBeVisible()
+  await captureScreenshot(popup, 'home-shield-total-after-activity.png')
+  await popup.getByRole('tab', { name: 'Total assets', exact: true }).click()
+  await expect(popup.getByRole('tab', { name: 'Total assets' })).toHaveAttribute(
+    'aria-selected',
+    'true'
+  )
   await expect(total).toHaveText(initialTotal)
 })
 
@@ -105,12 +242,13 @@ test('adds and removes an exact custom Token without symbol or icon spoofing', a
   await mockReleasedEvmRpc(context)
   await waitForBackgroundWalletInitialization(popup)
   await importTestWallet(popup)
+  await stopImportedZcashSync(popup)
 
-  await popup.getByRole('button', { name: 'Manage Tokens' }).click()
+  await openManageTokens(popup)
   await expect(popup.getByRole('heading', { name: 'Manage Tokens' })).toBeVisible()
   await expect(popup.getByLabel('Search Tokens')).toBeVisible()
   await expect(
-    popup.getByRole('button', { name: 'Manage Tokens network: All Networks' })
+    popup.getByRole('button', { name: 'Manage Tokens network: All networks' })
   ).toBeVisible()
   await popup.getByRole('button', { name: 'Add Token' }).click()
   const addDialog = popup.getByRole('dialog')
@@ -161,7 +299,7 @@ test('adds and removes an exact custom Token without symbol or icon spoofing', a
     .toMatchObject({ result: { hiddenAssetIds: [] } })
 
   await popup.getByRole('button', { name: 'Back' }).click()
-  await expect(popup.getByRole('heading', { name: 'Portfolio' })).toBeVisible({ timeout: 30_000 })
+  await expect(popup.getByRole('tab', { name: 'Total assets' })).toBeVisible({ timeout: 30_000 })
   await expect(popup.getByRole('status', { name: 'Loading portfolio' })).toHaveCount(0, {
     timeout: 30_000
   })
@@ -184,10 +322,10 @@ test('adds and removes an exact custom Token without symbol or icon spoofing', a
   await popup.getByLabel('Send To').fill('0x1111111111111111111111111111111111111111')
   await popup.getByLabel('USDC amount').fill('0.5')
   await popup.getByRole('button', { name: 'Continue', exact: true }).click()
-  await expect(popup.getByRole('heading', { name: 'Review Send' })).toBeVisible({
+  await expect(popup.getByRole('heading', { name: 'Sending' })).toBeVisible({
     timeout: 30_000
   })
-  const sendReview = popup.getByRole('dialog', { name: 'Review Send' })
+  const sendReview = popup.getByRole('dialog', { name: 'Sending' })
   await expect(sendReview).toContainText(
     'This transfer calls a custom Token contract you added. Verify the network, Token, and recipient.'
   )
@@ -198,10 +336,10 @@ test('adds and removes an exact custom Token without symbol or icon spoofing', a
   })
   await captureScreenshot(popup, 'release-default-custom-token-transaction-final.png')
   await popup.getByRole('button', { name: 'Done', exact: true }).click()
-  await expect(popup.getByRole('heading', { name: 'Portfolio' })).toBeVisible({ timeout: 30_000 })
+  await expect(popup.getByRole('tab', { name: 'Total assets' })).toBeVisible({ timeout: 30_000 })
   await popup.getByRole('button', { name: 'Not now' }).click()
 
-  await popup.getByRole('button', { name: 'Manage Tokens' }).click()
+  await openManageTokens(popup)
   await popup.getByRole('button', { name: 'Remove USDC' }).click()
   const removeDialog = popup.getByRole('dialog')
   await removeDialog.getByRole('button', { name: 'Remove', exact: true }).click()
@@ -210,7 +348,7 @@ test('adds and removes an exact custom Token without symbol or icon spoofing', a
     .poll(() => popup.evaluate(() => chrome.runtime.sendMessage({ type: 'GET_USER_EVM_ASSETS' })))
     .toEqual({ result: [] })
   await popup.getByRole('button', { name: 'Back' }).click()
-  await expect(popup.getByRole('heading', { name: 'Portfolio' })).toBeVisible({ timeout: 30_000 })
+  await expect(popup.getByRole('tab', { name: 'Total assets' })).toBeVisible({ timeout: 30_000 })
   await popup.getByRole('tab', { name: 'Activity' }).click()
   const customActivity = popup.getByRole('button', { name: 'View Sent USDC details' })
   await expect(customActivity).toBeVisible({ timeout: 30_000 })
@@ -716,18 +854,18 @@ test('automatically manages Intents Tokens on newly released chains', async ({
         asset => asset.asset.id === `${SOLANA_NETWORKS.mainnet.chainId}/token:${solanaUsdcMint}`
       )?.balance.totalRaw
   ).toBe('2500000')
-  await popup.getByRole('button', { name: 'Manage Tokens' }).click()
+  await openManageTokens(popup)
   await expect(popup.getByRole('heading', { name: 'Manage Tokens' })).toBeVisible()
   await expect(popup.getByRole('switch', { name: 'Disable USDC on Solana' })).toBeVisible({
     timeout: 30_000
   })
   await expect(popup.getByRole('switch', { name: 'Disable USDT on NEAR' })).toBeVisible()
-  await popup.getByRole('button', { name: 'Manage Tokens network: All Networks' }).click()
+  await popup.getByRole('button', { name: 'Manage Tokens network: All networks' }).click()
   await popup.getByRole('menuitemradio', { name: 'Solana', exact: true }).click()
   await expect(popup.getByRole('switch', { name: 'Disable USDC on Solana' })).toBeVisible()
   await expect(popup.getByRole('switch', { name: 'Disable USDT on NEAR' })).toHaveCount(0)
   await popup.getByRole('button', { name: 'Manage Tokens network: Solana' }).click()
-  await popup.getByRole('menuitemradio', { name: 'All Networks', exact: true }).click()
+  await popup.getByRole('menuitemradio', { name: 'All networks', exact: true }).click()
   await expect(popup.getByRole('switch', { name: 'Disable USDT on NEAR' })).toBeVisible()
   const gnosisUsdcSwitch = popup.getByRole('switch', { name: 'Disable USDC on Gnosis' })
   await expect(gnosisUsdcSwitch).toBeVisible()
@@ -808,7 +946,7 @@ test('automatically manages Intents Tokens on newly released chains', async ({
     )
   ).toBe(true)
   await popup.getByRole('button', { name: 'Back' }).click()
-  await expect(popup.getByRole('heading', { name: 'Portfolio' })).toBeVisible()
+  await expect(popup.getByRole('tab', { name: 'Total assets' })).toBeVisible()
   const nearUsdtRow = popup.getByRole('button', { name: 'View USDT details on NEAR' })
   await expect(nearUsdtRow).toBeVisible()
   await expect(nearUsdtRow.getByText('$4.5', { exact: true })).toBeVisible()
@@ -872,11 +1010,11 @@ test('automatically manages Intents Tokens on newly released chains', async ({
     name: 'View Received USDC details on Solana'
   })
   await expect(solanaUsdcActivity).toBeVisible({ timeout: 30_000 })
-  await expect(solanaUsdcActivity.getByText('+2.5 USDC', { exact: true })).toBeVisible()
+  await expect(solanaUsdcActivity).toContainText(/\+2\.5\s*USDC/)
   await expect(solanaUsdcActivity.locator('img[alt="USDC"]')).toBeVisible()
   const rnearActivity = popup.getByRole('button', { name: 'View Received rNEAR details on NEAR' })
   await expect(rnearActivity).toBeVisible({ timeout: 30_000 })
-  await expect(rnearActivity.getByText('+0.2 rNEAR', { exact: true })).toBeVisible()
+  await expect(rnearActivity).toContainText(/\+0\.2\s*rNEAR/)
   expect(directSolanaHistoryMethods).toContain('getSignaturesForAddress')
   expect(directSolanaHistoryMethods).toContain('getTransaction')
   expect(directNearHistoryRequests).toBeGreaterThan(0)
@@ -888,8 +1026,8 @@ test('automatically manages Intents Tokens on newly released chains', async ({
   await captureScreenshot(popup, 'release-default-rnear-activity.png')
   await popup.getByRole('button', { name: 'Close' }).click()
 
-  await popup.getByRole('tab', { name: 'Assets' }).click()
-  await popup.getByRole('button', { name: 'Manage Tokens' }).click()
+  await popup.getByRole('tab', { name: 'Total assets' }).click()
+  await openManageTokens(popup)
   await popup.getByRole('button', { name: 'Add Token' }).click()
   let addTokenDialog = popup.getByRole('dialog')
   await addTokenDialog.getByRole('button', { name: 'Token network' }).click()
@@ -969,7 +1107,7 @@ test('automatically manages Intents Tokens on newly released chains', async ({
   await popup.getByRole('button', { name: 'Choose source account, current main' }).click()
   await popup
     .getByRole('dialog', { name: 'Choose source account' })
-    .getByRole('radio', { name: /Confidential account/ })
+    .getByRole('radio', { name: /Private account/ })
     .click()
   await expect(
     popup.getByRole('button', { name: 'Choose source account, current private' })

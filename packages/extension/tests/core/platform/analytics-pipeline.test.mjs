@@ -40,10 +40,21 @@ test('V2 pages and chain families resolve to bounded analytics values', () => {
     '/voting/round',
     '/hardware/ledger-connect',
     '/hardware/ledger-sign',
-    '/manage-tokens'
+    '/manage-tokens',
+    '/transfer',
+    '/shield-provider',
+    '/shield-funds',
+    '/shield-withdraw',
+    '/shield-deposit',
+    '/shield-swap',
+    '/dapp-connections',
+    '/account-networks',
+    '/onboarding/import-accounts',
+    '/default-evm-wallet',
+    '/evm-wallet-choice'
   ]
   for (const route of routes) {
-    assert.ok(Object.values(PAGE_IDS).includes(resolvePageId(route)), route)
+    assert.notEqual(resolvePageId(route), PAGE_IDS.BACKGROUND, route)
   }
   for (const chain of ['zcash', 'evm', 'bitcoin', 'solana', 'near']) {
     assert.equal(resolveAnalyticsChain(chain), chain)
@@ -103,6 +114,59 @@ test('V2 pages and chain families resolve to bounded analytics values', () => {
   )
   assert.equal(pageParams.chain, 'zcash')
   assert.equal(pageParams.page_location, canonicalPage.pageLocation)
+  assert.equal(resolvePageId('/shield-funds?provider=private-address'), PAGE_IDS.SHIELD_FUNDS)
+  assert.equal(resolvePageId('/unknown/private-address'), PAGE_IDS.BACKGROUND)
+  assert.deepEqual(
+    sanitizeAnalyticsMetadata({
+      method: 'u1-sensitive-address',
+      page_location: 'https://noir-wallet.extension/noir_send?recipient=u1-private-address',
+      funding_source: 'private-address'
+    }),
+    {}
+  )
+})
+
+test('GA event params exclude device fields and stay within the protocol limit', () => {
+  const params = {
+    browser: 'Chrome',
+    browser_major_version: '150',
+    device_category: 'desktop',
+    operating_system: 'macOS',
+    language: 'en-US',
+    page_id: PAGE_IDS.SEND,
+    page_location: 'https://noir-wallet.extension/noir_send',
+    page_title: PAGE_IDS.SEND,
+    chain: 'zcash',
+    action: 'Transfer',
+    direction: 'same_chain',
+    fee_tier: 'standard',
+    funding_source: 'private',
+    kind: 'transfer',
+    method: 'sendTransaction',
+    phase: 'broadcast',
+    source: 'wallet',
+    status: 'SUCCESS',
+    from_token: 'ZEC',
+    to_token: 'USDC',
+    previous_version: '2.0.0-beta.1',
+    event_id: '12345678-1234-1234-1234-123456789abc',
+    account_count: 2,
+    hardware: true,
+    from_dapp: true,
+    is_existing_wallet: false
+  }
+  const ga = buildGaEventParams('page_view', params, {
+    appVersion: '2.0.0-beta.2',
+    buildChannel: 'production',
+    foreground: true,
+    networkMode: 'mainnet',
+    sessionId: '123'
+  })
+  assert.ok(Object.keys(ga).length <= 25)
+  assert.equal(ga.browser, undefined)
+  assert.equal(ga.browser_major_version, undefined)
+  assert.equal(ga.page_id, PAGE_IDS.SEND)
+  assert.equal(ga.extension_version, '2.0.0-beta.2')
 })
 
 test('every catalog event preserves its permitted fields in both channels', () => {
@@ -168,6 +232,28 @@ test('every catalog event preserves its permitted fields in both channels', () =
     assert.ok(!JSON.stringify(payload).includes('private-address'))
     assert.ok(!JSON.stringify(payload).includes('local-transaction-reference'))
   }
+})
+
+test('Shield result metadata is allowlisted without exporting local operation IDs', () => {
+  const event = sanitizeAnalyticsEvent(ANALYTICS_EVENTS.SHIELD_OPERATION_RESULT, {
+    chain: 'evm',
+    idempotencyKey: 'private-plan-id',
+    extra: {
+      operation: 'withdraw',
+      status: 'refunded',
+      planId: 'private-plan-id',
+      error: 'private-error'
+    }
+  })
+  assert.deepEqual(event?.options.extra, { operation: 'withdraw', status: 'refunded' })
+  const payload = buildPayload(event.name, event.options)
+  assert.deepEqual(JSON.parse(payload.extra), { operation: 'withdraw', status: 'refunded' })
+  assert.ok(!JSON.stringify(payload).includes('private-plan-id'))
+  assert.ok(!JSON.stringify(payload).includes('private-error'))
+  const rejected = sanitizeAnalyticsEvent(ANALYTICS_EVENTS.SHIELD_OPERATION_RESULT, {
+    extra: { operation: 'unknown', status: 'processing' }
+  })
+  assert.equal(rejected?.options.extra, undefined)
 })
 
 test('V2 event enums accept intended values and reject arbitrary strings', () => {

@@ -2,6 +2,8 @@ import { test } from 'node:test'
 import { expect } from '@playwright/test'
 
 import {
+  ALL_EVM_NETWORKS_CHAIN_ID,
+  ALL_EVM_NETWORKS_NAME,
   createAddressBookContact,
   migrateLegacyContacts,
   parseAddressBookContact,
@@ -63,6 +65,28 @@ test.describe('Address Book V2', () => {
         name: 'Wrong network'
       })
     ).toThrow('Invalid EVM contact')
+  })
+
+  test('persists all-EVM contacts while rejecting non-EVM addresses and mismatched scope', () => {
+    const contact = createAddressBookContact(
+      {
+        chainId: ALL_EVM_NETWORKS_CHAIN_ID,
+        chainFamily: 'evm',
+        network: 'mainnet',
+        networkName: ALL_EVM_NETWORKS_NAME,
+        address: '0x1111111111111111111111111111111111111111',
+        name: 'Shared recipient'
+      },
+      100
+    )
+    expect(parseAddressBookContact(contact)).toEqual(contact)
+    expect(() => createAddressBookContact({ ...contact, chainFamily: 'zcash' })).toThrow()
+    expect(() =>
+      createAddressBookContact({ ...contact, address: 't1XVXWCvpMgBvUaed4XDqWtgQgJSu1Ghz7F' })
+    ).toThrow('Invalid EVM contact')
+    expect(() => parseAddressBookContact({ ...contact, networkName: 'Ethereum' })).toThrow(
+      'network name does not match'
+    )
   })
 
   test('detects persisted contact tampering', () => {

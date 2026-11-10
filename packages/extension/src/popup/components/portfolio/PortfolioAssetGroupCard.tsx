@@ -18,17 +18,42 @@ import { BalanceHelp } from '@/popup/components/transaction/BalanceHelp'
 import { getPortfolioAssetUsdValue } from './portfolio-prices'
 import { formatDisplayAmount } from './portfolio-format'
 import { Skeleton } from '@/popup/components/ui/skeleton'
-import { Tooltip } from '@/popup/components/ui/tooltip'
 import {
-  calculatePortfolioAccountBalanceBreakdown,
   getAvailablePortfolioAssetGroupUsdValue,
   getPortfolioAssetGroupUnitQuote,
-  type PortfolioAccountBalanceBreakdown,
   type PortfolioAssetGroup,
   type PortfolioAssetGroupEntry
 } from '@/popup/services/portfolio-presentation'
+import type { AssetDomain } from '@/popup/services/asset-domains'
+
+export const portfolioAssetRowClassName =
+  'flex min-h-[72px] w-full min-w-0 items-center gap-3 px-4 py-2.5 text-left'
+
+export function PortfolioAssetRowContent({
+  icon,
+  title,
+  subtitle,
+  balance
+}: {
+  readonly icon: ReactNode
+  readonly title: ReactNode
+  readonly subtitle: ReactNode
+  readonly balance: ReactNode
+}) {
+  return (
+    <>
+      {icon}
+      <div className="min-w-0 flex-1">
+        <div className="flex min-w-0 items-center gap-1.5">{title}</div>
+        {subtitle}
+      </div>
+      <div className="min-w-0 max-w-[142px] shrink-0 text-right">{balance}</div>
+    </>
+  )
+}
 
 interface PortfolioAssetGroupCardProps {
+  readonly domain?: AssetDomain
   readonly group: PortfolioAssetGroup
   readonly prices: AssetPriceReadModel | null
   readonly balancesHidden: boolean
@@ -40,6 +65,7 @@ interface PortfolioAssetGroupCardProps {
 }
 
 interface PortfolioAssetBalanceRowProps {
+  readonly domain?: AssetDomain
   readonly entry: PortfolioAssetGroupEntry
   readonly prices: AssetPriceReadModel | null
   readonly balancesHidden: boolean
@@ -62,52 +88,13 @@ function PendingAssetAmount({ amount, symbol }: { readonly amount: Big; readonly
   return (
     <div className="flex min-w-0 items-center justify-end gap-1 px-3 pb-2.5 text-[11px] text-muted">
       <span
-        className="min-w-0 break-all text-right font-mono"
+        className="min-w-0 break-all text-right"
         title={`${amount.toFixed()} ${symbol} pending`}
       >
         {formatDisplayAmount(amount)} {symbol} pending
       </span>
       <BalanceHelp kind="pending" />
     </div>
-  )
-}
-
-function AccountBalanceTooltip({
-  breakdown,
-  symbol,
-  children
-}: {
-  readonly breakdown: PortfolioAccountBalanceBreakdown
-  readonly symbol: string
-  readonly children: ReactNode
-}) {
-  return (
-    <Tooltip
-      side="left"
-      className="w-48"
-      content={
-        <span className="block space-y-1">
-          <span className="flex items-center justify-between gap-3">
-            <span>Public</span>
-            <span className="min-w-0 break-all text-right font-mono">
-              <span title={`${breakdown.main.toFixed()} ${symbol}`}>
-                {formatDisplayAmount(breakdown.main)} {symbol}
-              </span>
-            </span>
-          </span>
-          <span className="flex items-center justify-between gap-3">
-            <span>Confidential</span>
-            <span className="min-w-0 break-all text-right font-mono">
-              <span title={`${breakdown.privateBalance.toFixed()} ${symbol}`}>
-                {formatDisplayAmount(breakdown.privateBalance)} {symbol}
-              </span>
-            </span>
-          </span>
-        </span>
-      }
-    >
-      {children}
-    </Tooltip>
   )
 }
 
@@ -141,8 +128,8 @@ function UnitPrice({
       </span>
       {change && formattedChange && (
         <span
-          aria-label={`${formattedChange} over 24 hours${changeFreshness === 'stale' ? ', delayed' : ''}`}
-          title={changeFreshness === 'stale' ? '24h change · Delayed' : '24h change'}
+          aria-label={`${formattedChange} over 24 hours${changeFreshness === 'stale' ? ', last available data' : ''}`}
+          title={changeFreshness === 'stale' ? 'Last available 24h change' : '24h change'}
           className={cn(
             'shrink-0',
             change.gt(0) ? 'text-success' : change.lt(0) ? 'text-danger' : 'text-muted'
@@ -168,8 +155,11 @@ function PortfolioAssetBalanceRow({
   const pendingAmount = assetPendingAmount(entry.asset)
   const fiat = getPortfolioAssetUsdValue(entry.asset, prices)
   const quote = findAssetPrice(prices, entry.asset.asset.id)
-  const chainAlias = resolveChainIconAlias(entry.chain.chain.family, entry.chain.chain.displayName)
-  const breakdown = calculatePortfolioAccountBalanceBreakdown([entry])
+  const chainAlias = resolveChainIconAlias(
+    entry.chain.chain.family,
+    entry.chain.chain.displayName,
+    entry.chain.chain.id
+  )
 
   return (
     <div>
@@ -178,7 +168,7 @@ function PortfolioAssetBalanceRow({
         aria-label={`View ${entry.asset.metadata.symbol} details on ${entry.chain.chain.displayName}`}
         onClick={() => onSelectAsset?.(entry.asset.asset.id)}
         className={cn(
-          'flex min-h-14 w-full min-w-0 items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-white/[0.03]',
+          'wallet-interactive flex min-h-[72px] w-full min-w-0 items-center gap-3 px-4 py-2.5 text-left hover:bg-white/[0.05] active:bg-white/10 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary',
           !balancesHidden && pendingAmount.gt(0) && 'pb-0'
         )}
       >
@@ -200,7 +190,7 @@ function PortfolioAssetBalanceRow({
           />
         )}
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-medium">
+          <p className="truncate text-base font-medium">
             {leading === 'chain' ? entry.chain.chain.displayName : entry.asset.metadata.symbol}
           </p>
           {showUnitPrice && (
@@ -216,7 +206,7 @@ function PortfolioAssetBalanceRow({
           {!balancesHidden && fiat === null && pricesLoading ? (
             <Skeleton className="ml-auto h-4 w-16" />
           ) : (
-            <p className="break-all text-sm font-medium">
+            <p className="break-all text-base font-medium">
               {balancesHidden
                 ? '••••'
                 : fiat === null
@@ -224,27 +214,11 @@ function PortfolioAssetBalanceRow({
                   : formatFiatAmount(fiat, { showSign: true })}
             </p>
           )}
-          {breakdown && !balancesHidden ? (
-            <AccountBalanceTooltip breakdown={breakdown} symbol={entry.asset.metadata.symbol}>
-              <p
-                className="mt-0.5 break-all font-mono text-xs text-muted underline decoration-dotted underline-offset-2"
-                title={`${amount.toFixed()} ${entry.asset.metadata.symbol}`}
-              >
-                {formatDisplayAmount(amount)} {entry.asset.metadata.symbol}
-              </p>
-            </AccountBalanceTooltip>
-          ) : (
-            <p
-              className="mt-0.5 break-all font-mono text-xs text-muted"
-              title={
-                balancesHidden ? undefined : `${amount.toFixed()} ${entry.asset.metadata.symbol}`
-              }
-            >
-              {balancesHidden
-                ? '••••'
-                : `${formatDisplayAmount(amount)} ${entry.asset.metadata.symbol}`}
-            </p>
-          )}
+          <p className="mt-0.5 break-all text-xs text-muted">
+            {balancesHidden
+              ? '••••'
+              : `${formatDisplayAmount(amount)} ${entry.asset.metadata.symbol}`}
+          </p>
         </div>
       </button>
       {!balancesHidden && (
@@ -260,6 +234,7 @@ export function PortfolioChainAssetRow(props: Omit<PortfolioAssetBalanceRowProps
 
 export function PortfolioAssetGroupCard({
   group,
+  domain = 'all',
   prices,
   balancesHidden,
   expanded,
@@ -278,10 +253,9 @@ export function PortfolioAssetGroupCard({
   )
   const fiat = getAvailablePortfolioAssetGroupUsdValue(group, prices)
   const unitQuote = getPortfolioAssetGroupUnitQuote(group, prices)
-  const breakdown = calculatePortfolioAccountBalanceBreakdown(group.entries)
 
   return (
-    <article className="overflow-hidden rounded-xl bg-card">
+    <article className="overflow-hidden">
       <button
         type="button"
         aria-label={
@@ -294,71 +268,67 @@ export function PortfolioAssetGroupCard({
           directAsset ? onSelectAsset?.(group.entries[0].asset.asset.id) : onToggle?.()
         }
         className={cn(
-          'flex min-h-[68px] w-full min-w-0 items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-white/[0.03]',
+          portfolioAssetRowClassName,
+          'wallet-interactive hover:bg-white/[0.05] active:bg-white/10 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary',
           !balancesHidden && pendingAmount.gt(0) && 'pb-0'
         )}
       >
-        <TokenIcon
-          assetId={group.representativeAssetId}
-          symbol={group.symbol}
-          icon={group.iconUrl}
-          blockchain={
-            directAsset && group.entries[0]
-              ? resolveChainIconAlias(
-                  group.entries[0].chain.chain.family,
-                  group.entries[0].chain.chain.displayName
-                )
-              : undefined
+        <PortfolioAssetRowContent
+          icon={
+            <TokenIcon
+              assetId={group.representativeAssetId}
+              symbol={group.symbol}
+              icon={group.iconUrl}
+              blockchain={
+                directAsset && group.entries[0]
+                  ? resolveChainIconAlias(
+                      group.entries[0].chain.chain.family,
+                      group.entries[0].chain.chain.displayName,
+                      group.entries[0].chain.chain.id
+                    )
+                  : undefined
+              }
+              size={36}
+              className="shrink-0"
+            />
           }
-          size={36}
-          className="shrink-0"
-        />
-        <div className="min-w-0 flex-1">
-          <div className="flex min-w-0 items-center gap-1.5">
-            <p className="truncate text-base font-medium">{group.symbol}</p>
-            {!group.bundled && (
-              <span className="shrink-0 rounded bg-white/8 px-1.5 py-0.5 text-[9px] text-muted">
-                Custom
-              </span>
-            )}
-          </div>
-          <UnitPrice
-            price={unitQuote?.priceUsd ?? null}
-            percent24h={unitQuote?.percent24h}
-            changeFreshness={unitQuote?.changeFreshness}
-            loading={pricesLoading}
-          />
-        </div>
-        <div className="min-w-0 max-w-[142px] shrink-0 text-right">
-          {!balancesHidden && fiat === null && pricesLoading ? (
-            <Skeleton className="ml-auto h-4 w-16" />
-          ) : (
-            <p className="break-all text-sm font-medium">
-              {balancesHidden
-                ? '••••'
-                : fiat === null
-                  ? '—'
-                  : formatFiatAmount(fiat, { showSign: true })}
-            </p>
-          )}
-          {breakdown && !balancesHidden ? (
-            <AccountBalanceTooltip breakdown={breakdown} symbol={group.symbol}>
-              <p
-                className="mt-0.5 break-all font-mono text-xs text-muted underline decoration-dotted underline-offset-2"
-                title={`${totalAmount.toFixed()} ${group.symbol}`}
-              >
-                {formatDisplayAmount(totalAmount)} {group.symbol}
+          title={
+            <>
+              <p className="truncate text-base font-medium">{group.symbol}</p>
+              {!group.bundled && (
+                <span className="shrink-0 rounded bg-white/8 px-1.5 py-0.5 text-[9px] text-muted">
+                  Custom
+                </span>
+              )}
+            </>
+          }
+          subtitle={
+            <UnitPrice
+              price={unitQuote?.priceUsd ?? null}
+              percent24h={unitQuote?.percent24h}
+              changeFreshness={unitQuote?.changeFreshness}
+              loading={pricesLoading}
+            />
+          }
+          balance={
+            <>
+              {!balancesHidden && fiat === null && pricesLoading ? (
+                <Skeleton className="ml-auto h-4 w-16" />
+              ) : (
+                <p className="break-all text-base font-medium">
+                  {balancesHidden
+                    ? '••••'
+                    : fiat === null
+                      ? '—'
+                      : formatFiatAmount(fiat, { showSign: true })}
+                </p>
+              )}
+              <p className="mt-0.5 break-all text-xs text-muted">
+                {balancesHidden ? '••••' : `${formatDisplayAmount(totalAmount)} ${group.symbol}`}
               </p>
-            </AccountBalanceTooltip>
-          ) : (
-            <p
-              className="mt-0.5 break-all font-mono text-xs text-muted"
-              title={balancesHidden ? undefined : `${totalAmount.toFixed()} ${group.symbol}`}
-            >
-              {balancesHidden ? '••••' : `${formatDisplayAmount(totalAmount)} ${group.symbol}`}
-            </p>
-          )}
-        </div>
+            </>
+          }
+        />
         {!directAsset && (
           <Icon
             icon="lucide:chevron-down"
@@ -379,6 +349,7 @@ export function PortfolioAssetGroupCard({
             <PortfolioAssetBalanceRow
               key={entry.asset.asset.id}
               entry={entry}
+              domain={domain}
               prices={prices}
               balancesHidden={balancesHidden}
               leading="chain"

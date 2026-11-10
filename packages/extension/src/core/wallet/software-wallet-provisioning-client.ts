@@ -1,5 +1,6 @@
 import type { MnemonicWordCount } from '@/config/wallet'
 import { getResponseErrorMessage } from '@/lib/errors'
+import type { AccountNetworkFamily } from './account-network-selection'
 
 type SoftwareWalletProvisioningMode = 'create' | 'import'
 
@@ -28,6 +29,7 @@ export async function provisionAdditionalSoftwareWallet(input: {
   readonly mnemonic: string
   readonly accountName: string
   readonly birthdayHeight?: number
+  readonly selectedNetworkFamilies?: readonly AccountNetworkFamily[]
 }): Promise<string> {
   const record = responseRecord(
     await chrome.runtime.sendMessage({
@@ -35,7 +37,10 @@ export async function provisionAdditionalSoftwareWallet(input: {
       mode: input.mode,
       mnemonic: input.mnemonic,
       accountName: input.accountName,
-      ...(input.birthdayHeight === undefined ? {} : { birthdayHeight: input.birthdayHeight })
+      ...(input.birthdayHeight === undefined ? {} : { birthdayHeight: input.birthdayHeight }),
+      ...(input.selectedNetworkFamilies === undefined
+        ? {}
+        : { selectedNetworkFamilies: input.selectedNetworkFamilies })
     })
   )
   if (record?.success !== true || typeof record.walletId !== 'string') {

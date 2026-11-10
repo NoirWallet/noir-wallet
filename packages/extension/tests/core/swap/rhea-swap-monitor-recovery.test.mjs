@@ -294,6 +294,48 @@ it('restores a Zcash swap monitor from its persisted transaction and scope', asy
   )
 })
 
+it('restores the transfer action only from the matching private-send quote session', async () => {
+  for (const quoteScope of [
+    { walletId: scope.walletId, accountId: scope.accountId, purpose: 'public-private-send' },
+    { walletId: scope.walletId, accountId: scope.accountId, purpose: 'wallet-swap' },
+    { walletId: scope.walletId, accountId: 'account:other', purpose: 'public-private-send' }
+  ]) {
+    const values = storage()
+    const tx = transaction()
+    const service = {
+      async canRecoverTransactionSubmission() {
+        return true
+      },
+      async readPrivateSwapRequest(handle) {
+        assert.equal(handle, tx.quoteBinding.quoteHandle)
+        return { scope: quoteScope }
+      },
+      async recordTransactionSubmission() {},
+      async reportSubmission() {},
+      async getOrderStatus() {
+        return { status: 'processing' }
+      }
+    }
+    const monitor = new RheaSwapTransactionMonitor(service, {
+      loadZcashTransactions: async () => [tx],
+      updateZcashTransaction: async (_key, id, updates) => {
+        assert.equal(id, tx.id)
+        Object.assign(tx, updates)
+      }
+    })
+    assert.equal(await monitor.restorePendingZcashSwaps([scope]), 1)
+    await monitor.check(values.get('rhea_swap_pending_transactions')[0])
+    assert.equal(tx.type, 'swap')
+    assert.equal(
+      tx.quoteBinding.userAction,
+      quoteScope.purpose === 'public-private-send' && quoteScope.accountId === scope.accountId
+        ? 'transfer'
+        : undefined
+    )
+    assert.equal(values.get('rhea_swap_pending_transactions').length, 1)
+  }
+})
+
 it('settles the original Zcash record and retries reporting without polling a terminal order', async () => {
   const values = storage()
   const tx = transaction()
@@ -433,6 +475,11 @@ it('retains older quote timing budgets when saving new sessions and rejects inva
   const current = {
     ...legacy,
     quoteHandle: 'rhea-quote:current-timing',
+    privateSwapScope: {
+      walletId: 'wallet:monitor',
+      accountId: 'account:monitor',
+      purpose: 'private-transfer'
+    },
     request: {
       ...legacy.request,
       quoteWaitingTimeMs: 6000,
@@ -446,6 +493,10 @@ it('retains older quote timing budgets when saving new sessions and rejects inva
     legacy.request
   )
   assert.deepEqual((await store.get(current.quoteHandle)).request, current.request)
+  assert.deepEqual(
+    (await store.get(current.quoteHandle)).privateSwapScope,
+    current.privateSwapScope
+  )
 
   for (const [field, value] of [
     ['quoteWaitingTimeMs', -1],

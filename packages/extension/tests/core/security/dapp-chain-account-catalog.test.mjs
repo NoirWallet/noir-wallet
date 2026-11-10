@@ -1,7 +1,10 @@
 import { test } from 'node:test'
 import { expect } from '@playwright/test'
 
-import { listDAppChainAccounts } from '../../../src/background/dapp-chain-account-catalog.ts'
+import {
+  filterEnabledDAppContext,
+  listDAppChainAccounts
+} from '../../../src/background/dapp-chain-account-catalog.ts'
 
 test('lists every supported stored account with a stable wallet and account label', async () => {
   const pointer = {
@@ -97,4 +100,68 @@ test('lists every supported stored account with a stable wallet and account labe
       address: '0x2222222222222222222222222222222222222222'
     }
   ])
+
+  const selected = await listDAppChainAccounts({
+    repository: {
+      getActivePointer: async () => pointer,
+      getSnapshot: async () => snapshot
+    },
+    chainId: 'eip155:1',
+    family: 'evm',
+    isNetworkEnabled: source => source.kind !== 'software',
+    resolveAddress: ({ chainAccount }) => chainAccount.identity.value.toLowerCase()
+  })
+  expect(selected).toEqual([accounts[1]])
+})
+
+test('rechecks saved software selections for an active dApp context', async () => {
+  const originalChrome = Object.getOwnPropertyDescriptor(globalThis, 'chrome')
+  const originalNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator')
+  const walletState = {
+    state: {
+      wallets: [
+        {
+          id: 'wallet-1',
+          accounts: [{ id: 'account-1', networkSelections: { mainnet: ['zcash'] } }]
+        }
+      ]
+    }
+  }
+  Object.defineProperty(globalThis, 'chrome', {
+    configurable: true,
+    value: {
+      storage: {
+        local: {
+          get: async keys =>
+            Object.fromEntries(
+              (Array.isArray(keys) ? keys : [keys]).map(key => [
+                key,
+                key === 'wallet_state' ? walletState : undefined
+              ])
+            )
+        }
+      }
+    }
+  })
+  Object.defineProperty(globalThis, 'navigator', {
+    configurable: true,
+    value: { locks: { request: async (_name, operation) => operation() } }
+  })
+  try {
+    const context = {
+      keyDomainSource: { kind: 'software' },
+      chainAccount: { scope: { keyDomainId: 'wallet-1', accountId: 'account-1' } }
+    }
+    await expect(filterEnabledDAppContext(context, 'evm')).resolves.toBeNull()
+    await expect(
+      filterEnabledDAppContext({ ...context, keyDomainSource: { kind: 'hardware' } }, 'evm')
+    ).resolves.toEqual({ ...context, keyDomainSource: { kind: 'hardware' } })
+    walletState.state.wallets[0].accounts[0].networkSelections.mainnet = ['zcash', 'evm']
+    await expect(filterEnabledDAppContext(context, 'evm')).resolves.toBe(context)
+  } finally {
+    if (originalChrome) Object.defineProperty(globalThis, 'chrome', originalChrome)
+    else Reflect.deleteProperty(globalThis, 'chrome')
+    if (originalNavigator) Object.defineProperty(globalThis, 'navigator', originalNavigator)
+    else Reflect.deleteProperty(globalThis, 'navigator')
+  }
 })

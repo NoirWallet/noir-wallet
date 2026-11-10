@@ -21,7 +21,11 @@ import { credentialSession } from './credential-session'
 import { dappHandler } from './dapp-handler'
 import { getBitcoinAccountPreferences } from './bitcoin-account-preferences'
 import { BITCOIN_ADDRESS_POLICY } from '@/core/chains/bitcoin'
-import { listDAppChainAccounts } from './dapp-chain-account-catalog'
+import {
+  filterEnabledDAppContext,
+  isDAppNetworkEnabled,
+  listDAppChainAccounts
+} from './dapp-chain-account-catalog'
 
 export function createBackgroundBitcoinDAppHandler(
   transferController: BackgroundBitcoinTransferController | null,
@@ -35,12 +39,17 @@ export function createBackgroundBitcoinDAppHandler(
     network,
     manager: dappManager,
     approval: dappHandler,
-    loadActiveContext: () => loadActiveBitcoinDiscoveryContext(storageRepository, network.chainId),
+    loadActiveContext: async () =>
+      filterEnabledDAppContext(
+        await loadActiveBitcoinDiscoveryContext(storageRepository, network.chainId),
+        'bitcoin'
+      ),
     listAccounts: () =>
       listDAppChainAccounts({
         repository: storageRepository,
         chainId: network.chainId,
         family: 'bitcoin',
+        isNetworkEnabled: isDAppNetworkEnabled,
         resolveAddress: async ({ account, addresses }) => {
           const addressType = await accountPreferences.get({
             network: DEFAULT_NETWORK,

@@ -1,4 +1,6 @@
 import type { AddressBookContact } from '@/core/address-book/address-book'
+import { selectAddressBookContactsForChain } from '@/core/address-book/address-book'
+import type { Network } from '@/types'
 import { isGeneratedWalletTimestampName } from '@/lib/format'
 import type {
   AccountNetworkAddressView,
@@ -19,9 +21,29 @@ export interface MyAccountRecipientGroup {
   readonly addresses: readonly MyAccountRecipientAddress[]
 }
 
+export interface MyWalletRecipientGroup {
+  readonly walletId: string
+  readonly walletDisplayName: string
+  readonly accounts: readonly MyAccountRecipientGroup[]
+}
+
 export interface MyAccountRecipientGroupOptions {
   readonly includeUnavailableAccounts?: boolean
   readonly includeCurrentAccount?: boolean
+}
+
+export function getMyAccountRecipientUnavailableReason(
+  address: Pick<MyAccountRecipientAddress, 'value' | 'executionMode'>,
+  sendingAddress: string | undefined,
+  disablePrivateExecutionAddresses = false
+): string | null {
+  if (disablePrivateExecutionAddresses && address.executionMode === 'private') {
+    return 'Private execution addresses cannot be selected for Send.'
+  }
+  if (sendingAddress && address.value.toLowerCase() === sendingAddress.toLowerCase()) {
+    return 'This is the sending address.'
+  }
+  return null
 }
 
 function normalizedAddress(chainId: string, address: string): string {
@@ -98,29 +120,58 @@ export function buildMyAccountRecipientGroups(
     )
   }
 
+  const activeWalletId = groups.find(group => group.active)?.walletId
+  const walletOrder = new Map<string, number>()
+  groups.forEach((group, index) => {
+    if (!walletOrder.has(group.walletId)) walletOrder.set(group.walletId, index)
+  })
   return Object.freeze(
     groups
       .map((group, index) => ({ group, index }))
-      .sort(
-        (left, right) =>
-          Number(right.group.active) - Number(left.group.active) || left.index - right.index
-      )
+      .sort((left, right) => {
+        const activeOrder =
+          Number(right.group.walletId === activeWalletId) -
+          Number(left.group.walletId === activeWalletId)
+        if (activeOrder !== 0) return activeOrder
+        if (left.group.walletId === right.group.walletId) {
+          return Number(right.group.active) - Number(left.group.active) || left.index - right.index
+        }
+        return walletOrder.get(left.group.walletId)! - walletOrder.get(right.group.walletId)!
+      })
       .map(entry => entry.group)
+  )
+}
+
+export function buildMyWalletRecipientGroups(
+  accounts: readonly MyAccountRecipientGroup[]
+): readonly MyWalletRecipientGroup[] {
+  const wallets = new Map<string, MyAccountRecipientGroup[]>()
+  for (const account of accounts) {
+    const existing = wallets.get(account.walletId)
+    if (existing) existing.push(account)
+    else wallets.set(account.walletId, [account])
+  }
+  return Object.freeze(
+    [...wallets].map(([walletId, walletAccounts]) =>
+      Object.freeze({
+        walletId,
+        walletDisplayName: walletAccounts[0]!.walletDisplayName,
+        accounts: Object.freeze(walletAccounts)
+      })
+    )
   )
 }
 
 export function buildSavedRecipientList(
   contacts: readonly AddressBookContact[],
   chainId: string,
+  network: Network,
   excludeAddresses: readonly string[] = []
 ): readonly AddressBookContact[] {
   const excluded = new Set(excludeAddresses.map(address => normalizedAddress(chainId, address)))
   return Object.freeze(
-    contacts
-      .filter(
-        contact =>
-          contact.chainId === chainId && !excluded.has(normalizedAddress(chainId, contact.address))
-      )
+    selectAddressBookContactsForChain(contacts, chainId, network)
+      .filter(contact => !excluded.has(normalizedAddress(chainId, contact.address)))
       .sort((left, right) => left.name.localeCompare(right.name))
   )
 }

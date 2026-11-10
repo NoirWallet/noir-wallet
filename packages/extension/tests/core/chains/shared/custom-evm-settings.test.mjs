@@ -41,11 +41,7 @@ describe('custom EVM network settings', () => {
   it('registers custom native assets without treating network artwork as asset metadata', () => {
     for (const [chainId, numericChainId, iconUrl] of [
       ['eip155:31337', 31337, undefined],
-      [
-        'eip155:57073',
-        57073,
-        'https://assets-cdn.trustwallet.com/blockchains/ethereum/info/logo.png'
-      ]
+      ['eip155:57073', 57073, undefined]
     ]) {
       const custom = { ...network, chainId, numericChainId }
       const settings = saveCustomEvmNetworkSettings(DEFAULT_CHAIN_ENDPOINT_SETTINGS, custom)
@@ -119,15 +115,24 @@ describe('custom EVM network settings', () => {
     )
   })
 
-  it('prevents replacing built-in chains from either global network mode', () => {
+  it('keeps built-in definitions when saved custom chains overlap either global network mode', () => {
     for (const mode of ['mainnet', 'testnet']) {
-      for (const id of [1, 11155111]) {
-        const settings = saveCustomEvmNetworkSettings(DEFAULT_CHAIN_ENDPOINT_SETTINGS, {
-          ...network,
-          chainId: `eip155:${id}`,
-          numericChainId: id
-        })
-        assert.throws(() => resolveEvmNetworkCatalog(mode, settings), /cannot replace/)
+      const builtin = resolveEvmNetworkCatalog(mode, DEFAULT_CHAIN_ENDPOINT_SETTINGS)
+      for (const id of [42161, 11155111]) {
+        const chainId = `eip155:${id}`
+        const settings = withActiveEvmChainId(
+          saveCustomEvmNetworkSettings(DEFAULT_CHAIN_ENDPOINT_SETTINGS, {
+            ...network,
+            chainId,
+            numericChainId: id
+          }),
+          chainId
+        )
+        assert.deepEqual(resolveEvmNetworkCatalog(mode, settings), builtin)
+        const selected = builtin.find(item => item.chainId === chainId)
+        if (selected) assert.deepEqual(resolveActiveEvmNetworkConfig(mode, settings), selected)
+        assert.deepEqual(resolveReleasedChainEndpointSettings(mode, settings), settings)
+        assert.equal(settings.customEvmNetworks.length, 1)
       }
     }
   })

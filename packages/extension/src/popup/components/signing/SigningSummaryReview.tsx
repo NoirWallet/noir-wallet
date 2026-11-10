@@ -2,7 +2,11 @@ import type { ReactNode } from 'react'
 import { Icon } from '@iconify/react'
 import type { SigningSummary } from '@/core/keyring/domain'
 import { cn } from '@/lib/utils'
-import { CopyToast, useCopyToClipboard } from '@/popup/components/common/CopyToast'
+import {
+  CopyFeedbackIcon,
+  CopyToast,
+  useCopyToClipboard
+} from '@/popup/components/common/CopyToast'
 import { AmountDisplay } from '@/popup/components/common/AmountDisplay'
 import { ApprovalWindowLayout } from '@/popup/components/dapp/ApprovalWindowLayout'
 import {
@@ -39,6 +43,7 @@ export interface SigningSummaryReviewProps {
   readonly source: SigningRequestSource
   readonly accountMode?: DAppExecutionMode
   readonly isSubmitting?: boolean
+  readonly confirmDisabled?: boolean
   readonly feeControl?: ReactNode
   readonly notice?: ReactNode
   readonly evmPresentation?: EvmReviewPresentationOptions
@@ -59,7 +64,7 @@ function ReviewValue({
     <p
       className={cn(
         'min-w-0 whitespace-pre-wrap text-right text-xs leading-5 text-foreground/90',
-        row.code && 'font-mono',
+        row.code && !row.amount && 'font-mono',
         row.breakAll && 'break-all',
         row.tone === 'warning' && 'text-warning',
         row.tone === 'danger' && 'text-danger'
@@ -182,7 +187,7 @@ function DAppMessageReview({
   readonly iconChain?: string
   readonly networkName: string
 }) {
-  const { copyToClipboard, showToast } = useCopyToClipboard()
+  const { copyToClipboard, showToast, isCopied } = useCopyToClipboard()
   const primaryRows = model.sections.flatMap(section => section.rows.filter(isPrimaryMessageRow))
   const fallbackRows = model.sections.find(section => section.title !== 'Request')?.rows ?? []
   const messageRows = primaryRows.length > 0 ? primaryRows : fallbackRows
@@ -196,7 +201,7 @@ function DAppMessageReview({
 
   return (
     <>
-      <CopyToast show={showToast} message="Message copied" />
+      <CopyToast show={showToast} />
       <section aria-label="Message" className="rounded-2xl bg-card/70 p-4">
         <div className="mb-3 flex items-center justify-between gap-3">
           <h2 className="text-sm text-foreground/80">Message</h2>
@@ -207,7 +212,7 @@ function DAppMessageReview({
             className="flex size-7 items-center justify-center rounded-lg text-muted transition-colors hover:bg-foreground/10 hover:text-foreground"
             onClick={() => void copyToClipboard(copyValue)}
           >
-            <Icon icon="lucide:copy" width={16} height={16} />
+            <CopyFeedbackIcon copied={isCopied()} width={16} height={16} />
           </button>
         </div>
         {messageRows.length === 1 ? (
@@ -257,7 +262,10 @@ function DAppTransactionReview({
   const networkFee =
     feeControl ??
     (feeRow ? (
-      <span title={feeRow.title ?? feeRow.value} className="font-mono text-sm text-foreground/90">
+      <span
+        title={feeRow.title ?? feeRow.value}
+        className="font-sans text-sm tabular-nums text-foreground/90"
+      >
         {feeRow.value}
       </span>
     ) : undefined)
@@ -319,6 +327,7 @@ export function SigningSummaryReview({
   source,
   accountMode,
   isSubmitting = false,
+  confirmDisabled = false,
   feeControl,
   notice,
   evmPresentation,
@@ -361,7 +370,7 @@ export function SigningSummaryReview({
             variant={isBlocked ? 'secondary' : 'default'}
             size="lg"
             className="flex-1"
-            disabled={isBlocked}
+            disabled={isBlocked || confirmDisabled}
             isLoading={isSubmitting}
             onClick={onConfirm}
           >

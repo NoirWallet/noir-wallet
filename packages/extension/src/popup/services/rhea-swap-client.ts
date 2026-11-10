@@ -82,7 +82,7 @@ function hasSwapTimeoutReason(value: unknown, depth = 0): boolean {
   }
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false
   const record = value as Record<string, unknown>
-  return ['message', 'msg', 'reason', 'error', 'code', 'apiCode'].some(key =>
+  return ['message', 'msg', 'reason', 'error', 'code', 'errorCode', 'apiCode'].some(key =>
     hasSwapTimeoutReason(record[key], depth + 1)
   )
 }
@@ -95,8 +95,11 @@ export function getRheaSwapErrorMessage(error: unknown): string {
   if (/unsupported destination token|destinationtoken.*not supported/i.test(reason)) {
     return 'This destination is unavailable for this swap. Choose another asset.'
   }
+  if (/\b(?:crossChainTimeoutMs|sameChainTimeoutMs|quoteWaitingTimeMs)\b/i.test(reason)) {
+    return 'Quote unavailable. Please try again.'
+  }
   if (hasSwapTimeoutReason(error.message)) {
-    return 'No route found for this swap.'
+    return 'Request timed out.'
   }
   if (
     /\b(?:confidential_route_unavailable|route_unavailable|no (?:confidential |supported |swap )?route|route not found|no liquidity|quote response does not contain a valid best route)\b/i.test(
@@ -222,9 +225,22 @@ export function createRheaSwapClient(
       },
       options?: { readonly bypassCache?: boolean }
     ): Promise<RheaSwapCatalogResult> => getTokens(input, options),
-    quote: async (requestValue: RheaSwapQuoteRequest): Promise<RheaSwapQuoteView> => {
+    quote: async (
+      requestValue: RheaSwapQuoteRequest,
+      purpose?:
+        | 'wallet-swap'
+        | 'public-cross-chain-send'
+        | 'confidential-funding'
+        | 'private-swap'
+        | 'private-transfer'
+        | 'private-cross-chain-send'
+        | 'public-private-send'
+    ): Promise<RheaSwapQuoteView> => {
       const request = parseRheaSwapQuoteRequest(requestValue)
-      return unwrap(await send({ type: 'QUOTE_RHEA_SWAP', request }), parseRheaSwapQuoteView)
+      return unwrap(
+        await send({ type: 'QUOTE_RHEA_SWAP', request, ...(purpose ? { purpose } : {}) }),
+        parseRheaSwapQuoteView
+      )
     },
     prepare: async (quoteHandle: string): Promise<RheaSwapReviewView> =>
       unwrap(await send({ type: 'PREPARE_RHEA_SWAP', quoteHandle }), parseRheaSwapReviewView),

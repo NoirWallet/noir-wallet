@@ -1,17 +1,33 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Icon } from '@iconify/react'
 import { formatSortAddress, getAccountDisplayName } from '@/lib/format'
+import { resolveEvmAddressRole } from '@/core/accounts/evm-address-role'
+import { DEFAULT_NETWORK } from '@/lib/runtime-network'
 import {
   accountNetworksClient,
   type AccountNetworksCatalogView
 } from '@/popup/services/account-networks-client'
 import { useAddressBookStore } from '@/store/address-book-store'
 import { useWalletStore } from '@/store/wallet-store'
+import { AccountAvatar } from '../account/AccountAvatar'
+import { AddAddressDialog } from '../address-book/AddAddressDialog'
+import {
+  getAddressBookNetworkChoice,
+  getAddressBookNetworkChoices
+} from '../address-book/address-book-network'
 import { InlineError } from '../common/InlineError'
+import { Button } from '../ui/button'
+import { Input } from '../ui/input'
 import { ListSkeleton } from '../ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../ui/tabs'
+import { Tooltip } from '../ui/tooltip'
 import { ExecutionAccountBadge } from '../account/ExecutionAccountSelector'
-import { buildMyAccountRecipientGroups, buildSavedRecipientList } from './recipient-selector-model'
+import {
+  buildMyAccountRecipientGroups,
+  buildMyWalletRecipientGroups,
+  buildSavedRecipientList,
+  getMyAccountRecipientUnavailableReason
+} from './recipient-selector-model'
 
 const EMPTY_ADDRESSES: readonly string[] = Object.freeze([])
 const RECIPIENT_TAB_CLASS =
@@ -32,11 +48,13 @@ function addressSchemeLabel(scheme: string): string | null {
 function EmptyState({
   icon,
   title,
-  description
+  description,
+  action
 }: {
   readonly icon: string
   readonly title: string
-  readonly description: string
+  readonly description?: string
+  readonly action?: ReactNode
 }) {
   return (
     <div className="flex flex-col items-center px-4 py-8 text-center">
@@ -44,7 +62,10 @@ function EmptyState({
         <Icon icon={icon} width={22} height={22} />
       </div>
       <p className="mt-3 text-sm font-medium">{title}</p>
-      <p className="mt-1 max-w-[250px] text-xs leading-5 text-muted">{description}</p>
+      {description && (
+        <p className="mt-1 max-w-[250px] text-xs leading-5 text-muted">{description}</p>
+      )}
+      {action}
     </div>
   )
 }
@@ -54,19 +75,46 @@ export function RecipientSelector({
   excludeAddresses = EMPTY_ADDRESSES,
   includeUnavailableAccounts = false,
   includeCurrentAccount = false,
+  sendingAddress,
+  disablePrivateExecutionAddresses = false,
+  onMoveToPrivate,
   onSelect
 }: {
   readonly chainId: string
   readonly excludeAddresses?: readonly string[]
   readonly includeUnavailableAccounts?: boolean
   readonly includeCurrentAccount?: boolean
-  readonly onSelect: (address: string) => void
+  readonly sendingAddress?: string
+  readonly disablePrivateExecutionAddresses?: boolean
+  readonly onMoveToPrivate?: (address: string) => void
+  readonly onSelect: (address: string, displayName?: string) => void
 }) {
   const contacts = useAddressBookStore(state => state.contacts)
   const accountDisplayNames = useWalletStore(state => state.accountDisplayNames)
   const [catalog, setCatalog] = useState<AccountNetworksCatalogView | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
+  const [addingAddress, setAddingAddress] = useState(false)
+  const [query, setQuery] = useState('')
+  const availableAddressBookNetworks = useMemo(
+    () => getAddressBookNetworkChoices(catalog),
+    [catalog]
+  )
+  const addressBookNetwork = useMemo(
+    () =>
+      availableAddressBookNetworks.find(choice => choice.chainId === chainId) ??
+      getAddressBookNetworkChoice(chainId),
+    [chainId, availableAddressBookNetworks]
+  )
+  const addressBookNetworks = useMemo(() => {
+    if (!addressBookNetwork) return []
+    const choices = availableAddressBookNetworks.filter(
+      choice => choice.family === addressBookNetwork.family
+    )
+    return choices.some(choice => choice.chainId === chainId)
+      ? choices
+      : [...choices, addressBookNetwork]
+  }, [availableAddressBookNetworks, addressBookNetwork, chainId])
 
   const loadAccounts = async () => {
     setLoading(true)
@@ -113,15 +161,47 @@ export function RecipientSelector({
     [catalog, chainId, excludeAddresses, includeUnavailableAccounts, includeCurrentAccount]
   )
   const savedRecipients = useMemo(
-    () => buildSavedRecipientList(contacts, chainId, excludeAddresses),
+    () => buildSavedRecipientList(contacts, chainId, DEFAULT_NETWORK, excludeAddresses),
     [chainId, contacts, excludeAddresses]
   )
+  const normalizedQuery = query.trim().toLowerCase()
+  const visibleWalletGroups = buildMyWalletRecipientGroups(accountGroups).flatMap(wallet => {
+    const walletMatches = wallet.walletDisplayName.toLowerCase().includes(normalizedQuery)
+    const accounts = walletMatches
+      ? wallet.accounts
+      : wallet.accounts.filter(account => {
+          const displayName = getAccountDisplayName(
+            account.walletId,
+            account.accountId,
+            account.accountDisplayName,
+            accountDisplayNames
+          )
+          return `${displayName} ${account.addresses.map(address => address.value).join(' ')}`
+            .toLowerCase()
+            .includes(normalizedQuery)
+        })
+    return accounts.length > 0 ? [{ ...wallet, accounts }] : []
+  })
+  const visibleRecipients = savedRecipients.filter(contact =>
+    `${contact.name} ${contact.address}`.toLowerCase().includes(normalizedQuery)
+  )
+  const isEvm = chainId.startsWith('eip155:')
 
   return (
     <Tabs defaultValue="accounts" className="min-h-0 gap-0">
+      <div className="px-1 pb-3">
+        <Input
+          value={query}
+          onChange={event => setQuery(event.target.value)}
+          placeholder="Search accounts or addresses"
+          aria-label="Search accounts or addresses"
+          className="h-[46px] rounded-lg text-sm"
+          startContent={<Icon icon="lucide:search" width={18} height={18} className="text-muted" />}
+        />
+      </div>
       <TabsList className="h-10 w-full justify-start rounded-none border-b border-border bg-transparent p-0">
         <TabsTrigger value="accounts" className={RECIPIENT_TAB_CLASS}>
-          My Accounts
+          My Wallets
         </TabsTrigger>
         <TabsTrigger value="address-book" className={RECIPIENT_TAB_CLASS}>
           Address Book
@@ -137,89 +217,168 @@ export function RecipientSelector({
             message="Unable to load accounts"
             onRetry={loadAccounts}
           />
-        ) : accountGroups.length === 0 ? (
+        ) : visibleWalletGroups.length === 0 ? (
           <EmptyState
             icon="lucide:wallet"
-            title="No other accounts"
-            description="No other Wallet account has a receive address on this network."
+            title={normalizedQuery ? 'No matching accounts' : 'No other accounts'}
           />
         ) : (
           <div className="space-y-5 pb-1">
-            {accountGroups.map(group => {
-              const displayName = getAccountDisplayName(
-                group.walletId,
-                group.accountId,
-                group.accountDisplayName,
-                accountDisplayNames
-              )
-              if (group.addresses.length === 0) {
-                return (
-                  <button
-                    key={group.key}
-                    type="button"
-                    disabled
-                    className="flex w-full min-w-0 flex-col items-start gap-1 rounded-lg bg-card px-3 py-2.5 text-left opacity-60"
-                  >
-                    <span className="flex w-full min-w-0 items-center gap-2">
-                      <span className="min-w-0 truncate text-sm font-medium">{displayName}</span>
-                      {group.active && <span className="shrink-0 text-xs text-muted">Current</span>}
-                      {group.walletDisplayName && (
-                        <span className="ml-auto max-w-[42%] truncate text-xs text-muted">
-                          {group.walletDisplayName}
-                        </span>
-                      )}
-                    </span>
-                    <span className="text-xs text-muted">Unavailable on this network</span>
-                  </button>
-                )
-              }
+            {visibleWalletGroups.map(wallet => {
+              const firstAccount = wallet.accounts[0]!
               return (
-                <section key={group.key}>
+                <section key={wallet.walletId}>
                   <div className="mb-2 flex min-w-0 items-center gap-2 px-1">
-                    <p className="truncate text-sm font-medium">{displayName}</p>
-                    {group.active && (
-                      <span className="shrink-0 rounded-full bg-primary/15 px-1.5 py-0.5 text-[10px] text-primary">
+                    <AccountAvatar
+                      walletId={firstAccount.walletId}
+                      accountId={firstAccount.accountId}
+                      className="size-8 shrink-0 rounded-full object-cover"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-xs text-muted">
+                        {wallet.walletDisplayName || 'Wallet'}
+                      </p>
+                      {wallet.accounts.length === 1 && (
+                        <p className="truncate text-sm font-medium">
+                          {getAccountDisplayName(
+                            firstAccount.walletId,
+                            firstAccount.accountId,
+                            firstAccount.accountDisplayName,
+                            accountDisplayNames
+                          )}
+                        </p>
+                      )}
+                    </div>
+                    {wallet.accounts.length === 1 && firstAccount.active && (
+                      <span className="shrink-0 rounded bg-wallet-selected px-2 py-0.5 text-xs font-medium text-foreground">
                         Current
                       </span>
                     )}
-                    {group.walletDisplayName && (
-                      <p className="ml-auto max-w-[42%] truncate text-xs text-muted">
-                        {group.walletDisplayName}
-                      </p>
-                    )}
                   </div>
-                  <div className="space-y-2">
-                    {group.addresses.map(address => {
-                      const schemeLabel = addressSchemeLabel(address.scheme)
+                  <div className="space-y-3">
+                    {wallet.accounts.map(group => {
+                      const displayName = getAccountDisplayName(
+                        group.walletId,
+                        group.accountId,
+                        group.accountDisplayName,
+                        accountDisplayNames
+                      )
                       return (
-                        <button
-                          key={`${group.key}:${address.scheme}:${address.value}`}
-                          type="button"
-                          aria-label={`Send to ${displayName}${address.executionMode ? ` ${address.executionMode === 'private' ? 'Confidential' : 'Public'}` : schemeLabel ? ` ${schemeLabel}` : ''}`}
-                          onClick={() => onSelect(address.value)}
-                          className="flex w-full items-center gap-3 rounded-lg border border-transparent bg-card px-3 py-2.5 text-left transition-colors hover:border-primary/20 hover:bg-white/5"
-                        >
-                          {schemeLabel && (
-                            <span className="shrink-0 rounded-md bg-white/5 px-2 py-1 text-[10px] text-muted">
-                              {schemeLabel}
-                            </span>
+                        <div key={group.key} className="space-y-2">
+                          {wallet.accounts.length > 1 && (
+                            <div className="flex items-center gap-2 px-1 text-xs">
+                              <span className="min-w-0 flex-1 truncate font-medium">
+                                {displayName}
+                              </span>
+                              {group.active && (
+                                <span className="shrink-0 rounded bg-wallet-selected px-2 py-0.5 font-medium text-foreground">
+                                  Current
+                                </span>
+                              )}
+                            </div>
                           )}
-                          {address.executionMode === 'private' && (
-                            <ExecutionAccountBadge mode="private" iconOnly />
+                          {group.addresses.length === 0 ? (
+                            <div className="rounded-lg bg-card px-3 py-2.5 text-xs text-muted opacity-60">
+                              Unavailable on this network
+                            </div>
+                          ) : (
+                            group.addresses.map(address => {
+                              const schemeLabel = addressSchemeLabel(address.scheme)
+                              const unavailableReason = getMyAccountRecipientUnavailableReason(
+                                address,
+                                sendingAddress,
+                                disablePrivateExecutionAddresses
+                              )
+                              const canMove =
+                                group.active &&
+                                address.executionMode === 'private' &&
+                                Boolean(onMoveToPrivate)
+                              const addressButton = (
+                                <button
+                                  type="button"
+                                  aria-label={`${unavailableReason ? 'Unavailable: ' : 'Send to '}${displayName}${address.executionMode ? ` ${address.executionMode === 'private' ? 'Confidential' : 'Public'}` : schemeLabel ? ` ${schemeLabel}` : ''}${unavailableReason ? `. ${unavailableReason}` : ''}`}
+                                  aria-disabled={unavailableReason ? true : undefined}
+                                  onClick={() => {
+                                    if (!unavailableReason) onSelect(address.value, displayName)
+                                  }}
+                                  className={`flex min-w-0 flex-1 items-center gap-3 rounded-lg border border-transparent bg-card px-3 py-2.5 text-left transition-colors focus-visible:outline-2 focus-visible:outline-primary ${unavailableReason ? 'cursor-not-allowed opacity-65' : 'hover:border-primary/20 hover:bg-white/5'}`}
+                                >
+                                  {schemeLabel && (
+                                    <span
+                                      className={
+                                        schemeLabel === 'Shielded'
+                                          ? 'shrink-0 rounded-md bg-success/10 px-2 py-1 text-[10px] text-success'
+                                          : 'shrink-0 rounded-md bg-white/5 px-2 py-1 text-[10px] text-muted'
+                                      }
+                                    >
+                                      {schemeLabel}
+                                    </span>
+                                  )}
+                                  {isEvm && address.executionMode && (
+                                    <span className="flex shrink-0 items-center gap-1.5 text-sm">
+                                      {address.executionMode === 'private' ? (
+                                        <ExecutionAccountBadge mode="private" iconOnly />
+                                      ) : (
+                                        <Icon
+                                          icon="lucide:eye"
+                                          width={16}
+                                          height={16}
+                                          className="text-muted"
+                                        />
+                                      )}
+                                      {address.executionMode === 'private' ? 'Private' : 'Public'}
+                                    </span>
+                                  )}
+                                  <p
+                                    className="min-w-0 flex-1 truncate font-mono text-xs text-foreground"
+                                    title={address.value}
+                                  >
+                                    {formatSortAddress(address.value)}
+                                  </p>
+                                  {!isEvm && (
+                                    <Icon
+                                      icon="lucide:arrow-right"
+                                      width={14}
+                                      height={14}
+                                      className="shrink-0 text-muted"
+                                    />
+                                  )}
+                                </button>
+                              )
+                              return (
+                                <div
+                                  key={`${group.key}:${address.scheme}:${address.value}`}
+                                  className="flex items-center gap-1"
+                                >
+                                  {unavailableReason ? (
+                                    <Tooltip content={unavailableReason} side="top">
+                                      {addressButton}
+                                    </Tooltip>
+                                  ) : (
+                                    addressButton
+                                  )}
+                                  {canMove && (
+                                    <button
+                                      type="button"
+                                      onClick={() => onMoveToPrivate?.(address.value)}
+                                      aria-label={`Move to ${displayName} Private`}
+                                      title="Move to Private"
+                                      className="flex h-11 shrink-0 items-center gap-1 rounded-lg px-2 text-xs font-medium text-primary hover:bg-primary/10 focus-visible:outline-2 focus-visible:outline-primary"
+                                    >
+                                      <Icon
+                                        icon="lucide:arrow-right-left"
+                                        width={14}
+                                        height={14}
+                                        aria-hidden="true"
+                                      />
+                                      Move
+                                    </button>
+                                  )}
+                                </div>
+                              )
+                            })
                           )}
-                          <p
-                            className="min-w-0 flex-1 truncate font-mono text-xs text-foreground"
-                            title={address.value}
-                          >
-                            {formatSortAddress(address.value)}
-                          </p>
-                          <Icon
-                            icon="lucide:arrow-right"
-                            width={14}
-                            height={14}
-                            className="shrink-0 text-muted"
-                          />
-                        </button>
+                        </div>
                       )
                     })}
                   </div>
@@ -231,45 +390,97 @@ export function RecipientSelector({
       </TabsContent>
 
       <TabsContent value="address-book" className="max-h-[360px] overflow-y-auto px-1 py-4">
-        {savedRecipients.length === 0 ? (
+        {visibleRecipients.length === 0 ? (
           <EmptyState
             icon="lucide:book-user"
-            title="No saved recipients"
-            description="After you send on this network, Noir Wallet can offer to save the recipient here."
+            title={normalizedQuery ? 'No matching recipients' : 'No saved recipients'}
+            action={
+              addressBookNetwork && (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="mt-5"
+                  onClick={() => setAddingAddress(true)}
+                >
+                  Add address
+                </Button>
+              )
+            }
           />
         ) : (
           <div className="space-y-2 pb-1">
-            {savedRecipients.map(contact => (
+            {addressBookNetwork && (
               <button
-                key={contact.id}
                 type="button"
-                aria-label={`Send to ${contact.name}`}
-                onClick={() => onSelect(contact.address)}
-                className="flex w-full items-center gap-3 rounded-lg border border-transparent bg-card px-3 py-2.5 text-left transition-colors hover:border-primary/20 hover:bg-white/5"
+                onClick={() => setAddingAddress(true)}
+                className="ml-auto flex items-center gap-1.5 px-2 pb-2 text-xs text-primary"
               >
-                <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary/12 text-sm font-semibold text-primary">
-                  {contact.name.slice(0, 1).toUpperCase()}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium">{contact.name}</p>
-                  <p
-                    className="mt-0.5 truncate font-mono text-xs text-foreground"
-                    title={contact.address}
-                  >
-                    {formatSortAddress(contact.address)}
-                  </p>
-                </div>
-                <Icon
-                  icon="lucide:arrow-right"
-                  width={14}
-                  height={14}
-                  className="shrink-0 text-muted"
-                />
+                <Icon icon="lucide:plus" width={14} height={14} />
+                Add address
               </button>
-            ))}
+            )}
+            {visibleRecipients.map(contact => {
+              const privateAddress =
+                isEvm &&
+                disablePrivateExecutionAddresses &&
+                resolveEvmAddressRole(contact.address, chainId, catalog?.accounts) ===
+                  'confidential'
+              const unavailableReason = getMyAccountRecipientUnavailableReason(
+                {
+                  value: contact.address,
+                  executionMode: privateAddress ? 'private' : undefined
+                },
+                sendingAddress,
+                disablePrivateExecutionAddresses
+              )
+              const addressButton = (
+                <button
+                  type="button"
+                  aria-label={`${unavailableReason ? 'Unavailable: ' : 'Send to '}${contact.name}${unavailableReason ? `. ${unavailableReason}` : ''}`}
+                  aria-disabled={unavailableReason ? true : undefined}
+                  onClick={() => {
+                    if (!unavailableReason) onSelect(contact.address, contact.name)
+                  }}
+                  className={`flex w-full items-center gap-3 rounded-lg border border-transparent bg-card px-3 py-2.5 text-left transition-colors focus-visible:outline-2 focus-visible:outline-primary ${unavailableReason ? 'cursor-not-allowed opacity-65' : 'hover:border-primary/20 hover:bg-white/5'}`}
+                >
+                  <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary/12 text-sm font-semibold text-primary">
+                    {contact.name.slice(0, 1).toUpperCase()}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium">{contact.name}</p>
+                    <p
+                      className="mt-0.5 truncate font-mono text-xs text-foreground"
+                      title={contact.address}
+                    >
+                      {formatSortAddress(contact.address)}
+                    </p>
+                  </div>
+                  <Icon
+                    icon="lucide:arrow-right"
+                    width={14}
+                    height={14}
+                    className="shrink-0 text-muted"
+                  />
+                </button>
+              )
+              return unavailableReason ? (
+                <Tooltip key={contact.id} content={unavailableReason} side="top">
+                  {addressButton}
+                </Tooltip>
+              ) : (
+                <div key={contact.id}>{addressButton}</div>
+              )
+            })}
           </div>
         )}
       </TabsContent>
+      <AddAddressDialog
+        open={addingAddress}
+        onOpenChange={setAddingAddress}
+        networks={addressBookNetworks}
+        initialChainId={chainId}
+        fullHeight
+      />
     </Tabs>
   )
 }

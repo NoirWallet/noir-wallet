@@ -1,9 +1,13 @@
 import assert from 'node:assert/strict'
 import { it } from 'node:test'
 import { resolveConfidentialEvmAssetSupport } from '../../../../src/core/services/rhea-swap/rhea-confidential-support.ts'
-import { resolveEvmAddressRole } from '../../../../src/core/accounts/evm-address-role.ts'
+import {
+  isCurrentAccountPrivateEvmAddress,
+  resolveEvmAddressRole
+} from '../../../../src/core/accounts/evm-address-role.ts'
 import {
   createEvmSendIntentKey,
+  getEvmSendRecipientError,
   getEvmSendPrivacyWarning,
   resolveEvmSendAvailableRaw,
   resolveEvmSendRoute
@@ -109,10 +113,21 @@ it('retains usable rows while marking a malformed catalog as partial', async () 
 })
 
 it('derives address roles from chain-scoped local identities and gives PEA precedence', () => {
+  const otherPrivateAddress = `0x${'4'.repeat(40)}`
+  const otherPublicAddress = `0x${'5'.repeat(40)}`
   const accounts = [
     {
       networks: [
         { chain, addresses: [{ value: main }, { value: pea }], privateExecutionAddress: pea }
+      ]
+    },
+    {
+      networks: [
+        {
+          chain,
+          addresses: [{ value: otherPublicAddress }],
+          privateExecutionAddress: otherPrivateAddress
+        }
       ]
     }
   ]
@@ -121,9 +136,23 @@ it('derives address roles from chain-scoped local identities and gives PEA prece
     'public'
   )
   assert.equal(resolveEvmAddressRole(pea, chain.id, accounts), 'confidential')
+  assert.equal(resolveEvmAddressRole(otherPrivateAddress, chain.id, accounts), 'confidential')
+  assert.equal(resolveEvmAddressRole(otherPublicAddress, chain.id, accounts), 'public')
   assert.equal(resolveEvmAddressRole(recipient, chain.id, accounts), 'unknown')
   assert.equal(resolveEvmAddressRole(main, 'eip155:56', accounts), 'unknown')
   assert.equal(resolveEvmAddressRole(main, chain.id), 'unknown')
+  assert.equal(isCurrentAccountPrivateEvmAddress(pea, chain.id, accounts[0]), true)
+  assert.equal(
+    isCurrentAccountPrivateEvmAddress(pea.toUpperCase().replace('0X', '0x'), chain.id, accounts[0]),
+    true
+  )
+  assert.equal(isCurrentAccountPrivateEvmAddress(otherPrivateAddress, chain.id, accounts[0]), false)
+  assert.equal(isCurrentAccountPrivateEvmAddress(recipient, chain.id, accounts[0]), false)
+  assert.equal(isCurrentAccountPrivateEvmAddress(pea, 'eip155:56', accounts[0]), false)
+  assert.equal(isCurrentAccountPrivateEvmAddress(pea, chain.id, null), false)
+  assert.match(getEvmSendRecipientError('main', 'confidential', false, true), /your Private/)
+  assert.match(getEvmSendRecipientError('main', 'confidential'), /Send privately/)
+  assert.equal(getEvmSendRecipientError('main', 'unknown'), null)
   assert.equal(getEvmSendPrivacyWarning('main', 'public'), null)
   for (const role of ['confidential', 'unknown']) assert.ok(getEvmSendPrivacyWarning('main', role))
   for (const role of ['public', 'confidential', 'unknown'])
@@ -136,6 +165,11 @@ it('chooses the route before any quote and keeps unknown private assets blocked'
   assert.equal(resolveEvmSendRoute('private', 'supported'), 'confidential')
   assert.equal(resolveEvmSendRoute('private', 'unsupported'), 'onchain')
   assert.equal(resolveEvmSendRoute('private', 'unknown'), 'pending')
+  assert.equal(resolveEvmSendRoute('main', 'supported', true), 'confidential')
+  for (const state of ['unsupported', 'unknown']) {
+    assert.equal(resolveEvmSendRoute('main', state, true), 'pending')
+  }
+  assert.equal(getEvmSendRecipientError('main', 'confidential', true), null)
 })
 
 it('spends only the selected source on-chain balance, including when the abstract aggregate is larger', () => {
@@ -428,13 +462,11 @@ it('prepares native and ERC-20 direct Max probes from PEA without a privacy quot
     })
     const client = createQuoteDepositTransferClient({
       evm: {
-        prepareTransfer: async (intent, options) => {
+        estimateTransferFee: async (intent, options) => {
           calls.push({ intent, options })
           return {
-            graph: { root: { id: 'tx:probe' } },
-            review: {
-              summary: { schema: 'evm.transaction.v1', fields: { from: pea, maximumFeeWei: '100' } }
-            }
+            maximumFeeWei: '100',
+            ...(definition.kind === 'native' ? { amountIndependent: true } : {})
           }
         },
         rejectTransfer: async id => calls.push({ rejected: id }),
@@ -450,7 +482,7 @@ it('prepares native and ERC-20 direct Max probes from PEA without a privacy quot
     assert.equal(calls[0].intent.assetId, definition.id)
     assert.equal(calls[0].intent.recipient, recipient)
     assert.equal(result.amountRaw, definition.kind === 'native' ? '875' : '1000')
-    assert.equal(calls.length, 2)
+    assert.equal(calls.length, 1)
   }
 })
 

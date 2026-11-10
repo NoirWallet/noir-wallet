@@ -163,14 +163,14 @@ test.describe('Multichain Activity presentation', () => {
         schemaVersion: 1,
         direction: 'outgoing',
         primaryAmount: { assetId: sourceId, amountRaw: '1000000000000000000' },
-        counterAmount: { assetId: destinationId, amountRaw: '2500000' }
+        counterAmount: { assetId: destinationId, amountRaw: '2500001' }
       }
     }
 
     const route = getActivitySwapPresentation(item, assetMetadata, chainMetadata)
     expect(route).toEqual({
-      source: { assetId: sourceId, symbol: 'ETH', formatted: '1' },
-      destination: { assetId: destinationId, symbol: 'USDC', formatted: '2.5' },
+      source: { assetId: sourceId, symbol: 'ETH', formatted: '1', exact: '1' },
+      destination: { assetId: destinationId, symbol: 'USDC', formatted: '2.5', exact: '2.500001' },
       sourceNetwork: 'Ethereum',
       destinationNetwork: 'Arbitrum',
       sourceChainIconAlias: 'ethereum',
@@ -367,6 +367,37 @@ test.describe('Multichain Activity presentation', () => {
     expect(
       getActivityTransferRecipient({ ...item, snapshot: { ...item.snapshot, protocol: undefined } })
     ).toBe(sourceContract)
+  })
+
+  test('shows the final Near Intents transfer recipient instead of the deposit address', () => {
+    const depositAddress = `0x${'2'.repeat(40)}`
+    const destination = `0x${'3'.repeat(40)}`
+    const assetId = 'eip155:8453/slip44:60'
+    const item = {
+      ...failedItem({ transactionHash }),
+      failureCode: undefined,
+      status: 'confirming',
+      snapshot: {
+        schemaVersion: 1,
+        direction: 'outgoing',
+        primaryAmount: { assetId, amountRaw: '21080000000000' },
+        counterAmount: { assetId, amountRaw: '20000000000000' },
+        recipient: { chainId: 'eip155:8453', address: depositAddress },
+        protocol: {
+          provider: 'near-intents',
+          userAction: 'transfer',
+          destination: { recipient: destination }
+        }
+      }
+    }
+    const assets = new Map([[assetId, { metadata: { symbol: 'ETH', decimals: 18 } }]])
+
+    expect(getActivityTransferRecipient(item)).toBe(destination)
+    expect(getActivityRowTextPresentation(item, 'ETH', 'ETH', 'Base')).toEqual({
+      title: 'Sent ETH',
+      subtitle: 'To: 0x3333...333333'
+    })
+    expect(getActivitySwapPresentation(item, assets, new Map())).toBeNull()
   })
 
   test('offers cancellation only for a locally tracked pending EVM transaction', () => {

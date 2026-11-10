@@ -1,9 +1,11 @@
 import type { PortfolioReadModel } from '@/core/portfolio'
+import { decodeFunctionData, parseAbi } from 'viem'
 import { parseZcashAddress } from '@/core/address-book/address-book'
-import { isZecToken } from '@/core/services/intents-api'
+import { isZecToken, type SwapToken } from '@/core/services/intents-api'
 import {
   RHEA_SWAP_CHAIN_CATALOG,
   type RheaSwapQuoteRequest,
+  type RheaSwapReviewView,
   type RheaSwapToken
 } from '@/core/services/rhea-swap'
 import { createInitialProductChainRegistry } from '@/core/chains/registry'
@@ -17,6 +19,7 @@ import {
 
 import {
   resolveWalletOwnedQuoteAsset,
+  resolveWalletQuoteReceiveTarget,
   type PreparedQuoteDepositTransfer,
   type WalletOwnedQuoteAsset
 } from '@/popup/services/quote-deposit-transfer-client'
@@ -27,6 +30,10 @@ import {
   filterCrossChainSendDestinations,
   type CrossChainSendCapabilities
 } from '@/popup/services/cross-chain-send-assets'
+
+const ERC20_TRANSFER_ABI = parseAbi([
+  'function transfer(address to, uint256 amount) returns (bool)'
+])
 
 export function resolveSwapRecipientChainId(
   token: RheaSwapToken | null,
@@ -94,6 +101,50 @@ export function resolveSwapReviewAction(input: {
   if (input.isZecSource) return input.hasDepositAddress ? 'zcash-transfer' : 'unavailable'
   if (input.hasPreparedTransfer) return 'wallet-transfer'
   return 'unavailable'
+}
+
+export function resolveSwapSourceExecutionTarget(input: {
+  readonly review: RheaSwapReviewView
+  readonly prepared: PreparedQuoteDepositTransfer | null
+  readonly tokenIn: SwapToken
+  readonly approvalPending: boolean
+}): { readonly label: 'Deposit address' | 'Contract'; readonly address: string } | null {
+  const { review, prepared, tokenIn, approvalPending } = input
+  if (!prepared || approvalPending || !review.execution.target) return null
+  if (prepared.family === 'bitcoin' && review.execution.kind === 'bitcoin-transfer') {
+    return { label: 'Deposit address', address: review.execution.target }
+  }
+  if (prepared.family !== 'evm' || review.execution.kind !== 'evm-transaction') return null
+  const summary = prepared.review.review.summary
+  if (summary.schema !== 'evm.transaction.v1') return null
+  const target = summary.fields.to
+  if (!target || target.toLowerCase() !== review.execution.target.toLowerCase()) return null
+  if (summary.fields.calldata.byteLength === 0 && summary.fields.valueWei === review.amountIn) {
+    return { label: 'Deposit address', address: target }
+  }
+  if (tokenIn.contractAddress?.toLowerCase() === target.toLowerCase()) {
+    const calldata = summary.fields.calldata
+    if (
+      summary.fields.valueWei === '0' &&
+      calldata.encoding === 'hex' &&
+      calldata.byteLength === 68 &&
+      /^0xa9059cbb[0-9a-fA-F]{128}$/.test(calldata.value)
+    ) {
+      try {
+        const transfer = decodeFunctionData({
+          abi: ERC20_TRANSFER_ABI,
+          data: calldata.value as `0x${string}`
+        })
+        if (transfer.args[1].toString() === review.amountIn) {
+          return { label: 'Deposit address', address: transfer.args[0] }
+        }
+      } catch {
+        // Keep the verified contract target when calldata cannot be decoded.
+      }
+    }
+    return { label: 'Contract', address: target }
+  }
+  return null
 }
 
 export function resolveSwapStatusPollingProvider(input: {
@@ -257,6 +308,27 @@ export function filterSwapDestinationTokens(
     : tokens
 }
 
+export function isPrivateSwapDestinationSupported(
+  token: RheaSwapToken,
+  portfolio: PortfolioReadModel | null,
+  receiveTargets: AdditionalReceiveTargetsView | null,
+  privateExecutionAddresses: ReadonlyMap<string, string>,
+  mode: 'main' | 'private' = 'private',
+  zcashAddresses?: Readonly<{ shielded: string; transparent: string }>
+): boolean {
+  if (!portfolio || !isConfidentialSwapDestinationSupported(token)) return false
+  if (isZecToken(token)) return Boolean(zcashAddresses?.shielded && zcashAddresses.transparent)
+  const target = resolveWalletQuoteReceiveTarget(token, portfolio, receiveTargets)
+  if (target?.kind !== 'evm') return false
+  if (mode === 'main') return /^0x[0-9a-fA-F]{40}$/.test(target.address)
+  const privateAddress = privateExecutionAddresses.get(target.chain.id)
+  return Boolean(
+    privateAddress &&
+    /^0x[0-9a-fA-F]{40}$/.test(privateAddress) &&
+    privateAddress.toLowerCase() !== target.address.toLowerCase()
+  )
+}
+
 export function filterSelectableSwapDestinationTokens(input: {
   readonly tokens: readonly RheaSwapToken[]
   readonly confidentiality: 'basic' | undefined
@@ -363,6 +435,7 @@ export function buildLiveSwapQuoteRequest(input: {
   readonly slippage: number
   readonly refundAddress: string
   readonly recipientAddress: string
+  readonly privateRecipientAddress?: string
   readonly confidentiality?: 'basic'
   readonly blocked: boolean
 }): Readonly<{
@@ -380,6 +453,8 @@ export function buildLiveSwapQuoteRequest(input: {
     safeBig(input.amountIn).lte(0) ||
     !input.refundAddress ||
     !input.recipientAddress ||
+    (input.privateRecipientAddress !== undefined &&
+      input.recipientAddress.toLowerCase() !== input.privateRecipientAddress.toLowerCase()) ||
     input.blocked
   ) {
     return null

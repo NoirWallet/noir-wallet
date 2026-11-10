@@ -13,7 +13,6 @@ import {
   readStoredExtensionDisplayMode
 } from '@/lib/extension-display-mode'
 import { useActiveAccountNetworks } from '@/popup/hooks/useActiveAccountNetworks'
-import { SocialLinks } from '@/popup/components/common/SocialLinks'
 
 interface SidePanelOpenApi {
   open(options: { windowId: number }): Promise<void>
@@ -83,18 +82,31 @@ export function Settings() {
   }, [isSidePanelSurface, loadSidePanelMode, syncSidePanelMode])
 
   const menuItems = [
-    { label: 'General', action: () => navigate('/general') },
-    { label: 'Networks', action: () => navigate('/networks') },
-    { label: 'Address Book', action: () => navigate('/address-book') },
-    { label: 'Default EVM Wallet', action: () => navigate('/default-evm-wallet') },
-    { label: 'Security & Privacy', action: () => navigate('/security-privacy') },
-    { label: 'Developer Settings', action: () => navigate('/developer-settings') },
-    { label: 'About', action: () => navigate('/about') },
-    { label: 'Help', action: () => navigate('/help') },
+    {
+      label: 'Address Book',
+      icon: 'lucide:contact-round',
+      action: () => navigate('/address-book')
+    },
+    { label: 'DApps Connection', icon: 'lucide:link', action: () => navigate('/dapp-connections') },
+    { label: 'Preferences', icon: 'lucide:heart', action: () => navigate('/general') },
+    { label: 'Security', icon: 'lucide:shield-check', action: () => navigate('/security-privacy') },
+    { label: 'Networks', icon: 'lucide:radio', action: () => navigate('/networks') },
+    {
+      label: 'Default EVM Wallet',
+      icon: 'lucide:wallet',
+      action: () => navigate('/default-evm-wallet')
+    },
+    {
+      label: 'Developer Settings',
+      icon: 'lucide:code',
+      action: () => navigate('/developer-settings')
+    },
     ...(activeAccount?.walletSource.kind === 'software' &&
     activeAccount.networks.some(network => network.chain.family === 'zcash')
-      ? [{ label: 'Zcash voting', action: () => navigate('/voting') }]
-      : [])
+      ? [{ label: 'Zcash voting', icon: 'lucide:vote', action: () => navigate('/voting') }]
+      : []),
+    { label: 'Help', icon: 'lucide:circle-help', action: () => navigate('/help') },
+    { label: 'About', icon: 'lucide:info', action: () => navigate('/about') }
   ]
 
   const handleLock = async () => {
@@ -137,7 +149,7 @@ export function Settings() {
     <div className="page-container">
       <PageHeader title="Settings" showBack />
 
-      <div className="page-content space-y-2">
+      <div className="min-h-0 flex-1 overflow-y-auto px-4">
         {sidePanelSupported && (isInitializingDisplayMode || isSidePanelModeLoaded) && (
           <button
             type="button"
@@ -146,21 +158,11 @@ export function Settings() {
             aria-label="Side panel mode"
             disabled={isChangingDisplayMode || isInitializingDisplayMode || !isSidePanelModeLoaded}
             onClick={handleDisplayModeChange}
-            className="w-full p-4 bg-card rounded-xl hover:bg-white/5 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-wait text-left"
+            className="wallet-interactive flex min-h-[63px] w-full items-center gap-4 rounded-lg px-1 text-left enabled:hover:bg-white/5 enabled:active:bg-white/10 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 disabled:cursor-wait disabled:opacity-50"
           >
-            <div className="flex items-center justify-between gap-4">
-              <div>
-                <div className="text-sm">Side panel mode</div>
-                <div className="text-xs text-muted mt-1">
-                  {sidePanelMode
-                    ? 'Toolbar icon opens the Chrome side panel'
-                    : isSidePanelModeLoaded
-                      ? 'Toolbar icon opens the wallet popup'
-                      : 'Loading wallet display mode'}
-                </div>
-              </div>
-              <Switch checked={sidePanelMode} />
-            </div>
+            <Icon icon="lucide:panel-left" width={20} height={20} />
+            <span className="flex-1 text-base">Sidebar</span>
+            <Switch checked={sidePanelMode} size="md" />
           </button>
         )}
 
@@ -168,19 +170,22 @@ export function Settings() {
           <button
             key={index}
             onClick={item.action}
-            className="w-full p-4 bg-card rounded-xl hover:bg-white/5 transition-colors cursor-pointer"
+            className="wallet-interactive flex min-h-[63px] w-full items-center gap-4 rounded-lg px-1 text-left hover:bg-white/5 active:bg-white/10 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2"
           >
-            <div className="flex items-center justify-between">
-              <span className="text-sm">{item.label}</span>
-              <Icon icon="lucide:chevron-right" width={16} height={16} className="text-muted" />
-            </div>
+            <Icon icon={item.icon} width={20} height={20} />
+            <span className="flex-1 text-base">{item.label}</span>
+            <Icon icon="lucide:chevron-right" width={18} height={18} />
           </button>
         ))}
       </div>
 
-      <div className="page-footer space-y-3">
-        <SocialLinks />
-        <Button onClick={handleLock} variant="outline" className="w-full h-[45px]">
+      <div className="page-footer">
+        <Button
+          onClick={handleLock}
+          variant="ghost"
+          size="wallet"
+          className="w-full font-normal text-danger hover:text-danger"
+        >
           <Icon icon="lucide:lock" width={16} height={16} className="mr-2" />
           Lock Wallet
         </Button>

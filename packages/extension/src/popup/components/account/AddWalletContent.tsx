@@ -12,7 +12,7 @@ import { WALLET_OPTION_ICONS } from './wallet-option-icons'
 export type AddWalletAction = 'import' | 'private-key' | 'create' | HardwareConnectVendor
 
 export function AddWalletContent({ onSelect }: { onSelect: (action: AddWalletAction) => void }) {
-  const [step, setStep] = useState<'wallet' | 'import' | 'hardware'>('wallet')
+  const [step, setStep] = useState<'wallet' | 'hardware'>('wallet')
   const headingRef = useRef<HTMLHeadingElement>(null)
 
   useEffect(() => {
@@ -21,56 +21,51 @@ export function AddWalletContent({ onSelect }: { onSelect: (action: AddWalletAct
 
   return (
     <>
-      <DialogHeader className="relative flex h-8 flex-row items-center justify-center px-8">
+      <DialogHeader className="relative flex min-h-6 shrink-0 flex-row items-center justify-start pr-8 text-left">
         {step !== 'wallet' && (
           <button
             type="button"
             aria-label="Back to Add Wallet"
             onClick={() => setStep('wallet')}
-            className="absolute left-0 flex size-8 items-center justify-center rounded-full bg-card text-foreground transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+            className="mr-2 flex size-6 shrink-0 items-center justify-center rounded text-foreground transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
           >
             <Icon icon={WALLET_OPTION_ICONS.back} width={18} height={18} aria-hidden="true" />
           </button>
         )}
-        <DialogTitle ref={headingRef} tabIndex={-1} className="text-base outline-none">
-          {step === 'import'
-            ? 'Import Wallet'
-            : step === 'hardware'
-              ? 'Connect Hardware Wallet'
-              : 'Add Wallet'}
+        <DialogTitle
+          ref={headingRef}
+          tabIndex={-1}
+          className="text-left text-base font-medium leading-6 outline-none"
+        >
+          {step === 'hardware' ? 'Connect Hardware Wallet' : 'Add wallet'}
         </DialogTitle>
       </DialogHeader>
-      <div className="space-y-3">
+      <div className="min-h-0 space-y-3.5 overflow-y-auto">
         {step === 'wallet' && (
           <>
             <WalletOptionButton
-              label="Import Wallet"
-              icon={WALLET_OPTION_ICONS.import}
-              onClick={() => setStep('import')}
-            />
-            <WalletOptionButton
               label="Create New Wallet"
+              description="Create a new seed phrase wallet"
               icon={WALLET_OPTION_ICONS.create}
               onClick={() => onSelect('create')}
             />
             <WalletOptionButton
-              label="Connect Hardware Wallet"
-              icon={WALLET_OPTION_ICONS.hardware}
-              onClick={() => setStep('hardware')}
-            />
-          </>
-        )}
-        {step === 'import' && (
-          <>
-            <WalletOptionButton
-              label="Secret Recovery Phrase"
+              label="Import recovery phrase"
+              description="Import accounts from another wallet"
               icon={WALLET_OPTION_ICONS.phrase}
               onClick={() => onSelect('import')}
             />
             <WalletOptionButton
-              label="Private Key"
+              label="Import private key"
+              description="Import a single-chain account"
               icon={WALLET_OPTION_ICONS.key}
               onClick={() => onSelect('private-key')}
+            />
+            <WalletOptionButton
+              label="Connect a hardware wallet"
+              description="Using a USB or a QR code"
+              icon={WALLET_OPTION_ICONS.hardware}
+              onClick={() => setStep('hardware')}
             />
           </>
         )}
