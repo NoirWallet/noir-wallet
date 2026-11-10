@@ -39,7 +39,7 @@ import { cn } from '@/lib/utils'
 import { formatSortAddress } from '@/lib/format'
 import { DEFAULT_NETWORK } from '@/lib/runtime-network'
 import { useWalletStore } from '@/store/wallet-store'
-import { ACCOUNT_AVATARS } from '@/popup/lib/account-avatars'
+import { AccountAvatar } from '../../components/account/AccountAvatar'
 import { availableSoftwareAccountFamilies } from '@/popup/services/account-network-selection-client'
 import { useDAppExecutionMode } from '@/popup/hooks/useDAppExecutionMode'
 
@@ -433,9 +433,7 @@ export function AddressesList() {
   const activeMode = scopedReceive ? requestedMode : mode
   const [evmExpanded, setEvmExpanded] = useState(false)
   const [networks, setNetworks] = useState<readonly AccountNetworkView[]>([])
-  const [accountIdentity, setAccountIdentity] = useState<{ name: string; index: number } | null>(
-    null
-  )
+  const [accountIdentity, setAccountIdentity] = useState<{ name: string } | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [canRetry, setCanRetry] = useState(false)
@@ -477,7 +475,7 @@ export function AddressesList() {
           return
         }
         setNetworks(entry.networks)
-        setAccountIdentity({ name: entry.accountDisplayName, index: entry.accountIndex })
+        setAccountIdentity({ name: entry.accountDisplayName })
       } catch {
         if (!cancelled) {
           setError('Unable to load addresses for this account.')
@@ -840,10 +838,9 @@ export function AddressesList() {
               <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-5">
                 <div className="mx-auto flex max-w-[440px] flex-col items-center">
                   <div className="mt-6 flex w-full items-center justify-center gap-3">
-                    <img
-                      src={ACCOUNT_AVATARS[(accountIdentity?.index ?? 0) % ACCOUNT_AVATARS.length]}
-                      alt=""
-                      aria-hidden="true"
+                    <AccountAvatar
+                      walletId={walletId}
+                      accountId={accountId}
                       className="size-10 shrink-0 rounded-full object-cover"
                     />
                     <div className="min-w-0">
