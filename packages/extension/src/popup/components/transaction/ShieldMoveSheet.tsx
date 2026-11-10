@@ -227,7 +227,7 @@ export function ShieldMoveSheet({
   const filteredRows = rows.filter(row => {
     const term = search.trim().toLowerCase()
     return (
-      row.chain.chain.id === chainId &&
+      (chainId === 'all' || row.chain.chain.id === chainId) &&
       (!term ||
         row.asset.metadata.symbol.toLowerCase().includes(term) ||
         row.asset.metadata.name.toLowerCase().includes(term) ||
@@ -252,7 +252,7 @@ export function ShieldMoveSheet({
     : evmNetworks
   const zcashVisible =
     showZcash &&
-    (source === 'zcash-shield' || chainId === getZcashChainId(network)) &&
+    (source === 'zcash-shield' || chainId === 'all' || chainId === getZcashChainId(network)) &&
     (search.trim() === '' || 'zec zcash'.includes(search.trim().toLowerCase()))
   const needsCatalog = source !== 'zcash-shield' && canNear
   const loading =
@@ -429,6 +429,11 @@ export function ShieldMoveSheet({
                   </div>
                   {networks.length > 0 && (
                     <div className="mb-4 flex gap-2 overflow-x-auto pb-1" aria-label="Network">
+                      <FilterButton
+                        label="All"
+                        selected={chainId === 'all'}
+                        onClick={() => setChainId('all')}
+                      />
                       {networks.map(([id, label]) => (
                         <FilterButton
                           key={id}
@@ -529,15 +534,11 @@ export function ShieldMoveSheet({
                   </button>
                 </div>
               )}
-              {!loading &&
-                !error &&
-                (source === 'zcash-shield' || chainId !== 'all' || networks.length === 0) &&
-                filteredRows.length === 0 &&
-                !zcashVisible && (
-                  <p className="py-5 text-center text-sm text-wallet-secondary">
-                    No available tokens
-                  </p>
-                )}
+              {!loading && !error && filteredRows.length === 0 && !zcashVisible && (
+                <p className="py-5 text-center text-sm text-wallet-secondary">
+                  No available tokens
+                </p>
+              )}
             </>
           )}
         </div>
@@ -608,6 +609,7 @@ function FilterButton({
     <button
       type="button"
       aria-label={chainIcon ? `${label} network` : 'All networks'}
+      aria-pressed={selected}
       onClick={onClick}
       className={`wallet-interactive flex size-10 shrink-0 items-center justify-center rounded-md border ${selected ? 'border-primary bg-card text-foreground' : 'border-white/10 bg-card text-wallet-secondary hover:border-white/30'}`}
     >

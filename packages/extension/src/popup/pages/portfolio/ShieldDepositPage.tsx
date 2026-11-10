@@ -31,8 +31,7 @@ import {
   depositTokenForNetwork,
   listDepositTokenChoices,
   formatDepositAmount,
-  hasDepositSettlementShortfall,
-  depositTokenChainId
+  hasDepositSettlementShortfall
 } from '@/popup/services/shield-deposit-options'
 import {
   externalShieldDepositClient,
@@ -218,7 +217,6 @@ function ShieldDepositContent() {
   useEffect(() => {
     let active = true
     let revision = 0
-    let initialSelectionPending = true
     setRecords([])
     setViewRecordId(null)
     setShowAllHistory(false)
@@ -241,20 +239,13 @@ function ShieldDepositContent() {
           )
             return
           setRecords(result)
-          if (initialSelectionPending) {
-            setViewRecordId(
-              result.find(record => !isExternalShieldDepositAutoHidden(record))?.depositId ?? null
-            )
-            initialSelectionPending = false
-          }
         })
         .catch(() => {
           if (
             active &&
             requestRevision === revision &&
             mounted.current &&
-            scopeRef.current === scopeKey &&
-            initialSelectionPending
+            scopeRef.current === scopeKey
           )
             setError('Deposit history unavailable')
         })
@@ -1148,10 +1139,6 @@ function ShieldDepositContent() {
                           className="block truncate text-xs text-muted"
                           title={choice.token.assetId}
                         >
-                          {networks.find(
-                            network => network.id === depositTokenChainId(choice.token)
-                          )?.displayName ?? choice.token.blockchain}{' '}
-                          ·{' '}
                           {choice.token.contractAddress
                             ? `${choice.token.contractAddress.slice(0, 8)}...${choice.token.contractAddress.slice(-6)}`
                             : choice.token.assetId}

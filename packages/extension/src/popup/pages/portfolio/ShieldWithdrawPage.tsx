@@ -545,8 +545,8 @@ function ShieldWithdrawForm() {
   return (
     <div className="page-container min-h-0 overflow-hidden">
       <PageHeader title="Send" showBack />
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-5 pt-6">
-        <div className="flex flex-col items-center pb-7">
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-5 pt-4">
+        <div className="flex flex-col items-center pb-4">
           <input
             aria-label="Send amount"
             disabled={busy}
@@ -613,6 +613,7 @@ function ShieldWithdrawForm() {
           </div>
         </div>
 
+        <h2 className="mb-3 text-sm text-muted">Send to</h2>
         <div className="mb-3 flex min-h-[62px] w-full items-center gap-3 rounded-lg bg-wallet-surface px-3">
           <button
             type="button"
@@ -906,9 +907,10 @@ function ShieldWithdrawForm() {
                 type="button"
                 onClick={() => {
                   if (picker === 'source') {
-                    if (!destinationId && destinationToken)
-                      setDestinationId(destinationToken.asset.asset.id)
                     setSourceId(item.asset.asset.id)
+                    setDestinationId('')
+                    setDestinationNetworkId(null)
+                    setRecipient('')
                     setAmount('')
                   } else {
                     setDestinationId(item.asset.asset.id)
@@ -936,9 +938,11 @@ function ShieldWithdrawForm() {
                 />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm">{item.asset.metadata.symbol}</span>
-                  <span className="block truncate text-xs text-muted">
-                    {item.chain.chain.displayName}
-                  </span>
+                  {picker === 'source' && (
+                    <span className="block truncate text-xs text-muted">
+                      {item.chain.chain.displayName}
+                    </span>
+                  )}
                 </span>
                 {picker === 'source' && (
                   <span

@@ -62,6 +62,8 @@ export function ShieldSwapPage() {
 function ShieldSwapForm() {
   const [params] = useSearchParams()
   const { navigate } = useNavigate()
+  const routeSourceAssetId = params.get('assetId')
+  const routeDestinationAssetId = params.get('destination')
   const providerIsNear =
     params.get('provider') === null || params.get('provider') === 'near-confidential'
   const walletId = useWalletStore(state => state.currentWalletId)
@@ -88,8 +90,8 @@ function ShieldSwapForm() {
   const [managedAssets, setManagedAssets] = useState<readonly IntentsManagedAsset[]>([])
   const [balances, setBalances] = useState<readonly ConfidentialBalance[] | null>(null)
   const [balanceScope, setBalanceScope] = useState('')
-  const [fromId, setFromId] = useState<string | null>(params.get('assetId'))
-  const [toId, setToId] = useState<string | null>(null)
+  const [fromId, setFromId] = useState<string | null>(routeSourceAssetId)
+  const [toId, setToId] = useState<string | null>(routeDestinationAssetId)
   const [amount, setAmount] = useState('')
   const [slippageBps, setSlippageBps] = useState(50)
   const [picker, setPicker] = useState<'from' | 'to' | null>(null)
@@ -119,8 +121,8 @@ function ShieldSwapForm() {
   }, [providerIsNear, navigate])
 
   useEffect(() => {
-    setFromId(params.get('assetId'))
-    setToId(null)
+    setFromId(routeSourceAssetId)
+    setToId(routeDestinationAssetId)
     setAmount('')
     setSlippageBps(50)
     setPicker(null)
@@ -131,7 +133,7 @@ function ShieldSwapForm() {
     setUncertain(false)
     setError(null)
     confirmationAttempt.current = null
-  }, [scopeKey])
+  }, [scopeKey, routeSourceAssetId, routeDestinationAssetId])
 
   useEffect(() => {
     let active = true
@@ -199,7 +201,7 @@ function ShieldSwapForm() {
   const sources = shieldFundingSources(options, displayBalances)
   const from = fromId
     ? (sources.find(asset => asset.asset.asset.id === fromId) ?? null)
-    : (sources[0] ?? null)
+    : (sources.find(asset => asset.asset.asset.id !== toId) ?? null)
   const to = toId ? (options.find(asset => asset.asset.asset.id === toId) ?? null) : null
   const canReverse = Boolean(
     to && sources.some(asset => asset.asset.asset.id === to.asset.asset.id)

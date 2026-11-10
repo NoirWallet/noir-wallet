@@ -1479,23 +1479,19 @@ function TransferForm() {
               {maximum.loading ? '…' : 'Max'}
             </button>
           </div>
-          {fromAssetDetail && selected && (
+          {fromAssetDetail && from === 'shield' && selected && (
             <button
               type="button"
               onClick={() => {
-                if (from === 'shield') {
-                  setNetworkSearch('')
-                  setNetworkPickerOpen(true)
-                } else {
-                  setAssetPickerOpen(true)
-                }
+                setNetworkSearch('')
+                setNetworkPickerOpen(true)
               }}
               className="wallet-interactive flex max-w-full items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted hover:bg-wallet-selected focus-visible:outline-2 focus-visible:outline-primary"
               aria-label="Select network"
             >
               <ChainIcon
                 chain={
-                  from === 'shield' && targetAsset
+                  targetAsset
                     ? resolveChainIconAlias(
                         targetAsset.chain.chain.family,
                         targetAsset.chain.chain.displayName,
@@ -1508,9 +1504,7 @@ function TransferForm() {
                 showTooltip={false}
               />
               <span className="truncate">
-                {from === 'shield'
-                  ? (targetAsset?.chain.chain.displayName ?? 'Select network')
-                  : selected.chain.chain.displayName}
+                {targetAsset?.chain.chain.displayName ?? 'Select network'}
               </span>
               <Icon icon="lucide:chevron-down" width={14} height={14} />
             </button>

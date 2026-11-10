@@ -21,14 +21,14 @@ export function SeedPhraseDisplay({
     <div className="relative group">
       <div
         aria-hidden={blurred ? true : undefined}
-        className={`grid grid-cols-3 gap-3 p-4 bg-black/40 rounded-xl border border-white/10 transition-all duration-300 ${
+        className={`grid grid-cols-2 min-[520px]:grid-cols-3 gap-3 p-4 bg-black/40 rounded-xl border border-white/10 transition-all duration-300 ${
           blurred ? 'blur-md select-none' : ''
         }`}
       >
         {words.map((word, index) => (
-          <div key={index} className="relative flex items-center">
+          <div key={index} className="relative flex min-w-0 items-center">
             <span className="absolute left-3 text-xs text-muted select-none">{index + 1}.</span>
-            <div className="w-full py-2.5 pl-8 pr-2 bg-card rounded-lg text-sm font-medium text-center border border-transparent">
+            <div className="w-full min-w-0 py-2.5 pl-8 pr-2 bg-card rounded-lg text-sm font-medium text-center border border-transparent">
               {blurred ? '------' : word}
             </div>
           </div>

@@ -874,7 +874,12 @@ function AccountItem({
                   className="text-xs text-muted"
                 />
               ) : (
-                <span className="text-xs text-muted">{walletDisplayName || wallet.name}</span>
+                <span
+                  className="block max-w-full truncate text-xs text-muted"
+                  title={walletDisplayName || wallet.name}
+                >
+                  {walletDisplayName || wallet.name}
+                </span>
               ))}
           </div>
           <div className="pointer-events-auto flex shrink-0 items-center gap-1">

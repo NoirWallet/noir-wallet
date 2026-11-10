@@ -559,22 +559,11 @@ export function AssetDetail() {
     if (nearShieldSelected) {
       if (privateTransferEligible && shieldAssetSupported)
         navigate(
-          `/shield-swap?provider=near-confidential&assetId=${encodeURIComponent(asset.asset.id)}`
+          `/shield-swap?provider=near-confidential&destination=${encodeURIComponent(asset.asset.id)}`
         )
       return
     }
-    const query = new URLSearchParams({ source: asset.asset.id })
-    if (chain?.chain.family === 'evm' && effectiveWalletId && effectiveAccountId) {
-      query.set('sourceMode', actionDomain === 'private' ? 'private' : 'main')
-      query.set('sourceWalletId', effectiveWalletId)
-      query.set('sourceAccountId', effectiveAccountId)
-    }
-    if (
-      chain?.chain.family === 'zcash' &&
-      (detailDomain === 'public' || detailDomain === 'shield')
-    ) {
-      query.set('fundingSource', detailDomain === 'public' ? 'transparent' : 'shielded')
-    }
+    const query = new URLSearchParams({ destination: asset.asset.id })
     navigate(`/swap?${query.toString()}`)
   }
 
@@ -1119,7 +1108,7 @@ export function AssetDetail() {
                 type="button"
                 onClick={() =>
                   navigate(
-                    `/shield-swap?provider=near-confidential&assetId=${encodeURIComponent(asset.asset.id)}`
+                    `/shield-swap?provider=near-confidential&destination=${encodeURIComponent(asset.asset.id)}`
                   )
                 }
                 className="flex w-full items-center justify-between gap-4 text-left text-sm hover:text-primary"

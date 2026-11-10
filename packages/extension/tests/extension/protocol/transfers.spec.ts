@@ -364,8 +364,21 @@ test('receives an external Shield deposit without spending local funds and resto
   await captureScreenshot(popup, 'shield-near-provider-actions-popup.png')
   await popup.getByRole('button', { name: 'Receive', exact: true }).click()
   await popup.getByRole('button', { name: /Select token/i }).click()
-  await popup.getByPlaceholder('Search tokens').fill('ETH')
-  await popup.getByRole('button', { name: /^ETH on Ethereum/ }).click()
+  await popup.getByPlaceholder('Search token').fill('ETH')
+  await popup
+    .getByRole('dialog', { name: 'Select Token' })
+    .getByRole('button', { name: /^ETH/ })
+    .click()
+  await popup.getByRole('button', { name: 'Network Select network' }).click()
+  await popup
+    .getByRole('dialog', { name: 'Select Network' })
+    .getByRole('button', { name: 'Ethereum' })
+    .click()
+  await popup.getByRole('button', { name: 'Shield provider Select provider' }).click()
+  await popup
+    .getByRole('dialog', { name: 'Shield Provider' })
+    .getByRole('button', { name: /NEAR Confidential/ })
+    .click()
   await popup.getByLabel('Amount to receive', { exact: true }).fill('0.01')
   await expect(popup.getByLabel('Refund address', { exact: true })).toHaveValue(identity.main)
   const refund = '0x3333333333333333333333333333333333333333'
@@ -410,6 +423,18 @@ test('receives an external Shield deposit without spending local funds and resto
   await openNearShieldAction(popup, 'Receive')
   await expect(
     popup
+      .getByRole('region', { name: 'Deposit history' })
+      .getByRole('button', { name: /ETH/ })
+      .first()
+  ).toBeVisible()
+  await expect(popup.getByRole('dialog', { name: 'Receiving address' })).toHaveCount(0)
+  await popup
+    .getByRole('region', { name: 'Deposit history' })
+    .getByRole('button', { name: /ETH/ })
+    .first()
+    .click()
+  await expect(
+    popup
       .getByRole('dialog', { name: 'Receiving address' })
       .getByText(depositAddress, { exact: true })
   ).toBeVisible({ timeout: 30_000 })
@@ -418,6 +443,12 @@ test('receives an external Shield deposit without spending local funds and resto
   await sidePanel.setViewportSize({ width: 480, height: 900 })
   await sidePanel.goto(`chrome-extension://${extensionId}/index.html?surface=side-panel`)
   await openNearShieldAction(sidePanel, 'Receive')
+  await expect(sidePanel.getByRole('dialog', { name: 'Receiving address' })).toHaveCount(0)
+  await sidePanel
+    .getByRole('region', { name: 'Deposit history' })
+    .getByRole('button', { name: /ETH/ })
+    .first()
+    .click()
   const sidePanelAddress = sidePanel.getByRole('dialog', { name: 'Receiving address' })
   await expect(sidePanelAddress.getByText(depositAddress, { exact: true })).toBeVisible({
     timeout: 30_000
@@ -503,8 +534,7 @@ test('receives an external Shield deposit without spending local funds and resto
   await popup.goto(`chrome-extension://${extensionId}/index.html`)
   await openNearShieldAction(popup, 'Receive')
   const history = popup.getByRole('region', { name: 'Deposit history' })
-  await expect(popup.getByRole('dialog', { name: 'Receiving address' })).toBeVisible()
-  await popup.keyboard.press('Escape')
+  await expect(popup.getByRole('dialog', { name: 'Receiving address' })).toHaveCount(0)
   await expect(history.getByText('Quote expired')).toBeVisible()
   await popup.clock.fastForward(20_000)
   await expect(history.getByRole('button', { name: 'Show all' })).toBeVisible()
@@ -544,6 +574,8 @@ test('receives an external Shield deposit without spending local funds and resto
   await popup.goto(`chrome-extension://${extensionId}/index.html`)
   await openNearShieldAction(popup, 'Receive')
   const partialDialog = popup.getByRole('dialog', { name: 'Receiving address' })
+  await expect(partialDialog).toHaveCount(0)
+  await history.getByRole('button', { name: /ETH.*Partial deposit/ }).click()
   await expect(partialDialog.getByRole('status')).toHaveText('Partial deposit')
   await expect(partialDialog.getByText('Quote expired', { exact: true })).toBeVisible()
   await expect(partialDialog.getByText('0.005 ETH', { exact: true }).first()).toBeVisible()

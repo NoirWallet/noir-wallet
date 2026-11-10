@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useLocation, useSearchParams } from 'react-router-dom'
 import { Icon } from '@iconify/react'
 import { QRCodeSVG } from 'qrcode.react'
 import { useNavigate } from '../../provider/Router'
@@ -40,6 +40,7 @@ import { formatSortAddress } from '@/lib/format'
 import { DEFAULT_NETWORK } from '@/lib/runtime-network'
 import { useWalletStore } from '@/store/wallet-store'
 import { ACCOUNT_AVATARS } from '@/popup/lib/account-avatars'
+import { availableSoftwareAccountFamilies } from '@/popup/services/account-network-selection-client'
 
 interface AddressQrTarget {
   readonly network: AccountNetworkView
@@ -372,6 +373,7 @@ function AddressNetworkGroup({
 
 export function AddressesList() {
   const { navigate } = useNavigate()
+  const location = useLocation()
   const { copyToClipboard, showToast, isCopied, copyFailed } = useCopyToClipboard()
   const [searchParams] = useSearchParams()
   const walletId = searchParams.get('walletId')
@@ -390,7 +392,28 @@ export function AddressesList() {
       ? state.getAccount(walletId, accountId)?.networkAddresses?.[DEFAULT_NETWORK]?.shielded
       : undefined
   )
+  const account = useWalletStore(state =>
+    walletId && accountId ? state.getAccount(walletId, accountId) : undefined
+  )
+  const wallet = useWalletStore(state => state.wallets.find(item => item.id === walletId))
   const [networkQuery, setNetworkQuery] = useState('')
+  const availableFamilies = useMemo(() => availableSoftwareAccountFamilies(), [])
+  const selectedFamilies = account?.networkSelections?.[DEFAULT_NETWORK] ?? availableFamilies
+  const canManageNetworks =
+    Boolean(wallet && account) &&
+    (wallet?.keySource === undefined || wallet.keySource === 'software')
+  const missingFamilies =
+    !scopedReceive && !shieldedZcashOnly && !receiveView && canManageNetworks
+      ? (['zcash', 'evm'] as const).filter(
+          family =>
+            availableFamilies.includes(family) &&
+            !selectedFamilies.includes(family) &&
+            (!networkQuery.trim() ||
+              (family === 'evm' ? 'Ethereum & EVM' : 'Zcash')
+                .toLowerCase()
+                .includes(networkQuery.trim().toLowerCase()))
+        )
+      : []
   const [mode, setMode] = useState<'public' | 'private'>('public')
   const activeMode = scopedReceive ? requestedMode : mode
   const [evmExpanded, setEvmExpanded] = useState(false)
@@ -451,7 +474,7 @@ export function AddressesList() {
     return () => {
       cancelled = true
     }
-  }, [walletId, accountId, shieldedReceiveAddress, loadAttempt])
+  }, [walletId, accountId, shieldedReceiveAddress, loadAttempt, location.key])
 
   const filteredNetworks = useMemo(() => {
     const query = networkQuery.trim().toLowerCase()
@@ -536,6 +559,37 @@ export function AddressesList() {
     />
   )
 
+  const renderMissingFamily = (family: 'zcash' | 'evm') => (
+    <div
+      key={family}
+      className="flex min-h-[64px] min-w-0 items-center gap-3 border-b border-border/40 py-2"
+    >
+      {family === 'evm' ? (
+        <img src={evmGroupIcon} alt="" aria-hidden="true" className="size-8 shrink-0" />
+      ) : (
+        <ChainIcon chain="zcash" width={32} height={32} className="shrink-0 rounded-lg" />
+      )}
+      <span className="min-w-0 flex-1 truncate text-base font-medium">
+        {family === 'evm' ? 'Ethereum & EVM' : 'Zcash'}
+      </span>
+      <Button
+        type="button"
+        variant="secondary"
+        size="sm"
+        aria-label={`Add ${family === 'evm' ? 'EVM' : 'Zcash'} network`}
+        className="shrink-0"
+        onClick={() =>
+          navigate(
+            `/account-networks?walletId=${encodeURIComponent(walletId!)}&accountId=${encodeURIComponent(accountId!)}`
+          )
+        }
+      >
+        <Icon icon="lucide:plus" width={16} height={16} />
+        Add {family === 'evm' ? 'EVM' : 'Zcash'}
+      </Button>
+    </div>
+  )
+
   if (!walletId || !accountId) {
     return (
       <div className="page-container">
@@ -579,7 +633,7 @@ export function AddressesList() {
             onRetry={canRetry ? () => setLoadAttempt(value => value + 1) : undefined}
             className="mt-5"
           />
-        ) : filteredNetworks.length === 0 ? (
+        ) : filteredNetworks.length === 0 && missingFamilies.length === 0 ? (
           <p className="py-10 text-center text-sm text-muted">
             {shieldedReceive
               ? 'Shield address unavailable'
@@ -590,8 +644,10 @@ export function AddressesList() {
         ) : (
           <div role="region" className="mt-3 pb-4" aria-label="Account network addresses">
             {scopedReceive && filteredNetworks.map(renderNetwork)}
+            {missingFamilies.includes('zcash') && renderMissingFamily('zcash')}
             {!scopedReceive &&
               otherNetworks.filter(network => network.chain.family === 'zcash').map(renderNetwork)}
+            {missingFamilies.includes('evm') && renderMissingFamily('evm')}
             {!scopedReceive && !receiveView && showOtherChains && (
               <div className="mt-3 flex min-h-10 min-w-0 items-center justify-between gap-2 border-t border-border/40 pt-2">
                 <h2 className="min-w-0 text-sm text-wallet-secondary">Other chains</h2>

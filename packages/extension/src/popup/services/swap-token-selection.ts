@@ -4,7 +4,7 @@ import type { SavedSwapTokenSelection } from '@/store/swap-store'
 import { getEnabledSwapChains } from './swap-catalog-loading'
 
 export interface ResolvedSwapTokenSelection {
-  readonly tokenIn: SwapToken
+  readonly tokenIn: SwapToken | null
   readonly tokenOut: SwapToken | null
 }
 
@@ -105,6 +105,7 @@ export function resolveSwapTokenSelection(input: {
   readonly crossChainDestinationTokens?: readonly SwapToken[]
   readonly savedSelection?: SavedSwapTokenSelection
   readonly requestedSourceAssetId?: string | null
+  readonly requestedDestinationAssetId?: string | null
   readonly selectedSourceAssetId?: string | null
   readonly preferredSourceAssetId?: string
   readonly enabledChains?: readonly ChainDefinition[]
@@ -115,33 +116,44 @@ export function resolveSwapTokenSelection(input: {
   const walletSourceTokens = input.walletSourceTokens.filter(token =>
     enabledBlockchains.includes(token.blockchain)
   )
+  const destinationAssetId = input.requestedDestinationAssetId
+  const sourceCandidates = destinationAssetId
+    ? walletSourceTokens.filter(token => token.assetId !== destinationAssetId)
+    : walletSourceTokens
   const requestedSource = input.tokens.find(
     token =>
       token.assetId === input.requestedSourceAssetId &&
+      token.assetId !== destinationAssetId &&
       enabledBlockchains.includes(token.blockchain)
   )
   const selectedSource = (input.sourceTokens ?? input.tokens).find(
     token =>
-      token.assetId === input.selectedSourceAssetId && enabledBlockchains.includes(token.blockchain)
+      token.assetId === input.selectedSourceAssetId &&
+      token.assetId !== destinationAssetId &&
+      enabledBlockchains.includes(token.blockchain)
   )
   if (!requestedSource && !selectedSource && walletSourceTokens.length === 0) return null
   const tokenIn =
     selectedSource ??
     requestedSource ??
-    walletSourceTokens.find(token => token.assetId === input.savedSelection?.tokenInId) ??
-    walletSourceTokens.find(token => token.assetId === input.preferredSourceAssetId) ??
-    walletSourceTokens[0]
+    sourceCandidates.find(token => token.assetId === input.savedSelection?.tokenInId) ??
+    sourceCandidates.find(token => token.assetId === input.preferredSourceAssetId) ??
+    sourceCandidates[0] ??
+    (destinationAssetId ? null : walletSourceTokens[0])
   const destinations = getSwapDestinationTokens(
     tokenIn,
     input.sameChainDestinationTokens ?? input.sourceTokens ?? input.tokens,
     input.crossChainDestinationTokens ?? input.tokens
   )
   const tokenOut =
-    destinations.find(
-      token =>
-        input.savedSelection?.tokenInId === tokenIn.assetId &&
-        token.assetId === input.savedSelection?.tokenOutId &&
-        token.assetId !== tokenIn.assetId
-    ) ?? findDefaultDestination(tokenIn, destinations, walletSourceTokens, enabledBlockchains)
+    destinations.find(token => token.assetId === destinationAssetId) ??
+    (tokenIn
+      ? (destinations.find(
+          token =>
+            input.savedSelection?.tokenInId === tokenIn.assetId &&
+            token.assetId === input.savedSelection?.tokenOutId &&
+            token.assetId !== tokenIn.assetId
+        ) ?? findDefaultDestination(tokenIn, destinations, walletSourceTokens, enabledBlockchains))
+      : null)
   return Object.freeze({ tokenIn, tokenOut })
 }
