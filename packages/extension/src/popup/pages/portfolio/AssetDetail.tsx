@@ -1141,7 +1141,7 @@ export function AssetDetail() {
           </section>
         )}
 
-        {(historyStatus === 'loading' || visibleHistory) && (
+        {(quote || historyStatus === 'loading' || visibleHistory) && (
           <section className="border-t border-border py-4">
             <MarketPriceChart
               points={visibleHistory?.points ?? null}
@@ -1151,11 +1151,7 @@ export function AssetDetail() {
               priceLabel={quote ? formatTokenPrice(quote.priceUsd, { showSign: true }) : null}
               changeLabel={formattedChange}
               changeDirection={change?.gt(0) ? 'positive' : change?.lt(0) ? 'negative' : 'neutral'}
-              delayed={
-                quote?.freshness === 'stale' ||
-                quote?.marketChange?.freshness === 'stale' ||
-                visibleHistory?.freshness === 'stale'
-              }
+              priceAsOf={quote?.freshness === 'stale' ? quote.sourceUpdatedAt : undefined}
               showRanges={historyStatus !== 'unsupported'}
               availableRanges={
                 historyRanges?.assetId === asset.asset.id ? historyRanges.ranges : []

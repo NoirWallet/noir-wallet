@@ -155,6 +155,58 @@ test('manual discovery refresh bypasses the automatic request cooldown', async (
   expect(discoveryRequests).toBe(2)
 })
 
+test('uses the Four.Meme icon only when discovery and stored metadata have no icon', async () => {
+  const chains = createInitialProductChainRegistry('mainnet')
+  const record = createDetectedEvmAssetRecord(chains, {
+    chainId: 'eip155:1',
+    contractAddress: CONTRACT,
+    metadata: { name: 'Example Token', symbol: 'EXT', decimals: 18 },
+    detectedAt: NOW,
+    lastSeenAt: NOW
+  })
+  const saved = []
+  let iconReads = 0
+  let discoveryIcon
+  const coordinator = new DetectedEvmAssetCoordinator({
+    chains,
+    repository: {
+      list: async () => [record],
+      upsert: async records => {
+        saved.push(...records)
+        return true
+      }
+    },
+    discovery: {
+      available: true,
+      discover: async () => [
+        {
+          assetId: ASSET_ID,
+          chainId: 'eip155:1',
+          contractAddress: CONTRACT,
+          ...(discoveryIcon ? { iconUrl: discoveryIcon } : {})
+        }
+      ]
+    },
+    resolveRpc: () => {
+      throw new Error('Existing Token metadata must not be queried again')
+    },
+    resolveIconUrl: async () => {
+      iconReads++
+      return 'https://static.four.meme/market/example.png'
+    },
+    now: () => NOW
+  })
+
+  await coordinator.refresh([{ address: ADDRESS, chainIds: ['eip155:1'] }])
+  expect(saved[0].metadata.iconUrl).toBe('https://static.four.meme/market/example.png')
+  expect(iconReads).toBe(1)
+
+  discoveryIcon = 'https://history.example/token-icon?source=example'
+  await coordinator.refresh([{ address: ADDRESS, chainIds: ['eip155:1'] }], { force: true })
+  expect(saved[1].metadata.iconUrl).toBe(discoveryIcon)
+  expect(iconReads).toBe(1)
+})
+
 test('persists detected inventory and exact hidden AssetIds in network-isolated storage', async () => {
   const previousChrome = globalThis.chrome
   const memory = memoryChrome()

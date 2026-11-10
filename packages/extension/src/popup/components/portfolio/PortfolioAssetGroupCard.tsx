@@ -128,8 +128,8 @@ function UnitPrice({
       </span>
       {change && formattedChange && (
         <span
-          aria-label={`${formattedChange} over 24 hours${changeFreshness === 'stale' ? ', delayed' : ''}`}
-          title={changeFreshness === 'stale' ? '24h change · Delayed' : '24h change'}
+          aria-label={`${formattedChange} over 24 hours${changeFreshness === 'stale' ? ', last available data' : ''}`}
+          title={changeFreshness === 'stale' ? 'Last available 24h change' : '24h change'}
           className={cn(
             'shrink-0',
             change.gt(0) ? 'text-success' : change.lt(0) ? 'text-danger' : 'text-muted'

@@ -1,4 +1,10 @@
 export { ChromeAssetPriceCacheRepository } from './chrome-asset-price-cache'
+export { ChromeFourMemePriceCacheRepository } from './chrome-four-meme-price-cache'
+export { FourMemeMarketClient, type FourMemeToken } from './four-meme-market-client'
+export {
+  FourMemeAssetPriceService,
+  type FourMemeAssetPriceServiceOptions
+} from './four-meme-asset-price-service'
 export {
   ChromeDefiLlamaMarketCacheRepository,
   DEFI_LLAMA_MARKET_CACHE_STORAGE_KEY
