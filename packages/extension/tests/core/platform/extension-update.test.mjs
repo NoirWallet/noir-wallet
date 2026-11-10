@@ -122,6 +122,11 @@ it.describe('Extension update state validation', () => {
         status: 'available',
         version: '1.0.28',
         detectedAt: 1
+      },
+      {
+        status: 'detected',
+        version: '1.0.29',
+        detectedAt: 2
       }
     ]
     const invalidStates = [
@@ -135,10 +140,87 @@ it.describe('Extension update state validation', () => {
         version: '1.0.28',
         previousVersion: '1.0.27',
         detectedAt: 1
+      },
+      {
+        status: 'detected',
+        version: 'invalid',
+        detectedAt: 1
       }
     ]
 
     validStates.forEach(state => assert.equal(isExtensionUpdateState(state), true))
     invalidStates.forEach(state => assert.equal(isExtensionUpdateState(state), false))
   })
+})
+
+it('retains detected versions across remote failures and clears installed versions', async () => {
+  const listeners = {}
+  let installedVersion = '1.0.28'
+  let storedState = null
+  let notifyUpdate = false
+  let failRequest = false
+  const originalChrome = globalThis.chrome
+  const originalFetch = globalThis.fetch
+
+  globalThis.chrome = {
+    runtime: {
+      getManifest: () => ({ version: installedVersion }),
+      onUpdateAvailable: { addListener: listener => (listeners.available = listener) },
+      onInstalled: { addListener: listener => (listeners.installed = listener) },
+      onStartup: { addListener: listener => (listeners.startup = listener) }
+    },
+    storage: {
+      local: {
+        get: async key => ({ [key]: storedState }),
+        set: async values => {
+          storedState = values.extension_update_notice
+        },
+        remove: async () => {
+          storedState = null
+        }
+      }
+    }
+  }
+  globalThis.fetch = async () => {
+    if (failRequest) throw new Error('Remote unavailable')
+    return {
+      ok: true,
+      headers: { get: () => null },
+      text: async () =>
+        JSON.stringify({
+          schemaVersion: 1,
+          releases: {
+            '1.0.29': { changes: ['Update'], notifyUpdate }
+          }
+        })
+    }
+  }
+
+  try {
+    const { initializeExtensionUpdates, refreshExtensionUpdateNotice } =
+      await import('../../../src/background/extension-update.ts')
+    initializeExtensionUpdates()
+
+    listeners.available({ version: '1.0.29' })
+    await refreshExtensionUpdateNotice()
+    assert.equal(storedState.status, 'detected')
+    assert.equal(storedState.version, '1.0.29')
+
+    notifyUpdate = true
+    listeners.startup()
+    await refreshExtensionUpdateNotice()
+    assert.equal(storedState.status, 'available')
+
+    failRequest = true
+    await assert.rejects(refreshExtensionUpdateNotice(), /Remote unavailable/)
+    assert.equal(storedState.status, 'available')
+
+    installedVersion = '1.0.29'
+    listeners.installed({ reason: 'update' })
+    await refreshExtensionUpdateNotice()
+    assert.equal(storedState, null)
+  } finally {
+    globalThis.chrome = originalChrome
+    globalThis.fetch = originalFetch
+  }
 })

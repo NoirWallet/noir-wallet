@@ -99,7 +99,7 @@ import {
   MIN_SHIELDING_BALANCE_MESSAGE
 } from '@/core/zcash/shielding'
 import type { TransactionStatusUpdatedMessage } from '@/types/transaction-messages'
-import { initializeExtensionUpdates } from './extension-update'
+import { initializeExtensionUpdates, refreshExtensionUpdateNotice } from './extension-update'
 import type { SendTransactionParams, TransactionType, Network } from '@/types'
 import { isIntentsSettledTransaction } from '@/lib/cross-chain-transaction'
 import { buildAccountKey, type AccountScope } from '@/core/wallet/account-scope'
@@ -5950,6 +5950,22 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (isRuntimeRecord(message) && message.type === 'REFRESH_EXTENSION_UPDATE') {
+    if (
+      !__EXTENSION_UPDATES_ENABLED__ ||
+      !hasExactRuntimeKeys(message, ['type']) ||
+      getOwnExtensionSenderContext(sender, chrome.runtime.id) !== 'extension-page'
+    ) {
+      sendResponse({ success: false })
+      return false
+    }
+    void refreshExtensionUpdateNotice().then(
+      () => sendResponse({ success: true }),
+      () => sendResponse({ success: false })
+    )
+    return true
+  }
+
   // Selecting another wallet must not wait for Noir's wallet or WASM initialization.
   if (isRuntimeRecord(message) && handleEvmWalletChoiceMessage(message, sender, sendResponse)) {
     return true
