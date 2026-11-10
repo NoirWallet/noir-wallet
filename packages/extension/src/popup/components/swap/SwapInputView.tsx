@@ -1,412 +1,762 @@
-import { useState, useRef } from 'react'
+import { useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { Icon } from '@iconify/react'
-import type { AddressType, FundingSource } from '@/types'
-import { Button } from '../../components/ui/button'
-import { Input } from '../../components/ui/input'
-import { AddressTypeSwitch } from '../../components/account/AddressType'
-import { TokenIdentity } from '../../components/tokens/TokenIdentity'
-import { FeeTierPicker } from '../../components/transaction/FeeTierPicker'
-import { isZecToken, type SwapToken } from '@/core/services/intents-api'
-import type { FeeTier } from '@/config/fee'
-import {
-  formatChainName,
-  formatNumber,
-  formatPrice,
-  formatSortAddress,
-  formatSymbol
-} from '@/lib/format'
-import Big from 'big.js'
-import { safeBig } from '@/lib/big'
+import type { AddressType } from '@/types'
+import type { SwapToken } from '@/core/services/intents-api'
+import { formatChainName, formatSortAddress, formatSymbol } from '@/lib/format'
+import { formatFeeAmount, formatFiatAmount, formatTokenQuantity } from '@/lib/number-format'
+import { cn } from '@/lib/utils'
+import { ExecutionAccountBadge } from '../account/ExecutionAccountSelector'
+import { TokenIcon } from '../tokens/TokenIcon'
+import { Button } from '../ui/button'
+import { Skeleton } from '../ui/skeleton'
 import { BalanceHelp } from '../transaction/BalanceHelp'
-
-function AddressInputWithRecent({
-  label,
-  value,
-  placeholder,
-  recentAddresses,
-  onChange
-}: {
-  label: string
-  value: string
-  placeholder: string
-  recentAddresses: string[]
-  onChange: (value: string) => void
-}) {
-  const [showRecent, setShowRecent] = useState(false)
-  const blurTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
-
-  const handleFocus = () => {
-    clearTimeout(blurTimer.current)
-    if (!value && recentAddresses.length > 0) setShowRecent(true)
-  }
-
-  const handleBlur = () => {
-    blurTimer.current = setTimeout(() => setShowRecent(false), 150)
-  }
-
-  const handleSelect = (addr: string) => {
-    onChange(addr)
-    setShowRecent(false)
-  }
-
-  return (
-    <div className="mb-2">
-      <span className="text-sm text-muted mb-2 block">{label}</span>
-      <div className="relative">
-        <Input
-          value={value}
-          onChange={e => {
-            onChange(e.target.value)
-            setShowRecent(false)
-          }}
-          onFocus={handleFocus}
-          onBlur={handleBlur}
-          placeholder={placeholder}
-          className="h-[54px] bg-card border-none rounded-xl"
-        />
-        {showRecent && recentAddresses.length > 0 && (
-          <div className="absolute left-0 right-0 top-full mt-1 bg-card border border-border rounded-xl shadow-lg z-20 overflow-hidden">
-            <p className="text-[11px] text-muted px-3 pt-2 pb-1">Recent</p>
-            {recentAddresses.map(addr => (
-              <button
-                key={addr}
-                onMouseDown={e => e.preventDefault()}
-                onClick={() => handleSelect(addr)}
-                className="w-full text-left px-3 py-2.5 text-sm hover:bg-white/5 transition-colors truncate"
-                title={addr}
-              >
-                {formatSortAddress(addr)}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
+import { SendRecipientInputCard } from '../transaction/SendInputCards'
+import { safeBig } from '@/lib/big'
+import { InlineError } from '../common/InlineError'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog'
 
 interface SwapInputViewProps {
   tokenIn: SwapToken | null
   tokenOut: SwapToken | null
-  isZecToOther: boolean
+  isZecSource: boolean
+  isZecDestination: boolean
+  requiresRecipientAddress: boolean
+  canSwitchTokens: boolean
+  switchingTokens?: boolean
   amountIn: string
   estimatedOut: string
+  isEstimatedOut: boolean
   fromFiat: string
   toFiat: string
   rate: string
+  providerName?: string
   addressType: AddressType
-  fundingSource: FundingSource
-  availableBalance: string
+  destinationAddress?: string
   spendableBalance: string
-  pendingBalance: string
-  recipientAddress: string
-  refundAddress: string
+  availableBalance?: string
+  pendingBalance?: string
+  recipientError?: string | null
   slippage: number
+  networkFee?: string
   isQuoting: boolean
-  areTokensLoading: boolean
+  quoteError?: string | null
+  maxLoading?: boolean
+  maxDisabled?: boolean
+  maxDisabledReason?: string
+  catalogError?: boolean
+  sourceAssetsLoading?: boolean
+  destinationAssetsLoading?: boolean
   canGetQuote: boolean
   hasInsufficientFunds?: boolean
-  amountError?: string
-  recentRefundAddresses?: string[]
-  recentRecipientAddresses?: string[]
-  /** ZIP-317 fee tier props (only meaningful when isZecToOther). */
-  feeTier?: FeeTier
-  onFeeTierChange?: (tier: FeeTier) => void
-  /** Estimated fee per tier in zats; null while pending. */
-  feeByTier?: Record<FeeTier, number | null>
-  feeLoading?: boolean
-  feeLoadingByTier?: Record<FeeTier, boolean>
+  insufficientMessage?: string
+  walletManagedRefundAddress?: string
+  feeIsApproximate?: boolean
+  sourceAddress?: string
+  sourceBadge?: string
+  destinationBadge?: string
+  sourceAccountAction?: ReactNode
+  onSelectDestinationAccount?: () => void
+  destinationAssetLocked?: boolean
+  sourceAssetLocked?: boolean
+  hideSwitchAssets?: boolean
+  hideReceiveAddress?: boolean
+  actionLabel?: string
+  actionLoading?: boolean
   onAmountInChange: (value: string) => void
   onMaxClick?: () => void
   onRecipientAddressChange: (value: string) => void
-  onRefundAddressChange: (value: string) => void
+  onSelectRecipientFromWallet?: () => void
   onSelectToken: (type: 'in' | 'out') => void
-  onSelectZecAddress: () => void
-  onSelectFundingSource: () => void
   onSwitchTokens: () => void
+  onRetryTokenCatalog: () => void
+  onRetryQuote?: () => void
   onOpenSlippageSetting: () => void
   onGetQuote: () => void
 }
 
-interface SwapCurrencyInputProps {
-  label: string
+interface SwapAssetCardProps {
+  direction: 'From' | 'To'
   token: SwapToken | null
   amount: string
   fiatValue: string
+  accountAddress?: string
+  accountBadge?: string
+  accountAction?: ReactNode
+  accountFallbackLabel?: string
+  balance?: string
   onTokenSelect: () => void
+  tokenSelectDisabled?: boolean
+  tokenSelectLocked?: boolean
   onAmountChange?: (value: string) => void
+  onMaxClick?: () => void
+  maxLoading?: boolean
+  maxDisabled?: boolean
+  maxDisabledReason?: string
   isReadOnly?: boolean
-  labelAccessory?: React.ReactNode
-  extraHeader?: React.ReactNode
-  extraFooter?: React.ReactNode
-  showBalance?: boolean
-  isLoading?: boolean
-  isLoadingTokens?: boolean
+  isAmountLoading?: boolean
+  isEstimatedAmount?: boolean
+  validationMessage?: string
+  balanceHelp?: boolean
+  pendingBalance?: string
 }
 
-function SwapCurrencyInput({
-  label,
+function SwapAssetCardSkeleton({ direction }: { readonly direction: 'From' | 'To' }) {
+  return (
+    <section
+      className="min-h-[126px] py-3"
+      role="status"
+      aria-label={`Loading ${direction.toLowerCase()} assets`}
+    >
+      <div className="flex h-5 items-center justify-between">
+        <Skeleton className="h-3 w-24" />
+        <Skeleton className="h-3 w-14 bg-white/[0.05]" />
+      </div>
+      <div className="mt-5 flex items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <Skeleton className="size-9 shrink-0 rounded-full" />
+          <div className="space-y-2">
+            <Skeleton className="h-[26px] w-20" />
+            <Skeleton className="h-3 w-16 bg-white/[0.05]" />
+          </div>
+        </div>
+        <div className="min-w-0 flex-1 space-y-2">
+          <Skeleton className="ml-auto h-[26px] w-20" />
+          <Skeleton className="ml-auto h-3 w-12 bg-white/[0.05]" />
+        </div>
+      </div>
+    </section>
+  )
+}
+
+function ReceiveAddressSkeleton() {
+  return (
+    <div role="status" aria-label="Loading receive address">
+      <Skeleton className="mb-2 h-3.5 w-24" />
+      <div className="flex h-[46px] items-center gap-3 rounded-lg bg-card px-3">
+        <Skeleton className="size-6 shrink-0 rounded-lg" />
+        <Skeleton className="h-3.5 w-36" />
+        <Skeleton className="ml-auto h-3 w-12 bg-white/[0.05]" />
+      </div>
+    </div>
+  )
+}
+
+function SwapAssetCard({
+  direction,
   token,
   amount,
   fiatValue,
+  accountAddress,
+  accountBadge,
+  accountAction,
+  accountFallbackLabel,
+  balance,
   onTokenSelect,
+  tokenSelectDisabled = false,
+  tokenSelectLocked = false,
   onAmountChange,
+  onMaxClick,
+  maxLoading = false,
+  maxDisabled = false,
+  maxDisabledReason,
   isReadOnly = false,
-  labelAccessory,
-  extraHeader,
-  extraFooter,
-  isLoading = false
-}: SwapCurrencyInputProps) {
-  void isLoading
-
-  const tokenSelector = isZecToken(token) ? (
-    token && <TokenIdentity token={token} className="shrink-0" />
-  ) : (
-    <button
-      onClick={onTokenSelect}
-      className="cursor-pointer flex items-center gap-2 shrink-0 hover:opacity-80 transition-opacity"
-    >
-      {token ? <TokenIdentity token={token} /> : <span className="text-muted">Select</span>}
-      <Icon icon="lucide:chevron-down" width={16} height={16} className="text-muted" />
-    </button>
-  )
+  isAmountLoading = false,
+  isEstimatedAmount = false,
+  validationMessage,
+  balanceHelp = false,
+  pendingBalance
+}: SwapAssetCardProps) {
+  const hasAccountDetails = Boolean(accountAddress || accountFallbackLabel || accountBadge)
+  const amountField = useRef<HTMLInputElement>(null)
+  const amountInputId = useId()
+  const [amountFontSize, setAmountFontSize] = useState(20)
+  useLayoutEffect(() => {
+    if (isReadOnly || !amountField.current) return
+    const input = amountField.current
+    const resize = () => {
+      const canvas = document.createElement('canvas')
+      const context = canvas.getContext('2d')
+      if (!context) return
+      const computed = window.getComputedStyle(input)
+      context.font = `600 20px ${computed.fontFamily}`
+      const textWidth = context.measureText(amount || '0').width
+      setAmountFontSize(
+        Math.max(
+          11,
+          Math.min(20, Math.floor(((input.clientWidth - 4) * 20) / Math.max(textWidth, 1)))
+        )
+      )
+    }
+    const observer = new ResizeObserver(resize)
+    observer.observe(input)
+    resize()
+    return () => observer.disconnect()
+  }, [amount, isReadOnly])
+  if (tokenSelectDisabled) return <SwapAssetCardSkeleton direction={direction} />
 
   return (
-    <div className="mb-2">
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <div className="flex min-w-0 items-center gap-2">
-          <span className="text-sm text-muted">{label}</span>
-          {labelAccessory}
+    <section className="min-h-[126px] py-3">
+      <div className="flex min-h-5 min-w-0 flex-wrap items-center justify-between gap-x-2 gap-y-1 text-xs leading-4">
+        <div className="flex min-w-0 max-w-full items-center gap-1.5">
+          <span className="shrink-0 text-sm font-medium leading-[18px] text-muted">
+            {direction}
+          </span>
+          {accountAction}
+          {!accountAction && hasAccountDetails && (
+            <>
+              {accountAddress ? (
+                <span className="truncate font-mono text-xs text-muted" title={accountAddress}>
+                  {formatSortAddress(accountAddress)}
+                </span>
+              ) : accountFallbackLabel ? (
+                <span className="truncate text-muted">{accountFallbackLabel}</span>
+              ) : null}
+              {!accountAction &&
+                accountBadge &&
+                (accountBadge === 'Confidential' ||
+                accountBadge === 'Private' ||
+                accountBadge === 'Public' ? (
+                  <ExecutionAccountBadge
+                    mode={accountBadge === 'Public' ? 'main' : 'private'}
+                    className="h-[17px] px-1.5"
+                  />
+                ) : (
+                  <span
+                    className={cn(
+                      'shrink-0 rounded px-1.5 text-[10px] font-medium leading-[17px]',
+                      accountBadge === 'Shielded' || accountBadge === 'Shield'
+                        ? 'bg-success/10 text-success'
+                        : 'bg-white/7 text-muted'
+                    )}
+                  >
+                    {accountBadge}
+                  </span>
+                ))}
+            </>
+          )}
         </div>
-        {extraHeader}
-      </div>
-
-      <div className="relative">
-        {isReadOnly ? (
-          <div className="flex items-center justify-between gap-4">
-            {tokenSelector}
-            <div className="text-right min-w-0">
-              <p className="text-2xl font-semibold truncate">
-                {formatNumber(amount || '0', { useUnit: true })}
-              </p>
-            </div>
-          </div>
-        ) : (
-          <div className="flex gap-3">
-            <div className="flex-1 rounded-xl flex items-center  h-[56px]">{tokenSelector}</div>
-            <Input
-              type="text"
-              value={amount}
-              onChange={e => onAmountChange?.(e.target.value.replace(/[^0-9.]/g, ''))}
-              placeholder="0"
-              className="flex-1 h-[56px] bg-card border-none rounded-xl text-right text-2xl font-semibold px-4 shadow-none"
-            />
+        {balance !== undefined && (
+          <div className="ml-auto flex min-w-0 max-w-[48%] shrink items-center gap-1">
+            <span className="flex min-w-0 shrink items-center gap-1 text-xs font-medium text-muted">
+              <span className="shrink-0">Bal.</span>
+              <span className="min-w-0 truncate text-right font-sans tabular-nums" title={balance}>
+                {formatTokenQuantity(balance)}
+              </span>
+            </span>
+            {onMaxClick && (
+              <button
+                type="button"
+                onClick={onMaxClick}
+                disabled={maxLoading || maxDisabled}
+                aria-label="Use maximum balance"
+                title={maxDisabled ? maxDisabledReason : 'Use maximum balance'}
+                className="inline-flex min-w-7 shrink-0 items-center justify-center text-xs font-medium text-foreground enabled:hover:text-primary disabled:opacity-50"
+              >
+                {maxLoading ? (
+                  <Icon
+                    icon="lucide:loader-circle"
+                    width={12}
+                    height={12}
+                    className="animate-spin"
+                  />
+                ) : (
+                  'Max'
+                )}
+              </button>
+            )}
+            {balanceHelp && <BalanceHelp kind="available" />}
           </div>
         )}
       </div>
 
+      {validationMessage && (
+        <p
+          id="swap-source-amount-error"
+          className="mt-1 text-right text-xs text-warning"
+          role="alert"
+        >
+          {validationMessage}
+        </p>
+      )}
+
       <div
-        className={`mt-1 flex items-center gap-2 ${extraFooter ? 'justify-between' : 'justify-end'}`}
+        className={cn(
+          'flex items-center justify-between gap-3',
+          validationMessage ? 'mt-2' : 'mt-4'
+        )}
       >
-        {extraFooter}
-        <span className="text-sm text-muted">{formatPrice(fiatValue, { showSign: true })}</span>
+        <button
+          type="button"
+          onClick={onTokenSelect}
+          disabled={tokenSelectLocked}
+          aria-label={`${direction} asset`}
+          className="flex max-w-[55%] min-w-0 shrink-0 items-center gap-2 text-left transition-opacity enabled:hover:opacity-80"
+        >
+          <TokenIcon token={token || undefined} size={30} />
+          <span className="min-w-0">
+            <span className="flex min-w-0 items-center gap-1 text-xl font-semibold leading-[26px]">
+              <span className="truncate">{formatSymbol(token?.symbol) || 'Select'}</span>
+              {!tokenSelectLocked && (
+                <Icon icon="lucide:chevron-down" width={16} height={16} className="text-muted" />
+              )}
+            </span>
+            <span className="mt-0.5 block truncate text-xs leading-4 text-muted">
+              {token ? formatChainName(token.blockchain) : 'Choose network'}
+            </span>
+          </span>
+        </button>
+
+        {isReadOnly ? (
+          <div className="min-w-0 flex-1 text-right">
+            <p
+              aria-live="polite"
+              aria-label={isEstimatedAmount && amount ? `Estimated output: ${amount}` : undefined}
+              title={amount || undefined}
+              className={cn(
+                'overflow-x-auto whitespace-nowrap font-sans text-xl font-semibold leading-[26px]',
+                isEstimatedAmount && 'text-muted'
+              )}
+            >
+              {isAmountLoading && !amount ? (
+                <Icon
+                  icon="lucide:loader-circle"
+                  width={20}
+                  height={20}
+                  className="ml-auto animate-spin text-primary"
+                  aria-label="Refreshing quote"
+                />
+              ) : amount ? (
+                <>
+                  {isEstimatedAmount && <span aria-hidden="true">≈ </span>}
+                  {formatTokenQuantity(amount)}
+                </>
+              ) : (
+                '—'
+              )}
+            </p>
+            <p className="mt-0.5 truncate text-xs leading-4 text-muted">
+              {isEstimatedAmount ? (
+                <span className="inline-flex items-center justify-end gap-1">
+                  {isAmountLoading && (
+                    <Icon
+                      icon="lucide:loader-circle"
+                      width={11}
+                      height={11}
+                      className="animate-spin"
+                      aria-hidden="true"
+                    />
+                  )}
+                  <span>
+                    {fiatValue
+                      ? `≈${formatFiatAmount(fiatValue, { showSign: true })}`
+                      : 'Estimated'}
+                  </span>
+                </span>
+              ) : fiatValue ? (
+                formatFiatAmount(fiatValue, { showSign: true })
+              ) : (
+                '—'
+              )}
+            </p>
+          </div>
+        ) : (
+          <label htmlFor={amountInputId} className="min-w-0 flex-1 cursor-text text-right">
+            <input
+              id={amountInputId}
+              ref={amountField}
+              type="text"
+              inputMode="decimal"
+              value={amount}
+              onChange={event => onAmountChange?.(event.target.value.replace(/[^0-9.]/g, ''))}
+              placeholder="0"
+              aria-label={`${direction} amount`}
+              aria-invalid={Boolean(validationMessage) || undefined}
+              aria-describedby={validationMessage ? 'swap-source-amount-error' : undefined}
+              style={{ fontSize: amountFontSize }}
+              className="w-full min-w-0 bg-transparent text-right font-sans font-semibold leading-[26px] outline-none placeholder:text-muted/60"
+            />
+            <p className="mt-0.5 truncate text-xs leading-4 text-muted">
+              {fiatValue ? formatFiatAmount(fiatValue, { showSign: true }) : '—'}
+            </p>
+          </label>
+        )}
       </div>
-    </div>
+      {pendingBalance != null && safeBig(pendingBalance).gt(0) && (
+        <div className="mt-1 flex items-center justify-end gap-1 text-xs text-muted">
+          <span title={`${pendingBalance} ZEC pending`}>
+            {formatTokenQuantity(pendingBalance)} ZEC pending
+          </span>
+          <BalanceHelp kind="pending" />
+        </div>
+      )}
+    </section>
   )
 }
 
 export function SwapInputView({
   tokenIn,
   tokenOut,
-  isZecToOther,
+  isZecSource,
+  isZecDestination,
+  requiresRecipientAddress,
+  canSwitchTokens,
+  switchingTokens = false,
   amountIn,
   estimatedOut,
+  isEstimatedOut,
   fromFiat,
   toFiat,
   rate,
+  providerName,
   addressType,
-  fundingSource,
-  availableBalance,
+  destinationAddress,
   spendableBalance,
+  availableBalance,
   pendingBalance,
-  recipientAddress,
-  refundAddress,
+  recipientError,
   slippage,
+  networkFee,
   isQuoting,
-  areTokensLoading,
+  quoteError,
+  maxLoading = false,
+  maxDisabled = false,
+  maxDisabledReason,
+  catalogError = false,
+  sourceAssetsLoading = false,
+  destinationAssetsLoading = false,
   canGetQuote,
   hasInsufficientFunds,
-  amountError,
-  recentRefundAddresses = [],
-  recentRecipientAddresses = [],
-  feeTier,
-  onFeeTierChange,
-  feeByTier,
-  feeLoading,
-  feeLoadingByTier,
+  insufficientMessage,
+  walletManagedRefundAddress,
+  feeIsApproximate,
+  sourceAddress,
+  sourceBadge,
+  destinationBadge: destinationBadgeOverride,
+  sourceAccountAction,
+  onSelectDestinationAccount,
+  destinationAssetLocked = false,
+  sourceAssetLocked = false,
+  hideSwitchAssets = false,
+  hideReceiveAddress = false,
+  actionLabel = 'Swap',
+  actionLoading = false,
   onAmountInChange,
   onMaxClick,
   onRecipientAddressChange,
-  onRefundAddressChange,
+  onSelectRecipientFromWallet,
   onSelectToken,
-  onSelectZecAddress,
-  onSelectFundingSource,
   onSwitchTokens,
+  onRetryTokenCatalog,
+  onRetryQuote,
   onOpenSlippageSetting,
   onGetQuote
 }: SwapInputViewProps) {
-  void areTokensLoading
-
-  const showFeeTier = isZecToOther && feeTier && onFeeTierChange && feeByTier
+  const [showRefundAddress, setShowRefundAddress] = useState(false)
+  const [recipientSelectorOpen, setRecipientSelectorOpen] = useState(false)
+  const destinationBadge =
+    destinationBadgeOverride ??
+    (isZecDestination && !requiresRecipientAddress
+      ? addressType === 'shielded'
+        ? 'Shielded'
+        : 'Transparent'
+      : undefined)
+  const balanceValidationMessage = hasInsufficientFunds
+    ? insufficientMessage ||
+      (feeIsApproximate ? 'Insufficient balance' : `Insufficient balance (Fee: ${networkFee} ZEC)`)
+    : undefined
+  const hasQuoteDetails = Boolean(estimatedOut) && rate !== '...' && rate !== '0'
 
   return (
     <>
-      <div className="flex-1 px-5 py-2 overflow-y-auto">
-        <SwapCurrencyInput
-          label="From"
-          token={tokenIn}
-          amount={amountIn}
-          fiatValue={fromFiat}
-          onTokenSelect={() => onSelectToken('in')}
-          onAmountChange={onAmountInChange}
-          labelAccessory={
-            isZecToOther ? (
-              <AddressTypeSwitch
-                type={fundingSource}
-                onClick={onSelectFundingSource}
-                ariaLabel="Select funding source"
-              />
-            ) : undefined
-          }
-          extraHeader={
-            isZecToOther ? (
-              <div className="min-w-0 text-right">
-                <div className="flex min-w-0 items-center justify-end gap-1">
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-3 pt-2">
+        <div className="relative">
+          <SwapAssetCard
+            direction="From"
+            token={tokenIn}
+            amount={amountIn}
+            fiatValue={fromFiat}
+            accountAddress={sourceAddress}
+            accountBadge={sourceBadge ?? (isZecSource ? 'Shielded' : undefined)}
+            accountAction={sourceAccountAction}
+            balance={isZecSource ? (availableBalance ?? spendableBalance) : spendableBalance}
+            balanceHelp={isZecSource}
+            pendingBalance={isZecSource ? pendingBalance : undefined}
+            onTokenSelect={() => onSelectToken('in')}
+            tokenSelectDisabled={sourceAssetsLoading}
+            tokenSelectLocked={sourceAssetLocked}
+            onAmountChange={onAmountInChange}
+            onMaxClick={onMaxClick}
+            maxLoading={maxLoading}
+            maxDisabled={maxDisabled}
+            maxDisabledReason={maxDisabledReason}
+            validationMessage={balanceValidationMessage}
+          />
+
+          <div className="relative border-t border-white/10 pt-2">
+            {!hideSwitchAssets && (
+              <Button
+                type="button"
+                onClick={onSwitchTokens}
+                disabled={!canSwitchTokens}
+                aria-label="Switch assets"
+                aria-busy={switchingTokens}
+                title={
+                  switchingTokens
+                    ? 'Switching assets'
+                    : canSwitchTokens
+                      ? 'Switch assets'
+                      : 'The destination asset is not available in this wallet'
+                }
+                className="absolute -top-3.5 left-1/2 z-10 size-7 -translate-x-1/2 rounded-md bg-[#373741] p-0 text-foreground hover:bg-popover disabled:opacity-40"
+                variant="secondary"
+              >
+                <Icon
+                  icon={switchingTokens ? 'lucide:loader-circle' : 'lucide:arrow-down-up'}
+                  className={switchingTokens ? 'animate-spin' : undefined}
+                  width={16}
+                  height={16}
+                />
+              </Button>
+            )}
+
+            <SwapAssetCard
+              direction="To"
+              token={tokenOut}
+              amount={estimatedOut}
+              fiatValue={toFiat}
+              accountAddress={destinationAddress}
+              accountBadge={destinationBadge}
+              accountFallbackLabel={requiresRecipientAddress ? 'Custom address' : 'Wallet'}
+              accountAction={
+                !hideReceiveAddress && tokenOut && !destinationAssetsLoading ? (
                   <button
                     type="button"
-                    onClick={() => (onMaxClick ? onMaxClick() : onAmountInChange(spendableBalance))}
-                    disabled={safeBig(spendableBalance).lte(0)}
-                    className="min-w-0 truncate text-xs font-medium text-muted transition-colors hover:text-primary disabled:opacity-50"
+                    onClick={() =>
+                      onSelectDestinationAccount
+                        ? onSelectDestinationAccount()
+                        : setRecipientSelectorOpen(true)
+                    }
+                    aria-label="Choose receive account"
+                    title={destinationAddress || 'Choose receive account'}
+                    className="flex min-w-0 items-center gap-1.5 text-xs transition-colors hover:text-primary"
                   >
-                    Available {formatNumber(availableBalance, { rm: Big.roundDown })} ZEC
-                  </button>
-                  <BalanceHelp kind="available" />
-                </div>
-                {safeBig(pendingBalance ?? '0').gt(0) && (
-                  <span className="mt-0.5 flex min-w-0 items-center justify-end gap-1 text-[11px] text-muted">
-                    <span className="truncate">
-                      {formatNumber(pendingBalance, { rm: Big.roundDown })} ZEC pending
+                    <span className="min-w-0 truncate font-mono text-xs text-muted">
+                      {destinationAddress
+                        ? formatSortAddress(destinationAddress)
+                        : requiresRecipientAddress
+                          ? 'Custom address'
+                          : 'Wallet'}
                     </span>
-                    <BalanceHelp kind="pending" />
-                  </span>
+                    {destinationBadge &&
+                      (destinationBadge === 'Public' || destinationBadge === 'Private' ? (
+                        <ExecutionAccountBadge
+                          mode={destinationBadge === 'Public' ? 'main' : 'private'}
+                          className="h-[17px] px-1.5"
+                        />
+                      ) : (
+                        <span
+                          className={cn(
+                            'shrink-0 rounded px-1.5 text-[10px] font-medium leading-[17px]',
+                            destinationBadge === 'Shield' || destinationBadge === 'Shielded'
+                              ? 'bg-success/10 text-success'
+                              : 'bg-white/7 text-muted'
+                          )}
+                        >
+                          {destinationBadge}
+                        </span>
+                      ))}
+                    <Icon icon="lucide:chevron-down" width={12} height={12} className="shrink-0" />
+                  </button>
+                ) : undefined
+              }
+              onTokenSelect={() => onSelectToken('out')}
+              tokenSelectDisabled={destinationAssetsLoading}
+              tokenSelectLocked={destinationAssetLocked}
+              isReadOnly
+              isAmountLoading={isQuoting}
+              isEstimatedAmount={isEstimatedOut}
+            />
+          </div>
+        </div>
+
+        {catalogError && (
+          <InlineError
+            message="Unable to load assets"
+            onRetry={onRetryTokenCatalog}
+            className="mt-2 px-1 leading-5"
+          />
+        )}
+
+        {quoteError && (
+          <InlineError
+            message={quoteError}
+            onRetry={onRetryQuote}
+            retrying={isQuoting}
+            className="mt-2 px-1 leading-5"
+          />
+        )}
+
+        {!hideReceiveAddress && tokenOut && (requiresRecipientAddress || recipientError) && (
+          <div className="mt-2">
+            {destinationAssetsLoading ? (
+              <ReceiveAddressSkeleton />
+            ) : (
+              <div>
+                <SendRecipientInputCard
+                  id="swap-recipient-inline"
+                  label="Receive at"
+                  variant="filled"
+                  value={destinationAddress ?? ''}
+                  placeholder={`${formatChainName(tokenOut.blockchain)} address`}
+                  onChange={onRecipientAddressChange}
+                  onSelectRecipient={onSelectRecipientFromWallet}
+                  invalid={Boolean(recipientError)}
+                />
+                {recipientError && <InlineError message={recipientError} className="mt-2" />}
+              </div>
+            )}
+          </div>
+        )}
+
+        {!hasQuoteDetails && (
+          <button
+            type="button"
+            onClick={onOpenSlippageSetting}
+            className="mt-2 flex w-full items-center justify-end gap-1 text-xs font-medium leading-4 text-muted hover:text-foreground"
+            aria-label={`Set slippage, currently ${slippage}%`}
+          >
+            Slippage {slippage}%
+            <Icon icon="lucide:chevron-down" width={12} height={12} />
+          </button>
+        )}
+
+        {hasQuoteDetails && (
+          <div className="mt-3 space-y-2 rounded-lg border border-white/15 px-2.5 py-2.5 text-xs font-medium leading-4">
+            <div className="flex min-w-0 items-center justify-between gap-2">
+              <span className="text-muted">Slippage</span>
+              <button
+                type="button"
+                onClick={onOpenSlippageSetting}
+                className="flex shrink-0 items-center gap-1 hover:text-primary"
+                aria-label={`Set slippage, currently ${slippage}%`}
+              >
+                {slippage}% <Icon icon="lucide:chevron-down" width={12} height={12} />
+              </button>
+            </div>
+            {providerName && (
+              <div className="flex min-w-0 items-center justify-between gap-2">
+                <span className="text-muted">Provider</span>
+                <span className="truncate" title={providerName}>
+                  {providerName}
+                </span>
+              </div>
+            )}
+            <div className="flex min-w-0 items-center justify-between gap-2">
+              <span className="shrink-0 text-muted">Rate</span>
+              <span
+                className="min-w-0 truncate text-right"
+                title={`1 ${formatSymbol(tokenIn?.symbol)} = ${rate} ${formatSymbol(tokenOut?.symbol)}`}
+              >
+                1 {formatSymbol(tokenIn?.symbol) || '—'} = {isEstimatedOut ? '≈ ' : ''}
+                {formatTokenQuantity(rate)} {formatSymbol(tokenOut?.symbol) || '—'}
+              </span>
+            </div>
+            {networkFee && isZecSource && (
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-muted">Network fee</span>
+                <span>
+                  {feeIsApproximate ? '≈ ' : ''}
+                  {formatFeeAmount(networkFee)} ZEC
+                </span>
+              </div>
+            )}
+            {walletManagedRefundAddress && (
+              <div>
+                <button
+                  type="button"
+                  onClick={() => setShowRefundAddress(value => !value)}
+                  aria-expanded={showRefundAddress}
+                  className="flex w-full items-center justify-between text-muted hover:text-foreground"
+                >
+                  <span>Refund address</span>
+                  <Icon
+                    icon="lucide:chevron-down"
+                    width={12}
+                    height={12}
+                    className={cn('transition-transform', showRefundAddress && 'rotate-180')}
+                  />
+                </button>
+                {showRefundAddress && (
+                  <p
+                    className="mt-1 break-all font-mono text-xs font-normal"
+                    title={walletManagedRefundAddress}
+                  >
+                    {walletManagedRefundAddress}
+                  </p>
                 )}
               </div>
-            ) : undefined
-          }
-        />
-        {hasInsufficientFunds && (
-          <p className="text-warning text-xs mt-2 px-1" role="alert">
-            {amountError || 'Amount exceeds available balance.'}
-          </p>
-        )}
-        {!isZecToOther && tokenIn && !isZecToken(tokenIn) && (
-          <AddressInputWithRecent
-            label="Refund Address"
-            value={refundAddress}
-            placeholder={`${formatChainName(tokenIn.blockchain)} address...`}
-            recentAddresses={recentRefundAddresses}
-            onChange={onRefundAddressChange}
-          />
-        )}
-
-        {/* Switch tokens button */}
-        <div className="flex items-center justify-center my-1">
-          <div className="flex-1 h-px bg-white/10" />
-          <Button
-            onClick={onSwitchTokens}
-            className="mx-4 rounded-md"
-            size="icon-sm"
-            variant="secondary"
-          >
-            <Icon icon="lucide:arrow-down-up" width={18} height={18} />
-          </Button>
-          <div className="flex-1 h-px bg-white/10" />
-        </div>
-        <SwapCurrencyInput
-          label="To"
-          token={tokenOut}
-          amount={estimatedOut}
-          fiatValue={toFiat}
-          onTokenSelect={() => onSelectToken('out')}
-          isReadOnly
-          extraHeader={
-            !isZecToOther ? (
-              <AddressTypeSwitch
-                type={addressType}
-                onClick={onSelectZecAddress}
-                size="md"
-                ariaLabel="Select address type"
-              />
-            ) : undefined
-          }
-        />
-        {isZecToOther && tokenOut && (
-          <AddressInputWithRecent
-            label="Address"
-            value={recipientAddress}
-            placeholder={`${formatChainName(tokenOut.blockchain)} address...`}
-            recentAddresses={recentRecipientAddresses}
-            onChange={onRecipientAddressChange}
-          />
-        )}
-        {/* Rate, slippage, fee tier */}
-        <div className="space-y-3 pt-2">
-          <div className="flex justify-between items-center">
-            <span className="text-sm text-muted">Slippage tolerance</span>
-            <Button
-              onClick={onOpenSlippageSetting}
-              variant="secondary"
-              className="flex items-center gap-1"
-              size="sm"
-            >
-              <span className="text-sm">{slippage}%</span>
-              <Icon icon="lucide:settings" width={14} height={14} />
-            </Button>
+            )}
           </div>
-          <div className="flex justify-between items-center">
-            <span className="text-sm text-muted">Rate</span>
-
-            <span className="text-sm">
-              1 {formatSymbol(tokenIn?.symbol) || 'ZEC'} = {formatNumber(rate)}{' '}
-              {formatSymbol(tokenOut?.symbol) || '...'}
-            </span>
-          </div>
-          {showFeeTier && (
-            <FeeTierPicker
-              tier={feeTier!}
-              onTierChange={onFeeTierChange!}
-              feeByTier={feeByTier!}
-              loading={feeLoading}
-              loadingByTier={feeLoadingByTier}
-            />
-          )}
-        </div>
+        )}
       </div>
 
       <div className="page-footer">
         <Button
           onClick={onGetQuote}
-          disabled={!canGetQuote || hasInsufficientFunds}
-          isLoading={isQuoting}
-          className={`w-full h-[50px] font-semibold rounded-xl ${
-            canGetQuote && !hasInsufficientFunds && !isQuoting
-              ? 'bg-primary hover:bg-primary/90 text-black'
-              : 'bg-[#2C2C2E] text-muted cursor-not-allowed'
-          }`}
+          disabled={!canGetQuote || hasInsufficientFunds || actionLoading}
+          isLoading={isQuoting || actionLoading}
+          className="h-[45px] w-full text-base font-semibold leading-[21px] text-black"
         >
-          Get a quote
+          {actionLabel}
         </Button>
       </div>
+
+      <Dialog
+        open={recipientSelectorOpen && !hideReceiveAddress && !onSelectDestinationAccount}
+        onOpenChange={setRecipientSelectorOpen}
+      >
+        <DialogContent
+          position="bottom"
+          className="flex max-h-[calc(100dvh-56px)] flex-col gap-0 p-0"
+          showCloseButton
+        >
+          <DialogHeader className="shrink-0 px-5 pb-4 pt-5 text-left">
+            <DialogTitle className="text-sm">Receive at</DialogTitle>
+          </DialogHeader>
+          {tokenOut && (
+            <div className="min-h-0 overflow-y-auto px-5">
+              <SendRecipientInputCard
+                id="swap-recipient"
+                label="Address"
+                variant="filled"
+                value={destinationAddress ?? ''}
+                placeholder={`${formatChainName(tokenOut.blockchain)} address`}
+                onChange={onRecipientAddressChange}
+                autoFocus
+                onSelectRecipient={
+                  onSelectRecipientFromWallet
+                    ? () => {
+                        setRecipientSelectorOpen(false)
+                        window.requestAnimationFrame(() => onSelectRecipientFromWallet())
+                      }
+                    : undefined
+                }
+                invalid={Boolean(recipientError)}
+              />
+              {recipientError && <InlineError message={recipientError} className="mt-2" />}
+            </div>
+          )}
+          <div className="shrink-0 p-5">
+            <Button
+              type="button"
+              onClick={() => setRecipientSelectorOpen(false)}
+              className="h-10 w-full"
+            >
+              Done
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </>
   )
 }

@@ -1,4 +1,5 @@
-const DEFAULT_TIMEOUT_MS = 15_000
+import { DEFAULT_REQUEST_TIMEOUT_MS } from '@/config/extension'
+
 const DEFAULT_MAX_BYTES = 8 * 1024 * 1024
 const MAX_ERROR_BYTES = 16 * 1024
 
@@ -119,9 +120,9 @@ function readErrorDetail(
 async function fetchBytes(
   input: RequestInfo | URL,
   init?: FetchOptions
-): Promise<{ bytes: Uint8Array<ArrayBuffer>; contentType: string }> {
+): Promise<{ bytes: Uint8Array<ArrayBuffer>; response: Response }> {
   const {
-    timeoutMs = DEFAULT_TIMEOUT_MS,
+    timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
     maxBytes = DEFAULT_MAX_BYTES,
     signal: externalSignal,
     ...fetchInit
@@ -174,7 +175,7 @@ async function fetchBytes(
         const body = await readBody(response, maxBytes, value => {
           reader = value
         })
-        return { bytes: body.bytes, contentType: response.headers.get('content-type') || '' }
+        return { bytes: body.bytes, response }
       })(),
       aborted
     ])
@@ -198,11 +199,29 @@ export async function fetchJsonWithTimeout<T = unknown>(
   return JSON.parse(new TextDecoder().decode(bytes)) as T
 }
 
-/** Fetches headers and a bounded binary body within one deadline. */
-export async function fetchBlobWithTimeout(
+/** Retains the Response contract for clients while bounding the complete read. */
+export async function fetchWithTimeout(
   input: RequestInfo | URL,
   init?: FetchOptions
-): Promise<Blob> {
-  const { bytes, contentType } = await fetchBytes(input, init)
-  return new Blob([bytes], { type: contentType })
+): Promise<Response> {
+  const { bytes, response } = await fetchBytes(input, init)
+  return new Response(bytes.byteLength === 0 ? null : bytes, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers
+  })
+}
+
+export async function readBoundedResponseText(
+  response: Response,
+  maximumBytes: number,
+  responseTooLarge: () => Error
+): Promise<string> {
+  try {
+    const { bytes } = await readBody(response, maximumBytes, () => {})
+    return new TextDecoder().decode(bytes)
+  } catch (error) {
+    if (error instanceof FetchResponseTooLargeError) throw responseTooLarge()
+    throw error
+  }
 }

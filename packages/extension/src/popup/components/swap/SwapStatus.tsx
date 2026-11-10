@@ -1,36 +1,66 @@
 import { Button } from '../ui/button'
 import type { SwapStatus } from '@/core/services/intents-api'
-import {
-  formatNumber,
-  formatSortAddress,
-  formatExplorerUrl,
-  getChainFromAssetId,
-  formatChainName
-} from '@/lib/format'
+import { formatSortAddress } from '@/lib/format'
 import { TransactionResult, type TransactionStatus } from '../transaction/TransactionResult'
+import { AmountDisplay } from '../common/AmountDisplay'
 import { isZcashDestination } from '@/lib/cross-chain-transaction'
 import { WALLET_CONFIG } from '@/config/wallet'
 import { getIntentsStatusCopy } from '@/lib/transaction-status-copy'
+import type { TransactionLifecycleStatus } from '@/core/transactions/domain'
+import type { Network } from '@/types'
+import { getIntentsProgressPresentation } from '@/popup/services/transaction-progress'
+import { TransactionProgressSteps } from '../transaction/TransactionProgressSteps'
+import {
+  getConfidentialFundingStatusCopy,
+  getSwapTransactionReference,
+  getSwapResultAction,
+  getSwapActionLabels,
+  type ConfidentialFundingStatusView
+} from './swap-status-model'
 
 interface SwapStatusDisplayProps {
+  network: Network
   status: SwapStatus | null
   tokenInSymbol: string
   tokenOutSymbol: string
   amountIn: string
   amountOut: string
   actionName?: string
+  router?: string
   destinationChain?: string
   destinationConfirmations?: number | null
-  zcashTxHash?: string
+  originChain?: string
+  originTxHash?: string
+  originStatus?: TransactionLifecycleStatus
+  originConfirmations?: number
+  signedOrder?: boolean
   /** ZEC fee for the on-chain leg, in ZEC. Omit to hide the fee row. */
   fee?: string
+  confidentialFunding?: ConfidentialFundingStatusView
+  onResumeConfidentialFunding?: () => void
+  resumingConfidentialFunding?: boolean
   onClose: () => void
-  onBack?: () => void
+  onViewActivity: () => void
+  viewActivityDisabled?: boolean
 }
 
-function TxHashLink({ hash, chain }: { hash: string; chain: string }) {
-  const explorerUrl = formatExplorerUrl(chain, hash)
-  const chainLabel = formatChainName(chain)
+function TxHashLink({
+  hash,
+  assetId,
+  fallbackChain,
+  network
+}: {
+  hash: string
+  assetId?: string
+  fallbackChain?: string
+  network: Network
+}) {
+  const { label: chainLabel, url: explorerUrl } = getSwapTransactionReference(
+    assetId,
+    fallbackChain,
+    hash,
+    network
+  )
 
   if (!explorerUrl) {
     return (
@@ -56,32 +86,29 @@ function TxHashLink({ hash, chain }: { hash: string; chain: string }) {
   )
 }
 
-function getActionLabels(actionName?: string): { sendLabel: string; receiveLabel: string } {
-  switch (actionName) {
-    case 'Supply':
-      return { sendLabel: 'Send', receiveLabel: 'Supplied' }
-    case 'Withdraw':
-      return { sendLabel: 'Withdraw', receiveLabel: 'Received' }
-    case 'Claim':
-      return { sendLabel: 'Claimed', receiveLabel: 'Received' }
-    default:
-      return { sendLabel: 'Send', receiveLabel: 'Receive' }
-  }
-}
-
 export function SwapStatusDisplay({
+  network,
   status,
   tokenInSymbol,
   tokenOutSymbol,
   amountIn,
   amountOut,
   actionName,
+  router,
   destinationChain: destinationChainHint,
   destinationConfirmations,
-  zcashTxHash,
+  originChain: originChainHint,
+  originTxHash,
+  originStatus,
+  originConfirmations,
+  signedOrder,
   fee,
+  confidentialFunding,
+  onResumeConfidentialFunding,
+  resumingConfidentialFunding,
   onClose,
-  onBack
+  onViewActivity,
+  viewActivityDisabled
 }: SwapStatusDisplayProps) {
   const currentStatus = status?.status || 'PENDING_DEPOSIT'
   const destinationTxHash = status?.swapDetails?.destinationChainTxHashes?.[0]?.hash
@@ -96,76 +123,120 @@ export function SwapStatusDisplay({
     destinationConfirmations != null && destinationConfirmations >= requiredConfirmations
   const waitsForSpendability = waitsForZcashDestination && !destinationIsSpendable
   const actionLabel = actionName || 'Swap'
-  const statusCopy = getIntentsStatusCopy(currentStatus, {
+  const statusCopy = confidentialFunding
+    ? getConfidentialFundingStatusCopy(confidentialFunding, actionLabel)
+    : getIntentsStatusCopy(currentStatus, {
+        actionName: actionLabel,
+        hasDestinationTxHash: !!destinationTxHash,
+        waitsForZcashConfirmations: waitsForSpendability,
+        destinationConfirmations,
+        requiredConfirmations
+      })
+  const progress = getIntentsProgressPresentation({
+    status: currentStatus,
     actionName: actionLabel,
-    hasDestinationTxHash: !!destinationTxHash,
-    waitsForZcashConfirmations: waitsForSpendability,
+    router,
+    originStatus,
+    originTxHash: originTxHash ?? status?.swapDetails?.originChainTxHashes?.[0]?.hash,
+    originConfirmations,
+    destinationTxHash,
+    waitsForDestinationConfirmations: waitsForSpendability,
     destinationConfirmations,
-    requiredConfirmations
+    requiredConfirmations,
+    signedOrder
   })
   const txStatus: TransactionStatus = statusCopy.resultStatus
-  const isComplete = txStatus === 'success' || txStatus === 'warning' || txStatus === 'failed'
+  const resultAction = getSwapResultAction(
+    txStatus,
+    confidentialFunding?.phase === 'needs-auth' && onResumeConfidentialFunding !== undefined,
+    !!confidentialFunding
+  )
 
-  const originChain = getChainFromAssetId(status?.originAsset || '')
-  const destinationHashChain = getChainFromAssetId(status?.destinationAsset || '')
-  const labels = getActionLabels(actionName)
+  const labels = getSwapActionLabels(actionName)
   const showFee = !!fee
 
   return (
     <TransactionResult
       status={txStatus}
-      title={statusCopy.title}
-      description={statusCopy.description}
+      showStatus={!!confidentialFunding}
+      title={confidentialFunding ? statusCopy.title : progress.title}
+      description={confidentialFunding ? statusCopy.description : progress.description}
       footer={
-        isComplete ? (
+        resultAction === 'continue' && onResumeConfidentialFunding ? (
           <Button
-            onClick={onClose}
-            className="w-full h-[50px] bg-primary hover:bg-primary/90 text-black font-bold rounded-xl"
+            onClick={onResumeConfidentialFunding}
+            disabled={resumingConfidentialFunding}
+            isLoading={resumingConfidentialFunding}
+            className="h-[45px] w-full"
           >
-            Done
+            Continue
           </Button>
         ) : (
           <Button
-            onClick={onBack}
-            variant="outline"
-            className="w-full h-[50px] border-white/20 hover:bg-white/5 font-semibold rounded-xl"
+            onClick={resultAction === 'done' ? onClose : onViewActivity}
+            disabled={resultAction !== 'done' && viewActivityDisabled}
+            className="h-[45px] w-full"
           >
-            Back
+            {resultAction === 'done' ? 'Done' : 'View Activity'}
           </Button>
         )
       }
     >
       <div className="w-full space-y-3">
-        <div className="flex justify-between items-center py-3 border-b border-white/10">
+        <TransactionProgressSteps steps={progress.steps} className="pb-2" />
+        <div className="flex min-w-0 items-center justify-between gap-3 border-b border-white/10 py-3">
           <span className="text-sm text-muted">{labels.sendLabel}</span>
-          <span className="text-sm font-medium">
-            {formatNumber(amountIn)} {tokenInSymbol}
-          </span>
+          <AmountDisplay value={amountIn} symbol={tokenInSymbol} className="text-sm font-medium" />
         </div>
-        <div className="flex justify-between items-center py-3 border-b border-white/10">
+        <div className="flex min-w-0 items-center justify-between gap-3 border-b border-white/10 py-3">
           <span className="text-sm text-muted">{labels.receiveLabel}</span>
-          <span className="text-sm font-medium">
-            {formatNumber(amountOut)} {tokenOutSymbol}
-          </span>
+          <AmountDisplay
+            value={amountOut}
+            symbol={tokenOutSymbol}
+            className="text-sm font-medium"
+          />
         </div>
 
         {showFee && (
-          <div className="flex justify-between items-center py-3 border-b border-white/10">
+          <div className="flex min-w-0 items-center justify-between gap-3 border-b border-white/10 py-3">
             <span className="text-sm text-muted">Fee</span>
-            <span className="text-sm font-medium">≈ {fee} ZEC</span>
+            <AmountDisplay
+              value={fee}
+              symbol="ZEC"
+              prefix="≈ "
+              profile="fee"
+              className="text-sm font-medium"
+            />
           </div>
         )}
 
-        {zcashTxHash && !status?.swapDetails?.originChainTxHashes?.length && (
-          <TxHashLink hash={zcashTxHash} chain="zcash" />
+        {originTxHash && !status?.swapDetails?.originChainTxHashes?.length && (
+          <TxHashLink
+            hash={originTxHash}
+            assetId={status?.originAsset}
+            fallbackChain={originChainHint}
+            network={network}
+          />
         )}
 
         {status?.swapDetails?.originChainTxHashes?.map((tx, i) => (
-          <TxHashLink key={`origin-${i}`} hash={tx.hash} chain={originChain} />
+          <TxHashLink
+            key={`origin-${i}`}
+            hash={tx.hash}
+            assetId={status.originAsset}
+            fallbackChain={originChainHint}
+            network={network}
+          />
         ))}
 
         {status?.swapDetails?.destinationChainTxHashes?.map((tx, i) => (
-          <TxHashLink key={`dest-${i}`} hash={tx.hash} chain={destinationHashChain} />
+          <TxHashLink
+            key={`dest-${i}`}
+            hash={tx.hash}
+            assetId={status.destinationAsset}
+            fallbackChain={destinationChainHint}
+            network={network}
+          />
         ))}
       </div>
     </TransactionResult>

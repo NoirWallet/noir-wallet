@@ -5,13 +5,17 @@ import type { AddressType } from '@/types'
 
 const MAX_RECENT_ADDRESSES = 5
 
+export interface SavedSwapTokenSelection {
+  readonly tokenInId: string | null
+  readonly tokenOutId: string | null
+}
+
 interface SwapPreferences {
   slippage: number
   addressType: AddressType
   recentRefundAddresses: Record<string, string[]>
   recentRecipientAddresses: Record<string, string[]>
-  savedTokenInId: string | null
-  savedTokenOutId: string | null
+  tokenSelections: Record<string, SavedSwapTokenSelection>
 
   setSlippage: (slippage: number) => void
   setAddressType: (type: AddressType) => void
@@ -19,8 +23,9 @@ interface SwapPreferences {
   addRecentRecipientAddress: (chain: string, address: string) => void
   getRecentRefundAddresses: (chain: string) => string[]
   getRecentRecipientAddresses: (chain: string) => string[]
-  setSavedTokenInId: (id: string | null) => void
-  setSavedTokenOutId: (id: string | null) => void
+  setSavedTokenSelection: (scope: string, selection: SavedSwapTokenSelection) => void
+  setSavedTokenInId: (scope: string, id: string | null) => void
+  setSavedTokenOutId: (scope: string, id: string | null) => void
 }
 
 function addToRecent(
@@ -43,13 +48,40 @@ export const useSwapPreferences = create<SwapPreferences>()(
       addressType: 'shielded',
       recentRefundAddresses: {},
       recentRecipientAddresses: {},
-      savedTokenInId: null,
-      savedTokenOutId: null,
+      tokenSelections: {},
 
       setSlippage: slippage => set({ slippage }),
       setAddressType: type => set({ addressType: type }),
-      setSavedTokenInId: id => set({ savedTokenInId: id }),
-      setSavedTokenOutId: id => set({ savedTokenOutId: id }),
+      setSavedTokenSelection: (scope, selection) => {
+        if (!scope) return
+        set(state => ({
+          tokenSelections: { ...state.tokenSelections, [scope]: selection }
+        }))
+      },
+      setSavedTokenInId: (scope, id) => {
+        if (!scope) return
+        set(state => ({
+          tokenSelections: {
+            ...state.tokenSelections,
+            [scope]: {
+              tokenInId: id,
+              tokenOutId: state.tokenSelections[scope]?.tokenOutId ?? null
+            }
+          }
+        }))
+      },
+      setSavedTokenOutId: (scope, id) => {
+        if (!scope) return
+        set(state => ({
+          tokenSelections: {
+            ...state.tokenSelections,
+            [scope]: {
+              tokenInId: state.tokenSelections[scope]?.tokenInId ?? null,
+              tokenOutId: id
+            }
+          }
+        }))
+      },
 
       addRecentRefundAddress: (chain, address) => {
         if (!address.trim()) return
@@ -74,8 +106,7 @@ export const useSwapPreferences = create<SwapPreferences>()(
         addressType: state.addressType,
         recentRefundAddresses: state.recentRefundAddresses,
         recentRecipientAddresses: state.recentRecipientAddresses,
-        savedTokenInId: state.savedTokenInId,
-        savedTokenOutId: state.savedTokenOutId
+        tokenSelections: state.tokenSelections
       })
     }
   )

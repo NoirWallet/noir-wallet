@@ -38,8 +38,8 @@ export function AddressTypeLabel({
 }: AddressTypeLabelProps) {
   const sizeStyles =
     size === 'sm'
-      ? `${children ? 'min-w-15' : 'w-15'} px-2 py-0.5 text-[10px]`
-      : 'px-3 py-1 text-xs'
+      ? 'min-w-[68px] shrink-0 whitespace-nowrap px-1.5 py-0.5 text-[10px]'
+      : 'whitespace-nowrap px-3 py-1 text-xs'
   const config = getAddressTypeConfig(type)
 
   return (
@@ -79,9 +79,8 @@ export function AddressTypeSwitch({
     <button
       type="button"
       aria-label={ariaLabel}
-      title={ariaLabel}
       onClick={onClick}
-      className="block focus:outline-none group"
+      className="focus:outline-none block group"
     >
       <AddressTypeLabel
         type={type}
@@ -92,7 +91,7 @@ export function AddressTypeSwitch({
           icon="lucide:chevron-down"
           width={iconSize}
           height={iconSize}
-          className={`${textColorClass} shrink-0`}
+          className={textColorClass}
         />
       </AddressTypeLabel>
     </button>

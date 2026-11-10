@@ -1,5 +1,6 @@
-import { ZEC_ZCASH_ASSET } from '@/config/near'
+import { ZEC_ZCASH_ASSET } from '@/config/intents'
 import type { Transaction, TransactionStatus, TransactionType } from '@/types'
+import type { TransactionLifecycleStatus } from '@/core/transactions/domain'
 
 export interface CrossChainRoute {
   destinationAsset?: string
@@ -33,6 +34,15 @@ export function isIntentsSettledTransaction(
   type: TransactionType | undefined
 ): type is 'supply' | 'swap' {
   return type === 'supply' || type === 'swap'
+}
+
+export function getZcashIntentsOriginStatus(
+  transaction: Pick<Transaction, 'txHash' | 'status' | 'confirmations'>
+): TransactionLifecycleStatus {
+  if (!transaction.txHash) return transaction.status === 'failed' ? 'failed' : 'created'
+  if (transaction.status === 'success' || transaction.status === 'relay_confirmed') return 'final'
+  if (transaction.confirmations != null && transaction.confirmations > 0) return 'final'
+  return 'broadcast'
 }
 
 /**

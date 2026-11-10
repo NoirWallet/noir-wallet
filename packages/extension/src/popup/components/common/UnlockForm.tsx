@@ -1,15 +1,25 @@
+import { InlineError } from './InlineError'
 import { useState, useEffect } from 'react'
 import { Button } from '../ui/button'
 import WalletIcon from '@/images/wallet-icon.svg'
 import { PasswordInput } from './PasswordInput'
-import { accountManager } from '@/core/wallet/account-manager'
 import { classifyError } from '@/lib/errors'
 import { useNavigate } from '../../provider/Router'
+import { rehydrateWalletStore } from '@/store/wallet-store'
 import { openModal } from '../../provider/ModalManager'
 import { SecureStorage } from '@/core/wallet/secure-storage'
+import { BlockingWalletFailure } from './BlockingWalletFailure'
+import { zcashWalletRuntimeClient } from '@/popup/services/zcash-wallet-runtime-client'
+import { getUnlockFailureMessage } from '@/popup/services/unlock-failure-message'
 
 interface UnlockFormProps {
   onUnlockSuccess?: () => void | Promise<void>
+  activation?: {
+    pending: boolean
+    error: string
+    onRetry: () => void
+    onChangeCode: () => void
+  }
   onCancel?: () => void
   showCancelButton?: boolean
   showForgotPassword?: boolean
@@ -21,6 +31,7 @@ interface UnlockFormProps {
 
 export function UnlockForm({
   onUnlockSuccess,
+  activation,
   onCancel,
   showCancelButton = false,
   showForgotPassword = true,
@@ -35,6 +46,7 @@ export function UnlockForm({
   const [isLoading, setIsLoading] = useState(false)
   const [lockRemainingSeconds, setLockRemainingSeconds] = useState(0)
   const [isAccountLocked, setIsAccountLocked] = useState(false)
+  const [walletUpgradeFailed, setWalletUpgradeFailed] = useState(false)
 
   useEffect(() => {
     checkLockStatus()
@@ -71,6 +83,7 @@ export function UnlockForm({
   }
 
   const handleUnlock = async () => {
+    if (activation?.pending || isLoading) return
     if (!password) {
       setError('Please enter your password')
       return
@@ -85,10 +98,15 @@ export function UnlockForm({
     setError('')
 
     try {
-      const result = await accountManager.unlock(password, {
-        allowMissingCredentialRecovery: true
-      })
+      const result = await zcashWalletRuntimeClient.unlock(password)
+      if (result.upgradeFailed) {
+        setWalletUpgradeFailed(true)
+        return
+      }
       if (result.success) {
+        await rehydrateWalletStore()
+        setPassword('')
+
         if (onUnlockSuccess) {
           await onUnlockSuccess()
         }
@@ -96,20 +114,8 @@ export function UnlockForm({
         setIsAccountLocked(true)
         setLockRemainingSeconds(Math.ceil((result.lockRemainingMs || 0) / 1000))
         setError('Too many failed attempts. Account temporarily locked.')
-      } else if (result.failure === 'credential_missing') {
-        setError(
-          'Wallet credentials are missing from this device. Restore your wallet to continue.'
-        )
-      } else if (result.failure === 'credential_invalid') {
-        setError('Wallet credentials are damaged. Restore your wallet to continue.')
-      } else if (result.failure === 'operation_failed') {
-        setError('Unable to unlock your wallet. Please try again.')
       } else {
-        if (result.remainingAttempts !== undefined && result.remainingAttempts <= 2) {
-          setError(`Incorrect password. ${result.remainingAttempts} attempts remaining.`)
-        } else {
-          setError('Incorrect password')
-        }
+        setError(getUnlockFailureMessage(result))
       }
     } catch (err) {
       setError(classifyError(err).userMessage)
@@ -169,7 +175,7 @@ export function UnlockForm({
       setIsLoading(true)
       setError('')
       try {
-        await accountManager.clearWalletData()
+        await zcashWalletRuntimeClient.reset()
         replace('/onboarding')
       } catch {
         setError('Unable to reset wallet. Please try again.')
@@ -177,6 +183,18 @@ export function UnlockForm({
         setIsLoading(false)
       }
     }
+  }
+
+  if (walletUpgradeFailed) {
+    return (
+      <BlockingWalletFailure
+        title="Wallet upgrade failed"
+        description="Noir Wallet could not finish upgrading this wallet. It will stay locked until the upgrade completes."
+        assurance="Your existing wallet data is still stored on this device. Noir Wallet will not open a partially upgraded wallet."
+        isRetrying={isLoading}
+        onRetry={handleUnlock}
+      />
+    )
   }
 
   return (
@@ -202,8 +220,16 @@ export function UnlockForm({
             placeholder="Enter Password"
             error={error}
             onEnter={handleUnlock}
-            disabled={isAccountLocked}
+            disabled={isAccountLocked || isLoading || activation?.pending}
           />
+
+          {activation?.error && (
+            <InlineError
+              message={activation.error}
+              onRetry={activation.onRetry}
+              retrying={isLoading}
+            />
+          )}
 
           {isAccountLocked && lockRemainingSeconds > 0 && (
             <div className="p-3 bg-destructive/10 rounded-lg border border-destructive/20">
@@ -221,26 +247,39 @@ export function UnlockForm({
             <Button
               variant="outline"
               onClick={onCancel}
-              disabled={isLoading}
+              disabled={isLoading || activation?.pending}
               className="flex-1 h-[45px]"
             >
               Cancel
             </Button>
           )}
-          <Button
-            onClick={handleUnlock}
-            disabled={!password || isAccountLocked}
-            isLoading={isLoading}
-            className={`h-[45px] ${showCancelButton ? 'flex-1' : 'w-full'}`}
-          >
-            {isAccountLocked ? `Locked (${lockRemainingSeconds}s)` : 'Unlock'}
-          </Button>
+          {!activation?.error && (
+            <Button
+              onClick={handleUnlock}
+              disabled={activation?.pending ? !activation.error : !password || isAccountLocked}
+              isLoading={isLoading || (activation?.pending && !activation.error)}
+              className={`h-[45px] ${showCancelButton ? 'flex-1' : 'w-full'}`}
+            >
+              {activation?.pending
+                ? 'Activating wallet'
+                : isAccountLocked
+                  ? `Locked (${lockRemainingSeconds}s)`
+                  : 'Unlock'}
+            </Button>
+          )}
         </div>
+
+        {activation?.error && (
+          <Button variant="ghost" className="h-10 w-full" onClick={activation.onChangeCode}>
+            Use another code
+          </Button>
+        )}
 
         {showForgotPassword && (
           <button
             onClick={handleForgotPassword}
-            className="w-full text-center text-sm text-primary hover:text-primary/80 transition-colors py-2"
+            disabled={activation?.pending}
+            className="w-full text-center text-sm text-primary hover:text-primary/80 transition-colors py-2 disabled:pointer-events-none disabled:opacity-50"
           >
             Forgot password?
           </button>
