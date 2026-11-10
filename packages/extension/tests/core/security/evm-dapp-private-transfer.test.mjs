@@ -18,7 +18,10 @@ function createHarness({
   network = EVM_NETWORKS.mainnet,
   tokenContract,
   analytics,
-  store
+  store,
+  exactOutputApi,
+  exactOutputStore,
+  pendingSourceStore
 } = {}) {
   const calls = {
     approvals: [],
@@ -31,6 +34,8 @@ function createHarness({
     quoteScopes: [],
     recorded: [],
     reports: 0,
+    exactPrepared: 0,
+    exactSubmitted: 0,
     status: 'completed',
     statusReads: 0
   }
@@ -71,7 +76,11 @@ function createHarness({
     }
   })
   const storeValues = new Map()
+  const exactValues = new Map()
   let now = 1_000
+  calls.advanceTime = milliseconds => {
+    now += milliseconds
+  }
   const service = {
     async listTokens() {
       return { tokens }
@@ -192,6 +201,24 @@ function createHarness({
       }
     },
     transferController: {
+      async prepare(intent, binding, _fee, _mode, account) {
+        calls.exactPrepared += 1
+        calls.exactIntent = intent
+        calls.exactBinding = binding
+        calls.exactAccount = account
+        return {
+          graph: {
+            root: {
+              id: 'transaction:evm:exact',
+              intent: { feeLimit: { amountRaw: '21000' } }
+            }
+          },
+          review: {
+            expiresAt: now + 30_000,
+            payloadFingerprint: { digestHex: '44'.repeat(32) }
+          }
+        }
+      },
       async prepareContractCall(intent, _feeTier, binding, account) {
         calls.events.push(binding ? 'prepare-route' : 'prepare-approval')
         if (binding && calls.prepareRouteError) throw calls.prepareRouteError
@@ -202,6 +229,7 @@ function createHarness({
         calls.events.push(`approve:${transactionId}`)
         if (calls.approveError) throw calls.approveError
         await authorize()
+        if (transactionId === 'transaction:evm:exact') calls.exactSubmitted += 1
         return {
           graph: {
             root: { id: transactionId },
@@ -228,6 +256,26 @@ function createHarness({
       },
       async delete(fingerprint) {
         storeValues.delete(fingerprint)
+      }
+    },
+    ...(exactOutputApi ? { exactOutputApi } : {}),
+    exactOutputStore: exactOutputStore ?? {
+      async get(fingerprint) {
+        return structuredClone(exactValues.get(fingerprint) ?? null)
+      },
+      async put(value) {
+        exactValues.set(value.fingerprint, structuredClone(value))
+      },
+      async delete(fingerprint) {
+        exactValues.delete(fingerprint)
+      }
+    },
+    pendingSourceStore: pendingSourceStore ?? {
+      async get() {
+        return null
+      },
+      async getReviewGraph() {
+        return null
       }
     },
     now: () => now,
@@ -262,7 +310,199 @@ function createHarness({
   return { calls, coordinator, input, storeValues }
 }
 
+function createExactHarness({
+  status = 'SUCCESS',
+  output = '1000',
+  storeValues = new Map(),
+  pendingSourceStore
+} = {}) {
+  const calls = { quotes: [], statusReads: 0 }
+  const exactOutputApi = {
+    async quoteExactOutput(input) {
+      calls.quotes.push(input)
+      return {
+        expiresAt: Date.now() + 60_000,
+        quote: {
+          amountIn: '1020',
+          amountOut: output,
+          minAmountOut: output,
+          depositAddress: '0x4444444444444444444444444444444444444444',
+          deadline: new Date(Date.now() + 60_000).toISOString()
+        },
+        minimumInputRaw: '1010'
+      }
+    },
+    async getOneClickStatus() {
+      calls.statusReads += 1
+      return {
+        status: calls.status ?? status,
+        settledAmountOutRaw: calls.settledAmountOutRaw ?? '1000',
+        transactionHash: DESTINATION_HASH
+      }
+    },
+    async getStatus() {
+      return { transactionHash: DESTINATION_HASH }
+    }
+  }
+  const exactOutputStore = {
+    async get(fingerprint) {
+      return structuredClone(storeValues.get(fingerprint) ?? null)
+    },
+    async put(value) {
+      storeValues.set(value.fingerprint, structuredClone(value))
+    },
+    async delete(fingerprint) {
+      storeValues.delete(fingerprint)
+    }
+  }
+  return {
+    ...createHarness({ exactOutputApi, exactOutputStore, pendingSourceStore }),
+    exactCalls: calls,
+    exactStoreValues: storeValues
+  }
+}
+
 test.describe('EVM dApp Private transfer coordinator', () => {
+  test('reviews gross sender debit and returns a destination hash only after exact settlement', async () => {
+    const h = createExactHarness()
+    const prepared = await h.coordinator.prepareExactOutput(h.input)
+    expect(prepared.approvalData).toMatchObject({
+      amountRaw: '1020',
+      estimatedOutputRaw: '1000',
+      minimumOutputRaw: '1000',
+      networkFeeRaw: '21000',
+      approvalRequired: false,
+      exactOutput: true
+    })
+    expect(h.calls.exactIntent).toMatchObject({
+      amountRaw: '1020',
+      recipient: '0x4444444444444444444444444444444444444444'
+    })
+    expect(h.calls.exactBinding).toMatchObject({
+      userAction: 'transfer',
+      refundAddress: PEA,
+      destination: { recipient: RECIPIENT, minimumAmountRaw: '1000' }
+    })
+    expect(h.calls.exactAccount).toMatchObject({ kind: 'pea', address: PEA })
+    await expect(prepared.execute()).resolves.toBe(DESTINATION_HASH)
+    expect(h.calls.exactSubmitted).toBe(1)
+    await expect(h.coordinator.resumePending(h.input)).resolves.toBeNull()
+    const nextPayment = await h.coordinator.prepareExactOutput(h.input)
+    expect(h.exactCalls.quotes).toHaveLength(2)
+    await expect(nextPayment.execute()).resolves.toBe(DESTINATION_HASH)
+    expect(h.calls.exactSubmitted).toBe(2)
+  })
+
+  test('a completed legacy Private payment does not intercept the next direct or exact-output request', async () => {
+    const h = createExactHarness()
+    await expect(h.coordinator.send(h.input)).resolves.toBe(DESTINATION_HASH)
+    expect(h.storeValues.size).toBe(1)
+
+    const nextPayment = await h.coordinator.prepareExactOutput(h.input)
+    expect(h.storeValues.size).toBe(0)
+    expect(h.exactCalls.quotes).toHaveLength(1)
+    await nextPayment.cancel()
+    await expect(h.coordinator.resumePending(h.input)).resolves.toBeNull()
+  })
+
+  test('rejects a changed destination amount before preparing or signing', async () => {
+    const h = createExactHarness({ output: '999' })
+    await expect(h.coordinator.prepareExactOutput(h.input)).rejects.toThrow(/exceeds|match/)
+    expect(h.calls.exactPrepared).toBe(0)
+    expect(h.calls.exactSubmitted).toBe(0)
+  })
+
+  test('cancellation rejects the prepared source and never broadcasts', async () => {
+    const h = createExactHarness()
+    const prepared = await h.coordinator.prepareExactOutput(h.input)
+    await prepared.cancel()
+    await expect(prepared.execute()).rejects.toMatchObject({ code: 4001 })
+    expect(h.calls.cancelled).toContain('transaction:evm:exact')
+    expect(h.calls.exactSubmitted).toBe(0)
+    expect(h.exactStoreValues.size).toBe(0)
+  })
+
+  test('an expired review cannot debit the Private account', async () => {
+    const h = createExactHarness()
+    const prepared = await h.coordinator.prepareExactOutput(h.input)
+    h.calls.advanceTime(30_000)
+    await expect(prepared.execute()).rejects.toThrow(/expired/)
+    expect(h.calls.exactSubmitted).toBe(0)
+    expect(h.exactStoreValues.size).toBe(0)
+  })
+
+  test('cancellation during the identity check prevents source submission', async () => {
+    const h = createExactHarness()
+    const original = h.input.ensureIdentity
+    let checks = 0
+    let release
+    const held = new Promise(resolve => {
+      release = resolve
+    })
+    const input = {
+      ...h.input,
+      ensureIdentity: async () => {
+        checks += 1
+        if (checks === 3) await held
+        await original()
+      }
+    }
+    const prepared = await h.coordinator.prepareExactOutput(input)
+    const execution = prepared.execute()
+    await Promise.resolve()
+    await prepared.cancel()
+    release()
+    await expect(execution).rejects.toMatchObject({ code: 4001 })
+    expect(h.calls.exactSubmitted).toBe(0)
+    expect(h.exactStoreValues.size).toBe(0)
+  })
+
+  test('an ambiguous source submission resumes status without another debit', async () => {
+    const h = createExactHarness({ status: 'PENDING_DEPOSIT' })
+    const prepared = await h.coordinator.prepareExactOutput(h.input)
+    await expect(prepared.execute()).rejects.toMatchObject({ code: -32000 })
+    expect(h.calls.exactSubmitted).toBe(1)
+    expect(h.exactStoreValues.size).toBe(1)
+    h.exactCalls.status = 'SUCCESS'
+    await expect(h.coordinator.resumePending(h.input)).resolves.toBe(DESTINATION_HASH)
+    expect(h.calls.exactSubmitted).toBe(1)
+    expect(h.exactCalls.quotes).toHaveLength(1)
+  })
+
+  test('releases an exact-output marker only when the source is proven unsigned', async () => {
+    const pendingSourceStore = {
+      async get() {
+        return {
+          phase: 'awaiting-approval',
+          scope: { keyDomainId: 'wallet:one', accountId: 'account:one' }
+        }
+      },
+      async getReviewGraph() {
+        return {
+          root: { id: 'transaction:evm:exact', status: 'prepared' },
+          segments: [{ role: 'origin', evidence: {} }]
+        }
+      }
+    }
+    const h = createExactHarness({ pendingSourceStore })
+    const prepared = await h.coordinator.prepareExactOutput(h.input)
+    h.calls.approveError = new Error('Pre-sign approval failed')
+    await expect(prepared.execute()).rejects.toThrow('Pre-sign approval failed')
+    expect(h.calls.exactSubmitted).toBe(0)
+    expect(h.calls.cancelled).toContain('transaction:evm:exact')
+    expect(h.exactStoreValues.size).toBe(0)
+    await expect(h.coordinator.resumePending(h.input)).resolves.toBeNull()
+  })
+
+  test('does not return a hash for a successful status with an unverified amount', async () => {
+    const h = createExactHarness()
+    h.exactCalls.settledAmountOutRaw = '999'
+    const prepared = await h.coordinator.prepareExactOutput(h.input)
+    await expect(prepared.execute()).rejects.toThrow(/amount could not be verified/)
+    expect(h.exactStoreValues.size).toBe(1)
+    expect(h.calls.exactSubmitted).toBe(1)
+  })
+
   test('submits signature execution through Confidential and returns the real destination hash', async () => {
     const h = createHarness()
 
@@ -427,7 +667,7 @@ test.describe('EVM dApp Private transfer coordinator', () => {
 
       const resumed = createHarness({ store: new ChromeEvmDAppPrivateTransferStore() })
       resumed.calls.status = 'completed'
-      await expect(resumed.coordinator.send(resumed.input)).resolves.toBe(DESTINATION_HASH)
+      await expect(resumed.coordinator.resumePending(resumed.input)).resolves.toBe(DESTINATION_HASH)
       expect(resumed.calls.quotes).toHaveLength(0)
       expect(resumed.calls.confirmed).toHaveLength(0)
       expect(resumed.calls.statusReads).toBeGreaterThan(0)

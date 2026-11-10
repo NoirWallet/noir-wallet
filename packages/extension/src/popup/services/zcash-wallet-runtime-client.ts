@@ -208,6 +208,7 @@ export const zcashWalletRuntimeClient = Object.freeze({
   },
 
   async provisionPrimarySoftwareWallet(input: {
+    readonly mode: 'create' | 'import'
     readonly mnemonic: string
     readonly password: string
     readonly accountName: string
@@ -217,6 +218,7 @@ export const zcashWalletRuntimeClient = Object.freeze({
     await expectSuccess(
       {
         type: 'PROVISION_PRIMARY_SOFTWARE_WALLET',
+        mode: input.mode,
         mnemonic: input.mnemonic,
         password: input.password,
         accountName: input.accountName,

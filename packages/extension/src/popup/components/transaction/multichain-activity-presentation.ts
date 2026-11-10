@@ -317,7 +317,7 @@ export function getActivityTransferRecipient(item: ActivityItem): string | undef
   const protocol = item.snapshot?.protocol
   if (
     item.kind === 'transfer' &&
-    protocol?.provider === 'rhea-cross-chain-dex' &&
+    (protocol?.provider === 'rhea-cross-chain-dex' || protocol?.provider === 'near-intents') &&
     protocol.userAction === 'transfer'
   ) {
     return protocol.destination.recipient

@@ -415,6 +415,14 @@ For `eth_requestAccounts`, closing the wallet's unlock window cancels the reques
 An `eth_sendTransaction` request with insufficient funds returns `-32000` before opening
 transaction approval; the error identifies insufficient funds for the transaction and network fee.
 
+For a connected Private EVM account, ordinary transfers default to a direct on-chain transfer.
+The user can select **Send privately** in wallet approval for a supported transfer. This route
+keeps the requested recipient amount fixed and charges route costs and gas to the sender. It
+returns the destination transaction hash after settlement, so the request can take longer than
+a direct transfer. The destination transaction is not sent from the connected Private address;
+do not use its sender as proof of the connected account's identity. Contract calls remain direct.
+After a processing timeout, check Wallet Activity before requesting another payment.
+
 For Chainlist compatibility, `wallet_addEthereumChain` also accepts an optional account address
 as the second positional parameter. This hint is ignored and never grants account permissions.
 `wallet_switchEthereumChain` still accepts exactly one chain parameter.

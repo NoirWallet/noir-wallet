@@ -1,5 +1,5 @@
 import dayjs from './dayjs'
-import type { AddressType, WalletItem } from '@/types/wallet'
+import type { AddressType } from '@/types/wallet'
 import {
   getBlockExplorerBaseUrl,
   getBlockExplorerTransactionPath
@@ -277,21 +277,6 @@ export function formatWalletName(
 ): string {
   const walletIndex = allWallets.findIndex(w => w.id === wallet.id)
   return formatWalletNameAtIndex(wallet.name, walletIndex)
-}
-
-export function formatWalletBackupName(
-  wallet: WalletItem,
-  allWallets: WalletItem[],
-  displayNames: Record<string, string>
-): string {
-  const primary = wallet.accounts.find(account => account.derivationIndex === 0)
-  if (!primary) return formatWalletName(wallet, allWallets)
-  const customName = displayNames[`${wallet.id}_${primary.id}`]?.trim()
-  return (
-    customName ||
-    formatSortAddress(primary.addresses.shielded || primary.addresses.transparent) ||
-    formatWalletName(wallet, allWallets)
-  )
 }
 
 export function formatWalletNameAtIndex(walletName: string, walletIndex: number): string {

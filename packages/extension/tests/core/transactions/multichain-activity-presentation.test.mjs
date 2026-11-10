@@ -369,6 +369,37 @@ test.describe('Multichain Activity presentation', () => {
     ).toBe(sourceContract)
   })
 
+  test('shows the final Near Intents transfer recipient instead of the deposit address', () => {
+    const depositAddress = `0x${'2'.repeat(40)}`
+    const destination = `0x${'3'.repeat(40)}`
+    const assetId = 'eip155:8453/slip44:60'
+    const item = {
+      ...failedItem({ transactionHash }),
+      failureCode: undefined,
+      status: 'confirming',
+      snapshot: {
+        schemaVersion: 1,
+        direction: 'outgoing',
+        primaryAmount: { assetId, amountRaw: '21080000000000' },
+        counterAmount: { assetId, amountRaw: '20000000000000' },
+        recipient: { chainId: 'eip155:8453', address: depositAddress },
+        protocol: {
+          provider: 'near-intents',
+          userAction: 'transfer',
+          destination: { recipient: destination }
+        }
+      }
+    }
+    const assets = new Map([[assetId, { metadata: { symbol: 'ETH', decimals: 18 } }]])
+
+    expect(getActivityTransferRecipient(item)).toBe(destination)
+    expect(getActivityRowTextPresentation(item, 'ETH', 'ETH', 'Base')).toEqual({
+      title: 'Sent ETH',
+      subtitle: 'To: 0x3333...333333'
+    })
+    expect(getActivitySwapPresentation(item, assets, new Map())).toBeNull()
+  })
+
   test('offers cancellation only for a locally tracked pending EVM transaction', () => {
     const item = {
       ...failedItem({ transactionHash }),

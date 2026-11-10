@@ -133,6 +133,25 @@ test.describe('Wallet metadata persistence', () => {
     }
   })
 
+  test('keeps mnemonic provenance across stale writes without inventing backup verification', async () => {
+    const unknown = { ...wallet, id: 'wallet:unknown' }
+    const snapshot = { state: { wallets: [wallet, unknown] } }
+    const storage = mockStorage({ wallet_state: snapshot })
+    try {
+      await writeWalletMetadata({
+        state: { wallets: [{ ...wallet, secretPhraseOrigin: 'imported' }, unknown] }
+      })
+      await writeWalletMetadata(snapshot)
+      const saved = (await readWalletMetadata()).state.wallets
+      expect(saved[0].secretPhraseOrigin).toBe('imported')
+      expect(saved[0].secretPhraseBackupVerifiedAt).toBeUndefined()
+      expect(saved[1].secretPhraseOrigin).toBeUndefined()
+      expect(saved[1].secretPhraseBackupVerifiedAt).toBeUndefined()
+    } finally {
+      storage.restore()
+    }
+  })
+
   test('renames retained wallet and account metadata without replacing other fields', async () => {
     const otherWallet = { ...wallet, id: 'wallet:other', name: 'Other wallet' }
     const initial = {

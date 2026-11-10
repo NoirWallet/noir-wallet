@@ -123,6 +123,10 @@ test('approval cannot complete while its transaction fee review is changing', as
   const customFeeUpdate = new Promise(resolve => {
     completeCustomFeeUpdate = resolve
   })
+  let completePrivacyUpdate
+  const privacyUpdate = new Promise(resolve => {
+    completePrivacyUpdate = resolve
+  })
   const handler = new DAppHandler()
   const approvalOpened = waitForApprovalOpened()
   const approval = handler.requestExternalApproval(
@@ -131,7 +135,8 @@ test('approval cannot complete while its transaction fee review is changing', as
     { feeTier: 'standard' },
     {
       onNetworkFeeTierChange: () => feeUpdate,
-      onEvmFeeSelectionChange: () => customFeeUpdate
+      onEvmFeeSelectionChange: () => customFeeUpdate,
+      onEvmTransferPrivacyChange: () => privacyUpdate
     }
   )
   await approvalOpened
@@ -171,37 +176,64 @@ test('approval cannot complete while its transaction fee review is changing', as
   const customData = { feeSelection: { kind: 'tier', tier: 'low' } }
   completeCustomFeeUpdate(customData)
   assert.deepEqual(await pendingCustomFeeResponse, { data: customData })
+  const pendingPrivacyResponse = sendApprovalMessage(requestId, {
+    type: 'DAPP_EVM_TRANSFER_PRIVACY_CHANGE',
+    enabled: true
+  })
+  assert.deepEqual(
+    await sendApprovalMessage(requestId, { type: 'DAPP_APPROVAL_RESULT', success: true }),
+    { error: 'Wait for the network fee update to complete' }
+  )
+  assert.deepEqual(
+    await sendApprovalMessage(requestId, {
+      type: 'DAPP_EVM_FEE_SELECTION_CHANGE',
+      feeSelection: { kind: 'tier', tier: 'fast' }
+    }),
+    { error: 'Wait for the network fee update to complete' }
+  )
+  const privateData = {
+    sendPrivately: true,
+    transferPrivacyRevision: 1,
+    privateTransfer: { amountRaw: '101' }
+  }
+  completePrivacyUpdate(privateData)
+  assert.deepEqual(await pendingPrivacyResponse, { data: privateData })
   assert.deepEqual(
     await sendApprovalMessage(requestId, {
       type: 'DAPP_APPROVAL_RESULT',
-      success: true
+      success: true,
+      transferPrivacyRevision: privateData.transferPrivacyRevision
     }),
     { success: true }
   )
-  assert.equal((await approval).approved, true)
+  assert.deepEqual(await approval, {
+    approved: true,
+    requestId,
+    transferPrivacyRevision: 1
+  })
   assert.equal(listeners.size, 0)
 })
 
-test('rejection cancels an approval during fee preparation and discards its late review', async () => {
-  let completeFeeUpdate
-  const feeUpdate = new Promise(resolve => {
-    completeFeeUpdate = resolve
+test('rejection cancels an approval during privacy preparation and discards its late review', async () => {
+  let completePrivacyUpdate
+  const privacyUpdate = new Promise(resolve => {
+    completePrivacyUpdate = resolve
   })
   const handler = new DAppHandler()
   const approvalOpened = waitForApprovalOpened()
   const approval = handler.requestExternalApproval(
     'https://dapp.example',
-    'bitcoinTransaction',
-    { feeTier: 'standard' },
-    { onNetworkFeeTierChange: () => feeUpdate }
+    'evmTransaction',
+    { sendPrivately: false },
+    { onEvmTransferPrivacyChange: () => privacyUpdate }
   )
   await approvalOpened
   const requestId = new URLSearchParams(approvalUrl.split('?')[1]).get('requestId')
   assert.ok(requestId)
 
-  const pendingFeeResponse = sendApprovalMessage(requestId, {
-    type: 'DAPP_NETWORK_FEE_TIER_CHANGE',
-    feeTier: 'fast'
+  const pendingPrivacyResponse = sendApprovalMessage(requestId, {
+    type: 'DAPP_EVM_TRANSFER_PRIVACY_CHANGE',
+    enabled: true
   })
   assert.deepEqual(
     await sendApprovalMessage(requestId, { type: 'DAPP_APPROVAL_RESULT', success: false }),
@@ -209,7 +241,7 @@ test('rejection cancels an approval during fee preparation and discards its late
   )
   assert.equal((await approval).approved, false)
   assert.equal(listeners.size, 0)
-  completeFeeUpdate({ feeTier: 'fast' })
-  assert.deepEqual(await pendingFeeResponse, { error: 'Approval request is no longer active' })
+  completePrivacyUpdate({ sendPrivately: true })
+  assert.deepEqual(await pendingPrivacyResponse, { error: 'Approval request is no longer active' })
   assert.equal(pendingRequestsManager.get(requestId), null)
 })

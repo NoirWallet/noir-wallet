@@ -1526,7 +1526,10 @@ export class BackgroundZcashWalletRuntime {
       true
     )
 
-    await this.setPrimaryWalletState({ ...wallet, secretPhraseCreationRevision: 1 }, password)
+    await this.setPrimaryWalletState(
+      { ...wallet, secretPhraseOrigin: 'created', secretPhraseCreationRevision: 1 },
+      password
+    )
 
     return seedString
   }
@@ -1536,7 +1539,8 @@ export class BackgroundZcashWalletRuntime {
     password: string,
     accountName: string = 'Account 1',
     birthdayHeight?: number,
-    selectedNetworkFamilies?: readonly AccountNetworkFamily[]
+    selectedNetworkFamilies?: readonly AccountNetworkFamily[],
+    secretPhraseOrigin: 'created' | 'imported' = 'imported'
   ): Promise<void> {
     if (!this.isInitialized) {
       throw new Error('Zcash wallet runtime not initialized')
@@ -1577,7 +1581,14 @@ export class BackgroundZcashWalletRuntime {
       selectedNetworkFamilies
     )
 
-    await this.setPrimaryWalletState(wallet, password)
+    await this.setPrimaryWalletState(
+      {
+        ...wallet,
+        secretPhraseOrigin,
+        ...(secretPhraseOrigin === 'created' ? { secretPhraseCreationRevision: 1 } : {})
+      },
+      password
+    )
   }
 
   private async readAuthorizedSeedPhrase(
@@ -3534,7 +3545,11 @@ export class BackgroundZcashWalletRuntime {
       birthdayHeight || undefined
     )
 
-    await this.addWalletToList({ ...wallet, secretPhraseCreationRevision: 1 })
+    await this.addWalletToList({
+      ...wallet,
+      secretPhraseOrigin: 'created',
+      secretPhraseCreationRevision: 1
+    })
 
     return { walletId: wallet.id, seedPhrase: seedString }
   }
@@ -3588,7 +3603,7 @@ export class BackgroundZcashWalletRuntime {
       selectedNetworkFamilies
     )
 
-    await this.addWalletToList(wallet)
+    await this.addWalletToList({ ...wallet, secretPhraseOrigin: 'imported' })
 
     return wallet.id
   }

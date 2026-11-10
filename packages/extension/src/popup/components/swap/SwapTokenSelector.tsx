@@ -12,6 +12,14 @@ import { resolveNearConfidentialZecHolding } from '@/popup/services/near-confide
 import { TokenIcon } from '../tokens/TokenIcon'
 import { formatTokenQuantity } from '@/lib/number-format'
 import type { Network } from '@/types'
+import type { UserEvmAssetRecord } from '@/core/chains/user-assets'
+import { userEvmAssetsClient } from '@/popup/services/user-evm-assets-client'
+import {
+  loadCuratedSwapTokens,
+  readCachedCuratedSwapTokens,
+  selectDefaultSwapTokens,
+  type CuratedSwapTokenRow
+} from '@/popup/services/swap-curated-catalog'
 
 interface SwapBalanceScope {
   readonly scopeKey: string
@@ -50,6 +58,49 @@ export function SwapTokenSelector({
 }: SwapTokenSelectorProps) {
   const [tokens, setTokens] = useState(initialTokens)
   const [loading, setLoading] = useState(true)
+  const chainIdsKey = [...new Set(tokens.map(token => token.tokenListChainId))]
+    .sort((a, b) => a - b)
+    .join(',')
+  const chainIds = useMemo(
+    () => (chainIdsKey ? chainIdsKey.split(',').map(Number) : []),
+    [chainIdsKey]
+  )
+  const [curatedRows, setCuratedRows] = useState<readonly CuratedSwapTokenRow[]>(() =>
+    readCachedCuratedSwapTokens(chainIds)
+  )
+  const [curatedLoading, setCuratedLoading] = useState(true)
+  const [customAssets, setCustomAssets] = useState<readonly UserEvmAssetRecord[]>([])
+  useEffect(() => {
+    let cancelled = false
+    setCuratedRows(readCachedCuratedSwapTokens(chainIds))
+    setCuratedLoading(true)
+    void loadCuratedSwapTokens(chainIds, rows => {
+      if (!cancelled) setCuratedRows(rows)
+    })
+      .then(rows => {
+        if (!cancelled) setCuratedRows(rows)
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setCuratedLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [chainIds])
+  useEffect(() => {
+    let cancelled = false
+    setCustomAssets([])
+    void userEvmAssetsClient
+      .list()
+      .then(assets => {
+        if (!cancelled) setCustomAssets(assets)
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [balanceScope?.scopeKey])
   const [portfolioSnapshot, setPortfolioSnapshot] = useState(() => ({
     scope: balanceScope?.scopeKey,
     value: balanceScope?.initialPortfolio ?? null
@@ -131,6 +182,10 @@ export function SwapTokenSelector({
         : undefined,
     [tokens, scopedPortfolio, scopedReceiveTargets, balanceScope]
   )
+  const defaultTokens = useMemo(
+    () => selectDefaultSwapTokens(tokens, curatedRows, { balances, customAssets }),
+    [tokens, curatedRows, balances, customAssets]
+  )
   useEffect(() => {
     let cancelled = false
     void loadTokens(
@@ -172,6 +227,8 @@ export function SwapTokenSelector({
         networkFilterStyle="icons"
         stableCatalogOrder
         tokens={tokens}
+        defaultTokens={defaultTokens}
+        defaultCatalogLoading={curatedLoading}
         balances={balances}
         catalogLoading={loading}
         onSelect={token => {

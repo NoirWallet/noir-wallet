@@ -2,12 +2,14 @@ import { InlineError } from '@/popup/components/common/InlineError'
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Button } from '../../components/ui/button'
+import { Switch } from '../../components/ui/switch'
 import { WarningBox } from '../../components/ui/WarningBox'
 import { useWalletStore } from '@/store/wallet-store'
 import { useTransactionResultStore } from '@/store/transaction-result-store'
 import { zcashWalletRuntimeClient } from '@/popup/services/zcash-wallet-runtime-client'
 import { Icon } from '@iconify/react'
 import { AddressTypeLabel } from '@/popup/components/account/AddressType'
+import { ExecutionAccountBadge } from '@/popup/components/account/ExecutionAccountSelector'
 import { formatAccountName, getAccountDisplayName, formatSortAddress } from '@/lib/format'
 import { AmountDisplay } from '@/popup/components/common/AmountDisplay'
 import { StandardTransactionResult } from '../../components/transaction/StandardTransactionResult'
@@ -183,6 +185,9 @@ export function ApprovalPage() {
   const [canRetryLoad, setCanRetryLoad] = useState(false)
   const [requestLoaded, setRequestLoaded] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
+  const [privacyUpdateError, setPrivacyUpdateError] = useState('')
+  const [privacyRetryEnabled, setPrivacyRetryEnabled] = useState<boolean | null>(null)
+  const [privacyNow, setPrivacyNow] = useState(Date.now())
   const decisionInFlight = useRef(false)
   const [showResult, setShowResult] = useState(false)
   const [walletReady, setWalletReady] = useState(false)
@@ -241,6 +246,30 @@ export function ApprovalPage() {
     data.executionMode === 'private' || data.executionMode === 'main'
       ? data.executionMode
       : undefined
+  const privacyTransferEligible =
+    isEvmTransaction && evmExecutionMode === 'private' && typeof data.sendPrivately === 'boolean'
+  const privacyTransferAvailable = privacyTransferEligible && data.privacyTransferAvailable === true
+  const sendPrivately = privacyTransferAvailable && data.sendPrivately === true
+  const selectedPrivateTransfer = sendPrivately
+    ? parseEvmPrivateTransferApproval(data.privateTransfer)
+    : null
+  const privacyRevisionReady =
+    !privacyTransferEligible ||
+    (Number.isSafeInteger(data.transferPrivacyRevision) && data.transferPrivacyRevision >= 0)
+  const privateTransferReady =
+    selectedPrivateTransfer?.exactOutput === true &&
+    selectedPrivateTransfer.expiresAt > Math.max(Date.now(), privacyNow) &&
+    privacyRevisionReady &&
+    !data.privacyError &&
+    !privacyUpdateError
+  useEffect(() => {
+    if (!sendPrivately || !selectedPrivateTransfer) return
+    const timeout = setTimeout(
+      () => setPrivacyNow(Date.now()),
+      Math.max(0, selectedPrivateTransfer.expiresAt - Date.now())
+    )
+    return () => clearTimeout(timeout)
+  }, [sendPrivately, selectedPrivateTransfer?.expiresAt])
   const bitcoinSigningSummary = isBitcoinTransaction
     ? parseBitcoinSigningSummary(data.review?.summary, 'transaction')
     : isBitcoinMessage
@@ -354,6 +383,37 @@ export function ApprovalPage() {
         throw new Error('The wallet returned an invalid fee review')
       }
       setData(updatedData)
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const handleEvmTransferPrivacyChange = async (enabled: boolean) => {
+    if (!requestId || isLoading) return
+    setPrivacyUpdateError('')
+    setIsLoading(true)
+    try {
+      const response = (await chrome.runtime.sendMessage({
+        type: 'DAPP_EVM_TRANSFER_PRIVACY_CHANGE',
+        requestId,
+        enabled
+      })) as unknown
+      if (typeof response !== 'object' || response === null || Array.isArray(response)) {
+        throw new Error('The transfer route could not be updated')
+      }
+      const responseError = Reflect.get(response, 'error')
+      if (typeof responseError === 'string') throw new Error(responseError)
+      const updatedData = Reflect.get(response, 'data')
+      if (typeof updatedData !== 'object' || updatedData === null || Array.isArray(updatedData)) {
+        throw new Error('The wallet returned an invalid transfer review')
+      }
+      setData(updatedData)
+      setPrivacyRetryEnabled(null)
+    } catch (cause) {
+      setPrivacyRetryEnabled(enabled)
+      setPrivacyUpdateError(
+        cause instanceof Error ? cause.message : 'The transfer route could not be updated'
+      )
     } finally {
       setIsLoading(false)
     }
@@ -482,6 +542,14 @@ export function ApprovalPage() {
   const handleDecision = async (approved: boolean) => {
     setCanRetryLoad(false)
     if (approved && !requestLoaded) return
+    if (
+      approved &&
+      (isLoading ||
+        !!privacyUpdateError ||
+        !privacyRevisionReady ||
+        (sendPrivately && !privateTransferReady))
+    )
+      return
     if (decisionInFlight.current) return
     decisionInFlight.current = true
 
@@ -585,6 +653,9 @@ export function ApprovalPage() {
           type: 'DAPP_APPROVAL_RESULT',
           requestId,
           success: true,
+          ...(privacyTransferEligible
+            ? { transferPrivacyRevision: data.transferPrivacyRevision }
+            : {}),
           ...(MULTI_ACCOUNT_CONNECT_ACTIONS.has(action) && (data.accounts?.length ?? 0) > 0
             ? { selectedIds }
             : {}),
@@ -1286,6 +1357,147 @@ export function ApprovalPage() {
     )
   }
 
+  const evmPrivacyControl = privacyTransferEligible ? (
+    <section aria-label="Transfer privacy" className="space-y-2">
+      {privacyTransferAvailable && (
+        <button
+          type="button"
+          role="switch"
+          aria-checked={sendPrivately}
+          disabled={isLoading}
+          onClick={() => void handleEvmTransferPrivacyChange(!sendPrivately)}
+          className="flex w-full items-center justify-between gap-3 rounded-lg border border-border bg-card/35 px-3 py-2.5 text-sm text-foreground disabled:opacity-50"
+        >
+          <span>Send privately</span>
+          <Switch checked={sendPrivately} size="sm" />
+        </button>
+      )}
+      {!sendPrivately && !privacyUpdateError && (
+        <p className="px-1 text-xs leading-5 text-warning">
+          This transfer is public and links your Private address to the recipient.
+        </p>
+      )}
+      {(privacyUpdateError || (sendPrivately && data.privacyError)) && (
+        <InlineError
+          message={privacyUpdateError || data.privacyError}
+          onRetry={() => void handleEvmTransferPrivacyChange(privacyRetryEnabled ?? true)}
+          retrying={isLoading}
+        />
+      )}
+    </section>
+  ) : undefined
+
+  if (isEvmTransaction && sendPrivately) {
+    const transfer = selectedPrivateTransfer
+    const formatAsset = (raw: string) =>
+      transfer ? formatBaseUnitDecimalAmount(raw, transfer.asset.decimals) : ''
+    return (
+      <ApprovalWindowLayout
+        footer={
+          <div className="flex gap-3">
+            <Button
+              variant="outline"
+              className="flex-1"
+              onClick={() => void handleDecision(false)}
+              disabled={isLoading}
+              size="lg"
+            >
+              Reject
+            </Button>
+            <Button
+              className="flex-1 bg-primary hover:bg-primary/90"
+              onClick={() => void handleDecision(true)}
+              isLoading={isLoading}
+              disabled={!privateTransferReady || isLoading || !!privacyUpdateError}
+              size="lg"
+            >
+              Confirm
+            </Button>
+          </div>
+        }
+      >
+        <div className="space-y-4">
+          <DAppRequestHeader
+            domain={dappDomain}
+            pageUrl={dappPageUrl}
+            action="Confidential transfer"
+          />
+          {evmPrivacyControl}
+          {transfer?.exactOutput &&
+          transfer.nativeCurrency &&
+          transfer.networkFeeRaw !== undefined ? (
+            <>
+              <DAppNetworkCard
+                chain={transfer.iconChain}
+                network={transfer.chainName}
+                chainId={String(transfer.chainId)}
+              />
+              <ApprovalDetailCard title="Transfer">
+                <div className="space-y-3 text-sm">
+                  <div className="flex justify-between gap-3">
+                    <span className="text-muted">Recipient receives</span>
+                    <span className="font-sans font-medium tabular-nums">
+                      <AmountDisplay
+                        value={formatAsset(transfer.estimatedOutputRaw)}
+                        symbol={transfer.asset.symbol}
+                      />
+                    </span>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <span className="text-muted">Total sent</span>
+                    <span className="font-sans font-medium tabular-nums">
+                      <AmountDisplay
+                        value={formatAsset(transfer.amountRaw)}
+                        symbol={transfer.asset.symbol}
+                      />
+                    </span>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <span className="text-muted">From</span>
+                    <span
+                      className="flex min-w-0 flex-col items-end gap-1 font-mono"
+                      title={transfer.sourceAddress}
+                    >
+                      {formatSortAddress(transfer.sourceAddress)}
+                      <ExecutionAccountBadge mode="private" />
+                    </span>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <span className="text-muted">To</span>
+                    <span className="font-mono" title={transfer.recipient}>
+                      {formatSortAddress(transfer.recipient)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <span className="text-muted">Network fee</span>
+                    <span className="font-sans tabular-nums">
+                      <AmountDisplay
+                        value={formatBaseUnitDecimalAmount(
+                          transfer.networkFeeRaw,
+                          transfer.nativeCurrency.decimals
+                        )}
+                        symbol={transfer.nativeCurrency.symbol}
+                      />
+                    </span>
+                  </div>
+                </div>
+              </ApprovalDetailCard>
+            </>
+          ) : !data.privacyError && !privacyUpdateError ? (
+            <WarningBox>The private transfer review is unavailable.</WarningBox>
+          ) : null}
+          {transfer && transfer.expiresAt <= privacyNow && !data.privacyError && (
+            <InlineError
+              message="The private transfer quote expired."
+              onRetry={() => void handleEvmTransferPrivacyChange(true)}
+              retrying={isLoading}
+            />
+          )}
+        </div>
+      </ApprovalWindowLayout>
+    )
+  }
+
   if (isEvmTransaction && evmTransactionSummary) {
     const nativeDecimals =
       Number.isSafeInteger(data.nativeCurrency?.decimals) &&
@@ -1310,6 +1522,8 @@ export function ApprovalPage() {
         source={{ kind: 'dapp', domain: dappDomain, pageUrl: dappPageUrl }}
         accountMode={evmExecutionMode}
         isSubmitting={isLoading}
+        confirmDisabled={!!privacyUpdateError || !privacyRevisionReady}
+        notice={evmPrivacyControl}
         evmPresentation={{
           nativeCurrency: { symbol: nativeSymbol, decimals: nativeDecimals },
           directContract: data.privacyRoute === 'direct-contract',

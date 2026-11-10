@@ -441,8 +441,12 @@ test('backs up and removes the intended retained software wallet with word proof
       return chrome.storage.local.get('wallet_state').then(saved => {
         const state = saved.wallet_state
         const wallet = state.state.wallets.find((item: { id: string }) => item.id === walletId)
+        const activeWallet = state.state.wallets.find(
+          (item: { id: string }) => item.id === state.state.currentWalletId
+        )
         wallet.name = 'Wallet 1791000000000'
         wallet.createdAt = 1791000000000
+        activeWallet.secretPhraseBackupVerifiedAt = Date.now()
         state.state.accountDisplayNames[`${walletId}_${accountId}`] = 'Archive account'
         return chrome.storage.local.set({ wallet_state: state })
       })
@@ -468,7 +472,15 @@ test('backs up and removes the intended retained software wallet with word proof
     popup.evaluate(() => chrome.runtime.sendMessage({ type: 'GET_WALLET_SESSION_STATE' }))
   ).resolves.toEqual({ active: true })
   const banner = popup.getByRole('complementary', { name: 'Secret phrase backup reminder' })
-  await expect(banner).toContainText('Archive account')
+  await expect(banner).toHaveCount(0)
+  await selectRetainedAccountThroughPopup(popup, {
+    walletName: 'Wallet 1',
+    accountName: 'Archive account',
+    walletId: setup.previousWalletId,
+    accountId: setup.previousAccountId
+  })
+  await expect(banner).toContainText('Wallet 1')
+  await expect(banner).not.toContainText('Archive account')
   await expect(banner).not.toContainText('Account 2')
   await captureScreenshot(popup, 'wallet-backup-banner-375x600.png')
   await banner.getByRole('button', { name: 'Back up' }).click()
@@ -480,13 +492,13 @@ test('backs up and removes the intended retained software wallet with word proof
   await popup.getByRole('button', { name: 'Unlock to reveal' }).click()
   await expect(popup.getByRole('button', { name: 'Continue' })).toBeVisible({ timeout: 30_000 })
   await popup.getByRole('button', { name: 'Click to reveal seed phrase' }).click()
-  const displayedWords = popup.locator('div.grid.grid-cols-3 > div > div')
+  const displayedWords = popup.locator('div.grid.grid-cols-2 > div > div')
   await expect(displayedWords.first()).not.toHaveText('------')
   const phraseWords = await displayedWords.allTextContents()
   expect(phraseWords).toHaveLength(12)
   await popup.getByRole('button', { name: 'Continue' }).click()
   await expect(popup.getByRole('heading', { name: 'Confirm backup' })).toBeVisible()
-  await expect(popup.locator('div.grid.grid-cols-3 > div > div')).toHaveCount(0)
+  await expect(displayedWords).toHaveCount(0)
   await expect(popup.getByRole('textbox', { name: /^Word \d+$/ })).toHaveCount(2)
   await captureScreenshot(popup, 'wallet-backup-confirm-375x600.png')
   const indices = (await popup.locator('label').allTextContents())

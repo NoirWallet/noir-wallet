@@ -40,6 +40,11 @@ export interface ConfidentialStatus {
   readonly depositedAmountRaw?: string
 }
 
+export interface ConfidentialExactOutputQuote extends ConfidentialQuote {
+  readonly minimumInputRaw: string
+  readonly expiresAt: number
+}
+
 export interface ConfidentialPrivateWithdraw {
   readonly sequence?: number
   readonly transactionType: string
@@ -955,6 +960,93 @@ export class ConfidentialFundingApi {
     return quote
   }
 
+  async quoteExactOutput(input: {
+    readonly asset: string
+    readonly amountOutRaw: string
+    readonly sender: string
+    readonly recipient: string
+    readonly slippageBps: number
+  }): Promise<ConfidentialExactOutputQuote> {
+    const appFees = await this.getConfidentialAppFees()
+    const request = {
+      dry: false,
+      swapType: 'EXACT_OUTPUT',
+      slippageTolerance: input.slippageBps,
+      originAsset: input.asset,
+      depositType: 'ORIGIN_CHAIN',
+      destinationAsset: input.asset,
+      amount: positiveRaw(input.amountOutRaw, 'Confidential target amount'),
+      refundTo: input.sender,
+      refundType: 'ORIGIN_CHAIN',
+      recipient: input.recipient,
+      recipientType: 'DESTINATION_CHAIN',
+      deadline: new Date(Date.now() + 60 * 60_000).toISOString(),
+      referral: NOIR_SWAP_REFERRAL,
+      quoteWaitingTimeMs: 0,
+      ...(appFees.length > 0 ? { appFees } : {}),
+      confidentiality: 'basic'
+    }
+    const baseline = parseQuote(
+      await requestJson(this.oneClickUrl('/quote'), {
+        method: 'POST',
+        body: JSON.stringify({ ...request, dry: true, appFees: undefined })
+      })
+    )
+    if (
+      Object.entries(request).some(
+        ([key, expected]) =>
+          key !== 'appFees' && baseline.quoteRequest[key] !== (key === 'dry' ? true : expected)
+      )
+    ) {
+      throw new Error('Confidential provider fee quote is invalid')
+    }
+    const providerFees = readConfidentialQuoteAppFees(baseline)
+    if (
+      providerFees.length > 1 ||
+      providerFees.some(fee => fee.fee > MAX_CONFIDENTIAL_PROVIDER_FEE_BPS)
+    ) {
+      throw new Error('Confidential provider fee quote is invalid')
+    }
+    const value = await requestJson(this.oneClickUrl('/quote'), {
+      method: 'POST',
+      body: JSON.stringify(request)
+    })
+    const quote = parseQuote(value)
+    const rawQuote = isRecord(value) && isRecord(value.quote) ? value.quote : null
+    const minimumInputRaw = positiveRaw(rawQuote?.minAmountIn, 'Confidential minimum input')
+    const expirationValues = [
+      rawQuote?.deadline,
+      rawQuote?.timeWhenInactive,
+      quote.quoteRequest.deadline
+    ].filter(value => value !== undefined && value !== null)
+    const expirations = expirationValues.map(value =>
+      typeof value === 'string' ? Date.parse(value) : Number.NaN
+    )
+    const expiresAt = Math.min(...expirations)
+    if (
+      Object.entries(request).some(([key, expected]) => {
+        const actual = quote.quoteRequest[key]
+        return key === 'recipient' || key === 'refundTo'
+          ? typeof actual !== 'string' ||
+              !isAddress(actual) ||
+              actual.toLowerCase() !== String(expected).toLowerCase()
+          : key !== 'appFees' && actual !== expected
+      }) ||
+      quote.quote.amountOut !== input.amountOutRaw ||
+      quote.quote.minAmountOut !== input.amountOutRaw ||
+      BigInt(minimumInputRaw) > BigInt(quote.quote.amountIn) ||
+      !isAddress(quote.quote.depositAddress) ||
+      /^0x0{40}$/i.test(quote.quote.depositAddress) ||
+      expirations.length === 0 ||
+      expirations.some(value => !Number.isSafeInteger(value)) ||
+      expiresAt <= Date.now()
+    ) {
+      throw new Error('Confidential exact-output quote does not match the requested transfer')
+    }
+    assertQuoteAppFees(quote, appFees, providerFees)
+    return Object.freeze({ ...quote, minimumInputRaw, expiresAt })
+  }
+
   async generateIntent(input: {
     readonly signerId: string
     readonly depositAddress: string
@@ -1056,8 +1148,10 @@ export class ConfidentialFundingApi {
     const settledAmountOutRaw = optionalRaw(details.amountOut)
     const depositedAmountRaw = optionalRaw(details.depositedAmount)
     const errorStatus = optionalString(details, 'refundReason')
+    const transactionHash = readRheaDestinationHash(value)
     return Object.freeze({
       status: requiredString(value, 'status', 'Shield swap status'),
+      ...(transactionHash ? { transactionHash } : {}),
       ...(settledAmountOutRaw ? { amountOutRaw: settledAmountOutRaw, settledAmountOutRaw } : {}),
       ...(depositedAmountRaw ? { depositedAmountRaw } : {}),
       ...(errorStatus ? { errorStatus } : {})

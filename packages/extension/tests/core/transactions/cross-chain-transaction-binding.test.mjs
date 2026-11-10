@@ -124,6 +124,35 @@ test.describe('Near Intents transaction binding', () => {
     })
   })
 
+  test('preserves transfer activity for a same-asset exact-output deposit', () => {
+    const transferBinding = {
+      ...binding(),
+      userAction: 'transfer',
+      destination: {
+        ...binding().destination,
+        chainId: EVM_CHAIN_ID,
+        assetId: EVM_ASSET_ID,
+        protocolAssetId: binding().origin.protocolAssetId,
+        recipient: '0x3333333333333333333333333333333333333333',
+        expectedAmountRaw: '900',
+        minimumAmountRaw: '900'
+      }
+    }
+    const graph = bindNearIntentsTransactionGraph({
+      graph: sourceGraph(),
+      binding: transferBinding,
+      segmentIds: {
+        relay: parseTransactionSegmentId('segment:transfer:relay'),
+        destination: parseTransactionSegmentId('segment:transfer:destination'),
+        refund: parseTransactionSegmentId('segment:transfer:refund')
+      },
+      now: 200
+    })
+    expect(graph.root.kind).toBe('transfer')
+    expect(graph.root.intent.protocol).toEqual(transferBinding)
+    expect(graph.root.intent.counterAmount).toEqual({ assetId: EVM_ASSET_ID, amountRaw: '900' })
+  })
+
   test('rejects a quote that is expired or bound to another transfer', () => {
     expect(() =>
       bindNearIntentsTransactionGraph({

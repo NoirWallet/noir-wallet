@@ -271,6 +271,7 @@ export const useOnboardingStore = create<OnboardingState>((set, get) => ({
         throw new Error('Confirm your recovery phrase before creating the wallet')
       }
       await zcashWalletRuntimeClient.provisionPrimarySoftwareWallet({
+        mode: 'create',
         mnemonic: seedPhrase.join(' '),
         password,
         accountName: normalizeAccountName(accountName)
@@ -294,6 +295,7 @@ export const useOnboardingStore = create<OnboardingState>((set, get) => ({
       const { importedSeedPhrase, password, birthdayHeight, accountName, selectedNetworkFamilies } =
         get()
       await zcashWalletRuntimeClient.provisionPrimarySoftwareWallet({
+        mode: 'import',
         mnemonic: importedSeedPhrase,
         password,
         accountName: normalizeAccountName(accountName),

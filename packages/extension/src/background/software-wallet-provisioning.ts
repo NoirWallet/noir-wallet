@@ -58,6 +58,7 @@ export interface AddSoftwareWalletResult {
 }
 
 export interface ProvisionPrimarySoftwareWalletInput {
+  readonly mode: SoftwareWalletProvisioningMode
   readonly mnemonic: string
   readonly password: string
   readonly accountName: string
@@ -275,6 +276,9 @@ export async function provisionPrimarySoftwareWallet(
   input: ProvisionPrimarySoftwareWalletInput,
   synchronizeNetworkMetadata?: () => Promise<void>
 ): Promise<AddSoftwareWalletResult> {
+  if (input.mode !== 'create' && input.mode !== 'import') {
+    throw new Error('Invalid wallet provisioning mode')
+  }
   const mnemonic = normalizeMnemonic(input.mnemonic)
   const birthdayHeight = validateBirthdayHeight(input.birthdayHeight)
   const accountName = normalizeAccountName(input.accountName)
@@ -290,7 +294,8 @@ export async function provisionPrimarySoftwareWallet(
       input.password,
       accountName,
       birthdayHeight,
-      selectedNetworkFamilies
+      selectedNetworkFamilies,
+      input.mode === 'create' ? 'created' : 'imported'
     )
 
     const credentials = await credentialLifecycle.synchronizeRetainedV1(input.password)

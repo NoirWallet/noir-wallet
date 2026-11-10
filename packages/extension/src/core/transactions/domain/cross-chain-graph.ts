@@ -393,7 +393,7 @@ export function bindNearIntentsTransactionGraph(input: {
   return parseTransactionGraph({
     root: {
       ...graph.root,
-      kind: binding.kind,
+      kind: getTransactionProtocolIntentKind(binding),
       segmentIds: [
         origin.id,
         input.segmentIds.relay,

@@ -27,6 +27,9 @@ export interface EvmPrivateTransferApprovalSummary {
   readonly router: string
   readonly expiresAt: number
   readonly approvalRequired: boolean
+  readonly exactOutput?: boolean
+  readonly networkFeeRaw?: string
+  readonly nativeCurrency?: Readonly<{ symbol: string; decimals: number }>
 }
 
 export interface EvmAddNetworkApprovalSummary {
@@ -103,6 +106,9 @@ export function parseEvmPrivateTransferApproval(
     'router',
     'expiresAt',
     'approvalRequired',
+    'exactOutput',
+    'networkFeeRaw',
+    'nativeCurrency',
     'favicon',
     'faviconPageUrl'
   ])
@@ -110,6 +116,11 @@ export function parseEvmPrivateTransferApproval(
   const asset = record.asset
   if (!asset || typeof asset !== 'object' || Array.isArray(asset)) return null
   const assetRecord = asset as Record<string, unknown>
+  const currency = record.nativeCurrency
+  const nativeCurrency =
+    currency && typeof currency === 'object' && !Array.isArray(currency)
+      ? (currency as Record<string, unknown>)
+      : null
   if (
     Object.keys(assetRecord).length !== 2 ||
     !Object.prototype.hasOwnProperty.call(assetRecord, 'symbol') ||
@@ -139,7 +150,21 @@ export function parseEvmPrivateTransferApproval(
     !record.router.toLowerCase().includes('nearintents') ||
     !Number.isSafeInteger(record.expiresAt) ||
     (record.expiresAt as number) <= 0 ||
-    typeof record.approvalRequired !== 'boolean'
+    typeof record.approvalRequired !== 'boolean' ||
+    (record.exactOutput !== undefined && record.exactOutput !== true) ||
+    (record.exactOutput === true &&
+      (record.minimumOutputRaw !== record.estimatedOutputRaw ||
+        BigInt(record.amountRaw as string) < BigInt(record.estimatedOutputRaw as string) ||
+        record.approvalRequired !== false ||
+        typeof record.networkFeeRaw !== 'string' ||
+        !/^[0-9]{1,78}$/.test(record.networkFeeRaw) ||
+        !nativeCurrency ||
+        typeof nativeCurrency.symbol !== 'string' ||
+        nativeCurrency.symbol.length === 0 ||
+        nativeCurrency.symbol.length > 64 ||
+        !Number.isSafeInteger(nativeCurrency.decimals) ||
+        (nativeCurrency.decimals as number) < 0 ||
+        (nativeCurrency.decimals as number) > 255))
   ) {
     return null
   }
@@ -158,7 +183,17 @@ export function parseEvmPrivateTransferApproval(
     minimumOutputRaw: record.minimumOutputRaw as string,
     router: record.router,
     expiresAt: record.expiresAt as number,
-    approvalRequired: record.approvalRequired
+    approvalRequired: record.approvalRequired,
+    ...(record.exactOutput === true
+      ? {
+          exactOutput: true,
+          networkFeeRaw: record.networkFeeRaw as string,
+          nativeCurrency: Object.freeze({
+            symbol: nativeCurrency!.symbol as string,
+            decimals: nativeCurrency!.decimals as number
+          })
+        }
+      : {})
   })
 }
 

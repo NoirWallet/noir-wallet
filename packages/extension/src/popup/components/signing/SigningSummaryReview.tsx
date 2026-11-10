@@ -43,6 +43,7 @@ export interface SigningSummaryReviewProps {
   readonly source: SigningRequestSource
   readonly accountMode?: DAppExecutionMode
   readonly isSubmitting?: boolean
+  readonly confirmDisabled?: boolean
   readonly feeControl?: ReactNode
   readonly notice?: ReactNode
   readonly evmPresentation?: EvmReviewPresentationOptions
@@ -326,6 +327,7 @@ export function SigningSummaryReview({
   source,
   accountMode,
   isSubmitting = false,
+  confirmDisabled = false,
   feeControl,
   notice,
   evmPresentation,
@@ -368,7 +370,7 @@ export function SigningSummaryReview({
             variant={isBlocked ? 'secondary' : 'default'}
             size="lg"
             className="flex-1"
-            disabled={isBlocked}
+            disabled={isBlocked || confirmDisabled}
             isLoading={isSubmitting}
             onClick={onConfirm}
           >

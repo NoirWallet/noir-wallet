@@ -1062,6 +1062,7 @@ test.describe('Runtime message security', () => {
     expect(
       parseTrustedExtensionRuntimeMessage({
         type: 'PROVISION_PRIMARY_SOFTWARE_WALLET',
+        mode: 'import',
         mnemonic: `${'abandon '.repeat(11)}about`,
         password: 'legacy-compatible-password',
         accountName: 'Primary Account'
@@ -1696,11 +1697,30 @@ test.describe('Runtime message security', () => {
           marginalFeeZats: 5000,
           feeQuoteId: 'quote-1',
           feeTier: 'standard',
-          feeZats: 10000
+          feeZats: 10000,
+          transferPrivacyRevision: 0
         },
         'request-1'
       )
-    ).toMatchObject({ feeQuoteId: 'quote-1', feeTier: 'standard', marginalFeeZats: 5000 })
+    ).toMatchObject({
+      feeQuoteId: 'quote-1',
+      feeTier: 'standard',
+      marginalFeeZats: 5000,
+      transferPrivacyRevision: 0
+    })
+    for (const transferPrivacyRevision of [-1, 0.5, '1']) {
+      expect(() =>
+        parseDAppApprovalResultMessage(
+          {
+            type: 'DAPP_APPROVAL_RESULT',
+            requestId: 'request-1',
+            success: true,
+            transferPrivacyRevision
+          },
+          'request-1'
+        )
+      ).toThrow(/revision/i)
+    }
     expect(
       parseDAppApprovalResultMessage(
         {

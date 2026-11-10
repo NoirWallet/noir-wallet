@@ -120,6 +120,7 @@ export interface DAppApprovalResultMessage {
   readonly feeZats?: number
   readonly selectedIds?: readonly string[]
   readonly selectedScopes?: Readonly<Record<string, readonly string[]>>
+  readonly transferPrivacyRevision?: number
 }
 
 export type HardwareSignResultMessage =
@@ -450,6 +451,7 @@ const TRUSTED_RUNTIME_SCHEMAS: Readonly<Record<string, RuntimeMessageSchema>> = 
   },
   PROVISION_PRIMARY_SOFTWARE_WALLET: {
     required: {
+      mode: isSoftwareWalletProvisioningMode,
       mnemonic: isMnemonicPhrase,
       password: isLegacyPasswordString,
       accountName: isShortString
@@ -1627,7 +1629,8 @@ export function parseDAppApprovalResultMessage(
     'feeTier',
     'feeZats',
     'selectedIds',
-    'selectedScopes'
+    'selectedScopes',
+    'transferPrivacyRevision'
   ])
   if (
     Object.keys(value).some(key => !allowedKeys.has(key)) ||
@@ -1657,6 +1660,13 @@ export function parseDAppApprovalResultMessage(
     (!Number.isSafeInteger(value.feeZats) || (value.feeZats as number) <= 0)
   ) {
     throw new Error('Invalid approval fee')
+  }
+  if (
+    value.transferPrivacyRevision !== undefined &&
+    (!Number.isSafeInteger(value.transferPrivacyRevision) ||
+      (value.transferPrivacyRevision as number) < 0)
+  ) {
+    throw new Error('Invalid transfer privacy revision')
   }
   if (
     value.selectedIds !== undefined &&
@@ -1695,7 +1705,8 @@ export function parseDAppApprovalResultMessage(
       value.feeTier !== undefined ||
       value.feeZats !== undefined ||
       value.selectedIds !== undefined ||
-      value.selectedScopes !== undefined)
+      value.selectedScopes !== undefined ||
+      value.transferPrivacyRevision !== undefined)
   ) {
     throw new Error('Rejected approval cannot include approval data')
   }
@@ -1713,7 +1724,10 @@ export function parseDAppApprovalResultMessage(
     ...(value.selectedIds === undefined
       ? {}
       : { selectedIds: Object.freeze([...(value.selectedIds as string[])]) }),
-    ...(selectedScopes === undefined ? {} : { selectedScopes })
+    ...(selectedScopes === undefined ? {} : { selectedScopes }),
+    ...(value.transferPrivacyRevision === undefined
+      ? {}
+      : { transferPrivacyRevision: value.transferPrivacyRevision as number })
   }
 }
 

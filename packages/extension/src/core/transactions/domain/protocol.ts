@@ -21,6 +21,7 @@ export interface NearIntentsTransactionBinding {
   readonly schemaVersion: 1
   readonly provider: 'near-intents'
   readonly kind: 'swap' | 'supply'
+  readonly userAction?: 'transfer'
   readonly depositAddress: string
   readonly refundAddress: string
   readonly expiresAt: number
@@ -64,9 +65,7 @@ export type TransactionProtocolBinding = NearIntentsTransactionBinding | RheaSwa
 export function getTransactionProtocolIntentKind(
   binding: TransactionProtocolBinding
 ): 'swap' | 'supply' | 'transfer' {
-  return binding.provider === 'rhea-cross-chain-dex' && binding.userAction === 'transfer'
-    ? 'transfer'
-    : binding.kind
+  return binding.userAction === 'transfer' ? 'transfer' : binding.kind
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -153,24 +152,27 @@ function parseDestinationBinding(value: unknown): NearIntentsDestinationBinding 
 
 export function parseNearIntentsTransactionBinding(value: unknown): NearIntentsTransactionBinding {
   if (!isRecord(value)) throw new Error('Near Intents binding must be an object')
+  const requiredKeys = [
+    'schemaVersion',
+    'provider',
+    'kind',
+    'depositAddress',
+    'refundAddress',
+    'expiresAt',
+    'origin',
+    'destination'
+  ]
   assertExactKeys(
     value,
-    [
-      'schemaVersion',
-      'provider',
-      'kind',
-      'depositAddress',
-      'refundAddress',
-      'expiresAt',
-      'origin',
-      'destination'
-    ],
+    value.userAction === undefined ? requiredKeys : [...requiredKeys, 'userAction'],
     'Near Intents binding'
   )
   if (
     value.schemaVersion !== 1 ||
     value.provider !== 'near-intents' ||
     (value.kind !== 'swap' && value.kind !== 'supply') ||
+    (value.userAction !== undefined &&
+      (value.userAction !== 'transfer' || value.kind !== 'swap')) ||
     !Number.isSafeInteger(value.expiresAt) ||
     (value.expiresAt as number) <= 0
   ) {
@@ -180,6 +182,7 @@ export function parseNearIntentsTransactionBinding(value: unknown): NearIntentsT
     schemaVersion: 1,
     provider: 'near-intents',
     kind: value.kind,
+    ...(value.userAction === undefined ? {} : { userAction: 'transfer' as const }),
     depositAddress: parseString(value.depositAddress, 'Near Intents deposit address'),
     refundAddress: parseString(value.refundAddress, 'Near Intents refund address'),
     expiresAt: value.expiresAt as number,

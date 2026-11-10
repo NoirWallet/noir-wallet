@@ -94,6 +94,8 @@ export interface WalletItem {
   createdAt: number
   isPinned: boolean
   keySource?: KeySource
+  /** Recorded when the mnemonic enters the wallet; absent for legacy metadata. */
+  secretPhraseOrigin?: 'created' | 'imported'
   /** A positive revision distinguishes generated wallets created after backup confirmation became mandatory. */
   secretPhraseCreationRevision?: number
   secretPhraseBackupVerifiedAt?: number

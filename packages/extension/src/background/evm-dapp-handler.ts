@@ -39,7 +39,10 @@ import type { DAppExecutionMode } from '@/core/dapp/dapp-execution-mode'
 import type { BackgroundEvmTransferController } from './evm-transfer-controller'
 import type { EvmDAppOperationRecord } from './evm-dapp-operation-store'
 import type { DAppChainAccountDescriptor } from './dapp-chain-account-catalog'
-import type { EvmDAppPrivateTransferPort } from './evm-dapp-private-transfer'
+import type {
+  EvmDAppPrivateTransferPort,
+  EvmDAppPrivateTransferPreparation
+} from './evm-dapp-private-transfer'
 import type { EvmFeeSelection } from '@/infrastructure/chains/evm'
 import {
   activeDAppSessionAccountMatches,
@@ -64,11 +67,13 @@ export interface EvmDAppApprovalPort {
     options?: {
       readonly onNetworkFeeTierChange?: (tier: 'low' | 'standard' | 'fast') => Promise<unknown>
       readonly onEvmFeeSelectionChange?: (selection: EvmFeeSelection) => Promise<unknown>
+      readonly onEvmTransferPrivacyChange?: (enabled: boolean) => Promise<unknown>
     }
   ) => Promise<{
     readonly approved: boolean
     readonly requestId: string
     readonly selectedIds?: readonly string[]
+    readonly transferPrivacyRevision?: number
   }>
   readonly broadcastProviderEvent: (
     origin: string,
@@ -98,6 +103,7 @@ export interface BackgroundEvmDAppHandlerOptions {
   readonly runActiveOperation: <T>(operation: () => Promise<T>) => Promise<T>
   readonly transferController: BackgroundEvmTransferController | null
   readonly privateTransfer?: EvmDAppPrivateTransferPort
+  readonly onTransactionSubmitted?: () => Promise<void>
   readonly operationStore: Readonly<{
     put: (record: EvmDAppOperationRecord) => Promise<void>
     delete: (transactionId: string) => Promise<void>
@@ -759,35 +765,31 @@ export class BackgroundEvmDAppHandler {
       this.assertSoftwareSigningAccount(active)
     }
     const isContractCall = parsed.kind === 'contract-call'
-    if (active.executionMode === 'private' && !isContractCall) {
-      if (!this.options.privateTransfer || !('assetId' in parsed.intent)) {
-        throw new Eip1193ProviderError(
-          4200,
-          'Confidential asset transfers are unavailable on this network.'
-        )
+    const privateTransferInput =
+      active.executionMode === 'private' && !isContractCall && 'assetId' in parsed.intent
+        ? {
+            origin,
+            chainId: this.chainId,
+            account: Object.freeze({
+              keyDomainId: active.reference.walletId,
+              accountId: active.reference.accountId,
+              address: active.address,
+              addressIndex: active.addressIndex
+            }),
+            intent: parsed.intent,
+            ...(parsed.tokenContract === undefined ? {} : { tokenContract: parsed.tokenContract }),
+            tabInfo,
+            ensureIdentity: async () => {
+              await this.requireUnchangedExecutionIdentity(origin, active)
+            }
+          }
+        : null
+    if (privateTransferInput && this.options.privateTransfer) {
+      const recovered = await this.options.privateTransfer.resumePending(privateTransferInput)
+      if (recovered) {
+        await this.requireUnchangedExecutionIdentity(origin, active)
+        return recovered
       }
-      const destinationHash = await this.options.privateTransfer.send({
-        origin,
-        chainId: this.chainId,
-        account: Object.freeze({
-          keyDomainId: active.reference.walletId,
-          accountId: active.reference.accountId,
-          address: active.address,
-          addressIndex: active.addressIndex
-        }),
-        intent: parsed.intent,
-        ...(parsed.tokenContract === undefined ? {} : { tokenContract: parsed.tokenContract }),
-        tabInfo,
-        ensureIdentity: async () => {
-          await this.requireUnchangedExecutionIdentity(origin, active)
-        }
-      })
-      emitDAppEvent(this.options.analytics, 'evm', ANALYTICS_EVENTS.DAPP_TRANSACTION_SENT, {
-        hasTransaction: 1,
-        idempotencyKey: `dapp:evm:private:${destinationHash}`,
-        extra: { funding_source: 'private' }
-      })
-      return destinationHash
     }
     const executionAccount =
       active.executionMode === 'private'
@@ -861,12 +863,27 @@ export class BackgroundEvmDAppHandler {
     }
     let submitted = false
     let approvalActive = true
+    let sendPrivately = false
+    let transferPrivacyRevision = 0
+    const privateState: { prepared: EvmDAppPrivateTransferPreparation | null } = { prepared: null }
+    let privacyError: string | undefined
+    let directPrepared = true
+    let selectedFee: EvmFeeSelection = { kind: 'tier', tier: 'standard' }
     try {
       await this.requireUnchangedExecutionIdentity(origin, active)
       const approvalData = (review: typeof prepared.review, feeSelection: EvmFeeSelection) => ({
         chainName: this.options.network.displayName,
         iconChain: this.options.network.iconChain,
         executionMode: active.executionMode,
+        ...(privateTransferInput
+          ? {
+              privacyTransferAvailable: this.options.privateTransfer !== undefined,
+              sendPrivately,
+              transferPrivacyRevision,
+              privateTransfer: privateState.prepared?.approvalData ?? null,
+              ...(privacyError ? { privacyError } : {})
+            }
+          : {}),
         privacyRoute:
           active.executionMode === 'private' && isContractCall ? 'direct-contract' : 'onchain',
         nativeCurrency: this.options.network.nativeCurrency,
@@ -880,10 +897,12 @@ export class BackgroundEvmDAppHandler {
         intent: parsed.intent,
         feeSelection,
         ...(feeSelection.kind === 'tier' ? { feeTier: feeSelection.tier } : {}),
-        feeEditingAvailable: true,
+        feeEditingAvailable: !sendPrivately,
         ...dappApprovalMetadata(tabInfo)
       })
       const reprepareForFeeSelection = async (feeSelection: EvmFeeSelection) => {
+        if (sendPrivately) throw new Error('Switch to direct transfer before changing its fee.')
+        await this.requireUnchangedExecutionIdentity(origin, active)
         const replacement = isContractCall
           ? await transferController.prepareContractCall(
               parsed.intent,
@@ -911,6 +930,9 @@ export class BackgroundEvmDAppHandler {
           await this.options.operationStore.delete(prepared.graph.root.id).catch(() => {})
           if (!approvalActive) throw new Error('Approval request is no longer active')
           prepared = replacement
+          directPrepared = true
+          selectedFee = feeSelection
+          if (privateTransferInput) transferPrivacyRevision += 1
           adopted = true
           return approvalData(replacement.review, feeSelection)
         } finally {
@@ -920,6 +942,57 @@ export class BackgroundEvmDAppHandler {
           }
         }
       }
+      const changeTransferPrivacy = async (enabled: boolean) => {
+        if (!approvalActive || !privateTransferInput || !this.options.privateTransfer) {
+          throw new Error('Private transfer selection is unavailable.')
+        }
+        await this.requireUnchangedExecutionIdentity(origin, active)
+        transferPrivacyRevision += 1
+        sendPrivately = enabled
+        privacyError = undefined
+        const previous = privateState.prepared
+        privateState.prepared = null
+        if (previous) await previous.cancel()
+        if (!enabled) {
+          try {
+            return await reprepareForFeeSelection(selectedFee)
+          } catch (error) {
+            privacyError = 'Unable to prepare the direct transfer. Try again.'
+            throw error
+          }
+        }
+        if (directPrepared) {
+          await transferController.reject(prepared.graph.root.id)
+          directPrepared = false
+          await this.options.operationStore.delete(prepared.graph.root.id)
+        }
+        let candidate: EvmDAppPrivateTransferPreparation | null = null
+        try {
+          if (
+            parsed.kind === 'native-transfer' &&
+            (await this.options.rpc.getCode(privateTransferInput.intent.recipient)) !== '0x'
+          ) {
+            throw new Eip1193ProviderError(
+              4200,
+              'This recipient is a contract. Use a direct transfer.'
+            )
+          }
+          candidate = await this.options.privateTransfer.prepareExactOutput(privateTransferInput)
+          await this.requireUnchangedExecutionIdentity(origin, active)
+          if (!approvalActive) throw new Error('Approval request is no longer active')
+          privateState.prepared = candidate
+          candidate = null
+        } catch (error) {
+          if (!approvalActive) throw error
+          privacyError =
+            error instanceof Eip1193ProviderError && error.code === 4200
+              ? error.message
+              : 'Unable to quote the exact receive amount. Try again or choose a direct transfer.'
+        } finally {
+          if (candidate) await candidate.cancel().catch(() => {})
+        }
+        return approvalData(prepared.review, selectedFee)
+      }
       let decision: Awaited<ReturnType<typeof this.options.approval.requestExternalApproval>>
       try {
         decision = await this.options.approval.requestExternalApproval(
@@ -928,7 +1001,10 @@ export class BackgroundEvmDAppHandler {
           approvalData(prepared.review, { kind: 'tier', tier: 'standard' }),
           {
             onNetworkFeeTierChange: tier => reprepareForFeeSelection({ kind: 'tier', tier }),
-            onEvmFeeSelectionChange: reprepareForFeeSelection
+            onEvmFeeSelectionChange: reprepareForFeeSelection,
+            ...(privateTransferInput && this.options.privateTransfer
+              ? { onEvmTransferPrivacyChange: changeTransferPrivacy }
+              : {})
           }
         )
       } finally {
@@ -936,6 +1012,33 @@ export class BackgroundEvmDAppHandler {
       }
       if (!decision.approved) {
         throw new Eip1193ProviderError(4001, 'User rejected the transaction request.')
+      }
+      if (privateTransferInput && decision.transferPrivacyRevision !== transferPrivacyRevision) {
+        throw new Eip1193ProviderError(-32000, 'The transfer review changed. Review it again.')
+      }
+      if (sendPrivately) {
+        // Only the route reviewed in this approval may execute. Quote errors never
+        // fall through to the original direct transfer.
+        const confidential = privateState.prepared
+        if (!confidential || privacyError) {
+          throw new Eip1193ProviderError(
+            -32000,
+            'Review a valid Confidential quote before sending.'
+          )
+        }
+        await this.requireUnchangedExecutionIdentity(origin, active)
+        privateState.prepared = null
+        const destinationHash = await confidential.execute()
+        await this.requireUnchangedExecutionIdentity(origin, active)
+        emitDAppEvent(this.options.analytics, 'evm', ANALYTICS_EVENTS.DAPP_TRANSACTION_SENT, {
+          hasTransaction: 1,
+          idempotencyKey: `dapp:evm:private:${destinationHash}`,
+          extra: { funding_source: 'private' }
+        })
+        return destinationHash
+      }
+      if (!directPrepared || privacyError) {
+        throw new Eip1193ProviderError(-32000, 'Review the direct transfer again before sending.')
       }
       let submission = await this.options.transferController.approveForDApp(
         prepared.graph.root.id,
@@ -1012,6 +1115,7 @@ export class BackgroundEvmDAppHandler {
           }
         })
       }
+      await this.options.onTransactionSubmitted?.().catch(() => {})
       return transactionHash.toLowerCase()
     } catch (error) {
       if (!(typeof error === 'object' && error !== null && Reflect.get(error, 'code') === 4001)) {
@@ -1034,6 +1138,7 @@ export class BackgroundEvmDAppHandler {
       }
       throw error
     } finally {
+      if (privateState.prepared) await privateState.prepared.cancel().catch(() => {})
       if (!submitted) {
         await this.options.transferController.reject(prepared.graph.root.id).catch(() => {})
         await this.options.operationStore.delete(prepared.graph.root.id).catch(() => {})

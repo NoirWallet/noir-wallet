@@ -3011,6 +3011,7 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
     message.type === 'DAPP_APPROVAL_RESULT' ||
     message.type === 'DAPP_NETWORK_FEE_TIER_CHANGE' ||
     message.type === 'DAPP_EVM_FEE_SELECTION_CHANGE' ||
+    message.type === 'DAPP_EVM_TRANSFER_PRIVACY_CHANGE' ||
     message.type === 'HW_SIGN_RESULT' ||
     message.type === 'UNLOCK_SUCCESS' ||
     message.type === 'CLEAR_WALLET_INIT_STATE' ||
@@ -4726,6 +4727,7 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
       accountContextTransition.runActiveOperation(() =>
         provisionPrimarySoftwareWallet(
           {
+            mode: message.mode as SoftwareWalletProvisioningMode,
             mnemonic: message.mnemonic as string,
             password: message.password as string,
             accountName: message.accountName as string,

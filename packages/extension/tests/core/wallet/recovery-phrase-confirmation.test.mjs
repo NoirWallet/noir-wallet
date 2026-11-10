@@ -88,6 +88,13 @@ test.describe('Wallet backup verification', () => {
     expect(
       getWalletsNeedingSecretPhraseBackup([
         legacyWallet,
+        { ...legacyWallet, id: 'explicit-import', secretPhraseOrigin: 'imported' },
+        {
+          ...legacyWallet,
+          id: 'renamed-created',
+          name: 'Daily wallet',
+          secretPhraseOrigin: 'created'
+        },
         { ...legacyWallet, id: 'new-v2', secretPhraseCreationRevision: 1 },
         { ...legacyWallet, id: 'verified', secretPhraseBackupVerifiedAt: 1791000000001 },
         { ...legacyWallet, id: 'keystone', keySource: 'keystone' },
@@ -98,7 +105,7 @@ test.describe('Wallet backup verification', () => {
           accounts: [{ id: 'primary', name: 'Imported Account', derivationIndex: 0 }]
         }
       ]).map(wallet => wallet.id)
-    ).toEqual(['legacy-generated'])
+    ).toEqual(['legacy-generated', 'renamed-created'])
   })
 
   test('checks both positions, even when the phrase repeats a word', () => {

@@ -94,6 +94,7 @@ test.describe('Zcash wallet Background client', () => {
 
     try {
       await zcashWalletRuntimeClient.provisionPrimarySoftwareWallet({
+        mode: 'import',
         mnemonic: 'abandon '.repeat(11) + 'about',
         password: 'test-password',
         accountName: 'Trading',
@@ -102,6 +103,7 @@ test.describe('Zcash wallet Background client', () => {
       expect(messages).toEqual([
         {
           type: 'PROVISION_PRIMARY_SOFTWARE_WALLET',
+          mode: 'import',
           mnemonic: 'abandon '.repeat(11) + 'about',
           password: 'test-password',
           accountName: 'Trading',

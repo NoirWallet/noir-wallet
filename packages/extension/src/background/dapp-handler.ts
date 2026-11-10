@@ -2059,6 +2059,7 @@ export class DAppHandler {
     options?: {
       readonly onNetworkFeeTierChange?: (tier: 'low' | 'standard' | 'fast') => Promise<unknown>
       readonly onEvmFeeSelectionChange?: (selection: EvmFeeSelection) => Promise<unknown>
+      readonly onEvmTransferPrivacyChange?: (enabled: boolean) => Promise<unknown>
       readonly cancelOnNetworkFeeTierChangeError?: boolean
     }
   ): Promise<{
@@ -2066,6 +2067,7 @@ export class DAppHandler {
     readonly requestId: string
     readonly selectedIds?: readonly string[]
     readonly selectedScopes?: Readonly<Record<string, readonly string[]>>
+    readonly transferPrivacyRevision?: number
   }> {
     const result = await this.requestUserApprovalWithId(origin, action, data, options)
     return Object.freeze({
@@ -2076,7 +2078,10 @@ export class DAppHandler {
         : { selectedIds: Object.freeze([...result.selectedIds]) }),
       ...(result.selectedScopes === undefined
         ? {}
-        : { selectedScopes: Object.freeze({ ...result.selectedScopes }) })
+        : { selectedScopes: Object.freeze({ ...result.selectedScopes }) }),
+      ...(result.transferPrivacyRevision === undefined
+        ? {}
+        : { transferPrivacyRevision: result.transferPrivacyRevision })
     })
   }
 
@@ -2126,6 +2131,7 @@ export class DAppHandler {
     options?: {
       readonly onNetworkFeeTierChange?: (tier: 'low' | 'standard' | 'fast') => Promise<unknown>
       readonly onEvmFeeSelectionChange?: (selection: EvmFeeSelection) => Promise<unknown>
+      readonly onEvmTransferPrivacyChange?: (enabled: boolean) => Promise<unknown>
       readonly cancelOnNetworkFeeTierChangeError?: boolean
     }
   ): Promise<{
@@ -2140,6 +2146,7 @@ export class DAppHandler {
     feeZats?: number
     selectedIds?: string[]
     selectedScopes?: Readonly<Record<string, readonly string[]>>
+    transferPrivacyRevision?: number
   }> {
     const capturedWalletId = useWalletStore.getState().currentWalletId || ''
     const account = backgroundZcashWalletRuntime.getCurrentAccount()
@@ -2226,6 +2233,7 @@ export class DAppHandler {
               feeZats?: number
               selectedIds?: string[]
               selectedScopes?: Readonly<Record<string, readonly string[]>>
+              transferPrivacyRevision?: number
             }
           ) => {
             if (finished) return
@@ -2249,7 +2257,8 @@ export class DAppHandler {
               feeTier: extras?.feeTier,
               feeZats: extras?.feeZats,
               selectedIds: extras?.selectedIds,
-              selectedScopes: extras?.selectedScopes
+              selectedScopes: extras?.selectedScopes,
+              transferPrivacyRevision: extras?.transferPrivacyRevision
             })
           }
 
@@ -2296,6 +2305,47 @@ export class DAppHandler {
                   }
                   sendResponse({
                     error: error instanceof Error ? error.message : 'Network fee update failed'
+                  })
+                })
+              return true
+            }
+
+            if (
+              typeof msg === 'object' &&
+              msg !== null &&
+              !Array.isArray(msg) &&
+              Reflect.get(msg, 'type') === 'DAPP_EVM_TRANSFER_PRIVACY_CHANGE' &&
+              Reflect.get(msg, 'requestId') === requestId &&
+              options?.onEvmTransferPrivacyChange
+            ) {
+              const enabled = Reflect.get(msg, 'enabled')
+              if (typeof enabled !== 'boolean') {
+                sendResponse({ error: 'Invalid transfer privacy selection' })
+                return false
+              }
+              if (feeUpdateInFlight) {
+                sendResponse({ error: 'Wait for the network fee update to complete' })
+                return false
+              }
+              feeUpdateInFlight = true
+              void Promise.resolve()
+                .then(() => options.onEvmTransferPrivacyChange?.(enabled))
+                .then(updatedData => {
+                  feeUpdateInFlight = false
+                  if (finished || !pendingRequestsManager.updateData(requestId, updatedData)) {
+                    sendResponse({ error: 'Approval request is no longer active' })
+                    return
+                  }
+                  sendResponse({ data: updatedData })
+                })
+                .catch(error => {
+                  feeUpdateInFlight = false
+                  if (finished || !pendingRequestsManager.get(requestId)) {
+                    sendResponse({ error: 'Approval request is no longer active' })
+                    return
+                  }
+                  sendResponse({
+                    error: error instanceof Error ? error.message : 'Transfer privacy update failed'
                   })
                 })
               return true
@@ -2369,7 +2419,8 @@ export class DAppHandler {
                   feeTier: result.feeTier,
                   feeZats: result.feeZats,
                   selectedIds: result.selectedIds ? [...result.selectedIds] : undefined,
-                  selectedScopes: result.selectedScopes
+                  selectedScopes: result.selectedScopes,
+                  transferPrivacyRevision: result.transferPrivacyRevision
                 })
                 sendResponse({ success: true })
               })

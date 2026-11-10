@@ -500,6 +500,97 @@ test.describe('confidential funding safety rules', () => {
     }
   })
 
+  test('binds an exact-output quote to its target, sender refund, and recipient', async () => {
+    const originalFetch = globalThis.fetch
+    const sender = '0x1111111111111111111111111111111111111111'
+    const recipient = '0x2222222222222222222222222222222222222222'
+    const asset = 'nep141:base-0x3333333333333333333333333333333333333333.omft.near'
+    const depositAddress = '0x4444444444444444444444444444444444444444'
+    const destinationHash = `0x${'ab'.repeat(32)}`
+    const inactiveAt = new Date(Date.now() + 30_000).toISOString()
+    let changeRecipient = false
+    globalThis.fetch = async (url, init) => {
+      if (url === `https://example.test/1click/status?depositAddress=${depositAddress}`) {
+        return new Response(
+          JSON.stringify({
+            status: 'SUCCESS',
+            quoteResponse: { quote: { depositAddress } },
+            swapDetails: {
+              amountOut: '1000',
+              destinationChainTxHashes: [{ hash: destinationHash }]
+            }
+          }),
+          { status: 200 }
+        )
+      }
+      if (url === 'https://example.test/api/swap/confidential-app-fee') {
+        return new Response(
+          JSON.stringify({
+            code: 0,
+            data: {
+              appId: 'ak_test',
+              confidentialAppFeeBps: 0,
+              confidentialAppFeeRecipient: '',
+              confidentialPlatformFeeBps: 0,
+              confidentialPlatformFeeRecipient: ''
+            }
+          }),
+          { status: 200 }
+        )
+      }
+      expect(url).toBe('https://example.test/1click/quote')
+      const request = JSON.parse(init.body)
+      expect(request).toMatchObject({
+        swapType: 'EXACT_OUTPUT',
+        depositType: 'ORIGIN_CHAIN',
+        recipientType: 'DESTINATION_CHAIN',
+        confidentiality: 'basic',
+        amount: '1000',
+        refundTo: sender
+      })
+      return new Response(
+        JSON.stringify({
+          code: 0,
+          data: {
+            correlationId: 'exact-one',
+            quoteRequest: {
+              ...request,
+              ...(changeRecipient && !request.dry ? { recipient: sender } : {})
+            },
+            quote: {
+              amountIn: '1020',
+              minAmountIn: '1010',
+              amountOut: '1000',
+              minAmountOut: '1000',
+              depositAddress: request.dry ? undefined : depositAddress,
+              timeWhenInactive: inactiveAt,
+              deadline: request.deadline
+            }
+          }
+        }),
+        { status: 200 }
+      )
+    }
+    try {
+      const api = new ConfidentialFundingApi(apiConfig, 'https://near.example.test', 'test-token')
+      const input = { asset, amountOutRaw: '1000', sender, recipient, slippageBps: 100 }
+      await expect(api.quoteExactOutput(input)).resolves.toMatchObject({
+        minimumInputRaw: '1010',
+        expiresAt: Date.parse(inactiveAt),
+        quote: { amountIn: '1020', amountOut: '1000', minAmountOut: '1000' }
+      })
+      await expect(api.getOneClickStatus(depositAddress)).resolves.toMatchObject({
+        status: 'SUCCESS',
+        settledAmountOutRaw: '1000',
+        transactionHash: destinationHash
+      })
+      changeRecipient = true
+      await expect(api.quoteExactOutput(input)).rejects.toThrow(/does not match/)
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
   test('accepts a pending internal swap status and rejects a mismatched echoed quote', async () => {
     const originalFetch = globalThis.fetch
     let echoedAddress = 'deposit-one'

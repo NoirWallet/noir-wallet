@@ -157,6 +157,9 @@ function preserveBackupVerification(
         )
         return {
           ...wallet,
+          ...(saved.secretPhraseOrigin === undefined
+            ? {}
+            : { secretPhraseOrigin: saved.secretPhraseOrigin }),
           ...(saved.secretPhraseCreationRevision === undefined
             ? {}
             : { secretPhraseCreationRevision: saved.secretPhraseCreationRevision }),

@@ -13,7 +13,7 @@ import { getWalletsNeedingSecretPhraseBackup } from '@/core/wallet/secret-phrase
 import { didCredentialSessionEnd } from '@/core/wallet/credential-session-state'
 import { rehydrateWalletStore, useWalletStore } from '@/store/wallet-store'
 import { classifyError } from '@/lib/errors'
-import { formatWalletBackupName } from '@/lib/format'
+import { formatWalletName } from '@/lib/format'
 
 type BackupStep = 'password' | 'phrase' | 'confirm'
 
@@ -38,12 +38,11 @@ function SeedPhraseContent({
   backupMode: boolean
 }) {
   const wallets = useWalletStore(state => state.wallets)
-  const displayNames = useWalletStore(state => state.accountDisplayNames)
   const targetWalletId = useRef(walletId ?? useWalletStore.getState().currentWalletId).current
   const targetWallet = targetWalletId
     ? wallets.find(wallet => wallet.id === targetWalletId)
     : undefined
-  const targetName = targetWallet ? formatWalletBackupName(targetWallet, wallets, displayNames) : ''
+  const targetName = targetWallet ? formatWalletName(targetWallet, wallets) : ''
   const backupTarget =
     backupMode &&
     Boolean(

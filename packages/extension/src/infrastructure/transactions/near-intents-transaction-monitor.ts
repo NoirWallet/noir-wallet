@@ -17,6 +17,7 @@ export interface NearIntentsStatusObservation {
   readonly originAsset?: string
   readonly destinationAsset?: string
   readonly amountOutFormatted?: string
+  readonly amountOutRaw?: string
   readonly originTransactionHashes: readonly string[]
   readonly destinationTransactionHashes: readonly string[]
 }
@@ -29,7 +30,10 @@ export interface NearIntentsDestinationObservation {
 
 export interface NearIntentsTransactionMonitorOptions {
   readonly repository: TransactionRepository
-  readonly fetchStatus: (depositAddress: string) => Promise<NearIntentsStatusObservation | null>
+  readonly fetchStatus: (
+    depositAddress: string,
+    binding: NearIntentsTransactionBinding
+  ) => Promise<NearIntentsStatusObservation | null>
   readonly observeDestination?: (
     chainId: string,
     transactionHash: string
@@ -78,6 +82,7 @@ export function parseNearIntentsStatusObservation(value: unknown): NearIntentsSt
     'originAsset',
     'destinationAsset',
     'amountOutFormatted',
+    'amountOutRaw',
     'originTransactionHashes',
     'destinationTransactionHashes'
   ])
@@ -90,6 +95,12 @@ export function parseNearIntentsStatusObservation(value: unknown): NearIntentsSt
       ? 'PENDING'
       : null
   if (!status) throw new Error('Invalid Near Intents status')
+  if (
+    value.amountOutRaw !== undefined &&
+    (typeof value.amountOutRaw !== 'string' || !/^[0-9]{1,78}$/.test(value.amountOutRaw))
+  ) {
+    throw new Error('Invalid Near Intents raw output amount')
+  }
   const parseOptionalString = (candidate: unknown, label: string): string | undefined => {
     if (candidate === undefined) return undefined
     if (
@@ -104,6 +115,7 @@ export function parseNearIntentsStatusObservation(value: unknown): NearIntentsSt
   }
   return Object.freeze({
     status,
+    ...(value.amountOutRaw === undefined ? {} : { amountOutRaw: value.amountOutRaw as string }),
     ...(value.originAsset === undefined
       ? {}
       : { originAsset: parseOptionalString(value.originAsset, 'origin asset') }),
@@ -135,7 +147,9 @@ function protocolSegments(graph: TransactionGraph): {
   if (
     !binding ||
     binding.provider !== 'near-intents' ||
-    (graph.root.kind !== 'swap' && graph.root.kind !== 'supply')
+    (graph.root.kind !== 'swap' &&
+      graph.root.kind !== 'supply' &&
+      !(graph.root.kind === 'transfer' && binding.userAction === 'transfer'))
   ) {
     return null
   }
@@ -232,7 +246,7 @@ export class NearIntentsTransactionMonitor {
     const segments = protocolSegments(graph)
     if (!segments) return 'unchanged'
     let applied = false
-    const status = await this.fetchStatus(segments.binding.depositAddress)
+    const status = await this.fetchStatus(segments.binding.depositAddress, segments.binding)
     if (!status || status.status === 'PENDING') return 'unchanged'
     if (
       (status.originAsset !== undefined &&
@@ -241,6 +255,13 @@ export class NearIntentsTransactionMonitor {
         status.destinationAsset !== segments.binding.destination.protocolAssetId)
     ) {
       throw new Error('Near Intents status does not match the persisted quote binding')
+    }
+    if (
+      status.status === 'SUCCESS' &&
+      segments.binding.userAction === 'transfer' &&
+      status.amountOutRaw !== segments.binding.destination.expectedAmountRaw
+    ) {
+      throw new Error('Confidential settlement amount does not match the reviewed transfer')
     }
 
     if (status.status === 'REFUNDED') {

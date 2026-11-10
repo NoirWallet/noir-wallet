@@ -17,7 +17,7 @@ const EVM_ASSET_ID = `${EVM_CHAIN_ID}/slip44:60`
 const ZEC_ASSET_ID = `${ZCASH_CHAIN_ID}/slip44:133`
 const scope = { keyDomainId: 'wallet:one', accountId: 'account:one' }
 
-function protocolGraph(kind = 'swap') {
+function protocolGraph(kind = 'swap', userAction) {
   const transactionId = parseTransactionId('transaction:evm:protocol')
   const originId = parseTransactionSegmentId('segment:evm:protocol')
   const source = parseTransactionGraph({
@@ -62,6 +62,7 @@ function protocolGraph(kind = 'swap') {
       schemaVersion: 1,
       provider: 'near-intents',
       kind,
+      ...(userAction ? { userAction } : {}),
       depositAddress: '0x2222222222222222222222222222222222222222',
       refundAddress: '0x1111111111111111111111111111111111111111',
       expiresAt: 10_000,
@@ -158,6 +159,40 @@ class MemoryRepository {
 }
 
 test.describe('Near Intents Transaction V2 monitor', () => {
+  test('recovers Confidential transfer settlement only for the exact reviewed receive amount', async () => {
+    for (const amountOutRaw of [undefined, '899', '900']) {
+      const repository = new MemoryRepository(protocolGraph('swap', 'transfer'))
+      const originalSegments = repository.graph.segments
+      let sequence = 0
+      const monitor = new NearIntentsTransactionMonitor({
+        repository,
+        now: () => 400 + sequence,
+        createId: () => `exact-${sequence++}`,
+        fetchStatus: async (_depositAddress, binding) => {
+          expect(binding.userAction).toBe('transfer')
+          return {
+            status: 'SUCCESS',
+            ...(amountOutRaw === undefined ? {} : { amountOutRaw }),
+            originTransactionHashes: [],
+            destinationTransactionHashes: ['destination-hash']
+          }
+        }
+      })
+      expect(repository.graph.root.kind).toBe('transfer')
+      const result = await monitor.poll([scope])
+      if (amountOutRaw === '900') {
+        expect(result).toMatchObject({ checked: 1, applied: 1, errors: 0 })
+        expect(repository.graph.segments.find(s => s.role === 'destination')).toMatchObject({
+          status: 'final',
+          evidence: { transactionHash: 'destination-hash' }
+        })
+      } else {
+        expect(result).toMatchObject({ checked: 1, applied: 0, errors: 1 })
+        expect(repository.graph.segments).toEqual(originalSegments)
+      }
+    }
+  })
+
   test('persists relay success and waits for destination Zcash finality', async () => {
     const repository = new MemoryRepository(protocolGraph())
     let confirmations = 3

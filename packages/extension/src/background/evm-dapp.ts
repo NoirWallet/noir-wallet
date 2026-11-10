@@ -28,6 +28,18 @@ import { evmDAppOperationStore } from './evm-dapp-operation-store'
 import type { RheaSwapService } from '@/core/services/rhea-swap'
 import type { RheaSwapEvmSignatureCoordinator } from './rhea-swap-evm-signature'
 import { EvmDAppPrivateTransferCoordinator } from './evm-dapp-private-transfer'
+import { EVM_TRANSACTION_MONITOR_ALARM } from './evm-transaction-monitor'
+import { NEAR_INTENTS_TRANSACTION_MONITOR_ALARM } from './near-intents-transaction-monitor'
+
+async function notifyTransactionSubmitted(confidential = false): Promise<void> {
+  await Promise.all([
+    chrome.alarms.create(EVM_TRANSACTION_MONITOR_ALARM, { when: Date.now() + 100 }),
+    ...(confidential
+      ? [chrome.alarms.create(NEAR_INTENTS_TRANSACTION_MONITOR_ALARM, { when: Date.now() + 100 })]
+      : []),
+    chrome.runtime.sendMessage({ type: 'TRANSACTION_ADDED' }).catch(() => {})
+  ])
+}
 
 async function readPrivateTransferSlippageBps(): Promise<number> {
   const stored = (await chrome.storage.local.get('swap_preferences')).swap_preferences
@@ -69,7 +81,8 @@ export function createBackgroundEvmDAppHandler(
           signatureCoordinator: rhea.signatureCoordinator,
           transferController,
           approval: dappHandler,
-          readSlippageBps: readPrivateTransferSlippageBps
+          readSlippageBps: readPrivateTransferSlippageBps,
+          onExactOutputSubmitted: () => notifyTransactionSubmitted(true)
         })
       : undefined
   return new BackgroundEvmDAppHandler({
@@ -97,6 +110,7 @@ export function createBackgroundEvmDAppHandler(
     hasUnlockSession: () => credentialSession.hasUnlockSession(),
     runActiveOperation: operation => accountContextTransition.runActiveOperation(operation),
     transferController,
+    onTransactionSubmitted: () => notifyTransactionSubmitted(),
     ...(privateTransfer === undefined ? {} : { privateTransfer }),
     operationStore: evmDAppOperationStore,
     signer,

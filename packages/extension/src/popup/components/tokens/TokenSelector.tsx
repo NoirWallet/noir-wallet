@@ -36,6 +36,8 @@ export interface TokenSelectorProps {
   selectedToken?: SwapToken
   onSelect: (token: SwapToken) => void
   tokens?: readonly SwapToken[]
+  defaultTokens?: readonly SwapToken[]
+  defaultCatalogLoading?: boolean
   balances?: ReadonlyMap<string, string>
   catalogLoading?: boolean
   stableCatalogOrder?: boolean
@@ -50,6 +52,8 @@ export function TokenSelector({
   selectedToken,
   onSelect,
   tokens: providedTokens,
+  defaultTokens,
+  defaultCatalogLoading = false,
   balances,
   catalogLoading = false,
   stableCatalogOrder = false,
@@ -125,20 +129,27 @@ export function TokenSelector({
   const filterKey = `${effectiveBlockchain}:${search}`
   const filteredTokens = useMemo(() => {
     const startedAt = performance.now()
+    const available = new Set(tokens.map(token => `${token.blockchain}:${token.assetId}`))
     const previous =
       stableCatalogOrder && !search && previousRows.current?.filter === filterKey
         ? new Map(previousRows.current.keys.map((key, index) => [key, index]))
         : undefined
     const ranked = [
       ...sortTokensByBalanceValue(
-        tokens.filter(token => {
+        (search.trim() ? tokens : (defaultTokens ?? tokens)).filter(token => {
+          if (!available.has(`${token.blockchain}:${token.assetId}`)) return false
           if (token.assetId === excludeAssetId) return false
           if (effectiveBlockchain !== 'all' && token.blockchain !== effectiveBlockchain)
             return false
           return matchesSwapTokenSearch(token, search)
         }),
         balances,
-        previous
+        previous,
+        !search.trim() && defaultTokens
+          ? new Map(
+              defaultTokens.map((token, index) => [`${token.blockchain}:${token.assetId}`, index])
+            )
+          : undefined
       )
     ].sort((left, right) => compareSwapTokenSearchRelevance(left, right, search))
     logDebugTiming(
@@ -149,6 +160,7 @@ export function TokenSelector({
     return ranked
   }, [
     tokens,
+    defaultTokens,
     excludeAssetId,
     effectiveBlockchain,
     search,
@@ -446,7 +458,7 @@ export function TokenSelector({
         {loading ? (
           <ListSkeleton rows={5} label="Loading tokens" className="px-1" />
         ) : filteredTokens.length === 0 ? (
-          catalogLoading ? (
+          catalogLoading || (!search.trim() && defaultCatalogLoading) ? (
             <ListSkeleton rows={3} label="Searching tokens" className="px-1" />
           ) : (
             <div className="py-8 text-center text-muted">{emptyMessage}</div>

@@ -22,6 +22,27 @@ test('strictly parses the bound dApp Private transfer approval', () => {
   expect(parseEvmPrivateTransferApproval(valid)).toEqual(valid)
 })
 
+test('requires exact receive amount and network fee for a dApp privacy route', () => {
+  const exactOutput = {
+    ...valid,
+    estimatedOutputRaw: '999000',
+    minimumOutputRaw: '999000',
+    approvalRequired: false,
+    exactOutput: true,
+    networkFeeRaw: '21000000000000',
+    nativeCurrency: { symbol: 'ETH', decimals: 18 }
+  }
+  expect(parseEvmPrivateTransferApproval(exactOutput)).toEqual(exactOutput)
+  for (const value of [
+    { ...exactOutput, minimumOutputRaw: '998999' },
+    { ...exactOutput, amountRaw: '998999' },
+    { ...exactOutput, networkFeeRaw: undefined },
+    { ...exactOutput, approvalRequired: true }
+  ]) {
+    expect(parseEvmPrivateTransferApproval(value)).toBeNull()
+  }
+})
+
 test('rejects approval data that can disguise a non-Confidential or substituted transfer', () => {
   for (const value of [
     { ...valid, router: 'direct' },
