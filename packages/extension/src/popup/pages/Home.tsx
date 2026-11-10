@@ -780,7 +780,11 @@ export function Home() {
       <CopyToast show={showToast} />
       {/* Header */}
       <header className="flex h-[52px] shrink-0 items-center justify-between gap-2 px-4">
-        <AccountSwitcher accountName={accountDisplayName} className="min-w-0 flex-1" />
+        <AccountSwitcher
+          accountName={accountDisplayName}
+          defaultEvmMode={privateMode ? 'private' : 'public'}
+          className="min-w-0 flex-1"
+        />
         <div data-testid="home-header-actions" className="flex shrink-0 items-center gap-3">
           <WalletModeSwitch
             state={dappExecutionMode.state}

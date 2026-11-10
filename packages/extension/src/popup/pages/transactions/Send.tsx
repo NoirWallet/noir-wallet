@@ -122,7 +122,7 @@ function MoveLayout({
             </span>
             {source === 'transparent' && (
               <span className="shrink-0 rounded bg-white/10 px-1.5 py-0.5 text-[11px] text-muted">
-                Public
+                Transparent
               </span>
             )}
           </div>
@@ -954,7 +954,7 @@ export function Send() {
                       fundingSource === 'shielded' ? 'shrink-0 text-primary' : 'shrink-0 text-muted'
                     }
                   >
-                    {fundingSource === 'shielded' ? 'Shield' : 'Public'}
+                    {fundingSource === 'shielded' ? 'Shield' : 'Transparent'}
                   </span>
                   <Icon icon="lucide:chevron-down" width={14} height={14} className="shrink-0" />
                 </button>
@@ -1243,7 +1243,7 @@ export function Send() {
                   )}
                 >
                   <Icon icon="lucide:eye" width={18} height={18} />
-                  <span className="flex-1">Public</span>
+                  <span className="flex-1">Transparent</span>
                   <span className="max-w-[35%] break-all text-right">
                     {formatTokenQuantity(option.available)}
                   </span>
@@ -1344,7 +1344,7 @@ export function Send() {
                           : 'bg-white/10 text-muted'
                       )}
                     >
-                      {fundingSource === 'shielded' ? 'Shield' : 'Public'}
+                      {fundingSource === 'shielded' ? 'Shield' : 'Transparent'}
                     </span>
                   </span>
                   <span

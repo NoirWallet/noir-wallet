@@ -41,6 +41,7 @@ import { DEFAULT_NETWORK } from '@/lib/runtime-network'
 import { useWalletStore } from '@/store/wallet-store'
 import { ACCOUNT_AVATARS } from '@/popup/lib/account-avatars'
 import { availableSoftwareAccountFamilies } from '@/popup/services/account-network-selection-client'
+import { useDAppExecutionMode } from '@/popup/hooks/useDAppExecutionMode'
 
 interface AddressQrTarget {
   readonly network: AccountNetworkView
@@ -381,7 +382,7 @@ export function AddressesList() {
   const scopedChainId = searchParams.get('chainId')
   const scopedReceive = searchParams.has('chainId')
   const receiveView = searchParams.get('source') === 'receive'
-  const requestedMode = searchParams.get('mode') === 'private' ? 'private' : 'public'
+  const explicitMode = searchParams.get('mode')
   const requestedPrivacy = searchParams.get('privacy')
   const shieldedZcashOnly =
     searchParams.get('chain') === 'zcash' && searchParams.get('privacy') === 'shielded'
@@ -396,6 +397,19 @@ export function AddressesList() {
     walletId && accountId ? state.getAccount(walletId, accountId) : undefined
   )
   const wallet = useWalletStore(state => state.wallets.find(item => item.id === walletId))
+  const currentWalletId = useWalletStore(state => state.currentWalletId)
+  const currentAccountId = useWalletStore(state => state.currentAccountId)
+  const executionMode = useDAppExecutionMode(
+    Boolean(
+      walletId && accountId && walletId === currentWalletId && accountId === currentAccountId
+    ),
+    walletId,
+    accountId
+  )
+  const defaultMode = executionMode.state?.mode === 'private' ? 'private' : 'public'
+  const requestedMode =
+    explicitMode === 'private' || explicitMode === 'public' ? explicitMode : defaultMode
+  const requestedZcashMode = explicitMode === 'private' ? 'private' : 'public'
   const [networkQuery, setNetworkQuery] = useState('')
   const availableFamilies = useMemo(() => availableSoftwareAccountFamilies(), [])
   const selectedFamilies = account?.networkSelections?.[DEFAULT_NETWORK] ?? availableFamilies
@@ -414,7 +428,8 @@ export function AddressesList() {
                 .includes(networkQuery.trim().toLowerCase()))
         )
       : []
-  const [mode, setMode] = useState<'public' | 'private'>('public')
+  const [selectedMode, setMode] = useState<'public' | 'private' | null>(null)
+  const mode = selectedMode ?? defaultMode
   const activeMode = scopedReceive ? requestedMode : mode
   const [evmExpanded, setEvmExpanded] = useState(false)
   const [networks, setNetworks] = useState<readonly AccountNetworkView[]>([])
@@ -431,6 +446,8 @@ export function AddressesList() {
     readonly qrTarget?: AddressQrTarget
     readonly copyKey?: string
   } | null>(null)
+
+  useEffect(() => setMode(null), [walletId, accountId])
 
   useEffect(() => {
     let cancelled = false
@@ -485,7 +502,7 @@ export function AddressesList() {
           const privacy =
             requestedPrivacy === 'transparent' || requestedPrivacy === 'shielded'
               ? requestedPrivacy
-              : requestedMode === 'private'
+              : requestedZcashMode === 'private'
                 ? 'shielded'
                 : 'transparent'
           const addresses = network.addresses.filter(address => address.privacy === privacy)
@@ -515,6 +532,7 @@ export function AddressesList() {
     networks,
     mode,
     requestedMode,
+    requestedZcashMode,
     requestedPrivacy,
     scopedChainId,
     scopedReceive,
@@ -537,7 +555,7 @@ export function AddressesList() {
     <AddressNetworkGroup
       key={network.chain.id}
       network={network}
-      mode={activeMode}
+      mode={scopedReceive && network.chain.family === 'zcash' ? requestedZcashMode : activeMode}
       onCopy={(value, key) => void copyToClipboard(value, key)}
       isCopied={isCopied}
       onCopyPrivateExecution={address => setPrivateAddressAction({ address })}

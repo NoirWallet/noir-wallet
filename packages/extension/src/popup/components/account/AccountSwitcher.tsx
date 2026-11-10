@@ -113,6 +113,7 @@ function AccountAvatar({
 
 function AccountAddressPopover({
   account,
+  defaultEvmMode,
   onCopy,
   onCopyPrivate,
   isCopied,
@@ -121,6 +122,7 @@ function AccountAddressPopover({
   className
 }: {
   readonly account: SwitcherAccount
+  readonly defaultEvmMode: 'public' | 'private'
   readonly onCopy: (value: string, key: string) => void
   readonly onCopyPrivate: (value: string, key: string) => void
   readonly isCopied: (key: string) => boolean
@@ -128,11 +130,12 @@ function AccountAddressPopover({
   readonly onViewAll: () => void
   readonly className?: string
 }) {
-  const [evmMode, setEvmMode] = useState<'public' | 'private'>('public')
+  const [selectedEvmMode, setEvmMode] = useState<'public' | 'private' | null>(null)
   const keyPrefix = `${copyScope}-${account.walletId}-${account.accountId}`
   const zcash = account.networks.find(network => network.chain.family === 'zcash')
   const evm = account.networks.filter(network => network.chain.family === 'evm')
   const evmAddresses = evmExecutionAddresses(evm)
+  const evmMode = selectedEvmMode ?? (evmAddresses.privateAddress ? defaultEvmMode : 'public')
   const otherAddresses = account.networks.flatMap(network => {
     if (network.chain.family === 'zcash' || network.chain.family === 'evm') return []
     const address =
@@ -326,10 +329,12 @@ function AccountAddressPopover({
 
 export function AccountSwitcher({
   className,
-  accountName
+  accountName,
+  defaultEvmMode = 'public'
 }: {
   readonly className?: string
   readonly accountName?: string
+  readonly defaultEvmMode?: 'public' | 'private'
 }) {
   const { navigate, replace } = useNavigate()
   const { confirm, alert } = useDialog()
@@ -668,7 +673,9 @@ export function AccountSwitcher({
               >
                 <div className="animate-in fade-in-0 slide-in-from-left-1 duration-140 motion-reduce:animate-none">
                   <AccountAddressPopover
+                    key={`${previewAccount.walletId}:${previewAccount.accountId}`}
                     account={previewAccount}
+                    defaultEvmMode={defaultEvmMode}
                     className="max-w-[calc(100vw-114px)]"
                     onCopy={(value, key) => void copyToClipboard(value, key)}
                     onCopyPrivate={(address, key) => {
@@ -745,7 +752,9 @@ export function AccountSwitcher({
         >
           {activeAccount && (
             <AccountAddressPopover
+              key={`${activeAccount.walletId}:${activeAccount.accountId}`}
               account={activeAccount}
+              defaultEvmMode={defaultEvmMode}
               onCopy={(value, key) => void copyToClipboard(value, key)}
               onCopyPrivate={(address, key) => {
                 cancelAddressesClose()

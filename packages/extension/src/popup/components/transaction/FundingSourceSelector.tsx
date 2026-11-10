@@ -5,7 +5,6 @@ import { formatSortAddress } from '@/lib/format'
 import { formatTokenQuantity } from '@/lib/number-format'
 import { safeBig } from '@/lib/big'
 import { cn } from '@/lib/utils'
-import nearLogo from '@/images/figma-near-confidential.svg'
 import zcashShieldLogo from '@/images/figma-zcash-shield.svg'
 
 export const fundingSourceSheetClassName =
@@ -91,27 +90,6 @@ export function FundingSourceSelector({
                 </span>
               )}
             </button>
-            {type === 'transparent' && !receiving && (
-              <button
-                type="button"
-                disabled
-                aria-label="NEAR Confidential Intents unavailable"
-                title="Not available for this swap"
-                className="flex min-h-[64px] w-full items-center gap-3 rounded-xl border border-transparent bg-card px-3 py-2.5 text-left opacity-45 disabled:cursor-not-allowed"
-              >
-                <span className="min-w-0 flex-1">
-                  <span className="flex items-center gap-1.5 text-sm">
-                    <Icon icon="lucide:shield-check" width={16} className="text-success" />
-                    Shield
-                  </span>
-                  <span className="mt-1 flex items-center gap-1.5 text-xs text-muted">
-                    <img src={nearLogo} alt="" className="size-4 rounded" />
-                    NEAR Confidential Intents
-                  </span>
-                </span>
-                <span className="text-sm text-muted">—</span>
-              </button>
-            )}
           </div>
         )
       })}
