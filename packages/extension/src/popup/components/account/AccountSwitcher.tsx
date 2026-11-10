@@ -598,9 +598,12 @@ export function AccountSwitcher({
               }}
             >
               {groups.map((group, groupIndex) => (
-                <div key={group.walletId} className="border-b border-white/10 py-2">
+                <div key={group.id} className="border-b border-white/10 py-2">
                   <p
-                    className="mx-3 mb-2 truncate rounded bg-white/10 px-1 py-1 text-center text-xs font-medium text-wallet-secondary"
+                    className={cn(
+                      'mx-3 mb-2 rounded bg-white/10 px-1 py-1 text-center text-xs font-medium text-wallet-secondary',
+                      group.id === 'imported-private-key' ? 'break-words leading-4' : 'truncate'
+                    )}
                     title={group.name}
                   >
                     {group.name}

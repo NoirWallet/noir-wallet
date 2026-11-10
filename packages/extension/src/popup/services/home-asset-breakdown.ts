@@ -30,10 +30,12 @@ export function resolveHomePortfolioTotalStatus(
 }
 
 export interface HomeAssetBreakdown {
-  readonly publicUsd: string
+  readonly publicUsd: string | null
+  readonly publicUsdPartial: boolean
   readonly shieldUsd: string | null
   readonly shieldUsdPartial: boolean
-  readonly privateUsd: string
+  readonly privateUsd: string | null
+  readonly privateUsdPartial: boolean
 }
 
 export function hasCompletePortfolioTotal(
@@ -64,14 +66,15 @@ export function getHomeAssetBreakdown(input: {
   if (input.multichainEnabled) {
     if (!input.liveMultichainTotal || !input.portfolio) return null
     const domains = summarizeAssetDomainsUsd(input.portfolio, input.prices ?? null)
-    if (!domains) return null
     return domains
   }
   if (!input.zcashBalance || input.zecPrice <= 0) return null
   return Object.freeze({
     publicUsd: new Big(input.zcashBalance.transparent).times(input.zecPrice).toFixed(),
+    publicUsdPartial: false,
     shieldUsd: new Big(input.zcashBalance.shielded).times(input.zecPrice).toFixed(),
     shieldUsdPartial: false,
-    privateUsd: '0'
+    privateUsd: '0',
+    privateUsdPartial: false
   })
 }

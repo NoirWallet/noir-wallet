@@ -46,10 +46,13 @@ export interface SwitcherAccount {
 }
 
 export interface SwitcherGroup {
-  readonly walletId: string
+  readonly id: string
   readonly name: string
   readonly accounts: readonly SwitcherAccount[]
 }
+
+const IMPORTED_PRIVATE_KEY_GROUP_ID = 'imported-private-key'
+const IMPORTED_PRIVATE_KEY_GROUP_NAME = 'Imported Private Key'
 
 export function buildAccountSwitcherGroups(input: {
   readonly wallets: WalletItem[]
@@ -79,11 +82,16 @@ export function buildAccountSwitcherGroups(input: {
         active: wallet.id === currentWalletId && account.id === currentAccountId
       })
     }
-    groups.set(wallet.id, group)
+    groups.set(`wallet:${wallet.id}`, group)
   }
   for (const account of catalogAccounts) {
     if (retained.has(accountListKey(account.walletId, account.accountId))) continue
-    const group = groups.get(account.walletId) ?? { name: account.walletDisplayName, accounts: [] }
+    const isPrivateKey = account.walletSource.kind === 'private-key'
+    const groupId = isPrivateKey ? IMPORTED_PRIVATE_KEY_GROUP_ID : `wallet:${account.walletId}`
+    const group = groups.get(groupId) ?? {
+      name: isPrivateKey ? IMPORTED_PRIVATE_KEY_GROUP_NAME : account.walletDisplayName,
+      accounts: []
+    }
     group.accounts.push({
       walletId: account.walletId,
       accountId: account.accountId,
@@ -96,11 +104,11 @@ export function buildAccountSwitcherGroups(input: {
       networks: account.networks,
       active: account.active && !hasRetainedSelection
     })
-    groups.set(account.walletId, group)
+    groups.set(groupId, group)
   }
   return [...groups]
     .filter(([, group]) => group.accounts.length > 0)
-    .map(([walletId, group]) => ({ walletId, ...group }))
+    .map(([id, group]) => ({ id, ...group }))
 }
 
 export function accountListKey(walletId: string, accountId: string): string {
@@ -292,14 +300,14 @@ export function buildVisibleAccountList(input: {
       ensureWalletGroup(account.walletId, account).accounts.push({ kind: 'native', account })
       continue
     }
-    const id = 'imported-private-key'
+    const id = IMPORTED_PRIVATE_KEY_GROUP_ID
     let group = groups.get(id)
     if (!group) {
       group = {
         kind: 'private-key',
         id,
         walletId: null,
-        displayName: 'Imported Private Key',
+        displayName: IMPORTED_PRIVATE_KEY_GROUP_NAME,
         hardwareVendor: null,
         addAccount: null,
         createdAt: Number.MAX_SAFE_INTEGER,

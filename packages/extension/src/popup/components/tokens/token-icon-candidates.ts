@@ -1,4 +1,6 @@
 import type { SwapToken } from '@/core/services/intents-api'
+import { MARKET_ASSETS } from '@/config/asset-market-assets'
+import { findBundledWalletMarketAssetId, isBundledWalletAsset } from './token-display-policy'
 
 interface TokenIconCandidateInput {
   readonly token?: Pick<SwapToken, 'blockchain' | 'contractAddress' | 'icon' | 'coingeckoIcon'>
@@ -7,6 +9,54 @@ interface TokenIconCandidateInput {
   readonly blockchain?: string
   readonly nativeChain?: string
   readonly bundledIcon?: string
+}
+
+const nativeAssetIconUrls: Readonly<Record<string, string>> = Object.freeze({
+  [MARKET_ASSETS.bnb]:
+    'https://coin-images.coingecko.com/coins/images/825/large/bnb-icon2_2x.png?1696501970',
+  [MARKET_ASSETS.pol]:
+    'https://coin-images.coingecko.com/coins/images/32440/large/pol.png?1759114181',
+  [MARKET_ASSETS.avax]:
+    'https://coin-images.coingecko.com/coins/images/12559/large/Avalanche_Circle_RedWhite_Trans.png?1696512369',
+  [MARKET_ASSETS.mon]:
+    'https://coin-images.coingecko.com/coins/images/38927/large/mon.png?1766029057',
+  [MARKET_ASSETS.xdai]:
+    'https://coin-images.coingecko.com/coins/images/11062/large/Identity-Primary-DarkBG.png?1696511004',
+  [MARKET_ASSETS.xpl]:
+    'https://coin-images.coingecko.com/coins/images/66489/large/Plasma-symbol-green-1.png?1755142558',
+  [MARKET_ASSETS.okb]:
+    'https://coin-images.coingecko.com/coins/images/4463/large/WeChat_Image_20220118095654.png?1696505053',
+  [MARKET_ASSETS.bera]:
+    'https://coin-images.coingecko.com/coins/images/25235/large/BERA.png?1738822008',
+  [MARKET_ASSETS.btc]:
+    'https://coin-images.coingecko.com/coins/images/1/large/bitcoin.png?1696501400',
+  [MARKET_ASSETS.sol]:
+    'https://coin-images.coingecko.com/coins/images/4128/large/solana.png?1718769756',
+  [MARKET_ASSETS.near]:
+    'https://coin-images.coingecko.com/coins/images/10365/large/near.jpg?1696510367'
+})
+
+function getBundledNativeIconFallback(
+  assetId: string | undefined,
+  token?: Pick<SwapToken, 'contractAddress'>
+): string | undefined {
+  if (!assetId || (token !== undefined && token.contractAddress != null)) return undefined
+  if (!(isBundledWalletAsset(assetId) && assetId.includes('/slip44:')) && !token) {
+    return undefined
+  }
+  const marketAsset = findBundledWalletMarketAssetId(assetId)
+  return marketAsset ? nativeAssetIconUrls[marketAsset] : undefined
+}
+
+export function isBundledEthIconIdentity(
+  assetId: string | undefined,
+  token?: Pick<SwapToken, 'contractAddress'>
+): boolean {
+  if (!assetId || findBundledWalletMarketAssetId(assetId) !== MARKET_ASSETS.eth) return false
+  if (/^eip155:[1-9][0-9]*\/slip44:60$/.test(assetId)) {
+    return token === undefined || token.contractAddress == null
+  }
+  return token?.contractAddress == null && token !== undefined
 }
 
 function isCoinGeckoIconUrl(value: string | undefined): boolean {
@@ -60,12 +110,19 @@ function isRetiredIconSource(value: string, depth = 0): boolean {
 export function getTokenIconCandidates({
   token,
   icon,
+  assetId,
   bundledIcon
 }: TokenIconCandidateInput): readonly string[] {
   const providerIcon = isPublicIpfsIconUrl(token?.icon ?? undefined) ? undefined : token?.icon
   const metadataIcon = isCoinGeckoIconUrl(icon) || isPublicIpfsIconUrl(icon) ? undefined : icon
   const coinGeckoIcon = isCoinGeckoIconUrl(icon) ? icon : token?.coingeckoIcon
-  const candidates = [bundledIcon, providerIcon, metadataIcon, coinGeckoIcon]
+  const candidates = [
+    bundledIcon,
+    providerIcon,
+    metadataIcon,
+    coinGeckoIcon,
+    getBundledNativeIconFallback(assetId, token)
+  ]
 
   return Object.freeze(
     candidates.filter(

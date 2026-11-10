@@ -227,15 +227,19 @@ test('home asset domains count each EVM and Zcash balance once', () => {
   }
   expect(getHomeAssetBreakdown(input)).toEqual({
     publicUsd: '112',
+    publicUsdPartial: false,
     shieldUsd: '58',
     shieldUsdPartial: false,
-    privateUsd: '60'
+    privateUsd: '60',
+    privateUsdPartial: false
   })
   expect(summarizeAssetDomainsUsd(model, prices)).toEqual({
     publicUsd: '112',
+    publicUsdPartial: false,
     shieldUsd: '58',
     shieldUsdPartial: false,
-    privateUsd: '60'
+    privateUsd: '60',
+    privateUsdPartial: false
   })
   expect(getAssetDomainRaw(evmAsset, 'private')).toBe('30')
   const baseOnly = {
@@ -294,9 +298,11 @@ test('home asset domains count each EVM and Zcash balance once', () => {
   })
   expect(summarizeAssetDomainsUsd(independent, prices)).toEqual({
     publicUsd: '112',
+    publicUsdPartial: false,
     shieldUsd: '108',
     shieldUsdPartial: false,
-    privateUsd: '60'
+    privateUsd: '60',
+    privateUsdPartial: false
   })
   const withConfidentialZec = {
     ...independent,
@@ -320,9 +326,11 @@ test('home asset domains count each EVM and Zcash balance once', () => {
   })
   expect(summarizeAssetDomainsUsd(withConfidentialZec, prices)).toEqual({
     publicUsd: '112',
+    publicUsdPartial: false,
     shieldUsd: '114',
     shieldUsdPartial: false,
-    privateUsd: '60'
+    privateUsd: '60',
+    privateUsdPartial: false
   })
   const chainScoped = {
     ...withConfidentialZec,
@@ -343,17 +351,21 @@ test('home asset domains count each EVM and Zcash balance once', () => {
   expect(summarizePortfolioFiat(ethereum, prices).totalUsd).toBe('200')
   expect(summarizeAssetDomainsUsd(ethereum, prices)).toEqual({
     publicUsd: '100',
+    publicUsdPartial: false,
     shieldUsd: '40',
     shieldUsdPartial: false,
-    privateUsd: '60'
+    privateUsd: '60',
+    privateUsdPartial: false
   })
   const zcash = projectPortfolioForChains(chainScoped, [zcashAsset.asset.chainId])
   expect(summarizePortfolioFiat(zcash, prices).totalUsd).toBe('36')
   expect(summarizeAssetDomainsUsd(zcash, prices)).toEqual({
     publicUsd: '12',
+    publicUsdPartial: false,
     shieldUsd: '24',
     shieldUsdPartial: false,
-    privateUsd: '0'
+    privateUsd: '0',
+    privateUsdPartial: false
   })
   expect(summarizePortfolioFiat(chainScoped, prices).totalUsd).toBe('286')
   const staleCatalog = {
@@ -415,6 +427,64 @@ test('home asset domains count each EVM and Zcash balance once', () => {
     shieldUsdPartial: true
   })
   expect(getHomeAssetBreakdown({ ...input, portfolio: null })).toBeNull()
+  const unpricedPublicAsset = {
+    ...evmAsset,
+    asset: { ...evmAsset.asset, id: 'eip155:1/erc20:unpriced' },
+    balance: {
+      totalRaw: '10',
+      mainRaw: '10',
+      privateRaw: '0',
+      privateOnchainRaw: '0',
+      confidentialRaw: '0'
+    }
+  }
+  const withUnpriced = { ...model, assets: [...model.assets, unpricedPublicAsset] }
+  expect(summarizePortfolioFiat(withUnpriced, prices)).toMatchObject({
+    totalUsd: '230',
+    missingAssetCount: 1
+  })
+  expect(getHomeAssetBreakdown({ ...input, portfolio: withUnpriced })).toEqual({
+    publicUsd: '112',
+    publicUsdPartial: true,
+    shieldUsd: '58',
+    shieldUsdPartial: false,
+    privateUsd: '60',
+    privateUsdPartial: false
+  })
+  const staleEvmPrices = {
+    quotes: prices.quotes.map(quote =>
+      quote.assetId === evmAsset.asset.id ? { ...quote, freshness: 'stale' } : quote
+    )
+  }
+  expect(summarizeAssetDomainsUsd(model, staleEvmPrices)).toEqual({
+    publicUsd: '112',
+    publicUsdPartial: true,
+    shieldUsd: '58',
+    shieldUsdPartial: true,
+    privateUsd: '60',
+    privateUsdPartial: true
+  })
+  expect(summarizeAssetDomainsUsd({ ...model, assets: [unpricedPublicAsset] }, prices)).toEqual({
+    publicUsd: null,
+    publicUsdPartial: true,
+    shieldUsd: '0',
+    shieldUsdPartial: false,
+    privateUsd: '0',
+    privateUsdPartial: false
+  })
+  expect(
+    summarizeAssetDomainsUsd(
+      { ...model, assets: [evmAsset, { ...zcashAsset, balance: { totalRaw: '10' } }] },
+      prices
+    )
+  ).toEqual({
+    publicUsd: '100',
+    publicUsdPartial: true,
+    shieldUsd: '40',
+    shieldUsdPartial: true,
+    privateUsd: '60',
+    privateUsdPartial: true
+  })
   expect(getAssetDomainRaw({ ...evmAsset, balance: { totalRaw: '100' } }, 'public')).toBeNull()
   expect(getHomeAssetBreakdown({ ...input, liveMultichainTotal: false })).toBeNull()
   expect(
@@ -426,9 +496,11 @@ test('home asset domains count each EVM and Zcash balance once', () => {
     })
   ).toEqual({
     publicUsd: '8',
+    publicUsdPartial: false,
     shieldUsd: '12',
     shieldUsdPartial: false,
-    privateUsd: '0'
+    privateUsd: '0',
+    privateUsdPartial: false
   })
 })
 

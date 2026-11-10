@@ -81,7 +81,11 @@ import {
   projectPortfolioForChains,
   resolvePortfolioChainSelection
 } from '../services/portfolio-presentation'
-import { selectHomeActionSource, type AssetDomain } from '../services/asset-domains'
+import {
+  formatAssetDomainFiat,
+  selectHomeActionSource,
+  type AssetDomain
+} from '../services/asset-domains'
 import { selectShieldActions, type ShieldAction } from '../services/shield-action-selection'
 import { getPrivateTransferChainIds } from '../services/private-balance-transfer'
 
@@ -599,6 +603,12 @@ export function Home() {
     shield: assetBreakdown?.shieldUsd ?? null,
     private: assetBreakdown?.privateUsd ?? null
   }
+  const domainTotalsPartial = {
+    all: totalBalanceApproximate,
+    public: assetBreakdown?.publicUsdPartial ?? false,
+    shield: assetBreakdown?.shieldUsdPartial ?? false,
+    private: assetBreakdown?.privateUsdPartial ?? false
+  }
   const selectedDomainTotal = domainTotals[assetDomain]
 
   const openAddressesList = useCallback(() => {
@@ -864,19 +874,28 @@ export function Home() {
                       <div className="flex justify-between gap-4">
                         <span>Public</span>
                         <span className="tabular-nums">
-                          {formatFiatAmount(assetBreakdown.publicUsd, { showSign: true })}
+                          {formatAssetDomainFiat(
+                            assetBreakdown.publicUsd,
+                            assetBreakdown.publicUsdPartial
+                          )}
                         </span>
                       </div>
                       <div className="flex justify-between gap-4">
                         <span>Shield</span>
                         <span className="tabular-nums">
-                          {formatFiatAmount(assetBreakdown.shieldUsd, { showSign: true })}
+                          {formatAssetDomainFiat(
+                            assetBreakdown.shieldUsd,
+                            assetBreakdown.shieldUsdPartial
+                          )}
                         </span>
                       </div>
                       <div className="flex justify-between gap-4">
                         <span>Private</span>
                         <span className="tabular-nums">
-                          {formatFiatAmount(assetBreakdown.privateUsd, { showSign: true })}
+                          {formatAssetDomainFiat(
+                            assetBreakdown.privateUsd,
+                            assetBreakdown.privateUsdPartial
+                          )}
                         </span>
                       </div>
                     </div>
@@ -884,10 +903,10 @@ export function Home() {
                 >
                   <button
                     type="button"
-                    aria-label={`${totalBalanceApproximate ? 'Estimated ' : ''}${ASSET_DOMAIN_LABELS[assetDomain]} ${formatFiatAmount(selectedDomainTotal, { showSign: true })}, show asset breakdown`}
+                    aria-label={`${domainTotalsPartial[assetDomain] ? 'Estimated ' : ''}${ASSET_DOMAIN_LABELS[assetDomain]} ${formatAssetDomainFiat(selectedDomainTotal, domainTotalsPartial[assetDomain])}, show asset breakdown`}
                     className="max-w-[calc(100vw-4rem)] break-all rounded-sm text-[40px] font-semibold leading-[37.4px] tabular-nums focus-visible:outline-2 focus-visible:outline-primary"
                   >
-                    {formatFiatAmount(selectedDomainTotal, { showSign: true })}
+                    {formatAssetDomainFiat(selectedDomainTotal, domainTotalsPartial[assetDomain])}
                   </button>
                 </Tooltip>
               ) : (
@@ -897,7 +916,7 @@ export function Home() {
                 >
                   {balancesHidden
                     ? '••••'
-                    : formatFiatAmount(selectedDomainTotal, { showSign: true })}
+                    : formatAssetDomainFiat(selectedDomainTotal, domainTotalsPartial[assetDomain])}
                 </p>
               )}
               <button
@@ -918,6 +937,7 @@ export function Home() {
               <AssetDomainSelector
                 value={assetDomain}
                 totals={domainTotals}
+                partialTotals={domainTotalsPartial}
                 balancesHidden={balancesHidden}
                 onChange={domain => navigate.replace(homeAssetDomainPath(location.search, domain))}
               />

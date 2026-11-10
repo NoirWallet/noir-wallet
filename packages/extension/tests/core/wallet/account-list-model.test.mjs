@@ -297,6 +297,27 @@ test('groups private keys across chain families without merging wallet or accoun
     group.accounts.map(item => item.account.walletId),
     ['sol-key', 'evm-key']
   )
+  const switcherGroups = buildAccountSwitcherGroups({
+    wallets: [],
+    catalogAccounts: imports,
+    accountDisplayNames: {},
+    currentWalletId: null,
+    currentAccountId: null
+  })
+  assert.deepEqual(
+    switcherGroups.map(({ id, name, accounts }) => ({
+      id,
+      name,
+      walletIds: accounts.map(account => account.walletId)
+    })),
+    [
+      {
+        id: 'imported-private-key',
+        name: 'Imported Private Key',
+        walletIds: ['evm-key', 'sol-key']
+      }
+    ]
+  )
   assert.equal(
     buildVisibleAccountList({ ...input, searchQuery: 'Imported Private Key' }).regularEntries[0]
       .accounts.length,

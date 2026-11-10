@@ -1,5 +1,5 @@
 import Big from '@/lib/big'
-import { formatBaseUnitDecimalAmount } from '@/lib/number-format'
+import { formatBaseUnitDecimalAmount, formatFiatAmount } from '@/lib/number-format'
 import type { PortfolioAssetView, PortfolioChainView, PortfolioReadModel } from '@/core/portfolio'
 import { findAssetPrice, type AssetPriceReadModel } from '@/core/prices'
 import { ZCASH_CHAIN_IDS } from '@/core/chains/registry/chain-ids'
@@ -11,6 +11,11 @@ import {
 export type AssetDomain = 'all' | 'public' | 'shield' | 'private'
 export type ShieldProvider = 'near-confidential' | 'zcash-shield'
 const ZCASH_CHAIN_ID_SET = new Set<string>(Object.values(ZCASH_CHAIN_IDS))
+
+export function formatAssetDomainFiat(value: string | number | null, partial = false): string {
+  if (value === null) return '—'
+  return `${partial ? '~' : ''}${formatFiatAmount(value, { showSign: true })}`
+}
 
 function completeRawParts(totalRaw: string, parts: readonly (string | undefined)[]): boolean {
   return (
@@ -173,7 +178,10 @@ export function summarizeKnownShieldFiat(
   near: NearConfidentialSummary | null,
   assetShieldUsd: string | null | undefined
 ): Readonly<{ usd: string | null; partial: boolean }> {
-  const partial = near?.fiat === null || assetShieldUsd === null
+  const partial =
+    near?.fiat === null ||
+    assetShieldUsd === null ||
+    near?.entries.some(entry => entry.fiat !== null && entry.priceFreshness !== 'fresh') === true
   const knownNearUsd =
     near?.entries.reduce(
       (sum, entry) => (entry.fiat === null ? sum : sum.plus(entry.fiat)),
@@ -187,22 +195,27 @@ export function summarizeKnownShieldFiat(
 }
 
 interface AssetDomainFiatSummary {
-  readonly publicUsd: string
+  readonly publicUsd: string | null
+  readonly publicUsdPartial: boolean
   readonly shieldUsd: string | null
   readonly shieldUsdPartial: boolean
-  readonly privateUsd: string
+  readonly privateUsd: string | null
+  readonly privateUsdPartial: boolean
 }
 
 export function summarizeAssetDomainsUsd(
   model: PortfolioReadModel,
   prices: AssetPriceReadModel | null
-): AssetDomainFiatSummary | null {
+): AssetDomainFiatSummary {
   const independentConfidential =
     model.confidential !== undefined ||
     model.chains?.some(
       chain => chain.chain.family === 'evm' && chain.chain.network?.kind === 'mainnet'
     ) === true
   const sums = { public: new Big(0), shield: new Big(0), private: new Big(0) }
+  const unknown = { public: false, shield: false, private: false }
+  const stale = { public: false, shield: false, private: false }
+  const knownHolding = { public: false, shield: false, private: false }
   for (const asset of model.assets) {
     const embeddedConfidential =
       independentConfidential && asset.asset.chainId.startsWith('eip155:')
@@ -210,11 +223,20 @@ export function summarizeAssetDomainsUsd(
         : 0n
     if (BigInt(asset.balance.totalRaw) - embeddedConfidential === 0n) continue
     const quote = findAssetPrice(prices, asset.asset.id)
-    if (!quote) return null
     for (const domain of ['public', 'shield', 'private'] as const) {
       if (independentConfidential && domain === 'shield' && embeddedConfidential > 0n) continue
       const raw = getAssetDomainRaw(asset, domain)
-      if (raw === null) return null
+      if (raw === null) {
+        unknown[domain] = true
+        continue
+      }
+      if (BigInt(raw) === 0n) continue
+      if (!quote) {
+        unknown[domain] = true
+        continue
+      }
+      knownHolding[domain] = true
+      if (quote.freshness === 'stale') stale[domain] = true
       sums[domain] = sums[domain].plus(
         new Big(formatBaseUnitDecimalAmount(raw, asset.metadata.decimals)).times(quote.priceUsd)
       )
@@ -223,11 +245,16 @@ export function summarizeAssetDomainsUsd(
   const confidential = independentConfidential
     ? summarizeNearConfidentialHoldings(model, prices)
     : null
-  const shield = summarizeKnownShieldFiat(confidential, sums.shield.toFixed())
+  const shield = summarizeKnownShieldFiat(
+    confidential,
+    unknown.shield && !knownHolding.shield ? null : sums.shield.toFixed()
+  )
   return Object.freeze({
-    publicUsd: sums.public.toFixed(),
+    publicUsd: unknown.public && !knownHolding.public ? null : sums.public.toFixed(),
+    publicUsdPartial: unknown.public || stale.public,
     shieldUsd: shield.usd,
-    shieldUsdPartial: shield.partial,
-    privateUsd: sums.private.toFixed()
+    shieldUsdPartial: shield.partial || unknown.shield || stale.shield,
+    privateUsd: unknown.private && !knownHolding.private ? null : sums.private.toFixed(),
+    privateUsdPartial: unknown.private || stale.private
   })
 }

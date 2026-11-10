@@ -1,7 +1,6 @@
 import { useState } from 'react'
 import { Icon } from '@iconify/react'
-import { formatFiatAmount } from '@/lib/number-format'
-import type { AssetDomain } from '@/popup/services/asset-domains'
+import { formatAssetDomainFiat, type AssetDomain } from '@/popup/services/asset-domains'
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover'
 import { cn } from '@/lib/utils'
 
@@ -22,12 +21,14 @@ const ASSET_DOMAIN_ICONS: Record<AssetDomain, string> = {
 export function AssetDomainSelector({
   value,
   totals,
+  partialTotals,
   balancesHidden,
   domains = Object.keys(ASSET_DOMAIN_LABELS) as AssetDomain[],
   onChange
 }: {
   readonly value: AssetDomain
   readonly totals: Readonly<Record<AssetDomain, string | number | null>>
+  readonly partialTotals?: Readonly<Record<AssetDomain, boolean>>
   readonly balancesHidden: boolean
   readonly domains?: readonly AssetDomain[]
   readonly onChange: (domain: AssetDomain) => void
@@ -54,7 +55,7 @@ export function AssetDomainSelector({
       <PopoverContent
         align="center"
         sideOffset={8}
-        className="w-[218px] border-0 px-0 py-2"
+        className="w-[270px] max-w-[calc(100vw-24px)] border-0 px-0 py-2"
         aria-label="Asset categories"
       >
         <div role="radiogroup" aria-label="Asset category">
@@ -83,12 +84,17 @@ export function AssetDomainSelector({
                 )}
               />
               <span className="shrink-0">{ASSET_DOMAIN_LABELS[domain]}</span>
-              <span className="ml-auto min-w-0 break-all text-right text-sm tabular-nums text-foreground">
+              <span
+                className="ml-auto min-w-0 truncate text-right text-sm tabular-nums text-foreground"
+                title={
+                  balancesHidden
+                    ? undefined
+                    : formatAssetDomainFiat(totals[domain], partialTotals?.[domain])
+                }
+              >
                 {balancesHidden
                   ? '••••'
-                  : totals[domain] === null
-                    ? '—'
-                    : formatFiatAmount(totals[domain]!, { showSign: true })}
+                  : formatAssetDomainFiat(totals[domain], partialTotals?.[domain])}
               </span>
             </button>
           ))}

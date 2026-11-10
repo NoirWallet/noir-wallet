@@ -33,7 +33,7 @@ test('wallet and Swap ETH identities preserve supplied token artwork across netw
   )
 })
 
-test('native asset fallbacks never use chain badge artwork', () => {
+test('unknown native identities never use chain badge artwork', () => {
   for (const blockchain of ['eth', 'arb', 'base', 'op', 'btc', 'sol', 'near']) {
     const icons = getTokenIconCandidates({ token: { blockchain, contractAddress: null } })
     assert.deepEqual(icons, [], blockchain)

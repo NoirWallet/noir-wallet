@@ -384,6 +384,9 @@ export class AssetMarketHistoryService {
     const mappings = options.mappings.map(mapping => {
       if (
         !isValidFallback(mapping) ||
+        (mapping.backupCoinGeckoId !== undefined &&
+          (!REMOTE_ID_PATTERN.test(mapping.backupCoinGeckoId) ||
+            mapping.fallback.source !== 'coinmarketcap')) ||
         (mapping.primary !== null &&
           (!REMOTE_ID_PATTERN.test(mapping.primary.network) ||
             !REMOTE_ID_PATTERN.test(mapping.primary.poolAddress) ||
@@ -395,7 +398,8 @@ export class AssetMarketHistoryService {
         assetId: parseAssetId(mapping.assetId).id,
         marketAssetId: createMarketAssetId(mapping.marketAssetId),
         primary: mapping.primary ? Object.freeze({ ...mapping.primary }) : null,
-        fallback: Object.freeze({ ...mapping.fallback })
+        fallback: Object.freeze({ ...mapping.fallback }),
+        ...(mapping.backupCoinGeckoId ? { backupCoinGeckoId: mapping.backupCoinGeckoId } : {})
       })
     })
     if (new Set(mappings.map(mapping => mapping.assetId)).size !== mappings.length) {
@@ -409,6 +413,7 @@ export class AssetMarketHistoryService {
         (existing.primary?.network !== mapping.primary?.network ||
           existing.primary?.poolAddress !== mapping.primary?.poolAddress ||
           existing.primary?.token !== mapping.primary?.token ||
+          existing.backupCoinGeckoId !== mapping.backupCoinGeckoId ||
           !hasSameFallback(existing, mapping))
       ) {
         throw new Error('Conflicting market history source mapping')
@@ -579,10 +584,18 @@ export class AssetMarketHistoryService {
       }
     }
     if (mapping.fallback.source === 'coinmarketcap') {
-      return Object.freeze({
-        source: 'coinmarketcap-keyless' as const,
-        points: await this.fetchCoinMarketCap(mapping, range)
-      })
+      try {
+        return Object.freeze({
+          source: 'coinmarketcap-keyless' as const,
+          points: await this.fetchCoinMarketCap(mapping, range)
+        })
+      } catch (error) {
+        if (!mapping.backupCoinGeckoId || range === 'all') throw error
+        return Object.freeze({
+          source: 'coingecko-keyless' as const,
+          points: await this.fetchCoinGeckoId(mapping.backupCoinGeckoId, range)
+        })
+      }
     }
     return Object.freeze({
       source: 'coingecko-keyless' as const,
@@ -633,10 +646,15 @@ export class AssetMarketHistoryService {
     if (mapping.fallback.source !== 'coingecko') {
       throw new Error('Missing CoinGecko market history source')
     }
+    return this.fetchCoinGeckoId(mapping.fallback.coinId, range)
+  }
+
+  private async fetchCoinGeckoId(
+    coinId: MarketAssetId,
+    range: AssetMarketHistoryRange
+  ): Promise<readonly AssetMarketHistoryPoint[]> {
     const query = COIN_GECKO_RANGE_QUERY[range]
-    const url = new URL(
-      `${COIN_GECKO_MARKET_CHART_URL}/${encodeURIComponent(mapping.fallback.coinId)}/market_chart`
-    )
+    const url = new URL(`${COIN_GECKO_MARKET_CHART_URL}/${encodeURIComponent(coinId)}/market_chart`)
     url.searchParams.set('vs_currency', 'usd')
     url.searchParams.set('days', query.days)
     url.searchParams.set('interval', query.interval)

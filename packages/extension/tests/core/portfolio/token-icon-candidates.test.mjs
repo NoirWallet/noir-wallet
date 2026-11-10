@@ -95,20 +95,20 @@ test('does not derive contract image URLs and accepts supplied CoinGecko metadat
   ).toEqual(['https://coin-images.coingecko.com/coins/images/54725/large/fogo.png?1749218789'])
 })
 
-test('does not infer image URLs from canonical wallet asset IDs', () => {
+test('uses trusted built-in native assets only for a branded fallback', () => {
   expect(
     getTokenIconCandidates({
       assetId: 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp/slip44:501',
       blockchain: 'solana'
     })
-  ).toEqual([])
+  ).toEqual(['https://coin-images.coingecko.com/coins/images/4128/large/solana.png?1718769756'])
 
   expect(
     getTokenIconCandidates({
       assetId: 'near:mainnet/slip44:397',
       blockchain: 'near'
     })
-  ).toEqual([])
+  ).toEqual(['https://coin-images.coingecko.com/coins/images/10365/large/near.jpg?1696510367'])
 
   expect(
     getTokenIconCandidates({
