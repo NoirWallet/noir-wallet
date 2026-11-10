@@ -19,7 +19,7 @@ import {
 import { accountNetworksClient } from '@/popup/services/account-networks-client'
 import { AddAddressDialog } from '@/popup/components/address-book/AddAddressDialog'
 import {
-  getAddressBookNetworkChoice,
+  getAddressBookNetworkChoices,
   type AddressBookNetworkChoice
 } from '@/popup/components/address-book/address-book-network'
 import {
@@ -74,15 +74,9 @@ export function AddressBook() {
       .getCatalog()
       .then(catalog => {
         if (cancelled) return
-        const choices = new Map<string, AddressBookNetworkChoice>()
-        for (const account of catalog?.accounts ?? []) {
-          for (const network of account.networks) {
-            const choice = getAddressBookNetworkChoice(network.chain.id)
-            if (!choice || choice.family === 'bitcoin') continue
-            choices.set(network.chain.id, choice)
-          }
-        }
-        setAvailableNetworks([...choices.values()])
+        setAvailableNetworks(
+          getAddressBookNetworkChoices(catalog).filter(choice => choice.family !== 'bitcoin')
+        )
       })
       .catch(() => {})
     return () => {
@@ -146,7 +140,14 @@ export function AddressBook() {
                 className="flex h-[85px] items-start gap-3 px-4 pt-[15px] hover:bg-wallet-surface"
               >
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-normal leading-[18px]">{contact.name}</p>
+                  <div className="flex min-w-0 items-center gap-2">
+                    <p className="min-w-0 flex-1 truncate text-sm font-normal leading-[18px]">
+                      {contact.name}
+                    </p>
+                    <span className="max-w-[120px] shrink-0 truncate text-xs text-muted">
+                      {contact.networkName}
+                    </span>
+                  </div>
                   <p
                     className="mt-[9px] truncate text-sm leading-[18px] text-muted"
                     title={contact.address}
@@ -208,7 +209,12 @@ export function AddressBook() {
         </Button>
       </div>
 
-      <AddAddressDialog open={adding} onOpenChange={setAdding} networks={availableNetworks} />
+      <AddAddressDialog
+        open={adding}
+        onOpenChange={setAdding}
+        networks={availableNetworks}
+        fullHeight
+      />
 
       <Dialog open={editing !== null} onOpenChange={open => !open && setEditing(null)}>
         <DialogContent position="bottom" className="gap-0 p-0">

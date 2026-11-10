@@ -1,5 +1,8 @@
 import { useEffect, useState } from 'react'
+import { Icon } from '@iconify/react'
+import evmGroupIcon from '@/images/figma-evm-group.svg'
 import { Button } from '@/popup/components/ui/button'
+import { ChainIcon } from '@/popup/components/common/ChainIcon'
 import {
   Dialog,
   DialogContent,
@@ -11,7 +14,12 @@ import { Input } from '@/popup/components/ui/input'
 import { useAddressBookStore } from '@/store/address-book-store'
 import { DEFAULT_NETWORK } from '@/lib/runtime-network'
 import { cn } from '@/lib/utils'
-import type { AddressBookNetworkChoice } from './address-book-network'
+import {
+  ALL_EVM_NETWORKS_CHOICE,
+  getAddressBookNetworkChoice,
+  resolveAddressBookNetwork,
+  type AddressBookNetworkChoice
+} from './address-book-network'
 
 export function AddAddressDialog({
   open,
@@ -27,26 +35,48 @@ export function AddAddressDialog({
   readonly fullHeight?: boolean
 }) {
   const addContact = useAddressBookStore(state => state.addContact)
-  const getContact = useAddressBookStore(state => state.getContact)
+  const getExactContact = useAddressBookStore(state => state.getExactContact)
   const [name, setName] = useState('')
   const [address, setAddress] = useState('')
-  const soleNetworkChainId = networks.length === 1 ? networks[0].chainId : ''
-  const [chainId, setChainId] = useState(initialChainId || soleNetworkChainId)
   const [error, setError] = useState<string | null>(null)
-  const network = networks.find(choice => choice.chainId === chainId)
+  const [showNetworks, setShowNetworks] = useState(false)
+  const [evmChainId, setEvmChainId] = useState<string>(ALL_EVM_NETWORKS_CHOICE.chainId)
+  const initialNetwork = networks.find(choice => choice.chainId === initialChainId)
+  const detectedNetwork = address.trim()
+    ? resolveAddressBookNetwork(address, networks)
+    : initialNetwork?.family === 'evm'
+      ? ALL_EVM_NETWORKS_CHOICE
+      : initialNetwork
+  const evmNetworks = networks.filter(
+    choice =>
+      choice.family === 'evm' &&
+      choice.chainId !== ALL_EVM_NETWORKS_CHOICE.chainId &&
+      getAddressBookNetworkChoice(choice.chainId)?.family === 'evm'
+  )
+  const network =
+    detectedNetwork?.family === 'evm'
+      ? evmChainId === ALL_EVM_NETWORKS_CHOICE.chainId
+        ? ALL_EVM_NETWORKS_CHOICE
+        : evmNetworks.find(choice => choice.chainId === evmChainId)
+      : detectedNetwork
+
+  useEffect(() => {
+    if (detectedNetwork?.family !== 'evm') setEvmChainId(ALL_EVM_NETWORKS_CHOICE.chainId)
+  }, [detectedNetwork?.family])
 
   useEffect(() => {
     if (!open) return
     setName('')
     setAddress('')
-    setChainId(initialChainId || soleNetworkChainId)
     setError(null)
-  }, [open, initialChainId, soleNetworkChainId])
+    setShowNetworks(false)
+    setEvmChainId(ALL_EVM_NETWORKS_CHOICE.chainId)
+  }, [open, initialChainId])
 
   const save = () => {
     if (!network || !name.trim() || !address.trim()) return
     try {
-      if (getContact(network.chainId, address)) {
+      if (getExactContact(network.chainId, address)) {
         setError('This address is already saved on this network')
         return
       }
@@ -94,40 +124,57 @@ export function AddAddressDialog({
               className="h-[45px] rounded-xl bg-card"
             />
           </label>
-          {networks.length > 1 ? (
-            <label className="flex flex-col gap-2 text-sm">
-              <span>Network</span>
-              <select
-                aria-label="Network"
-                value={chainId}
-                onChange={event => {
-                  setChainId(event.target.value)
-                  setError(null)
-                }}
-                className="h-[45px] w-full rounded-xl border border-input bg-card px-3 text-sm text-foreground"
-              >
-                <option value="">Select network</option>
-                {networks.map(choice => (
-                  <option key={choice.chainId} value={choice.chainId}>
-                    {choice.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : null}
           <label className="flex flex-col gap-2 text-sm">
             <span>Address</span>
-            <Input
+            <textarea
               aria-label="Address"
               placeholder="Address"
               value={address}
+              rows={2}
+              spellCheck={false}
               onChange={event => {
                 setAddress(event.target.value)
                 setError(null)
               }}
-              className="h-[45px] rounded-xl bg-card"
+              onBlur={() => {
+                if (address.trim() && !network) {
+                  setError('Enter a valid address for a supported network')
+                }
+              }}
+              className="min-h-[70px] w-full resize-none rounded-xl border border-input bg-card px-3 py-3 text-sm leading-5 break-all outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50"
             />
           </label>
+          <div className="space-y-2 text-sm">
+            <span id="address-book-network-label">Network</span>
+            {detectedNetwork?.family === 'evm' ? (
+              <button
+                type="button"
+                aria-label="Ethereum & EVM networks"
+                aria-haspopup="dialog"
+                onClick={() => setShowNetworks(true)}
+                className="wallet-interactive flex min-h-[50px] w-full items-center gap-3 rounded-xl border border-input bg-card px-3 py-2 text-left hover:bg-accent focus-visible:outline-2 focus-visible:outline-primary"
+              >
+                <img src={evmGroupIcon} alt="" className="size-8 shrink-0" />
+                <span className="min-w-0 flex-1">
+                  <span className="block">Ethereum &amp; EVM</span>
+                  <span className="mt-0.5 block truncate text-xs text-muted">
+                    {network?.name ?? 'Select network'}
+                  </span>
+                </span>
+                <Icon icon="lucide:chevron-right" width={18} height={18} />
+              </button>
+            ) : (
+              <div
+                aria-labelledby="address-book-network-label"
+                className="flex min-h-[50px] items-center gap-3 rounded-xl border border-input bg-card px-3 py-2"
+              >
+                {network && (
+                  <ChainIcon chain={network.family} showTooltip={false} className="size-8" />
+                )}
+                <span className={cn(!network && 'text-muted')}>{network?.name ?? '—'}</span>
+              </div>
+            )}
+          </div>
           {error && (
             <p role="alert" className="text-xs text-danger">
               {error}
@@ -143,6 +190,59 @@ export function AddAddressDialog({
             Save address
           </Button>
         </div>
+        <Dialog open={showNetworks} onOpenChange={setShowNetworks}>
+          <DialogContent
+            position="bottom"
+            className="flex max-h-[calc(100dvh-56px)] flex-col gap-0 bg-popover p-0"
+          >
+            <DialogHeader className="shrink-0 px-5 py-5 text-left">
+              <DialogTitle>Select network</DialogTitle>
+              <DialogDescription className="sr-only">
+                Choose the networks for this address
+              </DialogDescription>
+            </DialogHeader>
+            <div
+              role="radiogroup"
+              aria-label="EVM network scope"
+              className="min-h-0 overflow-y-auto px-5 pb-5"
+            >
+              {[ALL_EVM_NETWORKS_CHOICE, ...evmNetworks].map(choice => (
+                <button
+                  key={choice.chainId}
+                  type="button"
+                  role="radio"
+                  aria-label={choice.name}
+                  aria-checked={evmChainId === choice.chainId}
+                  onClick={() => {
+                    setEvmChainId(choice.chainId)
+                    setError(null)
+                    setShowNetworks(false)
+                  }}
+                  className="wallet-interactive flex min-h-[56px] w-full items-center gap-3 rounded-lg px-2 py-3 text-left hover:bg-accent focus-visible:outline-2 focus-visible:outline-primary"
+                >
+                  {choice.chainId === ALL_EVM_NETWORKS_CHOICE.chainId ? (
+                    <img src={evmGroupIcon} alt="" className="size-8 shrink-0" />
+                  ) : (
+                    <ChainIcon
+                      chain={choice.iconChain ?? choice.chainId}
+                      showTooltip={false}
+                      className="size-8 shrink-0"
+                    />
+                  )}
+                  <span className="min-w-0 flex-1 text-sm">{choice.name}</span>
+                  {evmChainId === choice.chainId && (
+                    <Icon
+                      icon="lucide:check"
+                      width={18}
+                      height={18}
+                      className="shrink-0 text-primary"
+                    />
+                  )}
+                </button>
+              ))}
+            </div>
+          </DialogContent>
+        </Dialog>
       </DialogContent>
     </Dialog>
   )

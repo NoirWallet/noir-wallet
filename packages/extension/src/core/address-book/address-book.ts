@@ -7,6 +7,8 @@ import { findBuiltinEvmNetworkConfig } from '@/config/networks'
 export const ADDRESS_BOOK_SCHEMA_VERSION = 2 as const
 export const ADDRESS_BOOK_MAX_CONTACTS = 500
 export const ADDRESS_BOOK_MAX_NAME_LENGTH = 64
+export const ALL_EVM_NETWORKS_CHAIN_ID = 'evm:all' as const
+export const ALL_EVM_NETWORKS_NAME = 'All EVM networks' as const
 
 export interface AddressBookContact {
   readonly id: string
@@ -138,10 +140,12 @@ export function createAddressBookContact(
   let expectedNetworkName: string
 
   if (input.chainFamily === 'evm') {
-    const networkConfig = findBuiltinEvmNetworkConfig(input.network, input.chainId)
+    const allEvmNetworks = input.chainId === ALL_EVM_NETWORKS_CHAIN_ID
+    const networkConfig = allEvmNetworks
+      ? null
+      : findBuiltinEvmNetworkConfig(input.network, input.chainId)
     if (
-      parsedChain.namespace !== 'eip155' ||
-      !networkConfig ||
+      (!allEvmNetworks && (parsedChain.namespace !== 'eip155' || !networkConfig)) ||
       !/^0x[0-9a-fA-F]{40}$/.test(input.address)
     ) {
       throw new Error('Invalid EVM contact')
@@ -149,7 +153,7 @@ export function createAddressBookContact(
     if (/^0x0{40}$/i.test(input.address)) throw new Error('Invalid EVM contact')
     address = input.address
     addressScheme = 'evm'
-    expectedNetworkName = networkConfig.displayName
+    expectedNetworkName = allEvmNetworks ? ALL_EVM_NETWORKS_NAME : networkConfig!.displayName
   } else if (input.chainFamily === 'bitcoin') {
     if (input.chainId !== getBitcoinChainId(input.network)) {
       throw new Error('Bitcoin contact network does not match its chain')
@@ -240,6 +244,25 @@ export function parseAddressBookContacts(value: unknown): readonly AddressBookCo
     throw new Error('Duplicate address book contact')
   }
   return Object.freeze(contacts)
+}
+
+export function selectAddressBookContactsForChain(
+  contacts: readonly AddressBookContact[],
+  chainId: string,
+  network: Network
+): readonly AddressBookContact[] {
+  const scoped = contacts.filter(contact => contact.chainId === chainId)
+  if (!chainId.startsWith('eip155:')) return scoped
+  const scopedAddresses = new Set(scoped.map(contact => contact.normalizedAddress))
+  return [
+    ...scoped,
+    ...contacts.filter(
+      contact =>
+        contact.chainId === ALL_EVM_NETWORKS_CHAIN_ID &&
+        contact.network === network &&
+        !scopedAddresses.has(contact.normalizedAddress)
+    )
+  ]
 }
 
 function inferLegacyZcashNetwork(address: string): Network | null {

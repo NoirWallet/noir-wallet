@@ -14,7 +14,13 @@ test('address book retries a failed storage read before importing legacy contact
     set: async () => {},
     remove: async () => {}
   }
-  globalThis.chrome = { storage: { local, session: local } }
+  globalThis.chrome = {
+    storage: {
+      local,
+      session: local,
+      onChanged: { addListener: () => {}, removeListener: () => {} }
+    }
+  }
 
   try {
     const { initializeAddressBook, useAddressBookStore } =

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Icon } from '@iconify/react'
 import { formatSortAddress, getAccountDisplayName } from '@/lib/format'
+import { DEFAULT_NETWORK } from '@/lib/runtime-network'
 import {
   accountNetworksClient,
   type AccountNetworksCatalogView
@@ -9,7 +10,10 @@ import { useAddressBookStore } from '@/store/address-book-store'
 import { useWalletStore } from '@/store/wallet-store'
 import { ACCOUNT_AVATARS } from '@/popup/lib/account-avatars'
 import { AddAddressDialog } from '../address-book/AddAddressDialog'
-import { getAddressBookNetworkChoice } from '../address-book/address-book-network'
+import {
+  getAddressBookNetworkChoice,
+  getAddressBookNetworkChoices
+} from '../address-book/address-book-network'
 import { InlineError } from '../common/InlineError'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
@@ -83,7 +87,25 @@ export function RecipientSelector({
   const [error, setError] = useState(false)
   const [addingAddress, setAddingAddress] = useState(false)
   const [query, setQuery] = useState('')
-  const addressBookNetwork = useMemo(() => getAddressBookNetworkChoice(chainId), [chainId])
+  const availableAddressBookNetworks = useMemo(
+    () => getAddressBookNetworkChoices(catalog),
+    [catalog]
+  )
+  const addressBookNetwork = useMemo(
+    () =>
+      availableAddressBookNetworks.find(choice => choice.chainId === chainId) ??
+      getAddressBookNetworkChoice(chainId),
+    [chainId, availableAddressBookNetworks]
+  )
+  const addressBookNetworks = useMemo(() => {
+    if (!addressBookNetwork) return []
+    const choices = availableAddressBookNetworks.filter(
+      choice => choice.family === addressBookNetwork.family
+    )
+    return choices.some(choice => choice.chainId === chainId)
+      ? choices
+      : [...choices, addressBookNetwork]
+  }, [availableAddressBookNetworks, addressBookNetwork, chainId])
 
   const loadAccounts = async () => {
     setLoading(true)
@@ -130,7 +152,7 @@ export function RecipientSelector({
     [catalog, chainId, excludeAddresses, includeUnavailableAccounts, includeCurrentAccount]
   )
   const savedRecipients = useMemo(
-    () => buildSavedRecipientList(contacts, chainId, excludeAddresses),
+    () => buildSavedRecipientList(contacts, chainId, DEFAULT_NETWORK, excludeAddresses),
     [chainId, contacts, excludeAddresses]
   )
   const normalizedQuery = query.trim().toLowerCase()
@@ -382,7 +404,7 @@ export function RecipientSelector({
       <AddAddressDialog
         open={addingAddress}
         onOpenChange={setAddingAddress}
-        networks={addressBookNetwork ? [addressBookNetwork] : []}
+        networks={addressBookNetworks}
         initialChainId={chainId}
         fullHeight
       />

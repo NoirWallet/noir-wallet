@@ -1,4 +1,6 @@
 import type { AddressBookContact } from '@/core/address-book/address-book'
+import { selectAddressBookContactsForChain } from '@/core/address-book/address-book'
+import type { Network } from '@/types'
 import { isGeneratedWalletTimestampName } from '@/lib/format'
 import type {
   AccountNetworkAddressView,
@@ -149,15 +151,13 @@ export function buildMyWalletRecipientGroups(
 export function buildSavedRecipientList(
   contacts: readonly AddressBookContact[],
   chainId: string,
+  network: Network,
   excludeAddresses: readonly string[] = []
 ): readonly AddressBookContact[] {
   const excluded = new Set(excludeAddresses.map(address => normalizedAddress(chainId, address)))
   return Object.freeze(
-    contacts
-      .filter(
-        contact =>
-          contact.chainId === chainId && !excluded.has(normalizedAddress(chainId, contact.address))
-      )
+    selectAddressBookContactsForChain(contacts, chainId, network)
+      .filter(contact => !excluded.has(normalizedAddress(chainId, contact.address)))
       .sort((left, right) => left.name.localeCompare(right.name))
   )
 }
