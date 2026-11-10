@@ -25,7 +25,8 @@ import { ChainIcon } from '../common/ChainIcon'
 import evmGroupIcon from '@/images/figma-evm-group.svg'
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover'
 import { cn } from '@/lib/utils'
-import { ACCOUNT_AVATARS } from '@/popup/lib/account-avatars'
+import type { ActiveAccountIdentity } from '@/popup/lib/effective-active-account'
+import { AccountAvatar as AccountAvatarImage } from './AccountAvatar'
 import { PrivateAddressWarningDialog } from './PrivateAddressWarningDialog'
 
 function SidebarIcon({ kind }: { readonly kind: 'back' | 'accounts' | 'settings' }) {
@@ -84,20 +85,21 @@ function SidebarIcon({ kind }: { readonly kind: 'back' | 'accounts' | 'settings'
 
 function AccountAvatar({
   name,
-  index,
+  walletId,
+  accountId,
   size = 24,
   active = false
 }: {
   readonly name: string
-  readonly index: number
+  readonly walletId: string | null
+  readonly accountId: string | null
   readonly size?: number
   readonly active?: boolean
 }) {
   return (
-    <img
-      src={ACCOUNT_AVATARS[index % ACCOUNT_AVATARS.length]}
-      alt=""
-      aria-hidden="true"
+    <AccountAvatarImage
+      walletId={walletId}
+      accountId={accountId}
       width={size}
       height={size}
       className={cn(
@@ -330,10 +332,12 @@ function AccountAddressPopover({
 export function AccountSwitcher({
   className,
   accountName,
+  accountIdentity,
   defaultEvmMode = 'public'
 }: {
   readonly className?: string
   readonly accountName?: string
+  readonly accountIdentity: ActiveAccountIdentity | null
   readonly defaultEvmMode?: 'public' | 'private'
 }) {
   const { navigate, replace } = useNavigate()
@@ -494,10 +498,6 @@ export function AccountSwitcher({
           active: true
         }
       : null)
-  const activeIndex = Math.max(
-    0,
-    accounts.findIndex(account => account.active)
-  )
 
   const viewAddresses = (account: SwitcherAccount) => {
     cancelAddressesClose()
@@ -570,7 +570,11 @@ export function AccountSwitcher({
             title="Choose wallet"
             className="group wallet-interactive flex size-6 shrink-0 items-center justify-center rounded-full hover:brightness-110 active:brightness-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
           >
-            <AccountAvatar name={activeName} index={activeIndex} />
+            <AccountAvatar
+              name={activeName}
+              walletId={accountIdentity?.walletId ?? null}
+              accountId={accountIdentity?.accountId ?? null}
+            />
           </button>
         </DialogPrimitive.Trigger>
         <DialogPrimitive.Portal>
@@ -597,7 +601,7 @@ export function AccountSwitcher({
                 positionPreview()
               }}
             >
-              {groups.map((group, groupIndex) => (
+              {groups.map(group => (
                 <div key={group.id} className="border-b border-white/10 py-2">
                   <p
                     className={cn(
@@ -608,7 +612,7 @@ export function AccountSwitcher({
                   >
                     {group.name}
                   </p>
-                  {group.accounts.map((account, accountIndex) => (
+                  {group.accounts.map(account => (
                     <button
                       key={`${account.walletId}:${account.accountId}`}
                       type="button"
@@ -628,7 +632,8 @@ export function AccountSwitcher({
                     >
                       <AccountAvatar
                         name={account.name}
-                        index={groupIndex + accountIndex}
+                        walletId={account.walletId}
+                        accountId={account.accountId}
                         size={42}
                         active={account.active}
                       />
