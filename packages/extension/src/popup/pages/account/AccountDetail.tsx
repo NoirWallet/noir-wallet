@@ -24,7 +24,7 @@ import { useResyncZcash } from '../../hooks/useResyncZcash'
 import { accountNetworksClient } from '../../services/account-networks-client'
 import { isAccountNetworkEnabled } from '@/core/wallet/account-network-selection'
 import { DEFAULT_NETWORK } from '@/lib/runtime-network'
-import { ACCOUNT_AVATARS } from '@/popup/lib/account-avatars'
+import { AccountAvatar } from '../../components/account/AccountAvatar'
 
 export function AccountDetail() {
   const { navigate, goBack } = useNavigate()
@@ -59,11 +59,6 @@ export function AccountDetail() {
 
   const isHardwareWallet = isZcashHardwareKeySource(wallet?.keySource)
   const isCurrentAccount = wallet.id === currentWalletId && account.id === currentAccountId
-  const avatarIndex = Math.max(
-    0,
-    wallet.accounts.findIndex(item => item.id === account.id)
-  )
-  const avatarSrc = ACCOUNT_AVATARS[avatarIndex % ACCOUNT_AVATARS.length]
 
   const menuItems = [
     {
@@ -238,10 +233,9 @@ export function AccountDetail() {
 
       <div className="page-content min-h-0 !px-0 !pt-4">
         <div className="flex flex-col items-center pb-[21px] pt-[11px]">
-          <img
-            src={avatarSrc}
-            alt=""
-            aria-hidden="true"
+          <AccountAvatar
+            walletId={wallet.id}
+            accountId={account.id}
             width={74}
             height={74}
             className="size-[74px] rounded-full object-cover ring-2 ring-wallet-selected"

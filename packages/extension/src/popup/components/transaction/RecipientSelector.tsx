@@ -9,7 +9,7 @@ import {
 } from '@/popup/services/account-networks-client'
 import { useAddressBookStore } from '@/store/address-book-store'
 import { useWalletStore } from '@/store/wallet-store'
-import { ACCOUNT_AVATARS } from '@/popup/lib/account-avatars'
+import { AccountAvatar } from '../account/AccountAvatar'
 import { AddAddressDialog } from '../address-book/AddAddressDialog'
 import {
   getAddressBookNetworkChoice,
@@ -186,12 +186,6 @@ export function RecipientSelector({
     `${contact.name} ${contact.address}`.toLowerCase().includes(normalizedQuery)
   )
   const isEvm = chainId.startsWith('eip155:')
-  const walletAvatarIndex = new Map<string, number>()
-  for (const account of catalog?.accounts ?? []) {
-    if (!walletAvatarIndex.has(account.walletId)) {
-      walletAvatarIndex.set(account.walletId, walletAvatarIndex.size)
-    }
-  }
 
   return (
     <Tabs defaultValue="accounts" className="min-h-0 gap-0">
@@ -232,14 +226,12 @@ export function RecipientSelector({
           <div className="space-y-5 pb-1">
             {visibleWalletGroups.map(wallet => {
               const firstAccount = wallet.accounts[0]!
-              const walletIndex = walletAvatarIndex.get(wallet.walletId) ?? 0
               return (
                 <section key={wallet.walletId}>
                   <div className="mb-2 flex min-w-0 items-center gap-2 px-1">
-                    <img
-                      src={ACCOUNT_AVATARS[walletIndex % ACCOUNT_AVATARS.length]}
-                      alt=""
-                      aria-hidden="true"
+                    <AccountAvatar
+                      walletId={firstAccount.walletId}
+                      accountId={firstAccount.accountId}
                       className="size-8 shrink-0 rounded-full object-cover"
                     />
                     <div className="min-w-0 flex-1">

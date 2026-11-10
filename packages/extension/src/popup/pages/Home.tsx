@@ -784,6 +784,7 @@ export function Home() {
       <header className="flex h-[52px] shrink-0 items-center justify-between gap-2 px-4">
         <AccountSwitcher
           accountName={accountDisplayName}
+          accountIdentity={effectiveAccount}
           defaultEvmMode={privateMode ? 'private' : 'public'}
           className="min-w-0 flex-1"
         />
