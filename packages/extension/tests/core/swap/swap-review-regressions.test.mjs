@@ -10,6 +10,7 @@ import {
   getRheaSwapErrorMessage,
   RheaSwapClientError
 } from '../../../src/popup/services/rhea-swap-client.ts'
+import { getSwapQuoteFailureMessage } from '../../../src/popup/services/swap-quote-error-message.ts'
 import {
   getRheaSwapMinimumAmountMessage,
   getSafeRheaSwapRuntimeErrorMessage
@@ -264,6 +265,21 @@ it('keeps minimum amounts while removing nested provider metadata without changi
     getRheaSwapErrorMessage(new RheaSwapClientError('{invalid response')),
     'An unexpected error occurred. Please try again.'
   )
+  assert.equal(
+    getSwapQuoteFailureMessage(
+      new Error(
+        'No confidential route available: quote failed (400): {"msg":"transport timeout","reason":"quote_timeout"}'
+      )
+    ),
+    'Request timed out.'
+  )
+  assert.equal(
+    getSwapQuoteFailureMessage(new Error('Temporary swap limits: minimum swap amount is $1,000')),
+    'Minimum swap amount is $1,000.'
+  )
+  assert.equal(getSwapQuoteFailureMessage(new Error('No route found')), 'no route')
+  assert.equal(getSwapQuoteFailureMessage(new Error('Shield balance is insufficient')), null)
+  assert.equal(getSwapQuoteFailureMessage(new Error('Confidential quote has expired')), null)
   assert.equal(
     getRheaSwapErrorMessage(
       new RheaSwapClientError('{"message":"Request timed out","path":"/internal"}')

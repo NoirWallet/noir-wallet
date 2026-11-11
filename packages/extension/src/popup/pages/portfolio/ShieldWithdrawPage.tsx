@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Navigate, useLocation, useSearchParams } from 'react-router-dom'
 import type { PortfolioReadModel, PortfolioAssetView } from '@/core/portfolio'
+import type { AssetPriceReadModel } from '@/core/prices'
 import { Icon } from '@iconify/react'
 import nearLogo from '@/images/figma-near-confidential.svg'
 import { isAddress } from 'viem'
@@ -19,11 +20,13 @@ import { useSettingsStore } from '@/store/settings-store'
 import { useActiveAccountNetworks } from '@/popup/hooks/useActiveAccountNetworks'
 import { useConfidentialFundingPreview } from '@/popup/hooks/useConfidentialFundingPreview'
 import { resolveEffectiveActiveAccountIdentity } from '@/popup/lib/effective-active-account'
+import { assetPriceClient } from '@/popup/services/asset-price-client'
 import { getPrivateTransferChainIds } from '@/popup/services/private-balance-transfer'
 import { useNavigate } from '@/popup/provider/Router'
 import { PageHeader } from '@/popup/components/common/PageHeader'
 import {
   SendSourceSection,
+  SendFieldLabel,
   SendAmountInputCard,
   SendRecipientInputCard
 } from '@/popup/components/transaction/SendInputCards'
@@ -36,7 +39,9 @@ import {
   TransactionReviewView
 } from '@/popup/components/transaction/TransactionReviewView'
 import { Button } from '@/popup/components/ui/button'
+import { SlippageSettingContent } from '@/popup/components/swap/SlippageSetting'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/popup/components/ui/dialog'
+import { openModal } from '@/popup/provider/ModalManager'
 import {
   CONFIDENTIAL_PREVIEW_CONNECTION_ERROR,
   confidentialFundingClient,
@@ -55,6 +60,7 @@ import {
   shieldPortfolioBalances,
   shieldFundingAvailableRaw,
   shieldFundingSources,
+  selectDefaultShieldWithdrawSource,
   resolveShieldManagedAsset,
   selectShieldWithdrawDestinationForNetwork,
   type ShieldFundingAsset
@@ -119,6 +125,10 @@ export function ShieldWithdrawForm({
   const [catalogTokens, setCatalogTokens] = useState<readonly SwapToken[]>([])
   const [managedAssets, setManagedAssets] = useState<readonly IntentsManagedAsset[]>([])
   const [balances, setBalances] = useState<readonly ConfidentialBalance[] | null>(null)
+  const [priceSnapshot, setPriceSnapshot] = useState<{
+    scopeKey: string
+    value: AssetPriceReadModel
+  } | null>(null)
   const [balanceScope, setBalanceScope] = useState('')
   const [connecting, setConnecting] = useState(false)
   const [sourceId, setSourceId] = useState(routeAssetId)
@@ -226,6 +236,19 @@ export function ShieldWithdrawForm({
     }
   }, [scopeKey, canManageNear])
 
+  useEffect(() => {
+    let active = true
+    void assetPriceClient
+      .getPrices('read')
+      .then(value => {
+        if (active && value && value.status !== 'error') setPriceSnapshot({ scopeKey, value })
+      })
+      .catch(() => {})
+    return () => {
+      active = false
+    }
+  }, [scopeKey])
+
   const options = useMemo(
     () => listShieldFundingAssets(model, managedAssets, catalogTokens, network),
     [model, managedAssets, catalogTokens, network]
@@ -234,6 +257,7 @@ export function ShieldWithdrawForm({
   const currentBalances = balanceScope === scopeKey ? balances : null
   const displayBalances = currentBalances ?? shieldPortfolioBalances(model)
   const fundedSources = shieldFundingSources(options, displayBalances)
+  const prices = priceSnapshot?.scopeKey === scopeKey ? priceSnapshot.value : null
   const fundedAssetIds = new Set(fundedSources.map(item => item.asset.asset.id))
   const sources = [
     ...fundedSources,
@@ -247,7 +271,10 @@ export function ShieldWithdrawForm({
     ? (sources.find(item => item.asset.asset.id === sourceId) ??
       sources.find(item => item.managed.protocolAssetId === routedManaged?.protocolAssetId) ??
       null)
-    : (sources[0] ?? null)
+    : selectDefaultShieldWithdrawSource(options, displayBalances, model, prices, network)
+  const keepSelectedSource = () => {
+    if (!sourceId && source) setSourceId(source.asset.asset.id)
+  }
   const destinationToken = destinationId
     ? (destinations.find(item => item.asset.asset.id === destinationId) ?? null)
     : (destinations.find(
@@ -623,7 +650,7 @@ export function ShieldWithdrawForm({
                 onChange={value => {
                   const next = normalizePrivateBalanceTransferInput(value)
                   if (next !== null) {
-                    if (!sourceId && source) setSourceId(source.asset.asset.id)
+                    keepSelectedSource()
                     setAmount(next)
                   }
                 }}
@@ -673,7 +700,7 @@ export function ShieldWithdrawForm({
                 title={!currentBalances ? 'Shield balance unavailable' : 'Use maximum balance'}
                 onClick={() => {
                   if (!source) return
-                  if (!sourceId) setSourceId(source.asset.asset.id)
+                  keepSelectedSource()
                   setAmount(
                     formatBaseUnitDecimalAmount(availableRaw, source.asset.metadata.decimals)
                   )
@@ -687,11 +714,14 @@ export function ShieldWithdrawForm({
         </div>
 
         <div className="mb-2 flex min-w-0 items-center justify-between gap-3 text-xs">
-          <span className="text-muted">Send to</span>
+          <SendFieldLabel>Send to</SendFieldLabel>
           <button
             type="button"
             disabled={busy || !destinationToken}
-            onClick={() => setPicker('network')}
+            onClick={() => {
+              keepSelectedSource()
+              setPicker('network')
+            }}
             className="wallet-interactive inline-flex min-w-0 items-center gap-1.5 hover:text-primary disabled:opacity-50"
             aria-label={`Destination network, ${destinationNetwork?.displayName ?? 'select network'}`}
           >
@@ -712,19 +742,32 @@ export function ShieldWithdrawForm({
             id="shield-send-recipient"
             label="Recipient address"
             value={recipient}
-            onChange={setRecipient}
+            onChange={value => {
+              keepSelectedSource()
+              setRecipient(value)
+            }}
             placeholder="Enter address"
             variant="filled"
             hideLabel
             disabled={busy || !destination}
-            onSelectRecipient={busy || !destination ? undefined : () => setPicker('recipient')}
+            onSelectRecipient={
+              busy || !destination
+                ? undefined
+                : () => {
+                    keepSelectedSource()
+                    setPicker('recipient')
+                  }
+            }
           />
         </div>
         <div className="mb-3 flex min-h-[62px] w-full items-center gap-3 rounded-lg bg-wallet-surface px-3">
           <button
             type="button"
             disabled={busy}
-            onClick={() => setPicker('destination')}
+            onClick={() => {
+              keepSelectedSource()
+              setPicker('destination')
+            }}
             className="wallet-interactive flex min-w-0 flex-1 items-center gap-3 text-left enabled:hover:text-primary focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 disabled:opacity-50"
             aria-label="Select destination token"
           >
@@ -757,29 +800,45 @@ export function ShieldWithdrawForm({
           <button
             type="button"
             disabled={busy}
-            onClick={() => setPicker('destination')}
+            onClick={() => {
+              keepSelectedSource()
+              setPicker('destination')
+            }}
             aria-label="Select destination token"
             className="wallet-interactive shrink-0 enabled:hover:text-primary focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 disabled:opacity-50"
           >
             <Icon icon="lucide:chevron-down" width={17} height={17} />
           </button>
         </div>
-        <div className="rounded-lg border border-white/15 px-4 py-1 text-sm">
-          <label className="flex items-center justify-between py-2.5">
-            <span className="text-muted">Slippage</span>
-            <select
-              aria-label="Slippage"
-              disabled={busy}
-              value={slippageBps}
-              onChange={event => setSlippageBps(Number(event.target.value))}
-              className="bg-transparent text-right outline-none"
-            >
-              <option value={10}>0.1%</option>
-              <option value={50}>0.5%</option>
-              <option value={100}>1%</option>
-            </select>
-          </label>
-        </div>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() =>
+            void openModal({
+              title: 'Slippage Tolerance',
+              showCloseButton: true,
+              body: (_resolve, close) => (
+                <SlippageSettingContent
+                  currentSlippage={slippageBps / 100}
+                  minimumSlippage={0.1}
+                  maximumSlippage={1}
+                  presets={[0.1, 0.5, 1]}
+                  onSave={value => {
+                    setSlippageBps(Math.round(value * 100))
+                    close()
+                  }}
+                />
+              )
+            })
+          }
+          className="wallet-interactive flex min-h-[47px] w-full items-center justify-between rounded-lg border border-white/15 px-4 text-sm enabled:hover:bg-white/5 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 disabled:opacity-50"
+        >
+          <span className="text-muted">Slippage</span>
+          <span className="flex items-center gap-2">
+            {slippageBps / 100}%
+            <Icon icon="lucide:chevron-right" width={16} height={16} className="text-muted" />
+          </span>
+        </button>
         <div className="mt-4 space-y-2 text-xs">
           <span className="text-muted">Provider</span>
           <div className="rounded-lg border border-white/10 bg-wallet-surface px-3 py-2.5">

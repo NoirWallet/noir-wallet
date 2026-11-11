@@ -519,7 +519,7 @@ export function Home() {
   const multichainTotalUsd = multichainFiat.totalUsd
   const displayedChainSelection = resolvePortfolioChainSelection(
     multichainPortfolio,
-    activeTab === 'assets' ? persistedChainSelection : null,
+    persistedChainSelection,
     __ENABLED_CHAIN_FEATURE_FLAGS__
   )
   const displayedPortfolio = projectPortfolioForChains(multichainPortfolio, displayedChainSelection)

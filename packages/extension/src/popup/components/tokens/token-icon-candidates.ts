@@ -118,13 +118,19 @@ export function getTokenIconCandidates({
   const providerIcon = isPublicIpfsIconUrl(token?.icon ?? undefined) ? undefined : token?.icon
   const metadataIcon = isCoinGeckoIconUrl(icon) || isPublicIpfsIconUrl(icon) ? undefined : icon
   const coinGeckoIcon = isCoinGeckoIconUrl(icon) ? icon : token?.coingeckoIcon
+  const nativeIcon = getBundledNativeIconFallback(assetId, token)
+  const preferredNativeIcon =
+    assetId && findBundledWalletMarketAssetId(assetId) === MARKET_ASSETS.avax
+      ? nativeIcon
+      : undefined
   const candidates = [
     bundledIcon,
+    preferredNativeIcon,
     providerIcon,
     metadataIcon,
     coinGeckoIcon,
     isCoinGeckoIconUrl(contractIcon) ? contractIcon : undefined,
-    getBundledNativeIconFallback(assetId, token)
+    nativeIcon
   ]
 
   return Object.freeze(

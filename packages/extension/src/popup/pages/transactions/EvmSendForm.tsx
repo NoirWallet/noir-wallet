@@ -39,6 +39,7 @@ import { NetworkFeeTierPicker } from '@/popup/components/transaction/NetworkFeeT
 import {
   SendAmountInputCard,
   SendSourceSection,
+  SendFieldLabel,
   SendAssetHeader,
   SendRecipientAddress,
   SendRecipientInputCard
@@ -1136,7 +1137,7 @@ export function EvmSendForm({
 
         <div>
           <div className="mb-2 flex items-center justify-between text-xs">
-            <span className="text-muted">Send to</span>
+            <SendFieldLabel>Send to</SendFieldLabel>
             {!sendPrivately && destinationNetworks.length > 1 ? (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>

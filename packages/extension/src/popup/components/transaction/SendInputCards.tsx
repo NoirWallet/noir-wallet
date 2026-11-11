@@ -11,6 +11,15 @@ import { safeBig } from '@/lib/big'
 import { Tooltip } from '../ui/tooltip'
 import { BalanceDomainTabs, type BalanceDomain } from '../account/BalanceDomainTabs'
 
+/** Keeps source and recipient headings at the same visual level. */
+export function SendFieldLabel({ children }: { readonly children: ReactNode }) {
+  return (
+    <span className="shrink-0 font-sans text-sm font-medium text-wallet-field-label">
+      {children}
+    </span>
+  )
+}
+
 export function SendSourceSection({
   amountInput,
   assetSelector,
@@ -41,7 +50,7 @@ export function SendSourceSection({
         </div>
       </div>
       <div className="flex min-w-0 items-center justify-between gap-3">
-        <span className="shrink-0 text-sm text-muted">Send from</span>
+        <SendFieldLabel>Send from</SendFieldLabel>
         <BalanceDomainTabs
           value={domain}
           available={availableDomains}

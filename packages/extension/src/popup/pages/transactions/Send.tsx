@@ -24,6 +24,7 @@ import { InlineError } from '@/popup/components/common/InlineError'
 import {
   SendAmountInputCard,
   SendAssetHeader,
+  SendFieldLabel,
   SendRecipientAddress,
   SendRecipientInputCard
 } from '../../components/transaction/SendInputCards'
@@ -969,7 +970,7 @@ export function Send() {
                 </div>
               </div>
               <div className="flex min-w-0 items-center justify-between gap-3">
-                <span className="shrink-0 text-sm text-muted">Send from</span>
+                <SendFieldLabel>Send from</SendFieldLabel>
                 <BalanceDomainTabs
                   value={fundingSource === 'shielded' ? 'shield' : 'public'}
                   available={(['public', 'shield'] as const).filter(domain =>
@@ -1003,7 +1004,7 @@ export function Send() {
           {!isSelfMove && (
             <div>
               <div className="mb-2 flex items-center justify-between text-xs">
-                <span className="text-muted">Send to</span>
+                <SendFieldLabel>Send to</SendFieldLabel>
                 <span className="text-foreground">
                   {currentNetwork === 'testnet' ? 'Zcash Testnet' : 'Zcash'}
                 </span>

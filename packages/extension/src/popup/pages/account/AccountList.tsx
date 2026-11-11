@@ -747,6 +747,11 @@ function NativeAccountItem({
                 endContent={<AccountChainIcons networks={account.networks} />}
               />
             </div>
+            {isPrivateKey && (
+              <p className="truncate text-xs text-muted" title={account.walletDisplayName}>
+                {account.walletDisplayName}
+              </p>
+            )}
             {switching || removing ? (
               <Icon
                 icon="lucide:loader-2"

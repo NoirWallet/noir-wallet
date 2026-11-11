@@ -29,7 +29,7 @@ import {
   type AccountNetworkView
 } from '../../services/account-networks-client'
 import { cn } from '@/lib/utils'
-import { formatSortAddress } from '@/lib/format'
+import { formatSortAddress, getAccountDisplayName } from '@/lib/format'
 import { DEFAULT_NETWORK } from '@/lib/runtime-network'
 import { useWalletStore } from '@/store/wallet-store'
 import { AccountAvatar } from '../../components/account/AccountAvatar'
@@ -392,6 +392,7 @@ export function AddressesList() {
   const wallet = useWalletStore(state => state.wallets.find(item => item.id === walletId))
   const currentWalletId = useWalletStore(state => state.currentWalletId)
   const currentAccountId = useWalletStore(state => state.currentAccountId)
+  const accountDisplayNames = useWalletStore(state => state.accountDisplayNames)
   const executionMode = useDAppExecutionMode(
     Boolean(
       walletId && accountId && walletId === currentWalletId && accountId === currentAccountId
@@ -830,7 +831,14 @@ export function AddressesList() {
                     />
                     <div className="min-w-0">
                       <p className="truncate text-base font-medium">
-                        {accountIdentity?.name ?? 'Account'}
+                        {walletId && accountId && accountIdentity
+                          ? getAccountDisplayName(
+                              walletId,
+                              accountId,
+                              accountIdentity.name,
+                              accountDisplayNames
+                            )
+                          : 'Account'}
                       </p>
                       <p className="flex items-center gap-1.5 text-sm text-muted">
                         <ChainIcon

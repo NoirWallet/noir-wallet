@@ -7,21 +7,26 @@ import type { RheaSwapQuoteMode } from '@/core/services/rhea-swap'
 export function SlippageSettingContent({
   currentSlippage,
   currentQuoteMode,
+  minimumSlippage = 0,
+  maximumSlippage = 50,
+  presets = [0.5, 1, 2, 3],
   onSave
 }: {
   currentSlippage: number
   currentQuoteMode?: RheaSwapQuoteMode
+  minimumSlippage?: number
+  maximumSlippage?: number
+  presets?: readonly number[]
   onSave: (slippage: number, quoteMode?: RheaSwapQuoteMode) => void
 }) {
   const [slippage, setSlippage] = useState(currentSlippage.toString())
   const [quoteMode, setQuoteMode] = useState<RheaSwapQuoteMode>(currentQuoteMode ?? 'best-price')
-  const presets = [0.5, 1, 2, 3]
   const parsedSlippage = Number(slippage)
   const validSlippage =
     /^\d+(?:\.\d{1,2})?$/.test(slippage) &&
     Number.isFinite(parsedSlippage) &&
-    parsedSlippage >= 0 &&
-    parsedSlippage <= 50
+    parsedSlippage >= minimumSlippage &&
+    parsedSlippage <= maximumSlippage
 
   return (
     <div className="py-4">
@@ -90,7 +95,9 @@ export function SlippageSettingContent({
         />
       </div>
       {!validSlippage && (
-        <p className="mb-3 text-xs text-destructive">Enter 0 to 50 with up to 2 decimals.</p>
+        <p className="mb-3 text-xs text-destructive">
+          Enter {minimumSlippage} to {maximumSlippage} with up to 2 decimals.
+        </p>
       )}
 
       <Button
