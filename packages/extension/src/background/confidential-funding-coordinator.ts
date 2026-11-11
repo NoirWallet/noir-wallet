@@ -15,7 +15,10 @@ import { isAddress } from 'viem'
 import { parseZcashAddress } from '@/core/address-book/address-book'
 import type { PortfolioReadModel } from '@/core/portfolio'
 import type { SwapToken } from '@/core/services/intents-api'
-import { resolveIntentsEvmChainId } from '@/core/services/intents-evm-assets'
+import {
+  resolveIntentsEvmAssets,
+  resolveIntentsEvmChainId
+} from '@/core/services/intents-evm-assets'
 import { resolveManagedIntentsAssets } from '@/core/services/intents-managed-assets'
 import type { ChainId } from '@/core/chains/domain'
 import { parseAccountId } from '@/core/accounts/domain'
@@ -477,12 +480,24 @@ export class ConfidentialFundingCoordinator {
   }
 
   hasExternalDepositAsset(source: CreateExternalShieldDepositInput['source']): boolean {
-    return Boolean(
-      this.options.assets.get(source.assetId) &&
-      this.options.assetMappings.some(
-        mapping =>
-          mapping.assetId === source.assetId && mapping.protocolAssetId === source.protocolAssetId
+    const asset = this.options.assets.get(source.assetId)
+    if (!asset) return false
+    const catalog = this.options.getProtocolTokens?.() ?? this.options.protocolTokens
+    if (catalog && asset.asset.namespace === 'erc20') {
+      // A contract may have multiple protocol representations. Bind the selected one
+      // independently of the portfolio's single default mapping for that contract.
+      const token = catalog.find(item => item.assetId === source.protocolAssetId)
+      const resolved = token ? resolveIntentsEvmAssets([token], this.options.evmNetworks)[0] : null
+      return Boolean(
+        resolved &&
+        resolved.assetId === source.assetId &&
+        resolved.chainId === source.chainId &&
+        resolved.decimals === asset.metadata.decimals
       )
+    }
+    return this.options.assetMappings.some(
+      mapping =>
+        mapping.assetId === source.assetId && mapping.protocolAssetId === source.protocolAssetId
     )
   }
 
@@ -507,8 +522,8 @@ export class ConfidentialFundingCoordinator {
     )
       throw new Error('External Shield deposit request is invalid')
     const catalog = this.options.getProtocolTokens?.() ?? this.options.protocolTokens
+    const token = catalog?.find(item => item.assetId === input.source.protocolAssetId)
     if (catalog) {
-      const token = catalog.find(item => item.assetId === input.source.protocolAssetId)
       const tokenChainId = token
         ? ['zec', 'zcash'].includes(token.blockchain.trim().toLowerCase())
           ? getZcashChainId(this.options.network)
@@ -675,7 +690,7 @@ export class ConfidentialFundingCoordinator {
       accountId: input.accountId,
       source: Object.freeze({ ...input.source, amountRaw }),
       destinationAssetId: input.source.assetId,
-      sourceSymbol: asset.metadata.symbol,
+      sourceSymbol: token?.symbol ?? asset.metadata.symbol,
       sourceDecimals: asset.metadata.decimals,
       signerId: identity.address,
       depositAddress: quote.quote.depositAddress,

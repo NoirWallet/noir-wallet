@@ -367,13 +367,17 @@ export function Send() {
             () => {
               if (cancelled || currentPreviewKey.current !== previewKey) return
               setPrivatePreview(null)
-              setPrivatePreviewRetry(value => value + 1)
+              setPrivatePreviewError('Quote expired. Try again.')
               if (quoteHandle) void rheaSwapClient.discard(quoteHandle).catch(() => {})
               quoteHandle = null
             },
             Math.max(0, getRheaSwapQuoteDeadline(quote) - Date.now())
           )
         } catch (error) {
+          if (quoteHandle) {
+            void rheaSwapClient.discard(quoteHandle).catch(() => {})
+            quoteHandle = null
+          }
           if (!cancelled && currentPreviewKey.current === previewKey)
             setPrivatePreviewError(getRheaSwapErrorMessage(error))
         }

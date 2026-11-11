@@ -586,6 +586,7 @@ async function mockProtocolApis(
   readonly getConfidentialBalanceReadCount: () => number
   readonly getConfidentialBatchRequests: () => readonly ProtocolConfidentialBatchRequest[]
   readonly setConfidentialBatchCompleted: () => void
+  readonly getRheaPrepareCount: () => number
   readonly getQuoteRequests: () => readonly {
     originAsset: string
     destinationAsset: string
@@ -618,6 +619,7 @@ async function mockProtocolApis(
     refundType?: 'ORIGIN_CHAIN' | 'CONFIDENTIAL_INTENTS'
     recipientType?: 'CONFIDENTIAL_INTENTS' | 'DESTINATION_CHAIN'
   }> = []
+  let rheaPrepareCount = 0
   const priceUpdatedAt = new Date().toISOString()
   await context.route(TOKEN_LIST_URL, async route => {
     if (!tokenOnline) return route.abort('failed')
@@ -1422,6 +1424,7 @@ async function mockProtocolApis(
     })
   }
   await context.route(BUILD_SWAP_URL, async route => {
+    rheaPrepareCount += 1
     const request = route.request().postDataJSON() as {
       fromChain: string
       toChain: string
@@ -1567,7 +1570,8 @@ async function mockProtocolApis(
       for (const request of confidentialBatchRequests)
         for (const row of request.withdraws) submittedConfidentialAddresses.add(row.deposit_address)
     },
-    getQuoteRequests: () => [...quoteRequests]
+    getQuoteRequests: () => [...quoteRequests],
+    getRheaPrepareCount: () => rheaPrepareCount
   })
 }
 

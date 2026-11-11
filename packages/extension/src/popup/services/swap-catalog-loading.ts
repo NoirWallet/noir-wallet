@@ -7,6 +7,7 @@ import { resolveEvmChainIconAlias } from '@/config/icons'
 import { BITCOIN_CHAIN_IDS, ZCASH_CHAIN_IDS } from '@/core/chains/registry/chain-ids'
 
 export interface SwapInitialCatalogOptions {
+  readonly catalogScope?: string | null
   readonly sourceAssetId?: string | null
   readonly destinationAssetId?: string | null
   readonly destinationApiChainId?: string | null

@@ -91,7 +91,7 @@ export function useTransferMaximum(options: {
   useEffect(() => {
     if (
       !options.enabled ||
-      options.refreshOnExpiry === false ||
+      options.refreshOnExpiry !== true ||
       state.key !== requestKey ||
       !state.value?.expiresAt
     )

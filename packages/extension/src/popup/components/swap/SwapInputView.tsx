@@ -182,7 +182,7 @@ function ReceiveAddressSkeleton() {
   )
 }
 
-function SwapAssetCard({
+export function SwapAssetCard({
   direction,
   token,
   amount,

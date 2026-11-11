@@ -4,6 +4,27 @@ import { Input } from '../ui/input'
 import { Button } from '../ui/button'
 import type { RheaSwapQuoteMode } from '@/core/services/rhea-swap'
 
+export function SwapSettingsButton({
+  onClick,
+  disabled = false
+}: {
+  readonly onClick: () => void
+  readonly disabled?: boolean
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-label="Swap settings"
+      title="Swap settings"
+      className="wallet-interactive flex size-8 items-center justify-center rounded-lg text-muted hover:bg-accent hover:text-foreground disabled:opacity-40"
+    >
+      <Icon icon="lucide:settings-2" width={18} height={18} />
+    </button>
+  )
+}
+
 export function SlippageSettingContent({
   currentSlippage,
   currentQuoteMode,

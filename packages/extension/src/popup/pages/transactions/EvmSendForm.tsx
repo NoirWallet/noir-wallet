@@ -388,6 +388,7 @@ export function EvmSendForm({
   const maximumRequestKey = `${accountContextKey}:${asset.asset.id}:${recipient}:${availableRaw}:${JSON.stringify(feeSelection)}:${route}`
   const maximum = useTransferMaximum({
     prefetch: true,
+    refreshOnExpiry: false,
     enabled:
       route !== 'pending' &&
       asset.asset.kind === 'native' &&
@@ -592,7 +593,7 @@ export function EvmSendForm({
             () => {
               if (cancelled || currentPrivatePreviewKey.current !== privatePreviewKey) return
               setPrivatePreview(null)
-              setPrivatePreviewRetry(value => value + 1)
+              setPrivatePreviewError('Quote expired. Try again.')
               if (heldQuoteHandle) void rheaSwapClient.discard(heldQuoteHandle).catch(() => {})
               heldQuoteHandle = null
             },

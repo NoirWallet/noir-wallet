@@ -152,6 +152,12 @@ it('retains the reviewed sender, recipient, amount and privacy mode when a quote
   assert.equal(fastQuote.request.quoteMode, 'fast')
   assert.notEqual(fastQuote.key, quote.key)
   assert.notEqual(fastQuote.scopeKey, quote.scopeKey)
+  const changedToken = buildLiveSwapQuoteRequest({
+    ...input,
+    tokenOut: { ...input.tokenOut, rheaAddress: 'different-usdc', decimals: 5 }
+  })
+  assert.notEqual(changedToken.key, quote.key)
+  assert.notEqual(changedToken.scopeKey, quote.scopeKey)
   assert.equal(buildLiveSwapQuoteRequest({ ...input, amountIn: '0.0000001' }), null)
   assert.equal(buildLiveSwapQuoteRequest({ ...input, amountIn: '0.5000001' }), null)
   assert.equal(buildLiveSwapQuoteRequest({ ...input, amountIn: '0.000001' }).request.amountIn, '1')

@@ -63,6 +63,7 @@ test('quotes Public ZEC to the same Account Public ETH', async ({
       })
     )
     .toBe('2')
+  await popup.getByRole('button', { name: 'View ZEC details on Zcash' }).click()
   await popup.getByRole('button', { name: 'Swap', exact: true }).click()
 
   const fromAsset = popup.getByRole('button', { name: 'From asset' })
@@ -96,10 +97,14 @@ test('quotes Public ZEC to the same Account Public ETH', async ({
     const recipient = evm?.addresses?.find(
       (address: { preferredForReceive?: unknown }) => address.preferredForReceive
     )?.value
-    if (typeof refund !== 'string' || typeof recipient !== 'string') {
+    if (
+      typeof refund !== 'string' ||
+      typeof recipient !== 'string' ||
+      typeof evm?.privateExecutionAddress !== 'string'
+    ) {
       throw new Error('Test Account route is unavailable')
     }
-    return { refund, recipient }
+    return { refund, recipient, private: evm.privateExecutionAddress }
   }, getZcashChainId('mainnet'))
   await expect(popup.getByRole('button', { name: 'Choose receive account' })).toHaveCount(0)
   await expect(popup.locator('input[id^="swap-recipient"]')).toHaveCount(0)
@@ -122,6 +127,38 @@ test('quotes Public ZEC to the same Account Public ETH', async ({
   expect(api.getQuoteRequests().at(-1)?.confidentiality).toBeUndefined()
   await expect(popup.getByRole('button', { name: 'Swap', exact: true })).toBeEnabled()
   await captureScreenshot(popup, 'swap-zec-public-own-public-quote.png')
+
+  const modes = popup.getByRole('group', { name: 'Account type' })
+  await modes.getByRole('button', { name: 'Private', exact: true }).click()
+  await expect(fromAsset).not.toContainText('ZEC')
+  await fromAsset.click()
+  const sources = swapAssetDialog(popup, 'From')
+  await expect(sources.getByRole('button', { name: /^ZEC on Zcash/ })).toHaveCount(0)
+  await sources.getByRole('button', { name: /^ETH on Ethereum/ }).click()
+  await popup.getByRole('button', { name: 'To asset' }).click()
+  await swapAssetDialog(popup, 'To')
+    .getByRole('button', { name: /^USDC on Ethereum/ })
+    .click()
+  await popup.getByRole('textbox', { name: 'From amount' }).fill('0.01')
+  await expect
+    .poll(() => api.getQuoteRequests().at(-1)?.refundTo.toLowerCase())
+    .toBe(addresses.private.toLowerCase())
+  await expect
+    .poll(() => api.getQuoteRequests().at(-1)?.recipient.toLowerCase())
+    .toBe(addresses.private.toLowerCase())
+  await expect(popup.getByRole('button', { name: 'Swap', exact: true })).toBeEnabled()
+  await captureScreenshot(popup, 'swap-zec-entry-private-quote-fixed.png')
+
+  await modes.getByRole('button', { name: 'Public', exact: true }).click()
+  await expect(fromAsset).toContainText('ZEC')
+  const restoredQuoteCount = matchingQuoteCount()
+  await popup.getByRole('textbox', { name: 'From amount' }).fill('1')
+  await expect.poll(matchingQuoteCount).toBe(restoredQuoteCount + 1)
+  expect(api.getQuoteRequests().at(-1)).toMatchObject({
+    originAsset: 'zec',
+    refundTo: addresses.refund,
+    recipient: addresses.recipient
+  })
 })
 
 function swapAssetDialog(popup: Page, _direction: 'From' | 'To') {
@@ -174,7 +211,8 @@ test('renders usable Swap assets while unrelated chain catalogs are pending', as
     await importTestWallet(popup)
     await popup.goto(`chrome-extension://${extensionId}/index.html`)
     await popup.getByRole('button', { name: 'Swap', exact: true }).click()
-    await expect(popup.getByRole('status', { name: 'Loading swap assets' })).toBeVisible()
+    await expect(popup.getByRole('status', { name: 'Loading from assets' })).toBeVisible()
+    await expect(popup.getByRole('status', { name: 'Loading to assets' })).toBeVisible()
     await captureScreenshot(popup, 'protocol-swap-initial-skeleton.png')
     releaseSources?.()
     await expect(popup.getByRole('button', { name: 'From asset' })).toBeVisible()
@@ -197,7 +235,8 @@ test('renders usable Swap assets while unrelated chain catalogs are pending', as
     releaseDestinations?.()
     await expect(popup.getByRole('button', { name: 'To asset' })).toBeEnabled()
     await expect(popup.getByRole('button', { name: 'To asset' })).toContainText('ETH')
-    await expect(popup.getByRole('status', { name: 'Loading swap assets' })).toHaveCount(0)
+    await expect(popup.getByRole('status', { name: 'Loading from assets' })).toHaveCount(0)
+    await expect(popup.getByRole('status', { name: 'Loading to assets' })).toHaveCount(0)
     await expect.poll(() => pendingRequests).toBeGreaterThan(0)
     await popup.locator('input[placeholder="0"]').fill('1')
     await expectNoOverflow(popup)

@@ -219,7 +219,7 @@ function MethodCard({
   detail: string
   recommended: boolean
   selected: boolean
-  estimate: MoveMethodEstimate
+  estimate: MoveMethodEstimate | null
   fee: { value: string; detail: string | null }
   onClick: () => void
 }) {
@@ -254,7 +254,7 @@ function MethodCard({
         <span className="text-muted">Privacy</span>
         <span>{title === 'Cluster' ? 'Strong' : 'Standard'}</span>
       </span>
-      {estimate.time !== '—' && (
+      {estimate && estimate.time !== '—' && (
         <span className="mt-2 flex justify-between gap-2">
           <span className="shrink-0 text-muted">Time (est.)</span>
           <span className="min-w-0 text-right">
@@ -968,6 +968,7 @@ function TransferForm() {
     maxSelected && selected?.asset.asset.kind === 'native' && from !== 'shield'
   const maximum = useTransferMaximum({
     prefetch: selected?.chain.chain.family === 'evm',
+    refreshOnExpiry: false,
     enabled: nativeMaximumEnabled,
     requestKey: `${scopeKey}:${selected?.asset.asset.id ?? ''}:${direction}:${source?.availableRaw ?? '0'}`,
     fallback: () =>
@@ -1082,7 +1083,7 @@ function TransferForm() {
         })
       : null
   const estimateAmountRaw = methodAmount?.error ? null : methodAmount?.amountRaw
-  const methodEstimateKey = `${routeKey}:${estimateAmountRaw ?? ''}:${source?.sender}:${source?.recipient}:${source?.executionMode}:${source?.availableRaw}:${retry}`
+  const methodEstimateKey = `${routeKey}:${estimateAmountRaw ?? ''}:${source?.sender}:${source?.recipient}:${source?.executionMode}:${retry}`
   const canEstimateMethods = Boolean(
     draftScope === scopeKey &&
     clusterPair &&
@@ -1136,30 +1137,16 @@ function TransferForm() {
     managedAsset &&
     shieldConnection === 'connected' &&
     clusterEstimate.value?.routeFeeRaw !== null &&
-    clusterEstimate.value &&
-    clusterEstimate.value.expiresAt > Date.now()
+    clusterEstimate.value
   )
   const directQuoted = Boolean(
     canEstimateMethods &&
     methodAvailable &&
     directEstimate.value?.routeFeeRaw !== null &&
-    directEstimate.value &&
-    directEstimate.value.expiresAt > Date.now()
+    directEstimate.value
   )
-  const clusterReady = clusterQuoted
-  const directReady = directQuoted
-  useEffect(() => {
-    if (
-      method === 'cluster' &&
-      clusterPair &&
-      directQuoted &&
-      !clusterReady &&
-      !clusterEstimate.loading &&
-      shieldConnection !== 'checking' &&
-      shieldConnection !== 'busy'
-    )
-      setMethod('directly')
-  }, [method, clusterPair, clusterReady, directQuoted, clusterEstimate.loading, shieldConnection])
+  const clusterAvailable = Boolean(clusterPair && managedAsset && effective)
+  const selectedEstimate = method === 'cluster' ? clusterEstimate : directEstimate
   const shieldReviewKey = `${routeKey}:${method}:${currentAmount}:${shieldAmountState?.amountRaw ?? ''}`
   const latestShieldReviewKey = useRef(shieldReviewKey)
   latestShieldReviewKey.current = shieldReviewKey
@@ -1815,38 +1802,46 @@ function TransferForm() {
             {transferError}
           </p>
         )}
-        {selected?.chain.chain.family === 'evm' && clusterPair && (clusterReady || directReady) && (
-          <div
-            role="radiogroup"
-            aria-label="Transfer method"
-            className={cn(
-              'mt-auto grid shrink-0 gap-2.5 pt-6',
-              clusterReady && directReady ? 'grid-cols-2' : 'grid-cols-1'
-            )}
-          >
-            {clusterReady && clusterEstimate.value && (
-              <MethodCard
-                title="Cluster"
-                detail="Multiple transactions"
-                recommended
-                selected={method === 'cluster'}
-                estimate={clusterEstimate.value}
-                fee={formatMoveMethodFee(clusterEstimate.value, selected.asset)}
-                onClick={() => setMethod('cluster')}
-              />
-            )}
-            {directReady && directEstimate.value && (
-              <MethodCard
-                title="Directly"
-                detail="One transaction"
-                recommended={false}
-                selected={method === 'directly'}
-                estimate={directEstimate.value}
-                fee={formatMoveMethodFee(directEstimate.value, selected.asset)}
-                onClick={() => setMethod('directly')}
-              />
-            )}
-          </div>
+        {selected?.chain.chain.family === 'evm' &&
+          clusterPair &&
+          (clusterAvailable || methodAvailable) && (
+            <div
+              role="radiogroup"
+              aria-label="Transfer method"
+              className={cn(
+                'mt-auto grid shrink-0 gap-2.5 pt-6',
+                clusterAvailable && methodAvailable ? 'grid-cols-2' : 'grid-cols-1'
+              )}
+            >
+              {clusterAvailable && (
+                <MethodCard
+                  title="Cluster"
+                  detail="Multiple transactions"
+                  recommended
+                  selected={method === 'cluster'}
+                  estimate={clusterEstimate.value}
+                  fee={formatMoveMethodFee(clusterEstimate.value, selected.asset)}
+                  onClick={() => setMethod('cluster')}
+                />
+              )}
+              {methodAvailable && (
+                <MethodCard
+                  title="Directly"
+                  detail="One transaction"
+                  recommended={false}
+                  selected={method === 'directly'}
+                  estimate={directEstimate.value}
+                  fee={formatMoveMethodFee(directEstimate.value, selected.asset)}
+                  onClick={() => setMethod('directly')}
+                />
+              )}
+            </div>
+          )}
+        {clusterPair && selectedEstimate.error && (
+          <InlineError
+            message="Transfer estimate unavailable. Try again."
+            onRetry={() => setRetry(value => value + 1)}
+          />
         )}
         {method === 'directly' &&
           selected &&

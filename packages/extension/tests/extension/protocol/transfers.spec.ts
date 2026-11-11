@@ -1013,10 +1013,8 @@ test('swaps a Shield-only holding to Shield USDC without adding a Public asset a
     return response.result.model.assets.map((asset: { asset: { id: string } }) => asset.asset.id)
   })
   expect(publicAssetIds.some((assetId: string) => assetId.includes(TRIAL_CONTRACT))).toBe(false)
-  await expect(popup.getByRole('button', { name: 'Select source Shield token' })).toContainText(
-    'TRIAL'
-  )
-  await popup.getByRole('button', { name: 'Select destination Shield token' }).click()
+  await expect(popup.getByRole('button', { name: 'From asset' })).toContainText('TRIAL')
+  await popup.getByRole('button', { name: 'To asset' }).click()
   const picker = popup.getByRole('dialog', { name: 'Select token' })
   await picker
     .getByRole('button')
@@ -1024,7 +1022,7 @@ test('swaps a Shield-only holding to Shield USDC without adding a Public asset a
     .filter({ hasText: 'Ethereum' })
     .first()
     .click()
-  await popup.getByRole('textbox', { name: 'Shield swap amount' }).fill('0.01')
+  await popup.getByRole('textbox', { name: 'From amount' }).fill('0.01')
   await popup.getByRole('button', { name: 'Swap', exact: true }).click()
   await expect(popup.getByRole('heading', { name: 'Confirm Swap' })).toBeVisible()
   await expect(
@@ -1087,7 +1085,7 @@ test('submits Public Cluster as one scheduled batch to one destination and resto
   popup,
   extensionId
 }) => {
-  test.setTimeout(180_000)
+  test.setTimeout(210_000)
   const rpc = await mockEvmNetwork(context, { allowBroadcast: true })
   await mockBitcoinNetwork(context)
   const api = await mockProtocolApis(context, { confidentialBalanceRaw: '0' })
@@ -1100,9 +1098,29 @@ test('submits Public Cluster as one scheduled batch to one destination and resto
   const identity = await readShieldTransferIdentity(popup)
   const destinationAddress = identity.private
   await openShieldTransfer(popup, 'Public', 'Private', true)
+  await popup.getByRole('textbox', { name: 'Transfer amount' }).fill('0.003')
+  const cluster = popup.getByRole('radio', { name: 'Cluster' })
+  const directly = popup.getByRole('radio', { name: 'Directly' })
+  await expect(cluster).toContainText('~', { timeout: 30_000 })
+  await expect(directly).toContainText('~', { timeout: 30_000 })
+  await expect(cluster).toBeChecked()
+  const idleQuotes = api.getQuoteRequests().length
+  const idlePrepares = api.getRheaPrepareCount()
+  await popup.waitForTimeout(35_000)
+  expect(api.getQuoteRequests()).toHaveLength(idleQuotes)
+  expect(api.getRheaPrepareCount()).toBe(idlePrepares)
+  await expect(cluster).toBeVisible()
+  await expect(directly).toBeVisible()
+  await expect(cluster).toBeChecked()
+  await expect(popup.getByRole('button', { name: 'Review Cluster', exact: true })).toBeEnabled()
+  await captureScreenshot(popup, 'move-cluster-idle-quote-stable.png')
   await popup.getByRole('textbox', { name: 'Transfer amount' }).fill('0.01')
+  await expect.poll(() => api.getQuoteRequests().length).toBeGreaterThan(idleQuotes)
+  await expect.poll(api.getRheaPrepareCount).toBeGreaterThan(idlePrepares)
+  const quotesBeforeReview = api.getQuoteRequests().length
   await popup.getByRole('button', { name: 'Review Cluster', exact: true }).click()
   await expect(popup.getByRole('heading', { name: 'Cluster transfer' })).toBeVisible()
+  expect(api.getQuoteRequests().length).toBeGreaterThan(quotesBeforeReview)
   const plan = await readStoredShieldPlan(popup)
   expect(plan).toMatchObject({
     operation: 'cluster',
@@ -1642,7 +1660,7 @@ test('deducts native gas from Available and Max in Public Send', async ({
   await captureScreenshot(popup, 'send-native-max-main-review.png')
 })
 
-test('reviews and submits Public to Private from AssetDetail Move', async ({
+test('reviews and submits Public to Private from Shielded Move', async ({
   context,
   popup,
   extensionId
@@ -1656,14 +1674,6 @@ test('reviews and submits Public to Private from AssetDetail Move', async ({
   const preparationPending = new Promise<void>(resolve => {
     releasePreparation = resolve
   })
-  await context.route(BUILD_SWAP_URL, async route => {
-    await preparationPending
-    if (preparationFails) {
-      await route.fulfill({ status: 502, body: 'Unavailable' })
-      return
-    }
-    await route.fallback()
-  })
 
   await waitForBackgroundWalletInitialization(popup)
   await importTestWallet(popup)
@@ -1674,21 +1684,42 @@ test('reviews and submits Public to Private from AssetDetail Move', async ({
   await expect(popup.getByTestId('home-total-assets')).toContainText('$')
   await popup.getByRole('button', { name: 'Asset category: Total assets' }).click()
   const categories = popup.getByRole('radiogroup', { name: 'Asset category' })
-  for (const domain of ['Public', 'Shield', 'Private']) {
-    await expect(
-      categories.getByRole('radio', { name: new RegExp(`${domain} assets`) })
-    ).toContainText('—')
-  }
+  await expect(categories.getByRole('radio', { name: /Public assets/ })).toContainText('$')
+  await expect(categories.getByRole('radio', { name: /Shield assets/ })).toContainText('—')
+  await expect(categories.getByRole('radio', { name: /Private assets/ })).toContainText('$')
   await captureScreenshot(popup, 'home-total-assets-amount.png')
   await popup.keyboard.press('Escape')
   await popup.getByRole('button', { name: 'View ETH details on Ethereum' }).click()
+  await popup.getByRole('button', { name: 'Shielded', exact: true }).click()
+  await popup.getByRole('button', { name: /NEAR Confidential/ }).click()
   await popup.getByRole('button', { name: 'Move', exact: true }).click()
+  const sourceAsset = popup.getByRole('button', { name: 'Select transfer asset' })
+  if (!(await sourceAsset.textContent())?.includes('ETH')) {
+    await sourceAsset.click()
+    await popup
+      .getByRole('dialog', { name: 'Select asset' })
+      .getByRole('button')
+      .filter({ has: popup.getByText('ETH', { exact: true }) })
+      .filter({ has: popup.getByText('Ethereum', { exact: true }) })
+      .click()
+  }
+  await popup.getByRole('button', { name: /^To: .* Change account$/ }).click()
+  await popup.getByRole('dialog').getByRole('button', { name: 'Select Private account' }).click()
   await expect(popup.getByRole('button', { name: 'From: Public. Change account' })).toBeVisible()
   await expect(popup.getByRole('button', { name: 'To: Private. Change account' })).toBeVisible()
   await captureScreenshot(popup, 'balance-transfer-public-confidential-addresses.png')
+  await popup.getByRole('radio', { name: 'Directly' }).click()
   await popup.getByRole('textbox', { name: 'Transfer amount' }).fill('0.01')
   await expect(popup.getByRole('button', { name: 'Move', exact: true })).toBeEnabled({
     timeout: 30_000
+  })
+  await context.route(BUILD_SWAP_URL, async route => {
+    await preparationPending
+    if (preparationFails) {
+      await route.fulfill({ status: 502, body: 'Unavailable' })
+      return
+    }
+    await route.fallback()
   })
   await popup.getByRole('button', { name: 'Move', exact: true }).click()
 
@@ -1776,14 +1807,15 @@ test('reviews and submits Private to Public from AssetDetail Move', async ({
   await waitForBackgroundWalletInitialization(popup)
   await importTestWallet(popup)
   await popup.goto(`chrome-extension://${extensionId}/index.html`)
+  await popup.getByRole('radio', { name: 'Private mode' }).click()
   await expect(popup.getByRole('button', { name: 'View ETH details on Ethereum' })).toBeVisible({
     timeout: 30_000
   })
   await popup.getByRole('button', { name: 'View ETH details on Ethereum' }).click()
   await popup.getByRole('button', { name: 'Move', exact: true }).click()
-  await popup.getByRole('button', { name: 'Switch transfer direction' }).click()
   await expect(popup.getByRole('button', { name: 'From: Private. Change account' })).toBeVisible()
   await expect(popup.getByRole('button', { name: 'To: Public. Change account' })).toBeVisible()
+  await popup.getByRole('radio', { name: 'Directly' }).click()
   await popup.getByRole('textbox', { name: 'Transfer amount' }).fill('0.01')
   await expect(popup.getByRole('button', { name: 'Move', exact: true })).toBeEnabled({
     timeout: 30_000

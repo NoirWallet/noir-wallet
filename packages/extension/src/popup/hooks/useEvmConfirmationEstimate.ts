@@ -23,7 +23,6 @@ export function useEvmConfirmationEstimate({
 
   useEffect(() => {
     let active = true
-    let timer: ReturnType<typeof setTimeout> | undefined
     setState({ key, value: '—' })
     if (!enabled || !chainId || !maxFeePerGasWei || !maxPriorityFeePerGasWei) return
 
@@ -38,17 +37,10 @@ export function useEvmConfirmationEstimate({
       } catch {
         if (active) setState({ key, value: '—' })
       }
-      if (active) {
-        timer = setTimeout(() => {
-          setState({ key, value: '—' })
-          void refresh()
-        }, 30_000)
-      }
     }
     void refresh()
     return () => {
       active = false
-      clearTimeout(timer)
     }
   }, [enabled, key, chainId, maxFeePerGasWei, maxPriorityFeePerGasWei])
 

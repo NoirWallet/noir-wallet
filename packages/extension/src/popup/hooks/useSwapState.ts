@@ -30,6 +30,8 @@ export function useSwapState(
   options: SwapInitialCatalogOptions = {}
 ) {
   const enabledChainKey = options.enabledChains?.map(chain => chain.id).join('|')
+  // Modes share catalog metadata, but retain separate saved pairs and quote state.
+  const catalogScope = options.catalogScope === undefined ? preferenceScope : options.catalogScope
   const [initialSelection] = useState(() =>
     preferenceScope ? useSwapPreferences.getState().tokenSelections[preferenceScope] : undefined
   )
@@ -120,22 +122,34 @@ export function useSwapState(
   const [destinationTokensLoading, setDestinationTokensLoading] = useState(true)
 
   const activePreferenceScope = useRef(preferenceScope)
+  const [selectionScope, setSelectionScope] = useState(preferenceScope)
   useEffect(() => {
     if (activePreferenceScope.current === preferenceScope) return
     activePreferenceScope.current = preferenceScope
+    setSelectionScope(preferenceScope)
     selectionEdited.current = false
     selectionRestored.current = false
     inputRevision.current += 1
     switchRequestSequence.current += 1
     switchingTokens.current = false
     setIsSwitchingTokens(false)
-    setTokenIn(null)
-    setSelectedSourceAssetId(null)
-    setTokenOut(null)
-    setSourceCatalog([])
-    setCrossChainDestinationCatalog([])
-    setAreTokensLoading(true)
-    setDestinationTokensLoading(true)
+    const saved = preferenceScope
+      ? useSwapPreferences.getState().tokenSelections[preferenceScope]
+      : undefined
+    const sources = sourceCatalog
+    const destinations = crossChainDestinationCatalog
+    const source = preferenceScope
+      ? pickProvisionalSwapSource(sources, saved?.tokenInId ?? undefined)
+      : null
+    const destinationId =
+      source?.assetId === saved?.tokenInId
+        ? getSavedSwapDestinationAssetId(saved, source?.assetId)
+        : undefined
+    setTokenIn(source)
+    setSelectedSourceAssetId(source && source.assetId === saved?.tokenInId ? source.assetId : null)
+    setTokenOut(
+      [...sources, ...destinations].find(token => token.assetId === destinationId) ?? null
+    )
     setAmountIn('')
     setAmountOut('')
     setRecipientAddressState('')
@@ -219,14 +233,14 @@ export function useSwapState(
       setTokenIn(previous =>
         previous && isSwapAssetOnEnabledChain(previous.assetId, options.enabledChains)
           ? previous
-          : preferenceScope
+          : activePreferenceScope.current
             ? pickProvisionalSwapSource(cachedPlannedSources, readSavedSourceAssetId())
             : null
       )
       const destinationsRequest = loadTokenCatalogByChain(
         'cross-chain-to',
         plan.destinationChainIds,
-        catalogRequestId > 0 || cachedDestinations.length > 0,
+        catalogRequestId > 0,
         tokens => {
           setCrossChainDestinationCatalog(previous => mergeTokenCatalogs(previous, tokens))
           setTokenOut(
@@ -244,13 +258,13 @@ export function useSwapState(
         const sources = await loadTokenCatalogByChain(
           'from',
           plan.sourceChainIds,
-          catalogRequestId > 0 || cachedSources.length > 0,
+          catalogRequestId > 0,
           tokens => {
             setSourceCatalog(previous => mergeTokenCatalogs(previous, tokens))
             setTokenIn(
               previous =>
                 previous ??
-                (preferenceScope
+                (activePreferenceScope.current
                   ? pickProvisionalSwapSource(tokens, readSavedSourceAssetId())
                   : null)
             )
@@ -265,7 +279,7 @@ export function useSwapState(
         setTokenIn(
           previous =>
             previous ??
-            (preferenceScope
+            (activePreferenceScope.current
               ? pickProvisionalSwapSource(
                   sources.length > 0 ? sources : cachedPlannedSources,
                   readSavedSourceAssetId()
@@ -294,7 +308,7 @@ export function useSwapState(
     }
   }, [
     catalogRequestId,
-    preferenceScope,
+    catalogScope,
     options.sourceAssetId,
     options.destinationAssetId,
     options.destinationApiChainId,
@@ -646,6 +660,7 @@ export function useSwapState(
 
   return {
     // State
+    selectionReady: selectionScope === preferenceScope,
     tokenIn,
     selectedSourceAssetId,
     tokenOut,
