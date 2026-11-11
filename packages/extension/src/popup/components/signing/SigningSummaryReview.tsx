@@ -8,6 +8,7 @@ import {
   useCopyToClipboard
 } from '@/popup/components/common/CopyToast'
 import { AmountDisplay } from '@/popup/components/common/AmountDisplay'
+import { TokenIcon } from '@/popup/components/tokens/TokenIcon'
 import { ApprovalWindowLayout } from '@/popup/components/dapp/ApprovalWindowLayout'
 import {
   ApprovalContextCard,
@@ -239,6 +240,105 @@ function DAppMessageReview({
   )
 }
 
+function DAppTokenAuthorizationReview({
+  model,
+  chainName,
+  iconChain,
+  networkName,
+  accountName,
+  accountMode
+}: {
+  readonly model: ReturnType<typeof buildSigningSummaryReviewModel>
+  readonly chainName: string
+  readonly iconChain?: string
+  readonly networkName: string
+  readonly accountName: string
+  readonly accountMode?: DAppExecutionMode
+}) {
+  const authorization = model.tokenAuthorization
+  if (!authorization) return null
+  return (
+    <>
+      <section aria-label="Authorized tokens" className="rounded-2xl bg-card/70 p-4">
+        <span className="rounded-md bg-foreground/5 px-2 py-1 text-xs text-muted">
+          {authorization.protocol}
+        </span>
+        {authorization.kind === 'transfer' && (
+          <p className="mt-3 text-sm text-muted">Maximum transferable</p>
+        )}
+        <div className="mt-4 space-y-4">
+          {authorization.tokens.map((token, index) => (
+            <div key={`${token.contractAddress}-${index}`} className="min-w-0">
+              <div className="flex min-w-0 items-center gap-3">
+                <TokenIcon assetId={token.assetId} symbol={token.symbol ?? '?'} size={40} />
+                <div className="min-w-0 flex-1">
+                  {token.symbol === null && (
+                    <p className="mb-1 text-sm text-muted">
+                      {token.unlimited ? 'Unknown token' : 'Unknown token · raw amount'}
+                    </p>
+                  )}
+                  <div
+                    className={cn(
+                      'min-w-0 font-semibold',
+                      token.symbol === null ? 'text-base' : 'text-xl',
+                      token.unlimited && 'text-warning'
+                    )}
+                  >
+                    {token.unlimited ? (
+                      <span className="break-words">Unlimited {token.symbol ?? ''}</span>
+                    ) : (
+                      <AmountDisplay value={token.amount} symbol={token.symbol ?? undefined} />
+                    )}
+                  </div>
+                </div>
+              </div>
+              <p className="mt-2 break-all font-mono text-[11px] leading-4 text-muted">
+                {token.contractAddress}
+              </p>
+              {token.expiration && (
+                <div className="mt-2 flex items-start justify-between gap-3 text-xs leading-5">
+                  <span className="shrink-0 text-muted">Authorization expiry</span>
+                  <span className="text-right">{token.expiration}</span>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </section>
+      <section aria-label="Authorization details" className="rounded-2xl bg-card/70 px-4 py-1">
+        <ReviewRows
+          rows={[
+            {
+              label: 'Authorized spender',
+              value: authorization.spender,
+              code: true,
+              breakAll: true
+            },
+            { label: 'Signature submit by', value: authorization.signatureDeadline },
+            ...(authorization.kind === 'transfer'
+              ? [{ label: 'Recipient', value: 'Not specified in signature' }]
+              : [])
+          ]}
+        />
+        <div className="grid grid-cols-[104px_minmax(0,1fr)] gap-3 py-2.5 text-xs leading-5">
+          <span className="text-muted">Signing account</span>
+          <div className="min-w-0 text-right">
+            <p className="break-words">{accountName}</p>
+            <p className="break-all font-mono">{authorization.owner}</p>
+            {accountMode === 'private' && (
+              <span className="mt-1.5 flex justify-end">
+                <ExecutionAccountBadge mode="private" />
+              </span>
+            )}
+          </div>
+        </div>
+      </section>
+      <DAppNetworkCard chain={iconChain ?? chainName} network={networkName} />
+      <AdvancedReview sections={model.sections} />
+    </>
+  )
+}
+
 function DAppTransactionReview({
   model,
   chainName,
@@ -338,6 +438,7 @@ export function SigningSummaryReview({
   const isBlocked = model.level === 'blocked'
   const isDAppMessage = source.kind === 'dapp' && model.operation === 'message'
   const isDAppTransaction = source.kind === 'dapp' && model.operation === 'transaction'
+  const isDAppTokenAuthorization = source.kind === 'dapp' && model.tokenAuthorization !== undefined
   const hideReviewableUnknownEvmCall =
     isDAppTransaction && summary.schema === 'evm.transaction.v1' && model.level === 'caution'
   const visibleIssues = hideReviewableUnknownEvmCall
@@ -348,9 +449,11 @@ export function SigningSummaryReview({
     ? 'Signing blocked'
     : isCaution
       ? 'Confirm anyway'
-      : model.operation === 'message'
-        ? 'Sign message'
-        : 'Confirm'
+      : isDAppTokenAuthorization
+        ? 'Sign authorization'
+        : model.operation === 'message'
+          ? 'Sign message'
+          : 'Confirm'
   const requestTone = isBlocked ? 'blocked' : isCaution ? 'caution' : 'standard'
 
   return (
@@ -384,7 +487,13 @@ export function SigningSummaryReview({
           <DAppRequestHeader
             domain={source.domain}
             pageUrl={source.pageUrl}
-            action={model.operation === 'message' ? 'Sign message' : 'Review transaction'}
+            action={
+              isDAppTokenAuthorization
+                ? model.title
+                : model.operation === 'message'
+                  ? 'Sign message'
+                  : 'Review transaction'
+            }
             description={model.description}
             tone={requestTone}
           />
@@ -409,20 +518,23 @@ export function SigningSummaryReview({
           />
         )}
 
-        {source.kind === 'dapp' && accountMode === 'private' && !isDAppTransaction && (
-          <section
-            aria-label="Confidential execution account"
-            className="flex min-w-0 items-center gap-2 rounded-xl bg-primary/6 px-3 py-2"
-          >
-            <ExecutionAccountBadge mode="private" />
-            <span
-              className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted"
-              title={accountAddress}
+        {source.kind === 'dapp' &&
+          accountMode === 'private' &&
+          !isDAppTransaction &&
+          !isDAppTokenAuthorization && (
+            <section
+              aria-label="Confidential execution account"
+              className="flex min-w-0 items-center gap-2 rounded-xl bg-primary/6 px-3 py-2"
             >
-              {accountAddress}
-            </span>
-          </section>
-        )}
+              <ExecutionAccountBadge mode="private" />
+              <span
+                className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted"
+                title={accountAddress}
+              >
+                {accountAddress}
+              </span>
+            </section>
+          )}
 
         {notice}
 
@@ -456,7 +568,16 @@ export function SigningSummaryReview({
           </section>
         )}
 
-        {isDAppMessage ? (
+        {isDAppTokenAuthorization ? (
+          <DAppTokenAuthorizationReview
+            model={model}
+            chainName={chainName}
+            iconChain={iconChain}
+            networkName={networkName}
+            accountName={accountName}
+            accountMode={accountMode}
+          />
+        ) : isDAppMessage ? (
           <DAppMessageReview
             model={model}
             chainName={chainName}

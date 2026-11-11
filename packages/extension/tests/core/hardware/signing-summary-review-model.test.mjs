@@ -1,8 +1,10 @@
 import { test } from 'node:test'
 import { expect } from '@playwright/test'
 import { readFileSync } from 'node:fs'
+import { hashTypedData } from 'viem'
 
 import { SIGNING_SUMMARY_SCHEMAS } from '../../../src/core/keyring/domain/index.ts'
+import { decodeEvmPermitReview } from '../../../src/infrastructure/chains/evm/evm-permit-review.ts'
 import { buildSigningSummaryReviewModel } from '../../../src/popup/components/signing/signing-summary-review-model.ts'
 
 const digest = '00'.repeat(32)
@@ -149,6 +151,332 @@ const baseSummaries = [
     callbackUrl: null
   })
 ]
+
+const permitOwner = '0x1111111111111111111111111111111111111111'
+const permitSpender = '0x2222222222222222222222222222222222222222'
+const permitToken = '0x3333333333333333333333333333333333333333'
+const permit2Address = '0x000000000022D473030F116dDEE9F6B43aC78BA3'
+const typedScalar = (solidityType, value) => ({ kind: 'scalar', solidityType, value })
+const typedStruct = (typeName, entries) => ({
+  kind: 'struct',
+  typeName,
+  fields: entries.map(([name, value]) => ({ name, value }))
+})
+const typedArray = (itemType, items) => ({ kind: 'array', itemType, items })
+const permitDetails = () =>
+  typedStruct('PermitDetails', [
+    ['token', typedScalar('address', permitToken)],
+    ['amount', typedScalar('uint160', '42')],
+    ['expiration', typedScalar('uint48', '400')],
+    ['nonce', typedScalar('uint48', '1')]
+  ])
+const tokenPermissions = () =>
+  typedStruct('TokenPermissions', [
+    ['token', typedScalar('address', permitToken)],
+    ['amount', typedScalar('uint256', '42')]
+  ])
+const permitDomain = contract =>
+  typedStruct('EIP712Domain', [
+    ['name', typedScalar('string', contract === permit2Address ? 'Permit2' : 'Token')],
+    ['chainId', typedScalar('uint256', '1')],
+    ['verifyingContract', typedScalar('address', contract)]
+  ])
+const permitSummary = (message, contract = permit2Address, digestHex = `0x${digest}`) =>
+  summary('evm.typed-data.v1', 'eip155:1', 'message', {
+    signer: permitOwner,
+    primaryType: message.typeName,
+    domain: permitDomain(contract),
+    message,
+    digestHex
+  })
+
+function permit2BatchDigest(primaryType, arraySuffix = '[]') {
+  const transfer = primaryType === 'PermitBatchTransferFrom'
+  return hashTypedData({
+    domain: { name: 'Permit2', chainId: 1, verifyingContract: permit2Address },
+    types: {
+      EIP712Domain: [
+        { name: 'name', type: 'string' },
+        { name: 'chainId', type: 'uint256' },
+        { name: 'verifyingContract', type: 'address' }
+      ],
+      ...(transfer
+        ? {
+            TokenPermissions: [
+              { name: 'token', type: 'address' },
+              { name: 'amount', type: 'uint256' }
+            ],
+            PermitBatchTransferFrom: [
+              { name: 'permitted', type: `TokenPermissions${arraySuffix}` },
+              { name: 'spender', type: 'address' },
+              { name: 'nonce', type: 'uint256' },
+              { name: 'deadline', type: 'uint256' }
+            ]
+          }
+        : {
+            PermitDetails: [
+              { name: 'token', type: 'address' },
+              { name: 'amount', type: 'uint160' },
+              { name: 'expiration', type: 'uint48' },
+              { name: 'nonce', type: 'uint48' }
+            ],
+            PermitBatch: [
+              { name: 'details', type: `PermitDetails${arraySuffix}` },
+              { name: 'spender', type: 'address' },
+              { name: 'sigDeadline', type: 'uint256' }
+            ]
+          })
+    },
+    primaryType,
+    message: transfer
+      ? {
+          permitted: [1, 2].map(() => ({ token: permitToken, amount: 42n })),
+          spender: permitSpender,
+          nonce: 1n,
+          deadline: 500n
+        }
+      : {
+          details: [1, 2].map(() => ({
+            token: permitToken,
+            amount: 42n,
+            expiration: 400n,
+            nonce: 1n
+          })),
+          spender: permitSpender,
+          sigDeadline: 500n
+        }
+  })
+}
+
+test('decodes only canonical EIP-2612 and Permit2 allowance and transfer permissions', () => {
+  const permit = permitSummary(
+    typedStruct('Permit', [
+      ['owner', typedScalar('address', permitOwner)],
+      ['spender', typedScalar('address', permitSpender)],
+      ['value', typedScalar('uint256', '42')],
+      ['nonce', typedScalar('uint256', '1')],
+      ['deadline', typedScalar('uint256', '500')]
+    ]),
+    permitToken
+  )
+  const single = permitSummary(
+    typedStruct('PermitSingle', [
+      ['details', permitDetails()],
+      ['spender', typedScalar('address', permitSpender)],
+      ['sigDeadline', typedScalar('uint256', '500')]
+    ])
+  )
+  const batch = permitSummary(
+    typedStruct('PermitBatch', [
+      ['details', typedArray('PermitDetails', [permitDetails(), permitDetails()])],
+      ['spender', typedScalar('address', permitSpender)],
+      ['sigDeadline', typedScalar('uint256', '500')]
+    ]),
+    permit2Address,
+    permit2BatchDigest('PermitBatch')
+  )
+  const transfer = permitSummary(
+    typedStruct('PermitTransferFrom', [
+      ['permitted', tokenPermissions()],
+      ['spender', typedScalar('address', permitSpender)],
+      ['nonce', typedScalar('uint256', '1')],
+      ['deadline', typedScalar('uint256', '500')]
+    ])
+  )
+  const batchTransfer = permitSummary(
+    typedStruct('PermitBatchTransferFrom', [
+      ['permitted', typedArray('TokenPermissions', [tokenPermissions(), tokenPermissions()])],
+      ['spender', typedScalar('address', permitSpender)],
+      ['nonce', typedScalar('uint256', '1')],
+      ['deadline', typedScalar('uint256', '500')]
+    ]),
+    permit2Address,
+    permit2BatchDigest('PermitBatchTransferFrom')
+  )
+
+  for (const [input, protocol, kind, amountBits, count] of [
+    [permit, 'Permit', 'allowance', 256, 1],
+    [single, 'Permit2', 'allowance', 160, 1],
+    [batch, 'Permit2', 'allowance', 160, 2],
+    [transfer, 'Permit2', 'transfer', 256, 1],
+    [batchTransfer, 'Permit2', 'transfer', 256, 2]
+  ]) {
+    const before = JSON.stringify(input)
+    const decoded = decodeEvmPermitReview(input)
+    expect(decoded).toMatchObject({
+      protocol,
+      kind,
+      owner: permitOwner,
+      spender: permitSpender,
+      verifyingContract: input.fields.domain.fields[2].value.value,
+      signatureDeadlineRaw: '500'
+    })
+    expect(decoded.tokens).toHaveLength(count)
+    expect(decoded.tokens[0]).toMatchObject({
+      contractAddress: permitToken,
+      amountRaw: '42',
+      amountBits
+    })
+    expect(JSON.stringify(input)).toBe(before)
+  }
+})
+
+test('falls back for altered permit authority, domain, or signed schema', () => {
+  const base = permitSummary(
+    typedStruct('PermitSingle', [
+      ['details', permitDetails()],
+      ['spender', typedScalar('address', permitSpender)],
+      ['sigDeadline', typedScalar('uint256', '500')]
+    ])
+  )
+  const altered = change => {
+    const copy = structuredClone(base)
+    change(copy)
+    return copy
+  }
+  const cases = [
+    altered(input => {
+      input.chainId = 'eip155:56'
+    }),
+    altered(input => {
+      input.fields.domain.fields.splice(1, 1)
+    }),
+    altered(input => {
+      input.fields.domain.fields[0].value.value = 'Fake Permit2'
+    }),
+    altered(input => {
+      input.fields.domain.fields[2].value.value = permitToken
+    }),
+    altered(input => {
+      input.fields.message.fields.push({
+        name: 'witness',
+        value: typedScalar('bytes32', `0x${digest}`)
+      })
+    }),
+    altered(input => {
+      input.fields.message.fields[0].value.fields[1].value.value = (1n << 160n).toString()
+    }),
+    altered(input => {
+      input.fields.message.fields[0].value.fields[2].value.solidityType = 'uint256'
+    }),
+    altered(input => {
+      input.fields.message.fields[1].value.value = '0xbroken'
+    }),
+    altered(input => {
+      input.fields.message.fields[2].value.value = '-1'
+    }),
+    altered(input => {
+      input.fields.message.fields.reverse()
+    }),
+    altered(input => {
+      input.fields.primaryType = 'PermitWitnessTransferFrom'
+    })
+  ]
+  for (const input of cases) expect(decodeEvmPermitReview(input)).toBeNull()
+
+  const wrongOwner = permitSummary(
+    typedStruct('Permit', [
+      ['owner', typedScalar('address', permitSpender)],
+      ['spender', typedScalar('address', permitSpender)],
+      ['value', typedScalar('uint256', '42')],
+      ['nonce', typedScalar('uint256', '1')],
+      ['deadline', typedScalar('uint256', '500')]
+    ]),
+    permitToken
+  )
+  expect(decodeEvmPermitReview(wrongOwner)).toBeNull()
+
+  const fixedArray = permitSummary(
+    typedStruct('PermitBatch', [
+      ['details', typedArray('PermitDetails', [permitDetails(), permitDetails()])],
+      ['spender', typedScalar('address', permitSpender)],
+      ['sigDeadline', typedScalar('uint256', '500')]
+    ]),
+    permit2Address,
+    permit2BatchDigest('PermitBatch', '[2]')
+  )
+  expect(decodeEvmPermitReview(fixedArray)).toBeNull()
+})
+
+test('presents exact signed token permissions with trusted metadata and raw typed data', () => {
+  const input = permitSummary(
+    typedStruct('PermitSingle', [
+      [
+        'details',
+        typedStruct('PermitDetails', [
+          ['token', typedScalar('address', permitToken)],
+          ['amount', typedScalar('uint160', '6000000')],
+          ['expiration', typedScalar('uint48', '400')],
+          ['nonce', typedScalar('uint48', '1')]
+        ])
+      ],
+      ['spender', typedScalar('address', permitSpender)],
+      ['sigDeadline', typedScalar('uint256', '500')]
+    ])
+  )
+  const before = JSON.stringify(input)
+  const known = buildSigningSummaryReviewModel(input, {
+    tokenMetadata: [{ contractAddress: permitToken, symbol: 'USDC', decimals: 6 }]
+  })
+  expect(known.title).toBe('Token authorization')
+  expect(known.tokenAuthorization).toMatchObject({
+    protocol: 'Permit2',
+    kind: 'allowance',
+    owner: permitOwner,
+    spender: permitSpender,
+    tokens: [{ contractAddress: permitToken, amount: '6', symbol: 'USDC', unlimited: false }]
+  })
+  const signedRows = known.sections.find(section => section.title === 'Typed data').rows
+  expect(signedRows).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ label: 'Domain.chainId', value: 'uint256 · 1' }),
+      expect.objectContaining({
+        label: 'Domain.verifyingContract',
+        value: `address · ${permit2Address}`
+      }),
+      expect.objectContaining({ label: 'Message.details.amount', value: 'uint160 · 6000000' }),
+      expect.objectContaining({ label: 'Message.details.expiration', value: 'uint48 · 400' }),
+      expect.objectContaining({ label: 'Message.details.nonce', value: 'uint48 · 1' }),
+      expect.objectContaining({ label: 'Message.spender', value: `address · ${permitSpender}` }),
+      expect.objectContaining({ label: 'Message.sigDeadline', value: 'uint256 · 500' }),
+      expect.objectContaining({ label: 'Digest', value: `0x${digest}` })
+    ])
+  )
+  const unknown = buildSigningSummaryReviewModel(input)
+  expect(unknown.tokenAuthorization.tokens[0]).toMatchObject({
+    amount: '6000000',
+    symbol: null,
+    unlimited: false
+  })
+
+  const maximumAllowance = structuredClone(input)
+  maximumAllowance.fields.message.fields[0].value.fields[1].value.value = (
+    (1n << 160n) -
+    1n
+  ).toString()
+  expect(
+    buildSigningSummaryReviewModel(maximumAllowance).tokenAuthorization.tokens[0].unlimited
+  ).toBe(true)
+
+  const maximumTransfer = permitSummary(
+    typedStruct('PermitTransferFrom', [
+      [
+        'permitted',
+        typedStruct('TokenPermissions', [
+          ['token', typedScalar('address', permitToken)],
+          ['amount', typedScalar('uint256', ((1n << 256n) - 1n).toString())]
+        ])
+      ],
+      ['spender', typedScalar('address', permitSpender)],
+      ['nonce', typedScalar('uint256', '1')],
+      ['deadline', typedScalar('uint256', '500')]
+    ])
+  )
+  const transferModel = buildSigningSummaryReviewModel(maximumTransfer)
+  expect(transferModel.title).toBe('Token transfer authorization')
+  expect(transferModel.tokenAuthorization.tokens[0].unlimited).toBe(false)
+  expect(JSON.stringify(input)).toBe(before)
+})
 
 test('formats EVM approval amounts and addresses without changing the signing summary', () => {
   const original = baseSummaries.find(item => item.schema === 'evm.transaction.v1')
