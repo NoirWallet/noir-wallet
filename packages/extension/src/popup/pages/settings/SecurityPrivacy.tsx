@@ -10,6 +10,7 @@ import {
   setGoogleAnalyticsEnabled
 } from '@/lib/analytics/preferences'
 import { Switch } from '@/popup/components/ui/switch'
+import { ZcashBroadcastHelp } from '@/popup/components/settings/ZcashBroadcastHelp'
 import { toast } from '@/store/toast-store'
 import { SETTINGS_STORAGE_KEY } from '@/lib/wallet-settings-storage'
 import { sendZeroIndexerNodeMessage } from '@/popup/services/zero-indexer-node-client'
@@ -169,32 +170,41 @@ export function SecurityPrivacy() {
         <div>
           <p className="text-xs text-muted mb-2 px-1">Privacy</p>
           <section
-            aria-label="Private broadcast settings"
+            aria-label="Zcash private broadcast settings"
             className="mb-3 overflow-hidden rounded-lg border border-white/10 bg-card"
           >
-            <button
-              type="button"
-              role="switch"
-              aria-checked={zeroIndexerEnabled}
-              aria-label="Private broadcast"
-              disabled={!zeroIndexerLoaded || zeroIndexerLoading || zeroIndexerSaving}
-              onClick={() => void handleZeroIndexerToggle()}
-              className="flex w-full items-center justify-between gap-4 p-4 text-left transition-colors hover:bg-white/5 disabled:opacity-50"
-            >
-              <span className="text-sm">Private broadcast</span>
-              <Switch checked={zeroIndexerEnabled} />
-            </button>
-            <button
-              type="button"
-              onClick={() => navigate('/zero-indexer-nodes')}
-              className="flex w-full items-center justify-between gap-3 border-t border-white/10 px-4 py-3 text-left transition-colors hover:bg-white/5"
-            >
-              <span className="text-sm">Broadcast nodes</span>
-              <span className="flex min-w-0 items-center gap-2 text-xs text-muted">
-                <span className="max-w-28 truncate">{broadcastNode}</span>
-                <Icon icon="lucide:chevron-right" className="size-4 shrink-0" />
-              </span>
-            </button>
+            <div className="flex items-center gap-2 p-4">
+              <label htmlFor="zcash-private-broadcast" className="min-w-0 cursor-pointer text-sm">
+                Zcash Private Broadcast
+              </label>
+              <ZcashBroadcastHelp kind="broadcast" />
+              <button
+                id="zcash-private-broadcast"
+                type="button"
+                role="switch"
+                aria-checked={zeroIndexerEnabled}
+                aria-label="Zcash Private Broadcast"
+                disabled={!zeroIndexerLoaded || zeroIndexerLoading || zeroIndexerSaving}
+                onClick={() => void handleZeroIndexerToggle()}
+                className="ml-auto shrink-0 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50"
+              >
+                <Switch checked={zeroIndexerEnabled} />
+              </button>
+            </div>
+            <div className="flex items-center gap-1 border-t border-white/10 pr-3">
+              <button
+                type="button"
+                onClick={() => navigate('/zero-indexer-nodes')}
+                className="flex min-w-0 flex-1 items-center justify-between gap-3 py-3 pl-4 pr-1 text-left transition-colors hover:bg-white/5"
+              >
+                <span className="text-sm">ZeroIndexer nodes</span>
+                <span className="flex min-w-0 items-center gap-2 text-xs text-muted">
+                  <span className="max-w-28 truncate">{broadcastNode}</span>
+                  <Icon icon="lucide:chevron-right" className="size-4 shrink-0" />
+                </span>
+              </button>
+              <ZcashBroadcastHelp kind="nodes" />
+            </div>
           </section>
           {zeroIndexerLoadError && (
             <InlineError

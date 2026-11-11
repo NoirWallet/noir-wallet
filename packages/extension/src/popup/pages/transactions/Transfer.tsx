@@ -159,7 +159,7 @@ function DomainCard({
                 <span
                   className={cn(
                     'shrink-0 rounded-md px-2 py-0.5',
-                    domain === 'private' ? 'bg-warning/10 text-warning' : 'bg-white/10 text-muted'
+                    domain === 'private' ? 'bg-private/10 text-private' : 'bg-white/10 text-muted'
                   )}
                 >
                   {domainLabel(domain)}
@@ -294,7 +294,6 @@ function TransferForm() {
   const shieldEntry =
     entry === 'shield' &&
     (params.get('provider') === null || params.get('provider') === 'near-confidential')
-  const fromAssetDetail = params.get('entry') === 'asset-detail'
   const { goBack, navigate } = useNavigate()
   const currentWalletId = useWalletStore(state => state.currentWalletId)
   const currentAccountId = useWalletStore(state => state.currentAccountId)
@@ -987,7 +986,8 @@ function TransferForm() {
         availableRaw: source!.availableRaw,
         sender: source!.sender,
         recipient: source!.recipient,
-        executionMode: source!.executionMode
+        executionMode: source!.executionMode,
+        purpose: source!.executionMode === 'private' ? 'private-transfer' : 'confidential-funding'
       })
   })
   useEffect(() => {
@@ -1146,10 +1146,8 @@ function TransferForm() {
     directEstimate.value &&
     directEstimate.value.expiresAt > Date.now()
   )
-  const clusterReady = clusterQuoted && clusterEstimate.value?.time !== '—'
-  const directReady = directQuoted && directEstimate.value?.time !== '—'
-  const directTimeUnavailable = directQuoted && !directReady
-  const clusterTimeUnavailable = clusterQuoted && !clusterReady
+  const clusterReady = clusterQuoted
+  const directReady = directQuoted
   useEffect(() => {
     if (
       method === 'cluster' &&
@@ -1275,13 +1273,7 @@ function TransferForm() {
         selected.chain.chain.id
       )
     : 'evm'
-  const walletAccounts =
-    catalog?.accounts
-      .filter(account => account.walletId === effective?.walletId)
-      .sort((left, right) => left.accountIndex - right.accountIndex) ??
-    (activeAccount ? [activeAccount] : [])
-  const pickerAccount =
-    walletAccounts.find(account => account.accountId === pickerAccountId) ?? activeAccount
+  const pickerAccount = activeAccount
   const walletIndexInStore = wallets.findIndex(wallet => wallet.id === effective?.walletId)
   const walletIndex =
     walletIndexInStore >= 0
@@ -1753,36 +1745,6 @@ function TransferForm() {
               {maximum.loading ? '…' : 'Max'}
             </button>
           </div>
-          {fromAssetDetail && from === 'shield' && selected && (
-            <button
-              type="button"
-              onClick={() => {
-                setNetworkSearch('')
-                setNetworkPickerOpen(true)
-              }}
-              className="wallet-interactive flex max-w-full items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted hover:bg-wallet-selected focus-visible:outline-2 focus-visible:outline-primary"
-              aria-label="Select network"
-            >
-              <ChainIcon
-                chain={
-                  targetAsset
-                    ? resolveChainIconAlias(
-                        targetAsset.chain.chain.family,
-                        targetAsset.chain.chain.displayName,
-                        targetAsset.chain.chain.id
-                      )
-                    : networkIcon
-                }
-                width={16}
-                height={16}
-                showTooltip={false}
-              />
-              <span className="truncate">
-                {targetAsset?.chain.chain.displayName ?? 'Select network'}
-              </span>
-              <Icon icon="lucide:chevron-down" width={14} height={14} />
-            </button>
-          )}
         </div>
         <div className="mt-4 shrink-0">
           <DomainCard
@@ -1838,7 +1800,7 @@ function TransferForm() {
               setNetworkSearch('')
               setNetworkPickerOpen(true)
             }}
-            showNetwork={from === 'shield' && !fromAssetDetail}
+            showNetwork={from === 'shield'}
             onAccountClick={() => openDomainPicker('to')}
             disabled={!selected}
           />
@@ -1885,16 +1847,6 @@ function TransferForm() {
               />
             )}
           </div>
-        )}
-        {directTimeUnavailable && (
-          <p role="status" className="mt-2 text-xs text-muted">
-            Directly: time estimate unavailable
-          </p>
-        )}
-        {clusterTimeUnavailable && (
-          <p role="status" className="mt-2 text-xs text-muted">
-            Cluster: time estimate unavailable
-          </p>
         )}
         {method === 'directly' &&
           selected &&
@@ -2143,46 +2095,12 @@ function TransferForm() {
         >
           <DialogHeader className="text-left">
             <DialogTitle className="text-sm font-medium leading-[18px]">
-              Move {domainPicker === 'from' ? 'from' : 'to'} · {walletDisplayName}
+              Move {domainPicker === 'from' ? 'from' : 'to'} · {walletDisplayName} ·{' '}
+              {pickerAccountName}
             </DialogTitle>
-            <DialogDescription className="sr-only">
-              Select an account and balance.
-            </DialogDescription>
+            <DialogDescription className="sr-only">Select a balance.</DialogDescription>
           </DialogHeader>
-          <div
-            role="tablist"
-            aria-label="Wallet accounts"
-            className="flex gap-2 overflow-x-auto pb-1"
-          >
-            {walletAccounts.map(account => (
-              <button
-                key={account.accountId}
-                type="button"
-                role="tab"
-                aria-selected={pickerAccount?.accountId === account.accountId}
-                disabled={account.accountId !== effective?.accountId}
-                onClick={() => setPickerAccountId(account.accountId)}
-                className={cn(
-                  'h-8 shrink-0 rounded-2xl border px-3 text-sm font-medium leading-[18px]',
-                  pickerAccount?.accountId === account.accountId
-                    ? 'border-white bg-white text-black'
-                    : 'border-white/10 bg-white/5 text-foreground'
-                )}
-              >
-                {getAccountDisplayName(
-                  account.walletId,
-                  account.accountId,
-                  account.accountDisplayName,
-                  accountDisplayNames
-                )}
-              </button>
-            ))}
-          </div>
-          <div
-            role="tabpanel"
-            aria-label={`${pickerAccountName} balances`}
-            className="space-y-2 pb-2"
-          >
+          <div aria-label={`${pickerAccountName} balances`} className="space-y-2 pb-2">
             {(['public', 'private'] as const).map(domain => {
               const address =
                 domain === 'private'
@@ -2256,7 +2174,7 @@ function TransferForm() {
             >
               <span className="min-w-0">
                 <span className="flex items-center gap-2 text-base font-medium leading-[21px]">
-                  <Icon icon="lucide:shield-check" width={16} height={16} />
+                  <Icon icon="noir:shield-assets" width={16} height={16} />
                   Shield
                 </span>
                 <span className="mt-1 flex min-w-0 items-center gap-1.5 text-xs font-medium leading-4 text-muted">

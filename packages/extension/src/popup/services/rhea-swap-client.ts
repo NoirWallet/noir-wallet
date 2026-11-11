@@ -242,6 +242,11 @@ export function createRheaSwapClient(
         parseRheaSwapQuoteView
       )
     },
+    selectRoute: async (quoteHandle: string, routeIndex: number): Promise<RheaSwapQuoteView> =>
+      unwrap(
+        await send({ type: 'SELECT_RHEA_SWAP_ROUTE', quoteHandle, routeIndex }),
+        parseRheaSwapQuoteView
+      ),
     prepare: async (quoteHandle: string): Promise<RheaSwapReviewView> =>
       unwrap(await send({ type: 'PREPARE_RHEA_SWAP', quoteHandle }), parseRheaSwapReviewView),
     getEvmTransactionPlan: async (quoteHandle: string): Promise<RheaSwapEvmTransactionPlan> =>

@@ -43,7 +43,7 @@ const statusConfig = {
   },
   warning: {
     iconClass: 'text-warning',
-    bgClass: 'bg-warning/15'
+    bgClass: 'bg-warning-surface'
   }
 }
 

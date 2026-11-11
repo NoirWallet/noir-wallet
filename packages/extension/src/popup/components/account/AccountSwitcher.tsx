@@ -86,20 +86,17 @@ function SidebarIcon({ kind }: { readonly kind: 'back' | 'accounts' | 'settings'
 function AccountAvatar({
   name,
   walletId,
-  accountId,
   size = 24,
   active = false
 }: {
   readonly name: string
   readonly walletId: string | null
-  readonly accountId: string | null
   readonly size?: number
   readonly active?: boolean
 }) {
   return (
     <AccountAvatarImage
       walletId={walletId}
-      accountId={accountId}
       width={size}
       height={size}
       className={cn(
@@ -570,11 +567,7 @@ export function AccountSwitcher({
             title="Choose wallet"
             className="group wallet-interactive flex size-6 shrink-0 items-center justify-center rounded-full hover:brightness-110 active:brightness-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
           >
-            <AccountAvatar
-              name={activeName}
-              walletId={accountIdentity?.walletId ?? null}
-              accountId={accountIdentity?.accountId ?? null}
-            />
+            <AccountAvatar name={activeName} walletId={accountIdentity?.walletId ?? null} />
           </button>
         </DialogPrimitive.Trigger>
         <DialogPrimitive.Portal>
@@ -630,7 +623,6 @@ export function AccountSwitcher({
                       <AccountAvatar
                         name={account.name}
                         walletId={account.walletId}
-                        accountId={account.accountId}
                         size={42}
                         active={account.active}
                       />

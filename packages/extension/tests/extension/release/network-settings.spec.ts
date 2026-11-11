@@ -578,7 +578,7 @@ test('renders and switches the released EVM catalog and chain-scoped endpoint se
   await captureScreenshot(popup, 'release-default-evm-send-form.png')
   await popup.getByRole('button', { name: 'Select Recipient' }).click()
   const recipientDialog = popup.getByRole('dialog')
-  await expect(recipientDialog.getByRole('heading', { name: 'Select Recipient' })).toBeVisible()
+  await expect(recipientDialog.getByRole('heading', { name: 'Send to', exact: true })).toBeVisible()
   await expect(recipientDialog.getByRole('tab', { name: 'My Wallets' })).toHaveAttribute(
     'data-state',
     'active'

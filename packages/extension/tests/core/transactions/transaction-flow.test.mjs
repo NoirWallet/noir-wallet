@@ -94,12 +94,7 @@ describe('Cross-chain transaction lifecycle regressions', () => {
     )
   })
 
-  it('reveals a RHEA destination Token on any supported chain after a successful Swap', () => {
-    assert.match(
-      resultPageSource,
-      /data\.status\?\.status !== 'SUCCESS'[\s\S]*?showProtocolAsset\(destinationAsset\)[\s\S]*?getPortfolio\('refresh', \{ chainIds: \[destinationChainId\] \}\)/,
-      'a successful Swap must enable its exact Intents destination before refreshing Assets'
-    )
+  it('keeps swap asset discovery scoped to the selected route', () => {
     assert.doesNotMatch(
       resultPageSource,
       /forceDiscovery:\s*true/,

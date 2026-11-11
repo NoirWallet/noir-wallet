@@ -9,6 +9,7 @@ import {
   formatBaseUnitDecimalAmount,
   formatTokenQuantity
 } from '@/lib/number-format'
+import { formatSortAddress } from '@/lib/format'
 import { useWalletStore } from '@/store/wallet-store'
 import { useSettingsStore } from '@/store/settings-store'
 import { useActiveAccountNetworks } from '@/popup/hooks/useActiveAccountNetworks'
@@ -18,6 +19,7 @@ import { resolveEffectiveActiveAccountIdentity } from '@/popup/lib/effective-act
 import { getPrivateTransferChainIds } from '@/popup/services/private-balance-transfer'
 import { useNavigate } from '@/popup/provider/Router'
 import { PageHeader } from '@/popup/components/common/PageHeader'
+import { BalanceDomainTabs, type BalanceDomain } from '@/popup/components/account/BalanceDomainTabs'
 import { AmountDisplay } from '@/popup/components/common/AmountDisplay'
 import { TokenIcon } from '@/popup/components/tokens/TokenIcon'
 import {
@@ -52,6 +54,35 @@ import {
   shieldSwapFormBalance
 } from '@/popup/services/shield-swap-form'
 
+function shieldOriginIdentifier(
+  asset: ShieldFundingAsset,
+  options: readonly ShieldFundingAsset[]
+): string | null {
+  const peers = options.filter(
+    candidate =>
+      candidate.chain.chain.id === asset.chain.chain.id &&
+      candidate.asset.metadata.symbol === asset.asset.metadata.symbol
+  )
+  if (asset.asset.asset.kind === 'native' && peers.length === 1) return null
+  const identityOf = (candidate: ShieldFundingAsset) => {
+    const reference = candidate.asset.asset.reference
+    return peers.some(other => other !== candidate && other.asset.asset.reference === reference)
+      ? candidate.managed.protocolAssetId
+      : reference
+  }
+  const identity = identityOf(asset)
+  const peerIdentities = peers.filter(candidate => candidate !== asset).map(identityOf)
+  const initial = formatSortAddress(identity)
+  if (peerIdentities.every(candidate => formatSortAddress(candidate) !== initial)) return initial
+  for (let visible = 7; visible <= identity.length; visible += 1) {
+    const short = (value: string) =>
+      value.length > visible * 2 ? `${value.slice(0, visible)}...${value.slice(-visible)}` : value
+    const label = short(identity)
+    if (peerIdentities.every(candidate => short(candidate) !== label)) return label
+  }
+  return identity
+}
+
 export function ShieldSwapPage() {
   const walletId = useWalletStore(state => state.currentWalletId)
   const accountId = useWalletStore(state => state.currentAccountId)
@@ -77,6 +108,15 @@ function ShieldSwapForm() {
   })
   const canManageNear =
     providerIsNear && getPrivateTransferChainIds(activeAccount, network === 'mainnet').length > 0
+  const availableBalanceDomains: BalanceDomain[] = [
+    'public',
+    ...(activeAccount?.networks.some(
+      item => item.chain.family === 'evm' && item.privateExecutionAddress
+    )
+      ? (['private'] as const)
+      : []),
+    ...(canManageNear ? (['shield'] as const) : [])
+  ]
   const scopeKey = `${network}:${account?.walletId ?? ''}:${account?.accountId ?? ''}`
   const latestScope = useRef(scopeKey)
   latestScope.current = scopeKey
@@ -196,6 +236,11 @@ function ShieldSwapForm() {
     () => listShieldFundingAssets(model, managedAssets, tokens, network),
     [model, managedAssets, tokens, network]
   )
+  const originIdentifiers = useMemo(
+    () =>
+      new Map(options.map(asset => [asset.asset.asset.id, shieldOriginIdentifier(asset, options)])),
+    [options]
+  )
   const currentBalances = balanceScope === scopeKey ? balances : null
   const displayBalances = currentBalances ?? shieldPortfolioBalances(model)
   const sources = shieldFundingSources(options, displayBalances)
@@ -252,7 +297,7 @@ function ShieldSwapForm() {
     asset =>
       asset.managed.protocolAssetId !==
         (picker === 'from' ? to?.managed.protocolAssetId : from?.managed.protocolAssetId) &&
-      `${asset.asset.metadata.symbol} ${asset.asset.metadata.name} ${asset.chain.chain.displayName}`
+      `${asset.asset.metadata.symbol} ${asset.asset.metadata.name} ${asset.chain.chain.displayName} ${asset.asset.asset.reference}`
         .toLowerCase()
         .includes(search.trim().toLowerCase())
   )
@@ -269,6 +314,15 @@ function ShieldSwapForm() {
   const openActivity = (transactionId: string) => {
     if (scopeStillCurrent())
       navigate(`/?tab=activity&transactionId=${encodeURIComponent(transactionId)}`)
+  }
+  const selectBalanceDomain = (domain: BalanceDomain) => {
+    if (domain === 'shield') return
+    const query = new URLSearchParams({
+      balanceDomain: domain,
+      sourceWalletId: account?.walletId ?? '',
+      sourceAccountId: account?.accountId ?? ''
+    })
+    navigate(`/swap?${query.toString()}`)
   }
   const refreshBalances = async () => {
     if (!account || !canManageNear || connecting || !scopeStillCurrent()) return
@@ -423,6 +477,12 @@ function ShieldSwapForm() {
     return (
       <div className="page-container">
         <PageHeader title="Swap" showBack />
+        <BalanceDomainTabs
+          value="shield"
+          available={availableBalanceDomains}
+          onChange={selectBalanceDomain}
+          className="justify-center px-4 pb-2 pt-1"
+        />
         <p role="alert" className="px-4 py-6 text-center text-sm text-muted">
           Shield unavailable for this account
         </p>
@@ -525,6 +585,12 @@ function ShieldSwapForm() {
     <div className="page-container min-h-0 overflow-hidden">
       <PageHeader title="Swap" showBack />
       <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4">
+        <BalanceDomainTabs
+          value="shield"
+          available={availableBalanceDomains}
+          onChange={selectBalanceDomain}
+          className="justify-center pb-3 pt-1"
+        />
         <section className="pb-6 pt-4" aria-label="Swap from Shield">
           <div className="flex items-center justify-between text-sm text-muted">
             <span>From</span>
@@ -791,6 +857,7 @@ function ShieldSwapForm() {
               <button
                 type="button"
                 key={asset.asset.asset.id}
+                title={asset.managed.protocolAssetId}
                 onClick={() => {
                   if (picker === 'from') {
                     setFromId(asset.asset.asset.id)
@@ -809,7 +876,10 @@ function ShieldSwapForm() {
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm">{asset.asset.metadata.symbol}</span>
                   <span className="block truncate text-xs text-muted">
-                    {asset.chain.chain.displayName}
+                    Origin: {asset.chain.chain.displayName}
+                    {originIdentifiers.get(asset.asset.asset.id)
+                      ? ` · ${originIdentifiers.get(asset.asset.asset.id)}`
+                      : ''}
                   </span>
                 </span>
                 <span

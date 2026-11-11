@@ -1,9 +1,10 @@
 import { test } from 'node:test'
 import { expect } from '@playwright/test'
-import { serializeQuoteRequest } from '@rhea-finance/cross-chain-aggregation-dex'
+import { normalizeQuote, serializeQuoteRequest } from '@rhea-finance/cross-chain-aggregation-dex'
 import { getZcashChainId } from '../../../src/core/chains/registry/index.ts'
 import { parseTrustedExtensionRuntimeMessage } from '../../../src/lib/runtime-message-security.ts'
 import { readRheaDestinationHash } from '../../../src/core/services/rhea-swap/rhea-order-status.ts'
+import { parseRheaSwapReviewView } from '../../../src/core/services/rhea-swap/rhea-swap-runtime.ts'
 import {
   MemoryRheaSwapQuoteSessionStore,
   RHEA_SWAP_CHAIN_CATALOG,
@@ -87,6 +88,124 @@ test('trusted quote messages retain the reviewed wallet route purpose', () => {
     const message = { type: 'QUOTE_RHEA_SWAP', request: quoteRequest, purpose }
     expect(parseTrustedExtensionRuntimeMessage(message)).toEqual(message)
   }
+})
+
+test('alternative routes bind a fresh quote to the same account and selected build', async () => {
+  const raw = {
+    isCrossChain: true,
+    chainType: 'zcash',
+    bestQuote: {
+      router: 'nearintents',
+      amountOut: '2500',
+      minAmountOut: '2400',
+      expiresAt: 31_000,
+      preSwap: null,
+      bridge: null
+    },
+    allQuotes: [
+      {
+        router: 'alternate',
+        amountOut: '2300',
+        minAmountOut: '2200',
+        expiresAt: 20_000,
+        preSwap: null,
+        bridge: null
+      }
+    ]
+  }
+  let now = 2_000
+  let nextHandle = 0
+  let builtRouter = null
+  const sessions = new MemoryRheaSwapQuoteSessionStore()
+  const service = new RheaSwapService(
+    {
+      async quote(request) {
+        return normalizeQuote(request, raw, 1_000)
+      },
+      async buildSwap({ quote }) {
+        builtRouter = quote.buildContext.router
+        return {
+          executionId: 'selected-route',
+          isCrossChain: true,
+          fromChain: quote.fromChain,
+          toChain: quote.toChain,
+          tokenIn: quote.tokenIn,
+          tokenOut: quote.tokenOut,
+          amountIn: quote.amountIn,
+          estimatedOut: quote.estimatedOut,
+          minAmountOut: quote.minAmountOut,
+          router: quote.buildContext.router,
+          execution: {
+            kind: 'zcash-transfer',
+            chain: 'zcash',
+            amount: quote.amountIn,
+            depositAddress: 't1deposit',
+            decimals: 8
+          },
+          request: {
+            ...quote.buildContext.request,
+            router: quote.buildContext.router,
+            expectedOut: quote.buildContext.expectedOut,
+            minAmountOut: quote.buildContext.minAmountOut,
+            preSwap: quote.buildContext.preSwap,
+            bridge: quote.buildContext.bridge
+          },
+          raw: {}
+        }
+      }
+    },
+    sessions,
+    { now: () => now, createHandle: () => `route-${++nextHandle}` }
+  )
+  const scope = { walletId: 'wallet-1', accountId: 'account-1', purpose: 'wallet-swap' }
+  const best = await service.quote(quoteRequest, undefined, scope)
+  expect(best.alternatives).toMatchObject([{ index: 1, router: 'alternate' }])
+  expect(() =>
+    parseTrustedExtensionRuntimeMessage({
+      type: 'SELECT_RHEA_SWAP_ROUTE',
+      quoteHandle: best.quoteHandle,
+      routeIndex: 0
+    })
+  ).toThrow()
+  expect(
+    parseTrustedExtensionRuntimeMessage({
+      type: 'SELECT_RHEA_SWAP_ROUTE',
+      quoteHandle: best.quoteHandle,
+      routeIndex: 1
+    })
+  ).toMatchObject({ routeIndex: 1 })
+  await expect(service.selectRoute(best.quoteHandle, 2)).rejects.toThrow(/unavailable/)
+  const selected = await service.selectRoute(best.quoteHandle, 1)
+  expect(selected).toMatchObject({
+    quoteHandle: 'rhea-quote:route-2',
+    router: 'alternate',
+    estimatedOut: '2300',
+    expiresAt: 20_000,
+    alternatives: [{ router: 'nearintents', estimatedOut: '2500' }]
+  })
+  const selectedContext = await service.readQuoteSecurityContext(selected.quoteHandle)
+  expect(selectedContext.scope).toEqual(scope)
+  expect(() =>
+    assertPrivateQuoteRoute(
+      selectedContext.request,
+      { walletId: 'wallet-2', accountId: 'account-2', networks: [] },
+      'wallet-swap',
+      selectedContext.scope
+    )
+  ).toThrow(/account changed/)
+  const review = await service.prepare(selected.quoteHandle)
+  expect(review.router).toBe('alternate')
+  expect(parseRheaSwapReviewView(review).alternatives).toEqual(review.alternatives)
+  expect(() =>
+    parseRheaSwapReviewView({
+      ...review,
+      alternatives: [{ ...review.alternatives[0], index: 0 }]
+    })
+  ).toThrow(/alternative index/)
+  expect(builtRouter).toBe('alternate')
+  now = 20_001
+  await expect(service.prepare(selected.quoteHandle)).rejects.toThrow(/expired/)
+  await expect(service.selectRoute(best.quoteHandle, 1)).rejects.toThrow(/expired/)
 })
 
 test('Private Swap quote remains bound to the same Account and its managed destinations', () => {
@@ -183,7 +302,7 @@ test('Private Swap quote remains bound to the same Account and its managed desti
         'private-swap',
         account
       )
-    ).not.toThrow()
+    ).toThrow(/this Account/)
   }
   for (const recipient of ['u1external', 'U1OWN']) {
     expect(() =>
@@ -208,10 +327,34 @@ test('Private Swap quote remains bound to the same Account and its managed desti
       'wallet-swap',
       account
     )
+  ).toThrow(/Swap/)
+  expect(() =>
+    assertPrivateQuoteRoute(
+      { ...publicSwap, fromChain: 'zcash', sender: 'u1own', recipient: publicDestination },
+      zcashAccount,
+      'wallet-swap',
+      account
+    )
+  ).toThrow(/Swap/)
+  expect(() =>
+    assertPrivateQuoteRoute(
+      { ...publicSwap, fromChain: 'zcash', sender: 't1own', recipient: publicDestination },
+      zcashAccount,
+      'wallet-swap',
+      account
+    )
   ).not.toThrow()
   expect(() =>
     assertPrivateQuoteRoute(
       { ...publicSwap, toChain: 'zcash', recipient: 'u1own' },
+      zcashAccount,
+      'wallet-swap',
+      account
+    )
+  ).toThrow(/Swap/)
+  expect(() =>
+    assertPrivateQuoteRoute(
+      { ...publicSwap, toChain: 'zcash', recipient: 't1own' },
       zcashAccount,
       'wallet-swap',
       account
@@ -859,6 +1002,30 @@ test('quote and build remain bound across a session-store reload', async () => {
   const depositTransfer = { executionId: 'execution-1', to: 't1deposit', amountZats: '100000000' }
   await expect(
     service.readZcashTransferDeadline(quoteView.quoteHandle, depositTransfer)
+  ).resolves.toBe(31_000)
+  const walletSwapService = new RheaSwapService(client, new MemoryRheaSwapQuoteSessionStore(), {
+    now: () => 2_000,
+    createHandle: () => 'wallet-swap-source'
+  })
+  const walletSwapQuote = await walletSwapService.quote(confidentialQuoteRequest, undefined, {
+    ...privateSwapScope,
+    purpose: 'wallet-swap'
+  })
+  await walletSwapService.prepare(walletSwapQuote.quoteHandle)
+  await expect(
+    walletSwapService.readZcashTransferDeadline(walletSwapQuote.quoteHandle, {
+      ...depositTransfer,
+      fundingSource: 'shielded'
+    })
+  ).rejects.toThrow(/funding source/)
+  await expect(
+    walletSwapService.readZcashTransferDeadline(walletSwapQuote.quoteHandle, depositTransfer)
+  ).rejects.toThrow(/funding source/)
+  await expect(
+    walletSwapService.readZcashTransferDeadline(walletSwapQuote.quoteHandle, {
+      ...depositTransfer,
+      fundingSource: 'transparent'
+    })
   ).resolves.toBe(31_000)
   for (const altered of [
     { executionId: 'another-execution' },

@@ -29,6 +29,14 @@ test('keeps a cold-cache automatic refresh limited to the selected chain', async
     ).rejects.toThrow('Network unavailable')
     expect(messages).toHaveLength(1)
     expect(messages[0]).toMatchObject({ action: 'refresh', chainIds: ['eip155:1'] })
+    await expect(
+      refreshPortfolioFromCache(
+        { walletId: 'cold-wallet', accountId: 'cold-account', endpointRuntimeKey: 'cold-swap' },
+        null,
+        { refreshChainIds: ['eip155:1'] }
+      )
+    ).rejects.toThrow('Network unavailable')
+    expect(messages).toHaveLength(2)
   } finally {
     if (previousChrome === undefined) delete globalThis.chrome
     else globalThis.chrome = previousChrome

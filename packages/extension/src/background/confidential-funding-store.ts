@@ -285,6 +285,7 @@ function parseExternalDeposit(value: unknown): ExternalShieldDeposit {
     !isBoundedString(value.source.protocolAssetId) ||
     !isRawAmount(value.source.amountRaw, true) ||
     value.amountRaw !== value.source.amountRaw ||
+    (value.amountMode !== undefined && value.amountMode !== 'minimum') ||
     !isBoundedString(value.destinationAssetId) ||
     value.destinationAssetId !== value.source.assetId ||
     !isBoundedString(value.sourceSymbol, 32) ||
@@ -323,7 +324,13 @@ function parseExternalDeposit(value: unknown): ExternalShieldDeposit {
     value.quote.quote.amountOut !== value.expectedOutputRaw ||
     value.quote.quote.minAmountOut !== value.minimumOutputRaw ||
     value.quote.quote.depositMemo !== value.depositMemo ||
-    value.quote.quoteRequest.swapType !== 'EXACT_INPUT' ||
+    value.quote.quoteRequest.swapType !==
+      (value.amountMode === 'minimum' ? 'FLEX_INPUT' : 'EXACT_INPUT') ||
+    (value.amountMode === 'minimum' &&
+      (value.slippageBps !== 0 ||
+        value.quote.quoteRequest.dry !== false ||
+        !isRawAmount(value.quote.quote.minAmountIn, true) ||
+        BigInt(value.quote.quote.minAmountIn as string) > BigInt(value.amountRaw))) ||
     value.quote.quoteRequest.confidentiality !== 'basic' ||
     Number(value.quote.quoteRequest.slippageTolerance) !== value.slippageBps ||
     value.quote.quoteRequest.originAsset !== value.source.protocolAssetId ||

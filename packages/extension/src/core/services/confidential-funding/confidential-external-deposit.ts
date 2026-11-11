@@ -32,6 +32,7 @@ export interface ExternalShieldDeposit {
   readonly depositMemo?: string
   readonly refundAddress: string
   readonly amountRaw: string
+  readonly amountMode?: 'minimum'
   readonly expectedOutputRaw: string
   readonly minimumOutputRaw: string
   readonly settledOutputRaw?: string
@@ -53,7 +54,8 @@ export interface CreateExternalShieldDepositInput {
   readonly network: Network
   readonly keyDomainId: string
   readonly accountId: string
-  readonly source: ExternalShieldDeposit['source']
+  readonly source: Omit<ExternalShieldDeposit['source'], 'amountRaw'> &
+    Readonly<{ amountRaw?: string }>
   readonly refundAddress: string
   readonly requestId?: string
 }

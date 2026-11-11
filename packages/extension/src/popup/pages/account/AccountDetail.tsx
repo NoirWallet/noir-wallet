@@ -235,7 +235,6 @@ export function AccountDetail() {
         <div className="flex flex-col items-center pb-[21px] pt-[11px]">
           <AccountAvatar
             walletId={wallet.id}
-            accountId={account.id}
             width={74}
             height={74}
             className="size-[74px] rounded-full object-cover ring-2 ring-wallet-selected"

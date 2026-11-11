@@ -3,6 +3,7 @@ import type { PortfolioAssetView, PortfolioChainView } from '@/core/portfolio'
 import { parseSolanaPublicKey } from '@/core/chains/solana'
 import { formatSortAddress } from '@/lib/format'
 import { AmountDisplay } from '@/popup/components/common/AmountDisplay'
+import { BalanceDomainTabs } from '@/popup/components/account/BalanceDomainTabs'
 import { Button } from '@/popup/components/ui/button'
 import {
   Dialog,
@@ -29,6 +30,7 @@ import {
 import {
   formatBaseUnitAmount,
   formatBaseUnitDecimalAmount,
+  formatTokenQuantity,
   parseDisplayUnitAmount
 } from '@/lib/number-format'
 import { formatPortfolioNetworkName } from '@/popup/components/portfolio/portfolio-format'
@@ -332,16 +334,61 @@ export function SolanaSendForm({
   return (
     <>
       <div className="page-content space-y-4">
-        <SendAssetHeader
-          assetId={asset.asset.id}
-          symbol={asset.metadata.symbol}
-          icon={asset.metadata.iconUrl}
-          networkName={`To ${chain.chain.displayName}`}
-          nativeChain={asset.asset.kind === 'native' ? 'solana' : undefined}
-          blockchain={asset.asset.kind === 'token' ? 'solana' : undefined}
-        />
+        <div className="flex flex-col items-center gap-2 pt-2">
+          <SendAmountInputCard
+            ariaLabel={`${asset.metadata.symbol} amount`}
+            value={amount}
+            onChange={value => {
+              if (/^\d*\.?\d*$/.test(value)) {
+                invalidateMaximum()
+                setAmount(value)
+              }
+            }}
+            available={transferAvailability.display}
+            symbol={asset.metadata.symbol}
+            priceUsd={priceUsd}
+            hero
+          />
+          <SendAssetHeader
+            assetId={asset.asset.id}
+            symbol={asset.metadata.symbol}
+            icon={asset.metadata.iconUrl}
+            networkName={networkName}
+            nativeChain={asset.asset.kind === 'native' ? 'solana' : undefined}
+            blockchain={asset.asset.kind === 'token' ? 'solana' : undefined}
+            variant="pill"
+          />
+          <div className="flex min-w-0 items-center justify-center gap-2 text-xs text-muted">
+            <span className="min-w-0 truncate" title={transferAvailability.display}>
+              {formatTokenQuantity(transferAvailability.display)}
+            </span>
+            <button
+              type="button"
+              aria-label="Max"
+              aria-pressed={maxSelected}
+              disabled={
+                BigInt(asset.balance.availableRaw) <= 0n ||
+                (asset.asset.kind === 'native' && !parsedRecipient) ||
+                maximum.loading
+              }
+              onClick={() => void handleMaximum()}
+              className="rounded-md bg-primary/15 px-2 py-1 font-medium text-primary disabled:opacity-40"
+            >
+              Max
+            </button>
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-sm text-muted">Send from</span>
+          <BalanceDomainTabs value="public" available={['public']} onChange={() => {}} />
+        </div>
 
         <div>
+          <div className="mb-2 flex items-center justify-between text-xs">
+            <span className="text-muted">Send to</span>
+            <span>{networkName}</span>
+          </div>
           <SendRecipientInputCard
             id="solana-send-recipient"
             value={recipient}
@@ -355,38 +402,14 @@ export function SolanaSendForm({
               setSelectedRecipient(null)
             }}
             placeholder={`${networkName} address`}
-            autoFocus
+            variant="filled"
+            hideLabel
             onSelectRecipient={() => void handleSelectRecipient()}
           />
           {recipient && !parsedRecipient && (
             <p className="mt-2 px-1 text-xs text-danger">Enter a valid Solana address.</p>
           )}
         </div>
-
-        <SendAmountInputCard
-          ariaLabel={`${asset.metadata.symbol} amount`}
-          value={amount}
-          onChange={value => {
-            if (/^\d*\.?\d*$/.test(value)) {
-              invalidateMaximum()
-              setAmount(value)
-            }
-          }}
-          available={transferAvailability.display}
-          availableLabel={transferAvailability.label}
-          symbol={asset.metadata.symbol}
-          priceUsd={priceUsd}
-          maxSelected={maxSelected}
-          maxDisabledReason={
-            BigInt(asset.balance.availableRaw) <= 0n
-              ? 'No available balance'
-              : asset.asset.kind === 'native' && !parsedRecipient
-                ? 'Enter a valid recipient to calculate Max'
-                : undefined
-          }
-          maxLoading={maximum.loading}
-          onMax={() => void handleMaximum()}
-        />
 
         <SendNetworkFeeCard loading={feePreview.loading}>
           <span>{previewFee === '—' ? previewFee : `${previewFee} SOL`}</span>

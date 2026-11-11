@@ -87,6 +87,68 @@ export function resolveNearConfidentialZecHolding(input: {
   })
 }
 
+export function projectNearConfidentialZecForHome(
+  displayedModel: PortfolioReadModel,
+  sourceModel: PortfolioReadModel,
+  domain: 'all' | 'public' | 'shield' | 'private'
+): Readonly<{ model: PortfolioReadModel; protocolAssetId: string }> | null {
+  if (domain !== 'all' && domain !== 'shield') return null
+  if (
+    displayedModel.scope.keyDomainId !== sourceModel.scope.keyDomainId ||
+    displayedModel.scope.accountId !== sourceModel.scope.accountId
+  )
+    return null
+  const holding = resolveNearConfidentialZecHolding({
+    model: sourceModel,
+    network: 'mainnet',
+    walletId: sourceModel.scope.keyDomainId,
+    accountId: sourceModel.scope.accountId
+  })
+  if (!holding || BigInt(holding.availableRaw) === 0n) return null
+  const sourceAsset = sourceModel.assets.find(asset => asset.asset.id === holding.assetId)
+  const displayedChain = displayedModel.chains.find(
+    chain =>
+      chain.assets.some(asset => asset.asset.id === holding.assetId) ||
+      chain.chain.id === sourceAsset?.asset.chainId
+  )
+  if (!sourceAsset || !displayedChain || displayedChain.chain.family !== 'zcash') return null
+  const displayedAsset = displayedModel.assets.find(asset => asset.asset.id === holding.assetId)
+  const asset = displayedAsset ?? sourceAsset
+  const mergedAsset = Object.freeze({
+    ...asset,
+    balance: Object.freeze({
+      ...asset.balance,
+      totalRaw: (
+        BigInt(displayedAsset?.balance.totalRaw ?? '0') + BigInt(holding.availableRaw)
+      ).toString(),
+      pendingRaw: domain === 'shield' ? '0' : asset.balance.pendingRaw
+    })
+  })
+  return Object.freeze({
+    protocolAssetId: holding.protocolAssetId,
+    model: Object.freeze({
+      ...displayedModel,
+      assets: Object.freeze([
+        ...displayedModel.assets.filter(item => item.asset.id !== holding.assetId),
+        mergedAsset
+      ]),
+      chains: Object.freeze(
+        displayedModel.chains.map(chain =>
+          chain.chain.id === displayedChain.chain.id
+            ? Object.freeze({
+                ...chain,
+                assets: Object.freeze([
+                  ...chain.assets.filter(item => item.asset.id !== holding.assetId),
+                  mergedAsset
+                ])
+              })
+            : chain
+        )
+      )
+    })
+  })
+}
+
 export function resolveConfidentialDetailAssetId(
   model: PortfolioReadModel | null,
   tokenId: string

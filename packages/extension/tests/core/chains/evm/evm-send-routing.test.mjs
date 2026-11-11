@@ -506,6 +506,7 @@ it('propagates a supported Confidential quote failure without preparing any dire
         tokenOut: token(),
         recipient,
         confidential: true,
+        purpose: 'private-transfer',
         executionMode: 'private'
       },
       {

@@ -3479,7 +3479,8 @@ export class BackgroundZcashWalletRuntime {
   async addNewWallet(
     seedPhrase: string,
     walletName?: string,
-    accountName: string = 'Account 1'
+    accountName: string = 'Account 1',
+    selectedNetworkFamilies?: readonly AccountNetworkFamily[]
   ): Promise<{ walletId: string; seedPhrase: string }> {
     if (!this.password) {
       throw new Error('Password not set')
@@ -3506,32 +3507,35 @@ export class BackgroundZcashWalletRuntime {
       }
     }
 
-    const cachedChainTip = selectCachedChainTipHeight(
-      this.store.wallets.flatMap(wallet => {
-        const syncState = this.accountDataStore.getWalletSyncState(this.network, wallet.id)
-        return [syncState.latestHeight, syncState.currentHeight]
-      })
-    )
-    let birthdayHeight = getSafeNewWalletBirthdayHeight(cachedChainTip)
-    if (cachedChainTip) {
-      logger.log(`Using cached safe birthday for new wallet: ${birthdayHeight}`)
-    } else {
-      try {
-        const heightCore = this.getOrCreateWalletCore(`__height_query_${this.network}`)
-        await heightCore.ensureInitialized()
-        const queriedChainTip = await withTimeout(
-          heightCore.getLatestBlock(),
-          OPTIONAL_NEW_WALLET_CHAIN_TIP_TIMEOUT_MS,
-          'new wallet chain tip'
-        )
-        const validatedChainTip = selectCachedChainTipHeight([queriedChainTip])
-        if (validatedChainTip === null) {
-          throw new Error('Invalid chain tip for new wallet birthday')
+    let birthdayHeight: number | undefined
+    if (selectedNetworkFamilies?.includes('zcash') !== false) {
+      const cachedChainTip = selectCachedChainTipHeight(
+        this.store.wallets.flatMap(wallet => {
+          const syncState = this.accountDataStore.getWalletSyncState(this.network, wallet.id)
+          return [syncState.latestHeight, syncState.currentHeight]
+        })
+      )
+      birthdayHeight = getSafeNewWalletBirthdayHeight(cachedChainTip)
+      if (cachedChainTip) {
+        logger.log(`Using cached safe birthday for new wallet: ${birthdayHeight}`)
+      } else {
+        try {
+          const heightCore = this.getOrCreateWalletCore(`__height_query_${this.network}`)
+          await heightCore.ensureInitialized()
+          const queriedChainTip = await withTimeout(
+            heightCore.getLatestBlock(),
+            OPTIONAL_NEW_WALLET_CHAIN_TIP_TIMEOUT_MS,
+            'new wallet chain tip'
+          )
+          const validatedChainTip = selectCachedChainTipHeight([queriedChainTip])
+          if (validatedChainTip === null) {
+            throw new Error('Invalid chain tip for new wallet birthday')
+          }
+          birthdayHeight = getSafeNewWalletBirthdayHeight(validatedChainTip)
+          logger.log(`Using latest safe birthday for new wallet: ${birthdayHeight}`)
+        } catch {
+          logger.warn('Failed to get latest block for new wallet birthday')
         }
-        birthdayHeight = getSafeNewWalletBirthdayHeight(validatedChainTip)
-        logger.log(`Using latest safe birthday for new wallet: ${birthdayHeight}`)
-      } catch {
-        logger.warn('Failed to get latest block for new wallet birthday')
       }
     }
 
@@ -3542,7 +3546,8 @@ export class BackgroundZcashWalletRuntime {
       walletName || `Wallet ${Date.now()}`,
       false, // shouldReset (ignored if skipInit)
       true, // skipInit
-      birthdayHeight || undefined
+      birthdayHeight,
+      selectedNetworkFamilies
     )
 
     await this.addWalletToList({

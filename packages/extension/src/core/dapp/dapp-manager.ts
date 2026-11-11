@@ -1229,10 +1229,11 @@ export class DAppManager {
     return this.enqueueMutation(async () => {
       await this.initialize()
       const state = this.authorizationState[origin]
+      const automaticState = this.getAutomaticAuthorizationState(origin)
       if (
         (authorization?.automatic &&
-          state !== undefined &&
-          (state.mode !== 'unreviewed' || state.publicExplicit === true)) ||
+          automaticState !== undefined &&
+          (automaticState.mode !== 'unreviewed' || automaticState.publicExplicit === true)) ||
         (authorization?.expectedRevision !== undefined &&
           authorization.expectedRevision !== (state?.revision ?? 0))
       ) {
@@ -1254,6 +1255,8 @@ export class DAppManager {
       const states = { ...this.authorizationState }
       if (!authorization?.automatic) {
         states[origin] = { ...state, revision: state?.revision ?? 0, mode: 'approved' }
+      } else if (automaticState !== undefined) {
+        states[origin] = automaticState
       }
       await this.commitConnections(next, states)
     })
@@ -1275,8 +1278,16 @@ export class DAppManager {
 
   async canAutoConnect(origin: string): Promise<boolean> {
     await this.waitForStableState()
-    const state = this.authorizationState[origin]
+    const state = this.getAutomaticAuthorizationState(origin)
     return (state === undefined || state.mode === 'unreviewed') && state?.publicExplicit !== true
+  }
+
+  private getAutomaticAuthorizationState(origin: string): AuthorizationState | undefined {
+    const state = this.authorizationState[origin]
+    // Disconnect invalidates pending requests but does not revoke official-app trust.
+    return state?.mode === 'revoked' && shouldAutoConnectDApp(origin)
+      ? { revision: state.revision, mode: 'unreviewed' }
+      : state
   }
 
   async canAutoConnectSession(origin: string): Promise<boolean> {
@@ -1286,7 +1297,7 @@ export class DAppManager {
   }
 
   private canAutoConnectSessionFromState(origin: string): boolean {
-    const state = this.authorizationState[origin]
+    const state = this.getAutomaticAuthorizationState(origin)
     if (
       (state !== undefined && state.mode !== 'unreviewed') ||
       state?.publicExplicit === true ||
@@ -1750,9 +1761,12 @@ export class DAppManager {
       const next = new Map(this.connectedDApps)
       next.set(origin, replacement)
       const states = { ...this.authorizationState }
+      const state = authorization?.automatic
+        ? this.getAutomaticAuthorizationState(origin)
+        : states[origin]
       states[origin] = {
-        ...states[origin],
-        revision: states[origin]?.revision ?? 0,
+        ...state,
+        revision: state?.revision ?? 0,
         mode: authorization?.automatic
           ? 'unreviewed'
           : zcashAuthorization !== undefined

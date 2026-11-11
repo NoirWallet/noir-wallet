@@ -28,6 +28,7 @@ import { getOwnExtensionSenderContext } from '@/lib/runtime-message-security'
 import {
   accountNetworksClient,
   type AccountNetworksCatalogView,
+  type AccountNetworkView,
   type AccountNetworksView
 } from '../../services/account-networks-client'
 import { ChainIcon } from '../../components/common/ChainIcon'
@@ -98,6 +99,30 @@ function SelectedAccountIndicator({ selected }: { selected: boolean }) {
   )
 }
 
+function AccountChainIcons({ networks }: { networks: readonly AccountNetworkView[] }) {
+  const families = new Set<string>()
+  const iconNetworks = networks.filter(network => {
+    if (families.has(network.chain.family)) return false
+    families.add(network.chain.family)
+    return true
+  })
+  if (iconNetworks.length === 0) return null
+
+  return (
+    <span className="flex shrink-0 items-center pl-1">
+      {iconNetworks.map(network => (
+        <ChainIcon
+          key={network.chain.family}
+          chain={network.chain.family === 'evm' ? 'evm' : accountNetworkIconChain(network)}
+          width={19}
+          height={19}
+          className="-ml-1.5 shrink-0 rounded-[4px] ring-2 ring-background first:ml-0"
+        />
+      ))}
+    </span>
+  )
+}
+
 export function AccountList() {
   const { navigate, replace } = useNavigate()
   const { alert, confirm } = useDialog()
@@ -163,6 +188,12 @@ export function AccountList() {
     nativeAccounts: networkCatalog?.accounts ?? [],
     searchQuery: ''
   })
+  const catalogNetworksByAccount = new Map(
+    (networkCatalog?.accounts ?? []).map(account => [
+      accountListKey(account.walletId, account.accountId),
+      account.networks
+    ])
+  )
 
   const [switchingAccountKey, setSwitchingAccountKey] = useState<string | null>(null)
   const [addingWalletId, setAddingWalletId] = useState<string | null>(null)
@@ -299,6 +330,7 @@ export function AccountList() {
 
   const handleAddSoftwareAccount = async (walletId: string) => {
     if (addingWalletId) return
+    let accountCreated = false
     try {
       setAddingWalletId(walletId)
       const inspection = await zcashWalletRuntimeClient.inspectNextAccountHistory(walletId)
@@ -318,16 +350,23 @@ export function AccountList() {
         birthdayHeight = selection.mode === 'restore' ? selection.birthdayHeight : undefined
       }
 
-      await zcashWalletRuntimeClient.addAccount(walletId, {
+      const accountId = await zcashWalletRuntimeClient.addAccount(walletId, {
         expectedDerivationIndex: inspection.derivationIndex,
         ...(birthdayHeight === undefined ? {} : { birthdayHeight })
       })
-      await loadWallets()
+      accountCreated = true
+      await zcashWalletRuntimeClient.switchAccount(walletId, accountId)
+      replace('/')
     } catch (e) {
       console.error('Failed to add account:', e)
       await alert({
-        title: 'Account setup incomplete',
-        message: e instanceof Error ? e.message : 'Account setup did not finish. Please try again.'
+        title: accountCreated ? 'Unable to switch account' : 'Account setup incomplete',
+        message:
+          e instanceof Error
+            ? e.message
+            : accountCreated
+              ? 'The account was created, but could not be selected. Please try again.'
+              : 'Account setup did not finish. Please try again.'
       })
     } finally {
       setAddingWalletId(null)
@@ -388,6 +427,10 @@ export function AccountList() {
                             key={accountListKey(account.walletId, account.id)}
                             account={accountData}
                             wallet={wallet}
+                            networks={
+                              catalogNetworksByAccount.get(accountListKey(wallet.id, account.id)) ??
+                              []
+                            }
                             walletDisplayName={formatWalletName(wallet, wallets)}
                             showWalletName={true}
                             switchingAccountKey={switchingAccountKey}
@@ -512,6 +555,10 @@ export function AccountList() {
                             key={accountListKey(wallet.id, account.id)}
                             account={account}
                             wallet={wallet}
+                            networks={
+                              catalogNetworksByAccount.get(accountListKey(wallet.id, account.id)) ??
+                              []
+                            }
                             showWalletName={false}
                             switchingAccountKey={switchingAccountKey}
                             onSelect={handleAccountSelect}
@@ -585,6 +632,10 @@ export function AccountList() {
                             key={accountListKey(account.walletId, account.id)}
                             account={accountData}
                             wallet={wallet}
+                            networks={
+                              catalogNetworksByAccount.get(accountListKey(wallet.id, account.id)) ??
+                              []
+                            }
                             walletDisplayName={formatWalletName(wallet, wallets)}
                             showWalletName={true}
                             switchingAccountKey={switchingAccountKey}
@@ -693,16 +744,7 @@ function NativeAccountItem({
                 onEditingChange={setEditingName}
                 disabled={removing || switching}
                 className="text-base font-medium leading-[21px]"
-                endContent={
-                  account.networks[0] && (
-                    <ChainIcon
-                      chain={accountNetworkIconChain(account.networks[0])}
-                      width={15}
-                      height={15}
-                      className="shrink-0 rounded-[4px]"
-                    />
-                  )
-                }
+                endContent={<AccountChainIcons networks={account.networks} />}
               />
             </div>
             {switching || removing ? (
@@ -776,6 +818,7 @@ function NativeAccountItem({
 function AccountItem({
   account,
   wallet,
+  networks,
   walletDisplayName,
   showWalletName = true,
   switchingAccountKey,
@@ -789,6 +832,7 @@ function AccountItem({
 }: {
   account: AccountData
   wallet: WalletItem
+  networks: readonly AccountNetworkView[]
   walletDisplayName?: string
   showWalletName?: boolean
   switchingAccountKey: string | null
@@ -852,6 +896,7 @@ function AccountItem({
                 onEditingChange={setEditingAccountName}
                 className="text-base font-medium leading-[21px]"
                 disabled={switchingAccountKey === itemKey}
+                endContent={<AccountChainIcons networks={networks} />}
               />
             </div>
             {switchingAccountKey === itemKey ? (

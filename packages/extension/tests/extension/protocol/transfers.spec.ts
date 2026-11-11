@@ -136,25 +136,32 @@ async function openShieldTransfer(
   symbol = 'ETH'
 ) {
   await openNearShieldAction(page, 'Move')
-  const sources = page.getByRole('dialog', { name: 'Move from' })
-  await expect(sources.getByRole('button', { name: 'Public account' })).toBeVisible()
-  await expect(sources.getByRole('button', { name: 'Private account' })).toBeVisible()
-  await expect(sources.getByRole('button', { name: 'NEAR Confidential Intents' })).toBeVisible()
-  await captureScreenshot(page, `shield-${from.toLowerCase()}-move-source-picker.png`)
-  await sources
-    .getByRole('button', {
-      name: from === 'Shield' ? 'NEAR Confidential Intents' : `${from} account`
-    })
-    .click()
-  const picker = page.getByRole('dialog', { name: /^Select token/ })
-  const token = picker
-    .getByRole('button')
-    .filter({ has: page.getByText(symbol, { exact: true }) })
-    .filter({ has: page.getByText('Ethereum', { exact: true }) })
-  await expect(token).toHaveCount(1, { timeout: 30_000 })
-  await captureScreenshot(page, `shield-${from.toLowerCase()}-move-token-picker.png`)
-  await token.click()
   await expect(page.getByRole('heading', { name: 'Move', exact: true })).toBeVisible()
+  await expect(page.getByRole('textbox', { name: 'Transfer amount' })).toBeVisible()
+  await expect(page.getByRole('dialog', { name: 'Move from' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Select transfer asset' })).toContainText(/\S/, {
+    timeout: 30_000
+  })
+  if (from !== 'Public') {
+    await page.getByRole('button', { name: /^From: .* Change account$/ }).click()
+    await page
+      .getByRole('dialog')
+      .getByRole('button', {
+        name: `Select ${from} ${from === 'Shield' ? 'balance' : 'account'}`
+      })
+      .click()
+  }
+  const assetButton = page.getByRole('button', { name: 'Select transfer asset' })
+  if (!(await assetButton.textContent())?.includes(symbol)) {
+    await assetButton.click()
+    const picker = page.getByRole('dialog', { name: 'Select asset' })
+    const token = picker
+      .getByRole('button')
+      .filter({ has: page.getByText(symbol, { exact: true }) })
+      .filter({ has: page.getByText('Ethereum', { exact: true }) })
+    await expect(token).toHaveCount(1, { timeout: 30_000 })
+    await token.click()
+  }
   await expect(page.getByRole('button', { name: 'Select transfer asset' })).toContainText(symbol)
   const initialFrom = await page
     .getByRole('button', { name: /^From: .* Change account$/ })
@@ -174,7 +181,6 @@ async function openShieldTransfer(
     await page.getByRole('button', { name: /^To: .* Change account$/ }).click()
     await page
       .getByRole('dialog')
-      .filter({ has: page.getByRole('tablist', { name: 'Wallet accounts' }) })
       .getByRole('button', { name: `Select ${to} ${to === 'Shield' ? 'balance' : 'account'}` })
       .click()
   }
@@ -258,25 +264,11 @@ test('ZEC Move locks the current account as the destination in real MV3', async 
   ] as const) {
     await popup.goto(`chrome-extension://${extensionId}/index.html`)
     await popup.getByRole('button', { name: 'Shielded' }).click()
-    await expect(popup.getByRole('button', { name: /NEAR Confidential/ })).toBeVisible()
-    await expect(popup.getByRole('button', { name: /Zcash shield/ })).toBeVisible()
-    await popup.getByLabel('Shield actions').getByRole('button', { name: 'Move' }).click()
-    const sources = popup.getByRole('dialog', { name: 'Move from' })
-    await expect(sources.getByRole('button', { name: 'Public account' })).toBeVisible()
-    await expect(sources.getByRole('button', { name: 'Zcash Shield' })).toBeVisible()
-    await captureScreenshot(popup, 'shield-zec-move-source-picker.png')
-    await sources.getByRole('button', { name: source }).click()
-    const picker = popup.getByRole('dialog', { name: /^Select token/ })
-    if (source === 'Zcash Shield') {
-      await expect(picker.getByText('ETH', { exact: true })).toHaveCount(0)
-    }
-    await expect(picker.getByText('ZEC', { exact: true })).toBeVisible()
-    await captureScreenshot(popup, 'shield-zec-move-token-picker.png')
-    await picker
-      .getByRole('button')
-      .filter({ has: popup.getByText('ZEC', { exact: true }) })
-      .click()
+    await popup.getByRole('button', { name: /Zcash shield/ }).click()
+    await popup.getByRole('button', { name: 'Move', exact: true }).click()
     await expect(popup.getByRole('heading', { name: 'Move', exact: true })).toBeVisible()
+    if (source === 'Zcash Shield')
+      await popup.getByRole('button', { name: 'Switch move direction' }).click()
     await expect(popup.locator('#zcash-send-recipient')).toHaveCount(0)
     await expect(popup.locator(`[title="${destination}"]`)).toBeVisible()
     await expect(popup.getByRole('button', { name: 'Switch move direction' })).toBeVisible()
@@ -298,6 +290,22 @@ test('ZEC Move locks the current account as the destination in real MV3', async 
       await captureScreenshot(popup, 'shield-zec-move-to-public.png')
     }
   }
+
+  await popup.goto(`chrome-extension://${extensionId}/index.html`)
+  await popup.getByRole('button', { name: 'Send', exact: true }).click()
+  await popup.getByRole('button', { name: 'Send ZEC on Zcash' }).click()
+  await expect(popup.getByRole('button', { name: 'Public', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'true'
+  )
+  await expect(popup.getByText('Balance 2 ZEC')).toBeVisible()
+  await popup.getByRole('textbox', { name: 'ZEC amount' }).fill('0.1')
+  await popup.getByRole('button', { name: 'Shield', exact: true }).click()
+  await expect(popup.getByRole('textbox', { name: 'ZEC amount' })).toHaveValue('')
+  await expect(popup.getByText('Balance 1 ZEC')).toBeVisible()
+  await captureScreenshot(popup, 'send-zec-shield-source-375x600.png')
+  await popup.getByRole('button', { name: 'Public', exact: true }).click()
+  await expect(popup.getByText('Balance 2 ZEC')).toBeVisible()
 })
 
 test('receives an external Shield deposit without spending local funds and restores its address', async ({
@@ -308,7 +316,11 @@ test('receives an external Shield deposit without spending local funds and resto
   test.setTimeout(180_000)
   const rpc = await mockEvmNetwork(context, { allowBroadcast: false })
   await mockBitcoinNetwork(context)
-  const api = await mockProtocolApis(context, { confidentialBalanceRaw: '0' })
+  const minimumAmountRaw = '10000000000000000'
+  const api = await mockProtocolApis(context, {
+    confidentialBalanceRaw: '0',
+    flexibleDepositMinimumRaw: minimumAmountRaw
+  })
   let received = false
   let depositedAmount = '0'
   const depositAddress = '0x2222222222222222222222222222222222222222'
@@ -347,12 +359,13 @@ test('receives an external Shield deposit without spending local funds and resto
   }
   await captureScreenshot(popup, 'shield-funds-overview-popup.png')
   await actions.getByRole('button', { name: 'receive', exact: true }).click()
-  const providers = popup.getByRole('dialog', { name: 'Receive with' })
+  await expect(popup.getByRole('heading', { name: 'Receive', exact: true })).toBeVisible()
+  await popup.getByRole('button', { name: 'Shield Provider' }).click()
+  const providers = popup.getByRole('dialog', { name: 'Shield Provider' })
   await expect(providers.getByRole('button', { name: /NEAR Confidential/ })).toBeVisible()
   await expect(providers.getByRole('button', { name: /Zcash/ })).toBeVisible()
   await captureScreenshot(popup, 'shield-receive-provider-picker-popup.png')
   await providers.getByRole('button', { name: /NEAR Confidential/ }).click()
-  await expect(popup.getByRole('heading', { name: 'Receive', exact: true })).toBeVisible()
   await popup.goto(`chrome-extension://${extensionId}/index.html`)
   await importNativeOnlyEvmWallet(popup)
   const identity = await readShieldTransferIdentity(popup)
@@ -363,41 +376,57 @@ test('receives an external Shield deposit without spending local funds and resto
   }
   await captureScreenshot(popup, 'shield-near-provider-actions-popup.png')
   await popup.getByRole('button', { name: 'Receive', exact: true }).click()
-  await popup.getByRole('button', { name: /Select token/i }).click()
+  await popup
+    .getByRole('button')
+    .filter({ has: popup.getByText('Receive Token', { exact: true }) })
+    .click()
   await popup.getByPlaceholder('Search token').fill('ETH')
   await popup
     .getByRole('dialog', { name: 'Select Token' })
     .getByRole('button', { name: /^ETH/ })
     .click()
-  await popup.getByRole('button', { name: 'Network Select network' }).click()
+  await popup
+    .getByRole('button')
+    .filter({ has: popup.getByText('Network', { exact: true }) })
+    .click()
   await popup
     .getByRole('dialog', { name: 'Select Network' })
-    .getByRole('button', { name: 'Ethereum' })
+    .getByRole('button', { name: /Ethereum/ })
     .click()
-  await popup.getByRole('button', { name: 'Shield provider Select provider' }).click()
-  await popup
-    .getByRole('dialog', { name: 'Shield Provider' })
-    .getByRole('button', { name: /NEAR Confidential/ })
-    .click()
-  await popup.getByLabel('Amount to receive', { exact: true }).fill('0.01')
-  await expect(popup.getByLabel('Refund address', { exact: true })).toHaveValue(identity.main)
-  const refund = '0x3333333333333333333333333333333333333333'
-  await popup.getByLabel('Refund address', { exact: true }).fill(refund)
+  await expect(popup.getByRole('button', { name: 'Shield Provider' })).toContainText(
+    'NEAR Confidential'
+  )
+  await expect(popup.getByLabel('Amount to receive', { exact: true })).toHaveCount(0)
+  await expect(popup.getByLabel('Refund address', { exact: true })).toHaveCount(0)
   await captureScreenshot(popup, 'shield-external-deposit-form.png')
   await popup.getByRole('button', { name: 'Receiving address', exact: true }).click()
-  await expect(popup.getByRole('dialog', { name: 'Review receiving address' })).toBeVisible()
-  await captureScreenshot(popup, 'shield-external-deposit-review.png')
-  await popup.getByRole('button', { name: 'Generate address', exact: true }).click()
-  await expect(popup.getByText('Awaiting deposit', { exact: true }).first()).toBeVisible({
+  const receivingAddress = popup.getByRole('region', { name: 'Receiving Address' })
+  await expect(receivingAddress).toBeVisible({ timeout: 60_000 })
+  await expect(
+    receivingAddress.getByRole('button', { name: 'Copy address', exact: true })
+  ).toBeEnabled({
     timeout: 60_000
   })
-  const quote = api.getQuoteRequests().at(-1)
+  const depositQuotes = api
+    .getQuoteRequests()
+    .filter(request => request.depositType === 'ORIGIN_CHAIN' && request.originAsset === ETH_ASSET)
+  expect(depositQuotes).toHaveLength(2)
+  expect(depositQuotes[0]).toMatchObject({
+    swapType: 'FLEX_INPUT',
+    slippageTolerance: 0,
+    amount: '1',
+    refundTo: identity.main,
+    dry: true
+  })
+  const quote = depositQuotes[1]
   expect(quote).toMatchObject({
     originAsset: ETH_ASSET,
     destinationAsset: ETH_ASSET,
-    amount: '10000000000000000',
-    refundTo: refund,
+    amount: minimumAmountRaw,
+    refundTo: identity.main,
     dry: false,
+    swapType: 'FLEX_INPUT',
+    slippageTolerance: 0,
     depositType: 'ORIGIN_CHAIN',
     refundType: 'ORIGIN_CHAIN',
     recipientType: 'CONFIDENTIAL_INTENTS'
@@ -405,15 +434,15 @@ test('receives an external Shield deposit without spending local funds and resto
   expect(quote?.recipient.toLowerCase()).toBe(identity.main.toLowerCase())
   expect(rpc.getBroadcastCount()).toBe(0)
   expect(api.getConfidentialIntentSubmitCount()).toBe(0)
-  const receivingAddress = popup.getByRole('dialog', { name: 'Receiving address' })
-  await expect(receivingAddress.getByText(depositAddress, { exact: true })).toBeVisible()
-  await expect(receivingAddress.locator('svg[width="164"][height="164"]')).toBeVisible()
+  await expect(receivingAddress.getByText('Send at least 0.01 ETH')).toBeVisible()
+  await expect(receivingAddress.getByTitle(depositAddress, { exact: true })).toBeVisible()
+  await expect(
+    receivingAddress.locator('svg[aria-label="One-time receiving address QR code"]')
+  ).toBeVisible()
   await expectNoOverflow(popup)
   await captureScreenshot(popup, 'shield-external-deposit-address.png')
-  await receivingAddress
-    .getByRole('button', { name: 'Check deposit status' })
-    .scrollIntoViewIfNeeded()
-  await expect(receivingAddress.getByText(refund, { exact: true })).toBeInViewport()
+  await receivingAddress.getByTitle(identity.main, { exact: true }).scrollIntoViewIfNeeded()
+  await expect(receivingAddress.getByTitle(identity.main, { exact: true })).toBeInViewport()
   await expect(
     receivingAddress.getByRole('button', { name: 'Check deposit status' })
   ).toBeInViewport()
@@ -421,13 +450,14 @@ test('receives an external Shield deposit without spending local funds and resto
   const quotesBeforeReload = api.getQuoteRequests().length
   await popup.reload()
   await openNearShieldAction(popup, 'Receive')
+  await popup.getByRole('button', { name: 'Deposit history', exact: true }).click()
   await expect(
     popup
       .getByRole('region', { name: 'Deposit history' })
       .getByRole('button', { name: /ETH/ })
       .first()
   ).toBeVisible()
-  await expect(popup.getByRole('dialog', { name: 'Receiving address' })).toHaveCount(0)
+  await expect(popup.getByRole('region', { name: 'Receiving Address' })).toHaveCount(0)
   await popup
     .getByRole('region', { name: 'Deposit history' })
     .getByRole('button', { name: /ETH/ })
@@ -435,26 +465,30 @@ test('receives an external Shield deposit without spending local funds and resto
     .click()
   await expect(
     popup
-      .getByRole('dialog', { name: 'Receiving address' })
-      .getByText(depositAddress, { exact: true })
+      .getByRole('region', { name: 'Receiving Address' })
+      .getByTitle(depositAddress, { exact: true })
   ).toBeVisible({ timeout: 30_000 })
   expect(api.getQuoteRequests()).toHaveLength(quotesBeforeReload)
   const sidePanel = await context.newPage()
   await sidePanel.setViewportSize({ width: 480, height: 900 })
   await sidePanel.goto(`chrome-extension://${extensionId}/index.html?surface=side-panel`)
+  await sidePanel.bringToFront()
   await openNearShieldAction(sidePanel, 'Receive')
-  await expect(sidePanel.getByRole('dialog', { name: 'Receiving address' })).toHaveCount(0)
+  await expect(sidePanel.getByRole('region', { name: 'Receiving Address' })).toHaveCount(0)
+  await sidePanel.getByRole('button', { name: 'Deposit history', exact: true }).click()
   await sidePanel
     .getByRole('region', { name: 'Deposit history' })
     .getByRole('button', { name: /ETH/ })
     .first()
     .click()
-  const sidePanelAddress = sidePanel.getByRole('dialog', { name: 'Receiving address' })
-  await expect(sidePanelAddress.getByText(depositAddress, { exact: true })).toBeVisible({
+  const sidePanelAddress = sidePanel.getByRole('region', { name: 'Receiving Address' })
+  await expect(sidePanelAddress.getByTitle(depositAddress, { exact: true })).toBeVisible({
     timeout: 30_000
   })
-  await expect(sidePanelAddress.locator('svg[width="164"][height="164"]')).toBeVisible()
-  await expect(sidePanelAddress.getByText(refund, { exact: true })).toBeInViewport()
+  await expect(
+    sidePanelAddress.locator('svg[aria-label="One-time receiving address QR code"]')
+  ).toBeVisible()
+  await expect(sidePanelAddress.getByTitle(identity.main, { exact: true })).toBeInViewport()
   await expect(
     sidePanelAddress.getByRole('button', { name: 'Check deposit status' })
   ).toBeInViewport()
@@ -468,6 +502,7 @@ test('receives an external Shield deposit without spending local funds and resto
     .toEqual({ viewportWidth: 480, contentWidth: 480 })
   await captureScreenshot(sidePanel, 'shield-external-deposit-address-side-panel.png')
   await sidePanel.close()
+  await popup.bringToFront()
   expect(api.getQuoteRequests()).toHaveLength(quotesBeforeReload)
 
   depositedAmount = '5000000000000000'
@@ -533,20 +568,22 @@ test('receives an external Shield deposit without spending local funds and resto
   })
   await popup.goto(`chrome-extension://${extensionId}/index.html`)
   await openNearShieldAction(popup, 'Receive')
+  await popup.getByRole('button', { name: 'Deposit history', exact: true }).click()
   const history = popup.getByRole('region', { name: 'Deposit history' })
-  await expect(popup.getByRole('dialog', { name: 'Receiving address' })).toHaveCount(0)
+  await expect(popup.getByRole('region', { name: 'Receiving Address' })).toHaveCount(0)
   await expect(history.getByText('Quote expired')).toBeVisible()
   await popup.clock.fastForward(20_000)
   await expect(history.getByRole('button', { name: 'Show all' })).toBeVisible()
   await expect(history.getByText('Quote expired')).toHaveCount(0)
   await popup.goto(`chrome-extension://${extensionId}/index.html`)
   await openNearShieldAction(popup, 'Receive')
-  await expect(popup.getByRole('dialog', { name: 'Receiving address' })).toHaveCount(0)
+  await expect(popup.getByRole('region', { name: 'Receiving Address' })).toHaveCount(0)
+  await popup.getByRole('button', { name: 'Deposit history', exact: true }).click()
   await history.getByRole('button', { name: 'Show all' }).click()
   await expect(history.getByText('Quote expired')).toBeVisible()
   await history.getByRole('button', { name: /ETH.*Quote expired/ }).click()
   await expect(
-    popup.getByRole('dialog', { name: 'Receiving address' }).getByRole('button', {
+    popup.getByRole('region', { name: 'Receiving Address' }).getByRole('button', {
       name: 'Check deposit status'
     })
   ).toBeEnabled()
@@ -569,16 +606,18 @@ test('receives an external Shield deposit without spending local funds and resto
       }
     })
   }, staleDepositId)
-  await popup.keyboard.press('Escape')
+  await popup.getByRole('button', { name: 'Close receiving address' }).click()
+  await popup.getByRole('button', { name: 'Deposit history', exact: true }).click()
   await expect(history.getByText('Partial deposit')).toBeVisible()
   await popup.goto(`chrome-extension://${extensionId}/index.html`)
   await openNearShieldAction(popup, 'Receive')
-  const partialDialog = popup.getByRole('dialog', { name: 'Receiving address' })
-  await expect(partialDialog).toHaveCount(0)
+  const partialView = popup.getByRole('region', { name: 'Receiving Address' })
+  await expect(partialView).toHaveCount(0)
+  await popup.getByRole('button', { name: 'Deposit history', exact: true }).click()
   await history.getByRole('button', { name: /ETH.*Partial deposit/ }).click()
-  await expect(partialDialog.getByRole('status')).toHaveText('Partial deposit')
-  await expect(partialDialog.getByText('Quote expired', { exact: true })).toBeVisible()
-  await expect(partialDialog.getByText('0.005 ETH', { exact: true }).first()).toBeVisible()
+  await expect(partialView.getByRole('status')).toHaveText('Partial deposit')
+  await expect(partialView.getByText('Quote expired', { exact: true })).toBeVisible()
+  await expect(partialView.getByText('0.005 ETH', { exact: true }).first()).toBeVisible()
   await captureScreenshot(popup, 'shield-external-deposit-stale-partial.png')
 })
 
@@ -845,7 +884,7 @@ test('withdraws Shield ETH to an external EVM recipient and restores the settled
   const recipient = '0x3333333333333333333333333333333333333333'
   await openNearShieldAction(popup, 'Send')
   await expect(popup.getByRole('button', { name: 'Send', exact: true })).toBeDisabled()
-  await popup.getByRole('button', { name: 'Network Select network', exact: true }).click()
+  await popup.getByRole('button', { name: 'Destination network, select network' }).click()
   await popup
     .getByRole('dialog')
     .getByRole('button', { name: /Ethereum/ })
@@ -1169,7 +1208,7 @@ test('routes a dApp Private transfer through Confidential and returns the destin
   await expect.poll(evmNetwork.getBroadcastCount, { timeout: 30_000 }).toBe(1)
 })
 
-test('routes a Private EVM Send selection to Move before any signing', async ({
+test('routes a Private EVM asset action to Move before any signing', async ({
   context,
   popup,
   extensionId
@@ -1188,11 +1227,13 @@ test('routes a Private EVM Send selection to Move before any signing', async ({
 
   await popup.getByRole('button', { name: 'Send', exact: true }).click()
   await popup.getByRole('button', { name: 'Send ETH on Ethereum' }).click()
-  await popup.getByRole('button', { name: 'Choose source account, current main' }).click()
-  await popup
-    .getByRole('dialog', { name: 'Choose source account' })
-    .getByRole('radio', { name: /Private account/ })
-    .click()
+  await expect(popup.getByRole('button', { name: 'Private', exact: true })).toHaveCount(0)
+  await popup.getByRole('button', { name: 'Back' }).click()
+  await popup.getByRole('button', { name: 'Back' }).click()
+  await popup.getByRole('radio', { name: 'Private mode' }).click()
+  await popup.getByRole('button', { name: 'View ETH details on Ethereum' }).click()
+  await expect(popup.getByRole('button', { name: 'Send', exact: true })).toHaveCount(0)
+  await popup.getByRole('button', { name: 'Move', exact: true }).click()
   await expect(popup.getByRole('heading', { name: 'Move', exact: true })).toBeVisible()
   await expect(popup.getByRole('textbox', { name: 'Transfer amount' })).toBeVisible()
   expect(protocolApis.getQuoteRequests()).toHaveLength(0)
@@ -1368,11 +1409,16 @@ test('sends Public funds privately through Confidential without retaining Shield
   await popup.getByLabel('Send To').fill(recipient)
   await popup.getByLabel('ETH amount').fill('0.01')
   await popup.getByRole('switch', { name: 'Send privately' }).click()
-  await expect(popup.getByRole('button', { name: 'Use NEAR Confidential Intents' })).toBeEnabled({
+  await expect(popup.getByRole('switch', { name: 'Send privately' })).toBeChecked()
+  await expect(
+    popup.getByRole('button', { name: 'Select destination network, Ethereum' })
+  ).toHaveCount(0)
+  await expect(popup.getByText('NEAR Confidential Intents', { exact: true })).toBeVisible({
     timeout: 30_000
   })
-  await popup.getByRole('button', { name: 'Use NEAR Confidential Intents' }).click()
-  await expect(popup.getByRole('switch', { name: 'Send privately' })).toBeChecked()
+  await popup.getByRole('button', { name: 'Max', exact: true }).click({ timeout: 30_000 })
+  await expect(popup.getByLabel('ETH amount')).not.toHaveValue('0.01')
+  await popup.getByLabel('ETH amount').fill('0.01')
   await expectNoOverflow(popup)
   await captureScreenshot(popup, 'public-send-privately-input.png')
   await popup.getByRole('button', { name: 'Continue', exact: true }).click()
@@ -1510,7 +1556,7 @@ test('deducts native gas from Available and Max in Public Send', async ({
   await popup.getByRole('button', { name: 'Send', exact: true }).click()
   await popup.getByRole('button', { name: 'Send ETH on Ethereum' }).click()
   await popup.getByLabel('Send To').fill('0x2222222222222222222222222222222222222222')
-  const amountMax = popup.getByTestId('send-amount-card').getByRole('button', { name: 'Max' })
+  const amountMax = popup.getByRole('button', { name: 'Max', exact: true })
   await expect(amountMax).toBeEnabled({
     timeout: 30_000
   })
@@ -1521,7 +1567,7 @@ test('deducts native gas from Available and Max in Public Send', async ({
       timeout: 30_000
     }
   )
-  await expect(popup.getByTestId('send-amount-card')).toContainText('Available 0.002897 ETH')
+  await expect(popup.getByText('0.002897', { exact: true })).toBeVisible()
   await expect(popup.getByRole('button', { name: 'Continue', exact: true })).toBeEnabled({
     timeout: 30_000
   })
@@ -1793,15 +1839,14 @@ test('reviews a same-token cross-chain Send with the destination address in real
     popup.getByRole('button', { name: 'Select send asset, USDC on Ethereum' })
   ).toBeVisible()
   await captureScreenshot(popup, 'cross-chain-send-network-entry.png')
-  await popup.getByRole('button', { name: 'Send route, current Same-chain' }).click()
-  await popup.getByRole('menuitemradio', { name: 'Cross-chain' }).click()
+  await popup.getByRole('button', { name: 'Select destination network, Ethereum' }).click()
+  await popup.getByRole('menuitemradio', { name: 'Polygon' }).click()
   await expect(popup.getByRole('heading', { name: 'Send', exact: true })).toBeVisible()
-  await expect(popup.getByRole('button', { name: 'Send route, current Cross-chain' })).toBeVisible()
+  await expect(popup.getByRole('button', { name: 'Send route, current Cross-chain' })).toHaveCount(
+    0
+  )
   await expect(popup.getByRole('dialog', { name: 'Select network' })).toHaveCount(0)
-  await popup.getByRole('button', { name: 'To asset' }).click()
-  const destinations = popup.getByRole('dialog', { name: 'Select network' })
-  await destinations.getByPlaceholder('Search tokens').fill('USDC')
-  await destinations.getByRole('button', { name: /^USDC on Polygon/ }).click()
+  await expect(popup.getByRole('button', { name: 'To asset' })).toContainText('USDC')
   await expect(popup.getByRole('heading', { name: 'Send', exact: true })).toBeVisible()
   await expect(popup.getByRole('group', { name: 'Send mode' })).toHaveCount(0)
   await expect(popup.getByRole('button', { name: 'From asset' })).toBeDisabled()
@@ -1839,10 +1884,11 @@ test('reviews a same-token cross-chain Send with the destination address in real
   await captureScreenshot(popup, 'cross-chain-send-review.png')
 
   await popup.getByRole('button', { name: 'Back' }).click()
-  await popup.getByRole('button', { name: 'Send route, current Cross-chain' }).click()
-  await popup.getByRole('menuitemradio', { name: 'Same-chain' }).click()
+  await popup.getByRole('button', { name: 'Back' }).click()
   await expect(popup.getByRole('heading', { name: 'Send', exact: true })).toBeVisible()
-  await expect(popup.getByRole('button', { name: 'Send route, current Same-chain' })).toBeVisible()
+  await expect(
+    popup.getByRole('button', { name: 'Select destination network, Ethereum' })
+  ).toBeVisible()
   await expect(
     popup.getByRole('button', { name: 'Select send asset, USDC on Ethereum' })
   ).toBeVisible()
@@ -1868,12 +1914,9 @@ test('shows cross-chain Send result for an imported EVM private-key wallet', asy
 
   await popup.getByRole('button', { name: 'Send', exact: true }).click()
   await popup.getByRole('button', { name: 'Send USDC on Ethereum' }).click()
-  await popup.getByRole('button', { name: 'Send route, current Same-chain' }).click()
-  await popup.getByRole('menuitemradio', { name: 'Cross-chain' }).click()
-  await popup.getByRole('button', { name: 'To asset' }).click()
-  const destinations = popup.getByRole('dialog', { name: 'Select network' })
-  await destinations.getByPlaceholder('Search tokens').fill('USDC')
-  await destinations.getByRole('button', { name: /^USDC on Polygon/ }).click()
+  await popup.getByRole('button', { name: 'Select destination network, Ethereum' }).click()
+  await popup.getByRole('menuitemradio', { name: 'Polygon' }).click()
+  await expect(popup.getByRole('button', { name: 'To asset' })).toContainText('USDC')
   await popup.getByRole('textbox', { name: 'From amount' }).fill('1')
   await popup.getByRole('button', { name: 'Review Send' }).click()
   await expect(popup.getByRole('heading', { name: 'Review Send' })).toBeVisible()
@@ -1914,21 +1957,29 @@ test('returns to the selected Send asset after switching to the cross-chain rout
 }) => {
   await mockEvmNetwork(context)
   await mockBitcoinNetwork(context)
+  const api = await mockProtocolApis(context)
   await waitForBackgroundWalletInitialization(popup)
   await importTestWallet(popup)
   await popup.goto(`chrome-extension://${extensionId}/index.html`)
 
   await popup.getByRole('button', { name: 'Send', exact: true }).click()
-  await popup.getByRole('button', { name: 'Send ETH on Ethereum' }).click()
-  await popup.getByRole('button', { name: 'Send route, current Same-chain' }).click()
-  await popup.getByRole('menuitemradio', { name: 'Cross-chain' }).click()
+  await popup.getByRole('button', { name: 'Send USDC on Ethereum' }).click()
+  const recipient = '0x3333333333333333333333333333333333333333'
+  await popup.getByLabel('Send To').fill(recipient)
+  await popup.getByLabel('USDC amount').fill('1')
+  await popup.getByRole('button', { name: 'Select destination network, Ethereum' }).click()
+  await popup.getByRole('menuitemradio', { name: 'Polygon' }).click()
+  await expect(popup.getByRole('textbox', { name: 'From amount' })).toHaveValue('1')
+  await expect.poll(() => api.getQuoteRequests().at(-1)?.recipient).toBe(recipient)
   await popup.getByRole('button', { name: 'Back' }).click()
-  await expect(popup.getByRole('button', { name: 'Send route, current Same-chain' })).toBeVisible()
   await expect(
-    popup.getByRole('button', { name: 'Select send asset, ETH on Ethereum' })
+    popup.getByRole('button', { name: 'Select destination network, Ethereum' })
+  ).toBeVisible()
+  await expect(
+    popup.getByRole('button', { name: 'Select send asset, USDC on Ethereum' })
   ).toBeVisible()
   await popup.getByRole('button', { name: 'Back' }).click()
-  await expect(popup.getByRole('button', { name: 'Send ETH on Ethereum' })).toBeVisible()
+  await expect(popup.getByRole('button', { name: 'Send USDC on Ethereum' })).toBeVisible()
   await popup.getByRole('button', { name: 'Back' }).click()
   await expect(popup.getByRole('button', { name: 'Send', exact: true })).toBeVisible()
 })
@@ -1959,12 +2010,9 @@ test('shows the provider quote error on cross-chain Send', async ({
 
   await popup.getByRole('button', { name: 'Send', exact: true }).click()
   await popup.getByRole('button', { name: 'Send USDC on Ethereum' }).click()
-  await popup.getByRole('button', { name: 'Send route, current Same-chain' }).click()
-  await popup.getByRole('menuitemradio', { name: 'Cross-chain' }).click()
-  await popup.getByRole('button', { name: 'To asset' }).click()
-  const destinations = popup.getByRole('dialog', { name: 'Select network' })
-  await destinations.getByPlaceholder('Search tokens').fill('USDC')
-  await destinations.getByRole('button', { name: /^USDC on Polygon/ }).click()
+  await popup.getByRole('button', { name: 'Select destination network, Ethereum' }).click()
+  await popup.getByRole('menuitemradio', { name: 'Polygon' }).click()
+  await expect(popup.getByRole('button', { name: 'To asset' })).toContainText('USDC')
   await popup.getByRole('textbox', { name: 'From amount' }).fill('1')
 
   await expect(popup.getByText('Minimum swap amount is $1,000.', { exact: true })).toBeVisible({
@@ -1990,7 +2038,7 @@ test('formats long Send balances and reviews without a redundant Confidential ro
   await popup.getByLabel('Send To').fill('0x2222222222222222222222222222222222222222')
   await popup.getByRole('textbox', { name: 'ETH amount' }).fill('0.001234567890123456')
   const amountCard = popup.getByTestId('send-amount-card')
-  await expect(amountCard).toContainText('Balance 0.004744 ETH')
+  await expect(popup.getByTestId('send-available-balance')).toContainText('0.004744')
   await expect(amountCard.locator('[title^="0.004744096852704854 ETH"]')).toHaveCount(0)
   await expect(popup.getByRole('button', { name: 'Continue', exact: true })).toBeEnabled({
     timeout: 30_000
@@ -2010,30 +2058,25 @@ test('formats long Send balances and reviews without a redundant Confidential ro
   await expect(popup.getByRole('textbox', { name: 'ETH amount' })).toHaveValue(
     '0.001234567890123456'
   )
-  await popup.getByRole('button', { name: 'Choose source account, current main' }).click()
-  await popup
-    .getByRole('dialog', { name: 'Choose source account' })
-    .getByRole('radio', { name: /Private account/ })
-    .click()
-  await expect(popup.getByRole('heading', { name: 'Move', exact: true })).toBeVisible()
-  await expect(popup.getByRole('button', { name: 'From: Private. Change account' })).toBeVisible()
-  await popup.getByRole('textbox', { name: 'Transfer amount' }).fill('0.001')
-  await expect(popup.getByText('Confidential route', { exact: true })).toHaveCount(0)
-  await expect(popup.getByTestId('send-network-fee')).toHaveCount(0)
+  await expect(popup.getByRole('button', { name: 'Public', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'true'
+  )
+  await expect(popup.getByRole('button', { name: 'Private', exact: true })).toHaveCount(0)
   await expectNoOverflow(popup)
-  await captureScreenshot(popup, 'send-private-source-routes-to-move.png')
+  await captureScreenshot(popup, 'send-public-source-after-review.png')
   expect(rpc.getBroadcastCount()).toBe(0)
 })
 
-test('selects the current wallet alternate address in Send in real MV3', async ({
+test('keeps Public Send recipients public and opens Shielded Move in real MV3', async ({
   context,
   popup,
   extensionId
 }) => {
   test.setTimeout(120_000)
-  await mockEvmNetwork(context)
+  const rpc = await mockEvmNetwork(context, { allowBroadcast: false })
   await mockBitcoinNetwork(context)
-  await mockProtocolApis(context)
+  const protocol = await mockProtocolApis(context)
   await waitForBackgroundWalletInitialization(popup)
   await importTestWallet(popup)
   await popup.goto(`chrome-extension://${extensionId}/index.html`)
@@ -2043,55 +2086,34 @@ test('selects the current wallet alternate address in Send in real MV3', async (
   await expectNoOverflow(popup)
   await captureScreenshot(popup, 'send-asset-selection.png')
   await popup.getByRole('button', { name: 'Send ETH on Ethereum' }).click()
-  const addresses = await popup.evaluate(async () => {
-    const response = await chrome.runtime.sendMessage({ type: 'GET_ACCOUNT_NETWORKS' })
-    const account = response?.result?.accounts?.find(
-      (item: { active?: unknown }) => item.active === true
-    )
-    const network = account?.networks?.find(
-      (item: { chainId?: unknown }) => item.chainId === 'eip155:1'
-    )
-    const main = network?.addresses?.find(
-      (item: { preferredForReceive?: unknown }) => item.preferredForReceive
-    )?.value
-    if (typeof main !== 'string' || typeof network?.privateExecutionAddress !== 'string') {
-      throw new Error('Ethereum addresses unavailable')
-    }
-    return { main, private: network.privateExecutionAddress }
-  })
-  const source = popup.getByRole('button', { name: 'Choose source account, current main' })
-  await expect(source).toHaveCount(1)
-  await expect(source).toContainText('Public')
+  await expect(popup.getByRole('button', { name: 'Public', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'true'
+  )
   await expectNoOverflow(popup)
   await captureScreenshot(popup, 'send-public-from-address.png')
   await popup.getByRole('button', { name: 'Select Recipient', exact: true }).click()
-  const recipients = popup.getByRole('dialog', { name: 'Select Recipient' })
-  await expect(recipients.getByText('Current', { exact: true })).toBeVisible()
+  const recipients = popup.getByRole('dialog', { name: 'Send to', exact: true })
+  await expect(recipients.getByText('(Sending account)', { exact: true })).toBeVisible()
   const publicRecipient = recipients.getByRole('button', { name: /Unavailable: .*Public\./ })
   const privateRecipient = recipients.getByRole('button', { name: /Unavailable: .*Confidential\./ })
   await expect(publicRecipient).toBeDisabled()
-  await expect(privateRecipient).toBeDisabled()
-  await expect(recipients.getByRole('button', { name: /Move to .* Private/ })).toBeVisible()
-  await captureScreenshot(popup, 'send-current-wallet-confidential-recipient.png')
-  await privateRecipient.dispatchEvent('click')
-  await expect(recipients).toBeVisible()
-  await expect(popup.getByLabel('Send To')).toHaveValue('')
-  await recipients.getByRole('button', { name: 'Close' }).click()
-  await source.click()
-  const sources = popup.getByRole('dialog', { name: 'Choose source account' })
-  await captureScreenshot(popup, 'send-source-address-selector.png')
-  await sources.getByRole('radio', { name: /Private account/ }).click()
-  await expect(popup.getByRole('heading', { name: 'Move', exact: true })).toBeVisible()
-  await expect(popup.getByRole('button', { name: 'From: Private. Change account' })).toBeVisible()
-  await expect(popup.locator(`[title="${addresses.private}"]`)).toBeVisible()
-  await popup.getByRole('button', { name: 'To: Shield. Change account' }).click()
-  await popup
-    .getByRole('dialog')
-    .filter({ has: popup.getByRole('tablist', { name: 'Wallet accounts' }) })
-    .getByRole('button', { name: 'Select Public account' })
-    .click()
-  await expect(popup.getByRole('button', { name: 'To: Public. Change account' })).toBeVisible()
-  await expect(popup.locator(`[title="${addresses.main}"]`)).toBeVisible()
+  await expect(privateRecipient).toHaveCount(0)
+  await expect(recipients.getByText('Private', { exact: true })).toHaveCount(0)
+  await expect(recipients.getByRole('button', { name: 'Shielded Move', exact: true })).toBeVisible()
   await expectNoOverflow(popup)
-  await captureScreenshot(popup, 'send-private-source-move-public-address.png')
+  await captureScreenshot(popup, 'send-public-recipient-shielded-move.png')
+  await publicRecipient.dispatchEvent('click')
+  await expect(recipients).toBeVisible()
+  await expect(popup.locator('#evm-send-recipient')).toHaveValue('')
+  await recipients.getByRole('button', { name: 'Shielded Move', exact: true }).click()
+  await expect(recipients).toHaveCount(0)
+  await expect(popup.getByRole('heading', { name: 'Move', exact: true })).toBeVisible()
+  await expect(popup.getByRole('button', { name: 'From: Public. Change account' })).toBeVisible()
+  await expect(popup.getByRole('button', { name: 'To: Private. Change account' })).toBeVisible()
+  await expect(popup.getByRole('button', { name: 'Select transfer asset' })).toContainText('ETH')
+  await expectNoOverflow(popup)
+  await captureScreenshot(popup, 'send-recipient-public-to-private-move.png')
+  expect(rpc.getBroadcastCount()).toBe(0)
+  expect(protocol.getConfidentialIntentSubmitCount()).toBe(0)
 })

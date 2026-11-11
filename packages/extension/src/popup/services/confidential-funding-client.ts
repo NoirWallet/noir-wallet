@@ -276,6 +276,7 @@ function parseExternalDeposit(value: unknown): ExternalShieldDeposit {
     !isRecord(value) ||
     !isRecord(value.source) ||
     value.schemaVersion !== 1 ||
+    (value.amountMode !== undefined && value.amountMode !== 'minimum') ||
     typeof value.depositId !== 'string' ||
     value.transactionId !== `tx:confidential-external:${value.depositId}` ||
     (value.network !== 'mainnet' && value.network !== 'testnet') ||
@@ -286,6 +287,7 @@ function parseExternalDeposit(value: unknown): ExternalShieldDeposit {
     typeof value.source.assetId !== 'string' ||
     typeof value.source.protocolAssetId !== 'string' ||
     !/^[1-9]\d*$/.test(String(value.source.amountRaw)) ||
+    (value.amountMode !== undefined && value.amountMode !== 'minimum') ||
     typeof value.destinationAssetId !== 'string' ||
     typeof value.sourceSymbol !== 'string' ||
     !Number.isSafeInteger(value.sourceDecimals) ||

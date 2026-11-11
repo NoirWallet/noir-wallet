@@ -62,12 +62,12 @@ export function DeveloperSettings() {
             <div className="flex items-center gap-2">
               <span className="text-sm font-medium text-foreground">Testnet Mode</span>
               {networkMode === 'testnet' && (
-                <span className="rounded-full bg-warning/15 px-2 py-0.5 text-[10px] font-medium text-warning">
+                <span className="rounded-full bg-warning-surface px-2 py-0.5 text-[10px] font-medium text-warning">
                   ACTIVE
                 </span>
               )}
             </div>
-            <p className="mt-1 text-xs leading-5 text-muted">
+            <p className="mt-1 text-xs leading-5 text-warning">
               Show only test networks across Zcash, EVM, Bitcoin, and supported chains.
             </p>
           </div>
@@ -82,14 +82,14 @@ export function DeveloperSettings() {
           )}
         </button>
 
-        <div className="rounded-xl border border-warning/20 bg-warning/5 p-4">
+        <div className="rounded-xl border border-warning/20 bg-warning-surface p-4">
           <div className="flex gap-3">
             <Icon
               icon="lucide:triangle-alert"
               className="mt-0.5 shrink-0 text-warning"
               width={18}
             />
-            <p className="text-xs leading-5 text-muted">
+            <p className="text-xs leading-5 text-warning">
               Switching networks cancels unsigned approvals, disconnects dApps, locks the wallet,
               and restarts the extension. Mainnet and testnet balances and activity remain isolated.
               Keystone accounts may need to reconnect a firmware export for the target network.

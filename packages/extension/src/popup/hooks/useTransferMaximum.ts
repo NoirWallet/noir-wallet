@@ -11,6 +11,7 @@ export function useTransferMaximum(options: {
   readonly estimate: () => Promise<QuoteDepositMaximum>
   readonly fallback?: () => QuoteDepositMaximum
   readonly prefetch?: boolean
+  readonly refreshOnExpiry?: boolean
 }) {
   const walletId = useWalletStore(state => state.currentWalletId)
   const accountId = useWalletStore(state => state.currentAccountId)
@@ -88,7 +89,13 @@ export function useTransferMaximum(options: {
     return () => clearTimeout(timer)
   }, [options.enabled, options.prefetch, requestKey])
   useEffect(() => {
-    if (!options.enabled || state.key !== requestKey || !state.value?.expiresAt) return
+    if (
+      !options.enabled ||
+      options.refreshOnExpiry === false ||
+      state.key !== requestKey ||
+      !state.value?.expiresAt
+    )
+      return
     const timer = setTimeout(
       () => {
         void request()
@@ -96,7 +103,7 @@ export function useTransferMaximum(options: {
       Math.max(0, state.value.expiresAt - Date.now())
     )
     return () => clearTimeout(timer)
-  }, [options.enabled, requestKey, request, state.key, state.value])
+  }, [options.enabled, options.refreshOnExpiry, requestKey, request, state.key, state.value])
   const current = options.enabled && state.key === requestKey
   return {
     value: current ? state.value : null,

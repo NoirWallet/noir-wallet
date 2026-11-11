@@ -403,7 +403,9 @@ function ShieldProviderContent() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => navigate('/transfer?entry=shield&provider=near-confidential')}
+                  onClick={() =>
+                    navigate(`/transfer?entry=shield&provider=near-confidential&mode=${mode}`)
+                  }
                   disabled={!canManageNear}
                   className="wallet-interactive flex h-[74px] min-w-0 flex-col items-center justify-center gap-2 rounded-lg bg-[var(--color-wallet-surface)] text-xs enabled:hover:bg-[var(--color-wallet-selected)] enabled:active:bg-white/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 disabled:opacity-45"
                 >
@@ -461,7 +463,7 @@ function ShieldProviderContent() {
               {displayFiat}
             </p>
             <div className="mt-0.5 flex items-center justify-center gap-1.5 text-sm text-[var(--color-wallet-secondary)]">
-              <span>Shield balance</span>
+              <span>{provider === 'near-confidential' ? 'Total balance' : 'Shield balance'}</span>
               {provider === 'near-confidential' && near.status === 'ready' && canManageNear && (
                 <button
                   type="button"
@@ -500,13 +502,14 @@ function ShieldProviderContent() {
             )}
           </div>
           {provider === 'near-confidential' && near.entries.length > 0 && !nearBalanceEmpty ? (
-            <div className="divide-y divide-white/[0.08]">
+            <div className="py-1">
               {near.entries.map(entry => (
                 <NearConfidentialHoldingRow
                   key={entry.asset.tokenId}
                   entry={entry}
                   chain={model?.chains.find(chain => chain.chain.id === entry.asset.chainId)?.chain}
                   balancesHidden={balancesHidden}
+                  showQuantitySymbol={false}
                   onClick={() => setSelectedAssetId(entry.asset.tokenId)}
                 />
               ))}
@@ -527,39 +530,40 @@ function ShieldProviderContent() {
                 />
               ))}
             </div>
-          ) : status === 'loading' || (provider === 'near-confidential' && connecting) ? (
+          ) : nearBalanceEmpty ||
+            (provider === 'zcash-shield' && group?.fiat === '0') ? null : status === 'loading' ||
+            (provider === 'near-confidential' && connecting) ? (
             <p role="status" className="px-4 py-5 text-center text-sm text-muted">
               Loading balances…
             </p>
           ) : (
-              provider === 'near-confidential' ? near.status === 'ready' : group?.fiat === '0'
-            ) ? null : (
             <p className="px-4 py-5 text-center text-sm text-muted">Balance unavailable</p>
           )}
-          {provider === 'near-confidential' && canManageNear && (
-            <div className="flex flex-col items-center gap-3 px-4 py-5">
+          {nearBalanceEmpty && canManageNear && (
+            <div className="flex flex-col items-center gap-4 px-4 pb-8 pt-2">
               <button
                 type="button"
-                onClick={() => navigate('/transfer?entry=shield&provider=near-confidential')}
+                onClick={() =>
+                  navigate(`/transfer?entry=shield&provider=near-confidential&mode=${mode}`)
+                }
                 disabled={!canManageNear}
-                className="wallet-interactive h-11 min-w-48 rounded-lg bg-wallet-surface px-4 text-sm enabled:hover:bg-wallet-selected enabled:active:bg-white/15 focus-visible:outline-2 focus-visible:outline-primary disabled:opacity-45"
+                className="wallet-interactive h-[42px] min-w-48 rounded-[10px] border border-white/[0.08] bg-wallet-surface px-4 text-sm text-wallet-secondary enabled:hover:bg-wallet-selected enabled:active:bg-white/15 focus-visible:outline-2 focus-visible:outline-primary disabled:opacity-45"
               >
-                Move from your wallet
+                <span className="font-semibold text-foreground">Move</span> from your wallet
               </button>
               <button
                 type="button"
                 onClick={() => navigate('/shield-deposit?provider=near-confidential')}
                 disabled={!canManageNear}
-                className="wallet-interactive h-11 min-w-48 rounded-lg bg-wallet-surface px-4 text-sm enabled:hover:bg-wallet-selected enabled:active:bg-white/15 focus-visible:outline-2 focus-visible:outline-primary disabled:opacity-45"
+                className="wallet-interactive h-[42px] min-w-48 rounded-[10px] border border-white/[0.08] bg-wallet-surface px-4 text-sm text-wallet-secondary enabled:hover:bg-wallet-selected enabled:active:bg-white/15 focus-visible:outline-2 focus-visible:outline-primary disabled:opacity-45"
               >
-                Receive from others
+                <span className="font-semibold text-foreground">Receive</span> from others
               </button>
             </div>
           )}
         </section>
         {provider === 'near-confidential' && account && (
-          <section className="border-t border-white/[0.08] pt-4" aria-label="Shield activity">
-            <h2 className="px-4 text-sm font-semibold">Activity</h2>
+          <section aria-label="Shield activity">
             <MultichainActivityPanel
               walletId={account.walletId}
               accountId={account.accountId}
@@ -571,6 +575,8 @@ function ShieldProviderContent() {
               showToolbar={false}
               maxItems={5}
               compact
+              heading="Activity"
+              hideWhenEmpty
               onItemClick={item => void handleActivityClick(item)}
             />
           </section>
@@ -594,7 +600,7 @@ function ShieldProviderContent() {
             </button>
             <div className="mt-1 flex items-center gap-3">
               <TokenIcon
-                assetId={selectedNearEntry.asset.assetId}
+                assetId={selectedNearEntry.asset.assetId ?? selectedNearEntry.asset.protocolAssetId}
                 symbol={selectedNearEntry.asset.symbol ?? '?'}
                 icon={selectedNearEntry.asset.iconUrl}
                 size={32}

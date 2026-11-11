@@ -13,9 +13,9 @@ export const ASSET_DOMAIN_LABELS: Record<AssetDomain, string> = {
 
 const ASSET_DOMAIN_ICONS: Record<AssetDomain, string> = {
   all: 'noir:total-assets',
-  public: 'lucide:eye',
-  shield: 'lucide:shield-check',
-  private: 'lucide:scan-face'
+  public: 'noir:public-assets',
+  shield: 'noir:shield-assets',
+  private: 'noir:private-assets'
 }
 
 export function AssetDomainSelector({
@@ -46,7 +46,13 @@ export function AssetDomainSelector({
             icon={ASSET_DOMAIN_ICONS[value]}
             width={14}
             height={14}
-            className="text-wallet-secondary"
+            className={cn(
+              value === 'shield'
+                ? 'text-success'
+                : value === 'private'
+                  ? 'text-private'
+                  : 'text-wallet-secondary'
+            )}
           />
           {ASSET_DOMAIN_LABELS[value]}
           <Icon icon="lucide:chevron-down" width={12} height={12} />
@@ -79,6 +85,8 @@ export function AssetDomainSelector({
                 width={15}
                 height={15}
                 className={cn(
+                  'shrink-0',
+                  (domain === 'all' || domain === 'public') && 'text-wallet-secondary',
                   domain === 'shield' && 'text-success',
                   domain === 'private' && 'text-private'
                 )}

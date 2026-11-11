@@ -229,25 +229,24 @@ test('serves cached EVM balances across Popup reload without repeating RPC reads
       .getByRole('button', { name: 'Select send asset, ETH on Ethereum' })
       .getByRole('img', { name: 'Ethereum' })
   ).toBeVisible()
-  const sendSourceButton = popup.getByRole('button', {
-    name: 'Choose source account, current main'
-  })
-  await expect(sendSourceButton).toBeVisible()
+  await expect(popup.getByRole('button', { name: 'Public', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'true'
+  )
+  await expect(popup.getByRole('button', { name: 'Shield', exact: true })).toBeVisible()
   await expect(popup.getByRole('button', { name: 'Choose send source account' })).toHaveCount(0)
   await expect(popup.getByText('Send to', { exact: true })).toBeVisible()
-  await expect(popup.getByText('Amount', { exact: true })).toBeVisible()
+  await expect(popup.getByRole('textbox', { name: 'ETH amount' })).toBeVisible()
   await expect(popup.getByLabel('Send To')).toHaveCSS('height', '54px')
-  await expect(popup.getByTestId('send-amount-card').locator(':scope > div').nth(1)).toHaveCSS(
-    'min-height',
-    '55px'
-  )
+  await expect(popup.getByTestId('send-amount-card')).toBeVisible()
+  await expect(popup.getByTestId('send-available-balance')).toBeVisible()
   await expect(popup.getByText('Fee', { exact: true })).toBeVisible()
   await captureScreenshot(popup, 'release-default-send-input-cards.png')
-  await sendSourceButton.click()
-  const sendSourceDialog = popup.getByRole('dialog', { name: 'Choose source account' })
-  await expect(sendSourceDialog).toContainText('Choose an account for this action')
-  await expect(sendSourceDialog.getByText('Selected', { exact: true })).toHaveCount(0)
-  await sendSourceDialog.getByRole('radio', { name: /Private account/ }).click()
+  await popup.getByRole('button', { name: 'Back' }).click()
+  await popup.getByRole('button', { name: 'Back' }).click()
+  await popup.getByRole('radio', { name: 'Private mode' }).click()
+  await popup.getByRole('button', { name: 'View ETH details on Ethereum' }).click()
+  await popup.getByRole('button', { name: 'Move', exact: true }).click()
   await expect(popup.getByRole('heading', { name: 'Move' })).toBeVisible()
   await expect(popup.getByRole('button', { name: 'From: Private. Change account' })).toBeVisible()
   await captureScreenshot(popup, 'release-default-move-private-source.png')
@@ -362,14 +361,15 @@ test('REF-13211 blocks a Private USDC Move without native gas before preparation
       .getByRole('button', { name: 'Select send asset, USDC on Ethereum' })
       .getByRole('img', { name: 'Ethereum' })
   ).toBeVisible()
-  await expect(
-    popup.getByRole('button', { name: 'Choose source account, current main' })
-  ).toBeVisible()
+  await expect(popup.getByRole('button', { name: 'Public', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'true'
+  )
   await popup
     .getByRole('textbox', { name: 'Send to' })
     .fill('0x9C73842d02D1Fe00000000000000000000000000')
   await popup.getByLabel('USDC amount').fill('1')
-  await expect(popup.getByTestId('send-amount-card')).toContainText(/Bal\.\s*1\.7647 USDC/)
+  await expect(popup.getByTestId('send-available-balance')).toContainText('1.7647')
   const missingGasAlert = popup.getByRole('alert').filter({
     hasText: 'Insufficient ETH balance.'
   })
@@ -380,6 +380,21 @@ test('REF-13211 blocks a Private USDC Move without native gas before preparation
   await captureScreenshot(popup, 'REF-13207-noirv2-improve-balance-message.png')
   await captureScreenshot(popup, 'REF-13211-noirv2-still-errors.png')
 
+  const privateAddress = await popup.evaluate(async () => {
+    const response = await chrome.runtime.sendMessage({ type: 'GET_ACCOUNT_NETWORKS' })
+    const account = response?.result?.accounts?.find(
+      (entry: { active?: unknown }) => entry.active === true
+    )
+    const ethereum = account?.networks?.find(
+      (entry: { chainId?: unknown }) => entry.chainId === 'eip155:1'
+    )
+    if (typeof ethereum?.privateExecutionAddress !== 'string')
+      throw new Error('Private EVM address unavailable')
+    return ethereum.privateExecutionAddress as string
+  })
+  await popup.getByLabel('Send To').fill(privateAddress)
+  await popup.getByRole('button', { name: 'Move', exact: true }).click()
+  await expect(popup.getByRole('button', { name: 'From: Public. Change account' })).toBeVisible()
   await expect
     .poll(() =>
       popup.evaluate(
@@ -387,10 +402,11 @@ test('REF-13211 blocks a Private USDC Move without native gas before preparation
       )
     )
     .toBeGreaterThan(0)
-  await popup.getByRole('button', { name: 'Choose source account, current main' }).click()
+  await popup.getByRole('button', { name: 'From: Public. Change account' }).click()
   await popup
-    .getByRole('dialog', { name: 'Choose source account' })
-    .getByRole('radio', { name: /Private account/ })
+    .getByRole('dialog')
+    .filter({ has: popup.getByRole('tablist', { name: 'Wallet accounts' }) })
+    .getByRole('button', { name: 'Select Private account' })
     .click()
   await expect(
     popup.evaluate(
@@ -523,7 +539,7 @@ test('resyncs only active Wallet Zcash data and preserves EVM and Bitcoin state'
   })
 })
 
-test('shows Shield on positive transparent ZEC and uses the readable modal backdrop', async ({
+test('shows Zcash balance categories and opens shielding through Shielded', async ({
   context,
   popup,
   extensionId
@@ -557,13 +573,16 @@ test('shows Shield on positive transparent ZEC and uses the readable modal backd
   await expect(zcashBalanceBreakdown).toContainText('0.51 ZEC')
   await expect(zcashBalanceBreakdown).toContainText('0.002 ZEC')
   await expect(zcashBalanceBreakdown.getByText('Pending', { exact: true })).toHaveCount(0)
-  const shieldButton = popup.getByRole('button', { name: 'Shield transparent ZEC' })
+  const shieldButton = popup.getByRole('button', { name: 'Shielded', exact: true })
   await expect(shieldButton).toBeVisible()
   await captureScreenshot(popup, 'REF-13213-yellow-unspendable-balance.png')
   await captureScreenshot(popup, 'release-default-zcash-balance-and-shield.png')
   await shieldButton.click()
-  await expect(popup.getByRole('dialog', { name: 'Shielded' })).toBeVisible()
-  await captureScreenshot(popup, 'release-default-shield-modal-backdrop.png')
+  await expect(popup.getByRole('heading', { name: 'Shielded', exact: true })).toBeVisible()
+  await popup.getByRole('button', { name: /^Zcash shield/i }).click()
+  await popup.getByRole('button', { name: 'Move', exact: true }).click()
+  await expect(popup.getByRole('heading', { name: 'Move', exact: true })).toBeVisible()
+  await captureScreenshot(popup, 'release-default-zcash-detail-shield-move.png')
 })
 
 test('labels an outgoing shielded Zcash activity without a stale rotated address', async ({

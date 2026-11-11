@@ -2716,7 +2716,7 @@ test('prepares, signs, broadcasts, monitors, and records a Sepolia transfer in r
   await popup.getByRole('button', { name: 'Send ETH on Ethereum Sepolia' }).click()
   await popup.getByRole('button', { name: 'Select Recipient' }).click()
   const recipientDialog = popup.getByRole('dialog')
-  await expect(recipientDialog.getByRole('heading', { name: 'Select Recipient' })).toBeVisible()
+  await expect(recipientDialog.getByRole('heading', { name: 'Send to', exact: true })).toBeVisible()
   await expect(recipientDialog.getByRole('tab', { name: 'My Accounts' })).toBeVisible()
   await recipientDialog.getByRole('tab', { name: 'Address Book' }).click()
   await recipientDialog.getByRole('button').filter({ hasText: 'Alice Sepolia' }).click()

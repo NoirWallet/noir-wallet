@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Icon } from '@iconify/react'
-import { QRCodeSVG } from 'qrcode.react'
+import { ReceivingAddressLayout } from '@/popup/components/common/ReceivingAddressLayout'
 import { resolveEvmChainIconAlias } from '@/config/icons'
 import type { SwapToken } from '@/core/services/intents-api'
 import { resolveSwapTokenIconUrl } from '@/core/services/intents-api'
@@ -13,17 +13,15 @@ import {
 import type { ChainDefinition } from '@/core/chains/registry'
 import { getZcashChainId } from '@/core/chains/registry'
 import { resolveChainIconAlias } from '@/lib/chain-icon'
+import { formatSortAddress } from '@/lib/format'
 import { useActiveAccountNetworks } from '@/popup/hooks/useActiveAccountNetworks'
 import { resolveEffectiveActiveAccountIdentity } from '@/popup/lib/effective-active-account'
 import { getPrivateTransferChainIds } from '@/popup/services/private-balance-transfer'
-import { formatBridgeMinimumAmountError } from '@/popup/services/quote-minimum-error'
 import { swapTokenCatalogClient } from '@/popup/services/swap-token-catalog-client'
 import {
   availableDepositTokens,
   canPayShieldDeposit,
   defaultDepositRefundAddress,
-  depositAmountError,
-  depositAmountRaw,
   depositPaymentProgress,
   depositRefundAddressError,
   depositSourceAssetId,
@@ -45,7 +43,6 @@ import { TokenIcon } from '@/popup/components/tokens/TokenIcon'
 import { ShieldProviderLogo, SHIELD_PROVIDERS } from '@/popup/components/portfolio/shield-providers'
 import type { ShieldProvider } from '@/popup/services/asset-domains'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/popup/components/ui/dialog'
-import { Input } from '@/popup/components/ui/input'
 import {
   CopyFeedbackIcon,
   CopyToast,
@@ -53,7 +50,7 @@ import {
 } from '@/popup/components/common/CopyToast'
 import { InlineError } from '@/popup/components/common/InlineError'
 
-type Picker = 'token' | 'network' | null
+type Picker = 'provider' | 'token' | 'network' | null
 
 function depositChainIconAlias(network: ChainDefinition): string {
   return network.family === 'evm'
@@ -113,32 +110,20 @@ function ShieldDepositContent() {
   const [tokenId, setTokenId] = useState<string | null | undefined>(undefined)
   const [tokenSearch, setTokenSearch] = useState('')
   const [networkId, setNetworkId] = useState<string | null>(null)
-  const [refundAddress, setRefundAddress] = useState('')
-  const [refundEdited, setRefundEdited] = useState(false)
-  const [showRefundError, setShowRefundError] = useState(false)
-  const [amount, setAmount] = useState('')
-  const [showAmountError, setShowAmountError] = useState(false)
-  const [quoteAmountError, setQuoteAmountError] = useState<string | null>(null)
   const [provider, setProvider] = useState<ShieldProvider>(
     requestedProviderIsZcash ? 'zcash-shield' : 'near-confidential'
   )
-  const [providerSelected, setProviderSelected] = useState(
-    requestedProviderIsNear || requestedProviderIsZcash
+  const providerRef = useRef<ShieldProvider>(
+    requestedProviderIsZcash ? 'zcash-shield' : 'near-confidential'
   )
-  const providerRef = useRef<ShieldProvider | null>(
-    requestedProviderIsNear || requestedProviderIsZcash
-      ? requestedProviderIsZcash
-        ? 'zcash-shield'
-        : 'near-confidential'
-      : null
-  )
+  const [showZcashAddress, setShowZcashAddress] = useState(false)
   const [records, setRecords] = useState<readonly ExternalShieldDeposit[]>([])
   const [viewRecordId, setViewRecordId] = useState<string | null>(null)
   const viewRecordIdRef = useRef(viewRecordId)
   viewRecordIdRef.current = viewRecordId
   const [showAllHistory, setShowAllHistory] = useState(false)
+  const [showHistory, setShowHistory] = useState(false)
   const [historyLoading, setHistoryLoading] = useState(false)
-  const [reviewOpen, setReviewOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
   const [checkResult, setCheckResult] = useState<{ scope: string; depositId: string } | null>(null)
@@ -173,16 +158,9 @@ function ShieldDepositContent() {
     setNetworkId(null)
     const nextProvider = requestedProviderIsZcash ? 'zcash-shield' : 'near-confidential'
     setProvider(nextProvider)
-    setProviderSelected(requestedProviderIsNear || requestedProviderIsZcash)
-    providerRef.current = requestedProviderIsNear || requestedProviderIsZcash ? nextProvider : null
+    providerRef.current = nextProvider
+    setShowZcashAddress(false)
     setPicker(null)
-    setRefundAddress('')
-    setRefundEdited(false)
-    setShowRefundError(false)
-    setAmount('')
-    setShowAmountError(false)
-    setQuoteAmountError(null)
-    setReviewOpen(false)
     setBusy(false)
     setRefreshing(false)
     setCheckResult(null)
@@ -193,6 +171,19 @@ function ShieldDepositContent() {
     requestIdRef.current = null
     providerRevisionRef.current += 1
   }, [walletId, accountId, currentNetwork, requestedProviderIsNear, requestedProviderIsZcash])
+
+  useEffect(() => {
+    if (
+      !loading &&
+      !requestedProviderIsNear &&
+      !requestedProviderIsZcash &&
+      !canManageNear &&
+      canReceiveZcash
+    ) {
+      providerRef.current = 'zcash-shield'
+      setProvider('zcash-shield')
+    }
+  }, [loading, requestedProviderIsNear, requestedProviderIsZcash, canManageNear, canReceiveZcash])
 
   useEffect(() => {
     checkAttemptRef.current += 1
@@ -227,6 +218,7 @@ function ShieldDepositContent() {
     setRecords([])
     setViewRecordId(null)
     setShowAllHistory(false)
+    setShowHistory(false)
     setNow(Date.now())
     setHistoryLoading(Boolean(walletId && accountId))
     if (!walletId || !accountId)
@@ -300,7 +292,15 @@ function ShieldDepositContent() {
       tokenChoices.find(choice => choice.assetIds.includes(requested?.assetId ?? ''))?.id ?? null
     )
   }, [requestedAssetId, tokens, networks, tokenChoices])
-  const selectedChoiceId = tokenId === undefined ? requestedTokenId : tokenId
+  const selectedChoiceId =
+    tokenId === undefined
+      ? (requestedTokenId ??
+        tokenChoices.find(choice => choice.token.symbol === 'USDT')?.id ??
+        tokenChoices.find(choice => choice.token.symbol === 'USDC')?.id ??
+        tokenChoices.find(choice => choice.token.symbol === 'ETH')?.id ??
+        tokenChoices[0]?.id ??
+        null)
+      : tokenId
   const availableNetworks = networks.filter(
     network => depositTokenForNetwork(tokens, selectedChoiceId, network) !== null
   )
@@ -309,11 +309,8 @@ function ShieldDepositContent() {
   const displayedToken =
     selectedToken ?? tokenChoices.find(choice => choice.id === selectedChoiceId)?.token ?? null
   const defaultRefund = defaultDepositRefundAddress(selectedNetwork, account?.networks ?? [])
-  const effectiveRefund = refundEdited ? refundAddress : defaultRefund
+  const effectiveRefund = defaultRefund
   const refundError = depositRefundAddressError(effectiveRefund, selectedNetwork)
-  const amountError = depositAmountError(amount, selectedToken)
-  const displayAmountError = amountError ?? quoteAmountError
-  const amountRaw = depositAmountRaw(amount, selectedToken)
   const sourceAssetId =
     selectedToken && selectedNetwork ? depositSourceAssetId(selectedToken, selectedNetwork) : null
   const scopedRecords = records.filter(
@@ -327,6 +324,9 @@ function ShieldDepositContent() {
   )
   const historyRecords = showAllHistory ? scopedRecords : recentRecords
   const hasHiddenHistory = recentRecords.length < scopedRecords.length
+  const hasPendingDeposits = recentRecords.some(
+    record => record.phase === 'awaiting-payment' || record.phase === 'processing'
+  )
   const viewedRecord = scopedRecords.find(record => record.depositId === viewRecordId) ?? null
   const viewedToken = catalog.find(token => token.assetId === viewedRecord?.source.protocolAssetId)
   const viewedNetwork = networks.find(network => network.id === viewedRecord?.source.chainId)
@@ -397,29 +397,12 @@ function ShieldDepositContent() {
     }
   }, [viewedRecord, currentNetwork, walletId, accountId, scopeKey, refreshDepositRecord])
 
-  const openReview = () => {
-    setShowAmountError(true)
-    setShowRefundError(true)
-    setError(null)
-    if (quoteAmountError) return
-    if (
-      historyLoading ||
-      !account ||
-      !canManageNear ||
-      !walletId ||
-      !accountId ||
-      !selectedToken ||
-      !selectedNetwork ||
-      providerRef.current !== 'near-confidential' ||
-      !sourceAssetId ||
-      !amountRaw ||
-      refundError
-    )
-      return
-    setReviewOpen(true)
-  }
-
   const createDeposit = async () => {
+    if (historyLoading) return
+    if (refundError) {
+      setError('Receiving address unavailable for this account on the selected network.')
+      return
+    }
     if (
       !walletId ||
       !accountId ||
@@ -429,7 +412,6 @@ function ShieldDepositContent() {
       !selectedNetwork ||
       providerRef.current !== 'near-confidential' ||
       !sourceAssetId ||
-      !amountRaw ||
       refundError ||
       busy
     )
@@ -448,8 +430,7 @@ function ShieldDepositContent() {
           chainId: selectedNetwork.id,
           chainName: selectedNetwork.displayName,
           assetId: sourceAssetId,
-          protocolAssetId: selectedToken.assetId,
-          amountRaw
+          protocolAssetId: selectedToken.assetId
         },
         refundAddress: effectiveRefund.trim(),
         requestId
@@ -469,10 +450,8 @@ function ShieldDepositContent() {
       ])
       setViewRecordId(created.depositId)
       setNow(Date.now())
-      setReviewOpen(false)
-      setQuoteAmountError(null)
       requestIdRef.current = null
-    } catch (failure) {
+    } catch {
       const wallet = useWalletStore.getState()
       if (
         mounted.current &&
@@ -481,16 +460,7 @@ function ShieldDepositContent() {
         providerRef.current === 'near-confidential' &&
         providerRevisionRef.current === providerRevision
       ) {
-        const minimum = formatBridgeMinimumAmountError(
-          failure instanceof Error ? failure.message : undefined,
-          selectedToken
-        )
-        if (minimum) {
-          setQuoteAmountError(minimum)
-          setShowAmountError(true)
-        } else {
-          setError('Receiving address unavailable. Try again.')
-        }
+        setError('Receiving address unavailable. Try again.')
       }
     } finally {
       if (mounted.current && scopeRef.current === scopeKey) setBusy(false)
@@ -540,23 +510,11 @@ function ShieldDepositContent() {
   const selectToken = (choice: (typeof tokenChoices)[number]) => {
     setTokenId(choice.id)
     setNetworkId(null)
-    setRefundAddress('')
-    setRefundEdited(false)
-    setShowRefundError(false)
-    setAmount('')
-    setShowAmountError(false)
-    setQuoteAmountError(null)
     requestIdRef.current = null
     setPicker(null)
   }
   const selectNetwork = (network: ChainDefinition) => {
     setNetworkId(network.id)
-    setRefundAddress('')
-    setRefundEdited(false)
-    setShowRefundError(false)
-    setAmount('')
-    setShowAmountError(false)
-    setQuoteAmountError(null)
     requestIdRef.current = null
     setPicker(null)
   }
@@ -566,54 +524,226 @@ function ShieldDepositContent() {
     providerRef.current = nextProvider
     providerRevisionRef.current += 1
     setProvider(nextProvider)
-    setProviderSelected(true)
-    setReviewOpen(false)
+    setPicker(null)
+    setShowZcashAddress(false)
     setViewRecordId(null)
-    setQuoteAmountError(null)
-    setShowAmountError(false)
-    setShowRefundError(false)
     setError(null)
     requestIdRef.current = null
     checkAttemptRef.current += 1
   }
 
-  return (
-    <div className="page-container min-h-0 overflow-hidden">
-      <PageHeader title="Receive" showBack />
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-5">
-        {accountUnavailable && (
-          <div
-            role="alert"
-            className="mt-3 flex items-center justify-between gap-3 text-xs text-danger"
-          >
-            <span>
-              {accountCatalogError
-                ? 'Account addresses unavailable'
-                : account
-                  ? 'Shield unavailable for this account'
-                  : 'Account unavailable'}
-            </span>
-            <button
-              type="button"
-              onClick={() => void refreshAccountCatalog()}
-              className="wallet-interactive shrink-0 text-primary hover:underline focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2"
-            >
-              Retry
-            </button>
-          </div>
-        )}
-        {providerSelected && provider === 'near-confidential' && viewedRecord && (
-          <Dialog open onOpenChange={open => !open && setViewRecordId(null)}>
-            <DialogContent
-              position="bottom"
-              className="max-h-[calc(100%-24px)] overflow-y-auto bg-wallet-surface p-4 pb-6"
-            >
-              <DialogTitle className="text-base font-medium">Receiving address</DialogTitle>
-              <DialogDescription className="sr-only">
-                Receive funds into Shield and check payment status
-              </DialogDescription>
-              <div className="pt-1">
-                <div className="flex items-center justify-between gap-3">
+  if (
+    (provider === 'near-confidential' && viewedRecord) ||
+    (provider === 'zcash-shield' && showZcashAddress && zcashAddress)
+  ) {
+    const near = provider === 'near-confidential' && viewedRecord !== null
+    const refundAccount = near
+      ? accountCatalog?.accounts.find(candidate =>
+          candidate.networks.some(
+            network =>
+              network.chain.id === viewedRecord.source.chainId &&
+              (network.privateExecutionAddress?.toLowerCase() ===
+                viewedRecord.refundAddress.toLowerCase() ||
+                network.addresses.some(
+                  address =>
+                    address.value === viewedRecord.refundAddress ||
+                    (network.chain.family === 'evm' &&
+                      address.value.toLowerCase() === viewedRecord.refundAddress.toLowerCase())
+                ))
+          )
+        )
+      : undefined
+    const refundNetwork = refundAccount?.networks.find(
+      network => near && network.chain.id === viewedRecord.source.chainId
+    )
+    const refundIsPrivate =
+      near &&
+      refundNetwork?.privateExecutionAddress?.toLowerCase() ===
+        viewedRecord.refundAddress.toLowerCase()
+    return (
+      <>
+        <ReceivingAddressLayout
+          qrSize={160}
+          headerAction={
+            near && (
+              <button
+                type="button"
+                aria-label="Check deposit status"
+                title="Check deposit status"
+                onClick={() => void refreshDeposit()}
+                disabled={refreshing}
+                aria-busy={refreshing || undefined}
+                className="wallet-interactive flex size-8 items-center justify-center rounded-lg hover:bg-wallet-selected focus-visible:outline-2 focus-visible:outline-primary disabled:opacity-45"
+              >
+                <Icon
+                  icon="lucide:refresh-cw"
+                  width={20}
+                  height={20}
+                  className={refreshing ? 'animate-spin' : undefined}
+                />
+              </button>
+            )
+          }
+          onClose={() => {
+            setViewRecordId(null)
+            setShowZcashAddress(false)
+          }}
+          identity={
+            <div className="flex flex-col items-center gap-5">
+              <div className="flex items-center justify-center gap-5">
+                {near ? (
+                  <TokenIcon
+                    assetId={viewedRecord.source.assetId}
+                    symbol={viewedRecord.sourceSymbol}
+                    icon={viewedToken ? resolveSwapTokenIconUrl(viewedToken) : undefined}
+                    size={40}
+                    blockchain={viewedNetwork ? depositChainIconAlias(viewedNetwork) : undefined}
+                  />
+                ) : (
+                  <TokenIcon symbol="ZEC" nativeChain="zcash" blockchain="zcash" size={40} />
+                )}
+                <Icon icon="lucide:arrow-right" width={20} className="text-muted" />
+                <ShieldProviderLogo provider={provider} size={40} />
+              </div>
+              <p className="text-center text-base leading-5 text-muted">
+                Asking to receive
+                <br />
+                {near ? viewedRecord.sourceSymbol : 'ZEC'} on {SHIELD_PROVIDERS[provider].name}{' '}
+                address
+              </p>
+            </div>
+          }
+          qrValue={near ? (canPay ? viewedRecord.depositAddress : undefined) : zcashAddress}
+          beforeQr={
+            near && canPay ? (
+              <p className="text-center text-base font-medium">
+                {viewedRecord.amountMode === 'minimum' ? 'Send at least' : 'Send exactly'}{' '}
+                {formatDepositAmount(
+                  payment?.paymentAmountRaw ?? viewedRecord.amountRaw,
+                  viewedRecord.sourceDecimals
+                )}{' '}
+                {viewedRecord.sourceSymbol}
+              </p>
+            ) : undefined
+          }
+          qrLabel={
+            near ? 'One-time receiving address QR code' : 'Zcash shielded receiving address QR code'
+          }
+          warning={
+            (!near || canPay) && (
+              <div className="flex items-start gap-2 text-sm leading-5 text-muted">
+                <span
+                  aria-hidden="true"
+                  className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-wallet-selected font-bold text-foreground"
+                >
+                  !
+                </span>
+                <p>
+                  Only send {near ? viewedRecord.sourceSymbol : 'ZEC'} on{' '}
+                  {near
+                    ? (viewedNetwork?.displayName ?? viewedRecord.source.chainName)
+                    : zcashNetwork?.chain.displayName}
+                  . Sending other assets or using a different network will result in loss of funds.
+                </p>
+              </div>
+            )
+          }
+        >
+          {near ? (
+            <div className="w-full">
+              {canPay && (
+                <div className="mt-8 flex flex-col items-center">
+                  <p
+                    className="w-full text-base text-warning"
+                    title={`Valid until ${new Date(viewedRecord.expiresAt).toLocaleString()}`}
+                  >
+                    One-time receive address
+                  </p>
+                  <div className="mt-2 flex min-h-12 w-full items-center gap-2 rounded-xl bg-wallet-surface px-3">
+                    <span
+                      className="min-w-0 flex-1 truncate font-mono text-sm"
+                      title={viewedRecord.depositAddress}
+                    >
+                      {formatSortAddress(viewedRecord.depositAddress)}
+                    </span>
+                    <button
+                      type="button"
+                      aria-label="Copy address"
+                      disabled={!canPayShieldDeposit(viewedRecord, now)}
+                      onClick={() => {
+                        if (canPayShieldDeposit(viewedRecord, Date.now()))
+                          void copyToClipboard(
+                            viewedRecord.depositAddress,
+                            `deposit-address:${viewedRecord.depositId}`
+                          )
+                      }}
+                      className="wallet-interactive flex h-9 shrink-0 items-center gap-1.5 rounded-lg bg-wallet-selected px-3 text-sm enabled:hover:brightness-110 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 disabled:opacity-45"
+                    >
+                      <CopyFeedbackIcon
+                        copied={isCopied(`deposit-address:${viewedRecord.depositId}`)}
+                        width={14}
+                      />
+                      {isCopied(`deposit-address:${viewedRecord.depositId}`) ? 'Copied' : 'Copy'}
+                    </button>
+                  </div>
+                  {viewedRecord.depositMemo && (
+                    <div className="mt-2 flex min-h-11 w-full items-center gap-2 rounded-lg bg-wallet-surface px-3">
+                      <span
+                        className="min-w-0 flex-1 truncate font-mono text-xs"
+                        title={viewedRecord.depositMemo}
+                      >
+                        Memo: {viewedRecord.depositMemo}
+                      </span>
+                      <button
+                        type="button"
+                        aria-label="Copy memo"
+                        disabled={!canPayShieldDeposit(viewedRecord, now)}
+                        onClick={() => {
+                          if (canPayShieldDeposit(viewedRecord, Date.now()))
+                            void copyToClipboard(
+                              viewedRecord.depositMemo!,
+                              `deposit-memo:${viewedRecord.depositId}`
+                            )
+                        }}
+                        className="wallet-interactive flex h-8 shrink-0 items-center gap-1.5 rounded-md bg-white/10 px-2.5 text-xs enabled:hover:bg-white/15 enabled:active:bg-white/20 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 disabled:opacity-45"
+                      >
+                        <CopyFeedbackIcon
+                          copied={isCopied(`deposit-memo:${viewedRecord.depositId}`)}
+                          width={14}
+                        />
+                        {isCopied(`deposit-memo:${viewedRecord.depositId}`) ? 'Copied' : 'Copy'}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+              <div className="mt-6 flex items-start justify-between gap-3 text-sm">
+                <p className="shrink-0 text-muted">Refund address</p>
+                <div className="min-w-0 text-right">
+                  {refundAccount && (
+                    <div className="flex min-w-0 items-center justify-end gap-2">
+                      <span className="truncate">{refundAccount.accountDisplayName}</span>
+                      <span
+                        className={`shrink-0 rounded-full px-2 py-0.5 text-xs ${refundIsPrivate ? 'bg-warning/10 text-warning' : 'bg-wallet-selected text-muted'}`}
+                      >
+                        {refundIsPrivate
+                          ? 'Private'
+                          : refundNetwork?.chain.family === 'zcash'
+                            ? 'Transparent'
+                            : 'Public'}
+                      </span>
+                    </div>
+                  )}
+                  <p
+                    className="mt-1 truncate font-mono text-xs text-muted"
+                    title={viewedRecord.refundAddress}
+                  >
+                    {formatSortAddress(viewedRecord.refundAddress)}
+                  </p>
+                </div>
+              </div>
+              {(!canPay || payment?.hasDeposit) && (
+                <div className="mt-5 flex items-center justify-between gap-3">
                   <h2
                     className={`text-base font-medium ${hasDepositSettlementShortfall(viewedRecord) ? 'text-warning' : ''}`}
                     role="status"
@@ -624,8 +754,6 @@ function ShieldDepositContent() {
                     type="button"
                     onClick={() => {
                       setViewRecordId(null)
-                      setAmount('')
-                      setQuoteAmountError(null)
                       setError(null)
                       requestIdRef.current = null
                     }}
@@ -634,39 +762,26 @@ function ShieldDepositContent() {
                     New address
                   </button>
                 </div>
-                {viewedRecord.phase === 'awaiting-payment' &&
-                  hasExternalShieldDepositFunding(viewedRecord) &&
-                  now >= viewedRecord.expiresAt && (
-                    <p className="mt-1 text-xs text-warning">Quote expired</p>
-                  )}
-                <div className="mt-5 flex items-center gap-3">
-                  <TokenIcon
-                    assetId={viewedRecord.source.assetId}
-                    symbol={viewedRecord.sourceSymbol}
-                    icon={viewedToken ? resolveSwapTokenIconUrl(viewedToken) : undefined}
-                    size={32}
-                  />
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium">{viewedRecord.sourceSymbol}</p>
-                    <p className="truncate text-xs text-muted">
-                      {viewedNetwork?.displayName ?? viewedRecord.source.chainName} · NEAR
-                      Confidential
-                    </p>
-                  </div>
-                </div>
+              )}
+              {viewedRecord.phase === 'awaiting-payment' &&
+                hasExternalShieldDepositFunding(viewedRecord) &&
+                now >= viewedRecord.expiresAt && (
+                  <p className="mt-1 text-xs text-warning">Quote expired</p>
+                )}
+              {(!canPay || payment?.hasDeposit || viewedRecord.settledOutputRaw) && (
                 <div className="mt-5 space-y-3 border-t border-white/10 pt-4 text-sm">
-                  <div className="flex items-start justify-between gap-4">
-                    <span className="shrink-0 text-muted">
-                      {canPay ? 'Send exactly' : 'Amount'}
-                    </span>
-                    <span className="min-w-0 break-all text-right font-medium">
-                      {formatDepositAmount(
-                        payment?.paymentAmountRaw ?? viewedRecord.amountRaw,
-                        viewedRecord.sourceDecimals
-                      ) ?? '—'}{' '}
-                      {viewedRecord.sourceSymbol}
-                    </span>
-                  </div>
+                  {!canPay && (
+                    <div className="flex items-start justify-between gap-4">
+                      <span className="shrink-0 text-muted">Amount</span>
+                      <span className="min-w-0 break-all text-right font-medium">
+                        {formatDepositAmount(
+                          payment?.paymentAmountRaw ?? viewedRecord.amountRaw,
+                          viewedRecord.sourceDecimals
+                        ) ?? '—'}{' '}
+                        {viewedRecord.sourceSymbol}
+                      </span>
+                    </div>
+                  )}
                   {viewedRecord.phase === 'awaiting-payment' && payment?.hasDeposit && (
                     <>
                       <div className="flex items-start justify-between gap-4">
@@ -726,142 +841,116 @@ function ShieldDepositContent() {
                     </div>
                   )}
                 </div>
-                {canPay && (
-                  <div className="mt-5 flex flex-col items-center">
-                    <div className="rounded-lg bg-white p-3">
-                      <QRCodeSVG value={viewedRecord.depositAddress} size={164} level="M" />
-                    </div>
-                    <p className="mt-3 text-center text-xs text-muted">
-                      Only send {viewedRecord.sourceSymbol} on{' '}
-                      {viewedNetwork?.displayName ?? viewedRecord.source.chainName}.
-                    </p>
-                    <p className="mt-2 text-xs text-muted">
-                      Valid until {new Date(viewedRecord.expiresAt).toLocaleString()}
-                    </p>
-                    <p className="mt-4 w-full text-sm text-warning">One-time receive address</p>
-                    <div className="mt-2 flex min-h-11 w-full items-center gap-2 rounded-lg bg-wallet-selected px-3">
-                      <span
-                        className="min-w-0 flex-1 truncate font-mono text-xs"
-                        title={viewedRecord.depositAddress}
-                      >
-                        {viewedRecord.depositAddress}
-                      </span>
-                      <button
-                        type="button"
-                        aria-label="Copy address"
-                        disabled={!canPayShieldDeposit(viewedRecord, now)}
-                        onClick={() => {
-                          if (canPayShieldDeposit(viewedRecord, Date.now()))
-                            void copyToClipboard(
-                              viewedRecord.depositAddress,
-                              `deposit-address:${viewedRecord.depositId}`
-                            )
-                        }}
-                        className="wallet-interactive flex h-8 shrink-0 items-center gap-1.5 rounded-md bg-white/10 px-2.5 text-xs enabled:hover:bg-white/15 enabled:active:bg-white/20 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 disabled:opacity-45"
-                      >
-                        <CopyFeedbackIcon
-                          copied={isCopied(`deposit-address:${viewedRecord.depositId}`)}
-                          width={14}
-                        />
-                        {isCopied(`deposit-address:${viewedRecord.depositId}`) ? 'Copied' : 'Copy'}
-                      </button>
-                    </div>
-                    {viewedRecord.depositMemo && (
-                      <div className="mt-2 flex min-h-11 w-full items-center gap-2 rounded-lg bg-wallet-surface px-3">
-                        <span
-                          className="min-w-0 flex-1 truncate font-mono text-xs"
-                          title={viewedRecord.depositMemo}
-                        >
-                          Memo: {viewedRecord.depositMemo}
-                        </span>
-                        <button
-                          type="button"
-                          aria-label="Copy memo"
-                          disabled={!canPayShieldDeposit(viewedRecord, now)}
-                          onClick={() => {
-                            if (canPayShieldDeposit(viewedRecord, Date.now()))
-                              void copyToClipboard(
-                                viewedRecord.depositMemo!,
-                                `deposit-memo:${viewedRecord.depositId}`
-                              )
-                          }}
-                          className="wallet-interactive flex h-8 shrink-0 items-center gap-1.5 rounded-md bg-white/10 px-2.5 text-xs enabled:hover:bg-white/15 enabled:active:bg-white/20 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 disabled:opacity-45"
-                        >
-                          <CopyFeedbackIcon
-                            copied={isCopied(`deposit-memo:${viewedRecord.depositId}`)}
-                            width={14}
-                          />
-                          {isCopied(`deposit-memo:${viewedRecord.depositId}`) ? 'Copied' : 'Copy'}
-                        </button>
-                      </div>
-                    )}
-                  </div>
+              )}
+              {checkResult?.scope === scopeKey &&
+                checkResult.depositId === viewedRecord.depositId && (
+                  <p role="status" className="mt-3 text-xs text-muted">
+                    Checked · {depositStatusLabel(viewedRecord, now)}
+                  </p>
                 )}
-                <div className="mt-5 border-t border-white/10 pt-4">
-                  <p className="text-xs text-muted">Refund address</p>
-                  <p className="mt-1 break-all font-mono text-xs">{viewedRecord.refundAddress}</p>
-                </div>
-                {checkResult?.scope === scopeKey &&
-                  checkResult.depositId === viewedRecord.depositId && (
-                    <p role="status" className="mt-3 text-xs text-muted">
-                      Checked · {depositStatusLabel(viewedRecord, now)}
-                    </p>
-                  )}
-                <InlineError
-                  message={checkError ?? error}
-                  onRetry={checkError ? () => void refreshDeposit() : undefined}
-                  retrying={refreshing}
-                  className="mt-3"
-                />
+              <InlineError
+                message={checkError ?? error}
+                onRetry={checkError ? () => void refreshDeposit() : undefined}
+                retrying={refreshing}
+                className="mt-3"
+              />
+            </div>
+          ) : (
+            <div className="mt-8 w-full">
+              <p className="mb-2 text-base text-muted">Receive address</p>
+              <div className="flex min-h-12 items-center gap-2 rounded-xl bg-wallet-surface px-3">
+                <p
+                  className="min-w-0 flex-1 truncate font-mono text-sm leading-5"
+                  title={zcashAddress}
+                >
+                  {formatSortAddress(zcashAddress)}
+                </p>
                 <button
                   type="button"
-                  onClick={() => void refreshDeposit()}
-                  disabled={refreshing}
-                  aria-busy={refreshing || undefined}
-                  className="wallet-interactive mt-4 h-11 w-full rounded-lg border border-white/15 text-sm enabled:hover:border-white/30 enabled:hover:bg-white/5 enabled:active:bg-white/10 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 disabled:opacity-45"
+                  aria-label="Copy Zcash shielded address"
+                  onClick={() => void copyToClipboard(zcashAddress!, 'zcash-shield-address')}
+                  className="wallet-interactive flex h-9 shrink-0 items-center gap-1.5 rounded-lg bg-wallet-selected px-3 text-sm enabled:hover:brightness-110 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2"
                 >
-                  {refreshing && (
-                    <Icon
-                      icon="lucide:loader-circle"
-                      width={14}
-                      height={14}
-                      className="mr-2 inline animate-spin"
-                    />
-                  )}
-                  {refreshing ? 'Checking…' : 'Check deposit status'}
+                  <CopyFeedbackIcon copied={isCopied('zcash-shield-address')} width={16} />
+                  {isCopied('zcash-shield-address') ? 'Copied' : 'Copy'}
                 </button>
               </div>
-            </DialogContent>
-          </Dialog>
+            </div>
+          )}
+        </ReceivingAddressLayout>
+        <CopyToast show={showToast} />
+      </>
+    )
+  }
+
+  return (
+    <div className="page-container min-h-0 overflow-hidden">
+      <PageHeader
+        title="Receive"
+        showBack
+        rightContent={
+          provider === 'near-confidential' && (
+            <button
+              type="button"
+              aria-label="Deposit history"
+              title="Deposit history"
+              aria-haspopup="dialog"
+              aria-expanded={showHistory}
+              disabled={loading || !walletId || !accountId}
+              onClick={() => setShowHistory(true)}
+              className="wallet-interactive relative flex size-8 items-center justify-center rounded-lg text-foreground hover:bg-wallet-selected focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2"
+            >
+              <Icon icon="lucide:history" width={20} height={20} />
+              {hasPendingDeposits && (
+                <span
+                  aria-hidden="true"
+                  className="absolute right-0.5 top-0.5 size-1.5 rounded-full bg-primary"
+                />
+              )}
+            </button>
+          )
+        }
+      />
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-5">
+        {accountUnavailable && (
+          <div
+            role="alert"
+            className="mt-3 flex items-center justify-between gap-3 text-xs text-danger"
+          >
+            <span>
+              {accountCatalogError
+                ? 'Account addresses unavailable'
+                : account
+                  ? 'Shield unavailable for this account'
+                  : 'Account unavailable'}
+            </span>
+            <button
+              type="button"
+              onClick={() => void refreshAccountCatalog()}
+              className="wallet-interactive shrink-0 text-primary hover:underline focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2"
+            >
+              Retry
+            </button>
+          </div>
         )}
         {(canManageNear || canReceiveZcash) && (
-          <section className="pt-3" aria-label="Shield provider">
-            <h2 className="mb-2 text-xs text-muted">Shield provider</h2>
-            <div className="space-y-2">
-              {(['near-confidential', 'zcash-shield'] as const)
-                .filter(item => (item === 'near-confidential' ? canManageNear : canReceiveZcash))
-                .map(item => (
-                  <button
-                    key={item}
-                    type="button"
-                    aria-pressed={providerSelected && provider === item}
-                    onClick={() => selectProvider(item)}
-                    className={`wallet-interactive flex h-14 w-full items-center gap-3 rounded-lg border bg-wallet-surface px-3 text-left text-sm hover:bg-wallet-selected active:bg-white/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 ${providerSelected && provider === item ? 'border-primary' : 'border-transparent'}`}
-                  >
-                    <ShieldProviderLogo provider={item} size={30} />
-                    <span className="min-w-0 flex-1 truncate">
-                      {SHIELD_PROVIDERS[item].detailName}
-                    </span>
-                    {providerSelected && provider === item && (
-                      <Icon icon="lucide:check" width={18} height={18} className="text-primary" />
-                    )}
-                  </button>
-                ))}
-            </div>
-          </section>
+          <button
+            type="button"
+            aria-label="Shield Provider"
+            onClick={() => setPicker('provider')}
+            className="wallet-interactive mt-4 flex h-[62px] w-full items-center gap-2.5 rounded-lg bg-wallet-surface px-4 text-left hover:bg-wallet-selected"
+          >
+            <ShieldProviderLogo provider={provider} size={32} />
+            <span className="min-w-0 flex-1">
+              <span className="block text-xs text-muted">Shield Provider</span>
+              <span className="block truncate text-sm">
+                {SHIELD_PROVIDERS[provider].detailName}
+              </span>
+            </span>
+            <Icon icon="lucide:chevron-down" width={17} />
+          </button>
         )}
-        {providerSelected &&
-          !loading &&
+        {!loading &&
           ((provider === 'near-confidential' && !canManageNear) ||
             (provider === 'zcash-shield' && !canReceiveZcash)) &&
           account && (
@@ -869,7 +958,7 @@ function ShieldDepositContent() {
               {SHIELD_PROVIDERS[provider].name} unavailable for this account
             </p>
           )}
-        {providerSelected && provider === 'near-confidential' && canManageNear && (
+        {provider === 'near-confidential' && canManageNear && (
           <>
             <div className="space-y-2.5 pt-4">
               <button
@@ -894,7 +983,7 @@ function ShieldDepositContent() {
                   />
                 )}
                 <span className="min-w-0 flex-1">
-                  <span className="block text-xs text-muted">Token</span>
+                  <span className="block text-xs text-muted">Receive Token</span>
                   <span className="block truncate text-sm">
                     {displayedToken?.symbol ?? 'Select token'}
                   </span>
@@ -926,76 +1015,15 @@ function ShieldDepositContent() {
                 <Icon icon="lucide:chevron-down" width={17} height={17} />
               </button>
             </div>
-            {selectedToken && selectedNetwork && providerSelected && (
-              <div className="mt-6">
-                <label htmlFor="shield-deposit-amount" className="mb-2 block text-sm">
-                  Amount to receive
-                </label>
-                <Input
-                  id="shield-deposit-amount"
-                  type="text"
-                  inputMode="decimal"
-                  autoComplete="off"
-                  value={amount}
-                  onChange={event => {
-                    setAmount(event.target.value)
-                    setQuoteAmountError(null)
-                    requestIdRef.current = null
-                  }}
-                  onBlur={() => setShowAmountError(true)}
-                  placeholder="0"
-                  endContent={
-                    <span
-                      className="max-w-16 truncate text-sm text-muted"
-                      title={selectedToken.symbol}
-                    >
-                      {selectedToken.symbol}
-                    </span>
-                  }
-                  className="min-h-11"
-                  aria-invalid={showAmountError && displayAmountError !== null}
-                />
-                {showAmountError && displayAmountError && (
-                  <p role="alert" className="mt-1 text-xs text-danger">
-                    {displayAmountError}
-                  </p>
-                )}
-              </div>
-            )}
-            {selectedNetwork && (
-              <div className="mt-6">
-                <label htmlFor="shield-deposit-refund" className="mb-2 block text-sm">
-                  Refund address
-                </label>
-                <Input
-                  id="shield-deposit-refund"
-                  value={effectiveRefund}
-                  onChange={event => {
-                    setRefundAddress(event.target.value)
-                    setRefundEdited(true)
-                    requestIdRef.current = null
-                  }}
-                  onBlur={() => setShowRefundError(true)}
-                  placeholder="Enter refund address"
-                  className="min-h-11 font-mono text-xs"
-                  aria-invalid={showRefundError && refundError !== null}
-                />
-                {showRefundError && refundError && (
-                  <p role="alert" className="mt-1 text-xs text-danger">
-                    {refundError}
-                  </p>
-                )}
-              </div>
-            )}
           </>
         )}
-        {providerSelected && provider === 'zcash-shield' && canReceiveZcash && (
+        {provider === 'zcash-shield' && canReceiveZcash && (
           <section className="pt-4" aria-label="Zcash shielded receive address">
             <div className="space-y-2.5">
               <div className="flex h-[62px] items-center gap-2.5 rounded-lg bg-wallet-surface px-4">
                 <TokenIcon symbol="ZEC" nativeChain="zcash" size={32} />
                 <span className="min-w-0 flex-1">
-                  <span className="block text-xs text-muted">Token</span>
+                  <span className="block text-xs text-muted">Receive Token</span>
                   <span className="block text-sm">ZEC</span>
                 </span>
                 <Icon icon="lucide:lock-keyhole" width={16} height={16} className="text-muted" />
@@ -1009,32 +1037,7 @@ function ShieldDepositContent() {
                 <Icon icon="lucide:lock-keyhole" width={16} height={16} className="text-muted" />
               </div>
             </div>
-            {zcashAddress ? (
-              <div className="mt-5 flex flex-col items-center">
-                <div className="rounded-lg bg-white p-3">
-                  <QRCodeSVG
-                    value={zcashAddress}
-                    size={176}
-                    level="M"
-                    aria-label="Zcash shielded receiving address QR code"
-                  />
-                </div>
-                <div className="mt-4 flex min-h-11 w-full items-center gap-2 rounded-lg bg-wallet-selected px-3">
-                  <span className="min-w-0 flex-1 break-all font-mono text-xs leading-5">
-                    {zcashAddress}
-                  </span>
-                  <button
-                    type="button"
-                    aria-label="Copy Zcash shielded address"
-                    title="Copy address"
-                    onClick={() => void copyToClipboard(zcashAddress, 'zcash-shield-address')}
-                    className="wallet-interactive flex size-8 shrink-0 items-center justify-center rounded-md bg-white/10 hover:bg-white/15 active:bg-white/20 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2"
-                  >
-                    <CopyFeedbackIcon copied={isCopied('zcash-shield-address')} width={16} />
-                  </button>
-                </div>
-              </div>
-            ) : (
+            {!zcashAddress && (
               <InlineError
                 message="Shielded receiving address unavailable"
                 onRetry={() => void refreshAccountCatalog()}
@@ -1044,130 +1047,111 @@ function ShieldDepositContent() {
             )}
           </section>
         )}
-        {providerSelected && provider === 'near-confidential' && error && !viewedRecord && (
+        {provider === 'near-confidential' && error && !viewedRecord && (
           <p role="alert" className="mt-3 text-center text-xs text-danger">
             {error}
           </p>
         )}
-        {providerSelected &&
-          provider === 'near-confidential' &&
-          (historyLoading ? (
-            <p className="mt-5 text-center text-xs text-muted">Loading deposits…</p>
-          ) : (
-            scopedRecords.length > 0 && (
-              <section className="mt-7 border-t border-white/10 pt-4" aria-label="Deposit history">
-                <div className="mb-2 flex items-center justify-between gap-3">
-                  <h2 className="text-sm font-medium">
-                    {showAllHistory ? 'All deposits' : 'Recent deposits'}
-                  </h2>
-                  {hasHiddenHistory && (
-                    <button
-                      type="button"
-                      onClick={() => setShowAllHistory(current => !current)}
-                      className="wallet-interactive shrink-0 text-xs text-primary hover:underline focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2"
-                    >
-                      {showAllHistory ? 'Show recent' : 'Show all'}
-                    </button>
-                  )}
-                </div>
-                <div className="divide-y divide-white/10">
-                  {historyRecords.map(record => {
-                    return (
-                      <button
-                        key={record.depositId}
-                        type="button"
-                        onClick={() => {
-                          setViewRecordId(record.depositId)
-                          setNow(Date.now())
-                          setError(null)
-                        }}
-                        className="flex min-h-12 w-full items-center justify-between gap-3 py-2 text-left text-xs"
-                      >
-                        <span className="min-w-0 truncate">
-                          {record.sourceSymbol} · {record.source.chainName}
-                        </span>
-                        <span
-                          className={`shrink-0 ${hasDepositSettlementShortfall(record) ? 'text-warning' : 'text-muted'}`}
-                        >
-                          {depositStatusLabel(record, now)}
-                        </span>
-                      </button>
-                    )
-                  })}
-                </div>
-              </section>
-            )
-          ))}
       </div>
-      {providerSelected && provider === 'near-confidential' && canManageNear && !viewedRecord && (
-        <div className="page-footer">
-          <button
-            type="button"
-            onClick={openReview}
-            disabled={
-              loading ||
-              !account ||
-              !canManageNear ||
-              historyLoading ||
-              busy ||
-              !selectedToken ||
-              !selectedNetwork ||
-              !providerSelected ||
-              !sourceAssetId
-            }
-            className="wallet-interactive h-11 w-full rounded-lg bg-primary text-sm font-medium text-background enabled:hover:brightness-110 enabled:active:brightness-95 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 disabled:opacity-45"
-          >
-            Receiving address
-          </button>
-        </div>
-      )}
-      <Dialog
-        open={provider === 'near-confidential' && reviewOpen}
-        onOpenChange={open => !open && !busy && setReviewOpen(false)}
-      >
-        <DialogContent position="bottom" className="gap-0 bg-wallet-surface p-4 pb-6">
-          <DialogTitle className="text-base font-medium">Review receiving address</DialogTitle>
-          <DialogDescription className="sr-only">
-            Confirm the amount and refund address
-          </DialogDescription>
-          <div className="mt-5 space-y-3 text-sm">
-            <div className="flex justify-between gap-4">
-              <span className="text-muted">Amount</span>
-              <span className="min-w-0 break-all text-right">
-                {amount} {selectedToken?.symbol}
-              </span>
-            </div>
-            {quoteAmountError && (
-              <p role="alert" className="text-xs text-danger">
-                {quoteAmountError}
-              </p>
-            )}
-            <div className="flex justify-between gap-4">
-              <span className="text-muted">Network</span>
-              <span className="text-right">{selectedNetwork?.displayName}</span>
-            </div>
-            <div className="flex justify-between gap-4">
-              <span className="text-muted">Shield provider</span>
-              <span className="text-right">NEAR Confidential Intents</span>
-            </div>
-            <div className="border-t border-white/10 pt-3">
-              <span className="text-muted">Refund address</span>
-              <p className="mt-1 break-all font-mono text-xs">{effectiveRefund}</p>
-            </div>
+      <div className="page-footer">
+        <button
+          type="button"
+          onClick={() =>
+            provider === 'zcash-shield' ? setShowZcashAddress(true) : void createDeposit()
+          }
+          disabled={
+            loading ||
+            !account ||
+            busy ||
+            (provider === 'zcash-shield'
+              ? !zcashAddress
+              : !canManageNear ||
+                historyLoading ||
+                !selectedToken ||
+                !selectedNetwork ||
+                !sourceAssetId)
+          }
+          aria-busy={busy || undefined}
+          className="wallet-interactive h-11 w-full rounded-lg bg-primary text-sm font-medium text-background enabled:hover:brightness-110 enabled:active:brightness-95 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 disabled:opacity-45"
+        >
+          {busy ? 'Generating…' : 'Receiving address'}
+        </button>
+      </div>
+      <Dialog open={showHistory} onOpenChange={setShowHistory}>
+        <DialogContent
+          position="bottom"
+          showCloseButton={false}
+          className="flex max-h-[80dvh] min-h-[220px] flex-col gap-0 bg-background p-0"
+        >
+          <div className="flex h-14 shrink-0 items-center justify-between px-4">
+            <DialogTitle className="text-base font-medium">Deposit history</DialogTitle>
+            <button
+              type="button"
+              aria-label="Close deposit history"
+              onClick={() => setShowHistory(false)}
+              className="wallet-interactive flex size-8 items-center justify-center rounded-lg hover:bg-wallet-selected focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2"
+            >
+              <Icon icon="lucide:x" width={20} height={20} />
+            </button>
           </div>
-          {error && (
-            <p role="alert" className="mt-3 text-xs text-danger">
-              {error}
-            </p>
-          )}
-          <button
-            type="button"
-            onClick={() => void createDeposit()}
-            disabled={busy || quoteAmountError !== null}
-            className="wallet-interactive mt-5 h-11 w-full rounded-lg bg-primary text-sm font-medium text-background enabled:hover:brightness-110 enabled:active:brightness-95 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 disabled:opacity-45"
+          <DialogDescription className="sr-only">
+            Previous receiving addresses and deposit status
+          </DialogDescription>
+          <section
+            aria-label="Deposit history"
+            className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-5"
           >
-            {busy ? 'Generating…' : 'Generate address'}
-          </button>
+            {hasHiddenHistory && (
+              <div className="mb-2 flex items-center justify-between gap-3">
+                <h2 className="text-sm text-muted">
+                  {showAllHistory ? 'All deposits' : 'Recent deposits'}
+                </h2>
+                <button
+                  type="button"
+                  onClick={() => setShowAllHistory(current => !current)}
+                  className="wallet-interactive shrink-0 text-xs text-primary hover:underline focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2"
+                >
+                  {showAllHistory ? 'Show recent' : 'Show all'}
+                </button>
+              </div>
+            )}
+            {historyLoading ? (
+              <p role="status" className="py-6 text-center text-sm text-muted">
+                Loading deposits…
+              </p>
+            ) : error === 'Deposit history unavailable' ? (
+              <InlineError message={error} />
+            ) : historyRecords.length === 0 ? (
+              <p className="py-6 text-center text-sm text-muted">
+                {hasHiddenHistory && !showAllHistory ? 'No recent deposits' : 'No deposits yet'}
+              </p>
+            ) : (
+              <div className="divide-y divide-white/10">
+                {historyRecords.map(record => (
+                  <button
+                    key={record.depositId}
+                    type="button"
+                    onClick={() => {
+                      setShowHistory(false)
+                      setViewRecordId(record.depositId)
+                      setNow(Date.now())
+                      setError(null)
+                    }}
+                    className="wallet-interactive flex min-h-14 w-full items-center justify-between gap-3 py-3 text-left text-sm hover:bg-wallet-selected focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2"
+                  >
+                    <span className="min-w-0 truncate">
+                      {record.sourceSymbol} · {record.source.chainName}
+                    </span>
+                    <span
+                      className={`shrink-0 text-xs ${hasDepositSettlementShortfall(record) ? 'text-warning' : 'text-muted'}`}
+                    >
+                      {depositStatusLabel(record, now)}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </section>
         </DialogContent>
       </Dialog>
       <Dialog open={picker !== null} onOpenChange={open => !open && setPicker(null)}>
@@ -1178,7 +1162,11 @@ function ShieldDepositContent() {
         >
           <div className="flex h-14 shrink-0 items-center justify-between px-4">
             <DialogTitle className="text-base font-medium">
-              {picker === 'token' ? 'Select Token' : 'Select Network'}
+              {picker === 'provider'
+                ? 'Shield Provider'
+                : picker === 'token'
+                  ? 'Select Token'
+                  : 'Select Network'}
             </DialogTitle>
             <button
               type="button"
@@ -1190,6 +1178,26 @@ function ShieldDepositContent() {
             </button>
           </div>
           <DialogDescription className="sr-only">Choose deposit source</DialogDescription>
+          {picker === 'provider' && (
+            <div className="min-h-0 overflow-y-auto px-4 pb-5">
+              {(['near-confidential', 'zcash-shield'] as const).map(item => (
+                <button
+                  key={item}
+                  type="button"
+                  disabled={item === 'near-confidential' ? !canManageNear : !canReceiveZcash}
+                  aria-pressed={provider === item}
+                  onClick={() => selectProvider(item)}
+                  className="wallet-interactive flex h-16 w-full items-center gap-3 rounded-lg px-2 text-left text-sm enabled:hover:bg-wallet-selected disabled:opacity-45"
+                >
+                  <ShieldProviderLogo provider={item} size={32} />
+                  <span className="flex-1">{SHIELD_PROVIDERS[item].detailName}</span>
+                  {provider === item && (
+                    <Icon icon="lucide:check" width={18} className="text-primary" />
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
           {picker === 'token' && (
             <div className="min-h-0 overflow-y-auto px-4 pb-5">
               <label className="relative mb-3 block">

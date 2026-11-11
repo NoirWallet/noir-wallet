@@ -90,6 +90,13 @@ export function buildConfidentialPortfolioView(
     const registered = mappedAssetId ? assets.get(mappedAssetId) : undefined
     const assetId = managed?.assetId ?? registered?.asset.id
     const chainId = managed?.chainId ?? registered?.asset.chainId
+    const bundledMetadata =
+      token &&
+      registered?.source === 'bundled' &&
+      assetId === registered.asset.id &&
+      token.decimals === registered.metadata.decimals
+        ? registered.metadata
+        : null
     const iconUrl = token ? (token.icon ?? token.coingeckoIcon ?? undefined) : undefined
     const priceUsd = token && token.price > 0 ? new Big(token.price).toFixed() : undefined
     return [
@@ -102,8 +109,8 @@ export function buildConfidentialPortfolioView(
         ...(token
           ? {
               blockchain: token.blockchain,
-              symbol: token.symbol,
-              name: token.symbol,
+              symbol: bundledMetadata?.symbol ?? token.symbol,
+              name: bundledMetadata?.name ?? token.symbol,
               decimals: token.decimals,
               ...(iconUrl ? { iconUrl } : {}),
               ...(priceUsd && priceUsd.length <= 128

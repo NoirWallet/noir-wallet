@@ -7,11 +7,10 @@ interface AccountAvatarProps extends Pick<
   'width' | 'height' | 'className' | 'title'
 > {
   readonly walletId: string | null
-  readonly accountId: string | null
 }
 
-export function AccountAvatar({ walletId, accountId, ...props }: AccountAvatarProps) {
-  const src = getAccountAvatarSrc(walletId, accountId)
+export function AccountAvatar({ walletId, ...props }: AccountAvatarProps) {
+  const src = getAccountAvatarSrc(walletId)
   const [failedSrc, setFailedSrc] = useState<string | null>(null)
 
   if (!src || failedSrc === src) {

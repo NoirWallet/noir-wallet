@@ -6,15 +6,19 @@ import {
   hasPortfolioBalanceRefreshIssue
 } from '../../../src/popup/components/portfolio/portfolio-recovery.ts'
 
-function chain(displayName, status, errorCodes = []) {
-  return { chain: { displayName }, status, errorCodes }
+function chain(displayName, status, errorCodes = [], assets = []) {
+  return { chain: { displayName, family: 'evm' }, status, errorCodes, assets }
 }
 
 test.describe('Portfolio automatic recovery', () => {
-  test('does not retry cached loading or ready chains', () => {
+  test('retries empty loading chains but preserves cached balances', () => {
     expect(
-      hasPortfolioBalanceRefreshIssue([chain('Ethereum', 'ready'), chain('Bitcoin', 'loading')])
+      hasPortfolioBalanceRefreshIssue([
+        chain('Ethereum', 'ready'),
+        chain('Bitcoin', 'loading', [], [{ asset: 'cached' }])
+      ])
     ).toBe(false)
+    expect(hasPortfolioBalanceRefreshIssue([chain('Ethereum', 'loading')])).toBe(true)
   })
 
   test('retries a complete network failure', () => {

@@ -6,6 +6,7 @@ export function TokenBalanceDisplay({
   amount,
   symbol,
   priceUsd,
+  showSymbol = true,
   approximateFiat = false,
   unavailablePriceLabel = '—',
   className
@@ -13,6 +14,7 @@ export function TokenBalanceDisplay({
   amount: string
   symbol: string
   priceUsd?: number | string | null
+  showSymbol?: boolean
   approximateFiat?: boolean
   unavailablePriceLabel?: string
   className?: string
@@ -22,11 +24,11 @@ export function TokenBalanceDisplay({
 
   return (
     <div className={cn('min-w-0 text-right', className)}>
-      <p className="break-all font-sans text-sm tabular-nums" title={parsedAmount?.toFixed()}>
+      <p className="font-sans text-sm tabular-nums" title={parsedAmount?.toFixed()}>
         {parsedAmount === null
           ? unavailablePriceLabel
-          : formatTokenQuantity(parsedAmount.toFixed())}{' '}
-        {symbol}
+          : formatTokenQuantity(parsedAmount.toFixed())}
+        {showSymbol ? ` ${symbol}` : null}
       </p>
       <p className="break-all text-xs text-muted">
         {fiatValue === null

@@ -168,7 +168,11 @@ export function MultichainActivityDetail({
   const { copyToClipboard, showToast, isCopied, copyFailed } = useCopyToClipboard()
   const [privateCopyAddress, setPrivateCopyAddress] = useState<string | null>(null)
   const endpointSettings = useSettingsStore(state => state.chainEndpointSettings)
-  const { userAssets: userEvmAssets, detectedAssets: detectedEvmAssets } = useActivityEvmAssets()
+  const {
+    userAssets: userEvmAssets,
+    detectedAssets: detectedEvmAssets,
+    catalogTokens
+  } = useActivityEvmAssets()
   const currentWalletId = useWalletStore(state => state.currentWalletId)
   const currentAccountId = useWalletStore(state => state.currentAccountId)
   const currentNetwork = useWalletStore(state => state.currentNetwork)
@@ -399,9 +403,10 @@ export function MultichainActivityDetail({
         endpointSettings,
         userEvmAssets,
         detectedEvmAssets,
+        catalogTokens,
         portfolio
       }),
-    [endpointSettings, network, portfolio, userEvmAssets, detectedEvmAssets]
+    [endpointSettings, network, portfolio, userEvmAssets, detectedEvmAssets, catalogTokens]
   )
   const executionAddressModes = useMemo(
     () => buildActivityExecutionAddressModes(accountNetworks),

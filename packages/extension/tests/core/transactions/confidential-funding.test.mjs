@@ -120,6 +120,33 @@ test.describe('confidential funding safety rules', () => {
             }
           }
         },
+        async quoteFlexibleDeposit(request) {
+          return {
+            correlationId: 'flexible-external-quote',
+            quoteRequest: {
+              dry: false,
+              swapType: 'FLEX_INPUT',
+              confidentiality: 'basic',
+              originAsset: request.originAsset,
+              destinationAsset: request.originAsset,
+              amount: '35000000000001',
+              refundTo: request.refundTo,
+              depositType: 'ORIGIN_CHAIN',
+              refundType: 'ORIGIN_CHAIN',
+              recipient: request.signerId,
+              recipientType: 'CONFIDENTIAL_INTENTS',
+              slippageTolerance: 0
+            },
+            quote: {
+              amountIn: '35000000000001',
+              minAmountIn: '35000000000001',
+              amountOut: '35000000000001',
+              minAmountOut: '35000000000001',
+              depositAddress: '0x4444444444444444444444444444444444444444',
+              deadline: new Date(now + 60_000).toISOString()
+            }
+          }
+        },
         async getOneClickStatus(_address, memo) {
           statusCalls += 1
           expect(memo).toBe('memo-1')
@@ -202,7 +229,7 @@ test.describe('confidential funding safety rules', () => {
       ),
       assetMappings: [{ assetId: source.assetId, protocolAssetId: source.protocolAssetId }],
       now: () => now,
-      createId: () => 'external-one',
+      createId: () => (records.has('external-one') ? 'external-two' : 'external-one'),
       scheduleMonitoring: async () => {
         monitoringCalls += 1
       }
@@ -459,6 +486,90 @@ test.describe('confidential funding safety rules', () => {
     expect(cachedBalance).toEqual([
       { tokenId: source.protocolAssetId, available: '2', source: 'intents' }
     ])
+    const { amountRaw: _amountRaw, ...sourceWithoutAmount } = source
+    const minimumRequest = { ...request, requestId: 'minimum-one', source: sourceWithoutAmount }
+    const minimumDeposit = await coordinator.createExternalDeposit(minimumRequest)
+    expect(minimumDeposit).toMatchObject({
+      amountMode: 'minimum',
+      amountRaw: '35000000000001',
+      source: { amountRaw: '35000000000001' },
+      slippageBps: 0
+    })
+    expect((await coordinator.createExternalDeposit(minimumRequest)).depositId).toBe(
+      minimumDeposit.depositId
+    )
+    await expect(coordinator.createExternalDeposit({ ...minimumRequest, source })).rejects.toThrow(
+      'request ID was reused'
+    )
+  })
+
+  test('discovers the provider minimum and binds a flexible external deposit quote', async () => {
+    const originalFetch = globalThis.fetch
+    const requests = []
+    const signerId = '0x1111111111111111111111111111111111111111'
+    const refundTo = '0x2222222222222222222222222222222222222222'
+    const asset = 'nep141:eth.omft.near'
+    let tamper = false
+    let drySucceeds = false
+    let finalMinimumTooHigh = false
+    globalThis.fetch = async (_url, init) => {
+      const request = JSON.parse(init.body)
+      requests.push(request)
+      if (request.dry && !drySucceeds) {
+        return new Response(
+          JSON.stringify({ message: 'Amount is too low for bridge, try at least 35000000000001' }),
+          { status: 400 }
+        )
+      }
+      return new Response(
+        JSON.stringify({
+          correlationId: 'flex-quote',
+          quoteRequest: { ...request, recipient: tamper ? refundTo : request.recipient },
+          quote: {
+            amountIn: request.amount,
+            minAmountIn: request.dry
+              ? '35000000000001'
+              : finalMinimumTooHigh
+                ? '35000000000002'
+                : request.amount,
+            amountOut: request.amount,
+            minAmountOut: request.amount,
+            depositAddress: '0x3333333333333333333333333333333333333333',
+            deadline: new Date(Date.now() + 60_000).toISOString()
+          }
+        }),
+        { status: 201 }
+      )
+    }
+    try {
+      const api = new ConfidentialFundingApi(apiConfig, 'https://near.example.test', '')
+      const input = { originAsset: asset, signerId, refundTo }
+      const quote = await api.quoteFlexibleDeposit(input)
+      expect(requests.map(request => [request.dry, request.amount, request.swapType])).toEqual([
+        [true, '1', 'FLEX_INPUT'],
+        [false, '35000000000001', 'FLEX_INPUT']
+      ])
+      expect(requests.every(request => request.slippageTolerance === 0)).toBe(true)
+      expect(quote.quote.minAmountIn).toBe('35000000000001')
+      tamper = true
+      await expect(api.quoteFlexibleDeposit(input)).rejects.toThrow(
+        'Flexible external Shield quote does not match'
+      )
+      tamper = false
+      drySucceeds = true
+      const discovered = await api.quoteFlexibleDeposit(input)
+      expect(requests.slice(-2).map(request => [request.dry, request.amount])).toEqual([
+        [true, '1'],
+        [false, '35000000000001']
+      ])
+      expect(discovered.quote.minAmountIn).toBe('35000000000001')
+      finalMinimumTooHigh = true
+      await expect(api.quoteFlexibleDeposit(input)).rejects.toThrow(
+        'Flexible external Shield quote does not match'
+      )
+    } finally {
+      globalThis.fetch = originalFetch
+    }
   })
   test('does not turn a malformed balance response into a confirmed zero', async () => {
     const originalFetch = globalThis.fetch

@@ -138,13 +138,15 @@
   --color-ring: var(--ring);
 
   /* Additional Project Colors */
-  --color-warning: #ffc201;
+  --color-warning: #ffa100;
+  --color-warning-surface: color-mix(in srgb, var(--color-warning) 10%, #12121c);
   --color-warning-foreground: oklch(0 0 0);
   --color-success: #00d18a;
   --color-success-foreground: #000000;
   --color-danger: #ff4444;
   --color-danger-foreground: #ffffff;
   --color-private: #ffcc00;
+  --color-private-action: #d18400;
   --color-wallet-surface: #22222d;
   --color-wallet-selected: #414152;
   --color-wallet-secondary: #bcbcc8;
@@ -241,10 +243,10 @@ html[data-surface='side-panel'] #root {
 }
 
 [data-wallet-mode='private'] {
-  --primary: var(--color-private);
-  --ring: var(--color-private);
-  --color-primary: var(--color-private);
-  --color-ring: var(--color-private);
+  --primary: var(--color-private-action);
+  --ring: var(--color-private-action);
+  --color-primary: var(--color-private-action);
+  --color-ring: var(--color-private-action);
   --color-background: #14110c;
   --color-card: #222019;
   --color-popover: #25231c;
@@ -254,7 +256,7 @@ html[data-surface='side-panel'] #root {
   background-color: var(--color-background);
   background-image: radial-gradient(
     ellipse 375px 375px at 0 0,
-    rgb(255 162 0 / 20%),
+    rgb(255 161 0 / 20%),
     transparent 100%
   );
 }

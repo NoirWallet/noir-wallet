@@ -1558,6 +1558,17 @@ test('adds a Zcash account after the service worker restores an unlocked session
     await selectNewZcashAccountHistory(popup)
     await expect(popup.getByText('Account 2', { exact: true })).toBeVisible({ timeout: 60_000 })
     await expect(popup.getByText('Account setup incomplete')).toHaveCount(0)
+    await expect(popup.getByRole('button', { name: 'Choose wallet' })).toBeVisible()
+    await expect
+      .poll(() =>
+        popup.evaluate(async () => {
+          const response = await chrome.runtime.sendMessage({ type: 'GET_ACCOUNT_NETWORKS' })
+          return response.result?.accounts?.find((account: { active: boolean }) => account.active)
+            ?.accountIndex
+        })
+      )
+      .toBe(1)
+    await captureScreenshot(popup, 'pingcode-13757-new-account-active.png')
   } finally {
     await removeZcashHistoryMock()
   }

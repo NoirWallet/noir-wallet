@@ -1,6 +1,7 @@
 import { InlineError } from './InlineError'
 import { useState, useEffect } from 'react'
 import { Button } from '../ui/button'
+import { WarningBox } from '../ui/WarningBox'
 import WalletIcon from '@/images/wallet-icon.svg'
 import { PasswordInput } from './PasswordInput'
 import { classifyError } from '@/lib/errors'
@@ -139,11 +140,7 @@ export function UnlockForm({
             </p>
           </div>
 
-          <div className="p-3 bg-yellow-500/10 rounded-lg border border-yellow-500/20">
-            <p className="text-xs text-yellow-500">
-              ⚠️ Make sure you have your Secret Recovery Phrase before proceeding.
-            </p>
-          </div>
+          <WarningBox>Make sure you have your Secret Recovery Phrase before proceeding.</WarningBox>
 
           <div className="flex gap-2 pt-2">
             <Button

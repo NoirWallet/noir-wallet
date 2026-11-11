@@ -31,7 +31,7 @@ import { seedSettledZcashBalance } from '../../helpers/release-default'
 
 registerProtocolFixtures()
 
-test('quotes ZEC Shield to the same Account Private ETH while Private mode is selected', async ({
+test('quotes Public ZEC to the same Account Public ETH', async ({
   context,
   popup,
   extensionId
@@ -46,11 +46,11 @@ test('quotes ZEC Shield to the same Account Private ETH while Private mode is se
     popup,
     {
       total: '2',
-      transparent: '0',
-      shielded: '2',
+      transparent: '2',
+      shielded: '0',
       spendable: '2',
       available: '2',
-      confirmed: { shielded: '2', transparent: '0' }
+      confirmed: { shielded: '0', transparent: '2' }
     },
     { hydrateBackground: true }
   )
@@ -59,13 +59,10 @@ test('quotes ZEC Shield to the same Account Private ETH while Private mode is se
     .poll(() =>
       popup.evaluate(async () => {
         const snapshot = await chrome.runtime.sendMessage({ type: 'GET_SYNC_STATE' })
-        return snapshot.balance?.confirmed?.shielded
+        return snapshot.balance?.confirmed?.transparent
       })
     )
     .toBe('2')
-  await popup.getByRole('radio', { name: 'Private mode' }).click()
-  await popup.getByRole('button', { name: 'Asset category: Private assets', exact: true }).click()
-  await popup.getByRole('radio', { name: /Total assets/ }).click()
   await popup.getByRole('button', { name: 'Swap', exact: true }).click()
 
   const fromAsset = popup.getByRole('button', { name: 'From asset' })
@@ -96,10 +93,13 @@ test('quotes ZEC Shield to the same Account Private ETH while Private mode is se
     const refund = zcash?.addresses?.find(
       (address: { scheme?: unknown }) => address.scheme === 'zcash-transparent-p2pkh'
     )?.value
-    if (typeof refund !== 'string' || typeof evm?.privateExecutionAddress !== 'string') {
+    const recipient = evm?.addresses?.find(
+      (address: { preferredForReceive?: unknown }) => address.preferredForReceive
+    )?.value
+    if (typeof refund !== 'string' || typeof recipient !== 'string') {
       throw new Error('Test Account route is unavailable')
     }
-    return { refund, recipient: evm.privateExecutionAddress as string }
+    return { refund, recipient }
   }, getZcashChainId('mainnet'))
   await expect(popup.getByRole('button', { name: 'Choose receive account' })).toHaveCount(0)
   await expect(popup.locator('input[id^="swap-recipient"]')).toHaveCount(0)
@@ -117,11 +117,11 @@ test('quotes ZEC Shield to the same Account Private ETH while Private mode is se
     destinationAsset: ETH_ASSET,
     amount: '100000000',
     refundTo: addresses.refund,
-    recipient: addresses.recipient,
-    confidentiality: 'basic'
+    recipient: addresses.recipient
   })
+  expect(api.getQuoteRequests().at(-1)?.confidentiality).toBeUndefined()
   await expect(popup.getByRole('button', { name: 'Swap', exact: true })).toBeEnabled()
-  await captureScreenshot(popup, 'swap-zec-shield-own-private-quote.png')
+  await captureScreenshot(popup, 'swap-zec-public-own-public-quote.png')
 })
 
 function swapAssetDialog(popup: Page, _direction: 'From' | 'To') {
@@ -229,7 +229,7 @@ test('renders usable Swap assets while unrelated chain catalogs are pending', as
   }
 })
 
-test('limits Swap to this Account Zcash recipients and disables a wallet without Zcash', async ({
+test('limits Public Swap to this Account Zcash address and disables a wallet without Zcash', async ({
   context,
   popup,
   extensionId
@@ -256,13 +256,8 @@ test('limits Swap to this Account Zcash recipients and disables a wallet without
     .getByRole('button', { name: /^ZEC on Zcash/ })
     .first()
     .click()
-  await popup.getByRole('button', { name: 'Choose receive account' }).click()
-  const ownAddresses = popup.getByRole('dialog', { name: 'Receive at' })
-  await expect(ownAddresses.getByRole('button', { name: 'Receive at Shielded' })).toBeEnabled()
-  await expect(ownAddresses.getByRole('button', { name: 'Receive at Transparent' })).toBeEnabled()
-  await expect(ownAddresses.locator('input')).toHaveCount(0)
-  await captureScreenshot(popup, 'swap-zec-own-addresses.png')
-  await ownAddresses.getByRole('button', { name: 'Receive at Transparent' }).click()
+  await expect(popup.getByRole('button', { name: 'Choose receive account' })).toHaveCount(0)
+  await expect(popup.getByRole('dialog', { name: 'Receive at' })).toHaveCount(0)
   await popup.getByRole('textbox', { name: 'From amount' }).fill('0.01')
   const transparentRecipient = await popup.evaluate(async zcashChainId => {
     const response = await chrome.runtime.sendMessage({ type: 'GET_ACCOUNT_NETWORKS' })
@@ -276,25 +271,7 @@ test('limits Swap to this Account Zcash recipients and disables a wallet without
       )?.value as string
   }, getZcashChainId('mainnet'))
   await expect.poll(() => api.getQuoteRequests().at(-1)?.recipient).toBe(transparentRecipient)
-  await popup.getByRole('button', { name: 'Choose receive account' }).click()
-  await popup
-    .getByRole('dialog', { name: 'Receive at' })
-    .getByRole('button', { name: 'Receive at Shielded' })
-    .click()
-  const zcashRecipient = await popup.evaluate(async zcashChainId => {
-    const response = await chrome.runtime.sendMessage({ type: 'GET_ACCOUNT_NETWORKS' })
-    const active = response?.result?.accounts?.find(
-      (account: { active?: unknown }) => account.active === true
-    )
-    const zcash = active?.networks?.find(
-      (network: { chainId?: unknown }) => network.chainId === zcashChainId
-    )
-    return zcash?.addresses?.find(
-      (address: { scheme?: unknown }) => address.scheme === 'zcash-shielded-unified'
-    )?.value as string | undefined
-  }, getZcashChainId('mainnet'))
-  expect(zcashRecipient).toMatch(/^u1/)
-  await expect.poll(() => api.getQuoteRequests().at(-1)?.recipient).toBe(zcashRecipient)
+  await captureScreenshot(popup, 'swap-zec-own-public-address.png')
   await popup.goto(`chrome-extension://${extensionId}/index.html`)
   await popup.getByRole('button', { name: 'Choose wallet' }).click()
   await popup
@@ -322,14 +299,9 @@ test('limits Swap to this Account Zcash recipients and disables a wallet without
     .first()
     .click()
   await popup.getByRole('textbox', { name: 'From amount' }).fill('0.01')
-  await expect(popup.getByRole('button', { name: 'Choose receive account' })).toBeVisible()
+  await expect(popup.getByRole('button', { name: 'Choose receive account' })).toHaveCount(0)
   await expect(popup.locator('input[id^="swap-recipient"]')).toHaveCount(0)
-  await expect(popup.getByText('Receive account unavailable for this asset.')).toBeVisible()
   await expect(popup.getByRole('button', { name: 'Swap', exact: true })).toBeDisabled()
-  await popup.getByRole('button', { name: 'Choose receive account' }).click()
-  const unavailable = popup.getByRole('dialog', { name: 'Receive at' })
-  await expect(unavailable.getByRole('button', { name: 'Receive at Shielded' })).toBeDisabled()
-  await expect(unavailable.getByRole('button', { name: 'Receive at Transparent' })).toBeDisabled()
   await captureScreenshot(popup, 'swap-zec-unavailable-account.png')
 })
 
@@ -842,11 +814,13 @@ test('keeps Public and Private Swap within their own Account modes in real MV3',
   await expectNoOverflow(popup)
   await captureScreenshot(popup, 'swap-main-own-public.png')
 
-  await popup.getByRole('button', { name: 'Choose source account, current main' }).click()
   await popup
-    .getByRole('dialog', { name: 'Choose source account' })
-    .getByRole('radio', { name: /Private account/ })
+    .getByRole('group', { name: 'Account type' })
+    .getByRole('button', { name: 'Private' })
     .click()
+  await expect(
+    popup.getByRole('group', { name: 'Account type' }).getByRole('button', { name: 'Private' })
+  ).toHaveAttribute('aria-pressed', 'true')
   await popup.getByRole('textbox', { name: 'From amount' }).fill('0.01')
   await expect
     .poll(() => api.getQuoteRequests().at(-1)?.recipient.toLowerCase())
@@ -881,23 +855,13 @@ test('keeps Public and Private Swap within their own Account modes in real MV3',
         .click()
     }
     const mode = confidential ? 'private' : 'main'
-    if (confidential) {
-      const privateSourceAccount = popup.getByRole('button', {
-        name: 'Choose source account, current private'
-      })
-      await expect(privateSourceAccount).toBeVisible()
-      await expect(privateSourceAccount.locator('span[title]')).toHaveAttribute(
-        'title',
-        addresses.private
-      )
-      await expect(popup.getByRole('button', { name: 'Choose receive account' })).toHaveCount(0)
-      await expect(popup.locator('input[id^="swap-recipient"]')).toHaveCount(0)
-    } else {
-      await expect(
-        popup.getByRole('button', { name: `Choose source account, current ${mode}` })
-      ).toBeVisible()
-      await expect(popup.getByRole('button', { name: 'Choose receive account' })).toHaveCount(0)
-    }
+    await expect(
+      popup
+        .getByRole('group', { name: 'Account type' })
+        .getByRole('button', { name: confidential ? 'Private' : 'Public' })
+    ).toHaveAttribute('aria-pressed', 'true')
+    await expect(popup.getByRole('button', { name: 'Choose receive account' })).toHaveCount(0)
+    await expect(popup.locator('input[id^="swap-recipient"]')).toHaveCount(0)
     const notification = popup.getByRole('button', { name: 'Dismiss notification' })
     if (await notification.isVisible()) await notification.click()
     await captureScreenshot(

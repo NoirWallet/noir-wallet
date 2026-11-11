@@ -29,6 +29,7 @@ import {
   assertDirectConfidentialWithdrawIntentBinding,
   assertConfidentialIntentBinding,
   assertConfidentialQuoteBinding,
+  assertFlexibleExternalDepositQuoteBinding,
   createConfidentialFundingGraph,
   createExternalShieldDepositGraph,
   fingerprintConfidentialValue,
@@ -480,7 +481,7 @@ export class ConfidentialFundingCoordinator {
           mapping.assetId === input.source.assetId &&
           mapping.protocolAssetId === input.source.protocolAssetId
       ) ||
-      !isPositiveRaw(input.source.amountRaw) ||
+      (input.source.amountRaw !== undefined && !isPositiveRaw(input.source.amountRaw)) ||
       !isBoundedLabel(input.source.chainName) ||
       !isBoundedLabel(input.keyDomainId, 512) ||
       !isBoundedLabel(input.accountId, 512) ||
@@ -537,7 +538,10 @@ export class ConfidentialFundingCoordinator {
         existing.source.chainName !== input.source.chainName ||
         existing.source.assetId !== input.source.assetId ||
         existing.source.protocolAssetId !== input.source.protocolAssetId ||
-        existing.source.amountRaw !== input.source.amountRaw ||
+        (input.source.amountRaw === undefined
+          ? existing.amountMode !== 'minimum'
+          : existing.amountMode === 'minimum' ||
+            existing.source.amountRaw !== input.source.amountRaw) ||
         existing.refundAddress !== input.refundAddress ||
         existing.signerId !== identity.address
       ) {
@@ -558,35 +562,41 @@ export class ConfidentialFundingCoordinator {
       }
       return existing
     }
-    const quote = await this.options.api.quote({
+    const minimumMode = input.source.amountRaw === undefined
+    const quote = minimumMode
+      ? await this.options.api.quoteFlexibleDeposit({
+          originAsset: input.source.protocolAssetId,
+          signerId: identity.address,
+          refundTo: input.refundAddress
+        })
+      : await this.options.api.quote({
+          originAsset: input.source.protocolAssetId,
+          destinationAsset: input.source.protocolAssetId,
+          amountRaw: input.source.amountRaw!,
+          signerId: identity.address,
+          refundTo: input.refundAddress,
+          recipient: identity.address,
+          depositType: 'ORIGIN_CHAIN',
+          refundType: 'ORIGIN_CHAIN',
+          recipientType: 'CONFIDENTIAL_INTENTS',
+          slippageBps: 50,
+          dry: false
+        })
+    const amountRaw = minimumMode ? quote.quote.amountIn : input.source.amountRaw!
+    const binding = {
       originAsset: input.source.protocolAssetId,
       destinationAsset: input.source.protocolAssetId,
-      amountRaw: input.source.amountRaw,
+      amountRaw,
       signerId: identity.address,
       refundTo: input.refundAddress,
       recipient: identity.address,
-      depositType: 'ORIGIN_CHAIN',
-      refundType: 'ORIGIN_CHAIN',
-      recipientType: 'CONFIDENTIAL_INTENTS',
-      slippageBps: 50,
-      dry: false
-    })
-    assertConfidentialQuoteBinding(
-      quote,
-      {
-        originAsset: input.source.protocolAssetId,
-        destinationAsset: input.source.protocolAssetId,
-        amountRaw: input.source.amountRaw,
-        signerId: identity.address,
-        refundTo: input.refundAddress,
-        recipient: identity.address,
-        depositType: 'ORIGIN_CHAIN',
-        refundType: 'ORIGIN_CHAIN',
-        recipientType: 'CONFIDENTIAL_INTENTS',
-        slippageBps: 50
-      },
-      this.now()
-    )
+      depositType: 'ORIGIN_CHAIN' as const,
+      refundType: 'ORIGIN_CHAIN' as const,
+      recipientType: 'CONFIDENTIAL_INTENTS' as const,
+      slippageBps: minimumMode ? 0 : 50
+    }
+    if (minimumMode) assertFlexibleExternalDepositQuoteBinding(quote, binding, this.now())
+    else assertConfidentialQuoteBinding(quote, binding, this.now())
     if (isZcash && quote.quoteRequest.refundTo !== input.refundAddress) {
       throw new Error('External Shield quote changed its Zcash refund address')
     }
@@ -640,7 +650,7 @@ export class ConfidentialFundingCoordinator {
       network: input.network,
       keyDomainId: input.keyDomainId,
       accountId: input.accountId,
-      source: Object.freeze({ ...input.source }),
+      source: Object.freeze({ ...input.source, amountRaw }),
       destinationAssetId: input.source.assetId,
       sourceSymbol: asset.metadata.symbol,
       sourceDecimals: asset.metadata.decimals,
@@ -648,10 +658,11 @@ export class ConfidentialFundingCoordinator {
       depositAddress: quote.quote.depositAddress,
       ...(quote.quote.depositMemo ? { depositMemo: quote.quote.depositMemo } : {}),
       refundAddress: input.refundAddress,
-      amountRaw: input.source.amountRaw,
+      amountRaw,
+      ...(minimumMode ? { amountMode: 'minimum' as const } : {}),
       expectedOutputRaw: quote.quote.amountOut,
       minimumOutputRaw: quote.quote.minAmountOut,
-      slippageBps: 50,
+      slippageBps: binding.slippageBps,
       expiresAt: quoteDeadline(quote),
       phase: 'awaiting-payment',
       ...(input.requestId ? { requestId: input.requestId } : {}),

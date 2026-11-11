@@ -433,6 +433,7 @@ export function buildLiveSwapQuoteRequest(input: {
   readonly tokenOut: RheaSwapToken | null
   readonly amountIn: string
   readonly slippage: number
+  readonly quoteMode?: RheaSwapQuoteRequest['quoteMode']
   readonly refundAddress: string
   readonly recipientAddress: string
   readonly privateRecipientAddress?: string
@@ -470,6 +471,7 @@ export function buildLiveSwapQuoteRequest(input: {
         input.refundAddress,
         input.recipientAddress,
         slippageTolerance,
+        input.quoteMode ?? 'best-price',
         input.confidentiality ?? null
       ]),
       key: JSON.stringify([
@@ -479,6 +481,7 @@ export function buildLiveSwapQuoteRequest(input: {
         input.refundAddress,
         input.recipientAddress,
         slippageTolerance,
+        input.quoteMode ?? 'best-price',
         input.confidentiality ?? null
       ]),
       amount,
@@ -502,6 +505,7 @@ export function buildLiveSwapQuoteRequest(input: {
         },
         amountIn: amount,
         slippageBps: slippageTolerance,
+        quoteMode: input.quoteMode ?? 'best-price',
         sender: input.refundAddress,
         recipient: input.recipientAddress,
         ...(input.confidentiality === undefined ? {} : { confidentiality: input.confidentiality })

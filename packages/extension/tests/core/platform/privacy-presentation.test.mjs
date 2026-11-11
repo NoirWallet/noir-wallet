@@ -16,6 +16,7 @@ import {
 } from '../../../src/popup/services/asset-domains.ts'
 import { projectPortfolioForChains } from '../../../src/popup/services/portfolio-presentation.ts'
 import {
+  projectNearConfidentialZecForHome,
   resolveConfidentialDetailAssetId,
   resolveNearConfidentialZecHolding
 } from '../../../src/popup/services/near-confidential-holdings.ts'
@@ -113,6 +114,60 @@ test('NEAR Confidential ZEC stays separate from on-chain ZEC and inside its acco
         }
       }
     })
+  ).toBeNull()
+})
+
+test('Home ZEC display combines on-chain and NEAR Confidential balances without changing source balances', () => {
+  const assetId = 'bip122:00040fe8ec8471911baa1db1266ea15d/slip44:133'
+  const chainId = 'bip122:00040fe8ec8471911baa1db1266ea15d'
+  const asset = {
+    asset: { id: assetId, chainId },
+    metadata: { decimals: 8, symbol: 'ZEC' },
+    balance: {
+      totalRaw: '300000000',
+      transparentRaw: '100000000',
+      shieldedRaw: '200000000',
+      availableRaw: '250000000',
+      pendingRaw: '0'
+    }
+  }
+  const model = {
+    scope: { keyDomainId: 'wallet-a', accountId: 'account-a' },
+    assets: [asset],
+    chains: [{ chain: { id: chainId, family: 'zcash' }, assets: [asset] }],
+    confidential: {
+      status: 'ready',
+      assets: [
+        {
+          tokenId: 'private-zec',
+          protocolAssetId: 'nep141:zec.omft.near',
+          assetId,
+          chainId,
+          availableRaw: '125000000',
+          decimals: 8
+        }
+      ]
+    }
+  }
+  const total = projectNearConfidentialZecForHome(model, model, 'all')
+  const shield = projectNearConfidentialZecForHome(
+    projectPortfolioForDomain(model, 'shield'),
+    model,
+    'shield'
+  )
+  expect(total?.model.assets[0].balance.totalRaw).toBe('425000000')
+  expect(shield?.model.assets[0].balance.totalRaw).toBe('325000000')
+  expect(total?.model.assets[0].balance.availableRaw).toBe('250000000')
+  expect(model.assets[0].balance.totalRaw).toBe('300000000')
+  expect(
+    projectNearConfidentialZecForHome(projectPortfolioForDomain(model, 'public'), model, 'public')
+  ).toBeNull()
+  expect(
+    projectNearConfidentialZecForHome(
+      model,
+      { ...model, scope: { ...model.scope, accountId: 'other' } },
+      'all'
+    )
   ).toBeNull()
 })
 

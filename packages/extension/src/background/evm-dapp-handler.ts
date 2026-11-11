@@ -2,7 +2,9 @@ import { transactionBroadcasted } from '@/core/transactions/transaction-analytic
 import { supportsEvmPrivateExecution } from '@/core/chains/evm'
 import { IndexedDbTransactionRepository } from '@/infrastructure/persistence/repositories'
 import { ANALYTICS_EVENTS } from '../lib/analytics/constants'
+import { classifyError } from '../lib/errors'
 import { emitDAppEvent, observeDAppRequest, type DAppAnalyticsSink } from './dapp-analytics'
+import { ConfidentialFundingApiError } from './confidential-funding-api'
 import type { EvmNetworkConfig } from '@/config/networks'
 import {
   EvmRpcError,
@@ -135,6 +137,27 @@ export function mapEvmTransactionPreparationError(error: unknown): unknown {
   return error instanceof EvmTransactionError && error.code === 'insufficient-funds'
     ? new Eip1193ProviderError(-32000, 'Insufficient funds for the transaction and network fee.')
     : error
+}
+
+function describePrivateTransferPreparationError(error: unknown): string {
+  if (error instanceof Eip1193ProviderError && error.code === 4200) return error.message
+  if (
+    error instanceof ConfidentialFundingApiError &&
+    (error.ambiguous || error.status === 429 || (error.status !== null && error.status >= 500))
+  ) {
+    return 'Confidential quote service is unavailable. Try again later or choose a direct transfer.'
+  }
+  const classified = classifyError(error)
+  if (
+    (error instanceof EvmTransactionError && error.code === 'insufficient-funds') ||
+    classified.userMessage.startsWith('Insufficient ')
+  ) {
+    return 'Balance cannot cover the exact receive amount and fees. Enter a smaller amount in the dApp or choose a direct transfer.'
+  }
+  if (classified.userMessage !== 'An unexpected error occurred. Please try again.') {
+    return classified.userMessage
+  }
+  return 'Unable to quote the exact receive amount. If you used Max, reduce the amount in the dApp to leave room for route costs; otherwise retry or choose a direct transfer.'
 }
 
 export interface EvmDAppRequest {
@@ -984,10 +1007,7 @@ export class BackgroundEvmDAppHandler {
           candidate = null
         } catch (error) {
           if (!approvalActive) throw error
-          privacyError =
-            error instanceof Eip1193ProviderError && error.code === 4200
-              ? error.message
-              : 'Unable to quote the exact receive amount. Try again or choose a direct transfer.'
+          privacyError = describePrivateTransferPreparationError(error)
         } finally {
           if (candidate) await candidate.cancel().catch(() => {})
         }

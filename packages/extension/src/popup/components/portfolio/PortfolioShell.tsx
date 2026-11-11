@@ -31,6 +31,7 @@ import {
 import { NearConfidentialHoldingRow } from './NearConfidentialHoldingRow'
 import {
   listStandaloneNearConfidentialHoldings,
+  projectNearConfidentialZecForHome,
   sumNearConfidentialChainFiat
 } from '@/popup/services/near-confidential-holdings'
 import {
@@ -57,6 +58,8 @@ interface PortfolioShellProps {
   readonly initialView?: PortfolioViewMode
   readonly view?: PortfolioViewMode
   readonly onViewChange?: (view: PortfolioViewMode) => void
+  readonly chainListExpanded: boolean
+  readonly onChainListExpandedChange: (expanded: boolean) => void
   readonly refreshing?: boolean
   readonly refreshDisabled?: boolean
   readonly selectedChainIds?: readonly string[]
@@ -261,6 +264,8 @@ export function PortfolioShell({
   initialView = 'assets',
   view: controlledView,
   onViewChange,
+  chainListExpanded,
+  onChainListExpandedChange,
   refreshing = false,
   refreshDisabled = refreshing,
   selectedChainIds: controlledSelectedChainIds,
@@ -273,17 +278,19 @@ export function PortfolioShell({
   const [localView, setLocalView] = useState<PortfolioViewMode>(initialView)
   const view = controlledView ?? localView
   const setView = onViewChange ?? setLocalView
+  const zecProjection = projectNearConfidentialZecForHome(model, sourceModel ?? model, domain)
+  const displayModel = zecProjection?.model ?? model
   const [localSelectedChainIds, setLocalSelectedChainIds] = useState<readonly string[]>(() =>
-    model.chains
+    displayModel.chains
       .filter(chain => isSelectableChainFamily(chain.chain.family, __ENABLED_CHAIN_FEATURE_FLAGS__))
       .map(chain => chain.chain.id)
   )
   const selectableChains = useMemo(
     () =>
-      model.chains.filter(chain =>
+      displayModel.chains.filter(chain =>
         isSelectableChainFamily(chain.chain.family, __ENABLED_CHAIN_FEATURE_FLAGS__)
       ),
-    [model.chains]
+    [displayModel.chains]
   )
   const availableChainIds = useMemo(
     () => selectableChains.map(chain => chain.chain.id),
@@ -296,7 +303,9 @@ export function PortfolioShell({
   const setSelectedChainIds = onSelectedChainIdsChange ?? setLocalSelectedChainIds
   const standaloneConfidential =
     domain === 'all' || domain === 'shield'
-      ? listStandaloneNearConfidentialHoldings(model, sourceModel ?? model, prices)
+      ? listStandaloneNearConfidentialHoldings(model, sourceModel ?? model, prices).filter(
+          item => item.entry.asset.protocolAssetId !== zecProjection?.protocolAssetId
+        )
       : []
   const visibleConfidential = standaloneConfidential.filter(
     item =>
@@ -344,6 +353,7 @@ export function PortfolioShell({
     () => sortPortfolioChains(visibleChains, prices),
     [prices, visibleChains]
   )
+  const displayedChains = chainListExpanded ? sortedChains : sortedChains.slice(0, 3)
   const sortedNetworkOptions = useMemo(
     () => sortPortfolioChains(selectableChains, prices),
     [selectableChains, prices]
@@ -540,7 +550,7 @@ export function PortfolioShell({
           </div>
         ) : (
           <div className="divide-y divide-white/[0.08] pb-2">
-            {sortedChains.map(chain => {
+            {displayedChains.map(chain => {
               const expanded = expandedChainIds.has(chain.chain.id)
               const confidentialEntries = visibleConfidential.filter(
                 item => item.chain?.chain.id === chain.chain.id
@@ -721,6 +731,22 @@ export function PortfolioShell({
                   onClick={() => onSelectConfidentialAsset?.(entry.asset.tokenId)}
                 />
               ))}
+            {sortedChains.length > 3 && (
+              <button
+                type="button"
+                aria-expanded={chainListExpanded}
+                onClick={() => onChainListExpandedChange(!chainListExpanded)}
+                className="wallet-interactive flex min-h-11 w-full items-center justify-center gap-1.5 px-4 py-2 text-sm font-medium text-primary hover:bg-white/[0.05] active:bg-white/10 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary"
+              >
+                {chainListExpanded ? 'Collapse' : 'View more'}
+                <Icon
+                  icon={chainListExpanded ? 'lucide:chevron-up' : 'lucide:chevron-down'}
+                  width={14}
+                  height={14}
+                  aria-hidden="true"
+                />
+              </button>
+            )}
           </div>
         )}
       </div>

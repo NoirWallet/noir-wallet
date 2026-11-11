@@ -9,6 +9,7 @@ interface TokenIconCandidateInput {
   readonly blockchain?: string
   readonly nativeChain?: string
   readonly bundledIcon?: string
+  readonly contractIcon?: string
 }
 
 const nativeAssetIconUrls: Readonly<Record<string, string>> = Object.freeze({
@@ -111,7 +112,8 @@ export function getTokenIconCandidates({
   token,
   icon,
   assetId,
-  bundledIcon
+  bundledIcon,
+  contractIcon
 }: TokenIconCandidateInput): readonly string[] {
   const providerIcon = isPublicIpfsIconUrl(token?.icon ?? undefined) ? undefined : token?.icon
   const metadataIcon = isCoinGeckoIconUrl(icon) || isPublicIpfsIconUrl(icon) ? undefined : icon
@@ -121,6 +123,7 @@ export function getTokenIconCandidates({
     providerIcon,
     metadataIcon,
     coinGeckoIcon,
+    isCoinGeckoIconUrl(contractIcon) ? contractIcon : undefined,
     getBundledNativeIconFallback(assetId, token)
   ]
 

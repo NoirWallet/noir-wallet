@@ -24,6 +24,7 @@ import { useNavigate } from '@/popup/provider/Router'
 import { useWalletStore } from '@/store/wallet-store'
 import { useAccountDataStore } from '@/store/account-data-store'
 import { EvmSendForm } from './EvmSendForm'
+import { ShieldWithdrawForm } from '../portfolio/ShieldWithdrawPage'
 import { EvmTransactionResult } from './EvmTransactionResult'
 import { BitcoinSendForm } from './BitcoinSendForm'
 import { BitcoinTransactionResult } from './BitcoinTransactionResult'
@@ -47,17 +48,32 @@ import {
   readCachedPortfolio,
   refreshPortfolioFromCache
 } from '@/popup/services/portfolio-cache'
-import { parsePublicPrivateEvmSendDraft, type EvmSendSourceMode } from './evm-send-validation'
-import { useWalletActionExecutionMode } from '@/popup/hooks/useWalletActionExecutionMode'
+import { parsePublicPrivateEvmSendDraft } from './evm-send-validation'
 import { resolveEffectiveActiveAccountIdentity } from '@/popup/lib/effective-active-account'
-import { getCrossChainSendAssetGroup } from '@/popup/services/cross-chain-send-assets'
+import {
+  getCrossChainSendAssetGroup,
+  getCrossChainSendDestinationAssetId,
+  getCrossChainSendTokenGroup,
+  isCrossChainSendDestination
+} from '@/popup/services/cross-chain-send-assets'
 import { prefetchEvmSendCatalogs } from '@/popup/services/evm-send-catalog'
+import { getEnabledSwapChains } from '@/popup/services/swap-catalog-loading'
+import { rheaSwapClient } from '@/popup/services/rhea-swap-client'
+import {
+  resolveEvmFeatureRuntimePolicy,
+  resolveSolanaFeatureRuntimePolicy
+} from '@/core/chains/feature-runtime-policy'
 
 type SendSubmission =
   | Readonly<{ family: 'evm'; value: EvmTransferSubmission }>
   | Readonly<{ family: 'bitcoin'; value: BitcoinTransferSubmission }>
   | Readonly<{ family: 'solana'; value: SolanaTransferSubmission }>
   | Readonly<{ family: 'near'; value: NearTransferSubmission }>
+
+const crossChainCapabilities = Object.freeze({
+  evm: resolveEvmFeatureRuntimePolicy(__ENABLED_CHAIN_FEATURE_FLAGS__).newOperationsEnabled,
+  solana: resolveSolanaFeatureRuntimePolicy(__ENABLED_CHAIN_FEATURE_FLAGS__).newOperationsEnabled
+})
 
 function availableUsdPrice(
   asset: PortfolioReadModel['assets'][number],
@@ -334,9 +350,11 @@ export function MultichainSend() {
   } | null>(null)
   const [submission, setSubmission] = useState<SendSubmission | null>(null)
   const [assetPickerOpen, setAssetPickerOpen] = useState(false)
-  const [evmSourceSelectorOpen, setEvmSourceSelectorOpen] = useState(false)
-  const { activeAccount: storageV2Account, loading: accountNetworksLoading } =
-    useActiveAccountNetworks()
+  const [destinationCatalog, setDestinationCatalog] = useState<{
+    key: string
+    assetIds: readonly string[]
+  } | null>(null)
+  const { activeAccount: storageV2Account } = useActiveAccountNetworks()
   const effectiveAccount = resolveEffectiveActiveAccountIdentity({
     currentWalletId,
     currentAccountId,
@@ -359,13 +377,18 @@ export function MultichainSend() {
     accountId?: string | null
     network?: string
     endpointRuntimeKey?: string
-    sendEntry?: 'asset-detail'
+    sendEntry?: 'asset-detail' | 'shield'
   } | null
-  const sendEntry = navigationSnapshot?.sendEntry === 'asset-detail' ? 'asset-detail' : null
+  const sendEntry =
+    navigationSnapshot?.sendEntry === 'asset-detail' || navigationSnapshot?.sendEntry === 'shield'
+      ? navigationSnapshot.sendEntry
+      : null
   const returnToEntry =
-    sendEntry === 'asset-detail'
+    sendEntry !== null
       ? goBack
       : () => {
+          if (requestedSourceMode === 'shield')
+            navigate('/send', { replace: true, state: navigationSnapshot })
           setSelection(null)
           setAssetPickerOpen(true)
         }
@@ -400,16 +423,6 @@ export function MultichainSend() {
         cachedPrices.quotes.length >= initialPrices.quotes.length))
       ? cachedPrices
       : initialPrices
-  const evmNetwork = storageV2Account?.networks.find(
-    network => network.chain.family === 'evm' && network.privateExecutionAddress
-  )
-  const evmActionMode = useWalletActionExecutionMode(
-    Boolean(evmNetwork?.privateExecutionAddress),
-    effectiveWalletId,
-    effectiveAccountId
-  )
-  const evmSourceMode: EvmSendSourceMode = evmActionMode.mode
-  const setEvmSourceMode = evmActionMode.setMode
   const zcashEnabled =
     storageV2Account?.networks.some(network => network.chain.family === 'zcash') ?? true
 
@@ -417,7 +430,7 @@ export function MultichainSend() {
     let cancelled = false
     void prefetchEvmSendCatalogs(
       storageV2Account?.networks.map(network => network.chain) ?? [],
-      requestedAssetId?.split('/')[0] ?? evmNetwork?.chain.id,
+      requestedAssetId?.split('/')[0],
       () => cancelled
     )
     return () => {
@@ -473,7 +486,6 @@ export function MultichainSend() {
     setSelectionSnapshot(null)
     setSubmission(null)
     setAssetPickerOpen(false)
-    setEvmSourceSelectorOpen(false)
     setModelSnapshot(null)
     void load()
     return () => {
@@ -519,19 +531,93 @@ export function MultichainSend() {
       ? (selectionSnapshot.value?.asset.asset.id ?? null)
       : requestedAssetId
   const selection = assets.find(item => item.asset.asset.id === selectedAssetId) ?? null
-
+  const crossChainGroup =
+    selection?.chain.chain.family === 'evm' && currentNetwork === 'mainnet'
+      ? getCrossChainSendAssetGroup(selection.asset.asset)
+      : null
+  const destinationCandidates = useMemo(
+    () =>
+      crossChainGroup && selection && visibleModel
+        ? visibleModel.chains.flatMap(chain => {
+            if (
+              chain.chain.id === selection.chain.chain.id ||
+              !storageV2Account?.networks.some(network => network.chain.id === chain.chain.id) ||
+              !isSelectableChainFamily(chain.chain.family, __ENABLED_CHAIN_FEATURE_FLAGS__) ||
+              chain.chain.capabilities.transaction.status !== 'available'
+            )
+              return []
+            const assetId = getCrossChainSendDestinationAssetId(chain.chain.id, crossChainGroup)
+            const descriptor = getEnabledSwapChains([chain.chain])[0]
+            return assetId &&
+              descriptor &&
+              ((descriptor.walletFamily === 'evm' && crossChainCapabilities.evm) ||
+                (descriptor.walletFamily === 'solana' && crossChainCapabilities.solana))
+              ? [{ assetId, chain }]
+              : []
+          })
+        : [],
+    [crossChainGroup, selection, storageV2Account, visibleModel]
+  )
+  const destinationCatalogKey = JSON.stringify([
+    scopeKey,
+    selection?.asset.asset.id,
+    destinationCandidates.map(item => item.assetId)
+  ])
   useEffect(() => {
-    setEvmSourceSelectorOpen(false)
-  }, [selection?.asset.asset.id])
-
-  useEffect(() => {
-    if (
-      selection?.chain.chain.family !== 'evm' ||
-      evmSourceMode !== 'private' ||
-      (requestedSourceMode === 'main' &&
-        appliedRequestedAssetRef.current !== `${scopeKey}:${requestedAssetId}`)
-    )
+    if (!crossChainGroup || !selection || destinationCandidates.length === 0) {
+      setDestinationCatalog(null)
       return
+    }
+    const sourceDescriptor = getEnabledSwapChains([selection.chain.chain])[0]
+    const destinationDescriptors = destinationCandidates.map(
+      item => getEnabledSwapChains([item.chain.chain])[0]
+    )
+    if (!sourceDescriptor || destinationDescriptors.some(descriptor => !descriptor)) return
+    let cancelled = false
+    void Promise.all([
+      rheaSwapClient.listTokens({
+        direction: 'from',
+        tokenListChainIds: [sourceDescriptor.tokenListChainId]
+      }),
+      rheaSwapClient.listTokens({
+        direction: 'cross-chain-to',
+        tokenListChainIds: destinationDescriptors.map(descriptor => descriptor!.tokenListChainId)
+      })
+    ])
+      .then(([sourceCatalog, destinationCatalog]) => {
+        if (cancelled) return
+        const sourceToken = sourceCatalog.tokens.find(
+          token =>
+            token.rheaChainId === sourceDescriptor.apiChainId &&
+            getCrossChainSendTokenGroup(token) === crossChainGroup
+        )
+        const assetIds = sourceToken
+          ? destinationCandidates.flatMap((item, index) => {
+              const destinationToken = destinationCatalog.tokens.find(
+                token =>
+                  token.rheaChainId === destinationDescriptors[index]?.apiChainId &&
+                  getCrossChainSendTokenGroup(token) === crossChainGroup &&
+                  isCrossChainSendDestination(sourceToken, token, crossChainCapabilities)
+              )
+              return destinationToken ? [item.assetId] : []
+            })
+          : []
+        setDestinationCatalog({ key: destinationCatalogKey, assetIds })
+      })
+      .catch(() => {
+        if (!cancelled) setDestinationCatalog({ key: destinationCatalogKey, assetIds: [] })
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [crossChainGroup, destinationCatalogKey, destinationCandidates, selection])
+  const availableDestinationNetworks =
+    destinationCatalog?.key === destinationCatalogKey
+      ? destinationCandidates.filter(item => destinationCatalog.assetIds.includes(item.assetId))
+      : []
+
+  useEffect(() => {
+    if (selection?.chain.chain.family !== 'evm' || requestedSourceMode !== 'private') return
     replace(
       `/transfer?${new URLSearchParams({
         assetId: selection.asset.asset.id,
@@ -539,7 +625,7 @@ export function MultichainSend() {
         to: 'shield'
       })}`
     )
-  }, [evmSourceMode, replace, requestedAssetId, requestedSourceMode, scopeKey, selection])
+  }, [replace, requestedSourceMode, selection])
 
   const leaveOnchainResult = useCallback(
     (path: string, shouldOffer: boolean) => {
@@ -575,9 +661,9 @@ export function MultichainSend() {
 
   useEffect(() => {
     if (
+      requestedSourceMode === 'shield' ||
       !requestedAssetId ||
       !visibleModel ||
-      (requestedSourceMode === 'private' && (accountNetworksLoading || evmActionMode.loading)) ||
       appliedRequestedAssetRef.current === `${scopeKey}:${requestedAssetId}`
     ) {
       return
@@ -594,27 +680,7 @@ export function MultichainSend() {
       navigate('/send/zcash')
       return
     }
-    const sendAsset = assets.find(item => item.asset.asset.id === requestedAssetId)
-    if (sendAsset) {
-      if (
-        requestedSourceMode === 'main' ||
-        (requestedSourceMode === 'private' && evmActionMode.privateAvailable)
-      )
-        setEvmSourceMode(requestedSourceMode)
-    }
-  }, [
-    assets,
-    accountNetworksLoading,
-    evmActionMode.privateAvailable,
-    evmActionMode.loading,
-    loadStatus,
-    visibleModel,
-    navigate,
-    requestedAssetId,
-    requestedSourceMode,
-    scopeKey,
-    setEvmSourceMode
-  ])
+  }, [loadStatus, visibleModel, navigate, requestedAssetId, requestedSourceMode, scopeKey])
 
   if (submission?.family === 'evm' && selection?.chain.chain.family === 'evm') {
     return (
@@ -684,12 +750,14 @@ export function MultichainSend() {
     )
   }
 
-  const crossChainSourceAssetId =
-    selection && currentNetwork === 'mainnet' && getCrossChainSendAssetGroup(selection.asset.asset)
+  const walletMode = 'public'
+  const nonEvmCrossChainSourceAssetId =
+    selection?.chain.chain.family !== 'evm' &&
+    selection &&
+    currentNetwork === 'mainnet' &&
+    getCrossChainSendAssetGroup(selection.asset.asset)
       ? selection.asset.asset.id
       : null
-  const crossChainSourceMode = selection?.chain.chain.family === 'evm' ? evmSourceMode : 'main'
-  const walletMode = searchParams.get('mode') === 'private' ? 'private' : 'public'
   const publicPrivateDraft =
     selection && effectiveWalletId && effectiveAccountId
       ? parsePublicPrivateEvmSendDraft(searchParams, {
@@ -702,6 +770,36 @@ export function MultichainSend() {
   const preparingRequestedAsset = Boolean(
     !assetPickerOpen && requestedAssetId && !selection && loadStatus === 'loading'
   )
+  const switchSource = (
+    sourceMode: 'main' | 'shield',
+    assetId: string | null,
+    recipient: string,
+    networkId?: string
+  ) => {
+    setAssetPickerOpen(false)
+    navigate(
+      `/send?${new URLSearchParams({
+        sourceMode,
+        ...(assetId ? { assetId } : {}),
+        ...(networkId ? { networkId } : {}),
+        ...(sourceMode === 'shield' ? { provider: 'near-confidential' } : {}),
+        ...(recipient ? { recipient } : {})
+      })}`,
+      { replace: true, state: navigationSnapshot }
+    )
+  }
+  if (requestedSourceMode === 'shield') {
+    return (
+      <ShieldWithdrawForm
+        key={scopeKey}
+        model={visibleModel ?? null}
+        initialAsset={selection?.asset ?? null}
+        refresh={load}
+        onBack={returnToEntry}
+        onSelectPublic={(assetId, recipient) => switchSource('main', assetId, recipient)}
+      />
+    )
+  }
   return (
     <div className="page-container" data-wallet-mode={walletMode}>
       <PageHeader
@@ -715,24 +813,23 @@ export function MultichainSend() {
               : goBack
         }
         rightContent={
-          !assetPickerOpen && crossChainSourceAssetId ? (
+          !assetPickerOpen && nonEvmCrossChainSourceAssetId ? (
             <SendRouteMenu
               route="onchain"
               onChange={route => {
-                if (route === 'cross-chain') {
-                  navigate(
-                    `/send/cross-chain?${new URLSearchParams({
-                      source: crossChainSourceAssetId,
-                      sourceMode: crossChainSourceMode,
-                      sourceWalletId: effectiveWalletId ?? '',
-                      sourceAccountId: effectiveAccountId ?? ''
-                    })}`,
-                    {
-                      replace: true,
-                      state: { returnToSendAssetId: crossChainSourceAssetId, sendEntry }
-                    }
-                  )
-                }
+                if (route !== 'cross-chain' || !effectiveWalletId || !effectiveAccountId) return
+                navigate(
+                  `/send/cross-chain?${new URLSearchParams({
+                    source: nonEvmCrossChainSourceAssetId,
+                    sourceMode: 'main',
+                    sourceWalletId: effectiveWalletId,
+                    sourceAccountId: effectiveAccountId
+                  })}`,
+                  {
+                    replace: true,
+                    state: { returnToSendAssetId: nonEvmCrossChainSourceAssetId, sendEntry }
+                  }
+                )
               }}
             />
           ) : undefined
@@ -741,22 +838,67 @@ export function MultichainSend() {
       {selection && (
         <div className={assetPickerOpen ? 'hidden' : 'contents'}>
           {selection.chain.chain.family === 'evm' && visibleModel ? (
-            requestedSourceMode === 'private' && !evmActionMode.privateAvailable ? (
-              <div className="page-content px-4 pt-5">
-                <InlineError message="Private send is unavailable for this account." />
-              </div>
-            ) : (
+            requestedSourceMode === 'private' ? null : (
               <EvmSendForm
                 key={`${scopeKey}:${selection.asset.asset.id}`}
                 walletMode={walletMode}
                 onSelectAsset={() => setAssetPickerOpen(true)}
+                onSelectShield={recipient =>
+                  switchSource(
+                    'shield',
+                    selection.asset.asset.id,
+                    recipient,
+                    selection.chain.chain.id
+                  )
+                }
+                destinationNetworks={[
+                  {
+                    assetId: selection.asset.asset.id,
+                    chainId: selection.chain.chain.id,
+                    name: selection.chain.chain.displayName,
+                    icon: resolveChainIconAlias(
+                      selection.chain.chain.family,
+                      selection.chain.chain.displayName,
+                      selection.chain.chain.id
+                    )
+                  },
+                  ...availableDestinationNetworks.map(item => ({
+                    assetId: item.assetId,
+                    chainId: item.chain.chain.id,
+                    name: item.chain.chain.displayName,
+                    icon: resolveChainIconAlias(
+                      item.chain.chain.family,
+                      item.chain.chain.displayName,
+                      item.chain.chain.id
+                    )
+                  }))
+                ]}
+                onSelectDestinationNetwork={(destinationAssetId, draft) => {
+                  if (!effectiveWalletId || !effectiveAccountId) return
+                  const destination = availableDestinationNetworks.find(
+                    item => item.assetId === destinationAssetId
+                  )
+                  if (!destination) return
+                  navigate(
+                    `/send/cross-chain?${new URLSearchParams({
+                      source: selection.asset.asset.id,
+                      destination: destinationAssetId,
+                      sourceMode: 'main',
+                      sourceWalletId: effectiveWalletId,
+                      sourceAccountId: effectiveAccountId,
+                      ...(draft.recipient ? { recipient: draft.recipient } : {}),
+                      ...(draft.amount ? { amount: draft.amount } : {})
+                    })}`,
+                    {
+                      replace: true,
+                      state: { returnToSendAssetId: selection.asset.asset.id, sendEntry }
+                    }
+                  )
+                }}
                 selection={selection}
                 portfolio={visibleModel}
                 priceUsd={availableUsdPrice(selection.asset, assetPrices)}
-                sourceMode={evmSourceMode}
-                sourceSelectorOpen={evmSourceSelectorOpen}
-                onSourceModeChange={setEvmSourceMode}
-                onSourceSelectorOpenChange={setEvmSourceSelectorOpen}
+                sourceMode="main"
                 onFundPrivate={
                   currentNetwork === 'mainnet'
                     ? () =>
@@ -771,9 +913,7 @@ export function MultichainSend() {
                     : undefined
                 }
                 initialRecipient={
-                  requestedSourceMode === 'private' &&
-                  requestedRecipient &&
-                  /^0x[0-9a-fA-F]{40}$/.test(requestedRecipient)
+                  requestedRecipient && /^0x[0-9a-fA-F]{40}$/.test(requestedRecipient)
                     ? requestedRecipient
                     : undefined
                 }

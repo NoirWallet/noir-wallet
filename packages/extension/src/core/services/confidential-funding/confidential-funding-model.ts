@@ -33,6 +33,7 @@ export interface ConfidentialQuote {
   readonly quoteRequest: Readonly<Record<string, unknown>>
   readonly quote: Readonly<{
     amountIn: string
+    minAmountIn?: string
     amountOut: string
     minAmountOut: string
     depositAddress: string
@@ -482,6 +483,37 @@ export function assertConfidentialQuoteBinding(
     deadline <= now
   ) {
     throw new Error('Confidential quote does not match the requested funding route')
+  }
+}
+
+export function assertFlexibleExternalDepositQuoteBinding(
+  quote: ConfidentialQuote,
+  expected: ConfidentialQuoteBinding,
+  now = Date.now(),
+  dry = false
+): void {
+  const request = quote.quoteRequest
+  const deadline = Date.parse(quote.quote.deadline)
+  if (
+    request.swapType !== 'FLEX_INPUT' ||
+    request.dry !== dry ||
+    request.confidentiality !== 'basic' ||
+    request.originAsset !== expected.originAsset ||
+    request.destinationAsset !== expected.destinationAsset ||
+    request.amount !== expected.amountRaw ||
+    quote.quote.amountIn !== expected.amountRaw ||
+    !/^[1-9][0-9]*$/.test(quote.quote.minAmountIn ?? '') ||
+    (!dry && BigInt(quote.quote.minAmountIn!) > BigInt(expected.amountRaw)) ||
+    !equalAddress(request.refundTo, expected.refundTo ?? expected.signerId) ||
+    request.depositType !== 'ORIGIN_CHAIN' ||
+    request.refundType !== 'ORIGIN_CHAIN' ||
+    !equalAddress(request.recipient, expected.recipient) ||
+    request.recipientType !== 'CONFIDENTIAL_INTENTS' ||
+    Number(request.slippageTolerance) !== expected.slippageBps ||
+    !Number.isSafeInteger(deadline) ||
+    deadline <= now
+  ) {
+    throw new Error('Flexible external Shield quote does not match the requested route')
   }
 }
 

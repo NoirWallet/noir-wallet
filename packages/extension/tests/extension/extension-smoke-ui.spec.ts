@@ -366,6 +366,7 @@ test('creates a 12-word phrase with the pinned Multichain WASM at 375x600', asyn
   await option12.click()
   await expect(option12).toHaveAttribute('aria-checked', 'true')
   await expect(option24).toHaveAttribute('aria-checked', 'false')
+  await popup.getByRole('checkbox', { name: 'Zcash' }).check()
   await captureScreenshot(popup, 'extension-create-word-count-12.png')
 
   await popup.getByRole('button', { name: 'Continue' }).click()
@@ -456,6 +457,109 @@ test('creates a 12-word phrase with the pinned Multichain WASM at 375x600', asyn
       zcashSeedPolicy: 'direct-bip39-v1'
     })
   ])
+})
+
+test('creation network choices persist for primary and additional software wallets', async ({
+  popup
+}) => {
+  test.skip(!e2eEnabledChainFeatureFlags.includes('chain.evm'), 'Requires EVM support')
+  test.setTimeout(180_000)
+
+  const selectedCatalog = async () =>
+    popup.evaluate(async () => {
+      const response = await chrome.runtime.sendMessage({ type: 'GET_ACCOUNT_NETWORKS' })
+      if (!response?.result?.accounts) throw new Error('Account catalog unavailable')
+      return response.result.accounts.map(
+        (account: { accountId: string; active: boolean; networks: { chainId: string }[] }) => ({
+          accountId: account.accountId,
+          active: account.active,
+          chainIds: account.networks.map(network => network.chainId)
+        })
+      )
+    })
+
+  const selectEvmOnly = async () => {
+    const choices = popup.getByRole('group', { name: 'Account networks' })
+    const evm = choices.getByRole('checkbox', { name: 'Ethereum & EVM' })
+    await expect(evm).toBeVisible()
+    for (const checkbox of await choices.getByRole('checkbox').all()) {
+      if ((await checkbox.getAttribute('aria-label')) === 'Ethereum & EVM') {
+        await checkbox.check()
+      } else {
+        await checkbox.uncheck()
+      }
+    }
+    await expect(evm).toBeChecked()
+  }
+
+  const backUpAndCreate = async (wordCount: 12 | 24) => {
+    await popup.getByRole('button', { name: 'Continue' }).click()
+    await popup.getByRole('button', { name: 'Start backup' }).click()
+    await expect(popup.getByText('View Secret Phrase', { exact: true })).toBeVisible({
+      timeout: 60_000
+    })
+    await popup.getByRole('button', { name: 'Click to reveal seed phrase' }).click()
+    const words = await popup.locator('div.grid.grid-cols-2 > div > div.w-full').allTextContents()
+    expect(words).toHaveLength(wordCount)
+    await popup.getByRole('checkbox').check()
+    await popup.getByRole('button', { name: 'Next' }).click()
+    const prompt = await popup.getByText(/^Select the .* words\.$/).textContent()
+    const indices = (prompt?.match(/\d+/g) ?? []).map(ordinal => Number.parseInt(ordinal, 10) - 1)
+    expect(indices).toHaveLength(2)
+    for (const index of indices) {
+      await popup
+        .getByRole('button', { name: words[index], exact: true, pressed: false })
+        .first()
+        .click()
+    }
+    await popup.getByRole('button', { name: 'Confirm', exact: true }).click()
+    await expect(popup.getByRole('heading', { name: 'Congratulations!' })).toBeVisible({
+      timeout: 60_000
+    })
+    await popup.getByRole('button', { name: 'Got it' }).click()
+  }
+
+  await popup.getByRole('button', { name: 'Create Wallet' }).click()
+  await popup.getByPlaceholder('8–64 characters').fill('create-network-password')
+  await popup.getByPlaceholder('Confirm password').fill('create-network-password')
+  await popup.getByRole('checkbox').check()
+  await popup.getByRole('button', { name: 'Create', exact: true }).click()
+  await popup.getByRole('radio', { name: '12 words' }).click()
+  await selectEvmOnly()
+  await expect(popup.getByRole('checkbox', { name: 'Zcash' })).not.toBeChecked()
+  await captureScreenshot(popup, 'extension-create-networks-12.png')
+  await backUpAndCreate(12)
+
+  const first = await selectedCatalog()
+  expect(first).toHaveLength(1)
+  expect(first[0].active).toBe(true)
+  expect(first[0].chainIds).toContain('eip155:1')
+  expect(first[0].chainIds.every(chainId => chainId.startsWith('eip155:'))).toBe(true)
+
+  await popup.getByRole('button', { name: 'Choose wallet' }).click()
+  await popup
+    .getByRole('dialog', { name: 'Accounts' })
+    .getByRole('button', { name: 'Accounts' })
+    .click()
+  await popup.getByRole('button', { name: 'Add Wallet' }).click()
+  await popup.getByRole('button', { name: 'Create New Wallet' }).click()
+  await expect(popup.getByRole('radio', { name: '24 words' })).toHaveAttribute(
+    'aria-checked',
+    'true'
+  )
+  await expect(popup.getByRole('checkbox', { name: 'Zcash' })).toBeChecked()
+  await selectEvmOnly()
+  await captureScreenshot(popup, 'extension-create-networks-24.png')
+  await backUpAndCreate(24)
+
+  const added = await selectedCatalog()
+  expect(added).toHaveLength(2)
+  expect(added.map(account => account.accountId)).toContain(first[0].accountId)
+  expect(added.filter(account => account.active)).toHaveLength(1)
+  for (const account of added) {
+    expect(account.chainIds).toContain('eip155:1')
+    expect(account.chainIds.every(chainId => chainId.startsWith('eip155:'))).toBe(true)
+  }
 })
 
 test('verification builds do not upload analytics after Google Analytics opt-out', async ({

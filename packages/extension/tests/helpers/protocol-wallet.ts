@@ -574,6 +574,7 @@ async function mockProtocolApis(
     readonly orderStatus?: 'pending' | 'completed'
     readonly confidentialBalanceRaw?: string
     readonly confidentialAssetId?: string
+    readonly flexibleDepositMinimumRaw?: string
   } = {}
 ): Promise<{
   readonly setTokenOnline: (online: boolean) => void
@@ -592,6 +593,8 @@ async function mockProtocolApis(
     refundTo: string
     recipient: string
     dry: boolean
+    swapType?: string
+    slippageTolerance?: number
     confidentiality?: 'basic'
     depositType?: 'ORIGIN_CHAIN' | 'CONFIDENTIAL_INTENTS'
     refundType?: 'ORIGIN_CHAIN' | 'CONFIDENTIAL_INTENTS'
@@ -608,6 +611,8 @@ async function mockProtocolApis(
     refundTo: string
     recipient: string
     dry: boolean
+    swapType?: string
+    slippageTolerance?: number
     confidentiality?: 'basic'
     depositType?: 'ORIGIN_CHAIN' | 'CONFIDENTIAL_INTENTS'
     refundType?: 'ORIGIN_CHAIN' | 'CONFIDENTIAL_INTENTS'
@@ -1121,6 +1126,8 @@ async function mockProtocolApis(
       refundTo: string
       recipient: string
       dry: boolean
+      swapType: string
+      slippageTolerance: number
       confidentiality: 'basic'
       depositType: 'ORIGIN_CHAIN' | 'CONFIDENTIAL_INTENTS'
       refundType: 'ORIGIN_CHAIN' | 'CONFIDENTIAL_INTENTS'
@@ -1142,11 +1149,29 @@ async function mockProtocolApis(
       refundTo: request.refundTo,
       recipient: request.recipient,
       dry: request.dry,
+      swapType: request.swapType,
+      slippageTolerance: request.slippageTolerance,
       confidentiality: request.confidentiality,
       depositType: request.depositType,
       refundType: request.refundType,
       recipientType: request.recipientType
     })
+    if (
+      options.flexibleDepositMinimumRaw &&
+      request.depositType === 'ORIGIN_CHAIN' &&
+      request.swapType === 'FLEX_INPUT' &&
+      request.dry &&
+      request.amount === '1'
+    ) {
+      await route.fulfill({
+        status: 400,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          message: `Amount is too low for bridge, try at least ${options.flexibleDepositMinimumRaw}`
+        })
+      })
+      return
+    }
     const deposit = request.depositType === 'ORIGIN_CHAIN'
     if (deposit) confidentialDepositAmount = request.amount
     if (!deposit && !request.dry) formalWithdrawQuoteCount += 1
@@ -1191,6 +1216,9 @@ async function mockProtocolApis(
             : request,
         quote: {
           amountIn: request.amount,
+          ...(request.swapType === 'FLEX_INPUT' && options.flexibleDepositMinimumRaw
+            ? { minAmountIn: options.flexibleDepositMinimumRaw }
+            : {}),
           amountOut: amountOutRaw,
           minAmountOut: amountOutRaw,
           deadline: request.deadline,

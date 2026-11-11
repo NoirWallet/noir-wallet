@@ -485,7 +485,7 @@ export function TokenSelector({
                 >
                   <div
                     className={cn(
-                      'flex min-w-0 items-center gap-3',
+                      'flex min-w-0 flex-1 items-center gap-3',
                       networkFilterStyle === 'icons' && 'gap-2'
                     )}
                   >
@@ -507,6 +507,7 @@ export function TokenSelector({
                       <TokenBalanceDisplay
                         amount={balance}
                         symbol={symbol}
+                        showSymbol={false}
                         priceUsd={token.price}
                         className={
                           networkFilterStyle === 'icons' ? '[&>p:first-child]:font-sans' : undefined

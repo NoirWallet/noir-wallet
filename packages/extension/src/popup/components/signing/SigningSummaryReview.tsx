@@ -444,13 +444,22 @@ export function SigningSummaryReview({
             aria-label={isBlocked ? 'Signing blocked' : 'Signing warnings'}
             className={cn(
               'space-y-3 rounded-xl border p-3',
-              isBlocked ? 'border-danger/40 bg-danger/10' : 'border-warning/40 bg-warning/10'
+              isBlocked
+                ? 'border-danger/40 bg-danger/10'
+                : 'border-warning/40 bg-warning-surface text-warning'
             )}
           >
             {visibleIssues.map((issue, index) => (
               <div key={`${issue.title}-${index}`} className="min-w-0">
                 <h2 className="text-xs font-semibold">{issue.title}</h2>
-                <p className="mt-0.5 text-xs leading-5 text-foreground/70">{issue.description}</p>
+                <p
+                  className={cn(
+                    'mt-0.5 text-xs leading-5',
+                    isBlocked ? 'text-foreground/70' : 'text-warning'
+                  )}
+                >
+                  {issue.description}
+                </p>
               </div>
             ))}
           </section>

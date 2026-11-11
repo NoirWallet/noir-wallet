@@ -145,20 +145,20 @@ export function assertPrivateQuoteRoute(
       }
       return
     }
-    const evmPair = /^[1-9]\d*$/.test(request.fromChain) && /^[1-9]\d*$/.test(request.toChain)
     const recipient = request.recipient ?? ''
+    const publicDestination = destinationNetwork?.addresses?.some(address =>
+      matches(recipient, address.value, request.toChain)
+    )
     if (
       !sourceIsPublic ||
+      (request.fromChain === 'zcash' && !/^t[13]/.test(request.sender)) ||
       !destinationNetwork ||
       !recipient ||
-      !(
-        destinationNetwork.addresses?.some(address =>
-          matches(recipient, address.value, request.toChain)
-        ) ||
-        (!evmPair &&
-          matches(recipient, destinationNetwork.privateExecutionAddress, request.toChain))
-      ) ||
-      (evmPair && request.confidentiality !== undefined)
+      !publicDestination ||
+      (request.toChain === 'zcash' && !/^t[13]/.test(recipient)) ||
+      (/^[1-9]\d*$/.test(request.fromChain) &&
+        /^[1-9]\d*$/.test(request.toChain) &&
+        request.confidentiality !== undefined)
     ) {
       throw new Error('Swap must stay in this Account.')
     }
@@ -199,15 +199,8 @@ export function assertPrivateQuoteRoute(
     }
     return
   }
-  if (purpose === 'private-swap' && request.toChain === 'zcash') {
-    const destination = account.networks.find(
-      network => network.chainId === getZcashChainId('mainnet')
-    )
-    if (!destination?.addresses?.some(address => address.value === request.recipient)) {
-      throw new Error('Private Swap must stay in this Account.')
-    }
-    return
-  }
+  if (purpose === 'private-swap' && !/^[1-9]\d*$/.test(request.toChain))
+    throw new Error('Private Swap must stay in this Account.')
   const destination = account.networks.find(
     network => network.chainId === `eip155:${request.toChain}`
   )
@@ -394,8 +387,11 @@ export interface RheaSwapQuoteRequest {
   readonly slippageBps: number
   readonly sender: string
   readonly recipient: string
+  readonly quoteMode?: RheaSwapQuoteMode
   readonly confidentiality?: 'basic'
 }
+
+export type RheaSwapQuoteMode = 'fast' | 'best-price'
 
 export interface RheaSwapQuoteView {
   readonly quoteHandle: string
@@ -403,8 +399,16 @@ export interface RheaSwapQuoteView {
   readonly estimatedOut: string
   readonly minAmountOut: string
   readonly router: string
+  readonly alternatives?: readonly RheaSwapRouteView[]
   readonly receivedAt: number
   readonly expiresAt: number | null
+}
+
+export interface RheaSwapRouteView {
+  readonly index: number
+  readonly router: string
+  readonly estimatedOut: string
+  readonly minAmountOut: string
 }
 
 export interface RheaSwapExecutionView {
@@ -618,7 +622,7 @@ export function parseRheaSwapQuoteRequest(value: unknown): RheaSwapQuoteRequest 
       'sender',
       'recipient'
     ],
-    ['confidentiality'],
+    ['confidentiality', 'quoteMode'],
     'RHEA Swap quote request'
   )
   const fromChain = readChainRef(value.fromChain, 'RHEA Swap source chain')
@@ -636,6 +640,13 @@ export function parseRheaSwapQuoteRequest(value: unknown): RheaSwapQuoteRequest 
   if (value.confidentiality !== undefined && value.confidentiality !== 'basic') {
     throw new Error('RHEA Swap confidentiality is invalid')
   }
+  if (
+    value.quoteMode !== undefined &&
+    value.quoteMode !== 'fast' &&
+    value.quoteMode !== 'best-price'
+  ) {
+    throw new Error('RHEA Swap quote mode is invalid')
+  }
   return Object.freeze({
     fromChain,
     toChain,
@@ -645,19 +656,22 @@ export function parseRheaSwapQuoteRequest(value: unknown): RheaSwapQuoteRequest 
     slippageBps: value.slippageBps as number,
     sender: readString(value.sender, 'RHEA Swap sender'),
     recipient: readString(value.recipient, 'RHEA Swap recipient'),
+    ...(value.quoteMode === undefined ? {} : { quoteMode: value.quoteMode as RheaSwapQuoteMode }),
     ...(value.confidentiality === undefined ? {} : { confidentiality: 'basic' as const })
   })
 }
 
 export function toSdkQuoteRequest(value: RheaSwapQuoteRequest): QuoteRequest {
+  const { quoteMode, ...quoteFields } = value
+  const fast = quoteMode === 'fast'
   return Object.freeze({
-    ...value,
+    ...quoteFields,
     tokenIn: toSdkQuoteAsset(value.tokenIn),
     tokenOut: toSdkQuoteAsset(value.tokenOut),
     extensions: Object.freeze({ referral: NOIR_SWAP_REFERRAL }),
-    quoteWaitingTimeMs: 6_000,
-    sameChainTimeoutMs: 1_500,
-    crossChainTimeoutMs: 6_000
+    quoteWaitingTimeMs: fast ? 1_500 : 6_000,
+    sameChainTimeoutMs: fast ? 500 : 1_500,
+    crossChainTimeoutMs: fast ? 1_500 : 6_000
   })
 }
 

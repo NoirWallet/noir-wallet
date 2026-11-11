@@ -407,7 +407,14 @@ test('automatic refresh preserves chain revocation and declines changed or locke
   expect(retained.scopes[bitcoin]).toBeUndefined()
   expect(await manager.getChainAuthorization(origin, bitcoin)).toBeNull()
   await manager.removeConnection(origin)
+  const snapshot = state.snapshot
+  state.snapshot = null
   expect(await handler.request({ method: 'wallet_getSession' }, origin, {})).toBeNull()
+  expect(await manager.getCaip25Session(origin)).toBeNull()
+  state.snapshot = snapshot
+  const restored = await handler.request({ method: 'wallet_getSession' }, origin, {})
+  expect(restored.scopes[bitcoin].accounts).toHaveLength(1)
+  expect(await manager.isRevoked(origin)).toBe(false)
 
   const fresh = firstPartyFixture()
   let reads = 0
