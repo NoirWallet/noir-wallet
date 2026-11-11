@@ -37,7 +37,11 @@ const EVM_HISTORY_PROXY_ORIGINS = new Set([DEFAULT_HISTORY_API_ORIGIN, 'https://
 
 async function expectDAppRequestHeader(
   page: Page,
-  action: 'Review transaction' | 'Sign message'
+  action:
+    | 'Review transaction'
+    | 'Sign message'
+    | 'Token authorization'
+    | 'Token transfer authorization'
 ): Promise<void> {
   await expect(
     page.getByTestId('approval-scroll-region').getByText(action, { exact: true })
@@ -465,6 +469,164 @@ test('restores an authorized EVM dApp on its first request after worker restart'
   await terminateExtensionServiceWorker(context, popup)
   await dapp.reload()
   expect(await readAutoConnect()).toEqual({ accounts: connectedAccounts })
+})
+
+test('reviews Permit and Permit2 permissions and signs the original payload in real MV3', async ({
+  context,
+  popup,
+  extensionId
+}) => {
+  test.skip(
+    process.env.APPROVAL_WINDOW_E2E !== '1',
+    'Chrome popup windows require a headed browser session'
+  )
+  test.setTimeout(120_000)
+  await mockPreparingEvmRpc(popup)
+  await waitForBackgroundWalletInitialization(popup)
+  await importTestWallet(popup, 'new')
+  await popup.goto(`chrome-extension://${extensionId}/index.html`)
+  const { page: dapp, address: connectedAddress } = await connectAdditionalEvmDApp(
+    context,
+    'https://evm-dapp.example',
+    'EVM permit dApp'
+  )
+
+  // Exercise the Worker-prepared summary and verify that the reviewed payload is signed unchanged.
+  const permitTypes = {
+    Permit: [
+      { name: 'owner', type: 'address' },
+      { name: 'spender', type: 'address' },
+      { name: 'value', type: 'uint256' },
+      { name: 'nonce', type: 'uint256' },
+      { name: 'deadline', type: 'uint256' }
+    ]
+  }
+  const permit2Types = {
+    PermitDetails: [
+      { name: 'token', type: 'address' },
+      { name: 'amount', type: 'uint160' },
+      { name: 'expiration', type: 'uint48' },
+      { name: 'nonce', type: 'uint48' }
+    ],
+    PermitBatch: [
+      { name: 'details', type: 'PermitDetails[]' },
+      { name: 'spender', type: 'address' },
+      { name: 'sigDeadline', type: 'uint256' }
+    ]
+  }
+  const transferTypes = {
+    TokenPermissions: [
+      { name: 'token', type: 'address' },
+      { name: 'amount', type: 'uint256' }
+    ],
+    PermitTransferFrom: [
+      { name: 'permitted', type: 'TokenPermissions' },
+      { name: 'spender', type: 'address' },
+      { name: 'nonce', type: 'uint256' },
+      { name: 'deadline', type: 'uint256' }
+    ]
+  }
+  for (const protocol of ['Permit', 'Permit2', 'Permit2 transfer'] as const) {
+    const isPermit2 = protocol !== 'Permit'
+    const isTransfer = protocol === 'Permit2 transfer'
+    const domain = {
+      name: isPermit2 ? 'Permit2' : 'USD Coin',
+      ...(!isPermit2 ? { version: '2' } : {}),
+      chainId: 11155111,
+      verifyingContract: isPermit2 ? '0x000000000022d473030f116ddee9f6b43ac78ba3' : USDC_CONTRACT
+    }
+    const payload = {
+      types: {
+        EIP712Domain: [
+          { name: 'name', type: 'string' },
+          ...(!isPermit2 ? [{ name: 'version', type: 'string' }] : []),
+          { name: 'chainId', type: 'uint256' },
+          { name: 'verifyingContract', type: 'address' }
+        ],
+        ...(isTransfer ? transferTypes : isPermit2 ? permit2Types : permitTypes)
+      },
+      primaryType: isTransfer ? 'PermitTransferFrom' : isPermit2 ? 'PermitBatch' : 'Permit',
+      domain,
+      message: isTransfer
+        ? {
+            permitted: { token: USDC_CONTRACT, amount: '6000000' },
+            spender: RECIPIENT,
+            nonce: '1',
+            deadline: '4102444800'
+          }
+        : isPermit2
+          ? {
+              details: [
+                { token: USDC_CONTRACT, amount: '6000000', expiration: '4070908800', nonce: '1' },
+                { token: RECIPIENT, amount: '12345678901234567890', expiration: '0', nonce: '2' }
+              ],
+              spender: RECIPIENT,
+              sigDeadline: '4102444800'
+            }
+          : {
+              owner: connectedAddress,
+              spender: RECIPIENT,
+              value: '6000000',
+              nonce: '1',
+              deadline: '4102444800'
+            }
+    }
+    const approvalOpened = context.waitForEvent('page')
+    const signed = dapp.evaluate(
+      ({ address, payloadJson }) =>
+        (
+          window as typeof window & {
+            noirwallet: {
+              ethereum: {
+                request(input: { method: string; params: unknown[] }): Promise<unknown>
+              }
+            }
+          }
+        ).noirwallet.ethereum.request({
+          method: 'eth_signTypedData_v4',
+          params: [address, payloadJson]
+        }),
+      { address: connectedAddress, payloadJson: JSON.stringify(payload) }
+    )
+    const approval = await approvalOpened
+    await approval.waitForURL(/#approval\?requestId=/)
+    await approval.setViewportSize({ width: 375, height: 632 })
+    await expectDAppRequestHeader(
+      approval,
+      isTransfer ? 'Token transfer authorization' : 'Token authorization'
+    )
+    const tokens = approval.getByRole('region', { name: 'Authorized tokens', exact: true })
+    await expect(tokens.getByText(isPermit2 ? 'Permit2' : 'Permit', { exact: true })).toBeVisible()
+    await expect(tokens.getByRole('button', { name: 'Show full USDC amount' })).toHaveText('6 USDC')
+    await expect(tokens.locator('input')).toHaveCount(0)
+    const details = approval.getByRole('region', { name: 'Authorization details', exact: true })
+    await expect(details.getByText(RECIPIENT, { exact: true })).toBeVisible()
+    await expect(details.getByText('Signature submit by', { exact: true })).toBeVisible()
+    if (isTransfer) {
+      await expect(tokens.getByText('Maximum transferable', { exact: true })).toBeVisible()
+      await expect(details.getByText('Not specified in signature', { exact: true })).toBeVisible()
+    } else if (isPermit2) {
+      await expect(tokens.getByText('Unknown token · raw amount', { exact: true })).toBeVisible()
+      await expect(tokens.getByText('Authorization expiry', { exact: true })).toHaveCount(2)
+      await expect(tokens.getByText('On submission', { exact: true })).toBeVisible()
+    }
+    await expect(approval.getByTestId('approval-footer')).toBeInViewport()
+    await captureScreenshot(
+      approval,
+      isTransfer
+        ? 'evm-dapp-permit2-transfer-approval.png'
+        : isPermit2
+          ? 'evm-dapp-permit2-approval.png'
+          : 'evm-dapp-permit-approval.png'
+    )
+    await approval.getByText('Advanced', { exact: true }).click()
+    await expect(approval.getByText('Message.spender', { exact: true })).toBeVisible()
+    await expect(approval.getByText('Domain.verifyingContract', { exact: true })).toBeVisible()
+    await approval.getByRole('button', { name: 'Sign authorization', exact: true }).click()
+    const signature = (await signed) as Hex
+    const recovered = await recoverTypedDataAddress({ ...payload, signature })
+    expect(recovered.toLowerCase()).toBe(connectedAddress.toLowerCase())
+  }
 })
 
 test('announces an EIP-6963 provider and enforces EVM permissions in real MV3', async ({

@@ -34,7 +34,7 @@ export function buildSigningSummaryReviewModel(
     case 'evm.personal-message.v1':
       return evmPersonalMessageReview(summary)
     case 'evm.typed-data.v1':
-      return evmTypedDataReview(summary)
+      return evmTypedDataReview(summary, evmOptions)
     case 'bitcoin.psbt.v1':
       return bitcoinPsbtReview(summary)
     case 'bitcoin.bip322-message.v1':
