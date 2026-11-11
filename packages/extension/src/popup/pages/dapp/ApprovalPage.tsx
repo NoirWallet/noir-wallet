@@ -1339,6 +1339,19 @@ export function ApprovalPage() {
     }
   }
 
+  const evmTokenMetadata = getBundledEvmAssetDefinitions(currentNetwork)
+    .filter(
+      asset =>
+        asset.chainId === (evmMessageSummary?.chainId ?? evmTransactionSummary?.chainId) &&
+        asset.namespace === 'erc20' &&
+        asset.verification === 'trusted'
+    )
+    .map(asset => ({
+      contractAddress: asset.reference,
+      symbol: asset.metadata.symbol,
+      decimals: asset.metadata.decimals
+    }))
+
   if (isEvmMessage && evmMessageSummary) {
     return (
       <SigningSummaryReview
@@ -1350,6 +1363,7 @@ export function ApprovalPage() {
         accountAddress={evmMessageSummary.fields.signer}
         source={{ kind: 'dapp', domain: dappDomain, pageUrl: dappPageUrl }}
         accountMode={evmExecutionMode}
+        evmPresentation={{ tokenMetadata: evmTokenMetadata }}
         isSubmitting={isLoading}
         onReject={() => void handleDecision(false)}
         onConfirm={() => void handleDecision(true)}
@@ -1527,18 +1541,7 @@ export function ApprovalPage() {
         evmPresentation={{
           nativeCurrency: { symbol: nativeSymbol, decimals: nativeDecimals },
           directContract: data.privacyRoute === 'direct-contract',
-          tokenMetadata: getBundledEvmAssetDefinitions(currentNetwork)
-            .filter(
-              asset =>
-                asset.chainId === evmTransactionSummary.chainId &&
-                asset.namespace === 'erc20' &&
-                asset.verification === 'trusted'
-            )
-            .map(asset => ({
-              contractAddress: asset.reference,
-              symbol: asset.metadata.symbol,
-              decimals: asset.metadata.decimals
-            }))
+          tokenMetadata: evmTokenMetadata
         }}
         feeControl={
           data.feeEditingAvailable ? (
