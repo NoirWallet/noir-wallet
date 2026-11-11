@@ -177,7 +177,7 @@ export function SecurityPrivacy() {
               <label htmlFor="zcash-private-broadcast" className="min-w-0 cursor-pointer text-sm">
                 Zcash Private Broadcast
               </label>
-              <ZcashBroadcastHelp kind="broadcast" />
+              <ZcashBroadcastHelp />
               <button
                 id="zcash-private-broadcast"
                 type="button"
@@ -191,11 +191,11 @@ export function SecurityPrivacy() {
                 <Switch checked={zeroIndexerEnabled} />
               </button>
             </div>
-            <div className="flex items-center gap-1 border-t border-white/10 pr-3">
+            <div className="border-t border-white/10">
               <button
                 type="button"
                 onClick={() => navigate('/zero-indexer-nodes')}
-                className="flex min-w-0 flex-1 items-center justify-between gap-3 py-3 pl-4 pr-1 text-left transition-colors hover:bg-white/5"
+                className="flex w-full min-w-0 items-center justify-between gap-3 px-4 py-3 text-left transition-colors hover:bg-white/5"
               >
                 <span className="text-sm">ZeroIndexer nodes</span>
                 <span className="flex min-w-0 items-center gap-2 text-xs text-muted">
@@ -203,7 +203,6 @@ export function SecurityPrivacy() {
                   <Icon icon="lucide:chevron-right" className="size-4 shrink-0" />
                 </span>
               </button>
-              <ZcashBroadcastHelp kind="nodes" />
             </div>
           </section>
           {zeroIndexerLoadError && (

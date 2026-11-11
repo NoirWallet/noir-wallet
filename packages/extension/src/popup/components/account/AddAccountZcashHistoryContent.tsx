@@ -56,7 +56,7 @@ export function AddAccountZcashHistoryContent({
 
     if (!syncDate) {
       throw new ZcashAccountHistoryValidationError(
-        'Select the approximate date of the first ZEC transaction.'
+        'Select a date before your account’s first transaction.'
       )
     }
     const timestamp = getUtcDayStartTimestamp(syncDate)
@@ -103,7 +103,7 @@ export function AddAccountZcashHistoryContent({
       {!priorUsageDetected && (
         <div role="radiogroup" aria-label="Zcash account history" className="space-y-2">
           <HistoryChoice
-            title="New Zcash account"
+            title="New Zcash Account"
             description="Use the current chain height. Older ZEC history will not be scanned."
             selected={historyMode === 'new'}
             onSelect={() => {
@@ -112,8 +112,8 @@ export function AddAccountZcashHistoryContent({
             }}
           />
           <HistoryChoice
-            title="Restore Zcash history"
-            description="Set the approximate first ZEC transaction so older funds can be found."
+            title="Restore Zcash Account"
+            description="Select an approximate date before your account’s first transaction to restore your shielded balance."
             selected={historyMode === 'restore'}
             onSelect={() => {
               setHistoryMode('restore')
@@ -164,9 +164,7 @@ export function AddAccountZcashHistoryContent({
             </div>
           ) : (
             <div>
-              <label className="mb-2 block text-sm text-muted">
-                Approximate first ZEC transaction
-              </label>
+              <label className="mb-2 block text-sm text-muted">Recovery start date</label>
               <DatePicker
                 value={syncDate}
                 onChange={value => {

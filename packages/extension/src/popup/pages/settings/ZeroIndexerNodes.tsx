@@ -12,7 +12,6 @@ import {
   EndpointSelectionIndicator
 } from '../../components/common/EndpointStatus'
 import { PageHeader } from '../../components/common/PageHeader'
-import { ZcashBroadcastHelp } from '../../components/settings/ZcashBroadcastHelp'
 import { InlineError } from '../../components/common/InlineError'
 import { Button } from '../../components/ui/button'
 import { Input } from '../../components/ui/input'
@@ -218,7 +217,6 @@ export function ZeroIndexerNodes() {
       <PageHeader
         title="ZeroIndexer Nodes"
         showBack
-        rightContent={<ZcashBroadcastHelp kind="nodes" />}
         action={{
           ariaLabel: 'Refresh broadcast nodes',
           icon: (
