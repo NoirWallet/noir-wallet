@@ -7,6 +7,7 @@ import type { SwapToken } from '@/core/services/intents-api'
 import { resolveSwapTokenIconUrl } from '@/core/services/intents-api'
 import {
   hasExternalShieldDepositFunding,
+  externalShieldDepositFailureMessage,
   isExternalShieldDepositAutoHidden,
   shouldAutoRefreshExternalShieldDeposit
 } from '@/core/services/confidential-funding/confidential-external-deposit'
@@ -451,7 +452,7 @@ function ShieldDepositContent() {
       setViewRecordId(created.depositId)
       setNow(Date.now())
       requestIdRef.current = null
-    } catch {
+    } catch (error) {
       const wallet = useWalletStore.getState()
       if (
         mounted.current &&
@@ -460,7 +461,7 @@ function ShieldDepositContent() {
         providerRef.current === 'near-confidential' &&
         providerRevisionRef.current === providerRevision
       ) {
-        setError('Receiving address unavailable. Try again.')
+        setError(externalShieldDepositFailureMessage(error))
       }
     } finally {
       if (mounted.current && scopeRef.current === scopeKey) setBusy(false)

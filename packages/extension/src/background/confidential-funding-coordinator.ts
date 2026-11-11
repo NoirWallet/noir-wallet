@@ -7,7 +7,9 @@ import {
 } from '@/lib/analytics/operations'
 import {
   hasExternalShieldDepositFunding,
-  shouldAutoRefreshExternalShieldDeposit
+  shouldAutoRefreshExternalShieldDeposit,
+  ExternalShieldDepositError,
+  type ExternalShieldDepositFailureStage
 } from '@/core/services/confidential-funding/confidential-external-deposit'
 import { isAddress } from 'viem'
 import { parseZcashAddress } from '@/core/address-book/address-book'
@@ -462,11 +464,31 @@ export class ConfidentialFundingCoordinator {
   async createExternalDeposit(
     input: CreateExternalShieldDepositInput
   ): Promise<ExternalShieldDeposit> {
-    return this.prepareQueue.run(() => this.createExternalDepositExclusive(input))
+    return this.prepareQueue.run(async () => {
+      let stage: ExternalShieldDepositFailureStage = 'request'
+      try {
+        return await this.createExternalDepositExclusive(input, next => {
+          stage = next
+        })
+      } catch (error) {
+        throw new ExternalShieldDepositError(stage, error)
+      }
+    })
+  }
+
+  hasExternalDepositAsset(source: CreateExternalShieldDepositInput['source']): boolean {
+    return Boolean(
+      this.options.assets.get(source.assetId) &&
+      this.options.assetMappings.some(
+        mapping =>
+          mapping.assetId === source.assetId && mapping.protocolAssetId === source.protocolAssetId
+      )
+    )
   }
 
   private async createExternalDepositExclusive(
-    input: CreateExternalShieldDepositInput
+    input: CreateExternalShieldDepositInput,
+    setStage: (stage: ExternalShieldDepositFailureStage) => void
   ): Promise<ExternalShieldDeposit> {
     const chain = parseChainId(input.source.chainId)
     const isZcash = chain.id === getZcashChainId(this.options.network)
@@ -476,11 +498,7 @@ export class ConfidentialFundingCoordinator {
       (!isZcash && chain.namespace !== 'eip155') ||
       parseAssetId(input.source.assetId).chainId !== chain.id ||
       !asset ||
-      !this.options.assetMappings.some(
-        mapping =>
-          mapping.assetId === input.source.assetId &&
-          mapping.protocolAssetId === input.source.protocolAssetId
-      ) ||
+      !this.hasExternalDepositAsset(input.source) ||
       (input.source.amountRaw !== undefined && !isPositiveRaw(input.source.amountRaw)) ||
       !isBoundedLabel(input.source.chainName) ||
       !isBoundedLabel(input.keyDomainId, 512) ||
@@ -511,6 +529,7 @@ export class ConfidentialFundingCoordinator {
     } else if (!isAddress(input.refundAddress) || /^0x0{40}$/i.test(input.refundAddress)) {
       throw new Error('External Shield deposit refund address is invalid')
     }
+    setStage('account')
     const identityChain = isZcash ? this.options.evmNetworks[0]?.chainId : chain.id
     if (!identityChain) throw new Error('External Shield deposit Account has no EVM identity')
     const identity = await this.options.signer.resolveIdentity(parseChainId(identityChain).id)
@@ -563,6 +582,7 @@ export class ConfidentialFundingCoordinator {
       return existing
     }
     const minimumMode = input.source.amountRaw === undefined
+    setStage('quote')
     const quote = minimumMode
       ? await this.options.api.quoteFlexibleDeposit({
           originAsset: input.source.protocolAssetId,
@@ -620,6 +640,7 @@ export class ConfidentialFundingCoordinator {
       )
     )
       throw new Error('External Shield service reused a deposit address')
+    setStage('account')
     const currentIdentity = await this.options.signer.resolveIdentity(
       parseChainId(identityChain).id
     )
@@ -631,7 +652,9 @@ export class ConfidentialFundingCoordinator {
     ) {
       throw new Error('External Shield deposit Account changed after quoting')
     }
+    setStage('authorization')
     await this.ensureSession(currentIdentity, true)
+    setStage('account')
     const activeIdentity = await this.options.signer.resolveIdentity(parseChainId(identityChain).id)
     if (
       activeIdentity.context.chainAccount.scope.keyDomainId !== input.keyDomainId ||
@@ -670,6 +693,7 @@ export class ConfidentialFundingCoordinator {
       createdAt,
       updatedAt: createdAt
     })
+    setStage('storage')
     await this.options.store.putExternalDeposit(record)
     const result = await this.options.store.withExternalDepositScope(record, () =>
       this.options.repository.create(createExternalShieldDepositGraph(record))

@@ -65,6 +65,53 @@ export type ExternalShieldDepositScope = Pick<
   'network' | 'keyDomainId' | 'accountId'
 >
 
+export type ExternalShieldDepositFailureStage =
+  | 'request'
+  | 'account'
+  | 'quote'
+  | 'authorization'
+  | 'storage'
+
+export class ExternalShieldDepositError extends Error {
+  constructor(
+    readonly stage: ExternalShieldDepositFailureStage,
+    readonly cause: unknown
+  ) {
+    super(cause instanceof Error ? cause.message : 'Receiving address unavailable')
+    this.name = 'ExternalShieldDepositError'
+  }
+}
+
+export function externalShieldDepositFailureMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : ''
+  if (message === 'Wallet is locked' || message === 'Credential is not unlocked')
+    return 'Unlock your wallet, then try again.'
+  if (message === 'Quoting for this pair is not available')
+    return 'This token and network are temporarily unavailable. Try again or select another network.'
+  if (
+    message === 'External Shield deposit asset catalog changed' ||
+    message === 'External Shield deposit request is invalid'
+  )
+    return 'Could not prepare this receiving address. Select your token and network again.'
+  if (
+    message === 'Confidential funding requires an active software EVM Account' ||
+    message === 'External Shield deposit Account has no EVM identity'
+  )
+    return 'Select a software account with Ethereum enabled, then try again.'
+  if (
+    message === 'External Shield deposit refund address is invalid' ||
+    message === 'External Shield deposit requires a transparent Zcash refund address'
+  )
+    return 'A receiving address is unavailable for this account on the selected network.'
+  const stage = (error as { depositStage?: unknown } | null)?.depositStage
+  if (stage === 'account')
+    return 'Could not access this account. Unlock your wallet again and retry.'
+  if (stage === 'quote') return 'Could not get a receiving address from the provider. Try again.'
+  if (stage === 'authorization') return 'Could not connect this account to the provider. Try again.'
+  if (stage === 'storage') return 'Could not save the receiving address. Try again.'
+  return 'Receiving address unavailable. Try again.'
+}
+
 const UNFUNDED_AUTO_REFRESH_MS = 3 * 60 * 60 * 1000
 const UNFUNDED_AUTO_HIDE_MS = 24 * 60 * 60 * 1000
 

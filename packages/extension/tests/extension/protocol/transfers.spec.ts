@@ -308,6 +308,65 @@ test('ZEC Move locks the current account as the destination in real MV3', async 
   await expect(popup.getByText('Balance 2 ZEC')).toBeVisible()
 })
 
+test('receives a Shield asset added after the background catalog was initialized', async ({
+  context,
+  popup
+}) => {
+  const rpc = await mockEvmNetwork(context, { allowBroadcast: false })
+  await mockBitcoinNetwork(context)
+  await mockProtocolApis(context, { flexibleDepositMinimumRaw: '10000000000000000' })
+  const priceUpdatedAt = new Date().toISOString()
+  const nativeToken = {
+    assetId: ETH_ASSET,
+    blockchain: 'eth',
+    decimals: 18,
+    symbol: 'ETH',
+    price: 2000,
+    priceUpdatedAt
+  }
+  let catalog: Array<typeof nativeToken & { contractAddress?: string }> = [nativeToken]
+  await context.route('https://1click.chaindefuser.com/v0/tokens', route =>
+    route.fulfill({ contentType: 'application/json', body: JSON.stringify(catalog) })
+  )
+  await waitForBackgroundWalletInitialization(popup)
+  await importTestWallet(popup)
+  expect(
+    await popup.evaluate(() =>
+      chrome.runtime.sendMessage({ type: 'REFRESH_INTENTS_PROTOCOL_ASSETS', force: true })
+    )
+  ).toMatchObject({ result: { refreshed: true } })
+  catalog = [
+    nativeToken,
+    { ...nativeToken, assetId: TRIAL_ASSET, symbol: 'TRIAL', contractAddress: TRIAL_CONTRACT }
+  ]
+  await popup.getByRole('button', { name: 'Shielded', exact: true }).click()
+  await popup
+    .getByLabel('Shield actions')
+    .getByRole('button', { name: 'receive', exact: true })
+    .click()
+  await popup
+    .getByRole('button')
+    .filter({ has: popup.getByText('Receive Token', { exact: true }) })
+    .click()
+  await popup
+    .getByRole('dialog', { name: 'Select Token' })
+    .getByRole('button', { name: /^TRIAL/ })
+    .click()
+  await popup
+    .getByRole('button')
+    .filter({ has: popup.getByText('Network', { exact: true }) })
+    .click()
+  await popup
+    .getByRole('dialog', { name: 'Select Network' })
+    .getByRole('button', { name: /Ethereum/ })
+    .click()
+  await popup.getByRole('button', { name: 'Receiving address', exact: true }).click()
+  await expect(popup.getByRole('region', { name: 'Receiving Address' })).toContainText('TRIAL', {
+    timeout: 30_000
+  })
+  expect(rpc.getBroadcastCount()).toBe(0)
+})
+
 test('receives an external Shield deposit without spending local funds and restores its address', async ({
   context,
   popup,

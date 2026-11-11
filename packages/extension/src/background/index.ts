@@ -235,6 +235,7 @@ import {
 } from './confidential-funding'
 import type { ConfidentialFundingCoordinator } from './confidential-funding-coordinator'
 import { getConfidentialFundingMessageHandler } from './confidential-funding-messages'
+import { ExternalShieldDepositError } from '@/core/services/confidential-funding/confidential-external-deposit'
 import { ChromeConfidentialFundingStore } from './confidential-funding-store'
 import { createEvmWalletRuntimeError } from '@/core/chains/evm'
 import { hidePortfolioAssets } from '@/core/portfolio'
@@ -4229,16 +4230,33 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
       sendResponse({ error: 'Unauthorized confidential funding request' })
       return true
     }
-    const operation = confidentialFundingHandler({ coordinator, accountContextTransition }, message)
+    const operation = Promise.resolve().then(async () => {
+      if (
+        message.type === 'CREATE_EXTERNAL_SHIELD_DEPOSIT' &&
+        !coordinator.hasExternalDepositAsset(message.request.source)
+      ) {
+        // The receive page can refresh its catalog after this runtime was constructed.
+        await refreshIntentsProtocolAssets(true)
+      }
+      const currentCoordinator = confidentialFundingCoordinator
+      if (!currentCoordinator)
+        throw new Error('Confidential funding is unavailable in this network')
+      return confidentialFundingHandler(
+        { coordinator: currentCoordinator, accountContextTransition },
+        message
+      )
+    })
     void operation
       .then(result => sendResponse({ result }))
       .catch(error => {
         console.error('[Confidential Funding] Request failed', {
           operation: message.type,
-          errorName: error instanceof Error ? error.name : 'UnknownError'
+          errorName: error instanceof Error ? error.name : 'UnknownError',
+          ...(error instanceof ExternalShieldDepositError ? { failureStage: error.stage } : {})
         })
         sendResponse({
-          error: error instanceof Error ? error.message : 'Confidential funding request failed'
+          error: error instanceof Error ? error.message : 'Confidential funding request failed',
+          ...(error instanceof ExternalShieldDepositError ? { depositStage: error.stage } : {})
         })
       })
     return true

@@ -112,7 +112,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function unwrap(value: unknown): unknown {
   if (!isRecord(value)) throw new Error('Confidential funding returned an invalid response')
-  if (typeof value.error === 'string') throw new Error(value.error)
+  if (typeof value.error === 'string') {
+    const error = new Error(value.error)
+    if (
+      ['request', 'account', 'quote', 'authorization', 'storage'].includes(
+        String(value.depositStage)
+      )
+    )
+      Object.assign(error, { depositStage: value.depositStage })
+    throw error
+  }
   if (!Object.prototype.hasOwnProperty.call(value, 'result')) {
     throw new Error('Confidential funding returned an invalid response')
   }
