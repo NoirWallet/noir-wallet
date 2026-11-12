@@ -239,7 +239,7 @@ function PortfolioAssetBalanceRow({
               {balancesHidden
                 ? '••••'
                 : fiat === null
-                  ? '—'
+                  ? formatFiatAmount('0', { showSign: true })
                   : formatFiatAmount(fiat, { showSign: true })}
             </p>
           )}
@@ -357,7 +357,7 @@ export function PortfolioAssetGroupCard({
                   {balancesHidden
                     ? '••••'
                     : fiat === null
-                      ? '—'
+                      ? formatFiatAmount('0', { showSign: true })
                       : formatFiatAmount(fiat, { showSign: true })}
                 </p>
               )}

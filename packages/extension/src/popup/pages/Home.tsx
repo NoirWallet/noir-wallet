@@ -74,6 +74,7 @@ import type { DAppExecutionMode } from '@/core/dapp/dapp-execution-mode'
 import { resolveEffectiveActiveAccountIdentity } from '../lib/effective-active-account'
 import {
   getHomeAssetBreakdown,
+  resolveHomeAssetDomainDisplay,
   resolveHomePortfolioTotalStatus
 } from '../services/home-asset-breakdown'
 import {
@@ -164,6 +165,7 @@ export function Home() {
   const {
     model: multichainPortfolio,
     status: portfolioLoadStatus,
+    settled: portfolioSettled,
     refresh: refreshPortfolio
   } = useHomePortfolio(
     multichainPortfolioEnabled ? effectiveWalletId : null,
@@ -529,7 +531,6 @@ export function Home() {
   const useCurrentMultichainTotal =
     multichainPortfolioEnabled &&
     (portfolioTotalStatus === 'ready' || portfolioTotalStatus === 'partial')
-  const displayedTotalUsd = useCurrentMultichainTotal ? displayedFiat.totalUsd : totalUsd
   const assetBreakdown = getHomeAssetBreakdown({
     multichainEnabled: multichainPortfolioEnabled,
     liveMultichainTotal: useCurrentMultichainTotal,
@@ -592,17 +593,30 @@ export function Home() {
     zecPrice
   ])
 
-  const totalBalanceLoading =
-    !balancesHidden && multichainPortfolioEnabled && portfolioTotalStatus === 'loading'
-  const totalBalanceUnavailable =
-    !balancesHidden && multichainPortfolioEnabled && portfolioTotalStatus === 'unavailable'
-  const domainTotals = {
-    all: totalBalanceUnavailable ? null : displayedTotalUsd,
-    public: assetBreakdown?.publicUsd ?? null,
-    shield: assetBreakdown?.shieldUsd ?? null,
-    private: assetBreakdown?.privateUsd ?? null
-  }
+  const multichainDomainDisplay = resolveHomeAssetDomainDisplay({
+    portfolio: displayedPortfolio,
+    walletId: effectiveWalletId,
+    accountId: effectiveAccountId,
+    loadStatus: portfolioLoadStatus,
+    settled: portfolioSettled,
+    priceStatus: assetPriceStatus,
+    totalStatus: portfolioTotalStatus,
+    fiat: displayedFiat,
+    breakdown: assetBreakdown
+  })
+  const domainTotals = multichainPortfolioEnabled
+    ? multichainDomainDisplay.totals
+    : {
+        all: totalUsd,
+        public: assetBreakdown?.publicUsd ?? null,
+        shield: assetBreakdown?.shieldUsd ?? null,
+        private: assetBreakdown?.privateUsd ?? null
+      }
+  const domainLoading = multichainPortfolioEnabled
+    ? multichainDomainDisplay.loading
+    : { all: false, public: false, shield: false, private: false }
   const selectedDomainTotal = domainTotals[assetDomain]
+  const selectedDomainLoading = !balancesHidden && domainLoading[assetDomain]
 
   const openAddressesList = useCallback(() => {
     if (!effectiveWalletId || !effectiveAccountId) return
@@ -839,16 +853,16 @@ export function Home() {
         <div className="px-4 pb-5 pt-6">
           <div className="text-center">
             <div data-testid="home-total-assets" className="group relative mx-auto min-h-12 w-fit">
-              {totalBalanceLoading ? (
+              {selectedDomainLoading ? (
                 <div role="status" aria-label="Loading total assets">
                   <Skeleton className="my-1.5 h-8 w-40" />
                 </div>
-              ) : totalBalanceUnavailable || (!balancesHidden && selectedDomainTotal === null) ? (
+              ) : !balancesHidden && selectedDomainTotal === null ? (
                 <p
                   aria-label="Total assets unavailable"
-                  className="text-[40px] font-semibold leading-[37.4px] text-muted"
+                  className="text-xl font-semibold leading-[37.4px] text-muted"
                 >
-                  —
+                  Unavailable
                 </p>
               ) : (
                 <p
@@ -876,6 +890,7 @@ export function Home() {
               <AssetDomainSelector
                 value={assetDomain}
                 totals={domainTotals}
+                loading={domainLoading}
                 balancesHidden={balancesHidden}
                 onChange={domain => navigate.replace(homeAssetDomainPath(location.search, domain))}
               />

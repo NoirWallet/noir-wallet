@@ -4,6 +4,7 @@ import type { NearConfidentialHolding } from '@/popup/services/near-confidential
 import type { PortfolioChainView } from '@/core/portfolio'
 import { resolveChainIconAlias } from '@/lib/chain-icon'
 import { TokenIcon } from '@/popup/components/tokens/TokenIcon'
+import { Skeleton } from '@/popup/components/ui/skeleton'
 
 export function NearConfidentialHoldingRow({
   entry,
@@ -11,6 +12,7 @@ export function NearConfidentialHoldingRow({
   chain,
   showProvider = false,
   showQuantitySymbol = true,
+  pricesLoading = false,
   onClick
 }: {
   readonly entry: NearConfidentialHolding
@@ -18,6 +20,7 @@ export function NearConfidentialHoldingRow({
   readonly chain?: PortfolioChainView['chain']
   readonly showProvider?: boolean
   readonly showQuantitySymbol?: boolean
+  readonly pricesLoading?: boolean
   readonly onClick?: () => void
 }) {
   const { asset } = entry
@@ -53,16 +56,20 @@ export function NearConfidentialHoldingRow({
         </span>
       </span>
       <span className="min-w-0 max-w-[45%] text-right">
-        <span
-          className="block break-all text-base font-medium"
-          title={balancesHidden ? undefined : (entry.fiat ?? undefined)}
-        >
-          {balancesHidden
-            ? '••••'
-            : entry.fiat === null
-              ? '—'
-              : formatFiatAmount(entry.fiat, { showSign: true })}
-        </span>
+        {!balancesHidden && entry.amount !== null && entry.fiat === null && pricesLoading ? (
+          <Skeleton className="ml-auto h-4 w-16" />
+        ) : (
+          <span
+            className="block break-all text-base font-medium"
+            title={balancesHidden ? undefined : (entry.fiat ?? undefined)}
+          >
+            {balancesHidden
+              ? '••••'
+              : entry.amount === null
+                ? 'Unavailable'
+                : formatFiatAmount(entry.fiat ?? '0', { showSign: true })}
+          </span>
+        )}
         <span
           className="block break-all text-xs text-muted"
           title={balancesHidden ? undefined : (entry.amount ?? undefined)}
@@ -70,7 +77,7 @@ export function NearConfidentialHoldingRow({
           {balancesHidden
             ? '••••'
             : entry.amount === null
-              ? '—'
+              ? 'Unavailable'
               : `${formatTokenQuantity(entry.amount)}${showQuantitySymbol ? ` ${symbol}` : ''}`}
         </span>
       </span>

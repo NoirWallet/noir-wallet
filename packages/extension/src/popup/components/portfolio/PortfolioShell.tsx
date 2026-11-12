@@ -190,7 +190,7 @@ function UnloadedChainBalance({
                 <p className="mt-0.5 text-xs text-muted">••••</p>
               </>
             ) : unavailable ? (
-              <span className="text-muted">—</span>
+              <span className="text-xs text-muted">Unavailable</span>
             ) : (
               <>
                 <Skeleton className="ml-auto h-4 w-16" />
@@ -222,7 +222,11 @@ function UnloadedChainBalance({
           <Skeleton className="mt-1.5 h-3 w-20" />
         )}
       </div>
-      {unavailable ? <span className="text-muted">—</span> : <Skeleton className="h-4 w-16" />}
+      {unavailable ? (
+        <span className="text-xs text-muted">Unavailable</span>
+      ) : (
+        <Skeleton className="h-4 w-16" />
+      )}
     </div>
   )
 }
@@ -528,6 +532,7 @@ export function PortfolioShell({
                 chain={chain?.chain}
                 showProvider
                 balancesHidden={balancesHidden}
+                pricesLoading={pricesLoading}
                 onClick={() => onSelectConfidentialAsset?.(entry.asset.tokenId)}
               />
             ))}
@@ -633,7 +638,9 @@ export function PortfolioShell({
                         {balancesHidden
                           ? '••••'
                           : chainFiat === null
-                            ? '—'
+                            ? getPortfolioChainBalanceStatus(chain) === 'unavailable'
+                              ? 'Unavailable'
+                              : formatFiatAmount('0', { showSign: true })
                             : formatFiatAmount(chainFiat, { showSign: true })}
                       </span>
                     )}
@@ -694,6 +701,7 @@ export function PortfolioShell({
                           chain={chain.chain}
                           showProvider
                           balancesHidden={balancesHidden}
+                          pricesLoading={pricesLoading}
                           onClick={() => onSelectConfidentialAsset?.(entry.asset.tokenId)}
                         />
                       ))}
@@ -752,6 +760,7 @@ export function PortfolioShell({
                   entry={entry}
                   showProvider
                   balancesHidden={balancesHidden}
+                  pricesLoading={pricesLoading}
                   onClick={() => onSelectConfidentialAsset?.(entry.asset.tokenId)}
                 />
               ))}

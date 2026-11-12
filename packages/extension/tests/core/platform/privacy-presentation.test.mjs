@@ -199,6 +199,19 @@ test('Home renders available valuations during partial refreshes instead of an e
   expect(status({ ...model, status: 'partial' })).toBe('partial')
   expect(status({ ...model, status: 'error' })).toBe('partial')
   expect(status(model, 'loading', 'loading')).toBe('partial')
+  expect(
+    status(
+      {
+        ...model,
+        status: 'loading',
+        chains: [{ status: 'loading', assets: [] }],
+        confidential: { status: 'ready', assets: [] }
+      },
+      'loading',
+      'loading',
+      { ...fiat, pricedAssetCount: 0 }
+    )
+  ).toBe('partial')
   expect(status(model, 'ready', 'error', { ...fiat, staleAssetCount: 1 })).toBe('partial')
   expect(status(model, 'ready', 'ready', { ...fiat, missingAssetCount: 1 })).toBe('partial')
   expect(status({ ...model, scope: { ...model.scope, accountId: 'account-b' } })).toBe(
@@ -214,10 +227,48 @@ test('Home distinguishes an initial load, an unavailable valuation and a confirm
   expect(status(null, 'loading', 'ready')).toBe('loading')
   expect(status(null, 'error', 'ready')).toBe('unavailable')
   expect(status(model, 'ready', 'loading', { ...fiat, missingAssetCount: 1 })).toBe('loading')
-  expect(status(model, 'ready', 'error', { ...fiat, missingAssetCount: 1 })).toBe('unavailable')
+  expect(status(model, 'ready', 'error', { ...fiat, missingAssetCount: 1 })).toBe('ready')
   expect(status({ ...model, status: 'partial' }, 'ready', 'ready')).toBe('unavailable')
+  expect(
+    status(
+      {
+        ...model,
+        status: 'partial',
+        chains: [
+          { status: 'ready', assets: [] },
+          { status: 'loading', assets: [] }
+        ]
+      },
+      'loading',
+      'loading'
+    )
+  ).toBe('partial')
+  expect(
+    status(
+      {
+        ...model,
+        status: 'partial',
+        chains: [{ status: 'ready', assets: [{ balance: { totalRaw: '1' } }] }]
+      },
+      'ready',
+      'ready',
+      { ...fiat, missingAssetCount: 1 }
+    )
+  ).toBe('partial')
   expect(status(model, 'ready', 'error')).toBe('ready')
   expect(status({ ...model, status: 'empty' }, 'ready', 'error')).toBe('ready')
+  expect(
+    status(
+      {
+        ...model,
+        chains: [{ status: 'ready', assets: [] }],
+        confidential: { status: 'unavailable', assets: [] }
+      },
+      'ready',
+      'ready',
+      { ...fiat, missingAssetCount: 1 }
+    )
+  ).toBe('partial')
   expect(
     status(
       { ...model, status: 'empty', confidential: { status: 'unavailable', assets: [] } },

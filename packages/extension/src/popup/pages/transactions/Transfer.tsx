@@ -1650,7 +1650,7 @@ function TransferForm() {
       <div className="page-container">
         <TransactionReviewView
           variant="figma"
-          title={activeShieldReview.operation === 'cluster' ? 'Cluster transfer' : 'Confirm Move'}
+          title={activeShieldReview.operation === 'cluster' ? 'Cluster Move' : 'Confirm Move'}
           asset={{
             assetId: selected.asset.asset.id,
             symbol,

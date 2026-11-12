@@ -640,32 +640,36 @@ export function AccountSwitcher({
                       onClick={() => void select(account)}
                       className={cn(
                         'group wallet-interactive flex w-full flex-col items-center gap-1 rounded-lg px-1 py-2 text-center hover:bg-white/6 active:bg-white/10 focus-visible:bg-white/6 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary disabled:pointer-events-none disabled:opacity-50',
-                        account.active && 'text-primary'
+                        account.active && 'text-primary',
+                        switching === `${account.walletId}:${account.accountId}` &&
+                          'disabled:opacity-100'
                       )}
                     >
-                      <AccountAvatar
-                        name={account.name}
-                        walletId={account.walletId}
-                        size={42}
-                        active={account.active}
-                      />
+                      <span className="relative flex size-[42px] items-center justify-center">
+                        <AccountAvatar
+                          name={account.name}
+                          walletId={account.walletId}
+                          size={42}
+                          active={account.active}
+                        />
+                        {switching === `${account.walletId}:${account.accountId}` && (
+                          <span
+                            role="status"
+                            aria-label={`Switching to ${account.name}`}
+                            className="absolute inset-0 flex items-center justify-center rounded-full bg-wallet-surface/60 text-primary"
+                          >
+                            <Icon
+                              icon="lucide:loader-2"
+                              className="animate-spin"
+                              width={24}
+                              height={24}
+                            />
+                          </span>
+                        )}
+                      </span>
                       <span className="w-full truncate text-[11px] font-medium leading-[14px]">
                         {account.name}
                       </span>
-                      {switching === `${account.walletId}:${account.accountId}` && (
-                        <span
-                          role="status"
-                          className="flex items-center gap-1 text-[11px] text-primary"
-                        >
-                          <Icon
-                            icon="lucide:loader-2"
-                            className="animate-spin"
-                            width={12}
-                            height={12}
-                          />
-                          Switching…
-                        </span>
-                      )}
                     </button>
                   ))}
                 </div>

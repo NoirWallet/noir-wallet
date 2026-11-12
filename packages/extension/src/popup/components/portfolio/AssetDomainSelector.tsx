@@ -3,6 +3,7 @@ import { Icon } from '@iconify/react'
 import { formatAssetDomainFiat, type AssetDomain } from '@/popup/services/asset-domains'
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover'
 import { cn } from '@/lib/utils'
+import { Skeleton } from '../ui/skeleton'
 
 export const ASSET_DOMAIN_LABELS: Record<AssetDomain, string> = {
   all: 'Total assets',
@@ -23,6 +24,7 @@ export function AssetDomainSelector({
   totals,
   partialTotals,
   balancesHidden,
+  loading,
   domains = Object.keys(ASSET_DOMAIN_LABELS) as AssetDomain[],
   onChange
 }: {
@@ -30,6 +32,7 @@ export function AssetDomainSelector({
   readonly totals: Readonly<Record<AssetDomain, string | number | null>>
   readonly partialTotals?: Readonly<Record<AssetDomain, boolean>>
   readonly balancesHidden: boolean
+  readonly loading?: Readonly<Record<AssetDomain, boolean>>
   readonly domains?: readonly AssetDomain[]
   readonly onChange: (domain: AssetDomain) => void
 }) {
@@ -92,18 +95,26 @@ export function AssetDomainSelector({
                 )}
               />
               <span className="shrink-0">{ASSET_DOMAIN_LABELS[domain]}</span>
-              <span
-                className="ml-auto min-w-0 truncate text-right text-sm tabular-nums text-foreground"
-                title={
-                  balancesHidden
-                    ? undefined
-                    : formatAssetDomainFiat(totals[domain], partialTotals?.[domain])
-                }
-              >
-                {balancesHidden
-                  ? '••••'
-                  : formatAssetDomainFiat(totals[domain], partialTotals?.[domain])}
-              </span>
+              {!balancesHidden && loading?.[domain] && totals[domain] === null ? (
+                <Skeleton className="ml-auto h-4 w-16" />
+              ) : (
+                <span
+                  className="ml-auto min-w-0 truncate text-right text-sm tabular-nums text-foreground"
+                  title={
+                    balancesHidden
+                      ? undefined
+                      : totals[domain] === null
+                        ? 'Unavailable'
+                        : formatAssetDomainFiat(totals[domain], partialTotals?.[domain])
+                  }
+                >
+                  {balancesHidden
+                    ? '••••'
+                    : totals[domain] === null
+                      ? 'Unavailable'
+                      : formatAssetDomainFiat(totals[domain], partialTotals?.[domain])}
+                </span>
+              )}
             </button>
           ))}
         </div>
