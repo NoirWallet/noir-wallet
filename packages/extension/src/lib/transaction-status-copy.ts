@@ -348,7 +348,7 @@ export function getStandardTransactionResultCopy(
       return {
         title: 'Confirming',
         description: '',
-        resultStatus: 'submitted'
+        resultStatus: 'loading'
       }
     case 'success':
       return {

@@ -366,7 +366,20 @@ function ShieldSwapForm({ onStateChange }: ShieldSwapPageProps) {
         accountId: account.accountId,
         transactionId
       },
-      () => navigate(`/?tab=activity&transactionId=${encodeURIComponent(transactionId)}`)
+      () => navigate(`/?tab=activity&transactionId=${encodeURIComponent(transactionId)}`),
+      prepared
+        ? {
+            operation: 'swap',
+            amount: prepared.amount,
+            symbol: formatSymbol(prepared.from.asset.metadata.symbol),
+            receiveAmount: formatBaseUnitDecimalAmount(
+              prepared.review.expectedOutputRaw,
+              prepared.to.asset.metadata.decimals
+            ),
+            receiveSymbol: formatSymbol(prepared.to.asset.metadata.symbol),
+            network: 'NEAR Confidential'
+          }
+        : undefined
     )
   }
   const refreshBalances = async () => {
@@ -551,8 +564,10 @@ function ShieldSwapForm({ onStateChange }: ShieldSwapPageProps) {
           }}
           amount={prepared.amount}
           network=""
+          exchange
           summary={
             <TransactionReviewExchangeSummary
+              presentation="exchange"
               source={{
                 asset: {
                   assetId: prepared.from.asset.asset.id,
@@ -617,6 +632,7 @@ function ShieldSwapForm({ onStateChange }: ShieldSwapPageProps) {
           }
           confirmLabel={uncertain ? 'Check status' : 'Confirm'}
           confirming={busy}
+          submitting={busy && confirmationAttempt.current === prepared.review.planId}
           onCancel={() => void cancelReview()}
           onConfirm={() => void confirm()}
         />
@@ -843,7 +859,7 @@ function ShieldSwapForm({ onStateChange }: ShieldSwapPageProps) {
                     {formatSymbol(asset.asset.metadata.symbol)}
                   </span>
                   <span className="block truncate text-xs text-muted">
-                    Origin: {asset.chain.chain.displayName}
+                    {asset.chain.chain.displayName}
                     {originIdentifiers.get(asset.asset.asset.id)
                       ? ` · ${originIdentifiers.get(asset.asset.asset.id)}`
                       : ''}

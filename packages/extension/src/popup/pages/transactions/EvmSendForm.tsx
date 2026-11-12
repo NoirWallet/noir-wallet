@@ -1430,7 +1430,7 @@ export function EvmSendForm({
 
           {review && summary?.schema === 'evm.transaction.v1' && (
             <TransactionReviewView
-              title="Sending"
+              title="Confirm Send"
               titleId="evm-send-review-title"
               variant="figma"
               asset={{
@@ -1439,6 +1439,7 @@ export function EvmSendForm({
                 icon: asset.metadata.iconUrl
               }}
               amount={review.amount}
+              amountPrefix="-"
               fiatValue={reviewFiat}
               network={formatPortfolioNetworkName(chain)}
               notice={
@@ -1543,6 +1544,7 @@ export function EvmSendForm({
               ]}
               confirmLabel={review.privacyWarning ? 'Send anyway' : 'Send'}
               confirming={approving}
+              submitting={approving}
               preparing={updatingFee}
               confirmDisabled={review.intentKey !== intentKey}
               error={error ? <InlineError message={error} className="mt-3" /> : undefined}

@@ -384,7 +384,13 @@ function QuoteAssetRow({
     <section className="flex min-w-0 items-start gap-4">
       <TokenIcon token={token} size={42} />
       <div className="min-w-0 flex-1">
-        <div className="min-w-0 text-[26px] font-semibold leading-8">
+        <div
+          className={
+            amount.length > 13
+              ? 'min-w-0 text-lg font-semibold leading-8'
+              : 'min-w-0 text-[26px] font-semibold leading-8'
+          }
+        >
           <AmountDisplay
             value={amount}
             symbol={formatSymbol(token.symbol)}

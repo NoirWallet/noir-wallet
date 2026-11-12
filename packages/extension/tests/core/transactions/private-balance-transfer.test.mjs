@@ -67,6 +67,16 @@ test('defaults Shield Move and keeps preferences scoped to a supported account a
     initialMoveDraft({
       state: null,
       scope,
+      mode: 'private',
+      routeFrom: null,
+      routeTo: null,
+      routeAssetId: null
+    })
+  ).toMatchObject({ from: 'private', to: 'shield', assetId: null, amount: '' })
+  expect(
+    initialMoveDraft({
+      state: null,
+      scope,
       mode: 'public',
       routeFrom: null,
       routeTo: null,

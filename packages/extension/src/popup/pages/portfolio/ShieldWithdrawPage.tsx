@@ -26,6 +26,7 @@ import { getPrivateTransferChainIds } from '@/popup/services/private-balance-tra
 import { useNavigate } from '@/popup/provider/Router'
 import { PageHeader } from '@/popup/components/common/PageHeader'
 import { ShieldSendProviderTabs } from '@/popup/components/portfolio/ShieldSendProviderTabs'
+import { SlippageSettingContent } from '@/popup/components/swap/SlippageSetting'
 import {
   SendSourceSection,
   SendFieldLabel,
@@ -138,7 +139,8 @@ export function ShieldWithdrawForm({
   const [destinationNetworkId, setDestinationNetworkId] = useState<string | null>(routeNetworkId)
   const [amount, setAmount] = useState('')
   const [recipient, setRecipient] = useState(isAddress(routeRecipient) ? routeRecipient : '')
-  const [picker, setPicker] = useState<'source' | 'network' | 'recipient' | null>(null)
+  const [picker, setPicker] = useState<'source' | 'network' | 'recipient' | 'slippage' | null>(null)
+  const [slippage, setSlippage] = useState(0.5)
   const [prepared, setPrepared] = useState<Readonly<{
     review: ConfidentialFundingReview
     request: PrepareConfidentialFundingRequest
@@ -308,7 +310,7 @@ export function ShieldWithdrawForm({
       recipient: recipient.trim(),
       source,
       destination,
-      slippageBps: 50
+      slippageBps: Math.round(slippage * 100)
     })
   }, [
     network,
@@ -319,6 +321,7 @@ export function ShieldWithdrawForm({
     source,
     destination,
     amountState?.amountRaw,
+    slippage,
     recipient,
     recipientValid
   ])
@@ -352,7 +355,17 @@ export function ShieldWithdrawForm({
         accountId: account.accountId,
         transactionId
       },
-      () => navigate(`/?tab=activity&transactionId=${encodeURIComponent(transactionId)}`)
+      () => navigate(`/?tab=activity&transactionId=${encodeURIComponent(transactionId)}`),
+      prepared
+        ? {
+            operation: 'send',
+            amount: prepared.amount,
+            symbol: formatSymbol(prepared.source.asset.metadata.symbol),
+            from: 'Shield · NEAR Confidential',
+            recipient: prepared.review.destinationAddress,
+            network: prepared.destination.chain.chain.displayName
+          }
+        : undefined
     )
   }
   const refreshBalances = async () => {
@@ -537,6 +550,7 @@ export function ShieldWithdrawForm({
           network={prepared.destination.chain.chain.displayName}
           summary={
             <TransactionReviewExchangeSummary
+              presentation="single"
               destinationLabel="Recipient receives"
               destinationPrefix=""
               source={{
@@ -559,6 +573,7 @@ export function ShieldWithdrawForm({
           }
           rows={[
             { label: 'From', content: 'Shield · NEAR Confidential' },
+            { label: 'Recipient', content: prepared.review.destinationAddress },
             {
               label: 'Network',
               content: (
@@ -573,7 +588,15 @@ export function ShieldWithdrawForm({
                 </span>
               )
             },
-            { label: 'Recipient', content: prepared.review.destinationAddress },
+            {
+              label: 'Recipient receives',
+              content: (
+                <AmountDisplay
+                  value={output}
+                  symbol={formatSymbol(prepared.destination.asset.metadata.symbol)}
+                />
+              )
+            },
             {
               label: 'Minimum receive',
               content: (
@@ -618,6 +641,7 @@ export function ShieldWithdrawForm({
           }
           confirmLabel={uncertain ? 'Check status' : 'Confirm'}
           confirming={busy}
+          submitting={busy && confirmationAttempt.current === prepared.review.planId}
           onCancel={() => void cancelReview()}
           onConfirm={() => void confirm()}
         />
@@ -629,28 +653,18 @@ export function ShieldWithdrawForm({
     <div className="page-container min-h-0 overflow-hidden">
       <PageHeader title="Send" showBack onBack={onBack} />
       <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-5 pt-4">
-        {canSendZcash && (
-          <div className="mb-4">
-            <ShieldSendProviderTabs
-              value="near-confidential"
-              disabled={busy}
-              onChange={provider => {
-                if (provider === 'zcash-shield') navigate('/send/zcash?from=shielded')
-              }}
-            />
-          </div>
-        )}
         <div className="space-y-4 mb-4">
           <SendSourceSection
             domain="shield"
             availableDomains={['public', 'shield']}
             disabled={busy}
             onDomainChange={domain => {
-              if (domain === 'public')
-                onSelectPublic(
-                  destination?.asset.asset.id ?? initialAsset?.asset.id ?? null,
-                  isAddress(recipient) ? recipient : ''
-                )
+              if (domain === 'public') {
+                const publicAssetId = [source?.asset, destination?.asset, initialAsset]
+                  .map(asset => asset?.asset.id)
+                  .find(id => model?.assets.some(item => item.asset.id === id))
+                onSelectPublic(publicAssetId ?? null, isAddress(recipient) ? recipient : '')
+              }
             }}
             amountInput={
               <SendAmountInputCard
@@ -726,6 +740,26 @@ export function ShieldWithdrawForm({
           />
         </div>
 
+        <div className="mb-5 flex min-w-0 items-center justify-between gap-3">
+          <SendFieldLabel>Provider</SendFieldLabel>
+          {canSendZcash ? (
+            <div className="w-[225px] max-w-[72%] min-w-0">
+              <ShieldSendProviderTabs
+                value="near-confidential"
+                disabled={busy}
+                onChange={provider => {
+                  if (provider === 'zcash-shield') navigate('/send/zcash?from=shielded')
+                }}
+              />
+            </div>
+          ) : (
+            <span className="inline-flex items-center gap-2 text-sm">
+              <img src={nearLogo} alt="" className="size-5 rounded" />
+              Confidential
+            </span>
+          )}
+        </div>
+
         <div className="mb-2 flex min-w-0 items-center justify-between gap-3 text-xs">
           <SendFieldLabel>Send to</SendFieldLabel>
           <button
@@ -778,52 +812,34 @@ export function ShieldWithdrawForm({
             No supported network for this token
           </p>
         )}
-        <div className="mt-4 space-y-2 text-xs">
-          <span className="text-muted">Provider</span>
-          <div className="rounded-lg border border-white/10 bg-wallet-surface px-3 py-2.5">
-            <div className="flex min-w-0 items-center gap-2">
-              <img src={nearLogo} alt="" className="size-5 shrink-0 rounded" />
-              <span className="min-w-0 flex-1 truncate">NEAR Confidential Intents</span>
-              {preview && destination && (
-                <AmountDisplay
-                  value={formatBaseUnitDecimalAmount(
-                    preview.amountOutRaw,
-                    destination.asset.metadata.decimals
-                  )}
-                  symbol={formatSymbol(destination.asset.metadata.symbol)}
-                />
-              )}
-            </div>
-            <div className="mt-3 grid grid-cols-2 gap-3 text-muted">
-              <span>
-                Est. time{' '}
-                <span className="text-foreground">
-                  {preview?.timeEstimateSeconds === undefined
-                    ? '—'
-                    : formatShieldQuoteTime(preview.timeEstimateSeconds)}
-                </span>
-              </span>
-              <span className="text-right">
-                Network fee{' '}
-                <span className="text-foreground">
-                  {preview?.sourceNetworkFee
-                    ? `${formatBaseUnitDecimalAmount(preview.sourceNetworkFee.raw, preview.sourceNetworkFee.decimals)} ${formatSymbol(preview.sourceNetworkFee.symbol)}`
-                    : '—'}
-                </span>
-              </span>
-            </div>
-            {preview && destination && (
-              <div className="mt-2 flex justify-between gap-3 border-t border-white/10 pt-2">
-                <span className="text-muted">Minimum receive</span>
-                <AmountDisplay
-                  value={formatBaseUnitDecimalAmount(
-                    preview.minimumOutputRaw,
-                    destination.asset.metadata.decimals
-                  )}
-                  symbol={formatSymbol(destination.asset.metadata.symbol)}
-                />
-              </div>
-            )}
+        <div className="mt-4 space-y-4 text-sm">
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-muted">Slippage</span>
+            <button
+              type="button"
+              aria-label={`Set slippage, currently ${slippage}%`}
+              disabled={busy}
+              onClick={() => setPicker('slippage')}
+              className="wallet-interactive inline-flex items-center gap-1 text-foreground hover:text-primary disabled:opacity-45"
+            >
+              {slippage}% <Icon icon="lucide:chevron-down" width={14} height={14} />
+            </button>
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-muted">Fee</span>
+            <span className="flex min-w-0 items-center gap-1.5 text-right text-foreground">
+              {preview?.sourceNetworkFee
+                ? `${formatBaseUnitDecimalAmount(preview.sourceNetworkFee.raw, preview.sourceNetworkFee.decimals)} ${formatSymbol(preview.sourceNetworkFee.symbol)}`
+                : '—'}
+            </span>
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-muted">Est. time</span>
+            <span>
+              {preview?.timeEstimateSeconds === undefined
+                ? '—'
+                : formatShieldQuoteTime(preview.timeEstimateSeconds)}
+            </span>
           </div>
         </div>
         {previewError && (
@@ -856,32 +872,6 @@ export function ShieldWithdrawForm({
           <p role="alert" className="mt-3 text-xs text-warning">
             {amountState.error}
           </p>
-        )}
-        {currentBalances && source && availableRaw === '0' && (
-          <div className="mt-4 flex justify-center gap-4 text-sm">
-            <button
-              type="button"
-              onClick={() =>
-                navigate(
-                  `/transfer?entry=shield&provider=near-confidential&assetId=${encodeURIComponent(source.asset.asset.id)}`
-                )
-              }
-              className="wallet-interactive rounded-md px-2 py-1 text-primary hover:bg-primary/10 focus-visible:outline-2 focus-visible:outline-primary"
-            >
-              Move funds
-            </button>
-            <button
-              type="button"
-              onClick={() =>
-                navigate(
-                  `/shield-deposit?provider=near-confidential&assetId=${encodeURIComponent(source.asset.asset.id)}`
-                )
-              }
-              className="wallet-interactive rounded-md px-2 py-1 text-primary hover:bg-primary/10 focus-visible:outline-2 focus-visible:outline-primary"
-            >
-              Receive funds
-            </button>
-          </div>
         )}
         {recipient && !recipientValid && (
           <p role="alert" className="mt-3 text-xs text-warning">
@@ -935,9 +925,15 @@ export function ShieldWithdrawForm({
           className="max-h-[80vh] min-h-0 overflow-y-auto bg-wallet-surface p-4 pb-6"
         >
           <DialogTitle>
-            {picker === 'source' ? 'Source token' : picker === 'network' ? 'Network' : 'Recipient'}
+            {picker === 'source'
+              ? 'Source token'
+              : picker === 'network'
+                ? 'Network'
+                : picker === 'slippage'
+                  ? 'Slippage'
+                  : 'Recipient'}
           </DialogTitle>
-          <DialogDescription className="sr-only">Choose a withdrawal {picker}</DialogDescription>
+          <DialogDescription className="sr-only">Set Send {picker}</DialogDescription>
           {picker === 'source' && sources.length === 0 && (
             <p className="py-6 text-center text-sm text-muted">
               {currentBalances
@@ -947,7 +943,16 @@ export function ShieldWithdrawForm({
                   : 'Balance unavailable'}
             </p>
           )}
-          {picker === 'recipient' && destination ? (
+          {picker === 'slippage' ? (
+            <SlippageSettingContent
+              key={slippage}
+              currentSlippage={slippage}
+              onSave={value => {
+                setSlippage(value)
+                setPicker(null)
+              }}
+            />
+          ) : picker === 'recipient' && destination ? (
             <RecipientSelector
               chainId={destination.chain.chain.id}
               includeCurrentAccount

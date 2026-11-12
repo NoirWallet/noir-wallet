@@ -47,6 +47,7 @@ import {
 } from '@/lib/number-format'
 import { cn } from '@/lib/utils'
 import { AmountDisplay } from '@/popup/components/common/AmountDisplay'
+import { TransactionReviewView } from '@/popup/components/transaction/TransactionReviewView'
 import { BalanceDomainTabs } from '@/popup/components/account/BalanceDomainTabs'
 import { ShieldSendProviderTabs } from '@/popup/components/portfolio/ShieldSendProviderTabs'
 import { useActiveAccountNetworks } from '@/popup/hooks/useActiveAccountNetworks'
@@ -501,8 +502,8 @@ export function Send() {
   }
 
   useEffect(() => {
-    if (showReview && staleSelectedMax) setShowReview(false)
-  }, [showReview, staleSelectedMax])
+    if (showReview && staleSelectedMax && !isConfirming) setShowReview(false)
+  }, [showReview, staleSelectedMax, isConfirming])
 
   useEffect(() => {
     if (maxSelected) {
@@ -874,20 +875,6 @@ export function Send() {
     <div className="page-container" data-wallet-mode={isSelfMove ? 'public' : walletMode}>
       <PageHeader title={isSelfMove ? 'Move' : 'Send'} showBack onBack={goBack} />
       <div className="page-content min-h-0 !px-4 pt-4">
-        {!isSelfMove && fundingSource === 'shielded' && canSendConfidential && (
-          <div className="mb-4">
-            <ShieldSendProviderTabs
-              value="zcash-shield"
-              disabled={isConfirming || showReview}
-              onChange={provider => {
-                if (provider === 'near-confidential')
-                  navigate('/send?sourceMode=shield&provider=near-confidential', {
-                    state: { sendEntry: 'shield' }
-                  })
-              }}
-            />
-          </div>
-        )}
         <div className={cn('space-y-2', !isSelfMove && 'space-y-4')}>
           {isSelfMove ? (
             <>
@@ -1014,6 +1001,23 @@ export function Send() {
                   }
                 />
               </div>
+              {fundingSource === 'shielded' && canSendConfidential && (
+                <div className="flex min-w-0 items-center justify-between gap-3">
+                  <SendFieldLabel>Provider</SendFieldLabel>
+                  <div className="w-[225px] max-w-[72%] min-w-0">
+                    <ShieldSendProviderTabs
+                      value="zcash-shield"
+                      disabled={isConfirming || showReview}
+                      onChange={provider => {
+                        if (provider === 'near-confidential')
+                          navigate('/send?sourceMode=shield&provider=near-confidential', {
+                            state: { sendEntry: 'shield' }
+                          })
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
             </>
           )}
 
@@ -1237,79 +1241,71 @@ export function Send() {
         </Button>
       </div>
 
-      <Dialog open={showReview} onOpenChange={setShowReview}>
+      <Dialog
+        open={showReview}
+        onOpenChange={open => {
+          if (!open && (confirmationInFlight.current || isHardwareSigning)) return
+          setShowReview(open)
+        }}
+      >
         <DialogContent
           position="bottom"
           showCloseButton={false}
-          aria-label={isSelfMove ? 'Review Move' : 'Review Send'}
+          aria-label={isSelfMove ? 'Confirm Move' : 'Confirm Send'}
           data-wallet-mode={isSelfMove ? 'public' : walletMode}
           className="flex h-dvh max-h-dvh flex-col gap-0 rounded-none border-0 bg-background p-0 shadow-none"
         >
           <DialogTitle className="sr-only">
-            {isSelfMove ? 'Review Move' : 'Review Send'}
+            {isSelfMove ? 'Confirm Move' : 'Confirm Send'}
           </DialogTitle>
           <DialogDescription className="sr-only">
             Review the amount, destination, and fee before {isSelfMove ? 'moving' : 'sending'}.
           </DialogDescription>
-          <div className="relative flex h-14 shrink-0 items-center justify-center">
-            <button
-              type="button"
-              aria-label={isSelfMove ? 'Back to Move' : 'Back to Send'}
-              onClick={() => setShowReview(false)}
-              className="absolute left-4 flex size-7 items-center justify-center"
-            >
-              <Icon icon="lucide:chevron-left" width={22} height={22} />
-            </button>
-            <span className="text-lg font-medium leading-[23px]">
-              {isSelfMove ? 'Moving' : 'Sending'}
-            </span>
-          </div>
-          <div className="min-h-0 flex-1 overflow-y-auto px-4">
-            <div className="flex h-32 flex-col items-center justify-center">
-              <div className="max-w-full text-center text-[40px] font-semibold leading-[37.4px] tracking-[-0.015em]">
-                <AmountDisplay
-                  value={amount}
-                  symbol="ZEC"
-                  className="gap-[0.25em] font-sans tabular-nums"
-                />
-              </div>
-              <p className="mt-3 text-base leading-[21px] text-muted">
-                {formatFiatAmount(
-                  safeBig(amount || '0')
-                    .times(zecPrice || 0)
-                    .toFixed(),
-                  { showSign: true }
-                )}
-              </p>
-            </div>
-            <div className="mt-1 divide-y divide-white/10 text-sm font-medium leading-[18px]">
-              <div className="flex min-h-16 items-center justify-between gap-3">
-                <span className="text-muted">{isSelfMove ? 'Move from' : 'Send from'}</span>
-                <span className="min-w-0 text-right">
-                  <span className="flex items-center justify-end gap-1.5">
-                    {accountDisplayName}
+          <TransactionReviewView
+            title={isSelfMove ? 'Confirm Move' : 'Confirm Send'}
+            showTitle
+            variant="figma"
+            asset={{ symbol: 'ZEC', nativeChain: 'zcash' }}
+            amount={amount}
+            amountPrefix={isConfirming && !isHardwareWallet ? '' : isSelfMove ? '' : '-'}
+            fiatValue={formatFiatAmount(
+              safeBig(amount || '0')
+                .times(zecPrice || 0)
+                .times(isSelfMove ? 1 : -1)
+                .toFixed(),
+              { showSign: true }
+            )}
+            network={currentNetwork === 'testnet' ? 'Zcash Testnet' : 'Zcash'}
+            rows={[
+              {
+                label: 'From',
+                content: (
+                  <span className="min-w-0 text-right">
+                    <span className="flex items-center justify-end gap-1.5">
+                      {accountDisplayName}
+                      <span
+                        className={cn(
+                          'rounded px-1.5 py-0.5 text-xs',
+                          fundingSource === 'shielded'
+                            ? 'bg-primary/10 text-primary'
+                            : 'bg-white/10 text-muted'
+                        )}
+                      >
+                        {fundingSource === 'shielded' ? 'Shield' : 'Transparent'}
+                      </span>
+                    </span>
                     <span
-                      className={cn(
-                        'rounded px-1.5 py-0.5 text-xs',
-                        fundingSource === 'shielded'
-                          ? 'bg-primary/10 text-primary'
-                          : 'bg-white/10 text-muted'
-                      )}
+                      className="block truncate text-xs font-normal leading-4 text-muted"
+                      title={fromAddress}
                     >
-                      {fundingSource === 'shielded' ? 'Shield' : 'Transparent'}
+                      {formatSortAddress(fromAddress)}
                     </span>
                   </span>
-                  <span
-                    className="block truncate text-xs font-normal leading-4 text-muted"
-                    title={fromAddress}
-                  >
-                    {formatSortAddress(fromAddress)}
-                  </span>
-                </span>
-              </div>
-              <div className="flex min-h-16 items-center justify-between gap-3">
-                <span className="text-muted">To</span>
-                <span className="min-w-0 max-w-[70%] text-right">
+                )
+              },
+              {
+                label: 'To',
+                content: (
                   <SendRecipientAddress
                     address={effectiveToAddress}
                     name={
@@ -1319,66 +1315,55 @@ export function Send() {
                         : undefined)
                     }
                   />
-                </span>
-              </div>
-              <div className="flex min-h-12 items-center justify-between">
-                <span className="text-muted">Network</span>
-                <span>{currentNetwork === 'testnet' ? 'Zcash Testnet' : 'Zcash'}</span>
-              </div>
-              {effectiveMemo && (
-                <div className="flex min-h-12 items-center justify-between gap-3">
-                  <span className="text-muted">Memo</span>
-                  <span className="max-w-[65%] break-all text-right text-xs">{effectiveMemo}</span>
-                </div>
-              )}
-              <div className="flex min-h-12 items-center justify-between gap-2">
-                <span className="text-muted">Network fee</span>
-                <FeeTierPicker
-                  tier={feeTier}
-                  onTierChange={setFeeTier}
-                  feeByTier={displayedFeeByTier}
-                  loading={displayedFeeLoading}
-                  loadingByTier={displayedFeeLoadingByTier}
-                  allowFallback={false}
-                  hideLabel
-                />
-              </div>
-            </div>
-            {feeError && (
-              <InlineError
-                className="mt-3"
-                message={
-                  (!isMaxFeeMode && feeEstimate.errorMessage) || 'Could not estimate network fee'
-                }
-                onRetry={retryFeeEstimate}
-              />
-            )}
-          </div>
-          <div className="flex shrink-0 gap-2.5 px-4 pb-5 pt-2">
-            <Button
-              variant="outline"
-              size="wallet"
-              onClick={() => setShowReview(false)}
-              className="h-[45px] flex-1"
-            >
-              Cancel
-            </Button>
-            <Button
-              size="wallet"
-              onClick={handleConfirm}
-              disabled={
-                moveUnavailable ||
-                reviewInsufficient ||
-                !feeReady ||
-                (isSelfMove && syncState.isSyncing) ||
-                isHardwareSigning ||
-                isConfirming
+                )
+              },
+              {
+                label: 'Network',
+                content: currentNetwork === 'testnet' ? 'Zcash Testnet' : 'Zcash'
+              },
+              ...(effectiveMemo ? [{ label: 'Memo', content: effectiveMemo }] : []),
+              {
+                label: 'Network fee',
+                content: (
+                  <FeeTierPicker
+                    tier={feeTier}
+                    onTierChange={setFeeTier}
+                    feeByTier={displayedFeeByTier}
+                    loading={displayedFeeLoading}
+                    loadingByTier={displayedFeeLoadingByTier}
+                    allowFallback={false}
+                    hideLabel
+                  />
+                )
               }
-              className="h-[45px] flex-1"
-            >
-              {isHardwareSigning ? 'Waiting for hardware wallet...' : 'Confirm'}
-            </Button>
-          </div>
+            ]}
+            error={
+              feeError ? (
+                <InlineError
+                  className="mt-3"
+                  message={
+                    (!isMaxFeeMode && feeEstimate.errorMessage) || 'Could not estimate network fee'
+                  }
+                  onRetry={retryFeeEstimate}
+                />
+              ) : undefined
+            }
+            confirmLabel={isHardwareSigning ? 'Waiting for hardware wallet...' : 'Confirm'}
+            confirming={isConfirming}
+            submitting={isConfirming && !isHardwareWallet}
+            confirmDisabled={
+              moveUnavailable ||
+              reviewInsufficient ||
+              !feeReady ||
+              (isSelfMove && syncState.isSyncing) ||
+              isHardwareSigning
+            }
+            cancelDisabled={isConfirming || isHardwareSigning}
+            onCancel={() => {
+              if (!confirmationInFlight.current && !isHardwareSigning) setShowReview(false)
+            }}
+            onConfirm={() => void handleConfirm()}
+          />
         </DialogContent>
       </Dialog>
 

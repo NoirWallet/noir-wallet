@@ -1430,8 +1430,19 @@ function TransferForm() {
       setMaxSelected(false)
       setShieldError(null)
       setConfirmUncertain(false)
-      void openConfidentialActivity(plan, () =>
-        navigate(`/?tab=activity&transactionId=${encodeURIComponent(plan.transactionId)}`)
+      void openConfidentialActivity(
+        plan,
+        () => navigate(`/?tab=activity&transactionId=${encodeURIComponent(plan.transactionId)}`),
+        selected
+          ? {
+              operation: 'move',
+              amount: currentAmount,
+              symbol: formatSymbol(selected.asset.metadata.symbol),
+              from: `${accountName} · ${domainLabel(from)}`,
+              recipient: `${accountName} · ${domainLabel(to)}`,
+              network: selected.chain.chain.displayName
+            }
+          : undefined
       )
     }
   }
@@ -1650,6 +1661,9 @@ function TransferForm() {
                 : 'Move'
           }
           confirming={confirmingShield}
+          submitting={
+            confirmingShield && confirmAttemptedPlanId.current === activeShieldReview.planId
+          }
           cancelDisabled={cancellingShield}
           confirmDisabled={
             !scopeStillCurrent() ||

@@ -4126,8 +4126,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
                             : zecDestinationType === 'transparent'
                               ? getFundingBalance(storeBalance, 'transparent').available
                               : storeBalance?.available || '0',
-                        evmExecutionMode: selectorBalanceMode,
-                        network: currentNetwork
+                        evmExecutionMode: selectorBalanceMode
                       }
                     : undefined
                 }
@@ -4144,21 +4143,6 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
                     : 'No destination assets are available'
                 }
                 selectedToken={(type === 'in' ? swap.tokenIn : swap.tokenOut) || undefined}
-                confidentialZecToken={
-                  type === 'in' && ordinarySwapRequested
-                    ? swap.sourceTokens.find(isZecToken)
-                    : undefined
-                }
-                onSelectConfidentialZec={
-                  type === 'in' && ordinarySwapRequested
-                    ? assetId => {
-                        resolve(undefined)
-                        navigate(
-                          `/shield-swap?provider=near-confidential&assetId=${encodeURIComponent(assetId)}`
-                        )
-                      }
-                    : undefined
-                }
                 onSelect={(token, selectedPortfolio) => {
                   if (
                     selectedPortfolio &&
@@ -4784,6 +4768,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
                 swap.tokenIn.contractAddress == null ? swap.tokenIn.blockchain : undefined
             }}
             amount={transferReview?.amountIn ?? '—'}
+            amountPrefix={publicPrivacySendRequested ? '-' : ''}
             network={walletOwnedSource.chain.chain.displayName}
             rows={reviewRows}
             error={
@@ -4807,6 +4792,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
             }
             confirmLabel="Confirm"
             confirming={isSending || isPreparingReview}
+            submitting={isSending}
             confirmDisabled={
               !transferReview ||
               Boolean(transferPreparationError) ||

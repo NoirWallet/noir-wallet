@@ -12,7 +12,7 @@ export function ShieldSendProviderTabs({
 }) {
   return (
     <div
-      className="grid h-11 grid-cols-2 gap-1 rounded-lg bg-wallet-surface p-1"
+      className="grid h-9 grid-cols-2 gap-1 rounded-lg bg-wallet-surface p-1"
       aria-label="Shield provider"
     >
       {(['near-confidential', 'zcash-shield'] as const).map(provider => (

@@ -5,6 +5,7 @@ import { Button } from '@/popup/components/ui/button'
 import { TokenIcon } from '@/popup/components/tokens/TokenIcon'
 import { AmountDisplay } from '@/popup/components/common/AmountDisplay'
 import { Skeleton } from '@/popup/components/ui/skeleton'
+import { TransactionResult } from './TransactionResult'
 
 export interface TransactionReviewAsset {
   readonly assetId?: string
@@ -34,15 +35,18 @@ interface TransactionReviewViewProps {
   readonly variant?: 'default' | 'figma'
   readonly asset: TransactionReviewAsset | null
   readonly amount: string
+  readonly amountPrefix?: string
   readonly amountDetails?: boolean
   readonly fiatValue?: string | null
   readonly network: string
   readonly rows: readonly TransactionReviewRow[]
   readonly summary?: ReactNode
+  readonly exchange?: boolean
   readonly notice?: ReactNode
   readonly error?: ReactNode
   readonly confirmLabel: string
   readonly confirming?: boolean
+  readonly submitting?: boolean
   readonly preparing?: boolean
   readonly confirmDisabled?: boolean
   readonly cancelDisabled?: boolean
@@ -57,15 +61,18 @@ export function TransactionReviewView({
   variant = 'default',
   asset,
   amount,
+  amountPrefix = '',
   amountDetails = true,
   fiatValue,
   network,
   rows,
   summary,
+  exchange = false,
   notice,
   error,
   confirmLabel,
   confirming = false,
+  submitting = false,
   preparing = false,
   confirmDisabled = false,
   cancelDisabled = false,
@@ -73,6 +80,39 @@ export function TransactionReviewView({
   onConfirm
 }: TransactionReviewViewProps) {
   const figma = variant === 'figma'
+  if (submitting) {
+    return (
+      <TransactionResult status="loading" title="Transaction Submitting">
+        <div className="divide-y divide-border/60 border-y border-border/60">
+          {exchange && summary ? (
+            summary
+          ) : (
+            <div className="flex justify-between gap-4 py-4 text-sm">
+              <span className="text-muted">Amount</span>
+              <AmountDisplay value={amount} symbol={asset?.symbol} showDetails={false} />
+            </div>
+          )}
+          {rows
+            .filter(row => ['From', 'To', 'Network', 'Recipient', 'Send To'].includes(row.label))
+            .map((row, index) => (
+              <div
+                key={`${row.label}-${index}`}
+                className="flex justify-between gap-4 py-4 text-sm"
+              >
+                <span className="shrink-0 text-muted">{row.label}</span>
+                <span className="min-w-0 break-all text-right">{row.content}</span>
+              </div>
+            ))}
+          {network && !rows.some(row => row.label === 'Network') && (
+            <div className="flex justify-between gap-4 py-4 text-sm">
+              <span className="text-muted">Network</span>
+              <span className="text-right">{network}</span>
+            </div>
+          )}
+        </div>
+      </TransactionResult>
+    )
+  }
   return (
     <div className="flex min-h-0 flex-1 flex-col" aria-busy={preparing || confirming}>
       <div
@@ -140,6 +180,7 @@ export function TransactionReviewView({
                 <AmountDisplay
                   value={amount}
                   symbol={asset.symbol}
+                  prefix={amountPrefix}
                   showDetails={amountDetails}
                   className={figma ? 'justify-center gap-x-[0.25em]' : undefined}
                 />
@@ -228,13 +269,29 @@ export function TransactionReviewExchangeSummary({
   source,
   destination,
   destinationLabel,
-  destinationPrefix = '+'
+  destinationPrefix = '+',
+  presentation
 }: {
   readonly source: { readonly asset: TransactionReviewAsset; readonly amount: string }
   readonly destination: { readonly asset: TransactionReviewAsset; readonly amount: string }
   readonly destinationLabel?: string
   readonly destinationPrefix?: string
+  readonly presentation: 'single' | 'exchange'
 }) {
+  if (presentation === 'single') {
+    return (
+      <div className="flex max-w-full min-w-0 justify-center pb-5 pt-[18px] text-center text-[40px] font-semibold leading-[37.4px]">
+        <AmountDisplay
+          value={source.amount}
+          symbol={source.asset.symbol}
+          prefix="-"
+          showDetails={false}
+          className="max-w-full justify-center"
+        />
+      </div>
+    )
+  }
+
   return (
     <div className="space-y-3 pb-6 pt-[18px]">
       {([source, destination] as const).map((entry, index) => (
@@ -257,6 +314,7 @@ export function TransactionReviewExchangeSummary({
                 value={entry.amount}
                 symbol={entry.asset.symbol}
                 prefix={index === 0 ? '-' : destinationPrefix}
+                showDetails={false}
                 className="max-w-full justify-start font-sans tabular-nums"
               />
             </div>
