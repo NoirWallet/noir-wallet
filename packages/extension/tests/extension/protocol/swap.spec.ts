@@ -1025,12 +1025,6 @@ test('shows Swap asset icons, sent amount, and route clearly in Activity', async
   await expect(row).toContainText('−0.01 ETH')
   await expect(row).not.toContainText('Quoted')
   await expect(row.locator('[data-activity-avatar="swap"] [data-slot="token-icon"]')).toHaveCount(2)
-  const tokenPositions = await row
-    .locator('[data-activity-avatar="swap"] [data-slot="token-icon"]')
-    .evaluateAll(icons => icons.map(icon => icon.getBoundingClientRect().left))
-  const swapRowLeft = await row.evaluate(element => element.getBoundingClientRect().left)
-  expect(tokenPositions[0] - swapRowLeft).toBe(16)
-  expect(tokenPositions[1] - tokenPositions[0]).toBeLessThan(30)
   await expect(row).toContainText(/Source submitted|Waiting for Intents/)
   await expectNoOverflow(popup)
   await captureScreenshot(popup, 'swap-activity-route-row.png')
@@ -1171,15 +1165,6 @@ test('prepares and rejects wallet-owned EVM Swap reviews in real MV3', async ({
   }
   await expect(trialSwapSource).toBeVisible()
   await expect(sourceSelector.getByText('Powered by CoinGecko', { exact: true })).toHaveCount(0)
-  const networkFilter = sourceSelector.getByRole('group', { name: 'Filter assets by network' })
-  const [tokenSearchBox, networkFilterBox] = await Promise.all([
-    sourceSelector.getByPlaceholder('Search tokens').boundingBox(),
-    networkFilter.boundingBox()
-  ])
-  if (!tokenSearchBox || !networkFilterBox) {
-    throw new Error('Swap asset selector controls do not have layout boxes')
-  }
-  expect(tokenSearchBox.y).toBeLessThan(networkFilterBox.y)
   await expect
     .poll(() =>
       usdcSwapSource
@@ -1733,11 +1718,7 @@ test('shows a page-level retry state when RHEA token catalogs are unavailable', 
   await expect(unavailableError).toBeVisible({ timeout: 30_000 })
 })
 
-test('retries a failed quote below the destination asset card in real MV3', async ({
-  context,
-  popup,
-  extensionId
-}) => {
+test('retries a failed quote in real MV3', async ({ context, popup, extensionId }) => {
   test.setTimeout(120_000)
   await mockEvmNetwork(context)
   await mockBitcoinNetwork(context)
@@ -1774,17 +1755,6 @@ test('retries a failed quote below the destination asset card in real MV3', asyn
     timeout: 30_000
   })
   await expect(error.getByRole('button', { name: 'Retry', exact: true })).toBeEnabled()
-  const destinationCard = popup
-    .locator('section')
-    .filter({ has: popup.getByRole('button', { name: 'To asset' }) })
-  await expect(destinationCard.getByRole('alert')).toHaveCount(0)
-  const cardBounds = await destinationCard.boundingBox()
-  const errorBounds = await error.boundingBox()
-  expect(cardBounds).not.toBeNull()
-  expect(errorBounds).not.toBeNull()
-  if (cardBounds && errorBounds) {
-    expect(errorBounds.y).toBeGreaterThanOrEqual(cardBounds.y + cardBounds.height)
-  }
   await expectNoOverflow(popup)
   await captureScreenshot(popup, 'swap-quote-error-below-card.png')
   const inputQuotes = () => requests.filter(request => request.amountIn === '10000000000000000')

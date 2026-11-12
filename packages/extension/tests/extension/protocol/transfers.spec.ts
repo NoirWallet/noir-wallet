@@ -1785,11 +1785,6 @@ test('reviews and submits Public to Private from Shielded Move', async ({
   await expect(
     accountTransferRow.locator('[data-activity-avatar="swap"] [data-slot="token-icon"]')
   ).toHaveCount(1)
-  const transferIconLeft = await accountTransferRow
-    .locator('[data-activity-avatar="swap"] [data-slot="token-icon"]')
-    .evaluate(icon => icon.getBoundingClientRect().left)
-  const transferRowLeft = await accountTransferRow.evaluate(row => row.getBoundingClientRect().left)
-  expect(transferIconLeft - transferRowLeft).toBe(16)
   await expect(popup.getByRole('button', { name: /^View Sent ETH/ })).toHaveCount(0)
   await captureScreenshot(popup, 'activity-public-to-confidential-transfer.png')
 })

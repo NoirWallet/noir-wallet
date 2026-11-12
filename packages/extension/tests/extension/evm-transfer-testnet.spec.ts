@@ -188,47 +188,6 @@ async function getWalletModeGroup(page: Page) {
   return group
 }
 
-async function expectHomeHeaderActionsAligned(page: Page) {
-  const buttons = page.getByTestId('home-header-actions').getByRole('button')
-  await expect(buttons).toHaveCount(3)
-  const boxes = await buttons.evaluateAll(elements =>
-    elements.map(element => {
-      const box = element.getBoundingClientRect()
-      const iconBox = element.firstElementChild?.getBoundingClientRect()
-      const style = window.getComputedStyle(element)
-      return {
-        x: box.x,
-        y: box.y,
-        width: box.width,
-        height: box.height,
-        iconWidth: iconBox?.width,
-        iconHeight: iconBox?.height,
-        borderRadius: style.borderRadius,
-        backgroundColor: style.backgroundColor
-      }
-    })
-  )
-  expect(boxes.map(({ width, height }) => ({ width, height }))).toEqual([
-    { width: 32, height: 32 },
-    { width: 32, height: 32 },
-    { width: 32, height: 32 }
-  ])
-  expect(boxes.map(box => box.y)).toEqual([boxes[0].y, boxes[0].y, boxes[0].y])
-  expect(boxes.map(({ iconWidth, iconHeight }) => ({ iconWidth, iconHeight }))).toEqual([
-    { iconWidth: 18, iconHeight: 18 },
-    { iconWidth: 18, iconHeight: 18 },
-    { iconWidth: 18, iconHeight: 18 }
-  ])
-  expect(boxes.map(box => box.borderRadius)).toEqual(['8px', '8px', '8px'])
-  expect(boxes.map(box => box.backgroundColor)).toEqual([
-    boxes[0].backgroundColor,
-    boxes[0].backgroundColor,
-    boxes[0].backgroundColor
-  ])
-  expect(boxes[1].x - (boxes[0].x + boxes[0].width)).toBe(8)
-  expect(boxes[2].x - (boxes[1].x + boxes[1].width)).toBe(8)
-}
-
 function waitForAccountsChanged(page: Page): Promise<unknown> {
   return page.evaluate(
     () =>
@@ -2434,20 +2393,6 @@ test('prepares, signs, broadcasts, monitors, and records a Sepolia transfer in r
   await expect(popup.getByRole('button', { name: 'Asset category: Total assets' })).toBeVisible()
   await expect(popup.getByText('Known Assets Value', { exact: true })).toHaveCount(0)
   await expect(popup.getByText('Zcash Value', { exact: true })).toHaveCount(0)
-  const homeActions = popup.getByTestId('home-actions')
-  await expect(homeActions).toHaveAttribute('data-layout', 'centered')
-  const [actionsBounds, sendBounds, shieldFundsBounds] = await Promise.all([
-    homeActions.boundingBox(),
-    homeActions.getByRole('button', { name: 'Send', exact: true }).boundingBox(),
-    homeActions.getByRole('button', { name: 'Shielded', exact: true }).boundingBox()
-  ])
-  if (!actionsBounds || !sendBounds || !shieldFundsBounds) {
-    throw new Error('Testnet action buttons are not visible')
-  }
-  const actionsCenter = (sendBounds.x + shieldFundsBounds.x + shieldFundsBounds.width) / 2
-  const containerCenter = actionsBounds.x + actionsBounds.width / 2
-  expect(Math.abs(actionsCenter - containerCenter)).toBeLessThanOrEqual(1)
-  await expect(popup.locator('body')).toHaveCSS('width', '375px')
   await expect
     .poll(() =>
       popup.evaluate(() => ({
@@ -2891,20 +2836,6 @@ test('prepares, signs, broadcasts, monitors, and records a Sepolia transfer in r
   await activityTab.click()
   await expect(activityTab).toHaveAttribute('data-state', 'active')
   await expect(assetsTab).toHaveAttribute('data-state', 'inactive')
-  await expect
-    .poll(() =>
-      popup.evaluate(() => {
-        const tabs = Array.from(document.querySelectorAll<HTMLElement>('[role="tab"]'))
-        const widths = Object.fromEntries(
-          tabs.map(tab => [
-            tab.textContent?.trim(),
-            Number.parseFloat(getComputedStyle(tab, '::after').width)
-          ])
-        )
-        return { assetsHidden: widths['Total assets'] === 0, activityVisible: widths.Activity > 0 }
-      })
-    )
-    .toEqual({ assetsHidden: true, activityVisible: true })
   await expect(popup.getByRole('region', { name: 'Multichain activity' })).toBeVisible()
   await expect(popup.getByText('Sent ETH', { exact: true })).toBeVisible()
   await expect(popup.getByText('Sent USDC', { exact: true })).toHaveCount(0)

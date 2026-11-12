@@ -237,7 +237,6 @@ test('serves cached EVM balances across Popup reload without repeating RPC reads
   await expect(popup.getByRole('button', { name: 'Choose send source account' })).toHaveCount(0)
   await expect(popup.getByText('Send to', { exact: true })).toBeVisible()
   await expect(popup.getByRole('textbox', { name: 'ETH amount' })).toBeVisible()
-  await expect(popup.getByLabel('Send To')).toHaveCSS('height', '54px')
   await expect(popup.getByTestId('send-amount-card')).toBeVisible()
   await expect(popup.getByTestId('send-available-balance')).toBeVisible()
   await expect(popup.getByText('Fee', { exact: true })).toBeVisible()

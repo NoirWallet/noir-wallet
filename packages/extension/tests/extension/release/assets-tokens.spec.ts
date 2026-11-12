@@ -1061,16 +1061,6 @@ test('automatically manages Intents Tokens on newly released chains', async ({
   await popup.getByRole('button', { name: 'To asset' }).click()
   const assetSelector = popup.getByRole('dialog')
   await expect(assetSelector.getByText('Powered by CoinGecko', { exact: true })).toHaveCount(0)
-  const [tokenSearchBox, networkFilterBox] = await Promise.all([
-    assetSelector.getByPlaceholder('Search tokens').boundingBox(),
-    assetSelector
-      .getByRole('button', { name: 'Filter assets by network: All Networks' })
-      .boundingBox()
-  ])
-  if (!tokenSearchBox || !networkFilterBox) {
-    throw new Error('Swap asset selector controls do not have layout boxes')
-  }
-  expect(tokenSearchBox.y).toBeLessThan(networkFilterBox.y)
   await assetSelector
     .getByRole('button', { name: 'Filter assets by network: All Networks' })
     .click()

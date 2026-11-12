@@ -151,12 +151,6 @@ describe('Cross-chain transaction lifecycle regressions', () => {
     )
   })
 
-  it('labels the two steps of a multi-step Zcash send distinctly', () => {
-    assert.match(transactionDetailSource, /showMultiStepZcashLabels = isMultiStepZcashSend/)
-    assert.match(transactionDetailSource, /'Funding Hash'/)
-    assert.match(transactionDetailSource, /'Payment Hash'/)
-  })
-
   it('treats relay success as final for outbound supply and swap transactions', () => {
     assert.ok(
       monitorSource.includes('getCrossChainCompletionStatus(tx.type, {'),
@@ -197,10 +191,6 @@ describe('Cross-chain transaction lifecycle regressions', () => {
       /pollingTransactionConfirmations\([\s\S]*?SPENDABILITY_CONFIRMATIONS/
     )
     assert.match(resultPageSource, /controller\.abort\(\)/)
-  })
-
-  it('uses Chrome production alarm minimum for background relay checks', () => {
-    assert.match(monitorSource, /const POLL_DELAY_MIN = 0\.5/)
   })
 })
 

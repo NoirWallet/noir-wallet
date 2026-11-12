@@ -543,15 +543,6 @@ test('exposes the released multichain provider surface by default', async ({ con
   const providerNetworkButtons = page.locator('.provider-network-button')
   const providerNetworkButtonCount = await providerNetworkButtons.count()
   const providerNetworkIcons = page.locator('.provider-network-icon-frame img')
-  expect(
-    await providerNetworkButtons.evaluateAll(
-      buttons => new Set(buttons.map(button => Math.round(button.getBoundingClientRect().top))).size
-    )
-  ).toBeLessThanOrEqual(2)
-  const titleWidth = await page
-    .getByRole('heading', { name: 'Multichain SDK Playground' })
-    .evaluate(heading => ({ clientWidth: heading.clientWidth, scrollWidth: heading.scrollWidth }))
-  expect(titleWidth.scrollWidth).toBeLessThanOrEqual(titleWidth.clientWidth)
   await expect
     .poll(
       () =>

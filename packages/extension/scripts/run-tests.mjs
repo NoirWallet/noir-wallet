@@ -87,6 +87,7 @@ function help() {
 
   pnpm test                           Offline core tests (Node options accepted)
   pnpm test --list                    List core test files
+  pnpm test --file=security           Run one core directory (or a core-relative file)
   pnpm test e2e <project>             Build and run one MV3 project
   pnpm test live [project]            Run live-services by default; other projects are explicit
   pnpm test rc                        Run the existing multichain RC sequence

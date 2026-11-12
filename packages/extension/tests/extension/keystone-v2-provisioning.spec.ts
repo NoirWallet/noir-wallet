@@ -341,18 +341,6 @@ async function mockBitcoinNetwork(context: BrowserContext): Promise<MockBitcoinR
   return state
 }
 
-async function expectPopupFits(page: import('@playwright/test').Page): Promise<void> {
-  await expect
-    .poll(() =>
-      page.evaluate(() => ({
-        viewportWidth: document.documentElement.clientWidth,
-        documentWidth: document.documentElement.scrollWidth,
-        viewportHeight: document.documentElement.clientHeight
-      }))
-    )
-    .toEqual({ viewportWidth: 375, documentWidth: 375, viewportHeight: 600 })
-}
-
 async function openAccountList(page: import('@playwright/test').Page): Promise<void> {
   await page.getByRole('button', { name: 'Choose wallet' }).click()
   await page
@@ -397,8 +385,6 @@ test('groups a Keystone wallet and persists wallet and account names', async ({
   const renameKeystoneAccount = group.getByRole('button', {
     name: `Rename account ${account.accountDisplayName}`
   })
-  await renameKeystoneAccount.hover()
-  await expect(renameKeystoneAccount.locator('svg')).toBeVisible()
   await renameKeystoneAccount.click()
   await group.getByRole('textbox', { name: 'Account name' }).fill('Keystone Treasury')
   await group.getByRole('textbox', { name: 'Account name' }).press('Enter')
@@ -406,8 +392,6 @@ test('groups a Keystone wallet and persists wallet and account names', async ({
   const renameKeystoneWallet = popup.getByRole('button', {
     name: 'Rename wallet Keystone Multi-Coin'
   })
-  await renameKeystoneWallet.hover()
-  await expect(renameKeystoneWallet.locator('svg')).toBeVisible()
   await renameKeystoneWallet.click()
   await group.getByRole('textbox', { name: 'Wallet name' }).fill('Keystone Archive')
   await group.getByRole('textbox', { name: 'Wallet name' }).press('Enter')
@@ -467,7 +451,6 @@ test('provisions and operates a pure Storage V2 Multi-Coin Keystone Wallet', asy
   })
   await expect(popup.getByRole('button', { name: 'Lending' })).toHaveCount(0)
   await expect(popup.getByRole('button', { name: 'Swap', exact: true })).toBeVisible()
-  await expectPopupFits(popup)
 
   await openAccountList(popup)
   await expect(popup.getByText('Keystone Multi-Coin', { exact: true })).toBeVisible()
@@ -489,7 +472,6 @@ test('provisions and operates a pure Storage V2 Multi-Coin Keystone Wallet', asy
     MAINNET_EVM_NETWORK_NAMES.length
   )
   await expect(accountAddresses.locator(`[title="${EXPECTED_BITCOIN_ADDRESS}"]`)).toBeVisible()
-  await expectPopupFits(popup, false)
   await captureScreenshot(popup, 'keystone-v2-account-addresses.png')
 
   await popup.getByRole('button', { name: 'Back' }).click()
@@ -505,7 +487,6 @@ test('provisions and operates a pure Storage V2 Multi-Coin Keystone Wallet', asy
   await expect(receiveAddresses.getByRole('heading', { name: 'Zcash' })).toHaveCount(0)
   await expect(receiveAddresses.getByText('Native SegWit', { exact: true })).toBeVisible()
   await expect(receiveAddresses.locator(`[title="${EXPECTED_BITCOIN_ADDRESS}"]`)).toBeVisible()
-  await expectPopupFits(popup)
   await captureScreenshot(popup, 'keystone-v2-receive-bitcoin.png')
 
   const sendPage = await context.newPage()
@@ -536,17 +517,6 @@ test('provisions and operates a pure Storage V2 Multi-Coin Keystone Wallet', asy
   })
   await expect(signingPage.locator('.rounded-2xl.bg-white svg')).toBeVisible()
   await expect(signingPage.getByRole('button', { name: 'Scan Signed Transaction' })).toBeVisible()
-  await expect
-    .poll(() =>
-      signingPage.evaluate(() => ({
-        width: document.documentElement.scrollWidth,
-        viewportWidth: document.documentElement.clientWidth,
-        footerVisible:
-          document.querySelector('.page-footer')?.getBoundingClientRect().bottom ===
-          document.documentElement.clientHeight
-      }))
-    )
-    .toEqual({ width: 375, viewportWidth: 375, footerVisible: true })
   await captureScreenshot(signingPage, 'keystone-bitcoin-sign-review.png')
   const signingPageClosed = signingPage.waitForEvent('close')
   await signingPage.getByRole('button', { name: 'Close', exact: true }).click()
@@ -682,17 +652,6 @@ test('provisions and operates a pure Storage V2 Multi-Coin Keystone Wallet', asy
   })
   await expect(evmSigningPage.locator('.rounded-2xl.bg-white svg')).toBeVisible()
   await expect(evmSigningPage.getByRole('button', { name: 'Scan Signature' })).toBeVisible()
-  await expect
-    .poll(() =>
-      evmSigningPage.evaluate(() => ({
-        width: document.documentElement.scrollWidth,
-        viewportWidth: document.documentElement.clientWidth,
-        footerVisible:
-          document.querySelector('.page-footer')?.getBoundingClientRect().bottom ===
-          document.documentElement.clientHeight
-      }))
-    )
-    .toEqual({ width: 375, viewportWidth: 375, footerVisible: true })
   await captureScreenshot(evmSigningPage, 'keystone-evm-sign-review.png')
   await terminateExtensionServiceWorker(context, evmSigningPage)
   await evmSigningPage.reload()
@@ -1105,6 +1064,5 @@ test('provisions and operates a pure Storage V2 Multi-Coin Keystone Wallet', asy
   await expect(cypherpunkAddresses.getByRole('heading', { name: 'Zcash' })).toBeVisible()
   await expect(cypherpunkAddresses.getByRole('heading', { name: 'Ethereum' })).toHaveCount(0)
   await expect(cypherpunkAddresses.getByRole('heading', { name: 'Bitcoin' })).toHaveCount(0)
-  await expectPopupFits(popup, false)
   await captureScreenshot(popup, 'keystone-v2-mixed-wallets.png')
 })

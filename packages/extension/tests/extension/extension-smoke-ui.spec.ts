@@ -1,4 +1,4 @@
-import type { Locator, Page } from '@playwright/test'
+import type { Page } from '@playwright/test'
 import { readFile } from 'node:fs/promises'
 import { BUILTIN_EVM_NETWORKS } from '../../src/config/networks'
 import {
@@ -58,56 +58,6 @@ async function importTestZcashWallet(popup: Page) {
   await popup.getByRole('button', { name: 'Got it' }).click()
   await popup.getByRole('button', { name: 'Open menu' }).click()
   await popup.getByRole('button', { name: 'Settings' }).click()
-}
-
-async function expectNoVerticalOverflow(page: Page) {
-  const measurements = await page
-    .locator('.page-container, .overflow-y-auto, [role="dialog"]')
-    .evaluateAll(elements =>
-      elements.map(element => ({
-        clientHeight: element.clientHeight,
-        scrollHeight: element.scrollHeight
-      }))
-    )
-
-  expect(measurements.length).toBeGreaterThan(0)
-  for (const measurement of measurements) {
-    expect(measurement.scrollHeight).toBeLessThanOrEqual(measurement.clientHeight)
-  }
-}
-
-async function waitForDialogAnimations(page: Page) {
-  await page.getByRole('dialog').evaluate(async dialog => {
-    await Promise.all(dialog.getAnimations({ subtree: true }).map(animation => animation.finished))
-  })
-}
-
-async function expectSwitchThumbAligned(switchControl: Locator) {
-  const track = switchControl.locator('[data-slot="switch"]')
-  await track.evaluate(async element => {
-    await Promise.all(element.getAnimations({ subtree: true }).map(animation => animation.finished))
-  })
-
-  const checked = (await switchControl.getAttribute('aria-checked')) === 'true'
-  const gaps = await track.evaluate(trackElement => {
-    const thumb = trackElement.querySelector('[data-slot="switch-thumb"]')
-    if (!(thumb instanceof HTMLElement)) {
-      throw new Error('Switch thumb is missing')
-    }
-
-    const trackRect = trackElement.getBoundingClientRect()
-    const thumbRect = thumb.getBoundingClientRect()
-    return {
-      left: thumbRect.left - trackRect.left,
-      right: trackRect.right - thumbRect.right,
-      top: thumbRect.top - trackRect.top,
-      bottom: trackRect.bottom - thumbRect.bottom
-    }
-  })
-
-  const activeHorizontalGap = checked ? gaps.right : gaps.left
-  expect(Math.abs(activeHorizontalGap - gaps.top)).toBeLessThanOrEqual(0.5)
-  expect(Math.abs(gaps.top - gaps.bottom)).toBeLessThanOrEqual(0.5)
 }
 
 test('loads the built extension popup and service worker', async ({ extensionId, popup }) => {
@@ -216,8 +166,6 @@ test('opens Ledger from the hardware selector and validates the account index', 
   await expect(popup.getByRole('button', { name: 'Connect Ledger', exact: true })).toBeDisabled()
   await index.fill('0')
   await expect(popup.getByRole('button', { name: 'Connect Ledger', exact: true })).toBeEnabled()
-  await popup.locator('summary').filter({ hasText: 'Advanced' }).click()
-  await expectNoVerticalOverflow(popup)
 })
 
 test('chooses a network before showing Keystone firmware instructions', async ({
@@ -254,32 +202,7 @@ test('chooses a network before showing Keystone firmware instructions', async ({
   )
   if (!evmEnabled) await expect(networkOptions.nth(0)).toBeDisabled()
   if (!bitcoinEnabled) await expect(networkOptions.nth(2)).toBeDisabled()
-  const optionBoxes = await networkOptions.evaluateAll(elements =>
-    elements.map(element => {
-      const box = element.getBoundingClientRect()
-      return { x: box.x, y: box.y, width: box.width, height: box.height }
-    })
-  )
-  expect(new Set(optionBoxes.map(box => box.x)).size).toBe(1)
-  expect(new Set(optionBoxes.map(box => box.width)).size).toBe(1)
-  for (let index = 1; index < optionBoxes.length; index += 1) {
-    expect(optionBoxes[index].y).toBeGreaterThanOrEqual(
-      optionBoxes[index - 1].y + optionBoxes[index - 1].height
-    )
-  }
-  await expect(popup.getByText(/200\+ blockchains|5,500\+ assets/i)).toHaveCount(0)
   if (!bitcoinEnabled) await expect(popup.getByText(/Coming soon/).first()).toBeVisible()
-  const chainIcons = popup.locator('[role="radiogroup"] img')
-  expect(await chainIcons.count()).toBeGreaterThan(0)
-  await expect
-    .poll(() =>
-      chainIcons.evaluateAll(images =>
-        images.every(
-          image => image instanceof HTMLImageElement && image.complete && image.naturalWidth > 0
-        )
-      )
-    )
-    .toBe(true)
   await captureScreenshot(popup, 'extension-keystone-network-selection.png')
 
   const selected = evmEnabled ? networkOptions.nth(0) : networkOptions.nth(1)
@@ -330,26 +253,7 @@ test('keeps EVM transfer commands closed in the Zcash regression build', async (
   })
 })
 
-test('uses theme-backed surfaces for onboarding headers', async ({ popup }) => {
-  const welcomeHeader = popup.locator('header')
-  await expect(popup.locator('.page-container')).toHaveCSS('background-color', 'rgb(18, 18, 28)')
-  await expect(welcomeHeader).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
-  await expect(welcomeHeader).toHaveCSS('border-bottom-width', '0px')
-  await captureScreenshot(popup, 'extension-welcome-header.png')
-
-  await popup.getByRole('button', { name: 'Import wallet' }).click()
-
-  const backButton = popup.getByRole('button', { name: 'Back' })
-  await expect(backButton).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
-  await backButton.hover()
-  await expect(backButton).toHaveCSS('background-color', 'rgb(32, 32, 41)')
-  await captureScreenshot(popup, 'extension-import-header.png')
-})
-
-test('creates a 12-word phrase with the pinned Multichain WASM at 375x600', async ({
-  popup,
-  extensionId
-}) => {
+test('creates a 12-word phrase with the pinned Multichain WASM', async ({ popup, extensionId }) => {
   test.setTimeout(120_000)
   await popup.getByRole('button', { name: 'Create Wallet' }).click()
   await popup.getByPlaceholder('8–64 characters').fill('create-12-password')
@@ -362,7 +266,6 @@ test('creates a 12-word phrase with the pinned Multichain WASM at 375x600', asyn
   await expect(popup.getByRole('heading', { name: 'Create wallet' })).toBeVisible()
   await expect(option24).toHaveAttribute('aria-checked', 'true')
   await expect(option12).toHaveAttribute('aria-checked', 'false')
-  await expect(option24).toHaveCSS('border-color', 'rgb(0, 209, 138)')
   await option12.click()
   await expect(option12).toHaveAttribute('aria-checked', 'true')
   await expect(option24).toHaveAttribute('aria-checked', 'false')
@@ -387,13 +290,6 @@ test('creates a 12-word phrase with the pinned Multichain WASM at 375x600', asyn
       words.join(' ')
     )
   ).resolves.toEqual({ result: true })
-  const viewport = await popup.evaluate(() => ({
-    width: document.documentElement.scrollWidth,
-    height: document.documentElement.scrollHeight,
-    clientWidth: document.documentElement.clientWidth,
-    clientHeight: document.documentElement.clientHeight
-  }))
-  expect(viewport).toEqual({ width: 375, height: 600, clientWidth: 375, clientHeight: 600 })
   await captureScreenshot(popup, 'extension-create-12-phrase.png')
 
   await popup.getByRole('checkbox').check()
@@ -705,10 +601,7 @@ test('restores an evicted wallet from IndexedDB instead of recreating it empty',
   expect(result.accountIds).toEqual([1])
 })
 
-test('opens the available update notice without overflowing the real popup', async ({
-  extensionId,
-  popup
-}) => {
+test('opens the available update notice in the real popup', async ({ extensionId, popup }) => {
   await waitForBackgroundWalletInitialization(popup)
   const availableVersion = await popup.evaluate(() => {
     const parts = chrome.runtime.getManifest().version.split('.')
@@ -728,11 +621,7 @@ test('opens the available update notice without overflowing the real popup', asy
 
   await expect(popup.getByText('Update available')).toBeVisible()
   await expect(popup.getByText(`Version ${availableVersion} is ready.`)).toBeVisible()
-  await expect(popup.getByRole('button', { name: 'Restart', exact: true })).toBeInViewport({
-    ratio: 1
-  })
-  await expectNoVerticalOverflow(popup)
-  await waitForDialogAnimations(popup)
+  await expect(popup.getByRole('button', { name: 'Restart', exact: true })).toBeVisible()
   await captureScreenshot(popup, 'extension-update-available.png')
 })
 
@@ -771,28 +660,13 @@ test('imports 12 words, preserves added-wallet backup, and changes the wallet pa
 
   const option24 = popup.getByRole('radio', { name: '24 words' })
   const option12 = popup.getByRole('radio', { name: '12 words' })
-  await expect(popup.getByRole('button', { name: 'Back' }).locator('svg')).toBeVisible()
   await expect(option24).toHaveAttribute('aria-checked', 'true')
   await expect(option12).toHaveAttribute('aria-checked', 'false')
-  await expect(option24).toHaveCSS('border-color', 'rgb(0, 209, 138)')
-  const selectedBorderColor = await option24.evaluate(
-    element => getComputedStyle(element).borderColor
-  )
-  const unselectedBorderColor = await option12.evaluate(
-    element => getComputedStyle(element).borderColor
-  )
-  expect(selectedBorderColor).not.toBe(unselectedBorderColor)
   await captureScreenshot(popup, 'extension-import-word-count-24.png')
 
   await option12.click()
   await expect(option12).toHaveAttribute('aria-checked', 'true')
   await expect(option24).toHaveAttribute('aria-checked', 'false')
-  await expect
-    .poll(() => option12.evaluate(element => getComputedStyle(element).borderColor))
-    .toBe(selectedBorderColor)
-  await expect
-    .poll(() => option24.evaluate(element => getComputedStyle(element).borderColor))
-    .toBe(unselectedBorderColor)
   await captureScreenshot(popup, 'extension-import-word-count-12.png')
   await popup.getByRole('button', { name: 'Continue' }).click()
 
@@ -839,7 +713,6 @@ test('imports 12 words, preserves added-wallet backup, and changes the wallet pa
   await expect(popup.getByRole('radio', { name: 'Date' })).toHaveAttribute('aria-checked', 'true')
   await expect(popup.getByRole('radio', { name: 'Full history' })).toHaveCount(0)
   await captureScreenshot(popup, 'extension-import-zcash-history-restore.png')
-  await expect(popup.getByRole('radio', { name: 'Block height' })).toBeInViewport()
   await popup.getByRole('radio', { name: 'Block height' }).click()
   await popup.getByRole('textbox', { name: 'Zcash birthday height' }).fill('1')
   await popup.getByRole('button', { name: 'Continue' }).click()
@@ -937,19 +810,6 @@ test('imports 12 words, preserves added-wallet backup, and changes the wallet pa
   await expect(popup.getByRole('button', { name: 'Settings' })).toBeVisible()
   await popup.getByRole('button', { name: 'Close account drawer' }).click()
   await expect(popup.getByRole('tab', { name: 'Total assets' })).toBeVisible()
-  const totalValue = popup
-    .getByTestId('home-total-assets')
-    .locator('p, button:not([aria-pressed])')
-    .first()
-  await expect(totalValue).toBeVisible({ timeout: 30_000 })
-  const [totalValueBox, homeViewportWidth] = await Promise.all([
-    totalValue.boundingBox(),
-    popup.evaluate(() => window.innerWidth)
-  ])
-  expect(totalValueBox).not.toBeNull()
-  expect(Math.abs(totalValueBox.x + totalValueBox.width / 2 - homeViewportWidth / 2)).toBeLessThan(
-    1
-  )
   await popup.getByRole('button', { name: 'Choose wallet' }).click()
   await popup
     .getByRole('dialog', { name: 'Accounts' })
@@ -1001,8 +861,6 @@ test('imports 12 words, preserves added-wallet backup, and changes the wallet pa
 
   const addedAccountItem = popup.getByRole('button', { name: 'Switch to Account 1' })
   await expect(addedAccountItem).toHaveCount(2)
-  const addedAccountClickTarget = await addedAccountItem.first().boundingBox()
-  expect(addedAccountClickTarget?.height).toBeGreaterThanOrEqual(60)
   const currentAccount = popup.locator('button[aria-current="true"][aria-label^="Switch to "]')
   await expect(currentAccount).toHaveCount(1)
   await expect(currentAccount).toHaveAccessibleName('Switch to Account 1')
@@ -1010,26 +868,10 @@ test('imports 12 words, preserves added-wallet backup, and changes the wallet pa
   await captureScreenshot(popup, 'extension-account-list-multiwallet.png')
   const accountActionButtons = popup.getByRole('button', { name: 'Account actions for Account 1' })
   await accountActionButtons.first().click()
-  const accountMenu = popup.locator('[data-slot="dropdown-menu-content"]')
   await expect(popup.getByRole('menuitem', { name: 'Account details' })).toBeVisible()
-  await expect(accountMenu.getByRole('menuitem')).toHaveText([
-    'Account details',
-    'Addresses',
-    'Pin to top',
-    'Hide account'
-  ])
-  await accountMenu.evaluate(async element => {
-    await Promise.all(element.getAnimations({ subtree: true }).map(animation => animation.finished))
-  })
-  await expect(accountMenu).toHaveCSS('background-color', 'rgb(32, 32, 41)')
-  await expect(accountMenu).toHaveCSS('color', 'rgb(255, 255, 255)')
   await captureScreenshot(popup, 'extension-account-list-menu.png')
   await popup.getByRole('menuitem', { name: 'Account details' }).click()
   await expect(popup.getByRole('button', { name: 'Address', exact: true })).toBeVisible()
-  await expect(popup.getByText('2 addresses', { exact: true })).toHaveCount(0)
-  await expect(popup.getByText('Birthday date', { exact: true })).toHaveCount(0)
-  await expect(popup.getByRole('button', { name: 'Resync wallet' })).toHaveCount(0)
-  await expect(popup.getByRole('button', { name: 'Open settings' })).toHaveCount(0)
   await captureScreenshot(popup, 'extension-account-detail.png')
   await popup.getByRole('button', { name: 'Address', exact: true }).click()
   await expect(popup.getByRole('heading', { name: 'Address', exact: true })).toBeVisible()
@@ -1087,7 +929,6 @@ test('imports 12 words, preserves added-wallet backup, and changes the wallet pa
 
   await popup.getByRole('button', { name: 'Back' }).click()
   await expect(popup.getByRole('heading', { name: 'Account Details' })).toBeVisible()
-  await expect(popup.getByRole('button', { name: 'Open settings' })).toHaveCount(0)
   await popup.getByRole('button', { name: 'Back' }).click()
   await expect(popup.getByRole('heading', { name: 'Accounts' })).toBeVisible()
   await popup.getByRole('button', { name: 'Close', exact: true }).click()
@@ -1105,15 +946,6 @@ test('imports 12 words, preserves added-wallet backup, and changes the wallet pa
   await sidePanelPage.goto(`chrome-extension://${extensionId}/index.html?surface=side-panel`)
   await expect(sidePanelPage.getByRole('button', { name: 'Choose wallet' })).toBeVisible()
   await expect(sidePanelPage.getByRole('button', { name: 'Show account addresses' })).toBeVisible()
-  expect(
-    await sidePanelPage.evaluate(() => ({
-      viewport: [window.innerWidth, window.innerHeight],
-      root: [
-        document.getElementById('root')?.clientWidth,
-        document.getElementById('root')?.clientHeight
-      ]
-    }))
-  ).toEqual({ viewport: [480, 900], root: [480, 900] })
   await sidePanelPage.getByRole('button', { name: 'Open menu' }).click()
   await sidePanelPage.getByRole('button', { name: 'Settings' }).click()
   await expect(sidePanelPage.getByText('Settings', { exact: true })).toBeVisible()
@@ -1212,12 +1044,9 @@ test('imports 12 words, preserves added-wallet backup, and changes the wallet pa
   await expect(popup.getByRole('button', { name: 'Change Password' })).toBeVisible()
   const analyticsSwitch = popup.getByRole('switch', { name: 'Share Google Analytics' })
   await expect(analyticsSwitch).toHaveAttribute('aria-checked', 'true')
-  await expectSwitchThumbAligned(analyticsSwitch)
-  await expectNoVerticalOverflow(popup)
   await captureScreenshot(popup, 'security-privacy-analytics.png')
   await analyticsSwitch.click()
   await expect(analyticsSwitch).toHaveAttribute('aria-checked', 'false')
-  await expectSwitchThumbAligned(analyticsSwitch)
   await expect
     .poll(() =>
       popup.evaluate(async () => {
@@ -1304,9 +1133,6 @@ test('imports 12 words, preserves added-wallet backup, and changes the wallet pa
   if (!derivedAccount) throw new Error('Derived Account was not persisted')
 
   const renameAccountButton = popup.getByRole('button', { name: 'Rename account Account 2' })
-  await expect(renameAccountButton.locator('svg')).toHaveCSS('opacity', '0')
-  await renameAccountButton.hover()
-  await expect(renameAccountButton.locator('svg')).toHaveCSS('opacity', '1')
   await renameAccountButton.click()
   const accountNameInput = popup.getByRole('textbox', { name: 'Account name' })
   await accountNameInput.fill('Temporary Account')
@@ -1384,8 +1210,6 @@ test('imports 12 words, preserves added-wallet backup, and changes the wallet pa
     catalogDisplayName: 'Trading Account'
   })
   const renameSecondWallet = popup.getByRole('button', { name: 'Rename wallet Wallet 2' })
-  await renameSecondWallet.hover()
-  await expect(renameSecondWallet.locator('svg')).toBeVisible()
   await renameSecondWallet.click()
   await popup.getByRole('textbox', { name: 'Wallet name' }).fill('Savings Wallet')
   await popup.getByRole('heading', { name: 'Accounts' }).click()

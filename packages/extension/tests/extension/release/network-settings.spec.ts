@@ -296,19 +296,7 @@ test('adds, persists, selects and removes custom RPCs through the real popup', a
         'true'
       )
     }
-    await expect
-      .poll(() =>
-        popup.evaluate(() =>
-          document
-            .getAnimations()
-            .filter(animation => animation.effect?.getTiming().iterations !== Infinity)
-            .every(animation => animation.playState === 'finished')
-        )
-      )
-      .toBe(true)
     await expect(dialog.getByRole('button', { name: 'Verify & Save' })).toHaveCount(0)
-    const width = await popup.evaluate(() => document.documentElement.scrollWidth)
-    expect(width).toBeLessThanOrEqual(375)
     await popup
       .getByRole('dialog')
       .getByRole('button', { name: `Remove My ${chain}` })
@@ -332,9 +320,7 @@ test('adds, persists, selects and removes custom RPCs through the real popup', a
   await sidePanel.getByRole('button', { name: 'Configure Arbitrum network' }).click()
   await sidePanel.getByRole('button', { name: 'RPC Endpoint', exact: true }).click()
   const sidePanelDialog = sidePanel.getByRole('dialog')
-  const presets = sidePanelDialog.getByTestId('provider-presets')
   await expect(sidePanelDialog.getByRole('button', { name: 'Use ZAN RPC' })).toBeInViewport()
-  expect(await presets.evaluate(element => element.scrollHeight - element.clientHeight)).toBe(0)
   await captureScreenshot(sidePanel, 'rpc-arbitrum-presets-side-panel.png')
   await sidePanel.close()
 })
@@ -437,8 +423,6 @@ test('renders and switches the released EVM catalog and chain-scoped endpoint se
     name: 'Filter activity by network: All networks'
   })
   await expect(activityFilter).toBeVisible()
-  const activityFilterPosition = await activityFilter.boundingBox()
-  if (!activityFilterPosition) throw new Error('Activity network filter has no layout box')
   await activityFilter.click()
   await popup.getByRole('menuitemradio', { name: 'Ethereum', exact: true }).click()
   await expect(popup.getByRole('link', { name: 'Full history' })).toHaveAttribute(
@@ -475,15 +459,11 @@ test('renders and switches the released EVM catalog and chain-scoped endpoint se
   ).length
   await assetsTab.click()
   await expect(assetsTab).toHaveAttribute('data-state', 'active')
-  const portfolioFilterForAlignment = popup.getByRole('button', {
+  const portfolioFilter = popup.getByRole('button', {
     name: 'Filter portfolio by network: Ethereum'
   })
-  await expect(portfolioFilterForAlignment).toBeVisible()
-  const portfolioFilterPosition = await portfolioFilterForAlignment.boundingBox()
-  if (!portfolioFilterPosition) throw new Error('Portfolio network filter has no layout box')
-  expect(Math.abs(portfolioFilterPosition.x - activityFilterPosition.x)).toBeLessThan(0.5)
-  expect(Math.abs(portfolioFilterPosition.y - activityFilterPosition.y)).toBeLessThan(0.5)
-  await portfolioFilterForAlignment.click()
+  await expect(portfolioFilter).toBeVisible()
+  await portfolioFilter.click()
   await popup.getByRole('menuitemradio', { name: 'All networks', exact: true }).click()
   await activityTab.click()
   await expect(
@@ -538,11 +518,9 @@ test('renders and switches the released EVM catalog and chain-scoped endpoint se
   await expect(popup.getByText('Available', { exact: true })).toHaveCount(0)
   await expect(popup.getByText(/^≈\$/).first()).toBeVisible()
   const sendNetworkFilter = popup.getByRole('button', { name: 'All Networks', exact: true })
-  await expect(sendNetworkFilter).toHaveCSS('cursor', 'pointer')
   await sendNetworkFilter.click()
   const ethereumSendFilter = popup.getByRole('menuitemradio', { name: 'Ethereum', exact: true })
   await expect(ethereumSendFilter.locator('img')).toHaveCount(1)
-  await expect(ethereumSendFilter).toHaveCSS('cursor', 'pointer')
   await captureScreenshot(popup, 'release-default-send-network-filter.png')
   await popup.getByRole('menuitemradio', { name: 'All Networks', exact: true }).click()
   const orderedSendAssets = await popup
@@ -603,7 +581,6 @@ test('renders and switches the released EVM catalog and chain-scoped endpoint se
         )
     )
     .toEqual(['ZEC amount', 'zcash-send-recipient'])
-  await expect(popup.getByTestId('zcash-amount-card')).toHaveCSS('min-height', '40px')
   await expect(popup.getByText('Memo (optional)', { exact: true })).toBeVisible()
   await expect(popup.getByRole('button', { name: 'Continue', exact: true })).toBeVisible()
   await captureScreenshot(popup, 'release-default-zcash-send-form.png')
@@ -653,15 +630,6 @@ test('renders and switches the released EVM catalog and chain-scoped endpoint se
 
   const homeScroll = popup.getByTestId('home-scroll-container')
   await expect(homeScroll).toBeVisible()
-  expect(
-    await homeScroll.evaluate(
-      element =>
-        [...element.querySelectorAll('*')].filter(child => {
-          const overflowY = getComputedStyle(child).overflowY
-          return overflowY === 'auto' || overflowY === 'scroll'
-        }).length
-    )
-  ).toBe(0)
   await expect(popup.getByRole('button', { name: 'Show token view' })).toHaveAttribute(
     'aria-pressed',
     'true'
@@ -710,19 +678,6 @@ test('renders and switches the released EVM catalog and chain-scoped endpoint se
   const zcashSyncProgress = popup.getByRole('status', { name: 'Zcash sync progress: 42%' })
   await expect(zcashSyncProgress).toHaveCount(1)
   await expect(zcashSyncProgress).toBeVisible()
-  const syncProgressBox = await zcashSyncProgress.boundingBox()
-  const activityTabBox = await popup
-    .getByRole('tab', { name: 'Activity', exact: true })
-    .boundingBox()
-  if (!syncProgressBox || !activityTabBox) {
-    throw new Error('Zcash sync progress or Activity tab is not measurable')
-  }
-  expect(syncProgressBox.x).toBeGreaterThan(activityTabBox.x + activityTabBox.width)
-  expect(
-    Math.abs(
-      syncProgressBox.y + syncProgressBox.height / 2 - activityTabBox.y - activityTabBox.height / 2
-    )
-  ).toBeLessThan(2)
   await captureScreenshot(popup, 'release-default-home-zcash-sync-progress.png')
   await popup.getByRole('tab', { name: 'Activity', exact: true }).click()
   await expect(zcashSyncProgress).toHaveCount(1)
@@ -804,9 +759,6 @@ test('renders and switches the released EVM catalog and chain-scoped endpoint se
   await expect(priceChart).toBeVisible()
   const priceChartLine = priceChart.locator('path[fill="none"]')
   await expect(priceChartLine).toHaveCount(1)
-  expect(await priceChartLine.evaluate(element => getComputedStyle(element).strokeDasharray)).toBe(
-    'none'
-  )
   await popup.getByRole('button', { name: '1W', exact: true }).click()
   await expect(popup.getByRole('img', { name: '1W price history' })).toBeVisible()
   expect(

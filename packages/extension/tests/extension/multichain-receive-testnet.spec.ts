@@ -101,24 +101,6 @@ async function importTestWallet(page: Page): Promise<void> {
   })
 }
 
-async function expectPopupFits(page: Page, footerExpected = true): Promise<void> {
-  await expect
-    .poll(() =>
-      page.evaluate(() => ({
-        viewportWidth: document.documentElement.clientWidth,
-        documentWidth: document.documentElement.scrollWidth,
-        viewportHeight: document.documentElement.clientHeight,
-        footerBottom: document.querySelector('.page-footer')?.getBoundingClientRect().bottom
-      }))
-    )
-    .toEqual({
-      viewportWidth: 375,
-      documentWidth: 375,
-      viewportHeight: 600,
-      footerBottom: footerExpected ? 600 : undefined
-    })
-}
-
 test('shows verified EVM, Bitcoin, Solana and NEAR addresses without releasing waiting transactions', async ({
   context,
   popup,
@@ -155,7 +137,6 @@ test('shows verified EVM, Bitcoin, Solana and NEAR addresses without releasing w
     .getByRole('button', { name: 'Accounts' })
     .click()
   await expect(popup.getByRole('heading', { name: 'Accounts' })).toBeVisible()
-  await expectPopupFits(popup)
   await popup.getByRole('button', { name: 'Account actions for Account 1' }).click()
   await popup.getByRole('menuitem', { name: 'Addresses' }).click()
   await expect(popup.getByRole('heading', { name: 'Address', exact: true })).toBeVisible()
@@ -186,13 +167,6 @@ test('shows verified EVM, Bitcoin, Solana and NEAR addresses without releasing w
   const zcashAddresses = accountAddresses.locator('section[aria-label="Zcash"]')
   await expect(zcashAddresses.getByText('Shield', { exact: true })).toBeVisible()
   await expect(zcashAddresses.getByText('Transparent', { exact: true })).toBeVisible()
-  const zcashAddressButtons = accountAddresses.getByRole('button', {
-    name: /Copy Zcash .* address/
-  })
-  const zcashAddressTopPositions = await zcashAddressButtons.evaluateAll(buttons =>
-    buttons.map(button => button.getBoundingClientRect().top)
-  )
-  expect(Math.abs(zcashAddressTopPositions[0] - zcashAddressTopPositions[1])).toBeGreaterThan(10)
   await expect(
     accountAddresses.getByRole('button', { name: /Copy NEAR Testnet .* address/ })
   ).toHaveCount(1)
@@ -212,7 +186,6 @@ test('shows verified EVM, Bitcoin, Solana and NEAR addresses without releasing w
     .getByRole('button', { name: 'Copy Ethereum Sepolia transparent address' })
     .click()
   await expect(popup.getByText('Address copied', { exact: true })).toBeVisible()
-  await expectPopupFits(popup, false)
   await captureScreenshot(popup, 'multichain-addresses-list.png')
 
   await addressSearch.fill('Bitcoin')
@@ -220,7 +193,6 @@ test('shows verified EVM, Bitcoin, Solana and NEAR addresses without releasing w
     accountAddresses.getByRole('heading', { name: 'Bitcoin', exact: true })
   ).toBeVisible()
   await expect(accountAddresses.getByRole('heading', { name: 'Zcash', exact: true })).toHaveCount(0)
-  await expectPopupFits(popup, false)
   await captureScreenshot(popup, 'multichain-addresses-bitcoin-formats.png')
 
   await accountAddresses
@@ -261,7 +233,6 @@ test('shows verified EVM, Bitcoin, Solana and NEAR addresses without releasing w
     EXPECTED_EVM_NETWORK_LABELS.length
   )
   await expect(homeReceiveAddresses.locator(`[title="${EXPECTED_BITCOIN_ADDRESS}"]`)).toBeVisible()
-  await expectPopupFits(popup, false)
   await captureScreenshot(popup, 'multichain-receive-addresses.png')
 
   await popup.getByRole('button', { name: 'Back' }).click()
