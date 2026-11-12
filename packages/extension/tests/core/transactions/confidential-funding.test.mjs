@@ -708,6 +708,7 @@ test.describe('confidential funding safety rules', () => {
         [false, '35000000000001', 'FLEX_INPUT']
       ])
       expect(requests.every(request => request.slippageTolerance === 0)).toBe(true)
+      expect(requests.every(request => request.referral === 'noir_receive')).toBe(true)
       expect(quote.quote.minAmountIn).toBe('35000000000001')
       tamper = true
       await expect(api.quoteFlexibleDeposit(input)).rejects.toThrow(
@@ -811,6 +812,7 @@ test.describe('confidential funding safety rules', () => {
       const request = JSON.parse(init.body)
       expect(request).toMatchObject({
         swapType: 'EXACT_OUTPUT',
+        referral: 'noir_send',
         depositType: 'ORIGIN_CHAIN',
         recipientType: 'DESTINATION_CHAIN',
         confidentiality: 'basic',
@@ -956,6 +958,7 @@ test.describe('confidential funding safety rules', () => {
     try {
       const api = new ConfidentialFundingApi(apiConfig, 'https://near.example.test', 'swap-jwt')
       const withdrawal = {
+        referral: 'noir_send',
         originAsset: 'nep141:eth.omft.near',
         destinationAsset: 'nep141:usdc.omft.near',
         amountRaw: '1000',
@@ -970,7 +973,8 @@ test.describe('confidential funding safety rules', () => {
       const quotedWithdrawal = await api.quote(withdrawal)
       expect(quoteRequests[0].dry).toBe(true)
       expect(quoteRequests[0].appFees).toBeUndefined()
-      expect(quoteRequests[1].referral).toBe('noir_swap')
+      expect(quoteRequests[0].referral).toBe('noir_send')
+      expect(quoteRequests[1].referral).toBe('noir_send')
       expect(quoteRequests[1].appFees).toEqual([{ recipient: 'platform.near', fee: 50 }])
       expect(quotedWithdrawal.quoteRequest.appFees).toEqual([
         { recipient: 'platform.near', fee: 50 },
@@ -979,18 +983,22 @@ test.describe('confidential funding safety rules', () => {
       expect(feeReads).toBe(1)
       await api.quote({
         ...withdrawal,
+        referral: 'noir_move',
         depositType: 'ORIGIN_CHAIN',
         recipientType: 'CONFIDENTIAL_INTENTS'
       })
       expect(quoteRequests[2].appFees).toBeUndefined()
+      expect(quoteRequests[2].referral).toBe('noir_move')
       expect(feeReads).toBe(1)
       await api.quote({
         ...withdrawal,
+        referral: 'noir_swap',
         recipient: withdrawal.signerId,
         recipientType: 'CONFIDENTIAL_INTENTS',
         dry: true
       })
       expect(quoteRequests[4]).toMatchObject({
+        referral: 'noir_swap',
         swapType: 'EXACT_INPUT',
         depositType: 'CONFIDENTIAL_INTENTS',
         recipientType: 'CONFIDENTIAL_INTENTS',

@@ -1,4 +1,11 @@
 import type { Network } from '@/types'
+import {
+  NOIR_MOVE_REFERRAL,
+  NOIR_RECEIVE_REFERRAL,
+  NOIR_SEND_REFERRAL,
+  NOIR_SWAP_REFERRAL,
+  type NoirIntentsReferral
+} from '@/config/intents'
 import { trackEvent } from '@/background/analytics/reporter'
 import { SerialTaskQueue } from '@/lib/async-utils'
 import {
@@ -188,6 +195,14 @@ export type PrepareConfidentialFundingInput = ConfidentialFundingRouteInput &
         destinationDomain?: never
       }>
   )
+
+function fundingReferral(input: {
+  readonly operation?: 'deposit' | 'withdraw' | 'swap' | 'cluster'
+  readonly externalRecipient?: string
+}): NoirIntentsReferral {
+  if (input.operation === 'swap') return NOIR_SWAP_REFERRAL
+  return input.externalRecipient ? NOIR_SEND_REFERRAL : NOIR_MOVE_REFERRAL
+}
 
 export interface ConfidentialFundingCoordinatorOptions {
   readonly network: Network
@@ -634,6 +649,7 @@ export class ConfidentialFundingCoordinator {
           refundTo: input.refundAddress
         })
       : await this.options.api.quote({
+          referral: NOIR_RECEIVE_REFERRAL,
           originAsset: input.source.protocolAssetId,
           destinationAsset: input.source.protocolAssetId,
           amountRaw: input.source.amountRaw!,
@@ -1169,7 +1185,11 @@ export class ConfidentialFundingCoordinator {
           : ('DESTINATION_CHAIN' as const),
       slippageBps: input.slippageBps
     }
-    const quote = await this.options.api.quote({ ...binding, dry: true })
+    const quote = await this.options.api.quote({
+      ...binding,
+      referral: fundingReferral(input),
+      dry: true
+    })
     assertConfidentialQuoteBinding(quote, binding, this.now())
     const currentIdentity = await this.options.signer.resolveIdentity(sourceSigningChain)
     this.assertSameAccount(sourceIdentity, currentIdentity)
@@ -1221,9 +1241,14 @@ export class ConfidentialFundingCoordinator {
     const depositQuote =
       input.sourceDomain === 'shield'
         ? undefined
-        : await this.options.api.quote({ ...depositBinding, dry: true })
+        : await this.options.api.quote({
+            ...depositBinding,
+            referral: fundingReferral(input),
+            dry: true
+          })
     if (depositQuote) assertConfidentialQuoteBinding(depositQuote, depositBinding, this.now())
     const previews = await this.prepareWithdrawPreviews({
+      referral: fundingReferral(input),
       sourceAsset: input.source.protocolAssetId,
       destinationAsset: input.destination.protocolAssetId,
       spendRaw: depositQuote?.quote.amountOut ?? input.source.amountRaw,
@@ -1431,6 +1456,7 @@ export class ConfidentialFundingCoordinator {
     const baseline = getConfidentialAvailableForAsset(balances, input.source.protocolAssetId) ?? '0'
     const requiresDeposit = true
     const depositQuote = await this.options.api.quote({
+      referral: fundingReferral(input),
       originAsset: input.source.protocolAssetId,
       destinationAsset: input.source.protocolAssetId,
       amountRaw: input.source.amountRaw,
@@ -1462,6 +1488,7 @@ export class ConfidentialFundingCoordinator {
     )
     const spendRaw = depositQuote.quote.amountOut
     const previews = await this.prepareWithdrawPreviews({
+      referral: fundingReferral(input),
       sourceAsset: input.source.protocolAssetId,
       destinationAsset: input.destination.protocolAssetId,
       spendRaw,
@@ -1635,6 +1662,7 @@ export class ConfidentialFundingCoordinator {
     }
     const quote = await this.options.api.quote({
       originAsset: input.source.protocolAssetId,
+      referral: fundingReferral(input),
       destinationAsset: isDeposit
         ? input.source.protocolAssetId
         : input.destination.protocolAssetId,
@@ -1826,6 +1854,7 @@ export class ConfidentialFundingCoordinator {
         : destinationIdentity.address
     const depositQuote = requiresDeposit
       ? await this.options.api.quote({
+          referral: fundingReferral(input),
           originAsset: input.source.protocolAssetId,
           destinationAsset: input.source.protocolAssetId,
           amountRaw: input.source.amountRaw,
@@ -1861,6 +1890,7 @@ export class ConfidentialFundingCoordinator {
     }
     const spendRaw = depositQuote?.quote.amountOut ?? input.source.amountRaw
     const previews = await this.prepareWithdrawPreviews({
+      referral: fundingReferral(input),
       sourceAsset: input.source.protocolAssetId,
       destinationAsset: input.destination.protocolAssetId,
       spendRaw,
@@ -2728,6 +2758,7 @@ export class ConfidentialFundingCoordinator {
   }
 
   private async prepareWithdrawPreviews(input: {
+    readonly referral: NoirIntentsReferral
     readonly sourceAsset: string
     readonly destinationAsset: string
     readonly spendRaw: string
@@ -2740,6 +2771,7 @@ export class ConfidentialFundingCoordinator {
       const quotes = await Promise.all(
         amounts.map(amountRaw =>
           this.options.api.quote({
+            referral: input.referral,
             originAsset: input.sourceAsset,
             destinationAsset: input.destinationAsset,
             amountRaw,
@@ -2789,6 +2821,7 @@ export class ConfidentialFundingCoordinator {
     const quotes = await Promise.all(
       plan.splitSourceAmounts.map(sourceAmountRaw =>
         this.options.api.quote({
+          referral: fundingReferral(plan),
           originAsset: plan.source.protocolAssetId,
           destinationAsset: plan.destination.protocolAssetId,
           amountRaw: sourceAmountRaw,
@@ -2927,6 +2960,7 @@ export class ConfidentialFundingCoordinator {
     const quotes = await Promise.all(
       plan.splitSourceAmounts.map(sourceAmountRaw =>
         this.options.api.quote({
+          referral: fundingReferral(plan),
           originAsset: plan.source.protocolAssetId,
           destinationAsset: plan.destination.protocolAssetId,
           amountRaw: sourceAmountRaw,
@@ -3083,6 +3117,7 @@ export class ConfidentialFundingCoordinator {
         plan.operation === 'swap' && plan.swapQuote?.quoteRequest.dry === false
           ? plan.swapQuote
           : await this.options.api.quote({
+              referral: fundingReferral(plan),
               originAsset: plan.source.protocolAssetId,
               destinationAsset: plan.destination.protocolAssetId,
               amountRaw: plan.source.amountRaw,

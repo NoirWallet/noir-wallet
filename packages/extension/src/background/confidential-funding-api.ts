@@ -1,4 +1,9 @@
-import { NOIR_SWAP_REFERRAL, type ConfidentialFundingNetworkConfig } from '@/config/intents'
+import {
+  NOIR_RECEIVE_REFERRAL,
+  NOIR_SEND_REFERRAL,
+  type NoirIntentsReferral,
+  type ConfidentialFundingNetworkConfig
+} from '@/config/intents'
 import { parseNearAccountId } from '@/core/chains/near/identifiers'
 import { readRheaDestinationHash } from '@/core/services/rhea-swap/rhea-order-status'
 import { DedupPromise } from '@/lib/async-utils'
@@ -879,6 +884,7 @@ export class ConfidentialFundingApi {
   }
 
   async quote(input: {
+    readonly referral: NoirIntentsReferral
     readonly originAsset: string
     readonly destinationAsset: string
     readonly amountRaw: string
@@ -919,7 +925,7 @@ export class ConfidentialFundingApi {
       recipient: input.recipient,
       recipientType: input.recipientType,
       deadline: new Date(Date.now() + 60 * 60_000).toISOString(),
-      referral: NOIR_SWAP_REFERRAL,
+      referral: input.referral,
       quoteWaitingTimeMs: 0,
       ...(appFees ? { appFees } : {}),
       confidentiality: 'basic'
@@ -984,7 +990,7 @@ export class ConfidentialFundingApi {
       recipient: input.signerId,
       recipientType: 'CONFIDENTIAL_INTENTS',
       deadline: new Date(Date.now() + 60 * 60_000).toISOString(),
-      referral: NOIR_SWAP_REFERRAL,
+      referral: NOIR_RECEIVE_REFERRAL,
       quoteWaitingTimeMs: 0,
       confidentiality: 'basic'
     }
@@ -1064,7 +1070,7 @@ export class ConfidentialFundingApi {
       recipient: input.recipient,
       recipientType: 'DESTINATION_CHAIN',
       deadline: new Date(Date.now() + 60 * 60_000).toISOString(),
-      referral: NOIR_SWAP_REFERRAL,
+      referral: NOIR_SEND_REFERRAL,
       quoteWaitingTimeMs: 0,
       ...(appFees.length > 0 ? { appFees } : {}),
       confidentiality: 'basic'
