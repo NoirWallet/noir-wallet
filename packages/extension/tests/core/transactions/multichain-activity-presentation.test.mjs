@@ -84,7 +84,7 @@ test.describe('Multichain Activity presentation', () => {
       sourceAccountMode: 'Public',
       destinationAccountMode: 'Confidential'
     })
-    expect(getActivityRouteTitle(item, route)).toBe('Account Transfer')
+    expect(getActivityRouteTitle(item, route)).toBe('Move')
     expect(hasMatchingActivityTokenIcons(route)).toBe(true)
     expect(
       hasMatchingActivityTokenIcons({

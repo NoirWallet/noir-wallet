@@ -122,6 +122,22 @@ export function isOwnedAccountTransfer(route: ActivitySwapPresentation): boolean
   )
 }
 
+export function isDirectAccountMove(item: ActivityItem, route: ActivitySwapPresentation): boolean {
+  const sourceMode = route.sourceAccountMode
+  const destinationMode = route.destinationAccountMode
+  return (
+    !item.snapshot?.shield &&
+    item.snapshot?.direction === 'outgoing' &&
+    item.snapshot.protocol?.provider === 'rhea-cross-chain-dex' &&
+    item.snapshot.protocol.userAction === 'transfer' &&
+    ((sourceMode === 'Public' && destinationMode === 'Confidential') ||
+      (sourceMode === 'Confidential' && destinationMode === 'Public')) &&
+    route.source?.assetId !== undefined &&
+    route.source.assetId === route.destination?.assetId &&
+    route.sourceNetwork === route.destinationNetwork
+  )
+}
+
 export function getActivityAccountRouteLabel(route: ActivitySwapPresentation): string {
   const label = (mode: ActivitySwapPresentation['sourceAccountMode']) =>
     mode === 'Confidential' ? 'Private' : (mode ?? '')
@@ -140,6 +156,7 @@ export function getActivityRouteTitle(item: ActivityItem, route: ActivitySwapPre
           ? 'Swap'
           : 'Send'
   }
+  if (isDirectAccountMove(item, route)) return 'Move'
   if (isAccountModeTransfer(item, route)) {
     return isOwnedAccountTransfer(route) ? 'Account Transfer' : 'Transfer'
   }

@@ -25,6 +25,7 @@ import type {
 } from '@/core/services/confidential-funding'
 import { getConfidentialAvailableForAsset } from '@/core/services/confidential-funding'
 import type { TransferDomain } from './private-balance-transfer'
+import { getCrossChainSendAssetGroup } from './cross-chain-send-assets'
 
 type ShieldTransferAsset = Pick<
   IntentsManagedAsset,
@@ -35,6 +36,7 @@ export type ShieldFundingAsset = Readonly<{
   asset: PortfolioAssetView
   chain: PortfolioChainView
   managed: ShieldTransferAsset
+  marketAssetId?: string
 }>
 
 export function formatShieldQuoteTime(seconds: number): string {
@@ -184,7 +186,7 @@ export function listShieldFundingAssets(
     const asset = fundingAssetView(model, managed, token.symbol, holding)
     if (!asset) return []
     seen.add(managed.protocolAssetId)
-    return [{ asset, chain, managed }]
+    return [{ asset, chain, managed, marketAssetId: token.coingeckoId?.trim() || undefined }]
   })
 }
 
@@ -333,18 +335,22 @@ export function isClusterTransferRoute(from: TransferDomain, to: TransferDomain)
   return (from === 'public' && to === 'private') || (from === 'private' && to === 'public')
 }
 
+function isValidShieldFundingAsset(item: ShieldFundingAsset): boolean {
+  return (
+    item.chain.chain.capabilities.transaction.status === 'available' &&
+    item.asset.asset.chainId === item.chain.chain.id &&
+    item.managed.assetId === item.asset.asset.id &&
+    item.managed.chainId === item.chain.chain.id
+  )
+}
+
 function isShieldMoveDestination(
   source: ShieldFundingAsset,
   destination: ShieldFundingAsset,
   network: Network
 ): boolean {
-  const valid = (item: ShieldFundingAsset) =>
-    item.chain.chain.family === 'evm' &&
-    item.chain.chain.capabilities.transaction.status === 'available' &&
-    item.asset.asset.chainId === item.chain.chain.id &&
-    item.managed.assetId === item.asset.asset.id &&
-    item.managed.chainId === item.chain.chain.id
-  if (!valid(source) || !valid(destination)) return false
+  if (!isValidShieldFundingAsset(source) || !isValidShieldFundingAsset(destination)) return false
+  if (source.chain.chain.family !== 'evm' || destination.chain.chain.family !== 'evm') return false
   if (source.asset.asset.id === destination.asset.asset.id) {
     return source.managed.protocolAssetId === destination.managed.protocolAssetId
   }
@@ -376,6 +382,38 @@ export function listShieldMoveDestinations(
   network: Network
 ): readonly ShieldFundingAsset[] {
   return options.filter(option => isShieldMoveDestination(source, option, network))
+}
+
+function isShieldSendDestination(
+  source: ShieldFundingAsset,
+  destination: ShieldFundingAsset,
+  network: Network
+): boolean {
+  if (!isValidShieldFundingAsset(source) || !isValidShieldFundingAsset(destination)) return false
+  if (
+    (source.chain.chain.family !== 'evm' && source.chain.chain.id !== getZcashChainId(network)) ||
+    destination.chain.chain.family !== 'evm'
+  )
+    return false
+  if (source.asset.asset.id === destination.asset.asset.id)
+    return source.managed.protocolAssetId === destination.managed.protocolAssetId
+  if (network !== 'mainnet' || source.chain.chain.id === destination.chain.chain.id) return false
+  const sourceGroup = getCrossChainSendAssetGroup(source.asset.asset)
+  const destinationGroup = getCrossChainSendAssetGroup(destination.asset.asset)
+  if (sourceGroup && destinationGroup) return sourceGroup === destinationGroup
+  return Boolean(
+    source.marketAssetId &&
+    source.marketAssetId === destination.marketAssetId &&
+    source.asset.metadata.symbol === destination.asset.metadata.symbol
+  )
+}
+
+export function listShieldSendDestinations(
+  source: ShieldFundingAsset,
+  options: readonly ShieldFundingAsset[],
+  network: Network
+): readonly ShieldFundingAsset[] {
+  return options.filter(option => isShieldSendDestination(source, option, network))
 }
 
 export function matchesShieldReview(
@@ -432,16 +470,8 @@ export function buildExternalShieldWithdrawRequest(
     accountId: string
     amountRaw: string
     recipient: string
-    source: Readonly<{
-      asset: PortfolioAssetView
-      chain: PortfolioChainView
-      managed: ShieldTransferAsset
-    }>
-    destination: Readonly<{
-      asset: PortfolioAssetView
-      chain: PortfolioChainView
-      managed: ShieldTransferAsset
-    }>
+    source: ShieldFundingAsset
+    destination: ShieldFundingAsset
     slippageBps: number
   }>
 ): PrepareConfidentialFundingRequest {
@@ -452,6 +482,7 @@ export function buildExternalShieldWithdrawRequest(
     (input.source.chain.chain.family !== 'evm' &&
       input.source.chain.chain.id !== getZcashChainId(input.network)) ||
     input.destination.chain.chain.family !== 'evm' ||
+    !isShieldSendDestination(input.source, input.destination, input.network) ||
     input.source.asset.asset.id !== input.source.managed.assetId ||
     input.destination.asset.asset.id !== input.destination.managed.assetId ||
     input.source.chain.chain.id !== input.source.managed.chainId ||

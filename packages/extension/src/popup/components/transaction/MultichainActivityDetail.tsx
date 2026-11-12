@@ -64,6 +64,7 @@ import {
 import {
   getActivityDetailTitle,
   getActivityRouteTitle,
+  isDirectAccountMove,
   getClusterBatchStatusLabel,
   getClusterChildStatusLabel,
   getActivityTransferRecipient,
@@ -445,6 +446,7 @@ export function MultichainActivityDetail({
     direction === 'self' &&
     visibleItem.snapshot.shield.operation !== 'swap'
   )
+  const isMove = isShieldMove || (swap !== null && isDirectAccountMove(visibleItem, swap))
   const isShieldSend =
     visibleItem.snapshot?.shield?.operation === 'withdraw' && direction === 'outgoing'
   const isIncoming = visibleItem.kind === 'receive' || direction === 'incoming'
@@ -986,7 +988,7 @@ export function MultichainActivityDetail({
             {swap.sourceAccountMode &&
               swap.destinationAccountMode &&
               swap.sourceAccountMode !== swap.destinationAccountMode && (
-                <DetailRow label={isShieldMove ? 'Move direction' : 'Account'}>
+                <DetailRow label={isMove ? 'Move direction' : 'Account'}>
                   <span className="flex items-center gap-1.5">
                     {swap.sourceAccountMode === 'External' ? (
                       <span className="text-sm">External</span>

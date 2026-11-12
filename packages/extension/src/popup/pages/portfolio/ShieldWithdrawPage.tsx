@@ -41,9 +41,7 @@ import {
 } from '@/popup/components/transaction/TransactionReviewView'
 import { openConfidentialActivity } from '@/popup/components/transaction/ConfidentialActivitySheet'
 import { Button } from '@/popup/components/ui/button'
-import { SlippageSettingContent } from '@/popup/components/swap/SlippageSetting'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/popup/components/ui/dialog'
-import { openModal } from '@/popup/provider/ModalManager'
 import {
   CONFIDENTIAL_PREVIEW_CONNECTION_ERROR,
   confidentialFundingClient,
@@ -59,6 +57,7 @@ import {
   isUnsignedShieldTerminal,
   matchesExternalShieldWithdrawReview,
   listShieldFundingAssets,
+  listShieldSendDestinations,
   shieldPortfolioBalances,
   shieldFundingAvailableRaw,
   shieldFundingSources,
@@ -135,14 +134,10 @@ export function ShieldWithdrawForm({
   const [balanceScope, setBalanceScope] = useState('')
   const [connecting, setConnecting] = useState(false)
   const [sourceId, setSourceId] = useState(routeAssetId)
-  const [destinationId, setDestinationId] = useState('')
   const [destinationNetworkId, setDestinationNetworkId] = useState<string | null>(routeNetworkId)
   const [amount, setAmount] = useState('')
   const [recipient, setRecipient] = useState(isAddress(routeRecipient) ? routeRecipient : '')
-  const [slippageBps, setSlippageBps] = useState(50)
-  const [picker, setPicker] = useState<'source' | 'destination' | 'network' | 'recipient' | null>(
-    null
-  )
+  const [picker, setPicker] = useState<'source' | 'network' | 'recipient' | null>(null)
   const [prepared, setPrepared] = useState<Readonly<{
     review: ConfidentialFundingReview
     request: PrepareConfidentialFundingRequest
@@ -168,11 +163,9 @@ export function ShieldWithdrawForm({
 
   useEffect(() => {
     setSourceId(routeAssetId)
-    setDestinationId('')
     setDestinationNetworkId(routeNetworkId)
     setAmount('')
     setRecipient(isAddress(routeRecipient) ? routeRecipient : '')
-    setSlippageBps(50)
     setPicker(null)
     setPrepared(null)
     setBusy(false)
@@ -256,7 +249,6 @@ export function ShieldWithdrawForm({
     () => listShieldFundingAssets(model, managedAssets, catalogTokens, network),
     [model, managedAssets, catalogTokens, network]
   )
-  const destinations = options.filter(item => item.chain.chain.family === 'evm')
   const currentBalances = balanceScope === scopeKey ? balances : null
   const displayBalances = currentBalances ?? shieldPortfolioBalances(model)
   const fundedSources = shieldFundingSources(options, displayBalances)
@@ -278,18 +270,10 @@ export function ShieldWithdrawForm({
   const keepSelectedSource = () => {
     if (!sourceId && source) setSourceId(source.asset.asset.id)
   }
-  const destinationToken = destinationId
-    ? (destinations.find(item => item.asset.asset.id === destinationId) ?? null)
-    : (destinations.find(
-        item => item.managed.protocolAssetId === source?.managed.protocolAssetId
-      ) ?? null)
+  const destinations = source ? listShieldSendDestinations(source, options, network) : []
   const destination =
-    destinationToken && destinationNetworkId
-      ? selectShieldWithdrawDestinationForNetwork(
-          destinations,
-          destinationToken,
-          destinationNetworkId
-        )
+    source && destinationNetworkId
+      ? selectShieldWithdrawDestinationForNetwork(destinations, source, destinationNetworkId)
       : null
   const destinationNetwork = destinations.find(item => item.chain.chain.id === destinationNetworkId)
     ?.chain.chain
@@ -323,7 +307,7 @@ export function ShieldWithdrawForm({
       recipient: recipient.trim(),
       source,
       destination,
-      slippageBps
+      slippageBps: 50
     })
   }, [
     network,
@@ -335,8 +319,7 @@ export function ShieldWithdrawForm({
     destination,
     amountState?.amountRaw,
     recipient,
-    recipientValid,
-    slippageBps
+    recipientValid
   ])
   const {
     preview,
@@ -746,7 +729,7 @@ export function ShieldWithdrawForm({
           <SendFieldLabel>Send to</SendFieldLabel>
           <button
             type="button"
-            disabled={busy || !destinationToken}
+            disabled={busy || destinations.length === 0}
             onClick={() => {
               keepSelectedSource()
               setPicker('network')
@@ -789,85 +772,11 @@ export function ShieldWithdrawForm({
             }
           />
         </div>
-        <div className="mb-3 flex min-h-[62px] w-full items-center gap-3 rounded-lg bg-wallet-surface px-3">
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => {
-              keepSelectedSource()
-              setPicker('destination')
-            }}
-            className="wallet-interactive flex min-w-0 flex-1 items-center gap-3 text-left enabled:hover:text-primary focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 disabled:opacity-50"
-            aria-label="Select destination token"
-          >
-            {destinationToken && (
-              <TokenIcon
-                assetId={destinationToken.asset.asset.id}
-                symbol={destinationToken.asset.metadata.symbol}
-                icon={destinationToken.asset.metadata.iconUrl}
-                size={32}
-              />
-            )}
-            <span className="min-w-0 flex-1">
-              <span className="block text-xs text-muted">Token</span>
-              <span className="block truncate text-sm">
-                {destinationToken?.asset.metadata.symbol ?? 'Select token'}
-              </span>
-            </span>
-          </button>
-          {preview && destination && (
-            <span className="min-w-0 max-w-[42%] text-right text-sm">
-              <span className="block text-xs text-muted">Est. receive</span>
-              <AmountDisplay
-                value={formatBaseUnitDecimalAmount(
-                  preview.amountOutRaw,
-                  destination.asset.metadata.decimals
-                )}
-              />
-            </span>
-          )}
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => {
-              keepSelectedSource()
-              setPicker('destination')
-            }}
-            aria-label="Select destination token"
-            className="wallet-interactive shrink-0 enabled:hover:text-primary focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 disabled:opacity-50"
-          >
-            <Icon icon="lucide:chevron-down" width={17} height={17} />
-          </button>
-        </div>
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() =>
-            void openModal({
-              title: 'Slippage Tolerance',
-              showCloseButton: true,
-              body: (_resolve, close) => (
-                <SlippageSettingContent
-                  currentSlippage={slippageBps / 100}
-                  minimumSlippage={0.1}
-                  maximumSlippage={1}
-                  presets={[0.1, 0.5, 1]}
-                  onSave={value => {
-                    setSlippageBps(Math.round(value * 100))
-                    close()
-                  }}
-                />
-              )
-            })
-          }
-          className="wallet-interactive flex min-h-[47px] w-full items-center justify-between rounded-lg border border-white/15 px-4 text-sm enabled:hover:bg-white/5 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 disabled:opacity-50"
-        >
-          <span className="text-muted">Slippage</span>
-          <span className="flex items-center gap-2">
-            {slippageBps / 100}%
-            <Icon icon="lucide:chevron-right" width={16} height={16} className="text-muted" />
-          </span>
-        </button>
+        {source && destinations.length === 0 && (
+          <p role="alert" className="mt-3 text-xs text-warning">
+            No supported network for this token
+          </p>
+        )}
         <div className="mt-4 space-y-2 text-xs">
           <span className="text-muted">Provider</span>
           <div className="rounded-lg border border-white/10 bg-wallet-surface px-3 py-2.5">
@@ -1025,13 +934,7 @@ export function ShieldWithdrawForm({
           className="max-h-[80vh] min-h-0 overflow-y-auto bg-wallet-surface p-4 pb-6"
         >
           <DialogTitle>
-            {picker === 'source'
-              ? 'Source token'
-              : picker === 'destination'
-                ? 'Receive token'
-                : picker === 'network'
-                  ? 'Network'
-                  : 'Recipient'}
+            {picker === 'source' ? 'Source token' : picker === 'network' ? 'Network' : 'Recipient'}
           </DialogTitle>
           <DialogDescription className="sr-only">Choose a withdrawal {picker}</DialogDescription>
           {picker === 'source' && sources.length === 0 && (
@@ -1053,77 +956,49 @@ export function ShieldWithdrawForm({
               }}
             />
           ) : picker === 'network' ? (
-            [
-              ...new Map(
-                destinations
-                  .filter(
-                    item =>
-                      destinationToken &&
-                      item.asset.metadata.symbol === destinationToken.asset.metadata.symbol
-                  )
-                  .map(item => [item.chain.chain.id, item])
-              ).values()
-            ].map(item => (
-              <button
-                key={item.chain.chain.id}
-                type="button"
-                aria-pressed={destinationNetworkId === item.chain.chain.id}
-                onClick={() => {
-                  const next = selectShieldWithdrawDestinationForNetwork(
-                    destinations,
-                    destinationToken,
-                    item.chain.chain.id
-                  )
-                  if (next) {
-                    setDestinationId(next.asset.asset.id)
-                    if (destinationNetworkId !== item.chain.chain.id) setRecipient('')
-                    setDestinationNetworkId(item.chain.chain.id)
-                  }
-                  setPicker(null)
-                }}
-                className={`wallet-interactive flex w-full items-center gap-3 rounded-md px-2 py-3 text-left text-sm hover:bg-wallet-selected active:bg-white/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 ${destinationNetworkId === item.chain.chain.id ? 'bg-wallet-selected' : ''}`}
-              >
-                <ChainIcon
-                  chain={withdrawChainIconAlias(item.chain.chain)}
-                  width={28}
-                  height={28}
-                  className="shrink-0 rounded-md"
-                />
-                <span className="min-w-0 flex-1 truncate">{item.chain.chain.displayName}</span>
-                {destinationNetworkId === item.chain.chain.id && (
-                  <Icon icon="lucide:check" width={17} height={17} className="text-primary" />
-                )}
-              </button>
-            ))
+            [...new Map(destinations.map(item => [item.chain.chain.id, item])).values()].map(
+              item => (
+                <button
+                  key={item.chain.chain.id}
+                  type="button"
+                  aria-pressed={destinationNetworkId === item.chain.chain.id}
+                  onClick={() => {
+                    const next = selectShieldWithdrawDestinationForNetwork(
+                      destinations,
+                      source,
+                      item.chain.chain.id
+                    )
+                    if (next) {
+                      if (destinationNetworkId !== item.chain.chain.id) setRecipient('')
+                      setDestinationNetworkId(item.chain.chain.id)
+                    }
+                    setPicker(null)
+                  }}
+                  className={`wallet-interactive flex w-full items-center gap-3 rounded-md px-2 py-3 text-left text-sm hover:bg-wallet-selected active:bg-white/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 ${destinationNetworkId === item.chain.chain.id ? 'bg-wallet-selected' : ''}`}
+                >
+                  <ChainIcon
+                    chain={withdrawChainIconAlias(item.chain.chain)}
+                    width={28}
+                    height={28}
+                    className="shrink-0 rounded-md"
+                  />
+                  <span className="min-w-0 flex-1 truncate">{item.chain.chain.displayName}</span>
+                  {destinationNetworkId === item.chain.chain.id && (
+                    <Icon icon="lucide:check" width={17} height={17} className="text-primary" />
+                  )}
+                </button>
+              )
+            )
           ) : (
-            (picker === 'source'
-              ? sources
-              : [...new Map(destinations.map(item => [item.asset.metadata.symbol, item])).values()]
-            ).map(item => (
+            sources.map(item => (
               <button
                 key={item.asset.asset.id}
                 type="button"
                 onClick={() => {
-                  if (picker === 'source') {
-                    setSourceId(item.asset.asset.id)
-                    setDestinationId('')
-                    setDestinationNetworkId(null)
-                    setRecipient('')
-                    setAmount('')
-                  } else {
-                    setDestinationId(item.asset.asset.id)
-                    if (
-                      destinationNetworkId &&
-                      !selectShieldWithdrawDestinationForNetwork(
-                        destinations,
-                        item,
-                        destinationNetworkId
-                      )
-                    ) {
-                      setDestinationNetworkId(null)
-                      setRecipient('')
-                    }
-                  }
+                  setSourceId(item.asset.asset.id)
+                  setDestinationNetworkId(null)
+                  setRecipient('')
+                  setAmount('')
                   setPicker(null)
                 }}
                 className="wallet-interactive flex w-full items-center gap-3 rounded-md px-2 py-2 text-left hover:bg-wallet-selected active:bg-white/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2"
