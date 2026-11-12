@@ -277,7 +277,7 @@ export function EvmSendForm({
   const canMoveRecipient =
     Boolean(onFundPrivate) &&
     isCurrentAccountPrivateEvmAddress(recipient, chain.chain.id, activeAccount)
-  const recipientName =
+  const recipientContactName =
     selectedRecipient?.address === recipient ? selectedRecipient.name : undefined
   const restoredDraft = useRef<string | null>(null)
   useEffect(() => {
@@ -1209,7 +1209,6 @@ export function EvmSendForm({
               <SendRecipientInputCard
                 id="evm-send-recipient"
                 value={recipient}
-                selectedName={recipientName}
                 onChange={value => {
                   invalidateMaximum()
                   if (maxSelected) setAmount('')
@@ -1463,7 +1462,9 @@ export function EvmSendForm({
                 },
                 {
                   label: 'To',
-                  content: <SendRecipientAddress address={review.recipient} name={recipientName} />
+                  content: (
+                    <SendRecipientAddress address={review.recipient} name={recipientContactName} />
+                  )
                 },
                 { label: 'Network', content: formatPortfolioNetworkName(chain) },
                 {

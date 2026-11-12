@@ -93,6 +93,12 @@ import {
 } from '@/popup/lib/active-account-scope'
 import { getZcashChainId } from '@/core/chains/registry'
 import { resolveZcashSelfMove } from '@/popup/services/zcash-self-move'
+import {
+  getZcashTransparentToShieldMoveAmountError,
+  isZcashSendRecipientReady,
+  resolveZcashSendRecipientInput,
+  shouldRetainZcashSendRecipient
+} from './zcash-send-validation'
 
 function MoveLayout({
   amount,
@@ -190,7 +196,6 @@ export function Send() {
     routeParams.get('from') === 'transparent' || routeParams.get('from') === 'shielded'
       ? (routeParams.get('from') as FundingSource)
       : null
-  const isWholeBalanceShield = isSelfMove && moveSource === 'transparent'
   const walletMode = 'public' as const
   const routeIdentity = JSON.stringify([isSelfMove, routeParams.get('from'), walletMode])
   const previousRouteIdentity = useRef(routeIdentity)
@@ -256,6 +261,7 @@ export function Send() {
     : getFundingSourceUnavailableReason(currentWallet?.keySource, selectedFundingSource)
       ? 'shielded'
       : selectedFundingSource
+  const isTransparentToShieldMove = isSelfMove && fundingSource === 'transparent'
   const resultReturnPath = `${location.pathname}?${new URLSearchParams({
     ...(isSelfMove ? { move: '1' } : {}),
     from: fundingSource,
@@ -271,8 +277,14 @@ export function Send() {
 
   const { sendTransaction } = useTransaction()
 
-  const zns = useZnsResolve(isSelfMove ? '' : toAddress)
-  const effectiveToAddress = isSelfMove ? (selfMove?.toAddress ?? '') : zns.address || toAddress
+  const recipientInput = resolveZcashSendRecipientInput(toAddress, currentNetwork)
+  const zns = useZnsResolve(isSelfMove ? '' : recipientInput.znsInput)
+  const effectiveToAddress = isSelfMove
+    ? (selfMove?.toAddress ?? '')
+    : recipientInput.formatError
+      ? ''
+      : zns.address || recipientInput.resolvedAddress
+  const recipientFormatError = isSelfMove ? null : recipientInput.formatError
 
   const feeTier = useSettingsStore(state => state.feeTier)
   const setFeeTier = useSettingsStore(state => state.setFeeTier)
@@ -286,7 +298,6 @@ export function Send() {
   )
   const transparentBalance = safeBig(getShieldableTransparentBalance(balance)).toNumber()
   const shieldableBalance = getShieldableTransparentBalance(balance)
-  const shieldAmountText = formatTokenQuantity(shieldableBalance)
 
   const reverseMove = () => {
     if (!isSelfMove) return
@@ -411,7 +422,7 @@ export function Send() {
     memo: effectiveMemo,
     feeTier,
     fundingSource,
-    enabled: !sendPrivately && !isWholeBalanceShield && !!effectiveToAddress && !!fromAddress
+    enabled: !sendPrivately && !!effectiveToAddress && !!fromAddress && !recipientFormatError
   })
   const isMaxTransferAmount =
     !!maxTransfer.maxAmount && safeBig(amount || '0').eq(maxTransfer.maxAmount)
@@ -432,9 +443,9 @@ export function Send() {
     ]),
     enabled:
       !sendPrivately &&
-      !isWholeBalanceShield &&
       safeBig(amount || '0').gt(0) &&
       !!effectiveToAddress &&
+      !recipientFormatError &&
       !maxSelected &&
       !isMaxTransferAmount
   })
@@ -444,7 +455,8 @@ export function Send() {
   const displayedFeeLoadingByTier = isMaxFeeMode
     ? maxTransfer.loadingByTier
     : feeEstimate.loadingByTier
-  const feeRequired = !!effectiveToAddress && safeBig(amount || '0').gt(0)
+  const feeRequired =
+    !!effectiveToAddress && safeBig(amount || '0').gt(0) && recipientFormatError === null
   const feeError = feeRequired && (isMaxFeeMode ? maxTransfer.error : feeEstimate.error)
   const feeReady =
     feeRequired &&
@@ -473,11 +485,17 @@ export function Send() {
     fundingSource,
     selectedFeeZats,
     standardFeeZats,
-    maximumAmount: maxTransfer.maxAmount
+    maximumAmount: maxTransfer.maxAmount,
+    capTransparentToShieldable: isTransparentToShieldMove
   })
-  const amountError = getFundingAmountError(amount, sourceBalance, effectiveMaxStr)
-  const amountErrorCopy = getFundingAmountErrorCopy(amountError)
-  const reviewInsufficient = amountError !== null
+  const amountError = isTransparentToShieldMove
+    ? null
+    : getFundingAmountError(amount, sourceBalance, effectiveMaxStr)
+  const amountErrorCopy = isTransparentToShieldMove
+    ? getZcashTransparentToShieldMoveAmountError(amount, balance, effectiveMaxStr)
+    : getFundingAmountErrorCopy(amountError)
+  const reviewInsufficient =
+    amountError !== null || (isTransparentToShieldMove && amountErrorCopy !== undefined)
   const isValidAmount = !!fromAddress && safeBig(amount || '0').gt(0) && !reviewInsufficient
   const selectedFeeZec = isMaxFeeMode ? (maxTransfer.fee ?? estimatedFeeZec) : estimatedFeeZec
   const selectedFeeQuote = isMaxFeeMode ? maxTransfer.feeQuote : feeEstimate.feeQuote
@@ -545,6 +563,10 @@ export function Send() {
   const handleSelectFundingSource = (source: FundingSource) => {
     if (fundingOptions.find(option => option.type === source)?.disabledReason) return
     setPrivateSendScope(null)
+    if (!shouldRetainZcashSendRecipient(toAddress, currentAccount?.addresses)) {
+      setToAddress('')
+      setSelectedRecipient(null)
+    }
     setFundingSource(source)
     setAmount('')
     setMaxSelected(false)
@@ -582,7 +604,8 @@ export function Send() {
           walletId: currentWalletId,
           accountId: currentAccountId,
           network: currentNetwork
-        })
+        }),
+        { replace: true }
       )
       return
     }
@@ -592,7 +615,9 @@ export function Send() {
       isValidAmount &&
       !reviewInsufficient &&
       feeReady &&
-      (isSelfMove || !zns.loading)
+      !recipientFormatError &&
+      (isSelfMove ||
+        isZcashSendRecipientReady(effectiveToAddress, recipientFormatError, zns.loading))
     ) {
       setShowReview(true)
     }
@@ -809,71 +834,6 @@ export function Send() {
     )
   }
 
-  if (isWholeBalanceShield) {
-    return (
-      <div className="page-container" data-wallet-mode="public">
-        <PageHeader title="Move" showBack onBack={goBack} />
-        <div className="page-content !px-4 pt-4">
-          <MoveLayout
-            amount={
-              <div
-                className="min-h-12 max-w-full font-semibold leading-tight tabular-nums"
-                style={{
-                  fontSize: `${Math.max(18, Math.min(40, Math.floor(500 / shieldAmountText.length)))}px`
-                }}
-              >
-                {shieldAmountText}
-              </div>
-            }
-            balance={shieldableBalance}
-            max={
-              <span className="rounded-md bg-primary/15 px-2 py-1 font-medium text-primary">
-                Max
-              </span>
-            }
-            accountName={accountDisplayName}
-            fromAddress={fromAddress}
-            toAddress={selfMove?.toAddress ?? ''}
-            from="transparent"
-            onReverse={reverseMove}
-          />
-          {moveUnavailable && (
-            <InlineError
-              className="mt-4"
-              message="This account cannot move ZEC between Public and Shield."
-            />
-          )}
-          {!moveUnavailable && !hasEnoughTransparentBalanceToShield(shieldableBalance) && (
-            <InlineError className="mt-4" message={MIN_SHIELDING_BALANCE_MESSAGE} />
-          )}
-          {syncState.isSyncing && (
-            <p role="status" className="mt-4 text-xs text-muted">
-              Syncing wallet
-            </p>
-          )}
-        </div>
-        <div className="page-footer">
-          <Button
-            size="wallet"
-            className="h-[45px] w-full"
-            disabled={
-              moveUnavailable ||
-              !fromAddress ||
-              !selfMove?.toAddress ||
-              !hasEnoughTransparentBalanceToShield(shieldableBalance) ||
-              syncState.isSyncing ||
-              isMigrating
-            }
-            onClick={handleMigrateNow}
-          >
-            Move
-          </Button>
-        </div>
-        {migrateSheet}
-      </div>
-    )
-  }
-
   return (
     <div className="page-container" data-wallet-mode={isSelfMove ? 'public' : walletMode}>
       <PageHeader title={isSelfMove ? 'Move' : 'Send'} showBack onBack={goBack} />
@@ -900,7 +860,7 @@ export function Send() {
                     }}
                   />
                 }
-                balance={sourceBalance.available}
+                balance={isTransparentToShieldMove ? shieldableBalance : sourceBalance.available}
                 max={
                   <button
                     type="button"
@@ -910,7 +870,9 @@ export function Send() {
                       !fromAddress ||
                       !effectiveToAddress ||
                       safeBig(effectiveMaxStr).lte(0) ||
-                      maxTransfer.loading
+                      maxTransfer.loading ||
+                      (isTransparentToShieldMove &&
+                        !hasEnoughTransparentBalanceToShield(shieldableBalance))
                     }
                     onClick={() => {
                       setMaxSelected(true)
@@ -925,12 +887,17 @@ export function Send() {
                 accountName={accountDisplayName}
                 fromAddress={fromAddress}
                 toAddress={effectiveToAddress}
-                from="shielded"
+                from={fundingSource}
                 onReverse={reverseMove}
               />
               {moveUnavailable && (
                 <InlineError message="This account cannot move ZEC between Public and Shield." />
               )}
+              {isTransparentToShieldMove &&
+                !moveUnavailable &&
+                !hasEnoughTransparentBalanceToShield(shieldableBalance) && (
+                  <InlineError message={MIN_SHIELDING_BALANCE_MESSAGE} />
+                )}
               {amountErrorCopy && <InlineError message={amountErrorCopy} />}
             </>
           ) : (
@@ -997,6 +964,7 @@ export function Send() {
                 <SendFieldLabel>Send from</SendFieldLabel>
                 <BalanceDomainTabs
                   value={fundingSource === 'shielded' ? 'shield' : 'public'}
+                  labels={{ public: 'Transparent' }}
                   available={(['public', 'shield'] as const).filter(domain =>
                     fundingOptions.some(
                       option =>
@@ -1049,8 +1017,14 @@ export function Send() {
                 placeholder="Recipient address"
                 variant="filled"
                 hideLabel
+                invalid={Boolean(recipientFormatError)}
                 onSelectRecipient={handleSelectMyAddress}
               />
+              {recipientFormatError && (
+                <p role="alert" className="mt-1.5 px-1 text-xs text-danger">
+                  {recipientFormatError}
+                </p>
+              )}
               {zns.loading && (
                 <p className="text-muted text-xs mt-1.5 px-1 flex items-center gap-1.5">
                   <Icon icon="lucide:loader-2" width={12} height={12} className="animate-spin" />
@@ -1063,7 +1037,7 @@ export function Send() {
                   {formatSortAddress(zns.address)}
                 </p>
               )}
-              {zns.error && (
+              {recipientInput.znsInput && zns.error && (
                 <InlineError
                   className="mt-1.5 px-1"
                   message={zns.error}
@@ -1079,16 +1053,23 @@ export function Send() {
               <SendRouteInfoCard
                 provider={
                   fundingSource === 'shielded' && canSendConfidential ? (
-                    <div className="w-[190px] max-w-full">
+                    <div className="relative z-10 w-[190px] max-w-full">
                       <ShieldSendProviderTabs
                         value="zcash-shield"
                         disabled={isConfirming || showReview}
                         onChange={provider => {
                           if (provider === 'near-confidential')
-                            navigate('/send?sourceMode=shield&provider=near-confidential', {
-                              replace: true,
-                              state: { sendEntry: 'shield' }
-                            })
+                            navigate(
+                              `/send?${new URLSearchParams({
+                                sourceMode: 'shield',
+                                provider: 'near-confidential',
+                                assetId: ZEC_ZCASH_ASSET
+                              })}`,
+                              {
+                                replace: true,
+                                state: { sendEntry: 'shield' }
+                              }
+                            )
                         }}
                       />
                     </div>
@@ -1244,9 +1225,13 @@ export function Send() {
             !amount ||
             !isValidAmount ||
             reviewInsufficient ||
+            Boolean(recipientFormatError) ||
             (sendPrivately ? !privatePreviewReady : !feeReady) ||
             (isSelfMove && syncState.isSyncing) ||
-            (!isSelfMove && zns.loading)
+            (isTransparentToShieldMove &&
+              !hasEnoughTransparentBalanceToShield(shieldableBalance)) ||
+            (!isSelfMove &&
+              !isZcashSendRecipientReady(effectiveToAddress, recipientFormatError, zns.loading))
           }
           onClick={handleContinue}
           className="w-full h-[45px]"

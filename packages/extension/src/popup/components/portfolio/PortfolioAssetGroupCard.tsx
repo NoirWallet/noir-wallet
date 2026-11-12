@@ -14,7 +14,12 @@ import type { PortfolioAssetView } from '@/core/portfolio'
 import { findAssetPrice, type AssetPriceReadModel } from '@/core/prices'
 import { resolveChainIconAlias } from '@/lib/chain-icon'
 import { ChainIcon } from '@/popup/components/common/ChainIcon'
+import type { SwapToken } from '@/core/services/intents-api'
 import { TokenIcon } from '@/popup/components/tokens/TokenIcon'
+import {
+  lookupSwapTokenForWalletAsset,
+  resolvePortfolioAssetIconUrl
+} from '@/popup/components/tokens/portfolio-token-swap-icon'
 import { BalanceHelp } from '@/popup/components/transaction/BalanceHelp'
 import { getPortfolioAssetUsdValue } from './portfolio-prices'
 import { formatDisplayAmount } from './portfolio-format'
@@ -63,6 +68,7 @@ interface PortfolioAssetGroupCardProps {
   readonly directAsset?: boolean
   readonly onToggle?: () => void
   readonly onSelectAsset?: (assetId: string) => void
+  readonly swapCatalog?: readonly SwapToken[]
 }
 
 interface PortfolioAssetBalanceRowProps {
@@ -74,6 +80,27 @@ interface PortfolioAssetBalanceRowProps {
   readonly pricesLoading?: boolean
   readonly showUnitPrice?: boolean
   readonly onSelectAsset?: (assetId: string) => void
+  readonly swapCatalog?: readonly SwapToken[]
+}
+
+function portfolioTokenIconProps(
+  asset: PortfolioAssetView,
+  catalog: readonly SwapToken[] | undefined,
+  blockchain?: string
+) {
+  const assetId = asset.asset.id
+  const swapToken = catalog ? lookupSwapTokenForWalletAsset(assetId, catalog) : null
+  return {
+    token: swapToken ?? undefined,
+    assetId,
+    symbol: formatSymbol(asset.metadata.symbol),
+    icon: resolvePortfolioAssetIconUrl({
+      assetId,
+      metadataIconUrl: asset.metadata.iconUrl,
+      catalog
+    }),
+    blockchain: blockchain ?? swapToken?.blockchain
+  }
 }
 
 function assetAmount(asset: PortfolioAssetView): Big {
@@ -150,7 +177,8 @@ function PortfolioAssetBalanceRow({
   leading,
   pricesLoading = false,
   showUnitPrice = true,
-  onSelectAsset
+  onSelectAsset,
+  swapCatalog
 }: PortfolioAssetBalanceRowProps) {
   const amount = assetAmount(entry.asset)
   const pendingAmount = assetPendingAmount(entry.asset)
@@ -183,9 +211,7 @@ function PortfolioAssetBalanceRow({
           />
         ) : (
           <TokenIcon
-            assetId={entry.asset.asset.id}
-            symbol={formatSymbol(entry.asset.metadata.symbol)}
-            icon={entry.asset.metadata.iconUrl}
+            {...portfolioTokenIconProps(entry.asset, swapCatalog, chainAlias)}
             size={32}
             className="shrink-0"
           />
@@ -247,7 +273,8 @@ export function PortfolioAssetGroupCard({
   pricesLoading = false,
   directAsset = false,
   onToggle,
-  onSelectAsset
+  onSelectAsset,
+  swapCatalog
 }: PortfolioAssetGroupCardProps) {
   const totalAmount = group.entries.reduce(
     (sum, entry) => sum.plus(assetAmount(entry.asset)),
@@ -259,6 +286,15 @@ export function PortfolioAssetGroupCard({
   )
   const fiat = getAvailablePortfolioAssetGroupUsdValue(group, prices)
   const unitQuote = getPortfolioAssetGroupUnitQuote(group, prices)
+  const representativeAsset = group.entries[0]?.asset
+  const chainBadge =
+    directAsset && group.entries[0]
+      ? resolveChainIconAlias(
+          group.entries[0].chain.chain.family,
+          group.entries[0].chain.chain.displayName,
+          group.entries[0].chain.chain.id
+        )
+      : undefined
 
   return (
     <article className="overflow-hidden">
@@ -282,18 +318,14 @@ export function PortfolioAssetGroupCard({
         <PortfolioAssetRowContent
           icon={
             <TokenIcon
-              assetId={group.representativeAssetId}
-              symbol={formatSymbol(group.symbol)}
-              icon={group.iconUrl}
-              blockchain={
-                directAsset && group.entries[0]
-                  ? resolveChainIconAlias(
-                      group.entries[0].chain.chain.family,
-                      group.entries[0].chain.chain.displayName,
-                      group.entries[0].chain.chain.id
-                    )
-                  : undefined
-              }
+              {...(representativeAsset
+                ? portfolioTokenIconProps(representativeAsset, swapCatalog, chainBadge)
+                : {
+                    assetId: group.representativeAssetId,
+                    symbol: formatSymbol(group.symbol),
+                    icon: group.iconUrl,
+                    blockchain: chainBadge
+                  })}
               size={36}
               className="shrink-0"
             />

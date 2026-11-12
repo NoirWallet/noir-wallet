@@ -18,6 +18,7 @@ import { Icon } from '@iconify/react'
 import { useEffect, useRef, useState } from 'react'
 import {
   lookupTokenContractIcon,
+  resolveAssetIdContractIconIdentity,
   resolveTokenContractIconIdentity
 } from '@/popup/services/token-contract-icon'
 
@@ -77,7 +78,9 @@ export function TokenIcon({
   const bundledIcon =
     mappedIcon ??
     ((assetId && isBundledWalletAsset(assetId)) || nativeToken ? bundledIconForSymbol : undefined)
-  const contractIdentity = token ? resolveTokenContractIconIdentity(token) : null
+  const contractIdentity =
+    (token ? resolveTokenContractIconIdentity(token) : null) ??
+    resolveAssetIdContractIconIdentity(assetId)
   const [contractIcon, setContractIcon] = useState<{
     identity: string
     icon: string

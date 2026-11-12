@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { Button } from '../ui/button'
 import type { SwapToken } from '@/core/services/intents-api'
 import { formatChainName, formatSortAddress, formatSymbol } from '@/lib/format'
+import { cn } from '@/lib/utils'
 import {
   formatAmount,
   formatFiatAmount,
@@ -141,6 +142,7 @@ export function SwapReviewView({
   insufficient
 }: SwapReviewViewProps) {
   const [showMore, setShowMore] = useState(false)
+  const [showApprovalDetails, setShowApprovalDetails] = useState(true)
   const sourceAddress = sourceAccount?.address ?? sourceTransferDetails?.sender
   const destinationAddress = destinationAccount?.address ?? recipient
   const sourceNetwork = sourceTransferDetails?.network ?? formatChainName(tokenIn.blockchain)
@@ -351,21 +353,45 @@ export function SwapReviewView({
 
           {approvalDetails && (
             <>
-              <DetailItem label="Step 1 of 2">
-                <span>Approve {formatSymbol(approvalDetails.symbol)}</span>
-              </DetailItem>
-              <DetailItem label="Approval amount">
-                <AmountDisplay
-                  value={approvalDetails.amount}
-                  symbol={formatSymbol(approvalDetails.symbol)}
-                  showDetails={false}
-                />
-              </DetailItem>
-              <DetailItem label="Approval spender">
-                <span title={approvalDetails.spender} className="text-xs">
-                  {formatSortAddress(approvalDetails.spender)}
-                </span>
-              </DetailItem>
+              <div className="border-b border-border/60">
+                <button
+                  type="button"
+                  onClick={() => setShowApprovalDetails(value => !value)}
+                  aria-expanded={showApprovalDetails}
+                  className="flex w-full items-center justify-between gap-3 py-3 text-sm"
+                >
+                  <span className="shrink-0 text-muted">Step 1 of 2</span>
+                  <span className="inline-flex min-w-0 items-center gap-1.5 text-right font-medium">
+                    <span className="truncate">Approve {formatSymbol(approvalDetails.symbol)}</span>
+                    <Icon
+                      icon="lucide:chevron-down"
+                      width={14}
+                      className={cn(
+                        'shrink-0 text-muted transition-transform',
+                        showApprovalDetails && 'rotate-180'
+                      )}
+                    />
+                  </span>
+                </button>
+                {showApprovalDetails && (
+                  <div className="space-y-2 pb-3 pl-3 text-xs">
+                    <div className="flex justify-between gap-3">
+                      <span className="text-muted">Approval amount</span>
+                      <AmountDisplay
+                        value={approvalDetails.amount}
+                        symbol={formatSymbol(approvalDetails.symbol)}
+                        showDetails={false}
+                      />
+                    </div>
+                    <div className="flex justify-between gap-3">
+                      <span className="shrink-0 text-muted">Approval spender</span>
+                      <span title={approvalDetails.spender} className="text-xs">
+                        {formatSortAddress(approvalDetails.spender)}
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </div>
               <DetailItem label="Step 2 of 2">Sign Swap Order</DetailItem>
             </>
           )}

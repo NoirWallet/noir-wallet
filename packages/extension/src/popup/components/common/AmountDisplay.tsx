@@ -35,11 +35,11 @@ export function AmountDisplay({
     )
   }
 
-  if (!showDetails) {
+  if (!showDetails || profile === 'fee') {
     return (
       <span className={cn('break-all font-sans tabular-nums', className)}>
         {prefix}
-        {review.full}
+        {display}
         {symbol ? ` ${symbol}` : ''}
       </span>
     )

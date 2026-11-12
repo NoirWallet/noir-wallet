@@ -1,7 +1,7 @@
 /**
  * Token selector component for Swap and other scenarios
  */
-import { useState, useEffect, useMemo, useRef } from 'react'
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { Icon } from '@iconify/react'
 import { Input } from '../ui/input'
 import type { SwapToken } from '@/core/services/intents-api'
@@ -22,6 +22,13 @@ import {
   deferredChainChoices,
   isSelectableSwapBlockchain
 } from '@/popup/services/chain-selection-availability'
+import { useWalletStore } from '@/store/wallet-store'
+import {
+  orderNetworkIdsByRecency,
+  recordRecentChainSelection,
+  tokenSelectorChainOrderStorageKey,
+  TOKEN_SELECTOR_VISIBLE_CHAINS
+} from './token-selector-chain-order'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -63,6 +70,21 @@ export function TokenSelector({
   emptyMessage = 'No tokens found',
   unavailableNetworks = []
 }: TokenSelectorProps) {
+  const currentNetwork = useWalletStore(state => state.currentNetwork)
+  const currentWalletId = useWalletStore(state => state.currentWalletId)
+  const currentAccountId = useWalletStore(state => state.currentAccountId)
+  const chainOrderKey = useMemo(
+    () =>
+      currentWalletId && currentAccountId
+        ? tokenSelectorChainOrderStorageKey({
+            network: currentNetwork,
+            walletId: currentWalletId,
+            accountId: currentAccountId
+          })
+        : null,
+    [currentAccountId, currentNetwork, currentWalletId]
+  )
+  const [recentChainIds, setRecentChainIds] = useState<readonly string[]>([])
   const [search, setSearch] = useState('')
   const [selectedBlockchain, setSelectedBlockchain] = useState('all')
   const [fetchedTokens, setFetchedTokens] = useState<readonly SwapToken[]>([])
@@ -79,6 +101,44 @@ export function TokenSelector({
     [providedTokens, fetchedTokens]
   )
   const loading = !hasProvidedTokens && fetchedLoading
+
+  useEffect(() => {
+    if (!chainOrderKey) {
+      setRecentChainIds([])
+      return
+    }
+    let cancelled = false
+    void chrome.storage.session
+      .get(chainOrderKey)
+      .then(result => {
+        if (cancelled) return
+        const stored = result[chainOrderKey]
+        setRecentChainIds(
+          Array.isArray(stored)
+            ? stored.filter((value): value is string => typeof value === 'string')
+            : []
+        )
+      })
+      .catch(() => {
+        if (!cancelled) setRecentChainIds([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [chainOrderKey])
+
+  const selectBlockchain = useCallback(
+    (chainId: string) => {
+      setSelectedBlockchain(chainId)
+      if (!chainOrderKey) return
+      setRecentChainIds(current => {
+        const next = recordRecentChainSelection(current, chainId)
+        void chrome.storage.session.set({ [chainOrderKey]: next }).catch(() => {})
+        return next
+      })
+    },
+    [chainOrderKey]
+  )
 
   useEffect(() => {
     if (hasProvidedTokens) return
@@ -113,16 +173,21 @@ export function TokenSelector({
         options.set(token.blockchain, formatChainName(token.blockchain))
       }
     }
-    return [...options].map(([id, label]) => ({ id, label }))
-  }, [tokens])
+    const base = [...options].map(([id, label]) => ({ id, label }))
+    const orderedIds = orderNetworkIdsByRecency(
+      base.map(option => option.id),
+      recentChainIds
+    )
+    return orderedIds.map(id => base.find(option => option.id === id)!)
+  }, [tokens, recentChainIds])
   const effectiveBlockchain =
     selectedBlockchain === 'all' || networkOptions.some(option => option.id === selectedBlockchain)
       ? selectedBlockchain
       : 'all'
   const selectedNetwork = networkOptions.find(option => option.id === effectiveBlockchain)
   const selectedNetworkLabel = selectedNetwork?.label ?? 'All Networks'
-  const primaryNetworks = networkOptions.slice(0, 5)
-  const moreNetworks = networkOptions.slice(5)
+  const primaryNetworks = networkOptions.slice(0, TOKEN_SELECTOR_VISIBLE_CHAINS)
+  const moreNetworks = networkOptions.slice(TOKEN_SELECTOR_VISIBLE_CHAINS)
   const unavailableNetworkOptions = unavailableNetworks.filter(
     option => !networkOptions.some(available => available.id === option.id)
   )
@@ -212,7 +277,7 @@ export function TokenSelector({
           >
             <button
               type="button"
-              onClick={() => setSelectedBlockchain('all')}
+              onClick={() => selectBlockchain('all')}
               aria-pressed={effectiveBlockchain === 'all'}
               className={cn(
                 'wallet-interactive flex size-10 shrink-0 items-center justify-center rounded-md border text-sm hover:bg-accent active:bg-white/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2',
@@ -228,7 +293,7 @@ export function TokenSelector({
               <button
                 key={option.id}
                 type="button"
-                onClick={() => setSelectedBlockchain(option.id)}
+                onClick={() => selectBlockchain(option.id)}
                 aria-label={option.label}
                 aria-pressed={effectiveBlockchain === option.id}
                 title={option.label}
@@ -272,7 +337,7 @@ export function TokenSelector({
                 <DropdownMenuContent align="end" className="min-w-[180px]">
                   <DropdownMenuRadioGroup
                     value={effectiveBlockchain}
-                    onValueChange={setSelectedBlockchain}
+                    onValueChange={selectBlockchain}
                   >
                     {moreNetworks.map(option => (
                       <DropdownMenuRadioItem
@@ -363,10 +428,7 @@ export function TokenSelector({
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" className="min-w-[180px]">
-              <DropdownMenuRadioGroup
-                value={effectiveBlockchain}
-                onValueChange={setSelectedBlockchain}
-              >
+              <DropdownMenuRadioGroup value={effectiveBlockchain} onValueChange={selectBlockchain}>
                 <DropdownMenuRadioItem value="all" className="cursor-pointer">
                   <Icon icon="lucide:network" width={16} height={16} className="text-muted" />
                   <span>All Networks</span>

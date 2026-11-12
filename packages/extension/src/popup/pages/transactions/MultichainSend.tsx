@@ -691,7 +691,7 @@ export function MultichainSend() {
     const chain = visibleModel.chains.find(item => item.chain.id === requested.asset.chainId)
     appliedRequestedAssetRef.current = `${scopeKey}:${requestedAssetId}`
     if (chain?.chain.family === 'zcash') {
-      navigate('/send/zcash')
+      navigate('/send/zcash', { replace: true })
       return
     }
   }, [loadStatus, visibleModel, navigate, requestedAssetId, requestedSourceMode, scopeKey])

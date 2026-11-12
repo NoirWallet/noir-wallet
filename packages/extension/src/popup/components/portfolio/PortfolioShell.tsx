@@ -1,4 +1,6 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import type { SwapToken } from '@/core/services/intents-api'
+import { swapTokenCatalogClient } from '@/popup/services/swap-token-catalog-client'
 import { Icon } from '@iconify/react'
 import Big from '@/lib/big'
 import { formatFiatAmount } from '@/lib/number-format'
@@ -316,6 +318,25 @@ export function PortfolioShell({
     visibleConfidential.flatMap(item => (item.chain ? [item.chain.chain.id] : []))
   )
   const [expandedChainIds, setExpandedChainIds] = useState<ReadonlySet<string>>(() => new Set())
+  const [swapCatalog, setSwapCatalog] = useState<readonly SwapToken[]>([])
+  useEffect(() => {
+    let cancelled = false
+    void swapTokenCatalogClient
+      .readCached()
+      .then(tokens => {
+        if (!cancelled) setSwapCatalog(tokens)
+      })
+      .catch(() => {})
+    void swapTokenCatalogClient
+      .refresh()
+      .then(tokens => {
+        if (!cancelled) setSwapCatalog(tokens)
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [])
   const [lowValueExpanded, setLowValueExpanded] = useState(false)
   const [expandedLowValueChainIds, setExpandedLowValueChainIds] = useState<ReadonlySet<string>>(
     () => new Set()
@@ -383,6 +404,7 @@ export function PortfolioShell({
           pricesLoading={pricesLoading}
           onSelectAsset={onSelectAsset}
           directAsset
+          swapCatalog={swapCatalog}
         />
         {unavailableZcash && (
           <div className="px-4 pb-2 pl-16">
@@ -662,6 +684,7 @@ export function PortfolioShell({
                           balancesHidden={balancesHidden}
                           pricesLoading={pricesLoading}
                           onSelectAsset={onSelectAsset}
+                          swapCatalog={swapCatalog}
                         />
                       ))}
                       {confidentialEntries.map(({ entry }) => (
@@ -711,6 +734,7 @@ export function PortfolioShell({
                                 balancesHidden={balancesHidden}
                                 pricesLoading={pricesLoading}
                                 onSelectAsset={onSelectAsset}
+                                swapCatalog={swapCatalog}
                               />
                             ))}
                         </>

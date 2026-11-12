@@ -48,6 +48,12 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/popup/c
 import { MultichainActivityPanel } from '@/popup/components/transaction/MultichainActivityPanel'
 import { MultichainActivityDetail } from '@/popup/components/transaction/MultichainActivityDetail'
 import { openModal } from '@/popup/provider/ModalManager'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/popup/components/ui/tabs'
+import { Button } from '@/popup/components/ui/button'
+import {
+  resolveShieldZcashVaultEntry,
+  shieldZcashEnablePath
+} from '@/popup/services/shield-zcash-entry'
 
 export function ShieldProviderDetail() {
   const currentWalletId = useWalletStore(state => state.currentWalletId)
@@ -88,7 +94,16 @@ function ShieldProviderContent() {
   const [pricesLoading, setPricesLoading] = useState(true)
   const [directoryTokens, setDirectoryTokens] = useState<readonly SwapToken[] | null>(null)
   const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null)
+  const [detailTab, setDetailTab] = useState<'assets' | 'activity'>('assets')
   const appliedAssetSelection = useRef<string | null>(null)
+  const currentWallet = useWalletStore(state =>
+    currentWalletId ? state.getWallet(currentWalletId) : undefined
+  )
+  const walletAccount = useWalletStore(state =>
+    currentWalletId && currentAccountId
+      ? state.getAccount(currentWalletId, currentAccountId)
+      : undefined
+  )
 
   useEffect(() => {
     mounted.current = true
@@ -150,9 +165,16 @@ function ShieldProviderContent() {
   const near = useMemo(() => summarizeNearConfidentialHoldings(model, prices), [model, prices])
   const canManageNear =
     getPrivateTransferChainIds(activeAccount, currentNetwork === 'mainnet').length > 0
+  const zcashVaultEntry = resolveShieldZcashVaultEntry({
+    network: currentNetwork,
+    keySource: currentWallet?.keySource,
+    account: walletAccount,
+    hasPortfolioZcash: hasZcashAccount,
+    enabledFlags: __ENABLED_CHAIN_FEATURE_FLAGS__
+  })
   const providerAvailable =
     provider === 'zcash-shield'
-      ? hasZcashAccount
+      ? zcashVaultEntry.showVaultCard
       : provider === 'near-confidential' && (canManageNear || near.entries.length > 0)
   const group = useMemo(
     () =>
@@ -459,125 +481,163 @@ function ShieldProviderContent() {
           </div>
         </header>
 
-        <section aria-label={`${info.name} balance`} className="border-t border-white/[0.08]">
-          <div className="py-3.5 text-center">
-            <p className="break-all px-4 text-[26px] font-semibold leading-[37.4px]">
-              {displayFiat}
-            </p>
-            <div className="mt-0.5 flex items-center justify-center gap-1.5 text-sm text-[var(--color-wallet-secondary)]">
-              <span>{provider === 'near-confidential' ? 'Total balance' : 'Shield balance'}</span>
-              {provider === 'near-confidential' && near.status === 'ready' && canManageNear && (
-                <button
-                  type="button"
-                  title="Refresh Shield balance"
-                  aria-label="Refresh Shield balance"
-                  onClick={() => void refreshShieldBalances()}
-                  disabled={connecting}
-                  className="wallet-interactive rounded-md text-primary enabled:hover:bg-primary/10 enabled:active:bg-primary/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 disabled:opacity-50"
-                >
-                  <Icon
-                    icon="lucide:refresh-cw"
-                    width={14}
-                    height={14}
-                    className={connecting ? 'animate-spin' : undefined}
-                  />
-                </button>
-              )}
-            </div>
-            {provider === 'near-confidential' &&
-              connectionError &&
-              canManageNear &&
-              !connecting && (
-                <button
-                  type="button"
-                  onClick={() => void refreshShieldBalances()}
-                  disabled={connecting}
-                  className="wallet-interactive mt-2 rounded-md text-sm font-medium text-primary enabled:hover:bg-primary/10 enabled:active:bg-primary/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 disabled:opacity-50"
-                >
-                  Retry
-                </button>
-              )}
-            {connectionError && (
-              <p role="alert" className="px-4 pt-2 text-xs text-warning">
-                {connectionError}
-              </p>
-            )}
+        <Tabs
+          value={detailTab}
+          onValueChange={value => {
+            if (value === 'assets' || value === 'activity') setDetailTab(value)
+          }}
+          className="gap-0 border-t border-white/[0.08]"
+        >
+          <div className="sticky top-0 z-10 flex h-10 items-center gap-7 border-b border-white/8 bg-background px-4">
+            <TabsList className="h-full min-w-0 flex-1 justify-start gap-7 rounded-none bg-transparent! p-0">
+              <TabsTrigger
+                value="assets"
+                className="tab-trigger-custom h-full flex-0 rounded-none px-0 py-0 text-base font-normal text-wallet-secondary data-[state=active]:text-white after:max-w-11"
+              >
+                Assets
+              </TabsTrigger>
+              <TabsTrigger
+                value="activity"
+                className="tab-trigger-custom h-full flex-0 rounded-none px-0 py-0 text-base font-normal text-wallet-secondary data-[state=active]:text-white after:max-w-11"
+              >
+                Activity
+              </TabsTrigger>
+            </TabsList>
           </div>
-          {provider === 'near-confidential' && near.entries.length > 0 && !nearBalanceEmpty ? (
-            <div className="py-1">
-              {near.entries.map(entry => (
-                <NearConfidentialHoldingRow
-                  key={entry.asset.tokenId}
-                  entry={entry}
-                  chain={model?.chains.find(chain => chain.chain.id === entry.asset.chainId)?.chain}
-                  balancesHidden={balancesHidden}
-                  showQuantitySymbol={false}
-                  onClick={() => setSelectedAssetId(entry.asset.tokenId)}
-                />
-              ))}
-            </div>
-          ) : provider === 'zcash-shield' &&
-            group?.entries.length &&
-            group.entries.some(entry => BigInt(entry.asset.balance.totalRaw) > 0n) ? (
-            <div className="divide-y divide-white/[0.08]">
-              {group.entries.map(entry => (
-                <PortfolioChainAssetRow
-                  key={entry.asset.asset.id}
-                  entry={entry}
-                  domain="shield"
-                  prices={prices}
-                  pricesLoading={pricesLoading}
-                  balancesHidden={balancesHidden}
-                  onSelectAsset={setSelectedAssetId}
-                />
-              ))}
-            </div>
-          ) : nearBalanceEmpty ||
-            (provider === 'zcash-shield' && group?.fiat === '0') ? null : status === 'loading' ||
-            (provider === 'near-confidential' && connecting) ? (
-            <p role="status" className="px-4 py-5 text-center text-sm text-muted">
-              Loading balances…
-            </p>
-          ) : (
-            <p className="px-4 py-5 text-center text-sm text-muted">Balance unavailable</p>
-          )}
-          {showNearEmptyState && (
-            <div className="px-4 pb-6 pt-8 text-center text-sm text-wallet-secondary">
-              <p>No shielded assets yet,</p>
-              <p className="mt-2">
-                <button
-                  type="button"
-                  onClick={() =>
-                    navigate(`/transfer?entry=shield&provider=near-confidential&mode=${mode}`)
-                  }
-                  className="wallet-interactive font-semibold text-foreground underline underline-offset-4 hover:text-primary focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2"
-                >
-                  Move
-                </button>{' '}
-                now
-              </p>
-            </div>
-          )}
-        </section>
-        {provider === 'near-confidential' && account && (
-          <section aria-label="Shield activity">
-            <MultichainActivityPanel
-              walletId={account.walletId}
-              accountId={account.accountId}
-              network={currentNetwork}
-              portfolio={model}
-              accountNetworks={activeAccount?.networks}
-              filterDomain="shield"
-              confidentialIntentsOnly
-              showToolbar={false}
-              maxItems={5}
-              compact
-              heading="Activity"
-              hideWhenEmpty
-              onItemClick={item => void handleActivityClick(item)}
-            />
-          </section>
-        )}
+          <TabsContent value="assets" className="mt-0">
+            <section aria-label={`${info.name} balance`}>
+              <div className="py-3.5 text-center">
+                <p className="break-all px-4 text-[26px] font-semibold leading-[37.4px]">
+                  {displayFiat}
+                </p>
+                <div className="mt-0.5 flex items-center justify-center gap-1.5 text-sm text-[var(--color-wallet-secondary)]">
+                  <span>
+                    {provider === 'near-confidential' ? 'Total balance' : 'Shield balance'}
+                  </span>
+                  {provider === 'near-confidential' && near.status === 'ready' && canManageNear && (
+                    <button
+                      type="button"
+                      title="Refresh Shield balance"
+                      aria-label="Refresh Shield balance"
+                      onClick={() => void refreshShieldBalances()}
+                      disabled={connecting}
+                      className="wallet-interactive rounded-md text-primary enabled:hover:bg-primary/10 enabled:active:bg-primary/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 disabled:opacity-50"
+                    >
+                      <Icon
+                        icon="lucide:refresh-cw"
+                        width={14}
+                        height={14}
+                        className={connecting ? 'animate-spin' : undefined}
+                      />
+                    </button>
+                  )}
+                </div>
+                {provider === 'near-confidential' &&
+                  connectionError &&
+                  canManageNear &&
+                  !connecting && (
+                    <button
+                      type="button"
+                      onClick={() => void refreshShieldBalances()}
+                      disabled={connecting}
+                      className="wallet-interactive mt-2 rounded-md text-sm font-medium text-primary enabled:hover:bg-primary/10 enabled:active:bg-primary/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 disabled:opacity-50"
+                    >
+                      Retry
+                    </button>
+                  )}
+                {connectionError && (
+                  <p role="alert" className="px-4 pt-2 text-xs text-warning">
+                    {connectionError}
+                  </p>
+                )}
+              </div>
+              {provider === 'near-confidential' && near.entries.length > 0 && !nearBalanceEmpty ? (
+                <div className="py-1">
+                  {near.entries.map(entry => (
+                    <NearConfidentialHoldingRow
+                      key={entry.asset.tokenId}
+                      entry={entry}
+                      chain={
+                        model?.chains.find(chain => chain.chain.id === entry.asset.chainId)?.chain
+                      }
+                      balancesHidden={balancesHidden}
+                      showQuantitySymbol={false}
+                      onClick={() => setSelectedAssetId(entry.asset.tokenId)}
+                    />
+                  ))}
+                </div>
+              ) : provider === 'zcash-shield' &&
+                group?.entries.length &&
+                group.entries.some(entry => BigInt(entry.asset.balance.totalRaw) > 0n) ? (
+                <div className="divide-y divide-white/[0.08]">
+                  {group.entries.map(entry => (
+                    <PortfolioChainAssetRow
+                      key={entry.asset.asset.id}
+                      entry={entry}
+                      domain="shield"
+                      prices={prices}
+                      pricesLoading={pricesLoading}
+                      balancesHidden={balancesHidden}
+                      onSelectAsset={setSelectedAssetId}
+                    />
+                  ))}
+                </div>
+              ) : nearBalanceEmpty ||
+                (provider === 'zcash-shield' && group?.fiat === '0') ? null : status ===
+                  'loading' ||
+                (provider === 'near-confidential' && connecting) ? (
+                <p role="status" className="px-4 py-5 text-center text-sm text-muted">
+                  Loading balances…
+                </p>
+              ) : (
+                <p className="px-4 py-5 text-center text-sm text-muted">Balance unavailable</p>
+              )}
+              {showNearEmptyState && (
+                <p className="px-4 pb-6 pt-8 text-center text-sm text-wallet-secondary">
+                  No shielded assets yet.
+                </p>
+              )}
+              {provider === 'zcash-shield' &&
+                !hasZcashAccount &&
+                zcashVaultEntry.canEnableZcash &&
+                currentWalletId &&
+                currentAccountId && (
+                  <div className="px-4 pb-8 pt-6 text-center">
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      className="h-10 px-4"
+                      onClick={() =>
+                        navigate(shieldZcashEnablePath(currentWalletId, currentAccountId))
+                      }
+                    >
+                      Enable Zcash
+                    </Button>
+                  </div>
+                )}
+            </section>
+          </TabsContent>
+          <TabsContent value="activity" className="mt-0">
+            {account ? (
+              <MultichainActivityPanel
+                walletId={account.walletId}
+                accountId={account.accountId}
+                network={currentNetwork}
+                portfolio={model}
+                accountNetworks={activeAccount?.networks}
+                filterDomain="shield"
+                confidentialIntentsOnly={provider === 'near-confidential'}
+                showToolbar={false}
+                compact
+                heading={undefined}
+                hideWhenEmpty={false}
+                onItemClick={item => void handleActivityClick(item)}
+              />
+            ) : (
+              <p className="px-4 py-8 text-center text-sm text-muted">No activity yet.</p>
+            )}
+          </TabsContent>
+        </Tabs>
       </div>
 
       {provider === 'near-confidential' && selectedNearEntry && (

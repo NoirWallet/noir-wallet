@@ -90,7 +90,8 @@ import {
   ConfidentialFundingApi,
   ConfidentialFundingApiError,
   readConfidentialQuoteAppFees,
-  type ConfidentialPrivateOrder
+  type ConfidentialPrivateOrder,
+  type ConfidentialStatus
 } from './confidential-funding-api'
 import {
   ConfidentialFundingSigner,
@@ -100,6 +101,10 @@ import { ChromeConfidentialFundingStore } from './confidential-funding-store'
 
 const SESSION_REFRESH_BUFFER_MS = 60_000
 export const CONFIDENTIAL_FUNDING_MONITOR_ALARM = 'confidential-funding-monitor'
+
+const EXTERNAL_DEPOSIT_STATUS_BACKOFF_INITIAL_MS = 10_000
+const EXTERNAL_DEPOSIT_STATUS_BACKOFF_MAX_MS = 120_000
+const CONFIDENTIAL_FUNDING_MONITOR_DELAY_MINUTES = 20 / 60
 export type ClusterRejectionReason = 'APP_FEE_REJECTED_2002' | 'BACKEND_CONFIRMED_REJECTION'
 const TERMINAL_PHASES = new Set<ConfidentialFundingPlan['phase']>([
   'ready',
@@ -474,6 +479,11 @@ export class ConfidentialFundingCoordinator {
   >()
   private readonly cancellingPlans = new Set<string>()
   private readonly refreshingExternalDeposits = new Map<string, Promise<ExternalShieldDeposit>>()
+  private readonly oneClickStatusQueries = new Map<string, Promise<ConfidentialStatus>>()
+  private readonly oneClickStatusState = new Map<
+    string,
+    { backoffUntil: number; backoffMs: number }
+  >()
   private readonly externalBalanceRefreshQueues = new Map<string, Promise<void>>()
   private readonly reconciledTerminalExternalDeposits = new Set<string>()
   private readonly prepareQueue = new SerialTaskQueue()
@@ -793,6 +803,70 @@ export class ConfidentialFundingCoordinator {
     )
   }
 
+  private oneClickStatusKey(depositAddress: string, depositMemo?: string): string {
+    return `${depositAddress}\0${depositMemo ?? ''}`
+  }
+
+  private async fetchOneClickDepositStatus(
+    depositAddress: string,
+    depositMemo?: string
+  ): Promise<ConfidentialStatus> {
+    const key = this.oneClickStatusKey(depositAddress, depositMemo)
+    const state = this.oneClickStatusState.get(key)
+    // Only a rate-limited or failing provider pauses status reads; a healthy one is always read
+    // fresh so recovery never settles on a stale phase.
+    if (state && this.now() < state.backoffUntil) {
+      throw new ConfidentialFundingApiError('Deposit status polling is in backoff', 429, true)
+    }
+    const pending = this.oneClickStatusQueries.get(key)
+    if (pending) return pending
+
+    const operation = this.options.api
+      .getOneClickStatus(depositAddress, depositMemo)
+      .then(status => {
+        this.oneClickStatusState.delete(key)
+        return status
+      })
+      .catch(error => {
+        if (retryableFundingError(error)) {
+          const previous = this.oneClickStatusState.get(key)
+          const backoffMs = Math.min(
+            Math.max(
+              (previous?.backoffMs ?? EXTERNAL_DEPOSIT_STATUS_BACKOFF_INITIAL_MS / 2) * 2,
+              EXTERNAL_DEPOSIT_STATUS_BACKOFF_INITIAL_MS
+            ),
+            EXTERNAL_DEPOSIT_STATUS_BACKOFF_MAX_MS
+          )
+          this.oneClickStatusState.set(key, { backoffUntil: this.now() + backoffMs, backoffMs })
+        }
+        throw error
+      })
+      .finally(() => {
+        if (this.oneClickStatusQueries.get(key) === operation) {
+          this.oneClickStatusQueries.delete(key)
+        }
+      })
+    this.oneClickStatusQueries.set(key, operation)
+    return operation
+  }
+
+  private async readExternalDepositProviderStatus(
+    record: ExternalShieldDeposit
+  ): Promise<ConfidentialStatus | null> {
+    try {
+      return await this.fetchOneClickDepositStatus(record.depositAddress, record.depositMemo)
+    } catch (error) {
+      if (
+        error instanceof ConfidentialFundingApiError &&
+        (error.ambiguous || error.status === 429)
+      ) {
+        return null
+      }
+      if (retryableFundingError(error)) return null
+      throw error
+    }
+  }
+
   async refreshExternalDeposit(depositId: string): Promise<ExternalShieldDeposit> {
     const pending = this.refreshingExternalDeposits.get(depositId)
     if (pending) return pending
@@ -822,10 +896,11 @@ export class ConfidentialFundingCoordinator {
     }
     if (record.phase === 'ready') {
       if (record.settledOutputRaw === undefined) {
-        const status = await this.options.api.getOneClickStatus(
-          record.depositAddress,
-          record.depositMemo
-        )
+        const status = await this.readExternalDepositProviderStatus(record)
+        if (!status) {
+          await this.scheduleMonitoring()
+          return record
+        }
         const normalized = normalizeStatus(status.status)
         if (
           (normalized === 'SUCCESS' || normalized === 'COMPLETED') &&
@@ -864,10 +939,11 @@ export class ConfidentialFundingCoordinator {
       await this.markExternalDepositGraphReconciled(record)
       return record
     }
-    const status = await this.options.api.getOneClickStatus(
-      record.depositAddress,
-      record.depositMemo
-    )
+    const status = await this.readExternalDepositProviderStatus(record)
+    if (!status) {
+      await this.scheduleMonitoring()
+      return record
+    }
     const normalized = normalizeStatus(status.status)
     if (
       ![
@@ -4138,6 +4214,8 @@ export class ConfidentialFundingCoordinator {
 
   private async scheduleMonitoring(): Promise<void> {
     await (this.options.scheduleMonitoring?.() ??
-      chrome.alarms.create(CONFIDENTIAL_FUNDING_MONITOR_ALARM, { delayInMinutes: 0.1 }))
+      chrome.alarms.create(CONFIDENTIAL_FUNDING_MONITOR_ALARM, {
+        delayInMinutes: CONFIDENTIAL_FUNDING_MONITOR_DELAY_MINUTES
+      }))
   }
 }

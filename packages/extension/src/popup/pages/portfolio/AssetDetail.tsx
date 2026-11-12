@@ -947,7 +947,6 @@ export function AssetDetail() {
           >
             {detailAmount} {formatSymbol(asset.metadata.symbol)}
           </p>
-          <p className="mt-2 text-xs text-muted">Total assets</p>
           {priceStatus === 'loading' && detailFiat === null ? (
             <Skeleton className="mt-2 h-4 w-20" />
           ) : (

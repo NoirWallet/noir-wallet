@@ -2,8 +2,13 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate as useRouterNavigate, useSearchParams } from 'react-router-dom'
 import { Icon } from '@iconify/react'
 import type { PortfolioAssetView, PortfolioChainView } from '@/core/portfolio'
-import type { AssetPriceReadModel } from '@/core/prices'
-import { formatBaseUnitAmount, formatTokenQuantity, formatFiatAmount } from '@/lib/number-format'
+import { findAssetPrice, type AssetPriceReadModel } from '@/core/prices'
+import {
+  formatBaseUnitAmount,
+  formatTokenQuantity,
+  formatFiatAmount,
+  parseDisplayUnitAmount
+} from '@/lib/number-format'
 import {
   formatSortAddress,
   formatSymbol,
@@ -26,6 +31,7 @@ import {
   formatMoveMethodFee,
   type MoveMethodEstimate
 } from '@/popup/services/move-method-estimate'
+import { formatMoveQuoteMinimumError } from '@/popup/services/move-quote-error'
 import { PageHeader } from '@/popup/components/common/PageHeader'
 import { InlineError } from '@/popup/components/common/InlineError'
 import { AmountDisplay } from '@/popup/components/common/AmountDisplay'
@@ -34,6 +40,7 @@ import { ChainIcon } from '@/popup/components/common/ChainIcon'
 import { ExecutionAccountIcon } from '@/popup/components/account/ExecutionAccountSelector'
 import nearLogo from '@/images/figma-near-confidential.svg'
 import { Button } from '@/popup/components/ui/button'
+import { Skeleton } from '@/popup/components/ui/skeleton'
 import {
   Dialog,
   DialogContent,
@@ -44,6 +51,7 @@ import {
 import { resolveEffectiveActiveAccountIdentity } from '@/popup/lib/effective-active-account'
 import { rheaSwapClient } from '@/popup/services/rhea-swap-client'
 import { resolveRheaPrivateTransferToken } from '@/core/services/rhea-swap'
+import { resolveConfidentialEvmAssetSupport } from '@/core/services/rhea-swap/rhea-confidential-support'
 import type { SwapToken } from '@/core/services/intents-api'
 import { resolvePortfolioTransferAvailability } from '@/popup/services/transfer-availability'
 import { assetPriceClient } from '@/popup/services/asset-price-client'
@@ -226,6 +234,7 @@ function MethodCard({
   selected,
   estimate,
   fee,
+  loading,
   onClick
 }: {
   title: 'Cluster' | 'Directly'
@@ -234,6 +243,7 @@ function MethodCard({
   selected: boolean
   estimate: MoveMethodEstimate | null
   fee: { value: string; detail: string | null }
+  loading?: boolean
   onClick: () => void
 }) {
   return (
@@ -267,20 +277,32 @@ function MethodCard({
         <span className="text-muted">Privacy</span>
         <span>{title === 'Cluster' ? 'Strong' : 'Standard'}</span>
       </span>
-      {estimate && estimate.time !== '—' && (
+      {(loading || (estimate && estimate.time !== '—')) && (
         <span className="mt-2 flex justify-between gap-2">
           <span className="shrink-0 text-muted">Time (est.)</span>
           <span className="min-w-0 text-right">
-            <span className="block">{estimate.time}</span>
-            <span className="block text-[10px] text-muted">{estimate.timeScope}</span>
+            {loading ? (
+              <Skeleton className="ml-auto h-4 w-16" />
+            ) : estimate ? (
+              <>
+                <span className="block">{estimate.time}</span>
+                <span className="block text-[10px] text-muted">{estimate.timeScope}</span>
+              </>
+            ) : null}
           </span>
         </span>
       )}
       <span className="mt-2 flex justify-between gap-2">
         <span className="shrink-0 text-muted">Fee (est.)</span>
         <span className="min-w-0 break-words text-right">
-          <span className="block">{fee.value}</span>
-          {fee.detail && <span className="block text-[10px] text-muted">{fee.detail}</span>}
+          {loading ? (
+            <Skeleton className="ml-auto h-4 w-24" />
+          ) : (
+            <>
+              <span className="block">{fee.value}</span>
+              {fee.detail && <span className="block text-[10px] text-muted">{fee.detail}</span>}
+            </>
+          )}
         </span>
       </span>
     </button>
@@ -390,6 +412,7 @@ function TransferForm() {
   const preferenceReady = loadedPreference?.key === preferenceKey
   const [preferenceAppliedScope, setPreferenceAppliedScope] = useState<string | null>(null)
   const userEditedMove = useRef(false)
+  const userPickedMethod = useRef(launchHasDraft)
   const [catalogReady, setCatalogReady] = useState(false)
   const [routeSnapshot, setRouteSnapshot] = useState<{
     key: string
@@ -518,6 +541,7 @@ function TransferForm() {
 
   useEffect(() => {
     userEditedMove.current = false
+    userPickedMethod.current = launchHasDraft
     const draft = initialMoveDraft({
       state: location.state,
       scope: scopeKey,
@@ -824,6 +848,19 @@ function TransferForm() {
   const clusterPair = isClusterTransferRoute(from, to) && selected?.chain.chain.family === 'evm'
   const clusterSelected = method === 'cluster' && clusterPair
   const fundingRoute = Boolean(shieldPair || clusterSelected)
+  useEffect(() => {
+    if (!supportedPair && !fundingRoute) return
+    let cancelled = false
+    void (async () => {
+      try {
+        const prices = await assetPriceClient.getPrices('read')
+        if (!cancelled && prices) setAssetPrices(prices)
+      } catch {}
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [scopeKey, supportedPair, fundingRoute])
   const managedAsset = useMemo(
     () =>
       selected
@@ -951,13 +988,28 @@ function TransferForm() {
           selected.asset.asset.kind === 'token'
             ? selected.asset.asset.reference.toLowerCase()
             : null
+        if (!resolveRheaPrivateTransferToken(catalog.tokens, contract)) {
+          setRouteSnapshot({
+            key: routeKey,
+            status: catalog.failedChainIds.includes(Number(match[1])) ? 'error' : 'unsupported'
+          })
+          return
+        }
+        const confidentialSupport = resolveConfidentialEvmAssetSupport({
+          chain: selected.chain.chain,
+          asset: selected.asset.asset,
+          catalog
+        })
         setRouteSnapshot({
           key: routeKey,
-          status: resolveRheaPrivateTransferToken(catalog.tokens, contract)
-            ? 'supported'
-            : catalog.failedChainIds.includes(Number(match[1]))
-              ? 'error'
-              : 'unsupported'
+          status:
+            confidentialSupport === 'supported'
+              ? 'supported'
+              : confidentialSupport === 'unsupported'
+                ? 'unsupported'
+                : catalog.failedChainIds.includes(Number(match[1]))
+                  ? 'error'
+                  : 'unsupported'
         })
       })
       .catch(() => {
@@ -1085,21 +1137,19 @@ function TransferForm() {
         })
       : null
   const amountError = fundingRoute ? shieldAmountState?.error : amountState?.error
-  const transferError =
-    amountError ??
-    ((fundingRoute ? shieldAmountState?.amountRaw : amountState?.amountRaw)
-      ? tokenFeeBalanceError
-      : null)
-  const methodAmount =
-    selected && source && clusterPair
-      ? resolvePrivateBalanceTransferAmount({
-          amount: currentAmount,
-          decimals: selected.asset.metadata.decimals,
-          availableRaw: source.availableRaw,
-          sourceLabel: source.sourceLabel
-        })
+  const confidentialRouteError =
+    supportedPair && selected && routeState === 'unsupported'
+      ? 'Confidential transfers are unavailable for this asset.'
       : null
-  const estimateAmountRaw = methodAmount?.error ? null : methodAmount?.amountRaw
+  const estimateAmountRaw = useMemo(() => {
+    if (!selected || currentAmount.length === 0 || currentAmount === '.') return null
+    try {
+      const raw = parseDisplayUnitAmount(currentAmount, selected.asset.metadata.decimals)
+      return BigInt(raw) > 0n ? raw : null
+    } catch {
+      return null
+    }
+  }, [selected, currentAmount])
   const methodEstimateKey = `${routeKey}:${estimateAmountRaw ?? ''}:${source?.sender}:${source?.recipient}:${source?.executionMode}:${retry}`
   const canEstimateMethods = Boolean(
     draftScope === scopeKey &&
@@ -1109,7 +1159,6 @@ function TransferForm() {
     source &&
     estimateAmountRaw &&
     !tokenFeeBalanceError &&
-    !preparingShield &&
     !preparedShield
   )
   const directEstimate = useMoveMethodEstimate({
@@ -1164,6 +1213,37 @@ function TransferForm() {
   )
   const clusterAvailable = Boolean(clusterPair && managedAsset && effective)
   const selectedEstimate = method === 'cluster' ? clusterEstimate : directEstimate
+  const quoteMinimumError = useMemo(() => {
+    if (!selected) return null
+    for (const candidate of [clusterEstimate.errorMessage, directEstimate.errorMessage]) {
+      if (!candidate) continue
+      const message = formatMoveQuoteMinimumError(
+        candidate,
+        selected.asset.metadata.decimals,
+        formatSymbol(selected.asset.metadata.symbol)
+      )
+      if (message) return message
+    }
+    return null
+  }, [selected, clusterEstimate.errorMessage, directEstimate.errorMessage])
+  const showGenericEstimateError =
+    clusterPair &&
+    selectedEstimate.error &&
+    !quoteMinimumError &&
+    !clusterEstimate.loading &&
+    !directEstimate.loading
+  const transferError =
+    quoteMinimumError ??
+    amountError ??
+    confidentialRouteError ??
+    ((fundingRoute ? shieldAmountState?.amountRaw : amountState?.amountRaw)
+      ? tokenFeeBalanceError
+      : null)
+  useEffect(() => {
+    if (!clusterPair || !clusterAvailable || userPickedMethod.current || method === 'cluster')
+      return
+    setMethod('cluster')
+  }, [clusterPair, clusterAvailable, method])
   const shieldReviewKey = `${routeKey}:${method}:${currentAmount}:${shieldAmountState?.amountRaw ?? ''}`
   const latestShieldReviewKey = useRef(shieldReviewKey)
   latestShieldReviewKey.current = shieldReviewKey
@@ -1526,6 +1606,22 @@ function TransferForm() {
     }
   }
 
+  const moveReviewFiatValue = useMemo(() => {
+    if (!selected || !assetPrices || !currentAmount) return null
+    const priceUsd = findAssetPrice(assetPrices, selected.asset.asset.id)?.priceUsd
+    if (typeof priceUsd !== 'string' || !priceUsd) return null
+    const usd = Number(priceUsd)
+    if (!Number.isFinite(usd) || usd <= 0) return null
+    try {
+      const raw = parseDisplayUnitAmount(currentAmount, selected.asset.metadata.decimals)
+      const quantity = Number(formatBaseUnitAmount(raw, selected.asset.metadata.decimals))
+      if (!Number.isFinite(quantity) || quantity <= 0) return null
+      return formatFiatAmount(quantity * usd)
+    } catch {
+      return null
+    }
+  }, [selected, assetPrices, currentAmount])
+
   if (activeShieldReview && selected) {
     const output = formatBaseUnitAmount(
       activeShieldReview.expectedOutputRaw,
@@ -1562,6 +1658,7 @@ function TransferForm() {
           }}
           amount={currentAmount}
           amountDetails={false}
+          fiatValue={moveReviewFiatValue}
           network={selected.chain.chain.displayName}
           rows={[
             {
@@ -1857,8 +1954,16 @@ function TransferForm() {
                   recommended
                   selected={method === 'cluster'}
                   estimate={clusterEstimate.value}
+                  loading={
+                    canEstimateMethods &&
+                    shieldConnection === 'connected' &&
+                    clusterEstimate.loading
+                  }
                   fee={formatMoveMethodFee(clusterEstimate.value, selected.asset)}
-                  onClick={() => setMethod('cluster')}
+                  onClick={() => {
+                    userPickedMethod.current = true
+                    setMethod('cluster')
+                  }}
                 />
               )}
               {methodAvailable && (
@@ -1868,28 +1973,28 @@ function TransferForm() {
                   recommended={false}
                   selected={method === 'directly'}
                   estimate={directEstimate.value}
+                  loading={canEstimateMethods && methodAvailable && directEstimate.loading}
                   fee={formatMoveMethodFee(directEstimate.value, selected.asset)}
-                  onClick={() => setMethod('directly')}
+                  onClick={() => {
+                    userPickedMethod.current = true
+                    setMethod('directly')
+                  }}
                 />
               )}
             </div>
           )}
-        {clusterPair && selectedEstimate.error && (
+        {showGenericEstimateError && (
           <InlineError
             message="Transfer estimate unavailable. Try again."
             onRetry={() => setRetry(value => value + 1)}
           />
         )}
-        {method === 'directly' &&
-          selected &&
-          supportedPair &&
-          eligible &&
-          routeState === 'error' && (
-            <InlineError
-              message="Transfer availability could not be checked."
-              onRetry={() => setRetry(value => value + 1)}
-            />
-          )}
+        {supportedPair && routeState === 'error' && (
+          <InlineError
+            message="Transfer availability could not be checked."
+            onRetry={() => setRetry(value => value + 1)}
+          />
+        )}
         {loadState === 'error' && !portfolio && (
           <InlineError
             message="Assets could not be loaded."

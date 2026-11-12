@@ -6,8 +6,15 @@ import {
   buildLiveSwapQuoteRequest,
   hasSwapQuoteTermsChanged,
   isAcceptedSwapReview,
-  resolveScopedSwapZcashRecipient
+  resolveScopedSwapZcashRecipient,
+  resolveShieldDomainZecFundingSource,
+  shieldConfidentialSwapActive
 } from '../../../src/popup/services/swap-page-model.ts'
+import {
+  buildShieldSwapZecSourceOptions,
+  SHIELD_SWAP_ZEC_INTENTS_SELECTION_ID,
+  SHIELD_SWAP_ZEC_NATIVE_SELECTION_ID
+} from '../../../src/popup/services/shield-swap-zec-sources.ts'
 import {
   getRheaSwapErrorMessage,
   RheaSwapClientError
@@ -474,4 +481,85 @@ it('identifies native gas insufficiency in Swap and Transfer without hiding unre
     assert.equal(classifyError(error).retryable, false)
   }
   assert.equal(getRheaSwapErrorMessage(new Error('Request timed out')), 'Request timed out.')
+})
+
+it('keeps Shield native ZEC swap on shielded funding without merging confidential balances', () => {
+  assert.equal(
+    resolveShieldDomainZecFundingSource({
+      ordinarySwapRequested: true,
+      shieldZecSource: 'native-shielded',
+      isZecSource: true,
+      selectedFundingSource: 'transparent'
+    }),
+    'shielded'
+  )
+  assert.equal(
+    resolveShieldDomainZecFundingSource({
+      ordinarySwapRequested: true,
+      shieldZecSource: 'intents',
+      isZecSource: true,
+      selectedFundingSource: 'transparent'
+    }),
+    'transparent'
+  )
+  assert.equal(
+    shieldConfidentialSwapActive({ shieldSwapSelected: true, shieldZecSource: 'native-shielded' }),
+    false
+  )
+  assert.equal(
+    shieldConfidentialSwapActive({ shieldSwapSelected: true, shieldZecSource: 'intents' }),
+    true
+  )
+})
+
+it('lists Intents and native Shield ZEC as separate selectable sources with distinct balances', () => {
+  const previousFlags = globalThis.__ENABLED_CHAIN_FEATURE_FLAGS__
+  globalThis.__ENABLED_CHAIN_FEATURE_FLAGS__ = ['chain.zcash']
+  try {
+    const options = buildShieldSwapZecSourceOptions({
+      network: 'mainnet',
+      sources: [
+        {
+          asset: {
+            asset: { id: 'wallet-zec-intents', chainId: 'near:mainnet', kind: 'token' },
+            metadata: { symbol: 'ZEC', decimals: 8, name: 'ZEC' },
+            balance: { totalRaw: '0' }
+          },
+          chain: { chain: { id: 'near:mainnet', family: 'near', displayName: 'NEAR' } },
+          managed: { protocolAssetId: 'nep141:zec.omft.near', assetId: 'wallet-zec-intents' }
+        }
+      ],
+      balances: [{ tokenId: 'nep141:zec.omft.near', available: '120000000' }],
+      portfolio: {
+        assets: [
+          {
+            asset: {
+              id: 'zcash:zec:mainnet:native',
+              chainId: 'bip122:00040fe8ec8471911baa1db1266ea15d',
+              kind: 'native'
+            },
+            metadata: { symbol: 'ZEC', decimals: 8, name: 'ZEC' },
+            balance: {
+              totalRaw: '50000000',
+              transparentRaw: '0',
+              shieldedRaw: '50000000'
+            }
+          }
+        ],
+        chains: []
+      },
+      enabledFlags: ['chain.zcash'],
+      zcashAccountEnabled: true,
+      keySource: 'software'
+    })
+    assert.equal(options.length, 2)
+    assert.equal(options[0].selectionId, SHIELD_SWAP_ZEC_INTENTS_SELECTION_ID)
+    assert.equal(options[0].availableRaw, '120000000')
+    assert.equal(options[0].badgeBlockchain, 'near')
+    assert.equal(options[1].selectionId, SHIELD_SWAP_ZEC_NATIVE_SELECTION_ID)
+    assert.equal(options[1].availableRaw, '50000000')
+    assert.equal(options[1].badgeBlockchain, 'zec')
+  } finally {
+    globalThis.__ENABLED_CHAIN_FEATURE_FLAGS__ = previousFlags
+  }
 })

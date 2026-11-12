@@ -48,6 +48,8 @@ interface MultichainActivityPanelProps {
   readonly heading?: string
   readonly hideWhenEmpty?: boolean
   readonly accountMode?: DAppExecutionMode
+  /** Total view: list every execution mode instead of only the current one. */
+  readonly allExecutionModes?: boolean
   readonly focusTransactionId?: string | null
 }
 
@@ -111,6 +113,7 @@ export function MultichainActivityPanel({
   heading,
   hideWhenEmpty = false,
   accountMode,
+  allExecutionModes = false,
   focusTransactionId
 }: MultichainActivityPanelProps) {
   const requestSequence = useRef(0)
@@ -324,11 +327,12 @@ export function MultichainActivityPanel({
         assetId: filterAssetId,
         domain: filterDomain,
         confidentialIntentsOnly,
-        accountMode: filterAssetId ? undefined : accountMode,
+        accountMode: filterAssetId || allExecutionModes ? undefined : accountMode,
         executionAddressModes
       }),
     [
       accountMode,
+      allExecutionModes,
       confidentialIntentsOnly,
       executionAddressModes,
       filterAssetId,

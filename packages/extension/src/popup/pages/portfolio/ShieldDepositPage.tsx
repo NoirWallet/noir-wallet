@@ -137,6 +137,7 @@ function ShieldDepositContent() {
   const checkAttemptRef = useRef(0)
   const checkInFlightRef = useRef(false)
   const refreshRequests = useRef(new Map<string, Promise<ExternalShieldDeposit>>())
+  const depositPollDelayMsRef = useRef(20_000)
   const refreshDepositRecord = useCallback((depositId: string, scope: string) => {
     const key = `${scope}:${depositId}`
     const existing = refreshRequests.current.get(key)
@@ -339,7 +340,7 @@ function ShieldDepositContent() {
     if (records.length === 0) return
     const timer = window.setInterval(
       () => setNow(Date.now()),
-      viewedRecord?.phase === 'awaiting-payment' ? 1_000 : 15_000
+      viewedRecord?.phase === 'awaiting-payment' ? 1_000 : 20_000
     )
     return () => window.clearInterval(timer)
   }, [records.length, viewedRecord?.phase])
@@ -353,17 +354,23 @@ function ShieldDepositContent() {
       return
     let active = true
     let inFlight = false
-    const timer = window.setInterval(() => {
-      if (!shouldAutoRefreshExternalShieldDeposit(viewedRecord, Date.now())) {
-        window.clearInterval(timer)
+    let timeoutId: number | undefined
+    depositPollDelayMsRef.current = 20_000
+
+    const poll = () => {
+      if (!active || !shouldAutoRefreshExternalShieldDeposit(viewedRecord, Date.now())) {
         return
       }
-      if (inFlight) return
+      if (inFlight) {
+        timeoutId = window.setTimeout(poll, depositPollDelayMsRef.current)
+        return
+      }
       inFlight = true
       const checkAttemptAtStart = checkAttemptRef.current
       const manualCheckInFlightAtStart = checkInFlightRef.current
       void refreshDepositRecord(viewedRecord.depositId, scopeKey)
         .then(updated => {
+          depositPollDelayMsRef.current = 20_000
           if (
             active &&
             mounted.current &&
@@ -388,14 +395,20 @@ function ShieldDepositContent() {
               )
           }
         })
-        .catch(() => {})
+        .catch(() => {
+          depositPollDelayMsRef.current = Math.min(depositPollDelayMsRef.current * 2, 120_000)
+        })
         .finally(() => {
           inFlight = false
+          if (active) timeoutId = window.setTimeout(poll, depositPollDelayMsRef.current)
         })
-    }, 15_000)
+    }
+
+    timeoutId = window.setTimeout(poll, depositPollDelayMsRef.current)
     return () => {
       active = false
-      window.clearInterval(timer)
+      depositPollDelayMsRef.current = 20_000
+      if (timeoutId !== undefined) window.clearTimeout(timeoutId)
     }
   }, [viewedRecord, currentNetwork, walletId, accountId, scopeKey, refreshDepositRecord])
 

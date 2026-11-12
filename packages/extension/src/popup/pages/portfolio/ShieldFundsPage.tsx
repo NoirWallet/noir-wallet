@@ -23,6 +23,14 @@ import { WalletActionIcon } from '@/popup/components/common/WalletActionIcon'
 import { ShieldProviderLogo, SHIELD_PROVIDERS } from '@/popup/components/portfolio/shield-providers'
 import { TokenIcon } from '@/popup/components/tokens/TokenIcon'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/popup/components/ui/dialog'
+import {
+  nearConfidentialVaultIcons,
+  zcashShieldVaultIcons
+} from '@/popup/services/shield-vault-display-icons'
+import {
+  resolveShieldZcashVaultEntry,
+  shieldZcashEnablePath
+} from '@/popup/services/shield-zcash-entry'
 
 export function ShieldFundsPage() {
   const currentWalletId = useWalletStore(state => state.currentWalletId)
@@ -100,6 +108,23 @@ function ShieldFundsContent() {
     [model, prices]
   )
   const hasNear = canManageNear || near.entries.length > 0
+  const zcashAccountData = useWalletStore(state =>
+    currentWalletId && currentAccountId
+      ? state.getAccount(currentWalletId, currentAccountId)
+      : undefined
+  )
+  const zcashVaultEntry = resolveShieldZcashVaultEntry({
+    network: currentNetwork,
+    keySource: zcashKeySource,
+    account: zcashAccountData,
+    hasPortfolioZcash: hasZcash,
+    enabledFlags: __ENABLED_CHAIN_FEATURE_FLAGS__
+  })
+  const nearVaultIcons = useMemo(() => nearConfidentialVaultIcons(near.entries), [near.entries])
+  const zcashVaultIcons = useMemo(
+    () => zcashShieldVaultIcons(zcash?.entries.map(entry => entry.asset) ?? []),
+    [zcash?.entries]
+  )
   const shieldTotal = model
     ? summarizeKnownShieldFiat(
         hasNear ? near : null,
@@ -253,7 +278,9 @@ function ShieldFundsContent() {
         </div>
         <div className="mt-3 grid grid-cols-2 gap-3">
           {(['near-confidential', 'zcash-shield'] as const)
-            .filter(provider => (provider === 'near-confidential' ? hasNear : hasZcash))
+            .filter(provider =>
+              provider === 'near-confidential' ? hasNear : zcashVaultEntry.showVaultCard
+            )
             .map(provider => {
               const group = provider === 'zcash-shield' ? zcash : undefined
               const fiat = provider === 'near-confidential' ? near.fiat : group?.fiat
@@ -264,11 +291,17 @@ function ShieldFundsContent() {
                     ? '…'
                     : '—'
                   : formatFiatAmount(fiat, { showSign: true })
+              const zcashNeedsEnable =
+                provider === 'zcash-shield' && !zcashVaultEntry.hasActiveZcash
               return (
                 <button
                   key={provider}
                   type="button"
-                  onClick={() => navigate(`/shield-provider?provider=${provider}&mode=${mode}`)}
+                  onClick={() =>
+                    zcashVaultEntry.canEnableZcash && currentWalletId && currentAccountId
+                      ? navigate(shieldZcashEnablePath(currentWalletId, currentAccountId))
+                      : navigate(`/shield-provider?provider=${provider}&mode=${mode}`)
+                  }
                   className="wallet-interactive flex h-[154px] min-w-0 flex-col overflow-hidden rounded-lg bg-wallet-surface text-left hover:brightness-110 active:brightness-95 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary"
                 >
                   <span
@@ -283,39 +316,43 @@ function ShieldFundsContent() {
                     </span>
                   </span>
                   <span className="flex h-9 items-center justify-between gap-1 bg-white/5 px-2.5 text-xs">
-                    <span className="flex min-w-0 items-center">
-                      {provider === 'near-confidential'
-                        ? near.entries
-                            .slice(0, 4)
-                            .map((entry, index) => (
-                              <TokenIcon
-                                key={entry.asset.tokenId}
-                                assetId={entry.asset.assetId ?? entry.asset.protocolAssetId}
-                                symbol={entry.asset.symbol ?? '?'}
-                                icon={entry.asset.iconUrl}
-                                size={16}
-                                className={index ? '-ml-1 shrink-0' : 'shrink-0'}
-                              />
-                            ))
-                        : group?.entries
-                            .slice(0, 4)
-                            .map((entry, index) => (
-                              <TokenIcon
-                                key={entry.asset.asset.id}
-                                assetId={entry.asset.asset.id}
-                                symbol={entry.asset.metadata.symbol}
-                                icon={entry.asset.metadata.iconUrl}
-                                size={16}
-                                className={index ? '-ml-1 shrink-0' : 'shrink-0'}
-                              />
-                            ))}
-                    </span>
-                    <span
-                      className="max-w-[100px] truncate"
-                      title={balancesHidden ? undefined : label}
-                    >
-                      {label}
-                    </span>
+                    {zcashNeedsEnable && zcashVaultEntry.canEnableZcash ? (
+                      <span className="flex h-7 items-center rounded-md bg-white/10 px-2.5 text-[11px] font-medium text-foreground">
+                        Enable Zcash
+                      </span>
+                    ) : (
+                      <>
+                        <span className="flex min-w-0 items-center">
+                          {provider === 'near-confidential'
+                            ? nearVaultIcons.map((entry, index) => (
+                                <TokenIcon
+                                  key={entry.key}
+                                  assetId={entry.assetId}
+                                  symbol={entry.symbol}
+                                  icon={entry.icon}
+                                  size={16}
+                                  className={index ? '-ml-1 shrink-0' : 'shrink-0'}
+                                />
+                              ))
+                            : zcashVaultIcons.map((entry, index) => (
+                                <TokenIcon
+                                  key={entry.key}
+                                  assetId={entry.assetId}
+                                  symbol={entry.symbol}
+                                  icon={entry.icon}
+                                  size={16}
+                                  className={index ? '-ml-1 shrink-0' : 'shrink-0'}
+                                />
+                              ))}
+                        </span>
+                        <span
+                          className="max-w-[100px] truncate"
+                          title={balancesHidden ? undefined : label}
+                        >
+                          {zcashNeedsEnable ? '—' : label}
+                        </span>
+                      </>
+                    )}
                   </span>
                 </button>
               )

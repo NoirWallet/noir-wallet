@@ -75,6 +75,12 @@ function parseContractIcon(
   }
 }
 
+export function resolveAssetIdContractIconIdentity(assetId: string | undefined): string | null {
+  if (!assetId) return null
+  const match = /^(eip155:[1-9][0-9]*)\/erc20:(0x[0-9a-fA-F]{40})$/.exec(assetId)
+  return match ? `${match[1]}/erc20:${match[2].toLowerCase()}` : null
+}
+
 export function resolveTokenContractIconIdentity(token: SwapToken): string | null {
   const rheaChainId = 'rheaChainId' in token ? token.rheaChainId : null
   if (

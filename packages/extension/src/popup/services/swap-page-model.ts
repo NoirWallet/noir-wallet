@@ -2,6 +2,9 @@ import type { PortfolioReadModel } from '@/core/portfolio'
 import { decodeFunctionData, parseAbi } from 'viem'
 import { parseZcashAddress } from '@/core/address-book/address-book'
 import { isZecToken, type SwapToken } from '@/core/services/intents-api'
+import { getEvmNetworkConfigs } from '@/config/networks'
+import { resolveIntentsEvmAssets } from '@/core/services/intents-evm-assets'
+import { DEFAULT_NETWORK } from '@/lib/runtime-network'
 import {
   RHEA_SWAP_CHAIN_CATALOG,
   type RheaSwapQuoteView,
@@ -25,7 +28,8 @@ import {
   type WalletOwnedQuoteAsset
 } from '@/popup/services/quote-deposit-transfer-client'
 import type { AdditionalReceiveTargetsView } from '@/popup/services/receive-targets-client'
-import type { Network } from '@/types'
+import type { FundingSource, Network } from '@/types'
+import type { ShieldSwapZecSourceKind } from '@/popup/services/shield-swap-zec-sources'
 import { isRheaSwapQuoteFresh } from '@/core/services/rhea-swap/rhea-swap-quote-validity'
 import { resolveAccountAvailableRaw } from '@/popup/services/transfer-availability'
 import {
@@ -123,6 +127,32 @@ export function isAcceptedSwapReview(input: {
     quoteKey === requestKey &&
     isRheaSwapQuoteFresh(quote, input.now)
   )
+}
+
+export function resolveShieldDomainZecFundingSource(input: {
+  readonly ordinarySwapRequested: boolean
+  readonly shieldZecSource: ShieldSwapZecSourceKind | null
+  readonly isZecSource: boolean
+  readonly selectedFundingSource: FundingSource
+  readonly publicPrivacySendRequested?: boolean
+}): FundingSource {
+  if (input.publicPrivacySendRequested && input.isZecSource) return 'transparent'
+  if (
+    input.ordinarySwapRequested &&
+    input.shieldZecSource === 'native-shielded' &&
+    input.isZecSource
+  ) {
+    return 'shielded'
+  }
+  if (input.ordinarySwapRequested && input.isZecSource) return 'transparent'
+  return input.selectedFundingSource
+}
+
+export function shieldConfidentialSwapActive(input: {
+  readonly shieldSwapSelected: boolean
+  readonly shieldZecSource: ShieldSwapZecSourceKind | null
+}): boolean {
+  return input.shieldSwapSelected && input.shieldZecSource !== 'native-shielded'
 }
 
 export function resolveSwapReviewAction(input: {
@@ -233,6 +263,28 @@ export function isPreparedSwapFeeUnaffordable(
   return requiredRaw > BigInt(prepared.source.networkFeeAsset.balance.availableRaw)
 }
 
+function formatSwapTokenPortfolioBalance(
+  token: RheaSwapToken,
+  portfolio: PortfolioReadModel,
+  receiveTargets: AdditionalReceiveTargetsView | null,
+  evmExecutionMode: 'main' | 'private'
+): string | undefined {
+  const owned = receiveTargets && resolveWalletOwnedQuoteAsset(token, portfolio, receiveTargets)
+  if (owned) {
+    const availableRaw =
+      resolveWalletSwapSourceAvailableRaw(owned, evmExecutionMode) ??
+      owned.asset.balance.availableRaw ??
+      owned.asset.balance.totalRaw
+    return formatBaseUnitDecimalAmount(availableRaw, owned.asset.metadata.decimals)
+  }
+  const evm = resolveIntentsEvmAssets([token], getEvmNetworkConfigs(DEFAULT_NETWORK))[0]
+  if (!evm) return undefined
+  const asset = portfolio.assets.find(candidate => candidate.asset.id === evm.assetId)
+  if (!asset || asset.metadata.decimals !== token.decimals) return undefined
+  const availableRaw = resolveAccountAvailableRaw(asset.balance, evmExecutionMode)
+  return formatBaseUnitDecimalAmount(availableRaw, asset.metadata.decimals)
+}
+
 export function buildWalletSwapSourceBalances(input: {
   readonly tokens: readonly RheaSwapToken[]
   readonly portfolio: PortfolioReadModel | null
@@ -246,15 +298,14 @@ export function buildWalletSwapSourceBalances(input: {
       balances.set(token.assetId, input.zcashAvailable)
       continue
     }
-    if (!input.portfolio || !input.receiveTargets) continue
-    const source = resolveWalletOwnedQuoteAsset(token, input.portfolio, input.receiveTargets)
-    if (!source) continue
-    const availableRaw = resolveWalletSwapSourceAvailableRaw(source, input.evmExecutionMode)
-    if (availableRaw === undefined) continue
-    balances.set(
-      token.assetId,
-      formatBaseUnitDecimalAmount(availableRaw, source.asset.metadata.decimals)
+    if (!input.portfolio) continue
+    const formatted = formatSwapTokenPortfolioBalance(
+      token,
+      input.portfolio,
+      input.receiveTargets,
+      input.evmExecutionMode
     )
+    if (formatted !== undefined) balances.set(token.assetId, formatted)
   }
   return balances
 }
@@ -567,4 +618,12 @@ export function isSwapQuoteRefreshReady(
     target.scopeKey === request.scopeKey &&
     target.amount === request.amount
   )
+}
+
+/** Skip auto-focus when the user is already editing another text control. */
+export function shouldDeferSwapAmountFocus(activeElement: Element | null): boolean {
+  if (!activeElement || activeElement === document.body) return false
+  const tag = activeElement.tagName
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true
+  return activeElement.getAttribute('contenteditable') === 'true'
 }

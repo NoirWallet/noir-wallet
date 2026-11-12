@@ -3,6 +3,7 @@ import { Navigate, useLocation, useSearchParams } from 'react-router-dom'
 import type { PortfolioReadModel, PortfolioAssetView } from '@/core/portfolio'
 import type { AssetPriceReadModel } from '@/core/prices'
 import { Icon } from '@iconify/react'
+import { ZEC_ZCASH_ASSET } from '@/config/intents'
 import nearLogo from '@/images/figma-near-confidential.svg'
 import { isAddress } from 'viem'
 import { resolveEvmChainIconAlias } from '@/config/icons'
@@ -22,6 +23,7 @@ import { useActiveAccountNetworks } from '@/popup/hooks/useActiveAccountNetworks
 import { useConfidentialFundingPreview } from '@/popup/hooks/useConfidentialFundingPreview'
 import { resolveEffectiveActiveAccountIdentity } from '@/popup/lib/effective-active-account'
 import { assetPriceClient } from '@/popup/services/asset-price-client'
+import { findAssetPrice } from '@/core/prices'
 import { getPrivateTransferChainIds } from '@/popup/services/private-balance-transfer'
 import { useNavigate } from '@/popup/provider/Router'
 import { PageHeader } from '@/popup/components/common/PageHeader'
@@ -37,6 +39,8 @@ import {
 import { AmountDisplay } from '@/popup/components/common/AmountDisplay'
 import { ChainIcon } from '@/popup/components/common/ChainIcon'
 import { TokenIcon } from '@/popup/components/tokens/TokenIcon'
+import { ShieldSourceTokenPickerRows } from '@/popup/components/tokens/ShieldSourceTokenPickerRows'
+import { sortSendAssetsByBalanceValue } from '@/popup/pages/transactions/send-asset-order'
 import { RecipientSelector } from '@/popup/components/transaction/RecipientSelector'
 import {
   TransactionReviewExchangeSummary,
@@ -262,6 +266,29 @@ export function ShieldWithdrawForm({
     ...fundedSources,
     ...options.filter(item => !fundedAssetIds.has(item.asset.asset.id))
   ]
+  const sourcePickerItems = useMemo(
+    () =>
+      sortSendAssetsByBalanceValue(
+        sources.map(item => ({
+          key: item.asset.asset.id,
+          amount: formatBaseUnitDecimalAmount(
+            shieldFundingAvailableRaw(item, displayBalances),
+            item.asset.metadata.decimals
+          ),
+          priceUsd: findAssetPrice(prices, item.asset.asset.id)?.priceUsd ?? null,
+          item
+        }))
+      ).map(row => ({
+        key: row.item.asset.asset.id,
+        assetId: row.item.asset.asset.id,
+        symbol: row.item.asset.metadata.symbol,
+        iconUrl: row.item.asset.metadata.iconUrl,
+        chainName: row.item.chain.chain.displayName,
+        availableRaw: shieldFundingAvailableRaw(row.item, displayBalances),
+        decimals: row.item.asset.metadata.decimals
+      })),
+    [displayBalances, prices, sources]
+  )
   const routedPublicAsset = model?.assets.find(item => item.asset.id === sourceId)
   const routedManaged = routedPublicAsset
     ? resolveShieldManagedAsset(routedPublicAsset, managedAssets, catalogTokens, network)
@@ -281,6 +308,10 @@ export function ShieldWithdrawForm({
       : null
   const destinationNetwork = destinations.find(item => item.chain.chain.id === destinationNetworkId)
     ?.chain.chain
+  useEffect(() => {
+    if (!source || destinationNetworkId || destinations.length !== 1) return
+    setDestinationNetworkId(destinations[0]!.chain.chain.id)
+  }, [source, destinations, destinationNetworkId])
   const availableRaw = shieldFundingAvailableRaw(source, displayBalances)
   const displayedAsset = source?.asset ?? initialAsset
   const amountState = source
@@ -796,13 +827,21 @@ export function ShieldWithdrawForm({
           <SendRouteInfoCard
             provider={
               canSendZcash ? (
-                <div className="w-[190px] max-w-full">
+                <div className="relative z-10 w-[190px] max-w-full">
                   <ShieldSendProviderTabs
                     value="near-confidential"
                     disabled={busy}
                     onChange={provider => {
-                      if (provider === 'zcash-shield')
-                        navigate('/send/zcash?from=shielded', { replace: true })
+                      if (provider === 'zcash-shield') {
+                        const params = new URLSearchParams({ from: 'shielded' })
+                        if (
+                          source?.managed.protocolAssetId === ZEC_ZCASH_ASSET ||
+                          source?.asset.asset.id === ZEC_ZCASH_ASSET
+                        ) {
+                          params.set('assetId', ZEC_ZCASH_ASSET)
+                        }
+                        navigate(`/send/zcash?${params}`, { replace: true })
+                      }
                     }}
                   />
                 </div>
@@ -923,7 +962,7 @@ export function ShieldWithdrawForm({
         >
           <DialogTitle>
             {picker === 'source'
-              ? 'Source token'
+              ? 'Select Token'
               : picker === 'network'
                 ? 'Network'
                 : picker === 'slippage'
@@ -992,64 +1031,20 @@ export function ShieldWithdrawForm({
                 </button>
               )
             )
-          ) : (
-            sources.map(item => (
-              <button
-                key={item.asset.asset.id}
-                type="button"
-                onClick={() => {
-                  setSourceId(item.asset.asset.id)
-                  setDestinationNetworkId(null)
-                  setRecipient('')
-                  setAmount('')
-                  setPicker(null)
-                }}
-                className="wallet-interactive flex w-full items-center gap-3 rounded-md px-2 py-2 text-left hover:bg-wallet-selected active:bg-white/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2"
-              >
-                <TokenIcon
-                  assetId={item.asset.asset.id}
-                  symbol={formatSymbol(item.asset.metadata.symbol)}
-                  icon={item.asset.metadata.iconUrl}
-                  size={30}
-                />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm">
-                    {formatSymbol(item.asset.metadata.symbol)}
-                  </span>
-                  {picker === 'source' && (
-                    <span className="block truncate text-xs text-muted">
-                      {item.chain.chain.displayName}
-                    </span>
-                  )}
-                </span>
-                {picker === 'source' && (
-                  <span
-                    className="max-w-[42%] min-w-0 shrink-0 text-right"
-                    title={
-                      balancesHidden
-                        ? undefined
-                        : formatBaseUnitDecimalAmount(
-                            shieldFundingAvailableRaw(item, displayBalances),
-                            item.asset.metadata.decimals
-                          )
-                    }
-                  >
-                    <span className="block truncate text-sm tabular-nums">
-                      {balancesHidden
-                        ? '••••'
-                        : formatTokenQuantity(
-                            formatBaseUnitDecimalAmount(
-                              shieldFundingAvailableRaw(item, displayBalances),
-                              item.asset.metadata.decimals
-                            )
-                          )}
-                    </span>
-                    <span className="block text-xs text-muted">Available</span>
-                  </span>
-                )}
-              </button>
-            ))
-          )}
+          ) : picker === 'source' ? (
+            <ShieldSourceTokenPickerRows
+              items={sourcePickerItems}
+              balancesHidden={balancesHidden}
+              selectedAssetId={source?.asset.asset.id}
+              onSelect={assetId => {
+                setSourceId(assetId)
+                setDestinationNetworkId(null)
+                setRecipient('')
+                setAmount('')
+                setPicker(null)
+              }}
+            />
+          ) : null}
         </DialogContent>
       </Dialog>
     </div>

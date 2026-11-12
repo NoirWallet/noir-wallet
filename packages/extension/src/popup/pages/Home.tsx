@@ -1190,6 +1190,7 @@ export function Home() {
                       ? 'main'
                       : (dappExecutionMode.state?.mode ?? 'main')
                 }
+                allExecutionModes={activityFilterDomain === undefined}
                 filterAssetId={activityFilterAssetId ?? undefined}
                 filterDomain={activityFilterDomain}
                 showToolbar={!activityFilterAssetId}

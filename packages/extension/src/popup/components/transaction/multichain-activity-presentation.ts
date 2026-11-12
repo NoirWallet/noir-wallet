@@ -769,20 +769,25 @@ export function getActivitySegmentStatusPresentation(
   })
 }
 
+function resolveShieldAuthorizationOrigin(
+  item: ActivityItem,
+  origin: ActivitySegment | undefined
+): ActivitySegment | undefined {
+  const hasShieldRelay = item.segments.some(segment => segment.role === 'relay')
+  const shield = item.snapshot?.shield
+  if (!hasShieldRelay || !shield || origin?.target.kind !== 'protocol') return undefined
+  const mergesAuthorizationWithRelay =
+    (shield.operation === 'withdraw' && item.snapshot?.direction === 'outgoing') ||
+    (item.snapshot?.direction === 'self' && shield.operation !== 'swap')
+  return mergesAuthorizationWithRelay ? origin : undefined
+}
+
 export function getActivityProgressSteps(
   item: ActivityItem,
   chainName: (chainId: string) => string
 ): readonly TransactionProgressStep[] {
   const origin = item.segments.find(segment => segment.role === 'origin')
-  const hasShieldRelay = item.segments.some(segment => segment.role === 'relay')
-  const shieldSendAuthorization =
-    hasShieldRelay &&
-    item.snapshot?.shield?.operation === 'withdraw' &&
-    item.snapshot.direction === 'outgoing'
-      ? origin?.target.kind === 'protocol'
-        ? origin
-        : undefined
-      : undefined
+  const shieldSendAuthorization = resolveShieldAuthorizationOrigin(item, origin)
   return item.segments
     .filter(
       segment =>

@@ -53,6 +53,35 @@ function DialogContent({
     bottom:
       'bottom-0 left-0 right-0 translate-x-0 translate-y-0 data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom max-w-full rounded-t-2xl rounded-b-none border-t border-foreground/10 shadow-[0_-14px_36px_rgba(0,0,0,0.48)]'
   }
+  const scrollableBody = typeof className === 'string' && /\boverflow-y-auto\b/.test(className)
+  const surfaceClassName =
+    scrollableBody && typeof className === 'string'
+      ? className
+          .replace(/\boverflow-y-auto\b/g, '')
+          .replace(/\boverscroll-contain\b/g, '')
+          .trim()
+      : className
+
+  const closeButton = showCloseButton ? (
+    <DialogPrimitive.Close
+      data-slot="dialog-close"
+      className="ring-offset-background focus:ring-ring data-[state=open]:bg-accent data-[state=open]:text-muted-foreground flex size-8 shrink-0 items-center justify-center rounded-full opacity-70 transition-opacity hover:opacity-100 focus:ring-2 focus:ring-offset-2 focus:outline-hidden disabled:pointer-events-none [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4"
+    >
+      <svg
+        aria-hidden="true"
+        viewBox="0 0 24 24"
+        width={16}
+        height={16}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={2}
+        strokeLinecap="round"
+      >
+        <path d="m18 6-12 12M6 6l12 12" />
+      </svg>
+      <span className="sr-only">Close</span>
+    </DialogPrimitive.Close>
+  ) : null
 
   return (
     <DialogPortal data-slot="dialog-portal">
@@ -60,32 +89,31 @@ function DialogContent({
       <DialogPrimitive.Content
         data-slot="dialog-content"
         className={cn(
-          'bg-background data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 fixed z-50 grid w-full gap-4 overflow-hidden p-6 shadow-lg duration-200 outline-none [&>*]:min-w-0',
+          'bg-background data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 fixed z-50 w-full shadow-lg duration-200 outline-none [&>*]:min-w-0',
+          scrollableBody
+            ? 'flex max-h-[calc(100dvh-1rem)] flex-col overflow-hidden p-0'
+            : 'grid gap-4 overflow-hidden p-6',
           positionClasses[position],
-          className
+          surfaceClassName
         )}
         {...props}
       >
-        {children}
-        {showCloseButton && (
-          <DialogPrimitive.Close
-            data-slot="dialog-close"
-            className="ring-offset-background focus:ring-ring data-[state=open]:bg-accent data-[state=open]:text-muted-foreground absolute top-4 right-4 flex size-8 items-center justify-center rounded-full opacity-70 transition-opacity hover:opacity-100 focus:ring-2 focus:ring-offset-2 focus:outline-hidden disabled:pointer-events-none [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4"
-          >
-            <svg
-              aria-hidden="true"
-              viewBox="0 0 24 24"
-              width={16}
-              height={16}
-              fill="none"
-              stroke="currentColor"
-              strokeWidth={2}
-              strokeLinecap="round"
-            >
-              <path d="m18 6-12 12M6 6l12 12" />
-            </svg>
-            <span className="sr-only">Close</span>
-          </DialogPrimitive.Close>
+        {scrollableBody ? (
+          <>
+            {closeButton ? (
+              <div className="sticky top-0 z-10 flex shrink-0 justify-end border-b border-border/40 bg-background px-6 pb-3 pt-6">
+                {closeButton}
+              </div>
+            ) : null}
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 pb-6 pt-4">
+              {children}
+            </div>
+          </>
+        ) : (
+          <>
+            {children}
+            {closeButton ? <div className="absolute top-4 right-4">{closeButton}</div> : null}
+          </>
         )}
       </DialogPrimitive.Content>
     </DialogPortal>

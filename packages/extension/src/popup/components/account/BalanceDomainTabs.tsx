@@ -11,16 +11,19 @@ const LABELS: Record<BalanceDomain, string> = {
 export function BalanceDomainTabs({
   value,
   available = ['public', 'private', 'shield'],
+  labels,
   onChange,
   className,
   disabled = false
 }: {
   readonly value: BalanceDomain
   readonly available?: readonly BalanceDomain[]
+  readonly labels?: Partial<Record<BalanceDomain, string>>
   readonly onChange: (value: BalanceDomain) => void
   readonly className?: string
   readonly disabled?: boolean
 }) {
+  const resolvedLabels = { ...LABELS, ...labels }
   return (
     <div
       role="group"
@@ -50,7 +53,7 @@ export function BalanceDomainTabs({
               'border-success bg-success text-black shadow-[0_0_6px_var(--color-success)]'
           )}
         >
-          {LABELS[domain]}
+          {resolvedLabels[domain]}
         </button>
       ))}
     </div>

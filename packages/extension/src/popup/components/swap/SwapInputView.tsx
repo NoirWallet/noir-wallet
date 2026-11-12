@@ -18,6 +18,7 @@ import { Skeleton } from '../ui/skeleton'
 import { BalanceHelp } from '../transaction/BalanceHelp'
 import { SendRecipientInputCard } from '../transaction/SendInputCards'
 import { safeBig } from '@/lib/big'
+import { shouldDeferSwapAmountFocus } from '@/popup/services/swap-page-model'
 import { InlineError } from '../common/InlineError'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog'
 import nearIntentsIcon from '@/images/figma-near-confidential.svg'
@@ -104,6 +105,7 @@ interface SwapInputViewProps {
   actionLoading?: boolean
   onAmountInChange: (value: string) => void
   focusAmountOnMount?: boolean
+  amountFocusToken?: number
   onMaxClick?: () => void
   onRecipientAddressChange: (value: string) => void
   onSelectRecipientFromWallet?: () => void
@@ -119,6 +121,7 @@ interface SwapInputViewProps {
 interface SwapAssetCardProps {
   direction: 'From' | 'To'
   token: SwapToken | null
+  tokenBadgeBlockchain?: string
   amount: string
   fiatValue: string
   accountAddress?: string
@@ -131,6 +134,7 @@ interface SwapAssetCardProps {
   tokenSelectLocked?: boolean
   onAmountChange?: (value: string) => void
   autoFocusAmount?: boolean
+  amountFocusToken?: number
   onMaxClick?: () => void
   maxLoading?: boolean
   maxDisabled?: boolean
@@ -187,6 +191,7 @@ function ReceiveAddressSkeleton() {
 export function SwapAssetCard({
   direction,
   token,
+  tokenBadgeBlockchain,
   amount,
   fiatValue,
   accountAddress,
@@ -199,6 +204,7 @@ export function SwapAssetCard({
   tokenSelectLocked = false,
   onAmountChange,
   autoFocusAmount = false,
+  amountFocusToken,
   onMaxClick,
   maxLoading = false,
   maxDisabled = false,
@@ -214,6 +220,14 @@ export function SwapAssetCard({
   const amountField = useRef<HTMLInputElement>(null)
   const amountInputId = useId()
   const [amountFontSize, setAmountFontSize] = useState(20)
+  useLayoutEffect(() => {
+    if (isReadOnly || amountFocusToken === undefined) return
+    if (shouldDeferSwapAmountFocus(document.activeElement)) return
+    const frame = window.requestAnimationFrame(() => {
+      amountField.current?.focus()
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [amountFocusToken, isReadOnly])
   useLayoutEffect(() => {
     if (isReadOnly || !amountField.current) return
     const input = amountField.current
@@ -337,7 +351,11 @@ export function SwapAssetCard({
           className="flex max-w-[55%] min-w-0 shrink-0 items-center gap-2 text-left transition-opacity enabled:hover:opacity-80"
         >
           <span className="size-[30px] shrink-0">
-            <TokenIcon token={token || undefined} size={30} />
+            <TokenIcon
+              token={token || undefined}
+              blockchain={tokenBadgeBlockchain ?? token?.blockchain}
+              size={30}
+            />
           </span>
           <span className="min-w-0 flex-1">
             <span className="flex min-w-0 items-center gap-1 text-xl font-semibold leading-[26px]">
@@ -502,6 +520,7 @@ export function SwapInputView({
   actionLoading = false,
   onAmountInChange,
   focusAmountOnMount = false,
+  amountFocusToken,
   onMaxClick,
   onRecipientAddressChange,
   onSelectRecipientFromWallet,
@@ -528,6 +547,8 @@ export function SwapInputView({
       (feeIsApproximate ? 'Insufficient balance' : `Insufficient balance (Fee: ${networkFee} ZEC)`)
     : undefined
   const hasQuoteDetails = Boolean(estimatedOut) && rate !== '...' && rate !== '0'
+  const providerNetworkFeeLabel =
+    isZecSource && networkFee !== undefined ? `${formatFeeAmount(networkFee)} ZEC` : null
 
   return (
     <>
@@ -554,6 +575,7 @@ export function SwapInputView({
             tokenSelectLocked={sourceAssetLocked}
             onAmountChange={onAmountInChange}
             autoFocusAmount={focusAmountOnMount}
+            amountFocusToken={amountFocusToken}
             onMaxClick={onMaxClick}
             maxLoading={maxLoading}
             maxDisabled={maxDisabled}
@@ -709,17 +731,13 @@ export function SwapInputView({
                   {formatTokenQuantity(estimatedOut)} {formatSymbol(tokenOut.symbol)}
                 </span>
               </div>
-              <div className="mt-1.5 flex items-center justify-between gap-2 text-muted">
-                <span>
-                  Est. time <span className="text-foreground">—</span>
-                </span>
-                <span>
-                  Network fee{' '}
-                  <span className="text-foreground">
-                    {networkFee && isZecSource ? `${formatFeeAmount(networkFee)} ZEC` : '—'}
+              {providerNetworkFeeLabel && (
+                <div className="mt-1.5 flex items-center justify-end gap-2 text-muted">
+                  <span>
+                    Network fee <span className="text-foreground">{providerNetworkFeeLabel}</span>
                   </span>
-                </span>
-              </div>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -953,17 +971,13 @@ export function SwapInputView({
                     {formatTokenQuantity(estimatedOut)} {formatSymbol(tokenOut?.symbol)}
                   </span>
                 </div>
-                <div className="mt-4 flex items-center justify-between gap-2 text-xs text-muted">
-                  <span>
-                    Est. time <span className="text-foreground">—</span>
-                  </span>
-                  <span>
-                    Network fee{' '}
-                    <span className="text-foreground">
-                      {networkFee && isZecSource ? `${formatFeeAmount(networkFee)} ZEC` : '—'}
+                {providerNetworkFeeLabel && (
+                  <div className="mt-4 flex items-center justify-end gap-2 text-xs text-muted">
+                    <span>
+                      Network fee <span className="text-foreground">{providerNetworkFeeLabel}</span>
                     </span>
-                  </span>
-                </div>
+                  </div>
+                )}
               </div>
             )}
             {providerAlternatives.map(route => (
@@ -1000,14 +1014,6 @@ export function SwapInputView({
                         )
                       : '—'}{' '}
                     {formatSymbol(tokenOut?.symbol)}
-                  </span>
-                </span>
-                <span className="mt-4 flex items-center justify-between gap-2 text-xs text-muted">
-                  <span>
-                    Est. time <span className="text-foreground">—</span>
-                  </span>
-                  <span>
-                    Network fee <span className="text-foreground">—</span>
                   </span>
                 </span>
               </button>
