@@ -5,6 +5,7 @@ import { getChainFromAssetId } from '@/lib/format'
 import { createDebugRequestId, logDebugTiming, traceDebugStage } from '@/lib/debug-performance'
 import { resolveEvmChainIconAlias } from '@/config/icons'
 import { BITCOIN_CHAIN_IDS, ZCASH_CHAIN_IDS } from '@/core/chains/registry/chain-ids'
+import { isDeprecatedIntentsToken } from '@/core/services/intents-evm-assets'
 
 export interface SwapInitialCatalogOptions {
   readonly catalogScope?: string | null
@@ -186,6 +187,7 @@ export function mergeTokenCatalogs(
   const tokens = new Map<string, RheaSwapToken>()
   for (const catalog of catalogs) {
     for (const token of catalog) {
+      if (isDeprecatedIntentsToken(token)) continue
       tokens.set(`${token.rheaChainId}:${token.rheaAddress}`, token)
     }
   }
@@ -256,8 +258,9 @@ export async function loadTokenCatalogByChain(
         const result = await traceDebugStage(requestId, `list-chain-${chainId}`, () =>
           client.listTokens({ direction, tokenListChainIds: [chainId] }, { bypassCache })
         )
-        tokens.push(...result.tokens)
-        if (!isCancelled() && result.tokens.length > 0) onTokens(result.tokens)
+        const available = result.tokens.filter(token => !isDeprecatedIntentsToken(token))
+        tokens.push(...available)
+        if (!isCancelled() && available.length > 0) onTokens(available)
       } catch {
         // A failed chain must not discard catalogs that are already usable.
       }
