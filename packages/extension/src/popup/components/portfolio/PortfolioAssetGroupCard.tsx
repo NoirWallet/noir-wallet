@@ -9,6 +9,7 @@ import {
 } from '@/lib/number-format'
 
 import { cn } from '@/lib/utils'
+import { formatSymbol } from '@/lib/format'
 import type { PortfolioAssetView } from '@/core/portfolio'
 import { findAssetPrice, type AssetPriceReadModel } from '@/core/prices'
 import { resolveChainIconAlias } from '@/lib/chain-icon'
@@ -89,9 +90,9 @@ function PendingAssetAmount({ amount, symbol }: { readonly amount: Big; readonly
     <div className="flex min-w-0 items-center justify-end gap-1 px-3 pb-2.5 text-[11px] text-muted">
       <span
         className="min-w-0 break-all text-right"
-        title={`${amount.toFixed()} ${symbol} pending`}
+        title={`${amount.toFixed()} ${formatSymbol(symbol)} pending`}
       >
-        {formatDisplayAmount(amount)} {symbol} pending
+        {formatDisplayAmount(amount)} {formatSymbol(symbol)} pending
       </span>
       <BalanceHelp kind="pending" />
     </div>
@@ -165,7 +166,7 @@ function PortfolioAssetBalanceRow({
     <div>
       <button
         type="button"
-        aria-label={`View ${entry.asset.metadata.symbol} details on ${entry.chain.chain.displayName}`}
+        aria-label={`View ${formatSymbol(entry.asset.metadata.symbol)} details on ${entry.chain.chain.displayName}`}
         onClick={() => onSelectAsset?.(entry.asset.asset.id)}
         className={cn(
           'wallet-interactive flex min-h-[72px] w-full min-w-0 items-center gap-3 px-4 py-2.5 text-left hover:bg-white/[0.05] active:bg-white/10 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary',
@@ -183,7 +184,7 @@ function PortfolioAssetBalanceRow({
         ) : (
           <TokenIcon
             assetId={entry.asset.asset.id}
-            symbol={entry.asset.metadata.symbol}
+            symbol={formatSymbol(entry.asset.metadata.symbol)}
             icon={entry.asset.metadata.iconUrl}
             size={32}
             className="shrink-0"
@@ -191,7 +192,9 @@ function PortfolioAssetBalanceRow({
         )}
         <div className="min-w-0 flex-1">
           <p className="truncate text-base font-medium">
-            {leading === 'chain' ? entry.chain.chain.displayName : entry.asset.metadata.symbol}
+            {leading === 'chain'
+              ? entry.chain.chain.displayName
+              : formatSymbol(entry.asset.metadata.symbol)}
           </p>
           {showUnitPrice && (
             <UnitPrice
@@ -217,12 +220,15 @@ function PortfolioAssetBalanceRow({
           <p className="mt-0.5 break-all text-xs text-muted">
             {balancesHidden
               ? '••••'
-              : `${formatDisplayAmount(amount)} ${entry.asset.metadata.symbol}`}
+              : `${formatDisplayAmount(amount)} ${formatSymbol(entry.asset.metadata.symbol)}`}
           </p>
         </div>
       </button>
       {!balancesHidden && (
-        <PendingAssetAmount amount={pendingAmount} symbol={entry.asset.metadata.symbol} />
+        <PendingAssetAmount
+          amount={pendingAmount}
+          symbol={formatSymbol(entry.asset.metadata.symbol)}
+        />
       )}
     </div>
   )
@@ -260,8 +266,8 @@ export function PortfolioAssetGroupCard({
         type="button"
         aria-label={
           directAsset
-            ? `View ${group.symbol} details on ${group.entries[0]?.chain.chain.displayName}`
-            : `${expanded ? 'Collapse' : 'Expand'} ${group.symbol} networks`
+            ? `View ${formatSymbol(group.symbol)} details on ${group.entries[0]?.chain.chain.displayName}`
+            : `${expanded ? 'Collapse' : 'Expand'} ${formatSymbol(group.symbol)} networks`
         }
         aria-expanded={directAsset ? undefined : expanded}
         onClick={() =>
@@ -277,7 +283,7 @@ export function PortfolioAssetGroupCard({
           icon={
             <TokenIcon
               assetId={group.representativeAssetId}
-              symbol={group.symbol}
+              symbol={formatSymbol(group.symbol)}
               icon={group.iconUrl}
               blockchain={
                 directAsset && group.entries[0]
@@ -294,7 +300,7 @@ export function PortfolioAssetGroupCard({
           }
           title={
             <>
-              <p className="truncate text-base font-medium">{group.symbol}</p>
+              <p className="truncate text-base font-medium">{formatSymbol(group.symbol)}</p>
               {!group.bundled && (
                 <span className="shrink-0 rounded bg-white/8 px-1.5 py-0.5 text-[9px] text-muted">
                   Custom
@@ -324,7 +330,9 @@ export function PortfolioAssetGroupCard({
                 </p>
               )}
               <p className="mt-0.5 break-all text-xs text-muted">
-                {balancesHidden ? '••••' : `${formatDisplayAmount(totalAmount)} ${group.symbol}`}
+                {balancesHidden
+                  ? '••••'
+                  : `${formatDisplayAmount(totalAmount)} ${formatSymbol(group.symbol)}`}
               </p>
             </>
           }
@@ -338,11 +346,13 @@ export function PortfolioAssetGroupCard({
           />
         )}
       </button>
-      {!balancesHidden && <PendingAssetAmount amount={pendingAmount} symbol={group.symbol} />}
+      {!balancesHidden && (
+        <PendingAssetAmount amount={pendingAmount} symbol={formatSymbol(group.symbol)} />
+      )}
       {!directAsset && expanded && (
         <div
           role="region"
-          aria-label={`${group.symbol} network balances`}
+          aria-label={`${formatSymbol(group.symbol)} network balances`}
           className="divide-y divide-border/70 border-t border-border/70"
         >
           {group.entries.map(entry => (

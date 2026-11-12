@@ -22,7 +22,7 @@ import {
 
 import { resolveChainIconAlias } from '@/lib/chain-icon'
 import { cn } from '@/lib/utils'
-import { formatSortAddress } from '@/lib/format'
+import { formatSortAddress, formatSymbol } from '@/lib/format'
 import { getAssetDetailCategories, getZcashPrivacyBalanceDisplay } from './asset-detail-balance'
 import { getChainEndpointRuntimeKey } from '@/core/chains/chain-endpoint-settings'
 import { useWalletStore } from '@/store/wallet-store'
@@ -724,13 +724,13 @@ export function AssetDetail() {
           <div className="flex items-center gap-3 py-5">
             <TokenIcon
               assetId={asset.asset.id}
-              symbol={asset.metadata.symbol}
+              symbol={formatSymbol(asset.metadata.symbol)}
               icon={asset.metadata.iconUrl}
               size={48}
             />
             <div>
-              <p className="font-medium">{asset.metadata.name}</p>
-              <p className="text-sm text-muted">{asset.metadata.symbol}</p>
+              <p className="font-medium">{formatSymbol(asset.metadata.name)}</p>
+              <p className="text-sm text-muted">{formatSymbol(asset.metadata.symbol)}</p>
             </div>
           </div>
           <dl className="divide-y divide-border/60">
@@ -819,7 +819,7 @@ export function AssetDetail() {
         }}
       />
       <PageHeader
-        title={asset.metadata.symbol}
+        title={formatSymbol(asset.metadata.symbol)}
         showBack
         onBack={goBack}
         action={{
@@ -838,7 +838,7 @@ export function AssetDetail() {
           <div data-testid="asset-detail-token-icon">
             <TokenIcon
               assetId={asset.asset.id}
-              symbol={asset.metadata.symbol}
+              symbol={formatSymbol(asset.metadata.symbol)}
               icon={asset.metadata.iconUrl}
               blockchain={chainAlias}
               size={52}
@@ -849,10 +849,10 @@ export function AssetDetail() {
             title={
               displayRaw === null
                 ? undefined
-                : `${formatBaseUnitAmount(displayRaw, asset.metadata.decimals)} ${asset.metadata.symbol}`
+                : `${formatBaseUnitAmount(displayRaw, asset.metadata.decimals)} ${formatSymbol(asset.metadata.symbol)}`
             }
           >
-            {detailAmount} {asset.metadata.symbol}
+            {detailAmount} {formatSymbol(asset.metadata.symbol)}
           </p>
           <p className="mt-2 text-xs text-muted">Total assets</p>
           {priceStatus === 'loading' && detailFiat === null ? (
@@ -942,7 +942,7 @@ export function AssetDetail() {
                     balance={
                       raw === null
                         ? '—'
-                        : `${formatDisplayTokenAmount(raw, asset.metadata.decimals)} ${asset.metadata.symbol}`
+                        : `${formatDisplayTokenAmount(raw, asset.metadata.decimals)} ${formatSymbol(asset.metadata.symbol)}`
                     }
                     fiat={formatBalanceFiat(categories.fiat[domain])}
                   />
@@ -1064,9 +1064,9 @@ export function AssetDetail() {
               <span className="text-muted">Pending</span>
               <span
                 className="min-w-0 break-all text-right text-sm"
-                title={`${formatBaseUnitAmount(asset.balance.pendingRaw, asset.metadata.decimals)} ${asset.metadata.symbol}`}
+                title={`${formatBaseUnitAmount(asset.balance.pendingRaw, asset.metadata.decimals)} ${formatSymbol(asset.metadata.symbol)}`}
               >
-                {display.pending} {asset.metadata.symbol}
+                {display.pending} {formatSymbol(asset.metadata.symbol)}
               </span>
             </div>
           </section>

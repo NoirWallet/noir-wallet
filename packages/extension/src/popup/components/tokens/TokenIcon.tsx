@@ -3,6 +3,7 @@ import zecIcon from '@/images/zec.svg'
 import usdcIcon from '@/images/usdc.svg'
 import ethIcon from '@/images/eth.svg'
 import { cn } from '@/lib/utils'
+import { formatSymbol } from '@/lib/format'
 import { findBundledWalletMarketAssetId, isBundledWalletAsset } from './token-display-policy'
 import { MARKET_ASSETS } from '@/config/asset-market-assets'
 import { formatConfiguredChainIconUrl } from '@/config/icons'
@@ -57,7 +58,7 @@ export function TokenIcon({
   showBadge,
   badgeType
 }: TokenIconProps) {
-  const symbol = token?.symbol || symbolProp || ''
+  const symbol = formatSymbol(token?.symbol || symbolProp)
   const assetId = token?.assetId || assetIdProp
   const blockchain = token?.blockchain || blockchainProp
   const bundledIconForSymbol = bundledTokenIcons[symbol.toUpperCase()]

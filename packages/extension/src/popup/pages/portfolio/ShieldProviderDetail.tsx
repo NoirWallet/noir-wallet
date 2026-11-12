@@ -34,6 +34,7 @@ import {
   depositSourceNetworks
 } from '@/popup/services/shield-deposit-options'
 import { summarizeNearConfidentialHoldings } from '@/popup/services/near-confidential-holdings'
+import { formatSymbol } from '@/lib/format'
 import { getPrivateTransferChainIds } from '@/popup/services/private-balance-transfer'
 import { buildShieldProviderGroups, type ShieldProvider } from '@/popup/services/asset-domains'
 import { NearConfidentialHoldingRow } from '@/popup/components/portfolio/NearConfidentialHoldingRow'
@@ -607,7 +608,7 @@ function ShieldProviderContent() {
               />
               <div className="min-w-0 flex-1">
                 <DialogTitle className="truncate text-base font-medium">
-                  {selectedNearEntry.asset.symbol ?? 'Unknown token'}
+                  {formatSymbol(selectedNearEntry.asset.symbol) || 'Unknown token'}
                 </DialogTitle>
                 <DialogDescription className="sr-only">Confidential holding</DialogDescription>
                 <p className="text-xs text-muted">
@@ -725,7 +726,7 @@ function ShieldProviderContent() {
               />
               <div className="min-w-0 flex-1">
                 <DialogTitle className="text-base font-medium">
-                  {selectedEntry.asset.metadata.symbol}
+                  {formatSymbol(selectedEntry.asset.metadata.symbol)}
                 </DialogTitle>
                 <DialogDescription className="sr-only">
                   Shield balance and transfer actions

@@ -15,6 +15,7 @@ import {
   formatTokenQuantity
 } from '@/lib/number-format'
 import { resolveChainIconAlias } from '@/lib/chain-icon'
+import { formatSymbol } from '@/lib/format'
 import { useWalletStore } from '@/store/wallet-store'
 import { useSettingsStore } from '@/store/settings-store'
 import { useActiveAccountNetworks } from '@/popup/hooks/useActiveAccountNetworks'
@@ -529,7 +530,7 @@ export function ShieldWithdrawForm({
           title="Confirm Send"
           asset={{
             assetId: prepared.source.asset.asset.id,
-            symbol: prepared.source.asset.metadata.symbol,
+            symbol: formatSymbol(prepared.source.asset.metadata.symbol),
             icon: prepared.source.asset.metadata.iconUrl
           }}
           amount={prepared.amount}
@@ -541,7 +542,7 @@ export function ShieldWithdrawForm({
               source={{
                 asset: {
                   assetId: prepared.source.asset.asset.id,
-                  symbol: prepared.source.asset.metadata.symbol,
+                  symbol: formatSymbol(prepared.source.asset.metadata.symbol),
                   icon: prepared.source.asset.metadata.iconUrl
                 },
                 amount: prepared.amount
@@ -549,7 +550,7 @@ export function ShieldWithdrawForm({
               destination={{
                 asset: {
                   assetId: prepared.destination.asset.asset.id,
-                  symbol: prepared.destination.asset.metadata.symbol,
+                  symbol: formatSymbol(prepared.destination.asset.metadata.symbol),
                   icon: prepared.destination.asset.metadata.iconUrl
                 },
                 amount: output
@@ -578,7 +579,7 @@ export function ShieldWithdrawForm({
               content: (
                 <AmountDisplay
                   value={minimum}
-                  symbol={prepared.destination.asset.metadata.symbol}
+                  symbol={formatSymbol(prepared.destination.asset.metadata.symbol)}
                 />
               )
             },
@@ -600,7 +601,7 @@ export function ShieldWithdrawForm({
                           prepared.review.sourceNetworkFee.raw,
                           prepared.review.sourceNetworkFee.decimals
                         )}
-                        symbol={prepared.review.sourceNetworkFee.symbol}
+                        symbol={formatSymbol(prepared.review.sourceNetworkFee.symbol)}
                         profile="fee"
                       />
                     )
@@ -656,7 +657,7 @@ export function ShieldWithdrawForm({
                 ariaLabel="Send amount"
                 disabled={busy}
                 available={availableRaw}
-                symbol={displayedAsset?.metadata.symbol ?? ''}
+                symbol={formatSymbol(displayedAsset?.metadata.symbol)}
                 hero
                 value={amount}
                 onChange={value => {
@@ -678,12 +679,12 @@ export function ShieldWithdrawForm({
                 {displayedAsset && (
                   <TokenIcon
                     assetId={displayedAsset.asset.id}
-                    symbol={displayedAsset.metadata.symbol}
+                    symbol={formatSymbol(displayedAsset.metadata.symbol)}
                     icon={displayedAsset.metadata.iconUrl}
                     size={24}
                   />
                 )}
-                {displayedAsset?.metadata.symbol ?? 'Token'}
+                {displayedAsset ? formatSymbol(displayedAsset.metadata.symbol) : 'Token'}
                 <Icon icon="lucide:chevron-down" width={16} height={16} />
               </button>
             }
@@ -789,7 +790,7 @@ export function ShieldWithdrawForm({
                     preview.amountOutRaw,
                     destination.asset.metadata.decimals
                   )}
-                  symbol={destination.asset.metadata.symbol}
+                  symbol={formatSymbol(destination.asset.metadata.symbol)}
                 />
               )}
             </div>
@@ -806,7 +807,7 @@ export function ShieldWithdrawForm({
                 Network fee{' '}
                 <span className="text-foreground">
                   {preview?.sourceNetworkFee
-                    ? `${formatBaseUnitDecimalAmount(preview.sourceNetworkFee.raw, preview.sourceNetworkFee.decimals)} ${preview.sourceNetworkFee.symbol}`
+                    ? `${formatBaseUnitDecimalAmount(preview.sourceNetworkFee.raw, preview.sourceNetworkFee.decimals)} ${formatSymbol(preview.sourceNetworkFee.symbol)}`
                     : '—'}
                 </span>
               </span>
@@ -819,7 +820,7 @@ export function ShieldWithdrawForm({
                     preview.minimumOutputRaw,
                     destination.asset.metadata.decimals
                   )}
-                  symbol={destination.asset.metadata.symbol}
+                  symbol={formatSymbol(destination.asset.metadata.symbol)}
                 />
               </div>
             )}
@@ -1005,12 +1006,14 @@ export function ShieldWithdrawForm({
               >
                 <TokenIcon
                   assetId={item.asset.asset.id}
-                  symbol={item.asset.metadata.symbol}
+                  symbol={formatSymbol(item.asset.metadata.symbol)}
                   icon={item.asset.metadata.iconUrl}
                   size={30}
                 />
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm">{item.asset.metadata.symbol}</span>
+                  <span className="block truncate text-sm">
+                    {formatSymbol(item.asset.metadata.symbol)}
+                  </span>
                   {picker === 'source' && (
                     <span className="block truncate text-xs text-muted">
                       {item.chain.chain.displayName}

@@ -1,4 +1,5 @@
 import { formatFiatAmount, formatTokenPrice, formatTokenQuantity } from '@/lib/number-format'
+import { formatSymbol } from '@/lib/format'
 import type { NearConfidentialHolding } from '@/popup/services/near-confidential-holdings'
 import type { PortfolioChainView } from '@/core/portfolio'
 import { resolveChainIconAlias } from '@/lib/chain-icon'
@@ -20,13 +21,13 @@ export function NearConfidentialHoldingRow({
   readonly onClick?: () => void
 }) {
   const { asset } = entry
-  const symbol = asset.symbol ?? 'Unknown token'
+  const symbol = formatSymbol(asset.symbol) || 'Unknown token'
   const price = entry.priceUsd ? formatTokenPrice(entry.priceUsd, { showSign: true }) : '—'
   const content = (
     <>
       <TokenIcon
         assetId={asset.assetId ?? asset.protocolAssetId}
-        symbol={asset.symbol ?? '?'}
+        symbol={symbol}
         icon={asset.iconUrl}
         blockchain={
           chain ? resolveChainIconAlias(chain.family, chain.displayName, chain.id) : undefined

@@ -7,7 +7,7 @@ import type {
   TransactionSegmentEvidence,
   TransactionSegmentTarget
 } from '@/core/transactions/domain'
-import { formatSortAddress } from '@/lib/format'
+import { formatSortAddress, formatSymbol } from '@/lib/format'
 import { parseAssetId } from '@/core/chains/registry'
 import type {
   ActivityAssetMetadata,
@@ -408,7 +408,7 @@ export function resolveActivityDisplayAmount(
   if (!metadata) return undefined
   return Object.freeze({
     assetId: amount.assetId,
-    symbol: metadata.symbol,
+    symbol: formatSymbol(metadata.symbol),
     formatted: formatActivityTokenAmount(amount.amountRaw, metadata.decimals),
     exact: formatBaseUnitDecimalAmount(amount.amountRaw, metadata.decimals),
     ...(metadata.iconUrl ? { iconUrl: metadata.iconUrl } : {})
@@ -889,13 +889,14 @@ function getActivityTitle(item: ActivityItem, chainId?: string): string {
 export function getActivityRowTextPresentation(
   item: ActivityItem,
   primarySymbol: string | undefined,
-  counterSymbol: string | undefined,
+  rawCounterSymbol: string | undefined,
   networkName: string,
   chainId?: string
 ): ActivityRowTextPresentation {
   const interaction = getActivityInteractionPresentation(item, chainId)
   const title = interaction?.title ?? getActivityTitle(item, chainId)
-  const symbol = primarySymbol?.trim()
+  const symbol = formatSymbol(primarySymbol)
+  const counterSymbol = formatSymbol(rawCounterSymbol)
   const sender = item.snapshot?.sender?.address
   const recipient = getActivityTransferRecipient(item)
   const direction = item.snapshot?.direction

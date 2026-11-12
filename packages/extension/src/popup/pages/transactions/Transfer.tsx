@@ -4,7 +4,12 @@ import { Icon } from '@iconify/react'
 import type { PortfolioAssetView, PortfolioChainView } from '@/core/portfolio'
 import type { AssetPriceReadModel } from '@/core/prices'
 import { formatBaseUnitAmount, formatTokenQuantity, formatFiatAmount } from '@/lib/number-format'
-import { formatSortAddress, formatWalletNameAtIndex, getAccountDisplayName } from '@/lib/format'
+import {
+  formatSortAddress,
+  formatSymbol,
+  formatWalletNameAtIndex,
+  getAccountDisplayName
+} from '@/lib/format'
 import { getChainEndpointRuntimeKey } from '@/core/chains/chain-endpoint-settings'
 import { resolveChainIconAlias } from '@/lib/chain-icon'
 import { cn } from '@/lib/utils'
@@ -797,7 +802,11 @@ function TransferForm() {
     nativeFeeAsset && from !== 'shield' ? getTransferDomainBalanceRaw(nativeFeeAsset, from) : null
   const tokenFeeBalanceError =
     selected?.asset.asset.kind === 'token' && nativeFeeAsset && nativeFeeRaw !== null
-      ? getEvmTokenFeeBalanceError('token', nativeFeeRaw, nativeFeeAsset.metadata.symbol)
+      ? getEvmTokenFeeBalanceError(
+          'token',
+          nativeFeeRaw,
+          formatSymbol(nativeFeeAsset.metadata.symbol)
+        )
       : null
   const source =
     selected?.chain.chain.family === 'evm'
@@ -1245,7 +1254,7 @@ function TransferForm() {
           })
     )
   }
-  const symbol = selected?.asset.metadata.symbol ?? ''
+  const symbol = formatSymbol(selected?.asset.metadata.symbol)
   const sourceBalance =
     selected && (shieldPair ? shieldSourceRaw : sourceRaw) !== null
       ? formatBaseUnitAmount(
@@ -1577,7 +1586,7 @@ function TransferForm() {
               content: (
                 <AmountDisplay
                   value={output}
-                  symbol={targetAsset?.asset.metadata.symbol ?? symbol}
+                  symbol={targetAsset ? formatSymbol(targetAsset.asset.metadata.symbol) : symbol}
                 />
               )
             },
@@ -1586,7 +1595,7 @@ function TransferForm() {
               content: (
                 <AmountDisplay
                   value={minimum}
-                  symbol={targetAsset?.asset.metadata.symbol ?? symbol}
+                  symbol={targetAsset ? formatSymbol(targetAsset.asset.metadata.symbol) : symbol}
                 />
               )
             },
@@ -1617,7 +1626,7 @@ function TransferForm() {
                       </span>
                       <AmountDisplay
                         value={formatBaseUnitAmount(networkFee.raw, networkFee.decimals)}
-                        symbol={networkFee.symbol}
+                        symbol={formatSymbol(networkFee.symbol)}
                         profile="fee"
                       />
                     </span>
@@ -1717,7 +1726,7 @@ function TransferForm() {
             {selected || pendingAssetHint ? (
               <TokenIcon
                 assetId={selected?.asset.asset.id ?? selectedAssetId!}
-                symbol={symbol || pendingAssetHint!.symbol}
+                symbol={symbol || formatSymbol(pendingAssetHint!.symbol)}
                 icon={selected?.asset.metadata.iconUrl ?? pendingAssetHint?.iconUrl}
                 {...(from !== 'shield' ? { blockchain: networkIcon } : {})}
                 size={26}
@@ -1727,7 +1736,7 @@ function TransferForm() {
             )}
             <span className="max-w-32 truncate">
               {symbol ||
-                pendingAssetHint?.symbol ||
+                formatSymbol(pendingAssetHint?.symbol) ||
                 (loadState === 'loading' ? '…' : 'Select asset')}
             </span>
             <Icon icon="lucide:chevron-down" width={14} height={14} />
@@ -1995,7 +2004,7 @@ function TransferForm() {
                 >
                   <TokenIcon
                     assetId={item.asset.asset.id}
-                    symbol={item.asset.metadata.symbol}
+                    symbol={formatSymbol(item.asset.metadata.symbol)}
                     icon={item.asset.metadata.iconUrl}
                     blockchain={resolveChainIconAlias(
                       item.chain.chain.family,
@@ -2005,7 +2014,9 @@ function TransferForm() {
                     size={32}
                   />
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate text-base">{item.asset.metadata.symbol}</span>
+                    <span className="block truncate text-base">
+                      {formatSymbol(item.asset.metadata.symbol)}
+                    </span>
                     <span className="block truncate text-xs text-muted">
                       {item.chain.chain.displayName}
                     </span>

@@ -8,7 +8,7 @@ import {
   formatBaseUnitDecimalAmount,
   formatTokenQuantity
 } from '@/lib/number-format'
-import { formatSortAddress } from '@/lib/format'
+import { formatSortAddress, formatSymbol } from '@/lib/format'
 import { useWalletStore } from '@/store/wallet-store'
 import { useSettingsStore } from '@/store/settings-store'
 import { useSwapPreferences } from '@/store/swap-store'
@@ -546,7 +546,7 @@ function ShieldSwapForm({ onStateChange }: ShieldSwapPageProps) {
           title="Confirm Swap"
           asset={{
             assetId: prepared.from.asset.asset.id,
-            symbol: prepared.from.asset.metadata.symbol,
+            symbol: formatSymbol(prepared.from.asset.metadata.symbol),
             icon: prepared.from.asset.metadata.iconUrl
           }}
           amount={prepared.amount}
@@ -556,7 +556,7 @@ function ShieldSwapForm({ onStateChange }: ShieldSwapPageProps) {
               source={{
                 asset: {
                   assetId: prepared.from.asset.asset.id,
-                  symbol: prepared.from.asset.metadata.symbol,
+                  symbol: formatSymbol(prepared.from.asset.metadata.symbol),
                   icon: prepared.from.asset.metadata.iconUrl
                 },
                 amount: prepared.amount
@@ -564,7 +564,7 @@ function ShieldSwapForm({ onStateChange }: ShieldSwapPageProps) {
               destination={{
                 asset: {
                   assetId: prepared.to.asset.asset.id,
-                  symbol: prepared.to.asset.metadata.symbol,
+                  symbol: formatSymbol(prepared.to.asset.metadata.symbol),
                   icon: prepared.to.asset.metadata.iconUrl
                 },
                 amount: output
@@ -574,7 +574,12 @@ function ShieldSwapForm({ onStateChange }: ShieldSwapPageProps) {
           rows={[
             {
               label: 'Minimum receive',
-              content: <AmountDisplay value={minimum} symbol={prepared.to.asset.metadata.symbol} />
+              content: (
+                <AmountDisplay
+                  value={minimum}
+                  symbol={formatSymbol(prepared.to.asset.metadata.symbol)}
+                />
+              )
             },
             {
               label: 'Service fee',
@@ -585,7 +590,7 @@ function ShieldSwapForm({ onStateChange }: ShieldSwapPageProps) {
               content: (
                 <AmountDisplay
                   value={feeAmount}
-                  symbol={prepared.to.asset.metadata.symbol}
+                  symbol={formatSymbol(prepared.to.asset.metadata.symbol)}
                   profile="fee"
                 />
               )
@@ -693,7 +698,8 @@ function ShieldSwapForm({ onStateChange }: ShieldSwapPageProps) {
                 <div className="flex items-center justify-between gap-3 py-2.5">
                   <span className="shrink-0 text-muted">Rate</span>
                   <span className="min-w-0 truncate text-right tabular-nums">
-                    1 {from.asset.metadata.symbol} = {previewRate} {to.asset.metadata.symbol}
+                    1 {formatSymbol(from.asset.metadata.symbol)} = {previewRate}{' '}
+                    {formatSymbol(to.asset.metadata.symbol)}
                   </span>
                 </div>
               )}
@@ -717,7 +723,7 @@ function ShieldSwapForm({ onStateChange }: ShieldSwapPageProps) {
                       preview.minimumOutputRaw,
                       to.asset.metadata.decimals
                     )}
-                    symbol={to.asset.metadata.symbol}
+                    symbol={formatSymbol(to.asset.metadata.symbol)}
                   />
                 </span>
               </div>
@@ -828,12 +834,14 @@ function ShieldSwapForm({ onStateChange }: ShieldSwapPageProps) {
               >
                 <TokenIcon
                   assetId={asset.asset.asset.id}
-                  symbol={asset.asset.metadata.symbol}
+                  symbol={formatSymbol(asset.asset.metadata.symbol)}
                   icon={asset.asset.metadata.iconUrl}
                   size={32}
                 />
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm">{asset.asset.metadata.symbol}</span>
+                  <span className="block truncate text-sm">
+                    {formatSymbol(asset.asset.metadata.symbol)}
+                  </span>
                   <span className="block truncate text-xs text-muted">
                     Origin: {asset.chain.chain.displayName}
                     {originIdentifiers.get(asset.asset.asset.id)

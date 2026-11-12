@@ -14,7 +14,7 @@ import {
 import type { ChainDefinition } from '@/core/chains/registry'
 import { getZcashChainId } from '@/core/chains/registry'
 import { resolveChainIconAlias } from '@/lib/chain-icon'
-import { formatSortAddress } from '@/lib/format'
+import { formatSortAddress, formatSymbol } from '@/lib/format'
 import { useActiveAccountNetworks } from '@/popup/hooks/useActiveAccountNetworks'
 import { resolveEffectiveActiveAccountIdentity } from '@/popup/lib/effective-active-account'
 import { getPrivateTransferChainIds } from '@/popup/services/private-balance-transfer'
@@ -599,7 +599,7 @@ function ShieldDepositContent() {
                 {near ? (
                   <TokenIcon
                     assetId={viewedRecord.source.assetId}
-                    symbol={viewedRecord.sourceSymbol}
+                    symbol={formatSymbol(viewedRecord.sourceSymbol)}
                     icon={viewedToken ? resolveSwapTokenIconUrl(viewedToken) : undefined}
                     size={40}
                     blockchain={viewedNetwork ? depositChainIconAlias(viewedNetwork) : undefined}
@@ -993,7 +993,7 @@ function ShieldDepositContent() {
                 {displayedToken ? (
                   <TokenIcon
                     assetId={displayedToken.assetId}
-                    symbol={displayedToken.symbol}
+                    symbol={formatSymbol(displayedToken.symbol)}
                     icon={resolveSwapTokenIconUrl(displayedToken)}
                     size={32}
                   />
@@ -1008,7 +1008,7 @@ function ShieldDepositContent() {
                 <span className="min-w-0 flex-1">
                   <span className="block text-xs text-muted">Receive Token</span>
                   <span className="block truncate text-sm">
-                    {displayedToken?.symbol ?? 'Select token'}
+                    {displayedToken ? formatSymbol(displayedToken.symbol) : 'Select token'}
                   </span>
                 </span>
                 <Icon icon="lucide:chevron-down" width={17} height={17} />
@@ -1251,12 +1251,14 @@ function ShieldDepositContent() {
                   >
                     <TokenIcon
                       assetId={choice.token.assetId}
-                      symbol={choice.token.symbol}
+                      symbol={formatSymbol(choice.token.symbol)}
                       icon={resolveSwapTokenIconUrl(choice.token)}
                       size={32}
                     />
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm">{choice.token.symbol}</span>
+                      <span className="block truncate text-sm">
+                        {formatSymbol(choice.token.symbol)}
+                      </span>
                       {choice.distinguish && (
                         <span
                           className="block truncate text-xs text-muted"

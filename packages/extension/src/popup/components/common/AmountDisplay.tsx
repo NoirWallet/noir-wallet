@@ -1,4 +1,5 @@
 import { formatFeeAmount, formatReviewAmount } from '@/lib/number-format'
+import { formatSymbol } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { CopyFeedbackIcon, CopyToast, useCopyToClipboard } from './CopyToast'
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover'
@@ -14,12 +15,13 @@ interface AmountDisplayProps {
 
 export function AmountDisplay({
   value,
-  symbol,
+  symbol: rawSymbol,
   prefix = '',
   profile = 'review',
   className,
   showDetails = true
 }: AmountDisplayProps) {
+  const symbol = formatSymbol(rawSymbol)
   const { copyToClipboard, showToast, copiedKey } = useCopyToClipboard()
   const review = formatReviewAmount(value)
   const display = profile === 'fee' ? formatFeeAmount(value) : review.display
