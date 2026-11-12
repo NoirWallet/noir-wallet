@@ -65,7 +65,7 @@ function DialogContent({
   const closeButton = showCloseButton ? (
     <DialogPrimitive.Close
       data-slot="dialog-close"
-      className="ring-offset-background focus:ring-ring data-[state=open]:bg-accent data-[state=open]:text-muted-foreground flex size-8 shrink-0 items-center justify-center rounded-full opacity-70 transition-opacity hover:opacity-100 focus:ring-2 focus:ring-offset-2 focus:outline-hidden disabled:pointer-events-none [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4"
+      className="ring-offset-background focus-visible:ring-ring absolute right-4 top-4 z-10 flex size-8 shrink-0 items-center justify-center rounded-full bg-inherit text-muted-foreground transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-offset-2 focus:outline-hidden disabled:pointer-events-none [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4"
     >
       <svg
         aria-hidden="true"
@@ -91,7 +91,7 @@ function DialogContent({
         className={cn(
           'bg-background data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 fixed z-50 w-full shadow-lg duration-200 outline-none [&>*]:min-w-0',
           scrollableBody
-            ? 'flex max-h-[calc(100dvh-1rem)] flex-col overflow-hidden p-0'
+            ? 'flex max-h-[calc(100dvh-1rem)] flex-col gap-4 overflow-hidden p-6'
             : 'grid gap-4 overflow-hidden p-6',
           positionClasses[position],
           surfaceClassName
@@ -99,22 +99,13 @@ function DialogContent({
         {...props}
       >
         {scrollableBody ? (
-          <>
-            {closeButton ? (
-              <div className="sticky top-0 z-10 flex shrink-0 justify-end border-b border-border/40 bg-background px-6 pb-3 pt-6">
-                {closeButton}
-              </div>
-            ) : null}
-            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 pb-6 pt-4">
-              {children}
-            </div>
-          </>
-        ) : (
-          <>
+          <div className="grid min-h-0 flex-1 content-start gap-[inherit] overflow-y-auto overscroll-contain">
             {children}
-            {closeButton ? <div className="absolute top-4 right-4">{closeButton}</div> : null}
-          </>
+          </div>
+        ) : (
+          children
         )}
+        {closeButton}
       </DialogPrimitive.Content>
     </DialogPortal>
   )
