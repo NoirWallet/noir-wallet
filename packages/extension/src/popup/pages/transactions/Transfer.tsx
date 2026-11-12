@@ -1619,7 +1619,7 @@ function TransferForm() {
       const raw = parseDisplayUnitAmount(currentAmount, selected.asset.metadata.decimals)
       const quantity = Number(formatBaseUnitAmount(raw, selected.asset.metadata.decimals))
       if (!Number.isFinite(quantity) || quantity <= 0) return null
-      return formatFiatAmount(quantity * usd)
+      return formatFiatAmount(quantity * usd, { showSign: true })
     } catch {
       return null
     }
