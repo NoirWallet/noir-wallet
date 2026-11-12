@@ -299,6 +299,14 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
     reviewing: false,
     busy: false
   })
+  const handleShieldFormStateChange = useCallback(
+    (next: { readonly reviewing: boolean; readonly busy: boolean }) => {
+      setShieldFormState(previous =>
+        previous.reviewing === next.reviewing && previous.busy === next.busy ? previous : next
+      )
+    },
+    []
+  )
   const crossChainSendRequested = purpose === 'cross-chain-send'
   const requestedSourceAssetId = searchParams.get('source')
   const requestedDestinationAssetId = searchParams.get('destination')
@@ -367,6 +375,17 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
   const currentNetwork = useWalletStore(state => state.currentNetwork)
   const currentWalletId = useWalletStore(state => state.currentWalletId)
   const currentAccountId = useWalletStore(state => state.currentAccountId)
+  const shieldPanelScope = `${currentNetwork}:${currentWalletId}:${currentAccountId}`
+  const [visitedShieldScope, setVisitedShieldScope] = useState<string | null>(null)
+  useEffect(() => {
+    setVisitedShieldScope(previous =>
+      confidentialShieldSwapActive
+        ? shieldPanelScope
+        : previous === shieldPanelScope
+          ? previous
+          : null
+    )
+  }, [confidentialShieldSwapActive, shieldPanelScope])
   const legacyHardwareWallet = useWalletStore(state =>
     isZcashHardwareKeySource(state.getCurrentWallet()?.keySource)
   )
@@ -5629,13 +5648,23 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
           className="shrink-0 justify-center px-4 pb-3 pt-3"
         />
       )}
-      {ordinarySwapRequested && confidentialShieldSwapActive ? (
-        <ShieldSwapPage
-          amountFocusToken={amountFocusToken}
-          onStateChange={setShieldFormState}
-          onSelectNativeZecSwap={activateShieldNativeZecSwap}
-        />
-      ) : legacyShieldSwapRequested || publicPrivacySendUnavailable || crossChainSendUnavailable ? (
+      {ordinarySwapRequested &&
+        (visitedShieldScope === shieldPanelScope || confidentialShieldSwapActive) && (
+          <div
+            hidden={!confidentialShieldSwapActive}
+            className={confidentialShieldSwapActive ? 'flex min-h-0 flex-1 flex-col' : undefined}
+          >
+            <ShieldSwapPage
+              active={confidentialShieldSwapActive}
+              amountFocusToken={amountFocusToken}
+              onStateChange={handleShieldFormStateChange}
+              onSelectNativeZecSwap={activateShieldNativeZecSwap}
+            />
+          </div>
+        )}
+      {ordinarySwapRequested && confidentialShieldSwapActive ? null : legacyShieldSwapRequested ||
+        publicPrivacySendUnavailable ||
+        crossChainSendUnavailable ? (
         <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-8 text-center">
           {crossChainSendUnavailable && swap.catalogError ? (
             <InlineError

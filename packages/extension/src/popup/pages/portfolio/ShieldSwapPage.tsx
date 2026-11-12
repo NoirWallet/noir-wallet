@@ -68,6 +68,8 @@ import {
   SHIELD_SWAP_ZEC_NATIVE_SELECTION_ID
 } from '@/popup/services/shield-swap-zec-sources'
 
+const SHIELD_BALANCE_REUSE_MS = 30_000
+
 function shieldOriginIdentifier(
   asset: ShieldFundingAsset,
   options: readonly ShieldFundingAsset[]
@@ -98,6 +100,7 @@ function shieldOriginIdentifier(
 }
 
 interface ShieldSwapPageProps {
+  readonly active: boolean
   readonly amountFocusToken?: number
   readonly onStateChange: (state: { readonly reviewing: boolean; readonly busy: boolean }) => void
   readonly onSelectNativeZecSwap?: () => void
@@ -111,6 +114,7 @@ export function ShieldSwapPage(props: ShieldSwapPageProps) {
 }
 
 function ShieldSwapForm({
+  active,
   amountFocusToken,
   onStateChange,
   onSelectNativeZecSwap
@@ -147,6 +151,8 @@ function ShieldSwapForm({
   const managedAssets = useMemo(() => resolveManagedIntentsCatalog(tokens), [tokens])
   const [balances, setBalances] = useState<readonly ConfidentialBalance[] | null>(null)
   const [balanceScope, setBalanceScope] = useState('')
+  const balanceRefreshedAt = useRef(0)
+  const balanceRequest = useRef<{ scope: string; promise: Promise<void> } | null>(null)
   const [fromId, setFromId] = useState<string | null>(routeSourceAssetId)
   const [toId, setToId] = useState<string | null>(routeDestinationAssetId)
   const [amount, setAmount] = useState('')
@@ -173,8 +179,8 @@ function ShieldSwapForm({
   const confirmationAttempt = useRef<string | null>(null)
 
   useLayoutEffect(() => {
-    onStateChange({ reviewing: Boolean(prepared), busy })
-  }, [prepared, busy, onStateChange])
+    onStateChange({ reviewing: active && Boolean(prepared), busy: active && busy })
+  }, [active, prepared, busy, onStateChange])
 
   useLayoutEffect(() => () => onStateChange({ reviewing: false, busy: false }), [onStateChange])
 
@@ -186,8 +192,12 @@ function ShieldSwapForm({
   }, [])
 
   useEffect(() => {
-    if (!providerIsNear) navigate('/shield-funds', { replace: true })
-  }, [providerIsNear, navigate])
+    if (active && !providerIsNear) navigate('/shield-funds', { replace: true })
+  }, [active, providerIsNear, navigate])
+
+  useEffect(() => {
+    if (!active) setPicker(null)
+  }, [active])
 
   useEffect(() => {
     setFromId(routeSourceAssetId)
@@ -204,15 +214,16 @@ function ShieldSwapForm({
   }, [scopeKey, routeSourceAssetId, routeDestinationAssetId])
 
   useEffect(() => {
-    let active = true
+    if (!active) return
+    let current = true
     const load = async () => {
       try {
         if (getCachedTokens().length === 0) {
           const cached = await swapTokenCatalogClient.readCached()
-          if (active && cached.length) setTokens(cached)
+          if (current && cached.length) setTokens(cached)
         }
         const refreshed = await fetchSwapTokens()
-        if (active && refreshed.length) {
+        if (current && refreshed.length) {
           setTokens(refreshed)
         }
       } catch {
@@ -221,17 +232,26 @@ function ShieldSwapForm({
     }
     void load()
     return () => {
-      active = false
+      current = false
     }
-  }, [network])
+  }, [active, network])
 
   useEffect(() => {
-    let active = true
-    setBalances(null)
-    setBalanceScope('')
-    if (!account || !canManageNear) return
+    if (!active || !account || !canManageNear || balanceRequest.current?.scope === scopeKey) return
+    const age = Date.now() - balanceRefreshedAt.current
+    if (
+      balanceScope === scopeKey &&
+      balanceRefreshedAt.current > 0 &&
+      age >= 0 &&
+      age < SHIELD_BALANCE_REUSE_MS
+    )
+      return
+    // Retain displayed balances during catch-up. Preparing and confirming a swap
+    // still re-read spendable balances in Background.
     setConnecting(true)
-    void confidentialFundingClient
+    setError(null)
+    const currentScope = () => mounted.current && latestScope.current === scopeKey
+    const request = confidentialFundingClient
       .refreshBalances(
         {
           network,
@@ -241,22 +261,22 @@ function ShieldSwapForm({
         true
       )
       .then(value => {
-        if (active) {
+        if (currentScope()) {
           setBalances(value)
           setBalanceScope(scopeKey)
+          balanceRefreshedAt.current = Date.now()
           void refresh()
         }
       })
       .catch(() => {
-        if (active) setError('Unable to load Shield balances. Please try again.')
+        if (currentScope()) setError('Unable to load Shield balances. Please try again.')
       })
       .finally(() => {
-        if (active) setConnecting(false)
+        if (currentScope()) setConnecting(false)
+        if (balanceRequest.current?.promise === request) balanceRequest.current = null
       })
-    return () => {
-      active = false
-    }
-  }, [scopeKey, canManageNear])
+    balanceRequest.current = { scope: scopeKey, promise: request }
+  }, [active, scopeKey, canManageNear])
 
   const options = useMemo(
     () => listShieldFundingAssets(model, managedAssets, tokens, network),
@@ -356,7 +376,7 @@ function ShieldSwapForm({
     loading: previewLoading,
     error: previewError,
     retry: retryPreview
-  } = useConfidentialFundingPreview(previewRequest, scopeKey)
+  } = useConfidentialFundingPreview(active ? previewRequest : null, scopeKey)
   const previewOutput =
     preview && to
       ? formatBaseUnitDecimalAmount(preview.amountOutRaw, to.asset.metadata.decimals)
@@ -483,6 +503,7 @@ function ShieldSwapForm({
       if (scopeStillCurrent()) {
         setBalances(value)
         setBalanceScope(scopeKey)
+        balanceRefreshedAt.current = Date.now()
         if (previewError === CONFIDENTIAL_PREVIEW_CONNECTION_ERROR) retryPreview()
         void refresh(true)
       }
@@ -615,11 +636,19 @@ function ShieldSwapForm({
   }
 
   useEffect(() => {
-    if (!prepared || busy || uncertain || error || acceptedPlanId !== prepared.review.planId) return
+    if (
+      !active ||
+      !prepared ||
+      busy ||
+      uncertain ||
+      error ||
+      acceptedPlanId !== prepared.review.planId
+    )
+      return
     const wait = Math.max(0, Math.min(60_000, prepared.review.expiresAt - Date.now() - 5_000))
     const timer = window.setTimeout(() => void refreshReview(), wait)
     return () => window.clearTimeout(timer)
-  }, [prepared, busy, uncertain, error, acceptedPlanId])
+  }, [active, prepared, busy, uncertain, error, acceptedPlanId])
   const cancelReview = async () => {
     if (!prepared || busy || !scopeStillCurrent()) return
     setBusy(true)
@@ -916,8 +945,10 @@ function ShieldSwapForm({
             setPicker('from')
           }}
           tokenSelectLocked={busy}
-          amountFocusToken={amountFocusToken && amountFocusToken > 0 ? amountFocusToken : undefined}
-          autoFocusAmount
+          amountFocusToken={
+            active && amountFocusToken && amountFocusToken > 0 ? amountFocusToken : undefined
+          }
+          autoFocusAmount={active}
           onAmountChange={value => {
             if (!fromId && from) setFromId(from.asset.asset.id)
             setAmount(value)
@@ -1081,7 +1112,7 @@ function ShieldSwapForm({
           Swap
         </Button>
       </div>
-      <Dialog open={picker !== null} onOpenChange={open => !open && setPicker(null)}>
+      <Dialog open={active && picker !== null} onOpenChange={open => !open && setPicker(null)}>
         <DialogContent
           position="bottom"
           className="flex max-h-[85dvh] flex-col gap-3 bg-wallet-surface p-4"
