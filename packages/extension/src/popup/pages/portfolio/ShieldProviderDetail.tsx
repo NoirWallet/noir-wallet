@@ -187,6 +187,7 @@ function ShieldProviderContent() {
     provider === 'near-confidential' &&
     near.status === 'ready' &&
     near.entries.every(entry => Big(entry.asset.availableRaw).eq(0))
+  const showNearEmptyState = nearBalanceEmpty && canManageNear && !connecting && !connectionError
   const selectedNearAssetId = selectedNearEntry?.asset.assetId
   const selectedNearAssetSupported = Boolean(
     selectedNearAssetId &&
@@ -540,26 +541,21 @@ function ShieldProviderContent() {
           ) : (
             <p className="px-4 py-5 text-center text-sm text-muted">Balance unavailable</p>
           )}
-          {nearBalanceEmpty && canManageNear && (
-            <div className="flex flex-col items-center gap-2.5 px-4 pb-6 pt-2">
-              <button
-                type="button"
-                onClick={() =>
-                  navigate(`/transfer?entry=shield&provider=near-confidential&mode=${mode}`)
-                }
-                disabled={!canManageNear}
-                className="wallet-interactive h-9 min-w-44 rounded-lg border border-white/[0.08] bg-wallet-surface px-3 text-xs text-wallet-secondary enabled:hover:bg-wallet-selected enabled:active:bg-white/15 focus-visible:outline-2 focus-visible:outline-primary disabled:opacity-45"
-              >
-                <span className="font-semibold text-foreground">Move</span> from your wallet
-              </button>
-              <button
-                type="button"
-                onClick={() => navigate('/shield-deposit?provider=near-confidential')}
-                disabled={!canManageNear}
-                className="wallet-interactive h-9 min-w-44 rounded-lg border border-white/[0.08] bg-wallet-surface px-3 text-xs text-wallet-secondary enabled:hover:bg-wallet-selected enabled:active:bg-white/15 focus-visible:outline-2 focus-visible:outline-primary disabled:opacity-45"
-              >
-                <span className="font-semibold text-foreground">Receive</span> from others
-              </button>
+          {showNearEmptyState && (
+            <div className="px-4 pb-6 pt-8 text-center text-sm text-wallet-secondary">
+              <p>No shielded assets yet,</p>
+              <p className="mt-2">
+                <button
+                  type="button"
+                  onClick={() =>
+                    navigate(`/transfer?entry=shield&provider=near-confidential&mode=${mode}`)
+                  }
+                  className="wallet-interactive font-semibold text-foreground underline underline-offset-4 hover:text-primary focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2"
+                >
+                  Move
+                </button>{' '}
+                now
+              </p>
             </div>
           )}
         </section>

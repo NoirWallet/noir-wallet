@@ -39,6 +39,7 @@ import { TokenIcon } from '@/popup/components/tokens/TokenIcon'
 import { AssetBalanceRow } from '@/popup/components/portfolio/AssetBalanceRow'
 import { PrivateAddressWarningDialog } from '@/popup/components/account/PrivateAddressWarningDialog'
 import { confidentialFundingClient } from '@/popup/services/confidential-funding-client'
+import { getPrivateTransferChainIds } from '@/popup/services/private-balance-transfer'
 import { resolveNearConfidentialZecHolding } from '@/popup/services/near-confidential-holdings'
 
 import { formatDisplayTokenAmount } from '@/popup/components/portfolio/portfolio-format'
@@ -278,7 +279,7 @@ export function AssetDetail() {
     }
   }, [privateTransferEligible, effectiveWalletId, effectiveAccountId, currentNetwork])
 
-  const handleMove = () => {
+  const handleMove = (from: 'public' | 'private' = actionDomain) => {
     if (!asset) return
     const moveAssetHint = {
       scope: `${currentNetwork}:${effectiveWalletId ?? ''}:${effectiveAccountId ?? ''}:${chainEndpointRuntimeKey}`,
@@ -287,13 +288,12 @@ export function AssetDetail() {
       iconUrl: asset.metadata.iconUrl
     }
     if (!privateTransferEligible) return
-    const from = actionDomain === 'private' ? 'private' : 'public'
     navigate(
       `/transfer?${new URLSearchParams({
         assetId: asset.asset.id,
         entry: 'asset-detail',
         from,
-        to: from === 'public' ? 'private' : 'public',
+        to: 'shield',
         mode: searchParams.get('mode') === 'private' ? 'private' : 'public'
       })}`,
       { state: { moveAssetHint } }
@@ -418,11 +418,10 @@ export function AssetDetail() {
     }
   }, [asset?.asset.id, historyRange, historyRetry])
 
-  const handleSend = () => {
+  const handleSend = (domain: 'public' | 'private' = actionDomain) => {
     if (!asset || !chain || !canSend) return
-    const domain = actionDomain
     if (chain.chain.family === 'evm' && domain === 'private') {
-      handleMove()
+      handleMove(domain)
       return
     }
     if (chain.chain.family === 'zcash') {
@@ -430,7 +429,7 @@ export function AssetDetail() {
       return
     }
     const query = new URLSearchParams({ assetId: asset.asset.id })
-    if (searchParams.get('mode') === 'private') query.set('mode', 'private')
+    if (domain === 'private') query.set('mode', 'private')
     if (chain.chain.family === 'evm') {
       if (domain === 'public') query.set('sourceMode', 'main')
     }
@@ -447,13 +446,13 @@ export function AssetDetail() {
     })
   }
 
-  const handleReceive = () => {
+  const handleReceive = (domain: 'public' | 'private' = actionDomain) => {
     if (!chain || !canReceive || !effectiveWalletId || !effectiveAccountId) return
     const query = new URLSearchParams({
       walletId: effectiveWalletId,
       accountId: effectiveAccountId,
       chainId: chain.chain.id,
-      mode: actionDomain === 'private' ? 'private' : 'public'
+      mode: domain
     })
     if (chain.chain.family === 'zcash') {
       query.set('privacy', 'transparent')
@@ -482,18 +481,112 @@ export function AssetDetail() {
     }
   }
 
-  const handleSwap = () => {
+  const handleSwap = (domain: 'public' | 'private' = actionDomain) => {
     if (!asset || !canSwap) return
     const query = new URLSearchParams({ source: asset.asset.id })
     if (effectiveWalletId && effectiveAccountId) {
       query.set('sourceWalletId', effectiveWalletId)
       query.set('sourceAccountId', effectiveAccountId)
     }
-    if (actionDomain === 'public' || actionDomain === 'private') {
-      query.set('balanceDomain', actionDomain)
-    }
+    query.set('balanceDomain', domain)
     navigate(`/swap?${query.toString()}`)
   }
+
+  const confidentialActions = () => {
+    if (
+      !asset ||
+      getPrivateTransferChainIds(storageV2Account, currentNetwork === 'mainnet').length === 0
+    )
+      return []
+    const query = new URLSearchParams({ provider: 'near-confidential', assetId: asset.asset.id })
+    return [
+      {
+        action: 'send' as const,
+        label: 'Send',
+        onClick: () => navigate(`/shield-withdraw?${query}`)
+      },
+      {
+        action: 'receive' as const,
+        label: 'Receive',
+        onClick: () => navigate(`/shield-deposit?${query}`)
+      },
+      ...(chain?.chain.family === 'evm'
+        ? [
+            {
+              action: 'move' as const,
+              label: 'Move',
+              onClick: () =>
+                navigate(
+                  `/transfer?${query}&entry=asset-detail&from=shield&to=${actionDomain}&mode=${actionDomain}`
+                )
+            }
+          ]
+        : []),
+      { action: 'swap' as const, label: 'Swap', onClick: () => navigate(`/shield-swap?${query}`) }
+    ]
+  }
+
+  const accountActions = (domain: 'public' | 'private') => [
+    ...(domain === 'public'
+      ? [
+          {
+            action: 'send' as const,
+            label: 'Send',
+            disabled: !canSend,
+            onClick: () => handleSend(domain)
+          },
+          {
+            action: 'receive' as const,
+            label: 'Receive',
+            disabled: !canReceive,
+            onClick: () => handleReceive(domain)
+          }
+        ]
+      : []),
+    ...(privateTransferEligible
+      ? [{ action: 'move' as const, label: 'Move', onClick: () => handleMove(domain) }]
+      : []),
+    {
+      action: 'swap' as const,
+      label: 'Swap',
+      disabled: !canSwap || (domain === 'private' && !privateTransferEligible),
+      onClick: () => handleSwap(domain)
+    }
+  ]
+
+  const zcashActions = (privacy: 'transparent' | 'shielded') => [
+    {
+      action: 'send' as const,
+      label: 'Send',
+      disabled: Boolean(getFundingSourceUnavailableReason(currentWallet?.keySource, privacy)),
+      onClick: () => navigate(`/send/zcash?from=${privacy}`)
+    },
+    {
+      action: 'receive' as const,
+      label: 'Receive',
+      disabled: !canReceive,
+      onClick: () =>
+        navigate(
+          `/addresses-list?${new URLSearchParams({ walletId: effectiveWalletId ?? '', accountId: effectiveAccountId ?? '', chainId: chain?.chain.id ?? '', privacy })}`
+        )
+    },
+    {
+      action: 'move' as const,
+      label: 'Move',
+      disabled: Boolean(getFundingSourceUnavailableReason(currentWallet?.keySource, privacy)),
+      onClick: () => navigate(`/send/zcash?move=1&from=${privacy}`)
+    },
+    ...(privacy === 'transparent'
+      ? [
+          {
+            action: 'swap' as const,
+            label: 'Swap',
+            disabled: !canSwap,
+            onClick: () => handleSwap('public')
+          }
+        ]
+      : [])
+  ]
 
   const handleActivityClick = useCallback(
     async (item: ActivityItem) => {
@@ -759,7 +852,7 @@ export function AssetDetail() {
                 <button
                   type="button"
                   aria-label="Receive Bitcoin"
-                  onClick={handleReceive}
+                  onClick={() => handleReceive()}
                   disabled={!canReceive}
                   className="wallet-interactive flex size-8 shrink-0 items-center justify-center rounded-full text-muted hover:bg-white/10 hover:text-foreground"
                 >
@@ -880,7 +973,7 @@ export function AssetDetail() {
                 chain.chain.family === 'evm' &&
                 !privateTransferEligible)
             }
-            onClick={handleSend}
+            onClick={() => handleSend()}
             title={fundingUnavailableReason}
           />
           {(actionDomain !== 'private' || chain.chain.family !== 'evm') && (
@@ -888,7 +981,7 @@ export function AssetDetail() {
               icon={<WalletActionIcon action="receive" />}
               label="Receive"
               disabled={!canReceive}
-              onClick={handleReceive}
+              onClick={() => handleReceive()}
             />
           )}
           <WalletActionButton
@@ -900,7 +993,7 @@ export function AssetDetail() {
                 actionDomain === 'private' &&
                 !privateTransferEligible)
             }
-            onClick={handleSwap}
+            onClick={() => handleSwap()}
             title={fundingUnavailableReason}
           />
           {(isZcashAsset || privateTransferEligible) && (
@@ -945,6 +1038,7 @@ export function AssetDetail() {
                         : `${formatDisplayTokenAmount(raw, asset.metadata.decimals)} ${formatSymbol(asset.metadata.symbol)}`
                     }
                     fiat={formatBalanceFiat(categories.fiat[domain])}
+                    actions={domain === 'shield' ? confidentialActions() : accountActions(domain)}
                   />
                 )
               })}
@@ -990,6 +1084,7 @@ export function AssetDetail() {
           <section className="py-2" aria-label="Zcash balance breakdown">
             <AssetBalanceRow
               label="Transparent"
+              actions={zcashActions('transparent')}
               subtitle={renderBalanceAddress(publicAddress, 'Transparent')}
               balance={
                 zcashDisplay ? `${zcashDisplay.transparent} ZEC` : <Skeleton className="h-4 w-20" />
@@ -1003,6 +1098,7 @@ export function AssetDetail() {
             />
             <AssetBalanceRow
               label="Zcash Shield"
+              actions={zcashActions('shielded')}
               subtitle={renderBalanceAddress(
                 accountNetwork?.addresses.find(address => address.privacy === 'shielded')?.value,
                 'Zcash Shield'
@@ -1020,6 +1116,7 @@ export function AssetDetail() {
             {nearConfidentialZec && (
               <AssetBalanceRow
                 label="Shielded"
+                actions={confidentialActions()}
                 subtitle="NEAR Confidential Intents"
                 balance={`${formatDisplayTokenAmount(nearConfidentialZec.availableRaw, asset.metadata.decimals)} ZEC`}
                 fiat={formatBalanceFiat(
