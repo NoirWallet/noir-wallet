@@ -136,6 +136,7 @@ interface PrivateSendPreview {
 }
 
 export function EvmSendForm({
+  active,
   walletMode,
   onSelectAsset,
   onSelectShield,
@@ -150,6 +151,7 @@ export function EvmSendForm({
   initialDraft,
   onSubmitted
 }: {
+  active: boolean
   walletMode: 'public' | 'private'
   onSelectAsset: () => void
   onSelectShield: (recipient: string) => void
@@ -265,7 +267,7 @@ export function EvmSendForm({
     sourceMode,
     sourceAddress
   ])
-  const support = useEvmSendSupport(chain.chain, asset.asset, accountContextKey)
+  const support = useEvmSendSupport(chain.chain, asset.asset, accountContextKey, active)
   const privacyScope = `${accountContextKey}:${asset.asset.id}`
   const sendPrivately = sourceMode === 'main' && privateSendScope === privacyScope
   const route = resolveEvmSendRoute(sourceMode, support.support, sendPrivately)
@@ -334,7 +336,18 @@ export function EvmSendForm({
   }
   const intentKey = createEvmSendIntentKey({ ...reviewContext, recipient, amountRaw })
   const currentIntent = useRef<string | null>(intentKey)
-  currentIntent.current = intentKey
+  currentIntent.current = active ? intentKey : null
+  useEffect(() => {
+    if (active) return
+    reviewAttempt.current.invalidate()
+    setPreparing(false)
+    setUpdatingFee(false)
+    setReview(null)
+    lastMaximumRequestKey.current = null
+    const pending = pendingReview.current
+    pendingReview.current = null
+    if (pending) void evmWalletClient.rejectTransfer(pending.graph.root.id).catch(() => {})
+  }, [active])
   const handleMoveRecipient = async (targetAddress = recipient) => {
     if (
       !onFundPrivate ||
@@ -391,6 +404,7 @@ export function EvmSendForm({
     prefetch: true,
     refreshOnExpiry: false,
     enabled:
+      active &&
       route !== 'pending' &&
       asset.asset.kind === 'native' &&
       validRecipient &&
@@ -467,6 +481,7 @@ export function EvmSendForm({
     asset
   } as const
   const privatePreviewKey =
+    active &&
     sendPrivately &&
     route === 'confidential' &&
     networkMode === 'mainnet' &&
@@ -619,6 +634,7 @@ export function EvmSendForm({
     maxSelected && asset.asset.kind === 'native' && (maximum.loading || !maximum.value)
   useEffect(() => {
     if (
+      active &&
       maxSelected &&
       !review &&
       asset.asset.kind === 'native' &&
@@ -629,6 +645,7 @@ export function EvmSendForm({
     )
       requestMaximum()
   }, [
+    active,
     maxSelected,
     review,
     asset.asset.kind,
@@ -638,9 +655,9 @@ export function EvmSendForm({
     sourceAddress
   ])
   useEffect(() => {
-    if (maxSelected && !review && maximum.value)
+    if (active && maxSelected && !review && maximum.value)
       setAmount(formatBaseUnitDecimalAmount(maximum.value.amountRaw, asset.metadata.decimals))
-  }, [maxSelected, review, maximum.value, asset.metadata.decimals])
+  }, [active, maxSelected, review, maximum.value, asset.metadata.decimals])
 
   const rejectPrepared = async (value: EvmTransferReview) => {
     if (pendingReview.current?.graph.root.id === value.graph.root.id) pendingReview.current = null
@@ -718,6 +735,7 @@ export function EvmSendForm({
       : undefined
   const calculatedFeePreview = useTransferFeePreview({
     enabled:
+      active &&
       !maximumFeeEstimate &&
       route === 'onchain' &&
       Boolean(sourceAddress) &&
@@ -751,11 +769,12 @@ export function EvmSendForm({
       : null
   const confirmationTime = useEvmConfirmationEstimate({
     enabled:
+      active &&
       route === 'onchain' &&
       (review !== null
         ? review.intentKey === intentKey && !updatingFee
         : !feePreview.loading && feePreview.details !== null),
-    fallbackEnabled: route === 'onchain',
+    fallbackEnabled: active && route === 'onchain',
     chainId: chain.chain.id,
     requestKey: `${accountContextKey}:${intentKey}:${JSON.stringify(feeSelection)}:${review?.value.graph.root.id ?? 'preview'}`,
     feeEstimate: review ? reviewedFeeEstimate : feePreview.details
@@ -775,6 +794,7 @@ export function EvmSendForm({
 
   const handleContinue = async () => {
     if (
+      !active ||
       route === 'pending' ||
       !sourceAddress ||
       !amountRaw ||
@@ -1067,6 +1087,7 @@ export function EvmSendForm({
       <div className="page-content min-h-0 space-y-4 !px-4 pt-4">
         <SendSourceSection
           domain="public"
+          disabled={preparing || approving || updatingFee}
           availableDomains={shieldSourceAvailable ? ['public', 'shield'] : ['public']}
           onDomainChange={domain => {
             if (domain === 'shield') onSelectShield(validRecipient ? recipient : '')
@@ -1388,7 +1409,7 @@ export function EvmSendForm({
       </div>
 
       <Dialog
-        open={review !== null}
+        open={active && review !== null}
         onOpenChange={open => {
           if (!open && !approving) void handleCloseReview()
         }}

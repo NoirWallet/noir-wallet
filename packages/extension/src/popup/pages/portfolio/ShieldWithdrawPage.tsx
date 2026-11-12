@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Navigate, useLocation, useSearchParams } from 'react-router-dom'
 import type { PortfolioReadModel, PortfolioAssetView } from '@/core/portfolio'
 import type { AssetPriceReadModel } from '@/core/prices'
@@ -8,7 +8,7 @@ import nearLogo from '@/images/figma-near-confidential.svg'
 import { isAddress } from 'viem'
 import { resolveEvmChainIconAlias } from '@/config/icons'
 import type { IntentsManagedAsset } from '@/core/services/intents-managed-assets'
-import type { SwapToken } from '@/core/services/intents-api'
+import { fetchSwapTokens, getCachedTokens, type SwapToken } from '@/core/services/intents-api'
 import type { ConfidentialFundingReview } from '@/core/services/confidential-funding'
 import {
   formatBaseUnitAmount,
@@ -21,12 +21,12 @@ import { useWalletStore } from '@/store/wallet-store'
 import { useSettingsStore } from '@/store/settings-store'
 import { useActiveAccountNetworks } from '@/popup/hooks/useActiveAccountNetworks'
 import { useConfidentialFundingPreview } from '@/popup/hooks/useConfidentialFundingPreview'
+import { useShieldBalances } from '@/popup/hooks/useShieldBalances'
 import { resolveEffectiveActiveAccountIdentity } from '@/popup/lib/effective-active-account'
 import { assetPriceClient } from '@/popup/services/asset-price-client'
 import { findAssetPrice } from '@/core/prices'
 import { getPrivateTransferChainIds } from '@/popup/services/private-balance-transfer'
 import { useNavigate } from '@/popup/provider/Router'
-import { PageHeader } from '@/popup/components/common/PageHeader'
 import { ShieldSendProviderTabs } from '@/popup/components/portfolio/ShieldSendProviderTabs'
 import { SlippageSettingContent } from '@/popup/components/swap/SlippageSetting'
 import {
@@ -52,7 +52,6 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/popup/c
 import {
   CONFIDENTIAL_PREVIEW_CONNECTION_ERROR,
   confidentialFundingClient,
-  type ConfidentialBalance,
   type PrepareConfidentialFundingRequest
 } from '@/popup/services/confidential-funding-client'
 import { resolveManagedIntentsCatalog } from '@/popup/services/intents-asset-manager-client'
@@ -94,26 +93,35 @@ export function ShieldWithdrawPage() {
   )
 }
 
+export interface ShieldWithdrawEntry {
+  readonly assetId: string | null
+  readonly networkId: string | null
+  readonly recipient: string
+  readonly provider: string | null
+}
+
 export function ShieldWithdrawForm({
+  active,
+  entry,
+  onStateChange,
   model,
   initialAsset,
   refresh,
-  onSelectPublic,
-  onBack
+  onSelectPublic
 }: {
+  readonly active: boolean
+  readonly entry: Readonly<ShieldWithdrawEntry>
+  readonly onStateChange: (state: { readonly reviewing: boolean; readonly busy: boolean }) => void
   readonly model: PortfolioReadModel | null
   readonly initialAsset: PortfolioAssetView | null
   readonly refresh: (force?: boolean) => Promise<void>
   readonly onSelectPublic: (assetId: string | null, recipient: string) => void
-  readonly onBack: () => void
 }) {
-  const [params] = useSearchParams()
   const { navigate } = useNavigate()
-  const providerIsNear =
-    params.get('provider') === null || params.get('provider') === 'near-confidential'
-  const routeAssetId = params.get('assetId') ?? ''
-  const routeNetworkId = params.get('networkId')
-  const routeRecipient = params.get('recipient') ?? ''
+  const providerIsNear = entry.provider === null || entry.provider === 'near-confidential'
+  const routeAssetId = entry.assetId ?? ''
+  const routeNetworkId = entry.networkId
+  const routeRecipient = entry.recipient
   const currentWalletId = useWalletStore(state => state.currentWalletId)
   const currentAccountId = useWalletStore(state => state.currentAccountId)
   const network = useWalletStore(state => state.currentNetwork)
@@ -130,16 +138,21 @@ export function ShieldWithdrawForm({
   const scopeKey = `${network}:${account?.walletId ?? ''}:${account?.accountId ?? ''}`
   const latestScope = useRef(scopeKey)
   latestScope.current = scopeKey
+  const entryKey = JSON.stringify([routeAssetId, routeNetworkId, routeRecipient, entry.provider])
+  const latestEntry = useRef(entryKey)
+  latestEntry.current = entryKey
+  const activeRef = useRef(active)
+  activeRef.current = active
+  const formRef = useRef<HTMLDivElement>(null)
   const mounted = useRef(false)
-  const [catalogTokens, setCatalogTokens] = useState<readonly SwapToken[]>([])
-  const [managedAssets, setManagedAssets] = useState<readonly IntentsManagedAsset[]>([])
-  const [balances, setBalances] = useState<readonly ConfidentialBalance[] | null>(null)
+  const [catalogTokens, setCatalogTokens] = useState<readonly SwapToken[]>(getCachedTokens)
+  const [managedAssets, setManagedAssets] = useState<readonly IntentsManagedAsset[]>(() =>
+    resolveManagedIntentsCatalog(getCachedTokens())
+  )
   const [priceSnapshot, setPriceSnapshot] = useState<{
     scopeKey: string
     value: AssetPriceReadModel
   } | null>(null)
-  const [balanceScope, setBalanceScope] = useState('')
-  const [connecting, setConnecting] = useState(false)
   const [sourceId, setSourceId] = useState(routeAssetId)
   const [destinationNetworkId, setDestinationNetworkId] = useState<string | null>(routeNetworkId)
   const [amount, setAmount] = useState('')
@@ -157,6 +170,31 @@ export function ShieldWithdrawForm({
   const [uncertain, setUncertain] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const confirmationAttempt = useRef<string | null>(null)
+  const {
+    balances: currentBalances,
+    connecting,
+    error: balanceError,
+    refreshBalances: loadBalances
+  } = useShieldBalances({
+    active,
+    enabled: canManageNear,
+    scopeKey,
+    scope: account
+      ? { network, keyDomainId: account.walletId, accountId: account.accountId }
+      : null,
+    refreshPortfolio: refresh
+  })
+
+  useLayoutEffect(() => {
+    onStateChange({ reviewing: active && Boolean(prepared), busy: active && busy })
+  }, [active, prepared, busy, onStateChange])
+
+  useLayoutEffect(() => () => onStateChange({ reviewing: false, busy: false }), [onStateChange])
+
+  useLayoutEffect(() => {
+    if (active || !formRef.current?.contains(document.activeElement)) return
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
+  }, [active])
 
   useEffect(() => {
     mounted.current = true
@@ -166,8 +204,16 @@ export function ShieldWithdrawForm({
   }, [])
 
   useEffect(() => {
-    if (!providerIsNear) navigate('/shield-funds', { replace: true })
-  }, [providerIsNear, navigate])
+    if (active && !providerIsNear) navigate('/shield-funds', { replace: true })
+  }, [active, providerIsNear, navigate])
+
+  useEffect(() => {
+    if (!active) setPicker(null)
+  }, [active])
+
+  useEffect(() => {
+    if (!active && prepared && confirmationAttempt.current) setUncertain(true)
+  }, [active, prepared])
 
   useEffect(() => {
     setSourceId(routeAssetId)
@@ -177,23 +223,25 @@ export function ShieldWithdrawForm({
     setPicker(null)
     setPrepared(null)
     setBusy(false)
-    setConnecting(false)
     setUncertain(false)
     setError(null)
     confirmationAttempt.current = null
   }, [scopeKey, routeAssetId, routeNetworkId, routeRecipient])
 
   useEffect(() => {
-    let active = true
+    if (!active) return
+    let current = true
     const load = async () => {
       try {
-        const cached = await swapTokenCatalogClient.readCached()
-        if (active && cached.length) {
-          setCatalogTokens(cached)
-          setManagedAssets(resolveManagedIntentsCatalog(cached))
+        if (getCachedTokens().length === 0) {
+          const cached = await swapTokenCatalogClient.readCached()
+          if (current && cached.length) {
+            setCatalogTokens(cached)
+            setManagedAssets(resolveManagedIntentsCatalog(cached))
+          }
         }
-        const refreshed = await swapTokenCatalogClient.refresh()
-        if (active) {
+        const refreshed = await fetchSwapTokens()
+        if (current && refreshed.length) {
           setCatalogTokens(refreshed)
           setManagedAssets(resolveManagedIntentsCatalog(refreshed))
         }
@@ -203,61 +251,28 @@ export function ShieldWithdrawForm({
     }
     void load()
     return () => {
-      active = false
+      current = false
     }
-  }, [network])
+  }, [active, network])
 
   useEffect(() => {
-    let active = true
-    setBalances(null)
-    setBalanceScope('')
-    if (!account || !canManageNear) return
-    setConnecting(true)
-    void confidentialFundingClient
-      .refreshBalances(
-        {
-          network,
-          keyDomainId: account.walletId,
-          accountId: account.accountId
-        },
-        true
-      )
-      .then(value => {
-        if (active) {
-          setBalances(value)
-          setBalanceScope(scopeKey)
-          void refresh(true)
-        }
-      })
-      .catch(() => {
-        if (active) setError('Unable to load Shield balances. Please try again.')
-      })
-      .finally(() => {
-        if (active) setConnecting(false)
-      })
-    return () => {
-      active = false
-    }
-  }, [scopeKey, canManageNear])
-
-  useEffect(() => {
-    let active = true
+    if (!active) return
+    let current = true
     void assetPriceClient
       .getPrices('read')
       .then(value => {
-        if (active && value && value.status !== 'error') setPriceSnapshot({ scopeKey, value })
+        if (current && value && value.status !== 'error') setPriceSnapshot({ scopeKey, value })
       })
       .catch(() => {})
     return () => {
-      active = false
+      current = false
     }
-  }, [scopeKey])
+  }, [active, scopeKey])
 
   const options = useMemo(
     () => listShieldFundingAssets(model, managedAssets, catalogTokens, network),
     [model, managedAssets, catalogTokens, network]
   )
-  const currentBalances = balanceScope === scopeKey ? balances : null
   const displayBalances = currentBalances ?? shieldPortfolioBalances(model)
   const fundedSources = shieldFundingSources(options, displayBalances)
   const prices = priceSnapshot?.scopeKey === scopeKey ? priceSnapshot.value : null
@@ -362,13 +377,15 @@ export function ShieldWithdrawForm({
     loading: previewLoading,
     error: previewError,
     retry: retryPreview
-  } = useConfidentialFundingPreview(previewRequest, scopeKey)
+  } = useConfidentialFundingPreview(active ? previewRequest : null, scopeKey)
 
   const scopeStillCurrent = () => {
     const wallet = useWalletStore.getState()
     return (
+      activeRef.current &&
       mounted.current &&
       latestScope.current === scopeKey &&
+      latestEntry.current === entryKey &&
       wallet.currentWalletId === currentWalletId &&
       wallet.currentAccountId === currentAccountId &&
       wallet.currentNetwork === network
@@ -387,7 +404,10 @@ export function ShieldWithdrawForm({
         accountId: account.accountId,
         transactionId
       },
-      () => navigate(`/?tab=activity&transactionId=${encodeURIComponent(transactionId)}`),
+      () => {
+        if (activeRef.current)
+          navigate(`/?tab=activity&transactionId=${encodeURIComponent(transactionId)}`)
+      },
       prepared
         ? {
             operation: 'send',
@@ -402,28 +422,10 @@ export function ShieldWithdrawForm({
   }
   const refreshBalances = async () => {
     if (!account || !canManageNear || connecting || !scopeStillCurrent()) return
-    setConnecting(true)
     setError(null)
-    try {
-      const value = await confidentialFundingClient.refreshBalances(
-        {
-          network,
-          keyDomainId: account.walletId,
-          accountId: account.accountId
-        },
-        true
-      )
-      if (scopeStillCurrent()) {
-        setBalances(value)
-        setBalanceScope(scopeKey)
-        if (previewError === CONFIDENTIAL_PREVIEW_CONNECTION_ERROR) retryPreview()
-        void refresh(true)
-      }
-    } catch (cause) {
-      if (scopeStillCurrent())
-        setError(cause instanceof Error ? cause.message : 'Shield balance unavailable')
-    } finally {
-      if (scopeStillCurrent()) setConnecting(false)
+    if (await loadBalances()) {
+      if (scopeStillCurrent() && previewError === CONFIDENTIAL_PREVIEW_CONNECTION_ERROR)
+        retryPreview()
     }
   }
   const prepare = async () => {
@@ -466,7 +468,8 @@ export function ShieldWithdrawForm({
       if (scopeStillCurrent())
         setError(cause instanceof Error ? cause.message : 'Send quote unavailable')
     } finally {
-      if (scopeStillCurrent()) setBusy(false)
+      if (mounted.current && latestScope.current === scopeKey && latestEntry.current === entryKey)
+        setBusy(false)
     }
   }
   const inspectPlan = async (planId: string) => {
@@ -493,14 +496,16 @@ export function ShieldWithdrawForm({
         if (state !== 'prepared') return
       }
       await confidentialFundingClient.cancel(prepared.review.planId)
-      if (!scopeStillCurrent()) return
+      if (!mounted.current || latestScope.current !== scopeKey || latestEntry.current !== entryKey)
+        return
       setPrepared(null)
       setUncertain(false)
     } catch (cause) {
       if (scopeStillCurrent())
         setError(cause instanceof Error ? cause.message : 'Unable to cancel review')
     } finally {
-      if (scopeStillCurrent()) setBusy(false)
+      if (mounted.current && latestScope.current === scopeKey && latestEntry.current === entryKey)
+        setBusy(false)
     }
   }
   const confirm = async () => {
@@ -527,6 +532,7 @@ export function ShieldWithdrawForm({
       if (hasShieldTransferStarted(plan)) openActivity(plan.transactionId)
       else await inspectPlan(plan.planId)
     } catch (cause) {
+      if (!scopeStillCurrent()) return
       try {
         const state = await inspectPlan(prepared.review.planId)
         if (!scopeStillCurrent()) return
@@ -544,14 +550,14 @@ export function ShieldWithdrawForm({
         }
       }
     } finally {
-      if (scopeStillCurrent()) setBusy(false)
+      if (mounted.current && latestScope.current === scopeKey && latestEntry.current === entryKey)
+        setBusy(false)
     }
   }
 
   if (activeAccount && !canManageNear) {
     return (
-      <div className="page-container">
-        <PageHeader title="Send" showBack />
+      <div ref={formRef} className="flex min-h-0 flex-1 flex-col">
         <p role="alert" className="px-4 py-6 text-center text-sm text-muted">
           Shield unavailable for this account
         </p>
@@ -569,7 +575,7 @@ export function ShieldWithdrawForm({
       prepared.destination.asset.metadata.decimals
     )
     return (
-      <div className="page-container">
+      <div ref={formRef} className="flex min-h-0 flex-1 flex-col overflow-hidden">
         <TransactionReviewView
           variant="figma"
           title="Confirm Send"
@@ -682,8 +688,7 @@ export function ShieldWithdrawForm({
   }
 
   return (
-    <div className="page-container min-h-0 overflow-hidden">
-      <PageHeader title="Send" showBack onBack={onBack} />
+    <div ref={formRef} className="flex min-h-0 flex-1 flex-col overflow-hidden">
       <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 pb-5 pt-4">
         <SendSourceSection
           domain="shield"
@@ -914,9 +919,9 @@ export function ShieldWithdrawForm({
             Enter a valid EVM address
           </p>
         )}
-        {error && (
+        {(error || balanceError) && (
           <p role="alert" className="order-5 text-xs text-warning">
-            {error}
+            {error ?? balanceError}
           </p>
         )}
         {!currentBalances && canManageNear && connecting && (
@@ -924,7 +929,7 @@ export function ShieldWithdrawForm({
             Loading Shield balances…
           </p>
         )}
-        {!currentBalances && canManageNear && !connecting && error && (
+        {!currentBalances && canManageNear && !connecting && balanceError && (
           <Button
             variant="outline"
             size="wallet"
@@ -955,7 +960,7 @@ export function ShieldWithdrawForm({
           Continue
         </Button>
       </div>
-      <Dialog open={picker !== null} onOpenChange={open => !open && setPicker(null)}>
+      <Dialog open={active && picker !== null} onOpenChange={open => !open && setPicker(null)}>
         <DialogContent
           position="bottom"
           className="max-h-[80vh] min-h-0 overflow-y-auto bg-wallet-surface p-4 pb-6"

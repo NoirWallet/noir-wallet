@@ -24,13 +24,14 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog'
 import nearIntentsIcon from '@/images/figma-near-confidential.svg'
 
 function providerDisplayName(router: string): string {
+  if (router === 'near-confidential') return 'NEAR Confidential Intents'
   return ['nearintents', 'preswap-nearintents'].includes(router.toLowerCase())
     ? 'NEAR Intents'
     : router
 }
 
 function ProviderMark({ router, size }: { readonly router: string; readonly size: 24 | 28 }) {
-  if (providerDisplayName(router) === 'NEAR Intents') {
+  if (router === 'near-confidential' || providerDisplayName(router) === 'NEAR Intents') {
     return (
       <img src={nearIntentsIcon} alt="" width={size} height={size} className="shrink-0 rounded" />
     )
@@ -45,6 +46,57 @@ function ProviderMark({ router, size }: { readonly router: string; readonly size
     >
       {router.slice(0, 1).toUpperCase()}
     </span>
+  )
+}
+
+export function SwapProviderCard({
+  slippage,
+  providerName,
+  outputAmount,
+  outputSymbol,
+  isBestPrice = false,
+  action,
+  details
+}: {
+  readonly slippage: number
+  readonly providerName: string
+  readonly outputAmount: string
+  readonly outputSymbol: string
+  readonly isBestPrice?: boolean
+  readonly action?: ReactNode
+  readonly details?: ReactNode
+}) {
+  return (
+    <div className="mt-2 rounded-lg border border-white/15 px-3 py-2 text-xs">
+      <div className="flex items-center justify-between gap-2 py-1">
+        <span className="text-muted">Slippage</span>
+        <span>{slippage}%</span>
+      </div>
+      <div className="mt-2 flex items-center justify-between gap-2 py-1">
+        <span className="text-muted">Provider</span>
+        {action}
+      </div>
+      <div className="mt-1.5 rounded-md bg-white/5 px-2.5 py-2">
+        <div className="flex min-w-0 items-center gap-2">
+          <ProviderMark router={providerName} size={24} />
+          <span className="min-w-0 truncate font-medium" title={providerDisplayName(providerName)}>
+            {providerDisplayName(providerName)}
+          </span>
+          {isBestPrice && (
+            <span className="shrink-0 rounded bg-success/15 px-1.5 py-0.5 text-[10px] text-success">
+              Best price
+            </span>
+          )}
+          <span
+            className="ml-auto min-w-0 truncate text-right font-medium"
+            title={`${outputAmount} ${formatSymbol(outputSymbol)}`}
+          >
+            {formatTokenQuantity(outputAmount)} {formatSymbol(outputSymbol)}
+          </span>
+        </div>
+        {details}
+      </div>
+    </div>
   )
 }
 
@@ -680,14 +732,14 @@ export function SwapInputView({
         </div>
 
         {showProviderCard && providerName && tokenOut && (
-          <div className="mt-2 rounded-lg border border-white/15 px-3 py-2 text-xs">
-            <div className="flex items-center justify-between gap-2 py-1">
-              <span className="text-muted">Slippage</span>
-              <span>{slippage}%</span>
-            </div>
-            <div className="mt-2 flex items-center justify-between gap-2 py-1">
-              <span className="text-muted">Provider</span>
-              {providerAlternatives.length > 0 ? (
+          <SwapProviderCard
+            slippage={slippage}
+            providerName={providerName}
+            outputAmount={estimatedOut}
+            outputSymbol={tokenOut.symbol}
+            isBestPrice={providerIsBestPrice}
+            action={
+              providerAlternatives.length > 0 ? (
                 <button
                   type="button"
                   onClick={() => setRoutesOpen(true)}
@@ -708,38 +760,18 @@ export function SwapInputView({
                 >
                   <Icon icon="lucide:refresh-cw" width={14} />
                 </button>
-              )}
-            </div>
-            <div className="mt-1.5 rounded-md bg-white/5 px-2.5 py-2">
-              <div className="flex min-w-0 items-center gap-2">
-                <ProviderMark router={providerName} size={24} />
-                <span
-                  className="min-w-0 truncate font-medium"
-                  title={providerDisplayName(providerName)}
-                >
-                  {providerDisplayName(providerName)}
-                </span>
-                {providerIsBestPrice && (
-                  <span className="shrink-0 rounded bg-success/15 px-1.5 py-0.5 text-[10px] text-success">
-                    Best price
-                  </span>
-                )}
-                <span
-                  className="ml-auto min-w-0 truncate text-right font-medium"
-                  title={`${estimatedOut} ${formatSymbol(tokenOut.symbol)}`}
-                >
-                  {formatTokenQuantity(estimatedOut)} {formatSymbol(tokenOut.symbol)}
-                </span>
-              </div>
-              {providerNetworkFeeLabel && (
+              )
+            }
+            details={
+              providerNetworkFeeLabel ? (
                 <div className="mt-1.5 flex items-center justify-end gap-2 text-muted">
                   <span>
                     Network fee <span className="text-foreground">{providerNetworkFeeLabel}</span>
                   </span>
                 </div>
-              )}
-            </div>
-          </div>
+              ) : undefined
+            }
+          />
         )}
 
         {catalogError && (

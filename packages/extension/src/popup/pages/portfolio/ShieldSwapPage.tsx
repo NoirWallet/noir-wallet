@@ -15,11 +15,12 @@ import { useSwapPreferences } from '@/store/swap-store'
 import { useActiveAccountNetworks } from '@/popup/hooks/useActiveAccountNetworks'
 import { useHomePortfolio } from '@/popup/hooks/useHomePortfolio'
 import { useConfidentialFundingPreview } from '@/popup/hooks/useConfidentialFundingPreview'
+import { useShieldBalances } from '@/popup/hooks/useShieldBalances'
 import { resolveEffectiveActiveAccountIdentity } from '@/popup/lib/effective-active-account'
 import { getPrivateTransferChainIds } from '@/popup/services/private-balance-transfer'
 import { getEvmNetworkConfigs } from '@/config/networks'
 import { useNavigate } from '@/popup/provider/Router'
-import { SwapAssetCard } from '@/popup/components/swap/SwapInputView'
+import { SwapAssetCard, SwapProviderCard } from '@/popup/components/swap/SwapInputView'
 import { getSwapAmountValues } from '@/popup/components/swap/swap-estimate'
 import { AmountDisplay } from '@/popup/components/common/AmountDisplay'
 import { TokenIcon } from '@/popup/components/tokens/TokenIcon'
@@ -38,7 +39,6 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/popup/c
 import {
   CONFIDENTIAL_PREVIEW_CONNECTION_ERROR,
   confidentialFundingClient,
-  type ConfidentialBalance,
   type PrepareConfidentialFundingRequest
 } from '@/popup/services/confidential-funding-client'
 import { resolveManagedIntentsCatalog } from '@/popup/services/intents-asset-manager-client'
@@ -67,8 +67,6 @@ import {
   SHIELD_SWAP_ZEC_INTENTS_SELECTION_ID,
   SHIELD_SWAP_ZEC_NATIVE_SELECTION_ID
 } from '@/popup/services/shield-swap-zec-sources'
-
-const SHIELD_BALANCE_REUSE_MS = 30_000
 
 function shieldOriginIdentifier(
   asset: ShieldFundingAsset,
@@ -149,10 +147,6 @@ function ShieldSwapForm({
   const hidden = useSettingsStore(state => state.balancesHidden)
   const [tokens, setTokens] = useState<readonly SwapToken[]>(getCachedTokens)
   const managedAssets = useMemo(() => resolveManagedIntentsCatalog(tokens), [tokens])
-  const [balances, setBalances] = useState<readonly ConfidentialBalance[] | null>(null)
-  const [balanceScope, setBalanceScope] = useState('')
-  const balanceRefreshedAt = useRef(0)
-  const balanceRequest = useRef<{ scope: string; promise: Promise<void> } | null>(null)
   const [fromId, setFromId] = useState<string | null>(routeSourceAssetId)
   const [toId, setToId] = useState<string | null>(routeDestinationAssetId)
   const [amount, setAmount] = useState('')
@@ -173,10 +167,23 @@ function ShieldSwapForm({
   const [showReviewMore, setShowReviewMore] = useState(false)
   const cancelledPlanId = useRef<string | null>(null)
   const [busy, setBusy] = useState(false)
-  const [connecting, setConnecting] = useState(false)
   const [uncertain, setUncertain] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const confirmationAttempt = useRef<string | null>(null)
+  const {
+    balances: currentBalances,
+    connecting,
+    error: balanceError,
+    refreshBalances: loadBalances
+  } = useShieldBalances({
+    active,
+    enabled: canManageNear,
+    scopeKey,
+    scope: account
+      ? { network, keyDomainId: account.walletId, accountId: account.accountId }
+      : null,
+    refreshPortfolio: refresh
+  })
 
   useLayoutEffect(() => {
     onStateChange({ reviewing: active && Boolean(prepared), busy: active && busy })
@@ -207,7 +214,6 @@ function ShieldSwapForm({
     setSearch('')
     setPrepared(null)
     setBusy(false)
-    setConnecting(false)
     setUncertain(false)
     setError(null)
     confirmationAttempt.current = null
@@ -236,48 +242,6 @@ function ShieldSwapForm({
     }
   }, [active, network])
 
-  useEffect(() => {
-    if (!active || !account || !canManageNear || balanceRequest.current?.scope === scopeKey) return
-    const age = Date.now() - balanceRefreshedAt.current
-    if (
-      balanceScope === scopeKey &&
-      balanceRefreshedAt.current > 0 &&
-      age >= 0 &&
-      age < SHIELD_BALANCE_REUSE_MS
-    )
-      return
-    // Retain displayed balances during catch-up. Preparing and confirming a swap
-    // still re-read spendable balances in Background.
-    setConnecting(true)
-    setError(null)
-    const currentScope = () => mounted.current && latestScope.current === scopeKey
-    const request = confidentialFundingClient
-      .refreshBalances(
-        {
-          network,
-          keyDomainId: account.walletId,
-          accountId: account.accountId
-        },
-        true
-      )
-      .then(value => {
-        if (currentScope()) {
-          setBalances(value)
-          setBalanceScope(scopeKey)
-          balanceRefreshedAt.current = Date.now()
-          void refresh()
-        }
-      })
-      .catch(() => {
-        if (currentScope()) setError('Unable to load Shield balances. Please try again.')
-      })
-      .finally(() => {
-        if (currentScope()) setConnecting(false)
-        if (balanceRequest.current?.promise === request) balanceRequest.current = null
-      })
-    balanceRequest.current = { scope: scopeKey, promise: request }
-  }, [active, scopeKey, canManageNear])
-
   const options = useMemo(
     () => listShieldFundingAssets(model, managedAssets, tokens, network),
     [model, managedAssets, tokens, network]
@@ -287,7 +251,6 @@ function ShieldSwapForm({
       new Map(options.map(asset => [asset.asset.asset.id, shieldOriginIdentifier(asset, options)])),
     [options]
   )
-  const currentBalances = balanceScope === scopeKey ? balances : null
   const displayBalances = currentBalances ?? shieldPortfolioBalances(model)
   const sources = shieldFundingSources(options, displayBalances)
   const sourceChoices = sources.length > 0 ? sources : options
@@ -389,10 +352,6 @@ function ShieldSwapForm({
     tokenInPrice: fromToken?.price,
     tokenOutPrice: toToken?.price
   })
-  const previewRate =
-    preview && previewOutput && amount && from && to
-      ? formatShieldSwapPreviewRate(amount, preview.amountOutRaw, to.asset.metadata.decimals)
-      : null
   const pickable = (picker === 'from' ? sourceChoices : options).filter(
     asset =>
       asset.managed.protocolAssetId !==
@@ -489,29 +448,10 @@ function ShieldSwapForm({
   }
   const refreshBalances = async () => {
     if (!account || !canManageNear || connecting || !scopeStillCurrent()) return
-    setConnecting(true)
     setError(null)
-    try {
-      const value = await confidentialFundingClient.refreshBalances(
-        {
-          network,
-          keyDomainId: account.walletId,
-          accountId: account.accountId
-        },
-        true
-      )
-      if (scopeStillCurrent()) {
-        setBalances(value)
-        setBalanceScope(scopeKey)
-        balanceRefreshedAt.current = Date.now()
-        if (previewError === CONFIDENTIAL_PREVIEW_CONNECTION_ERROR) retryPreview()
-        void refresh(true)
-      }
-    } catch (cause) {
-      if (scopeStillCurrent())
-        setError(cause instanceof Error ? cause.message : 'Shield balance unavailable')
-    } finally {
-      if (scopeStillCurrent()) setConnecting(false)
+    if (await loadBalances()) {
+      if (scopeStillCurrent() && previewError === CONFIDENTIAL_PREVIEW_CONNECTION_ERROR)
+        retryPreview()
     }
   }
   const prepare = async () => {
@@ -997,49 +937,34 @@ function ShieldSwapForm({
             isEstimatedAmount={Boolean(previewOutput)}
           />
         </div>
-        <div className="mt-2 rounded-lg border border-white/15 px-3 py-2 text-xs">
-          <div className="flex items-center justify-between gap-2 py-1">
-            <span className="text-muted">Slippage</span>
-            <span>{slippage}%</span>
-          </div>
-          {preview && from && to && (
-            <>
-              {previewRate && (
-                <div className="flex items-center justify-between gap-3 py-2.5">
-                  <span className="shrink-0 text-muted">Rate</span>
-                  <span className="min-w-0 truncate text-right tabular-nums">
-                    1 {formatSymbol(from.asset.metadata.symbol)} = {previewRate}{' '}
-                    {formatSymbol(to.asset.metadata.symbol)}
-                  </span>
+        {preview && from && to && previewOutput && (
+          <SwapProviderCard
+            slippage={slippage}
+            providerName="near-confidential"
+            outputAmount={previewOutput}
+            outputSymbol={to.asset.metadata.symbol}
+            details={
+              preview.appFeeBps !== undefined || preview.timeEstimateSeconds !== undefined ? (
+                <div className="mt-1.5 space-y-1.5 text-muted">
+                  {preview.appFeeBps !== undefined && (
+                    <div className="flex items-center justify-between gap-2">
+                      <span>Service fee</span>
+                      <span className="text-foreground">{preview.appFeeBps / 100}%</span>
+                    </div>
+                  )}
+                  {preview.timeEstimateSeconds !== undefined && (
+                    <div className="flex items-center justify-between gap-2">
+                      <span>Est. time</span>
+                      <span className="text-foreground">
+                        {formatShieldQuoteTime(preview.timeEstimateSeconds)}
+                      </span>
+                    </div>
+                  )}
                 </div>
-              )}
-              {preview.appFeeBps !== undefined && (
-                <div className="flex items-center justify-between gap-3 py-2.5">
-                  <span className="text-muted">Service fee</span>
-                  <span>{preview.appFeeBps / 100}%</span>
-                </div>
-              )}
-              {preview.timeEstimateSeconds !== undefined && (
-                <div className="flex items-center justify-between gap-3 py-2.5">
-                  <span className="text-muted">Est. time</span>
-                  <span>{formatShieldQuoteTime(preview.timeEstimateSeconds)}</span>
-                </div>
-              )}
-              <div className="flex items-center justify-between gap-3 py-2.5">
-                <span className="shrink-0 text-muted">Minimum receive</span>
-                <span className="min-w-0 text-right">
-                  <AmountDisplay
-                    value={formatBaseUnitDecimalAmount(
-                      preview.minimumOutputRaw,
-                      to.asset.metadata.decimals
-                    )}
-                    symbol={formatSymbol(to.asset.metadata.symbol)}
-                  />
-                </span>
-              </div>
-            </>
-          )}
-        </div>
+              ) : undefined
+            }
+          />
+        )}
         {previewError && (
           <div
             role="alert"
@@ -1066,9 +991,9 @@ function ShieldSwapForm({
             </button>
           </div>
         )}
-        {error && (
+        {(error || balanceError) && (
           <p role="alert" className="mt-3 text-xs text-warning">
-            {error}
+            {error || balanceError}
           </p>
         )}
         {status === 'error' && currentBalances && (
@@ -1081,7 +1006,7 @@ function ShieldSwapForm({
             Loading Shield balances…
           </p>
         )}
-        {!currentBalances && canManageNear && !connecting && error && (
+        {!currentBalances && canManageNear && !connecting && balanceError && (
           <Button
             variant="outline"
             size="wallet"
