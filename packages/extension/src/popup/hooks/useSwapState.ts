@@ -32,6 +32,7 @@ export function useSwapState(
   const enabledChainKey = options.enabledChains?.map(chain => chain.id).join('|')
   // Modes share catalog metadata, but retain separate saved pairs and quote state.
   const catalogScope = options.catalogScope === undefined ? preferenceScope : options.catalogScope
+  const initializedCatalogContext = useRef<string | null>(null)
   const [initialSelection] = useState(() =>
     preferenceScope ? useSwapPreferences.getState().tokenSelections[preferenceScope] : undefined
   )
@@ -225,36 +226,69 @@ export function useSwapState(
         'cross-chain-to',
         ALL_DESTINATION_CHAIN_IDS
       )
-      setAreTokensLoading(true)
-      setDestinationTokensLoading(true)
+      const knownSources = new Set(sourceCatalog)
+      const knownDestinations = new Set(crossChainDestinationCatalog)
+      const catalogContext = JSON.stringify([
+        catalogScope,
+        enabledChainKey,
+        options.sourceAssetId,
+        options.destinationAssetId,
+        options.destinationApiChainId,
+        catalogRequestId
+      ])
+      // Domain changes can select a different default chain without changing its
+      // fresh catalog. Keep those references instead of republishing every row.
+      const canReuseCatalog = initializedCatalogContext.current === catalogContext
+      const sourcesReady =
+        canReuseCatalog &&
+        cachedPlannedSources.length > 0 &&
+        plan.sourceChainIds.every(chainId => {
+          const cached = readCachedTokenCatalogByChain('from', [chainId])
+          return cached.length > 0 && cached.every(token => knownSources.has(token))
+        })
+      const destinationsReady =
+        canReuseCatalog &&
+        plan.destinationChainIds.every(chainId => {
+          const cached = readCachedTokenCatalogByChain('cross-chain-to', [chainId])
+          return cached.length > 0 && cached.every(token => knownDestinations.has(token))
+        })
+      initializedCatalogContext.current = catalogContext
+      setAreTokensLoading(!sourcesReady)
+      setDestinationTokensLoading(!destinationsReady)
       setCatalogError(false)
-      setSourceCatalog(cachedSources ?? [])
-      setCrossChainDestinationCatalog(cachedDestinations ?? [])
-      setTokenIn(previous =>
-        previous && isSwapAssetOnEnabledChain(previous.assetId, options.enabledChains)
-          ? previous
-          : activePreferenceScope.current
-            ? pickProvisionalSwapSource(cachedPlannedSources, readSavedSourceAssetId())
-            : null
-      )
-      const destinationsRequest = loadTokenCatalogByChain(
-        'cross-chain-to',
-        plan.destinationChainIds,
-        catalogRequestId > 0,
-        tokens => {
-          setCrossChainDestinationCatalog(previous => mergeTokenCatalogs(previous, tokens))
-          setTokenOut(
-            previous =>
-              previous ??
-              tokens.find(token => token.assetId === readSavedDestinationAssetId()) ??
-              null
-          )
-        },
-        () => cancelled
-      ).finally(() => {
-        if (!cancelled) setDestinationTokensLoading(false)
-      })
+      if (sourcesReady && destinationsReady) return
+      if (!sourcesReady) {
+        setSourceCatalog(cachedSources ?? [])
+        setTokenIn(previous =>
+          previous && isSwapAssetOnEnabledChain(previous.assetId, options.enabledChains)
+            ? previous
+            : activePreferenceScope.current
+              ? pickProvisionalSwapSource(cachedPlannedSources, readSavedSourceAssetId())
+              : null
+        )
+      }
+      if (!canReuseCatalog) setCrossChainDestinationCatalog(cachedDestinations ?? [])
+      const destinationsRequest = destinationsReady
+        ? Promise.resolve()
+        : loadTokenCatalogByChain(
+            'cross-chain-to',
+            plan.destinationChainIds,
+            catalogRequestId > 0,
+            tokens => {
+              setCrossChainDestinationCatalog(previous => mergeTokenCatalogs(previous, tokens))
+              setTokenOut(
+                previous =>
+                  previous ??
+                  tokens.find(token => token.assetId === readSavedDestinationAssetId()) ??
+                  null
+              )
+            },
+            () => cancelled
+          ).finally(() => {
+            if (!cancelled) setDestinationTokensLoading(false)
+          })
       try {
+        if (sourcesReady) return
         const sources = await loadTokenCatalogByChain(
           'from',
           plan.sourceChainIds,

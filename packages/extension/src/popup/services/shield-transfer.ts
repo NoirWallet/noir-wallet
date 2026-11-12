@@ -131,6 +131,10 @@ export function listShieldFundingAssets(
   network: Network
 ): readonly ShieldFundingAsset[] {
   if (!model) return []
+  const tokensByAssetId = new Map<string, SwapToken>()
+  for (const token of catalogTokens) {
+    if (!tokensByAssetId.has(token.assetId)) tokensByAssetId.set(token.assetId, token)
+  }
   const chains = new Map<string, PortfolioChainView>(
     model.chains.map(chain => [chain.chain.id, chain])
   )
@@ -149,7 +153,7 @@ export function listShieldFundingAssets(
   })
   const native = getAssetProtocolSourceMappings(network, bundled).flatMap(mapping => {
     const entry = bundled.get(mapping.assetId)
-    const token = catalogTokens.find(candidate => candidate.assetId === mapping.protocolAssetId)
+    const token = tokensByAssetId.get(mapping.protocolAssetId)
     return entry?.asset.kind === 'native' &&
       (entry.asset.chainId.startsWith('eip155:') || entry.asset.chainId === zcashChainId) &&
       token?.decimals === entry.metadata.decimals
@@ -173,7 +177,7 @@ export function listShieldFundingAssets(
     const chain =
       chains.get(managed.chainId) ??
       (managed.chainId === zcashChainId ? zcashRouteChain : undefined)
-    const token = catalogTokens.find(candidate => candidate.assetId === managed.protocolAssetId)
+    const token = tokensByAssetId.get(managed.protocolAssetId)
     if (
       (chain?.chain.family !== 'evm' && chain?.chain.id !== zcashChainId) ||
       chain.chain.capabilities.transaction.status !== 'available' ||

@@ -1,8 +1,8 @@
 import type { EvmNetworkConfig } from '@/config/networks'
 import type { Network } from '@/types'
 
-import { resolveSwapTokenIconUrl, type SwapToken } from './intents-api'
-import { isDeprecatedIntentsToken, resolveIntentsEvmAssets } from './intents-evm-assets'
+import type { SwapToken } from './intents-api'
+import { resolveIntentsEvmAssets } from './intents-evm-assets'
 import { createIntentsWalletAssetCatalog } from './intents-wallet-assets'
 
 export interface IntentsManagedAsset {
@@ -30,30 +30,22 @@ export function resolveManagedIntentsAssets(
   const assets = new Map<string, IntentsManagedAsset>()
   const walletCatalog = createIntentsWalletAssetCatalog(tokens, network)
 
-  for (const token of tokens) {
-    const iconUrl = resolveSwapTokenIconUrl(token)
-    const evmAsset = resolveIntentsEvmAssets([token], evmNetworks)[0]
-    if (evmAsset) {
-      const previous = assets.get(evmAsset.assetId)
-      if (!previous || (isDeprecatedIntentsToken(previous) && !isDeprecatedIntentsToken(token))) {
-        assets.set(
-          evmAsset.assetId,
-          Object.freeze({
-            protocolAssetId: token.assetId,
-            assetId: evmAsset.assetId,
-            chainId: evmAsset.chainId,
-            namespace: 'erc20',
-            reference: evmAsset.contractAddress,
-            blockchain: token.blockchain,
-            symbol: token.symbol,
-            decimals: token.decimals,
-            ...(iconUrl ? { iconUrl } : {}),
-            management: 'evm' as const
-          })
-        )
-      }
-      continue
-    }
+  for (const evmAsset of resolveIntentsEvmAssets(tokens, evmNetworks)) {
+    assets.set(
+      evmAsset.assetId,
+      Object.freeze({
+        protocolAssetId: evmAsset.protocolAssetId,
+        assetId: evmAsset.assetId,
+        chainId: evmAsset.chainId,
+        namespace: 'erc20',
+        reference: evmAsset.contractAddress,
+        blockchain: evmAsset.blockchain,
+        symbol: evmAsset.symbol,
+        decimals: evmAsset.decimals,
+        ...(evmAsset.iconUrl ? { iconUrl: evmAsset.iconUrl } : {}),
+        management: 'evm' as const
+      })
+    )
   }
 
   for (const walletAsset of walletCatalog.entries) {

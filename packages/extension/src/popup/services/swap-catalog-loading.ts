@@ -191,7 +191,12 @@ export function mergeTokenCatalogs(
       tokens.set(`${token.rheaChainId}:${token.rheaAddress}`, token)
     }
   }
-  return Object.freeze([...tokens.values()])
+  const merged = [...tokens.values()]
+  const first = catalogs[0]
+  if (first?.length === merged.length && merged.every((token, index) => token === first[index])) {
+    return first
+  }
+  return Object.freeze(merged)
 }
 
 export function findSwapTokenInCatalog(

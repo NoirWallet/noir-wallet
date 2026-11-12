@@ -16,7 +16,15 @@ import {
   type ShieldSwapZecSourceKind
 } from '@/popup/services/shield-swap-zec-sources'
 import { isZcashHardwareKeySource } from '@/core/wallet/hardware-wallet-data'
-import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
+import {
+  useState,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useOptimistic,
+  useTransition
+} from 'react'
 import { useLocation, useSearchParams } from 'react-router-dom'
 import { Icon } from '@iconify/react'
 import { useNavigate } from '../../provider/Router'
@@ -573,6 +581,13 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
   const shieldManagedAssets = useMemo(
     () => resolveManagedIntentsCatalog(swap.tokens),
     [swap.tokens]
+  )
+  const managedAssetsByChainAndProtocolId = useMemo(
+    () =>
+      new Map(
+        shieldManagedAssets.map(asset => [`${asset.chainId}:${asset.protocolAssetId}`, asset])
+      ),
+    [shieldManagedAssets]
   )
   const shieldDisplayBalances = useMemo(() => shieldPortfolioBalances(portfolio), [portfolio])
   const shieldFundingOptions = useMemo(
@@ -1131,10 +1146,12 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
       if (source)
         return Boolean(selectWalletOwnedQuoteAssetExecution(source, 'private', privateAddress))
       // Selection may register this token; execution still requires its refreshed private balance.
-      const managed = resolveManagedIntentsCatalogAsset([token], token.assetId)
+      const managed =
+        managedAssetsByChainAndProtocolId.get(`${target.chain.id}:${token.assetId}`) ??
+        resolveManagedIntentsCatalogAsset([token], token.assetId)
       return managed?.management === 'evm' && managed.chainId === target.chain.id
     },
-    [portfolio, receiveTargets, privateExecutionAddresses]
+    [portfolio, receiveTargets, privateExecutionAddresses, managedAssetsByChainAndProtocolId]
   )
   const privateSwapSourceTokens = useMemo(
     () => swap.sourceTokens.filter(isSelectablePrivateSource),
@@ -4755,7 +4772,15 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
     swap.tokens
   ])
 
-  const handleBalanceDomainChange = (domain: BalanceDomain) => {
+  const [balanceDomainPending, startBalanceDomainTransition] = useTransition()
+  const [displayedBalanceDomain, setDisplayedBalanceDomain] = useOptimistic<BalanceDomain>(
+    shieldSwapSelected ? 'shield' : sourceMode === 'private' ? 'private' : 'public'
+  )
+  const lastRequestedBalanceDomain = useRef(displayedBalanceDomain)
+  useEffect(() => {
+    if (!balanceDomainPending) lastRequestedBalanceDomain.current = displayedBalanceDomain
+  }, [balanceDomainPending, displayedBalanceDomain])
+  const applyBalanceDomainChange = (domain: BalanceDomain) => {
     if (!availableBalanceDomains.includes(domain)) return
     setAmountFocusToken(value => value + 1)
     if (domain === 'shield') {
@@ -4769,10 +4794,19 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
     setShieldSwapSelected(false)
     setShieldZecSource('intents')
     if (domain === 'public') {
-      handleSourceModeChange('main', false)
+      handleSourceModeChange('main', true)
       return
     }
     handleSourceModeChange('private', true)
+  }
+  const handleBalanceDomainChange = (domain: BalanceDomain) => {
+    if (!availableBalanceDomains.includes(domain) || lastRequestedBalanceDomain.current === domain)
+      return
+    lastRequestedBalanceDomain.current = domain
+    startBalanceDomainTransition(() => {
+      setDisplayedBalanceDomain(domain)
+      applyBalanceDomainChange(domain)
+    })
   }
 
   const handleDestinationModeChange = (mode: QuoteDepositExecutionMode) => {
@@ -5632,7 +5666,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
           rightContent={
             showSwapSettings && viewStep === 'input' ? (
               <SwapSettingsButton
-                disabled={confidentialShieldSwapActive && shieldBusy}
+                disabled={balanceDomainPending || (confidentialShieldSwapActive && shieldBusy)}
                 onClick={() => void handleOpenSlippageSetting()}
               />
             ) : undefined
@@ -5641,156 +5675,161 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
       )}
       {ordinarySwapRequested && viewStep === 'input' && !shieldReviewing && (
         <BalanceDomainTabs
-          value={shieldSwapSelected ? 'shield' : sourceMode === 'private' ? 'private' : 'public'}
+          value={displayedBalanceDomain}
           available={availableBalanceDomains}
           onChange={handleBalanceDomainChange}
+          allowReselect
           disabled={shieldBusy || isPreparingReview}
           className="shrink-0 justify-center px-4 pb-3 pt-3"
         />
       )}
-      {ordinarySwapRequested &&
-        (visitedShieldScope === shieldPanelScope || confidentialShieldSwapActive) && (
-          <div
-            hidden={!confidentialShieldSwapActive}
-            className={confidentialShieldSwapActive ? 'flex min-h-0 flex-1 flex-col' : undefined}
-          >
-            <ShieldSwapPage
-              active={confidentialShieldSwapActive}
-              amountFocusToken={amountFocusToken}
-              onStateChange={handleShieldFormStateChange}
-              onSelectNativeZecSwap={activateShieldNativeZecSwap}
-            />
-          </div>
-        )}
-      {ordinarySwapRequested && confidentialShieldSwapActive ? null : legacyShieldSwapRequested ||
-        publicPrivacySendUnavailable ||
-        crossChainSendUnavailable ? (
-        <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-8 text-center">
-          {crossChainSendUnavailable && swap.catalogError ? (
-            <InlineError
-              message={crossChainSendUnavailable}
-              onRetry={swap.retryTokenCatalog}
-              className="w-full text-left"
-            />
-          ) : (
-            <>
-              <Icon icon="lucide:circle-alert" width={24} height={24} className="text-warning" />
-              <p className="mt-4 text-sm text-muted" role="alert">
-                {legacyShieldSwapRequested
-                  ? 'This Swap link is unavailable.'
-                  : publicPrivacySendUnavailable || crossChainSendUnavailable}
-              </p>
-              <Button
-                variant="outline"
-                className="mt-5"
-                onClick={
-                  legacyShieldSwapRequested
-                    ? () => navigate('/swap', { replace: true })
-                    : publicPrivacySendRequested
-                      ? returnFromPublicPrivacySend
-                      : () => navigate('/send')
-                }
-              >
-                {legacyShieldSwapRequested ? 'Back to Swap' : 'Back to Send'}
-              </Button>
-            </>
+      <div className="contents" inert={balanceDomainPending} aria-busy={balanceDomainPending}>
+        {ordinarySwapRequested &&
+          (visitedShieldScope === shieldPanelScope || confidentialShieldSwapActive) && (
+            <div
+              hidden={!confidentialShieldSwapActive}
+              className={confidentialShieldSwapActive ? 'flex min-h-0 flex-1 flex-col' : undefined}
+            >
+              <ShieldSwapPage
+                active={confidentialShieldSwapActive}
+                amountFocusToken={amountFocusToken}
+                onStateChange={handleShieldFormStateChange}
+                onSelectNativeZecSwap={activateShieldNativeZecSwap}
+              />
+            </div>
           )}
-        </div>
-      ) : viewStep === 'approval-pending' ? (
-        renderContent()
-      ) : preparingSimplifiedTransfer ? (
-        <TransactionReviewView
-          title={publicPrivacySendRequested ? 'Review Send' : 'Review Transfer'}
-          showTitle={false}
-          variant="figma"
-          asset={
-            swap.tokenIn
-              ? {
-                  assetId: swap.tokenIn.assetId,
-                  symbol: formatSymbol(swap.tokenIn.symbol),
-                  icon: swap.tokenIn.icon ?? swap.tokenIn.coingeckoIcon ?? undefined,
-                  blockchain: swap.tokenIn.blockchain,
-                  nativeChain:
-                    swap.tokenIn.contractAddress == null ? swap.tokenIn.blockchain : undefined
-                }
-              : null
-          }
-          amount={swap.amountIn || privateFundingAmount || privateTransferAmount}
-          network={walletOwnedSource?.chain.chain.displayName ?? ''}
-          rows={[
-            {
-              label: 'From',
-              content: walletOwnedSource ? (
-                <span className="inline-flex items-center justify-end gap-1.5">
-                  <span className="font-mono text-muted" title={walletOwnedSource.refundAddress}>
-                    {formatSortAddress(walletOwnedSource.refundAddress)}
-                  </span>
-                  <ExecutionAccountBadge
-                    mode={isPrivateFunding || publicPrivacySendRequested ? 'main' : 'private'}
-                  />
-                </span>
-              ) : (
-                <Skeleton className="h-4 w-32" />
-              )
-            },
-            ...(privateBalanceTransferRequested
-              ? [
-                  {
-                    label: 'Receive in',
-                    content: <ExecutionAccountBadge mode={isPrivateFunding ? 'private' : 'main'} />
+        {ordinarySwapRequested && confidentialShieldSwapActive ? null : legacyShieldSwapRequested ||
+          publicPrivacySendUnavailable ||
+          crossChainSendUnavailable ? (
+          <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-8 text-center">
+            {crossChainSendUnavailable && swap.catalogError ? (
+              <InlineError
+                message={crossChainSendUnavailable}
+                onRetry={swap.retryTokenCatalog}
+                className="w-full text-left"
+              />
+            ) : (
+              <>
+                <Icon icon="lucide:circle-alert" width={24} height={24} className="text-warning" />
+                <p className="mt-4 text-sm text-muted" role="alert">
+                  {legacyShieldSwapRequested
+                    ? 'This Swap link is unavailable.'
+                    : publicPrivacySendUnavailable || crossChainSendUnavailable}
+                </p>
+                <Button
+                  variant="outline"
+                  className="mt-5"
+                  onClick={
+                    legacyShieldSwapRequested
+                      ? () => navigate('/swap', { replace: true })
+                      : publicPrivacySendRequested
+                        ? returnFromPublicPrivacySend
+                        : () => navigate('/send')
                   }
-                ]
-              : []),
-            {
-              label: 'Send To',
-              content:
-                resolvedRecipientAddress || privateTransferRecipient ? (
-                  <span
-                    className="font-mono text-muted"
-                    title={resolvedRecipientAddress || privateTransferRecipient}
-                  >
-                    {formatSortAddress(resolvedRecipientAddress || privateTransferRecipient)}
+                >
+                  {legacyShieldSwapRequested ? 'Back to Swap' : 'Back to Send'}
+                </Button>
+              </>
+            )}
+          </div>
+        ) : viewStep === 'approval-pending' ? (
+          renderContent()
+        ) : preparingSimplifiedTransfer ? (
+          <TransactionReviewView
+            title={publicPrivacySendRequested ? 'Review Send' : 'Review Transfer'}
+            showTitle={false}
+            variant="figma"
+            asset={
+              swap.tokenIn
+                ? {
+                    assetId: swap.tokenIn.assetId,
+                    symbol: formatSymbol(swap.tokenIn.symbol),
+                    icon: swap.tokenIn.icon ?? swap.tokenIn.coingeckoIcon ?? undefined,
+                    blockchain: swap.tokenIn.blockchain,
+                    nativeChain:
+                      swap.tokenIn.contractAddress == null ? swap.tokenIn.blockchain : undefined
+                  }
+                : null
+            }
+            amount={swap.amountIn || privateFundingAmount || privateTransferAmount}
+            network={walletOwnedSource?.chain.chain.displayName ?? ''}
+            rows={[
+              {
+                label: 'From',
+                content: walletOwnedSource ? (
+                  <span className="inline-flex items-center justify-end gap-1.5">
+                    <span className="font-mono text-muted" title={walletOwnedSource.refundAddress}>
+                      {formatSortAddress(walletOwnedSource.refundAddress)}
+                    </span>
+                    <ExecutionAccountBadge
+                      mode={isPrivateFunding || publicPrivacySendRequested ? 'main' : 'private'}
+                    />
                   </span>
                 ) : (
                   <Skeleton className="h-4 w-32" />
                 )
-            },
-            { label: 'You receive', content: <Skeleton className="h-4 w-24" /> },
-            { label: 'Network fee', content: <Skeleton className="h-8 w-28" /> }
-          ]}
-          error={
-            transferPreparationStatusError ? (
-              <InlineError
-                message={transferPreparationStatusError}
-                className="mt-3 px-1 leading-5"
-                onRetry={
-                  transferPreparationError || swap.quoteError || swap.catalogError
-                    ? () => {
-                        setTransferPreparationError(null)
-                        autoReviewStartedScope.current = null
-                        if (swap.catalogError) swap.retryTokenCatalog()
-                        else if (quoteResult && isRheaSwapQuoteFresh(quoteResult))
-                          void reviewLiveQuote()
-                        else {
-                          setQuoteResult(null)
-                          setLiveQuoteKey(null)
-                          setQuoteRefreshTick(current => current + 1)
+              },
+              ...(privateBalanceTransferRequested
+                ? [
+                    {
+                      label: 'Receive in',
+                      content: (
+                        <ExecutionAccountBadge mode={isPrivateFunding ? 'private' : 'main'} />
+                      )
+                    }
+                  ]
+                : []),
+              {
+                label: 'Send To',
+                content:
+                  resolvedRecipientAddress || privateTransferRecipient ? (
+                    <span
+                      className="font-mono text-muted"
+                      title={resolvedRecipientAddress || privateTransferRecipient}
+                    >
+                      {formatSortAddress(resolvedRecipientAddress || privateTransferRecipient)}
+                    </span>
+                  ) : (
+                    <Skeleton className="h-4 w-32" />
+                  )
+              },
+              { label: 'You receive', content: <Skeleton className="h-4 w-24" /> },
+              { label: 'Network fee', content: <Skeleton className="h-8 w-28" /> }
+            ]}
+            error={
+              transferPreparationStatusError ? (
+                <InlineError
+                  message={transferPreparationStatusError}
+                  className="mt-3 px-1 leading-5"
+                  onRetry={
+                    transferPreparationError || swap.quoteError || swap.catalogError
+                      ? () => {
+                          setTransferPreparationError(null)
+                          autoReviewStartedScope.current = null
+                          if (swap.catalogError) swap.retryTokenCatalog()
+                          else if (quoteResult && isRheaSwapQuoteFresh(quoteResult))
+                            void reviewLiveQuote()
+                          else {
+                            setQuoteResult(null)
+                            setLiveQuoteKey(null)
+                            setQuoteRefreshTick(current => current + 1)
+                          }
                         }
-                      }
-                    : undefined
-                }
-              />
-            ) : undefined
-          }
-          preparing={!transferPreparationStatusError}
-          confirmLabel="Confirm"
-          confirmDisabled
-          onCancel={publicPrivacySendRequested ? returnFromPublicPrivacySend : goBack}
-          onConfirm={() => {}}
-        />
-      ) : (
-        renderContent()
-      )}
+                      : undefined
+                  }
+                />
+              ) : undefined
+            }
+            preparing={!transferPreparationStatusError}
+            confirmLabel="Confirm"
+            confirmDisabled
+            onCancel={publicPrivacySendRequested ? returnFromPublicPrivacySend : goBack}
+            onConfirm={() => {}}
+          />
+        ) : (
+          renderContent()
+        )}
+      </div>
       {!swap.isZecSource && !isPrivateFunding && !privateTransferRequested && (
         <ExecutionAccountSelectorDialog
           open={sourceSelectorOpen}
