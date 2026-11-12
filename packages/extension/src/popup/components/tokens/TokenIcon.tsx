@@ -31,6 +31,7 @@ interface TokenIconProps {
   nativeChain?: string
   size?: number | 'sm' | 'md' | 'lg' | 'xl'
   className?: string
+  showChainBadge?: boolean
   showBadge?: boolean
   badgeType?: 'send' | 'receive'
 }
@@ -56,6 +57,7 @@ export function TokenIcon({
   nativeChain,
   size = 32,
   className,
+  showChainBadge = true,
   showBadge,
   badgeType
 }: TokenIconProps) {
@@ -153,7 +155,7 @@ export function TokenIcon({
       )}
 
       {/* Chain badge for SwapToken context */}
-      {blockchain && (
+      {showChainBadge && blockchain && (
         <ChainIcon
           chain={blockchain}
           className="absolute -bottom-0.5 -right-0.5 w-[45%] h-[45%] rounded-full border border-black bg-white"

@@ -3,7 +3,6 @@ import { useSearchParams } from 'react-router-dom'
 import { Icon } from '@iconify/react'
 import type { ActivityItem } from '@/core/activity'
 import type { SwapToken } from '@/core/services/intents-api'
-import { resolveEvmChainIconAlias } from '@/config/icons'
 import {
   formatBaseUnitDecimalAmount,
   formatFiatAmount,
@@ -337,47 +336,51 @@ function ShieldProviderContent() {
           <div className="flex justify-center">
             <ShieldProviderLogo provider={provider} size={49} />
           </div>
-          <h1 className="mt-4 text-lg font-bold">{info.detailName}</h1>
+          <h1 className="mt-5 text-lg font-bold">{info.detailName}</h1>
           {provider === 'near-confidential' && (
-            <p className="mx-auto mt-2 max-w-[300px] text-sm leading-[18px] text-[var(--color-wallet-secondary)]">
-              Confidential Intents extends NEAR Intents with private swaps. Balances and swap
-              details are shielded from public view.
+            <p className="mx-auto mt-2 max-w-[343px] text-xs leading-4 text-wallet-secondary">
+              Confidential Intents extend the NEAR Intents protocol with privacy-preserving swaps.
+              Market makers can provide liquidity on a private chain where balances and swap details
+              are shielded from public view.
             </p>
           )}
           {provider === 'near-confidential' ? (
-            <div className="mt-6 grid grid-cols-2 gap-3 text-center">
+            <div className="mt-5 grid grid-cols-2 gap-3 text-center">
               <div className="min-w-0">
-                <div className="flex h-5 items-center justify-center -space-x-1">
-                  {supportedNetworks.slice(0, 7).map(network => (
-                    <ChainIcon
-                      key={network.id}
-                      chain={
-                        network.family === 'evm'
-                          ? resolveEvmChainIconAlias(network.id)
-                          : resolveChainIconAlias(network.family, network.displayName)
-                      }
-                      width={17}
-                      height={17}
-                      className="shrink-0 rounded-full border border-background"
-                    />
-                  ))}
+                <div className="flex h-5 items-center justify-center gap-1.5">
+                  {supportedNetworks.some(network => network.family === 'evm') && (
+                    <ChainIcon chain="evm" width={17} height={17} />
+                  )}
+                  {supportedNetworks
+                    .filter(network => network.family !== 'evm')
+                    .slice(0, 4)
+                    .map(network => (
+                      <ChainIcon
+                        key={network.id}
+                        chain={resolveChainIconAlias(network.family, network.displayName)}
+                        width={17}
+                        height={17}
+                        className="shrink-0 rounded-full border border-background"
+                      />
+                    ))}
                 </div>
-                <p className="mt-2 text-xs text-wallet-secondary">
+                <p className="mt-1 text-sm text-wallet-secondary">
                   {supportedNetworks.length} Supported networks
                 </p>
               </div>
               <div className="min-w-0">
                 <div className="flex h-5 items-center justify-center -space-x-1">
-                  {supportedTokens?.slice(0, 7).map(token => (
+                  {supportedTokens?.slice(0, 5).map(token => (
                     <TokenIcon
                       key={token.assetId}
                       token={token}
+                      showChainBadge={false}
                       size={17}
                       className="shrink-0 rounded-full border border-background"
                     />
                   ))}
                 </div>
-                <p className="mt-2 text-xs text-wallet-secondary">
+                <p className="mt-1 text-sm text-wallet-secondary">
                   {supportedTokens?.length ?? '—'} Supported tokens
                 </p>
               </div>
@@ -403,7 +406,7 @@ function ShieldProviderContent() {
             </div>
           )}
           <div
-            className={`mt-4 grid gap-2 ${provider === 'near-confidential' ? 'grid-cols-4' : 'grid-cols-3'}`}
+            className={`mt-5 grid gap-3 ${provider === 'near-confidential' ? 'grid-cols-4' : 'grid-cols-3'}`}
           >
             {provider === 'near-confidential' && (
               <>
@@ -486,27 +489,27 @@ function ShieldProviderContent() {
           onValueChange={value => {
             if (value === 'assets' || value === 'activity') setDetailTab(value)
           }}
-          className="gap-0 border-t border-white/[0.08]"
+          className="gap-0"
         >
-          <div className="sticky top-0 z-10 flex h-10 items-center gap-7 border-b border-white/8 bg-background px-4">
-            <TabsList className="h-full min-w-0 flex-1 justify-start gap-7 rounded-none bg-transparent! p-0">
+          <TabsList
+            aria-label="Shield funds"
+            className="h-[50px] w-full rounded-none border-y border-white/[0.08] bg-transparent p-0 px-5"
+          >
+            {(['assets', 'activity'] as const).map(tab => (
               <TabsTrigger
-                value="assets"
-                className="tab-trigger-custom h-full flex-0 rounded-none px-0 py-0 text-base font-normal text-wallet-secondary data-[state=active]:text-white after:max-w-11"
+                key={tab}
+                value={tab}
+                className="group h-full rounded-none border-0 bg-transparent p-0 text-base font-normal text-wallet-secondary data-[state=active]:bg-transparent data-[state=active]:text-foreground data-[state=active]:shadow-none dark:data-[state=active]:bg-transparent"
               >
-                Assets
+                <span className="relative flex h-full items-center after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 group-data-[state=active]:after:bg-foreground">
+                  {tab === 'assets' ? 'Assets' : 'Activity'}
+                </span>
               </TabsTrigger>
-              <TabsTrigger
-                value="activity"
-                className="tab-trigger-custom h-full flex-0 rounded-none px-0 py-0 text-base font-normal text-wallet-secondary data-[state=active]:text-white after:max-w-11"
-              >
-                Activity
-              </TabsTrigger>
-            </TabsList>
-          </div>
+            ))}
+          </TabsList>
           <TabsContent value="assets" className="mt-0">
             <section aria-label={`${info.name} balance`}>
-              <div className="py-3.5 text-center">
+              <div className="py-5 text-center">
                 <p className="break-all px-4 text-[26px] font-semibold leading-[37.4px]">
                   {displayFiat}
                 </p>
@@ -557,9 +560,6 @@ function ShieldProviderContent() {
                     <NearConfidentialHoldingRow
                       key={entry.asset.tokenId}
                       entry={entry}
-                      chain={
-                        model?.chains.find(chain => chain.chain.id === entry.asset.chainId)?.chain
-                      }
                       balancesHidden={balancesHidden}
                       showQuantitySymbol={false}
                       onClick={() => setSelectedAssetId(entry.asset.tokenId)}
@@ -593,9 +593,22 @@ function ShieldProviderContent() {
                 <p className="px-4 py-5 text-center text-sm text-muted">Balance unavailable</p>
               )}
               {showNearEmptyState && (
-                <p className="px-4 pb-6 pt-8 text-center text-sm text-wallet-secondary">
-                  No shielded assets yet.
-                </p>
+                <div className="flex flex-col items-center gap-2 px-4 pb-6 pt-7 text-sm text-muted">
+                  <p>No shielded assets yet,</p>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      navigate(`/transfer?entry=shield&provider=near-confidential&mode=${mode}`)
+                    }
+                    disabled={!canManageNear}
+                    className="wallet-interactive rounded-sm enabled:hover:text-foreground focus-visible:outline-2 focus-visible:outline-primary disabled:opacity-45"
+                  >
+                    <span className="font-semibold text-foreground underline underline-offset-2">
+                      Move
+                    </span>{' '}
+                    now
+                  </button>
+                </div>
               )}
               {provider === 'zcash-shield' &&
                 !hasZcashAccount &&
@@ -617,7 +630,7 @@ function ShieldProviderContent() {
                 )}
             </section>
           </TabsContent>
-          <TabsContent value="activity" className="mt-0">
+          <TabsContent value="activity" className="mt-0 pt-4" aria-label="Shield activity">
             {account ? (
               <MultichainActivityPanel
                 walletId={account.walletId}
