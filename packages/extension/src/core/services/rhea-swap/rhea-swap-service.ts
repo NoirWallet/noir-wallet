@@ -31,6 +31,7 @@ import {
   type RheaSwapSubmissionView,
   type RheaSwapToken
 } from './rhea-swap-model'
+import { isDeprecatedIntentsToken } from '@/core/services/intents-evm-assets'
 import { readRheaDestinationHash } from './rhea-order-status'
 import { getRheaSwapQuoteDeadline, isRheaSwapQuoteFresh } from './rhea-swap-quote-validity'
 import { DedupPromise, SerialTaskQueue } from '@/lib/async-utils'
@@ -195,6 +196,10 @@ export class RheaSwapService {
         ? `${token.rheaChainId}:native:${token.assetId}`
         : `${token.rheaChainId}:${token.rheaAddress}`
       const previous = unique.get(key)
+      if (previous && isDeprecatedIntentsToken(previous) !== isDeprecatedIntentsToken(token)) {
+        if (isDeprecatedIntentsToken(previous)) unique.set(key, token)
+        continue
+      }
       unique.set(
         key,
         previous
