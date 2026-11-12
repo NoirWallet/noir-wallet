@@ -3110,11 +3110,13 @@ export class BackgroundZcashWalletRuntime {
       enabledAccounts.find(account => account.id === this.store.currentAccountId) ??
       enabledAccounts[0]
     if (firstAccount && core.accountIndex !== firstAccount.derivationIndex) {
+      // Credential binding changes the derivation index, but does not select the WASM account.
+      const restored = await core.restoreFromDB(firstAccount.derivationIndex)
+      if (!restored) throw new Error('Active Zcash account could not be restored')
       if (credential) {
         this.bindCredentialToCore(core, credential, firstAccount.derivationIndex)
       } else {
-        const restored = await core.restoreFromDB(firstAccount.derivationIndex)
-        if (restored) core.setSessionCredential(firstAccount.derivationIndex)
+        core.setSessionCredential(firstAccount.derivationIndex)
       }
     }
   }
