@@ -53,6 +53,8 @@ import { NetworkFeeTierPicker } from '@/popup/components/transaction/NetworkFeeT
 import {
   SendAssetHeader,
   SendAmountInputCard,
+  SendAmountRow,
+  SendRouteInfoCard,
   SendRecipientAddress,
   SendRecipientInputCard
 } from '@/popup/components/transaction/SendInputCards'
@@ -460,61 +462,69 @@ export function BitcoinSendForm({
 
   return (
     <>
-      <div className="page-content space-y-4">
-        <div className="flex flex-col items-center gap-2 pt-2">
-          <SendAmountInputCard
-            ariaLabel="BTC amount"
-            value={amount}
-            onChange={value => {
-              if (/^\d*\.?\d*$/.test(value)) {
-                setAmount(value)
-                setSendMaximum(false)
-              }
-            }}
-            available={availableDisplay}
-            symbol="BTC"
-            priceUsd={balanceKnown ? priceUsd : null}
-            hero
+      <div className="page-content flex flex-col gap-4">
+        <div className="order-3">
+          <SendAmountRow
+            amountInput={
+              <SendAmountInputCard
+                ariaLabel="BTC amount"
+                value={amount}
+                onChange={value => {
+                  if (/^\d*\.?\d*$/.test(value)) {
+                    setAmount(value)
+                    setSendMaximum(false)
+                  }
+                }}
+                available={availableDisplay}
+                symbol="BTC"
+                priceUsd={balanceKnown ? priceUsd : null}
+                inline
+              />
+            }
+            assetSelector={
+              <SendAssetHeader
+                assetId={asset.asset.id}
+                symbol="BTC"
+                icon={asset.metadata.iconUrl}
+                networkName={formatPortfolioNetworkName(chain)}
+                nativeChain="bitcoin"
+                variant="pill"
+              />
+            }
+            balance={
+              <span title={balanceKnown ? availableDisplay : undefined}>
+                {balanceKnown ? formatTokenQuantity(availableDisplay) : '—'}
+              </span>
+            }
+            maxButton={
+              <button
+                type="button"
+                aria-label="Max"
+                aria-pressed={sendMaximum}
+                disabled={
+                  !balanceKnown ||
+                  BigInt(selectedAvailableRaw) <= 0n ||
+                  !parsedRecipient ||
+                  maximum.loading
+                }
+                onClick={() => {
+                  setSendMaximum(true)
+                  void maximum.request()
+                }}
+                className="rounded-md bg-white/10 px-2 py-1 font-medium text-muted aria-pressed:bg-primary/15 aria-pressed:text-primary disabled:opacity-40"
+              >
+                Max
+              </button>
+            }
           />
-          <SendAssetHeader
-            assetId={asset.asset.id}
-            symbol="BTC"
-            icon={asset.metadata.iconUrl}
-            networkName={formatPortfolioNetworkName(chain)}
-            nativeChain="bitcoin"
-            variant="pill"
-          />
-          <div className="flex min-w-0 items-center justify-center gap-2 text-xs text-muted">
-            <span className="min-w-0 truncate" title={balanceKnown ? availableDisplay : undefined}>
-              {balanceKnown ? formatTokenQuantity(availableDisplay) : '—'}
-            </span>
-            <button
-              type="button"
-              aria-label="Max"
-              aria-pressed={sendMaximum}
-              disabled={
-                !balanceKnown ||
-                BigInt(selectedAvailableRaw) <= 0n ||
-                !parsedRecipient ||
-                maximum.loading
-              }
-              onClick={() => {
-                setSendMaximum(true)
-                void maximum.request()
-              }}
-              className="rounded-md bg-primary/15 px-2 py-1 font-medium text-primary disabled:opacity-40"
-            >
-              Max
-            </button>
-          </div>
         </div>
 
-        <div className="flex items-center justify-between gap-3">
+        <div className="order-1 flex items-center justify-between gap-3">
           <span className="text-sm text-muted">Send from</span>
           <BalanceDomainTabs value="public" available={['public']} onChange={() => {}} />
         </div>
 
-        <div>
+        <div className="order-2">
           <div className="mb-2 flex items-center justify-between text-xs">
             <span className="text-muted">Send to</span>
             <span>{formatPortfolioNetworkName(chain)}</span>
@@ -545,34 +555,40 @@ export function BitcoinSendForm({
           )}
         </div>
 
-        <div className="flex min-h-12 items-center justify-between gap-2 rounded-lg border border-white/15 px-4 py-3 text-xs">
-          <span className="text-muted">
-            Fee · {bitcoinAccountTypeDescription(bitcoinAddressType)}
-          </span>
-          <div className="flex min-w-0 items-center gap-1.5">
-            {feePreview.loading && (
-              <Icon
-                icon="lucide:loader-circle"
-                width={14}
-                height={14}
-                className="animate-spin text-muted"
-              />
-            )}
-            <NetworkFeeTierPicker
-              chainFamily="bitcoin"
-              tier={feeTier}
-              amount={previewFee}
-              symbol="BTC"
-              layout="inline"
-              onTierChange={nextTier => {
-                setFeeTier(nextTier)
-                if (sendMaximum) {
-                  setSendMaximum(false)
-                  setAmount('')
-                }
-              }}
-            />
-          </div>
+        <div className="order-4">
+          <SendRouteInfoCard
+            fee={
+              <div className="flex min-w-0 items-center gap-1.5">
+                {feePreview.loading && (
+                  <Icon
+                    icon="lucide:loader-circle"
+                    width={14}
+                    height={14}
+                    className="animate-spin text-muted"
+                  />
+                )}
+                <NetworkFeeTierPicker
+                  chainFamily="bitcoin"
+                  tier={feeTier}
+                  amount={previewFee}
+                  symbol="BTC"
+                  layout="inline"
+                  onTierChange={nextTier => {
+                    setFeeTier(nextTier)
+                    if (sendMaximum) {
+                      setSendMaximum(false)
+                      setAmount('')
+                    }
+                  }}
+                />
+              </div>
+            }
+            extra={
+              <div className="border-t border-white/10 pt-3 text-muted">
+                {bitcoinAccountTypeDescription(bitcoinAddressType)}
+              </div>
+            }
+          />
         </div>
 
         {balanceKnown &&

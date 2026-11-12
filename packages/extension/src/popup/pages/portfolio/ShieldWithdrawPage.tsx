@@ -31,6 +31,7 @@ import {
   SendSourceSection,
   SendFieldLabel,
   SendAmountInputCard,
+  SendRouteInfoCard,
   SendRecipientInputCard
 } from '@/popup/components/transaction/SendInputCards'
 import { AmountDisplay } from '@/popup/components/common/AmountDisplay'
@@ -652,200 +653,196 @@ export function ShieldWithdrawForm({
   return (
     <div className="page-container min-h-0 overflow-hidden">
       <PageHeader title="Send" showBack onBack={onBack} />
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-5 pt-4">
-        <div className="space-y-4 mb-4">
-          <SendSourceSection
-            domain="shield"
-            availableDomains={['public', 'shield']}
-            disabled={busy}
-            onDomainChange={domain => {
-              if (domain === 'public') {
-                const publicAssetId = [source?.asset, destination?.asset, initialAsset]
-                  .map(asset => asset?.asset.id)
-                  .find(id => model?.assets.some(item => item.asset.id === id))
-                onSelectPublic(publicAssetId ?? null, isAddress(recipient) ? recipient : '')
-              }
-            }}
-            amountInput={
-              <SendAmountInputCard
-                ariaLabel="Send amount"
-                disabled={busy}
-                available={availableRaw}
-                symbol={formatSymbol(displayedAsset?.metadata.symbol)}
-                hero
-                value={amount}
-                onChange={value => {
-                  const next = normalizePrivateBalanceTransferInput(value)
-                  if (next !== null) {
-                    keepSelectedSource()
-                    setAmount(next)
-                  }
-                }}
-              />
+      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 pb-5 pt-4">
+        <SendSourceSection
+          domain="shield"
+          availableDomains={['public', 'shield']}
+          disabled={busy}
+          onDomainChange={domain => {
+            if (domain === 'public') {
+              const publicAssetId = [source?.asset, destination?.asset, initialAsset]
+                .map(asset => asset?.asset.id)
+                .find(id => model?.assets.some(item => item.asset.id === id))
+              onSelectPublic(publicAssetId ?? null, isAddress(recipient) ? recipient : '')
             }
-            assetSelector={
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => setPicker('source')}
-                className="wallet-interactive flex h-9 max-w-full items-center gap-2 rounded-full bg-wallet-surface px-2.5 text-sm enabled:hover:bg-wallet-selected enabled:active:bg-white/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 disabled:opacity-50"
-              >
-                {displayedAsset && (
-                  <TokenIcon
-                    assetId={displayedAsset.asset.id}
-                    symbol={formatSymbol(displayedAsset.metadata.symbol)}
-                    icon={displayedAsset.metadata.iconUrl}
-                    size={24}
-                  />
-                )}
-                {displayedAsset ? formatSymbol(displayedAsset.metadata.symbol) : 'Token'}
-                <Icon icon="lucide:chevron-down" width={16} height={16} />
-              </button>
-            }
-            balance={
-              <span
-                className="min-w-0 truncate"
-                title={
-                  source && !balancesHidden
-                    ? formatBaseUnitDecimalAmount(availableRaw, source.asset.metadata.decimals)
-                    : undefined
-                }
-              >
-                {balancesHidden
-                  ? '••••'
-                  : source
-                    ? formatTokenQuantity(
-                        formatBaseUnitDecimalAmount(availableRaw, source.asset.metadata.decimals)
-                      )
-                    : '—'}
-              </span>
-            }
-            maxButton={
-              <button
-                type="button"
-                disabled={busy || connecting || !source || !currentBalances || availableRaw === '0'}
-                title={!currentBalances ? 'Shield balance unavailable' : 'Use maximum balance'}
-                onClick={() => {
-                  if (!source) return
+          }}
+          amountInput={
+            <SendAmountInputCard
+              ariaLabel="Send amount"
+              disabled={busy}
+              available={availableRaw}
+              symbol={formatSymbol(displayedAsset?.metadata.symbol)}
+              inline
+              value={amount}
+              onChange={value => {
+                const next = normalizePrivateBalanceTransferInput(value)
+                if (next !== null) {
                   keepSelectedSource()
-                  setAmount(
-                    formatBaseUnitDecimalAmount(availableRaw, source.asset.metadata.decimals)
-                  )
-                }}
-                className="rounded-md bg-primary/15 px-2 py-1 font-medium text-primary disabled:opacity-40"
-              >
-                Max
-              </button>
-            }
-          />
-        </div>
-
-        <div className="mb-5 flex min-w-0 items-center justify-between gap-3">
-          <SendFieldLabel>Provider</SendFieldLabel>
-          {canSendZcash ? (
-            <div className="w-[225px] max-w-[72%] min-w-0">
-              <ShieldSendProviderTabs
-                value="near-confidential"
-                disabled={busy}
-                onChange={provider => {
-                  if (provider === 'zcash-shield') navigate('/send/zcash?from=shielded')
-                }}
-              />
-            </div>
-          ) : (
-            <span className="inline-flex items-center gap-2 text-sm">
-              <img src={nearLogo} alt="" className="size-5 rounded" />
-              Confidential
+                  setAmount(next)
+                }
+              }}
+            />
+          }
+          assetSelector={
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => setPicker('source')}
+              className="wallet-interactive flex h-9 max-w-full items-center gap-2 rounded-full bg-wallet-surface px-2.5 text-sm enabled:hover:bg-wallet-selected enabled:active:bg-white/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 disabled:opacity-50"
+            >
+              {displayedAsset && (
+                <TokenIcon
+                  assetId={displayedAsset.asset.id}
+                  symbol={formatSymbol(displayedAsset.metadata.symbol)}
+                  icon={displayedAsset.metadata.iconUrl}
+                  size={24}
+                />
+              )}
+              {displayedAsset ? formatSymbol(displayedAsset.metadata.symbol) : 'Token'}
+              <Icon icon="lucide:chevron-down" width={16} height={16} />
+            </button>
+          }
+          balance={
+            <span
+              className="min-w-0 truncate"
+              title={
+                source && !balancesHidden
+                  ? formatBaseUnitDecimalAmount(availableRaw, source.asset.metadata.decimals)
+                  : undefined
+              }
+            >
+              {balancesHidden
+                ? '••••'
+                : source
+                  ? formatTokenQuantity(
+                      formatBaseUnitDecimalAmount(availableRaw, source.asset.metadata.decimals)
+                    )
+                  : '—'}
             </span>
-          )}
-        </div>
-
-        <div className="mb-2 flex min-w-0 items-center justify-between gap-3 text-xs">
-          <SendFieldLabel>Send to</SendFieldLabel>
-          <button
-            type="button"
-            disabled={busy || destinations.length === 0}
-            onClick={() => {
-              keepSelectedSource()
-              setPicker('network')
-            }}
-            className="wallet-interactive inline-flex min-w-0 items-center gap-1.5 hover:text-primary disabled:opacity-50"
-            aria-label={`Destination network, ${destinationNetwork?.displayName ?? 'select network'}`}
-          >
-            {destinationNetwork && (
-              <ChainIcon
-                chain={withdrawChainIconAlias(destinationNetwork)}
-                width={16}
-                height={16}
-                className="shrink-0 rounded-[4px]"
-              />
-            )}
-            <span className="truncate">{destinationNetwork?.displayName ?? 'Select network'}</span>
-            <Icon icon="lucide:chevron-down" width={13} height={13} className="shrink-0" />
-          </button>
-        </div>
-        <div className="mb-3">
-          <SendRecipientInputCard
-            id="shield-send-recipient"
-            label="Recipient address"
-            value={recipient}
-            onChange={value => {
-              keepSelectedSource()
-              setRecipient(value)
-            }}
-            placeholder="Enter address"
-            variant="filled"
-            hideLabel
-            disabled={busy || !destination}
-            onSelectRecipient={
-              busy || !destination
-                ? undefined
-                : () => {
-                    keepSelectedSource()
-                    setPicker('recipient')
-                  }
-            }
-          />
+          }
+          maxButton={
+            <button
+              type="button"
+              disabled={busy || connecting || !source || !currentBalances || availableRaw === '0'}
+              title={!currentBalances ? 'Shield balance unavailable' : 'Use maximum balance'}
+              onClick={() => {
+                if (!source) return
+                keepSelectedSource()
+                setAmount(formatBaseUnitDecimalAmount(availableRaw, source.asset.metadata.decimals))
+              }}
+              className="rounded-md bg-white/10 px-2 py-1 font-medium text-muted disabled:opacity-40"
+            >
+              Max
+            </button>
+          }
+        />
+        <div className="order-2 space-y-2">
+          <div className="flex min-w-0 items-center justify-between gap-3 text-xs">
+            <SendFieldLabel>Send to</SendFieldLabel>
+            <button
+              type="button"
+              disabled={busy || destinations.length === 0}
+              onClick={() => {
+                keepSelectedSource()
+                setPicker('network')
+              }}
+              className="wallet-interactive inline-flex min-w-0 items-center gap-1.5 hover:text-primary disabled:opacity-50"
+              aria-label={`Destination network, ${destinationNetwork?.displayName ?? 'select network'}`}
+            >
+              {destinationNetwork && (
+                <ChainIcon
+                  chain={withdrawChainIconAlias(destinationNetwork)}
+                  width={16}
+                  height={16}
+                  className="shrink-0 rounded-[4px]"
+                />
+              )}
+              <span className="truncate">
+                {destinationNetwork?.displayName ?? 'Select network'}
+              </span>
+              <Icon icon="lucide:chevron-down" width={13} height={13} className="shrink-0" />
+            </button>
+          </div>
+          <div>
+            <SendRecipientInputCard
+              id="shield-send-recipient"
+              label="Recipient address"
+              value={recipient}
+              onChange={value => {
+                keepSelectedSource()
+                setRecipient(value)
+              }}
+              placeholder="Enter address"
+              variant="filled"
+              hideLabel
+              disabled={busy || !destination}
+              onSelectRecipient={
+                busy || !destination
+                  ? undefined
+                  : () => {
+                      keepSelectedSource()
+                      setPicker('recipient')
+                    }
+              }
+            />
+          </div>
         </div>
         {source && destinations.length === 0 && (
-          <p role="alert" className="mt-3 text-xs text-warning">
+          <p role="alert" className="order-5 text-xs text-warning">
             No supported network for this token
           </p>
         )}
-        <div className="mt-4 space-y-4 text-sm">
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-muted">Slippage</span>
-            <button
-              type="button"
-              aria-label={`Set slippage, currently ${slippage}%`}
-              disabled={busy}
-              onClick={() => setPicker('slippage')}
-              className="wallet-interactive inline-flex items-center gap-1 text-foreground hover:text-primary disabled:opacity-45"
-            >
-              {slippage}% <Icon icon="lucide:chevron-down" width={14} height={14} />
-            </button>
-          </div>
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-muted">Fee</span>
-            <span className="flex min-w-0 items-center gap-1.5 text-right text-foreground">
-              {preview?.sourceNetworkFee
+        <div className="order-4">
+          <SendRouteInfoCard
+            provider={
+              canSendZcash ? (
+                <div className="w-[190px] max-w-full">
+                  <ShieldSendProviderTabs
+                    value="near-confidential"
+                    disabled={busy}
+                    onChange={provider => {
+                      if (provider === 'zcash-shield')
+                        navigate('/send/zcash?from=shielded', { replace: true })
+                    }}
+                  />
+                </div>
+              ) : (
+                <span className="inline-flex items-center gap-2">
+                  <img src={nearLogo} alt="" className="size-5 rounded" />
+                  Confidential
+                </span>
+              )
+            }
+            fee={
+              preview?.sourceNetworkFee
                 ? `${formatBaseUnitDecimalAmount(preview.sourceNetworkFee.raw, preview.sourceNetworkFee.decimals)} ${formatSymbol(preview.sourceNetworkFee.symbol)}`
-                : '—'}
-            </span>
-          </div>
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-muted">Est. time</span>
-            <span>
-              {preview?.timeEstimateSeconds === undefined
+                : '—'
+            }
+            time={
+              preview?.timeEstimateSeconds === undefined
                 ? '—'
-                : formatShieldQuoteTime(preview.timeEstimateSeconds)}
-            </span>
-          </div>
+                : formatShieldQuoteTime(preview.timeEstimateSeconds)
+            }
+            extra={
+              <div className="flex items-center justify-between gap-3 border-t border-white/10 pt-3">
+                <span className="text-muted">Slippage</span>
+                <button
+                  type="button"
+                  aria-label={`Set slippage, currently ${slippage}%`}
+                  disabled={busy}
+                  onClick={() => setPicker('slippage')}
+                  className="wallet-interactive inline-flex items-center gap-1 text-foreground hover:text-primary disabled:opacity-45"
+                >
+                  {slippage}% <Icon icon="lucide:chevron-down" width={14} height={14} />
+                </button>
+              </div>
+            }
+          />
         </div>
         {previewError && (
           <div
             role="alert"
-            className="mt-3 flex items-center justify-between gap-2 text-xs text-warning"
+            className="order-5 flex items-center justify-between gap-2 text-xs text-warning"
           >
             <span>
               {previewError === CONFIDENTIAL_PREVIEW_CONNECTION_ERROR
@@ -869,22 +866,22 @@ export function ShieldWithdrawForm({
           </div>
         )}
         {amountState?.error && (
-          <p role="alert" className="mt-3 text-xs text-warning">
+          <p role="alert" className="order-5 text-xs text-warning">
             {amountState.error}
           </p>
         )}
         {recipient && !recipientValid && (
-          <p role="alert" className="mt-3 text-xs text-warning">
+          <p role="alert" className="order-5 text-xs text-warning">
             Enter a valid EVM address
           </p>
         )}
         {error && (
-          <p role="alert" className="mt-3 text-xs text-warning">
+          <p role="alert" className="order-5 text-xs text-warning">
             {error}
           </p>
         )}
         {!currentBalances && canManageNear && connecting && (
-          <p role="status" className="mt-4 text-center text-sm text-muted">
+          <p role="status" className="order-5 text-center text-sm text-muted">
             Loading Shield balances…
           </p>
         )}
@@ -893,7 +890,7 @@ export function ShieldWithdrawForm({
             variant="outline"
             size="wallet"
             onClick={() => void refreshBalances()}
-            className="mt-4 w-full"
+            className="order-5 w-full"
           >
             Retry
           </Button>
@@ -916,7 +913,7 @@ export function ShieldWithdrawForm({
           }
           onClick={() => void prepare()}
         >
-          Send
+          Continue
         </Button>
       </div>
       <Dialog open={picker !== null} onOpenChange={open => !open && setPicker(null)}>

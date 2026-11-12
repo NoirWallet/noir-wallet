@@ -4,6 +4,7 @@ import { parseZcashAddress } from '@/core/address-book/address-book'
 import { isZecToken, type SwapToken } from '@/core/services/intents-api'
 import {
   RHEA_SWAP_CHAIN_CATALOG,
+  type RheaSwapQuoteView,
   type RheaSwapQuoteRequest,
   type RheaSwapReviewView,
   type RheaSwapToken
@@ -25,6 +26,7 @@ import {
 } from '@/popup/services/quote-deposit-transfer-client'
 import type { AdditionalReceiveTargetsView } from '@/popup/services/receive-targets-client'
 import type { Network } from '@/types'
+import { isRheaSwapQuoteFresh } from '@/core/services/rhea-swap/rhea-swap-quote-validity'
 import { resolveAccountAvailableRaw } from '@/popup/services/transfer-availability'
 import {
   filterCrossChainSendDestinations,
@@ -90,6 +92,38 @@ export {
   getRheaSwapQuoteDeadline,
   isRheaSwapQuoteFresh
 } from '@/core/services/rhea-swap/rhea-swap-quote-validity'
+
+export function hasSwapQuoteTermsChanged(
+  previous: RheaSwapQuoteView,
+  next: RheaSwapQuoteView
+): boolean {
+  return (
+    previous.estimatedOut !== next.estimatedOut ||
+    previous.minAmountOut !== next.minAmountOut ||
+    previous.router !== next.router ||
+    previous.recipient !== next.recipient
+  )
+}
+
+export function isAcceptedSwapReview(input: {
+  readonly quote: RheaSwapQuoteView | null
+  readonly review: RheaSwapReviewView | null
+  readonly acceptedHandle: string | null
+  readonly quoteKey: string | null
+  readonly requestKey: string | null | undefined
+  readonly now?: number
+}): boolean {
+  const { quote, review, acceptedHandle, quoteKey, requestKey } = input
+  return Boolean(
+    quote &&
+    review &&
+    acceptedHandle === quote.quoteHandle &&
+    review.quoteHandle === quote.quoteHandle &&
+    quoteKey &&
+    quoteKey === requestKey &&
+    isRheaSwapQuoteFresh(quote, input.now)
+  )
+}
 
 export function resolveSwapReviewAction(input: {
   readonly isZecSource: boolean

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Icon } from '@iconify/react'
 import type { PortfolioAssetView, PortfolioChainView } from '@/core/portfolio'
 import { parseSolanaPublicKey } from '@/core/chains/solana'
 import { formatSortAddress } from '@/lib/format'
@@ -17,7 +18,8 @@ import { RecipientSelector } from '@/popup/components/transaction/RecipientSelec
 import {
   SendAssetHeader,
   SendAmountInputCard,
-  SendNetworkFeeCard,
+  SendAmountRow,
+  SendRouteInfoCard,
   SendRecipientAddress,
   SendRecipientInputCard
 } from '@/popup/components/transaction/SendInputCards'
@@ -333,58 +335,66 @@ export function SolanaSendForm({
 
   return (
     <>
-      <div className="page-content space-y-4">
-        <div className="flex flex-col items-center gap-2 pt-2">
-          <SendAmountInputCard
-            ariaLabel={`${asset.metadata.symbol} amount`}
-            value={amount}
-            onChange={value => {
-              if (/^\d*\.?\d*$/.test(value)) {
-                invalidateMaximum()
-                setAmount(value)
-              }
-            }}
-            available={transferAvailability.display}
-            symbol={asset.metadata.symbol}
-            priceUsd={priceUsd}
-            hero
+      <div className="page-content flex flex-col gap-4">
+        <div className="order-3">
+          <SendAmountRow
+            amountInput={
+              <SendAmountInputCard
+                ariaLabel={`${asset.metadata.symbol} amount`}
+                value={amount}
+                onChange={value => {
+                  if (/^\d*\.?\d*$/.test(value)) {
+                    invalidateMaximum()
+                    setAmount(value)
+                  }
+                }}
+                available={transferAvailability.display}
+                symbol={asset.metadata.symbol}
+                priceUsd={priceUsd}
+                inline
+              />
+            }
+            assetSelector={
+              <SendAssetHeader
+                assetId={asset.asset.id}
+                symbol={asset.metadata.symbol}
+                icon={asset.metadata.iconUrl}
+                networkName={networkName}
+                nativeChain={asset.asset.kind === 'native' ? 'solana' : undefined}
+                blockchain={asset.asset.kind === 'token' ? 'solana' : undefined}
+                variant="pill"
+              />
+            }
+            balance={
+              <span title={transferAvailability.display}>
+                {formatTokenQuantity(transferAvailability.display)}
+              </span>
+            }
+            maxButton={
+              <button
+                type="button"
+                aria-label="Max"
+                aria-pressed={maxSelected}
+                disabled={
+                  BigInt(asset.balance.availableRaw) <= 0n ||
+                  (asset.asset.kind === 'native' && !parsedRecipient) ||
+                  maximum.loading
+                }
+                onClick={() => void handleMaximum()}
+                className="rounded-md bg-white/10 px-2 py-1 font-medium text-muted aria-pressed:bg-primary/15 aria-pressed:text-primary disabled:opacity-40"
+              >
+                Max
+              </button>
+            }
           />
-          <SendAssetHeader
-            assetId={asset.asset.id}
-            symbol={asset.metadata.symbol}
-            icon={asset.metadata.iconUrl}
-            networkName={networkName}
-            nativeChain={asset.asset.kind === 'native' ? 'solana' : undefined}
-            blockchain={asset.asset.kind === 'token' ? 'solana' : undefined}
-            variant="pill"
-          />
-          <div className="flex min-w-0 items-center justify-center gap-2 text-xs text-muted">
-            <span className="min-w-0 truncate" title={transferAvailability.display}>
-              {formatTokenQuantity(transferAvailability.display)}
-            </span>
-            <button
-              type="button"
-              aria-label="Max"
-              aria-pressed={maxSelected}
-              disabled={
-                BigInt(asset.balance.availableRaw) <= 0n ||
-                (asset.asset.kind === 'native' && !parsedRecipient) ||
-                maximum.loading
-              }
-              onClick={() => void handleMaximum()}
-              className="rounded-md bg-primary/15 px-2 py-1 font-medium text-primary disabled:opacity-40"
-            >
-              Max
-            </button>
-          </div>
         </div>
 
-        <div className="flex items-center justify-between gap-3">
+        <div className="order-1 flex items-center justify-between gap-3">
           <span className="text-sm text-muted">Send from</span>
           <BalanceDomainTabs value="public" available={['public']} onChange={() => {}} />
         </div>
 
-        <div>
+        <div className="order-2">
           <div className="mb-2 flex items-center justify-between text-xs">
             <span className="text-muted">Send to</span>
             <span>{networkName}</span>
@@ -411,9 +421,23 @@ export function SolanaSendForm({
           )}
         </div>
 
-        <SendNetworkFeeCard loading={feePreview.loading}>
-          <span>{previewFee === '—' ? previewFee : `${previewFee} SOL`}</span>
-        </SendNetworkFeeCard>
+        <div className="order-4">
+          <SendRouteInfoCard
+            fee={
+              <span>
+                {feePreview.loading && (
+                  <Icon
+                    icon="lucide:loader-circle"
+                    width={14}
+                    height={14}
+                    className="mr-1 inline animate-spin"
+                  />
+                )}
+                {previewFee === '—' ? previewFee : `${previewFee} SOL`}
+              </span>
+            }
+          />
+        </div>
 
         {amountRaw !== null && !amountWithinBalance && (
           <p role="alert" className="mt-3 text-xs text-danger">

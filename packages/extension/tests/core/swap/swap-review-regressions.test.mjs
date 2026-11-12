@@ -4,6 +4,8 @@ import { selectWalletOwnedQuoteAssetExecution } from '../../../src/popup/service
 import { resolveSwapMaximumAdjustment } from '../../../src/popup/services/swap-maximum.ts'
 import {
   buildLiveSwapQuoteRequest,
+  hasSwapQuoteTermsChanged,
+  isAcceptedSwapReview,
   resolveScopedSwapZcashRecipient
 } from '../../../src/popup/services/swap-page-model.ts'
 import {
@@ -161,6 +163,38 @@ it('retains the reviewed sender, recipient, amount and privacy mode when a quote
   assert.equal(buildLiveSwapQuoteRequest({ ...input, amountIn: '0.0000001' }), null)
   assert.equal(buildLiveSwapQuoteRequest({ ...input, amountIn: '0.5000001' }), null)
   assert.equal(buildLiveSwapQuoteRequest({ ...input, amountIn: '0.000001' }).request.amountIn, '1')
+})
+
+it('requires a fresh, matching and explicitly accepted swap review before execution', () => {
+  const now = 10_000
+  const quote = {
+    quoteHandle: 'quote-a',
+    recipient: 'recipient',
+    estimatedOut: '100',
+    minAmountOut: '90',
+    router: 'router',
+    receivedAt: now,
+    expiresAt: now + 60_000
+  }
+  const input = {
+    quote,
+    review: { ...quote, executionId: 'execution-a' },
+    acceptedHandle: 'quote-a',
+    quoteKey: 'request-a',
+    requestKey: 'request-a',
+    now
+  }
+  assert.equal(isAcceptedSwapReview(input), true)
+  assert.equal(isAcceptedSwapReview({ ...input, acceptedHandle: null }), false)
+  assert.equal(
+    isAcceptedSwapReview({ ...input, review: { ...input.review, quoteHandle: 'quote-old' } }),
+    false
+  )
+  assert.equal(isAcceptedSwapReview({ ...input, requestKey: 'request-b' }), false)
+  assert.equal(isAcceptedSwapReview({ ...input, now: now + 60_000 }), false)
+  assert.equal(hasSwapQuoteTermsChanged(quote, { ...quote, quoteHandle: 'quote-b' }), false)
+  assert.equal(hasSwapQuoteTermsChanged(quote, { ...quote, minAmountOut: '89' }), true)
+  assert.equal(hasSwapQuoteTermsChanged(quote, { ...quote, recipient: 'other' }), true)
 })
 
 it('binds the Public to Private preview to its account, quote inputs and fee context', () => {

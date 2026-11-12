@@ -38,6 +38,7 @@ import { RecipientSelector } from '@/popup/components/transaction/RecipientSelec
 import { NetworkFeeTierPicker } from '@/popup/components/transaction/NetworkFeeTierPicker'
 import {
   SendAmountInputCard,
+  SendRouteInfoCard,
   SendSourceSection,
   SendFieldLabel,
   SendAssetHeader,
@@ -1083,7 +1084,7 @@ export function EvmSendForm({
               available={transferAvailability.display}
               symbol={asset.metadata.symbol}
               priceUsd={priceUsd}
-              hero
+              inline
             />
           }
           assetSelector={
@@ -1131,7 +1132,7 @@ export function EvmSendForm({
                     }
                   : handleMaximum
               }
-              className="rounded-md bg-primary/15 px-2 py-1 font-medium text-primary disabled:opacity-40"
+              className="rounded-md bg-white/10 px-2 py-1 font-medium text-muted aria-pressed:bg-primary/15 aria-pressed:text-primary disabled:opacity-40"
             >
               Max
             </button>
@@ -1247,70 +1248,50 @@ export function EvmSendForm({
         />
 
         {sendPrivately && (
-          <div className="space-y-3 text-sm">
-            <div className="flex min-h-6 items-center gap-2">
-              <Icon
-                icon="lucide:shield-check"
-                width={17}
-                height={17}
-                className="shrink-0 text-primary"
-              />
-              <span className="min-w-0 leading-5">Your transaction will go through Shield</span>
-              {sendPrivately && privatePreviewLoading && (
-                <Icon
-                  icon="lucide:loader-circle"
-                  width={14}
-                  height={14}
-                  className="ml-auto animate-spin text-muted"
-                />
-              )}
-            </div>
-            <div className="text-xs">
-              <span className="text-muted">Provider</span>
-              <div className="mt-2 rounded-lg border border-white/10 bg-wallet-surface px-3 py-2.5">
-                <div className="flex min-w-0 items-center gap-2">
-                  <img src={nearLogo} alt="" className="size-5 shrink-0 rounded" />
-                  <span className="min-w-0 flex-1 truncate">NEAR Confidential Intents</span>
-                  <span className="min-w-0 max-w-[40%] text-right">
-                    {privatePreviewReady && privatePreview ? (
-                      <AmountDisplay
-                        value={privatePreview.estimatedReceive}
-                        symbol={asset.metadata.symbol}
-                      />
-                    ) : (
-                      '—'
-                    )}
-                  </span>
-                </div>
-                <div className="mt-3 grid grid-cols-2 gap-x-3 text-muted">
-                  <div>
-                    Est. time <span className="text-foreground">—</span>
-                  </div>
-                  <div className="text-right">
-                    Network fee <span className="text-foreground">—</span>
-                  </div>
-                </div>
-                {privatePreviewReady && privatePreview && (
-                  <div className="mt-2 flex justify-between gap-3 border-t border-white/10 pt-2">
-                    <span className="text-muted">Route cost</span>
-                    <span className="min-w-0 max-w-[65%] text-right">
-                      {privateRouteCostFiat ? (
-                        `~${privateRouteCostFiat}`
-                      ) : privatePreview.routeCost === null ? (
-                        '—'
-                      ) : (
-                        <AmountDisplay
-                          value={privatePreview.routeCost}
-                          symbol={asset.metadata.symbol}
-                          profile="fee"
-                        />
-                      )}
-                    </span>
-                  </div>
+          <SendRouteInfoCard
+            provider={
+              <span className="inline-flex items-center gap-2">
+                <img src={nearLogo} alt="" className="size-5 rounded" />
+                NEAR Confidential Intents
+                {privatePreviewLoading && (
+                  <Icon
+                    icon="lucide:loader-circle"
+                    width={14}
+                    height={14}
+                    className="animate-spin text-muted"
+                  />
                 )}
-              </div>
-            </div>
-          </div>
+              </span>
+            }
+            fee={
+              privatePreviewReady && privatePreview ? (
+                privateRouteCostFiat ? (
+                  `~${privateRouteCostFiat}`
+                ) : privatePreview.routeCost === null ? (
+                  '—'
+                ) : (
+                  <AmountDisplay
+                    value={privatePreview.routeCost}
+                    symbol={asset.metadata.symbol}
+                    profile="fee"
+                  />
+                )
+              ) : (
+                '—'
+              )
+            }
+            extra={
+              privatePreviewReady && privatePreview ? (
+                <div className="flex justify-between gap-3 border-t border-white/10 pt-3">
+                  <span className="text-muted">Est. receive</span>
+                  <AmountDisplay
+                    value={privatePreview.estimatedReceive}
+                    symbol={asset.metadata.symbol}
+                  />
+                </div>
+              ) : undefined
+            }
+          />
         )}
         {sendPrivately && privatePreviewError && (
           <InlineError
@@ -1321,9 +1302,8 @@ export function EvmSendForm({
         )}
 
         {route === 'onchain' && (
-          <div className="space-y-3 rounded-lg border border-white/15 px-4 py-3">
-            <div className="flex min-h-6 items-center justify-between gap-2 text-xs">
-              <span className="text-muted">Fee</span>
+          <SendRouteInfoCard
+            fee={
               <NetworkFeeTierPicker
                 chainFamily="evm"
                 tier={feeSelection.kind === 'tier' ? feeSelection.tier : 'standard'}
@@ -1334,14 +1314,13 @@ export function EvmSendForm({
                 onTierChange={tier => handleFormFeeSelectionChange({ kind: 'tier', tier })}
                 onSelectionChange={handleFormFeeSelectionChange}
               />
-            </div>
-            <div className="flex min-h-6 items-center justify-between gap-2 text-xs">
-              <span className="text-muted">Est. time</span>
+            }
+            time={
               <span title="Approximate first confirmation; actual time depends on network conditions.">
                 {confirmationTime}
               </span>
-            </div>
-          </div>
+            }
+          />
         )}
 
         {amountRaw !== null && BigInt(amountRaw) > BigInt(availableRaw) && (
@@ -1375,19 +1354,20 @@ export function EvmSendForm({
       </div>
 
       <div className="page-footer">
-        <button
-          type="button"
-          role="switch"
-          aria-label="Send privately"
-          aria-checked={sendPrivately}
-          disabled={networkMode !== 'mainnet' || support.support === 'unsupported'}
-          onClick={() => changePrivacyRoute(sendPrivately ? null : privacyScope)}
-          className={`mb-4 flex w-full items-center justify-center gap-1.5 text-sm disabled:opacity-40 ${sendPrivately ? 'text-primary' : 'text-muted'}`}
-        >
-          <Icon icon="lucide:shield-check" width={15} height={15} className="text-primary" />
-          Send privately
-          <Switch checked={sendPrivately} size="sm" />
-        </button>
+        {sourceMode === 'main' && networkMode === 'mainnet' && support.support === 'supported' && (
+          <button
+            type="button"
+            role="switch"
+            aria-label="Send privately"
+            aria-checked={sendPrivately}
+            onClick={() => changePrivacyRoute(sendPrivately ? null : privacyScope)}
+            className={`mb-4 flex w-full items-center justify-center gap-1.5 text-sm disabled:opacity-40 ${sendPrivately ? 'text-primary' : 'text-muted'}`}
+          >
+            <Icon icon="lucide:shield-check" width={15} height={15} className="text-primary" />
+            Send privately
+            <Switch checked={sendPrivately} size="sm" />
+          </button>
+        )}
         <Button
           size="wallet"
           className="h-[45px] w-full"

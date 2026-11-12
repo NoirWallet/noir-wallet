@@ -43,8 +43,10 @@ interface TransactionReviewViewProps {
   readonly summary?: ReactNode
   readonly exchange?: boolean
   readonly notice?: ReactNode
+  readonly afterRows?: ReactNode
   readonly error?: ReactNode
   readonly confirmLabel: string
+  readonly confirmTone?: 'default' | 'warning'
   readonly confirming?: boolean
   readonly submitting?: boolean
   readonly preparing?: boolean
@@ -69,8 +71,10 @@ export function TransactionReviewView({
   summary,
   exchange = false,
   notice,
+  afterRows,
   error,
   confirmLabel,
+  confirmTone = 'default',
   confirming = false,
   submitting = false,
   preparing = false,
@@ -238,6 +242,7 @@ export function TransactionReviewView({
           ))}
         </div>
 
+        {afterRows}
         {error}
       </div>
 
@@ -253,7 +258,7 @@ export function TransactionReviewView({
         </Button>
         <Button
           size={figma ? 'wallet' : 'default'}
-          className={figma ? 'h-[45px] flex-[2]' : 'h-[45px] flex-1'}
+          className={`${figma ? 'h-[45px] flex-[2]' : 'h-[45px] flex-1'} ${confirmTone === 'warning' ? 'bg-warning text-black hover:bg-warning/90' : ''}`}
           disabled={confirmDisabled || preparing}
           isLoading={confirming}
           onClick={onConfirm}
@@ -270,12 +275,14 @@ export function TransactionReviewExchangeSummary({
   destination,
   destinationLabel,
   destinationPrefix = '+',
+  destinationLoading = false,
   presentation
 }: {
   readonly source: { readonly asset: TransactionReviewAsset; readonly amount: string }
   readonly destination: { readonly asset: TransactionReviewAsset; readonly amount: string }
   readonly destinationLabel?: string
   readonly destinationPrefix?: string
+  readonly destinationLoading?: boolean
   readonly presentation: 'single' | 'exchange'
 }) {
   if (presentation === 'single') {
@@ -310,13 +317,20 @@ export function TransactionReviewExchangeSummary({
               {index === 1 && destinationLabel && (
                 <p className="text-xs font-normal leading-5 text-muted">{destinationLabel}</p>
               )}
-              <AmountDisplay
-                value={entry.amount}
-                symbol={entry.asset.symbol}
-                prefix={index === 0 ? '-' : destinationPrefix}
-                showDetails={false}
-                className="max-w-full justify-start font-sans tabular-nums"
-              />
+              {index === 1 && destinationLoading ? (
+                <div className="space-y-2 py-1" role="status" aria-label="Refreshing quote">
+                  <div className="h-6 w-44 animate-pulse rounded bg-card" />
+                  <div className="h-3 w-16 animate-pulse rounded bg-card" />
+                </div>
+              ) : (
+                <AmountDisplay
+                  value={entry.amount}
+                  symbol={entry.asset.symbol}
+                  prefix={index === 0 ? '-' : destinationPrefix}
+                  showDetails={false}
+                  className="max-w-full justify-start font-sans tabular-nums"
+                />
+              )}
             </div>
           </div>
         </div>

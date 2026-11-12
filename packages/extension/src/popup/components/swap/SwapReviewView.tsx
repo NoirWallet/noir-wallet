@@ -1,8 +1,14 @@
 import { Icon } from '@iconify/react'
+import { useState } from 'react'
 import { Button } from '../ui/button'
 import type { SwapToken } from '@/core/services/intents-api'
 import { formatChainName, formatSortAddress, formatSymbol } from '@/lib/format'
-import { formatAmount, formatFiatAmount, formatPercentage } from '@/lib/number-format'
+import {
+  formatAmount,
+  formatFiatAmount,
+  formatPercentage,
+  formatTokenQuantity
+} from '@/lib/number-format'
 
 import type { FeeTier } from '@/config/fee'
 import type { NetworkFeeTier } from '@/core/transactions/domain'
@@ -32,6 +38,12 @@ interface SwapReviewViewProps {
   toFiat: string
   /** Output token units received for one input token unit. */
   rate?: string
+  previousRate?: string
+  priceAcceptanceRequired?: boolean
+  onAcceptNewPrice?: () => void
+  onRefreshQuote?: () => void
+  quoteRefreshing?: boolean
+  provider?: string
   sendMethod?: string
   sourceAccount?: SwapReviewAccount
   destinationAccount?: SwapReviewAccount
@@ -92,6 +104,12 @@ export function SwapReviewView({
   fromFiat,
   toFiat,
   rate,
+  previousRate,
+  priceAcceptanceRequired,
+  onAcceptNewPrice,
+  onRefreshQuote,
+  quoteRefreshing,
+  provider,
   sendMethod,
   sourceAccount,
   destinationAccount,
@@ -122,6 +140,7 @@ export function SwapReviewView({
   confirmLabel = 'Confirm Swap',
   insufficient
 }: SwapReviewViewProps) {
+  const [showMore, setShowMore] = useState(false)
   const sourceAddress = sourceAccount?.address ?? sourceTransferDetails?.sender
   const destinationAddress = destinationAccount?.address ?? recipient
   const sourceNetwork = sourceTransferDetails?.network ?? formatChainName(tokenIn.blockchain)
@@ -145,6 +164,7 @@ export function SwapReviewView({
             amount={amountIn}
             fiatValue={fromFiat}
             account={{ ...sourceAccount, address: sourceAddress, badge: sourceBadge }}
+            showAccountDetails={!onRefreshQuote}
           />
           <div className="flex h-3 items-center pl-4 text-muted/60" aria-hidden="true">
             <ReviewDownTriangle />
@@ -155,6 +175,8 @@ export function SwapReviewView({
             amount={amountOut}
             fiatValue={toFiat}
             account={{ ...destinationAccount, address: destinationAddress }}
+            loading={quoteRefreshing}
+            showAccountDetails={!onRefreshQuote}
           />
         </div>
 
@@ -191,104 +213,138 @@ export function SwapReviewView({
           ) : (
             <DetailItem label="Rate">
               {rate ? (
-                <span className="inline-flex max-w-full flex-wrap items-baseline justify-end gap-x-1">
-                  <span>1 {formatSymbol(tokenIn.symbol)} =</span>
-                  <AmountDisplay
-                    value={rate}
-                    symbol={formatSymbol(tokenOut.symbol)}
-                    showDetails={false}
-                    className="font-sans tabular-nums"
-                  />
+                <span className="inline-flex max-w-full flex-col items-end gap-0.5 tabular-nums">
+                  {priceAcceptanceRequired && previousRate && (
+                    <span className="text-xs text-muted line-through">
+                      1 {formatSymbol(tokenIn.symbol)} = {formatTokenQuantity(previousRate)}{' '}
+                      {formatSymbol(tokenOut.symbol)}
+                    </span>
+                  )}
+                  <span>
+                    1 {formatSymbol(tokenIn.symbol)} = {formatTokenQuantity(rate)}{' '}
+                    {formatSymbol(tokenOut.symbol)}
+                  </span>
                 </span>
               ) : (
                 '—'
               )}
             </DetailItem>
           )}
-          <DetailItem label="Network fee">
-            {sourceNetworkFee && sourceFeeTier && sourceFeeFamily && onSourceFeeTierChange ? (
-              <NetworkFeeTierPicker
-                showAmountDetails={false}
-                chainFamily={sourceFeeFamily}
-                tier={sourceFeeTier}
-                amount={sourceNetworkFee.amount}
-                symbol={sourceNetworkFee.symbol}
-                onTierChange={onSourceFeeTierChange}
-                disabled={isLoading}
-              />
-            ) : sourceNetworkFee ? (
+          <DetailItem label="Minimum Receive">
+            {quoteRefreshing ? (
+              <span className="inline-block h-4 w-24 animate-pulse rounded bg-card" />
+            ) : (
               <AmountDisplay
-                value={sourceNetworkFee.amount}
-                symbol={sourceNetworkFee.symbol}
-                profile="fee"
+                value={formatAmount(minAmountOut, tokenOut.decimals)}
+                symbol={formatSymbol(tokenOut.symbol)}
                 showDetails={false}
                 className="font-sans tabular-nums"
               />
-            ) : feeTier && onFeeTierChange && feeByTier ? (
-              <FeeTierPicker
-                tier={feeTier}
-                onTierChange={onFeeTierChange}
-                feeByTier={feeByTier}
-                loadingByTier={feeLoadingByTier}
-                loading={feeLoading}
-                allowFallback={false}
-                hideLabel
-              />
-            ) : (
-              '—'
             )}
           </DetailItem>
-          <DetailItem label="Minimum Receive">
-            <AmountDisplay
-              value={formatAmount(minAmountOut, tokenOut.decimals)}
-              symbol={formatSymbol(tokenOut.symbol)}
-              showDetails={false}
-              className="font-sans tabular-nums"
-            />
-          </DetailItem>
-          <DetailItem label="Recipient">
-            <span className="block break-all text-xs" title={recipient}>
-              {recipient}
-            </span>
-          </DetailItem>
-          <DetailItem label="Price impact">
-            <span className={priceImpact > 5 ? 'text-danger' : undefined}>
-              {formatPercentage(priceImpact)}
-            </span>
-          </DetailItem>
-          <DetailItem label="Slippage tolerance">
-            <span>{slippage}%</span>
-          </DetailItem>
-
-          {arrivalEstimate && (
-            <DetailItem label="Estimated time">
-              <span>{arrivalEstimate}</span>
-            </DetailItem>
+          {onRefreshQuote && (
+            <button
+              type="button"
+              className="flex w-full items-center justify-center gap-1 py-3 text-sm text-muted hover:text-foreground"
+              onClick={() => setShowMore(value => !value)}
+              aria-expanded={showMore}
+            >
+              {showMore ? 'Show less' : 'Show more'}
+              <Icon icon={showMore ? 'lucide:chevron-up' : 'lucide:chevron-down'} width={14} />
+            </button>
           )}
-
-          {sourceTransferDetails && (
+          {(!onRefreshQuote || showMore) && (
             <>
-              {sourceAddress !== sourceTransferDetails.sender && (
-                <DetailItem label="Source wallet">
-                  <span className="inline-flex min-w-0 items-center justify-end gap-2">
-                    <ChainIcon
-                      chain={sourceTransferDetails.chainIcon}
-                      alt={sourceTransferDetails.network}
-                      title={sourceTransferDetails.network}
-                      className="size-4 shrink-0 rounded-full"
-                    />
-                    <span title={sourceTransferDetails.sender} className="text-xs">
-                      {formatSortAddress(sourceTransferDetails.sender)}
-                    </span>
+              {provider && <DetailItem label="Provider">{provider}</DetailItem>}
+              {onRefreshQuote && sourceAddress && (
+                <DetailItem label="Used account">
+                  <span title={sourceAddress} className="text-xs">
+                    {sourceAccount?.name ? `${sourceAccount.name} · ` : ''}
+                    {formatSortAddress(sourceAddress)}
                   </span>
                 </DetailItem>
               )}
-              {sourceTransferDetails.executionTarget && (
-                <DetailItem label={sourceTransferDetails.executionTarget.label}>
-                  <span title={sourceTransferDetails.executionTarget.address} className="text-xs">
-                    {formatSortAddress(sourceTransferDetails.executionTarget.address)}
-                  </span>
+              <DetailItem label="Network fee">
+                {sourceNetworkFee && sourceFeeTier && sourceFeeFamily && onSourceFeeTierChange ? (
+                  <NetworkFeeTierPicker
+                    showAmountDetails={false}
+                    chainFamily={sourceFeeFamily}
+                    tier={sourceFeeTier}
+                    amount={sourceNetworkFee.amount}
+                    symbol={sourceNetworkFee.symbol}
+                    onTierChange={onSourceFeeTierChange}
+                    disabled={isLoading}
+                  />
+                ) : sourceNetworkFee ? (
+                  <AmountDisplay
+                    value={sourceNetworkFee.amount}
+                    symbol={sourceNetworkFee.symbol}
+                    profile="fee"
+                    showDetails={false}
+                    className="font-sans tabular-nums"
+                  />
+                ) : feeTier && onFeeTierChange && feeByTier ? (
+                  <FeeTierPicker
+                    tier={feeTier}
+                    onTierChange={onFeeTierChange}
+                    feeByTier={feeByTier}
+                    loadingByTier={feeLoadingByTier}
+                    loading={feeLoading}
+                    allowFallback={false}
+                    hideLabel
+                  />
+                ) : (
+                  '—'
+                )}
+              </DetailItem>
+              <DetailItem label="Recipient">
+                <span className="block break-all text-xs" title={recipient}>
+                  {recipient}
+                </span>
+              </DetailItem>
+              <DetailItem label="Price impact">
+                <span className={priceImpact > 5 ? 'text-danger' : undefined}>
+                  {formatPercentage(priceImpact)}
+                </span>
+              </DetailItem>
+              <DetailItem label="Slippage tolerance">
+                <span>{slippage}%</span>
+              </DetailItem>
+
+              {arrivalEstimate && (
+                <DetailItem label="Estimated time">
+                  <span>{arrivalEstimate}</span>
                 </DetailItem>
+              )}
+
+              {sourceTransferDetails && (
+                <>
+                  {sourceAddress !== sourceTransferDetails.sender && (
+                    <DetailItem label="Source wallet">
+                      <span className="inline-flex min-w-0 items-center justify-end gap-2">
+                        <ChainIcon
+                          chain={sourceTransferDetails.chainIcon}
+                          alt={sourceTransferDetails.network}
+                          title={sourceTransferDetails.network}
+                          className="size-4 shrink-0 rounded-full"
+                        />
+                        <span title={sourceTransferDetails.sender} className="text-xs">
+                          {formatSortAddress(sourceTransferDetails.sender)}
+                        </span>
+                      </span>
+                    </DetailItem>
+                  )}
+                  {sourceTransferDetails.executionTarget && (
+                    <DetailItem label={sourceTransferDetails.executionTarget.label}>
+                      <span
+                        title={sourceTransferDetails.executionTarget.address}
+                        className="text-xs"
+                      >
+                        {formatSortAddress(sourceTransferDetails.executionTarget.address)}
+                      </span>
+                    </DetailItem>
+                  )}
+                </>
               )}
             </>
           )}
@@ -335,6 +391,17 @@ export function SwapReviewView({
             Amount exceeds balance at this fee. Go back to lower the amount or switch fee tier.
           </p>
         )}
+        {onRefreshQuote && !quoteRefreshing && (
+          <button
+            type="button"
+            onClick={onRefreshQuote}
+            disabled={isLoading}
+            className="mt-3 inline-flex items-center gap-1 px-1 text-xs text-muted hover:text-foreground disabled:opacity-50"
+            aria-label="Refresh quote"
+          >
+            <Icon icon="lucide:refresh-cw" width={14} /> Refresh quote
+          </button>
+        )}
       </div>
 
       <div className="page-footer flex gap-2.5">
@@ -353,13 +420,23 @@ export function SwapReviewView({
         <Button
           type="button"
           size="wallet"
-          onClick={onConfirm}
-          disabled={isLoading || insufficient || feeUnavailable || Boolean(preparationError)}
+          onClick={priceAcceptanceRequired ? onAcceptNewPrice : onConfirm}
+          disabled={
+            isLoading ||
+            insufficient ||
+            feeUnavailable ||
+            Boolean(preparationError) ||
+            (priceAcceptanceRequired && !onAcceptNewPrice)
+          }
           isLoading={isLoading}
           aria-label={approvalDetails ? 'Confirm token approval' : actionLabel}
-          className="min-w-0 flex-[2] text-sm text-black"
+          className={`min-w-0 flex-[2] text-sm text-black ${priceAcceptanceRequired ? 'bg-warning hover:bg-warning/90' : ''}`}
         >
-          {actionLabel === 'Confirm Swap' ? 'Confirm' : actionLabel}
+          {priceAcceptanceRequired
+            ? 'Accept new price'
+            : actionLabel === 'Confirm Swap'
+              ? 'Confirm'
+              : actionLabel}
         </Button>
       </div>
     </>
@@ -371,63 +448,76 @@ function QuoteAssetRow({
   token,
   amount,
   fiatValue,
-  account
+  account,
+  loading,
+  showAccountDetails = true
 }: {
   direction: 'pay' | 'receive'
   token: SwapToken
   amount: string
   fiatValue: string
   account: SwapReviewAccount
+  loading?: boolean
+  showAccountDetails?: boolean
 }) {
   const badge = account.badge
   return (
     <section className="flex min-w-0 items-start gap-4">
       <TokenIcon token={token} size={42} />
       <div className="min-w-0 flex-1">
-        <div
-          className={
-            amount.length > 13
-              ? 'min-w-0 text-lg font-semibold leading-8'
-              : 'min-w-0 text-[26px] font-semibold leading-8'
-          }
-        >
-          <AmountDisplay
-            value={amount}
-            symbol={formatSymbol(token.symbol)}
-            prefix={direction === 'pay' ? '-' : '+'}
-            showDetails={false}
-            className="max-w-full justify-start gap-1 font-sans tabular-nums"
-          />
-        </div>
-        <p className="mt-0.5 text-sm text-muted">
-          {formatFiatAmount(fiatValue, { showSign: true })}
-        </p>
-        {(account.name || badge || account.address) && (
-          <div className="mt-2 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-xs">
-            {account.name && (
-              <span className="max-w-full truncate font-medium" title={account.name}>
-                {account.name}
-              </span>
-            )}
-            {badge && (
-              <span
-                className={
-                  badge === 'Shield' || badge === 'Shielded'
-                    ? 'shrink-0 rounded bg-success/15 px-2 py-0.5 text-[11px] text-success'
-                    : badge === 'Private' || badge === 'Confidential'
-                      ? 'shrink-0 rounded bg-private/12 px-2 py-0.5 text-[11px] text-private'
-                      : 'shrink-0 rounded border border-dashed border-border px-2 py-0.5 text-[11px] text-muted'
-                }
-              >
-                {badge}
-              </span>
-            )}
-            {account.address && (
-              <span className="min-w-0 truncate text-muted" title={account.address}>
-                {formatSortAddress(account.address)}
-              </span>
-            )}
+        {loading ? (
+          <div className="space-y-2 py-1" role="status" aria-label="Refreshing quote">
+            <div className="h-6 w-44 animate-pulse rounded bg-card" />
+            <div className="h-3 w-16 animate-pulse rounded bg-card" />
           </div>
+        ) : (
+          <>
+            <div
+              className={
+                amount.length > 13
+                  ? 'min-w-0 text-lg font-semibold leading-8'
+                  : 'min-w-0 text-[26px] font-semibold leading-8'
+              }
+            >
+              <AmountDisplay
+                value={amount}
+                symbol={formatSymbol(token.symbol)}
+                prefix={direction === 'pay' ? '-' : '+'}
+                showDetails={false}
+                className="max-w-full justify-start gap-1 font-sans tabular-nums"
+              />
+            </div>
+            <p className="mt-0.5 text-sm text-muted">
+              {formatFiatAmount(fiatValue, { showSign: true })}
+            </p>
+            {showAccountDetails && (account.name || badge || account.address) && (
+              <div className="mt-2 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-xs">
+                {account.name && (
+                  <span className="max-w-full truncate font-medium" title={account.name}>
+                    {account.name}
+                  </span>
+                )}
+                {badge && (
+                  <span
+                    className={
+                      badge === 'Shield' || badge === 'Shielded'
+                        ? 'shrink-0 rounded bg-success/15 px-2 py-0.5 text-[11px] text-success'
+                        : badge === 'Private' || badge === 'Confidential'
+                          ? 'shrink-0 rounded bg-private/12 px-2 py-0.5 text-[11px] text-private'
+                          : 'shrink-0 rounded border border-dashed border-border px-2 py-0.5 text-[11px] text-muted'
+                    }
+                  >
+                    {badge}
+                  </span>
+                )}
+                {account.address && (
+                  <span className="min-w-0 truncate text-muted" title={account.address}>
+                    {formatSortAddress(account.address)}
+                  </span>
+                )}
+              </div>
+            )}
+          </>
         )}
       </div>
     </section>
