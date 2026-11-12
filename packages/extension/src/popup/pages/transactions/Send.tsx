@@ -759,12 +759,15 @@ export function Send({
             setResult(
               {
                 type: 'zcash',
+                operation: isSelfMove ? 'move' : 'send',
                 step: 'submitted',
                 amount: result.amount,
+                fromAddress,
                 toAddress: effectiveToAddress,
                 txHash: result.txHash,
                 accountKey: result.accountKey,
                 transactionId: result.transactionId,
+                showFrom: true,
                 showTo: true
               },
               resultReturnPath
@@ -789,9 +792,12 @@ export function Send({
 
       const pendingResult = {
         type: 'zcash',
+        operation: isSelfMove ? 'move' : 'send',
         step: 'pending',
         amount,
+        fromAddress,
         toAddress: effectiveToAddress,
+        showFrom: true,
         showTo: true,
         saveRecipient: {
           chainId: getZcashChainId(currentNetwork),
@@ -1274,7 +1280,7 @@ export function Send({
             network={currentNetwork === 'testnet' ? 'Zcash Testnet' : 'Zcash'}
             rows={[
               {
-                label: 'From',
+                label: isSelfMove ? 'From' : 'Send from',
                 content: (
                   <span className="min-w-0 text-right">
                     <span className="flex items-center justify-end gap-1.5">
@@ -1300,7 +1306,7 @@ export function Send({
                 )
               },
               {
-                label: 'To',
+                label: isSelfMove ? 'To' : 'Recipient',
                 content: (
                   <SendRecipientAddress
                     address={effectiveToAddress}

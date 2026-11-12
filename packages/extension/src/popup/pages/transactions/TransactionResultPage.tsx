@@ -563,6 +563,12 @@ export function TransactionResultPage() {
         <PageHeader title="" />
         <StandardTransactionResult
           step={resultStep}
+          operation={
+            data.operation ??
+            (resultTransaction?.type === 'shield' || resultTransaction?.type === 'unshield'
+              ? 'move'
+              : 'send')
+          }
           amount={data.amount}
           fromAddress={data.fromAddress}
           toAddress={data.toAddress}

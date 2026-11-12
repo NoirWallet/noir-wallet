@@ -10,6 +10,7 @@ import type {
 
 interface ZcashTransactionResult {
   type: 'zcash'
+  operation?: 'send' | 'move'
   step: TransactionStep
   amount: string
   fromAddress?: string

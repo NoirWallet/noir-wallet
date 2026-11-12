@@ -5,7 +5,7 @@ import { Button } from '@/popup/components/ui/button'
 import { TokenIcon } from '@/popup/components/tokens/TokenIcon'
 import { AmountDisplay } from '@/popup/components/common/AmountDisplay'
 import { Skeleton } from '@/popup/components/ui/skeleton'
-import { TransactionResult } from './TransactionResult'
+import { TransactionResult, TransactionResultDetailRow } from './TransactionResult'
 
 export interface TransactionReviewAsset {
   readonly assetId?: string
@@ -86,32 +86,32 @@ export function TransactionReviewView({
   const figma = variant === 'figma'
   if (submitting) {
     return (
-      <TransactionResult status="loading" title="Transaction Submitting">
-        <div className="divide-y divide-border/60 border-y border-border/60">
+      <TransactionResult
+        status="loading"
+        title="Transaction Submitting"
+        layout={figma ? 'single-asset' : 'default'}
+        onClose={figma ? onCancel : undefined}
+        closeDisabled={cancelDisabled || confirming}
+      >
+        <div>
           {exchange && summary ? (
             summary
           ) : (
-            <div className="flex justify-between gap-4 py-4 text-sm">
-              <span className="text-muted">Amount</span>
+            <TransactionResultDetailRow label="Amount">
               <AmountDisplay value={amount} symbol={asset?.symbol} showDetails={false} />
-            </div>
+            </TransactionResultDetailRow>
           )}
           {rows
-            .filter(row => ['From', 'To', 'Network', 'Recipient', 'Send To'].includes(row.label))
+            .filter(row =>
+              ['From', 'To', 'Send from', 'Network', 'Recipient', 'Send To'].includes(row.label)
+            )
             .map((row, index) => (
-              <div
-                key={`${row.label}-${index}`}
-                className="flex justify-between gap-4 py-4 text-sm"
-              >
-                <span className="shrink-0 text-muted">{row.label}</span>
-                <span className="min-w-0 break-all text-right">{row.content}</span>
-              </div>
+              <TransactionResultDetailRow key={`${row.label}-${index}`} label={row.label}>
+                {row.content}
+              </TransactionResultDetailRow>
             ))}
           {network && !rows.some(row => row.label === 'Network') && (
-            <div className="flex justify-between gap-4 py-4 text-sm">
-              <span className="text-muted">Network</span>
-              <span className="text-right">{network}</span>
-            </div>
+            <TransactionResultDetailRow label="Network">{network}</TransactionResultDetailRow>
           )}
         </div>
       </TransactionResult>
@@ -119,44 +119,40 @@ export function TransactionReviewView({
   }
   return (
     <div className="flex min-h-0 flex-1 flex-col" aria-busy={preparing || confirming}>
+      {showTitle && figma && (
+        <div className="flex h-14 shrink-0 items-center justify-between bg-background px-5">
+          <h2 id={titleId} className="min-w-0 truncate text-lg font-medium leading-[23px]">
+            {title}
+          </h2>
+          <button
+            type="button"
+            aria-label="Close"
+            onClick={onCancel}
+            disabled={cancelDisabled || confirming}
+            className="flex size-8 shrink-0 items-center justify-center rounded-md bg-background hover:bg-accent disabled:opacity-50"
+          >
+            <Icon icon="lucide:x" width={22} height={22} />
+          </button>
+        </div>
+      )}
       <div
         className={
           figma
-            ? 'min-h-0 flex-1 overflow-y-auto px-4 pb-4'
+            ? 'min-h-0 flex-1 overflow-y-auto px-5 pb-4'
             : 'min-h-0 flex-1 overflow-y-auto px-5 pb-4 pt-5'
         }
       >
-        {showTitle && (
-          <div className={figma ? 'relative' : undefined}>
-            <h2
-              id={titleId}
-              className={
-                figma
-                  ? 'flex h-14 items-center justify-center text-lg font-medium leading-[23px]'
-                  : 'text-center text-base font-semibold'
-              }
-            >
-              {title}
-            </h2>
-            {figma && (
-              <button
-                type="button"
-                aria-label="Back"
-                onClick={onCancel}
-                disabled={cancelDisabled || confirming}
-                className="absolute left-0 top-4 flex size-6 items-center justify-center disabled:opacity-50"
-              >
-                <Icon icon="lucide:chevron-left" width={20} height={20} />
-              </button>
-            )}
-          </div>
+        {showTitle && !figma && (
+          <h2 id={titleId} className="text-center text-base font-semibold">
+            {title}
+          </h2>
         )}
 
         {summary ?? (
           <div
             className={
               figma
-                ? 'flex flex-col items-center pb-5 pt-[18px]'
+                ? 'flex flex-col items-start pb-14 pt-10'
                 : 'flex flex-col items-center pb-4 pt-4'
             }
           >
@@ -176,7 +172,7 @@ export function TransactionReviewView({
             <div
               className={
                 figma
-                  ? 'max-w-full min-w-0 break-all text-center text-[40px] font-semibold leading-[37.4px] tracking-[-0.015em]'
+                  ? 'max-w-full min-w-0 break-all text-left text-[40px] font-semibold leading-tight'
                   : 'mt-3 max-w-full min-w-0 text-center text-xl font-bold leading-tight'
               }
             >
@@ -186,13 +182,17 @@ export function TransactionReviewView({
                   symbol={asset.symbol}
                   prefix={amountPrefix}
                   showDetails={amountDetails}
-                  className={figma ? 'justify-center gap-x-[0.25em]' : undefined}
+                  className={figma ? 'justify-start gap-x-1' : undefined}
                 />
               ) : (
                 <Skeleton className="h-7 w-36" />
               )}
             </div>
-            {fiatValue && <p className="mt-2 text-sm text-muted">≈{fiatValue}</p>}
+            {fiatValue && (
+              <p className={figma ? 'mt-2 text-base text-muted' : 'mt-2 text-sm text-muted'}>
+                {figma ? fiatValue : `≈${fiatValue}`}
+              </p>
+            )}
             {!figma &&
               (network ? (
                 <p className="mt-1 text-xs text-muted">{network}</p>
@@ -204,13 +204,7 @@ export function TransactionReviewView({
 
         {notice}
 
-        <div
-          className={
-            figma
-              ? 'border-t border-border/60'
-              : 'rounded-xl border border-border/60 bg-card/60 px-4'
-          }
-        >
+        <div className={figma ? '' : 'rounded-xl border border-border/60 bg-card/60 px-4'}>
           {rows.map((row, index) => (
             <div
               key={`${row.label}-${index}`}
@@ -287,13 +281,13 @@ export function TransactionReviewExchangeSummary({
 }) {
   if (presentation === 'single') {
     return (
-      <div className="flex max-w-full min-w-0 justify-center pb-5 pt-[18px] text-center text-[40px] font-semibold leading-[37.4px]">
+      <div className="flex max-w-full min-w-0 justify-start pb-14 pt-10 text-left text-[40px] font-semibold leading-tight">
         <AmountDisplay
           value={source.amount}
           symbol={source.asset.symbol}
           prefix="-"
           showDetails={false}
-          className="max-w-full justify-center"
+          className="max-w-full justify-start"
         />
       </div>
     )

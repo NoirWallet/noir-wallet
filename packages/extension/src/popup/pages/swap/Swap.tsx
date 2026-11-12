@@ -5643,24 +5643,37 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
           : undefined
       }
     >
-      {!shieldReviewing && (
+      {!shieldReviewing && viewStep === 'review' && (
+        <div className="flex h-14 shrink-0 items-center justify-between bg-background px-5">
+          <h1 className="min-w-0 truncate text-lg font-medium leading-[23px]">
+            {publicPrivacySendRequested || crossChainSendRequested
+              ? 'Confirm Send'
+              : lockedAssetFlowRequested
+                ? 'Transfer'
+                : 'Confirm Swap'}
+          </h1>
+          <button
+            type="button"
+            aria-label="Close"
+            onClick={publicPrivacySendRequested ? returnFromPublicPrivacySend : handleReturnToInput}
+            className="flex size-8 shrink-0 items-center justify-center rounded-md bg-background hover:bg-accent"
+          >
+            <Icon icon="lucide:x" width={22} height={22} />
+          </button>
+        </div>
+      )}
+      {!shieldReviewing && viewStep !== 'review' && (
         <PageHeader
           title={
             viewStep === 'approval-pending'
               ? 'Token approval'
               : publicPrivacySendRequested
-                ? viewStep === 'review'
-                  ? 'Review Send'
-                  : 'Send'
+                ? 'Send'
                 : lockedAssetFlowRequested
                   ? 'Transfer'
                   : crossChainSendRequested
-                    ? viewStep === 'review'
-                      ? 'Review Send'
-                      : 'Send'
-                    : viewStep === 'review'
-                      ? 'Confirm Swap'
-                      : 'Swap'
+                    ? 'Send'
+                    : 'Swap'
           }
           {...(viewStep === 'approval-pending' ? {} : getHeaderProps())}
           rightContent={
@@ -5755,7 +5768,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
             network={walletOwnedSource?.chain.chain.displayName ?? ''}
             rows={[
               {
-                label: 'From',
+                label: publicPrivacySendRequested ? 'Send from' : 'From',
                 content: walletOwnedSource ? (
                   <span className="inline-flex items-center justify-end gap-1.5">
                     <span className="font-mono text-muted" title={walletOwnedSource.refundAddress}>
@@ -5780,7 +5793,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
                   ]
                 : []),
               {
-                label: 'Send To',
+                label: publicPrivacySendRequested ? 'Recipient' : 'Send To',
                 content:
                   resolvedRecipientAddress || privateTransferRecipient ? (
                     <span

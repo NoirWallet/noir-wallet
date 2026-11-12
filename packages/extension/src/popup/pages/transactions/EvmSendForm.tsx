@@ -276,6 +276,13 @@ export function EvmSendForm({
     chain.chain.id,
     activeAccount ? catalog?.accounts : []
   )
+  const reviewRecipientRole = review
+    ? resolveEvmAddressRole(
+        review.recipient,
+        chain.chain.id,
+        activeAccount ? catalog?.accounts : []
+      )
+    : 'unknown'
   const canMoveRecipient =
     Boolean(onFundPrivate) &&
     isCurrentAccountPrivateEvmAddress(recipient, chain.chain.id, activeAccount)
@@ -1465,29 +1472,51 @@ export function EvmSendForm({
               }
               rows={[
                 {
-                  label: 'From',
+                  label: 'Send from',
                   content: (
                     <span className="inline-flex min-w-0 max-w-full items-center justify-end gap-1.5">
-                      <span className="min-w-0 text-right">
-                        <span className="block truncate">{accountDisplayName}</span>
-                        <span
-                          className="block truncate font-mono text-xs text-muted"
-                          title={summary.fields.from}
-                        >
-                          {formatSortAddress(summary.fields.from)}
-                        </span>
-                      </span>
                       <ExecutionAccountBadge mode={review.sourceMode} />
+                      <span
+                        className="min-w-0 truncate font-mono text-sm"
+                        title={`${accountDisplayName}: ${summary.fields.from}`}
+                      >
+                        {formatSortAddress(summary.fields.from)}
+                      </span>
                     </span>
                   )
                 },
                 {
-                  label: 'To',
+                  label: 'Recipient',
                   content: (
-                    <SendRecipientAddress address={review.recipient} name={recipientContactName} />
+                    <span className="inline-flex min-w-0 max-w-full items-center justify-end gap-1.5">
+                      {reviewRecipientRole !== 'unknown' && (
+                        <ExecutionAccountBadge
+                          mode={reviewRecipientRole === 'confidential' ? 'private' : 'main'}
+                        />
+                      )}
+                      <SendRecipientAddress
+                        address={review.recipient}
+                        name={recipientContactName}
+                      />
+                    </span>
                   )
                 },
-                { label: 'Network', content: formatPortfolioNetworkName(chain) },
+                {
+                  label: 'Network',
+                  content: (
+                    <span className="inline-flex items-center justify-end gap-1.5">
+                      <ChainIcon
+                        chain={resolveChainIconAlias(
+                          chain.chain.family,
+                          chain.chain.displayName,
+                          chain.chain.id
+                        )}
+                        className="size-4"
+                      />
+                      {formatPortfolioNetworkName(chain)}
+                    </span>
+                  )
+                },
                 {
                   label: 'Network fee',
                   content: (
@@ -1528,7 +1557,7 @@ export function EvmSendForm({
                   )
                 },
                 {
-                  label: 'Est. confirmation',
+                  label: 'Est. time',
                   content: (
                     <span title="Estimated first confirmation based on recent blocks.">
                       {confirmationTime}
@@ -1544,7 +1573,7 @@ export function EvmSendForm({
                     ]
                   : [])
               ]}
-              confirmLabel={review.privacyWarning ? 'Send anyway' : 'Send'}
+              confirmLabel={review.privacyWarning ? 'Send anyway' : 'Confirm'}
               confirming={approving}
               submitting={approving}
               preparing={updatingFee}
