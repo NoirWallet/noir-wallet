@@ -332,17 +332,7 @@ export function Home() {
     navigate
   ])
   const openTransfer = () => {
-    if (assetDomain === 'all') {
-      navigate.navigate('/transfer?mode=private')
-      return
-    }
-    navigate.navigate(
-      `/transfer?${new URLSearchParams({
-        mode: privateMode ? 'private' : 'public',
-        from: actionDomain === 'private' ? 'private' : 'public',
-        to: actionDomain === 'private' ? 'public' : 'private'
-      })}`
-    )
+    navigate.navigate(`/transfer?mode=${privateMode ? 'private' : 'public'}`)
   }
   const openShieldAction = (action: ShieldAction) =>
     navigate.navigate(`/shield-funds?action=${action}&mode=${privateMode ? 'private' : 'public'}`)

@@ -231,19 +231,12 @@ export function RecipientSelector({
             <div className="flex items-start gap-2 text-warning">
               <Icon icon="lucide:info" className="mt-0.5 size-4 shrink-0" />
               <p className="text-sm leading-5">
-                Sending from or receiving with a Private account may expose your on-chain identity.
-                Use Shielded Move instead.
+                Private Account only accepts{' '}
+                <button type="button" className="font-medium underline" onClick={onShieldedMove}>
+                  Moves from Shield Account
+                </button>
+                .
               </p>
-            </div>
-            <div className="mt-3 flex justify-center">
-              <Button
-                type="button"
-                size="sm"
-                className="rounded-full bg-warning px-5 text-black hover:bg-warning/90"
-                onClick={onShieldedMove}
-              >
-                Shielded Move
-              </Button>
             </div>
           </div>
         )}

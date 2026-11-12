@@ -9,6 +9,7 @@ interface AmountDisplayProps {
   readonly prefix?: string
   readonly profile?: 'review' | 'fee'
   readonly className?: string
+  readonly showDetails?: boolean
 }
 
 export function AmountDisplay({
@@ -16,7 +17,8 @@ export function AmountDisplay({
   symbol,
   prefix = '',
   profile = 'review',
-  className
+  className,
+  showDetails = true
 }: AmountDisplayProps) {
   const { copyToClipboard, showToast, copiedKey } = useCopyToClipboard()
   const review = formatReviewAmount(value)
@@ -26,6 +28,16 @@ export function AmountDisplay({
     return (
       <span className={cn('font-sans tabular-nums', className)}>
         {display}
+        {symbol ? ` ${symbol}` : ''}
+      </span>
+    )
+  }
+
+  if (!showDetails) {
+    return (
+      <span className={cn('break-all font-sans tabular-nums', className)}>
+        {prefix}
+        {review.full}
         {symbol ? ` ${symbol}` : ''}
       </span>
     )

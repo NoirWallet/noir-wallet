@@ -26,10 +26,51 @@ import {
 import { confidentialPrivateTokenId } from '../../../src/core/services/confidential-funding/confidential-funding-portfolio.ts'
 import { getEvmNetworkConfigs } from '../../../src/config/networks.ts'
 import {
+  availableDepositTokens,
+  defaultDepositRefundAddress,
+  depositSourceAssetId,
   depositStatusLabel,
   depositTokenForNetwork,
   listDepositTokenChoices
 } from '../../../src/popup/services/shield-deposit-options.ts'
+
+test('uses the selected EVM private refund address while Zcash retains a transparent refund', () => {
+  const publicAddress = '0x1111111111111111111111111111111111111111'
+  const privateAddress = '0x2222222222222222222222222222222222222222'
+  const zcashAddress = 't1QexampleTransparentAddress'
+  const evm = { id: 'eip155:56', family: 'evm' }
+  const zcash = { id: 'zcash:mainnet', family: 'zcash' }
+  const networks = [
+    {
+      chain: evm,
+      privateExecutionAddress: privateAddress,
+      addresses: [{ value: publicAddress, privacy: 'transparent' }]
+    },
+    {
+      chain: zcash,
+      addresses: [{ value: zcashAddress, privacy: 'transparent' }]
+    }
+  ]
+  expect(defaultDepositRefundAddress(evm, networks)).toBe(privateAddress)
+  expect(defaultDepositRefundAddress(zcash, networks)).toBe(zcashAddress)
+})
+
+test('offers current BNB deposits without exposing the deprecated protocol token', () => {
+  const bnb = { id: 'eip155:56', family: 'evm' }
+  const current = {
+    assetId: 'nep141:bnb.omdep.near',
+    blockchain: 'bsc',
+    symbol: 'BNB',
+    decimals: 18
+  }
+  const deprecated = {
+    ...current,
+    assetId: 'nep245:v2_1.omni.hot.tg:56_11111111111111111111',
+    symbol: 'BNB(DEPRECATED)'
+  }
+  expect(depositSourceAssetId(current, bnb)).toBe('eip155:56/slip44:714')
+  expect(availableDepositTokens([deprecated, current], [bnb])).toEqual([current])
+})
 
 test('resolves the selected deposit token only on the explicitly selected network', () => {
   const ethereum = { id: 'eip155:1' }

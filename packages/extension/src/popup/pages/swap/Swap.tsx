@@ -446,6 +446,15 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
             network.chain.id === useSettingsStore.getState().chainEndpointSettings.activeEvmChainId
         )?.chain.id ?? storageV2Account.networks[0]?.chain.id)
       : undefined
+  const privateSwapChainId =
+    storageV2Account?.networks.find(
+      network =>
+        network.chain.id === useSettingsStore.getState().chainEndpointSettings.activeEvmChainId &&
+        network.privateExecutionAddress
+    )?.chain.id ??
+    storageV2Account?.networks.find(
+      network => network.chain.family === 'evm' && network.privateExecutionAddress
+    )?.chain.id
   const swap = useSwapState(
     lockedAssetFlowRequested || crossChainSendRequested ? null : swapPreferenceScope,
     {
@@ -460,7 +469,13 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
       defaultSourceChainId:
         isPrivateFunding && privateFundingDestinationChain
           ? `eip155:${privateFundingDestinationChain}`
-          : defaultSwapChainId
+          : !crossChainSendRequested &&
+              !privateTransferRequested &&
+              !isPrivateFunding &&
+              !publicPrivacySendRequested &&
+              walletActionMode.mode === 'private'
+            ? privateSwapChainId
+            : defaultSwapChainId
     }
   )
   const { addRecentRecipientAddress } = useSwapPreferences()
@@ -3188,6 +3203,28 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
     swap.isQuoting
   ])
 
+  const resultSourceAssetId = returnToSendAssetId ?? requestedSourceAssetId ?? swap.tokenIn?.assetId
+  const sendReturnPath = (mode: 'main' | 'private') =>
+    resultSourceAssetId
+      ? `/send?${new URLSearchParams({ assetId: resultSourceAssetId, sourceMode: mode })}`
+      : '/send'
+  const resultReturnPath = privateFundingRequestId
+    ? `/approval?requestId=${encodeURIComponent(privateFundingRequestId)}`
+    : crossChainSendRequested
+      ? sendReturnPath(executionSourceMode)
+      : publicPrivacySendRequested
+        ? sendReturnPath('main')
+        : privateBalanceTransferRequested
+          ? `/transfer?${new URLSearchParams({
+              ...(resultSourceAssetId ? { assetId: resultSourceAssetId } : {}),
+              from: privateTransferRequested ? 'private' : 'public',
+              to: privateTransferRequested ? 'public' : 'private',
+              mode: privateTransferRequested ? 'private' : 'public'
+            })}`
+          : privateTransferRequested
+            ? sendReturnPath('private')
+            : '/swap'
+
   const navigateToSwapResult = useCallback(
     (
       txHash?: string,
@@ -3230,9 +3267,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
             ? { approvalRequestIdAfterFunding: privateFundingRequestId }
             : {})
         },
-        privateFundingRequestId
-          ? `/approval?requestId=${encodeURIComponent(privateFundingRequestId)}`
-          : '/'
+        resultReturnPath
       )
       navigate('/transaction-result')
     },
@@ -3245,6 +3280,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
       isPrivateFunding,
       crossChainSendRequested,
       privateFundingRequestId,
+      resultReturnPath,
       executionSourceMode
     ]
   )
@@ -3640,7 +3676,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
                 transactionId: result.transactionId,
                 timestamp: result.timestamp
               },
-              '/'
+              resultReturnPath
             )
           }
         } else {
@@ -3653,7 +3689,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
               customDescription: result.error || 'Failed to send ZEC to deposit address.',
               error: result.error
             },
-            '/'
+            resultReturnPath
           )
         }
       } finally {
@@ -3855,6 +3891,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
     currentNetwork,
     isPrivateFunding,
     privateFundingRequestId,
+    resultReturnPath,
     lockedAssetFlowRequested,
     navigate
   ])
@@ -4737,9 +4774,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
                 </p>
               ) : undefined
             }
-            confirmLabel={
-              pendingRheaEvmAfterApproval ? `Approve ${swap.tokenIn.symbol}` : 'Confirm'
-            }
+            confirmLabel="Confirm"
             confirming={isSending || isPreparingReview}
             confirmDisabled={
               !transferReview ||

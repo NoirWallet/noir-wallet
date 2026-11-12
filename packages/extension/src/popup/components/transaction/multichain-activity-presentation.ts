@@ -130,6 +130,8 @@ export function getActivityAccountRouteLabel(route: ActivitySwapPresentation): s
 
 export function getActivityRouteTitle(item: ActivityItem, route: ActivitySwapPresentation): string {
   if (item.snapshot?.shield) {
+    if (item.snapshot.direction === 'self' && item.snapshot.shield.operation !== 'swap')
+      return 'Move'
     return item.snapshot.shield.operation === 'cluster'
       ? 'Move'
       : item.snapshot.shield.operation === 'deposit'
@@ -434,7 +436,9 @@ function isSignedOrderOrigin(segment: ActivitySegment): boolean {
 }
 
 export function getActivityDetailTitle(item: ActivityItem, interactionTitle?: string): string {
-  if (item.snapshot?.shield)
+  if (item.snapshot?.shield) {
+    if (item.snapshot.direction === 'self' && item.snapshot.shield.operation !== 'swap')
+      return 'Move'
     return item.snapshot.shield.operation === 'cluster'
       ? 'Move'
       : item.snapshot.shield.operation === 'deposit'
@@ -442,6 +446,7 @@ export function getActivityDetailTitle(item: ActivityItem, interactionTitle?: st
         : item.snapshot.shield.operation === 'swap'
           ? 'Shield Swap'
           : 'Send'
+  }
   if (isConfidentialFundingActivity(item)) return 'Add to Confidential'
   if (item.failureCode === 'refunded') return 'Refund'
   if (
@@ -752,9 +757,19 @@ export function getActivityProgressSteps(
   chainName: (chainId: string) => string
 ): readonly TransactionProgressStep[] {
   const origin = item.segments.find(segment => segment.role === 'origin')
+  const hasShieldRelay = item.segments.some(segment => segment.role === 'relay')
+  const shieldSendAuthorization =
+    hasShieldRelay &&
+    item.snapshot?.shield?.operation === 'withdraw' &&
+    item.snapshot.direction === 'outgoing'
+      ? origin?.target.kind === 'protocol'
+        ? origin
+        : undefined
+      : undefined
   return item.segments
     .filter(
       segment =>
+        segment !== shieldSendAuthorization &&
         (segment.role !== 'refund' ||
           segment.status !== 'created' ||
           segment.evidence?.transactionHash !== undefined) &&
@@ -763,6 +778,30 @@ export function getActivityProgressSteps(
           segment.status !== 'created')
     )
     .map(segment => {
+      if (
+        shieldSendAuthorization &&
+        segment.role === 'relay' &&
+        shieldSendAuthorization.status !== 'final'
+      ) {
+        const authorizationStatus = shieldSendAuthorization.status
+        return {
+          id: segment.id,
+          label: 'Shield processing',
+          detail: segment.target.kind === 'protocol' ? segment.target.provider : undefined,
+          state:
+            authorizationStatus === 'failed'
+              ? 'failed'
+              : authorizationStatus === 'created'
+                ? 'pending'
+                : 'active',
+          statusLabel:
+            authorizationStatus === 'failed'
+              ? 'Authorization failed'
+              : authorizationStatus === 'created'
+                ? 'Waiting for authorization'
+                : 'Authorizing'
+        } as const
+      }
       const presentation = getActivitySegmentStatusPresentation(segment, item)
       const signedOrderSubmitted =
         isSignedOrderOrigin(segment) &&

@@ -17,6 +17,7 @@ import { useHomePortfolio } from '@/popup/hooks/useHomePortfolio'
 import { useConfidentialFundingPreview } from '@/popup/hooks/useConfidentialFundingPreview'
 import { resolveEffectiveActiveAccountIdentity } from '@/popup/lib/effective-active-account'
 import { getPrivateTransferChainIds } from '@/popup/services/private-balance-transfer'
+import { getEvmNetworkConfigs } from '@/config/networks'
 import { useNavigate } from '@/popup/provider/Router'
 import { SwapAssetCard } from '@/popup/components/swap/SwapInputView'
 import { getSwapAmountValues } from '@/popup/components/swap/swap-estimate'
@@ -26,6 +27,7 @@ import {
   TransactionReviewExchangeSummary,
   TransactionReviewView
 } from '@/popup/components/transaction/TransactionReviewView'
+import { openConfidentialActivity } from '@/popup/components/transaction/ConfidentialActivitySheet'
 import { Button } from '@/popup/components/ui/button'
 import { Input } from '@/popup/components/ui/input'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/popup/components/ui/dialog'
@@ -42,6 +44,7 @@ import {
   formatShieldQuoteTime,
   isUnsignedShieldTerminal,
   listShieldFundingAssets,
+  selectDefaultShieldWithdrawSource,
   shieldPortfolioBalances,
   shieldFundingSources,
   type ShieldFundingAsset
@@ -243,12 +246,44 @@ function ShieldSwapForm({ onStateChange }: ShieldSwapPageProps) {
   const currentBalances = balanceScope === scopeKey ? balances : null
   const displayBalances = currentBalances ?? shieldPortfolioBalances(model)
   const sources = shieldFundingSources(options, displayBalances)
+  const sourceChoices = sources.length > 0 ? sources : options
+  const defaultSource = selectDefaultShieldWithdrawSource(
+    options,
+    displayBalances,
+    model,
+    null,
+    network
+  )
   const from = fromId
-    ? (sources.find(asset => asset.asset.asset.id === fromId) ?? null)
-    : (sources.find(asset => asset.asset.asset.id !== toId) ?? null)
-  const to = toId ? (options.find(asset => asset.asset.asset.id === toId) ?? null) : null
+    ? (sourceChoices.find(asset => asset.asset.asset.id === fromId) ?? null)
+    : (sourceChoices.find(
+        asset =>
+          asset.asset.asset.id === defaultSource?.asset.asset.id && asset.asset.asset.id !== toId
+      ) ??
+      sourceChoices.find(asset => asset.asset.asset.id !== toId) ??
+      null)
+  const ethereumUsdcContract = getEvmNetworkConfigs(network)
+    .find(config => config.chainId === 'eip155:1')
+    ?.usdcContract?.toLowerCase()
+  const to = toId
+    ? (options.find(asset => asset.asset.asset.id === toId) ?? null)
+    : (options.find(
+        asset =>
+          asset.asset.asset.chainId === 'eip155:1' &&
+          asset.asset.asset.namespace === 'erc20' &&
+          asset.asset.asset.reference.toLowerCase() === ethereumUsdcContract &&
+          asset.asset.asset.id !== from?.asset.asset.id
+      ) ??
+      options.find(
+        asset =>
+          asset.asset.asset.chainId === 'eip155:1' &&
+          asset.asset.asset.kind === 'native' &&
+          asset.asset.asset.id !== from?.asset.asset.id
+      ) ??
+      options.find(asset => asset.asset.asset.id !== from?.asset.asset.id) ??
+      null)
   const canReverse = Boolean(
-    to && sources.some(asset => asset.asset.asset.id === to.asset.asset.id)
+    to && sourceChoices.some(asset => asset.asset.asset.id === to.asset.asset.id)
   )
   const balance = shieldSwapFormBalance(from, displayBalances)
   const currentBalance = shieldSwapFormBalance(from, currentBalances)
@@ -300,7 +335,7 @@ function ShieldSwapForm({ onStateChange }: ShieldSwapPageProps) {
     preview && previewOutput && amount && from && to
       ? formatShieldSwapPreviewRate(amount, preview.amountOutRaw, to.asset.metadata.decimals)
       : null
-  const pickable = (picker === 'from' ? sources : options).filter(
+  const pickable = (picker === 'from' ? sourceChoices : options).filter(
     asset =>
       asset.managed.protocolAssetId !==
         (picker === 'from' ? to?.managed.protocolAssetId : from?.managed.protocolAssetId) &&
@@ -319,8 +354,20 @@ function ShieldSwapForm({ onStateChange }: ShieldSwapPageProps) {
     )
   }
   const openActivity = (transactionId: string) => {
-    if (scopeStillCurrent())
-      navigate(`/?tab=activity&transactionId=${encodeURIComponent(transactionId)}`)
+    if (!scopeStillCurrent() || !account) return
+    setPrepared(null)
+    setAmount('')
+    setUncertain(false)
+    setError(null)
+    void openConfidentialActivity(
+      {
+        network,
+        keyDomainId: account.walletId,
+        accountId: account.accountId,
+        transactionId
+      },
+      () => navigate(`/?tab=activity&transactionId=${encodeURIComponent(transactionId)}`)
+    )
   }
   const refreshBalances = async () => {
     if (!account || !canManageNear || connecting || !scopeStillCurrent()) return

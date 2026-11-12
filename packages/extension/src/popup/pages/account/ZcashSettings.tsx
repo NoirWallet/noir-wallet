@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Icon } from '@iconify/react'
 import { AddressTypeLabel } from '../../components/account/AddressType'
@@ -58,6 +58,12 @@ export function ZcashSettings() {
     wallet && accountId ? wallet.accounts.find(candidate => candidate.id === accountId) : null
   const isCurrentAccount = walletId === currentWalletId && accountId === currentAccountId
   const shieldedAddresses = account?.networkShieldedReceiveAddressHistory?.[DEFAULT_NETWORK] ?? []
+  const orderedAddresses = [...(network?.addresses ?? [])].sort(
+    (left, right) => Number(right.privacy === 'shielded') - Number(left.privacy === 'shielded')
+  )
+  const firstShieldedAddressIndex = orderedAddresses.findIndex(
+    address => address.privacy === 'shielded'
+  )
   const accountName =
     walletId && accountId && account
       ? getAccountDisplayName(walletId, accountId, account.name, accountDisplayNames)
@@ -281,6 +287,38 @@ export function ZcashSettings() {
     }
   }
 
+  const generateShieldedAddressAction = isCurrentAccount &&
+    !addressLoading &&
+    !addressError &&
+    network && (
+      <div>
+        <Button
+          type="button"
+          variant="outline"
+          className="h-[45px] w-full"
+          isLoading={isRotatingShielded}
+          disabled={!activeAccount || !canRotateShielded || selectingAddress !== null}
+          onClick={() => void rotateShieldedAddress()}
+        >
+          <Icon icon="lucide:refresh-cw" width={17} height={17} />
+          <span aria-live="polite">
+            {isRotatingShielded
+              ? waitingForSync === null
+                ? 'Preparing address...'
+                : waitingForSync
+                  ? 'Waiting for sync...'
+                  : 'Generating address...'
+              : 'Generate new shielded address'}
+          </span>
+        </Button>
+        {rotationError && (
+          <p role="alert" className="mt-2 text-xs text-destructive">
+            {rotationError}
+          </p>
+        )}
+      </div>
+    )
+
   return (
     <div className="page-container">
       <CopyToast show={showToast} />
@@ -372,67 +410,42 @@ export function ZcashSettings() {
                 {addressError}
               </p>
             ) : (
-              network?.addresses.map(address => (
-                <div
-                  key={`${address.scheme}:${address.value}`}
-                  className="rounded-2xl bg-card px-4 py-3"
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <AddressTypeLabel
-                      type={address.privacy === 'transparent' ? 'transparent' : 'shielded'}
-                    />
-                    <button
-                      type="button"
-                      aria-label={`Copy Zcash ${address.privacy} address`}
-                      title={`Copy ${privacyLabel(address)} address`}
-                      className="flex size-8 shrink-0 items-center justify-center rounded-lg text-muted transition-colors hover:bg-foreground/10 hover:text-foreground"
-                      onClick={() => void copyToClipboard(address.value, `zcash-${address.scheme}`)}
-                    >
-                      <CopyFeedbackIcon
-                        copied={isCopied(`zcash-${address.scheme}`)}
-                        width={17}
-                        height={17}
+              orderedAddresses.map((address, index) => (
+                <Fragment key={`${address.scheme}:${address.value}`}>
+                  <div className="rounded-2xl bg-card px-4 py-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <AddressTypeLabel
+                        type={address.privacy === 'transparent' ? 'transparent' : 'shielded'}
                       />
-                    </button>
+                      <button
+                        type="button"
+                        aria-label={`Copy Zcash ${address.privacy} address`}
+                        title={`Copy ${privacyLabel(address)} address`}
+                        className="flex size-8 shrink-0 items-center justify-center rounded-lg text-muted transition-colors hover:bg-foreground/10 hover:text-foreground"
+                        onClick={() =>
+                          void copyToClipboard(address.value, `zcash-${address.scheme}`)
+                        }
+                      >
+                        <CopyFeedbackIcon
+                          copied={isCopied(`zcash-${address.scheme}`)}
+                          width={17}
+                          height={17}
+                        />
+                      </button>
+                    </div>
+                    <p
+                      className="mt-2 break-all font-mono text-[11px] leading-relaxed text-muted"
+                      title={address.value}
+                    >
+                      {address.value}
+                    </p>
                   </div>
-                  <p
-                    className="mt-2 break-all font-mono text-[11px] leading-relaxed text-muted"
-                    title={address.value}
-                  >
-                    {address.value}
-                  </p>
-                </div>
+                  {index === firstShieldedAddressIndex && generateShieldedAddressAction}
+                </Fragment>
               ))
             )}
+            {firstShieldedAddressIndex === -1 && generateShieldedAddressAction}
           </div>
-          {isCurrentAccount && !addressLoading && !addressError && network && (
-            <div className="mt-3">
-              <Button
-                type="button"
-                variant="outline"
-                className="h-[45px] w-full"
-                isLoading={isRotatingShielded}
-                disabled={!activeAccount || !canRotateShielded || selectingAddress !== null}
-                onClick={() => void rotateShieldedAddress()}
-              >
-                <Icon icon="lucide:refresh-cw" width={17} height={17} />
-                <span aria-live="polite">
-                  {isRotatingShielded
-                    ? waitingForSync === null
-                      ? 'Preparing address...'
-                      : waitingForSync
-                        ? 'Waiting for sync...'
-                        : 'Generating address...'
-                    : 'Generate new shielded address'}
-                </span>
-              </Button>
-              {rotationError && (
-                <p role="alert" className="mt-2 text-xs text-destructive">
-                  {rotationError}
-                </p>
-              )}
-            </div>
-          )}
           {shieldedAddresses.length > 1 && (
             <div className="mt-4">
               <button

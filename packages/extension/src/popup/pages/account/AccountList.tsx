@@ -338,7 +338,7 @@ export function AccountList() {
 
       if (inspection.status === 'unknown' || birthdayHeight === undefined) {
         const selection = await openModal<AddAccountZcashHistorySelection | undefined>({
-          title: 'Zcash account history',
+          className: 'max-h-[85vh] grid-rows-[auto_minmax(0,1fr)_auto] gap-0 p-0',
           body: resolve => (
             <AddAccountZcashHistoryContent
               priorUsageDetected={inspection.status === 'used'}

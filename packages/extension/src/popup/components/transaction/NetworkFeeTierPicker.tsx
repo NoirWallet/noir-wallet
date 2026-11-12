@@ -26,6 +26,7 @@ interface NetworkFeeTierPickerProps {
   readonly disabled?: boolean
   readonly details?: ReactNode
   readonly layout?: 'stacked' | 'inline'
+  readonly showAmountDetails?: boolean
 }
 
 export function NetworkFeeTierPicker({
@@ -38,7 +39,8 @@ export function NetworkFeeTierPicker({
   onSelectionChange,
   disabled = false,
   details,
-  layout = 'stacked'
+  layout = 'stacked',
+  showAmountDetails = true
 }: NetworkFeeTierPickerProps) {
   const handleEdit = () => {
     if (disabled) return
@@ -68,7 +70,7 @@ export function NetworkFeeTierPicker({
         layout === 'inline' && 'flex-row flex-wrap items-center justify-end gap-x-2 gap-y-1'
       )}
     >
-      <AmountDisplay value={amount} symbol={symbol} profile="fee" />
+      <AmountDisplay value={amount} symbol={symbol} profile="fee" showDetails={showAmountDetails} />
       <button
         type="button"
         onClick={handleEdit}

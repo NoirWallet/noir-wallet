@@ -133,11 +133,7 @@ export function SwapReviewView({
       : fundingSource === 'transparent'
         ? 'Transparent'
         : undefined)
-  const actionLabel = approvalDetails
-    ? `Approve ${formatSymbol(approvalDetails.symbol)}`
-    : hasSigningReview
-      ? signingActionLabel
-      : confirmLabel
+  const actionLabel = hasSigningReview ? signingActionLabel : confirmLabel
 
   return (
     <>
@@ -200,6 +196,7 @@ export function SwapReviewView({
                   <AmountDisplay
                     value={rate}
                     symbol={formatSymbol(tokenOut.symbol)}
+                    showDetails={false}
                     className="font-sans tabular-nums"
                   />
                 </span>
@@ -211,6 +208,7 @@ export function SwapReviewView({
           <DetailItem label="Network fee">
             {sourceNetworkFee && sourceFeeTier && sourceFeeFamily && onSourceFeeTierChange ? (
               <NetworkFeeTierPicker
+                showAmountDetails={false}
                 chainFamily={sourceFeeFamily}
                 tier={sourceFeeTier}
                 amount={sourceNetworkFee.amount}
@@ -223,6 +221,7 @@ export function SwapReviewView({
                 value={sourceNetworkFee.amount}
                 symbol={sourceNetworkFee.symbol}
                 profile="fee"
+                showDetails={false}
                 className="font-sans tabular-nums"
               />
             ) : feeTier && onFeeTierChange && feeByTier ? (
@@ -243,6 +242,7 @@ export function SwapReviewView({
             <AmountDisplay
               value={formatAmount(minAmountOut, tokenOut.decimals)}
               symbol={formatSymbol(tokenOut.symbol)}
+              showDetails={false}
               className="font-sans tabular-nums"
             />
           </DetailItem>
@@ -295,13 +295,14 @@ export function SwapReviewView({
 
           {approvalDetails && (
             <>
-              <DetailItem label="Execution step">
+              <DetailItem label="Step 1 of 2">
                 <span>Approve {formatSymbol(approvalDetails.symbol)}</span>
               </DetailItem>
               <DetailItem label="Approval amount">
                 <AmountDisplay
                   value={approvalDetails.amount}
                   symbol={formatSymbol(approvalDetails.symbol)}
+                  showDetails={false}
                 />
               </DetailItem>
               <DetailItem label="Approval spender">
@@ -309,6 +310,7 @@ export function SwapReviewView({
                   {formatSortAddress(approvalDetails.spender)}
                 </span>
               </DetailItem>
+              <DetailItem label="Step 2 of 2">Sign Swap Order</DetailItem>
             </>
           )}
         </div>
@@ -354,7 +356,7 @@ export function SwapReviewView({
           onClick={onConfirm}
           disabled={isLoading || insufficient || feeUnavailable || Boolean(preparationError)}
           isLoading={isLoading}
-          aria-label={actionLabel}
+          aria-label={approvalDetails ? 'Confirm token approval' : actionLabel}
           className="min-w-0 flex-[2] text-sm text-black"
         >
           {actionLabel === 'Confirm Swap' ? 'Confirm' : actionLabel}
@@ -387,6 +389,7 @@ function QuoteAssetRow({
             value={amount}
             symbol={formatSymbol(token.symbol)}
             prefix={direction === 'pay' ? '-' : '+'}
+            showDetails={false}
             className="max-w-full justify-start gap-1 font-sans tabular-nums"
           />
         </div>

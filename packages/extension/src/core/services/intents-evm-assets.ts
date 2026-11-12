@@ -38,6 +38,10 @@ export interface IntentsEvmAsset {
   readonly iconUrl?: string
 }
 
+export function isDeprecatedIntentsToken(token: Pick<SwapToken, 'symbol'>): boolean {
+  return token.symbol.trim().toUpperCase().endsWith('(DEPRECATED)')
+}
+
 export function resolveIntentsEvmChainId(
   blockchain: string,
   networks: readonly EvmNetworkConfig[]
@@ -71,7 +75,12 @@ export function resolveIntentsEvmAssets(
     }
     const contractAddress = token.contractAddress.toLowerCase() as `0x${string}`
     const assetId = `${network.chainId}/erc20:${contractAddress}`
-    if (resolved.has(assetId)) continue
+    const previous = resolved.get(assetId)
+    if (
+      previous &&
+      !(isDeprecatedIntentsToken({ symbol: previous.symbol }) && !isDeprecatedIntentsToken(token))
+    )
+      continue
     resolved.set(
       assetId,
       Object.freeze({

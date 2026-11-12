@@ -165,6 +165,11 @@ function ShieldFundsContent() {
       navigate('/shield-deposit')
       return
     }
+    if (action === 'send') {
+      const provider = canManageNear ? 'near-confidential' : hasZcash ? 'zcash-shield' : null
+      if (provider) runAction(provider, action)
+      return
+    }
     const providers = availableProviders(action)
     if (providers.length === 1) runAction(providers[0], action)
     else if (providers.length > 1) setPendingAction(action)
@@ -196,7 +201,9 @@ function ShieldFundsContent() {
       )
     } else if (requestedAction === 'receive' && providers.length > 0) {
       replace('/shield-deposit')
-    } else if (providers.length === 1) runAction(providers[0]!, requestedAction, true)
+    } else if (requestedAction === 'send' && canManageNear)
+      runAction('near-confidential', requestedAction, true)
+    else if (providers.length === 1) runAction(providers[0]!, requestedAction, true)
     else {
       replace('/shield-funds')
       if (providers.length > 1) setPendingAction(requestedAction)

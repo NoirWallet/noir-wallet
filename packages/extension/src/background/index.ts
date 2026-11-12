@@ -4238,6 +4238,13 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
         // The receive page can refresh its catalog after this runtime was constructed.
         await refreshIntentsProtocolAssets(true)
       }
+      if (
+        (message.type === 'PREVIEW_CONFIDENTIAL_FUNDING' ||
+          message.type === 'PREPARE_CONFIDENTIAL_FUNDING') &&
+        !coordinator.hasCurrentFundingAssets(message.request)
+      ) {
+        await refreshIntentsProtocolAssets(true)
+      }
       const currentCoordinator = confidentialFundingCoordinator
       if (!currentCoordinator)
         throw new Error('Confidential funding is unavailable in this network')

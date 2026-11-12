@@ -130,6 +130,7 @@ function ShieldDepositContent() {
   const [checkResult, setCheckResult] = useState<{ scope: string; depositId: string } | null>(null)
   const [checkError, setCheckError] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [showRefundInfo, setShowRefundInfo] = useState(false)
   const [now, setNow] = useState(Date.now())
   const requestIdRef = useRef<string | null>(null)
   const providerRevisionRef = useRef(0)
@@ -512,11 +513,13 @@ function ShieldDepositContent() {
     setTokenId(choice.id)
     setNetworkId(null)
     requestIdRef.current = null
+    setError(null)
     setPicker(null)
   }
   const selectNetwork = (network: ChainDefinition) => {
     setNetworkId(network.id)
     requestIdRef.current = null
+    setError(null)
     setPicker(null)
   }
   const selectProvider = (nextProvider: ShieldProvider) => {
@@ -574,14 +577,15 @@ function ShieldDepositContent() {
                 onClick={() => void refreshDeposit()}
                 disabled={refreshing}
                 aria-busy={refreshing || undefined}
-                className="wallet-interactive flex size-8 items-center justify-center rounded-lg hover:bg-wallet-selected focus-visible:outline-2 focus-visible:outline-primary disabled:opacity-45"
+                className="wallet-interactive flex h-8 items-center justify-center gap-1 rounded-lg px-2 text-xs text-wallet-secondary hover:bg-wallet-selected focus-visible:outline-2 focus-visible:outline-primary disabled:opacity-45"
               >
                 <Icon
-                  icon="lucide:refresh-cw"
-                  width={20}
-                  height={20}
+                  icon="lucide:scan-search"
+                  width={16}
+                  height={16}
                   className={refreshing ? 'animate-spin' : undefined}
                 />
+                Check
               </button>
             )
           }
@@ -719,7 +723,19 @@ function ShieldDepositContent() {
                 </div>
               )}
               <div className="mt-6 flex items-start justify-between gap-3 text-sm">
-                <p className="shrink-0 text-muted">Refund address</p>
+                <div className="flex shrink-0 items-center gap-1 text-muted">
+                  <span>Refund address</span>
+                  <button
+                    type="button"
+                    aria-label="About refund address"
+                    aria-expanded={showRefundInfo}
+                    title="About refund address"
+                    onClick={() => setShowRefundInfo(value => !value)}
+                    className="wallet-interactive flex size-5 items-center justify-center rounded-full focus-visible:outline-2 focus-visible:outline-primary"
+                  >
+                    <Icon icon="lucide:circle-help" width={15} height={15} />
+                  </button>
+                </div>
                 <div className="min-w-0 text-right">
                   {refundAccount && (
                     <div className="flex min-w-0 items-center justify-end gap-2">
@@ -743,6 +759,12 @@ function ShieldDepositContent() {
                   </p>
                 </div>
               </div>
+              {showRefundInfo && (
+                <p className="mt-2 text-xs text-muted">
+                  If this deposit cannot complete, funds return to this address on the sending
+                  network.
+                </p>
+              )}
               {(!canPay || payment?.hasDeposit) && (
                 <div className="mt-5 flex items-center justify-between gap-3">
                   <h2

@@ -633,7 +633,21 @@ export function MultichainSend() {
       const recipient = graph?.root.intent?.recipient
       const sender = graph?.root.intent?.sender
       const chain = selection?.chain.chain
-      navigate(path)
+      if (path === '/send') {
+        setSubmission(null)
+        setAssetPickerOpen(false)
+        navigate(
+          selection
+            ? `/send?${new URLSearchParams({
+                assetId: selection.asset.asset.id,
+                sourceMode: 'main'
+              })}`
+            : '/send',
+          { replace: true }
+        )
+      } else {
+        navigate(path)
+      }
       if (
         !shouldOffer ||
         !recipient ||
@@ -688,7 +702,7 @@ export function MultichainSend() {
         asset={selection.asset}
         chain={selection.chain}
         submission={submission.value}
-        onDone={outcome => leaveOnchainResult('/', outcome !== 'failed')}
+        onDone={outcome => leaveOnchainResult('/send', outcome !== 'failed')}
         onViewActivity={transactionId =>
           leaveOnchainResult(
             `/?tab=activity&transactionId=${encodeURIComponent(transactionId)}`,
@@ -705,7 +719,7 @@ export function MultichainSend() {
         asset={selection.asset}
         chain={selection.chain}
         submission={submission.value}
-        onDone={outcome => leaveOnchainResult('/', outcome !== 'failed')}
+        onDone={outcome => leaveOnchainResult('/send', outcome !== 'failed')}
         onViewActivity={transactionId =>
           leaveOnchainResult(
             `/?tab=activity&transactionId=${encodeURIComponent(transactionId)}`,
@@ -722,7 +736,7 @@ export function MultichainSend() {
         asset={selection.asset}
         chain={selection.chain}
         submission={submission.value}
-        onDone={outcome => leaveOnchainResult('/', outcome !== 'failed')}
+        onDone={outcome => leaveOnchainResult('/send', outcome !== 'failed')}
         onViewActivity={transactionId =>
           leaveOnchainResult(
             `/?tab=activity&transactionId=${encodeURIComponent(transactionId)}`,
@@ -739,7 +753,7 @@ export function MultichainSend() {
         asset={selection.asset}
         chain={selection.chain}
         submission={submission.value}
-        onDone={outcome => leaveOnchainResult('/', outcome !== 'failed')}
+        onDone={outcome => leaveOnchainResult('/send', outcome !== 'failed')}
         onViewActivity={transactionId =>
           leaveOnchainResult(
             `/?tab=activity&transactionId=${encodeURIComponent(transactionId)}`,

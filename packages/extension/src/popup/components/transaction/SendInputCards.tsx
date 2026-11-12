@@ -25,6 +25,7 @@ export function SendSourceSection({
   assetSelector,
   balance,
   maxButton,
+  recipient,
   domain,
   availableDomains,
   onDomainChange,
@@ -34,30 +35,38 @@ export function SendSourceSection({
   readonly assetSelector: ReactNode
   readonly balance: ReactNode
   readonly maxButton: ReactNode
+  readonly recipient?: ReactNode
   readonly domain: BalanceDomain
   readonly availableDomains: readonly BalanceDomain[]
   readonly onDomainChange: (domain: BalanceDomain) => void
   readonly disabled?: boolean
 }) {
+  const amountSection = (
+    <div className="flex flex-col items-center gap-2 pt-2">
+      {amountInput}
+      {assetSelector}
+      <div className="flex min-h-6 min-w-0 items-center justify-center gap-2 text-xs text-muted">
+        {balance}
+        {maxButton}
+      </div>
+    </div>
+  )
+  const sourceSection = (
+    <div className="flex min-w-0 items-center justify-between gap-3">
+      <SendFieldLabel>Send from</SendFieldLabel>
+      <BalanceDomainTabs
+        value={domain}
+        available={availableDomains}
+        onChange={onDomainChange}
+        disabled={disabled}
+      />
+    </div>
+  )
   return (
     <>
-      <div className="flex flex-col items-center gap-2 pt-2">
-        {amountInput}
-        {assetSelector}
-        <div className="flex min-h-6 min-w-0 items-center justify-center gap-2 text-xs text-muted">
-          {balance}
-          {maxButton}
-        </div>
-      </div>
-      <div className="flex min-w-0 items-center justify-between gap-3">
-        <SendFieldLabel>Send from</SendFieldLabel>
-        <BalanceDomainTabs
-          value={domain}
-          available={availableDomains}
-          onChange={onDomainChange}
-          disabled={disabled}
-        />
-      </div>
+      {recipient ? sourceSection : amountSection}
+      {recipient}
+      {recipient ? amountSection : sourceSection}
     </>
   )
 }

@@ -229,11 +229,11 @@ it('maps supported RHEA destinations to wallet asset identities', () => {
 })
 
 it('uses the earlier of the SDK age limit and provider expiration', () => {
-  assert.equal(getRheaSwapQuoteDeadline({ receivedAt: 1_000, expiresAt: 90_000 }), 31_000)
+  assert.equal(getRheaSwapQuoteDeadline({ receivedAt: 1_000, expiresAt: 400_000 }), 301_000)
   assert.equal(getRheaSwapQuoteDeadline({ receivedAt: 1_000, expiresAt: 20_000 }), 20_000)
-  assert.equal(isRheaSwapQuoteFresh({ receivedAt: 1_000, expiresAt: null }, 30_999), true)
-  assert.equal(isRheaSwapQuoteFresh({ receivedAt: 1_000, expiresAt: null }, 31_000), false)
-  assert.equal(isRheaSwapQuoteFresh({ receivedAt: 1_000, expiresAt: null }, 31_001), false)
+  assert.equal(isRheaSwapQuoteFresh({ receivedAt: 1_000, expiresAt: null }, 300_999), true)
+  assert.equal(isRheaSwapQuoteFresh({ receivedAt: 1_000, expiresAt: null }, 301_000), false)
+  assert.equal(isRheaSwapQuoteFresh({ receivedAt: 1_000, expiresAt: null }, 301_001), false)
   assert.equal(isRheaSwapQuoteFresh({ receivedAt: 1_000, expiresAt: null }, 999), false)
   assert.equal(isRheaSwapQuoteFresh({ receivedAt: Number.NaN, expiresAt: null }, 1_000), false)
 })

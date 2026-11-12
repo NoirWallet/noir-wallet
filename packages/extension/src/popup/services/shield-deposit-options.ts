@@ -9,7 +9,10 @@ import {
   type ChainDefinition
 } from '@/core/chains/registry'
 import { getAssetProtocolSourceMappings } from '@/core/prices/asset-market-mappings'
-import { resolveIntentsEvmChainId } from '@/core/services/intents-evm-assets'
+import {
+  isDeprecatedIntentsToken,
+  resolveIntentsEvmChainId
+} from '@/core/services/intents-evm-assets'
 import type { SwapToken } from '@/core/services/intents-api'
 import { resolveManagedIntentsCatalogAsset } from './intents-asset-manager-client'
 import { DEFAULT_NETWORK } from '@/lib/runtime-network'
@@ -63,6 +66,7 @@ export function availableDepositTokens(
   networks: readonly ChainDefinition[]
 ): readonly SwapToken[] {
   return tokens.filter(token => {
+    if (isDeprecatedIntentsToken(token)) return false
     const chainId = depositTokenChainId(token)
     const network = networks.find(candidate => candidate.id === chainId)
     return network !== undefined && depositSourceAssetId(token, network) !== null
@@ -129,6 +133,8 @@ export function defaultDepositRefundAddress(
   accountNetworks: readonly AccountNetworkView[]
 ): string {
   const accountNetwork = accountNetworks.find(item => item.chain.id === network?.id)
+  if (network?.family === 'evm' && accountNetwork?.privateExecutionAddress)
+    return accountNetwork.privateExecutionAddress
   return accountNetwork?.addresses.find(address => address.privacy === 'transparent')?.value ?? ''
 }
 

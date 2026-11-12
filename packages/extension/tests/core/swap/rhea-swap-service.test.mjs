@@ -597,7 +597,7 @@ test('token adapter canonicalizes a live native BNB source without changing its 
       raw: { address: '0x0000000000000000000000000000000000000000' }
     })
   ).toMatchObject({
-    assetId: 'nep245:v2_1.omni.hot.tg:56_11111111111111111111',
+    assetId: 'nep141:bnb.omdep.near',
     rheaAddress: '0x0000000000000000000000000000000000000000',
     rheaChainId: '56',
     isNative: true
@@ -777,7 +777,7 @@ test('catalog loading deduplicates native EVM address aliases after canonicaliza
 
   expect(result.tokens).toHaveLength(1)
   expect(result.tokens[0]).toMatchObject({
-    assetId: 'nep245:v2_1.omni.hot.tg:56_11111111111111111111',
+    assetId: 'nep141:bnb.omdep.near',
     rheaAddress: '0x0000000000000000000000000000000000000000'
   })
 })

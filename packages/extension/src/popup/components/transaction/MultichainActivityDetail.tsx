@@ -440,6 +440,13 @@ export function MultichainActivityDetail({
     ? (assetMetadata.get(swapSourceAmount.assetId)?.metadata ?? swapSourceAmount.metadata)?.decimals
     : undefined
   const direction = visibleItem.snapshot?.direction
+  const isShieldMove = Boolean(
+    visibleItem.snapshot?.shield &&
+    direction === 'self' &&
+    visibleItem.snapshot.shield.operation !== 'swap'
+  )
+  const isShieldSend =
+    visibleItem.snapshot?.shield?.operation === 'withdraw' && direction === 'outgoing'
   const isIncoming = visibleItem.kind === 'receive' || direction === 'incoming'
   const sign = isIncoming ? '+' : direction === 'outgoing' ? '−' : ''
   const displayedSign = visibleItem.failureCode === 'refunded' ? '+' : sign
@@ -754,24 +761,33 @@ export function MultichainActivityDetail({
 
   const progressReferences = new Map<string, ReactNode>()
   if (isCrossChain) {
+    const originHash = transactionReferences.find(candidate =>
+      visibleItem.segments.some(segment => segment.id === candidate.id && segment.role === 'origin')
+    )?.hash
     for (const segment of visibleItem.segments) {
       const reference = transactionReferences.find(candidate => candidate.id === segment.id)
+      const distinctReference =
+        segment.role === 'relay' && reference?.hash === originHash ? undefined : reference
       const unverifiedReplacementHash = segment.evidence?.replacementTransactionHash
       const chainId = segment.target.kind === 'onchain' ? segment.target.chainId : null
       const replacementHash =
         unverifiedReplacementHash && isActivityTransactionHash(unverifiedReplacementHash, chainId)
           ? unverifiedReplacementHash
           : undefined
-      if (!reference && !replacementHash) continue
+      if (!distinctReference && !replacementHash) continue
       progressReferences.set(
         segment.id,
         <div className="space-y-1">
-          {reference && (
+          {distinctReference && (
             <TransactionReference
-              value={reference.hash}
+              value={distinctReference.hash}
               url={
-                reference.chainId
-                  ? formatChainTransactionExplorerUrl(reference.chainId, reference.hash, network)
+                distinctReference.chainId
+                  ? formatChainTransactionExplorerUrl(
+                      distinctReference.chainId,
+                      distinctReference.hash,
+                      network
+                    )
                   : ''
               }
               compact
@@ -795,6 +811,24 @@ export function MultichainActivityDetail({
       )
     }
   }
+
+  const statusRow = (
+    <DetailRow label="Status">
+      <span
+        data-activity-status-value
+        className={cn(
+          'text-sm',
+          getTransactionStatusToneClassName(needsSubmissionCheck ? 'warning' : status.tone)
+        )}
+      >
+        {needsSubmissionCheck
+          ? 'Needs attention'
+          : activeConfidentialPlan?.operation === 'cluster'
+            ? getClusterBatchStatusLabel(activeConfidentialPlan)
+            : status.label}
+      </span>
+    </DetailRow>
+  )
 
   return (
     <article
@@ -846,10 +880,14 @@ export function MultichainActivityDetail({
               </div>
               {swap.destination && (
                 <div className="mt-1 max-w-full break-all font-sans text-sm text-muted tabular-nums">
-                  {swap.destinationIsSettled ? 'Received' : 'Expected'}{' '}
+                  {isShieldSend
+                    ? 'Recipient receives'
+                    : swap.destinationIsSettled
+                      ? 'Received'
+                      : 'Expected'}{' '}
                   <AmountDisplay
                     value={swap.destination.exact}
-                    prefix="+"
+                    prefix={isShieldSend ? '' : '+'}
                     symbol={swap.destination.symbol}
                   />
                 </div>
@@ -927,19 +965,28 @@ export function MultichainActivityDetail({
               </DetailRow>
             ) : (
               <DetailRow label="Route">
-                <span className="flex max-w-[245px] min-w-0 flex-wrap items-center justify-end gap-x-1.5 gap-y-1 text-right text-sm">
+                <span className="flex min-w-0 max-w-[calc(100vw-110px)] items-center justify-end gap-1 whitespace-nowrap text-right text-xs">
                   <SwapChainIcon alias={swap.sourceChainIconAlias} />
-                  <span>{swap.sourceNetwork}</span>
-                  <Icon icon="lucide:arrow-right" width={13} height={13} className="text-muted" />
+                  <span className="min-w-0 truncate" title={swap.sourceNetwork}>
+                    {swap.sourceNetwork}
+                  </span>
+                  <Icon
+                    icon="lucide:arrow-right"
+                    width={13}
+                    height={13}
+                    className="shrink-0 text-muted"
+                  />
                   <SwapChainIcon alias={swap.destinationChainIconAlias} />
-                  <span>{swap.destinationNetwork}</span>
+                  <span className="min-w-0 truncate" title={swap.destinationNetwork}>
+                    {swap.destinationNetwork}
+                  </span>
                 </span>
               </DetailRow>
             )}
             {swap.sourceAccountMode &&
               swap.destinationAccountMode &&
               swap.sourceAccountMode !== swap.destinationAccountMode && (
-                <DetailRow label="Account">
+                <DetailRow label={isShieldMove ? 'Move direction' : 'Account'}>
                   <span className="flex items-center gap-1.5">
                     {swap.sourceAccountMode === 'External' ? (
                       <span className="text-sm">External</span>
@@ -1002,21 +1049,7 @@ export function MultichainActivityDetail({
             {new Date(visibleItem.createdAt).toLocaleString()}
           </span>
         </DetailRow>
-        <DetailRow label="Status">
-          <span
-            data-activity-status-value
-            className={cn(
-              'text-sm',
-              getTransactionStatusToneClassName(needsSubmissionCheck ? 'warning' : status.tone)
-            )}
-          >
-            {needsSubmissionCheck
-              ? 'Needs attention'
-              : activeConfidentialPlan?.operation === 'cluster'
-                ? getClusterBatchStatusLabel(activeConfidentialPlan)
-                : status.label}
-          </span>
-        </DetailRow>
+        {!isShieldMove && statusRow}
         {activeConfidentialPlan?.operation === 'cluster' && (
           <>
             <DetailRow label="Method">
@@ -1142,6 +1175,7 @@ export function MultichainActivityDetail({
             />
           </DetailRow>
         )}
+        {isShieldMove && statusRow}
         {!isCrossChain &&
           transactionReferences.map(reference => (
             <DetailRow key={reference.id} label={reference.label}>

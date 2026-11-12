@@ -754,6 +754,8 @@ export function EvmSendForm({
       (review !== null
         ? review.intentKey === intentKey && !updatingFee
         : !feePreview.loading && feePreview.details !== null),
+    fallbackEnabled: route === 'onchain',
+    chainId: chain.chain.id,
     requestKey: `${accountContextKey}:${intentKey}:${JSON.stringify(feeSelection)}:${review?.value.graph.root.id ?? 'preview'}`,
     feeEstimate: review ? reviewedFeeEstimate : feePreview.details
   })
@@ -1134,19 +1136,60 @@ export function EvmSendForm({
               Max
             </button>
           }
-        />
-
-        <div>
-          <div className="mb-2 flex items-center justify-between text-xs">
-            <SendFieldLabel>Send to</SendFieldLabel>
-            {!sendPrivately && destinationNetworks.length > 1 ? (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <button
-                    type="button"
-                    className="inline-flex items-center gap-1.5 text-foreground hover:text-primary"
-                    aria-label={`Select destination network, ${chain.chain.displayName}`}
-                  >
+          recipient={
+            <div>
+              <div className="mb-2 flex items-center justify-between text-xs">
+                <SendFieldLabel>Send to</SendFieldLabel>
+                {!sendPrivately && destinationNetworks.length > 1 ? (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <button
+                        type="button"
+                        className="inline-flex items-center gap-1.5 text-foreground hover:text-primary"
+                        aria-label={`Select destination network, ${chain.chain.displayName}`}
+                      >
+                        <ChainIcon
+                          chain={resolveChainIconAlias(
+                            chain.chain.family,
+                            chain.chain.displayName,
+                            chain.chain.id
+                          )}
+                          width={16}
+                          height={16}
+                          className="rounded-[4px]"
+                          showTooltip={false}
+                        />
+                        {chain.chain.displayName}
+                        <Icon icon="lucide:chevron-down" width={13} height={13} />
+                      </button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="min-w-[150px]">
+                      <DropdownMenuRadioGroup
+                        value={asset.asset.id}
+                        onValueChange={destinationAssetId =>
+                          onSelectDestinationNetwork(destinationAssetId, {
+                            recipient,
+                            amount: maxSelected ? '' : amount
+                          })
+                        }
+                      >
+                        {destinationNetworks.map(option => (
+                          <DropdownMenuRadioItem key={option.assetId} value={option.assetId}>
+                            <ChainIcon
+                              chain={option.icon}
+                              width={16}
+                              height={16}
+                              className="rounded-[4px]"
+                              showTooltip={false}
+                            />
+                            {option.name}
+                          </DropdownMenuRadioItem>
+                        ))}
+                      </DropdownMenuRadioGroup>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                ) : (
+                  <span className="inline-flex items-center gap-1.5 text-foreground">
                     <ChainIcon
                       chain={resolveChainIconAlias(
                         chain.chain.family,
@@ -1159,84 +1202,49 @@ export function EvmSendForm({
                       showTooltip={false}
                     />
                     {chain.chain.displayName}
-                    <Icon icon="lucide:chevron-down" width={13} height={13} />
-                  </button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="min-w-[150px]">
-                  <DropdownMenuRadioGroup
-                    value={asset.asset.id}
-                    onValueChange={destinationAssetId =>
-                      onSelectDestinationNetwork(destinationAssetId, {
-                        recipient,
-                        amount: maxSelected ? '' : amount
-                      })
-                    }
-                  >
-                    {destinationNetworks.map(option => (
-                      <DropdownMenuRadioItem key={option.assetId} value={option.assetId}>
-                        <ChainIcon
-                          chain={option.icon}
-                          width={16}
-                          height={16}
-                          className="rounded-[4px]"
-                          showTooltip={false}
-                        />
-                        {option.name}
-                      </DropdownMenuRadioItem>
-                    ))}
-                  </DropdownMenuRadioGroup>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            ) : (
-              <span className="inline-flex items-center gap-1.5 text-foreground">
-                <ChainIcon
-                  chain={resolveChainIconAlias(
-                    chain.chain.family,
-                    chain.chain.displayName,
-                    chain.chain.id
+                  </span>
+                )}
+              </div>
+              <SendRecipientInputCard
+                id="evm-send-recipient"
+                value={recipient}
+                selectedName={recipientName}
+                onChange={value => {
+                  invalidateMaximum()
+                  if (maxSelected) setAmount('')
+                  setRecipient(value.trim())
+                  setSelectedRecipient(null)
+                }}
+                placeholder="Enter address"
+                variant="filled"
+                hideLabel
+                onSelectRecipient={() => void handleSelectRecipient()}
+              />
+              {recipient && !validRecipient && (
+                <div className="mt-2 flex items-start justify-between gap-3 px-1 text-xs text-danger">
+                  <p className="min-w-0 flex-1">
+                    {recipientPolicyError ?? 'Enter a valid non-zero EVM address.'}
+                  </p>
+                  {canMoveRecipient && recipientPolicyError && (
+                    <button
+                      type="button"
+                      onClick={() => void handleMoveRecipient()}
+                      className="inline-flex shrink-0 items-center gap-1 font-medium text-primary"
+                    >
+                      <Icon
+                        icon="lucide:arrow-right-left"
+                        width={13}
+                        height={13}
+                        aria-hidden="true"
+                      />
+                      Move
+                    </button>
                   )}
-                  width={16}
-                  height={16}
-                  className="rounded-[4px]"
-                  showTooltip={false}
-                />
-                {chain.chain.displayName}
-              </span>
-            )}
-          </div>
-          <SendRecipientInputCard
-            id="evm-send-recipient"
-            value={recipient}
-            selectedName={recipientName}
-            onChange={value => {
-              invalidateMaximum()
-              if (maxSelected) setAmount('')
-              setRecipient(value.trim())
-              setSelectedRecipient(null)
-            }}
-            placeholder="Enter address"
-            variant="filled"
-            hideLabel
-            onSelectRecipient={() => void handleSelectRecipient()}
-          />
-          {recipient && !validRecipient && (
-            <div className="mt-2 flex items-start justify-between gap-3 px-1 text-xs text-danger">
-              <p className="min-w-0 flex-1">
-                {recipientPolicyError ?? 'Enter a valid non-zero EVM address.'}
-              </p>
-              {canMoveRecipient && recipientPolicyError && (
-                <button
-                  type="button"
-                  onClick={() => void handleMoveRecipient()}
-                  className="inline-flex shrink-0 items-center gap-1 font-medium text-primary"
-                >
-                  <Icon icon="lucide:arrow-right-left" width={13} height={13} aria-hidden="true" />
-                  Move
-                </button>
+                </div>
               )}
             </div>
-          )}
-        </div>
+          }
+        />
 
         {sendPrivately && (
           <div className="space-y-3 text-sm">
@@ -1329,7 +1337,7 @@ export function EvmSendForm({
             </div>
             <div className="flex min-h-6 items-center justify-between gap-2 text-xs">
               <span className="text-muted">Est. time</span>
-              <span title="Estimated first confirmation based on recent blocks.">
+              <span title="Approximate first confirmation; actual time depends on network conditions.">
                 {confirmationTime}
               </span>
             </div>

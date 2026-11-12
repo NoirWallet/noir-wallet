@@ -70,6 +70,7 @@ import {
   shieldQuoteFeeRaw
 } from '@/popup/services/shield-transfer'
 import { TransactionReviewView } from '@/popup/components/transaction/TransactionReviewView'
+import { openConfidentialActivity } from '@/popup/components/transaction/ConfidentialActivitySheet'
 import {
   createNativeTransferSource,
   estimateConfidentialTransferMaximum,
@@ -104,6 +105,10 @@ function domainLabel(domain: TransferDomain): string {
   return domain === 'shield' ? 'Shield' : domain === 'private' ? 'Private' : 'Public'
 }
 
+function formatMoveReviewAddress(address: string): string {
+  return address.length > 12 ? `${address.slice(0, 7)}...${address.slice(-5)}` : address
+}
+
 function DomainCard({
   label,
   accountName,
@@ -129,7 +134,6 @@ function DomainCard({
 }) {
   return (
     <div className="w-full rounded-xl border border-white/5 bg-wallet-surface px-4 py-4">
-      <p className="mb-3 text-xs font-medium text-muted">{label}</p>
       <button
         type="button"
         onClick={onAccountClick}
@@ -147,7 +151,10 @@ function DomainCard({
         <span className="min-w-0 flex-1">
           {domain === 'shield' ? (
             <>
-              <span className="block text-xs text-muted">Shield</span>
+              <span className="flex min-w-0 items-center gap-2 text-xs text-muted">
+                <span className="shrink-0">{label}</span>
+                <span>Shield</span>
+              </span>
               <span className="block truncate text-base font-medium">
                 NEAR Confidential Intents
               </span>
@@ -155,6 +162,7 @@ function DomainCard({
           ) : (
             <>
               <span className="flex min-w-0 items-center gap-2 text-xs text-muted">
+                <span className="shrink-0">{label}</span>
                 <span className="truncate">{accountName}</span>
                 <span
                   className={cn(
@@ -1409,7 +1417,13 @@ function TransferForm() {
       plan.accountId === effective.accountId
     ) {
       setPreparedShield(null)
-      navigate(`/?tab=activity&transactionId=${encodeURIComponent(plan.transactionId)}`)
+      setAmount('')
+      setMaxSelected(false)
+      setShieldError(null)
+      setConfirmUncertain(false)
+      void openConfidentialActivity(plan, () =>
+        navigate(`/?tab=activity&transactionId=${encodeURIComponent(plan.transactionId)}`)
+      )
     }
   }
   const checkShieldPlan = async (
@@ -1527,6 +1541,7 @@ function TransferForm() {
             icon: selected.asset.metadata.iconUrl
           }}
           amount={currentAmount}
+          amountDetails={false}
           network={selected.chain.chain.displayName}
           rows={[
             {
@@ -1537,8 +1552,8 @@ function TransferForm() {
                 ) : (
                   <span>
                     {accountName} · {domainLabel(from)} · {selected.chain.chain.displayName}
-                    <span className="ml-auto mt-1 block w-[22ch] max-w-full break-all font-mono text-xs text-balance">
-                      {activeShieldReview.sourceAddress}
+                    <span className="ml-auto mt-1 block max-w-full font-mono text-xs">
+                      {formatMoveReviewAddress(activeShieldReview.sourceAddress)}
                     </span>
                   </span>
                 )
@@ -1551,8 +1566,8 @@ function TransferForm() {
                 ) : (
                   <span>
                     {accountName} · {domainLabel(to)} · {targetAsset?.chain.chain.displayName}
-                    <span className="ml-auto mt-1 block w-[22ch] max-w-full break-all font-mono text-xs text-balance">
-                      {activeShieldReview.destinationAddress}
+                    <span className="ml-auto mt-1 block max-w-full font-mono text-xs">
+                      {formatMoveReviewAddress(activeShieldReview.destinationAddress)}
                     </span>
                   </span>
                 )
@@ -1588,29 +1603,28 @@ function TransferForm() {
               ? [{ label: 'Split transfers', content: `${activeShieldReview.withdrawCount}` }]
               : []),
             {
-              label:
-                activeShieldReview.operation === 'cluster'
-                  ? 'Estimated route fees'
-                  : 'Estimated fee',
-              content: fee
-            },
-            ...(networkFee
-              ? [
-                  {
-                    label:
-                      activeShieldReview.operation === 'cluster'
-                        ? 'Max network fee'
-                        : 'Network fee',
-                    content: (
+              label: 'Estimated fee',
+              content: (
+                <span className="flex flex-col items-end gap-1">
+                  <span className="flex items-center gap-2">
+                    <span className="text-xs text-muted">Route</span>
+                    {fee}
+                  </span>
+                  {networkFee && (
+                    <span className="flex items-center gap-2">
+                      <span className="text-xs text-muted">
+                        {activeShieldReview.operation === 'cluster' ? 'Max network' : 'Network'}
+                      </span>
                       <AmountDisplay
                         value={formatBaseUnitAmount(networkFee.raw, networkFee.decimals)}
                         symbol={networkFee.symbol}
                         profile="fee"
                       />
-                    )
-                  }
-                ]
-              : [])
+                    </span>
+                  )}
+                </span>
+              )
+            }
           ]}
           error={
             shieldError ? (

@@ -113,6 +113,8 @@ function SwapActivityRow({
   const sourceSymbol = presentation.source?.symbol ?? 'Asset'
   const destinationSymbol = presentation.destination?.symbol ?? 'Asset'
   const action = getActivityRouteTitle(item, presentation)
+  const isShieldSend =
+    item.snapshot?.shield?.operation === 'withdraw' && item.snapshot.direction === 'outgoing'
   const route = `${presentation.sourceNetwork} → ${presentation.destinationNetwork}`
   const accountRoute =
     presentation.isExternalDeposit || isOwnedAccountTransfer(presentation)
@@ -142,7 +144,7 @@ function SwapActivityRow({
           <p className="min-w-0 truncate text-sm font-medium">
             {presentation.isExternalDeposit
               ? `${action} ${destinationSymbol}`
-              : action === 'Account Transfer'
+              : action === 'Account Transfer' || action === 'Move'
                 ? action
                 : `${action} ${sourceSymbol} → ${destinationSymbol}`}
           </p>
@@ -178,7 +180,9 @@ function SwapActivityRow({
             </p>
             {presentation.destination && (
               <p className="break-all font-sans text-[11px] text-muted tabular-nums">
-                {presentation.destinationIsSettled ? 'Received' : 'Expected'} +
+                {isShieldSend
+                  ? 'Recipient receives '
+                  : `${presentation.destinationIsSettled ? 'Received' : 'Expected'} +`}
                 {presentation.destination.formatted} {destinationSymbol}
               </p>
             )}

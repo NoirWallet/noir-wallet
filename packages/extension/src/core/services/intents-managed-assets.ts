@@ -2,7 +2,7 @@ import type { EvmNetworkConfig } from '@/config/networks'
 import type { Network } from '@/types'
 
 import { resolveSwapTokenIconUrl, type SwapToken } from './intents-api'
-import { resolveIntentsEvmAssets } from './intents-evm-assets'
+import { isDeprecatedIntentsToken, resolveIntentsEvmAssets } from './intents-evm-assets'
 import { createIntentsWalletAssetCatalog } from './intents-wallet-assets'
 
 export interface IntentsManagedAsset {
@@ -34,7 +34,8 @@ export function resolveManagedIntentsAssets(
     const iconUrl = resolveSwapTokenIconUrl(token)
     const evmAsset = resolveIntentsEvmAssets([token], evmNetworks)[0]
     if (evmAsset) {
-      if (!assets.has(evmAsset.assetId)) {
+      const previous = assets.get(evmAsset.assetId)
+      if (!previous || (isDeprecatedIntentsToken(previous) && !isDeprecatedIntentsToken(token))) {
         assets.set(
           evmAsset.assetId,
           Object.freeze({

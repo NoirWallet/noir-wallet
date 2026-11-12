@@ -540,14 +540,14 @@ function ShieldProviderContent() {
             <p className="px-4 py-5 text-center text-sm text-muted">Balance unavailable</p>
           )}
           {nearBalanceEmpty && canManageNear && (
-            <div className="flex flex-col items-center gap-4 px-4 pb-8 pt-2">
+            <div className="flex flex-col items-center gap-2.5 px-4 pb-6 pt-2">
               <button
                 type="button"
                 onClick={() =>
                   navigate(`/transfer?entry=shield&provider=near-confidential&mode=${mode}`)
                 }
                 disabled={!canManageNear}
-                className="wallet-interactive h-[42px] min-w-48 rounded-[10px] border border-white/[0.08] bg-wallet-surface px-4 text-sm text-wallet-secondary enabled:hover:bg-wallet-selected enabled:active:bg-white/15 focus-visible:outline-2 focus-visible:outline-primary disabled:opacity-45"
+                className="wallet-interactive h-9 min-w-44 rounded-lg border border-white/[0.08] bg-wallet-surface px-3 text-xs text-wallet-secondary enabled:hover:bg-wallet-selected enabled:active:bg-white/15 focus-visible:outline-2 focus-visible:outline-primary disabled:opacity-45"
               >
                 <span className="font-semibold text-foreground">Move</span> from your wallet
               </button>
@@ -555,7 +555,7 @@ function ShieldProviderContent() {
                 type="button"
                 onClick={() => navigate('/shield-deposit?provider=near-confidential')}
                 disabled={!canManageNear}
-                className="wallet-interactive h-[42px] min-w-48 rounded-[10px] border border-white/[0.08] bg-wallet-surface px-4 text-sm text-wallet-secondary enabled:hover:bg-wallet-selected enabled:active:bg-white/15 focus-visible:outline-2 focus-visible:outline-primary disabled:opacity-45"
+                className="wallet-interactive h-9 min-w-44 rounded-lg border border-white/[0.08] bg-wallet-surface px-3 text-xs text-wallet-secondary enabled:hover:bg-wallet-selected enabled:active:bg-white/15 focus-visible:outline-2 focus-visible:outline-primary disabled:opacity-45"
               >
                 <span className="font-semibold text-foreground">Receive</span> from others
               </button>

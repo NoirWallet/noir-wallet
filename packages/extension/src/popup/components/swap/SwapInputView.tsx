@@ -23,11 +23,13 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog'
 import nearIntentsIcon from '@/images/figma-near-confidential.svg'
 
 function providerDisplayName(router: string): string {
-  return router.toLowerCase() === 'nearintents' ? 'NEAR Intents' : router
+  return ['nearintents', 'preswap-nearintents'].includes(router.toLowerCase())
+    ? 'NEAR Intents'
+    : router
 }
 
 function ProviderMark({ router, size }: { readonly router: string; readonly size: 24 | 28 }) {
-  if (router.toLowerCase() === 'nearintents') {
+  if (providerDisplayName(router) === 'NEAR Intents') {
     return (
       <img src={nearIntentsIcon} alt="" width={size} height={size} className="shrink-0 rounded" />
     )

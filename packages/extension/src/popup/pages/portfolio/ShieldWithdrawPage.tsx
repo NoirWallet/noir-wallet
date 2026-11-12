@@ -24,6 +24,7 @@ import { assetPriceClient } from '@/popup/services/asset-price-client'
 import { getPrivateTransferChainIds } from '@/popup/services/private-balance-transfer'
 import { useNavigate } from '@/popup/provider/Router'
 import { PageHeader } from '@/popup/components/common/PageHeader'
+import { ShieldSendProviderTabs } from '@/popup/components/portfolio/ShieldSendProviderTabs'
 import {
   SendSourceSection,
   SendFieldLabel,
@@ -38,6 +39,7 @@ import {
   TransactionReviewExchangeSummary,
   TransactionReviewView
 } from '@/popup/components/transaction/TransactionReviewView'
+import { openConfidentialActivity } from '@/popup/components/transaction/ConfidentialActivitySheet'
 import { Button } from '@/popup/components/ui/button'
 import { SlippageSettingContent } from '@/popup/components/swap/SlippageSetting'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/popup/components/ui/dialog'
@@ -118,6 +120,7 @@ export function ShieldWithdrawForm({
   })
   const canManageNear =
     providerIsNear && getPrivateTransferChainIds(activeAccount, network === 'mainnet').length > 0
+  const canSendZcash = activeAccount?.networks.some(item => item.chain.family === 'zcash') ?? false
   const scopeKey = `${network}:${account?.walletId ?? ''}:${account?.accountId ?? ''}`
   const latestScope = useRef(scopeKey)
   latestScope.current = scopeKey
@@ -353,8 +356,20 @@ export function ShieldWithdrawForm({
     )
   }
   const openActivity = (transactionId: string) => {
-    if (scopeStillCurrent())
-      navigate(`/?tab=activity&transactionId=${encodeURIComponent(transactionId)}`)
+    if (!scopeStillCurrent() || !account) return
+    setPrepared(null)
+    setAmount('')
+    setUncertain(false)
+    setError(null)
+    void openConfidentialActivity(
+      {
+        network,
+        keyDomainId: account.walletId,
+        accountId: account.accountId,
+        transactionId
+      },
+      () => navigate(`/?tab=activity&transactionId=${encodeURIComponent(transactionId)}`)
+    )
   }
   const refreshBalances = async () => {
     if (!account || !canManageNear || connecting || !scopeStillCurrent()) return
@@ -538,6 +553,8 @@ export function ShieldWithdrawForm({
           network={prepared.destination.chain.chain.displayName}
           summary={
             <TransactionReviewExchangeSummary
+              destinationLabel="Recipient receives"
+              destinationPrefix=""
               source={{
                 asset: {
                   assetId: prepared.source.asset.asset.id,
@@ -557,6 +574,7 @@ export function ShieldWithdrawForm({
             />
           }
           rows={[
+            { label: 'From', content: 'Shield · NEAR Confidential' },
             {
               label: 'Network',
               content: (
@@ -627,6 +645,17 @@ export function ShieldWithdrawForm({
     <div className="page-container min-h-0 overflow-hidden">
       <PageHeader title="Send" showBack onBack={onBack} />
       <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-5 pt-4">
+        {canSendZcash && (
+          <div className="mb-4">
+            <ShieldSendProviderTabs
+              value="near-confidential"
+              disabled={busy}
+              onChange={provider => {
+                if (provider === 'zcash-shield') navigate('/send/zcash?from=shielded')
+              }}
+            />
+          </div>
+        )}
         <div className="space-y-4 mb-4">
           <SendSourceSection
             domain="shield"

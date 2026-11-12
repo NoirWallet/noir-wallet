@@ -48,6 +48,9 @@ import {
 import { cn } from '@/lib/utils'
 import { AmountDisplay } from '@/popup/components/common/AmountDisplay'
 import { BalanceDomainTabs } from '@/popup/components/account/BalanceDomainTabs'
+import { ShieldSendProviderTabs } from '@/popup/components/portfolio/ShieldSendProviderTabs'
+import { useActiveAccountNetworks } from '@/popup/hooks/useActiveAccountNetworks'
+import { getPrivateTransferChainIds } from '@/popup/services/private-balance-transfer'
 import { TokenIcon } from '../../components/tokens/TokenIcon'
 import nearLogo from '@/images/figma-near-confidential.svg'
 import zcashShieldLogo from '@/images/figma-zcash-shield.svg'
@@ -234,6 +237,9 @@ export function Send() {
   const { setResult, updateStep } = useTransactionResultStore()
 
   const currentWallet = useWalletStore(state => state.getCurrentWallet())
+  const { activeAccount } = useActiveAccountNetworks()
+  const canSendConfidential =
+    getPrivateTransferChainIds(activeAccount, currentNetwork === 'mainnet').length > 0
   const accountDisplayName = getAccountDisplayName(
     currentWalletId ?? currentWallet?.id ?? '',
     currentAccountId ?? currentAccount?.id ?? '',
@@ -246,6 +252,11 @@ export function Send() {
     : getFundingSourceUnavailableReason(currentWallet?.keySource, selectedFundingSource)
       ? 'shielded'
       : selectedFundingSource
+  const resultReturnPath = `${location.pathname}?${new URLSearchParams({
+    ...(isSelfMove ? { move: '1' } : {}),
+    from: fundingSource,
+    mode: walletMode
+  })}`
   const selfMove = isSelfMove
     ? resolveZcashSelfMove(currentAccount?.addresses, fundingSource, currentNetwork)
     : null
@@ -697,7 +708,7 @@ export function Send() {
                 transactionId: result.transactionId,
                 showTo: true
               },
-              '/'
+              resultReturnPath
             )
             navigate('/transaction-result')
           } else if (result.status === 'timeout') {
@@ -734,7 +745,7 @@ export function Send() {
           selfTransfer: Object.values(currentAccount.addresses).includes(effectiveToAddress)
         }
       } as const
-      setResult(pendingResult, '/')
+      setResult(pendingResult, resultReturnPath)
       navigate('/transaction-result')
 
       const result = await sendTransaction({
@@ -863,6 +874,20 @@ export function Send() {
     <div className="page-container" data-wallet-mode={isSelfMove ? 'public' : walletMode}>
       <PageHeader title={isSelfMove ? 'Move' : 'Send'} showBack onBack={goBack} />
       <div className="page-content min-h-0 !px-4 pt-4">
+        {!isSelfMove && fundingSource === 'shielded' && canSendConfidential && (
+          <div className="mb-4">
+            <ShieldSendProviderTabs
+              value="zcash-shield"
+              disabled={isConfirming || showReview}
+              onChange={provider => {
+                if (provider === 'near-confidential')
+                  navigate('/send?sourceMode=shield&provider=near-confidential', {
+                    state: { sendEntry: 'shield' }
+                  })
+              }}
+            />
+          </div>
+        )}
         <div className={cn('space-y-2', !isSelfMove && 'space-y-4')}>
           {isSelfMove ? (
             <>

@@ -501,6 +501,25 @@ export class ConfidentialFundingCoordinator {
     )
   }
 
+  hasCurrentFundingAssets(input: PrepareConfidentialFundingInput): boolean {
+    const catalog = this.options.getProtocolTokens?.() ?? this.options.protocolTokens
+    if (!catalog) return true
+    return [input.source, input.destination].every(route => {
+      const token = catalog.find(item => item.assetId === route.protocolAssetId)
+      const registered = this.options.assets.get(route.assetId)
+      return (
+        token !== undefined &&
+        registered !== undefined &&
+        token.blockchain === route.chainName &&
+        token.decimals === registered.metadata.decimals &&
+        this.options.assetMappings.some(
+          mapping =>
+            mapping.assetId === route.assetId && mapping.protocolAssetId === route.protocolAssetId
+        )
+      )
+    })
+  }
+
   private async createExternalDepositExclusive(
     input: CreateExternalShieldDepositInput,
     setStage: (stage: ExternalShieldDepositFailureStage) => void
@@ -2647,28 +2666,8 @@ export class ConfidentialFundingCoordinator {
     ) {
       throw new Error('Confidential funding request is invalid')
     }
-    const catalog = this.options.getProtocolTokens?.() ?? this.options.protocolTokens
-    if (catalog) {
-      const matchesCatalog = (
-        route: Readonly<{
-          assetId: string
-          protocolAssetId: string
-          chainName: string
-        }>
-      ) => {
-        const token = catalog.find(item => item.assetId === route.protocolAssetId)
-        const registered = this.options.assets.get(route.assetId)
-        return (
-          token !== undefined &&
-          registered !== undefined &&
-          token.blockchain === route.chainName &&
-          token.decimals === registered.metadata.decimals
-        )
-      }
-      if (!matchesCatalog(value.source) || !matchesCatalog(value.destination)) {
-        throw new Error('Confidential funding asset catalog changed')
-      }
-    }
+    if (!this.hasCurrentFundingAssets(value))
+      throw new Error('Confidential funding asset catalog changed')
     return Object.freeze({
       ...(value.operation === undefined
         ? {}

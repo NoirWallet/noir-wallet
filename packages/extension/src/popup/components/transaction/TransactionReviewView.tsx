@@ -34,6 +34,7 @@ interface TransactionReviewViewProps {
   readonly variant?: 'default' | 'figma'
   readonly asset: TransactionReviewAsset | null
   readonly amount: string
+  readonly amountDetails?: boolean
   readonly fiatValue?: string | null
   readonly network: string
   readonly rows: readonly TransactionReviewRow[]
@@ -56,6 +57,7 @@ export function TransactionReviewView({
   variant = 'default',
   asset,
   amount,
+  amountDetails = true,
   fiatValue,
   network,
   rows,
@@ -138,6 +140,7 @@ export function TransactionReviewView({
                 <AmountDisplay
                   value={amount}
                   symbol={asset.symbol}
+                  showDetails={amountDetails}
                   className={figma ? 'justify-center gap-x-[0.25em]' : undefined}
                 />
               ) : (
@@ -223,10 +226,14 @@ export function TransactionReviewView({
 
 export function TransactionReviewExchangeSummary({
   source,
-  destination
+  destination,
+  destinationLabel,
+  destinationPrefix = '+'
 }: {
   readonly source: { readonly asset: TransactionReviewAsset; readonly amount: string }
   readonly destination: { readonly asset: TransactionReviewAsset; readonly amount: string }
+  readonly destinationLabel?: string
+  readonly destinationPrefix?: string
 }) {
   return (
     <div className="space-y-3 pb-6 pt-[18px]">
@@ -243,10 +250,13 @@ export function TransactionReviewExchangeSummary({
               size={42}
             />
             <div className="min-w-0 flex-1 text-[26px] font-semibold leading-8">
+              {index === 1 && destinationLabel && (
+                <p className="text-xs font-normal leading-5 text-muted">{destinationLabel}</p>
+              )}
               <AmountDisplay
                 value={entry.amount}
                 symbol={entry.asset.symbol}
-                prefix={index === 0 ? '-' : '+'}
+                prefix={index === 0 ? '-' : destinationPrefix}
                 className="max-w-full justify-start font-sans tabular-nums"
               />
             </div>
