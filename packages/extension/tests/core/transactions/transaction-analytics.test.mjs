@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
+  transactionAnalyticsInputAmount,
   transactionBroadcasted,
   transactionFailedBeforeBroadcast
 } from '../../../src/core/transactions/transaction-analytics.ts'
@@ -34,6 +35,22 @@ test('a signed hash does not count as broadcast and failure does not erase a bro
     false
   )
   assert.equal(transactionFailedBeforeBroadcast(transfer('failed', 'broadcast', '0x1234')), false)
+})
+
+test('native transaction analytics use bundled asset precision when intent omits metadata', () => {
+  assert.equal(
+    transactionAnalyticsInputAmount({
+      root: {
+        intent: {
+          primaryAmount: {
+            assetId: 'near:mainnet/slip44:397',
+            amountRaw: '1230000000000000000000000'
+          }
+        }
+      }
+    }),
+    '1.23'
+  )
 })
 
 test('RHEA initiation requires a broadcast origin with a hash or order reference', () => {

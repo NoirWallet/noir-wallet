@@ -151,6 +151,7 @@ async function harness(
     monitoring: 0,
     refreshes: 0,
     statuses: withdraws.map(() => (phase === 'processing' ? 'PROCESSING' : 'PENDING_DEPOSIT')),
+    settledOutputs: new Map(),
     session: {
       accessToken: 'token',
       refreshToken: 'refresh',
@@ -251,6 +252,9 @@ async function harness(
       if (status === null) throw new ConfidentialFundingApiError('unavailable', 503, false)
       return {
         status,
+        ...(status === 'SUCCESS' && state.settledOutputs.has(sequence)
+          ? { settledAmountOutRaw: state.settledOutputs.get(sequence) }
+          : {}),
         ...(status === 'SUCCESS' || state.processingHashes.has(sequence)
           ? { transactionHash: `hash-${sequence}` }
           : {})
@@ -411,7 +415,9 @@ function directPreparationHarness(protocolTokens) {
         address: signerId,
         peaAddress,
         addressIndex: 0,
-        context: { chainAccount: { scope: { ...scope, accountId: state.identityAccount, chainId } } }
+        context: {
+          chainAccount: { scope: { ...scope, accountId: state.identityAccount, chainId } }
+        }
       }
     },
     signMessage: async input => {
@@ -507,9 +513,7 @@ function directPreparationHarness(protocolTokens) {
     repository: new InMemoryTransactionRepository(),
     assets: {
       get: id =>
-        id === assetId
-          ? nativeAsset
-          : { metadata: { decimals: id === zcashAssetId ? 8 : 18 } },
+        id === assetId ? nativeAsset : { metadata: { decimals: id === zcashAssetId ? 8 : 18 } },
       list: () => [nativeAsset]
     },
     evmNetworks: [],
@@ -747,9 +751,7 @@ test.describe('confidential funding persisted recovery', () => {
     })
     expect(h.state.quoteCalls.slice(1)).toHaveLength(3)
     expect(
-      h.state.quoteCalls
-        .slice(1)
-        .reduce((sum, quote) => sum + BigInt(quote.amountRaw), 0n)
+      h.state.quoteCalls.slice(1).reduce((sum, quote) => sum + BigInt(quote.amountRaw), 0n)
     ).toBe(57n)
     expect(h.state.formalQuotes).toBe(0)
     expect(h.state.signatures).toBe(0)
@@ -1680,6 +1682,11 @@ test.describe('confidential funding persisted recovery', () => {
 
   test('settles staggered children monotonically across restart and temporary RPC failure', async () => {
     const h = await harness('processing')
+    h.state.settledOutputs = new Map([
+      [0, '80'],
+      [1, '90'],
+      [2, '100']
+    ])
     h.state.statuses = ['SUCCESS', 'PROCESSING', 'PROCESSING']
     expect((await h.restart().continuePlan(h.initial.planId)).phase).toBe('processing')
     h.state.statuses = ['PROCESSING', 'SUCCESS', null]
@@ -1694,6 +1701,7 @@ test.describe('confidential funding persisted recovery', () => {
     const ready = await h.restart().continuePlan(h.initial.planId)
     expect(ready.phase).toBe('ready')
     expect(ready.withdraws.map(row => row.transactionHash)).toEqual(['hash-0', 'hash-1', 'hash-2'])
+    expect(ready.withdraws.map(row => row.settledOutputRaw)).toEqual(['80', '90', '100'])
     const graph = await h.repository.get(scope, h.initial.transactionId)
     expect(graph.root.status).toBe('final')
     expect(

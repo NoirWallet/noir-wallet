@@ -11,6 +11,7 @@ import {
   resolveAnalyticsChain
 } from './constants.ts'
 import type { AnalyticsEventPayload, TrackOptions } from './types.ts'
+import { collectorMetadata, sanitizeCollectorMetrics } from './collector-metrics.ts'
 
 const ALLOWED_METADATA_KEYS = new Set([
   'browser',
@@ -180,16 +181,20 @@ export function buildPayload(
   options: TrackOptions,
   timestamp?: number
 ): AnalyticsEventPayload {
-  const extra = sanitizeAnalyticsMetadata(options.params, options.extra)
+  const collector = sanitizeCollectorMetrics(name, options.collector)
+  const extra = {
+    ...sanitizeAnalyticsMetadata(options.params, options.extra),
+    ...collectorMetadata(collector)
+  }
   return {
     chain: resolveAnalyticsChain(options.chain) ?? ANALYTICS_CHAIN,
     event_name: name,
     extra: Object.keys(extra).length > 0 ? JSON.stringify(extra) : '',
     has_transaction: options.hasTransaction ?? 0,
-    input_amount: '',
+    input_amount: collector?.inputAmount ?? '',
     input_symbol: sanitizeSymbol(options.inputSymbol),
     input_token_code: '',
-    output_amount: '',
+    output_amount: collector?.outputAmount ?? '',
     output_symbol: sanitizeSymbol(options.outputSymbol),
     output_token_code: '',
     page_id:
@@ -198,7 +203,7 @@ export function buildPayload(
         : PAGE_IDS.BACKGROUND,
     project_id: ANALYTICS_PROJECT_ID,
     timestamp: timestamp ?? Date.now(),
-    usd_amount: '',
+    usd_amount: collector?.usdAmount ?? '',
     wallet_address: ''
   }
 }

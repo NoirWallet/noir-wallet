@@ -1,13 +1,37 @@
 import type { TransactionGraph } from '@/core/transactions/domain'
 import {
   transactionAnalyticsFamily,
+  transactionAnalyticsInputAmount,
   transactionBroadcasted,
   transactionFailedBeforeBroadcast
 } from '@/core/transactions/transaction-analytics'
 import { IndexedDbTransactionRepository } from '@/infrastructure/persistence/repositories'
 import { ANALYTICS_EVENTS, PAGE_IDS, sendAnalyticsEvent } from '@/lib/analytics'
+import type { TrackOptions } from '@/lib/analytics'
 
 type FundingSource = 'main' | 'private'
+
+function sendCollector(
+  graph: TransactionGraph,
+  fundingSource?: FundingSource,
+  broadcast = false
+): TrackOptions['collector'] {
+  const intent = graph.root.intent
+  const sourceDomain =
+    intent?.shield?.sourceDomain ?? (fundingSource === 'private' ? 'private' : 'public')
+  const destinationDomain = intent?.shield?.destinationDomain ?? 'public'
+  return {
+    inputAmount: transactionAnalyticsInputAmount(graph),
+    sourceDomain,
+    destinationDomain,
+    privacyRoute: intent?.shield ? 'confidential' : 'direct',
+    ...(intent?.shield ? { provider: 'near_confidential' as const } : {}),
+    transferType:
+      intent?.direction === 'self' ? 'self' : intent?.recipient ? 'external' : 'unknown',
+    activityType: 'transfer',
+    ...(broadcast ? { settlement: 'broadcast' as const } : {})
+  }
+}
 
 function reportSendOutcome(
   graph: TransactionGraph,
@@ -24,6 +48,7 @@ function reportSendOutcome(
     chain,
     hasTransaction: broadcast ? 1 : 0,
     inputSymbol: symbol,
+    collector: sendCollector(graph, fundingSource, broadcast),
     idempotencyKey: `send-${broadcast ? 'broadcast' : 'failed'}:${graph.root.id}`,
     extra: fundingSource ? { funding_source: fundingSource } : undefined
   })
@@ -41,6 +66,7 @@ export function recordSendSubmission(
     pageId: PAGE_IDS.SEND,
     chain,
     inputSymbol: symbol,
+    collector: sendCollector(graph, fundingSource),
     idempotencyKey: `send-submitted:${graph.root.id}`,
     extra: fundingSource ? { funding_source: fundingSource } : undefined
   })

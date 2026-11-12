@@ -217,6 +217,16 @@ function isPositiveRaw(value: string): boolean {
   return /^[1-9][0-9]*$/.test(value)
 }
 
+function quotedPrivacyFeeBps(quote: ConfidentialQuote | undefined): number | undefined {
+  if (!quote) return undefined
+  try {
+    const bps = readConfidentialQuoteAppFees(quote).reduce((sum, fee) => sum + fee.fee, 0)
+    return bps <= 10_000 ? bps : undefined
+  } catch {
+    return undefined
+  }
+}
+
 function externalDepositSettlementError(
   settledAmountRaw: string | undefined,
   minimumOutputRaw: string
@@ -817,7 +827,12 @@ export class ConfidentialFundingCoordinator {
             updatedAt: this.now()
           })
           await this.options.store.putExternalDeposit(record)
-          const event = projectExternalDepositResult(previous, record)
+          const event = projectExternalDepositResult(
+            previous,
+            record,
+            this.options.assets,
+            quotedPrivacyFeeBps(record.quote)
+          )
           if (event) trackEvent(event.name, event.options)
         } else {
           await this.scheduleMonitoring()
@@ -923,7 +938,12 @@ export class ConfidentialFundingCoordinator {
         updatedAt: this.now()
       })
       await this.options.store.putExternalDeposit(record)
-      const event = projectExternalDepositResult(previous, record)
+      const event = projectExternalDepositResult(
+        previous,
+        record,
+        this.options.assets,
+        quotedPrivacyFeeBps(record.quote)
+      )
       if (event) trackEvent(event.name, event.options)
     }
     await this.updateExternalDepositGraph(record)
@@ -2508,7 +2528,10 @@ export class ConfidentialFundingCoordinator {
         }
         await this.applyGraphStatus(plan, 'origin', 'final', { transactionHash })
         await this.applyGraphStatus(plan, 'relay', 'final')
-        const ready = await this.updatePlan(plan, { phase: 'ready' })
+        const ready = await this.updatePlan(plan, {
+          phase: 'ready',
+          settledOutputRaw: status.settledAmountOutRaw
+        })
         await this.options.refreshPortfolio?.().catch(() => {})
         return ready
       }
@@ -3615,7 +3638,11 @@ export class ConfidentialFundingCoordinator {
       return mergeConfidentialWithdrawObservation(row, {
         status: status?.status ?? row.status,
         transactionHash: status?.transactionHash,
-        errorStatus: status?.errorStatus
+        errorStatus: status?.errorStatus,
+        settledOutputRaw:
+          status?.settledAmountOutRaw && isPositiveRaw(status.settledAmountOutRaw)
+            ? status.settledAmountOutRaw
+            : undefined
       })
     })
     const settlement = aggregateConfidentialSettlement(rows.map(row => row.status))
@@ -4049,7 +4076,16 @@ export class ConfidentialFundingCoordinator {
   ): Promise<ConfidentialFundingPlan> {
     const next = Object.freeze({ ...plan, ...changes, updatedAt: this.now() })
     await this.options.store.putPlan(next)
-    const event = projectConfidentialPlanResult(plan, next)
+    const event = projectConfidentialPlanResult(
+      plan,
+      next,
+      this.options.assets,
+      next.operation === 'deposit'
+        ? quotedPrivacyFeeBps(next.depositQuote)
+        : next.operation === 'swap'
+          ? quotedPrivacyFeeBps(next.swapQuote)
+          : undefined
+    )
     if (event) trackEvent(event.name, event.options)
     this.notifyActivityChanged(next)
     return next

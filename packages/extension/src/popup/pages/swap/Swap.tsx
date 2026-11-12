@@ -48,6 +48,7 @@ import { isSidePanelSurface } from '@/lib/extension-display-mode'
 import { ANALYTICS_EVENTS, PAGE_IDS, sendAnalyticsEvent, type TrackOptions } from '@/lib/analytics'
 import {
   hasSubmittedRheaOrigin,
+  projectSwapCollector,
   resolveSwapAnalyticsAction,
   resolveSwapAnalyticsContext
 } from '@/popup/services/swap-event-model'
@@ -2464,13 +2465,41 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
       chain: context.chain,
       inputSymbol: swap.tokenIn?.symbol,
       outputSymbol: swap.tokenOut?.symbol,
+      collector: projectSwapCollector({
+        amountIn: swap.amountIn,
+        sourcePrice: swap.tokenIn?.price,
+        sourcePriceUpdatedAt: swap.tokenIn?.priceUpdatedAt,
+        now: Date.now(),
+        purpose: quotePurpose,
+        confidentiality: liveQuoteRequest?.confidentiality,
+        isTransfer: isTransferAnalyticsFlow,
+        isZecSource: swap.isZecSource,
+        isZecDestination,
+        fundingSource,
+        zecDestinationType,
+        executionSourceMode,
+        destinationMode,
+        hasExternalRecipient: requiresRecipientAddress
+      }),
       extra: {
         direction: context.direction,
         ...(context.chain ? { sourceFamily: context.chain } : {}),
         ...(context.fundingSource ? { funding_source: context.fundingSource } : {})
       }
     }
-  }, [swap, walletOwnedSource?.family, isTransferAnalyticsFlow, executionSourceMode])
+  }, [
+    swap,
+    walletOwnedSource?.family,
+    isTransferAnalyticsFlow,
+    executionSourceMode,
+    fundingSource,
+    isZecDestination,
+    zecDestinationType,
+    destinationMode,
+    quotePurpose,
+    liveQuoteRequest?.confidentiality,
+    requiresRecipientAddress
+  ])
 
   const liveQuoteRequestRef = useRef(liveQuoteRequest)
   liveQuoteRequestRef.current = liveQuoteRequest
@@ -3380,6 +3409,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
         if (!isTransferAnalyticsFlow && hasSubmittedRheaOrigin(signedOrder.graph)) {
           sendAnalyticsEvent(ANALYTICS_EVENTS.SWAP_DEPOSIT_SENT, {
             ...submitBase,
+            collector: { ...submitBase.collector, settlement: 'broadcast' },
             hasTransaction: 1,
             idempotencyKey: `rhea-initiated:${signingReview.quoteHandle}`
           })
@@ -3798,6 +3828,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
         if (!isTransferAnalyticsFlow && hasSubmittedRheaOrigin(submission.value.graph)) {
           sendAnalyticsEvent(ANALYTICS_EVENTS.SWAP_DEPOSIT_SENT, {
             ...submitBase,
+            collector: { ...submitBase.collector, settlement: 'broadcast' },
             hasTransaction: 1,
             idempotencyKey: `rhea-initiated:${quoteResult.quoteHandle}`
           })

@@ -487,7 +487,13 @@ export function KeystoneSignPage() {
           console.error('[HardwareSign] Failed to report result to the origin surface:', cause)
         }
       }
-      recordHardwareOperationOutcome(request, requestId, 'broadcast', transactionId ?? undefined)
+      recordHardwareOperationOutcome(
+        request,
+        requestId,
+        'broadcast',
+        transactionId ?? undefined,
+        sentAmount
+      )
       setTxHash(hash)
       setStep('success')
       if (request.reportToOrigin && originResultPublished) {

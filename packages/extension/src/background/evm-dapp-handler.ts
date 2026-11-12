@@ -2,8 +2,15 @@ import { transactionBroadcasted } from '@/core/transactions/transaction-analytic
 import { supportsEvmPrivateExecution } from '@/core/chains/evm'
 import { IndexedDbTransactionRepository } from '@/infrastructure/persistence/repositories'
 import { ANALYTICS_EVENTS } from '../lib/analytics/constants'
+import type { TrackOptions } from '../lib/analytics/types'
 import { classifyError } from '../lib/errors'
-import { emitDAppEvent, observeDAppRequest, type DAppAnalyticsSink } from './dapp-analytics'
+import {
+  emitDAppEvent,
+  formatKnownAssetAmount,
+  isErc20ApprovalCall,
+  observeDAppRequest,
+  type DAppAnalyticsSink
+} from './dapp-analytics'
 import { ConfidentialFundingApiError } from './confidential-funding-api'
 import type { EvmNetworkConfig } from '@/config/networks'
 import {
@@ -28,7 +35,8 @@ import {
   parsePersonalSignRequest,
   parseTypedDataV4Request,
   toEip1193ChainId,
-  type EvmDAppRuntimeMethod
+  type EvmDAppRuntimeMethod,
+  type ParsedEip1193Transfer
 } from '@/core/dapp/eip1193'
 import { parseChainId } from '@/core/chains/registry'
 import {
@@ -184,6 +192,113 @@ interface ActiveEvmDAppAccount {
   readonly address: string
   readonly addressIndex: number
   readonly executionMode: DAppExecutionMode
+}
+
+function directTransactionAnalytics(
+  parsed: ParsedEip1193Transfer,
+  active: ActiveEvmDAppAccount,
+  network: EvmNetworkConfig
+): TrackOptions {
+  const sourceDomain =
+    active.executionMode === 'private' ? ('private' as const) : ('public' as const)
+  if (parsed.kind === 'contract-call') {
+    const intent = parsed.intent
+    const activityType =
+      'calldata' in intent && isErc20ApprovalCall(intent.valueRaw, intent.calldata)
+        ? 'approval'
+        : 'contract'
+    return {
+      collector: {
+        sourceDomain,
+        privacyRoute: 'direct',
+        activityType,
+        settlement: 'broadcast',
+        valuation: 'unavailable'
+      }
+    }
+  }
+  if (!('assetId' in parsed.intent)) {
+    return {
+      collector: {
+        sourceDomain,
+        privacyRoute: 'direct',
+        activityType: 'contract',
+        settlement: 'broadcast',
+        valuation: 'unavailable'
+      }
+    }
+  }
+  const native = parsed.kind === 'native-transfer'
+  const trustedUsdc =
+    !native &&
+    network.usdcContract !== undefined &&
+    parsed.tokenContract?.toLowerCase() === network.usdcContract.toLowerCase()
+  const symbol = native ? network.nativeCurrency.symbol : trustedUsdc ? 'USDC' : undefined
+  const amount =
+    symbol === undefined
+      ? undefined
+      : formatKnownAssetAmount(
+          parsed.intent.amountRaw,
+          native ? network.nativeCurrency.decimals : 6
+        )
+  return {
+    ...(symbol === undefined ? {} : { inputSymbol: symbol, outputSymbol: symbol }),
+    collector: {
+      sourceDomain,
+      privacyRoute: 'direct',
+      activityType: 'transfer',
+      settlement: 'broadcast',
+      valuation: 'unavailable',
+      transferType: parsed.intent.recipient === active.address.toLowerCase() ? 'self' : 'external',
+      ...(amount === undefined ? {} : { inputAmount: amount })
+    }
+  }
+}
+
+function confidentialTransactionAnalytics(
+  approvalData: Readonly<Record<string, unknown>>,
+  recipient: string | undefined,
+  activeAddress: string
+): TrackOptions {
+  const asset = approvalData.asset
+  const knownAsset =
+    asset && typeof asset === 'object' && !Array.isArray(asset)
+      ? (asset as { symbol?: unknown; decimals?: unknown })
+      : null
+  const symbol =
+    typeof knownAsset?.symbol === 'string' && /^[A-Za-z0-9._-]{1,16}$/.test(knownAsset.symbol)
+      ? knownAsset.symbol
+      : undefined
+  const decimals = knownAsset?.decimals
+  const inputAmount =
+    typeof approvalData.amountRaw === 'string' && typeof decimals === 'number'
+      ? formatKnownAssetAmount(approvalData.amountRaw, decimals)
+      : undefined
+  const outputAmount =
+    approvalData.exactOutput === true &&
+    typeof approvalData.minimumOutputRaw === 'string' &&
+    typeof decimals === 'number'
+      ? formatKnownAssetAmount(approvalData.minimumOutputRaw, decimals)
+      : undefined
+  return {
+    ...(symbol === undefined ? {} : { inputSymbol: symbol, outputSymbol: symbol }),
+    collector: {
+      sourceDomain: 'private',
+      privacyRoute: 'confidential',
+      activityType: 'transfer',
+      provider: 'near_confidential',
+      settlement: 'confirmed',
+      valuation: 'unavailable',
+      transferType:
+        recipient === undefined
+          ? 'unknown'
+          : recipient === activeAddress.toLowerCase()
+            ? 'self'
+            : 'external',
+      ...(inputAmount === undefined ? {} : { inputAmount }),
+      ...(outputAmount === undefined ? {} : { outputAmount })
+    }
+  }
 }
 
 function accountRefsEqual(left: AccountRef, right: AccountRef): boolean {
@@ -1053,7 +1168,12 @@ export class BackgroundEvmDAppHandler {
         emitDAppEvent(this.options.analytics, 'evm', ANALYTICS_EVENTS.DAPP_TRANSACTION_SENT, {
           hasTransaction: 1,
           idempotencyKey: `dapp:evm:private:${destinationHash}`,
-          extra: { funding_source: 'private' }
+          extra: { funding_source: 'private' },
+          ...confidentialTransactionAnalytics(
+            confidential.approvalData,
+            privateTransferInput?.intent.recipient,
+            active.address
+          )
         })
         return destinationHash
       }
@@ -1132,7 +1252,8 @@ export class BackgroundEvmDAppHandler {
             funding_source:
               'executionMode' in active && active.executionMode === 'private' ? 'private' : 'main',
             hardware: active.context.keyDomainSource.kind === 'hardware'
-          }
+          },
+          ...directTransactionAnalytics(parsed, active, this.options.network)
         })
       }
       await this.options.onTransactionSubmitted?.().catch(() => {})

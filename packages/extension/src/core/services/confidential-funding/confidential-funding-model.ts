@@ -62,6 +62,7 @@ export interface ConfidentialWithdrawRow {
   readonly sequence: number
   readonly sourceAmountRaw: string
   readonly amountRaw: string
+  readonly settledOutputRaw?: string
   readonly depositAddress: string
   readonly destinationAddress: string
   readonly destinationChain: string
@@ -173,6 +174,7 @@ export interface ConfidentialFundingPlan {
   readonly approvalExpiresAt: number
   readonly expectedOutputRaw: string
   readonly minimumOutputRaw: string
+  readonly settledOutputRaw?: string
   readonly splitSourceAmounts: readonly string[]
   readonly withdraws: readonly ConfidentialWithdrawRow[]
   readonly frozenRequest?: ConfidentialWithdrawRequest
@@ -352,6 +354,7 @@ export function mergeConfidentialWithdrawObservation(
     status: string
     transactionHash?: string
     errorStatus?: string
+    settledOutputRaw?: string
   }> | null
 ): ConfidentialWithdrawRow {
   if (!observation) return row
@@ -366,6 +369,9 @@ export function mergeConfidentialWithdrawObservation(
         : {}),
       ...(!row.errorStatus && observation.errorStatus
         ? { errorStatus: observation.errorStatus }
+        : {}),
+      ...(!row.settledOutputRaw && observation.settledOutputRaw && current === 'success'
+        ? { settledOutputRaw: observation.settledOutputRaw }
         : {})
     })
   }
@@ -373,7 +379,10 @@ export function mergeConfidentialWithdrawObservation(
     ...row,
     status: observation.status,
     ...(observation.transactionHash ? { transactionHash: observation.transactionHash } : {}),
-    ...(observation.errorStatus ? { errorStatus: observation.errorStatus } : {})
+    ...(observation.errorStatus ? { errorStatus: observation.errorStatus } : {}),
+    ...(observation.settledOutputRaw && normalizeChildStatus(observation.status) === 'success'
+      ? { settledOutputRaw: observation.settledOutputRaw }
+      : {})
   })
 }
 

@@ -83,6 +83,7 @@ import {
 
 import { safeBig } from '@/lib/big'
 import { normalizeTxHash } from '@/lib/tx-history-dedup'
+import { observeZcashReceipts } from './analytics/observations'
 import {
   isMnemonicWordCount,
   WALLET_CONFIG,
@@ -2897,7 +2898,7 @@ export class BackgroundZcashWalletRuntime {
       }
 
       let newWasmTransactionCount = 0
-      await mutateTransactions(accountKey, currentTransactions => {
+      const persistedTransactions = await mutateTransactions(accountKey, currentTransactions => {
         const merged = mergeTransactionsWithWasmHistory(
           currentTransactions,
           wasmTransactions,
@@ -2906,6 +2907,11 @@ export class BackgroundZcashWalletRuntime {
         newWasmTransactionCount = merged.newWasmTransactionCount
         return associateIncomingIntentsTransactions(merged.transactions)
       })
+      void observeZcashReceipts(
+        { keyDomainId: walletId, accountId },
+        persistedTransactions,
+        walletCreatedTxids
+      ).catch(() => {})
       chrome.runtime
         .sendMessage({
           type: 'TRANSACTION_UPDATED',

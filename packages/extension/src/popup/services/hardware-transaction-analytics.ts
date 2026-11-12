@@ -1,7 +1,8 @@
 import { sendAnalyticsEvent, ANALYTICS_EVENTS, PAGE_IDS } from '@/lib/analytics'
 import {
   projectZcashOperationEvent,
-  resolveZcashAnalyticsOperation
+  resolveZcashAnalyticsOperation,
+  zcashOperationCollector
 } from '@/lib/analytics/operations'
 import type { HardwareSignRequest } from '@/lib/hardware-tab'
 
@@ -9,11 +10,13 @@ export function recordHardwareOperationOutcome(
   request: HardwareSignRequest,
   requestId: string | null,
   outcome: 'broadcast' | 'failed',
-  transactionId?: string
+  transactionId?: string,
+  broadcastAmount?: string
 ): void {
   if (request.dappRequestId) return
+  const operation = resolveZcashAnalyticsOperation(request.kind, request.quoteBinding?.userAction)
   const event = projectZcashOperationEvent(
-    resolveZcashAnalyticsOperation(request.kind, request.quoteBinding?.userAction),
+    operation,
     outcome,
     {
       pageId: PAGE_IDS.HARDWARE_SIGN,
@@ -21,7 +24,10 @@ export function recordHardwareOperationOutcome(
       outputSymbol: request.monitorParams?.tokenOutSymbol,
       hardware: true
     },
-    `zcash-hardware-${outcome}:${transactionId ?? requestId ?? request.createdAt}`
+    `zcash-hardware-${outcome}:${transactionId ?? requestId ?? request.createdAt}`,
+    outcome === 'broadcast'
+      ? zcashOperationCollector(operation, request.fundingSource, broadcastAmount, request.to)
+      : undefined
   )
   sendAnalyticsEvent(event.name, event.options)
 }

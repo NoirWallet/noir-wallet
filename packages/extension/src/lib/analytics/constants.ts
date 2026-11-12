@@ -7,8 +7,8 @@
  * Privacy guarantees are enforced in policy.ts:
  * - Never report seed phrases, keys, passwords, vault/session data, signatures or raw payloads
  * - Never report wallet/recipient/deposit addresses, transaction hashes, dApp origins or raw errors
- * - Never report exact crypto/fiat amounts
- * - Only event-specific allowlisted enums, booleans, page IDs and asset labels leave the extension
+ * - Validated financial metrics go only to the first-party collector, never Google Analytics
+ * - Only explicitly allowlisted fields leave the extension
  *
  * wallet_address semantics:
  * - Always `anon_<uuid>`, a random per-install identifier. GA derives a stable
@@ -238,6 +238,8 @@ export function buildAnalyticsPageMetadata(path: string): {
  * always receive the same event name.
  */
 export const ANALYTICS_EVENTS = {
+  ASSET_RECEIVED: 'asset_received',
+  BALANCE_SNAPSHOT: 'balance_snapshot',
   EXTENSION_ENGAGEMENT: 'extension_engagement',
   // ── Extension lifecycle ────────────────────────────────────────────────
   /** First install of the extension */

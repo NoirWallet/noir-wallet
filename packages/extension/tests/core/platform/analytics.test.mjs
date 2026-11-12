@@ -148,7 +148,7 @@ describe('payload: wire format construction', () => {
     })
   })
 
-  it('drops exact amounts and wallet identifiers at the payload boundary', () => {
+  it('drops legacy unscoped amounts and wallet identifiers at the payload boundary', () => {
     const payload = buildPayload(
       'swap_submitted',
       {
@@ -176,14 +176,75 @@ describe('payload: wire format construction', () => {
 
   it('drops malformed or oversized transaction amounts', () => {
     const payload = buildPayload('swap_submitted', {
-      inputAmount: '1e9',
-      outputAmount: '-2',
-      usdAmount: '1'.repeat(129)
+      collector: { inputAmount: '1e9', outputAmount: '-2', usdAmount: '1'.repeat(129) }
     })
 
     assert.equal(payload.input_amount, '')
     assert.equal(payload.output_amount, '')
     assert.equal(payload.usd_amount, '')
+  })
+
+  it('preserves exact collector decimals while rejecting arbitrary financial metadata', () => {
+    const collector = {
+      inputAmount: '0.000000000000000001',
+      outputAmount: '12345678901234567890.123456',
+      usdAmount: '12.50',
+      privacyFeeAmount: '0.0003',
+      privacyFeeSymbol: 'ETH',
+      sourceDomain: 'private',
+      privacyRoute: 'direct',
+      activityType: 'transfer',
+      address: '0x-private-address',
+      transactionHash: 'secret-hash',
+      provider: 'https://private-origin.example',
+      balance: 'sensitive-unreviewed-field'
+    }
+    const event = sanitizeAnalyticsEvent(ANALYTICS_EVENTS.SEND_SUCCEEDED, { collector })
+    const payload = buildPayload(event.name, event.options)
+    assert.equal(payload.input_amount, '0.000000000000000001')
+    assert.equal(payload.output_amount, '12345678901234567890.123456')
+    assert.equal(payload.usd_amount, '12.50')
+    assert.deepEqual(JSON.parse(payload.extra), {
+      pmf_version: 1,
+      input_amount_known: 1,
+      output_amount_known: 1,
+      usd_amount_known: 1,
+      privacy_fee_amount: '0.0003',
+      privacy_fee_symbol: 'ETH',
+      source_domain: 'private',
+      privacy_route: 'direct',
+      activity_type: 'transfer'
+    })
+    assert.equal(
+      sanitizeAnalyticsEvent(ANALYTICS_EVENTS.SHOW_PAGE, { collector }).options.collector,
+      undefined
+    )
+    assert.equal(buildPayload(ANALYTICS_EVENTS.SHOW_PAGE, { collector }).input_amount, '')
+    const zero = buildPayload(ANALYTICS_EVENTS.SEND_SUCCEEDED, {
+      collector: { inputAmount: '0', usdAmount: 'invalid', privacyRoute: 'direct' }
+    })
+    const zeroMetadata = JSON.parse(zero.extra)
+    assert.equal(zero.input_amount, '0')
+    assert.equal(zeroMetadata.input_amount_known, 1)
+    assert.equal(zeroMetadata.output_amount_known, 0)
+    assert.equal(zeroMetadata.usd_amount_known, 0)
+    for (const invalid of [
+      NaN,
+      Infinity,
+      10,
+      '-1',
+      '0x123',
+      '1e8',
+      'Infinity',
+      ' 1 ',
+      '1'.repeat(129)
+    ]) {
+      assert.equal(
+        buildPayload(ANALYTICS_EVENTS.SEND_SUCCEEDED, { collector: { inputAmount: invalid } })
+          .input_amount,
+        ''
+      )
+    }
   })
 
   it('applies the same metadata allowlist used by the GA reporter', () => {

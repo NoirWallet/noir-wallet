@@ -217,6 +217,7 @@ function parsePlan(value: unknown): ConfidentialFundingPlan {
     plan.withdraws.length > 5 ||
     plan.splitSourceAmounts.length !== plan.withdraws.length ||
     plan.splitSourceAmounts.some(amount => !isRawAmount(amount, true)) ||
+    (plan.settledOutputRaw !== undefined && !isRawAmount(plan.settledOutputRaw, true)) ||
     plan.withdraws.some(
       (row, index) =>
         !isRecord(row) ||
@@ -224,6 +225,7 @@ function parsePlan(value: unknown): ConfidentialFundingPlan {
         !isRawAmount(row.sourceAmountRaw, true) ||
         row.sourceAmountRaw !== plan.splitSourceAmounts[index] ||
         !isRawAmount(row.amountRaw, true) ||
+        (row.settledOutputRaw !== undefined && !isRawAmount(row.settledOutputRaw, true)) ||
         typeof row.depositAddress !== 'string' ||
         !isBoundedString(row.destinationAddress) ||
         row.destinationAddress.toLowerCase() !== plan.destination.address.toLowerCase() ||

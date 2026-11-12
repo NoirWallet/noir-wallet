@@ -40,6 +40,7 @@ import { parseEvmTransferIntent } from '@/infrastructure/chains/evm'
 import {
   projectZcashOperationEvent,
   resolveZcashAnalyticsOperation,
+  zcashOperationCollector,
   type ZcashAnalyticsOperation,
   type ZcashOperationAnalyticsContext
 } from '@/lib/analytics/operations'
@@ -166,6 +167,11 @@ import {
 import { createBackgroundEvmPortfolioCoordinator } from './evm-portfolio'
 import { createBackgroundPortfolioCoordinator } from './portfolio'
 import { createBackgroundActivityCoordinator } from './activity'
+import {
+  observeActivityReceipts,
+  observePortfolioBalances,
+  setObservationPriceReader
+} from './analytics/observations'
 import {
   createBackgroundAssetMarketHistoryService,
   createBackgroundAssetPriceService
@@ -462,6 +468,7 @@ let evmPortfolioConformanceCoordinator: ReturnType<
 let portfolioCoordinator: ReturnType<typeof createBackgroundPortfolioCoordinator> | null = null
 let activityCoordinator!: ReturnType<typeof createBackgroundActivityCoordinator>
 let assetPriceService = createBackgroundAssetPriceService()
+setObservationPriceReader(() => assetPriceService.readCached())
 let assetPriceRefreshTail: Promise<void> = Promise.resolve()
 const assetPriceRefreshes = new Map<
   string,
@@ -3724,6 +3731,10 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
             })) ?? baseModel)
         : null
       if (message.action === 'refresh' && model) {
+        void assetPriceService
+          .readCached()
+          .then(prices => observePortfolioBalances(model, prices))
+          .catch(() => {})
         void chrome.runtime
           .sendMessage({
             type: 'PORTFOLIO_UPDATED',
@@ -3783,7 +3794,24 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
         chainIds: Array.isArray(message.chainIds) ? message.chainIds : undefined,
         historyPageCount: message.historyPageCount
       })
-      .then(result => sendResponse({ result }))
+      .then(result => {
+        if (result && message.action !== 'read') {
+          void Promise.allSettled([
+            assetPriceService.readCached(),
+            portfolioCoordinator?.readCachedActive()
+          ])
+            .then(([prices, portfolio]) =>
+              observeActivityReceipts(
+                result.scope,
+                result.items,
+                prices.status === 'fulfilled' ? prices.value : undefined,
+                portfolio.status === 'fulfilled' ? (portfolio.value?.assets ?? []) : []
+              )
+            )
+            .catch(() => {})
+        }
+        sendResponse({ result })
+      })
       .catch(error => {
         console.warn(
           '[Background] Activity request failed:',
@@ -7448,7 +7476,13 @@ async function handleBackgroundZcashTx(params: {
           analyticsOperation,
           'broadcast',
           analytics,
-          `zcash:${accountKey}:${transactionId}:broadcast`
+          `zcash:${accountKey}:${transactionId}:broadcast`,
+          zcashOperationCollector(
+            analyticsOperation,
+            sendParams?.fundingSource ?? analytics.fundingSource,
+            onChainAmount,
+            sendParams?.to
+          )
         )
         trackEvent(event.name, event.options)
       }
