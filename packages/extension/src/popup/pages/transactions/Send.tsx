@@ -1007,9 +1007,6 @@ export function Send() {
               <SendRecipientInputCard
                 id="zcash-send-recipient"
                 value={toAddress}
-                selectedName={
-                  selectedRecipient?.address === toAddress ? selectedRecipient.name : undefined
-                }
                 onChange={value => {
                   setToAddress(value)
                   setSelectedRecipient(null)

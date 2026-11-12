@@ -402,9 +402,6 @@ export function SolanaSendForm({
           <SendRecipientInputCard
             id="solana-send-recipient"
             value={recipient}
-            selectedName={
-              selectedRecipient?.address === recipient ? selectedRecipient.name : undefined
-            }
             onChange={value => {
               invalidateMaximum()
               if (maxSelected) setAmount('')

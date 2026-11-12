@@ -532,9 +532,6 @@ export function BitcoinSendForm({
           <SendRecipientInputCard
             id="bitcoin-send-recipient"
             value={recipient}
-            selectedName={
-              selectedRecipient?.address === recipient ? selectedRecipient.name : undefined
-            }
             onChange={value => {
               setRecipient(value.trim())
               setSelectedRecipient(null)

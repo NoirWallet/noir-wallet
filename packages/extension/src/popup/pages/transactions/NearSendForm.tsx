@@ -388,9 +388,6 @@ export function NearSendForm({
           <SendRecipientInputCard
             id="near-send-recipient"
             value={recipient}
-            selectedName={
-              selectedRecipient?.address === recipient ? selectedRecipient.name : undefined
-            }
             onChange={value => {
               invalidateMaximum()
               if (maxSelected) setAmount('')
