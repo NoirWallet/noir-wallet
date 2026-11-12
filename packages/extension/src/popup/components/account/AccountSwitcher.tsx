@@ -506,11 +506,13 @@ export function AccountSwitcher({
   }
 
   const select = async (account: SwitcherAccount) => {
-    if (account.active || switching) {
+    if (switching) return
+    if (account.active) {
       setDrawerOpen(false)
       return
     }
-    setDrawerOpen(false)
+    cancelPreviewTimer()
+    setPreview(null)
     setSwitching(`${account.walletId}:${account.accountId}`)
     try {
       const switched = await switchWalletAccount({
@@ -555,6 +557,7 @@ export function AccountSwitcher({
       <DialogPrimitive.Root
         open={drawerOpen}
         onOpenChange={open => {
+          if (switching) return
           setDrawerOpen(open)
           if (open) setAddressesOpen(false)
           if (!open) setPreview(null)
@@ -571,16 +574,33 @@ export function AccountSwitcher({
           </button>
         </DialogPrimitive.Trigger>
         <DialogPrimitive.Portal>
-          <DialogPrimitive.Overlay className="fixed inset-0 z-[60] bg-black/60 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 duration-180 motion-reduce:animate-none" />
+          {/* Keep shared sync confirmations and failure dialogs above a pending switch. */}
+          <DialogPrimitive.Overlay
+            className={cn(
+              'fixed inset-0 bg-black/60 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 duration-180 motion-reduce:animate-none',
+              switching ? 'z-40' : 'z-[60]'
+            )}
+          />
           <DialogPrimitive.Content
             aria-describedby={undefined}
-            className="fixed inset-y-0 left-0 z-[61] flex w-24 flex-col bg-wallet-surface outline-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 duration-180 motion-reduce:animate-none"
+            aria-busy={Boolean(switching)}
+            onEscapeKeyDown={event => {
+              if (switching) event.preventDefault()
+            }}
+            onInteractOutside={event => {
+              if (switching) event.preventDefault()
+            }}
+            className={cn(
+              'fixed inset-y-0 left-0 flex w-24 flex-col bg-wallet-surface outline-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 duration-180 motion-reduce:animate-none',
+              switching ? 'z-[41]' : 'z-[61]'
+            )}
           >
             <DialogPrimitive.Title className="sr-only">Accounts</DialogPrimitive.Title>
             <DialogPrimitive.Close asChild>
               <button
                 type="button"
                 aria-label="Close account drawer"
+                disabled={Boolean(switching)}
                 className="wallet-interactive flex h-14 shrink-0 items-center justify-center text-foreground hover:bg-white/6 active:bg-white/10 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary"
               >
                 <SidebarIcon kind="back" />
@@ -610,10 +630,13 @@ export function AccountSwitcher({
                       aria-current={account.active ? 'true' : undefined}
                       disabled={Boolean(switching)}
                       onPointerEnter={event => {
-                        if (event.pointerType !== 'touch') showPreview(account, event.currentTarget)
+                        if (!switching && event.pointerType !== 'touch')
+                          showPreview(account, event.currentTarget)
                       }}
                       onPointerLeave={cancelPreviewTimer}
-                      onFocus={event => showPreview(account, event.currentTarget, true)}
+                      onFocus={event => {
+                        if (!switching) showPreview(account, event.currentTarget, true)
+                      }}
                       onClick={() => void select(account)}
                       className={cn(
                         'group wallet-interactive flex w-full flex-col items-center gap-1 rounded-lg px-1 py-2 text-center hover:bg-white/6 active:bg-white/10 focus-visible:bg-white/6 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary disabled:pointer-events-none disabled:opacity-50',
@@ -629,6 +652,20 @@ export function AccountSwitcher({
                       <span className="w-full truncate text-[11px] font-medium leading-[14px]">
                         {account.name}
                       </span>
+                      {switching === `${account.walletId}:${account.accountId}` && (
+                        <span
+                          role="status"
+                          className="flex items-center gap-1 text-[11px] text-primary"
+                        >
+                          <Icon
+                            icon="lucide:loader-2"
+                            className="animate-spin"
+                            width={12}
+                            height={12}
+                          />
+                          Switching…
+                        </span>
+                      )}
                     </button>
                   ))}
                 </div>
@@ -639,6 +676,7 @@ export function AccountSwitcher({
                 type="button"
                 aria-label="Accounts"
                 title="Accounts"
+                disabled={Boolean(switching)}
                 onClick={() => {
                   setDrawerOpen(false)
                   navigate('/account-list')
@@ -651,6 +689,7 @@ export function AccountSwitcher({
                 type="button"
                 aria-label="Settings"
                 title="Settings"
+                disabled={Boolean(switching)}
                 onClick={() => {
                   setDrawerOpen(false)
                   navigate('/settings')
@@ -660,7 +699,7 @@ export function AccountSwitcher({
                 <SidebarIcon kind="settings" />
               </button>
             </div>
-            {previewAccount && previewAccount.networks.length > 0 && (
+            {!switching && previewAccount && previewAccount.networks.length > 0 && (
               <div
                 ref={previewElement}
                 role="group"
