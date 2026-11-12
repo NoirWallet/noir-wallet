@@ -91,7 +91,9 @@ jobs:
       - name: Build and type-check extension
         working-directory: wallet
         env:
-          BUILD_CHANNEL: ${{ steps.profile.outputs.source_profile == 'multichain' && 'development' || 'beta' }}
+          BUILD_CHANNEL: ${{ github.event.pull_request.head.repo.full_name == github.repository && 'beta' || 'development' }}
+          GA_API_SECRET: ${{ github.event.pull_request.head.repo.full_name == github.repository && secrets.GA_API_SECRET || '' }}
+          CUSTOM_ANALYTICS_PASSWORD: ${{ github.event.pull_request.head.repo.full_name == github.repository && secrets.CUSTOM_ANALYTICS_PASSWORD || '' }}
           BETA_INVITE_REQUIRED: ${{ steps.profile.outputs.source_profile == 'multichain' && '1' || '' }}
           EVM_HISTORY_API_ORIGIN: ${{ steps.profile.outputs.source_profile == 'multichain' && vars.EVM_HISTORY_API_ORIGIN || '' }}
           RHEA_SWAP_ACCESS_TOKEN: ${{ steps.profile.outputs.source_profile == 'multichain' && github.event.pull_request.head.repo.full_name == github.repository && secrets.RHEA_SWAP_ACCESS_TOKEN || '' }}
@@ -109,6 +111,7 @@ jobs:
         env:
           BUILD_CHANNEL: beta
       - name: Stage tested ZIPs
+        if: github.event.pull_request.head.repo.full_name == github.repository
         env:
           SOURCE_PROFILE: ${{ steps.profile.outputs.source_profile }}
         run: |
@@ -130,13 +133,14 @@ jobs:
             cp "${testnet_zips[0]}" raw-zips/dist-testnet/
           fi
       - name: Package tested previews
+        if: github.event.pull_request.head.repo.full_name == github.repository
         id: package
         env:
           RELEASE_MODE: preview
           SOURCE_SHA: ${{ github.sha }}
           SOURCE_REF: ${{ github.ref }}
           WORKFLOW_SHA: ${{ github.sha }}
-          BUILD_CHANNEL: development
+          BUILD_CHANNEL: beta
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
@@ -164,10 +168,11 @@ jobs:
           }
           writeFileSync('release-assets/release-metadata.json', `${JSON.stringify(metadata, null, 2)}\n`)
           writeFileSync('release-assets/SHA256SUMS', `${sha256}  ${name}\n`)
-          writeFileSync('release-assets/release-body.md', `Development preview ${version}\n\nTested merge commit: ${SOURCE_SHA}\n`)
+          writeFileSync('release-assets/release-body.md', `PR preview ${version}\n\nTested merge commit: ${SOURCE_SHA}\n`)
           appendFileSync(process.env.GITHUB_OUTPUT, `artifact_label=${artifactLabel}\n`)
           NODE
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: github.event.pull_request.head.repo.full_name == github.repository
         with:
           name: noir-wallet-development-${{ steps.package.outputs.artifact_label }}
           path: release-assets/

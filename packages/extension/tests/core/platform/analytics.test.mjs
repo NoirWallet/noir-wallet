@@ -22,10 +22,20 @@ import { buildPayload, sanitizeAnalyticsMetadata } from '../../../src/lib/analyt
 import { sanitizeAnalyticsEvent } from '../../../src/lib/analytics/policy.ts'
 import { toGaClientId } from '../../../src/lib/analytics/ga.ts'
 import { CUSTOM_ANALYTICS_CONFIG } from '../../../src/config/analytics.ts'
+import { shouldEnableAnalyticsReporting } from '../../../scripts/lib/extension-build-config.ts'
 
 const PASSWORD = 'analytics-test-password'
 globalThis.__CUSTOM_ANALYTICS_PASSWORD__ = PASSWORD
 const describe = it.describe
+
+it('enables distributed mainnet reporting but isolates local and browser-test builds', () => {
+  for (const channel of ['beta', 'production']) {
+    assert.equal(shouldEnableAnalyticsReporting(channel, 'mainnet', false), true)
+    assert.equal(shouldEnableAnalyticsReporting(channel, 'mainnet', true), false)
+    assert.equal(shouldEnableAnalyticsReporting(channel, 'testnet', false), false)
+  }
+  assert.equal(shouldEnableAnalyticsReporting('development', 'mainnet', false), false)
+})
 
 /** Mirrors the backend Go DecryptStringFast: AES-128-CBC, key=iv=password[0:16] */
 function decryptLikeGoBackend(encryptedBase64, password) {

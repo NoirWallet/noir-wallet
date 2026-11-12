@@ -78,6 +78,8 @@ jobs:
       - name: Build V2 Beta
         env:
           BUILD_CHANNEL: beta
+          GA_API_SECRET: ${{ secrets.GA_API_SECRET }}
+          CUSTOM_ANALYTICS_PASSWORD: ${{ secrets.CUSTOM_ANALYTICS_PASSWORD }}
           BETA_INVITE_REQUIRED: '1'
           EVM_HISTORY_API_ORIGIN: ${{ vars.EVM_HISTORY_API_ORIGIN }}
           RHEA_SWAP_ACCESS_TOKEN: ${{ secrets.RHEA_SWAP_ACCESS_TOKEN }}
