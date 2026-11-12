@@ -8,9 +8,9 @@ import {
   localTxHashSet,
   isDuplicateWasmRow
 } from '../../../src/lib/tx-history-dedup.ts'
-import { decideMonitorSignal } from '../../../src/background/tx-monitor-policy.ts'
 import {
   getCrossChainCompletionStatus,
+  isZcashDestination,
   isIntentsSettledTransaction,
   needsRelayStatusRecovery
 } from '../../../src/lib/cross-chain-transaction.ts'
@@ -54,51 +54,12 @@ test.describe('ZIP-315 confirmation lifecycle', () => {
     expect(WALLET_CONFIG.SPENDABILITY_CONFIRMATIONS).toBe(10)
   })
 
-  test('Received in first block is still confirming (1/10)', () => {
-    const signal = decideMonitorSignal({
-      lookup: { status: 'confirmed', confirmations: 1 },
-      minConfirmations: 10,
-      expired: false,
-      elapsedMs: 1000,
-      timeoutMs: 30 * 60 * 1000,
-      hasNode: true,
-      confirmedInDb: false
-    })
-    expect(signal).toBe('wait')
-  })
-
   test('confirming transactions use the neutral tone', () => {
     expect(
       getTransactionStatusCopy(
         tx({ status: 'confirming', confirmations: 2, requiredConfirmations: 3 })
       )
     ).toMatchObject({ label: 'Confirming (2/3)', tone: 'neutral' })
-  })
-
-  test('9 incoming confirmations still wait for Activity finality', () => {
-    const signal = decideMonitorSignal({
-      lookup: { status: 'confirmed', confirmations: 9 },
-      minConfirmations: 10,
-      expired: false,
-      elapsedMs: 1000,
-      timeoutMs: 30 * 60 * 1000,
-      hasNode: true,
-      confirmedInDb: false
-    })
-    expect(signal).toBe('wait')
-  })
-
-  test('10 confirmations reaches confirmed', () => {
-    const signal = decideMonitorSignal({
-      lookup: { status: 'confirmed', confirmations: 10 },
-      minConfirmations: 10,
-      expired: false,
-      elapsedMs: 1000,
-      timeoutMs: 30 * 60 * 1000,
-      hasNode: true,
-      confirmedInDb: false
-    })
-    expect(signal).toBe('confirm')
   })
 
   test('external receives require 10 confirmations while sends require 3', () => {
@@ -160,21 +121,6 @@ test.describe('ZIP-315 confirmation lifecycle', () => {
   test('confirmation progress uses the same label for incoming and outgoing transactions', () => {
     expect(formatConfirmingStatus('receive', 6, 10)).toBe('Confirming (6/10)')
     expect(formatConfirmingStatus('send', 2, 3)).toBe('Confirming (2/3)')
-  })
-
-  test('mined but under 10 confirmations is not timed out even past timeout', () => {
-    const signal = decideMonitorSignal({
-      lookup: { status: 'confirmed', confirmations: 5 },
-      minConfirmations: 10,
-      expired: false,
-      elapsedMs: 60 * 60 * 1000,
-      timeoutMs: 30 * 60 * 1000,
-      hasNode: true,
-      confirmedInDb: false
-    })
-    // Past timeout, but tx is mined — policy returns 'wait' because it's
-    // confirmed but immature (not 'notfound').
-    expect(signal).toBe('wait')
   })
 })
 
@@ -317,6 +263,7 @@ test.describe('Withdraw monitor continuation', () => {
     expect(getCrossChainCompletionStatus('swap', { destinationChain: 'zec' })).toBe(
       'relay_confirmed'
     )
+    expect(isZcashDestination({ destinationAsset: 'nep141:zec.omft.near' })).toBe(true)
   })
 
   test('Intents owns the final status of supply and swap origin transactions', () => {

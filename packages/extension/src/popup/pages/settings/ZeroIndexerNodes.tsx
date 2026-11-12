@@ -215,7 +215,7 @@ export function ZeroIndexerNodes() {
   return (
     <div className="page-container">
       <PageHeader
-        title="Broadcast Nodes"
+        title="ZeroIndexer Nodes"
         showBack
         action={{
           ariaLabel: 'Refresh broadcast nodes',

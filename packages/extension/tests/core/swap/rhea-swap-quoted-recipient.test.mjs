@@ -23,6 +23,17 @@ it('returns the requested recipient with the quote and binds transfer activity t
     recipient: 'alice.near'
   })
   const sdkRequest = toSdkQuoteRequest(request)
+  assert.equal(sdkRequest.quoteWaitingTimeMs, 6_000)
+  assert.equal(sdkRequest.sameChainTimeoutMs, 1_500)
+  assert.equal(sdkRequest.crossChainTimeoutMs, 6_000)
+  const fastRequest = toSdkQuoteRequest(
+    parseRheaSwapQuoteRequest({ ...request, quoteMode: 'fast' })
+  )
+  assert.equal(fastRequest.quoteWaitingTimeMs, 1_500)
+  assert.equal(fastRequest.sameChainTimeoutMs, 500)
+  assert.equal(fastRequest.crossChainTimeoutMs, 1_500)
+  assert.equal('quoteMode' in fastRequest, false)
+  assert.throws(() => parseRheaSwapQuoteRequest({ ...request, quoteMode: 'turbo' }), /quote mode/)
   const service = new RheaSwapService(
     {
       async quote() {
@@ -35,6 +46,7 @@ it('returns the requested recipient with the quote and binds transfer activity t
           estimatedOut: '900',
           minAmountOut: '850',
           route: { router: 'nearintents' },
+          alternatives: [],
           receivedAt: 1_000,
           expiresAt: 5_000,
           buildContext: { request: sdkRequest },

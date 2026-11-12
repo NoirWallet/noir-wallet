@@ -7,13 +7,18 @@ import {
 } from '@/lib/analytics/operations'
 import {
   hasExternalShieldDepositFunding,
-  shouldAutoRefreshExternalShieldDeposit
+  shouldAutoRefreshExternalShieldDeposit,
+  ExternalShieldDepositError,
+  type ExternalShieldDepositFailureStage
 } from '@/core/services/confidential-funding/confidential-external-deposit'
 import { isAddress } from 'viem'
 import { parseZcashAddress } from '@/core/address-book/address-book'
 import type { PortfolioReadModel } from '@/core/portfolio'
 import type { SwapToken } from '@/core/services/intents-api'
-import { resolveIntentsEvmChainId } from '@/core/services/intents-evm-assets'
+import {
+  resolveIntentsEvmAssets,
+  resolveIntentsEvmChainId
+} from '@/core/services/intents-evm-assets'
 import { resolveManagedIntentsAssets } from '@/core/services/intents-managed-assets'
 import type { ChainId } from '@/core/chains/domain'
 import { parseAccountId } from '@/core/accounts/domain'
@@ -29,6 +34,7 @@ import {
   assertDirectConfidentialWithdrawIntentBinding,
   assertConfidentialIntentBinding,
   assertConfidentialQuoteBinding,
+  assertFlexibleExternalDepositQuoteBinding,
   createConfidentialFundingGraph,
   createExternalShieldDepositGraph,
   fingerprintConfidentialValue,
@@ -461,11 +467,43 @@ export class ConfidentialFundingCoordinator {
   async createExternalDeposit(
     input: CreateExternalShieldDepositInput
   ): Promise<ExternalShieldDeposit> {
-    return this.prepareQueue.run(() => this.createExternalDepositExclusive(input))
+    return this.prepareQueue.run(async () => {
+      let stage: ExternalShieldDepositFailureStage = 'request'
+      try {
+        return await this.createExternalDepositExclusive(input, next => {
+          stage = next
+        })
+      } catch (error) {
+        throw new ExternalShieldDepositError(stage, error)
+      }
+    })
+  }
+
+  hasExternalDepositAsset(source: CreateExternalShieldDepositInput['source']): boolean {
+    const asset = this.options.assets.get(source.assetId)
+    if (!asset) return false
+    const catalog = this.options.getProtocolTokens?.() ?? this.options.protocolTokens
+    if (catalog && asset.asset.namespace === 'erc20') {
+      // A contract may have multiple protocol representations. Bind the selected one
+      // independently of the portfolio's single default mapping for that contract.
+      const token = catalog.find(item => item.assetId === source.protocolAssetId)
+      const resolved = token ? resolveIntentsEvmAssets([token], this.options.evmNetworks)[0] : null
+      return Boolean(
+        resolved &&
+        resolved.assetId === source.assetId &&
+        resolved.chainId === source.chainId &&
+        resolved.decimals === asset.metadata.decimals
+      )
+    }
+    return this.options.assetMappings.some(
+      mapping =>
+        mapping.assetId === source.assetId && mapping.protocolAssetId === source.protocolAssetId
+    )
   }
 
   private async createExternalDepositExclusive(
-    input: CreateExternalShieldDepositInput
+    input: CreateExternalShieldDepositInput,
+    setStage: (stage: ExternalShieldDepositFailureStage) => void
   ): Promise<ExternalShieldDeposit> {
     const chain = parseChainId(input.source.chainId)
     const isZcash = chain.id === getZcashChainId(this.options.network)
@@ -475,12 +513,8 @@ export class ConfidentialFundingCoordinator {
       (!isZcash && chain.namespace !== 'eip155') ||
       parseAssetId(input.source.assetId).chainId !== chain.id ||
       !asset ||
-      !this.options.assetMappings.some(
-        mapping =>
-          mapping.assetId === input.source.assetId &&
-          mapping.protocolAssetId === input.source.protocolAssetId
-      ) ||
-      !isPositiveRaw(input.source.amountRaw) ||
+      !this.hasExternalDepositAsset(input.source) ||
+      (input.source.amountRaw !== undefined && !isPositiveRaw(input.source.amountRaw)) ||
       !isBoundedLabel(input.source.chainName) ||
       !isBoundedLabel(input.keyDomainId, 512) ||
       !isBoundedLabel(input.accountId, 512) ||
@@ -488,8 +522,8 @@ export class ConfidentialFundingCoordinator {
     )
       throw new Error('External Shield deposit request is invalid')
     const catalog = this.options.getProtocolTokens?.() ?? this.options.protocolTokens
+    const token = catalog?.find(item => item.assetId === input.source.protocolAssetId)
     if (catalog) {
-      const token = catalog.find(item => item.assetId === input.source.protocolAssetId)
       const tokenChainId = token
         ? ['zec', 'zcash'].includes(token.blockchain.trim().toLowerCase())
           ? getZcashChainId(this.options.network)
@@ -510,6 +544,7 @@ export class ConfidentialFundingCoordinator {
     } else if (!isAddress(input.refundAddress) || /^0x0{40}$/i.test(input.refundAddress)) {
       throw new Error('External Shield deposit refund address is invalid')
     }
+    setStage('account')
     const identityChain = isZcash ? this.options.evmNetworks[0]?.chainId : chain.id
     if (!identityChain) throw new Error('External Shield deposit Account has no EVM identity')
     const identity = await this.options.signer.resolveIdentity(parseChainId(identityChain).id)
@@ -537,7 +572,10 @@ export class ConfidentialFundingCoordinator {
         existing.source.chainName !== input.source.chainName ||
         existing.source.assetId !== input.source.assetId ||
         existing.source.protocolAssetId !== input.source.protocolAssetId ||
-        existing.source.amountRaw !== input.source.amountRaw ||
+        (input.source.amountRaw === undefined
+          ? existing.amountMode !== 'minimum'
+          : existing.amountMode === 'minimum' ||
+            existing.source.amountRaw !== input.source.amountRaw) ||
         existing.refundAddress !== input.refundAddress ||
         existing.signerId !== identity.address
       ) {
@@ -558,35 +596,42 @@ export class ConfidentialFundingCoordinator {
       }
       return existing
     }
-    const quote = await this.options.api.quote({
+    const minimumMode = input.source.amountRaw === undefined
+    setStage('quote')
+    const quote = minimumMode
+      ? await this.options.api.quoteFlexibleDeposit({
+          originAsset: input.source.protocolAssetId,
+          signerId: identity.address,
+          refundTo: input.refundAddress
+        })
+      : await this.options.api.quote({
+          originAsset: input.source.protocolAssetId,
+          destinationAsset: input.source.protocolAssetId,
+          amountRaw: input.source.amountRaw!,
+          signerId: identity.address,
+          refundTo: input.refundAddress,
+          recipient: identity.address,
+          depositType: 'ORIGIN_CHAIN',
+          refundType: 'ORIGIN_CHAIN',
+          recipientType: 'CONFIDENTIAL_INTENTS',
+          slippageBps: 50,
+          dry: false
+        })
+    const amountRaw = minimumMode ? quote.quote.amountIn : input.source.amountRaw!
+    const binding = {
       originAsset: input.source.protocolAssetId,
       destinationAsset: input.source.protocolAssetId,
-      amountRaw: input.source.amountRaw,
+      amountRaw,
       signerId: identity.address,
       refundTo: input.refundAddress,
       recipient: identity.address,
-      depositType: 'ORIGIN_CHAIN',
-      refundType: 'ORIGIN_CHAIN',
-      recipientType: 'CONFIDENTIAL_INTENTS',
-      slippageBps: 50,
-      dry: false
-    })
-    assertConfidentialQuoteBinding(
-      quote,
-      {
-        originAsset: input.source.protocolAssetId,
-        destinationAsset: input.source.protocolAssetId,
-        amountRaw: input.source.amountRaw,
-        signerId: identity.address,
-        refundTo: input.refundAddress,
-        recipient: identity.address,
-        depositType: 'ORIGIN_CHAIN',
-        refundType: 'ORIGIN_CHAIN',
-        recipientType: 'CONFIDENTIAL_INTENTS',
-        slippageBps: 50
-      },
-      this.now()
-    )
+      depositType: 'ORIGIN_CHAIN' as const,
+      refundType: 'ORIGIN_CHAIN' as const,
+      recipientType: 'CONFIDENTIAL_INTENTS' as const,
+      slippageBps: minimumMode ? 0 : 50
+    }
+    if (minimumMode) assertFlexibleExternalDepositQuoteBinding(quote, binding, this.now())
+    else assertConfidentialQuoteBinding(quote, binding, this.now())
     if (isZcash && quote.quoteRequest.refundTo !== input.refundAddress) {
       throw new Error('External Shield quote changed its Zcash refund address')
     }
@@ -610,6 +655,7 @@ export class ConfidentialFundingCoordinator {
       )
     )
       throw new Error('External Shield service reused a deposit address')
+    setStage('account')
     const currentIdentity = await this.options.signer.resolveIdentity(
       parseChainId(identityChain).id
     )
@@ -621,7 +667,9 @@ export class ConfidentialFundingCoordinator {
     ) {
       throw new Error('External Shield deposit Account changed after quoting')
     }
+    setStage('authorization')
     await this.ensureSession(currentIdentity, true)
+    setStage('account')
     const activeIdentity = await this.options.signer.resolveIdentity(parseChainId(identityChain).id)
     if (
       activeIdentity.context.chainAccount.scope.keyDomainId !== input.keyDomainId ||
@@ -640,18 +688,19 @@ export class ConfidentialFundingCoordinator {
       network: input.network,
       keyDomainId: input.keyDomainId,
       accountId: input.accountId,
-      source: Object.freeze({ ...input.source }),
+      source: Object.freeze({ ...input.source, amountRaw }),
       destinationAssetId: input.source.assetId,
-      sourceSymbol: asset.metadata.symbol,
+      sourceSymbol: token?.symbol ?? asset.metadata.symbol,
       sourceDecimals: asset.metadata.decimals,
       signerId: identity.address,
       depositAddress: quote.quote.depositAddress,
       ...(quote.quote.depositMemo ? { depositMemo: quote.quote.depositMemo } : {}),
       refundAddress: input.refundAddress,
-      amountRaw: input.source.amountRaw,
+      amountRaw,
+      ...(minimumMode ? { amountMode: 'minimum' as const } : {}),
       expectedOutputRaw: quote.quote.amountOut,
       minimumOutputRaw: quote.quote.minAmountOut,
-      slippageBps: 50,
+      slippageBps: binding.slippageBps,
       expiresAt: quoteDeadline(quote),
       phase: 'awaiting-payment',
       ...(input.requestId ? { requestId: input.requestId } : {}),
@@ -659,6 +708,7 @@ export class ConfidentialFundingCoordinator {
       createdAt,
       updatedAt: createdAt
     })
+    setStage('storage')
     await this.options.store.putExternalDeposit(record)
     const result = await this.options.store.withExternalDepositScope(record, () =>
       this.options.repository.create(createExternalShieldDepositGraph(record))

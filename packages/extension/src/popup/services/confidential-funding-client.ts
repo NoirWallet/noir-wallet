@@ -112,7 +112,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function unwrap(value: unknown): unknown {
   if (!isRecord(value)) throw new Error('Confidential funding returned an invalid response')
-  if (typeof value.error === 'string') throw new Error(value.error)
+  if (typeof value.error === 'string') {
+    const error = new Error(value.error)
+    if (
+      ['request', 'account', 'quote', 'authorization', 'storage'].includes(
+        String(value.depositStage)
+      )
+    )
+      Object.assign(error, { depositStage: value.depositStage })
+    throw error
+  }
   if (!Object.prototype.hasOwnProperty.call(value, 'result')) {
     throw new Error('Confidential funding returned an invalid response')
   }
@@ -276,6 +285,7 @@ function parseExternalDeposit(value: unknown): ExternalShieldDeposit {
     !isRecord(value) ||
     !isRecord(value.source) ||
     value.schemaVersion !== 1 ||
+    (value.amountMode !== undefined && value.amountMode !== 'minimum') ||
     typeof value.depositId !== 'string' ||
     value.transactionId !== `tx:confidential-external:${value.depositId}` ||
     (value.network !== 'mainnet' && value.network !== 'testnet') ||
@@ -286,6 +296,7 @@ function parseExternalDeposit(value: unknown): ExternalShieldDeposit {
     typeof value.source.assetId !== 'string' ||
     typeof value.source.protocolAssetId !== 'string' ||
     !/^[1-9]\d*$/.test(String(value.source.amountRaw)) ||
+    (value.amountMode !== undefined && value.amountMode !== 'minimum') ||
     typeof value.destinationAssetId !== 'string' ||
     typeof value.sourceSymbol !== 'string' ||
     !Number.isSafeInteger(value.sourceDecimals) ||

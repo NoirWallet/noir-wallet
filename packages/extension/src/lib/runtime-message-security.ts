@@ -241,6 +241,8 @@ const isRheaSwapQuoteRequest: RuntimeFieldValidator = value => {
 }
 const isRheaSwapQuoteHandle: RuntimeFieldValidator = value =>
   typeof value === 'string' && /^rhea-quote:[0-9A-Za-z:_-]{1,128}$/.test(value)
+const isRheaSwapRouteIndex: RuntimeFieldValidator = value =>
+  Number.isSafeInteger(value) && (value as number) >= 1 && (value as number) <= 12
 const isRheaSwapSourceHash: RuntimeFieldValidator = value =>
   typeof value === 'string' &&
   value.length > 0 &&
@@ -614,6 +616,9 @@ const TRUSTED_RUNTIME_SCHEMAS: Readonly<Record<string, RuntimeMessageSchema>> = 
         value === 'private-cross-chain-send' ||
         value === 'public-private-send'
     }
+  },
+  SELECT_RHEA_SWAP_ROUTE: {
+    required: { quoteHandle: isRheaSwapQuoteHandle, routeIndex: isRheaSwapRouteIndex }
   },
   PREPARE_RHEA_SWAP: { required: { quoteHandle: isRheaSwapQuoteHandle } },
   GET_RHEA_SWAP_EVM_PLAN: { required: { quoteHandle: isRheaSwapQuoteHandle } },
@@ -1036,6 +1041,7 @@ const TRUSTED_RUNTIME_CONTEXTS: Readonly<Record<string, readonly OwnExtensionSen
     GET_ASSET_PRICES: ['extension-page'],
     GET_RHEA_SWAP_TOKENS: ['extension-page'],
     QUOTE_RHEA_SWAP: ['extension-page'],
+    SELECT_RHEA_SWAP_ROUTE: ['extension-page'],
     PREPARE_RHEA_SWAP: ['extension-page'],
     GET_RHEA_SWAP_EVM_PLAN: ['extension-page'],
     GET_RHEA_SWAP_EVM_SIGNATURE_PLAN: ['extension-page'],

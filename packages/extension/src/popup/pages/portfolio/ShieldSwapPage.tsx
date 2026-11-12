@@ -1,23 +1,25 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Icon } from '@iconify/react'
-import type { IntentsManagedAsset } from '@/core/services/intents-managed-assets'
-import type { SwapToken } from '@/core/services/intents-api'
+import { fetchSwapTokens, getCachedTokens, type SwapToken } from '@/core/services/intents-api'
 import type { ConfidentialFundingReview } from '@/core/services/confidential-funding'
 import {
   formatBaseUnitAmount,
   formatBaseUnitDecimalAmount,
   formatTokenQuantity
 } from '@/lib/number-format'
+import { formatSortAddress } from '@/lib/format'
 import { useWalletStore } from '@/store/wallet-store'
 import { useSettingsStore } from '@/store/settings-store'
+import { useSwapPreferences } from '@/store/swap-store'
 import { useActiveAccountNetworks } from '@/popup/hooks/useActiveAccountNetworks'
 import { useHomePortfolio } from '@/popup/hooks/useHomePortfolio'
 import { useConfidentialFundingPreview } from '@/popup/hooks/useConfidentialFundingPreview'
 import { resolveEffectiveActiveAccountIdentity } from '@/popup/lib/effective-active-account'
 import { getPrivateTransferChainIds } from '@/popup/services/private-balance-transfer'
 import { useNavigate } from '@/popup/provider/Router'
-import { PageHeader } from '@/popup/components/common/PageHeader'
+import { SwapAssetCard } from '@/popup/components/swap/SwapInputView'
+import { getSwapAmountValues } from '@/popup/components/swap/swap-estimate'
 import { AmountDisplay } from '@/popup/components/common/AmountDisplay'
 import { TokenIcon } from '@/popup/components/tokens/TokenIcon'
 import {
@@ -52,14 +54,47 @@ import {
   shieldSwapFormBalance
 } from '@/popup/services/shield-swap-form'
 
-export function ShieldSwapPage() {
+function shieldOriginIdentifier(
+  asset: ShieldFundingAsset,
+  options: readonly ShieldFundingAsset[]
+): string | null {
+  const peers = options.filter(
+    candidate =>
+      candidate.chain.chain.id === asset.chain.chain.id &&
+      candidate.asset.metadata.symbol === asset.asset.metadata.symbol
+  )
+  if (asset.asset.asset.kind === 'native' && peers.length === 1) return null
+  const identityOf = (candidate: ShieldFundingAsset) => {
+    const reference = candidate.asset.asset.reference
+    return peers.some(other => other !== candidate && other.asset.asset.reference === reference)
+      ? candidate.managed.protocolAssetId
+      : reference
+  }
+  const identity = identityOf(asset)
+  const peerIdentities = peers.filter(candidate => candidate !== asset).map(identityOf)
+  const initial = formatSortAddress(identity)
+  if (peerIdentities.every(candidate => formatSortAddress(candidate) !== initial)) return initial
+  for (let visible = 7; visible <= identity.length; visible += 1) {
+    const short = (value: string) =>
+      value.length > visible * 2 ? `${value.slice(0, visible)}...${value.slice(-visible)}` : value
+    const label = short(identity)
+    if (peerIdentities.every(candidate => short(candidate) !== label)) return label
+  }
+  return identity
+}
+
+interface ShieldSwapPageProps {
+  readonly onStateChange: (state: { readonly reviewing: boolean; readonly busy: boolean }) => void
+}
+
+export function ShieldSwapPage(props: ShieldSwapPageProps) {
   const walletId = useWalletStore(state => state.currentWalletId)
   const accountId = useWalletStore(state => state.currentAccountId)
   const network = useWalletStore(state => state.currentNetwork)
-  return <ShieldSwapForm key={`${network}:${walletId}:${accountId}`} />
+  return <ShieldSwapForm key={`${network}:${walletId}:${accountId}`} {...props} />
 }
 
-function ShieldSwapForm() {
+function ShieldSwapForm({ onStateChange }: ShieldSwapPageProps) {
   const [params] = useSearchParams()
   const { navigate } = useNavigate()
   const routeSourceAssetId = params.get('assetId')
@@ -86,14 +121,15 @@ function ShieldSwapForm() {
     account?.accountId ?? null
   )
   const hidden = useSettingsStore(state => state.balancesHidden)
-  const [tokens, setTokens] = useState<readonly SwapToken[]>([])
-  const [managedAssets, setManagedAssets] = useState<readonly IntentsManagedAsset[]>([])
+  const [tokens, setTokens] = useState<readonly SwapToken[]>(getCachedTokens)
+  const managedAssets = useMemo(() => resolveManagedIntentsCatalog(tokens), [tokens])
   const [balances, setBalances] = useState<readonly ConfidentialBalance[] | null>(null)
   const [balanceScope, setBalanceScope] = useState('')
   const [fromId, setFromId] = useState<string | null>(routeSourceAssetId)
   const [toId, setToId] = useState<string | null>(routeDestinationAssetId)
   const [amount, setAmount] = useState('')
-  const [slippageBps, setSlippageBps] = useState(50)
+  const slippage = useSwapPreferences(state => state.slippage)
+  const slippageBps = Math.round(slippage * 100)
   const [picker, setPicker] = useState<'from' | 'to' | null>(null)
   const [search, setSearch] = useState('')
   const [prepared, setPrepared] = useState<Readonly<{
@@ -108,6 +144,12 @@ function ShieldSwapForm() {
   const [uncertain, setUncertain] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const confirmationAttempt = useRef<string | null>(null)
+
+  useLayoutEffect(() => {
+    onStateChange({ reviewing: Boolean(prepared), busy })
+  }, [prepared, busy, onStateChange])
+
+  useLayoutEffect(() => () => onStateChange({ reviewing: false, busy: false }), [onStateChange])
 
   useEffect(() => {
     mounted.current = true
@@ -124,7 +166,6 @@ function ShieldSwapForm() {
     setFromId(routeSourceAssetId)
     setToId(routeDestinationAssetId)
     setAmount('')
-    setSlippageBps(50)
     setPicker(null)
     setSearch('')
     setPrepared(null)
@@ -139,15 +180,13 @@ function ShieldSwapForm() {
     let active = true
     const load = async () => {
       try {
-        const cached = await swapTokenCatalogClient.readCached()
-        if (active && cached.length) {
-          setTokens(cached)
-          setManagedAssets(resolveManagedIntentsCatalog(cached))
+        if (getCachedTokens().length === 0) {
+          const cached = await swapTokenCatalogClient.readCached()
+          if (active && cached.length) setTokens(cached)
         }
-        const refreshed = await swapTokenCatalogClient.refresh()
-        if (active) {
+        const refreshed = await fetchSwapTokens()
+        if (active && refreshed.length) {
           setTokens(refreshed)
-          setManagedAssets(resolveManagedIntentsCatalog(refreshed))
         }
       } catch {
         /* The cached catalog remains available. */
@@ -178,7 +217,7 @@ function ShieldSwapForm() {
         if (active) {
           setBalances(value)
           setBalanceScope(scopeKey)
-          void refresh(true)
+          void refresh()
         }
       })
       .catch(() => {
@@ -195,6 +234,11 @@ function ShieldSwapForm() {
   const options = useMemo(
     () => listShieldFundingAssets(model, managedAssets, tokens, network),
     [model, managedAssets, tokens, network]
+  )
+  const originIdentifiers = useMemo(
+    () =>
+      new Map(options.map(asset => [asset.asset.asset.id, shieldOriginIdentifier(asset, options)])),
+    [options]
   )
   const currentBalances = balanceScope === scopeKey ? balances : null
   const displayBalances = currentBalances ?? shieldPortfolioBalances(model)
@@ -244,6 +288,14 @@ function ShieldSwapForm() {
     preview && to
       ? formatBaseUnitDecimalAmount(preview.amountOutRaw, to.asset.metadata.decimals)
       : null
+  const fromToken = tokens.find(token => token.assetId === from?.managed.protocolAssetId) ?? null
+  const toToken = tokens.find(token => token.assetId === to?.managed.protocolAssetId) ?? null
+  const { fromFiat, toFiat } = getSwapAmountValues({
+    amountIn: amount,
+    amountOut: previewOutput ?? '',
+    tokenInPrice: fromToken?.price,
+    tokenOutPrice: toToken?.price
+  })
   const previewRate =
     preview && previewOutput && amount && from && to
       ? formatShieldSwapPreviewRate(amount, preview.amountOutRaw, to.asset.metadata.decimals)
@@ -252,7 +304,7 @@ function ShieldSwapForm() {
     asset =>
       asset.managed.protocolAssetId !==
         (picker === 'from' ? to?.managed.protocolAssetId : from?.managed.protocolAssetId) &&
-      `${asset.asset.metadata.symbol} ${asset.asset.metadata.name} ${asset.chain.chain.displayName}`
+      `${asset.asset.metadata.symbol} ${asset.asset.metadata.name} ${asset.chain.chain.displayName} ${asset.asset.asset.reference}`
         .toLowerCase()
         .includes(search.trim().toLowerCase())
   )
@@ -421,8 +473,7 @@ function ShieldSwapForm() {
 
   if (activeAccount && !canManageNear) {
     return (
-      <div className="page-container">
-        <PageHeader title="Swap" showBack />
+      <div className="flex min-h-0 flex-1 flex-col">
         <p role="alert" className="px-4 py-6 text-center text-sm text-muted">
           Shield unavailable for this account
         </p>
@@ -442,7 +493,7 @@ function ShieldSwapForm() {
     const fee = prepared.review.quoteWithdrawFeeRaw ?? '0'
     const feeAmount = formatBaseUnitAmount(fee, prepared.to.asset.metadata.decimals)
     return (
-      <div className="page-container">
+      <div className="flex min-h-0 flex-1 flex-col">
         <TransactionReviewView
           variant="figma"
           title="Confirm Swap"
@@ -522,146 +573,73 @@ function ShieldSwapForm() {
   }
 
   return (
-    <div className="page-container min-h-0 overflow-hidden">
-      <PageHeader title="Swap" showBack />
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4">
-        <section className="pb-6 pt-4" aria-label="Swap from Shield">
-          <div className="flex items-center justify-between text-sm text-muted">
-            <span>From</span>
-            <span className="flex min-w-0 items-center gap-2 text-xs">
-              <span
-                className="max-w-[180px] truncate"
-                title={hidden ? undefined : (balance ?? undefined)}
-              >
-                Bal. {hidden ? '••••' : formatTokenQuantity(balance)}
-              </span>
-              <button
-                type="button"
-                className="wallet-interactive rounded text-foreground enabled:hover:bg-white/10 enabled:active:bg-white/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 disabled:opacity-40"
-                disabled={busy || connecting || currentBalance === null || currentBalance === '0'}
-                title={!currentBalances ? 'Shield balance unavailable' : 'Use maximum balance'}
-                onClick={() => {
-                  if (!from || currentBalance === null) return
-                  if (!fromId) setFromId(from.asset.asset.id)
-                  setAmount(currentBalance)
-                }}
-              >
-                Max
-              </button>
-            </span>
-          </div>
-          <div className="mt-5 flex items-center gap-3">
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => {
-                setSearch('')
-                setPicker('from')
-              }}
-              className="wallet-interactive flex min-w-0 shrink-0 items-center gap-2 rounded-lg text-lg font-medium enabled:hover:bg-white/5 enabled:active:bg-white/10 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 disabled:opacity-40"
-              aria-label="Select source Shield token"
-            >
-              {from && (
-                <TokenIcon
-                  assetId={from.asset.asset.id}
-                  symbol={from.asset.metadata.symbol}
-                  icon={from.asset.metadata.iconUrl}
-                  size={32}
-                />
-              )}
-              <span className="max-w-[110px] truncate">
-                {from?.asset.metadata.symbol ?? 'Select token'}
-              </span>
-              <Icon icon="lucide:chevron-down" width={14} />
-            </button>
-            <input
-              value={amount}
-              onChange={event => {
-                if (!fromId && from) setFromId(from.asset.asset.id)
-                setAmount(event.target.value)
-              }}
-              inputMode="decimal"
-              placeholder="0"
-              aria-label="Shield swap amount"
-              aria-invalid={Boolean(amountError)}
-              disabled={busy || !from}
-              className="min-w-0 flex-1 bg-transparent text-right text-2xl font-medium outline-none placeholder:text-muted disabled:opacity-50"
-            />
-          </div>
-          {amountError && (
-            <p className="mt-2 text-xs text-destructive" role="alert">
-              {amountError}
-            </p>
-          )}
-        </section>
-        <div className="relative -mx-4 flex h-8 items-center justify-center before:absolute before:inset-x-0 before:border-t before:border-white/10">
-          <button
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-3 pt-2">
+        <SwapAssetCard
+          direction="From"
+          token={fromToken}
+          amount={amount}
+          fiatValue={fromToken?.price ? fromFiat : ''}
+          balance={hidden ? '••••' : (balance ?? '—')}
+          tokenSelectDisabled={tokens.length === 0}
+          onTokenSelect={() => {
+            setSearch('')
+            setPicker('from')
+          }}
+          tokenSelectLocked={busy}
+          onAmountChange={value => {
+            if (!fromId && from) setFromId(from.asset.asset.id)
+            setAmount(value)
+          }}
+          validationMessage={amountError ?? undefined}
+          onMaxClick={() => {
+            if (!from || currentBalance === null) return
+            if (!fromId) setFromId(from.asset.asset.id)
+            setAmount(currentBalance)
+          }}
+          maxDisabled={busy || connecting || currentBalance === null || currentBalance === '0'}
+          maxDisabledReason={
+            !currentBalances ? 'Shield balance unavailable' : 'No available balance'
+          }
+        />
+        <div className="relative border-t border-white/10 pt-2">
+          <Button
             type="button"
-            aria-label="Reverse Shield swap tokens"
+            aria-label="Switch assets"
             disabled={busy || !from || !to || !canReverse}
-            title={!canReverse ? 'Destination has no available Shield balance' : 'Reverse tokens'}
+            title={!canReverse ? 'Destination has no available Shield balance' : 'Switch assets'}
             onClick={() => {
               if (!from || !to || !canReverse) return
               setFromId(to.asset.asset.id)
               setToId(from.asset.asset.id)
               setAmount('')
             }}
-            className="wallet-interactive relative rounded-lg bg-wallet-surface p-1.5 enabled:hover:bg-wallet-selected enabled:active:bg-white/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 disabled:opacity-40"
+            className="absolute -top-3.5 left-1/2 z-10 size-7 -translate-x-1/2 rounded-md bg-[#373741] p-0 text-foreground hover:bg-popover disabled:opacity-40"
+            variant="secondary"
           >
-            <Icon icon="lucide:arrow-down-up" width={22} />
-          </button>
+            <Icon icon="lucide:arrow-down-up" width={16} height={16} />
+          </Button>
+          <SwapAssetCard
+            direction="To"
+            token={toToken}
+            amount={previewOutput ?? ''}
+            fiatValue={toToken?.price ? toFiat : ''}
+            onTokenSelect={() => {
+              setSearch('')
+              setPicker('to')
+            }}
+            tokenSelectDisabled={tokens.length === 0}
+            tokenSelectLocked={busy}
+            isReadOnly
+            isAmountLoading={previewLoading}
+            isEstimatedAmount={Boolean(previewOutput)}
+          />
         </div>
-        <section className="pb-6 pt-3" aria-label="Swap to Shield">
-          <p className="text-sm text-muted">To</p>
-          <div className="mt-5 flex items-center justify-between gap-3">
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => {
-                setSearch('')
-                setPicker('to')
-              }}
-              className="wallet-interactive flex min-w-0 items-center gap-2 rounded-lg text-lg font-medium enabled:hover:bg-white/5 enabled:active:bg-white/10 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 disabled:opacity-40"
-              aria-label="Select destination Shield token"
-            >
-              {to && (
-                <TokenIcon
-                  assetId={to.asset.asset.id}
-                  symbol={to.asset.metadata.symbol}
-                  icon={to.asset.metadata.iconUrl}
-                  size={32}
-                />
-              )}
-              <span className="truncate">{to?.asset.metadata.symbol ?? 'Select token'}</span>
-              <Icon icon="lucide:chevron-down" width={14} />
-            </button>
-            <div
-              className="min-w-0 max-w-[50%] text-right text-2xl font-medium"
-              aria-label={previewOutput ? 'Estimated output' : 'Output quote pending'}
-            >
-              {previewOutput ? (
-                <AmountDisplay value={previewOutput} />
-              ) : (
-                <span className="tabular-nums">{amount ? '—' : '0'}</span>
-              )}
-            </div>
-          </div>
-        </section>
-        <div className="rounded-lg border border-border/70 px-3 py-1 text-sm">
-          <label className="flex items-center justify-between py-3">
+        <div className="mt-2 rounded-lg border border-white/15 px-3 py-2 text-xs">
+          <div className="flex items-center justify-between gap-2 py-1">
             <span className="text-muted">Slippage</span>
-            <select
-              aria-label="Slippage"
-              disabled={busy}
-              value={slippageBps}
-              onChange={event => setSlippageBps(Number(event.target.value))}
-              className="bg-transparent text-right outline-none"
-            >
-              <option value={10}>0.1%</option>
-              <option value={50}>0.5%</option>
-              <option value={100}>1%</option>
-            </select>
-          </label>
+            <span>{slippage}%</span>
+          </div>
           {preview && from && to && (
             <>
               {previewRate && (
@@ -791,6 +769,7 @@ function ShieldSwapForm() {
               <button
                 type="button"
                 key={asset.asset.asset.id}
+                title={asset.managed.protocolAssetId}
                 onClick={() => {
                   if (picker === 'from') {
                     setFromId(asset.asset.asset.id)
@@ -809,7 +788,10 @@ function ShieldSwapForm() {
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm">{asset.asset.metadata.symbol}</span>
                   <span className="block truncate text-xs text-muted">
-                    {asset.chain.chain.displayName}
+                    Origin: {asset.chain.chain.displayName}
+                    {originIdentifiers.get(asset.asset.asset.id)
+                      ? ` · ${originIdentifiers.get(asset.asset.asset.id)}`
+                      : ''}
                   </span>
                 </span>
                 <span

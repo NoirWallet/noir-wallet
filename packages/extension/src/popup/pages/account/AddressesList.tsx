@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useLocation, useSearchParams } from 'react-router-dom'
 import { Icon } from '@iconify/react'
-import { QRCodeSVG } from 'qrcode.react'
 import { useNavigate } from '../../provider/Router'
 import { PageHeader } from '../../components/common/PageHeader'
 import { InlineError } from '../../components/common/InlineError'
+import { ReceivingAddressLayout } from '../../components/common/ReceivingAddressLayout'
 import { CopyFeedbackIcon, CopyToast, useCopyToClipboard } from '../../components/common/CopyToast'
 import {
   PRIVATE_ADDRESS_WARNING,
@@ -19,14 +19,7 @@ import { ChainIcon } from '../../components/common/ChainIcon'
 import evmGroupIcon from '@/images/figma-evm-group.svg'
 import { Button } from '../../components/ui/button'
 import { ListSkeleton } from '../../components/ui/skeleton'
-import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle
-} from '../../components/ui/dialog'
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '../../components/ui/dialog'
 import { Input } from '../../components/ui/input'
 import { Tooltip } from '../../components/ui/tooltip'
 import type { AddressType } from '@/types/wallet'
@@ -36,7 +29,7 @@ import {
   type AccountNetworkView
 } from '../../services/account-networks-client'
 import { cn } from '@/lib/utils'
-import { formatSortAddress } from '@/lib/format'
+import { formatSortAddress, getAccountDisplayName } from '@/lib/format'
 import { DEFAULT_NETWORK } from '@/lib/runtime-network'
 import { useWalletStore } from '@/store/wallet-store'
 import { AccountAvatar } from '../../components/account/AccountAvatar'
@@ -399,6 +392,7 @@ export function AddressesList() {
   const wallet = useWalletStore(state => state.wallets.find(item => item.id === walletId))
   const currentWalletId = useWalletStore(state => state.currentWalletId)
   const currentAccountId = useWalletStore(state => state.currentAccountId)
+  const accountDisplayNames = useWalletStore(state => state.accountDisplayNames)
   const executionMode = useDAppExecutionMode(
     Boolean(
       walletId && accountId && walletId === currentWalletId && accountId === currentAccountId
@@ -817,35 +811,34 @@ export function AddressesList() {
         <DialogContent
           position="center"
           showCloseButton={false}
-          className="!inset-0 !h-dvh !w-screen !max-w-none !translate-x-0 !translate-y-0 flex flex-col gap-0 rounded-none p-0 shadow-none"
+          className="!inset-0 !h-dvh !w-screen !max-w-none !translate-x-0 !translate-y-0 gap-0 rounded-none p-0 shadow-none"
         >
           {qrTarget && (
             <>
-              <DialogHeader className="relative flex h-14 shrink-0 items-center justify-center p-0 text-center">
-                <DialogClose asChild>
-                  <button
-                    type="button"
-                    aria-label="Close receiving address"
-                    className="wallet-interactive absolute left-4 flex size-6 items-center justify-center rounded-md text-foreground hover:bg-white/10 active:bg-white/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2"
-                  >
-                    <Icon icon="lucide:x" width={20} height={20} />
-                  </button>
-                </DialogClose>
-                <DialogTitle className="text-lg font-medium leading-[23px]">
-                  {qrTarget.confidential ? 'Private Address' : 'Receiving Address'}
-                </DialogTitle>
-              </DialogHeader>
-              <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-5">
-                <div className="mx-auto flex max-w-[440px] flex-col items-center">
-                  <div className="mt-6 flex w-full items-center justify-center gap-3">
+              <DialogTitle className="sr-only">
+                {qrTarget.confidential ? 'Private Address' : 'Receiving Address'}
+              </DialogTitle>
+              <ReceivingAddressLayout
+                title={qrTarget.confidential ? 'Private Address' : 'Receiving Address'}
+                onClose={() => setQrTarget(null)}
+                qrValue={qrTarget.address.value}
+                qrLabel={`${qrTarget.displayName ?? qrTarget.network.chain.displayName} address QR code`}
+                identity={
+                  <div className="flex min-w-0 items-center gap-3">
                     <AccountAvatar
                       walletId={walletId}
-                      accountId={accountId}
                       className="size-10 shrink-0 rounded-full object-cover"
                     />
                     <div className="min-w-0">
                       <p className="truncate text-base font-medium">
-                        {accountIdentity?.name ?? 'Account'}
+                        {walletId && accountId && accountIdentity
+                          ? getAccountDisplayName(
+                              walletId,
+                              accountId,
+                              accountIdentity.name,
+                              accountDisplayNames
+                            )
+                          : 'Account'}
                       </p>
                       <p className="flex items-center gap-1.5 text-sm text-muted">
                         <ChainIcon
@@ -860,57 +853,51 @@ export function AddressesList() {
                       </p>
                     </div>
                   </div>
-                  <div className="mt-6 rounded-2xl bg-white p-3">
-                    <QRCodeSVG
-                      value={qrTarget.address.value}
-                      size={208}
-                      level="M"
-                      includeMargin={false}
-                      aria-label={`${qrTarget.displayName ?? qrTarget.network.chain.displayName} address QR code`}
-                    />
-                  </div>
-                  <h2 className="mt-5 text-center text-xl font-medium leading-7">
-                    {qrTarget.displayName ?? accountNetworkLabel(qrTarget.network)}{' '}
-                    {qrTarget.confidential
-                      ? 'private execution'
-                      : accountNetworkAddressLabel(qrTarget.network, qrTarget.address)}{' '}
-                    address
-                  </h2>
-                  <DialogDescription className="mt-1 max-w-[320px] text-center leading-5 text-muted">
+                }
+                warning={
+                  <DialogDescription className="text-center leading-5 text-muted">
                     {qrTarget.confidential
                       ? PRIVATE_ADDRESS_WARNING
                       : addressPrivacyLabel(qrTarget.address) === 'transparent'
                         ? 'This address and its activity are publicly visible on-chain.'
                         : 'Scan this code to receive funds to this account.'}
                   </DialogDescription>
-                  <div className="mt-6 flex w-full min-w-0 items-center gap-3 rounded-xl border border-white/10 bg-wallet-surface p-3">
-                    <p
-                      className="max-h-24 min-w-0 flex-1 overflow-y-auto break-all font-mono text-xs leading-5 text-foreground"
-                      title={qrTarget.address.value}
-                    >
-                      {qrTarget.address.value}
-                    </p>
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      className="h-10 shrink-0 px-3"
-                      onClick={() =>
-                        qrTarget.confidential
-                          ? setPrivateAddressAction({
-                              address: qrTarget.address.value,
-                              copyKey: 'qr-address'
-                            })
-                          : void copyToClipboard(qrTarget.address.value, 'qr-address', {
-                              toastOnSuccess: true
-                            })
-                      }
-                    >
-                      <CopyFeedbackIcon copied={isCopied('qr-address')} width={17} height={17} />
-                      {isCopied('qr-address') ? 'Copied' : 'Copy'}
-                    </Button>
-                  </div>
+                }
+              >
+                <h2 className="mt-5 text-center text-xl font-medium leading-7">
+                  {qrTarget.displayName ?? accountNetworkLabel(qrTarget.network)}{' '}
+                  {qrTarget.confidential
+                    ? 'private execution'
+                    : accountNetworkAddressLabel(qrTarget.network, qrTarget.address)}{' '}
+                  address
+                </h2>
+                <div className="mt-4 flex w-full min-w-0 items-center gap-3 rounded-lg border border-white/10 bg-wallet-surface p-3">
+                  <p
+                    className="max-h-24 min-w-0 flex-1 overflow-y-auto break-all font-mono text-xs leading-5 text-foreground"
+                    title={qrTarget.address.value}
+                  >
+                    {qrTarget.address.value}
+                  </p>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    className="h-10 shrink-0 px-3"
+                    onClick={() =>
+                      qrTarget.confidential
+                        ? setPrivateAddressAction({
+                            address: qrTarget.address.value,
+                            copyKey: 'qr-address'
+                          })
+                        : void copyToClipboard(qrTarget.address.value, 'qr-address', {
+                            toastOnSuccess: true
+                          })
+                    }
+                  >
+                    <CopyFeedbackIcon copied={isCopied('qr-address')} width={17} height={17} />
+                    {isCopied('qr-address') ? 'Copied' : 'Copy'}
+                  </Button>
                 </div>
-              </div>
+              </ReceivingAddressLayout>
             </>
           )}
         </DialogContent>

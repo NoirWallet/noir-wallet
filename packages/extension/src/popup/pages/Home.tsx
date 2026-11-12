@@ -249,19 +249,30 @@ export function Home() {
   }
   const openSwap = () => {
     if (assetDomain === 'all') {
-      navigate.navigate('/swap')
+      const query = new URLSearchParams({ balanceDomain: privateMode ? 'private' : 'public' })
+      if (effectiveWalletId && effectiveAccountId) {
+        query.set('sourceWalletId', effectiveWalletId)
+        query.set('sourceAccountId', effectiveAccountId)
+      }
+      navigate.navigate(`/swap?${query}`)
       return
     }
     if (assetDomain === 'shield') {
+      if (shieldActions.providersFor('swap').length === 0) return
       navigate.navigate(`/shield-funds?action=swap&mode=${privateMode ? 'private' : 'public'}`)
       return
     }
     if (!swapSource || !canOpenSwapSource) return
-    const query = new URLSearchParams({ source: swapSource.asset.asset.id })
-    if (swapSource.chain.chain.family === 'evm' && effectiveWalletId && effectiveAccountId) {
-      query.set('sourceMode', assetDomain === 'private' ? 'private' : 'main')
+    const query = new URLSearchParams({
+      source: swapSource.asset.asset.id,
+      balanceDomain: assetDomain === 'private' ? 'private' : 'public'
+    })
+    if (effectiveWalletId && effectiveAccountId) {
       query.set('sourceWalletId', effectiveWalletId)
       query.set('sourceAccountId', effectiveAccountId)
+    }
+    if (swapSource.chain.chain.family === 'evm' && effectiveWalletId && effectiveAccountId) {
+      query.set('sourceMode', assetDomain === 'private' ? 'private' : 'main')
     }
     if (swapSource.chain.chain.family === 'zcash') {
       query.set('fundingSource', 'transparent')
@@ -508,7 +519,7 @@ export function Home() {
   const multichainTotalUsd = multichainFiat.totalUsd
   const displayedChainSelection = resolvePortfolioChainSelection(
     multichainPortfolio,
-    activeTab === 'assets' ? persistedChainSelection : null,
+    persistedChainSelection,
     __ENABLED_CHAIN_FEATURE_FLAGS__
   )
   const displayedPortfolio = projectPortfolioForChains(multichainPortfolio, displayedChainSelection)

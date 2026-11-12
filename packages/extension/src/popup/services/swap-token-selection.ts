@@ -124,7 +124,7 @@ export function resolveSwapTokenSelection(input: {
   const sourceCandidates = destinationAssetId
     ? walletSourceTokens.filter(token => token.assetId !== destinationAssetId)
     : walletSourceTokens
-  const requestedSource = input.tokens.find(
+  const requestedSource = (input.sourceTokens ?? input.tokens).find(
     token =>
       token.assetId === input.requestedSourceAssetId &&
       token.assetId !== destinationAssetId &&

@@ -5,6 +5,7 @@ import ethIcon from '@/images/eth.svg'
 import { cn } from '@/lib/utils'
 import { findBundledWalletMarketAssetId, isBundledWalletAsset } from './token-display-policy'
 import { MARKET_ASSETS } from '@/config/asset-market-assets'
+import { formatConfiguredChainIconUrl } from '@/config/icons'
 import { getTokenIconCandidates, isBundledEthIconIdentity } from './token-icon-candidates'
 import {
   clearTokenIconUrlFailure,
@@ -13,7 +14,11 @@ import {
 } from './token-icon-failure-cache'
 import { ChainIcon } from '../common/ChainIcon'
 import { Icon } from '@iconify/react'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import {
+  lookupTokenContractIcon,
+  resolveTokenContractIconIdentity
+} from '@/popup/services/token-contract-icon'
 
 interface TokenIconProps {
   token?: SwapToken
@@ -63,31 +68,59 @@ export function TokenIcon({
       ? usdcIcon
       : marketAsset === MARKET_ASSETS.zec
         ? zecIcon
-        : undefined
+        : marketAsset === MARKET_ASSETS.bnb
+          ? formatConfiguredChainIconUrl('bsc')
+          : undefined
   const nativeToken =
     (token !== undefined && token.contractAddress == null) || nativeChain !== undefined
   const bundledIcon =
     mappedIcon ??
     ((assetId && isBundledWalletAsset(assetId)) || nativeToken ? bundledIconForSymbol : undefined)
+  const contractIdentity = token ? resolveTokenContractIconIdentity(token) : null
+  const [contractIcon, setContractIcon] = useState<{
+    identity: string
+    icon: string
+  } | null>(null)
   const iconCandidates = getTokenIconCandidates({
     token,
     icon: iconProp,
     assetId,
     blockchain,
     nativeChain,
-    bundledIcon
+    bundledIcon,
+    contractIcon: contractIcon?.identity === contractIdentity ? contractIcon.icon : undefined
   })
   const [failedIconUrls, setFailedIconUrls] = useState<readonly string[]>([])
+  const containerRef = useRef<HTMLDivElement>(null)
   const iconUrl = iconCandidates.find(
     candidate => !failedIconUrls.includes(candidate) && !hasTokenIconUrlFailed(candidate)
   )
+
+  useEffect(() => {
+    const element = containerRef.current
+    if (iconUrl || !contractIdentity || !element) return
+    let cancelled = false
+    const observer = new IntersectionObserver(entries => {
+      if (!entries.some(entry => entry.isIntersecting)) return
+      observer.disconnect()
+      void lookupTokenContractIcon(contractIdentity, () => !cancelled).then(icon => {
+        if (!cancelled && icon) setContractIcon({ identity: contractIdentity, icon })
+      })
+    })
+    observer.observe(element)
+    return () => {
+      cancelled = true
+      observer.disconnect()
+    }
+  }, [contractIdentity, iconUrl])
 
   const pixelSize = typeof size === 'string' ? sizeMap[size] : size
 
   return (
     <div
       data-slot="token-icon"
-      className={cn('relative inline-block', className)}
+      ref={containerRef}
+      className={cn('relative inline-block shrink-0', className)}
       style={{ width: pixelSize, height: pixelSize }}
     >
       <div className="flex h-full w-full items-center justify-center rounded-full bg-[#34343f] text-white/80">

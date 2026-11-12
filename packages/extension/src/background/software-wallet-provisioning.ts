@@ -333,8 +333,7 @@ export async function addSoftwareWallet(
   const mnemonic = normalizeMnemonic(input.mnemonic)
   const birthdayHeight = validateBirthdayHeight(input.birthdayHeight)
   const accountName = normalizeAccountName(input.accountName)
-  const selectedNetworkFamilies =
-    input.mode === 'import' ? importNetworkFamilies(input.selectedNetworkFamilies) : undefined
+  const selectedNetworkFamilies = importNetworkFamilies(input.selectedNetworkFamilies)
   const password = await requireProvisioningPassword()
 
   syncScheduler.pauseForTx()
@@ -343,8 +342,14 @@ export async function addSoftwareWallet(
     await ensureBackgroundPassword(password)
     const walletId =
       input.mode === 'create'
-        ? (await backgroundZcashWalletRuntime.addNewWallet(mnemonic, undefined, accountName))
-            .walletId
+        ? (
+            await backgroundZcashWalletRuntime.addNewWallet(
+              mnemonic,
+              undefined,
+              accountName,
+              selectedNetworkFamilies
+            )
+          ).walletId
         : await backgroundZcashWalletRuntime.addImportedWallet(
             mnemonic,
             undefined,

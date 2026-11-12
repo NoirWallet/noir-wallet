@@ -15,6 +15,7 @@ import {
   buildShieldTransferRequest,
   listShieldFundingAssets,
   listShieldMoveDestinations,
+  selectDefaultShieldWithdrawSource,
   selectShieldWithdrawDestinationForNetwork,
   shieldFundingSources,
   shieldPortfolioBalances
@@ -72,6 +73,28 @@ test('defaults Shield Move and keeps preferences scoped to a supported account a
       entry: 'shield'
     })
   ).toMatchObject({ from: 'public', to: 'shield', assetId: null, amount: '' })
+  expect(
+    initialMoveDraft({
+      state: null,
+      scope,
+      mode: 'private',
+      routeFrom: null,
+      routeTo: null,
+      routeAssetId: null,
+      entry: 'shield'
+    })
+  ).toMatchObject({ from: 'private', to: 'shield', assetId: null, amount: '' })
+  expect(
+    initialMoveDraft({
+      state: null,
+      scope,
+      mode: 'private',
+      routeFrom: 'shield',
+      routeTo: 'public',
+      routeAssetId: 'eip155:1/slip44:60',
+      entry: 'asset-detail'
+    })
+  ).toMatchObject({ from: 'shield', to: 'public', assetId: 'eip155:1/slip44:60' })
   expect(shieldMovePreferenceKey('mainnet', 'wallet-1', 'account-1')).not.toBe(
     shieldMovePreferenceKey('testnet', 'wallet-1', 'account-1')
   )
@@ -153,6 +176,64 @@ test('keeps the selected Shield withdrawal token when choosing its network', () 
     arbitrumUsdc
   )
   expect(selectShieldWithdrawDestinationForNetwork(options, baseUsdc, 'eip155:137')).toBeNull()
+})
+
+test('defaults Shield withdrawal to the highest USD balance or Ethereum USDC when empty', () => {
+  const usdcContract = getEvmNetworkConfigs('mainnet')
+    .find(config => config.chainId === 'eip155:1')
+    .usdcContract.toLowerCase()
+  const option = (chainId, reference, protocolAssetId, decimals) => ({
+    chain: { chain: { id: chainId } },
+    asset: {
+      asset: { id: `${chainId}/erc20:${reference}`, chainId, namespace: 'erc20', reference },
+      metadata: { decimals }
+    },
+    managed: { protocolAssetId }
+  })
+  const baseUsdc = option('eip155:8453', `0x${'1'.repeat(40)}`, 'base-usdc', 6)
+  const ethereumUsdc = option('eip155:1', usdcContract, 'ethereum-usdc', 6)
+  const ethereumOther = option('eip155:1', `0x${'2'.repeat(40)}`, 'other', 18)
+  const options = [baseUsdc, ethereumOther, ethereumUsdc]
+  const balances = [
+    { tokenId: 'base-usdc', available: '10000000' },
+    { tokenId: 'other', available: '1000000000000000000' },
+    { tokenId: 'ethereum-usdc', available: '2000000' }
+  ]
+  const model = {
+    confidential: {
+      status: 'ready',
+      assets: [
+        { protocolAssetId: 'base-usdc', availableRaw: '10000000', priceUsd: '1' },
+        { protocolAssetId: 'other', availableRaw: '1000000000000000000', priceUsd: '20' },
+        { protocolAssetId: 'ethereum-usdc', availableRaw: '2000000', priceUsd: '1' }
+      ]
+    }
+  }
+
+  expect(selectDefaultShieldWithdrawSource(options, balances, model, null, 'mainnet')).toBe(
+    ethereumOther
+  )
+  expect(
+    selectDefaultShieldWithdrawSource(
+      options,
+      balances,
+      model,
+      {
+        quotes: [{ assetId: ethereumUsdc.asset.asset.id, priceUsd: '15' }]
+      },
+      'mainnet'
+    )
+  ).toBe(ethereumUsdc)
+  expect(selectDefaultShieldWithdrawSource(options, balances, null, null, 'mainnet')).toBe(baseUsdc)
+  expect(
+    selectDefaultShieldWithdrawSource(
+      options,
+      balances.map(balance => ({ ...balance, available: '0' })),
+      model,
+      null,
+      'mainnet'
+    )
+  ).toBe(ethereumUsdc)
 })
 
 test('uses independently held Shield tokens without adding them to Public assets', () => {
@@ -467,6 +548,33 @@ test('lists official cross-network USDC destinations from the managed catalog', 
   expect(selectMoveAsset(['eip155:1', 'eip155:8453'], 'eip155:10/slip44:60')).toBe(sourceAssetId)
   expect(selectMoveAsset(['eip155:8453'])).toBe(destinationAssetId)
   expect(selectMoveAsset(['eip155:1', 'eip155:8453'], null, [])).toBeNull()
+  const fundedBase = moveAssets.map(item =>
+    item.asset.asset.id === destinationAssetId
+      ? {
+          ...item,
+          asset: {
+            ...item.asset,
+            balance: {
+              ...item.asset.balance,
+              totalRaw: '25000',
+              mainRaw: '25000',
+              privateRaw: '0'
+            }
+          }
+        }
+      : item
+  )
+  expect(
+    selectShieldMoveAssetId({
+      assets: fundedBase,
+      eligibleChainIds: ['eip155:1', 'eip155:8453'],
+      managedAssets: managed,
+      catalogTokens: tokens,
+      network: 'mainnet',
+      from: 'public',
+      preferredAssetId: sourceAssetId
+    })
+  ).toBe(destinationAssetId)
   const source = options.find(item => item.asset.asset.id === sourceAssetId)
   expect(source).toBeDefined()
   expect(

@@ -137,6 +137,8 @@ test('additional software wallet provision succeeds after selecting a native acc
     getWallet: () => null
   }
   let credentialLocked = false
+  let syncRequests = 0
+  let createdFamilies
   const runtime = {
     initialize: async () => {},
     getSessionPassword: () => null,
@@ -145,6 +147,10 @@ test('additional software wallet provision succeeds after selecting a native acc
         state.currentWalletId = 'retained-wallet'
       }
       return { success: state.currentWalletId !== null }
+    },
+    addNewWallet: async (_mnemonic, _walletName, _accountName, families) => {
+      createdFamilies = families
+      return { walletId: 'created-wallet' }
     },
     addImportedWallet: async () => 'imported-wallet',
     lock: async () => {}
@@ -176,12 +182,27 @@ test('additional software wallet provision succeeds after selecting a native acc
       }
     },
     './sync-scheduler': {
-      syncScheduler: { pauseForTx() {}, abortSync() {}, resumeAfterTx() {}, onRequestSync() {} }
+      syncScheduler: {
+        pauseForTx() {},
+        abortSync() {},
+        resumeAfterTx() {},
+        onRequestSync() {
+          syncRequests++
+        }
+      }
     },
-    '@/core/wallet/account-name': { normalizeAccountName: name => name }
+    '@/core/wallet/account-name': { normalizeAccountName: name => name },
+    '@/core/wallet/account-network-selection': {
+      parseSelectedNetworkFamilies: value => {
+        if (!Array.isArray(value) || value.length === 0) throw new Error('Invalid networks')
+        return value
+      }
+    },
+    '@/core/chains/feature-runtime-policy': { isNewWalletFamilyEnabled: () => true }
   }
   const module = { exports: {} }
-  new Function('require', 'module', 'exports', source)(
+  new Function('__ENABLED_CHAIN_FEATURE_FLAGS__', 'require', 'module', 'exports', source)(
+    [],
     specifier => dependencies[specifier] ?? {},
     module,
     module.exports
@@ -195,6 +216,16 @@ test('additional software wallet provision succeeds after selecting a native acc
 
   assert.equal(result.walletId, 'imported-wallet')
   assert.equal(credentialLocked, false)
+
+  const created = await module.exports.addSoftwareWallet({
+    mode: 'create',
+    mnemonic: [...Array(11).fill('abandon'), 'about'].join(' '),
+    accountName: 'Created',
+    selectedNetworkFamilies: ['evm', 'bitcoin']
+  })
+  assert.equal(created.walletId, 'created-wallet')
+  assert.deepEqual(createdFamilies, ['evm', 'bitcoin'])
+  assert.equal(syncRequests, 1)
 })
 
 test('same-wallet session restoration preserves an in-flight backup authorization', async () => {

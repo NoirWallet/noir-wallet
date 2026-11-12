@@ -159,7 +159,7 @@ function DomainCard({
                 <span
                   className={cn(
                     'shrink-0 rounded-md px-2 py-0.5',
-                    domain === 'private' ? 'bg-warning/10 text-warning' : 'bg-white/10 text-muted'
+                    domain === 'private' ? 'bg-private/10 text-private' : 'bg-white/10 text-muted'
                   )}
                 >
                   {domainLabel(domain)}
@@ -219,7 +219,7 @@ function MethodCard({
   detail: string
   recommended: boolean
   selected: boolean
-  estimate: MoveMethodEstimate
+  estimate: MoveMethodEstimate | null
   fee: { value: string; detail: string | null }
   onClick: () => void
 }) {
@@ -254,7 +254,7 @@ function MethodCard({
         <span className="text-muted">Privacy</span>
         <span>{title === 'Cluster' ? 'Strong' : 'Standard'}</span>
       </span>
-      {estimate.time !== '—' && (
+      {estimate && estimate.time !== '—' && (
         <span className="mt-2 flex justify-between gap-2">
           <span className="shrink-0 text-muted">Time (est.)</span>
           <span className="min-w-0 text-right">
@@ -294,7 +294,6 @@ function TransferForm() {
   const shieldEntry =
     entry === 'shield' &&
     (params.get('provider') === null || params.get('provider') === 'near-confidential')
-  const fromAssetDetail = params.get('entry') === 'asset-detail'
   const { goBack, navigate } = useNavigate()
   const currentWalletId = useWalletStore(state => state.currentWalletId)
   const currentAccountId = useWalletStore(state => state.currentAccountId)
@@ -969,6 +968,7 @@ function TransferForm() {
     maxSelected && selected?.asset.asset.kind === 'native' && from !== 'shield'
   const maximum = useTransferMaximum({
     prefetch: selected?.chain.chain.family === 'evm',
+    refreshOnExpiry: false,
     enabled: nativeMaximumEnabled,
     requestKey: `${scopeKey}:${selected?.asset.asset.id ?? ''}:${direction}:${source?.availableRaw ?? '0'}`,
     fallback: () =>
@@ -987,7 +987,8 @@ function TransferForm() {
         availableRaw: source!.availableRaw,
         sender: source!.sender,
         recipient: source!.recipient,
-        executionMode: source!.executionMode
+        executionMode: source!.executionMode,
+        purpose: source!.executionMode === 'private' ? 'private-transfer' : 'confidential-funding'
       })
   })
   useEffect(() => {
@@ -1082,7 +1083,7 @@ function TransferForm() {
         })
       : null
   const estimateAmountRaw = methodAmount?.error ? null : methodAmount?.amountRaw
-  const methodEstimateKey = `${routeKey}:${estimateAmountRaw ?? ''}:${source?.sender}:${source?.recipient}:${source?.executionMode}:${source?.availableRaw}:${retry}`
+  const methodEstimateKey = `${routeKey}:${estimateAmountRaw ?? ''}:${source?.sender}:${source?.recipient}:${source?.executionMode}:${retry}`
   const canEstimateMethods = Boolean(
     draftScope === scopeKey &&
     clusterPair &&
@@ -1136,32 +1137,16 @@ function TransferForm() {
     managedAsset &&
     shieldConnection === 'connected' &&
     clusterEstimate.value?.routeFeeRaw !== null &&
-    clusterEstimate.value &&
-    clusterEstimate.value.expiresAt > Date.now()
+    clusterEstimate.value
   )
   const directQuoted = Boolean(
     canEstimateMethods &&
     methodAvailable &&
     directEstimate.value?.routeFeeRaw !== null &&
-    directEstimate.value &&
-    directEstimate.value.expiresAt > Date.now()
+    directEstimate.value
   )
-  const clusterReady = clusterQuoted && clusterEstimate.value?.time !== '—'
-  const directReady = directQuoted && directEstimate.value?.time !== '—'
-  const directTimeUnavailable = directQuoted && !directReady
-  const clusterTimeUnavailable = clusterQuoted && !clusterReady
-  useEffect(() => {
-    if (
-      method === 'cluster' &&
-      clusterPair &&
-      directQuoted &&
-      !clusterReady &&
-      !clusterEstimate.loading &&
-      shieldConnection !== 'checking' &&
-      shieldConnection !== 'busy'
-    )
-      setMethod('directly')
-  }, [method, clusterPair, clusterReady, directQuoted, clusterEstimate.loading, shieldConnection])
+  const clusterAvailable = Boolean(clusterPair && managedAsset && effective)
+  const selectedEstimate = method === 'cluster' ? clusterEstimate : directEstimate
   const shieldReviewKey = `${routeKey}:${method}:${currentAmount}:${shieldAmountState?.amountRaw ?? ''}`
   const latestShieldReviewKey = useRef(shieldReviewKey)
   latestShieldReviewKey.current = shieldReviewKey
@@ -1275,13 +1260,7 @@ function TransferForm() {
         selected.chain.chain.id
       )
     : 'evm'
-  const walletAccounts =
-    catalog?.accounts
-      .filter(account => account.walletId === effective?.walletId)
-      .sort((left, right) => left.accountIndex - right.accountIndex) ??
-    (activeAccount ? [activeAccount] : [])
-  const pickerAccount =
-    walletAccounts.find(account => account.accountId === pickerAccountId) ?? activeAccount
+  const pickerAccount = activeAccount
   const walletIndexInStore = wallets.findIndex(wallet => wallet.id === effective?.walletId)
   const walletIndex =
     walletIndexInStore >= 0
@@ -1753,36 +1732,6 @@ function TransferForm() {
               {maximum.loading ? '…' : 'Max'}
             </button>
           </div>
-          {fromAssetDetail && from === 'shield' && selected && (
-            <button
-              type="button"
-              onClick={() => {
-                setNetworkSearch('')
-                setNetworkPickerOpen(true)
-              }}
-              className="wallet-interactive flex max-w-full items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted hover:bg-wallet-selected focus-visible:outline-2 focus-visible:outline-primary"
-              aria-label="Select network"
-            >
-              <ChainIcon
-                chain={
-                  targetAsset
-                    ? resolveChainIconAlias(
-                        targetAsset.chain.chain.family,
-                        targetAsset.chain.chain.displayName,
-                        targetAsset.chain.chain.id
-                      )
-                    : networkIcon
-                }
-                width={16}
-                height={16}
-                showTooltip={false}
-              />
-              <span className="truncate">
-                {targetAsset?.chain.chain.displayName ?? 'Select network'}
-              </span>
-              <Icon icon="lucide:chevron-down" width={14} height={14} />
-            </button>
-          )}
         </div>
         <div className="mt-4 shrink-0">
           <DomainCard
@@ -1838,7 +1787,7 @@ function TransferForm() {
               setNetworkSearch('')
               setNetworkPickerOpen(true)
             }}
-            showNetwork={from === 'shield' && !fromAssetDetail}
+            showNetwork={from === 'shield'}
             onAccountClick={() => openDomainPicker('to')}
             disabled={!selected}
           />
@@ -1853,48 +1802,46 @@ function TransferForm() {
             {transferError}
           </p>
         )}
-        {selected?.chain.chain.family === 'evm' && clusterPair && (clusterReady || directReady) && (
-          <div
-            role="radiogroup"
-            aria-label="Transfer method"
-            className={cn(
-              'mt-auto grid shrink-0 gap-2.5 pt-6',
-              clusterReady && directReady ? 'grid-cols-2' : 'grid-cols-1'
-            )}
-          >
-            {clusterReady && clusterEstimate.value && (
-              <MethodCard
-                title="Cluster"
-                detail="Multiple transactions"
-                recommended
-                selected={method === 'cluster'}
-                estimate={clusterEstimate.value}
-                fee={formatMoveMethodFee(clusterEstimate.value, selected.asset)}
-                onClick={() => setMethod('cluster')}
-              />
-            )}
-            {directReady && directEstimate.value && (
-              <MethodCard
-                title="Directly"
-                detail="One transaction"
-                recommended={false}
-                selected={method === 'directly'}
-                estimate={directEstimate.value}
-                fee={formatMoveMethodFee(directEstimate.value, selected.asset)}
-                onClick={() => setMethod('directly')}
-              />
-            )}
-          </div>
-        )}
-        {directTimeUnavailable && (
-          <p role="status" className="mt-2 text-xs text-muted">
-            Directly: time estimate unavailable
-          </p>
-        )}
-        {clusterTimeUnavailable && (
-          <p role="status" className="mt-2 text-xs text-muted">
-            Cluster: time estimate unavailable
-          </p>
+        {selected?.chain.chain.family === 'evm' &&
+          clusterPair &&
+          (clusterAvailable || methodAvailable) && (
+            <div
+              role="radiogroup"
+              aria-label="Transfer method"
+              className={cn(
+                'mt-auto grid shrink-0 gap-2.5 pt-6',
+                clusterAvailable && methodAvailable ? 'grid-cols-2' : 'grid-cols-1'
+              )}
+            >
+              {clusterAvailable && (
+                <MethodCard
+                  title="Cluster"
+                  detail="Multiple transactions"
+                  recommended
+                  selected={method === 'cluster'}
+                  estimate={clusterEstimate.value}
+                  fee={formatMoveMethodFee(clusterEstimate.value, selected.asset)}
+                  onClick={() => setMethod('cluster')}
+                />
+              )}
+              {methodAvailable && (
+                <MethodCard
+                  title="Directly"
+                  detail="One transaction"
+                  recommended={false}
+                  selected={method === 'directly'}
+                  estimate={directEstimate.value}
+                  fee={formatMoveMethodFee(directEstimate.value, selected.asset)}
+                  onClick={() => setMethod('directly')}
+                />
+              )}
+            </div>
+          )}
+        {clusterPair && selectedEstimate.error && (
+          <InlineError
+            message="Transfer estimate unavailable. Try again."
+            onRetry={() => setRetry(value => value + 1)}
+          />
         )}
         {method === 'directly' &&
           selected &&
@@ -2143,46 +2090,12 @@ function TransferForm() {
         >
           <DialogHeader className="text-left">
             <DialogTitle className="text-sm font-medium leading-[18px]">
-              Move {domainPicker === 'from' ? 'from' : 'to'} · {walletDisplayName}
+              Move {domainPicker === 'from' ? 'from' : 'to'} · {walletDisplayName} ·{' '}
+              {pickerAccountName}
             </DialogTitle>
-            <DialogDescription className="sr-only">
-              Select an account and balance.
-            </DialogDescription>
+            <DialogDescription className="sr-only">Select a balance.</DialogDescription>
           </DialogHeader>
-          <div
-            role="tablist"
-            aria-label="Wallet accounts"
-            className="flex gap-2 overflow-x-auto pb-1"
-          >
-            {walletAccounts.map(account => (
-              <button
-                key={account.accountId}
-                type="button"
-                role="tab"
-                aria-selected={pickerAccount?.accountId === account.accountId}
-                disabled={account.accountId !== effective?.accountId}
-                onClick={() => setPickerAccountId(account.accountId)}
-                className={cn(
-                  'h-8 shrink-0 rounded-2xl border px-3 text-sm font-medium leading-[18px]',
-                  pickerAccount?.accountId === account.accountId
-                    ? 'border-white bg-white text-black'
-                    : 'border-white/10 bg-white/5 text-foreground'
-                )}
-              >
-                {getAccountDisplayName(
-                  account.walletId,
-                  account.accountId,
-                  account.accountDisplayName,
-                  accountDisplayNames
-                )}
-              </button>
-            ))}
-          </div>
-          <div
-            role="tabpanel"
-            aria-label={`${pickerAccountName} balances`}
-            className="space-y-2 pb-2"
-          >
+          <div aria-label={`${pickerAccountName} balances`} className="space-y-2 pb-2">
             {(['public', 'private'] as const).map(domain => {
               const address =
                 domain === 'private'
@@ -2256,7 +2169,7 @@ function TransferForm() {
             >
               <span className="min-w-0">
                 <span className="flex items-center gap-2 text-base font-medium leading-[21px]">
-                  <Icon icon="lucide:shield-check" width={16} height={16} />
+                  <Icon icon="noir:shield-assets" width={16} height={16} />
                   Shield
                 </span>
                 <span className="mt-1 flex min-w-0 items-center gap-1.5 text-xs font-medium leading-4 text-muted">

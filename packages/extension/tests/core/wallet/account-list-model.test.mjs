@@ -314,7 +314,7 @@ test('groups private keys across chain families without merging wallet or accoun
       {
         id: 'imported-private-key',
         name: 'Imported Private Key',
-        walletIds: ['evm-key', 'sol-key']
+        walletIds: ['sol-key', 'evm-key']
       }
     ]
   )

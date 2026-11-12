@@ -80,8 +80,9 @@ getAccounts(): Promise<ZcashConnectResult | null>
 ```
 
 Returns the same shape as `connect()` without opening the wallet. It returns `null` when the wallet
-is locked, the origin is disconnected, or the active account is not authorized. After a site is
-disconnected, call `connect()` to request approval again; a silent restore cannot reconnect it.
+is locked or the active account is not authorized. Official Noir applications can reconnect
+automatically after disconnect while the wallet is unlocked. Other disconnected sites must call
+`connect()` for approval again; a silent restore cannot reconnect them.
 
 ```ts
 const connection = await wallet.zcash.getAccounts()

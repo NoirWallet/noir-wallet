@@ -93,7 +93,7 @@ export function ImportZcashHistorySheet({ onClose }: { readonly onClose: () => v
 
     if (!syncDate) {
       throw new ZcashHistoryValidationError(
-        'Select the approximate date of the first ZEC transaction.'
+        'Select a date before your account’s first transaction.'
       )
     }
     const timestamp = getUtcDayStartTimestamp(syncDate)
@@ -152,22 +152,24 @@ export function ImportZcashHistorySheet({ onClose }: { readonly onClose: () => v
         className="max-h-[85vh] grid-rows-[auto_minmax(0,1fr)_auto] gap-0 p-0"
       >
         <DialogHeader className="px-5 pb-4 pt-5">
-          <DialogTitle>Zcash history</DialogTitle>
-          <DialogDescription>Has this phrase received ZEC before?</DialogDescription>
+          <DialogTitle className="sr-only">Zcash account setup</DialogTitle>
+          <DialogDescription className="pr-8">
+            Has this phrase received ZEC before?
+          </DialogDescription>
         </DialogHeader>
 
         <fieldset
           disabled={flowMode === 'addWallet' && isImporting}
           className="min-h-0 min-w-0 overflow-y-auto px-5 pb-4"
         >
-          <div role="radiogroup" aria-label="Zcash history" className="space-y-2">
+          <div role="radiogroup" aria-label="Zcash account setup" className="space-y-2">
             <HistoryChoice
-              title="New to Zcash"
+              title="New Zcash Account"
               selected={historyMode === 'new'}
               onSelect={() => selectHistoryMode('new')}
             />
             <HistoryChoice
-              title="Restore Zcash history"
+              title="Restore Zcash Account"
               selected={historyMode === 'restore'}
               onSelect={() => selectHistoryMode('restore')}
             />
@@ -211,7 +213,11 @@ export function ImportZcashHistorySheet({ onClose }: { readonly onClose: () => v
                 </div>
               ) : (
                 <div>
-                  <label className="mb-2 block text-sm text-muted">First ZEC transaction</label>
+                  <p className="mb-3 text-sm text-muted">
+                    Select an approximate date before your account’s first transaction to restore
+                    your shielded balance.
+                  </p>
+                  <label className="mb-2 block text-sm text-muted">Recovery start date</label>
                   <DatePicker
                     value={syncDate}
                     onChange={value => {

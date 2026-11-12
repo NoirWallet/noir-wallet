@@ -238,6 +238,56 @@ export class RheaSwapService {
     })
   }
 
+  async selectRoute(quoteHandle: string, routeIndex: number): Promise<RheaSwapQuoteView> {
+    const handle = this.parseQuoteHandle(quoteHandle)
+    if (!Number.isSafeInteger(routeIndex) || routeIndex < 1 || routeIndex > 12) {
+      throw new Error('RHEA Swap route selection is invalid')
+    }
+    return this.runSessionOperation(handle, async () => {
+      if (this.clearingSessions) throw new Error('RHEA Swap sessions are being cleared')
+      const epoch = this.sessionEpoch
+      const record = await this.requireSession(handle)
+      if (
+        record.privateSwapScope?.purpose !== 'wallet-swap' &&
+        record.privateSwapScope?.purpose !== 'private-swap'
+      ) {
+        throw new Error('RHEA Swap route selection is unavailable')
+      }
+      const original = normalizeQuote(record.request, record.quoteRaw, record.receivedAt)
+      this.assertQuoteFresh(record, original)
+      const alternatives = this.selectableAlternatives(original)
+      const selected = alternatives[routeIndex - 1]
+      if (!selected) throw new Error('RHEA Swap route is unavailable')
+      const quoteRaw: SwapQuoteDataRaw = {
+        ...record.quoteRaw,
+        bestQuote: selected.raw,
+        allQuotes: [
+          record.quoteRaw.bestQuote,
+          ...alternatives.filter(route => route !== selected).map(route => route.raw)
+        ]
+      }
+      const quote = normalizeQuote(record.request, quoteRaw, record.receivedAt)
+      this.assertQuoteMatchesRequest(quote, record.request)
+      const expiresAt = Math.min(
+        record.expiresAt ?? Number.MAX_SAFE_INTEGER,
+        quote.expiresAt ?? Number.MAX_SAFE_INTEGER
+      )
+      const selectedRecord: RheaSwapQuoteSessionRecord = Object.freeze({
+        schemaVersion: 1,
+        quoteHandle: `rhea-quote:${this.createHandle()}`,
+        request: record.request,
+        privateSwapScope: record.privateSwapScope,
+        quoteRaw,
+        receivedAt: record.receivedAt,
+        expiresAt: expiresAt === Number.MAX_SAFE_INTEGER ? null : expiresAt
+      })
+      this.assertQuoteFresh(selectedRecord, quote)
+      if (epoch !== this.sessionEpoch) throw new Error('RHEA Swap session was cleared')
+      await this.sessions.put(selectedRecord)
+      return this.toQuoteView(selectedRecord, quote)
+    })
+  }
+
   async prepare(quoteHandle: string, signal?: AbortSignal): Promise<RheaSwapReviewView> {
     const handle = this.parseQuoteHandle(quoteHandle)
     return this.runSessionOperation(handle, () => this.prepareOnce(handle, signal))
@@ -307,9 +357,20 @@ export class RheaSwapService {
 
   async readZcashTransferDeadline(
     quoteHandle: string,
-    transfer: { readonly executionId: string; readonly to: string; readonly amountZats: string }
+    transfer: {
+      readonly executionId: string
+      readonly to: string
+      readonly amountZats: string
+      readonly fundingSource?: 'transparent' | 'shielded'
+    }
   ): Promise<number> {
     const record = await this.requireSession(quoteHandle)
+    if (
+      record.privateSwapScope?.purpose === 'wallet-swap' &&
+      transfer.fundingSource !== 'transparent'
+    ) {
+      throw new Error('Swap funding source has changed. Get a new quote.')
+    }
     const build = this.readBuild(record)
     if (
       build.execution.kind !== 'zcash-transfer' ||
@@ -953,9 +1014,35 @@ export class RheaSwapService {
       estimatedOut: quote.estimatedOut,
       minAmountOut: quote.minAmountOut,
       router: quote.route.router,
+      alternatives: Object.freeze(
+        this.selectableAlternatives(quote).map((route, index) =>
+          Object.freeze({
+            index: index + 1,
+            router: route.router,
+            estimatedOut: route.amountOut,
+            minAmountOut: route.minAmountOut
+          })
+        )
+      ),
       receivedAt: quote.receivedAt,
-      expiresAt: quote.expiresAt ?? null
+      expiresAt: record.expiresAt
     })
+  }
+
+  private selectableAlternatives(quote: Quote): Quote['alternatives'] {
+    return quote.alternatives
+      .filter(
+        route =>
+          route.router.length <= 128 &&
+          /^(0|[1-9]\d{0,77})$/.test(route.amountOut) &&
+          /^(0|[1-9]\d{0,77})$/.test(route.minAmountOut) &&
+          BigInt(route.amountOut) > 0n &&
+          BigInt(route.minAmountOut) > 0n &&
+          (route.router !== quote.route.router ||
+            route.amountOut !== quote.route.amountOut ||
+            route.minAmountOut !== quote.route.minAmountOut)
+      )
+      .slice(0, 12)
   }
 }
 

@@ -118,7 +118,7 @@ export function ApprovalRequestHeader({
           tone === 'blocked'
             ? 'bg-danger/10'
             : tone === 'caution'
-              ? 'bg-warning/10'
+              ? 'bg-warning-surface'
               : 'bg-primary/10'
         )}
       >
@@ -141,7 +141,7 @@ export function ApprovalRequestHeader({
             tone === 'blocked'
               ? 'border-danger/40 bg-danger/10 text-danger'
               : tone === 'caution'
-                ? 'border-warning/40 bg-warning/10 text-warning'
+                ? 'border-warning/40 bg-warning-surface text-warning'
                 : 'border-primary/30 bg-primary/10 text-primary'
           )}
         >

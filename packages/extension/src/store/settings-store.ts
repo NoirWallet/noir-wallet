@@ -66,6 +66,17 @@ function parsePortfolioChainSelectionByAccount(
   )
 }
 
+function parseExpandedPortfolioChainLists(value: unknown): Readonly<Record<string, true>> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return {}
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(
+        ([scopeKey, expanded]) => scopeKey.length > 0 && scopeKey.length <= 512 && expanded === true
+      )
+      .slice(0, 64)
+  )
+}
+
 function parseLedgerSigningTransportByWallet(
   value: unknown
 ): Readonly<Record<string, 'usb' | 'bluetooth'>> {
@@ -116,6 +127,7 @@ interface SettingsStore {
   balancesHidden: boolean
   portfolioViewMode: 'assets' | 'chains'
   portfolioChainSelectionByAccount: Readonly<Record<string, readonly string[]>>
+  expandedPortfolioChainLists: Readonly<Record<string, true>>
   ledgerSigningTransportByWallet: Readonly<Record<string, 'usb' | 'bluetooth'>>
   sidePanelMode: boolean
   isSidePanelModeLoaded: boolean
@@ -129,6 +141,7 @@ interface SettingsStore {
   setBalancesHidden: (hidden: boolean) => void
   setPortfolioViewMode: (mode: 'assets' | 'chains') => void
   setPortfolioChainSelection: (scopeKey: string, chainIds: readonly string[] | null) => void
+  setPortfolioChainListExpanded: (scopeKey: string, expanded: boolean) => void
   setLedgerSigningTransport: (walletId: string, transport: 'usb' | 'bluetooth') => void
   setSidePanelMode: (enabled: boolean) => Promise<void>
   syncSidePanelMode: (enabled: boolean) => void
@@ -150,6 +163,7 @@ export const useSettingsStore = create<SettingsStore>()(
       balancesHidden: false,
       portfolioViewMode: 'assets',
       portfolioChainSelectionByAccount: {},
+      expandedPortfolioChainLists: {},
       ledgerSigningTransportByWallet: {},
       sidePanelMode: false,
       isSidePanelModeLoaded: false,
@@ -184,6 +198,16 @@ export const useSettingsStore = create<SettingsStore>()(
           if (chainIds === null) delete next[scopeKey]
           else next[scopeKey] = Object.freeze([...new Set(chainIds)])
           return { portfolioChainSelectionByAccount: next }
+        })
+      },
+
+      setPortfolioChainListExpanded: (scopeKey, expanded) => {
+        if (!scopeKey || scopeKey.length > 512) return
+        set(state => {
+          const next = { ...state.expandedPortfolioChainLists }
+          if (expanded) next[scopeKey] = true
+          else delete next[scopeKey]
+          return { expandedPortfolioChainLists: next }
         })
       },
 
@@ -338,6 +362,9 @@ export const useSettingsStore = create<SettingsStore>()(
           portfolioChainSelectionByAccount: parsePortfolioChainSelectionByAccount(
             value.portfolioChainSelectionByAccount
           ),
+          expandedPortfolioChainLists: parseExpandedPortfolioChainLists(
+            value.expandedPortfolioChainLists
+          ),
           ledgerSigningTransportByWallet: parseLedgerSigningTransportByWallet(
             value.ledgerSigningTransportByWallet
           ),
@@ -365,6 +392,7 @@ export const useSettingsStore = create<SettingsStore>()(
         balancesHidden: state.balancesHidden,
         portfolioViewMode: state.portfolioViewMode,
         portfolioChainSelectionByAccount: state.portfolioChainSelectionByAccount,
+        expandedPortfolioChainLists: state.expandedPortfolioChainLists,
         ledgerSigningTransportByWallet: state.ledgerSigningTransportByWallet
       })
     }

@@ -7,6 +7,7 @@ import {
 } from '@/core/chains/bitcoin'
 import { formatSortAddress } from '@/lib/format'
 import { AmountDisplay } from '@/popup/components/common/AmountDisplay'
+import { BalanceDomainTabs } from '@/popup/components/account/BalanceDomainTabs'
 import { Button } from '@/popup/components/ui/button'
 import {
   Dialog,
@@ -26,6 +27,7 @@ import type { BitcoinTransferAmount } from '@/infrastructure/chains/bitcoin'
 import {
   formatBaseUnitAmount,
   formatBaseUnitDecimalAmount,
+  formatTokenQuantity,
   parseDisplayUnitAmount
 } from '@/lib/number-format'
 import { formatPortfolioNetworkName } from '@/popup/components/portfolio/portfolio-format'
@@ -459,22 +461,64 @@ export function BitcoinSendForm({
   return (
     <>
       <div className="page-content space-y-4">
-        <div>
+        <div className="flex flex-col items-center gap-2 pt-2">
+          <SendAmountInputCard
+            ariaLabel="BTC amount"
+            value={amount}
+            onChange={value => {
+              if (/^\d*\.?\d*$/.test(value)) {
+                setAmount(value)
+                setSendMaximum(false)
+              }
+            }}
+            available={availableDisplay}
+            symbol="BTC"
+            priceUsd={balanceKnown ? priceUsd : null}
+            hero
+          />
           <SendAssetHeader
             assetId={asset.asset.id}
             symbol="BTC"
             icon={asset.metadata.iconUrl}
             networkName={formatPortfolioNetworkName(chain)}
             nativeChain="bitcoin"
-            variant="compact"
+            variant="pill"
           />
-          <p className="mt-1 text-center text-xs text-muted">
-            {formatPortfolioNetworkName(chain)} ·{' '}
-            {bitcoinAccountTypeDescription(bitcoinAddressType)}
-          </p>
+          <div className="flex min-w-0 items-center justify-center gap-2 text-xs text-muted">
+            <span className="min-w-0 truncate" title={balanceKnown ? availableDisplay : undefined}>
+              {balanceKnown ? formatTokenQuantity(availableDisplay) : '—'}
+            </span>
+            <button
+              type="button"
+              aria-label="Max"
+              aria-pressed={sendMaximum}
+              disabled={
+                !balanceKnown ||
+                BigInt(selectedAvailableRaw) <= 0n ||
+                !parsedRecipient ||
+                maximum.loading
+              }
+              onClick={() => {
+                setSendMaximum(true)
+                void maximum.request()
+              }}
+              className="rounded-md bg-primary/15 px-2 py-1 font-medium text-primary disabled:opacity-40"
+            >
+              Max
+            </button>
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-sm text-muted">Send from</span>
+          <BalanceDomainTabs value="public" available={['public']} onChange={() => {}} />
         </div>
 
         <div>
+          <div className="mb-2 flex items-center justify-between text-xs">
+            <span className="text-muted">Send to</span>
+            <span>{formatPortfolioNetworkName(chain)}</span>
+          </div>
           <SendRecipientInputCard
             id="bitcoin-send-recipient"
             value={recipient}
@@ -488,8 +532,8 @@ export function BitcoinSendForm({
             placeholder={
               chain.chain.network.kind === 'testnet' ? 'Bitcoin testnet address' : 'Bitcoin address'
             }
-            autoFocus
             variant="filled"
+            hideLabel
             onSelectRecipient={() => void handleSelectRecipient()}
           />
           {recipient && !parsedRecipient && (
@@ -501,39 +545,10 @@ export function BitcoinSendForm({
           )}
         </div>
 
-        <SendAmountInputCard
-          ariaLabel="BTC amount"
-          value={amount}
-          onChange={value => {
-            if (/^\d*\.?\d*$/.test(value)) {
-              setAmount(value)
-              setSendMaximum(false)
-            }
-          }}
-          available={availableDisplay}
-          availableLabel={transferAvailability.label}
-          symbol={balanceKnown ? 'BTC' : ''}
-          priceUsd={balanceKnown ? priceUsd : null}
-          maxSelected={sendMaximum}
-          maxDisabledReason={
-            !balanceKnown
-              ? 'Balance unavailable'
-              : BigInt(selectedAvailableRaw) <= 0n
-                ? 'No available balance'
-                : !parsedRecipient
-                  ? 'Enter a valid recipient to calculate Max'
-                  : undefined
-          }
-          maxLoading={maximum.loading}
-          onMax={() => {
-            setSendMaximum(true)
-            void maximum.request()
-          }}
-          variant="filled"
-        />
-
-        <div className="flex min-h-6 items-center justify-between gap-2 text-xs">
-          <span className="text-muted">Fee</span>
+        <div className="flex min-h-12 items-center justify-between gap-2 rounded-lg border border-white/15 px-4 py-3 text-xs">
+          <span className="text-muted">
+            Fee · {bitcoinAccountTypeDescription(bitcoinAddressType)}
+          </span>
           <div className="flex min-w-0 items-center gap-1.5">
             {feePreview.loading && (
               <Icon

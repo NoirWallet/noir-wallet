@@ -364,11 +364,6 @@ export function ManageTokens() {
       <PageHeader title="Manage Tokens" showBack />
 
       <div className="page-content space-y-3 pb-5">
-        <p className="text-xs leading-5 text-muted">
-          Choose which Intents Tokens appear in Assets. Gas Tokens and supported stablecoins are
-          enabled by default; other supported Tokens can be enabled here.
-        </p>
-
         <Input
           aria-label="Search Tokens"
           value={searchQuery}
@@ -412,10 +407,6 @@ export function ManageTokens() {
                   ? 'No matching Tokens'
                   : 'No Tokens found'}
             </p>
-            <Button variant="outline" className="mt-4 h-9" onClick={openAddToken}>
-              <Icon icon="lucide:plus" className="size-4" />
-              Add Token
-            </Button>
           </div>
         )}
 
@@ -503,12 +494,12 @@ export function ManageTokens() {
 
       <Dialog open={addOpen} onOpenChange={setAddDialogOpen}>
         <DialogContent position="bottom" className="max-h-[88vh] overflow-y-auto">
-          <DialogHeader>
+          <DialogHeader className="mb-6">
             <DialogTitle>Add Token</DialogTitle>
           </DialogHeader>
 
           <div className="space-y-1.5 text-xs text-muted">
-            <span>Network</span>
+            <span className="block">Network</span>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <button
@@ -603,7 +594,7 @@ export function ManageTokens() {
             </div>
           )}
 
-          <div className="flex gap-2 rounded-xl border border-warning/25 bg-warning/10 px-3 py-2.5 text-xs leading-5 text-warning">
+          <div className="flex gap-2 rounded-xl border border-warning/25 bg-warning-surface px-3 py-2.5 text-xs leading-5 text-warning">
             <Icon icon="lucide:triangle-alert" className="mt-0.5 size-4 shrink-0" />
             <span>Anyone can create a Token. Only add tokens you trust.</span>
           </div>

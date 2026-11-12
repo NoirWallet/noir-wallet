@@ -433,6 +433,7 @@ export function buildLiveSwapQuoteRequest(input: {
   readonly tokenOut: RheaSwapToken | null
   readonly amountIn: string
   readonly slippage: number
+  readonly quoteMode?: RheaSwapQuoteRequest['quoteMode']
   readonly refundAddress: string
   readonly recipientAddress: string
   readonly privateRecipientAddress?: string
@@ -463,49 +464,40 @@ export function buildLiveSwapQuoteRequest(input: {
     const amount = parseDisplayUnitAmount(input.amountIn, input.tokenIn.decimals)
     if (BigInt(amount) <= 0n) return null
     const slippageTolerance = Math.round(input.slippage * 100)
+    const request: RheaSwapQuoteRequest = {
+      fromChain: input.tokenIn.rheaChainId,
+      toChain: input.tokenOut.rheaChainId,
+      tokenIn: {
+        chain: input.tokenIn.rheaChainId,
+        address: input.tokenIn.rheaAddress,
+        symbol: input.tokenIn.symbol,
+        decimals: input.tokenIn.decimals,
+        isNative: input.tokenIn.isNative
+      },
+      tokenOut: {
+        chain: input.tokenOut.rheaChainId,
+        address: input.tokenOut.rheaAddress,
+        symbol: input.tokenOut.symbol,
+        decimals: input.tokenOut.decimals,
+        isNative: input.tokenOut.isNative
+      },
+      amountIn: amount,
+      slippageBps: slippageTolerance,
+      quoteMode: input.quoteMode ?? 'best-price',
+      sender: input.refundAddress,
+      recipient: input.recipientAddress,
+      ...(input.confidentiality === undefined ? {} : { confidentiality: input.confidentiality })
+    }
     return Object.freeze({
       scopeKey: JSON.stringify([
         input.tokenIn.assetId,
         input.tokenOut.assetId,
-        input.refundAddress,
-        input.recipientAddress,
-        slippageTolerance,
-        input.confidentiality ?? null
+        { ...request, amountIn: undefined }
       ]),
-      key: JSON.stringify([
-        input.tokenIn.assetId,
-        input.tokenOut.assetId,
-        amount,
-        input.refundAddress,
-        input.recipientAddress,
-        slippageTolerance,
-        input.confidentiality ?? null
-      ]),
+      key: JSON.stringify([input.tokenIn.assetId, input.tokenOut.assetId, request]),
       amount,
       slippageTolerance,
-      request: {
-        fromChain: input.tokenIn.rheaChainId,
-        toChain: input.tokenOut.rheaChainId,
-        tokenIn: {
-          chain: input.tokenIn.rheaChainId,
-          address: input.tokenIn.rheaAddress,
-          symbol: input.tokenIn.symbol,
-          decimals: input.tokenIn.decimals,
-          isNative: input.tokenIn.isNative
-        },
-        tokenOut: {
-          chain: input.tokenOut.rheaChainId,
-          address: input.tokenOut.rheaAddress,
-          symbol: input.tokenOut.symbol,
-          decimals: input.tokenOut.decimals,
-          isNative: input.tokenOut.isNative
-        },
-        amountIn: amount,
-        slippageBps: slippageTolerance,
-        sender: input.refundAddress,
-        recipient: input.recipientAddress,
-        ...(input.confidentiality === undefined ? {} : { confidentiality: input.confidentiality })
-      },
+      request,
       ...(input.confidentiality === undefined ? {} : { confidentiality: input.confidentiality })
     })
   } catch {

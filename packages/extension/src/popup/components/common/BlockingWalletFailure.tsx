@@ -18,7 +18,7 @@ export function BlockingWalletFailure({
   return (
     <div className="flex h-full flex-col">
       <div className="flex flex-1 flex-col items-center justify-center px-5 py-8 text-center">
-        <div className="mb-6 flex size-16 items-center justify-center rounded-full border border-warning/30 bg-warning/10 text-warning">
+        <div className="mb-6 flex size-16 items-center justify-center rounded-full border border-warning/30 bg-warning-surface text-warning">
           <svg
             aria-hidden="true"
             viewBox="0 0 24 24"

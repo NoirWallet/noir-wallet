@@ -45,6 +45,8 @@ interface MultichainActivityPanelProps {
   readonly localPagination?: boolean
   readonly historyFooter?: ReactNode
   readonly compact?: boolean
+  readonly heading?: string
+  readonly hideWhenEmpty?: boolean
   readonly accountMode?: DAppExecutionMode
   readonly focusTransactionId?: string | null
 }
@@ -106,6 +108,8 @@ export function MultichainActivityPanel({
   localPagination = false,
   historyFooter,
   compact = false,
+  heading,
+  hideWhenEmpty = false,
   accountMode,
   focusTransactionId
 }: MultichainActivityPanelProps) {
@@ -128,7 +132,11 @@ export function MultichainActivityPanel({
   )
   const setPortfolioChainSelection = useSettingsStore(state => state.setPortfolioChainSelection)
   const endpointSettings = useSettingsStore(state => state.chainEndpointSettings)
-  const { userAssets: userEvmAssets, detectedAssets: detectedEvmAssets } = useActivityEvmAssets()
+  const {
+    userAssets: userEvmAssets,
+    detectedAssets: detectedEvmAssets,
+    catalogTokens
+  } = useActivityEvmAssets()
   const filteredChainId = filterAssetId
     ? portfolio?.assets.find(asset => asset.asset.id === filterAssetId)?.asset.chainId
     : undefined
@@ -140,9 +148,10 @@ export function MultichainActivityPanel({
         endpointSettings,
         userEvmAssets,
         detectedEvmAssets,
+        catalogTokens,
         portfolio
       }),
-    [endpointSettings, network, portfolio, userEvmAssets, detectedEvmAssets]
+    [endpointSettings, network, portfolio, userEvmAssets, detectedEvmAssets, catalogTokens]
   )
   const executionAddressModes = useMemo(
     () => buildActivityExecutionAddressModes(accountNetworks),
@@ -187,7 +196,7 @@ export function MultichainActivityPanel({
       if (isActivityModelForScope(local, walletId, accountId)) {
         localModelAvailable = true
         setModel(local)
-        if (local.items.length > 0) setStatus('ready')
+        setStatus('ready')
       }
     } catch {
       // A supplemental refresh can still recover when the local read is temporarily unavailable.
@@ -515,9 +524,13 @@ export function MultichainActivityPanel({
     </div>
   ) : null
 
+  const sectionClassName = cn('min-h-0', heading && 'border-t border-white/[0.08] pt-4')
+  const sectionHeading = heading ? <h2 className="px-4 text-sm font-semibold">{heading}</h2> : null
+
   if (status === 'loading' && (!visibleModel || visibleItems.length === 0)) {
     return (
-      <section aria-label="Multichain activity" className="min-h-0">
+      <section aria-label="Multichain activity" className={sectionClassName}>
+        {sectionHeading}
         {toolbar}
         {recoveryBanners}
         <ListSkeleton rows={3} label="Loading activity" className="px-5 py-3" />
@@ -527,7 +540,8 @@ export function MultichainActivityPanel({
 
   if (status === 'error' && !visibleModel) {
     return (
-      <section aria-label="Multichain activity" className="min-h-0">
+      <section aria-label="Multichain activity" className={sectionClassName}>
+        {sectionHeading}
         {toolbar}
         {recoveryBanners}
         <div className={cn('flex items-center px-6', compact ? 'min-h-28 py-4' : 'min-h-48 py-8')}>
@@ -543,8 +557,10 @@ export function MultichainActivityPanel({
   }
 
   if (!visibleModel || visibleItems.length === 0) {
+    if (hideWhenEmpty && status === 'ready' && !olderControl) return fullHistoryLink
     return (
-      <section aria-label="Multichain activity" className="min-h-0">
+      <section aria-label="Multichain activity" className={sectionClassName}>
+        {sectionHeading}
         {toolbar}
         {recoveryBanners}
         <EmptyState
@@ -559,7 +575,8 @@ export function MultichainActivityPanel({
   }
 
   return (
-    <section aria-label="Multichain activity" className="min-h-0">
+    <section aria-label="Multichain activity" className={sectionClassName}>
+      {sectionHeading}
       {toolbar}
       {recoveryBanners}
       <div className="space-y-4 pb-4">

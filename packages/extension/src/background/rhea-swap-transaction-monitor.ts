@@ -49,6 +49,7 @@ export interface RheaSwapPortfolioRefreshRequest {
 
 export interface RheaSwapTransactionMonitorOptions {
   readonly refreshPortfolio?: (request: RheaSwapPortfolioRefreshRequest) => Promise<void>
+  readonly revealDestinationAsset?: (assetId: string) => Promise<void>
   readonly prepareZcashDestinationCatchUp?: (scope: TransactionAccountScope) => Promise<void>
   readonly notifyStatus?: (quoteHandle: string, status: SwapStatus) => void
   readonly loadZcashAccountScopes?: () => readonly AccountScope[]
@@ -457,6 +458,8 @@ export class RheaSwapTransactionMonitor {
         ...(destinationHash ? { destinationTxHash: destinationHash } : {}),
         notified: true
       })
+      if (!isTransfer && value.destinationAsset)
+        await this.revealDestinationAsset(value.destinationAsset)
       await this.refreshPortfolio(
         { keyDomainId: value.walletId, accountId: value.accountId },
         value.destinationAsset ? [parseAssetId(value.destinationAsset).chainId] : []
@@ -639,6 +642,8 @@ export class RheaSwapTransactionMonitor {
           ? { externalReference: orderReference }
           : { transactionHash: sourceHash })
       })
+      if (binding.userAction !== 'transfer')
+        await this.revealDestinationAsset(binding.destination.assetId)
       await this.refreshPortfolio(graph.root.scope, [
         binding.origin.chainId,
         binding.destination.chainId
@@ -689,6 +694,8 @@ export class RheaSwapTransactionMonitor {
         externalReference: binding.executionId,
         ...(orderStatus.destinationHash ? { transactionHash: orderStatus.destinationHash } : {})
       })
+      if (binding.userAction !== 'transfer')
+        await this.revealDestinationAsset(binding.destination.assetId)
       await this.refreshPortfolio(graph.root.scope, [
         binding.origin.chainId,
         binding.destination.chainId
@@ -806,6 +813,16 @@ export class RheaSwapTransactionMonitor {
       })
     } catch (error) {
       console.warn('[RHEA Swap Monitor] Portfolio refresh after completion failed:', error)
+    }
+  }
+
+  private async revealDestinationAsset(assetId: string): Promise<void> {
+    try {
+      await this.options.revealDestinationAsset?.(assetId)
+    } catch (error) {
+      console.warn('[RHEA Swap Monitor] Destination asset reveal failed', {
+        errorName: error instanceof Error ? error.name : 'UnknownError'
+      })
     }
   }
 

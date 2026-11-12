@@ -82,11 +82,15 @@ export function selectShieldMoveAssetId(input: {
       managed !== null
     )
   })
-  return (
-    (
-      candidates.find(item => item.asset.asset.id === input.preferredAssetId) ??
-      candidates.find(item => item.asset.asset.id === ETHEREUM_USDC_ASSET_ID) ??
-      candidates[0]
-    )?.asset.asset.id ?? null
-  )
+  const funded =
+    input.from === 'shield'
+      ? candidates
+      : candidates.filter(
+          item => BigInt(getTransferDomainBalanceRaw(item.asset, input.from) ?? '0') > 0n
+        )
+  const preferred = (items: typeof candidates) =>
+    items.find(item => item.asset.asset.id === input.preferredAssetId) ??
+    items.find(item => item.asset.asset.id === ETHEREUM_USDC_ASSET_ID) ??
+    items[0]
+  return (preferred(funded) ?? preferred(candidates))?.asset.asset.id ?? null
 }

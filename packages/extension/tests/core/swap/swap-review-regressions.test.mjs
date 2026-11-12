@@ -10,6 +10,7 @@ import {
   getRheaSwapErrorMessage,
   RheaSwapClientError
 } from '../../../src/popup/services/rhea-swap-client.ts'
+import { getSwapQuoteFailureMessage } from '../../../src/popup/services/swap-quote-error-message.ts'
 import {
   getRheaSwapMinimumAmountMessage,
   getSafeRheaSwapRuntimeErrorMessage
@@ -147,6 +148,16 @@ it('retains the reviewed sender, recipient, amount and privacy mode when a quote
   )
   assert.equal(quote.request.confidentiality, 'basic')
   assert.equal(quote.request.slippageBps, 100)
+  const fastQuote = buildLiveSwapQuoteRequest({ ...input, quoteMode: 'fast' })
+  assert.equal(fastQuote.request.quoteMode, 'fast')
+  assert.notEqual(fastQuote.key, quote.key)
+  assert.notEqual(fastQuote.scopeKey, quote.scopeKey)
+  const changedToken = buildLiveSwapQuoteRequest({
+    ...input,
+    tokenOut: { ...input.tokenOut, rheaAddress: 'different-usdc', decimals: 5 }
+  })
+  assert.notEqual(changedToken.key, quote.key)
+  assert.notEqual(changedToken.scopeKey, quote.scopeKey)
   assert.equal(buildLiveSwapQuoteRequest({ ...input, amountIn: '0.0000001' }), null)
   assert.equal(buildLiveSwapQuoteRequest({ ...input, amountIn: '0.5000001' }), null)
   assert.equal(buildLiveSwapQuoteRequest({ ...input, amountIn: '0.000001' }).request.amountIn, '1')
@@ -260,6 +271,21 @@ it('keeps minimum amounts while removing nested provider metadata without changi
     getRheaSwapErrorMessage(new RheaSwapClientError('{invalid response')),
     'An unexpected error occurred. Please try again.'
   )
+  assert.equal(
+    getSwapQuoteFailureMessage(
+      new Error(
+        'No confidential route available: quote failed (400): {"msg":"transport timeout","reason":"quote_timeout"}'
+      )
+    ),
+    'Request timed out.'
+  )
+  assert.equal(
+    getSwapQuoteFailureMessage(new Error('Temporary swap limits: minimum swap amount is $1,000')),
+    'Minimum swap amount is $1,000.'
+  )
+  assert.equal(getSwapQuoteFailureMessage(new Error('No route found')), 'no route')
+  assert.equal(getSwapQuoteFailureMessage(new Error('Shield balance is insufficient')), null)
+  assert.equal(getSwapQuoteFailureMessage(new Error('Confidential quote has expired')), null)
   assert.equal(
     getRheaSwapErrorMessage(
       new RheaSwapClientError('{"message":"Request timed out","path":"/internal"}')

@@ -1,6 +1,10 @@
 import type { PortfolioAssetView, PortfolioChainView, PortfolioReadModel } from '@/core/portfolio'
 import type { IntentsManagedAsset } from '@/core/services/intents-managed-assets'
 import type { SwapToken } from '@/core/services/intents-api'
+import { findAssetPrice, type AssetPriceReadModel } from '@/core/prices'
+import { getEvmNetworkConfigs } from '@/config/networks'
+import Big from '@/lib/big'
+import { formatBaseUnitDecimalAmount } from '@/lib/number-format'
 import {
   createAssetRegistry,
   createInitialProductChainRegistry,
@@ -226,6 +230,57 @@ export function shieldFundingSources(
   return balances
     ? assets.filter(asset => BigInt(shieldFundingAvailableRaw(asset, balances)) > 0n)
     : []
+}
+
+export function selectDefaultShieldWithdrawSource(
+  options: readonly ShieldFundingAsset[],
+  balances: readonly Readonly<{ tokenId: string; available: string }>[] | null,
+  model: PortfolioReadModel | null,
+  prices: AssetPriceReadModel | null,
+  network: Network
+): ShieldFundingAsset | null {
+  const funded = shieldFundingSources(options, balances)
+  let highestValue: Big | null = null
+  let highestValueSource: ShieldFundingAsset | null = null
+  for (const option of funded) {
+    const holding =
+      model?.confidential?.status === 'ready'
+        ? model.confidential.assets.find(
+            item =>
+              item.protocolAssetId === option.managed.protocolAssetId &&
+              (item.assetId === undefined || item.assetId === option.asset.asset.id) &&
+              (item.chainId === undefined || item.chainId === option.asset.asset.chainId)
+          )
+        : undefined
+    const priceUsd = findAssetPrice(prices, option.asset.asset.id)?.priceUsd ?? holding?.priceUsd
+    if (!priceUsd) continue
+    const value = new Big(
+      formatBaseUnitDecimalAmount(
+        shieldFundingAvailableRaw(option, balances),
+        option.asset.metadata.decimals
+      )
+    ).times(priceUsd)
+    if (!highestValue || value.gt(highestValue)) {
+      highestValue = value
+      highestValueSource = option
+    }
+  }
+  if (highestValueSource) return highestValueSource
+  if (funded.length > 0) return funded[0]!
+
+  const ethereumUsdc = getEvmNetworkConfigs(network)
+    .find(config => config.chainId === 'eip155:1')
+    ?.usdcContract?.toLowerCase()
+  return (
+    options.find(
+      option =>
+        option.asset.asset.chainId === 'eip155:1' &&
+        option.asset.asset.namespace === 'erc20' &&
+        option.asset.asset.reference.toLowerCase() === ethereumUsdc
+    ) ??
+    options[0] ??
+    null
+  )
 }
 
 export function resolveShieldManagedAsset(

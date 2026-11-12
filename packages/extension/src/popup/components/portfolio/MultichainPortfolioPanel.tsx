@@ -6,6 +6,7 @@ import { resolvePortfolioChainSelection } from '@/popup/services/portfolio-prese
 import type { AssetPriceReadModel } from '@/core/prices'
 import { ListSkeleton } from '../ui/skeleton'
 import { useSettingsStore } from '@/store/settings-store'
+import { useWalletStore } from '@/store/wallet-store'
 import { getPortfolioRecoveryDelayMs, hasPortfolioBalanceRefreshIssue } from './portfolio-recovery'
 import { hasRetryablePortfolioPriceGap, summarizePortfolioFiat } from './portfolio-prices'
 import {
@@ -70,12 +71,20 @@ export function MultichainPortfolioPanel({
   onManageTokens
 }: MultichainPortfolioPanelProps) {
   const scopeKey = JSON.stringify([walletId ?? '', accountId ?? ''])
+  const network = useWalletStore(state => state.currentNetwork)
+  const chainListScopeKey = JSON.stringify([network, walletId ?? '', accountId ?? ''])
   const persistedChainSelection = useSettingsStore(
     state => state.portfolioChainSelectionByAccount[scopeKey]
   )
   const portfolioViewMode = useSettingsStore(state => state.portfolioViewMode)
   const setPortfolioViewMode = useSettingsStore(state => state.setPortfolioViewMode)
   const setPortfolioChainSelection = useSettingsStore(state => state.setPortfolioChainSelection)
+  const chainListExpanded = useSettingsStore(
+    state => state.expandedPortfolioChainLists[chainListScopeKey] === true
+  )
+  const setPortfolioChainListExpanded = useSettingsStore(
+    state => state.setPortfolioChainListExpanded
+  )
   const [recoveryAttempt, setRecoveryAttempt] = useState(0)
 
   useEffect(() => {
@@ -187,6 +196,10 @@ export function MultichainPortfolioPanel({
       balancesHidden={balancesHidden}
       view={portfolioViewMode}
       onViewChange={setPortfolioViewMode}
+      chainListExpanded={chainListExpanded}
+      onChainListExpandedChange={expanded => {
+        if (walletId && accountId) setPortfolioChainListExpanded(chainListScopeKey, expanded)
+      }}
       refreshing={status === 'loading' || priceStatus === 'loading' || recoveryNeeded}
       refreshDisabled={status === 'loading' || priceStatus === 'loading'}
       selectedChainIds={selectedChainIds}

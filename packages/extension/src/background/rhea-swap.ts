@@ -19,13 +19,14 @@ import {
 import type { TransactionGraph } from '@/core/transactions/domain'
 import { DEFAULT_REQUEST_TIMEOUT_MS } from '@/config/extension'
 import { RHEA_SWAP_TRANSACTION_MONITOR_ALARM } from './rhea-swap-transaction-monitor'
-import type { QuoteBinding } from '@/types/wallet'
+import type { FundingSource, QuoteBinding } from '@/types/wallet'
 import { safeBig } from '@/lib/big'
 
 export async function readRheaZcashTransferDeadline(
   binding: QuoteBinding | undefined,
   to: string | undefined,
-  amount: string | undefined
+  amount: string | undefined,
+  fundingSource: FundingSource | undefined
 ): Promise<number | undefined> {
   if (binding?.provider !== 'rhea-cross-chain-dex') return undefined
   const service = createBackgroundRheaSwapService()
@@ -39,7 +40,8 @@ export async function readRheaZcashTransferDeadline(
   return service.readZcashTransferDeadline(binding.quoteHandle, {
     executionId: binding.executionId,
     to,
-    amountZats: amountZats.toFixed(0)
+    amountZats: amountZats.toFixed(0),
+    fundingSource
   })
 }
 

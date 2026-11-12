@@ -97,7 +97,7 @@ export function AccountNetworkFamilyChoices({
             {family === 'zcash' && showZcashSyncWarning && (
               <div
                 className={cn(
-                  'mb-2 mt-1 flex items-start gap-2 rounded-lg bg-warning/10 px-3 py-2.5 text-xs leading-5 text-warning',
+                  'mb-2 mt-1 flex items-start gap-2 rounded-lg bg-warning-surface px-3 py-2.5 text-xs leading-5 text-warning',
                   variant === 'import' && 'text-sm'
                 )}
               >

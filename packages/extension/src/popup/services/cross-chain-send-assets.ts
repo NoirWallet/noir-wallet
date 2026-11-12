@@ -1,6 +1,7 @@
 import { getEvmNetworkConfigs } from '@/config/networks'
 import { RHEA_SWAP_CHAIN_CATALOG, type RheaSwapToken } from '@/core/services/rhea-swap'
 import { parseSolanaPublicKey } from '@/core/chains/solana'
+import { parseAssetId } from '@/core/chains/registry'
 
 type SendAssetIdentity = Readonly<{
   chainId: string
@@ -40,6 +41,24 @@ export function getCrossChainSendAssetGroup(
     return 'USDC'
   }
   return null
+}
+
+export function getCrossChainSendDestinationAssetId(
+  chainId: string,
+  group: CrossChainSendAssetGroup
+): string | null {
+  const evm = MAINNET_EVM_NETWORKS.find(network => network.chainId === chainId)
+  if (evm) {
+    if (group === 'ETH' && evm.nativeCurrency.symbol === 'ETH') {
+      return `${chainId}/slip44:${evm.nativeCurrency.slip44Reference}`
+    }
+    if (group === 'USDC' && evm.usdcContract) {
+      return `${chainId}/erc20:${evm.usdcContract}`
+    }
+  }
+  return group === 'USDC' && chainId.startsWith('solana:')
+    ? `${chainId}/token:${SOLANA_USDC_MINT}`
+    : null
 }
 
 export function getCrossChainSendTokenGroup(token: RheaSwapToken): CrossChainSendAssetGroup | null {
@@ -85,6 +104,35 @@ export function filterCrossChainSendDestinations(
 ): readonly RheaSwapToken[] {
   return destinations.filter(destination =>
     isCrossChainSendDestination(source, destination, capabilities)
+  )
+}
+
+export function resolveCrossChainSendDestinationByWalletAssetId(
+  source: RheaSwapToken | null,
+  walletAssetId: string | null,
+  destinations: readonly RheaSwapToken[],
+  capabilities: CrossChainSendCapabilities
+): RheaSwapToken | null {
+  if (!walletAssetId) return null
+  let asset: ReturnType<typeof parseAssetId>
+  try {
+    asset = parseAssetId(walletAssetId)
+  } catch {
+    return null
+  }
+  const group = getCrossChainSendAssetGroup(asset)
+  if (!group) return null
+  return (
+    destinations.find(destination => {
+      const chainMatches =
+        asset.chainId === `eip155:${destination.rheaChainId}` ||
+        (asset.chainId.startsWith('solana:') && destination.rheaChainId === 'solana')
+      return (
+        chainMatches &&
+        getCrossChainSendTokenGroup(destination) === group &&
+        isCrossChainSendDestination(source, destination, capabilities)
+      )
+    }) ?? null
   )
 }
 

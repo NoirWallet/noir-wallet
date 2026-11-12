@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { Icon } from '@iconify/react'
 import zamaLogo from '@/images/figma-zama.png'
 import privacyPoolsLogo from '@/images/figma-privacy-pools.png'
 import { formatFiatAmount } from '@/lib/number-format'
@@ -128,7 +129,7 @@ function ShieldFundsContent() {
       go(
         provider === 'zcash-shield'
           ? '/send/zcash?move=1&from=transparent'
-          : '/transfer?entry=shield&provider=near-confidential'
+          : `/transfer?entry=shield&provider=near-confidential&mode=${mode}`
       )
       return
     }
@@ -137,7 +138,8 @@ function ShieldFundsContent() {
       return
     }
     if (action === 'swap') {
-      go('/shield-swap?provider=near-confidential')
+      if (provider === 'near-confidential' && canManageNear)
+        go('/shield-swap?provider=near-confidential')
       return
     }
     if (provider === 'zcash-shield') {
@@ -152,7 +154,11 @@ function ShieldFundsContent() {
   }
   const openAction = (action: ShieldAction) => {
     if (action === 'move') {
-      navigate(canManageNear ? '/transfer?entry=shield' : '/send/zcash?move=1&from=transparent')
+      navigate(
+        canManageNear
+          ? `/transfer?entry=shield&mode=${mode}`
+          : '/send/zcash?move=1&from=transparent'
+      )
       return
     }
     if (action === 'receive') {
@@ -183,7 +189,11 @@ function ShieldFundsContent() {
     handledActionQuery.current = location.search
     const providers = availableProviders(requestedAction)
     if (requestedAction === 'move' && providers.length > 0) {
-      replace(canManageNear ? '/transfer?entry=shield' : '/send/zcash?move=1&from=transparent')
+      replace(
+        canManageNear
+          ? `/transfer?entry=shield&mode=${mode}`
+          : '/send/zcash?move=1&from=transparent'
+      )
     } else if (requestedAction === 'receive' && providers.length > 0) {
       replace('/shield-deposit')
     } else if (providers.length === 1) runAction(providers[0]!, requestedAction, true)
@@ -273,7 +283,7 @@ function ShieldFundsContent() {
                             .map((entry, index) => (
                               <TokenIcon
                                 key={entry.asset.tokenId}
-                                assetId={entry.asset.assetId}
+                                assetId={entry.asset.assetId ?? entry.asset.protocolAssetId}
                                 symbol={entry.asset.symbol ?? '?'}
                                 icon={entry.asset.iconUrl}
                                 size={16}
@@ -328,6 +338,48 @@ function ShieldFundsContent() {
             </div>
           ))}
         </div>
+        <section aria-labelledby="shield-explanation" className="mt-8">
+          <h2 id="shield-explanation" className="text-sm text-wallet-secondary">
+            How Shielded Works?
+          </h2>
+          <div className="mt-5 space-y-7">
+            {[
+              {
+                icon: 'noir:shield-assets',
+                title: 'Held by the route, not Noir',
+                description:
+                  'When you shield, your funds move to the route you pick. That route’s protocol holds them, not Noir.'
+              },
+              {
+                icon: 'lucide:lock',
+                title: 'Only you can move them',
+                description: 'Only your account can send, swap or move them.'
+              },
+              {
+                icon: 'lucide:globe',
+                title: 'Breaks the on-chain link',
+                description:
+                  'Funds that go through Shield are no longer linked to your Public address.'
+              },
+              {
+                icon: 'lucide:list',
+                title: 'Each route has trade-offs',
+                description:
+                  'Before you move in or receive, check what it supports, how fast and costly it is, and who runs it.'
+              }
+            ].map(item => (
+              <div key={item.title} className="flex items-start gap-4">
+                <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-success/15 text-success">
+                  <Icon icon={item.icon} width={19} height={19} />
+                </span>
+                <div className="min-w-0">
+                  <h3 className="text-sm font-semibold leading-5">{item.title}</h3>
+                  <p className="mt-2 text-xs leading-4 text-wallet-secondary">{item.description}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
       </div>
       <Dialog open={pendingAction !== null} onOpenChange={open => !open && setPendingAction(null)}>
         <DialogContent position="bottom" className="gap-2 bg-wallet-surface p-4 pb-6">

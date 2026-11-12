@@ -405,7 +405,7 @@ export function ZcashSettings() {
               ))
             )}
           </div>
-          {!addressLoading && !addressError && network && (
+          {isCurrentAccount && !addressLoading && !addressError && network && (
             <div className="mt-3">
               <Button
                 type="button"

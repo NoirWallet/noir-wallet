@@ -56,7 +56,6 @@ import { ShieldProviderDetail } from './pages/portfolio/ShieldProviderDetail'
 import { ShieldFundsPage } from './pages/portfolio/ShieldFundsPage'
 import { ShieldWithdrawPage } from './pages/portfolio/ShieldWithdrawPage'
 import { ShieldDepositPage } from './pages/portfolio/ShieldDepositPage'
-import { ShieldSwapPage } from './pages/portfolio/ShieldSwapPage'
 
 // Swap Page
 import { Swap } from './pages/swap/Swap'
@@ -299,7 +298,7 @@ function AppRoutes() {
       <Route path="/shield-funds" element={<ShieldFundsPage />} />
       <Route path="/shield-withdraw" element={<ShieldWithdrawPage />} />
       <Route path="/shield-deposit" element={<ShieldDepositPage />} />
-      <Route path="/shield-swap" element={<ShieldSwapPage />} />
+      <Route path="/shield-swap" element={<Swap />} />
       <Route path="/settings" element={<Settings />} />
       <Route path="/default-evm-wallet" element={<DefaultEvmWallet />} />
       <Route path="/general" element={<General />} />

@@ -235,6 +235,7 @@ import {
 } from './confidential-funding'
 import type { ConfidentialFundingCoordinator } from './confidential-funding-coordinator'
 import { getConfidentialFundingMessageHandler } from './confidential-funding-messages'
+import { ExternalShieldDepositError } from '@/core/services/confidential-funding/confidential-external-deposit'
 import { ChromeConfidentialFundingStore } from './confidential-funding-store'
 import { createEvmWalletRuntimeError } from '@/core/chains/evm'
 import { hidePortfolioAssets } from '@/core/portfolio'
@@ -380,6 +381,8 @@ import type { ChromeTokenVisibilityRepository } from '@/infrastructure/portfolio
 import type { DetectedEvmAssetRecord, UserEvmAssetRecord } from '@/core/chains/user-assets'
 import { createBackgroundUserEvmAssetRuntime } from './user-evm-assets'
 import { fetchSwapTokens, type SwapToken } from '@/core/services/intents-api'
+import { resolveManagedIntentsAssets } from '@/core/services/intents-managed-assets'
+import { getBundledInitialProductAssetDefinitions } from '@/core/chains/registry'
 import {
   createIntentsWalletAssetCatalog,
   resolveIntentsWalletAsset,
@@ -469,6 +472,7 @@ const rheaSwapService = DEFAULT_NETWORK === 'mainnet' ? createBackgroundRheaSwap
 const rheaSwapTransactionMonitor = rheaSwapService
   ? new RheaSwapTransactionMonitor(rheaSwapService, {
       loadZcashAccountScopes: getZcashAccountScopes,
+      revealDestinationAsset: revealSettledSwapDestinationAsset,
       prepareZcashDestinationCatchUp: scope =>
         prepareRheaSwapZcashDestinationCatchUp(scope, {
           getNetwork: () => backgroundZcashWalletRuntime.getNetwork(),
@@ -1493,6 +1497,41 @@ function refreshIntentsProtocolAssets(force = false): Promise<void> {
     }
   )
   return operation
+}
+
+async function revealSettledSwapDestinationAsset(assetId: string): Promise<void> {
+  await refreshIntentsProtocolAssets()
+  const networks = resolveEvmNetworkCatalog(DEFAULT_NETWORK, getActiveChainEndpointSettings())
+  const asset = resolveManagedIntentsAssets(
+    intentsFullCatalogTokens,
+    DEFAULT_NETWORK,
+    networks
+  ).find(candidate => candidate.assetId === assetId)
+  if (!asset) return
+  const bundledEvmAsset =
+    asset.management === 'evm' &&
+    getBundledInitialProductAssetDefinitions(DEFAULT_NETWORK).some(
+      candidate =>
+        candidate.chainId === asset.chainId &&
+        candidate.namespace === 'erc20' &&
+        candidate.reference.toLowerCase() === asset.reference.toLowerCase()
+    )
+  if (
+    asset.management === 'evm' &&
+    !bundledEvmAsset &&
+    !userEvmAssetRecords.some(record => record.assetId === assetId)
+  ) {
+    const coordinator = userEvmAssetCoordinator
+    if (!coordinator) return
+    await coordinator.ensure({
+      chainId: asset.chainId,
+      contractAddress: asset.reference,
+      expectedDecimals: asset.decimals,
+      ...(asset.iconUrl ? { iconUrl: asset.iconUrl } : {})
+    })
+    await refreshMultichainRuntimeForUserAssets(false, [asset.chainId])
+  }
+  await tokenVisibility?.revealHeldProtocolAssets([asset.assetId])
 }
 
 async function refreshMultichainRuntimeForUserAssets(
@@ -3799,6 +3838,7 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
   if (
     message.type === 'GET_RHEA_SWAP_TOKENS' ||
     message.type === 'QUOTE_RHEA_SWAP' ||
+    message.type === 'SELECT_RHEA_SWAP_ROUTE' ||
     message.type === 'PREPARE_RHEA_SWAP' ||
     message.type === 'GET_RHEA_SWAP_EVM_PLAN' ||
     message.type === 'GET_RHEA_SWAP_EVM_SIGNATURE_PLAN' ||
@@ -4020,7 +4060,14 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
                                         ? rheaSwapService.getOrderStatus(
                                             message.quoteHandle as string
                                           )
-                                        : rheaSwapService.discard(message.quoteHandle as string)
+                                        : message.type === 'SELECT_RHEA_SWAP_ROUTE'
+                                          ? runScopedSwap(message.quoteHandle as string, () =>
+                                              rheaSwapService.selectRoute(
+                                                message.quoteHandle as string,
+                                                message.routeIndex as number
+                                              )
+                                            )
+                                          : rheaSwapService.discard(message.quoteHandle as string)
     void operation
       .then(result => {
         sendResponse(
@@ -4183,16 +4230,33 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
       sendResponse({ error: 'Unauthorized confidential funding request' })
       return true
     }
-    const operation = confidentialFundingHandler({ coordinator, accountContextTransition }, message)
+    const operation = Promise.resolve().then(async () => {
+      if (
+        message.type === 'CREATE_EXTERNAL_SHIELD_DEPOSIT' &&
+        !coordinator.hasExternalDepositAsset(message.request.source)
+      ) {
+        // The receive page can refresh its catalog after this runtime was constructed.
+        await refreshIntentsProtocolAssets(true)
+      }
+      const currentCoordinator = confidentialFundingCoordinator
+      if (!currentCoordinator)
+        throw new Error('Confidential funding is unavailable in this network')
+      return confidentialFundingHandler(
+        { coordinator: currentCoordinator, accountContextTransition },
+        message
+      )
+    })
     void operation
       .then(result => sendResponse({ result }))
       .catch(error => {
         console.error('[Confidential Funding] Request failed', {
           operation: message.type,
-          errorName: error instanceof Error ? error.name : 'UnknownError'
+          errorName: error instanceof Error ? error.name : 'UnknownError',
+          ...(error instanceof ExternalShieldDepositError ? { failureStage: error.stage } : {})
         })
         sendResponse({
-          error: error instanceof Error ? error.message : 'Confidential funding request failed'
+          error: error instanceof Error ? error.message : 'Confidential funding request failed',
+          ...(error instanceof ExternalShieldDepositError ? { depositStage: error.stage } : {})
         })
       })
     return true
@@ -5643,7 +5707,8 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
             const deadline = await readRheaZcashTransferDeadline(
               request.quoteBinding,
               request.to,
-              request.amount
+              request.amount,
+              request.fundingSource
             )
             return await walletCore.pcztProveSend(
               prepared.fullPcztBase64,
@@ -5726,7 +5791,8 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
             const deadline = await readRheaZcashTransferDeadline(
               request.quoteBinding,
               request.to,
-              request.amount
+              request.amount,
+              request.fundingSource
             )
             return await walletCore.pcztProveSend(prepared.fullPcztBase64, signed, deadline)
           } catch (error) {
@@ -7274,7 +7340,8 @@ async function handleBackgroundZcashTx(params: {
         const submissionDeadline = await readRheaZcashTransferDeadline(
           pendingRecord.quoteBinding,
           sendParams!.to,
-          sendParams!.amount
+          sendParams!.amount,
+          sendParams!.fundingSource
         )
         const transferResult = await walletCore.sendTransaction(
           { ...sendParams!, marginalFeeZats, feeQuoteId },

@@ -365,6 +365,7 @@ it('settles the original Zcash record and retries reporting without polling a te
   }
   const options = {
     loadZcashTransactions: async () => [tx],
+    revealDestinationAsset: async assetId => calls.push(`reveal:${assetId}`),
     updateZcashTransaction: async (_key, id, updates) => {
       assert.equal(id, tx.id)
       Object.assign(tx, updates)
@@ -376,6 +377,7 @@ it('settles the original Zcash record and retries reporting without polling a te
   await monitor.check(pending)
   assert.equal(tx.status, 'success')
   assert.equal(tx.destinationTxHash, '0x' + 'b'.repeat(64))
+  assert.equal(calls.filter(call => call === `reveal:${canonicalUsdc}`).length, 1)
   assert.equal(values.get('rhea_swap_pending_transactions')[0].settled, true)
   assert.equal(calls.includes('discard'), false)
 
@@ -387,6 +389,7 @@ it('settles the original Zcash record and retries reporting without polling a te
     }
   }
   await resumed.recheckNow()
+  assert.equal(calls.filter(call => call === `reveal:${canonicalUsdc}`).length, 1)
   assert.deepEqual(values.get('rhea_swap_pending_transactions'), [])
   assert.equal(calls.filter(call => call === 'status').length, 1)
   assert.equal(calls.filter(call => call === 'report').length, 2)

@@ -4,7 +4,12 @@ const BASE_RECOVERY_DELAY_MS = 1_000
 const MAX_RECOVERY_DELAY_MS = 30_000
 
 export function hasPortfolioBalanceRefreshIssue(chains: readonly PortfolioChainView[]): boolean {
-  return chains.some(chain => chain.status === 'error' || chain.errorCodes.length > 0)
+  return chains.some(
+    chain =>
+      chain.status === 'error' ||
+      chain.errorCodes.length > 0 ||
+      (chain.chain.family !== 'zcash' && chain.status === 'loading' && chain.assets.length === 0)
+  )
 }
 
 export function getPortfolioRecoveryDelayMs(attempt: number): number {
