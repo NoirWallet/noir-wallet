@@ -181,6 +181,15 @@ function ZcashCapabilityEntry({
   return children
 }
 
+function ZcashSendRoute() {
+  const location = useLocation()
+  return new URLSearchParams(location.search).get('move') === '1' ? (
+    <Send />
+  ) : (
+    <MultichainSend initialZcashProvider />
+  )
+}
+
 function VotingCapabilityEntry({ children }: { children: ReactNode }) {
   const { replace } = useNavigate()
   const { activeAccount, loading } = useActiveAccountNetworks()
@@ -237,7 +246,7 @@ function AppRoutes() {
           path="/send/zcash"
           element={
             <ZcashCapabilityEntry fallbackPath="/send">
-              <Send />
+              <ZcashSendRoute />
             </ZcashCapabilityEntry>
           }
         />

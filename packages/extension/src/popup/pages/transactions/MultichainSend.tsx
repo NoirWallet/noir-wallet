@@ -27,8 +27,19 @@ import type { EvmTransferSubmission } from '@/popup/services/evm-wallet-client'
 import { useNavigate } from '@/popup/provider/Router'
 import { useWalletStore } from '@/store/wallet-store'
 import { useAccountDataStore } from '@/store/account-data-store'
+import { ZEC_ZCASH_ASSET } from '@/config/intents'
+import type { FundingSource } from '@/types'
+import type { ShieldProvider } from '@/popup/services/asset-domains'
+import { Send } from './Send'
+import { ShieldSendProviderTabs } from '@/popup/components/portfolio/ShieldSendProviderTabs'
+import { ShieldSourceTokenPickerRows } from '@/popup/components/tokens/ShieldSourceTokenPickerRows'
+import { getPrivateTransferChainIds } from '@/popup/services/private-balance-transfer'
 import { EvmSendForm } from './EvmSendForm'
-import { ShieldWithdrawForm, type ShieldWithdrawEntry } from '../portfolio/ShieldWithdrawPage'
+import {
+  ShieldWithdrawForm,
+  type ShieldWithdrawEntry,
+  type ShieldWithdrawSourcePickerState
+} from '../portfolio/ShieldWithdrawPage'
 import { EvmTransactionResult } from './EvmTransactionResult'
 import { BitcoinSendForm } from './BitcoinSendForm'
 import { BitcoinTransactionResult } from './BitcoinTransactionResult'
@@ -73,6 +84,18 @@ type SendSubmission =
   | Readonly<{ family: 'bitcoin'; value: BitcoinTransferSubmission }>
   | Readonly<{ family: 'solana'; value: SolanaTransferSubmission }>
   | Readonly<{ family: 'near'; value: NearTransferSubmission }>
+
+interface SendDomainSession {
+  key: string
+  routeKey: string
+  source: 'main' | 'shield'
+  publicVisited: boolean
+  publicRecipient: string
+  shieldEntry: ShieldWithdrawEntry | null
+  shieldProvider: ShieldProvider
+  zcashVisited: boolean
+  zcashInitialFundingSource: FundingSource
+}
 
 const crossChainCapabilities = Object.freeze({
   evm: resolveEvmFeatureRuntimePolicy(__ENABLED_CHAIN_FEATURE_FLAGS__).newOperationsEnabled,
@@ -303,7 +326,9 @@ function AssetSelection({
   )
 }
 
-export function MultichainSend() {
+export function MultichainSend({
+  initialZcashProvider = false
+}: { readonly initialZcashProvider?: boolean } = {}) {
   const [searchParams] = useSearchParams()
   const location = useLocation()
   const requestedAssetId = searchParams.get('assetId')
@@ -317,7 +342,8 @@ export function MultichainSend() {
   const chainEndpointRuntimeKey = useSettingsStore(state =>
     getChainEndpointRuntimeKey(state.chainEndpointSettings)
   )
-  const zcashTotal = useAccountDataStore(state => state.getCurrentBalance()?.total ?? '0')
+  const zcashBalance = useAccountDataStore(state => state.getCurrentBalance())
+  const zcashTotal = zcashBalance?.total ?? '0'
   const requestSequence = useRef(0)
   const appliedRequestedAssetRef = useRef<string | null>(null)
   const [modelSnapshot, setModelSnapshot] = useState<{
@@ -337,6 +363,20 @@ export function MultichainSend() {
   } | null>(null)
   const [submission, setSubmission] = useState<SendSubmission | null>(null)
   const [assetPickerOpen, setAssetPickerOpen] = useState(false)
+  const [sourcePicker, setSourcePicker] = useState<{
+    mode: 'shield' | 'zcash-public'
+    provider: ShieldProvider
+  } | null>(null)
+  const [sourcePickerQuery, setSourcePickerQuery] = useState('')
+  const [nearSourceOptions, setNearSourceOptions] = useState<{
+    key: string
+    value: ShieldWithdrawSourcePickerState
+  } | null>(null)
+  const [zcashFundingSelection, setZcashFundingSelection] = useState<{
+    key: string
+    source: FundingSource
+    revision: number
+  } | null>(null)
   const [destinationCatalog, setDestinationCatalog] = useState<{
     key: string
     assetIds: readonly string[]
@@ -356,21 +396,21 @@ export function MultichainSend() {
     chainEndpointRuntimeKey
   ])
   const sendEntryKey = `${location.key}:${scopeKey}`
-  const [domainSession, setDomainSession] = useState<{
-    key: string
-    routeKey: string
-    source: 'main' | 'shield'
-    publicVisited: boolean
-    publicRecipient: string
-    shieldEntry: ShieldWithdrawEntry | null
-  } | null>(null)
+  useEffect(() => {
+    setSourcePicker(null)
+    setNearSourceOptions(null)
+    setZcashFundingSelection(null)
+  }, [sendEntryKey])
+  const [domainSession, setDomainSession] = useState<SendDomainSession | null>(null)
+  const requestedZcashProvider =
+    initialZcashProvider || searchParams.get('provider') === 'zcash-shield'
   const initialSource =
     domainSession?.routeKey === location.key
       ? domainSession.source
-      : requestedSourceMode === 'shield'
+      : requestedZcashProvider || requestedSourceMode === 'shield'
         ? 'shield'
         : 'main'
-  const currentSession =
+  const currentSession: SendDomainSession =
     domainSession?.key === sendEntryKey
       ? domainSession
       : {
@@ -379,17 +419,55 @@ export function MultichainSend() {
           source: initialSource,
           publicVisited: initialSource !== 'shield',
           publicRecipient: requestedRecipient ?? '',
+          shieldProvider: requestedZcashProvider ? 'zcash-shield' : 'near-confidential',
+          zcashVisited: requestedZcashProvider,
+          zcashInitialFundingSource:
+            searchParams.get('from') === 'shielded' ||
+            (requestedZcashProvider && !initialZcashProvider)
+              ? 'shielded'
+              : 'transparent',
           shieldEntry:
             initialSource === 'shield'
               ? {
-                  assetId: requestedAssetId,
+                  assetId: requestedZcashProvider ? ZEC_ZCASH_ASSET : requestedAssetId,
                   networkId: searchParams.get('networkId'),
                   recipient: requestedRecipient ?? '',
-                  provider: searchParams.get('provider')
+                  provider: 'near-confidential'
                 }
               : null
         }
   const shieldActive = currentSession.source === 'shield'
+  const zcashActive =
+    shieldActive && currentSession.shieldProvider === 'zcash-shield' && !sourcePicker
+  const nearActive =
+    shieldActive && currentSession.shieldProvider === 'near-confidential' && !sourcePicker
+  const selectZcash = (source: FundingSource) => {
+    setAssetPickerOpen(false)
+    setZcashFundingSelection(previous => ({
+      key: sendEntryKey,
+      source,
+      revision: (previous?.revision ?? 0) + 1
+    }))
+    setDomainSession({
+      ...currentSession,
+      source: 'shield',
+      shieldProvider: 'zcash-shield',
+      zcashVisited: true,
+      zcashInitialFundingSource: currentSession.zcashVisited
+        ? currentSession.zcashInitialFundingSource
+        : source,
+      shieldEntry: currentSession.shieldEntry ?? {
+        assetId: ZEC_ZCASH_ASSET,
+        networkId: null,
+        recipient: '',
+        provider: 'near-confidential'
+      }
+    })
+  }
+  const openSourcePicker = (mode: 'shield' | 'zcash-public', provider: ShieldProvider) => {
+    setSourcePickerQuery('')
+    setSourcePicker({ mode, provider })
+  }
   const [{ reviewing: shieldReviewing, busy: shieldBusy }, setShieldState] = useState({
     reviewing: false,
     busy: false
@@ -401,6 +479,12 @@ export function MultichainSend() {
       )
     },
     []
+  )
+  const handleNearSourceOptions = useCallback(
+    (value: ShieldWithdrawSourcePickerState) => {
+      setNearSourceOptions({ key: sendEntryKey, value })
+    },
+    [sendEntryKey]
   )
   const setSelection = (value: SendAsset | null) =>
     setSelectionSnapshot({ scopeKey, entryKey: location.key, requestedAssetId, value })
@@ -418,7 +502,7 @@ export function MultichainSend() {
       ? navigationSnapshot.sendEntry
       : null
   const returnToEntry =
-    sendEntry !== null
+    sendEntry !== null || initialZcashProvider
       ? goBack
       : () => {
           if (shieldActive) navigate('/send', { replace: true, state: navigationSnapshot })
@@ -458,6 +542,12 @@ export function MultichainSend() {
       : initialPrices
   const zcashEnabled =
     storageV2Account?.networks.some(network => network.chain.family === 'zcash') ?? true
+  const confidentialEnabled =
+    getPrivateTransferChainIds(storageV2Account, currentNetwork === 'mainnet').length > 0
+  const availableShieldProviders: ShieldProvider[] = [
+    ...(confidentialEnabled ? (['near-confidential'] as const) : []),
+    ...(zcashEnabled ? (['zcash-shield'] as const) : [])
+  ]
 
   useEffect(() => {
     let cancelled = false
@@ -726,10 +816,10 @@ export function MultichainSend() {
     const chain = visibleModel.chains.find(item => item.chain.id === requested.asset.chainId)
     appliedRequestedAssetRef.current = `${sendEntryKey}:${selectedAssetId}`
     if (chain?.chain.family === 'zcash') {
-      navigate('/send/zcash', { replace: true })
+      selectZcash('transparent')
       return
     }
-  }, [loadStatus, visibleModel, navigate, selectedAssetId, shieldActive, sendEntryKey])
+  }, [loadStatus, visibleModel, selectedAssetId, shieldActive, sendEntryKey])
 
   if (submission?.family === 'evm' && selection?.chain.chain.family === 'evm') {
     return (
@@ -832,6 +922,10 @@ export function MultichainSend() {
       ...currentSession,
       source: sourceMode,
       publicVisited: currentSession.publicVisited || sourceMode === 'main',
+      shieldProvider:
+        sourceMode === 'shield' && currentSession.source === 'main'
+          ? 'near-confidential'
+          : currentSession.shieldProvider,
       publicRecipient:
         sourceMode === 'main' && !currentSession.publicVisited
           ? recipient
@@ -843,25 +937,35 @@ export function MultichainSend() {
           : null)
     })
   }
+  const nearPicker = nearSourceOptions?.key === sendEntryKey ? nearSourceOptions.value : null
+  const searchedNearItems = nearPicker?.items.filter(item =>
+    `${item.symbol} ${item.chainName ?? ''}`
+      .toLowerCase()
+      .includes(sourcePickerQuery.trim().toLowerCase())
+  )
+  const zcashPickerVisible =
+    zcashEnabled && `zec zcash ${currentNetwork}`.includes(sourcePickerQuery.trim().toLowerCase())
   return (
     <div className="page-container" data-wallet-mode={walletMode}>
-      {!(shieldActive && shieldReviewing) && (
+      {!(nearActive && shieldReviewing) && (
         <PageHeader
-          title="Send"
+          title={sourcePicker ? 'Select Token' : 'Send'}
           showBack
           onBack={
-            shieldActive
-              ? () => {
-                  if (!shieldBusy) returnToEntry()
-                }
-              : assetPickerOpen && selection
-                ? () => setAssetPickerOpen(false)
-                : selection
-                  ? returnToEntry
-                  : goBack
+            sourcePicker
+              ? () => setSourcePicker(null)
+              : shieldActive
+                ? () => {
+                    if (!nearActive || !shieldBusy) returnToEntry()
+                  }
+                : assetPickerOpen && selection
+                  ? () => setAssetPickerOpen(false)
+                  : selection
+                    ? returnToEntry
+                    : goBack
           }
           rightContent={
-            !shieldActive && !assetPickerOpen && nonEvmCrossChainSourceAssetId ? (
+            !sourcePicker && !shieldActive && !assetPickerOpen && nonEvmCrossChainSourceAssetId ? (
               <SendRouteMenu
                 route="onchain"
                 onChange={route => {
@@ -884,14 +988,83 @@ export function MultichainSend() {
           }
         />
       )}
+      {sourcePicker && (
+        <div className="page-content flex min-h-0 flex-col !px-4 pt-4">
+          <TokenSelectionSearch
+            value={sourcePickerQuery}
+            onChange={setSourcePickerQuery}
+            placeholder="Search token"
+            ariaLabel="Search token"
+          />
+          {sourcePicker.mode === 'shield' && (
+            <div className="-mx-4 mt-3">
+              <ShieldSendProviderTabs
+                value={sourcePicker.provider}
+                onChange={provider => setSourcePicker({ ...sourcePicker, provider })}
+                availableProviders={availableShieldProviders}
+              />
+            </div>
+          )}
+          <div className="min-h-0 flex-1 overflow-y-auto pt-2">
+            {sourcePicker.mode === 'shield' && sourcePicker.provider === 'near-confidential' ? (
+              searchedNearItems?.length ? (
+                <ShieldSourceTokenPickerRows
+                  items={searchedNearItems}
+                  balancesHidden={nearPicker?.balancesHidden ?? false}
+                  selectedAssetId={nearPicker?.selectedAssetId}
+                  onSelect={assetId => {
+                    nearPicker?.onSelect(assetId)
+                    setDomainSession({ ...currentSession, shieldProvider: 'near-confidential' })
+                    setSourcePicker(null)
+                  }}
+                />
+              ) : (
+                <p className="py-8 text-center text-sm text-muted">
+                  {visibleModel ? 'No tokens found' : 'Loading tokens'}
+                </p>
+              )
+            ) : zcashPickerVisible ? (
+              <TokenSelectionList
+                variant="source"
+                items={[
+                  {
+                    key: ZEC_ZCASH_ASSET,
+                    symbol: 'ZEC',
+                    subtitle: currentNetwork === 'testnet' ? 'Zcash Testnet' : 'Zcash',
+                    icon: <TokenIcon symbol="ZEC" nativeChain="zcash" blockchain="zec" size={30} />,
+                    balance: (
+                      <TokenBalanceDisplay
+                        amount={
+                          sourcePicker.mode === 'zcash-public'
+                            ? (zcashBalance?.transparent ?? '0')
+                            : (zcashBalance?.shielded ?? '0')
+                        }
+                        symbol="ZEC"
+                        priceUsd={zecPrice}
+                      />
+                    )
+                  }
+                ]}
+                selectedKey={ZEC_ZCASH_ASSET}
+                onSelect={() => {
+                  if (sourcePicker.mode === 'shield') selectZcash('shielded')
+                  setSourcePicker(null)
+                }}
+              />
+            ) : (
+              <p className="py-8 text-center text-sm text-muted">No tokens found</p>
+            )}
+          </div>
+        </div>
+      )}
       {currentSession.shieldEntry && (
         <div
-          hidden={!shieldActive}
-          className={shieldActive ? 'flex min-h-0 flex-1 flex-col' : undefined}
+          hidden={!nearActive}
+          className={nearActive ? 'flex min-h-0 flex-1 flex-col' : undefined}
         >
           <ShieldWithdrawForm
             key={sendEntryKey}
-            active={shieldActive}
+            active={nearActive}
             entry={currentSession.shieldEntry}
             model={visibleModel ?? null}
             initialAsset={
@@ -901,6 +1074,33 @@ export function MultichainSend() {
             refresh={load}
             onStateChange={handleShieldStateChange}
             onSelectPublic={(assetId, recipient) => switchSource('main', assetId, recipient)}
+            onOpenSourcePicker={() => openSourcePicker('shield', 'near-confidential')}
+            onSourcePickerState={handleNearSourceOptions}
+            sourceSelectorActive={
+              sourcePicker?.mode === 'shield' && sourcePicker.provider === 'near-confidential'
+            }
+          />
+        </div>
+      )}
+      {currentSession.zcashVisited && (
+        <div
+          hidden={!zcashActive}
+          className={zcashActive ? 'flex min-h-0 flex-1 flex-col' : undefined}
+        >
+          <Send
+            key={sendEntryKey}
+            embedded
+            active={zcashActive}
+            initialFundingSource={currentSession.zcashInitialFundingSource}
+            fundingSourceSelection={
+              zcashFundingSelection?.key === sendEntryKey ? zcashFundingSelection : null
+            }
+            onSelectAsset={fundingSource =>
+              openSourcePicker(
+                fundingSource === 'shielded' ? 'shield' : 'zcash-public',
+                'zcash-shield'
+              )
+            }
           />
         </div>
       )}
@@ -1026,7 +1226,7 @@ export function MultichainSend() {
           prices={assetPrices}
           loadingAdditional={loadStatus === 'loading'}
           additionalError={loadStatus === 'error' && !visibleModel}
-          onSelectZcash={() => navigate('/send/zcash')}
+          onSelectZcash={() => selectZcash('transparent')}
           onRetry={() => void load(true)}
           onSelect={asset => {
             setSelection(asset)

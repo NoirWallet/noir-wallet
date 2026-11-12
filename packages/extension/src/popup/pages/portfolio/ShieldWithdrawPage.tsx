@@ -3,7 +3,6 @@ import { Navigate, useLocation, useSearchParams } from 'react-router-dom'
 import type { PortfolioReadModel, PortfolioAssetView } from '@/core/portfolio'
 import type { AssetPriceReadModel } from '@/core/prices'
 import { Icon } from '@iconify/react'
-import { ZEC_ZCASH_ASSET } from '@/config/intents'
 import nearLogo from '@/images/figma-near-confidential.svg'
 import { isAddress } from 'viem'
 import { resolveEvmChainIconAlias } from '@/config/icons'
@@ -27,7 +26,6 @@ import { assetPriceClient } from '@/popup/services/asset-price-client'
 import { findAssetPrice } from '@/core/prices'
 import { getPrivateTransferChainIds } from '@/popup/services/private-balance-transfer'
 import { useNavigate } from '@/popup/provider/Router'
-import { ShieldSendProviderTabs } from '@/popup/components/portfolio/ShieldSendProviderTabs'
 import { SlippageSettingContent } from '@/popup/components/swap/SlippageSetting'
 import {
   SendSourceSection,
@@ -39,7 +37,10 @@ import {
 import { AmountDisplay } from '@/popup/components/common/AmountDisplay'
 import { ChainIcon } from '@/popup/components/common/ChainIcon'
 import { TokenIcon } from '@/popup/components/tokens/TokenIcon'
-import { ShieldSourceTokenPickerRows } from '@/popup/components/tokens/ShieldSourceTokenPickerRows'
+import {
+  ShieldSourceTokenPickerRows,
+  type ShieldSourceTokenPickerItem
+} from '@/popup/components/tokens/ShieldSourceTokenPickerRows'
 import { sortSendAssetsByBalanceValue } from '@/popup/pages/transactions/send-asset-order'
 import { RecipientSelector } from '@/popup/components/transaction/RecipientSelector'
 import {
@@ -100,6 +101,13 @@ export interface ShieldWithdrawEntry {
   readonly provider: string | null
 }
 
+export interface ShieldWithdrawSourcePickerState {
+  readonly items: readonly ShieldSourceTokenPickerItem[]
+  readonly selectedAssetId?: string
+  readonly balancesHidden: boolean
+  readonly onSelect: (assetId: string) => void
+}
+
 export function ShieldWithdrawForm({
   active,
   entry,
@@ -107,7 +115,10 @@ export function ShieldWithdrawForm({
   model,
   initialAsset,
   refresh,
-  onSelectPublic
+  onSelectPublic,
+  onOpenSourcePicker,
+  onSourcePickerState,
+  sourceSelectorActive = false
 }: {
   readonly active: boolean
   readonly entry: Readonly<ShieldWithdrawEntry>
@@ -116,6 +127,9 @@ export function ShieldWithdrawForm({
   readonly initialAsset: PortfolioAssetView | null
   readonly refresh: (force?: boolean) => Promise<void>
   readonly onSelectPublic: (assetId: string | null, recipient: string) => void
+  readonly onOpenSourcePicker?: () => void
+  readonly onSourcePickerState?: (state: ShieldWithdrawSourcePickerState) => void
+  readonly sourceSelectorActive?: boolean
 }) {
   const { navigate } = useNavigate()
   const providerIsNear = entry.provider === null || entry.provider === 'near-confidential'
@@ -134,7 +148,6 @@ export function ShieldWithdrawForm({
   })
   const canManageNear =
     providerIsNear && getPrivateTransferChainIds(activeAccount, network === 'mainnet').length > 0
-  const canSendZcash = activeAccount?.networks.some(item => item.chain.family === 'zcash') ?? false
   const scopeKey = `${network}:${account?.walletId ?? ''}:${account?.accountId ?? ''}`
   const latestScope = useRef(scopeKey)
   latestScope.current = scopeKey
@@ -229,7 +242,7 @@ export function ShieldWithdrawForm({
   }, [scopeKey, routeAssetId, routeNetworkId, routeRecipient])
 
   useEffect(() => {
-    if (!active) return
+    if (!active && !sourceSelectorActive) return
     let current = true
     const load = async () => {
       try {
@@ -253,7 +266,7 @@ export function ShieldWithdrawForm({
     return () => {
       current = false
     }
-  }, [active, network])
+  }, [active, sourceSelectorActive, network])
 
   useEffect(() => {
     if (!active) return
@@ -313,6 +326,42 @@ export function ShieldWithdrawForm({
       sources.find(item => item.managed.protocolAssetId === routedManaged?.protocolAssetId) ??
       null)
     : selectDefaultShieldWithdrawSource(options, displayBalances, model, prices, network)
+  const selectedSourceAssetId = source?.asset.asset.id
+  const pickerStateKey = JSON.stringify([
+    scopeKey,
+    sourcePickerItems,
+    selectedSourceAssetId,
+    balancesHidden
+  ])
+  const reportedPickerState = useRef<{
+    key: string
+    callback: typeof onSourcePickerState
+  } | null>(null)
+  useEffect(() => {
+    if (!onSourcePickerState) return
+    if (
+      reportedPickerState.current?.key === pickerStateKey &&
+      reportedPickerState.current.callback === onSourcePickerState
+    )
+      return
+    reportedPickerState.current = { key: pickerStateKey, callback: onSourcePickerState }
+    onSourcePickerState({
+      items: sourcePickerItems,
+      selectedAssetId: selectedSourceAssetId,
+      balancesHidden,
+      onSelect: assetId => {
+        if (assetId === selectedSourceAssetId) {
+          setPicker(null)
+          return
+        }
+        setSourceId(assetId)
+        setDestinationNetworkId(null)
+        setRecipient('')
+        setAmount('')
+        setPicker(null)
+      }
+    })
+  }, [onSourcePickerState, pickerStateKey])
   const keepSelectedSource = () => {
     if (!sourceId && source) setSourceId(source.asset.asset.id)
   }
@@ -723,7 +772,10 @@ export function ShieldWithdrawForm({
             <button
               type="button"
               disabled={busy}
-              onClick={() => setPicker('source')}
+              onClick={() => {
+                if (onOpenSourcePicker) onOpenSourcePicker()
+                else setPicker('source')
+              }}
               className="wallet-interactive flex h-9 max-w-full items-center gap-2 rounded-full bg-wallet-surface px-2.5 text-sm enabled:hover:bg-wallet-selected enabled:active:bg-white/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 disabled:opacity-50"
             >
               {displayedAsset && (
@@ -831,31 +883,10 @@ export function ShieldWithdrawForm({
         <div className="order-4">
           <SendRouteInfoCard
             provider={
-              canSendZcash ? (
-                <div className="relative z-10 w-[190px] max-w-full">
-                  <ShieldSendProviderTabs
-                    value="near-confidential"
-                    disabled={busy}
-                    onChange={provider => {
-                      if (provider === 'zcash-shield') {
-                        const params = new URLSearchParams({ from: 'shielded' })
-                        if (
-                          source?.managed.protocolAssetId === ZEC_ZCASH_ASSET ||
-                          source?.asset.asset.id === ZEC_ZCASH_ASSET
-                        ) {
-                          params.set('assetId', ZEC_ZCASH_ASSET)
-                        }
-                        navigate(`/send/zcash?${params}`, { replace: true })
-                      }
-                    }}
-                  />
-                </div>
-              ) : (
-                <span className="inline-flex items-center gap-2">
-                  <img src={nearLogo} alt="" className="size-5 rounded" />
-                  Confidential
-                </span>
-              )
+              <span className="inline-flex items-center gap-2">
+                <img src={nearLogo} alt="" className="size-5 rounded" />
+                Confidential
+              </span>
             }
             fee={
               preview?.sourceNetworkFee
@@ -1042,6 +1073,10 @@ export function ShieldWithdrawForm({
               balancesHidden={balancesHidden}
               selectedAssetId={source?.asset.asset.id}
               onSelect={assetId => {
+                if (assetId === source?.asset.asset.id) {
+                  setPicker(null)
+                  return
+                }
                 setSourceId(assetId)
                 setDestinationNetworkId(null)
                 setRecipient('')

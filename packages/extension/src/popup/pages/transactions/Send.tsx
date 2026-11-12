@@ -13,7 +13,7 @@ import {
   getPublicPrivateSendRouteCost
 } from '@/popup/services/public-private-send-preview'
 import { isZcashHardwareKeySource } from '@/core/wallet/hardware-wallet-data'
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { Icon } from '@iconify/react'
 import { Button } from '../../components/ui/button'
 import { PageHeader } from '../../components/common/PageHeader'
@@ -51,9 +51,6 @@ import { cn } from '@/lib/utils'
 import { AmountDisplay } from '@/popup/components/common/AmountDisplay'
 import { TransactionReviewView } from '@/popup/components/transaction/TransactionReviewView'
 import { BalanceDomainTabs } from '@/popup/components/account/BalanceDomainTabs'
-import { ShieldSendProviderTabs } from '@/popup/components/portfolio/ShieldSendProviderTabs'
-import { useActiveAccountNetworks } from '@/popup/hooks/useActiveAccountNetworks'
-import { getPrivateTransferChainIds } from '@/popup/services/private-balance-transfer'
 import { TokenIcon } from '../../components/tokens/TokenIcon'
 import { ChainIcon } from '../../components/common/ChainIcon'
 import nearLogo from '@/images/figma-near-confidential.svg'
@@ -81,7 +78,11 @@ import { safeBig } from '@/lib/big'
 
 import { ZEC_DECIMALS } from '@/config/wallet'
 import { useZnsResolve } from '../../hooks/useZnsResolve'
-import { isTransparentZcashAddress, sanitizeMemoForRecipient } from '@/lib/zcash-memo'
+import {
+  isTransparentZcashAddress,
+  sanitizeMemoForRecipient,
+  supportsZcashMemo
+} from '@/lib/zcash-memo'
 import {
   getShieldableTransparentBalance,
   hasEnoughTransparentBalanceToShield,
@@ -187,7 +188,19 @@ function MoveLayout({
   )
 }
 
-export function Send() {
+export function Send({
+  active = true,
+  embedded = false,
+  initialFundingSource = 'transparent',
+  fundingSourceSelection,
+  onSelectAsset
+}: {
+  readonly active?: boolean
+  readonly embedded?: boolean
+  readonly initialFundingSource?: FundingSource
+  readonly fundingSourceSelection?: Readonly<{ source: FundingSource; revision: number }> | null
+  readonly onSelectAsset?: (fundingSource: FundingSource) => void
+} = {}) {
   const { goBack, navigate } = useNavigate()
   const location = useLocation()
   const routeParams = new URLSearchParams(location.search)
@@ -201,7 +214,7 @@ export function Send() {
   const previousRouteIdentity = useRef(routeIdentity)
   const [selectedFundingSource, setFundingSource] = useState<FundingSource>(() => {
     const source = routeParams.get('from')
-    return source === 'shielded' ? 'shielded' : 'transparent'
+    return source === 'shielded' || source === 'transparent' ? source : initialFundingSource
   })
   const [privateSendScope, setPrivateSendScope] = useState<string | null>(null)
   const [privatePreview, setPrivatePreview] = useState<{
@@ -219,11 +232,13 @@ export function Send() {
   const [amount, setAmount] = useState('')
   const [maxSelected, setMaxSelected] = useState(false)
   const [memo, setMemo] = useState('')
-  const [showMemo, setShowMemo] = useState(false)
   const [showReview, setShowReview] = useState(false)
   const [isHardwareSigning, setIsHardwareSigning] = useState(false)
   const [isConfirming, setIsConfirming] = useState(false)
   const confirmationInFlight = useRef(false)
+  const activeRef = useRef(active)
+  activeRef.current = active
+  const appliedFundingSourceRevision = useRef<number | null>(null)
   const {
     isShielding: isMigrating,
     handleShieldFunds: handleMigrateNow,
@@ -246,9 +261,6 @@ export function Send() {
   const { setResult, updateStep } = useTransactionResultStore()
 
   const currentWallet = useWalletStore(state => state.getCurrentWallet())
-  const { activeAccount } = useActiveAccountNetworks()
-  const canSendConfidential =
-    getPrivateTransferChainIds(activeAccount, currentNetwork === 'mainnet').length > 0
   const accountDisplayName = getAccountDisplayName(
     currentWalletId ?? currentWallet?.id ?? '',
     currentAccountId ?? currentAccount?.id ?? '',
@@ -262,7 +274,7 @@ export function Send() {
       ? 'shielded'
       : selectedFundingSource
   const isTransparentToShieldMove = isSelfMove && fundingSource === 'transparent'
-  const resultReturnPath = `${location.pathname}?${new URLSearchParams({
+  const resultReturnPath = `${embedded ? '/send/zcash' : location.pathname}?${new URLSearchParams({
     ...(isSelfMove ? { move: '1' } : {}),
     from: fundingSource,
     mode: walletMode
@@ -278,7 +290,7 @@ export function Send() {
   const { sendTransaction } = useTransaction()
 
   const recipientInput = resolveZcashSendRecipientInput(toAddress, currentNetwork)
-  const zns = useZnsResolve(isSelfMove ? '' : recipientInput.znsInput)
+  const zns = useZnsResolve(active && !isSelfMove ? recipientInput.znsInput : '')
   const effectiveToAddress = isSelfMove
     ? (selfMove?.toAddress ?? '')
     : recipientInput.formatError
@@ -307,7 +319,6 @@ export function Send() {
     setAmount('')
     setMaxSelected(false)
     setMemo('')
-    setShowMemo(false)
     const params = new URLSearchParams({
       move: '1',
       from: fundingSource === 'transparent' ? 'shielded' : 'transparent',
@@ -316,7 +327,7 @@ export function Send() {
     navigate(`/send/zcash?${params.toString()}`, { replace: true })
   }
 
-  const isTransparentRecipient = isTransparentZcashAddress(effectiveToAddress)
+  const recipientSupportsMemo = supportsZcashMemo(effectiveToAddress)
   const effectiveMemo = isSelfMove ? '' : sanitizeMemoForRecipient(effectiveToAddress, memo)
   const privacyScope = JSON.stringify([currentNetwork, currentWalletId, currentAccountId])
   const privateSendAvailable =
@@ -327,6 +338,7 @@ export function Send() {
     !getFundingSourceUnavailableReason(currentWallet?.keySource, 'transparent')
   const sendPrivately = privateSendAvailable && privateSendScope === privacyScope
   const previewKey =
+    active &&
     sendPrivately &&
     currentWalletId &&
     currentAccountId &&
@@ -422,7 +434,8 @@ export function Send() {
     memo: effectiveMemo,
     feeTier,
     fundingSource,
-    enabled: !sendPrivately && !!effectiveToAddress && !!fromAddress && !recipientFormatError
+    enabled:
+      active && !sendPrivately && !!effectiveToAddress && !!fromAddress && !recipientFormatError
   })
   const isMaxTransferAmount =
     !!maxTransfer.maxAmount && safeBig(amount || '0').eq(maxTransfer.maxAmount)
@@ -442,6 +455,7 @@ export function Send() {
       sourceBalance.pending
     ]),
     enabled:
+      active &&
       !sendPrivately &&
       safeBig(amount || '0').gt(0) &&
       !!effectiveToAddress &&
@@ -527,10 +541,14 @@ export function Send() {
   }, [showReview, staleSelectedMax, isConfirming])
 
   useEffect(() => {
-    if (maxSelected) {
+    if (active && maxSelected && effectiveMaxStr) {
       setAmount(effectiveMaxStr)
     }
-  }, [maxSelected, effectiveMaxStr])
+  }, [active, maxSelected, effectiveMaxStr])
+
+  useEffect(() => {
+    if (!active) setShowReview(false)
+  }, [active])
 
   useEffect(() => {
     if (previousRouteIdentity.current === routeIdentity) return
@@ -542,7 +560,6 @@ export function Send() {
     setAmount('')
     setMaxSelected(false)
     setMemo('')
-    setShowMemo(false)
   }, [moveSource, routeIdentity, walletMode])
 
   useEffect(() => {
@@ -573,6 +590,17 @@ export function Send() {
     setShowReview(false)
   }
 
+  useLayoutEffect(() => {
+    if (
+      !fundingSourceSelection ||
+      appliedFundingSourceRevision.current === fundingSourceSelection.revision
+    )
+      return
+    appliedFundingSourceRevision.current = fundingSourceSelection.revision
+    if (fundingSource !== fundingSourceSelection.source)
+      handleSelectFundingSource(fundingSourceSelection.source)
+  }, [fundingSourceSelection, fundingSource])
+
   const handleSelectMyAddress = async () => {
     await openModal<string>({
       title: 'Select Recipient',
@@ -593,6 +621,7 @@ export function Send() {
   }
 
   const handleContinue = () => {
+    if (!active) return
     if (sendPrivately) {
       if (!privatePreviewReady || !currentWalletId || !currentAccountId || !isValidAmount) return
       navigate(
@@ -630,7 +659,7 @@ export function Send() {
   }
 
   const handleConfirm = async () => {
-    if (isHardwareSigning || confirmationInFlight.current) return
+    if (!active || isHardwareSigning || confirmationInFlight.current) return
     if (
       !isValidAmount ||
       reviewInsufficient ||
@@ -651,6 +680,7 @@ export function Send() {
         const currentQuote = await zcashWalletRuntimeClient.getFeeQuote()
         const latest = latestFee.current
         if (
+          !activeRef.current ||
           getActiveAccountScopeKey() !== activeScope ||
           latest.selectedFeeQuote?.id !== selectedFeeQuote.id ||
           latest.selectedFeeZec !== selectedFeeZec ||
@@ -825,8 +855,8 @@ export function Send() {
 
   if (!currentAccount) {
     return (
-      <div className="page-container">
-        <PageHeader title={isSelfMove ? 'Move' : 'Send'} showBack />
+      <div className={embedded ? 'flex min-h-0 flex-1 flex-col' : 'page-container'}>
+        {!embedded && <PageHeader title={isSelfMove ? 'Move' : 'Send'} showBack />}
         <div className="flex-1 flex items-center justify-center px-5">
           <p className="text-muted text-center">No account available</p>
         </div>
@@ -835,8 +865,11 @@ export function Send() {
   }
 
   return (
-    <div className="page-container" data-wallet-mode={isSelfMove ? 'public' : walletMode}>
-      <PageHeader title={isSelfMove ? 'Move' : 'Send'} showBack onBack={goBack} />
+    <div
+      className={embedded ? 'flex min-h-0 flex-1 flex-col bg-background' : 'page-container'}
+      data-wallet-mode={isSelfMove ? 'public' : walletMode}
+    >
+      {!embedded && <PageHeader title={isSelfMove ? 'Move' : 'Send'} showBack onBack={goBack} />}
       <div className="page-content min-h-0 !px-4 pt-4">
         <div className={cn('space-y-2', !isSelfMove && 'flex flex-col gap-4 space-y-0')}>
           {isSelfMove ? (
@@ -929,6 +962,7 @@ export function Send() {
                       nativeChain="zcash"
                       blockchain="zec"
                       variant="pill"
+                      onSelectAsset={onSelectAsset ? () => onSelectAsset(fundingSource) : undefined}
                     />
                   }
                   balance={
@@ -964,7 +998,7 @@ export function Send() {
                 <SendFieldLabel>Send from</SendFieldLabel>
                 <BalanceDomainTabs
                   value={fundingSource === 'shielded' ? 'shield' : 'public'}
-                  labels={{ public: 'Transparent' }}
+                  labels={{ public: 'Public' }}
                   available={(['public', 'shield'] as const).filter(domain =>
                     fundingOptions.some(
                       option =>
@@ -1049,28 +1083,10 @@ export function Send() {
             <div className="order-5">
               <SendRouteInfoCard
                 provider={
-                  fundingSource === 'shielded' && canSendConfidential ? (
-                    <div className="relative z-10 w-[190px] max-w-full">
-                      <ShieldSendProviderTabs
-                        value="zcash-shield"
-                        disabled={isConfirming || showReview}
-                        onChange={provider => {
-                          if (provider === 'near-confidential')
-                            navigate(
-                              `/send?${new URLSearchParams({
-                                sourceMode: 'shield',
-                                provider: 'near-confidential',
-                                assetId: ZEC_ZCASH_ASSET
-                              })}`,
-                              {
-                                replace: true,
-                                state: { sendEntry: 'shield' }
-                              }
-                            )
-                        }}
-                      />
-                    </div>
-                  ) : undefined
+                  <span className="inline-flex items-center gap-1.5">
+                    <img src={zcashShieldLogo} alt="" className="size-5 rounded" />
+                    Zcash
+                  </span>
                 }
                 fee={
                   <FeeTierPicker
@@ -1145,45 +1161,28 @@ export function Send() {
               onRetry={() => setPrivatePreviewRetry(value => value + 1)}
             />
           )}
-          {isSelfMove || sendPrivately ? null : showMemo ? (
+          {!isSelfMove && !sendPrivately && recipientSupportsMemo && (
             <div className="order-7">
               <label htmlFor="zcash-send-memo" className="mb-1.5 block px-1 text-xs text-muted">
                 Memo (optional)
               </label>
               <textarea
                 id="zcash-send-memo"
-                autoFocus
                 value={memo}
                 onChange={event => {
                   const encoded = new TextEncoder().encode(event.target.value)
                   if (encoded.length <= 512) setMemo(event.target.value)
                 }}
-                placeholder={
-                  isTransparentRecipient
-                    ? 'Memo not available for transparent addresses'
-                    : 'Add a private memo'
-                }
+                placeholder="Add a private memo"
                 rows={2}
-                disabled={isTransparentRecipient}
                 className="w-full resize-none rounded-xl border border-border/60 bg-card/50 px-4 py-3 text-sm placeholder:text-muted/50 focus:border-primary/50 focus:outline-none disabled:opacity-40"
               />
-              {memo && !isTransparentRecipient && (
+              {memo && (
                 <p className="mt-1 px-1 text-right text-xs text-muted">
                   {new TextEncoder().encode(memo).length}/512 bytes
                 </p>
               )}
             </div>
-          ) : (
-            <button
-              type="button"
-              aria-expanded="false"
-              disabled={isTransparentRecipient}
-              onClick={() => setShowMemo(true)}
-              className="order-7 flex min-h-11 w-full items-center justify-between rounded-xl bg-card/45 px-4 text-xs text-muted transition-colors hover:bg-card/70 disabled:pointer-events-none disabled:opacity-40"
-            >
-              <span>Memo (optional)</span>
-              <Icon icon="lucide:plus" width={16} height={16} />
-            </button>
           )}
 
           {syncState.isSyncing && (
@@ -1217,6 +1216,7 @@ export function Send() {
         <Button
           size="wallet"
           disabled={
+            !active ||
             !effectiveToAddress ||
             moveUnavailable ||
             !amount ||
@@ -1348,6 +1348,7 @@ export function Send() {
             confirming={isConfirming}
             submitting={isConfirming && !isHardwareWallet}
             confirmDisabled={
+              !active ||
               moveUnavailable ||
               reviewInsufficient ||
               !feeReady ||
