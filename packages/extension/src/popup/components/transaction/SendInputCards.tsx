@@ -64,9 +64,9 @@ export function SendSourceSection({
   )
   return (
     <>
-      {recipient ? sourceSection : amountSection}
+      {amountSection}
+      {sourceSection}
       {recipient}
-      {recipient ? amountSection : sourceSection}
     </>
   )
 }
