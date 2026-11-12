@@ -22,9 +22,16 @@ import init, {
   mnemonic_to_seed_fingerprint,
   parse_unified_address,
   sign_message_with_transparent,
-  WebVotingSession
+  WebVotingSession,
+  Dkg,
+  DkgRelay,
+  MessageSet,
+  EnvelopeCodec,
+  Keyset,
+  Sealed
 } from '../../lib/wasm-pkg/zcash_wallet_wasm'
 import { loadPinnedZcashWasmBinary } from '../zcash/pinned-wasm'
+import { createVaultDkgRpcHandler } from '../multisig/dkg-rpc'
 import { findExactBlockHeightByTime } from '../zcash/block-time'
 
 import type {
@@ -563,6 +570,17 @@ const debugLogsEnabled = typeof __DEBUG_LOGS__ !== 'boolean' || __DEBUG_LOGS__
 
 let activeWalletId: string | undefined
 
+// The wasm-bindgen classes bind to the module lazily, so the handler can exist before init runs;
+// every message awaits initializeWasm() before reaching it.
+const vaultDkg = createVaultDkgRpcHandler({
+  Dkg,
+  DkgRelay,
+  MessageSet,
+  EnvelopeCodec,
+  Keyset,
+  Sealed
+})
+
 function forwardLog(level: 'log' | 'warn' | 'error' | 'info', ...args: any[]) {
   if (!debugLogsEnabled) return
   const walletId = activeWalletId
@@ -932,6 +950,14 @@ self.addEventListener('message', async (event: MessageEvent<RPCRequest<any>>) =>
       case 'mnemonic.generate': {
         const { wordCount } = payload as RPCSchema['mnemonic.generate']['request']
         result = generate_mnemonic(wordCount)
+        break
+      }
+      // FROST vault DKG: the coordinator's share lives in this Worker, keyed by DKG session id.
+      case 'vault.dkg.open':
+      case 'vault.dkg.acceptRound1':
+      case 'vault.dkg.acceptRound2':
+      case 'vault.dkg.close': {
+        result = await vaultDkg.handle(method, payload)
         break
       }
       case 'mnemonic.validate': {

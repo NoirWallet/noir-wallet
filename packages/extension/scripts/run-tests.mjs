@@ -151,6 +151,8 @@ function projectEnvironment(config) {
     ENABLED_CHAIN_FEATURE_FLAGS: config.features,
     BETA_INVITE_REQUIRED: undefined,
     EXTENSION_DEV_SERVER: undefined,
+    // A developer's exported flag must not change which UI surface the E2E build ships.
+    FROST_MULTISIG_UI: undefined,
     ...config.env
   }
 }

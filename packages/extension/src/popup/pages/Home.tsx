@@ -28,6 +28,14 @@ import { useResyncZcash } from '../hooks/useResyncZcash'
 import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popover'
 import { BalanceWithPending } from '../components/balance/BalanceWithPending'
 import { ExtensionUpdateBanner } from '../components/common/ExtensionUpdateBanner'
+import { MultisigBadge } from '../components/multisig/MultisigBadge'
+import { MultisigBanner } from '../components/multisig/MultisigBanner'
+import { isMultisigUiEnabled } from '@/core/multisig/multisig-runtime-policy'
+import { isZcashHardwareKeySource } from '@/core/wallet/hardware-wallet-data'
+import { isSidePanelSurface } from '@/lib/extension-display-mode'
+import { openMultisigCreateTab } from '@/lib/multisig-tab'
+import { useMultisigGroup, useMultisigGroupStore } from '../multisig/group-store'
+import { dismissMultisigBanner, isMultisigBannerDismissed } from '@/lib/multisig-group-storage'
 import { LegacyPoolPrivacyNotice } from '../components/common/LegacyPoolPrivacyNotice'
 import { useLegacyPoolPrivacyNotice } from '../hooks/useLegacyPoolPrivacyNotice'
 import { hasLegacyOrchardBalance } from '@/lib/legacy-pool-privacy-notice'
@@ -187,6 +195,47 @@ export function Home() {
           accountDisplayNames
         )
       : 'Account 1')
+  const multisigScope = useMemo(
+    () =>
+      currentWalletId && currentAccountId
+        ? { network: currentNetwork, walletId: currentWalletId, accountId: currentAccountId }
+        : null,
+    [currentNetwork, currentWalletId, currentAccountId]
+  )
+  const multisigGroup = useMultisigGroup(multisigScope)
+  const multisigGroupsLoaded = useMultisigGroupStore(state => state.loaded)
+  // Starts true so the banner stays hidden until the stored flag has been read.
+  const [multisigBannerDismissed, setMultisigBannerDismissed] = useState(true)
+  useEffect(() => {
+    if (!multisigScope || !isMultisigUiEnabled()) return
+    // The flag is per account, so hide the banner again while the new account's flag loads.
+    setMultisigBannerDismissed(true)
+    let cancelled = false
+    isMultisigBannerDismissed(multisigScope)
+      .then(dismissed => {
+        if (!cancelled) setMultisigBannerDismissed(dismissed)
+      })
+      .catch(error => console.error('Failed to read the multisig banner flag', error))
+    return () => {
+      cancelled = true
+    }
+  }, [multisigScope])
+  // Multisig starts from a recovery phrase, so hardware and private-key wallets never see it.
+  const isHardwareWallet =
+    storageV2Account?.walletSource.kind === 'hardware' ||
+    isZcashHardwareKeySource(currentWallet?.keySource)
+  const multisigWalletEligible =
+    !isHardwareWallet &&
+    currentWallet?.keySource !== 'private-key' &&
+    storageV2Account?.walletSource.kind !== 'private-key'
+  const multisigBannerScope =
+    isMultisigUiEnabled() &&
+    multisigWalletEligible &&
+    multisigGroupsLoaded &&
+    multisigGroup === null &&
+    !multisigBannerDismissed
+      ? multisigScope
+      : null
   const supportsZcash =
     storageV2Account?.networks.some(network => network.chain.family === 'zcash') ??
     Boolean(currentAccount)
@@ -825,10 +874,30 @@ export function Home() {
               ))}
             </PopoverContent>
           </Popover>
+          {isMultisigUiEnabled() && multisigGroup && (
+            <MultisigBadge threshold={multisigGroup.threshold} />
+          )}
         </div>
       </header>
 
       <ExtensionUpdateBanner />
+      {multisigBannerScope && (
+        <div className="px-4 py-2">
+          <MultisigBanner
+            onClick={() => {
+              openMultisigCreateTab(multisigBannerScope)
+              // The side panel stays open; only the popup closes after opening the tab.
+              if (!isSidePanelSurface(window.location.search)) window.close()
+            }}
+            onDismiss={() => {
+              setMultisigBannerDismissed(true)
+              dismissMultisigBanner(multisigBannerScope).catch(error =>
+                console.error('Failed to save the multisig banner dismissal', error)
+              )
+            }}
+          />
+        </div>
+      )}
 
       <div
         data-testid="home-scroll-container"

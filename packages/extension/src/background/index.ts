@@ -158,6 +158,7 @@ import {
   parseTrustedExtensionRuntimeMessage,
   parseWorkerRpcRuntimeMessage
 } from '@/lib/runtime-message-security'
+import { isVaultRpcBlocked } from '@/core/multisig/multisig-runtime-policy'
 import { authorizeMultichainExtensionCommand } from './multichain-rpc-policy'
 import {
   BackgroundEvmTransactionMonitor,
@@ -2940,6 +2941,11 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
 
     if (rpcMessage.method.startsWith('session.') || rpcMessage.method.startsWith('credential.')) {
       sendResponse({ error: 'Credential session RPC is Background-only' })
+      return true
+    }
+
+    if (isVaultRpcBlocked(rpcMessage.method)) {
+      sendResponse({ error: 'Vault RPC is unavailable in this build' })
       return true
     }
 

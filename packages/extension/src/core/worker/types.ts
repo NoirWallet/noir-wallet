@@ -6,6 +6,7 @@ import type { FundingSource, Network, ZcashBalance } from '@/types'
 import type { TransferEstimate, TransferResult } from '@/core/zcash/transfer-result'
 import type { FeeQuote, QuotedFeeEstimate } from '@/config/fee'
 import type { ZeroIndexerOptions } from '@/core/zcash/zero-indexer'
+import type { VaultDkgSchema } from '@/core/multisig/dkg-rpc'
 import type {
   BallotDecision,
   PreparedVotingRound,
@@ -93,7 +94,7 @@ export type WasmUnifiedAddresses = {
   address_index?: number | null
 }
 
-export interface RPCSchema {
+export interface RPCSchema extends VaultDkgSchema {
   'credential.bind': {
     request: {
       walletId: string

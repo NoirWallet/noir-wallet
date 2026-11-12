@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { Icon } from '@iconify/react'
 import { Button } from '../../components/ui/button'
 import { InlineError } from '../../components/common/InlineError'
@@ -9,6 +9,12 @@ import { zcashWalletRuntimeClient } from '@/popup/services/zcash-wallet-runtime-
 import { useNavigate } from '../../provider/Router'
 import { useDialog } from '../../hooks/useDialog'
 import { openHardwareConnectTab } from '@/lib/hardware-tab'
+import { isZcashHardwareKeySource } from '@/core/wallet/hardware-wallet-data'
+import { isMultisigUiEnabled } from '@/core/multisig/multisig-runtime-policy'
+import { isSidePanelSurface } from '@/lib/extension-display-mode'
+import { openMultisigCreateTab, openMultisigTeamTab } from '@/lib/multisig-tab'
+import { useMultisigGroup } from '@/popup/multisig/group-store'
+import { MultisigBadge } from '@/popup/components/multisig/MultisigBadge'
 
 import {
   DropdownMenu,
@@ -801,8 +807,14 @@ function AccountItem({
   balancesHidden: boolean
 }) {
   const { navigate } = useNavigate()
-  const { currentWalletId, getCurrentAccount, accountDisplayNames } = useWalletStore()
+  const { currentWalletId, currentNetwork, getCurrentAccount, accountDisplayNames } =
+    useWalletStore()
   const currentAccount = getCurrentAccount()
+  const multisigScope = useMemo(
+    () => ({ network: currentNetwork, walletId: wallet.id, accountId: account.id }),
+    [currentNetwork, wallet.id, account.id]
+  )
+  const multisigGroup = useMultisigGroup(multisigScope)
   const [editingAccountName, setEditingAccountName] = useState(false)
   const [editingWalletName, setEditingWalletName] = useState(false)
   const selectionStartedWhileEditing = useRef(false)
@@ -853,6 +865,9 @@ function AccountItem({
                 className="text-base font-medium leading-[21px]"
                 disabled={switchingAccountKey === itemKey}
               />
+              {isMultisigUiEnabled() && multisigGroup && (
+                <MultisigBadge threshold={multisigGroup.threshold} />
+              )}
             </div>
             {switchingAccountKey === itemKey ? (
               <Icon
@@ -914,6 +929,22 @@ function AccountItem({
                   <Icon icon="lucide:scan-qr-code" className="mr-2 h-4 w-4" />
                   Addresses
                 </DropdownMenuItem>
+                {isMultisigUiEnabled() &&
+                  !isZcashHardwareKeySource(wallet.keySource) &&
+                  wallet.keySource !== 'private-key' && (
+                    <DropdownMenuItem
+                      onClick={e => {
+                        e.stopPropagation()
+                        if (multisigGroup) openMultisigTeamTab(multisigScope)
+                        else openMultisigCreateTab(multisigScope)
+                        // The side panel stays open; only the popup closes after opening the tab.
+                        if (!isSidePanelSurface(window.location.search)) window.close()
+                      }}
+                    >
+                      <Icon icon="lucide:shield" className="mr-2 h-4 w-4" />
+                      Multisig
+                    </DropdownMenuItem>
+                  )}
                 <DropdownMenuItem
                   onClick={async e => {
                     e.stopPropagation()

@@ -7,6 +7,8 @@ import { useOnboardingStore } from '@/store/onboarding-store'
 import { zcashWalletRuntimeClient } from '@/popup/services/zcash-wallet-runtime-client'
 import { toast } from '@/store/toast-store'
 import { needsUnlock } from '@/lib/lock-utils'
+import { isMultisigTabRoute } from '@/lib/multisig-tab'
+import { isMultisigUiEnabled } from '@/core/multisig/multisig-runtime-policy'
 import { SecureStorage } from '@/core/wallet/secure-storage'
 import { accountNetworksClient } from '../services/account-networks-client'
 import { hasAttestedCredentialSession } from '@/core/wallet/credential-session-client'
@@ -47,9 +49,14 @@ export function useAppRouting() {
     })()
   )
 
-  // Hardware wallet flows (connect/sign) run in a dedicated full tab and must
-  // keep their route across init and unlock redirects
-  const isHardwareTab = useRef(window.location.hash.includes('/hardware/'))
+  // Hardware wallet flows (connect/sign) and the multisig create flow run in a dedicated full tab
+  // and must keep their route across init and unlock redirects. A flag-off build has no multisig
+  // routes, so a hand-typed /multisig URL must fall through to the normal redirect instead of
+  // being kept on a blank page.
+  const isHardwareTab = useRef(
+    window.location.hash.includes('/hardware/') ||
+      (isMultisigUiEnabled() && isMultisigTabRoute(window.location.hash))
+  )
   const isActivationDApp = useRef(window.location.hash.includes('from=dapp'))
   const isUpdatePage = useRef(window.location.hash.includes('/update'))
   const { status: betaInviteStatus } = useBetaInviteActivation()

@@ -24,6 +24,7 @@ import type {
   ZcashTransactionContext
 } from './types'
 import type { Network } from '@/types'
+import type { VaultDkgMethod } from '@/core/multisig/dkg-rpc'
 import { DEFAULT_NETWORK, getNetworkConfig } from '@/lib/runtime-network'
 import { DedupPromise, ReadyFlag, TimeoutError } from '@/lib/async-utils'
 import { WALLET_CONFIG } from '@/config/wallet'
@@ -153,6 +154,10 @@ const RPC_TIMEOUTS: Record<string, number> = {
   'transaction.getFeeQuote': LIGHT,
   'transaction.estimateMaxTransfer': LIGHT,
   'transaction.estimateShieldFee': LIGHT,
+  'vault.dkg.open': LIGHT,
+  'vault.dkg.acceptRound1': LIGHT,
+  'vault.dkg.acceptRound2': LIGHT,
+  'vault.dkg.close': LIGHT,
   default: MEDIUM
 }
 
@@ -389,6 +394,17 @@ export function forwardKeyringRpcToOffscreen<T>(
   payload: Readonly<Record<string, unknown>>
 ): Promise<T> {
   return forwardToOffscreen<T>(method, payload)
+}
+
+/**
+ * Vault DKG calls bypass the wallet client on purpose: a ceremony needs the WASM, not a wallet,
+ * and must never trigger wallet initialisation or reconciliation.
+ */
+export function requestVaultDkg<M extends VaultDkgMethod>(
+  method: M,
+  payload: RPCSchema[M]['request']
+): Promise<RPCSchema[M]['response']> {
+  return forwardToOffscreen(method, payload)
 }
 
 export async function applyZeroIndexerOptionsToActiveWorker(

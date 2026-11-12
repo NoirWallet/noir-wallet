@@ -164,6 +164,303 @@ export class BlockRange {
   1: number
 }
 
+/**
+ * Canary gate. `phase` is one of `"notStarted"`, `"awaitingArrival"`, `"awaitingSpend"`,
+ * `"proven"`; `allows` answers whether a deposit may be started now.
+ */
+export class Canary {
+  free(): void
+  [Symbol.dispose](): void
+  allows(amount: number): boolean
+  arrival_confirmed(): void
+  /**
+   * Register the small first deposit.
+   */
+  begin(amount: number): void
+  constructor()
+  phase(): string
+  spend_confirmed(): void
+}
+
+/**
+ * Coordinator side of a signing session.
+ */
+export class Coordinator {
+  free(): void
+  [Symbol.dispose](): void
+  /**
+   * Collect a `SIGN_COMMITMENTS` envelope from a signer.
+   */
+  accept_commitments(envelope: Uint8Array): void
+  /**
+   * Collect a `SIGN_SHARE` envelope.
+   */
+  accept_share(envelope: Uint8Array): void
+  actions(): number
+  /**
+   * Aggregate once every signer has returned every share. Returns the signatures, 64 bytes each.
+   */
+  aggregate(): Uint8Array
+  /**
+   * The whole `SIGN_INIT` batch: `[[slot, envelope], ...]`. One call, because the session moves to
+   * `InitSent` as a whole.
+   */
+  init_all(): Array<any>
+  /**
+   * `signers` is the selected roster slots (length must equal the threshold).
+   */
+  constructor(
+    session_id: Uint8Array,
+    participants: number,
+    threshold: number,
+    signers: Uint8Array,
+    actions: number,
+    public_key_package: Uint8Array
+  )
+  /**
+   * The whole `SIGN_PAYLOAD` batch: `[[slot, envelope], ...]`.
+   */
+  payloads(): Array<any>
+  phase(): string
+  /**
+   * Hand over the sighash and per-action alphas read from the built transaction.
+   */
+  prepare_payload(sighash: Uint8Array, alphas: Uint8Array): void
+}
+
+/**
+ * Deposit denomination policy.
+ */
+export class Deposit {
+  private constructor()
+  free(): void
+  [Symbol.dispose](): void
+  static canary_amount(): number
+  static denom_cap(): number
+  static is_canonical(value: number): boolean
+  /**
+   * Split an amount into canonical outputs. Returns the output values (`Float64Array`) or an error
+   * when the amount cannot be sent.
+   */
+  static plan(amount: number): Float64Array
+  /**
+   * Residual left behind, in zatoshi.
+   */
+  static residual(amount: number): number
+}
+
+/**
+ * One device's participation in a distributed key generation.
+ */
+export class Dkg {
+  free(): void
+  [Symbol.dispose](): void
+  constructor(participants: number, threshold: number, slot: number)
+  /**
+   * Round 1: generate this device's contribution.
+   */
+  part1(): Dkg1
+  /**
+   * Round 2: seal one package per peer from everyone's broadcasts.
+   */
+  part2(secret: Uint8Array, broadcasts: MessageSet): Dkg2
+  /**
+   * Round 3: finalize with the broadcasts and the packages addressed to this device.
+   */
+  part3(secret: Uint8Array, broadcasts: MessageSet, incoming: MessageSet): Dkg3
+  slot(): number
+  /**
+   * The static public key carried inside a round-1 broadcast.
+   *
+   * A coordinator that handles one device at a time has each broadcast as bytes and needs the
+   * sender's key in order to seal KEYSET_SETUP to it. Use this rather than taking the framing apart.
+   */
+  static static_public_of_broadcast(broadcast: Uint8Array): Uint8Array
+}
+
+/**
+ * Round 1 of a distributed key generation: a secret to keep, a broadcast to send.
+ */
+export class Dkg1 {
+  private constructor()
+  free(): void
+  [Symbol.dispose](): void
+  /**
+   * Public broadcast for every other participant.
+   */
+  broadcast(): Uint8Array
+  /**
+   * The broadcast wrapped in a `DKGR1` envelope addressed to the coordinator.
+   *
+   * Use this instead of shipping the raw bytes: the envelope is what binds the payload to this
+   * session, this sender and this round, and what lets the relay reject replays.
+   */
+  broadcast_envelope(session_id: Uint8Array, sequence: number, my_slot: number): Uint8Array
+  /**
+   * Secret state for round 2. Persist it under the device keystore; it never leaves the device.
+   */
+  secret(): Uint8Array
+  /**
+   * This device's static public key. Publish it; peers seal later ceremony messages to it.
+   */
+  static_public(): Uint8Array
+}
+
+/**
+ * Round 2 output: a secret to keep plus one sealed package per peer.
+ */
+export class Dkg2 {
+  private constructor()
+  free(): void
+  [Symbol.dispose](): void
+  /**
+   * Packages to deliver, indexed by recipient slot.
+   */
+  outgoing(): MessageSet
+  /**
+   * The whole batch wrapped in a `DKGR2BATCH` envelope addressed to the coordinator.
+   */
+  outgoing_envelope(session_id: Uint8Array, sequence: number, my_slot: number): Uint8Array
+  secret(): Uint8Array
+  /**
+   * Every participant's static public key, by slot, including this device's — learned from the
+   * round-1 broadcasts. This is what KEYSET_SETUP seals to; there is no need to parse the broadcast
+   * framing to get it.
+   */
+  statics(): MessageSet
+}
+
+/**
+ * Round 3 output: this device's key package and the group's public package.
+ */
+export class Dkg3 {
+  private constructor()
+  free(): void
+  [Symbol.dispose](): void
+  /**
+   * `ak`, the group's spend validating key. Every other call needs it: the keyset derivation, the
+   * share backup binding and the signature verification all take it.
+   */
+  group_verifying_key(): Uint8Array
+  /**
+   * The share. Persist it as a [`ShareBackup`]; never transmit it.
+   */
+  key_package(): Uint8Array
+  /**
+   * The public group state. Safe to share; every device must end up with the same bytes.
+   */
+  public_key_package(): Uint8Array
+  /**
+   * This ceremony's static public key. Publish it (it already travels in the round-1 broadcast).
+   */
+  static_public(): Uint8Array
+  /**
+   * The matching static secret, for sealing later ceremony messages (KEYSET_SETUP) to peers.
+   *
+   * Keep it on the device. It cannot spend; it only lets peers send this device a message nobody
+   * else can read.
+   */
+  static_secret(): Uint8Array
+  /**
+   * Every participant's static public key, by slot, including this device's own.
+   */
+  statics(): MessageSet
+}
+
+/**
+ * The coordinator's side of the DKG message flow.
+ *
+ * Signers send `DKGR1` / `DKGR2BATCH` envelopes; the coordinator validates who sent them and in what
+ * order, then forwards a `DKGR1BUNDLE` / `DKGR2INBOX` to each peer. This type exists so that the
+ * session binding, roster check and replay rejection are not left to the app to reimplement.
+ *
+ * Round-2 packages are sealed to their recipient inside the DKG implementation (Noise, single
+ * message, ceremony as prologue), so a relay can forward them but cannot read them.
+ */
+export class DkgRelay {
+  free(): void
+  [Symbol.dispose](): void
+  /**
+   * Validate an envelope from a signer and return `[senderSlot, payload]`.
+   *
+   * `expected` is the message type name (`"dkgR1"` or `"dkgR2Batch"`). Anything that is not from a
+   * roster slot, not addressed to the coordinator, not the expected type, or not newer than the
+   * last message from that sender is refused.
+   */
+  accept(envelope: Uint8Array, expected: string): Array<any>
+  /**
+   * Forward a bundle to one recipient: `DKGR1BUNDLE` in round 1, `DKGR2INBOX` in round 2.
+   */
+  bundle(round: number, recipient: number, messages: MessageSet): Uint8Array
+  constructor(session_id: Uint8Array, participants: number)
+}
+
+/**
+ * Encode/decode an envelope. The frontend may treat envelopes as opaque bytes, but exposing the codec
+ * lets it validate framing before spending a QR frame on it.
+ */
+export class EnvelopeCodec {
+  private constructor()
+  free(): void
+  [Symbol.dispose](): void
+  /**
+   * Build a `SIGN_INIT`-shaped envelope. Mostly useful for transport tests.
+   */
+  static build(
+    msg_type: number,
+    round: number,
+    sender: number,
+    recipient: number,
+    sequence: number,
+    session_id: Uint8Array,
+    payload: Uint8Array
+  ): Uint8Array
+  /**
+   * Decode an envelope into a JSON-ish object: `{ msgType, round, sender, recipient, sequence,
+   * sessionId: Uint8Array, payload: Uint8Array }` as a JS array, to keep the surface primitive.
+   */
+  static decode(bytes: Uint8Array): Array<any>
+  /**
+   * The type names that have a defined payload.
+   */
+  static defined_msg_types(): Array<any>
+  /**
+   * Wire value of a message type **whose payload this crate defines**.
+   *
+   * Eight types qualify today: the four signing messages, whose payloads the session produces, and
+   * the four DKG messages, whose payloads are this crate's own DKG bytes and packed batches.
+   *
+   * The protocol table also reserves numbers for messages that have no payload format yet —
+   * `PAIR_INVITE`, `ROSTER_LOCK`, `KEYSET_SETUP` and others. Those are deliberately refused here so
+   * that an undefined type cannot become a de-facto contract by accident; use
+   * [`Self::reserved_msg_type`] if you genuinely need the number, and know that nothing defines
+   * what goes in it.
+   */
+  static msg_type(name: string): number
+  /**
+   * A fresh 16-byte session id, from this module's OS-backed entropy.
+   *
+   * Use this rather than a counter or a timestamp: a repeated id would make a stale session
+   * marker look like the current session after a restart, which is exactly the case the marker
+   * exists to catch.
+   */
+  static new_session_id(): Uint8Array
+  /**
+   * Wire value of a **reserved** type: the number exists in the protocol table, but no payload
+   * format is defined for it. Prefer [`Self::msg_type`]; this exists so a caller can decode a
+   * message it received rather than invent one it should not send.
+   */
+  static reserved_msg_type(name: string): number
+  /**
+   * The type names that are reserved without a payload format.
+   */
+  static reserved_msg_types(): Array<any>
+  /**
+   * The slot reserved for the coordinator, which may hold no share.
+   */
+  static readonly coordinator_slot: number
+}
+
 export class IntoUnderlyingByteSource {
   private constructor()
   free(): void
@@ -190,6 +487,69 @@ export class IntoUnderlyingSource {
   [Symbol.dispose](): void
   cancel(): void
   pull(controller: ReadableStreamDefaultController): Promise<any>
+}
+
+/**
+ * Keyset setup: `ak` plus the recovery key to a receiving address.
+ */
+export class Keyset {
+  private constructor()
+  free(): void
+  [Symbol.dispose](): void
+  /**
+   * Whether the derived address carries only an Orchard receiver. Must always be true; the
+   * frontend should refuse to show an address where it is not.
+   */
+  static address_is_shielded_only(address: string): boolean
+  /**
+   * Returns `[fvk(96), ufvk, address, rawAddress(43), fingerprint(32)]`.
+   */
+  static derive(
+    group_verifying_key: Uint8Array,
+    qsk: Uint8Array,
+    mainnet: boolean,
+    diversifier_index: number
+  ): Array<any>
+  /**
+   * A fresh `qsk`: the `nk`/`rivk` source, and the ZIP-2005 recovery candidate.
+   *
+   * Generate it **once**, on one device, then deliver it to every other device over a
+   * confidential, authenticated channel — the same one the DKG round-2 packages need. Every
+   * device must pass the identical `qsk` to [`Self::derive`] or they will land on different
+   * addresses for the same group.
+   *
+   * It cannot spend: spend authorization is `ak`, which lives only in the FROST shares. Holding
+   * `qsk` does not weaken the threshold, which is why backing it up is cheap insurance.
+   */
+  static generate_qsk(): Uint8Array
+}
+
+/**
+ * A set of messages indexed by peer slot.
+ *
+ * The frontend fills this with whatever its transport received, and reads it back after a round.
+ * Exists so the wire format of a message batch stays inside the wasm.
+ */
+export class MessageSet {
+  free(): void
+  [Symbol.dispose](): void
+  /**
+   * Unpack an envelope payload back into a set.
+   */
+  static from_bytes(bytes: Uint8Array): MessageSet
+  get(slot: number): Uint8Array | undefined
+  is_empty(): boolean
+  len(): number
+  constructor()
+  /**
+   * Add or replace the payload for a peer.
+   */
+  set(slot: number, bytes: Uint8Array): void
+  slots(): Uint8Array
+  /**
+   * Pack for transport as one envelope payload.
+   */
+  to_bytes(): Uint8Array
 }
 
 export class PaymentRequest {
@@ -268,6 +628,59 @@ export class Pczt {
   to_ledger_signing_payload(account_index: number): any
 }
 
+/**
+ * PCZT handling the frontend needs around a signing session: shrink the request, read what to sign,
+ * put the signatures back.
+ *
+ * Deliberately no proving: building and proving belongs to the wallet's own transaction path, and
+ * linking Halo2 here would double the module size for something already present.
+ */
+export class PcztTools {
+  private constructor()
+  free(): void
+  [Symbol.dispose](): void
+  /**
+   * Every Ironwood action's `alpha`, 32 bytes each, in action order. This is what the coordinator
+   * hands to the signers, and what `Verification::rk` needs.
+   */
+  static action_alphas(bytes: Uint8Array): Uint8Array
+  /**
+   * Every Ironwood action's `rk`, 32 bytes each, in action order.
+   */
+  static action_rks(bytes: Uint8Array): Uint8Array
+  /**
+   * Write signatures back. `signatures` is 64 bytes per action, positionally matching `indices`.
+   */
+  static apply_signatures(
+    bytes: Uint8Array,
+    indices: Uint8Array,
+    signatures: Uint8Array
+  ): Uint8Array
+  /**
+   * Fail unless this transaction is one the vault is allowed to sign (V6, Ironwood only, no
+   * transparent or Sapling part).
+   */
+  static check(bytes: Uint8Array): void
+  /**
+   * Whether every action's `rk` equals `ak + alpha·G`. Run this on the signer before approving.
+   */
+  static check_action_bindings(
+    bytes: Uint8Array,
+    group_verifying_key: Uint8Array,
+    alphas: Uint8Array
+  ): void
+  /**
+   * The shielded sighash, recomputed from the PCZT. Signers must use this value, never one handed
+   * to them by the coordinator.
+   */
+  static shielded_sighash(bytes: Uint8Array): Uint8Array
+  /**
+   * Drop the zk proof: the transport copy. The coordinator keeps its own proven copy for applying
+   * signatures.
+   */
+  static strip_proofs(bytes: Uint8Array): Uint8Array
+}
+
 export class ProofGenerationKey {
   private constructor()
   free(): void
@@ -280,12 +693,152 @@ export class Proposal {
   [Symbol.dispose](): void
 }
 
+/**
+ * Sealed, authenticated messages between ceremony participants.
+ *
+ * The DKG needs this for its round-2 packages (handled internally), and KEYSET_SETUP needs it for
+ * the `qsk`, which is the `nk`/`rivk` source and therefore a scanning secret: whoever relays it must
+ * not read it.
+ *
+ * Both parties' static keys are known from the DKG, so sealing is a single message with no round
+ * trip. `prologue` binds the participant set: a device that is shown a different roster derives a
+ * different key schedule and cannot open the message.
+ */
+export class Sealed {
+  private constructor()
+  free(): void
+  [Symbol.dispose](): void
+  /**
+   * Open a message from `sender_public`. Fails if the pair, the ceremony or the bytes are wrong.
+   */
+  static open(
+    recipient_secret: Uint8Array,
+    sender_public: Uint8Array,
+    prologue: Uint8Array,
+    ciphertext: Uint8Array
+  ): Uint8Array
+  /**
+   * The prologue for a participant set, given their static public keys by slot.
+   */
+  static prologue(statics: MessageSet): Uint8Array
+  /**
+   * Seal `plaintext` so only the holder of `recipient_public` can read it.
+   */
+  static seal(
+    sender_secret: Uint8Array,
+    recipient_public: Uint8Array,
+    prologue: Uint8Array,
+    plaintext: Uint8Array
+  ): Uint8Array
+}
+
 export class SeedFingerprint {
   free(): void
   [Symbol.dispose](): void
   static from_bytes(bytes: Uint8Array): SeedFingerprint
   constructor(seed: Uint8Array)
   to_bytes(): Uint8Array
+}
+
+/**
+ * Session marker helpers: what the host persists to know a session was in flight.
+ */
+export class SessionMarker {
+  private constructor()
+  free(): void
+  [Symbol.dispose](): void
+  /**
+   * Advance a marker once commitments have left the device.
+   */
+  static committed(session_id: Uint8Array): Uint8Array
+  /**
+   * Build the marker to persist right after a session starts.
+   */
+  static created(session_id: Uint8Array): Uint8Array
+  /**
+   * What to do about a persisted marker: `"clean"`, `"discardable"` or `"burned"`.
+   */
+  static recover(marker?: Uint8Array | null): string
+  /**
+   * The session a marker refers to, as 16 bytes, or `None` when clean.
+   */
+  static session_id(marker?: Uint8Array | null): Uint8Array | undefined
+}
+
+/**
+ * A device's key share, bound to a group and slot.
+ */
+export class ShareBackup {
+  free(): void
+  [Symbol.dispose](): void
+  device_id(): Uint8Array
+  /**
+   * Load and validate against the expected group and slot.
+   */
+  static from_bytes(
+    bytes: Uint8Array,
+    group_verifying_key: Uint8Array,
+    expected_slot: number
+  ): ShareBackup
+  group_verifying_key(): Uint8Array
+  /**
+   * The key package, for handing to a [`SignerSession`]. Kept out of `to_bytes` on purpose: the
+   * backup blob is what the host stores, not what it needs in memory.
+   */
+  key_package(): Uint8Array
+  /**
+   * Wrap a key package for storage. `device_id` and `vault_id` are opaque to the wasm and must be
+   * stable across restores.
+   */
+  constructor(
+    key_package: Uint8Array,
+    slot: number,
+    device_id: Uint8Array,
+    vault_id: Uint8Array,
+    group_verifying_key: Uint8Array
+  )
+  slot(): number
+  /**
+   * Bytes for the host to seal and store. The wasm does not encrypt.
+   */
+  to_bytes(): Uint8Array
+  vault_id(): Uint8Array
+}
+
+/**
+ * Signer side of a signing session. Holds the key share and the nonces.
+ */
+export class Signer {
+  free(): void
+  [Symbol.dispose](): void
+  /**
+   * Record that the user approved. Only after this can a share exist.
+   */
+  approve(): void
+  /**
+   * Consume `SIGN_INIT`, produce the `SIGN_COMMITMENTS` envelope to send back.
+   */
+  init(envelope: Uint8Array): Uint8Array
+  constructor(
+    session_id: Uint8Array,
+    my_slot: number,
+    participants: number,
+    key_package: Uint8Array
+  )
+  /**
+   * `"committed"` / `"consumed"` per action, so the host can persist the nonce state.
+   */
+  nonce_states(): Uint8Array
+  /**
+   * Consume `SIGN_PAYLOAD`. Returns `[sighash: Uint8Array, alphas: Uint8Array]` for the caller to
+   * verify against the PCZT **before** approving.
+   */
+  payload(envelope: Uint8Array): Array<any>
+  phase(): string
+  /**
+   * Produce the `SIGN_SHARE` envelope. Consumes the nonces.
+   */
+  share(): Uint8Array
 }
 
 export class TransactionRequest {
@@ -331,6 +884,28 @@ export class UnifiedSpendingKey {
    * Obtain the UFVK corresponding to this spending key
    */
   to_unified_full_viewing_key(): UnifiedFullViewingKey
+}
+
+/**
+ * Verification helpers the frontend needs before it broadcasts anything.
+ */
+export class Verification {
+  private constructor()
+  free(): void
+  [Symbol.dispose](): void
+  /**
+   * `rk = ak + alpha·G`, as the transaction carries it.
+   */
+  static rk(group_verifying_key: Uint8Array, alpha: Uint8Array): Uint8Array
+  /**
+   * Check an aggregated spend authorization signature. Run this before broadcasting.
+   */
+  static verify_spend_auth(
+    group_verifying_key: Uint8Array,
+    alpha: Uint8Array,
+    message: Uint8Array,
+    signature: Uint8Array
+  ): void
 }
 
 export class WalletSummary {
@@ -426,6 +1001,25 @@ export class WebWallet {
     ufvk: string,
     seed_fingerprint: Uint8Array,
     account_hd_index: number,
+    birthday_height?: number | null,
+    key_source?: string | null
+  ): Promise<number>
+  /**
+   * Create an unsigned, unproven PCZT for a transfer (hardware wallet flow).
+   *
+   * The returned PCZT carries ZIP-32 derivation metadata so an external signer
+   * (e.g. Keystone) can locate its keys. Serialize it with `Pczt.serialize()`
+   * before transporting via QR. `marginal_fee_zats` selects the ZIP-317 fee
+   * tier so hardware sends honor the same dynamic-fee tiers as software sends.
+   * Import a spending account from a UFVK with no ZIP-32 derivation (FROST vault flow).
+   *
+   * Use this for a vault whose FVK was produced by a DKG rather than a seed. Unlike
+   * [`Self::create_account_ufvk`] there is no `seed_fingerprint`/`account_hd_index` to pass, and
+   * none is invented: the account is recorded as having no derivation.
+   */
+  create_account_ufvk_external(
+    account_name: string,
+    ufvk: string,
     birthday_height?: number | null,
     key_source?: string | null
   ): Promise<number>
@@ -737,14 +1331,6 @@ export class WebWallet {
     marginal_fee_zats?: bigint | null,
     expiry_delta_blocks?: number | null
   ): Promise<TransferResult>
-  /**
-   * Create an unsigned, unproven PCZT for a transfer (hardware wallet flow).
-   *
-   * The returned PCZT carries ZIP-32 derivation metadata so an external signer
-   * (e.g. Keystone) can locate its keys. Serialize it with `Pczt.serialize()`
-   * before transporting via QR. `marginal_fee_zats` selects the ZIP-317 fee
-   * tier so hardware sends honor the same dynamic-fee tiers as software sends.
-   */
   pczt_create(
     account_id: number,
     to_address: string,
@@ -1044,6 +1630,11 @@ export function sign_message_with_transparent(
   address_index?: number | null
 ): any
 
+/**
+ * Which signing phase a session is in, for logging.
+ */
+export function signing_phases(): Array<any>
+
 export function start(): void
 
 /**
@@ -1274,6 +1865,16 @@ export interface InitOutput {
     j: number,
     k: number
   ) => number
+  readonly webwallet_create_account_ufvk_external: (
+    a: number,
+    b: number,
+    c: number,
+    d: number,
+    e: number,
+    f: number,
+    g: number,
+    h: number
+  ) => number
   readonly webwallet_db_to_bytes: (a: number) => number
   readonly webwallet_db_to_bytes_chunked: (a: number, b: number) => number
   readonly webwallet_estimate_orchard_migration_fee: (
@@ -1502,6 +2103,247 @@ export interface InitOutput {
   readonly webwallet_sync_next_batch_optimized: (a: number, b: number) => number
   readonly webwallet_sync_session_setup: (a: number) => number
   readonly task_worker_entry_point: (a: number, b: number) => void
+  readonly __wbg_canary_free: (a: number, b: number) => void
+  readonly __wbg_coordinator_free: (a: number, b: number) => void
+  readonly __wbg_deposit_free: (a: number, b: number) => void
+  readonly __wbg_dkg1_free: (a: number, b: number) => void
+  readonly __wbg_dkg2_free: (a: number, b: number) => void
+  readonly __wbg_dkg3_free: (a: number, b: number) => void
+  readonly __wbg_dkg_free: (a: number, b: number) => void
+  readonly __wbg_dkgrelay_free: (a: number, b: number) => void
+  readonly __wbg_messageset_free: (a: number, b: number) => void
+  readonly __wbg_sharebackup_free: (a: number, b: number) => void
+  readonly __wbg_signer_free: (a: number, b: number) => void
+  readonly canary_allows: (a: number, b: number) => number
+  readonly canary_arrival_confirmed: (a: number, b: number) => void
+  readonly canary_begin: (a: number, b: number, c: number) => void
+  readonly canary_new: () => number
+  readonly canary_phase: (a: number, b: number) => void
+  readonly canary_spend_confirmed: (a: number, b: number) => void
+  readonly coordinator_accept_commitments: (a: number, b: number, c: number, d: number) => void
+  readonly coordinator_accept_share: (a: number, b: number, c: number, d: number) => void
+  readonly coordinator_actions: (a: number) => number
+  readonly coordinator_aggregate: (a: number, b: number) => void
+  readonly coordinator_init_all: (a: number, b: number) => void
+  readonly coordinator_new: (
+    a: number,
+    b: number,
+    c: number,
+    d: number,
+    e: number,
+    f: number,
+    g: number,
+    h: number,
+    i: number,
+    j: number
+  ) => void
+  readonly coordinator_payloads: (a: number, b: number) => void
+  readonly coordinator_phase: (a: number, b: number) => void
+  readonly coordinator_prepare_payload: (
+    a: number,
+    b: number,
+    c: number,
+    d: number,
+    e: number,
+    f: number
+  ) => void
+  readonly deposit_canary_amount: () => number
+  readonly deposit_denom_cap: () => number
+  readonly deposit_is_canonical: (a: number) => number
+  readonly deposit_plan: (a: number, b: number) => void
+  readonly deposit_residual: (a: number, b: number) => void
+  readonly dkg1_broadcast: (a: number) => number
+  readonly dkg1_broadcast_envelope: (
+    a: number,
+    b: number,
+    c: number,
+    d: number,
+    e: number,
+    f: number
+  ) => void
+  readonly dkg1_secret: (a: number) => number
+  readonly dkg1_static_public: (a: number) => number
+  readonly dkg2_outgoing: (a: number) => number
+  readonly dkg2_outgoing_envelope: (
+    a: number,
+    b: number,
+    c: number,
+    d: number,
+    e: number,
+    f: number
+  ) => void
+  readonly dkg2_secret: (a: number) => number
+  readonly dkg2_statics: (a: number) => number
+  readonly dkg3_group_verifying_key: (a: number, b: number) => void
+  readonly dkg3_key_package: (a: number) => number
+  readonly dkg3_public_key_package: (a: number) => number
+  readonly dkg3_static_public: (a: number) => number
+  readonly dkg3_static_secret: (a: number) => number
+  readonly dkg3_statics: (a: number) => number
+  readonly dkg_new: (a: number, b: number, c: number, d: number) => void
+  readonly dkg_part1: (a: number, b: number) => void
+  readonly dkg_part2: (a: number, b: number, c: number, d: number, e: number) => void
+  readonly dkg_part3: (a: number, b: number, c: number, d: number, e: number, f: number) => void
+  readonly dkg_slot: (a: number) => number
+  readonly dkg_static_public_of_broadcast: (a: number, b: number, c: number) => void
+  readonly dkgrelay_accept: (
+    a: number,
+    b: number,
+    c: number,
+    d: number,
+    e: number,
+    f: number
+  ) => void
+  readonly dkgrelay_bundle: (a: number, b: number, c: number, d: number, e: number) => void
+  readonly dkgrelay_new: (a: number, b: number, c: number, d: number) => void
+  readonly envelopecodec_build: (
+    a: number,
+    b: number,
+    c: number,
+    d: number,
+    e: number,
+    f: number,
+    g: number,
+    h: number,
+    i: number,
+    j: number
+  ) => void
+  readonly envelopecodec_coordinator_slot: () => number
+  readonly envelopecodec_decode: (a: number, b: number, c: number) => void
+  readonly envelopecodec_defined_msg_types: () => number
+  readonly envelopecodec_msg_type: (a: number, b: number, c: number) => void
+  readonly envelopecodec_reserved_msg_type: (a: number, b: number, c: number) => void
+  readonly envelopecodec_reserved_msg_types: () => number
+  readonly keyset_address_is_shielded_only: (a: number, b: number) => number
+  readonly keyset_derive: (
+    a: number,
+    b: number,
+    c: number,
+    d: number,
+    e: number,
+    f: number,
+    g: number
+  ) => void
+  readonly keyset_generate_qsk: () => number
+  readonly messageset_from_bytes: (a: number, b: number, c: number) => void
+  readonly messageset_get: (a: number, b: number) => number
+  readonly messageset_is_empty: (a: number) => number
+  readonly messageset_len: (a: number) => number
+  readonly messageset_new: () => number
+  readonly messageset_set: (a: number, b: number, c: number, d: number) => void
+  readonly messageset_slots: (a: number, b: number) => void
+  readonly messageset_to_bytes: (a: number, b: number) => void
+  readonly pczttools_action_alphas: (a: number, b: number, c: number) => void
+  readonly pczttools_action_rks: (a: number, b: number, c: number) => void
+  readonly pczttools_apply_signatures: (
+    a: number,
+    b: number,
+    c: number,
+    d: number,
+    e: number,
+    f: number,
+    g: number
+  ) => void
+  readonly pczttools_check: (a: number, b: number, c: number) => void
+  readonly pczttools_check_action_bindings: (
+    a: number,
+    b: number,
+    c: number,
+    d: number,
+    e: number,
+    f: number,
+    g: number
+  ) => void
+  readonly pczttools_shielded_sighash: (a: number, b: number, c: number) => void
+  readonly pczttools_strip_proofs: (a: number, b: number, c: number) => void
+  readonly sealed_open: (
+    a: number,
+    b: number,
+    c: number,
+    d: number,
+    e: number,
+    f: number,
+    g: number,
+    h: number,
+    i: number
+  ) => void
+  readonly sealed_prologue: (a: number, b: number) => void
+  readonly sealed_seal: (
+    a: number,
+    b: number,
+    c: number,
+    d: number,
+    e: number,
+    f: number,
+    g: number,
+    h: number,
+    i: number
+  ) => void
+  readonly sessionmarker_committed: (a: number, b: number, c: number) => void
+  readonly sessionmarker_created: (a: number, b: number, c: number) => void
+  readonly sessionmarker_recover: (a: number, b: number, c: number) => void
+  readonly sessionmarker_session_id: (a: number, b: number, c: number) => void
+  readonly sharebackup_device_id: (a: number) => number
+  readonly sharebackup_from_bytes: (
+    a: number,
+    b: number,
+    c: number,
+    d: number,
+    e: number,
+    f: number
+  ) => void
+  readonly sharebackup_group_verifying_key: (a: number) => number
+  readonly sharebackup_key_package: (a: number, b: number) => void
+  readonly sharebackup_new: (
+    a: number,
+    b: number,
+    c: number,
+    d: number,
+    e: number,
+    f: number,
+    g: number,
+    h: number,
+    i: number,
+    j: number
+  ) => void
+  readonly sharebackup_slot: (a: number) => number
+  readonly sharebackup_to_bytes: (a: number, b: number) => void
+  readonly sharebackup_vault_id: (a: number) => number
+  readonly signer_approve: (a: number, b: number) => void
+  readonly signer_init: (a: number, b: number, c: number, d: number) => void
+  readonly signer_new: (
+    a: number,
+    b: number,
+    c: number,
+    d: number,
+    e: number,
+    f: number,
+    g: number
+  ) => void
+  readonly signer_nonce_states: (a: number, b: number) => void
+  readonly signer_payload: (a: number, b: number, c: number, d: number) => void
+  readonly signer_phase: (a: number, b: number) => void
+  readonly signer_share: (a: number, b: number) => void
+  readonly signing_phases: () => number
+  readonly verification_rk: (a: number, b: number, c: number, d: number, e: number) => void
+  readonly verification_verify_spend_auth: (
+    a: number,
+    b: number,
+    c: number,
+    d: number,
+    e: number,
+    f: number,
+    g: number,
+    h: number,
+    i: number
+  ) => void
+  readonly envelopecodec_new_session_id: () => number
+  readonly __wbg_envelopecodec_free: (a: number, b: number) => void
+  readonly __wbg_keyset_free: (a: number, b: number) => void
+  readonly __wbg_pczttools_free: (a: number, b: number) => void
+  readonly __wbg_sealed_free: (a: number, b: number) => void
+  readonly __wbg_sessionmarker_free: (a: number, b: number) => void
+  readonly __wbg_verification_free: (a: number, b: number) => void
   readonly __wbg_wbg_rayon_poolbuilder_free: (a: number, b: number) => void
   readonly initThreadPool: (a: number) => number
   readonly wbg_rayon_poolbuilder_build: (a: number) => void
@@ -1535,11 +2377,11 @@ export interface InitOutput {
   readonly rustsecp256k1_v0_14_default_illegal_callback_fn: (a: number, b: number) => void
   readonly rustsecp256k1_v0_14_context_create: (a: number) => number
   readonly rustsecp256k1_v0_14_context_destroy: (a: number) => void
-  readonly __wasm_bindgen_func_elem_16563: (a: number, b: number, c: number, d: number) => void
-  readonly __wasm_bindgen_func_elem_16580: (a: number, b: number, c: number, d: number) => void
-  readonly __wasm_bindgen_func_elem_12470: (a: number, b: number, c: number) => void
-  readonly __wasm_bindgen_func_elem_16565: (a: number, b: number, c: number) => void
-  readonly __wasm_bindgen_func_elem_12393: (a: number, b: number) => void
+  readonly __wasm_bindgen_func_elem_16645: (a: number, b: number, c: number, d: number) => void
+  readonly __wasm_bindgen_func_elem_16662: (a: number, b: number, c: number, d: number) => void
+  readonly __wasm_bindgen_func_elem_12542: (a: number, b: number, c: number) => void
+  readonly __wasm_bindgen_func_elem_16647: (a: number, b: number, c: number) => void
+  readonly __wasm_bindgen_func_elem_12465: (a: number, b: number) => void
   readonly memory: WebAssembly.Memory
   readonly __wbindgen_export: (a: number, b: number) => number
   readonly __wbindgen_export2: (a: number, b: number, c: number, d: number) => number
