@@ -270,7 +270,7 @@ test('omits empty wallet groups while preserving a wallet-specific Add Account a
   assert.deepEqual(search.hiddenAccounts, [])
 })
 
-test('groups private keys across chain families without merging wallet or account identities', () => {
+test('shows each imported private key under its chosen wallet name', () => {
   const privateKey = (walletId, chainFamily, createdAt) => ({
     ...catalogAccount,
     walletId,
@@ -287,15 +287,34 @@ test('groups private keys across chain families without merging wallet or accoun
     searchQuery: ''
   }
   const result = buildVisibleAccountList(input)
-  assert.equal(result.regularEntries.length, 1)
-  const group = result.regularEntries[0]
-  assert.equal(group.kind, 'private-key')
-  assert.equal(group.displayName, 'Imported Private Key')
-  assert.equal(group.walletId, null)
-  assert.equal(group.addAccount, null)
+  assert.equal(result.regularEntries.length, 2)
   assert.deepEqual(
-    group.accounts.map(item => item.account.walletId),
-    ['sol-key', 'evm-key']
+    result.regularEntries.map(group => ({
+      kind: group.kind,
+      id: group.id,
+      name: group.displayName,
+      walletId: group.walletId,
+      addAccount: group.addAccount,
+      accountIds: group.accounts.map(item => item.account.walletId)
+    })),
+    [
+      {
+        kind: 'private-key',
+        id: 'wallet:sol-key',
+        name: 'solana import',
+        walletId: null,
+        addAccount: null,
+        accountIds: ['sol-key']
+      },
+      {
+        kind: 'private-key',
+        id: 'wallet:evm-key',
+        name: 'eip155 import',
+        walletId: null,
+        addAccount: null,
+        accountIds: ['evm-key']
+      }
+    ]
   )
   const switcherGroups = buildAccountSwitcherGroups({
     wallets: [],
@@ -312,15 +331,19 @@ test('groups private keys across chain families without merging wallet or accoun
     })),
     [
       {
-        id: 'imported-private-key',
-        name: 'Imported Private Key',
-        walletIds: ['sol-key', 'evm-key']
+        id: 'wallet:sol-key',
+        name: 'solana import',
+        walletIds: ['sol-key']
+      },
+      {
+        id: 'wallet:evm-key',
+        name: 'eip155 import',
+        walletIds: ['evm-key']
       }
     ]
   )
   assert.equal(
-    buildVisibleAccountList({ ...input, searchQuery: 'Imported Private Key' }).regularEntries[0]
-      .accounts.length,
+    buildVisibleAccountList({ ...input, searchQuery: 'Imported Private Key' }).regularEntries.length,
     2
   )
   const filtered = buildVisibleAccountList({ ...input, searchQuery: 'solana import' })

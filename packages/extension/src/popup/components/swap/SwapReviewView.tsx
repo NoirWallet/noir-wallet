@@ -142,7 +142,7 @@ export function SwapReviewView({
   insufficient
 }: SwapReviewViewProps) {
   const [showMore, setShowMore] = useState(false)
-  const [showApprovalDetails, setShowApprovalDetails] = useState(true)
+  const [showApprovalDetails, setShowApprovalDetails] = useState(false)
   const sourceAddress = sourceAccount?.address ?? sourceTransferDetails?.sender
   const destinationAddress = destinationAccount?.address ?? recipient
   const sourceNetwork = sourceTransferDetails?.network ?? formatChainName(tokenIn.blockchain)

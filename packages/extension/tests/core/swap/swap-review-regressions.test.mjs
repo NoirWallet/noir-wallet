@@ -516,7 +516,7 @@ it('lists Intents and native Shield ZEC as separate selectable sources with dist
   const previousFlags = globalThis.__ENABLED_CHAIN_FEATURE_FLAGS__
   globalThis.__ENABLED_CHAIN_FEATURE_FLAGS__ = ['chain.zcash']
   try {
-    const options = buildShieldSwapZecSourceOptions({
+    const input = {
       network: 'mainnet',
       sources: [
         {
@@ -542,7 +542,8 @@ it('lists Intents and native Shield ZEC as separate selectable sources with dist
             balance: {
               totalRaw: '50000000',
               transparentRaw: '0',
-              shieldedRaw: '50000000'
+              shieldedRaw: '50000000',
+              shieldedPendingRaw: '10000000'
             }
           }
         ],
@@ -551,14 +552,26 @@ it('lists Intents and native Shield ZEC as separate selectable sources with dist
       enabledFlags: ['chain.zcash'],
       zcashAccountEnabled: true,
       keySource: 'software'
-    })
+    }
+    const options = buildShieldSwapZecSourceOptions(input)
     assert.equal(options.length, 2)
     assert.equal(options[0].selectionId, SHIELD_SWAP_ZEC_INTENTS_SELECTION_ID)
     assert.equal(options[0].availableRaw, '120000000')
     assert.equal(options[0].badgeBlockchain, 'near')
     assert.equal(options[1].selectionId, SHIELD_SWAP_ZEC_NATIVE_SELECTION_ID)
-    assert.equal(options[1].availableRaw, '50000000')
+    assert.equal(options[1].availableRaw, '40000000')
     assert.equal(options[1].badgeBlockchain, 'zec')
+    const pendingOnly = buildShieldSwapZecSourceOptions({
+      ...input,
+      portfolio: {
+        ...input.portfolio,
+        assets: input.portfolio.assets.map(asset => ({
+          ...asset,
+          balance: { ...asset.balance, shieldedPendingRaw: asset.balance.shieldedRaw }
+        }))
+      }
+    })
+    assert.equal(pendingOnly[1].availableRaw, '0')
   } finally {
     globalThis.__ENABLED_CHAIN_FEATURE_FLAGS__ = previousFlags
   }

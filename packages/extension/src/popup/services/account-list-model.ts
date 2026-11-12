@@ -51,9 +51,6 @@ export interface SwitcherGroup {
   readonly accounts: readonly SwitcherAccount[]
 }
 
-const IMPORTED_PRIVATE_KEY_GROUP_ID = 'imported-private-key'
-const IMPORTED_PRIVATE_KEY_GROUP_NAME = 'Imported Private Key'
-
 interface AccountDisplayOrder {
   readonly isPinned: boolean
   readonly createdAt: number
@@ -114,10 +111,9 @@ export function buildAccountSwitcherGroups(input: {
   }
   for (const account of catalogAccounts) {
     if (retained.has(accountListKey(account.walletId, account.accountId))) continue
-    const isPrivateKey = account.walletSource.kind === 'private-key'
-    const groupId = isPrivateKey ? IMPORTED_PRIVATE_KEY_GROUP_ID : `wallet:${account.walletId}`
+    const groupId = `wallet:${account.walletId}`
     const group = groups.get(groupId) ?? {
-      name: isPrivateKey ? IMPORTED_PRIVATE_KEY_GROUP_NAME : account.walletDisplayName,
+      name: account.walletDisplayName,
       createdAt: account.walletCreatedAt ?? Number.MAX_SAFE_INTEGER,
       accounts: []
     }
@@ -378,14 +374,14 @@ export function buildVisibleAccountList(input: {
       ensureWalletGroup(account.walletId, account).accounts.push({ kind: 'native', account })
       continue
     }
-    const id = IMPORTED_PRIVATE_KEY_GROUP_ID
+    const id = `wallet:${account.walletId}`
     let group = groups.get(id)
     if (!group) {
       group = {
         kind: 'private-key',
         id,
         walletId: null,
-        displayName: IMPORTED_PRIVATE_KEY_GROUP_NAME,
+        displayName: account.walletDisplayName,
         hardwareVendor: null,
         addAccount: null,
         createdAt: Number.MAX_SAFE_INTEGER,

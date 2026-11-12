@@ -886,6 +886,16 @@ export function ShieldWithdrawForm({
               <span className="inline-flex items-center gap-2">
                 <img src={nearLogo} alt="" className="size-5 rounded" />
                 Confidential
+                <button
+                  type="button"
+                  aria-label={`Slippage settings, currently ${slippage}%`}
+                  title={`Slippage: ${slippage}%`}
+                  disabled={busy}
+                  onClick={() => setPicker('slippage')}
+                  className="wallet-interactive ml-1 inline-flex size-6 items-center justify-center rounded text-muted hover:text-foreground disabled:opacity-45"
+                >
+                  <Icon icon="lucide:settings-2" width={15} height={15} />
+                </button>
               </span>
             }
             fee={
@@ -897,20 +907,6 @@ export function ShieldWithdrawForm({
               preview?.timeEstimateSeconds === undefined
                 ? '—'
                 : formatShieldQuoteTime(preview.timeEstimateSeconds)
-            }
-            extra={
-              <div className="flex items-center justify-between gap-3 border-t border-white/10 pt-3">
-                <span className="text-muted">Slippage</span>
-                <button
-                  type="button"
-                  aria-label={`Set slippage, currently ${slippage}%`}
-                  disabled={busy}
-                  onClick={() => setPicker('slippage')}
-                  className="wallet-interactive inline-flex items-center gap-1 text-foreground hover:text-primary disabled:opacity-45"
-                >
-                  {slippage}% <Icon icon="lucide:chevron-down" width={14} height={14} />
-                </button>
-              </div>
             }
           />
         </div>

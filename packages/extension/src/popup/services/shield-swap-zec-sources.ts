@@ -1,5 +1,4 @@
 import { ZEC_ZCASH_ASSET } from '@/config/intents'
-import { ZEC_DECIMALS } from '@/config/wallet'
 import type { PortfolioReadModel } from '@/core/portfolio'
 import { getZcashChainId } from '@/core/chains/registry'
 import { getConfidentialAvailableForAsset } from '@/core/services/confidential-funding'
@@ -133,19 +132,21 @@ export function buildShieldSwapZecSourceOptions(input: {
   ) {
     const nativeAsset = zcashShieldNativeAsset(input.portfolio, input.network)
     const shieldedRaw = nativeAsset ? getAssetDomainRaw(nativeAsset, 'shield') : null
-    const availableRaw = shieldedRaw ?? '0'
     try {
-      if (BigInt(availableRaw) > 0n) {
+      const availableRaw = (
+        BigInt(shieldedRaw ?? '0') - BigInt(nativeAsset?.balance.shieldedPendingRaw ?? '0')
+      ).toString()
+      if (nativeAsset && shieldedRaw !== null && BigInt(availableRaw) >= 0n) {
         options.push(
           Object.freeze({
             selectionId: SHIELD_SWAP_ZEC_NATIVE_SELECTION_ID,
             kind: 'native-shielded',
-            symbol: nativeAsset?.metadata.symbol ?? 'ZEC',
-            iconUrl: nativeAsset?.metadata.iconUrl,
+            symbol: nativeAsset.metadata.symbol,
+            iconUrl: nativeAsset.metadata.iconUrl,
             badgeBlockchain: 'zec',
             chainName: 'Zcash Shield',
             availableRaw,
-            decimals: nativeAsset?.metadata.decimals ?? ZEC_DECIMALS
+            decimals: nativeAsset.metadata.decimals
           })
         )
       }

@@ -1162,7 +1162,6 @@ function TransferForm() {
     eligible &&
     source &&
     estimateAmountRaw &&
-    !tokenFeeBalanceError &&
     !preparedShield
   )
   const directEstimate = useMoveMethodEstimate({
