@@ -2,7 +2,6 @@ import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
 const extensionDirectory = fileURLToPath(new URL('..', import.meta.url))
-const allChains = 'chain.evm,chain.bitcoin,chain.solana,chain.near'
 const testReleaseEnvironment = {
   EVM_HISTORY_API_ORIGIN: 'https://evm-history.test',
   RHEA_SWAP_ACCESS_TOKEN: 'test-rhea-access-token',
@@ -23,75 +22,27 @@ function isolated(profile, features, options = {}) {
 
 const projects = {
   extension: isolated('mainnet-zcash-regression', '', { workers: 4 }),
-  'release-default': isolated('mainnet-release-default', undefined, {
-    prepareExample: true,
-    env: { ...testReleaseEnvironment, BUILD_CHANNEL: 'beta', E2E_SCREENSHOTS: '1' }
-  }),
   'production-dist': {
     build: true,
     workers: 1,
-    env: { ...testReleaseEnvironment, BUILD_CHANNEL: 'production', E2E_SCREENSHOTS: '1' }
+    env: { ...testReleaseEnvironment, BUILD_CHANNEL: 'production' }
   },
   'development-extension': { env: { DEV_EXTENSION_E2E: '1' } },
   'transaction-testnet': isolated('testnet-transactions', ''),
-  'evm-testnet': isolated('testnet-evm', 'chain.evm', {
-    env: { APPROVAL_WINDOW_E2E: '1' }
-  }),
-  'multichain-receive-testnet': isolated('testnet-multichain-receive', allChains),
-  'solana-near-portfolio-testnet': isolated(
-    'testnet-solana-near-portfolio',
-    'chain.solana,chain.near'
-  ),
-  'private-key-testnet': isolated('testnet-private-key', allChains, {
-    prepareExample: true,
-    env: { APPROVAL_WINDOW_E2E: '1' }
-  }),
-  'bitcoin-testnet': isolated('testnet-bitcoin', 'chain.bitcoin', {
-    env: { APPROVAL_WINDOW_E2E: '1' }
-  }),
-  'protocol-mainnet': isolated('mainnet-protocol', 'chain.evm,chain.bitcoin', {
-    env: {
-      RHEA_SWAP_ACCESS_TOKEN: 'test-rhea-access-token',
-      APPROVAL_WINDOW_E2E: '1',
-      E2E_SCREENSHOTS: '1'
-    }
-  }),
-  'live-services': { live: true, workers: 1 },
-  'asset-price-live': isolated('mainnet-asset-price-live', 'chain.evm', { live: true }),
-  'funding-source-live': isolated('testnet-transactions', '', { live: true }),
-  'evm-testnet-live': isolated('testnet-evm', 'chain.evm', { live: true }),
-  'solana-near-testnet-live': isolated('testnet-solana-near-live', 'chain.solana,chain.near', {
-    live: true,
-    env: { APPROVAL_WINDOW_E2E: '1' }
-  }),
-  'bitcoin-testnet-live': isolated('testnet-bitcoin', 'chain.bitcoin', {
-    live: true,
-    env: { APPROVAL_WINDOW_E2E: '1' }
-  }),
-  'protocol-live': isolated('mainnet-protocol', 'chain.evm,chain.bitcoin', { live: true })
+  'live-services': { live: true, workers: 1 }
 }
 
-const rcProjects = [
-  'extension',
-  'release-default',
-  'transaction-testnet',
-  'multichain-receive-testnet',
-  'private-key-testnet',
-  'evm-testnet',
-  'bitcoin-testnet',
-  'protocol-mainnet'
-]
+const rcProjects = ['extension', 'transaction-testnet']
 
 function help() {
-  console.log(`Usage: pnpm test [core|e2e|live|rc|screenshots] [project] [options]
+  console.log(`Usage: pnpm test [core|e2e|live|rc] [project] [options]
 
   pnpm test                           Offline core tests (Node options accepted)
   pnpm test --list                    List core test files
   pnpm test --file=security           Run one core directory (or a core-relative file)
   pnpm test e2e <project>             Build and run one MV3 project
   pnpm test live [project]            Run live-services by default; other projects are explicit
-  pnpm test rc                        Run the existing multichain RC sequence
-  pnpm test screenshots [--prune]     Check the screenshot catalog
+  pnpm test rc                        Run core and MV3 safety checks, then verify builds
 
 Use --dry-run to print commands without executing them.
 Use --skip-build with e2e/live to reuse a matching build; other options go to Playwright.
@@ -159,10 +110,6 @@ function projectEnvironment(config) {
 function runProject(name, extraArgs = [], overrides = {}) {
   const config = projects[name]
   const env = { ...projectEnvironment(config), ...overrides }
-  if (!skipBuild && config.prepareExample) {
-    run('pnpm', ['--filter', '@noir-wallet/sdk', 'build'], env)
-    run('pnpm', ['--filter', '@noir-wallet/example', 'build'], env)
-  }
   if (!skipBuild && config.build) run('pnpm', ['run', 'build'], env)
   run(
     'pnpm',
@@ -183,10 +130,6 @@ function runCore(coreArgs = []) {
     fileURLToPath(new URL('../../../scripts/run-core-tests.mjs', import.meta.url)),
     ...coreArgs
   ])
-}
-
-function runScreenshots(screenshotArgs = []) {
-  run(process.execPath, ['scripts/check-e2e-screenshots.mjs', ...screenshotArgs])
 }
 
 try {
@@ -217,20 +160,13 @@ try {
     case 'rc':
       if (args.length > 0) throw new Error('rc only accepts --dry-run')
       runCore()
-      for (const name of rcProjects) runProject(name, [], { E2E_SCREENSHOTS: '1' })
+      for (const name of rcProjects) runProject(name)
       for (const network of ['mainnet', 'testnet']) {
         run('pnpm', ['run', 'build'], {
           ...projectEnvironment(projects['production-dist']),
           NETWORK_MODE: network
         })
       }
-      runScreenshots()
-      break
-    case 'screenshots':
-      if (args.some(argument => argument !== '--prune')) {
-        throw new Error('screenshots only accepts --prune and --dry-run')
-      }
-      runScreenshots(args)
       break
     default:
       throw new Error(`Unknown test command: ${mode}. Run pnpm test --help`)

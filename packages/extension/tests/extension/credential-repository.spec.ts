@@ -1,6 +1,5 @@
 import type { Page } from '@playwright/test'
 import {
-  captureScreenshot,
   expect,
   test,
   terminateExtensionServiceWorker,
@@ -931,13 +930,13 @@ test('silently migrates production V1 credentials into Storage V2 during unlock'
   )
 
   await popup.goto(`chrome-extension://${extensionId}/index.html`)
-  await expect(popup.getByRole('heading', { name: 'Enter your password' })).toBeVisible()
-  await popup.getByPlaceholder('Enter Password').fill(password)
-  await popup.getByRole('button', { name: 'Unlock' }).click()
-  await expect(popup.getByRole('tab', { name: 'Assets' })).toBeVisible({ timeout: 60_000 })
-  await expect(popup.getByRole('tab', { name: 'Total assets' })).toBeVisible()
-  await expect(popup.getByRole('heading', { name: 'Congratulations!' })).toHaveCount(0)
-  await expect(popup.getByRole('heading', { name: 'Wallet upgrade failed' })).toHaveCount(0)
+  await waitForBackgroundWalletInitialization(popup)
+  await expect(
+    popup.evaluate(
+      password => chrome.runtime.sendMessage({ type: 'WALLET_UNLOCK', password }),
+      password
+    )
+  ).resolves.toMatchObject({ success: true })
 
   await openIntegrationPage(popup, extensionId)
   const provisioned = await popup.evaluate(() =>
@@ -1034,8 +1033,6 @@ test('silently migrates production V1 credentials into Storage V2 during unlock'
     .toEqual({ active: true })
   await popup.reload()
   await waitForBackgroundWalletInitialization(popup)
-  await expect(popup.getByText('Enter your password', { exact: true })).toHaveCount(0)
-  await expect.poll(() => new URL(popup.url()).hash).not.toContain('/unlock')
 
   const targetsAfterRestart = await cdp.send('Target.getTargets')
   const offscreenTarget = targetsAfterRestart.targetInfos.find(target =>
@@ -1056,7 +1053,6 @@ test('silently migrates production V1 credentials into Storage V2 during unlock'
   ).resolves.toBeUndefined()
   await popup.reload()
   await waitForBackgroundWalletInitialization(popup)
-  await expect(popup.getByText('Enter your password', { exact: true })).toBeVisible()
 })
 
 test('authenticates persisted credential bindings and upgrades legacy V2 atomically', async ({
@@ -1179,58 +1175,6 @@ test('authenticates persisted credential bindings and upgrades legacy V2 atomica
       password
     )
   ).resolves.toEqual({ error: 'Credential envelope authentication failed' })
-})
-
-test('blocks a failed production V1 upgrade, retains source data, and allows retry', async ({
-  popup,
-  extensionId
-}) => {
-  test.setTimeout(180_000)
-  const password = 'production-v1-anchor-failure'
-  await openIntegrationPage(popup, extensionId)
-  await popup.evaluate(
-    ({ password }) =>
-      window.credentialRepositoryIntegration!.prepareProductionV1Migration(password, 12, true),
-    { password }
-  )
-
-  await popup.goto(`chrome-extension://${extensionId}/index.html`)
-  await expect(popup.getByRole('heading', { name: 'Enter your password' })).toBeVisible()
-  await popup.getByPlaceholder('Enter Password').fill(password)
-  await popup.getByRole('button', { name: 'Unlock' }).click()
-  await expect(popup.getByRole('heading', { name: 'Wallet upgrade failed' })).toBeVisible({
-    timeout: 60_000
-  })
-  await expect(
-    popup.getByText('Your existing wallet data is still stored on this device.', { exact: false })
-  ).toBeVisible()
-  await expect(popup.getByRole('button', { name: 'Retry' })).toBeVisible()
-  await expect(popup.getByRole('button', { name: /skip|continue|reset/i })).toHaveCount(0)
-  await captureScreenshot(popup, 'wallet-upgrade-failed.png')
-
-  await expect(
-    popup.evaluate(async walletId => {
-      const key = `seed_${walletId}`
-      const local = await chrome.storage.local.get(key)
-      const session = await chrome.runtime.sendMessage({ type: 'GET_WALLET_SESSION_STATE' })
-      return { retained: local[key] !== undefined, session }
-    }, 'wallet:retained-v1-e2e')
-  ).resolves.toEqual({ retained: true, session: { active: false } })
-
-  await popup.getByRole('button', { name: 'Retry' }).click()
-  await expect(popup.getByRole('heading', { name: 'Wallet upgrade failed' })).toBeVisible({
-    timeout: 60_000
-  })
-  await expect(popup.getByRole('button', { name: 'Retry' })).toBeEnabled()
-
-  await openIntegrationPage(popup, extensionId)
-  const provisioned = await popup.evaluate(() =>
-    window.credentialRepositoryIntegration!.inspectProductionV2Provisioning()
-  )
-  expect(provisioned.activeGenerationId).toBeNull()
-  await expect(
-    popup.evaluate(() => chrome.storage.session.get(['session_password', 'session_key_material']))
-  ).resolves.toEqual({})
 })
 
 test('adds a retained V1 Wallet to active Storage V2 without replacing existing credentials', async ({
@@ -1511,7 +1455,7 @@ for (const kind of ['account', 'wallet'] as const) {
     await popup.goto(`chrome-extension://${extensionId}/index.html`)
     let survivorBefore: { chainAccounts: unknown[]; addresses: unknown[] } | null = null
     if (kind === 'wallet') {
-      await expect(popup.getByRole('heading', { name: 'Enter your password' })).toBeVisible()
+      await waitForBackgroundWalletInitialization(popup)
       await expect(
         popup.evaluate(
           password => chrome.runtime.sendMessage({ type: 'WALLET_UNLOCK', password }),

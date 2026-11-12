@@ -23,7 +23,7 @@ Choose the lowest-cost deterministic layer that exercises the failing boundary: 
 Group wallet tests by execution environment and domain under `packages/extension/tests/`:
 
 - `core/<domain>/**/*.test.mjs` (or `.test.ts`): offline tests using Node's test runner. These may use the existing `expect` assertion library, but require no browser, external services, hardware, or funded credentials.
-- `extension/`: real isolated MV3 checks using Playwright. Keep reusable browser setup in `helpers/` and packaged integration pages beside their extension tests.
+- `extension/`: non-UI checks for real MV3 permissions, storage, migration, Workers, and package installation. UI acceptance suites and their dedicated helpers/configuration stay local and ignored by Git; do not commit them.
 - `live/`: external-service and funded integration checks, gated by explicit opt-in flags. Keep them outside the default test command.
 - `helpers/` and `fixtures/`: shared setup and immutable compatibility data; neither directory is discovered as a test suite.
 - `.local/`: ignored, temporary investigations. Keep reusable coverage in its owning suite instead of accumulating per-defect scripts as maintained tests.
@@ -38,11 +38,10 @@ The wallet uses one test entry point from either the repository root or extensio
 
 ```bash
 pnpm test                            # Offline core tests
-pnpm test e2e release-default        # Build and run one MV3 project
+pnpm test e2e extension              # Build and run MV3 safety checks
 pnpm test live                       # Opt-in service checks only
 pnpm test live evm-testnet-live      # Explicit funded project selection
-pnpm test rc                         # Existing multichain RC sequence
-pnpm test screenshots                # Screenshot catalog check
+pnpm test rc                         # Core, MV3 safety checks, and build verification
 ```
 
 `pnpm test --help` lists projects. Add `--dry-run` to inspect commands, or `--skip-build` to reuse a matching build for `e2e`/`live`; other options are forwarded to Node or Playwright. The runner supplies each project's network, feature flags, and build prerequisites. `development-extension` uses an already running `pnpm dev:extension`. Live projects retain their existing opt-in requirements; selecting `live` alone never selects funded flows. `production-dist` and RC production build checks use test configuration and write local distributable output that must not be published.

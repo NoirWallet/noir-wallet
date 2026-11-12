@@ -46,3 +46,27 @@ packages/evm-history-worker/.wrangler/
 packages/example/public/extension/*.zip
 packages/example/public/extension/version.json
 packages/zcash-wallet-wasm/
+
+# UI acceptance suites are local-only. Keep non-UI MV3 safety checks tracked.
+packages/extension/playwright.local.config.ts
+packages/extension/scripts/run-tests.local.mjs
+packages/extension/scripts/check-e2e-screenshots.mjs
+packages/extension/tests/extension/**/*.spec.ts
+!packages/extension/tests/extension/bitcoin-discovery-repository.spec.ts
+!packages/extension/tests/extension/credential-repository.spec.ts
+!packages/extension/tests/extension/credential-session-resource-budget.spec.ts
+!packages/extension/tests/extension/development-provider-injection.spec.ts
+!packages/extension/tests/extension/extension-security.spec.ts
+!packages/extension/tests/extension/keystone-v1-upgrade.spec.ts
+!packages/extension/tests/extension/mixed-v1-upgrade.spec.ts
+!packages/extension/tests/extension/multichain-wasm.spec.ts
+!packages/extension/tests/extension/production-dist-install.spec.ts
+!packages/extension/tests/extension/storage-migration.spec.ts
+!packages/extension/tests/extension/storage-quarantine.spec.ts
+!packages/extension/tests/extension/transaction-repository.spec.ts
+!packages/extension/tests/extension/transaction-testnet-environment.spec.ts
+!packages/extension/tests/extension/v1-golden-upgrade.spec.ts
+!packages/extension/tests/extension/wallet-cleanup.spec.ts
+packages/extension/tests/live/extension/
+packages/extension/tests/helpers/release-default.ts
+packages/extension/tests/helpers/protocol-wallet.ts
