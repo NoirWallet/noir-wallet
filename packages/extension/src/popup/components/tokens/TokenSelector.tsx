@@ -3,11 +3,11 @@
  */
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { Icon } from '@iconify/react'
-import { Input } from '../ui/input'
 import type { SwapToken } from '@/core/services/intents-api'
 import { formatChainName, formatSymbol } from '@/lib/format'
 import { TokenIcon } from './TokenIcon'
 import { TokenBalanceDisplay } from './TokenBalanceDisplay'
+import { TokenSelectionList, TokenSelectionSearch } from './TokenSelectionList'
 import { sortTokensByBalanceValue } from './token-balance-order'
 import { ListSkeleton } from '../ui/skeleton'
 import { swapTokenCatalogClient } from '@/popup/services/swap-token-catalog-client'
@@ -257,17 +257,15 @@ export function TokenSelector({
       <div
         className={cn('sticky top-0 z-10', networkFilterStyle === 'icons' ? 'pb-3 pt-1.5' : 'py-4')}
       >
-        <Input
-          type="text"
-          placeholder="Search tokens"
+        <TokenSelectionSearch
           value={search}
-          onChange={e => setSearch(e.target.value)}
+          onChange={setSearch}
+          ariaLabel="Search tokens"
           className={cn(
             'h-10',
             networkFilterStyle === 'icons' && 'h-[45px] rounded-xl border-transparent bg-card'
           )}
           autoFocus
-          startContent={<Icon icon="lucide:search" className="text-muted" width={16} height={16} />}
         />
         {networkFilterStyle === 'icons' ? (
           <div
@@ -526,61 +524,43 @@ export function TokenSelector({
             <div className="py-8 text-center text-muted">{emptyMessage}</div>
           )
         ) : (
-          <>
-            {visibleTokens.map(token => {
+          <TokenSelectionList
+            items={visibleTokens.map(token => {
               const balance = balances?.get(token.assetId)
               const symbol = formatSymbol(token.symbol)
               const chainName = formatChainName(token.blockchain)
-              return (
-                <button
-                  key={`${token.blockchain}-${token.symbol}-${token.assetId}`}
-                  onClick={() => onSelect(token)}
-                  aria-pressed={selectedToken?.assetId === token.assetId}
-                  aria-label={`${symbol} on ${chainName}${balance === undefined ? '' : `, balance ${balance} ${symbol}`}`}
-                  className={cn(
-                    'wallet-interactive flex min-h-[55px] w-full items-center justify-between gap-3 rounded-lg px-3 py-2.5 hover:bg-card active:bg-white/10 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary',
-                    networkFilterStyle === 'icons' &&
-                      'min-h-[72px] rounded-none py-3 hover:bg-white/5',
-                    networkFilterStyle === 'icons' && (fullHeight ? 'px-4' : 'px-2.5'),
-                    selectedToken?.assetId === token.assetId && 'bg-primary/[0.08]'
-                  )}
-                >
-                  <div
-                    className={cn(
-                      'flex min-w-0 flex-1 items-center gap-3',
-                      networkFilterStyle === 'icons' && 'gap-2'
-                    )}
-                  >
-                    <TokenIcon token={token} size={networkFilterStyle === 'icons' ? 32 : 30} />
-                    <div className="min-w-0 text-left">
-                      <p
-                        className={cn(
-                          'truncate font-semibold',
-                          networkFilterStyle === 'icons' && 'text-base font-medium'
-                        )}
-                      >
-                        {symbol}
-                      </p>
-                      <p className="truncate text-xs text-muted">{chainName}</p>
-                    </div>
-                  </div>
-                  <div className="min-w-0 max-w-[55%]">
-                    {balance !== undefined && (
-                      <TokenBalanceDisplay
-                        amount={balance}
-                        symbol={symbol}
-                        showSymbol={false}
-                        priceUsd={token.price}
-                        className={
-                          networkFilterStyle === 'icons' ? '[&>p:first-child]:font-sans' : undefined
-                        }
-                      />
-                    )}
-                  </div>
-                </button>
-              )
+              return {
+                key: `${token.blockchain}:${token.assetId}`,
+                symbol,
+                icon: <TokenIcon token={token} size={networkFilterStyle === 'icons' ? 32 : 30} />,
+                subtitle: chainName,
+                ariaLabel: `${symbol} on ${chainName}${balance === undefined ? '' : `, balance ${balance} ${symbol}`}`,
+                balance:
+                  balance === undefined ? undefined : (
+                    <TokenBalanceDisplay
+                      amount={balance}
+                      symbol={symbol}
+                      showSymbol={false}
+                      priceUsd={token.price}
+                      className={
+                        networkFilterStyle === 'icons' ? '[&>p:first-child]:font-sans' : undefined
+                      }
+                    />
+                  )
+              }
             })}
-          </>
+            selectedKey={
+              selectedToken ? `${selectedToken.blockchain}:${selectedToken.assetId}` : undefined
+            }
+            onSelect={key => {
+              const selected = visibleTokens.find(
+                token => `${token.blockchain}:${token.assetId}` === key
+              )
+              if (selected) onSelect(selected)
+            }}
+            variant={networkFilterStyle === 'icons' ? 'icons' : 'default'}
+            rowClassName={networkFilterStyle === 'icons' && !fullHeight ? 'px-2.5' : undefined}
+          />
         )}
       </div>
     </div>

@@ -4,6 +4,7 @@ import { formatSymbol } from '@/lib/format'
 import { formatBaseUnitDecimalAmount, formatTokenQuantity } from '@/lib/number-format'
 import { TokenIcon } from './TokenIcon'
 import { partitionShieldSourceTokenRows } from './shield-source-token-groups'
+import { TokenSelectionList, type TokenSelectionItem } from './TokenSelectionList'
 import { cn } from '@/lib/utils'
 
 export interface ShieldSourceTokenPickerItem {
@@ -33,57 +34,58 @@ export function ShieldSourceTokenPickerRows({
   const { funded, lowBalance } = partitionShieldSourceTokenRows(
     items.map(item => Object.freeze({ item, availableRaw: item.availableRaw }))
   )
-  const renderRow = (item: ShieldSourceTokenPickerItem) => (
-    <button
-      key={item.key}
-      type="button"
-      disabled={Boolean(item.disabledReason)}
-      title={item.disabledReason}
-      onClick={() => onSelect(item.assetId)}
-      aria-pressed={selectedAssetId === item.assetId}
-      className={cn(
-        'wallet-interactive flex w-full items-center gap-3 rounded-md px-2 py-2 text-left hover:bg-wallet-selected active:bg-white/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-45',
-        selectedAssetId === item.assetId && 'bg-wallet-selected'
-      )}
-    >
-      <TokenIcon
-        assetId={item.assetId}
-        symbol={formatSymbol(item.symbol)}
-        icon={item.iconUrl}
-        blockchain={item.badgeBlockchain}
-        size={30}
-      />
-      <span className="min-w-0 flex-1">
-        <span className="block truncate text-sm">{formatSymbol(item.symbol)}</span>
-        {item.chainName && (
-          <span className="block truncate text-xs text-muted">{item.chainName}</span>
-        )}
-      </span>
-      <span
-        className="max-w-[42%] min-w-0 shrink-0 text-right"
-        title={
-          balancesHidden ? undefined : formatBaseUnitDecimalAmount(item.availableRaw, item.decimals)
-        }
-      >
+  const toSelectionItem = (item: ShieldSourceTokenPickerItem): TokenSelectionItem => {
+    const balance = formatBaseUnitDecimalAmount(item.availableRaw, item.decimals)
+    return {
+      key: item.key,
+      symbol: formatSymbol(item.symbol),
+      icon: (
+        <TokenIcon
+          assetId={item.assetId}
+          symbol={formatSymbol(item.symbol)}
+          icon={item.iconUrl}
+          blockchain={item.badgeBlockchain}
+          size={30}
+        />
+      ),
+      subtitle: item.chainName,
+      balance: (
         <span className="block truncate text-sm tabular-nums">
-          {balancesHidden
-            ? '••••'
-            : formatTokenQuantity(formatBaseUnitDecimalAmount(item.availableRaw, item.decimals))}
+          {balancesHidden ? '••••' : formatTokenQuantity(balance)}
         </span>
-      </span>
-    </button>
-  )
+      ),
+      balanceTitle: balancesHidden ? undefined : balance,
+      disabledReason: item.disabledReason
+    }
+  }
+  const selectedKey = items.find(item => item.assetId === selectedAssetId)?.key
+  const selectKey = (key: string) => {
+    const selected = items.find(item => item.key === key)
+    if (selected) onSelect(selected.assetId)
+  }
 
   return (
     <div className="space-y-1">
-      {funded.map(renderRow)}
+      <TokenSelectionList
+        items={funded.map(toSelectionItem)}
+        selectedKey={selectedKey}
+        onSelect={selectKey}
+        variant="source"
+        className="space-y-1"
+      />
       {lowBalance.length > 0 && (
         <ClientSection
           expanded={lowBalanceExpanded}
           count={lowBalance.length}
           onToggle={() => setLowBalanceExpanded(current => !current)}
         >
-          {lowBalance.map(renderRow)}
+          <TokenSelectionList
+            items={lowBalance.map(toSelectionItem)}
+            selectedKey={selectedKey}
+            onSelect={selectKey}
+            variant="source"
+            className="space-y-1"
+          />
         </ClientSection>
       )}
     </div>

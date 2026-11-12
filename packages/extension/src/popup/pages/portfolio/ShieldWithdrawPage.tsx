@@ -317,16 +317,16 @@ export function ShieldWithdrawForm({
     if (!sourceId && source) setSourceId(source.asset.asset.id)
   }
   const destinations = source ? listShieldSendDestinations(source, options, network) : []
+  const selectedDestinationNetworkId = destinationNetworkId ?? source?.chain.chain.id ?? null
   const destination =
-    source && destinationNetworkId
-      ? selectShieldWithdrawDestinationForNetwork(destinations, source, destinationNetworkId)
+    source && selectedDestinationNetworkId
+      ? selectShieldWithdrawDestinationForNetwork(
+          destinations,
+          source,
+          selectedDestinationNetworkId
+        )
       : null
-  const destinationNetwork = destinations.find(item => item.chain.chain.id === destinationNetworkId)
-    ?.chain.chain
-  useEffect(() => {
-    if (!source || destinationNetworkId || destinations.length !== 1) return
-    setDestinationNetworkId(destinations[0]!.chain.chain.id)
-  }, [source, destinations, destinationNetworkId])
+  const destinationNetwork = destination?.chain.chain
   const availableRaw = shieldFundingAvailableRaw(source, displayBalances)
   const displayedAsset = source?.asset ?? initialAsset
   const amountState = source
@@ -1008,7 +1008,7 @@ export function ShieldWithdrawForm({
                 <button
                   key={item.chain.chain.id}
                   type="button"
-                  aria-pressed={destinationNetworkId === item.chain.chain.id}
+                  aria-pressed={selectedDestinationNetworkId === item.chain.chain.id}
                   onClick={() => {
                     const next = selectShieldWithdrawDestinationForNetwork(
                       destinations,
@@ -1016,12 +1016,12 @@ export function ShieldWithdrawForm({
                       item.chain.chain.id
                     )
                     if (next) {
-                      if (destinationNetworkId !== item.chain.chain.id) setRecipient('')
+                      if (selectedDestinationNetworkId !== item.chain.chain.id) setRecipient('')
                       setDestinationNetworkId(item.chain.chain.id)
                     }
                     setPicker(null)
                   }}
-                  className={`wallet-interactive flex w-full items-center gap-3 rounded-md px-2 py-3 text-left text-sm hover:bg-wallet-selected active:bg-white/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 ${destinationNetworkId === item.chain.chain.id ? 'bg-wallet-selected' : ''}`}
+                  className={`wallet-interactive flex w-full items-center gap-3 rounded-md px-2 py-3 text-left text-sm hover:bg-wallet-selected active:bg-white/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 ${selectedDestinationNetworkId === item.chain.chain.id ? 'bg-wallet-selected' : ''}`}
                 >
                   <ChainIcon
                     chain={withdrawChainIconAlias(item.chain.chain)}
@@ -1030,7 +1030,7 @@ export function ShieldWithdrawForm({
                     className="shrink-0 rounded-md"
                   />
                   <span className="min-w-0 flex-1 truncate">{item.chain.chain.displayName}</span>
-                  {destinationNetworkId === item.chain.chain.id && (
+                  {selectedDestinationNetworkId === item.chain.chain.id && (
                     <Icon icon="lucide:check" width={17} height={17} className="text-primary" />
                   )}
                 </button>

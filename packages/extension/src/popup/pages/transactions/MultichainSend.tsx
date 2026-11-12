@@ -5,7 +5,11 @@ import type { PortfolioReadModel } from '@/core/portfolio'
 import { findAssetPrice, type AssetPriceReadModel } from '@/core/prices'
 import { formatSortAddress } from '@/lib/format'
 import { resolveChainIconAlias } from '@/lib/chain-icon'
-import { Input } from '@/popup/components/ui/input'
+import {
+  TokenSelectionList,
+  TokenSelectionSearch,
+  type TokenSelectionItem
+} from '@/popup/components/tokens/TokenSelectionList'
 import { PageHeader } from '@/popup/components/common/PageHeader'
 import { InlineError } from '@/popup/components/common/InlineError'
 import { SendRouteMenu } from '@/popup/components/transaction/SendRouteMenu'
@@ -126,13 +130,12 @@ function AssetSelection({
   )
   return (
     <div className="page-content !px-4 pt-5">
-      <Input
+      <TokenSelectionSearch
         value={query}
-        onChange={event => setQuery(event.target.value)}
+        onChange={setQuery}
         placeholder="Search your assets"
-        aria-label="Search your assets"
+        ariaLabel="Search your assets"
         className="h-[46px] rounded-xl"
-        startContent={<Icon icon="lucide:search" width={18} height={18} className="text-muted" />}
       />
 
       <div className="mb-2 mt-3">
@@ -196,17 +199,17 @@ function AssetSelection({
       </div>
 
       <div>
-        {orderedRows.map(row => {
-          if (row.kind === 'zcash') {
-            return (
-              <button
-                key={row.key}
-                type="button"
-                aria-label={`Send ZEC on ${zcashNetwork === 'testnet' ? 'Zcash Testnet' : 'Zcash'}`}
-                onClick={onSelectZcash}
-                className="flex min-h-[55px] w-full items-center justify-between gap-3 py-2.5 text-left transition-colors hover:bg-card/60"
-              >
-                <div className="flex min-w-0 items-center gap-3">
+        <TokenSelectionList
+          variant="send"
+          items={orderedRows.map((row): TokenSelectionItem => {
+            if (row.kind === 'zcash') {
+              const networkName = zcashNetwork === 'testnet' ? 'Zcash Testnet' : 'Zcash'
+              return {
+                key: row.key,
+                symbol: 'ZEC',
+                ariaLabel: `Send ZEC on ${networkName}`,
+                subtitle: networkName,
+                icon: (
                   <TokenIcon
                     symbol="ZEC"
                     nativeChain="zcash"
@@ -214,84 +217,67 @@ function AssetSelection({
                     size={32}
                     className="shrink-0"
                   />
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-medium">ZEC</p>
-                    <p className="truncate text-xs text-muted">
-                      {zcashNetwork === 'testnet' ? 'Zcash Testnet' : 'Zcash'}
-                    </p>
-                  </div>
-                </div>
-                <TokenBalanceDisplay
-                  amount={row.amount}
-                  symbol="ZEC"
-                  priceUsd={row.priceUsd}
-                  approximateFiat
-                />
-              </button>
-            )
-          }
-
-          const { entry } = row
-          const available = row.amount
-          const customToken =
-            entry.asset.asset.kind === 'token' && entry.asset.source === 'user-added'
-          const networkName = entry.chain.chain.displayName
-          const priceUsd = row.priceUsd
-          const chainBadge = resolveChainIconAlias(
-            entry.chain.chain.family,
-            entry.chain.chain.displayName,
-            entry.chain.chain.id
-          )
-          return (
-            <button
-              key={row.key}
-              type="button"
-              aria-label={`Send ${entry.asset.metadata.symbol}${customToken ? ' custom Token' : ''} on ${networkName}`}
-              onClick={() => onSelect(entry)}
-              className="flex min-h-[55px] w-full items-center justify-between gap-3 py-2.5 text-left transition-colors hover:bg-card/60"
-            >
-              <div className="flex min-w-0 items-center gap-3">
+                ),
+                balance: (
+                  <TokenBalanceDisplay
+                    amount={row.amount}
+                    symbol="ZEC"
+                    priceUsd={row.priceUsd}
+                    approximateFiat
+                  />
+                )
+              }
+            }
+            const { entry } = row
+            const customToken =
+              entry.asset.asset.kind === 'token' && entry.asset.source === 'user-added'
+            const networkName = entry.chain.chain.displayName
+            return {
+              key: row.key,
+              symbol: entry.asset.metadata.symbol,
+              symbolSuffix: customToken ? (
+                <span className="shrink-0 rounded bg-white/8 px-1.5 py-0.5 text-[9px] text-muted">
+                  Custom
+                </span>
+              ) : undefined,
+              ariaLabel: `Send ${entry.asset.metadata.symbol}${customToken ? ' custom Token' : ''} on ${networkName}`,
+              subtitle: `${networkName}${customToken ? ` · ${formatSortAddress(entry.asset.asset.reference)}` : ''}`,
+              icon: (
                 <TokenIcon
                   assetId={entry.asset.asset.id}
                   symbol={entry.asset.metadata.symbol}
                   icon={entry.asset.metadata.iconUrl}
-                  blockchain={chainBadge}
+                  blockchain={resolveChainIconAlias(
+                    entry.chain.chain.family,
+                    networkName,
+                    entry.chain.chain.id
+                  )}
                   size={32}
                   className="shrink-0"
                 />
-                <div className="min-w-0">
-                  <div className="flex min-w-0 items-center gap-1.5">
-                    <p className="truncate text-sm font-medium">{entry.asset.metadata.symbol}</p>
-                    {customToken && (
-                      <span className="shrink-0 rounded bg-white/8 px-1.5 py-0.5 text-[9px] text-muted">
-                        Custom
-                      </span>
-                    )}
-                  </div>
-                  <p className="truncate text-xs text-muted">
-                    {networkName}
-                    {customToken && ` · ${formatSortAddress(entry.asset.asset.reference)}`}
+              ),
+              balance:
+                entry.chain.chain.family === 'bitcoin' && entry.asset.updatedAt === 0 ? (
+                  <p className="min-w-0 truncate text-right text-sm font-medium">
+                    {entry.chain.status === 'error' ? 'Unavailable' : 'Updating…'}
                   </p>
-                </div>
-              </div>
-              {entry.chain.chain.family === 'bitcoin' && entry.asset.updatedAt === 0 ? (
-                <p className="min-w-0 truncate text-right text-sm font-medium">
-                  {entry.chain.status === 'error' ? 'Unavailable' : 'Updating…'}
-                </p>
-              ) : (
-                <TokenBalanceDisplay
-                  amount={available}
-                  symbol={entry.asset.metadata.symbol}
-                  priceUsd={priceUsd}
-                  approximateFiat
-                />
-              )}
-            </button>
-          )
-        })}
-        {orderedRows.length === 0 && !loadingAdditional && !additionalError && (
-          <p className="py-8 text-center text-sm text-muted">No assets found</p>
-        )}
+                ) : (
+                  <TokenBalanceDisplay
+                    amount={row.amount}
+                    symbol={entry.asset.metadata.symbol}
+                    priceUsd={row.priceUsd}
+                    approximateFiat
+                  />
+                )
+            }
+          })}
+          onSelect={key => {
+            const row = orderedRows.find(item => item.key === key)
+            if (row?.kind === 'zcash') onSelectZcash()
+            else if (row) onSelect(row.entry)
+          }}
+          emptyMessage={!loadingAdditional && !additionalError ? 'No assets found' : undefined}
+        />
         {loadingAdditional && (
           <div
             role="status"

@@ -298,7 +298,10 @@ function ShieldFundsContent() {
                   key={provider}
                   type="button"
                   onClick={() =>
-                    zcashVaultEntry.canEnableZcash && currentWalletId && currentAccountId
+                    zcashNeedsEnable &&
+                    zcashVaultEntry.canEnableZcash &&
+                    currentWalletId &&
+                    currentAccountId
                       ? navigate(shieldZcashEnablePath(currentWalletId, currentAccountId))
                       : navigate(`/shield-provider?provider=${provider}&mode=${mode}`)
                   }
@@ -317,8 +320,14 @@ function ShieldFundsContent() {
                   </span>
                   <span className="flex h-9 items-center justify-between gap-1 bg-white/5 px-2.5 text-xs">
                     {zcashNeedsEnable && zcashVaultEntry.canEnableZcash ? (
-                      <span className="flex h-7 items-center rounded-md bg-white/10 px-2.5 text-[11px] font-medium text-foreground">
-                        Enable Zcash
+                      <span className="flex w-full items-center justify-between gap-2 text-xs text-primary">
+                        <span>Enable Zcash</span>
+                        <Icon
+                          icon="lucide:chevron-right"
+                          width={14}
+                          height={14}
+                          aria-hidden="true"
+                        />
                       </span>
                     ) : (
                       <>

@@ -41,6 +41,10 @@ import { useWalletStore } from '@/store/wallet-store'
 import { PageHeader } from '@/popup/components/common/PageHeader'
 import { ChainIcon } from '@/popup/components/common/ChainIcon'
 import { TokenIcon } from '@/popup/components/tokens/TokenIcon'
+import {
+  TokenSelectionList,
+  TokenSelectionSearch
+} from '@/popup/components/tokens/TokenSelectionList'
 import { ShieldProviderLogo, SHIELD_PROVIDERS } from '@/popup/components/portfolio/shield-providers'
 import type { ShieldProvider } from '@/popup/services/asset-domains'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/popup/components/ui/dialog'
@@ -1236,55 +1240,44 @@ function ShieldDepositContent() {
           )}
           {picker === 'token' && (
             <div className="min-h-0 overflow-y-auto px-4 pb-5">
-              <label className="relative mb-3 block">
-                <Icon
-                  icon="lucide:search"
-                  width={18}
-                  height={18}
-                  className="absolute left-3 top-1/2 -translate-y-1/2 text-muted"
-                />
-                <input
-                  aria-label="Search token"
-                  placeholder="Search token"
-                  value={tokenSearch}
-                  onChange={event => setTokenSearch(event.target.value)}
-                  className="h-12 w-full rounded-lg border border-white/10 bg-card pl-10 pr-3 text-sm outline-none focus:border-primary"
-                />
-              </label>
-              {tokenChoices
-                .filter(choice =>
-                  choice.token.symbol.toLowerCase().includes(tokenSearch.trim().toLowerCase())
-                )
-                .map(choice => (
-                  <button
-                    key={choice.id}
-                    type="button"
-                    onClick={() => selectToken(choice)}
-                    className="wallet-interactive flex h-16 w-full items-center gap-3 rounded-md px-1 text-left hover:bg-wallet-selected active:bg-white/15"
-                  >
-                    <TokenIcon
-                      assetId={choice.token.assetId}
-                      symbol={formatSymbol(choice.token.symbol)}
-                      icon={resolveSwapTokenIconUrl(choice.token)}
-                      size={32}
-                    />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm">
-                        {formatSymbol(choice.token.symbol)}
-                      </span>
-                      {choice.distinguish && (
-                        <span
-                          className="block truncate text-xs text-muted"
-                          title={choice.token.assetId}
-                        >
-                          {choice.token.contractAddress
-                            ? `${choice.token.contractAddress.slice(0, 8)}...${choice.token.contractAddress.slice(-6)}`
-                            : choice.token.assetId}
-                        </span>
-                      )}
-                    </span>
-                  </button>
-                ))}
+              <TokenSelectionSearch
+                ariaLabel="Search token"
+                placeholder="Search token"
+                value={tokenSearch}
+                onChange={setTokenSearch}
+                className="mb-3 h-12 rounded-lg border-white/10 bg-card"
+              />
+              <TokenSelectionList
+                items={tokenChoices
+                  .filter(choice =>
+                    choice.token.symbol.toLowerCase().includes(tokenSearch.trim().toLowerCase())
+                  )
+                  .map(choice => ({
+                    key: choice.id,
+                    symbol: formatSymbol(choice.token.symbol),
+                    icon: (
+                      <TokenIcon
+                        assetId={choice.token.assetId}
+                        symbol={formatSymbol(choice.token.symbol)}
+                        icon={resolveSwapTokenIconUrl(choice.token)}
+                        size={32}
+                      />
+                    ),
+                    subtitle: choice.distinguish
+                      ? choice.token.contractAddress
+                        ? `${choice.token.contractAddress.slice(0, 8)}...${choice.token.contractAddress.slice(-6)}`
+                        : choice.token.assetId
+                      : undefined,
+                    subtitleTitle: choice.distinguish ? choice.token.assetId : undefined
+                  }))}
+                selectedKey={selectedChoiceId ?? undefined}
+                onSelect={key => {
+                  const choice = tokenChoices.find(item => item.id === key)
+                  if (choice) selectToken(choice)
+                }}
+                variant="deposit"
+                emptyMessage="No tokens found"
+              />
             </div>
           )}
           {picker === 'network' && (

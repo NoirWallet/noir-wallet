@@ -25,6 +25,10 @@ import { getSwapAmountValues } from '@/popup/components/swap/swap-estimate'
 import { AmountDisplay } from '@/popup/components/common/AmountDisplay'
 import { TokenIcon } from '@/popup/components/tokens/TokenIcon'
 import {
+  TokenSelectionList,
+  TokenSelectionSearch
+} from '@/popup/components/tokens/TokenSelectionList'
+import {
   ShieldSourceTokenPickerRows,
   type ShieldSourceTokenPickerItem
 } from '@/popup/components/tokens/ShieldSourceTokenPickerRows'
@@ -34,7 +38,6 @@ import {
 } from '@/popup/components/transaction/TransactionReviewView'
 import { openConfidentialActivity } from '@/popup/components/transaction/ConfidentialActivitySheet'
 import { Button } from '@/popup/components/ui/button'
-import { Input } from '@/popup/components/ui/input'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/popup/components/ui/dialog'
 import {
   CONFIDENTIAL_PREVIEW_CONNECTION_ERROR,
@@ -1046,11 +1049,11 @@ function ShieldSwapForm({
           <DialogDescription className="sr-only">
             Choose a token in NEAR Confidential
           </DialogDescription>
-          <Input
+          <TokenSelectionSearch
             value={search}
-            onChange={event => setSearch(event.target.value)}
+            onChange={setSearch}
             placeholder="Search tokens"
-            aria-label="Search Shield tokens"
+            ariaLabel="Search Shield tokens"
           />
           <div className="min-h-0 overflow-y-auto">
             {picker === 'from' ? (
@@ -1090,53 +1093,41 @@ function ShieldSwapForm({
               </>
             ) : (
               <>
-                {pickable.map(asset => (
-                  <button
-                    type="button"
-                    key={asset.asset.asset.id}
-                    title={asset.managed.protocolAssetId}
-                    onClick={() => {
-                      setToId(asset.asset.asset.id)
-                      setPicker(null)
-                    }}
-                    className="wallet-interactive flex min-h-14 w-full items-center gap-3 rounded-lg p-2 text-left hover:bg-wallet-selected active:bg-white/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2"
-                  >
-                    <TokenIcon
-                      assetId={asset.asset.asset.id}
-                      symbol={formatSymbol(asset.asset.metadata.symbol)}
-                      icon={asset.asset.metadata.iconUrl}
-                      size={32}
-                    />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm">
-                        {formatSymbol(asset.asset.metadata.symbol)}
+                <TokenSelectionList
+                  items={pickable.map(asset => ({
+                    key: asset.asset.asset.id,
+                    title: asset.managed.protocolAssetId,
+                    symbol: formatSymbol(asset.asset.metadata.symbol),
+                    icon: (
+                      <TokenIcon
+                        assetId={asset.asset.asset.id}
+                        symbol={formatSymbol(asset.asset.metadata.symbol)}
+                        icon={asset.asset.metadata.iconUrl}
+                        size={32}
+                      />
+                    ),
+                    subtitle: `${asset.chain.chain.displayName}${originIdentifiers.get(asset.asset.asset.id) ? ` · ${originIdentifiers.get(asset.asset.asset.id)}` : ''}`,
+                    balance: (
+                      <span className="block truncate text-sm tabular-nums">
+                        {hidden
+                          ? '••••'
+                          : formatTokenQuantity(shieldSwapFormBalance(asset, displayBalances))}
                       </span>
-                      <span className="block truncate text-xs text-muted">
-                        {asset.chain.chain.displayName}
-                        {originIdentifiers.get(asset.asset.asset.id)
-                          ? ` · ${originIdentifiers.get(asset.asset.asset.id)}`
-                          : ''}
-                      </span>
-                    </span>
-                    <span
-                      className="max-w-[120px] truncate text-sm"
-                      title={
-                        hidden
-                          ? undefined
-                          : (shieldSwapFormBalance(asset, displayBalances) ?? undefined)
-                      }
-                    >
-                      {hidden
-                        ? '••••'
-                        : formatTokenQuantity(shieldSwapFormBalance(asset, displayBalances))}
-                    </span>
-                  </button>
-                ))}
-                {!pickable.length && (
-                  <p className="py-8 text-center text-sm text-muted">
-                    {status === 'loading' ? 'Loading Shield tokens…' : 'No Shield tokens found'}
-                  </p>
-                )}
+                    ),
+                    balanceTitle: hidden
+                      ? undefined
+                      : (shieldSwapFormBalance(asset, displayBalances) ?? undefined)
+                  }))}
+                  selectedKey={to?.asset.asset.id}
+                  onSelect={key => {
+                    setToId(key)
+                    setPicker(null)
+                  }}
+                  emptyMessage={
+                    status === 'loading' ? 'Loading Shield tokens…' : 'No Shield tokens found'
+                  }
+                  variant="compact"
+                />
               </>
             )}
           </div>
