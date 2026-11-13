@@ -265,7 +265,6 @@ export function AccountDetail() {
           {menuItems.map(item => {
             const rowClassName =
               'flex h-[61px] w-full items-center px-[27px] text-left transition-colors ' +
-              (item.label === 'Address' ? 'bg-wallet-surface ' : '') +
               (item.action ? 'hover:bg-wallet-surface cursor-pointer' : '')
 
             const content = (
