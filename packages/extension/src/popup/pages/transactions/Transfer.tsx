@@ -872,6 +872,7 @@ function TransferForm() {
         : null,
     [selected?.asset, managedAssets, catalogTokens, currentNetwork]
   )
+  const clusterAvailable = Boolean(clusterPair && managedAsset && effective)
   const destinationOptions = useMemo(() => {
     if (from !== 'shield' || !selected || !managedAsset) return []
     const options = listShieldFundingAssets(
@@ -1142,7 +1143,7 @@ function TransferForm() {
       : null
   const amountError = fundingRoute ? shieldAmountState?.error : amountState?.error
   const confidentialRouteError =
-    supportedPair && selected && routeState === 'unsupported'
+    supportedPair && selected && routeState === 'unsupported' && !clusterAvailable
       ? 'Confidential transfers are unavailable for this asset.'
       : null
   const estimateAmountRaw = useMemo(() => {
@@ -1214,7 +1215,6 @@ function TransferForm() {
     directEstimate.value?.routeFeeRaw !== null &&
     directEstimate.value
   )
-  const clusterAvailable = Boolean(clusterPair && managedAsset && effective)
   const selectedEstimate = method === 'cluster' ? clusterEstimate : directEstimate
   const quoteMinimumError = useMemo(() => {
     if (!selected) return null
