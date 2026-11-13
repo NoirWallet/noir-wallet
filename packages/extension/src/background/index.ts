@@ -5126,10 +5126,12 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
 
   if (message.type === 'GET_ZCASH_FEE_QUOTE') {
     accountContextTransition
-      .runActiveOperation(async () => {
-        await assertCurrentZcashNetworkEnabled()
-        return backgroundZcashWalletRuntime.getFeeQuote()
-      })
+      .runActiveOperation(() =>
+        withTxSyncPause(useWalletStore.getState().currentWalletId || undefined, async () => {
+          const core = await prepareWalletCoreForTx()
+          return core.getFeeQuote()
+        })
+      )
       .then(feeQuote => sendResponse({ success: true, feeQuote }))
       .catch(error =>
         sendResponse({ error: error instanceof Error ? error.message : String(error) })
