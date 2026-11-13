@@ -905,6 +905,7 @@ export function Send({
                     type="button"
                     aria-label="Max"
                     aria-pressed={maxSelected}
+                    aria-busy={maxTransfer.loading || undefined}
                     disabled={
                       !fromAddress ||
                       !effectiveToAddress ||
@@ -918,8 +919,16 @@ export function Send({
                       setAmount(effectiveMaxStr)
                       void maxTransfer.request()
                     }}
-                    className="rounded-md bg-primary/15 px-2 py-1 font-medium text-primary disabled:opacity-40"
+                    className="inline-flex items-center gap-1 rounded-md bg-primary/15 px-2 py-1 font-medium text-primary disabled:opacity-40"
                   >
+                    {maxTransfer.loading && (
+                      <Icon
+                        icon="lucide:loader-2"
+                        width={12}
+                        height={12}
+                        className="animate-spin"
+                      />
+                    )}
                     Max
                   </button>
                 }
@@ -981,6 +990,7 @@ export function Send({
                       type="button"
                       aria-label="Max"
                       aria-pressed={maxSelected}
+                      aria-busy={maxTransfer.loading || undefined}
                       disabled={
                         !fromAddress ||
                         safeBig(effectiveMaxStr).lte(0) ||
@@ -993,8 +1003,16 @@ export function Send({
                         setAmount(effectiveMaxStr)
                         void maxTransfer.request()
                       }}
-                      className="rounded-md bg-white/10 px-2 py-1 font-medium text-muted aria-pressed:bg-primary/15 aria-pressed:text-primary disabled:opacity-40"
+                      className="inline-flex items-center gap-1 rounded-md bg-primary/15 px-2 py-1 font-medium text-primary disabled:opacity-40"
                     >
+                      {maxTransfer.loading && (
+                        <Icon
+                          icon="lucide:loader-2"
+                          width={12}
+                          height={12}
+                          className="animate-spin"
+                        />
+                      )}
                       Max
                     </button>
                   }
@@ -1018,6 +1036,30 @@ export function Send({
                 />
               </div>
             </>
+          )}
+
+          {!isSelfMove && !sendPrivately && recipientSupportsMemo && (
+            <div className="order-4">
+              <label htmlFor="zcash-send-memo" className="mb-1.5 block px-1 text-xs text-muted">
+                Memo (optional)
+              </label>
+              <textarea
+                id="zcash-send-memo"
+                value={memo}
+                onChange={event => {
+                  const encoded = new TextEncoder().encode(event.target.value)
+                  if (encoded.length <= 512) setMemo(event.target.value)
+                }}
+                placeholder="Add a private memo"
+                rows={2}
+                className="w-full resize-none rounded-xl border border-border/60 bg-card/50 px-4 py-3 text-sm placeholder:text-muted/50 focus:border-primary/50 focus:outline-none disabled:opacity-40"
+              />
+              {memo && (
+                <p className="mt-1 px-1 text-right text-xs text-muted">
+                  {new TextEncoder().encode(memo).length}/512 bytes
+                </p>
+              )}
+            </div>
           )}
 
           {!isSelfMove &&
@@ -1108,6 +1150,13 @@ export function Send({
               />
             </div>
           )}
+          {!sendPrivately && maxTransfer.error && !isMaxFeeMode && (
+            <InlineError
+              className="order-3 px-1"
+              message="Could not calculate maximum amount"
+              onRetry={() => void maxTransfer.request()}
+            />
+          )}
           {!sendPrivately && feeError && (
             <InlineError
               className="order-6 px-1"
@@ -1166,29 +1215,6 @@ export function Send({
               message={privatePreviewError}
               onRetry={() => setPrivatePreviewRetry(value => value + 1)}
             />
-          )}
-          {!isSelfMove && !sendPrivately && recipientSupportsMemo && (
-            <div className="order-7">
-              <label htmlFor="zcash-send-memo" className="mb-1.5 block px-1 text-xs text-muted">
-                Memo (optional)
-              </label>
-              <textarea
-                id="zcash-send-memo"
-                value={memo}
-                onChange={event => {
-                  const encoded = new TextEncoder().encode(event.target.value)
-                  if (encoded.length <= 512) setMemo(event.target.value)
-                }}
-                placeholder="Add a private memo"
-                rows={2}
-                className="w-full resize-none rounded-xl border border-border/60 bg-card/50 px-4 py-3 text-sm placeholder:text-muted/50 focus:border-primary/50 focus:outline-none disabled:opacity-40"
-              />
-              {memo && (
-                <p className="mt-1 px-1 text-right text-xs text-muted">
-                  {new TextEncoder().encode(memo).length}/512 bytes
-                </p>
-              )}
-            </div>
           )}
 
           {syncState.isSyncing && (
