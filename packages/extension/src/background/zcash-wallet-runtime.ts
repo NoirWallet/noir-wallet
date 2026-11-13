@@ -1864,7 +1864,7 @@ export class BackgroundZcashWalletRuntime {
         // Re-check under the lock: a concurrent unlock or the sync readiness
         // path may have already created/restored this account in the same WASM
         // instance. Adopt it instead of issuing a duplicate create.
-        if (core.hasAccount() && core.accountIndex === index) {
+        if (await core.hasAccountForDerivation(index)) {
           this.bindCredentialToCore(core, credential, index)
           return
         }
@@ -2459,7 +2459,7 @@ export class BackgroundZcashWalletRuntime {
         const dbKey = `${this.network}_${walletId}`
         await core.ensureInitialized(dbKey)
 
-        if (!core.hasAccount() || core.accountIndex !== account.derivationIndex) {
+        if (!(await core.hasAccountForDerivation(account.derivationIndex))) {
           const restored = await core.restoreFromDB(account.derivationIndex)
           if (!restored) {
             try {
@@ -3036,8 +3036,9 @@ export class BackgroundZcashWalletRuntime {
 
     if (targetAccountId) {
       const account = this.store.getAccount(targetWalletId, targetAccountId)
+      if (!account) throw new Error('Account not found')
 
-      if (account && core.hasAccount() && core.accountIndex === account.derivationIndex) {
+      if (await core.hasAccountForDerivation(account.derivationIndex)) {
         if (!core.isReady() && !this.isLocked()) {
           await this.restoreSessionToCore(targetWalletId, core, account.derivationIndex)
         }
@@ -3045,6 +3046,9 @@ export class BackgroundZcashWalletRuntime {
       }
 
       await this.ensureWalletCoreAccount(targetWalletId, targetAccountId)
+      if (!(await core.hasAccountForDerivation(account.derivationIndex))) {
+        throw new Error('Active Zcash account could not be restored')
+      }
     }
 
     return core
@@ -3115,7 +3119,7 @@ export class BackgroundZcashWalletRuntime {
     const firstAccount =
       enabledAccounts.find(account => account.id === this.store.currentAccountId) ??
       enabledAccounts[0]
-    if (firstAccount && core.accountIndex !== firstAccount.derivationIndex) {
+    if (firstAccount && !(await core.hasAccountForDerivation(firstAccount.derivationIndex))) {
       // Credential binding changes the derivation index, but does not select the WASM account.
       const restored = await core.restoreFromDB(firstAccount.derivationIndex)
       if (!restored) throw new Error('Active Zcash account could not be restored')
@@ -3244,7 +3248,7 @@ export class BackgroundZcashWalletRuntime {
       if (!account) return
       if (!isAccountNetworkEnabled(account, this.network, 'zcash')) return
 
-      if (core.hasAccount() && core.accountIndex === account.derivationIndex) {
+      if (await core.hasAccountForDerivation(account.derivationIndex)) {
         if (!core.isReady() && !this.isLocked()) {
           await this.restoreSessionToCore(wid, core, account.derivationIndex)
         }
@@ -3475,6 +3479,9 @@ export class BackgroundZcashWalletRuntime {
       )
     }
 
+    if (!(await core.restoreFromDB(account.derivationIndex))) {
+      throw new Error('Active Zcash account could not be restored after resync')
+    }
     this.bindCredentialToCore(core, credential, account.derivationIndex)
 
     logger.log('Zcash resync: triggering wallet sync...', walletId, accountId)
@@ -3932,6 +3939,10 @@ export class BackgroundZcashWalletRuntime {
             this.bindCredentialToCore(core, credential, derivationIndex)
           }
         } else {
+          if (!(await core.hasAccountForDerivation(derivationIndex))) {
+            const restored = await core.restoreFromDB(derivationIndex)
+            if (!restored) throw new Error('Active Zcash account could not be restored')
+          }
           this.bindCredentialToCore(core, credential, derivationIndex)
         }
 

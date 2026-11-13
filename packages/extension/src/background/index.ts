@@ -7325,6 +7325,9 @@ async function handleBackgroundZcashTx(params: {
 
   try {
     await assertActiveBackgroundAccountScope(walletId, accountId, accountKey)
+    const approvedAccount = useWalletStore.getState().getAccount(walletId, accountId)
+    if (!approvedAccount) throw new Error('Approved Zcash account is unavailable')
+    const approvedAccountIndex = approvedAccount.derivationIndex
     await withTxSyncPause(walletId, async () => {
       const pendingRecord = (await loadTransactions(accountKey)).find(tx => tx.id === transactionId)
       if (!pendingRecord || pendingRecord.status !== 'pending' || pendingRecord.txHash) {
@@ -7361,7 +7364,7 @@ async function handleBackgroundZcashTx(params: {
       if (action === 'shield') {
         const shieldResult = await walletCore.shieldFunds(
           marginalFeeZats,
-          undefined,
+          approvedAccountIndex,
           transactionContext,
           feeQuoteId
         )
@@ -7381,7 +7384,7 @@ async function handleBackgroundZcashTx(params: {
         const transferResult = await walletCore.sendTransaction(
           { ...sendParams!, marginalFeeZats, feeQuoteId },
           submissionDeadline,
-          undefined,
+          approvedAccountIndex,
           transactionContext
         )
         const successfulTransfer = requireSuccessfulTransfer(transferResult)

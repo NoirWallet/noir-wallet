@@ -151,6 +151,14 @@ export class ZcashWalletCore {
     return this.accountId !== null
   }
 
+  async hasAccountForDerivation(derivationIndex: number): Promise<boolean> {
+    return (
+      this.accountId !== null &&
+      this.accountIndex === derivationIndex &&
+      (await this.client.getAccountHdIndex(this.accountId)) === derivationIndex
+    )
+  }
+
   async restoreFromDB(targetDerivationIndex?: number): Promise<boolean> {
     try {
       const accountIds = await this.client.getAccountIds()
