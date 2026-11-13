@@ -82,7 +82,22 @@ test('prefers the current BSC representation when a deprecated row shares its co
     assetId: `nep141:bnb-${contractAddress}.omdep.near`,
     symbol: 'USDT'
   }
-  expect(resolveIntentsEvmAssets([legacy], getEvmNetworkConfigs('mainnet'))).toEqual([])
+  expect(
+    resolveIntentsEvmAssets([{ ...legacy, symbol: 'USDT' }], getEvmNetworkConfigs('mainnet'))
+  ).toEqual([])
+  expect(
+    resolveIntentsEvmAssets(
+      [
+        {
+          ...legacy,
+          assetId: 'nep245:v2_1.omni.hot.tg:10_A2ewyUyDp6qsue1jqZsGypkCxRJ',
+          blockchain: 'op',
+          symbol: 'USDC'
+        }
+      ],
+      getEvmNetworkConfigs('mainnet')
+    )
+  ).toHaveLength(1)
   const assets = resolveIntentsEvmAssets([legacy, current], getEvmNetworkConfigs('mainnet'))
   expect(assets).toHaveLength(1)
   expect(assets[0]).toMatchObject({

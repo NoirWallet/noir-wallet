@@ -86,7 +86,7 @@ export function buildConfidentialPortfolioView(
   const entries = [...byProtocolId].flatMap(([protocolAssetId, { balance }]) => {
     if (balance.available === '0') return []
     const token = tokenById.get(protocolAssetId)
-    if (token && isDeprecatedIntentsToken(token)) return []
+    if (isDeprecatedIntentsToken({ assetId: protocolAssetId, symbol: token?.symbol })) return []
     const managed = managedById.get(protocolAssetId)
     const mappedAssetId = mappedById.get(protocolAssetId)
     const registered = mappedAssetId ? assets.get(mappedAssetId) : undefined
@@ -115,6 +115,7 @@ export function buildConfidentialPortfolioView(
               name: bundledMetadata?.name ?? token.symbol,
               decimals: token.decimals,
               ...(iconUrl ? { iconUrl } : {}),
+              ...(token.coingeckoId ? { coingeckoId: token.coingeckoId } : {}),
               ...(priceUsd && priceUsd.length <= 128
                 ? {
                     priceUsd,
@@ -138,7 +139,9 @@ function mergeAsset(
   if (!mapping || asset.balance.mainRaw === undefined || asset.balance.privateRaw === undefined) {
     return asset
   }
-  const confidentialRaw = getConfidentialAvailableForAsset(balances, mapping.protocolAssetId) ?? '0'
+  const confidentialRaw = isDeprecatedIntentsToken({ assetId: mapping.protocolAssetId })
+    ? '0'
+    : (getConfidentialAvailableForAsset(balances, mapping.protocolAssetId) ?? '0')
   const previousConfidential = BigInt(asset.balance.confidentialRaw ?? '0')
   const privateOnchain = BigInt(
     asset.balance.privateOnchainRaw ??
@@ -173,4 +176,41 @@ export function mergeConfidentialBalancesIntoPortfolio(
     })
   )
   return Object.freeze({ ...model, assets: Object.freeze(assets), chains: Object.freeze(chains) })
+}
+
+export function excludeDeprecatedConfidentialAssets(model: PortfolioReadModel): PortfolioReadModel {
+  const confidential = model.confidential
+  if (!confidential) return model
+  const hidden = confidential.assets.filter(asset =>
+    isDeprecatedIntentsToken({ assetId: asset.protocolAssetId, symbol: asset.symbol })
+  )
+  if (hidden.length === 0) return model
+  const visible = confidential.assets.filter(asset => !hidden.includes(asset))
+  const hiddenMappings = new Map(
+    hidden.flatMap(asset =>
+      asset.assetId
+        ? [
+            [
+              asset.assetId,
+              {
+                assetId: asset.assetId,
+                protocolAssetId:
+                  visible.find(current => current.assetId === asset.assetId)?.protocolAssetId ??
+                  asset.protocolAssetId
+              }
+            ] as const
+          ]
+        : []
+    )
+  )
+  // Replace only the projected Shield portion; public and private on-chain balances stay intact.
+  const projected = mergeConfidentialBalancesIntoPortfolio(
+    model,
+    [...hiddenMappings.values()],
+    visible.map(asset => ({ tokenId: asset.tokenId, available: asset.availableRaw }))
+  )
+  return Object.freeze({
+    ...projected,
+    confidential: Object.freeze({ ...confidential, assets: Object.freeze(visible) })
+  })
 }

@@ -1,6 +1,7 @@
 import type { PortfolioAssetView, PortfolioChainView, PortfolioReadModel } from '@/core/portfolio'
 import type { IntentsManagedAsset } from '@/core/services/intents-managed-assets'
 import type { SwapToken } from '@/core/services/intents-api'
+import { isDeprecatedIntentsToken } from '@/core/services/intents-evm-assets'
 import { findAssetPrice, type AssetPriceReadModel } from '@/core/prices'
 import { getEvmNetworkConfigs } from '@/config/networks'
 import Big from '@/lib/big'
@@ -182,6 +183,7 @@ export function listShieldFundingAssets(
       (chain?.chain.family !== 'evm' && chain?.chain.id !== zcashChainId) ||
       chain.chain.capabilities.transaction.status !== 'available' ||
       !token ||
+      isDeprecatedIntentsToken(token) ||
       token.decimals !== managed.decimals ||
       token.blockchain !== managed.blockchain
     )
@@ -304,6 +306,7 @@ export function resolveShieldManagedAsset(
       tokens.some(
         token =>
           token.assetId === item.protocolAssetId &&
+          !isDeprecatedIntentsToken(token) &&
           token.blockchain === item.blockchain &&
           token.decimals === item.decimals
       )
@@ -319,7 +322,7 @@ export function resolveShieldManagedAsset(
   const token = tokens.find(
     item => item.assetId === mapping.protocolAssetId && item.decimals === asset.metadata.decimals
   )
-  if (!token) return null
+  if (!token || isDeprecatedIntentsToken(token)) return null
   return Object.freeze({
     assetId: asset.asset.id,
     chainId: asset.asset.chainId,

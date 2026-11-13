@@ -12,6 +12,7 @@ import Big from '@/lib/big'
 import { formatBaseUnitDecimalAmount } from '@/lib/number-format'
 import { formatSymbol } from '@/lib/format'
 import type { Network } from '@/types'
+import { excludeDeprecatedConfidentialAssets } from '@/core/services/confidential-funding/confidential-funding-portfolio'
 
 type ConfidentialAsset = NonNullable<PortfolioReadModel['confidential']>['assets'][number]
 
@@ -155,10 +156,11 @@ export function resolveConfidentialDetailAssetId(
   tokenId: string
 ): string | null {
   if (model?.confidential?.status !== 'ready') return null
-  const matches = model.confidential.assets.filter(entry => entry.tokenId === tokenId)
+  const holdings = excludeDeprecatedConfidentialAssets(model).confidential!.assets
+  const matches = holdings.filter(entry => entry.tokenId === tokenId)
   if (matches.length !== 1) return null
   const holding = matches[0]!
-  if (model.confidential.assets.filter(entry => entry.assetId === holding.assetId).length !== 1) {
+  if (holdings.filter(entry => entry.assetId === holding.assetId).length !== 1) {
     return null
   }
   const asset = model.assets.find(item => item.asset.id === holding.assetId)
@@ -274,7 +276,7 @@ export function summarizeNearConfidentialHoldings(
   model: PortfolioReadModel | null,
   prices: AssetPriceReadModel | null = null
 ): NearConfidentialSummary {
-  const confidential = model?.confidential
+  const confidential = model ? excludeDeprecatedConfidentialAssets(model).confidential : undefined
   if (!confidential || confidential.status !== 'ready') {
     return Object.freeze({ status: 'unavailable', entries: Object.freeze([]), fiat: null })
   }

@@ -343,7 +343,10 @@ export class OneClickAssetPriceService {
           if (
             !isRecord(token) ||
             typeof token.symbol !== 'string' ||
-            isDeprecatedIntentsToken({ symbol: token.symbol })
+            isDeprecatedIntentsToken({
+              assetId: typeof token.assetId === 'string' ? token.assetId : undefined,
+              symbol: token.symbol
+            })
           )
             return []
           const key = tokenContractKey(token)
@@ -359,7 +362,7 @@ export class OneClickAssetPriceService {
           contractKey !== null &&
           currentContracts.has(contractKey) &&
           typeof token.symbol === 'string' &&
-          isDeprecatedIntentsToken({ symbol: token.symbol })
+          isDeprecatedIntentsToken({ assetId: token.assetId, symbol: token.symbol })
         const mappings = [
           ...(wanted.get(token.assetId) ?? []),
           ...(contractKey === null || supersededContract

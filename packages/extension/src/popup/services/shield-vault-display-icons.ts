@@ -22,8 +22,10 @@ function normalizeIconUrl(iconUrl: string | undefined): string | null {
   return trimmed.toLowerCase()
 }
 
-/** Group known shared asset icons, then identical URLs, without conflating unknown tickers. */
+/** Deduplicate icons by provider market identity before URL and asset fallbacks. */
 export function nearConfidentialVaultIconKey(entry: NearConfidentialHolding): string {
+  const coingeckoId = entry.asset.coingeckoId?.toLowerCase()
+  if (coingeckoId && !coingeckoId.startsWith('custom:')) return `coingecko:${coingeckoId}`
   const assetId = entry.asset.assetId ?? entry.asset.protocolAssetId
   const marketAssetId = assetId ? findBundledWalletMarketAssetId(assetId) : null
   if (marketAssetId) return `market:${marketAssetId}`

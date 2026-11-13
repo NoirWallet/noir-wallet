@@ -20,6 +20,7 @@ import {
 } from '@/core/chains/evm'
 import { parseKeyDomainId, parseSigningSummary, type SigningSummary } from '@/core/keyring/domain'
 import { parsePortfolioReadModel, type PortfolioReadModel } from '@/core/portfolio'
+import { excludeDeprecatedConfidentialAssets } from '@/core/services/confidential-funding/confidential-funding-portfolio'
 import {
   getTransactionProtocolIntentKind,
   parseTransactionGraph,
@@ -882,7 +883,9 @@ export function createEvmWalletClient(sendMessage: EvmRuntimeMessenger): EvmWall
           detectedAssets,
           protocolAssets
         )
-        return parsePortfolioReadModel(result.model, chains, assets)
+        return excludeDeprecatedConfidentialAssets(
+          parsePortfolioReadModel(result.model, chains, assets)
+        )
       })
     },
     getActivity: async (
