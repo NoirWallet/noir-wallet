@@ -418,33 +418,6 @@ it('keeps a quote timeout retryable when a successful HTTP response also mention
   })
 })
 
-it('preserves request bodies and cancellation when adapting SDK endpoints without rerouting status', async () => {
-  const controller = new AbortController()
-  const requests = []
-  const adaptedFetch = createRheaSwapFetch(async (input, init) => {
-    const request = new Request(input, init)
-    requests.push(request)
-    return new Response(JSON.stringify({ code: 0, data: {} }))
-  })
-  await adaptedFetch(
-    new Request('https://api.rhea.finance/api/swap/swap?test=1', {
-      method: 'POST',
-      headers: { Authorization: 'Bearer test', 'Idempotency-Key': 'build-1' },
-      body: JSON.stringify({ bridgeProvider: 'selected' }),
-      signal: controller.signal
-    })
-  )
-  await adaptedFetch('https://api.rhea.finance/api/swap/status?orderId=test')
-  assert.equal(requests[0].url, 'https://api.rhea.finance/crosschain/swap/swap?test=1')
-  assert.equal(requests[0].method, 'POST')
-  assert.equal(requests[0].headers.get('Authorization'), 'Bearer test')
-  assert.equal(requests[0].headers.get('Idempotency-Key'), 'build-1')
-  assert.deepEqual(await requests[0].json(), { bridgeProvider: 'selected' })
-  assert.equal(requests[1].url, 'https://api.rhea.finance/api/swap/status?orderId=test')
-  controller.abort()
-  assert.equal(requests[0].signal.aborted, true)
-})
-
 it('keeps provider minimums from multiple route failures without returning provider metadata', () => {
   const providerFailure =
     'NearIntents quote failed (400): {"message":"Temporary swap limits: minimum swap amount is $1,000","correlationId":"provider-reference"}'

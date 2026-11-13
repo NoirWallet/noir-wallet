@@ -1,10 +1,7 @@
 import {
   SwapClient,
-  SwapSdkError,
   normalizeFromTokenList,
   type ApiRequestOptions,
-  type BuildSwapInput,
-  type SwapBuild,
   type SwapClientConfig,
   type SwapTokenListItem,
   type TokenListRequest
@@ -25,26 +22,6 @@ export class RheaSwapCatalogClient extends SwapClient {
   constructor(config: SwapClientConfig) {
     super({ ...config, fetch: createRheaSwapFetch(config.fetch ?? globalThis.fetch) })
     this.catalogNow = config.now ?? Date.now
-  }
-
-  override buildSwap(input: BuildSwapInput): Promise<SwapBuild> {
-    const bridgeProvider = input.quote.raw.bestQuote.bridgeProvider
-    if (
-      bridgeProvider !== undefined &&
-      (typeof bridgeProvider !== 'string' || bridgeProvider.trim().length === 0)
-    ) {
-      throw new SwapSdkError('INVALID_API_RESPONSE', 'build', 'Invalid bridge provider')
-    }
-    // The SDK spreads this request into the build body but drops unknown route fields.
-    // Bind the provider to this selected quote, including restored quote sessions.
-    const request = { ...input.quote.buildContext.request, bridgeProvider }
-    return super.buildSwap({
-      ...input,
-      quote: {
-        ...input.quote,
-        buildContext: { ...input.quote.buildContext, request }
-      }
-    })
   }
 
   override async getFromTokens(
