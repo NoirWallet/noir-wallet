@@ -399,7 +399,7 @@ test('official Connect all skips connection approval while third-party Connect r
 })
 
 test('automatic refresh preserves chain revocation and declines changed or locked snapshots', async () => {
-  const { handler, manager, bitcoin, state } = firstPartyFixture()
+  const { handler, manager, bitcoin, state, approvals } = firstPartyFixture()
   const origin = 'https://app.zknoir.com'
   await handler.request({ method: 'wallet_getSession' }, origin, {})
   await manager.removeChainAuthorization(origin, bitcoin)
@@ -413,8 +413,20 @@ test('automatic refresh preserves chain revocation and declines changed or locke
   expect(await manager.getCaip25Session(origin)).toBeNull()
   state.snapshot = snapshot
   const restored = await handler.request({ method: 'wallet_getSession' }, origin, {})
-  expect(restored.scopes[bitcoin].accounts).toHaveLength(1)
-  expect(await manager.isRevoked(origin)).toBe(false)
+  expect(restored).toBeNull()
+  expect(await manager.isRevoked(origin)).toBe(true)
+  expect(await manager.canAutoConnectSession(origin)).toBe(false)
+  const reconnected = await handler.request(
+    {
+      method: 'wallet_createSession',
+      params: { scopes: { [ethereum]: { methods: ['eth_accounts'], notifications: [] } } }
+    },
+    origin,
+    {}
+  )
+  expect(approvals).toHaveLength(1)
+  expect(reconnected.scopes[ethereum].accounts).toHaveLength(1)
+  expect(await manager.canAutoConnectSession(origin)).toBe(false)
 
   const fresh = firstPartyFixture()
   let reads = 0

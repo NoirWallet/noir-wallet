@@ -1284,8 +1284,7 @@ export class DAppManager {
 
   private getAutomaticAuthorizationState(origin: string): AuthorizationState | undefined {
     const state = this.authorizationState[origin]
-    // Disconnect invalidates pending requests but does not revoke official-app trust.
-    return state?.mode === 'revoked' && shouldAutoConnectDApp(origin)
+    return state?.mode === 'revoked' && shouldAutoConnectDApp(origin) && state.publicExplicit !== true
       ? { revision: state.revision, mode: 'unreviewed' }
       : state
   }
@@ -1888,7 +1887,7 @@ export class DAppManager {
       await this.initialize()
       const next = new Map(this.connectedDApps)
       next.delete(origin)
-      await this.commitConnections(next, this.revokeOrigins([origin]))
+      await this.commitConnections(next, this.revokeOrigins([origin], true))
     })
   }
 
@@ -2066,13 +2065,21 @@ export class DAppManager {
     this.initialized = true
   }
 
-  private revokeOrigins(origins: readonly string[]): Record<string, AuthorizationState> {
+  private revokeOrigins(
+    origins: readonly string[],
+    blockAutomatic = false
+  ): Record<string, AuthorizationState> {
     const states = { ...this.authorizationState }
     for (const origin of origins) {
       const revision = states[origin]?.revision ?? 0
       if (revision >= Number.MAX_SAFE_INTEGER)
         throw new Error('Site authorization revision exhausted')
-      states[origin] = { ...states[origin], revision: revision + 1, mode: 'revoked' }
+      states[origin] = {
+        ...states[origin],
+        revision: revision + 1,
+        mode: 'revoked',
+        ...(blockAutomatic ? { publicExplicit: true } : {})
+      }
     }
     return states
   }
