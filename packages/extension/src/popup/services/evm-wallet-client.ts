@@ -174,6 +174,13 @@ export interface EvmWalletClient {
     expectedOwner: string,
     executionMode?: 'main' | 'private'
   ) => Promise<string>
+  readonly getTokenBalance: (request: {
+    readonly chainId: string
+    readonly token: string
+    readonly walletId: string
+    readonly accountId: string
+    readonly executionMode: 'main' | 'private'
+  }) => Promise<string>
   readonly prepareCancel: (
     chainId: string,
     originalTransactionId: TransactionId,
@@ -1090,6 +1097,36 @@ export function createEvmWalletClient(sendMessage: EvmRuntimeMessenger): EvmWall
           return value
         }
       )
+    },
+    getTokenBalance: async (request: {
+      readonly chainId: string
+      readonly token: string
+      readonly walletId: string
+      readonly accountId: string
+      readonly executionMode: 'main' | 'private'
+    }) => {
+      const chainId = parseClientInput(() => parseChainId(request.chainId))
+      if (
+        chainId.namespace !== 'eip155' ||
+        !/^0x[0-9a-fA-F]{40}$/.test(request.token) ||
+        !request.walletId ||
+        !request.accountId ||
+        request.walletId.length > 256 ||
+        request.accountId.length > 256 ||
+        (request.executionMode !== 'main' && request.executionMode !== 'private')
+      ) {
+        throw new EvmWalletClientError('invalid-request', 'Invalid EVM balance request')
+      }
+      return send({ type: 'GET_EVM_TOKEN_BALANCE', ...request, chainId: chainId.id }, value => {
+        if (
+          typeof value !== 'string' ||
+          !/^(0|[1-9][0-9]{0,77})$/.test(value) ||
+          BigInt(value) > (1n << 256n) - 1n
+        ) {
+          throw new Error('Invalid EVM balance response')
+        }
+        return value
+      })
     },
     prepareCancel: async (
       chainId: string,

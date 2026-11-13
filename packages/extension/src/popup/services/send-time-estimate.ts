@@ -15,7 +15,7 @@ export function estimateBitcoinSendTime(tier: NetworkFeeTier): string {
 
 export function estimateConfidentialSendTime(
   quoteSeconds: number | undefined,
-  chainConfirmationTime: string
+  chainConfirmationTime = '—'
 ): string {
   const quoted =
     quoteSeconds !== undefined && Number.isSafeInteger(quoteSeconds)

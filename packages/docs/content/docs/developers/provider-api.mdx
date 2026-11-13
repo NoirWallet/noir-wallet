@@ -427,3 +427,17 @@ After a processing timeout, check Wallet Activity before requesting another paym
 For Chainlist compatibility, `wallet_addEthereumChain` also accepts an optional account address
 as the second positional parameter. This hint is ignored and never grants account permissions.
 `wallet_switchEthereumChain` still accepts exactly one chain parameter.
+
+## Wallet token metadata
+
+With an established `wallet.multichain` session, `getTokenList()` returns the current unlocked
+account's visible tokens on authorized chains. Each entry contains `assetId`, `chainId`,
+`contractAddress` (`null` for native assets), `symbol`, `decimals`, and `enabled`. The response
+contains no balances or private-account holdings. Re-read it after `wallet_sessionChanged`
+and after returning from Token Manager. An unauthorized current account or a context change
+during the request rejects with `4100`.
+
+Call `wallet.multichain.openTokenManager()` from a user action to open the existing wallet
+management page; it resolves to `null`. These methods are also available through `request()`
+as `wallet_getTokenList` and `wallet_openTokenManager`, without parameters. Older providers may
+not support them; feature-detect the convenience methods before rendering the action.

@@ -40,6 +40,10 @@ import { Dialog, DialogContent, DialogTitle, DialogDescription } from '../../com
 import { useWalletStore } from '@/store/wallet-store'
 import { useAccountDataStore } from '@/store/account-data-store'
 import { useTransactionResultStore } from '@/store/transaction-result-store'
+import {
+  retryZcashBalanceRead,
+  useZcashBalanceReadStatus
+} from '@/popup/hooks/usePersistedExtensionContextSync'
 import { useLocation, useNavigate } from '../../provider/Router'
 import { formatSortAddress, getAccountDisplayName } from '@/lib/format'
 import {
@@ -97,10 +101,7 @@ import {
   getDefaultZcashSelfMoveSource,
   resolveZcashSelfMove
 } from '@/popup/services/zcash-self-move'
-import {
-  estimateConfidentialSendTime,
-  estimateZcashSendTime
-} from '@/popup/services/send-time-estimate'
+import { estimateZcashSendTime } from '@/popup/services/send-time-estimate'
 import {
   getZcashTransparentToShieldMoveAmountError,
   isZcashSendRecipientReady,
@@ -215,6 +216,15 @@ export function Send({
   const { goBack, navigate } = useNavigate()
   const location = useLocation()
   const routeParams = new URLSearchParams(location.search)
+  const requestedOriginPath = routeParams.get('originPath')
+  const originPath =
+    requestedOriginPath?.startsWith('/') &&
+    !requestedOriginPath.startsWith('//') &&
+    !requestedOriginPath.startsWith('/send/zcash') &&
+    !requestedOriginPath.startsWith('/transaction-result')
+      ? requestedOriginPath
+      : null
+  const leaveSend = () => (originPath ? navigate(originPath, { replace: true }) : goBack())
   const isSelfMove = routeParams.get('move') === '1'
   const moveSource =
     routeParams.get('from') === 'transparent' || routeParams.get('from') === 'shielded'
@@ -263,6 +273,12 @@ export function Send({
   const accountDisplayNames = useWalletStore(state => state.accountDisplayNames)
   const activeScopeRef = useRef<string | null | undefined>(undefined)
   const balance = useAccountDataStore(state => state.getCurrentBalance())
+  const balanceReadStatus = useZcashBalanceReadStatus(
+    currentNetwork,
+    currentWalletId,
+    currentAccountId
+  )
+  const balanceKnown = balance !== null
   const syncState = useAccountDataStore(state =>
     currentWalletId
       ? state.getWalletSyncState(currentNetwork, currentWalletId)
@@ -294,6 +310,7 @@ export function Send({
   const isTransparentToShieldMove = isSelfMove && fundingSource === 'transparent'
   const resultReturnPath = `${embedded ? '/send/zcash' : location.pathname}?${new URLSearchParams({
     ...(isSelfMove ? { move: '1' } : {}),
+    ...(originPath ? { originPath } : {}),
     from: fundingSource,
     mode: walletMode
   })}`
@@ -346,7 +363,8 @@ export function Send({
     const params = new URLSearchParams({
       move: '1',
       from: reverseSource,
-      mode: walletMode
+      mode: walletMode,
+      ...(originPath ? { originPath } : {})
     })
     navigate(`/send/zcash?${params.toString()}`, { replace: true })
   }
@@ -460,6 +478,7 @@ export function Send({
     fundingSource,
     enabled:
       active &&
+      balanceKnown &&
       !sendPrivately &&
       !moveUnavailable &&
       !!effectiveToAddress &&
@@ -476,18 +495,16 @@ export function Send({
     memo: effectiveMemo,
     fundingSource,
     feeTier,
-    scopeKey: JSON.stringify([
-      currentNetwork,
-      currentWalletId,
-      currentAccountId,
-      sourceBalance.available,
-      sourceBalance.pending
-    ]),
     enabled:
       active &&
+      balanceKnown &&
       !sendPrivately &&
       !moveUnavailable &&
       safeBig(amount || '0').gt(0) &&
+      (!isSelfMove ||
+        safeBig(amount).lte(
+          isTransparentToShieldMove ? shieldableBalance : sourceBalance.available
+        )) &&
       !!effectiveToAddress &&
       !recipientFormatError &&
       !maxSelected &&
@@ -544,7 +561,8 @@ export function Send({
     : getFundingAmountErrorCopy(amountError)
   const reviewInsufficient =
     amountError !== null || (isTransparentToShieldMove && amountErrorCopy !== undefined)
-  const isValidAmount = !!fromAddress && safeBig(amount || '0').gt(0) && !reviewInsufficient
+  const isValidAmount =
+    balanceKnown && !!fromAddress && safeBig(amount || '0').gt(0) && !reviewInsufficient
   const selectedFeeZec = isMaxFeeMode ? (maxTransfer.fee ?? estimatedFeeZec) : estimatedFeeZec
   const selectedFeeQuote = isMaxFeeMode ? maxTransfer.feeQuote : feeEstimate.feeQuote
   const latestFee = useRef({
@@ -909,7 +927,7 @@ export function Send({
       className={embedded ? 'flex min-h-0 flex-1 flex-col bg-background' : 'page-container'}
       data-wallet-mode={isSelfMove ? 'public' : walletMode}
     >
-      {!embedded && <PageHeader title={isSelfMove ? 'Move' : 'Send'} showBack onBack={goBack} />}
+      {!embedded && <PageHeader title={isSelfMove ? 'Move' : 'Send'} showBack onBack={leaveSend} />}
       <div className="page-content min-h-0 !px-4 pt-4">
         <div className={cn('space-y-2', !isSelfMove && 'flex flex-col gap-4 space-y-0')}>
           {isSelfMove ? (
@@ -933,7 +951,13 @@ export function Send({
                     }}
                   />
                 }
-                balance={isTransparentToShieldMove ? shieldableBalance : sourceBalance.available}
+                balance={
+                  balanceKnown
+                    ? isTransparentToShieldMove
+                      ? shieldableBalance
+                      : sourceBalance.available
+                    : '—'
+                }
                 max={
                   <button
                     type="button"
@@ -942,6 +966,7 @@ export function Send({
                     aria-busy={maxTransfer.loading || undefined}
                     disabled={
                       !fromAddress ||
+                      !balanceKnown ||
                       !effectiveToAddress ||
                       moveUnavailable ||
                       safeBig(effectiveMaxStr).lte(0) ||
@@ -984,10 +1009,23 @@ export function Send({
               )}
               {isTransparentToShieldMove &&
                 !moveUnavailable &&
+                safeBig(amount || '0').gt(0) &&
+                !amountErrorCopy &&
                 !hasEnoughTransparentBalanceToShield(shieldableBalance) && (
                   <InlineError message={MIN_SHIELDING_BALANCE_MESSAGE} />
                 )}
               {amountErrorCopy && <InlineError message={amountErrorCopy} />}
+              {!balanceKnown &&
+                balanceReadStatus === 'error' &&
+                currentWalletId &&
+                currentAccountId && (
+                  <InlineError
+                    message="ZEC balance unavailable."
+                    onRetry={() =>
+                      void retryZcashBalanceRead(currentNetwork, currentWalletId, currentAccountId)
+                    }
+                  />
+                )}
             </>
           ) : (
             <>
@@ -1003,7 +1041,7 @@ export function Send({
                         setMaxSelected(false)
                         setAmount(nextAmount)
                       }}
-                      available={sourceBalance.available}
+                      available={balanceKnown ? sourceBalance.available : ''}
                       symbol="ZEC"
                       priceUsd={zecPrice}
                       invalid={reviewInsufficient}
@@ -1022,8 +1060,8 @@ export function Send({
                     />
                   }
                   balance={
-                    <span title={sourceBalance.available}>
-                      {formatTokenQuantity(sourceBalance.available)}
+                    <span title={balanceKnown ? sourceBalance.available : undefined}>
+                      {balanceKnown ? formatTokenQuantity(sourceBalance.available) : '—'}
                     </span>
                   }
                   maxButton={
@@ -1034,6 +1072,7 @@ export function Send({
                       aria-busy={maxTransfer.loading || undefined}
                       disabled={
                         !fromAddress ||
+                        !balanceKnown ||
                         safeBig(effectiveMaxStr).lte(0) ||
                         !effectiveToAddress ||
                         zns.loading ||
@@ -1059,6 +1098,17 @@ export function Send({
                   }
                 />
               </div>
+              {!balanceKnown &&
+                balanceReadStatus === 'error' &&
+                currentWalletId &&
+                currentAccountId && (
+                  <InlineError
+                    message="ZEC balance unavailable."
+                    onRetry={() =>
+                      void retryZcashBalanceRead(currentNetwork, currentWalletId, currentAccountId)
+                    }
+                  />
+                )}
               <div className="order-1 flex min-w-0 items-center justify-between gap-3">
                 <SendFieldLabel>Send from</SendFieldLabel>
                 <BalanceDomainTabs
@@ -1199,7 +1249,7 @@ export function Send({
               onRetry={() => void maxTransfer.request()}
             />
           )}
-          {!sendPrivately && feeError && (
+          {!sendPrivately && !amountErrorCopy && feeError && (
             <InlineError
               className="order-6 px-1"
               message={
@@ -1230,15 +1280,6 @@ export function Send({
                       }
                       symbol="ZEC"
                     />
-                  ) : (
-                    '—'
-                  )
-                }
-                time={
-                  privatePreviewReady ? (
-                    <span title="Zcash confirmation only; confidential routing adds time.">
-                      {estimateConfidentialSendTime(undefined, estimateZcashSendTime())}
-                    </span>
                   ) : (
                     '—'
                   )

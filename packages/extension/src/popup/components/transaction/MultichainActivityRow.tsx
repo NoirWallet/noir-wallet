@@ -1,4 +1,5 @@
 import { Icon } from '@iconify/react'
+import { useState } from 'react'
 import { getActivityAssetEffects, type ActivityItem } from '@/core/activity'
 import { cn } from '@/lib/utils'
 import { formatSortAddress } from '@/lib/format'
@@ -28,6 +29,10 @@ import type {
 } from '@/popup/services/activity-presentation-catalog'
 import { ExecutionAccountBadge } from '../account/ExecutionAccountSelector'
 import { ActivityRouteTokenIcons } from './ActivityRouteTokenIcons'
+import { getActivityAddressAlias } from '@/popup/services/activity-address-alias'
+import { SMALL_TRANSFER_WARNING } from '@/popup/services/activity-small-transfer-warning'
+import { Tooltip } from '../ui/tooltip'
+import type { TransactionAssetAmount } from '@/core/transactions/domain'
 
 interface MultichainActivityRowProps {
   readonly item: ActivityItem
@@ -38,6 +43,27 @@ interface MultichainActivityRowProps {
   readonly chainId?: string
   readonly executionAddressModes?: ReadonlyMap<string, 'Public' | 'Confidential'>
   readonly onClick?: (item: ActivityItem) => void
+  readonly smallTransferWarning?: boolean
+  readonly settledDestination?: TransactionAssetAmount
+}
+
+function SmallTransferWarningIcon() {
+  const [open, setOpen] = useState(false)
+  return (
+    <Tooltip content={SMALL_TRANSFER_WARNING} open={open} onOpenChange={setOpen}>
+      <button
+        type="button"
+        aria-label={SMALL_TRANSFER_WARNING}
+        className="wallet-interactive absolute right-4 top-4 z-10 inline-flex size-4 items-center justify-center text-warning focus-visible:outline-2 focus-visible:outline-primary"
+        onClick={event => {
+          event.stopPropagation()
+          setOpen(value => !value)
+        }}
+      >
+        <Icon icon="lucide:triangle-alert" width={14} height={14} aria-hidden="true" />
+      </button>
+    </Tooltip>
+  )
 }
 
 function ChainBadge({ alias }: { readonly alias?: string }) {
@@ -103,11 +129,13 @@ function signedAmount(item: ActivityItem, amount: ActivityDisplayAmount): string
 function SwapActivityRow({
   item,
   presentation,
-  onClick
+  onClick,
+  smallTransferWarning
 }: {
   readonly item: ActivityItem
   readonly presentation: ActivitySwapPresentation
   readonly onClick?: (item: ActivityItem) => void
+  readonly smallTransferWarning?: boolean
 }) {
   const status = getActivityStatusPresentation(item)
   const sourceSymbol = presentation.source?.symbol ?? 'Asset'
@@ -123,78 +151,102 @@ function SwapActivityRow({
   const showStatus = item.status !== 'final'
 
   return (
-    <button
-      type="button"
-      data-activity-id={item.id}
-      data-activity-status={item.status}
-      data-activity-account-mode={item.accountMode}
-      data-activity-kind={item.kind}
-      aria-label={
-        presentation.isExternalDeposit
-          ? `View ${action} ${destinationSymbol} details from External to Shield`
-          : `View ${action} ${sourceSymbol} to ${destinationSymbol} details from ${presentation.sourceNetwork} to ${presentation.destinationNetwork}`
-      }
-      onClick={() => onClick?.(item)}
-      className="wallet-interactive grid min-h-[72px] w-full min-w-0 grid-cols-[36px_minmax(0,1fr)_minmax(0,45%)] items-center gap-3 px-4 py-3 text-left enabled:hover:bg-foreground/6 enabled:active:bg-foreground/10 focus-visible:bg-foreground/6 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary disabled:pointer-events-none"
-      disabled={!onClick}
-    >
-      <ActivityRouteTokenIcons route={presentation} />
-      <div className="min-w-0">
-        <div className="flex min-w-0 items-center gap-1.5">
-          <p className="min-w-0 truncate text-sm font-medium">
-            {presentation.isExternalDeposit
-              ? `${action} ${destinationSymbol}`
-              : action === 'Account Transfer' || action === 'Move'
-                ? action
-                : `${action} ${sourceSymbol} → ${destinationSymbol}`}
-          </p>
-          {item.accountMode === 'private' && <ExecutionAccountBadge mode="private" iconOnly />}
-        </div>
-        <p className="truncate text-xs text-muted" title={accountRoute ?? route}>
-          {accountRoute ?? route}
-        </p>
-        {accountRoute &&
-          !presentation.isExternalDeposit &&
-          presentation.sourceNetwork !== presentation.destinationNetwork && (
-            <p className="truncate text-[11px] text-muted" title={route}>
-              {route}
+    <div className="relative">
+      <button
+        type="button"
+        data-activity-id={item.id}
+        data-activity-status={item.status}
+        data-activity-account-mode={item.accountMode}
+        data-activity-kind={item.kind}
+        aria-label={
+          presentation.isExternalDeposit
+            ? `View ${action} ${destinationSymbol} details from External to Shield`
+            : `View ${action} ${sourceSymbol} to ${destinationSymbol} details from ${presentation.sourceNetwork} to ${presentation.destinationNetwork}`
+        }
+        onClick={() => onClick?.(item)}
+        className={cn(
+          'wallet-interactive grid min-h-[72px] w-full min-w-0 grid-cols-[36px_minmax(0,1fr)_minmax(0,45%)] items-center gap-3 px-4 py-3 text-left enabled:hover:bg-foreground/6 enabled:active:bg-foreground/10 focus-visible:bg-foreground/6 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary disabled:pointer-events-none',
+          smallTransferWarning && 'pr-9'
+        )}
+        disabled={!onClick}
+      >
+        <ActivityRouteTokenIcons route={presentation} />
+        <div className="min-w-0">
+          <div className="flex min-w-0 items-center gap-1.5">
+            <p className="min-w-0 truncate text-sm font-medium">
+              {presentation.isExternalDeposit
+                ? `${action} ${destinationSymbol}`
+                : action === 'Account Transfer' || action === 'Move'
+                  ? action
+                  : `${action} ${sourceSymbol} → ${destinationSymbol}`}
             </p>
-          )}
-      </div>
-      <div className="min-w-0 justify-self-end text-right">
-        {presentation.isExternalDeposit ? (
-          <p
-            className={cn(
-              'break-all font-sans text-sm font-medium tabular-nums',
-              presentation.destinationIsSettled && 'text-primary'
-            )}
-          >
-            {presentation.destination
-              ? `${presentation.destinationIsSettled ? '+' : 'Expected +'}${presentation.destination.formatted} ${destinationSymbol}`
-              : '—'}
+            {item.accountMode === 'private' && <ExecutionAccountBadge mode="private" iconOnly />}
+          </div>
+          <p className="truncate text-xs text-muted" title={accountRoute ?? route}>
+            {accountRoute ?? route}
           </p>
-        ) : (
-          <>
-            <p className="break-all font-sans text-sm font-medium tabular-nums">
-              {presentation.source ? `−${presentation.source.formatted} ${sourceSymbol}` : '—'}
-            </p>
-            {presentation.destination && (
-              <p className="break-all font-sans text-[11px] text-muted tabular-nums">
-                {isShieldSend
-                  ? 'Recipient receives '
-                  : `${presentation.destinationIsSettled ? 'Received' : 'Expected'} +`}
-                {presentation.destination.formatted} {destinationSymbol}
+          {accountRoute &&
+            !presentation.isExternalDeposit &&
+            presentation.sourceNetwork !== presentation.destinationNetwork && (
+              <p className="truncate text-[11px] text-muted" title={route}>
+                {route}
               </p>
             )}
-          </>
-        )}
-        {showStatus && (
-          <p className={cn('text-[11px]', getTransactionStatusToneClassName(status.tone))}>
-            {status.label}
-          </p>
-        )}
-      </div>
-    </button>
+        </div>
+        <div className="min-w-0 justify-self-end text-right">
+          {presentation.isExternalDeposit ? (
+            <p
+              title={
+                presentation.destination
+                  ? `${presentation.destinationIsSettled ? 'Received +' : 'Expected +'}${presentation.destination.exact} ${destinationSymbol}`
+                  : undefined
+              }
+              className={cn(
+                'truncate whitespace-nowrap font-sans text-sm font-medium tabular-nums',
+                presentation.destinationIsSettled && 'text-primary'
+              )}
+            >
+              {presentation.destination
+                ? `${presentation.destinationIsSettled ? '+' : 'Expected +'}${presentation.destination.formatted} ${destinationSymbol}`
+                : '—'}
+            </p>
+          ) : (
+            <>
+              <p
+                className="truncate whitespace-nowrap font-sans text-sm font-medium tabular-nums"
+                title={
+                  presentation.source ? `−${presentation.source.exact} ${sourceSymbol}` : undefined
+                }
+              >
+                {presentation.source ? `−${presentation.source.formatted} ${sourceSymbol}` : '—'}
+              </p>
+              {presentation.destination && (
+                <p
+                  className="truncate whitespace-nowrap font-sans text-[11px] text-muted tabular-nums"
+                  title={`${presentation.destination.exact} ${destinationSymbol}`}
+                >
+                  {isShieldSend
+                    ? 'Recipient receives '
+                    : `${presentation.destinationIsSettled ? 'Received' : 'Expected'} +`}
+                  {presentation.destination.formatted} {destinationSymbol}
+                </p>
+              )}
+            </>
+          )}
+          {showStatus && (
+            <p
+              className={cn(
+                'mt-1 text-xs font-medium',
+                getTransactionStatusToneClassName(status.tone)
+              )}
+            >
+              {status.label}
+            </p>
+          )}
+        </div>
+      </button>
+      {smallTransferWarning && <SmallTransferWarningIcon />}
+    </div>
   )
 }
 
@@ -206,7 +258,9 @@ export function MultichainActivityRow({
   chainIconAlias,
   chainId,
   executionAddressModes,
-  onClick
+  onClick,
+  smallTransferWarning,
+  settledDestination
 }: MultichainActivityRowProps) {
   const changes = getActivityDisplayChanges(item, assetMetadata)
   const observed =
@@ -221,9 +275,18 @@ export function MultichainActivityRow({
     item,
     assetMetadata,
     chainMetadata,
-    executionAddressModes
+    executionAddressModes,
+    settledDestination
   )
-  if (swap) return <SwapActivityRow item={item} presentation={swap} onClick={onClick} />
+  if (swap)
+    return (
+      <SwapActivityRow
+        item={item}
+        presentation={swap}
+        onClick={onClick}
+        smallTransferWarning={smallTransferWarning}
+      />
+    )
   const status = getActivityStatusPresentation(item)
   const interaction = getActivityInteractionPresentation(item, chainId)
   const resolvedNetworkName =
@@ -243,84 +306,96 @@ export function MultichainActivityRow({
   const showChanges = observed && summaryChange !== undefined
   const subtitle =
     interaction?.family === 'evm' && interaction.targetAddress
-      ? `${resolvedNetworkName} · ${formatSortAddress(interaction.targetAddress)}`
+      ? `${resolvedNetworkName} · ${getActivityAddressAlias(chainId, interaction.targetAddress) ?? formatSortAddress(interaction.targetAddress)}`
       : text.subtitle
 
   return (
-    <button
-      type="button"
-      data-activity-id={item.id}
-      data-activity-status={item.status}
-      data-activity-account-mode={item.accountMode}
-      aria-label={`View ${accessibleTitle} details on ${resolvedNetworkName}`}
-      onClick={() => onClick?.(item)}
-      className={cn(
-        'wallet-interactive grid min-h-[72px] w-full min-w-0 grid-cols-[36px_minmax(0,1fr)_minmax(0,45%)] items-center gap-3 px-4 py-3 text-left enabled:hover:bg-foreground/6 enabled:active:bg-foreground/10 focus-visible:bg-foreground/6 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary disabled:pointer-events-none',
-        isCancelled && 'opacity-60'
-      )}
-      disabled={!onClick}
-    >
-      <ActivityAvatar primary={primary} chainIconAlias={chainIconAlias} interaction={interaction} />
+    <div className="relative">
+      <button
+        type="button"
+        data-activity-id={item.id}
+        data-activity-status={item.status}
+        data-activity-account-mode={item.accountMode}
+        aria-label={`View ${accessibleTitle} details on ${resolvedNetworkName}`}
+        onClick={() => onClick?.(item)}
+        className={cn(
+          'wallet-interactive grid min-h-[72px] w-full min-w-0 grid-cols-[36px_minmax(0,1fr)_minmax(0,45%)] items-center gap-3 px-4 py-3 text-left enabled:hover:bg-foreground/6 enabled:active:bg-foreground/10 focus-visible:bg-foreground/6 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary disabled:pointer-events-none',
+          isCancelled && 'opacity-60',
+          smallTransferWarning && 'pr-9'
+        )}
+        disabled={!onClick}
+      >
+        <ActivityAvatar
+          primary={primary}
+          chainIconAlias={chainIconAlias}
+          interaction={interaction}
+        />
 
-      <div className="min-w-0">
-        <div className="flex min-w-0 items-center gap-1.5">
-          <p
-            className={cn(
-              'min-w-0 truncate text-sm font-medium',
-              status.tone === 'error' && !isCancelled && 'text-danger'
-            )}
-          >
-            {accessibleTitle}
-          </p>
-          {item.accountMode === 'private' && <ExecutionAccountBadge mode="private" iconOnly />}
-        </div>
-        <p className="truncate text-xs text-muted" title={subtitle}>
-          {subtitle}
-        </p>
-      </div>
-
-      <div className={cn('min-w-0 justify-self-end text-right', showChanges && 'max-w-[145px]')}>
-        {showChanges && summaryChange ? (
-          <div data-activity-asset-changes>
+        <div className="min-w-0">
+          <div className="flex min-w-0 items-center gap-1.5">
             <p
-              title={`${summaryChange.direction === 'incoming' ? '+' : '−'}${summaryChange.value} ${summaryChange.symbol}`}
               className={cn(
-                'flex min-w-0 flex-wrap items-baseline justify-end gap-1 font-sans text-sm font-medium tabular-nums',
-                summaryChange.direction === 'incoming' && 'text-primary'
+                'min-w-0 truncate text-sm font-medium',
+                status.tone === 'error' && !isCancelled && 'text-danger'
               )}
             >
-              <span className="min-w-0 break-all">
-                {summaryChange.direction === 'incoming' ? '+' : '−'}
-                {summaryChange.formatted}
-              </span>
-              <span className="max-w-16 shrink-0 truncate">{summaryChange.symbol}</span>
+              {accessibleTitle}
             </p>
+            {item.accountMode === 'private' && <ExecutionAccountBadge mode="private" iconOnly />}
           </div>
-        ) : primary || !observed ? (
-          <p
-            className={cn(
-              'break-all font-sans text-sm font-medium tabular-nums',
-              isIncoming && 'text-primary'
-            )}
-          >
-            {primary ? signedAmount(item, primary) : '—'}
+          <p className="truncate text-xs text-muted" title={subtitle}>
+            {subtitle}
           </p>
-        ) : null}
-        {showStatus ? (
-          <p
-            className={cn(
-              'truncate text-[11px]',
-              status.tone === 'error'
-                ? isCancelled
-                  ? 'text-muted'
-                  : 'text-danger'
-                : getTransactionStatusToneClassName(status.tone)
-            )}
-          >
-            {status.label}
-          </p>
-        ) : null}
-      </div>
-    </button>
+        </div>
+
+        <div className={cn('min-w-0 justify-self-end text-right', showChanges && 'max-w-[145px]')}>
+          {showChanges && summaryChange ? (
+            <div data-activity-asset-changes>
+              <p
+                title={
+                  summaryChange.assetId.startsWith('bip122:00040fe8')
+                    ? undefined
+                    : `${summaryChange.direction === 'incoming' ? '+' : '−'}${summaryChange.value} ${summaryChange.symbol}`
+                }
+                className={cn(
+                  'flex min-w-0 flex-wrap items-baseline justify-end gap-1 font-sans text-sm font-medium tabular-nums',
+                  summaryChange.direction === 'incoming' && 'text-primary'
+                )}
+              >
+                <span className="min-w-0 break-all">
+                  {summaryChange.direction === 'incoming' ? '+' : '−'}
+                  {summaryChange.formatted}
+                </span>
+                <span className="max-w-16 shrink-0 truncate">{summaryChange.symbol}</span>
+              </p>
+            </div>
+          ) : primary || !observed ? (
+            <p
+              className={cn(
+                'flex items-center justify-end gap-1 break-all font-sans text-sm font-medium tabular-nums',
+                isIncoming && 'text-primary'
+              )}
+            >
+              {primary ? signedAmount(item, primary) : '—'}
+            </p>
+          ) : null}
+          {showStatus ? (
+            <p
+              className={cn(
+                'mt-1 truncate text-xs font-medium',
+                status.tone === 'error'
+                  ? isCancelled
+                    ? 'text-muted'
+                    : 'text-danger'
+                  : getTransactionStatusToneClassName(status.tone)
+              )}
+            >
+              {status.label}
+            </p>
+          ) : null}
+        </div>
+      </button>
+      {smallTransferWarning && <SmallTransferWarningIcon />}
+    </div>
   )
 }

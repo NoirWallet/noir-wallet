@@ -19,7 +19,9 @@ import {
 } from '@/core/prices/asset-market-mappings'
 import type { Network } from '@/types'
 import { isAddress } from 'viem'
+import { parseZcashAddress } from '@/core/address-book/address-book'
 import type { PrepareConfidentialFundingRequest } from './confidential-funding-client'
+import type { EvmFeeSelection } from '@/infrastructure/chains/evm'
 import type {
   ConfidentialFundingPlan,
   ConfidentialFundingReview
@@ -397,11 +399,15 @@ function isShieldSendDestination(
   network: Network
 ): boolean {
   if (!isValidShieldFundingAsset(source) || !isValidShieldFundingAsset(destination)) return false
-  if (
-    (source.chain.chain.family !== 'evm' && source.chain.chain.id !== getZcashChainId(network)) ||
-    destination.chain.chain.family !== 'evm'
-  )
-    return false
+  const zcashChainId = getZcashChainId(network)
+  if (source.chain.chain.family !== 'evm' && source.chain.chain.id !== zcashChainId) return false
+  if (destination.chain.chain.id === zcashChainId) {
+    return (
+      source.managed.protocolAssetId === destination.managed.protocolAssetId &&
+      source.asset.asset.id === destination.asset.asset.id
+    )
+  }
+  if (destination.chain.chain.family !== 'evm') return false
   if (source.asset.asset.id === destination.asset.asset.id)
     return source.managed.protocolAssetId === destination.managed.protocolAssetId
   if (network !== 'mainnet' || source.chain.chain.id === destination.chain.chain.id) return false
@@ -421,6 +427,22 @@ export function listShieldSendDestinations(
   network: Network
 ): readonly ShieldFundingAsset[] {
   return options.filter(option => isShieldSendDestination(source, option, network))
+}
+
+export function isShieldWithdrawRecipient(
+  recipient: string,
+  destination: ShieldFundingAsset | null,
+  network: Network
+): boolean {
+  if (!destination) return false
+  if (destination.chain.chain.id === getZcashChainId(network)) {
+    try {
+      return parseZcashAddress(recipient, network).address === recipient
+    } catch {
+      return false
+    }
+  }
+  return isAddress(recipient) && !/^0x0{40}$/i.test(recipient)
 }
 
 export function matchesShieldReview(
@@ -444,7 +466,7 @@ export function matchesShieldReview(
 
 export function shieldQuoteFeeRaw(review: ConfidentialFundingReview): string | null {
   const difference = BigInt(review.sourceAmountRaw) - BigInt(review.expectedOutputRaw)
-  return difference >= 0n ? difference.toString() : null
+  return difference.toString()
 }
 
 export function hasShieldTransferStarted(plan: ConfidentialFundingPlan): boolean {
@@ -483,12 +505,10 @@ export function buildExternalShieldWithdrawRequest(
   }>
 ): PrepareConfidentialFundingRequest {
   if (
-    !isAddress(input.recipient) ||
-    /^0x0{40}$/i.test(input.recipient) ||
+    !isShieldWithdrawRecipient(input.recipient, input.destination, input.network) ||
     !/^[1-9]\d*$/.test(input.amountRaw) ||
     (input.source.chain.chain.family !== 'evm' &&
       input.source.chain.chain.id !== getZcashChainId(input.network)) ||
-    input.destination.chain.chain.family !== 'evm' ||
     !isShieldSendDestination(input.source, input.destination, input.network) ||
     input.source.asset.asset.id !== input.source.managed.assetId ||
     input.destination.asset.asset.id !== input.destination.managed.assetId ||
@@ -555,6 +575,7 @@ export function buildShieldTransferRequest(
     chain: PortfolioChainView
     managed: ShieldTransferAsset
     destination?: ShieldFundingAsset
+    feeSelection?: EvmFeeSelection
   }>
 ): PrepareConfidentialFundingRequest {
   const source: ShieldFundingAsset = {
@@ -601,6 +622,7 @@ export function buildShieldTransferRequest(
     destinationDomain: input.to,
     source: Object.freeze({ ...sourceRoute, amountRaw: input.amountRaw }),
     destination: destinationRoute,
-    slippageBps: 50
+    slippageBps: 50,
+    ...(input.from === 'shield' || !input.feeSelection ? {} : { feeSelection: input.feeSelection })
   })
 }

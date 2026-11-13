@@ -181,7 +181,7 @@ export function ManageTokens() {
       .then(async tokens => {
         if (cancelled) return
         setCatalogAssets(resolveManagedIntentsCatalog(tokens))
-        await intentsAssetManagerClient.ensureDefaults(tokens, { forceProtocolRefresh: true })
+        await intentsAssetManagerClient.ensureDefaults(tokens)
         if (!cancelled) {
           const result = await userEvmAssetsClient.listManaged()
           setAssets(result.userAssets)

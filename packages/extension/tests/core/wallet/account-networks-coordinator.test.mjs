@@ -4,7 +4,9 @@ import { expect } from '@playwright/test'
 import { AccountNetworksCoordinator } from '../../../src/background/account-networks.ts'
 import {
   getDefaultImportNetworkFamilies,
+  isAccountChainEnabled,
   isAccountNetworkEnabled,
+  parseSelectedChainIds,
   parseSelectedNetworkFamilies
 } from '../../../src/core/wallet/account-network-selection.ts'
 import {
@@ -18,6 +20,7 @@ const walletId = 'wallet:account-networks'
 const accountId = 'account:account-networks:0'
 const zcashChainId = 'bip122:05a60a92d99d85997cce3b87616c089f'
 const evmChainId = 'eip155:11155111'
+const secondEvmChainId = 'eip155:97'
 const bitcoinChainId = 'bip122:000000000933ea01ad0ee984209779ba'
 const evmAddress = '0xF278cF59F82eDcf871d630F28EcC8056f25C1cdb'
 const privateExecutionAddress = '0xc1d4A6EB60b9c2CFaBcDFEF60C90D04BE174E0f3'
@@ -196,6 +199,39 @@ test.describe('Account networks coordinator', () => {
     expect(
       (await coordinator.readCatalog()).accounts[0].networks.map(item => item.chainId)
     ).toContain(zcashChainId)
+  })
+
+  test('keeps unselected EVM chains out of account and dApp projections', async () => {
+    const source = snapshot()
+    source.chainAccounts.push({
+      ...source.chainAccounts[2],
+      id: 'chain-account:networks:second-evm',
+      scope: { keyDomainId: walletId, accountId, chainId: secondEvmChainId }
+    })
+    source.addresses.push({
+      ...source.addresses[3],
+      id: 'address:networks:second-evm',
+      chainAccountId: 'chain-account:networks:second-evm'
+    })
+    const account = {
+      networkSelections: { testnet: ['zcash', 'evm'] },
+      networkChainSelections: { testnet: [zcashChainId, evmChainId] }
+    }
+    expect(() => parseSelectedChainIds([evmChainId, evmChainId])).toThrow()
+    expect(isAccountChainEnabled(account, 'testnet', 'evm', evmChainId)).toBe(true)
+    expect(isAccountChainEnabled(account, 'testnet', 'evm', secondEvmChainId)).toBe(false)
+    const coordinator = new AccountNetworksCoordinator({
+      repository: repository(source),
+      chains,
+      isNetworkEnabled: (_scope, family, chainId) =>
+        isAccountChainEnabled(account, 'testnet', family, chainId)
+    })
+    expect((await coordinator.readActiveAccount()).chainIds).toEqual([zcashChainId, evmChainId])
+    expect(
+      (await coordinator.readCatalog()).accounts[0].networks.map(item => item.chainId)
+    ).toEqual([zcashChainId, evmChainId])
+    account.networkChainSelections.testnet = [zcashChainId, evmChainId, secondEvmChainId]
+    expect((await coordinator.readActiveAccount()).chainIds).toContain(secondEvmChainId)
   })
 
   test('uses the selected Zcash receive address after rotation and history selection without changing identity', async () => {

@@ -16,6 +16,13 @@ import {
   type TokenSelectionItem
 } from './TokenSelectionList'
 import { TokenIcon } from './TokenIcon'
+import { useWalletStore } from '@/store/wallet-store'
+import { resolveEvmChainIconAlias } from '@/config/icons'
+import {
+  orderNetworkIdsByRecency,
+  recordRecentChainSelection,
+  tokenSelectorChainOrderStorageKey
+} from './token-selector-chain-order'
 import {
   addInspectedToken,
   inspectTokenAddress,
@@ -31,6 +38,7 @@ export interface TokenSelectorNetwork {
 }
 
 interface TokenSelectorViewProps {
+  readonly accountScope?: Readonly<{ walletId: string; accountId: string }> | null
   readonly search: string
   readonly onSearchChange: (value: string) => void
   readonly networks: readonly TokenSelectorNetwork[]
@@ -56,6 +64,7 @@ interface TokenSelectorViewProps {
 }
 
 export function TokenSelectorView({
+  accountScope,
   search,
   onSearchChange,
   networks,
@@ -75,6 +84,59 @@ export function TokenSelectorView({
   onScroll,
   discovery
 }: TokenSelectorViewProps) {
+  const currentNetwork = useWalletStore(state => state.currentNetwork)
+  const currentWalletId = useWalletStore(state => state.currentWalletId)
+  const currentAccountId = useWalletStore(state => state.currentAccountId)
+  const walletId = accountScope?.walletId ?? currentWalletId
+  const accountId = accountScope?.accountId ?? currentAccountId
+  const lowBalancePreferenceKey =
+    walletId && accountId
+      ? `token-selector-low-balance:${currentNetwork}:${walletId}:${accountId}`
+      : null
+  const chainOrderKey =
+    walletId && accountId
+      ? tokenSelectorChainOrderStorageKey({
+          network: currentNetwork,
+          walletId,
+          accountId
+        })
+      : null
+  const [recentChainIds, setRecentChainIds] = useState<readonly string[]>([])
+  const pendingRecentChainIds = useRef<readonly string[] | null>(null)
+  useEffect(() => {
+    pendingRecentChainIds.current = null
+    setRecentChainIds([])
+    if (!chainOrderKey) return
+    let active = true
+    void chrome.storage.session
+      .get(chainOrderKey)
+      .then(result => {
+        if (active && pendingRecentChainIds.current === null) {
+          const saved = result[chainOrderKey]
+          setRecentChainIds(
+            Array.isArray(saved) ? saved.filter((id): id is string => typeof id === 'string') : []
+          )
+        }
+      })
+      .catch(() => {})
+    return () => {
+      active = false
+      if (pendingRecentChainIds.current) {
+        void chrome.storage.session
+          .set({ [chainOrderKey]: pendingRecentChainIds.current })
+          .catch(() => {})
+      }
+    }
+  }, [chainOrderKey])
+  const selectNetwork = (id: string) => {
+    onNetworkChange(id)
+    if (chainOrderKey) {
+      pendingRecentChainIds.current = recordRecentChainSelection(
+        pendingRecentChainIds.current ?? recentChainIds,
+        networks.find(network => network.id === id)?.iconChain ?? id
+      )
+    }
+  }
   const discoveryKey = `${discovery?.scopeKey ?? ''}:${discovery?.chainId ?? ''}:${search.trim().toLowerCase()}`
   const latestDiscoveryKey = useRef(discoveryKey)
   const discoveryGeneration = useRef(0)
@@ -126,7 +188,20 @@ export function TokenSelectorView({
       cancelled = true
     }
   }, [addressSearch, discovery?.chainId, discoveryKey, items.length, loading, search])
-  const available = networks.filter(network => !network.disabledReason)
+  const availableById = new Map(
+    networks.filter(network => !network.disabledReason).map(network => [network.id, network])
+  )
+  const availableIdByIconChain = new Map(
+    [...availableById.values()].map(network => [network.iconChain, network.id])
+  )
+  const available = orderNetworkIdsByRecency(
+    [...availableById.keys()],
+    recentChainIds.map(id => {
+      if (availableById.has(id)) return id
+      const iconChain = id.startsWith('eip155:') ? resolveEvmChainIconAlias(id) : id
+      return availableIdByIconChain.get(iconChain) ?? id
+    })
+  ).map(id => availableById.get(id)!)
   const primary = available.slice(0, 5)
   const more = available.slice(5)
   const disabled = networks.filter(network => network.disabledReason)
@@ -183,7 +258,7 @@ export function TokenSelectorView({
           >
             <button
               type="button"
-              onClick={() => onNetworkChange('all')}
+              onClick={() => selectNetwork('all')}
               aria-pressed={effectiveNetwork === 'all'}
               title="All networks"
               className={cn(
@@ -199,7 +274,7 @@ export function TokenSelectorView({
               <button
                 key={network.id}
                 type="button"
-                onClick={() => onNetworkChange(network.id)}
+                onClick={() => selectNetwork(network.id)}
                 aria-label={network.label}
                 aria-pressed={effectiveNetwork === network.id}
                 title={network.label}
@@ -239,7 +314,7 @@ export function TokenSelectorView({
                   </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="min-w-[180px]">
-                  <DropdownMenuRadioGroup value={effectiveNetwork} onValueChange={onNetworkChange}>
+                  <DropdownMenuRadioGroup value={effectiveNetwork} onValueChange={selectNetwork}>
                     {[...more, ...disabled].map(network => (
                       <DropdownMenuRadioItem
                         key={network.id}
@@ -337,7 +412,12 @@ export function TokenSelectorView({
               }}
             />
             {lowBalance.length > 0 && (
-              <LowBalanceRows items={lowBalance} selectedKey={selectedKey} onSelect={onSelect} />
+              <LowBalanceRows
+                items={lowBalance}
+                selectedKey={selectedKey}
+                onSelect={onSelect}
+                preferenceKey={lowBalancePreferenceKey}
+              />
             )}
           </>
         )}
@@ -350,19 +430,45 @@ export function TokenSelectorView({
 function LowBalanceRows({
   items,
   selectedKey,
-  onSelect
+  onSelect,
+  preferenceKey
 }: {
   readonly items: readonly TokenSelectionItem[]
   readonly selectedKey?: string
   readonly onSelect: (key: string) => void
+  readonly preferenceKey: string | null
 }) {
-  const [expanded, setExpanded] = useState(true)
+  const [expanded, setExpanded] = useState(false)
+  const [visibleCount, setVisibleCount] = useState(100)
+  const changedByUser = useRef(false)
+  useEffect(() => {
+    changedByUser.current = false
+    setExpanded(false)
+    if (!preferenceKey) return
+    let active = true
+    void chrome.storage.local
+      .get(preferenceKey)
+      .then(result => {
+        if (active && !changedByUser.current) setExpanded(result[preferenceKey] === true)
+      })
+      .catch(() => {})
+    return () => {
+      active = false
+    }
+  }, [preferenceKey])
   return (
     <section className="pt-2">
       <button
         type="button"
         aria-expanded={expanded}
-        onClick={() => setExpanded(current => !current)}
+        onClick={() => {
+          changedByUser.current = true
+          const next = !expanded
+          if (next) setVisibleCount(100)
+          setExpanded(next)
+          if (preferenceKey)
+            void chrome.storage.local.set({ [preferenceKey]: next }).catch(() => {})
+        }}
         className="wallet-interactive flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-muted hover:text-foreground"
       >
         <span className="min-w-0 flex-1">Low balance tokens ({items.length})</span>
@@ -374,7 +480,22 @@ function LowBalanceRows({
         />
       </button>
       {expanded && (
-        <TokenSelectionList items={items} selectedKey={selectedKey} onSelect={onSelect} />
+        <>
+          <TokenSelectionList
+            items={items.slice(0, visibleCount)}
+            selectedKey={selectedKey}
+            onSelect={onSelect}
+          />
+          {items.length > visibleCount && (
+            <button
+              type="button"
+              onClick={() => setVisibleCount(current => Math.min(items.length, current + 100))}
+              className="wallet-interactive w-full py-3 text-center text-sm text-primary hover:bg-card focus-visible:outline-2 focus-visible:outline-primary"
+            >
+              Show more
+            </button>
+          )}
+        </>
       )}
     </section>
   )

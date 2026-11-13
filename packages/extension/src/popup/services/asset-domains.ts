@@ -90,7 +90,7 @@ export function projectPortfolioForDomain(
   const projected = new Map<string, PortfolioAssetView>()
   for (const asset of model.assets) {
     const raw = getAssetDomainRaw(asset, domain)
-    if (raw === null || BigInt(raw) === 0n) continue
+    if (raw === null || (BigInt(raw) === 0n && asset.source !== 'user-added')) continue
     projected.set(asset.asset.id, projectDisplayAsset(asset, raw))
   }
   const chains = model.chains

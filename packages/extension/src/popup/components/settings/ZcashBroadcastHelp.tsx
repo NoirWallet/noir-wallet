@@ -19,8 +19,8 @@ export function ZcashBroadcastHelp() {
         className="max-h-[min(28rem,70vh)] w-80 max-w-[calc(100vw-2rem)] overflow-y-auto space-y-3 text-xs leading-5"
       >
         <p>
-          ZeroIndexer relays Zcash Shield transactions for extra network privacy. This may take
-          longer; if it fails, Noir uses regular RPC.
+          ZeroIndexer can relay transactions containing Orchard and check their status with extra
+          network privacy. If the endpoint fails, Noir falls back to the regular Zcash node.
         </p>
         <p>Auto selects a node for you. You can also choose a trusted node.</p>
       </PopoverContent>

@@ -34,6 +34,8 @@ function createHandler({
   activeChainIds,
   manager,
   readFirstPartySnapshot,
+  readTokenList,
+  openTokenManager,
   executionAccounts = [address]
 } = {}) {
   let stored = null
@@ -42,6 +44,8 @@ function createHandler({
   const invocations = []
   const handler = new BackgroundMultichainSessionDAppHandler({
     network: 'mainnet',
+    readTokenList,
+    openTokenManager,
     ...(activeChainIds === undefined ? {} : { activeChainIds }),
     ...(readFirstPartySnapshot === undefined ? {} : { readFirstPartySnapshot }),
     evmNetworks: [ethereum, custom].map(chainId => ({
@@ -119,6 +123,70 @@ function createHandler({
   })
   return { handler, approvals, events, invocations, getStored: () => stored }
 }
+
+test('token metadata and manager require the current authorized account and reject context changes', async () => {
+  let snapshot = { identity: 'one', activeReference: reference }
+  let reads = 0
+  let opens = 0
+  let changeDuringRead = false
+  const metadata = [
+    {
+      assetId: 'eip155:1/slip44:60',
+      chainId: ethereum,
+      contractAddress: null,
+      symbol: 'ETH',
+      decimals: 18,
+      enabled: true
+    }
+  ]
+  const { handler } = createHandler({
+    readFirstPartySnapshot: async () => snapshot,
+    readTokenList: async scope => {
+      reads++
+      expect(scope).toEqual({
+        keyDomainId: reference.walletId,
+        accountId: reference.accountId,
+        chainIds: [ethereum]
+      })
+      if (changeDuringRead) snapshot = { ...snapshot, identity: 'changed' }
+      return metadata
+    },
+    openTokenManager: async () => {
+      opens++
+    }
+  })
+  const origin = 'https://dapp.example'
+  for (const method of ['wallet_getTokenList', 'wallet_openTokenManager']) {
+    await expect(handler.request({ method }, origin, {})).rejects.toMatchObject({ code: 4100 })
+  }
+  expect(reads).toBe(0)
+  expect(opens).toBe(0)
+  await handler.request(
+    {
+      method: 'wallet_createSession',
+      params: { scopes: { [ethereum]: { methods: ['eth_accounts'], notifications: [] } } }
+    },
+    origin,
+    {}
+  )
+  await expect(handler.request({ method: 'wallet_getTokenList' }, origin, {})).resolves.toEqual(
+    metadata
+  )
+  await expect(
+    handler.request({ method: 'wallet_openTokenManager' }, origin, {})
+  ).resolves.toBeNull()
+  expect(opens).toBe(1)
+  snapshot = { ...snapshot, activeReference: { walletId: 'other', accountId: 'other' } }
+  await expect(
+    handler.request({ method: 'wallet_getTokenList' }, origin, {})
+  ).rejects.toMatchObject({ code: 4100 })
+  expect(reads).toBe(1)
+  snapshot = { identity: 'one', activeReference: reference }
+  changeDuringRead = true
+  await expect(
+    handler.request({ method: 'wallet_getTokenList' }, origin, {})
+  ).rejects.toMatchObject({ code: 4100 })
+})
 
 test('creates one shared EVM approval while preserving atomic chain scopes and methods', async () => {
   const { handler, approvals, events, invocations, getStored } = createHandler()

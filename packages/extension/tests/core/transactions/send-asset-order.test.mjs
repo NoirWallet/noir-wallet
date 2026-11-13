@@ -54,10 +54,13 @@ test('does not mutate the source list and rejects malformed values as zero-value
   expect(assets.map(asset => asset.key)).toEqual(['invalid', 'valid'])
 })
 
-test('shows the total EVM balance across Main and Private accounts', () => {
+test('shows only the Public EVM balance and leaves an unknown split unavailable', () => {
   const evmAsset = {
     asset: {
-      asset: { id: 'eip155:100/erc20:0x0000000000000000000000000000000000000001' },
+      asset: {
+        id: 'eip155:100/erc20:0x0000000000000000000000000000000000000001',
+        chainId: 'eip155:100'
+      },
       metadata: { symbol: 'EURE', name: 'EURE', decimals: 6 },
       balance: {
         totalRaw: '3701725',
@@ -81,5 +84,16 @@ test('shows the total EVM balance across Main and Private accounts', () => {
     searchQuery: ''
   }
 
-  expect(buildSendAssetSelectionModel(input).orderedRows[0]).toMatchObject({ amount: '3.701725' })
+  expect(buildSendAssetSelectionModel(input).orderedRows[0]).toMatchObject({ amount: '2.701725' })
+  expect(
+    buildSendAssetSelectionModel({
+      ...input,
+      assets: [
+        {
+          ...evmAsset,
+          asset: { ...evmAsset.asset, balance: { totalRaw: '3701725' } }
+        }
+      ]
+    }).orderedRows[0]
+  ).toMatchObject({ amount: null })
 })

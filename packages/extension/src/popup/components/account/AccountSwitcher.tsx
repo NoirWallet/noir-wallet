@@ -24,6 +24,7 @@ import { CopyFeedbackIcon, CopyToast, useCopyToClipboard } from '../common/CopyT
 import { ChainIcon } from '../common/ChainIcon'
 import evmGroupIcon from '@/images/figma-evm-group.svg'
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover'
+import { isRetainedV1UpgradeAccount } from '@/core/wallet/account-network-selection'
 import { cn } from '@/lib/utils'
 import type { ActiveAccountIdentity } from '@/popup/lib/effective-active-account'
 import { AccountAvatar as AccountAvatarImage } from './AccountAvatar'
@@ -118,6 +119,7 @@ function AccountAddressPopover({
   isCopied,
   copyScope,
   onViewAll,
+  onAddNetworks,
   className
 }: {
   readonly account: SwitcherAccount
@@ -127,6 +129,7 @@ function AccountAddressPopover({
   readonly isCopied: (key: string) => boolean
   readonly copyScope: string
   readonly onViewAll: () => void
+  readonly onAddNetworks?: () => void
   readonly className?: string
 }) {
   const [selectedEvmMode, setEvmMode] = useState<'public' | 'private' | null>(null)
@@ -322,6 +325,15 @@ function AccountAddressPopover({
       >
         View all <Icon icon="lucide:chevron-right" width={13} height={13} />
       </button>
+      {onAddNetworks && (
+        <button
+          type="button"
+          onClick={onAddNetworks}
+          className="wallet-interactive flex h-8 w-full items-center justify-center gap-1 rounded-sm text-xs text-primary hover:bg-white/6 focus-visible:outline-2 focus-visible:outline-primary"
+        >
+          <Icon icon="lucide:plus" width={13} height={13} /> Add More Networks
+        </button>
+      )}
     </div>
   )
 }
@@ -341,7 +353,8 @@ export function AccountSwitcher({
   const { confirm, alert } = useDialog()
   const { copyToClipboard, showToast, isCopied, copyFailed } = useCopyToClipboard()
   const [privateCopy, setPrivateCopy] = useState<{ address: string; key: string } | null>(null)
-  const { wallets, accountDisplayNames, currentWalletId, currentAccountId } = useWalletStore()
+  const { wallets, accountDisplayNames, currentWalletId, currentAccountId, currentNetwork } =
+    useWalletStore()
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [addressesOpen, setAddressesOpen] = useState(false)
   const [catalogAccounts, setCatalogAccounts] = useState<readonly AccountNetworksView[]>([])
@@ -352,25 +365,6 @@ export function AccountSwitcher({
   const previewAnchor = useRef<HTMLButtonElement | null>(null)
   const accountList = useRef<HTMLDivElement>(null)
   const previewTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const addressesCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const addressesCloseOnLeave = useRef(false)
-
-  const cancelAddressesClose = useCallback(() => {
-    if (addressesCloseTimer.current !== null) {
-      clearTimeout(addressesCloseTimer.current)
-      addressesCloseTimer.current = null
-    }
-  }, [])
-  const scheduleAddressesClose = useCallback(() => {
-    if (!addressesCloseOnLeave.current) return
-    cancelAddressesClose()
-    addressesCloseTimer.current = setTimeout(() => {
-      addressesCloseTimer.current = null
-      setAddressesOpen(false)
-    }, 180)
-  }, [cancelAddressesClose])
-
-  useEffect(() => cancelAddressesClose, [cancelAddressesClose])
 
   const cancelPreviewTimer = useCallback(() => {
     if (previewTimer.current !== null) {
@@ -497,11 +491,26 @@ export function AccountSwitcher({
       : null)
 
   const viewAddresses = (account: SwitcherAccount) => {
-    cancelAddressesClose()
     setAddressesOpen(false)
     setDrawerOpen(false)
     navigate(
       `/addresses-list?walletId=${encodeURIComponent(account.walletId)}&accountId=${encodeURIComponent(account.accountId)}`
+    )
+  }
+
+  const canAddNetworks = (account: SwitcherAccount) => {
+    const wallet = wallets.find(item => item.id === account.walletId)
+    return isRetainedV1UpgradeAccount(
+      wallet,
+      wallet?.accounts.find(item => item.id === account.accountId),
+      currentNetwork
+    )
+  }
+  const openNetworkManager = (account: SwitcherAccount) => {
+    setAddressesOpen(false)
+    setDrawerOpen(false)
+    navigate(
+      `/account-networks?walletId=${encodeURIComponent(account.walletId)}&accountId=${encodeURIComponent(account.accountId)}`
     )
   }
 
@@ -725,6 +734,11 @@ export function AccountSwitcher({
                     isCopied={isCopied}
                     copyScope="preview"
                     onViewAll={() => viewAddresses(previewAccount)}
+                    onAddNetworks={
+                      canAddNetworks(previewAccount)
+                        ? () => openNetworkManager(previewAccount)
+                        : undefined
+                    }
                   />
                 </div>
               </div>
@@ -732,11 +746,26 @@ export function AccountSwitcher({
           </DialogPrimitive.Content>
         </DialogPrimitive.Portal>
       </DialogPrimitive.Root>
+      <button
+        type="button"
+        aria-label={`Choose account, current: ${activeName}`}
+        onClick={() => {
+          setAddressesOpen(false)
+          setDrawerOpen(true)
+        }}
+        className="wallet-interactive flex min-w-0 max-w-[150px] items-center gap-1 rounded-sm text-sm font-semibold leading-[18px] hover:text-primary active:opacity-75 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+      >
+        <span className="min-w-0 truncate">{activeName}</span>
+        <Icon
+          icon="lucide:chevron-down"
+          width={10}
+          height={10}
+          className="shrink-0 text-wallet-secondary"
+        />
+      </button>
       <Popover
         open={addressesOpen}
         onOpenChange={open => {
-          cancelAddressesClose()
-          if (!open) addressesCloseOnLeave.current = false
           setAddressesOpen(open)
           if (open) setDrawerOpen(false)
         }}
@@ -746,32 +775,9 @@ export function AccountSwitcher({
             type="button"
             aria-label="Show account addresses"
             title="Show account addresses"
-            onPointerEnter={event => {
-              if (event.pointerType === 'mouse' && !addressesOpen) {
-                cancelAddressesClose()
-                addressesCloseOnLeave.current = true
-                setAddressesOpen(true)
-              }
-            }}
-            onPointerLeave={event => {
-              if (event.pointerType === 'mouse') scheduleAddressesClose()
-            }}
-            onClick={event => {
-              if (addressesOpen && addressesCloseOnLeave.current) {
-                addressesCloseOnLeave.current = false
-                cancelAddressesClose()
-                event.preventDefault()
-              }
-            }}
-            className="wallet-interactive flex min-w-0 max-w-[150px] items-center gap-1 rounded-sm text-sm font-semibold leading-[18px] hover:text-primary active:opacity-75 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            className="wallet-interactive flex size-6 shrink-0 items-center justify-center rounded-sm text-wallet-secondary hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
           >
-            <span className="min-w-0 truncate">{activeName}</span>
-            <Icon
-              icon="lucide:chevron-down"
-              width={10}
-              height={10}
-              className="shrink-0 text-wallet-secondary"
-            />
+            <Icon icon="lucide:copy" width={14} height={14} />
           </button>
         </PopoverTrigger>
         <PopoverContent
@@ -779,15 +785,6 @@ export function AccountSwitcher({
           alignOffset={-38}
           sideOffset={6}
           aria-label={`${activeName} addresses`}
-          onOpenAutoFocus={event => {
-            if (addressesCloseOnLeave.current) event.preventDefault()
-          }}
-          onPointerEnter={event => {
-            if (event.pointerType === 'mouse') cancelAddressesClose()
-          }}
-          onPointerLeave={event => {
-            if (event.pointerType === 'mouse') scheduleAddressesClose()
-          }}
           className="!z-[70] !w-[281px] !rounded-md !border-0 !bg-wallet-surface !p-0 !shadow-2xl"
         >
           {activeAccount && (
@@ -797,13 +794,15 @@ export function AccountSwitcher({
               defaultEvmMode={defaultEvmMode}
               onCopy={(value, key) => void copyToClipboard(value, key)}
               onCopyPrivate={(address, key) => {
-                cancelAddressesClose()
                 setAddressesOpen(false)
                 setPrivateCopy({ address, key })
               }}
               isCopied={isCopied}
               copyScope="active"
               onViewAll={() => viewAddresses(activeAccount)}
+              onAddNetworks={
+                canAddNetworks(activeAccount) ? () => openNetworkManager(activeAccount) : undefined
+              }
               className="!w-full"
             />
           )}

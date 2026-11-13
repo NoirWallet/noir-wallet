@@ -315,13 +315,17 @@ test.describe('Wallet metadata persistence', () => {
         'account:0',
         'testnet',
         ['evm', 'zcash'],
-        3_000_000
+        3_000_000,
+        ['bip122:05a60a92d99d85997cce3b87616c089f', 'eip155:11155111']
       )
       await writeWalletMetadata({
         state: { ...original.state, zecPrice: 2 }
       })
       const account = storage.values.wallet_state.state.wallets[0].accounts[0]
       expect(account.networkSelections).toEqual({ testnet: ['evm', 'zcash'] })
+      expect(account.networkChainSelections).toEqual({
+        testnet: ['bip122:05a60a92d99d85997cce3b87616c089f', 'eip155:11155111']
+      })
       expect(account.networkBirthdayHeights).toEqual({ testnet: 3_000_000 })
       expect(account.birthdayHeight).toBe(3_000_000)
       expect(storage.values.wallet_state.state.wallets[0].accounts[1]).toMatchObject(otherAccount)

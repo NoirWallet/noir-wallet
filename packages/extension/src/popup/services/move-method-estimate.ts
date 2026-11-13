@@ -21,7 +21,7 @@ export interface MoveMethodEstimate {
 
 function routeFee(amountRaw: string, outputRaw: string): string | null {
   const difference = BigInt(amountRaw) - BigInt(outputRaw)
-  return difference >= 0n ? difference.toString() : null
+  return difference.toString()
 }
 
 export function clusterMoveEstimate(
@@ -167,8 +167,10 @@ export function formatMoveMethodFee(
 ): { value: string; detail: string | null } {
   if (!estimate || !asset || estimate.routeFeeRaw === null) return { value: '—', detail: null }
   const gas = estimate.sourceNetworkFee
-  const format = (raw: string, decimals: number) =>
-    formatFeeAmount(formatBaseUnitDecimalAmount(raw, decimals))
+  const format = (raw: string, decimals: number) => {
+    const value = BigInt(raw)
+    return `${value < 0n ? '-' : ''}${formatFeeAmount(formatBaseUnitDecimalAmount(value < 0n ? -value : value, decimals))}`
+  }
   if (gas && asset.asset.kind === 'native')
     return {
       value: `~${format((BigInt(estimate.routeFeeRaw) + BigInt(gas.raw)).toString(), asset.metadata.decimals)} ${asset.metadata.symbol}`,

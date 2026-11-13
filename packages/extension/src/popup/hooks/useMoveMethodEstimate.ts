@@ -42,7 +42,7 @@ export function useMoveMethodEstimate({
             key: requestKey,
             value,
             loading: false,
-            error: value.routeFeeRaw === null,
+            error: false,
             errorMessage: null
           })
       } catch (error) {

@@ -52,6 +52,7 @@ export function buildRpcSelectionSettings(
   if (url === undefined) return withChainRpcEndpoint(settings, option.chainId)
   const normalized = url.trim()
   const preset = option.presets?.find(candidate => isSameRpcUrl(candidate.url, normalized))
+  if (preset && saveCustom) throw new Error('This RPC is already available as a preset')
   const saved = getSavedRpcEndpoints(settings, option).find(endpoint =>
     isSameRpcUrl(endpoint.url, normalized)
   )

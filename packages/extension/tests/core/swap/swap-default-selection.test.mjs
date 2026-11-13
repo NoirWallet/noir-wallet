@@ -111,6 +111,35 @@ it('uses a distinct same-chain token for a single EVM-enabled account', () => {
   )
 })
 
+it('defaults a zero-balance Private Swap from its supported catalog without overriding a draft', () => {
+  const input = {
+    tokens: [eth, usdc],
+    sourceTokens: [{ ...eth, isNative: true }, usdc],
+    walletSourceTokens: [],
+    enabledChains: [ethereumChain],
+    allowUnownedDefaultSource: true,
+    preferStableDestination: true
+  }
+  assert.deepEqual(resolveSwapTokenSelection(input), {
+    tokenIn: input.sourceTokens[0],
+    tokenOut: usdc
+  })
+  assert.deepEqual(
+    resolveSwapTokenSelection({
+      ...input,
+      savedSelection: { tokenInId: usdc.assetId, tokenOutId: eth.assetId }
+    }),
+    { tokenIn: usdc, tokenOut: input.sourceTokens[0] }
+  )
+  assert.deepEqual(
+    resolveSwapTokenSelection({
+      ...input,
+      selectedSourceAssetId: usdc.assetId
+    }),
+    { tokenIn: usdc, tokenOut: input.sourceTokens[0] }
+  )
+})
+
 it('keeps a newly selected source while the page still has an older wallet source list', () => {
   const input = {
     tokens: [zec, eth, usdc],

@@ -1,4 +1,5 @@
 import type { Network } from '@/types'
+import { externalRecipientsMatch, isValidExternalRecipient } from './confidential-funding-recipient'
 import { withMetadataLock, withUndeletedWalletAccountMetadata } from '@/lib/wallet-metadata-storage'
 import type { ConfidentialFundingPlan } from '@/core/services/confidential-funding'
 import type { ExternalShieldDeposit } from '@/core/services/confidential-funding'
@@ -134,7 +135,13 @@ function parsePlan(value: unknown): ConfidentialFundingPlan {
     plan.approvalExpiresAt <= 0 ||
     !/^0x[0-9a-f]{40}$/.test(plan.signerId) ||
     !/^[0-9a-f]{64}$/.test(plan.approvalFingerprint) ||
-    !/^0x[0-9a-fA-F]{40}$/.test(plan.destination.address) ||
+    (plan.externalRecipient === undefined
+      ? !/^0x[0-9a-fA-F]{40}$/.test(plan.destination.address)
+      : !isValidExternalRecipient(
+          plan.destination.address,
+          plan.destination.chainId,
+          plan.network
+        )) ||
     !isRawAmount(plan.confidentialBaselineRaw) ||
     !isRawAmount(plan.source.amountRaw, true) ||
     !isRawAmount(plan.expectedOutputRaw) ||
@@ -164,9 +171,13 @@ function parsePlan(value: unknown): ConfidentialFundingPlan {
       (plan.operation !== 'withdraw' ||
         plan.destinationDomain !== 'public' ||
         typeof plan.externalRecipient !== 'string' ||
-        !/^0x[0-9a-fA-F]{40}$/.test(plan.externalRecipient) ||
-        /^0x0{40}$/i.test(plan.externalRecipient) ||
-        plan.externalRecipient.toLowerCase() !== plan.destination.address.toLowerCase())) ||
+        !isValidExternalRecipient(plan.externalRecipient, plan.destination.chainId, plan.network) ||
+        !externalRecipientsMatch(
+          plan.externalRecipient,
+          plan.destination.address,
+          plan.destination.chainId,
+          plan.network
+        ))) ||
     (plan.operation === undefined &&
       (plan.sourceDomain !== undefined || plan.destinationDomain !== undefined)) ||
     (plan.operation === 'deposit' &&

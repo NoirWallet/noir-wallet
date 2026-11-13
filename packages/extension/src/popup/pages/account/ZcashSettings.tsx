@@ -28,6 +28,8 @@ function privacyLabel(address: AccountNetworkAddressView): 'Shielded' | 'Transpa
   return address.privacy === 'transparent' ? 'Transparent' : 'Shielded'
 }
 
+const blockTimeCache = new Map<string, number>()
+
 export function ZcashSettings() {
   const openResyncZcash = useResyncZcash()
   const [searchParams] = useSearchParams()
@@ -153,7 +155,10 @@ export function ZcashSettings() {
         if (height <= 0 || source === 'fallback') return
 
         try {
-          const timestamp = await zcashWalletRuntimeClient.getBlockTime(height)
+          const blockKey = `${DEFAULT_NETWORK}:${height}`
+          const timestamp =
+            blockTimeCache.get(blockKey) ?? (await zcashWalletRuntimeClient.getBlockTime(height))
+          blockTimeCache.set(blockKey, timestamp)
           if (!cancelled) {
             setBirthdayDate(
               getBirthdayDateFromBlockTimestamp(timestamp)?.format('MMM D, YYYY') ?? null

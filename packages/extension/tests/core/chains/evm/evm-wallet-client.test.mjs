@@ -336,6 +336,30 @@ test.describe('Popup EVM wallet client', () => {
     ).rejects.toMatchObject({ code: 'invalid-response' })
   })
 
+  test('accepts confirmed zero but rejects malformed catalog balance responses', async () => {
+    const messages = []
+    const request = {
+      chainId,
+      token: customContract,
+      walletId: 'wallet-1',
+      accountId: 'account-1',
+      executionMode: 'private'
+    }
+    const client = createEvmWalletClient(async message => {
+      messages.push(message)
+      return { result: '0' }
+    })
+    await expect(client.getTokenBalance(request)).resolves.toBe('0')
+    expect(messages).toEqual([{ type: 'GET_EVM_TOKEN_BALANCE', ...request }])
+    await expect(client.getTokenBalance({ ...request, token: 'invalid' })).rejects.toMatchObject({
+      code: 'invalid-request'
+    })
+    const malformed = createEvmWalletClient(async () => ({ result: '0x0' }))
+    await expect(malformed.getTokenBalance(request)).rejects.toMatchObject({
+      code: 'invalid-response'
+    })
+  })
+
   test('atomically validates a custom Token inventory with its Portfolio model', async () => {
     const messages = []
     const client = createEvmWalletClient(async message => {

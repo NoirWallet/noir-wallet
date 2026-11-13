@@ -15,6 +15,8 @@ export interface RpcProbeTarget {
 }
 
 const RPC_PROBE_TIMEOUT_MS = 10_000
+const SUCCESSFUL_PROBE_TTL_MS = 30_000
+const recentProbes = new Map<string, { latencyMs: number; expiresAt: number }>()
 
 export function buildRpcProbeTargets(input: {
   readonly settings: ChainEndpointSettings
@@ -117,9 +119,17 @@ export async function probeRpcTargets(
       while (!signal.aborted && next < unique.length) {
         const target = unique[next++]
         const key = rpcProbeKey(target)
+        const recent = recentProbes.get(key)
+        if (recent && recent.expiresAt > Date.now()) {
+          onResult(key, recent.latencyMs)
+          continue
+        }
         try {
           const latencyMs = await probeChainRpcEndpoint(target, signal)
-          if (!signal.aborted) onResult(key, latencyMs)
+          if (!signal.aborted) {
+            recentProbes.set(key, { latencyMs, expiresAt: Date.now() + SUCCESSFUL_PROBE_TTL_MS })
+            onResult(key, latencyMs)
+          }
         } catch {
           if (!signal.aborted) onResult(key, null)
         }

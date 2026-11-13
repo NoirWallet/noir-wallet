@@ -16,6 +16,8 @@ import { shieldFundingAvailableRaw } from './shield-transfer'
 
 export const SHIELD_SWAP_ZEC_INTENTS_SELECTION_ID = 'shield-swap-source:zec:intents' as const
 export const SHIELD_SWAP_ZEC_NATIVE_SELECTION_ID = 'shield-swap-source:zec:native-shielded' as const
+export const SHIELD_SWAP_ZEC_TRANSPARENT_SELECTION_ID =
+  'shield-swap-source:zec:transparent' as const
 
 export type ShieldSwapZecSourceKind = 'intents' | 'native-shielded'
 

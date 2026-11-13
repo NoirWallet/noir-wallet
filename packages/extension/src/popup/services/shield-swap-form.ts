@@ -57,13 +57,20 @@ export function buildShieldSwapRequest(
     from: ShieldFundingAsset
     to: ShieldFundingAsset
     amount: string
-    balances: readonly Readonly<{ tokenId: string; available: string }>[]
+    balances: readonly Readonly<{ tokenId: string; available: string }>[] | null
     slippageBps: number
-  }>
+  }>,
+  preview = false
 ): PrepareConfidentialFundingRequest {
+  const amountError = shieldSwapFormAmountError(input.amount, input.from, input.balances)
   if (
     input.from.managed.protocolAssetId === input.to.managed.protocolAssetId ||
-    shieldSwapFormAmountError(input.amount, input.from, input.balances) ||
+    (amountError &&
+      !(
+        preview &&
+        (amountError === 'Insufficient Shield balance' ||
+          amountError === 'Refresh your Shield balance')
+      )) ||
     !Number.isSafeInteger(input.slippageBps) ||
     input.slippageBps < 0 ||
     input.slippageBps > 10_000
@@ -94,6 +101,12 @@ export function buildShieldSwapRequest(
     destination,
     slippageBps: input.slippageBps
   })
+}
+
+export function buildShieldSwapPreviewRequest(
+  input: Parameters<typeof buildShieldSwapRequest>[0]
+): PrepareConfidentialFundingRequest {
+  return buildShieldSwapRequest(input, true)
 }
 
 export function matchesShieldSwapReview(

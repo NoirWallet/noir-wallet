@@ -20,12 +20,45 @@ import {
 const extensionId = 'abcdefghijklmnopabcdefghijklmnop'
 
 test.describe('Runtime message security', () => {
+  test('accepts scoped read-only EVM token balance requests only from extension pages', () => {
+    const message = {
+      type: 'GET_EVM_TOKEN_BALANCE',
+      chainId: 'eip155:42161',
+      token: '0x2222222222222222222222222222222222222222',
+      walletId: 'wallet-1',
+      accountId: 'account-1',
+      executionMode: 'main'
+    }
+    expect(parseTrustedExtensionRuntimeMessage(message)).toEqual(message)
+    expect(
+      isTrustedRuntimeMessageSender(
+        message.type,
+        { id: extensionId, url: `chrome-extension://${extensionId}/index.html` },
+        extensionId
+      )
+    ).toBe(true)
+    expect(() => parseTrustedExtensionRuntimeMessage({ ...message, token: 'invalid' })).toThrow()
+    expect(() =>
+      parseTrustedExtensionRuntimeMessage({ ...message, chainId: 'eip155:01' })
+    ).toThrow()
+    expect(() =>
+      parseTrustedExtensionRuntimeMessage({ ...message, walletId: 'x'.repeat(257) })
+    ).toThrow()
+    expect(() =>
+      parseTrustedExtensionRuntimeMessage({ ...message, executionMode: 'all' })
+    ).toThrow()
+    expect(() =>
+      parseTrustedExtensionRuntimeMessage({ ...message, address: message.token })
+    ).toThrow()
+  })
+
   test('limits account network changes to extension pages and valid family selections', () => {
     const message = {
       type: 'SET_ACCOUNT_NETWORK_SELECTION',
       walletId: 'wallet-1',
       accountId: 'account-1',
-      families: ['evm', 'zcash']
+      families: ['evm', 'zcash'],
+      chainIds: ['eip155:1', 'bip122:000000000019d6689c085ae165831e93']
     }
     expect(parseTrustedExtensionRuntimeMessage(message)).toEqual(message)
     expect(
@@ -44,6 +77,9 @@ test.describe('Runtime message security', () => {
     ).toBe(false)
     for (const families of [[], ['evm', 'evm'], ['unknown']]) {
       expect(() => parseTrustedExtensionRuntimeMessage({ ...message, families })).toThrow()
+    }
+    for (const chainIds of [[], ['eip155:1', 'eip155:1'], ['invalid']]) {
+      expect(() => parseTrustedExtensionRuntimeMessage({ ...message, chainIds })).toThrow()
     }
   })
 
@@ -1400,6 +1436,34 @@ test.describe('Runtime message security', () => {
       type: 'PREPARE_EVM_TRANSFER',
       intent: transferIntent,
       feeSelection: { kind: 'custom', maxPriorityFeePerGasWei: '1500000000' }
+    })
+    const customSelection = {
+      kind: 'custom',
+      maxPriorityFeePerGasWei: '1500000000',
+      maxFeePerGasWei: '10000000000',
+      gasLimit: '25000'
+    }
+    expect(
+      parseTrustedExtensionRuntimeMessage({
+        type: 'PREPARE_EVM_TRANSFER',
+        intent: transferIntent,
+        feeSelection: customSelection
+      })
+    ).toEqual({
+      type: 'PREPARE_EVM_TRANSFER',
+      intent: transferIntent,
+      feeSelection: customSelection
+    })
+    expect(
+      parseTrustedExtensionRuntimeMessage({
+        type: 'PREPARE_EVM_TRANSFER',
+        intent: transferIntent,
+        feeSelection: { kind: 'legacy', gasPriceWei: '1000000000', gasLimit: '25000' }
+      })
+    ).toEqual({
+      type: 'PREPARE_EVM_TRANSFER',
+      intent: transferIntent,
+      feeSelection: { kind: 'legacy', gasPriceWei: '1000000000', gasLimit: '25000' }
     })
     expect(() =>
       parseTrustedExtensionRuntimeMessage({

@@ -1544,7 +1544,11 @@ export class EvmTransferOrchestrator {
     const segment = graph.segments.find(candidate => candidate.id === pending.segmentId)
     const maximumFee = (
       BigInt(pending.prepared.transaction.gasLimit) *
-      BigInt(pending.prepared.transaction.maxFeePerGas)
+      BigInt(
+        pending.prepared.transaction.type === 'legacy'
+          ? pending.prepared.transaction.gasPrice
+          : pending.prepared.transaction.maxFeePerGas
+      )
     ).toString()
     const contractCall = classifyEvmContractCall(pending.prepared)
     const isContractCall = contractCall !== null

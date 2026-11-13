@@ -168,6 +168,7 @@ export { parseEvmAccountBinding, type EvmAccountBinding } from './evm-account'
 export { readErc20Metadata } from './evm-erc20-metadata-reader'
 export {
   deriveEvmFeeTierQuote,
+  deriveEvmLegacyFeeQuote,
   areEvmFeeSelectionsEqual,
   formatEvmPriorityFeeGwei,
   formatEvmWeiAsGwei,

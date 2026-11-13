@@ -68,8 +68,16 @@ export function createBackgroundPortfolioCoordinator(
   const peaSigner = new EvmMultichainSigningClient({ credentials: credentialSession })
   const isNetworkEnabled = (
     scope: { readonly keyDomainId: string; readonly accountId: string },
-    family: Parameters<typeof isStoredAccountNetworkEnabled>[3]
-  ) => isStoredAccountNetworkEnabled(scope.keyDomainId, scope.accountId, DEFAULT_NETWORK, family)
+    family: Parameters<typeof isStoredAccountNetworkEnabled>[3],
+    chainId: string
+  ) =>
+    isStoredAccountNetworkEnabled(
+      scope.keyDomainId,
+      scope.accountId,
+      DEFAULT_NETWORK,
+      family,
+      chainId
+    )
   const evmPortfolios = evmNetworks.flatMap(evmNetwork => {
     const chainId = parseChainId(evmNetwork.chainId).id
     if (!chains.get(chainId)) return []

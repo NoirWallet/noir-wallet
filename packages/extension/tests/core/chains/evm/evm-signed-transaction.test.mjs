@@ -49,6 +49,55 @@ function verify(value = prepared, hash = transactionHash, raw = rawTransaction) 
 }
 
 test.describe('signed EVM transaction host verification', () => {
+  test('verifies a signed legacy gas-price transaction and rejects changed gas price', async () => {
+    const account = privateKeyToAccount(`0x${'01'.repeat(32)}`)
+    const legacy = {
+      ...prepared,
+      from: account.address,
+      transaction: {
+        type: 'legacy',
+        chainId: '1',
+        nonce: '7',
+        gasPrice: '3000000000',
+        gasLimit: '21000',
+        to: prepared.recipient,
+        value: '123',
+        input: '0x'
+      }
+    }
+    const raw = await account.signTransaction({
+      type: 'legacy',
+      chainId: 1,
+      nonce: 7,
+      gasPrice: 3_000_000_000n,
+      gas: 21_000n,
+      to: prepared.recipient,
+      value: 123n
+    })
+    const decoded = parseTransaction(raw)
+    const parity = Number((BigInt(decoded.v) - 35n - 2n) % 2n)
+    await expect(
+      createKeystoneSignedEvmTransaction(
+        legacy,
+        `${decoded.r}${decoded.s.slice(2)}${parity.toString(16).padStart(2, '0')}`
+      )
+    ).resolves.toEqual({ rawTransaction: raw, transactionHash: keccak256(raw) })
+    await expect(
+      assertSignedEvmTransactionMatchesPrepared(legacy, {
+        rawTransaction: raw,
+        transactionHash: keccak256(raw)
+      })
+    ).resolves.toBeUndefined()
+    await expect(
+      assertSignedEvmTransactionMatchesPrepared(
+        {
+          ...legacy,
+          transaction: { ...legacy.transaction, gasPrice: '4000000000' }
+        },
+        { rawTransaction: raw, transactionHash: keccak256(raw) }
+      )
+    ).rejects.toThrow(/integrity validation/)
+  })
   test('serializes the Keystone signing payload and rebuilds the pinned signed transaction', async () => {
     const decoded = parseTransaction(rawTransaction)
     if (decoded.r === undefined || decoded.s === undefined || decoded.yParity === undefined) {

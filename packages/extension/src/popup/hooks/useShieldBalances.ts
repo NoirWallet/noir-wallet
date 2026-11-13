@@ -20,13 +20,15 @@ export function useShieldBalances({
   enabled,
   scopeKey,
   scope,
-  refreshPortfolio
+  refreshPortfolio,
+  readProjection
 }: Readonly<{
   active: boolean
   enabled: boolean
   scopeKey: string
   scope: BalanceScope | null
   refreshPortfolio: (force?: boolean) => Promise<void>
+  readProjection?: () => Promise<void>
 }>) {
   const cacheRef = useRef<{ key: string; cache: BalanceCache } | null>(null)
   if (cacheRef.current?.key !== scopeKey) {
@@ -43,9 +45,11 @@ export function useShieldBalances({
   const currentKey = useRef(scopeKey)
   const activeRef = useRef(active)
   const refreshPortfolioRef = useRef(refreshPortfolio)
+  const readProjectionRef = useRef(readProjection)
   currentKey.current = scopeKey
   activeRef.current = active
   refreshPortfolioRef.current = refreshPortfolio
+  readProjectionRef.current = readProjection
 
   useEffect(() => {
     mounted.current = true
@@ -80,7 +84,10 @@ export function useShieldBalances({
         )
         if (mounted.current && currentKey.current === scopeKey) {
           setSnapshot({ key: scopeKey, balances })
-          if (activeRef.current) void refreshPortfolioRef.current(force)
+          if (activeRef.current) {
+            if (readProjectionRef.current) void readProjectionRef.current().catch(() => {})
+            else void refreshPortfolioRef.current(force).catch(() => {})
+          }
         }
         return true
       } catch (cause) {

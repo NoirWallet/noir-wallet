@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import { WalletActionIcon } from '@/popup/components/common/WalletActionIcon'
+import { Tooltip } from '@/popup/components/ui/tooltip'
 
 export function AssetBalanceRow({
   label,
@@ -46,17 +47,17 @@ export function AssetBalanceRow({
         {actions.length > 0 && (
           <div className="pointer-events-none absolute right-0 top-1/2 flex -translate-y-1/2 gap-1.5 bg-background opacity-0 group-hover/balance:pointer-events-auto group-hover/balance:opacity-100 group-focus-within/balance:pointer-events-auto group-focus-within/balance:opacity-100">
             {actions.map(({ action, label: actionLabel, onClick, disabled }) => (
-              <button
-                key={action}
-                type="button"
-                aria-label={actionLabel}
-                title={actionLabel}
-                onClick={onClick}
-                disabled={disabled}
-                className="wallet-interactive flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-card hover:brightness-110 focus-visible:outline-2 focus-visible:outline-primary disabled:opacity-40"
-              >
-                <WalletActionIcon action={action} size={18} />
-              </button>
+              <Tooltip key={action} content={actionLabel}>
+                <button
+                  type="button"
+                  aria-label={actionLabel}
+                  onClick={onClick}
+                  disabled={disabled}
+                  className="wallet-interactive flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-card hover:brightness-110 focus-visible:outline-2 focus-visible:outline-primary disabled:opacity-40"
+                >
+                  <WalletActionIcon action={action} size={18} />
+                </button>
+              </Tooltip>
             ))}
           </div>
         )}

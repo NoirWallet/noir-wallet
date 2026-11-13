@@ -3,6 +3,7 @@ export const COIN_GECKO_ASSET_PLATFORMS_URL = 'https://api.coingecko.com/api/v3/
 const MAXIMUM_ASSET_PLATFORMS = 2_048
 const PLATFORM_CATALOG_FRESH_MS = 24 * 60 * 60 * 1_000
 const MISSING_PLATFORM_RECHECK_MS = 5 * 60 * 1_000
+const CATALOG_FAILURE_BACKOFF_MS = 60_000
 const ASSET_PLATFORM_ID_PATTERN = /^[-._:a-zA-Z0-9 ]{1,256}$/
 const EVM_CHAIN_ID_PATTERN = /^eip155:([1-9][0-9]*)$/
 
@@ -45,9 +46,16 @@ function parseAssetPlatformCatalog(value: unknown, fetchedAt: number): AssetPlat
   return Object.freeze({ fetchedAt, platformByChainId })
 }
 
+export class CoinGeckoCatalogUnavailable extends Error {
+  constructor(readonly retryAfterMs = CATALOG_FAILURE_BACKOFF_MS) {
+    super('CoinGecko asset platforms unavailable')
+  }
+}
+
 export class CoinGeckoPlatformResolver {
   private catalog: AssetPlatformCatalog | null = null
   private request: Promise<AssetPlatformCatalog> | null = null
+  private retryAt = 0
 
   constructor(
     private readonly fetchCatalog: () => Promise<unknown>,
@@ -77,11 +85,22 @@ export class CoinGeckoPlatformResolver {
 
   private load(): Promise<AssetPlatformCatalog> {
     if (this.request) return this.request
-    const request = this.fetchCatalog().then(value => {
-      const catalog = parseAssetPlatformCatalog(value, this.now())
-      this.catalog = catalog
-      return catalog
-    })
+    if (this.now() < this.retryAt) return Promise.reject(new CoinGeckoCatalogUnavailable())
+    const request = this.fetchCatalog()
+      .then(value => {
+        const catalog = parseAssetPlatformCatalog(value, this.now())
+        this.catalog = catalog
+        this.retryAt = 0
+        return catalog
+      })
+      .catch(error => {
+        const delay =
+          error instanceof CoinGeckoCatalogUnavailable
+            ? error.retryAfterMs
+            : CATALOG_FAILURE_BACKOFF_MS
+        this.retryAt = this.now() + Math.min(3_600_000, Math.max(CATALOG_FAILURE_BACKOFF_MS, delay))
+        throw error
+      })
     this.request = request
     void request
       .finally(() => {

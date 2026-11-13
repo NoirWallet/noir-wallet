@@ -7,7 +7,7 @@ import {
   type NoirIntentsReferral
 } from '@/config/intents'
 import { trackEvent } from '@/background/analytics/reporter'
-import { SerialTaskQueue } from '@/lib/async-utils'
+import { DedupPromise, SerialTaskQueue } from '@/lib/async-utils'
 import {
   projectConfidentialPlanResult,
   projectExternalDepositResult
@@ -19,7 +19,9 @@ import {
   type ExternalShieldDepositFailureStage
 } from '@/core/services/confidential-funding/confidential-external-deposit'
 import { isAddress } from 'viem'
+import { getEvmNetworkConfig } from '@/config/networks'
 import { parseZcashAddress } from '@/core/address-book/address-book'
+import { isValidExternalRecipient } from './confidential-funding-recipient'
 import type { PortfolioReadModel } from '@/core/portfolio'
 import type { SwapToken } from '@/core/services/intents-api'
 import {
@@ -80,8 +82,10 @@ import {
   createEvmTransactionSegmentEvent,
   estimateEvmTransferFee,
   observeEvmTransaction,
+  parseEvmFeeSelection,
   parsePreparedEvmTransfer,
   type EvmBroadcastRpc,
+  type EvmFeeSelection,
   type EvmTransactionRpc
 } from '@/infrastructure/chains/evm'
 import type { EvmNetworkConfig } from '@/config/networks'
@@ -90,6 +94,7 @@ import {
   ConfidentialFundingApi,
   ConfidentialFundingApiError,
   readConfidentialQuoteAppFees,
+  type ConfidentialBalance,
   type ConfidentialPrivateOrder,
   type ConfidentialStatus
 } from './confidential-funding-api'
@@ -170,6 +175,7 @@ interface ConfidentialFundingRouteInput {
   }>
   readonly slippageBps: number
   readonly feeTier?: NetworkFeeTier
+  readonly feeSelection?: EvmFeeSelection
   readonly dedupKey?: string
   readonly externalRecipient?: string
 }
@@ -425,22 +431,42 @@ function reviewFromPlan(
       ? {
           sourceNetworkFee: Object.freeze({
             raw: (
-              BigInt(prepared.transaction.gasLimit) * BigInt(prepared.transaction.maxFeePerGas)
+              BigInt(prepared.transaction.gasLimit) *
+              BigInt(
+                prepared.transaction.type === 'legacy'
+                  ? prepared.transaction.gasPrice
+                  : prepared.transaction.maxFeePerGas
+              )
             ).toString(),
             symbol: sourceFeeAsset.metadata.symbol,
             decimals: sourceFeeAsset.metadata.decimals
+          }),
+          sourceEvmFee: Object.freeze({
+            transactionType: prepared.transaction.type,
+            gasLimit: prepared.transaction.gasLimit,
+            ...(prepared.transaction.type === 'legacy'
+              ? { gasPriceWei: prepared.transaction.gasPrice }
+              : {
+                  maxFeePerGasWei: prepared.transaction.maxFeePerGas,
+                  maxPriorityFeePerGasWei: prepared.transaction.maxPriorityFeePerGas
+                })
           })
         }
       : {})
   })
 }
 
-function confidentialSigningChainId(sourceChainId: string, destinationChainId: string): ChainId {
+function confidentialSigningChainId(
+  sourceChainId: string,
+  destinationChainId: string,
+  network?: Network
+): ChainId {
   const destination = parseChainId(destinationChainId)
   if (destination.namespace === 'eip155') return destination.id
   const source = parseChainId(sourceChainId)
   if (source.namespace === 'eip155') return source.id
-  throw new Error('Confidential funding requires an EVM signing chain')
+  if (!network) throw new Error('Confidential funding requires an EVM signing chain')
+  return parseChainId(getEvmNetworkConfig(network).chainId).id
 }
 
 function directApprovalIntent(plan: ConfidentialFundingPlan): unknown {
@@ -469,6 +495,10 @@ function directApprovalIntent(plan: ConfidentialFundingPlan): unknown {
 }
 
 export class ConfidentialFundingCoordinator {
+  private readonly balanceRefreshes = new Map<
+    string,
+    DedupPromise<readonly ConfidentialBalance[]>
+  >()
   private readonly rpcByChain = new Map<string, EvmTransactionRpc & EvmBroadcastRpc>()
   private readonly continuingByPlan = new Map<string, Promise<ConfidentialFundingPlan>>()
   private readonly confirmingByPlan = new Map<
@@ -871,11 +901,7 @@ export class ConfidentialFundingCoordinator {
     force = false
   ): Promise<ConfidentialStatus | null> {
     try {
-      return await this.fetchOneClickDepositStatus(
-        record.depositAddress,
-        record.depositMemo,
-        force
-      )
+      return await this.fetchOneClickDepositStatus(record.depositAddress, record.depositMemo, force)
     } catch (error) {
       if (
         error instanceof ConfidentialFundingApiError &&
@@ -1247,10 +1273,11 @@ export class ConfidentialFundingCoordinator {
     const sourceSigningChain =
       parseChainId(input.source.chainId).namespace === 'eip155'
         ? input.source.chainId
-        : input.destination.chainId
+        : confidentialSigningChainId(input.source.chainId, input.destination.chainId, input.network)
     const destinationSigningChain = confidentialSigningChainId(
       input.source.chainId,
-      input.destination.chainId
+      input.destination.chainId,
+      input.network
     )
     const sourceIdentity = await this.options.signer.resolveIdentity(sourceSigningChain)
     const destinationIdentity = await this.options.signer.resolveIdentity(destinationSigningChain)
@@ -1402,7 +1429,9 @@ export class ConfidentialFundingCoordinator {
             amountRaw: input.source.amountRaw
           },
           rpc: this.requireRpc(input.source.chainId),
-          feeTier: input.feeTier
+          ...(input.feeSelection
+            ? { feeSelection: input.feeSelection }
+            : { feeTier: input.feeTier })
         })
         const feeAsset = this.options.assets
           .list(parseChainId(input.source.chainId).id)
@@ -1446,10 +1475,11 @@ export class ConfidentialFundingCoordinator {
     const sourceSigningChain =
       parseChainId(input.source.chainId).namespace === 'eip155'
         ? input.source.chainId
-        : input.destination.chainId
+        : confidentialSigningChainId(input.source.chainId, input.destination.chainId, input.network)
     const destinationSigningChain = confidentialSigningChainId(
       input.source.chainId,
-      input.destination.chainId
+      input.destination.chainId,
+      input.network
     )
     const sourceIdentity = await this.options.signer.resolveIdentity(sourceSigningChain)
     const destinationIdentity = await this.options.signer.resolveIdentity(destinationSigningChain)
@@ -1497,7 +1527,9 @@ export class ConfidentialFundingCoordinator {
       `private-funding:${await fingerprintConfidentialValue({
         source: input.source,
         destination: input.destination,
-        slippageBps: input.slippageBps
+        slippageBps: input.slippageBps,
+        feeTier: input.feeTier,
+        feeSelection: input.feeSelection
       })}`
     const sourcePlans = activePlans
       .filter(
@@ -1614,7 +1646,7 @@ export class ConfidentialFundingCoordinator {
         amountRaw: input.source.amountRaw
       },
       rpc: this.requireRpc(input.source.chainId),
-      feeTier: input.feeTier
+      ...(input.feeSelection ? { feeSelection: input.feeSelection } : { feeTier: input.feeTier })
     })
     const signing = await this.options.signer.prepareTransaction({
       identity: sourceIdentity,
@@ -1828,7 +1860,9 @@ export class ConfidentialFundingCoordinator {
             amountRaw: input.source.amountRaw
           },
           rpc: this.requireRpc(input.source.chainId),
-          feeTier: input.feeTier
+          ...(input.feeSelection
+            ? { feeSelection: input.feeSelection }
+            : { feeTier: input.feeTier })
         })
       : null
     const signing = prepared
@@ -2025,7 +2059,9 @@ export class ConfidentialFundingCoordinator {
             amountRaw: input.source.amountRaw
           },
           rpc: this.requireRpc(input.source.chainId),
-          feeTier: input.feeTier
+          ...(input.feeSelection
+            ? { feeSelection: input.feeSelection }
+            : { feeTier: input.feeTier })
         })
       : null
     const signing = prepared
@@ -2360,7 +2396,10 @@ export class ConfidentialFundingCoordinator {
     return this.continuePlan(planId)
   }
 
-  async enrichPortfolio(model: PortfolioReadModel, refresh = true): Promise<PortfolioReadModel> {
+  async enrichPortfolio(
+    model: PortfolioReadModel,
+    refresh: boolean | 'if-stale' = true
+  ): Promise<PortfolioReadModel> {
     const snapshot = await this.options.store.getBalanceSnapshot(
       this.options.network,
       model.scope.keyDomainId,
@@ -2398,7 +2437,7 @@ export class ConfidentialFundingCoordinator {
             )
       return Object.freeze({ ...merged, confidential })
     }
-    if (!refresh) return project(cached)
+    if (!refresh || (refresh === 'if-stale' && snapshot.fresh)) return project(cached)
     const firstEvm = this.options.evmNetworks[0]
     if (!firstEvm) {
       return project(cached)
@@ -2420,7 +2459,7 @@ export class ConfidentialFundingCoordinator {
     ) {
       return project(cached)
     }
-    const balances = await this.readAndCacheBalances(identity, session.accessToken).catch(
+    const balances = await this.refreshPortfolioBalances(identity, session.accessToken).catch(
       () => cached
     )
     return project(balances)
@@ -2441,7 +2480,7 @@ export class ConfidentialFundingCoordinator {
       throw new Error('Active Wallet Account changed')
     const session = await this.ensureSession(identity, authorize)
     if (!session) throw new Error('Confidential authorization is required')
-    return this.readAndCacheBalances(identity, session.accessToken)
+    return this.refreshPortfolioBalances(identity, session.accessToken)
   }
 
   async cancel(planId: string): Promise<void> {
@@ -2760,10 +2799,18 @@ export class ConfidentialFundingCoordinator {
     const sourceAllowed = sourceIsEvm || (shieldSpend && sourceChain.id === zcashChainId)
     const destinationAllowed =
       destinationIsEvm ||
+      (shieldSpend &&
+        value.operation === 'withdraw' &&
+        value.destinationDomain === 'public' &&
+        destinationChain.id === zcashChainId) ||
       (value.operation === 'swap' &&
         value.destinationDomain === 'shield' &&
         destinationChain.id === zcashChainId)
-    if (!sourceAllowed || !destinationAllowed || (!sourceIsEvm && !destinationIsEvm)) {
+    if (
+      !sourceAllowed ||
+      !destinationAllowed ||
+      (!sourceIsEvm && !destinationIsEvm && !(shieldSpend && destinationChain.id === zcashChainId))
+    ) {
       throw new Error('Confidential funding requires an EVM signing chain')
     }
     if (
@@ -2818,11 +2865,12 @@ export class ConfidentialFundingCoordinator {
       value.slippageBps < 0 ||
       value.slippageBps > 10_000 ||
       (value.feeTier !== undefined && !['low', 'standard', 'fast'].includes(value.feeTier)) ||
+      (value.feeSelection !== undefined &&
+        (value.feeTier !== undefined || value.sourceDomain === 'shield' || !sourceIsEvm)) ||
       (value.dedupKey !== undefined && !isBoundedLabel(value.dedupKey, 160)) ||
       (value.externalRecipient !== undefined &&
         (value.operation !== 'withdraw' ||
-          !isAddress(value.externalRecipient) ||
-          /^0x0{40}$/i.test(value.externalRecipient)))
+          !isValidExternalRecipient(value.externalRecipient, destinationChain.id, value.network)))
     ) {
       throw new Error('Confidential funding request is invalid')
     }
@@ -2855,6 +2903,7 @@ export class ConfidentialFundingCoordinator {
       slippageBps: value.slippageBps,
       ...(value.externalRecipient ? { externalRecipient: value.externalRecipient } : {}),
       ...(value.feeTier ? { feeTier: value.feeTier } : {}),
+      ...(value.feeSelection ? { feeSelection: parseEvmFeeSelection(value.feeSelection) } : {}),
       ...(value.dedupKey ? { dedupKey: value.dedupKey } : {})
     }) as PrepareConfidentialFundingInput & {
       readonly source: PrepareConfidentialFundingInput['source'] & { readonly chainId: ChainId }
@@ -3290,7 +3339,11 @@ export class ConfidentialFundingCoordinator {
       })
       const signedPayload = await this.options.signer.signMessage({
         identity: await this.requirePlanIdentity(plan),
-        chainId: confidentialSigningChainId(plan.source.chainId, plan.destination.chainId),
+        chainId: confidentialSigningChainId(
+          plan.source.chainId,
+          plan.destination.chainId,
+          plan.network
+        ),
         payload: binding.payload
       })
       row = Object.freeze({
@@ -3959,6 +4012,26 @@ export class ConfidentialFundingCoordinator {
     return authenticated
   }
 
+  private async refreshPortfolioBalances(
+    identity: ConfidentialSigningIdentity,
+    accessToken: string
+  ) {
+    const scope = identity.context.chainAccount.scope
+    const key = JSON.stringify([this.options.network, scope.keyDomainId, scope.accountId])
+    let refresh = this.balanceRefreshes.get(key)
+    if (!refresh) {
+      refresh = new DedupPromise<readonly ConfidentialBalance[]>()
+      this.balanceRefreshes.set(key, refresh)
+    }
+    try {
+      return await refresh.run(() => this.readAndCacheBalances(identity, accessToken))
+    } finally {
+      if (this.balanceRefreshes.get(key) === refresh && !refresh.isPending) {
+        this.balanceRefreshes.delete(key)
+      }
+    }
+  }
+
   private async readAndCacheBalances(identity: ConfidentialSigningIdentity, accessToken: string) {
     const balances = await this.options.api.getBalances(accessToken)
     await this.options.store.putBalances(
@@ -4015,7 +4088,12 @@ export class ConfidentialFundingCoordinator {
           ? {
               feeAssetId: feeAsset,
               maximumFeeRaw: (
-                BigInt(prepared.transaction.gasLimit) * BigInt(prepared.transaction.maxFeePerGas)
+                BigInt(prepared.transaction.gasLimit) *
+                BigInt(
+                  prepared.transaction.type === 'legacy'
+                    ? prepared.transaction.gasPrice
+                    : prepared.transaction.maxFeePerGas
+                )
               ).toString()
             }
           : {}),
@@ -4158,7 +4236,7 @@ export class ConfidentialFundingCoordinator {
 
   private async requirePlanIdentity(plan: ConfidentialFundingPlan) {
     const identity = await this.options.signer.resolveIdentity(
-      confidentialSigningChainId(plan.source.chainId, plan.destination.chainId)
+      confidentialSigningChainId(plan.source.chainId, plan.destination.chainId, plan.network)
     )
     if (
       identity.context.chainAccount.scope.keyDomainId !== plan.keyDomainId ||
@@ -4174,7 +4252,11 @@ export class ConfidentialFundingCoordinator {
             ? plan.source.address.toLowerCase() !== identity.address.toLowerCase() ||
               plan.destination.address.toLowerCase() !== identity.address.toLowerCase()
             : plan.externalRecipient
-              ? !isAddress(plan.externalRecipient) ||
+              ? !isValidExternalRecipient(
+                  plan.externalRecipient,
+                  plan.destination.chainId,
+                  plan.network
+                ) ||
                 plan.externalRecipient.toLowerCase() !== plan.destination.address.toLowerCase() ||
                 plan.source.address.toLowerCase() !== identity.address.toLowerCase()
               : plan.destination.address.toLowerCase() !==

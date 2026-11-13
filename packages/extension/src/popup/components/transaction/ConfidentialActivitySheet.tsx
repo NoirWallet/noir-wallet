@@ -9,10 +9,12 @@ import { formatSortAddress, formatSymbol } from '@/lib/format'
 import { formatChainTransactionExplorerUrl } from '@/popup/services/chain-explorer'
 import { getActivityTransactionReferences } from '@/popup/services/activity-transaction-references'
 import { useWalletStore } from '@/store/wallet-store'
+import { useActiveAccountNetworks } from '@/popup/hooks/useActiveAccountNetworks'
+import { resolveEffectiveActiveAccountIdentity } from '@/popup/lib/effective-active-account'
 import type { ActivityItem } from '@/core/activity'
 import type { Network } from '@/types'
 
-interface ConfidentialActivityTarget {
+export interface ConfidentialActivityTarget {
   readonly network: Network
   readonly keyDomainId: string
   readonly accountId: string
@@ -24,9 +26,10 @@ interface ConfidentialActivitySheetProps {
   readonly display?: ConfidentialActivityDisplay
   readonly onDone: () => void
   readonly onViewActivity: () => void
+  readonly inDialog?: boolean
 }
 
-interface ConfidentialActivityDisplay {
+export interface ConfidentialActivityDisplay {
   readonly operation: 'send' | 'move' | 'swap'
   readonly amount: string
   readonly symbol: string
@@ -37,24 +40,31 @@ interface ConfidentialActivityDisplay {
   readonly network?: string
 }
 
-function ConfidentialActivitySheet({
+export function ConfidentialActivityView({
   plan,
   display,
   onDone,
-  onViewActivity
+  onViewActivity,
+  inDialog = false
 }: ConfidentialActivitySheetProps) {
   const currentNetwork = useWalletStore(state => state.currentNetwork)
   const currentWalletId = useWalletStore(state => state.currentWalletId)
   const currentAccountId = useWalletStore(state => state.currentAccountId)
+  const { activeAccount, loading: accountLoading } = useActiveAccountNetworks()
+  const effectiveAccount = resolveEffectiveActiveAccountIdentity({
+    currentWalletId,
+    currentAccountId,
+    nativeAccount: activeAccount
+  })
   const [activity, setActivity] = useState<ActivityItem | null>(null)
   const [stillLoading, setStillLoading] = useState(false)
   const matchesAccount =
     currentNetwork === plan.network &&
-    currentWalletId === plan.keyDomainId &&
-    currentAccountId === plan.accountId
+    effectiveAccount?.walletId === plan.keyDomainId &&
+    effectiveAccount.accountId === plan.accountId
 
   useEffect(() => {
-    if (!matchesAccount) {
+    if (!matchesAccount && !accountLoading) {
       onDone()
       return
     }
@@ -95,7 +105,7 @@ function ConfidentialActivitySheet({
       clearTimeout(delayTimer)
       if (retryTimer !== undefined) clearTimeout(retryTimer)
     }
-  }, [matchesAccount, onDone, plan.accountId, plan.keyDomainId, plan.transactionId])
+  }, [matchesAccount, accountLoading, onDone, plan.accountId, plan.keyDomainId, plan.transactionId])
 
   const confirmed =
     activity?.status === 'final' &&
@@ -103,19 +113,23 @@ function ConfidentialActivitySheet({
     activity.completeness === 'complete'
   const failed = activity?.status === 'failed'
   const references = activity ? getActivityTransactionReferences(activity) : []
+  const origin = activity?.segments.find(segment => segment.role === 'origin')
+  const destination = activity?.segments.find(segment => segment.role === 'destination')
+  const progressTitle =
+    destination && ['broadcast', 'confirming'].includes(destination.status)
+      ? 'Destination processing'
+      : origin?.status === 'final'
+        ? 'Source confirmed'
+        : origin?.evidence?.transactionHash
+          ? 'Source transaction pending'
+          : 'Transaction Submitting'
 
   return (
     <>
-      <DialogTitle className="sr-only">Transaction activity</DialogTitle>
+      {inDialog && <DialogTitle className="sr-only">Transaction activity</DialogTitle>}
       <TransactionResult
         status={confirmed ? 'success' : failed ? 'failed' : 'loading'}
-        title={
-          confirmed
-            ? 'Transaction Confirmed'
-            : failed
-              ? 'Transaction Failed'
-              : 'Transaction Submitting'
-        }
+        title={confirmed ? 'Transaction Confirmed' : failed ? 'Transaction Failed' : progressTitle}
         footer={
           confirmed || failed ? (
             <Button onClick={onDone} className="h-[45px] w-full">
@@ -214,11 +228,12 @@ export function openConfidentialActivity(
   return openModal<void>({
     className: 'max-h-[calc(100dvh-1rem)] grid-rows-[minmax(0,1fr)_auto] gap-0 p-0',
     body: resolve => (
-      <ConfidentialActivitySheet
+      <ConfidentialActivityView
         plan={plan}
         display={display}
         onDone={resolve}
         onViewActivity={onViewActivity}
+        inDialog
       />
     )
   })

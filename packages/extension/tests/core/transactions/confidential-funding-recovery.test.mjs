@@ -597,17 +597,33 @@ test.describe('confidential funding persisted recovery', () => {
         source: { ...source, amountRaw: '1000' }
       })
     ).rejects.toThrow('EVM signing chain')
+    const zecDestination = {
+      chainId: source.chainId,
+      chainName: source.chainName,
+      assetId: source.assetId,
+      protocolAssetId: source.protocolAssetId
+    }
     await expect(
-      h.coordinator.prepare({
-        ...withdraw,
-        destination: { ...withdraw.destination, ...source }
-      })
-    ).rejects.toThrow('EVM signing chain')
+      h.coordinator.prepare({ ...withdraw, destination: zecDestination })
+    ).rejects.toThrow('request is invalid')
     h.state.formalQuoteAppFees = [{ recipient: 'platform.near', fee: 50 }]
     await expect(h.coordinator.confirm(review.planId, review.payloadFingerprint)).rejects.toThrow(
       'unexpected signature'
     )
     expect(h.state.signingChains).toEqual(['eip155:1'])
+    const zecRecipient = 't1XVXWCvpMgBvUaed4XDqWtgQgJSu1Ghz7F'
+    const zecReview = await h.coordinator.prepare({
+      ...withdraw,
+      destination: zecDestination,
+      externalRecipient: zecRecipient
+    })
+    expect(zecReview.destinationAddress).toBe(zecRecipient)
+    expect(h.state.lastQuoteRequest).toMatchObject({
+      destinationAsset: h.zcashProtocolId,
+      recipient: zecRecipient,
+      recipientType: 'DESTINATION_CHAIN'
+    })
+    expect(h.state.identityChains.slice(-2)).toEqual(['eip155:1', 'eip155:1'])
   })
 
   test('quotes a Confidential ZEC to EVM swap and an EVM to Confidential ZEC swap', async () => {
@@ -658,7 +674,7 @@ test.describe('confidential funding persisted recovery', () => {
         source: { ...zec, amountRaw: '10' },
         destination: zec
       })
-    ).rejects.toThrow('EVM signing chain')
+    ).rejects.toThrow('route is invalid')
   })
   test('rejects a Shield source whose catalog precision changed before preparation', async () => {
     const h = directPreparationHarness([
@@ -1125,7 +1141,7 @@ test.describe('confidential funding persisted recovery', () => {
         return transactionHash
       }
     })
-    const review = await coordinator.prepare({
+    const request = {
       network: 'mainnet',
       ...scope,
       operation: 'deposit',
@@ -1140,8 +1156,36 @@ test.describe('confidential funding persisted recovery', () => {
       },
       destination: { chainId: 'eip155:1', chainName: 'eth', assetId, protocolAssetId },
       slippageBps: 100
-    })
+    }
+    const review = await coordinator.prepare(request)
     const stored = await store.getPlan(review.planId)
+    const customReview = await coordinator.prepare({
+      ...request,
+      feeSelection: {
+        kind: 'custom',
+        gasLimit: '25000',
+        maxFeePerGasWei: '4000000000',
+        maxPriorityFeePerGasWei: '1500000000'
+      }
+    })
+    const customPlan = await store.getPlan(customReview.planId)
+    expect(customReview.planId).not.toBe(review.planId)
+    expect(customReview.payloadFingerprint).not.toBe(review.payloadFingerprint)
+    expect(customReview.sourceEvmFee).toMatchObject({
+      transactionType: 'eip1559',
+      gasLimit: '25000',
+      maxFeePerGasWei: '4000000000',
+      maxPriorityFeePerGasWei: '1500000000'
+    })
+    expect(customPlan.preparedDeposit.preparedTransfer.transaction).toMatchObject({
+      gasLimit: '25000',
+      maxFeePerGas: '4000000000',
+      maxPriorityFeePerGas: '1500000000'
+    })
+    await expect(
+      coordinator.confirm(customReview.planId, review.payloadFingerprint)
+    ).rejects.toThrow('approval')
+    expect(state.broadcasts).toBe(0)
     expect(state.prepared.from.toLowerCase()).toBe(peaAddress)
     expect(stored.depositQuote.quoteRequest.refundTo).toBe(peaAddress)
     expect(JSON.stringify(stored.preparedDeposit.preparedTransfer)).not.toBe(

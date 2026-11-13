@@ -9,7 +9,6 @@ import {
 } from '@/popup/services/account-networks-client'
 import { useAddressBookStore } from '@/store/address-book-store'
 import { useWalletStore } from '@/store/wallet-store'
-import { AccountAvatar } from '../account/AccountAvatar'
 import { AddAddressDialog } from '../address-book/AddAddressDialog'
 import {
   getAddressBookContactIconChain,
@@ -269,15 +268,19 @@ export function RecipientSelector({
                       return (
                         <div key={group.key} className="space-y-2">
                           <div className="flex min-w-0 items-center gap-2 px-1">
-                            <AccountAvatar
-                              walletId={group.walletId}
-                              className="size-8 shrink-0 rounded-full object-cover"
-                            />
-                            <div className="min-w-0 flex-1">
-                              <p className="truncate text-xs text-muted">
+                            <div className="flex min-w-0 flex-1 items-baseline gap-2">
+                              <p
+                                className="max-w-[45%] shrink-0 truncate text-xs text-muted"
+                                title={wallet.walletDisplayName || 'Wallet'}
+                              >
                                 {wallet.walletDisplayName || 'Wallet'}
                               </p>
-                              <p className="truncate text-sm font-medium">{displayName}</p>
+                              <p
+                                className="min-w-0 flex-1 truncate text-sm font-medium"
+                                title={displayName}
+                              >
+                                {displayName}
+                              </p>
                             </div>
                             {group.active && !(isEvm && disablePrivateExecutionAddresses) && (
                               <span className="shrink-0 rounded bg-wallet-selected px-2 py-0.5 text-xs font-medium text-foreground">

@@ -17,7 +17,7 @@ import { useWalletStore } from '@/store/wallet-store'
 import { useAccountDataStore } from '@/store/account-data-store'
 import { ZEC_ZCASH_ASSET } from '@/config/intents'
 import type { FundingSource } from '@/types'
-import type { ShieldProvider } from '@/popup/services/asset-domains'
+import { getAssetDomainRaw, type ShieldProvider } from '@/popup/services/asset-domains'
 import { Send } from './Send'
 import { ShieldSendProviderTabs } from '@/popup/components/portfolio/ShieldSendProviderTabs'
 import { shieldSourceSelectionItem } from '@/popup/components/tokens/ShieldSourceTokenPickerRows'
@@ -98,6 +98,7 @@ function availableUsdPrice(
 }
 
 function AssetSelection({
+  accountScope,
   assets,
   zcashTotal,
   zcashEnabled,
@@ -110,6 +111,7 @@ function AssetSelection({
   onSelect,
   onRetry
 }: {
+  accountScope: Readonly<{ walletId: string; accountId: string }> | null
   assets: readonly SendAsset[]
   zcashTotal: string
   zcashEnabled: boolean
@@ -120,7 +122,7 @@ function AssetSelection({
   additionalError: boolean
   onSelectZcash: () => void
   onSelect: (asset: SendAsset) => void
-  onRetry: () => void
+  onRetry: (chainId?: string) => void
 }) {
   const [query, setQuery] = useState('')
   const [selectedNetwork, setSelectedNetwork] = useState('all')
@@ -145,6 +147,7 @@ function AssetSelection({
   return (
     <div className="page-content flex min-h-0 flex-col !px-4 pt-4">
       <TokenSelectorView
+        accountScope={accountScope}
         search={query}
         onSearchChange={setQuery}
         networks={networkOptions.map(option => ({
@@ -154,7 +157,18 @@ function AssetSelection({
           disabledReason: option.disabled ? 'Coming soon' : undefined
         }))}
         selectedNetwork={selectedNetwork}
-        onNetworkChange={setSelectedNetwork}
+        onNetworkChange={chainId => {
+          setSelectedNetwork(chainId)
+          if (
+            chainId.startsWith('eip155:') &&
+            assets.some(
+              entry =>
+                entry.chain.chain.id === chainId &&
+                getAssetDomainRaw(entry.asset, 'public') === null
+            )
+          )
+            onRetry(chainId)
+        }}
         discovery={
           walletId && accountId
             ? {
@@ -223,7 +237,11 @@ function AssetSelection({
               />
             ),
             balance:
-              entry.chain.chain.family === 'bitcoin' && entry.asset.updatedAt === 0 ? (
+              row.amount === null ? (
+                <p className="min-w-0 truncate text-right text-sm font-medium text-muted">
+                  {entry.chain.status === 'loading' ? 'Updating…' : 'Unavailable'}
+                </p>
+              ) : entry.chain.chain.family === 'bitcoin' && entry.asset.updatedAt === 0 ? (
                 <p className="min-w-0 truncate text-right text-sm font-medium">
                   {entry.chain.status === 'error' ? 'Unavailable' : 'Updating…'}
                 </p>
@@ -290,7 +308,7 @@ export function MultichainSend({
     getChainEndpointRuntimeKey(state.chainEndpointSettings)
   )
   const zcashBalance = useAccountDataStore(state => state.getCurrentBalance())
-  const zcashTotal = zcashBalance?.total ?? '0'
+  const zcashTotal = zcashBalance?.transparent ?? '0'
   const requestSequence = useRef(0)
   const appliedRequestedAssetRef = useRef<string | null>(null)
   const [modelSnapshot, setModelSnapshot] = useState<{
@@ -511,7 +529,7 @@ export function MultichainSend({
   }, [storageV2Account, requestedAssetId])
 
   const load = useCallback(
-    async (forceRefresh = false) => {
+    async (forceRefresh = false, refreshChainId?: string) => {
       const request = ++requestSequence.current
       setLoadStatus('loading')
       try {
@@ -527,7 +545,10 @@ export function MultichainSend({
         const cached = await readCachedPortfolio(scope)
         if (request !== requestSequence.current) return
         if (cached) setModelSnapshot({ scopeKey, value: cached })
-        const refreshed = await refreshPortfolioFromCache(scope, cached, { forceRefresh })
+        const refreshed = await refreshPortfolioFromCache(scope, cached, {
+          forceRefresh,
+          ...(refreshChainId ? { refreshChainIds: [refreshChainId] } : {})
+        })
         if (request !== requestSequence.current) return
         setModelSnapshot({ scopeKey, value: refreshed })
         setLoadStatus(refreshed ? 'ready' : 'error')
@@ -994,6 +1015,7 @@ export function MultichainSend({
       {sourcePicker && (
         <div className="page-content flex min-h-0 flex-col !px-4 pt-4">
           <TokenSelectorView
+            accountScope={effectiveAccount}
             search={sourcePickerQuery}
             onSearchChange={setSourcePickerQuery}
             networks={sourcePickerNetworks}
@@ -1064,6 +1086,7 @@ export function MultichainSend({
                 ?.asset ?? null
             }
             refresh={load}
+            readProjection={readLatest}
             onStateChange={handleShieldStateChange}
             onSelectPublic={(assetId, recipient) => switchSource('main', assetId, recipient)}
             onOpenSourcePicker={() => openSourcePicker('shield', 'near-confidential')}
@@ -1210,6 +1233,7 @@ export function MultichainSend({
       )}
       {!shieldActive && (assetPickerOpen || (!selection && !preparingRequestedAsset)) && (
         <AssetSelection
+          accountScope={effectiveAccount}
           assets={assets}
           zcashTotal={zcashTotal}
           zcashEnabled={zcashEnabled}
@@ -1219,7 +1243,7 @@ export function MultichainSend({
           loadingAdditional={loadStatus === 'loading'}
           additionalError={loadStatus === 'error' && !visibleModel}
           onSelectZcash={() => selectZcash('transparent')}
-          onRetry={() => void load(true)}
+          onRetry={chainId => void load(true, chainId)}
           onSelect={asset => {
             setSelection(asset)
             setAssetPickerOpen(false)

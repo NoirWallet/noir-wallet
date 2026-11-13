@@ -27,10 +27,22 @@ export function getActivityTransactionReferences(
         )
     )
     .sort((left, right) => roleOrder[left.role] - roleOrder[right.role])
+  const originHash = hashedSegments.find(segment => segment.role === 'origin')?.evidence
+    ?.transactionHash
+  const seen = new Set<string>()
   return hashedSegments.flatMap(segment => {
     const hash = segment.evidence?.transactionHash
     if (!hash) return []
+    if (
+      segment.role === 'relay' &&
+      segment.target.kind === 'relay' &&
+      originHash?.toLowerCase() === hash.toLowerCase()
+    )
+      return []
     const chainId = segment.target.kind === 'onchain' ? segment.target.chainId : null
+    const identity = `${chainId ?? ''}:${hash.toLowerCase()}`
+    if (seen.has(identity)) return []
+    seen.add(identity)
     const label =
       hashedSegments.length === 1 && item.segments.length === 1
         ? 'Transaction Hash'

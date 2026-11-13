@@ -230,6 +230,9 @@ function getSyncBatchSize(remainingRange: number, isCurrentWallet: boolean): num
 
   if (remainingRange > 50_000) return cap
   if (remainingRange > 10_000) return Math.min(cap, MID)
+  // Near tip, keep the active wallet's uninterruptible WASM batch short enough
+  // for account switches to reach the journal-safe abort check promptly.
+  if (isCurrentWallet && remainingRange <= 1_000) return Math.min(MIN, 100)
   return MIN
 }
 

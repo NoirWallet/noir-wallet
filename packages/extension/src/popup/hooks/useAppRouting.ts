@@ -52,6 +52,7 @@ export function useAppRouting() {
   const isHardwareTab = useRef(window.location.hash.includes('/hardware/'))
   const isActivationDApp = useRef(window.location.hash.includes('from=dapp'))
   const isUpdatePage = useRef(window.location.hash.includes('/update'))
+  const isTokenManagerEntry = useRef(window.location.hash === '#/manage-tokens')
   const { status: betaInviteStatus } = useBetaInviteActivation()
   const inviteReturnRoute = useRef(
     getPendingBetaInviteReturnRoute(
@@ -269,7 +270,10 @@ export function useAppRouting() {
           // Hardware tabs must return to their flow (with query, e.g. sign request id)
           redirectParams.set('redirect', `${currentPath}${location.search || ''}`)
         } else {
-          redirectParams.set('redirect', inviteReturnRoute.current ?? '/')
+          redirectParams.set(
+            'redirect',
+            inviteReturnRoute.current ?? (isTokenManagerEntry.current ? '/manage-tokens' : '/')
+          )
         }
 
         replace(`/unlock?${redirectParams.toString()}`)
@@ -296,7 +300,7 @@ export function useAppRouting() {
 
       // dApp windows and hardware tabs stay on their route; normal popup goes home
       if ((!isDApp.current || isActivationDApp.current) && !isHardwareTab.current) {
-        replace(inviteReturnRoute.current ?? '/')
+        replace(inviteReturnRoute.current ?? (isTokenManagerEntry.current ? '/manage-tokens' : '/'))
       }
     } catch (error) {
       console.error('[useAppRouting] Initialization error:', error)

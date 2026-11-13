@@ -111,9 +111,13 @@ export function buildAccountSwitcherGroups(input: {
   }
   for (const account of catalogAccounts) {
     if (retained.has(accountListKey(account.walletId, account.accountId))) continue
-    const groupId = `wallet:${account.walletId}`
+    const groupId =
+      account.walletSource.kind === 'private-key' ? 'private-keys' : `wallet:${account.walletId}`
     const group = groups.get(groupId) ?? {
-      name: account.walletDisplayName,
+      name:
+        account.walletSource.kind === 'private-key'
+          ? 'Imported Private Keys'
+          : account.walletDisplayName,
       createdAt: account.walletCreatedAt ?? Number.MAX_SAFE_INTEGER,
       accounts: []
     }
@@ -134,7 +138,9 @@ export function buildAccountSwitcherGroups(input: {
       name: getAccountDisplayName(
         account.walletId,
         account.accountId,
-        account.accountDisplayName,
+        account.walletSource.kind === 'private-key' && account.accountDisplayName === 'Account 1'
+          ? account.walletDisplayName
+          : account.accountDisplayName,
         accountDisplayNames
       ),
       networks: account.networks,
@@ -307,17 +313,23 @@ export function buildVisibleAccountList(input: {
     accounts.map(account => accountListKey(account.walletId, account.id))
   )
   const query = input.searchQuery.trim().toLowerCase()
-  const nativeAccounts = input.nativeAccounts.filter(account => {
-    if (retainedAccountKeys.has(accountListKey(account.walletId, account.accountId))) return false
-    return (
-      !query ||
-      account.accountDisplayName.toLowerCase().includes(query) ||
-      account.walletDisplayName.toLowerCase().includes(query) ||
-      (account.walletSource.kind === 'private-key' && 'imported private key'.includes(query)) ||
-      account.networks.some(network => network.chain.displayName.toLowerCase().includes(query)) ||
-      catalogAddresses(account).some(address => address.toLowerCase().includes(query))
+  const nativeAccounts = input.nativeAccounts
+    .filter(account => {
+      if (retainedAccountKeys.has(accountListKey(account.walletId, account.accountId))) return false
+      return (
+        !query ||
+        account.accountDisplayName.toLowerCase().includes(query) ||
+        account.walletDisplayName.toLowerCase().includes(query) ||
+        (account.walletSource.kind === 'private-key' && 'imported private key'.includes(query)) ||
+        account.networks.some(network => network.chain.displayName.toLowerCase().includes(query)) ||
+        catalogAddresses(account).some(address => address.toLowerCase().includes(query))
+      )
+    })
+    .map(account =>
+      account.walletSource.kind === 'private-key' && account.accountDisplayName === 'Account 1'
+        ? { ...account, accountDisplayName: account.walletDisplayName }
+        : account
     )
-  })
   const filteredAccountKeys = new Set(
     filteredAccounts.map(account => accountListKey(account.walletId, account.id))
   )
@@ -374,14 +386,14 @@ export function buildVisibleAccountList(input: {
       ensureWalletGroup(account.walletId, account).accounts.push({ kind: 'native', account })
       continue
     }
-    const id = `wallet:${account.walletId}`
+    const id = 'private-keys'
     let group = groups.get(id)
     if (!group) {
       group = {
         kind: 'private-key',
         id,
         walletId: null,
-        displayName: account.walletDisplayName,
+        displayName: 'Imported Private Keys',
         hardwareVendor: null,
         addAccount: null,
         createdAt: Number.MAX_SAFE_INTEGER,

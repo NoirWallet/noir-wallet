@@ -89,6 +89,7 @@ import {
 } from '../services/asset-domains'
 import { selectShieldActions, type ShieldAction } from '../services/shield-action-selection'
 import { getPrivateTransferChainIds } from '../services/private-balance-transfer'
+import { isRetainedV1UpgradeAccount } from '@/core/wallet/account-network-selection'
 
 const evmOperationsEnabled = resolveEvmFeatureRuntimePolicy(
   __ENABLED_CHAIN_FEATURE_FLAGS__
@@ -152,6 +153,27 @@ export function Home() {
 
   const currentAccount = getCurrentAccount()
   const currentWallet = getCurrentWallet()
+  const showV1NetworkGuide = isRetainedV1UpgradeAccount(
+    currentWallet,
+    currentAccount,
+    currentNetwork
+  )
+  const [shieldIntroSeen, setShieldIntroSeen] = useState(true)
+  useEffect(() => {
+    if (!showV1NetworkGuide || !currentWalletId || !currentAccountId) return
+    const key = `v1_shield_intro_seen:${currentWalletId}:${currentAccountId}`
+    let active = true
+    setShieldIntroSeen(true)
+    void chrome.storage.local
+      .get(key)
+      .then(result => {
+        if (active) setShieldIntroSeen(result[key] === true)
+      })
+      .catch(() => {})
+    return () => {
+      active = false
+    }
+  }, [showV1NetworkGuide, currentWalletId, currentAccountId])
   const effectiveAccount = resolveEffectiveActiveAccountIdentity({
     currentWalletId,
     currentAccountId,
@@ -180,6 +202,19 @@ export function Home() {
     effectiveWalletId,
     effectiveAccountId
   )
+  const [modeSwitchPending, setModeSwitchPending] = useState(false)
+  const requestedMode = useRef<DAppExecutionMode | null>(null)
+  const modeChangeRunning = useRef(false)
+  const modeChangeRunId = useRef(0)
+  const modeScopeKey = JSON.stringify([currentNetwork, effectiveWalletId, effectiveAccountId])
+  const latestModeScopeKey = useRef(modeScopeKey)
+  latestModeScopeKey.current = modeScopeKey
+  useEffect(() => {
+    modeChangeRunId.current += 1
+    modeChangeRunning.current = false
+    requestedMode.current = null
+    setModeSwitchPending(false)
+  }, [modeScopeKey])
   const accountDisplayName =
     storageV2Account?.accountDisplayName ??
     (currentAccount && currentWalletId
@@ -734,22 +769,59 @@ export function Home() {
     }
   }
 
-  const handleDAppExecutionModeChange = async (mode: DAppExecutionMode) => {
+  const handleDAppExecutionModeChange = (mode: DAppExecutionMode) => {
     const current = dappExecutionMode.state
-    if (!current || current.mode === mode || dappExecutionMode.updating) return
+    if (!current) return
     if (mode === 'private' && !current.privateAvailable) {
       toast.error('Private mode is unavailable for this account')
       return
     }
-
-    try {
-      await dappExecutionMode.setMode(mode, {
-        confirmPrivateSetup: mode === 'private' && !current.privateSetupCompleted,
-        confirmAffectedOperations: true
+    requestedMode.current = mode
+    if (modeChangeRunning.current || current.mode === mode) return
+    modeChangeRunning.current = true
+    const runId = ++modeChangeRunId.current
+    setModeSwitchPending(true)
+    void (async () => {
+      let committed = current.mode
+      while (requestedMode.current && requestedMode.current !== committed) {
+        const target = requestedMode.current
+        let next
+        try {
+          next = await dappExecutionMode.setMode(target, {
+            confirmPrivateSetup: target === 'private' && !current.privateSetupCompleted,
+            confirmAffectedOperations: true
+          })
+        } catch (error) {
+          if (
+            runId === modeChangeRunId.current &&
+            latestModeScopeKey.current === modeScopeKey &&
+            requestedMode.current !== target &&
+            requestedMode.current !== committed
+          ) {
+            continue
+          }
+          throw error
+        }
+        if (runId !== modeChangeRunId.current || latestModeScopeKey.current !== modeScopeKey) return
+        if (next.mode === committed) {
+          if (requestedMode.current === committed) break
+          throw new Error('Mode change was not applied')
+        }
+        committed = next.mode
+      }
+    })()
+      .catch(error => {
+        if (runId === modeChangeRunId.current && latestModeScopeKey.current === modeScopeKey) {
+          toast.error(error instanceof Error ? error.message : 'Unable to change dApp account mode')
+        }
       })
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Unable to change dApp account mode')
-    }
+      .finally(() => {
+        if (runId === modeChangeRunId.current && latestModeScopeKey.current === modeScopeKey) {
+          requestedMode.current = null
+          modeChangeRunning.current = false
+          setModeSwitchPending(false)
+        }
+      })
   }
 
   const showInlineSyncProgress = supportsZcash && isSyncing
@@ -812,9 +884,10 @@ export function Home() {
         <div data-testid="home-header-actions" className="flex shrink-0 items-center gap-3">
           {!hardwareWallet && (
             <WalletModeSwitch
+              key={modeScopeKey}
               state={dappExecutionMode.state}
-              busy={dappExecutionMode.loading || dappExecutionMode.updating}
-              onChange={mode => void handleDAppExecutionModeChange(mode)}
+              busy={dappExecutionMode.loading || dappExecutionMode.updating || modeSwitchPending}
+              onChange={handleDAppExecutionModeChange}
             />
           )}
           <Popover>
@@ -928,7 +1001,7 @@ export function Home() {
                 icon={<WalletActionIcon action="send" />}
                 label="Send"
                 onClick={openSend}
-                disabled={assetDomain === 'public' && !publicSendSource}
+                disabled={modeSwitchPending || (assetDomain === 'public' && !publicSendSource)}
               />
               <WalletActionButton
                 icon={<WalletActionIcon action="receive" />}
@@ -943,7 +1016,7 @@ export function Home() {
               icon={<WalletActionIcon action="move" />}
               label="Move"
               onClick={() => openTransfer()}
-              disabled={!effectiveWalletId || !effectiveAccountId}
+              disabled={modeSwitchPending || !effectiveWalletId || !effectiveAccountId}
             />
           )}
           {actionDomain === 'shield' &&
@@ -953,7 +1026,7 @@ export function Home() {
                 icon={<WalletActionIcon action={action} />}
                 label={action[0].toUpperCase() + action.slice(1)}
                 onClick={() => openShieldAction(action)}
-                disabled={shieldActions.providersFor(action).length === 0}
+                disabled={modeSwitchPending || shieldActions.providersFor(action).length === 0}
               />
             ))}
           {!isTestnet &&
@@ -963,17 +1036,48 @@ export function Home() {
                 icon={<WalletActionIcon action="swap" />}
                 label="Swap"
                 onClick={openSwap}
-                disabled={assetDomain !== 'all' && assetDomain !== 'shield' && !canOpenSwapSource}
+                disabled={
+                  modeSwitchPending ||
+                  (assetDomain !== 'all' && assetDomain !== 'shield' && !canOpenSwapSource)
+                }
               />
             )}
-          <WalletActionButton
-            icon={<WalletShieldFundsIcon />}
-            label="Shielded"
-            onClick={() =>
-              navigate.navigate(`/shield-funds?mode=${privateMode ? 'private' : 'public'}`)
-            }
-          />
+          <div className="relative">
+            <WalletActionButton
+              icon={<WalletShieldFundsIcon />}
+              label="Shielded"
+              active={showV1NetworkGuide && !shieldIntroSeen}
+              disabled={modeSwitchPending}
+              onClick={() => {
+                if (showV1NetworkGuide && currentWalletId && currentAccountId) {
+                  setShieldIntroSeen(true)
+                  void chrome.storage.local.set({
+                    [`v1_shield_intro_seen:${currentWalletId}:${currentAccountId}`]: true
+                  })
+                }
+                navigate.navigate(`/shield-funds?mode=${privateMode ? 'private' : 'public'}`)
+              }}
+            />
+            {showV1NetworkGuide && !shieldIntroSeen && (
+              <span className="pointer-events-none absolute -top-8 right-0 z-20 whitespace-nowrap rounded bg-primary px-2 py-1 text-xs text-primary-foreground shadow-md">
+                Explore Shielded
+              </span>
+            )}
+          </div>
         </div>
+        {showV1NetworkGuide && currentWalletId && currentAccountId && (
+          <button
+            type="button"
+            onClick={() =>
+              navigate.navigate(
+                `/account-networks?walletId=${encodeURIComponent(currentWalletId)}&accountId=${encodeURIComponent(currentAccountId)}`
+              )
+            }
+            className="mx-5 mb-3 flex items-center gap-1.5 text-sm text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+          >
+            <Icon icon="lucide:plus" className="size-4" /> Add More Networks
+          </button>
+        )}
 
         {/* Tabs */}
         <Tabs

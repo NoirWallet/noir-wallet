@@ -59,7 +59,8 @@ export interface AdditionalReceiveTargetsCoordinatorOptions {
       readonly keyDomainId: KeyDomainId
       readonly accountId: AccountId
     },
-    family: AccountNetworkFamily
+    family: AccountNetworkFamily,
+    chainId: string
   ) => boolean | Promise<boolean>
   readonly getBitcoinReceiveTarget: (scope: {
     readonly keyDomainId: KeyDomainId
@@ -128,7 +129,8 @@ export class AdditionalReceiveTargetsCoordinator {
         this.options.isNetworkEnabled &&
         !(await this.options.isNetworkEnabled(
           { keyDomainId: selectedAccount.keyDomainId, accountId: selectedAccount.id },
-          available.chain.family
+          available.chain.family,
+          available.chain.id
         ))
       ) {
         continue
@@ -228,8 +230,14 @@ export function createBackgroundAdditionalReceiveTargetsCoordinator(
     chains: createBuildAddressGatedChainRegistry(
       createInitialProductChainRegistry(DEFAULT_NETWORK, customEvmNetworks)
     ),
-    isNetworkEnabled: (scope, family) =>
-      isStoredAccountNetworkEnabled(scope.keyDomainId, scope.accountId, DEFAULT_NETWORK, family),
+    isNetworkEnabled: (scope, family, chainId) =>
+      isStoredAccountNetworkEnabled(
+        scope.keyDomainId,
+        scope.accountId,
+        DEFAULT_NETWORK,
+        family,
+        chainId
+      ),
     getBitcoinReceiveTarget: async scope => {
       const activeAddressType = await bitcoinPreferences.get({
         network: DEFAULT_NETWORK,

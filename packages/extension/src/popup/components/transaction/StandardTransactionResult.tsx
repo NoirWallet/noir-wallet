@@ -85,7 +85,7 @@ export function StandardTransactionResult({
           </Button>
         )}
         {onCancel && (
-          <Button variant="ghost" onClick={onCancel} className="w-full h-[45px]">
+          <Button variant="outline" onClick={onCancel} className="w-full h-[45px]">
             Cancel
           </Button>
         )}

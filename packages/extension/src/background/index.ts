@@ -8,6 +8,8 @@ import {
 } from '@/background/analytics/reporter'
 import '@/lib/buffer-polyfill'
 import { betaInviteActivation } from './beta-invite'
+import { lookupTokenContractIcon } from './token-contract-icon'
+import { openTokenManager } from './token-manager-window'
 import { getBetaInviteErrorMessage } from '@/core/wallet/beta-invite'
 import { promptBetaInviteActivation } from './beta-invite-window'
 import { handleEvmWalletChoiceMessage } from './evm-wallet-choice'
@@ -18,6 +20,7 @@ import {
 import { isZcashHardwareKeySource } from '@/core/wallet/hardware-wallet-data'
 import {
   isAccountNetworkEnabled,
+  parseSelectedChainIds,
   parseSelectedNetworkFamilies
 } from '@/core/wallet/account-network-selection'
 import { setAccountNetworkSelection } from '@/lib/wallet-metadata-storage'
@@ -209,6 +212,8 @@ import { parseAccountId } from '@/core/accounts/domain'
 import { isAssetMarketHistoryRange } from '@/core/prices'
 import { UnsupportedAssetMarketHistoryError } from '@/infrastructure/prices'
 import {
+  createBuildFeatureGatedChainRegistry,
+  createInitialProductChainRegistry,
   getBitcoinChainId,
   getZcashChainId,
   parseAssetId,
@@ -1362,6 +1367,28 @@ async function reloadMultichainRuntime(
     ? resolveNearRuntimeNetworkConfig(DEFAULT_NETWORK, settings)
     : undefined
   multichainSessionDAppHandler = new BackgroundMultichainSessionDAppHandler({
+    openTokenManager,
+    readTokenList: async scope => {
+      const model = await portfolioCoordinator?.readCachedActive()
+      if (
+        !model ||
+        model.scope.keyDomainId !== scope.keyDomainId ||
+        model.scope.accountId !== scope.accountId
+      ) {
+        throw new Error('Wallet account changed')
+      }
+      const hidden = new Set((await tokenVisibility?.list()) ?? [])
+      return model.assets
+        .filter(row => scope.chainIds.includes(row.asset.chainId) && !hidden.has(row.asset.id))
+        .map(row => ({
+          assetId: row.asset.id,
+          chainId: row.asset.chainId,
+          contractAddress: row.asset.kind === 'native' ? null : row.asset.reference,
+          symbol: row.metadata.symbol,
+          decimals: row.metadata.decimals,
+          enabled: true
+        }))
+    },
     analytics: trackEvent,
     network: DEFAULT_NETWORK,
     evmNetworks: catalog,
@@ -3705,6 +3732,14 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
     return true
   }
 
+  if (message.type === 'GET_TOKEN_CONTRACT_ICON') {
+    void lookupTokenContractIcon(message.identity as string, () => true).then(
+      result => sendResponse({ result }),
+      () => sendResponse({ result: null })
+    )
+    return true
+  }
+
   if (message.type === 'GET_PORTFOLIO') {
     if (!portfolioCoordinator) {
       sendResponse({ error: createEvmWalletRuntimeError('unavailable') })
@@ -3730,7 +3765,10 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
           : await coordinator.refreshActive(refreshChainIds)
       const model = baseModel
         ? ((await confidentialFundingCoordinator
-            ?.enrichPortfolio(baseModel, message.action !== 'read')
+            ?.enrichPortfolio(
+              baseModel,
+              message.action === 'refresh' && refreshChainIds === undefined ? 'if-stale' : false
+            )
             .catch(error => {
               console.warn(
                 '[Confidential Funding] Balance merge failed:',
@@ -4312,6 +4350,7 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
     message.type === 'PREPARE_EVM_TRANSFER' ||
     message.type === 'PREPARE_EVM_CONTRACT_CALL' ||
     message.type === 'GET_EVM_TOKEN_ALLOWANCE' ||
+    message.type === 'GET_EVM_TOKEN_BALANCE' ||
     message.type === 'PREPARE_EVM_CANCEL' ||
     message.type === 'GET_EVM_NONCE_RECOVERY' ||
     message.type === 'PREPARE_EVM_NONCE_RECOVERY' ||
@@ -4412,32 +4451,40 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
                       message.expectedOwner,
                       message.executionMode
                     )
-                  : message.type === 'GET_EVM_NONCE_RECOVERY'
-                    ? evmTransferRouter.getNonceRecovery(message.chainId, message.executionMode)
-                    : message.type === 'PREPARE_EVM_NONCE_RECOVERY'
-                      ? evmTransferRouter.prepareNonceRecovery(
-                          message.chainId,
-                          message.executionMode,
-                          message.feeSelection
-                        )
-                      : message.type === 'GET_PENDING_EVM_TRANSFER'
-                        ? evmTransferRouter.getPendingApproval(message.transactionId)
-                        : message.type === 'APPROVE_EVM_TRANSFER'
-                          ? evmTransferRouter.approve(
-                              message.transactionId,
-                              message.payloadFingerprint
-                            )
-                          : message.type === 'GET_KEYSTONE_EVM_SIGNING_REQUEST'
-                            ? evmTransferRouter.getExternalSigningRequest(message.transactionId)
-                            : message.type === 'SUBMIT_KEYSTONE_EVM_SIGNATURE'
-                              ? evmTransferRouter.submitExternalSignature(
-                                  message.transactionId,
-                                  message.payloadFingerprint,
-                                  message.signatureCborBase64
-                                )
-                              : message.type === 'REJECT_EVM_TRANSFER'
-                                ? evmTransferRouter.reject(message.transactionId)
-                                : evmTransferRouter.resumeBroadcast(message.transactionId)
+                  : message.type === 'GET_EVM_TOKEN_BALANCE'
+                    ? evmTransferRouter.getTokenBalance(
+                        message.chainId,
+                        message.token,
+                        message.walletId,
+                        message.accountId,
+                        message.executionMode
+                      )
+                    : message.type === 'GET_EVM_NONCE_RECOVERY'
+                      ? evmTransferRouter.getNonceRecovery(message.chainId, message.executionMode)
+                      : message.type === 'PREPARE_EVM_NONCE_RECOVERY'
+                        ? evmTransferRouter.prepareNonceRecovery(
+                            message.chainId,
+                            message.executionMode,
+                            message.feeSelection
+                          )
+                        : message.type === 'GET_PENDING_EVM_TRANSFER'
+                          ? evmTransferRouter.getPendingApproval(message.transactionId)
+                          : message.type === 'APPROVE_EVM_TRANSFER'
+                            ? evmTransferRouter.approve(
+                                message.transactionId,
+                                message.payloadFingerprint
+                              )
+                            : message.type === 'GET_KEYSTONE_EVM_SIGNING_REQUEST'
+                              ? evmTransferRouter.getExternalSigningRequest(message.transactionId)
+                              : message.type === 'SUBMIT_KEYSTONE_EVM_SIGNATURE'
+                                ? evmTransferRouter.submitExternalSignature(
+                                    message.transactionId,
+                                    message.payloadFingerprint,
+                                    message.signatureCborBase64
+                                  )
+                                : message.type === 'REJECT_EVM_TRANSFER'
+                                  ? evmTransferRouter.reject(message.transactionId)
+                                  : evmTransferRouter.resumeBroadcast(message.transactionId)
     void operation
       .then(result => {
         if (debugRequestId) {
@@ -4459,7 +4506,11 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
         console.error('[EVM Transfer] Request failed', {
           operation: message.type,
           errorName: error instanceof Error ? error.name : 'UnknownError',
-          errorMessage: error instanceof Error ? error.message : 'EVM transfer request failed',
+          ...(message.type === 'GET_EVM_TOKEN_BALANCE'
+            ? {}
+            : {
+                errorMessage: error instanceof Error ? error.message : 'EVM transfer request failed'
+              }),
           ...(error instanceof EvmRpcError
             ? { rpcErrorCode: error.code, rpcCode: error.rpcCode, rpcMethod: error.rpcMethod }
             : error instanceof EvmTransactionError && error.rpcFailure
@@ -5344,6 +5395,20 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
     accountContextTransition
       .runScopedMutation([{ walletId, accountId }], async () => {
         const families = parseSelectedNetworkFamilies(message.families)
+        const selectedChainIds = parseSelectedChainIds(message.chainIds)
+        const availableChains = createBuildFeatureGatedChainRegistry(
+          createInitialProductChainRegistry(DEFAULT_NETWORK)
+        ).list()
+        const selectedChains = selectedChainIds.map(chainId =>
+          availableChains.find(chain => chain.id === chainId)
+        )
+        if (
+          selectedChains.some(chain => !chain) ||
+          selectedChains.some(chain => chain && !families.includes(chain.family)) ||
+          families.some(family => !selectedChains.some(chain => chain?.family === family))
+        ) {
+          throw new Error('Selected chain is unavailable')
+        }
         if (
           !families.every(family =>
             isNewWalletFamilyEnabled(family, __ENABLED_CHAIN_FEATURE_FLAGS__)
@@ -5391,12 +5456,18 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
                 ? await backgroundZcashWalletRuntime.resolveNewZcashBirthdayHeight()
                 : (message.birthdayHeight as number)
             : undefined
+          if (selectedChainIds.some(chainId => chainId.startsWith('eip155:'))) {
+            await credentialLifecycle.synchronizeEvmNetworkMetadata(
+              await chainEndpointSettingsCoordinator.read()
+            )
+          }
           await setAccountNetworkSelection(
             walletId,
             accountId,
             DEFAULT_NETWORK,
             families,
-            birthdayHeight
+            birthdayHeight,
+            selectedChainIds
           )
           await rehydrateWalletStore()
           if (disableZcash) syncScheduler.onZcashAccountUnavailable()

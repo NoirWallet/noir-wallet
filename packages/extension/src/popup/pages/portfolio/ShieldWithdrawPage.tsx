@@ -4,7 +4,6 @@ import type { PortfolioReadModel, PortfolioAssetView } from '@/core/portfolio'
 import type { AssetPriceReadModel } from '@/core/prices'
 import { Icon } from '@iconify/react'
 import nearLogo from '@/images/figma-near-confidential.svg'
-import { isAddress } from 'viem'
 import { resolveEvmChainIconAlias } from '@/config/icons'
 import type { IntentsManagedAsset } from '@/core/services/intents-managed-assets'
 import { getCachedTokens, type SwapToken } from '@/core/services/intents-api'
@@ -12,7 +11,8 @@ import type { ConfidentialFundingReview } from '@/core/services/confidential-fun
 import {
   formatBaseUnitAmount,
   formatBaseUnitDecimalAmount,
-  formatTokenQuantity
+  formatTokenQuantity,
+  parseDisplayUnitAmount
 } from '@/lib/number-format'
 import { resolveChainIconAlias } from '@/lib/chain-icon'
 import { formatSymbol } from '@/lib/format'
@@ -20,7 +20,6 @@ import { useWalletStore } from '@/store/wallet-store'
 import { useSettingsStore } from '@/store/settings-store'
 import { useActiveAccountNetworks } from '@/popup/hooks/useActiveAccountNetworks'
 import { useConfidentialFundingPreview } from '@/popup/hooks/useConfidentialFundingPreview'
-import { useEvmConfirmationEstimate } from '@/popup/hooks/useEvmConfirmationEstimate'
 import { useShieldBalances } from '@/popup/hooks/useShieldBalances'
 import { resolveEffectiveActiveAccountIdentity } from '@/popup/lib/effective-active-account'
 import { assetPriceClient } from '@/popup/services/asset-price-client'
@@ -65,6 +64,7 @@ import {
   matchesExternalShieldWithdrawReview,
   listShieldFundingAssets,
   listShieldSendDestinations,
+  isShieldWithdrawRecipient,
   shieldPortfolioBalances,
   shieldFundingAvailableRaw,
   shieldFundingSources,
@@ -77,10 +77,7 @@ import {
   normalizePrivateBalanceTransferInput,
   resolvePrivateBalanceTransferAmount
 } from '@/popup/services/private-balance-transfer'
-import {
-  estimateConfidentialSendTime,
-  estimateZcashSendTime
-} from '@/popup/services/send-time-estimate'
+import { estimateConfidentialSendTime } from '@/popup/services/send-time-estimate'
 
 function withdrawChainIconAlias(chain: ShieldFundingAsset['chain']['chain']): string {
   return chain.family === 'evm'
@@ -119,6 +116,7 @@ export function ShieldWithdrawForm({
   model,
   initialAsset,
   refresh,
+  readProjection,
   onSelectPublic,
   onOpenSourcePicker,
   onSourcePickerState,
@@ -130,6 +128,7 @@ export function ShieldWithdrawForm({
   readonly model: PortfolioReadModel | null
   readonly initialAsset: PortfolioAssetView | null
   readonly refresh: (force?: boolean) => Promise<void>
+  readonly readProjection: () => Promise<void>
   readonly onSelectPublic: (assetId: string | null, recipient: string) => void
   readonly onOpenSourcePicker?: () => void
   readonly onSourcePickerState?: (state: ShieldWithdrawSourcePickerState) => void
@@ -173,7 +172,7 @@ export function ShieldWithdrawForm({
   const [sourceId, setSourceId] = useState(routeAssetId)
   const [destinationNetworkId, setDestinationNetworkId] = useState<string | null>(routeNetworkId)
   const [amount, setAmount] = useState('')
-  const [recipient, setRecipient] = useState(isAddress(routeRecipient) ? routeRecipient : '')
+  const [recipient, setRecipient] = useState(routeRecipient)
   const [picker, setPicker] = useState<'source' | 'network' | 'recipient' | 'slippage' | null>(null)
   const [slippage, setSlippage] = useState(0.5)
   const [prepared, setPrepared] = useState<Readonly<{
@@ -199,7 +198,8 @@ export function ShieldWithdrawForm({
     scope: account
       ? { network, keyDomainId: account.walletId, accountId: account.accountId }
       : null,
-    refreshPortfolio: refresh
+    refreshPortfolio: refresh,
+    readProjection
   })
 
   useLayoutEffect(() => {
@@ -236,7 +236,7 @@ export function ShieldWithdrawForm({
     setSourceId(routeAssetId)
     setDestinationNetworkId(routeNetworkId)
     setAmount('')
-    setRecipient(isAddress(routeRecipient) ? routeRecipient : '')
+    setRecipient(routeRecipient)
     setPicker(null)
     setPrepared(null)
     setBusy(false)
@@ -389,15 +389,6 @@ export function ShieldWithdrawForm({
         )
       : null
   const destinationNetwork = destination?.chain.chain
-  const evmConfirmationTime = useEvmConfirmationEstimate({
-    enabled: false,
-    fallbackEnabled: active && destinationNetwork?.family === 'evm',
-    requestKey: scopeKey,
-    chainId: destinationNetwork?.id ?? '',
-    feeEstimate: null
-  })
-  const destinationConfirmationTime =
-    destinationNetwork?.family === 'zcash' ? estimateZcashSendTime() : evmConfirmationTime
   const availableRaw = shieldFundingAvailableRaw(source, displayBalances)
   const displayedAsset = source?.asset ?? initialAsset
   const amountState = source
@@ -408,7 +399,16 @@ export function ShieldWithdrawForm({
         sourceLabel: 'Shield'
       })
     : null
-  const recipientValid = isAddress(recipient.trim()) && !/^0x0{40}$/i.test(recipient.trim())
+  const recipientValid = isShieldWithdrawRecipient(recipient.trim(), destination, network)
+  const previewAmountRaw = useMemo(() => {
+    if (!source || !amount.trim()) return null
+    try {
+      const raw = parseDisplayUnitAmount(amount, source.asset.metadata.decimals)
+      return BigInt(raw) > 0n ? raw : null
+    } catch {
+      return null
+    }
+  }, [amount, source])
   const previewRequest = useMemo(() => {
     if (
       !account ||
@@ -416,7 +416,7 @@ export function ShieldWithdrawForm({
       !currentBalances ||
       !source ||
       !destination ||
-      !amountState?.amountRaw ||
+      !previewAmountRaw ||
       !recipientValid
     )
       return null
@@ -424,7 +424,7 @@ export function ShieldWithdrawForm({
       network,
       keyDomainId: account.walletId,
       accountId: account.accountId,
-      amountRaw: amountState.amountRaw,
+      amountRaw: previewAmountRaw,
       recipient: recipient.trim(),
       source,
       destination,
@@ -438,7 +438,7 @@ export function ShieldWithdrawForm({
     currentBalances,
     source,
     destination,
-    amountState?.amountRaw,
+    previewAmountRaw,
     slippage,
     recipient,
     recipientValid
@@ -715,23 +715,17 @@ export function ShieldWithdrawForm({
                 />
               )
             },
-            {
-              label: 'Estimated time',
-              content: (
-                <span
-                  title={
-                    prepared.review.quoteTimeEstimateSeconds === undefined
-                      ? 'Destination-network confirmation only; confidential routing adds time.'
-                      : undefined
+            ...(prepared.review.quoteTimeEstimateSeconds
+              ? [
+                  {
+                    label: 'Estimated time',
+                    content: estimateConfidentialSendTime(
+                      prepared.review.quoteTimeEstimateSeconds,
+                      undefined
+                    )
                   }
-                >
-                  {estimateConfidentialSendTime(
-                    prepared.review.quoteTimeEstimateSeconds,
-                    destinationConfirmationTime
-                  )}
-                </span>
-              )
-            },
+                ]
+              : []),
             ...(prepared.review.sourceNetworkFee
               ? [
                   {
@@ -779,7 +773,7 @@ export function ShieldWithdrawForm({
               const publicAssetId = [source?.asset, destination?.asset, initialAsset]
                 .map(asset => asset?.asset.id)
                 .find(id => model?.assets.some(item => item.asset.id === id))
-              onSelectPublic(publicAssetId ?? null, isAddress(recipient) ? recipient : '')
+              onSelectPublic(publicAssetId ?? null, recipientValid ? recipient : '')
             }
           }}
           amountInput={
@@ -807,7 +801,8 @@ export function ShieldWithdrawForm({
                 if (onOpenSourcePicker) onOpenSourcePicker()
                 else setPicker('source')
               }}
-              className="wallet-interactive flex h-9 max-w-full items-center gap-2 rounded-full bg-wallet-surface px-2.5 text-sm enabled:hover:bg-wallet-selected enabled:active:bg-white/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 disabled:opacity-50"
+              className="wallet-interactive flex h-9 max-w-full min-w-0 items-center gap-1.5 rounded-full bg-wallet-surface px-2.5 text-sm enabled:hover:bg-wallet-selected enabled:active:bg-white/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 disabled:opacity-50"
+              aria-label={`Select Confidential ${formatSymbol(displayedAsset?.metadata.symbol)} asset`}
             >
               {displayedAsset && (
                 <TokenIcon
@@ -817,8 +812,13 @@ export function ShieldWithdrawForm({
                   size={24}
                 />
               )}
-              {displayedAsset ? formatSymbol(displayedAsset.metadata.symbol) : 'Token'}
-              <Icon icon="lucide:chevron-down" width={16} height={16} />
+              <span className="flex min-w-0 flex-col items-start gap-0.5 leading-none">
+                <span className="max-w-[7ch] truncate">
+                  {displayedAsset ? formatSymbol(displayedAsset.metadata.symbol) : 'Token'}
+                </span>
+                {displayedAsset && <span className="text-[10px] text-muted">Confidential</span>}
+              </span>
+              <Icon icon="lucide:chevron-down" width={16} height={16} className="shrink-0" />
             </button>
           }
           balance={
@@ -917,40 +917,27 @@ export function ShieldWithdrawForm({
               <span className="inline-flex items-center gap-2">
                 <img src={nearLogo} alt="" className="size-5 rounded" />
                 Confidential
+              </span>
+            }
+            extra={
+              <div className="flex min-h-5 items-center justify-between gap-3">
+                <span className="text-muted">Slippage</span>
                 <button
                   type="button"
                   aria-label={`Slippage settings, currently ${slippage}%`}
-                  title={`Slippage: ${slippage}%`}
                   disabled={busy}
                   onClick={() => setPicker('slippage')}
-                  className="wallet-interactive ml-1 inline-flex size-6 items-center justify-center rounded text-muted hover:text-foreground disabled:opacity-45"
+                  className="wallet-interactive inline-flex items-center gap-2 rounded text-foreground hover:text-primary disabled:opacity-45"
                 >
+                  {slippage}%
                   <Icon icon="lucide:settings-2" width={15} height={15} />
                 </button>
-              </span>
-            }
-            fee={
-              preview?.sourceNetworkFee
-                ? `${formatBaseUnitDecimalAmount(preview.sourceNetworkFee.raw, preview.sourceNetworkFee.decimals)} ${formatSymbol(preview.sourceNetworkFee.symbol)}`
-                : '—'
+              </div>
             }
             time={
-              previewRequest && destination && !previewError ? (
-                <span
-                  title={
-                    preview?.timeEstimateSeconds === undefined
-                      ? 'Destination-network confirmation only; confidential routing adds time.'
-                      : undefined
-                  }
-                >
-                  {estimateConfidentialSendTime(
-                    preview?.timeEstimateSeconds,
-                    destinationConfirmationTime
-                  )}
-                </span>
-              ) : (
-                '—'
-              )
+              previewRequest && destination && !previewError && preview?.timeEstimateSeconds ? (
+                <span>{estimateConfidentialSendTime(preview?.timeEstimateSeconds, undefined)}</span>
+              ) : undefined
             }
           />
         </div>
@@ -987,7 +974,7 @@ export function ShieldWithdrawForm({
         )}
         {recipient && !recipientValid && (
           <p role="alert" className="order-5 text-xs text-warning">
-            Enter a valid EVM address
+            Enter a valid {destinationNetwork?.family === 'zcash' ? 'Zcash' : 'EVM'} address
           </p>
         )}
         {(error || balanceError) && (

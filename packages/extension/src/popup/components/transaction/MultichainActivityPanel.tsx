@@ -27,6 +27,18 @@ import {
   resolveAvailableActivityChainSelection
 } from '@/popup/services/activity-list-model'
 import { buildActivityExecutionAddressModes } from './multichain-activity-presentation'
+import { accountNetworksClient } from '@/popup/services/account-networks-client'
+import { assetPriceClient } from '@/popup/services/asset-price-client'
+import type { AssetPriceReadModel } from '@/core/prices'
+import { useAddressBookStore } from '@/store/address-book-store'
+import { shouldWarnSmallTransfer } from '@/popup/services/activity-small-transfer-warning'
+import { getZcashChainId } from '@/core/chains/registry'
+import type { TransactionAssetAmount } from '@/core/transactions/domain'
+import {
+  confidentialFundingClient,
+  getConfidentialFundingPlanId
+} from '@/popup/services/confidential-funding-client'
+import { getClusterSettledDestination } from './multichain-activity-presentation'
 
 interface MultichainActivityPanelProps {
   readonly walletId: string | null
@@ -39,6 +51,7 @@ interface MultichainActivityPanelProps {
   readonly filterAssetId?: string
   readonly filterDomain?: 'public' | 'private' | 'shield'
   readonly confidentialIntentsOnly?: boolean
+  readonly shieldProvider?: 'near-confidential' | 'zcash-shield'
   readonly showToolbar?: boolean
   readonly maxItems?: number
   readonly pageSize?: number
@@ -104,6 +117,7 @@ export function MultichainActivityPanel({
   filterAssetId,
   filterDomain,
   confidentialIntentsOnly = false,
+  shieldProvider,
   showToolbar = true,
   maxItems,
   pageSize = ACTIVITY_DISPLAY_PAGE_SIZE,
@@ -128,8 +142,51 @@ export function MultichainActivityPanel({
   )
   const [visibleLimit, setVisibleLimit] = useState(pageSize)
   const [olderStatus, setOlderStatus] = useState<'ready' | 'loading' | 'error'>('ready')
+  const [smallTransferPrices, setSmallTransferPrices] = useState<AssetPriceReadModel | null>(null)
+  const [clusterSettlements, setClusterSettlements] = useState<{
+    scope: string
+    amounts: ReadonlyMap<string, TransactionAssetAmount>
+  } | null>(null)
+  const [ownedAddresses, setOwnedAddresses] = useState<
+    readonly { chainId: string; address: string }[] | null
+  >(null)
+  const contacts = useAddressBookStore(state => state.contacts)
   const historyPageCount = useRef(1)
   const scopeKey = JSON.stringify([walletId ?? '', accountId ?? ''])
+  useEffect(() => {
+    let active = true
+    setOwnedAddresses(null)
+    if (walletId) {
+      void accountNetworksClient
+        .getCatalog()
+        .then(catalog => {
+          if (!active || !catalog) return
+          setOwnedAddresses(
+            catalog.accounts.flatMap(account =>
+              account.networks.flatMap(entry => [
+                ...entry.addresses.map(address => ({
+                  chainId: entry.chain.id,
+                  address: address.value
+                })),
+                ...(entry.privateExecutionAddress
+                  ? [{ chainId: entry.chain.id, address: entry.privateExecutionAddress }]
+                  : [])
+              ])
+            )
+          )
+        })
+        .catch(() => {})
+    }
+    void assetPriceClient
+      .getPrices('read')
+      .then(prices => {
+        if (active) setSmallTransferPrices(prices)
+      })
+      .catch(() => {})
+    return () => {
+      active = false
+    }
+  }, [walletId, network])
   const persistedChainSelection = useSettingsStore(
     state => state.portfolioChainSelectionByAccount[scopeKey]
   )
@@ -180,14 +237,22 @@ export function MultichainActivityPanel({
     [availableChainIds, filteredChainId, persistedChainSelection]
   )
   const selectedChainKey = selectedChainIds.join(',')
+  const providerChainIds = useMemo(
+    () =>
+      shieldProvider === 'zcash-shield'
+        ? [getZcashChainId(network)]
+        : shieldProvider === 'near-confidential'
+          ? undefined
+          : selectedChainIds,
+    [network, selectedChainIds, shieldProvider]
+  )
 
   const load = useCallback(async () => {
     const request = ++requestSequence.current
     olderRequestSequence.current += 1
     setOlderStatus('ready')
     setStatus('loading')
-    const chainIds =
-      !focusTransactionId && selectedChainKey ? selectedChainKey.split(',') : undefined
+    const chainIds = !focusTransactionId && providerChainIds?.length ? providerChainIds : undefined
     let localModelAvailable = false
     try {
       const local = await evmWalletClient.getActivity(
@@ -228,7 +293,7 @@ export function MultichainActivityPanel({
       if (request !== requestSequence.current) return
       setStatus(localModelAvailable ? 'ready' : 'error')
     }
-  }, [accountId, filteredChainId, focusTransactionId, selectedChainKey, walletId])
+  }, [accountId, filteredChainId, focusTransactionId, providerChainIds, walletId])
 
   useEffect(() => {
     const retainedModel = isActivityModelForScope(initialModel, walletId, accountId)
@@ -327,6 +392,7 @@ export function MultichainActivityPanel({
         assetId: filterAssetId,
         domain: filterDomain,
         confidentialIntentsOnly,
+        shieldProvider,
         accountMode: filterAssetId || allExecutionModes ? undefined : accountMode,
         executionAddressModes
       }),
@@ -334,6 +400,7 @@ export function MultichainActivityPanel({
       accountMode,
       allExecutionModes,
       confidentialIntentsOnly,
+      shieldProvider,
       executionAddressModes,
       filterAssetId,
       filterDomain,
@@ -404,6 +471,43 @@ export function MultichainActivityPanel({
     () => visibleItems.slice(0, maxItems ?? visibleLimit),
     [maxItems, visibleItems, visibleLimit]
   )
+  const clusterSettlementScope = JSON.stringify([network, walletId, accountId])
+  useEffect(() => {
+    let active = true
+    const completedClusters = displayedItems.filter(
+      item => item.snapshot?.shield?.operation === 'cluster' && item.status === 'final'
+    )
+    if (completedClusters.length === 0) {
+      setClusterSettlements({ scope: clusterSettlementScope, amounts: new Map() })
+      return
+    }
+    void Promise.all(
+      completedClusters.map(async item => {
+        const planId = getConfidentialFundingPlanId(item.id)
+        if (!planId) return null
+        try {
+          const plan = await confidentialFundingClient.get(planId)
+          if (plan.network !== network) return null
+          const settled = getClusterSettledDestination(item, plan)
+          return settled ? ([item.id, settled] as const) : null
+        } catch {
+          return null
+        }
+      })
+    ).then(entries => {
+      if (active) {
+        setClusterSettlements({
+          scope: clusterSettlementScope,
+          amounts: new Map(
+            entries.filter((entry): entry is NonNullable<typeof entry> => entry !== null)
+          )
+        })
+      }
+    })
+    return () => {
+      active = false
+    }
+  }, [clusterSettlementScope, displayedItems, network])
   const canLoadOlder =
     maxItems === undefined &&
     (visibleItems.length > visibleLimit ||
@@ -423,7 +527,7 @@ export function MultichainActivityPanel({
     setOlderStatus('loading')
     try {
       const next = await evmWalletClient.getActivity('refresh', 'all', {
-        ...(selectedChainIds.length > 0 ? { chainIds: selectedChainIds } : {}),
+        ...(providerChainIds?.length ? { chainIds: providerChainIds } : {}),
         historyPageCount: nextPageCount
       })
       if (request !== olderRequestSequence.current || refreshRequest !== requestSequence.current)
@@ -604,6 +708,22 @@ export function MultichainActivityPanel({
                     chainIconAlias={chain?.iconAlias}
                     chainId={chainId}
                     executionAddressModes={executionAddressModes}
+                    settledDestination={
+                      clusterSettlements?.scope === clusterSettlementScope
+                        ? clusterSettlements.amounts.get(item.id)
+                        : undefined
+                    }
+                    smallTransferWarning={shouldWarnSmallTransfer({
+                      item,
+                      history: visibleModel?.items ?? [],
+                      historyComplete: visibleModel?.hasMore !== true,
+                      ownedAddresses,
+                      contactAddresses: contacts
+                        .filter(contact => contact.network === network)
+                        .map(contact => ({ chainId: contact.chainId, address: contact.address })),
+                      assetMetadata,
+                      prices: smallTransferPrices
+                    })}
                     onClick={onItemClick}
                   />
                 )

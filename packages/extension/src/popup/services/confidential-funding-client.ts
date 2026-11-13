@@ -11,6 +11,7 @@ import type {
 } from '@/core/services/confidential-funding'
 import type { SwapStatus } from '@/core/services/intents-api'
 import type { NetworkFeeTier } from '@/core/transactions/domain'
+import type { EvmFeeSelection } from '@/infrastructure/chains/evm'
 import type { Network } from '@/types'
 
 type RuntimeMessenger = (message: Readonly<Record<string, unknown>>) => Promise<unknown>
@@ -43,6 +44,7 @@ export interface PrepareConfidentialFundingRequest {
   readonly slippageBps: number
   readonly externalRecipient?: string
   readonly feeTier?: NetworkFeeTier
+  readonly feeSelection?: EvmFeeSelection
   readonly dedupKey?: string
 }
 
@@ -224,7 +226,16 @@ function parseReview(value: unknown): ConfidentialFundingReview {
     (review.sourceNetworkFee !== undefined &&
       (!/^\d+$/.test(review.sourceNetworkFee.raw) ||
         typeof review.sourceNetworkFee.symbol !== 'string' ||
-        !Number.isSafeInteger(review.sourceNetworkFee.decimals)))
+        !Number.isSafeInteger(review.sourceNetworkFee.decimals))) ||
+    (review.sourceEvmFee !== undefined &&
+      (!isRecord(review.sourceEvmFee) ||
+        !/^\d+$/.test(review.sourceEvmFee.gasLimit) ||
+        (review.sourceEvmFee.transactionType === 'legacy'
+          ? !/^\d+$/.test(review.sourceEvmFee.gasPriceWei ?? '')
+          : review.sourceEvmFee.transactionType === 'eip1559'
+            ? !/^\d+$/.test(review.sourceEvmFee.maxFeePerGasWei ?? '') ||
+              !/^\d+$/.test(review.sourceEvmFee.maxPriorityFeePerGasWei ?? '')
+            : true)))
   ) {
     throw new Error('Confidential funding review is invalid')
   }

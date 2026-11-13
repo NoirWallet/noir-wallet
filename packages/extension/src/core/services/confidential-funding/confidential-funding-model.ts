@@ -239,6 +239,13 @@ export interface ConfidentialFundingReview {
     symbol: string
     decimals: number
   }>
+  readonly sourceEvmFee?: Readonly<{
+    transactionType: 'eip1559' | 'legacy'
+    gasLimit: string
+    maxFeePerGasWei?: string
+    maxPriorityFeePerGasWei?: string
+    gasPriceWei?: string
+  }>
 }
 
 export interface ConfidentialFundingPreview {

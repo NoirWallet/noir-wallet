@@ -103,7 +103,7 @@ export function SendRouteInfoCard({
   extra
 }: {
   readonly provider?: ReactNode
-  readonly fee: ReactNode
+  readonly fee?: ReactNode
   readonly time?: ReactNode
   readonly extra?: ReactNode
 }) {
@@ -115,14 +115,18 @@ export function SendRouteInfoCard({
           <div className="min-w-0 text-right">{provider}</div>
         </div>
       )}
-      <div className="flex min-h-5 items-center justify-between gap-3">
-        <span className="text-muted">Fee</span>
-        <div className="min-w-0 text-right">{fee}</div>
-      </div>
-      <div className="flex min-h-5 items-center justify-between gap-3">
-        <span className="text-muted">Est. time</span>
-        <div className="min-w-0 text-right">{time ?? '—'}</div>
-      </div>
+      {fee !== undefined && (
+        <div className="flex min-h-5 items-center justify-between gap-3">
+          <span className="text-muted">Fee</span>
+          <div className="min-w-0 text-right">{fee}</div>
+        </div>
+      )}
+      {time !== undefined && (
+        <div className="flex min-h-5 items-center justify-between gap-3">
+          <span className="text-muted">Est. time</span>
+          <div className="min-w-0 text-right">{time}</div>
+        </div>
+      )}
       {extra}
     </div>
   )

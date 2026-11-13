@@ -51,13 +51,22 @@ function getBundledNativeIconFallback(
 
 export function isBundledEthIconIdentity(
   assetId: string | undefined,
-  token?: Pick<SwapToken, 'contractAddress'>
+  token?: Pick<SwapToken, 'contractAddress'>,
+  symbol?: string
 ): boolean {
-  if (!assetId || findBundledWalletMarketAssetId(assetId) !== MARKET_ASSETS.eth) return false
+  if (!assetId) return false
   if (/^eip155:[1-9][0-9]*\/slip44:60$/.test(assetId)) {
-    return token === undefined || token.contractAddress == null
+    return (
+      (token === undefined || token.contractAddress == null) &&
+      (findBundledWalletMarketAssetId(assetId) === MARKET_ASSETS.eth ||
+        symbol?.toUpperCase() === 'ETH')
+    )
   }
-  return token?.contractAddress == null && token !== undefined
+  return (
+    findBundledWalletMarketAssetId(assetId) === MARKET_ASSETS.eth &&
+    token?.contractAddress == null &&
+    token !== undefined
+  )
 }
 
 function isCoinGeckoIconUrl(value: string | undefined): boolean {

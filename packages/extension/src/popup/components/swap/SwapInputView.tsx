@@ -23,17 +23,64 @@ import { InlineError } from '../common/InlineError'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog'
 import nearIntentsIcon from '@/images/figma-near-confidential.svg'
 
+const PROVIDER_NAMES: Readonly<Record<string, string>> = {
+  bitget: 'Bitget',
+  okx: 'OKX',
+  binance: 'Binance',
+  '1inch': '1inch',
+  paraswap: 'ParaSwap',
+  kodiak: 'Kodiak',
+  openocean: 'OpenOcean',
+  cow: 'CoW',
+  zerox: 'Robinhood',
+  jupiter: 'Jupiter',
+  titan: 'Titan',
+  dflow: 'DFlow',
+  hyperion: 'Hyperion',
+  'near-smart': 'SmartV1',
+  'near-smartx': 'SmartV2',
+  nearintents: 'NEAR Intents',
+  'preswap-nearintents': 'NEAR Intents',
+  rango: 'Rango',
+  lifi: 'LI.FI',
+  jumper: 'Jumper',
+  bungee: 'Bungee',
+  swapkit: 'SwapKit',
+  omnibridge: 'OmniBridge',
+  stableflow: 'StableFlow',
+  'near-mca-withdraw': 'NEAR Intents',
+  'near-confidential': 'NEAR Confidential Intents'
+}
+const PROVIDER_MARKS: Readonly<Record<string, { readonly slug: string; readonly color: string }>> =
+  {
+    binance: { slug: 'binance', color: '#F0B90B' },
+    okx: { slug: 'okx', color: '#FFFFFF' }
+  }
+
 function providerDisplayName(router: string): string {
-  if (router === 'near-confidential') return 'NEAR Confidential Intents'
-  return ['nearintents', 'preswap-nearintents'].includes(router.toLowerCase())
-    ? 'NEAR Intents'
-    : router
+  return PROVIDER_NAMES[router.trim().toLowerCase()] ?? router
 }
 
 function ProviderMark({ router, size }: { readonly router: string; readonly size: 24 | 28 }) {
-  if (router === 'near-confidential' || providerDisplayName(router) === 'NEAR Intents') {
+  const normalized = router.trim().toLowerCase()
+  const mark = PROVIDER_MARKS[normalized]
+  const [failedRouter, setFailedRouter] = useState<string | null>(null)
+  if (normalized === 'near-confidential' || providerDisplayName(router) === 'NEAR Intents') {
     return (
       <img src={nearIntentsIcon} alt="" width={size} height={size} className="shrink-0 rounded" />
+    )
+  }
+  if (mark && failedRouter !== normalized) {
+    return (
+      <img
+        src={`https://cdn.jsdelivr.net/npm/simple-icons@v15/icons/${mark.slug}.svg`}
+        alt=""
+        width={size}
+        height={size}
+        className={cn('shrink-0 rounded p-1', size === 24 ? 'size-6' : 'size-7')}
+        style={{ backgroundColor: mark.color }}
+        onError={() => setFailedRouter(normalized)}
+      />
     )
   }
   return (
@@ -44,7 +91,7 @@ function ProviderMark({ router, size }: { readonly router: string; readonly size
       )}
       aria-hidden="true"
     >
-      {router.slice(0, 1).toUpperCase()}
+      {providerDisplayName(router).slice(0, 1).toUpperCase()}
     </span>
   )
 }
@@ -107,6 +154,7 @@ interface SwapInputViewProps {
   isZecDestination: boolean
   requiresRecipientAddress: boolean
   canSwitchTokens: boolean
+  reverseUnavailableReason?: string | null
   switchingTokens?: boolean
   amountIn: string
   estimatedOut: string
@@ -133,6 +181,7 @@ interface SwapInputViewProps {
   networkFee?: string
   isQuoting: boolean
   quoteError?: string | null
+  onEnableReceiveNetwork?: () => void
   maxLoading?: boolean
   maxDisabled?: boolean
   maxDisabledReason?: string
@@ -436,7 +485,7 @@ export function SwapAssetCard({
               aria-label={isEstimatedAmount && amount ? `Estimated output: ${amount}` : undefined}
               title={amount || undefined}
               className={cn(
-                'overflow-x-auto whitespace-nowrap font-sans text-xl font-semibold leading-[26px]',
+                'min-h-[26px] overflow-x-auto whitespace-nowrap font-sans text-xl font-semibold leading-[26px]',
                 isEstimatedAmount && 'text-muted'
               )}
             >
@@ -524,6 +573,7 @@ export function SwapInputView({
   isZecDestination,
   requiresRecipientAddress,
   canSwitchTokens,
+  reverseUnavailableReason,
   switchingTokens = false,
   amountIn,
   estimatedOut,
@@ -550,6 +600,7 @@ export function SwapInputView({
   networkFee,
   isQuoting,
   quoteError,
+  onEnableReceiveNetwork,
   maxLoading = false,
   maxDisabled = false,
   maxDisabledReason,
@@ -639,29 +690,34 @@ export function SwapInputView({
 
           <div className="relative border-t border-white/10 pt-2">
             {!hideSwitchAssets && (
-              <Button
-                type="button"
-                onClick={onSwitchTokens}
-                disabled={!canSwitchTokens}
-                aria-label="Switch assets"
-                aria-busy={switchingTokens}
+              <span
                 title={
-                  switchingTokens
-                    ? 'Switching assets'
-                    : canSwitchTokens
-                      ? 'Switch assets'
-                      : 'The destination asset is not available in this wallet'
+                  reverseUnavailableReason ??
+                  (switchingTokens ? 'Switching assets' : 'Switch assets')
                 }
-                className="absolute -top-3.5 left-1/2 z-10 size-7 -translate-x-1/2 rounded-md bg-[#373741] p-0 text-foreground hover:bg-popover disabled:opacity-40"
-                variant="secondary"
+                className="absolute -top-3.5 left-1/2 z-10 -translate-x-1/2"
               >
-                <Icon
-                  icon={switchingTokens ? 'lucide:loader-circle' : 'lucide:arrow-down-up'}
-                  className={switchingTokens ? 'animate-spin' : undefined}
-                  width={16}
-                  height={16}
-                />
-              </Button>
+                <Button
+                  type="button"
+                  onClick={onSwitchTokens}
+                  disabled={!canSwitchTokens}
+                  aria-label="Switch assets"
+                  aria-busy={switchingTokens}
+                  title={
+                    reverseUnavailableReason ??
+                    (switchingTokens ? 'Switching assets' : 'Switch assets')
+                  }
+                  className="size-7 rounded-md bg-[#373741] p-0 text-foreground hover:bg-popover disabled:opacity-40"
+                  variant="secondary"
+                >
+                  <Icon
+                    icon={switchingTokens ? 'lucide:loader-circle' : 'lucide:arrow-down-up'}
+                    className={switchingTokens ? 'animate-spin' : undefined}
+                    width={16}
+                    height={16}
+                  />
+                </Button>
+              </span>
             )}
 
             <SwapAssetCard
@@ -791,6 +847,16 @@ export function SwapInputView({
             retrying={isQuoting}
             className="mt-2 px-1 leading-5"
           />
+        )}
+        {onEnableReceiveNetwork && (
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={onEnableReceiveNetwork}
+            className="mt-1 h-8 px-1 text-xs text-primary"
+          >
+            Enable receive network
+          </Button>
         )}
 
         {!hideReceiveAddress && tokenOut && (requiresRecipientAddress || recipientError) && (

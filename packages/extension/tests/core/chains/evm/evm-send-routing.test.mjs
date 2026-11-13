@@ -183,7 +183,9 @@ it('spends only the selected source on-chain balance, including when the abstrac
   assert.equal(resolveEvmSendAvailableRaw(balance, 'main'), '2000')
   assert.equal(resolveEvmSendAvailableRaw(balance, 'private'), '1000')
   const { privateOnchainRaw, ...legacy } = balance
-  assert.equal(resolveEvmSendAvailableRaw(legacy, 'private'), '0')
+  assert.equal(resolveEvmSendAvailableRaw(legacy, 'private'), null)
+  const { mainRaw, ...missingMain } = balance
+  assert.equal(resolveEvmSendAvailableRaw(missingMain, 'main'), null)
 })
 
 it('binds the reviewed payload to account, network, source, asset, recipient, amount, and route', () => {

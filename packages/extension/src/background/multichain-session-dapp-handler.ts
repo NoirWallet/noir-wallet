@@ -114,6 +114,21 @@ type SessionHandler = Pick<
 >
 
 export interface BackgroundMultichainSessionDAppHandlerOptions {
+  readonly readTokenList?: (scope: {
+    readonly keyDomainId: string
+    readonly accountId: string
+    readonly chainIds: readonly string[]
+  }) => Promise<
+    readonly Readonly<{
+      assetId: string
+      chainId: string
+      contractAddress: string | null
+      symbol: string
+      decimals: number
+      enabled: boolean
+    }>[]
+  >
+  readonly openTokenManager?: () => Promise<void>
   readonly analytics?: DAppAnalyticsSink
   readonly network: Network
   readonly evmNetworks: readonly EvmNetworkConfig[]
@@ -370,6 +385,10 @@ export class BackgroundMultichainSessionDAppHandler {
       case 'wallet_getSession':
         parseCaip25NoParams(request.params)
         return this.getSession(origin)
+      case 'wallet_getTokenList':
+      case 'wallet_openTokenManager':
+        parseCaip25NoParams(request.params)
+        return this.handleTokenAccess(origin, request.method === 'wallet_openTokenManager')
       case 'wallet_revokeSession':
         parseCaip25NoParams(request.params)
         await this.options.zcash.revokeAllPermissions(origin)
@@ -387,6 +406,52 @@ export class BackgroundMultichainSessionDAppHandler {
         .filter(connection => connection.caip25Session !== undefined)
         .map(connection => this.notifySessionChanged(connection.origin))
     )
+  }
+
+  private async handleTokenAccess(origin: string, openManager: boolean): Promise<unknown> {
+    const session = await this.getSession(origin)
+    const snapshot = await this.options.readFirstPartySnapshot?.()
+    const active = snapshot?.activeReference
+    if (!session || !snapshot || !active) {
+      throw new Caip25ProviderError(4100, 'Connect and unlock the current wallet account first.')
+    }
+    const revision = await this.options.manager.getAuthorizationRevision(origin)
+    const stored = await this.options.manager.getCaip25Session(origin)
+    const chainIds =
+      stored?.scopes
+        .filter(
+          scope =>
+            session.scopes[scope.chainId]?.accounts.length > 0 &&
+            scope.accounts?.some(
+              account =>
+                account.walletId === active.walletId && account.accountId === active.accountId
+            )
+        )
+        .map(scope => scope.chainId) ?? []
+    if (chainIds.length === 0) {
+      throw new Caip25ProviderError(4100, 'The current wallet account is not authorized.')
+    }
+    const result = openManager
+      ? null
+      : await this.options.readTokenList?.({
+          keyDomainId: active.walletId,
+          accountId: active.accountId,
+          chainIds
+        })
+    if (
+      (await this.options.readFirstPartySnapshot?.())?.identity !== snapshot.identity ||
+      (await this.options.manager.getAuthorizationRevision(origin)) !== revision
+    ) {
+      throw new Caip25ProviderError(4100, 'Wallet authorization changed. Try again.')
+    }
+    if (openManager) {
+      if (!this.options.openTokenManager)
+        throw new Caip25ProviderError(4200, 'Token Manager is unavailable.')
+      await this.options.openTokenManager()
+      return null
+    }
+    if (!result) throw new Caip25ProviderError(4200, 'Token list is unavailable.')
+    return result
   }
 
   async notifySessionChanged(origin: string): Promise<void> {

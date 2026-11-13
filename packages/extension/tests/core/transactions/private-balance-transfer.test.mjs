@@ -21,7 +21,10 @@ import {
   shieldFundingSources,
   shieldPortfolioBalances
 } from '../../../src/popup/services/shield-transfer.ts'
-import { buildShieldSwapRequest } from '../../../src/popup/services/shield-swap-form.ts'
+import {
+  buildShieldSwapRequest,
+  buildShieldSwapPreviewRequest
+} from '../../../src/popup/services/shield-swap-form.ts'
 import { initialMoveDraft } from '../../../src/popup/pages/transactions/move-draft.ts'
 import {
   readShieldMovePreference,
@@ -356,6 +359,18 @@ test('uses independently held Shield tokens without adding them to Public assets
     source: { assetId: sourceId, protocolAssetId: sourceProtocolId, amountRaw: '1250000' },
     destination: { assetId: destinationId, protocolAssetId: destinationProtocolId }
   })
+  const unfundedSwap = {
+    network: 'mainnet',
+    keyDomainId: 'wallet',
+    accountId: 'account',
+    from: sources[0],
+    to: options.find(item => item.asset.asset.id === destinationId),
+    amount: '1.25',
+    balances: [],
+    slippageBps: 50
+  }
+  expect(buildShieldSwapPreviewRequest(unfundedSwap).source.amountRaw).toBe('1250000')
+  expect(() => buildShieldSwapRequest(unfundedSwap)).toThrow('Shield swap is unavailable')
   expect(
     listShieldFundingAssets(
       {
@@ -394,6 +409,39 @@ test('uses independently held Shield tokens without adding them to Public assets
     shieldPortfolioBalances(withZcash)
   ).find(item => item.asset.asset.id === zcashAssetId)
   expect(zcashSource?.asset.balance.confidentialRaw).toBe('140000')
+  const zcashRecipient = 't1XVXWCvpMgBvUaed4XDqWtgQgJSu1Ghz7F'
+  expect(
+    listShieldSendDestinations(zcashSource, withZcashOptions, 'mainnet').map(
+      item => item.asset.asset.id
+    )
+  ).toContain(zcashAssetId)
+  expect(
+    buildExternalShieldWithdrawRequest({
+      network: 'mainnet',
+      keyDomainId: 'wallet',
+      accountId: 'account',
+      amountRaw: '100000',
+      recipient: zcashRecipient,
+      source: zcashSource,
+      destination: zcashSource,
+      slippageBps: 50
+    })
+  ).toMatchObject({
+    destination: { chainId: ZCASH_CHAIN_IDS.mainnet, protocolAssetId: zcashProtocolId },
+    externalRecipient: zcashRecipient
+  })
+  expect(() =>
+    buildExternalShieldWithdrawRequest({
+      network: 'mainnet',
+      keyDomainId: 'wallet',
+      accountId: 'account',
+      amountRaw: '100000',
+      recipient: `0x${'3'.repeat(40)}`,
+      source: zcashSource,
+      destination: zcashSource,
+      slippageBps: 50
+    })
+  ).toThrow('Shield withdrawal is unavailable')
   expect(() =>
     buildExternalShieldWithdrawRequest({
       network: 'mainnet',

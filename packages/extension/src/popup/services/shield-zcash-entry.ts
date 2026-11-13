@@ -26,7 +26,7 @@ export function resolveShieldZcashVaultEntry(input: {
   const zcashReleased = isNewWalletFamilyEnabled('zcash', enabledFlags)
   const registry = createBuildAddressGatedChainRegistry(createInitialProductChainRegistry(network))
   const zcashInProduct = registry.list().some(chain => chain.family === 'zcash')
-  const showVaultCard = zcashReleased && zcashInProduct
+  const showVaultCard = zcashReleased && zcashInProduct && keySource !== 'private-key'
 
   const hasActiveZcash = hasPortfolioZcash
   if (!showVaultCard) {

@@ -245,15 +245,31 @@ export function SwapReviewView({
             )}
           </DetailItem>
           {onRefreshQuote && (
-            <button
-              type="button"
-              className="flex w-full items-center justify-center gap-1 py-3 text-sm text-muted hover:text-foreground"
-              onClick={() => setShowMore(value => !value)}
-              aria-expanded={showMore}
-            >
-              {showMore ? 'Show less' : 'Show more'}
-              <Icon icon={showMore ? 'lucide:chevron-up' : 'lucide:chevron-down'} width={14} />
-            </button>
+            <div className="flex items-center justify-between gap-3 py-2">
+              <button
+                type="button"
+                className="inline-flex min-h-8 items-center gap-1 text-sm text-muted hover:text-foreground"
+                onClick={() => setShowMore(value => !value)}
+                aria-expanded={showMore}
+              >
+                {showMore ? 'Show less' : 'Show more'}
+                <Icon icon={showMore ? 'lucide:chevron-up' : 'lucide:chevron-down'} width={14} />
+              </button>
+              <button
+                type="button"
+                onClick={onRefreshQuote}
+                disabled={isLoading || quoteRefreshing}
+                className="inline-flex min-h-8 shrink-0 items-center gap-1 text-xs text-muted hover:text-foreground disabled:opacity-50"
+                aria-label="Refresh quote"
+              >
+                <Icon
+                  icon="lucide:refresh-cw"
+                  width={14}
+                  className={quoteRefreshing ? 'animate-spin' : undefined}
+                />
+                Refresh quote
+              </button>
+            </div>
           )}
           {(!onRefreshQuote || showMore) && (
             <>
@@ -417,17 +433,6 @@ export function SwapReviewView({
             Amount exceeds balance at this fee. Go back to lower the amount or switch fee tier.
           </p>
         )}
-        {onRefreshQuote && !quoteRefreshing && (
-          <button
-            type="button"
-            onClick={onRefreshQuote}
-            disabled={isLoading}
-            className="mt-3 inline-flex items-center gap-1 px-1 text-xs text-muted hover:text-foreground disabled:opacity-50"
-            aria-label="Refresh quote"
-          >
-            <Icon icon="lucide:refresh-cw" width={14} /> Refresh quote
-          </button>
-        )}
       </div>
 
       <div className="page-footer flex gap-2.5">
@@ -455,7 +460,13 @@ export function SwapReviewView({
             (priceAcceptanceRequired && !onAcceptNewPrice)
           }
           isLoading={isLoading}
-          aria-label={approvalDetails ? 'Confirm token approval' : actionLabel}
+          aria-label={
+            priceAcceptanceRequired
+              ? 'Accept new price'
+              : approvalDetails
+                ? 'Confirm token approval'
+                : actionLabel
+          }
           className={`min-w-0 flex-[2] text-sm text-black ${priceAcceptanceRequired ? 'bg-warning hover:bg-warning/90' : ''}`}
         >
           {priceAcceptanceRequired

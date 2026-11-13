@@ -23,7 +23,10 @@ import { formatEvmWeiAsGwei } from '@/infrastructure/chains/evm'
 import { openHardwareEvmSignTab } from '@/lib/hardware-tab'
 import { openModal } from '@/popup/provider/ModalManager'
 import { bitcoinWalletClient } from '@/popup/services/bitcoin-wallet-client'
-import { formatChainTransactionExplorerUrl } from '@/popup/services/chain-explorer'
+import {
+  formatChainAddressExplorerUrl,
+  formatChainTransactionExplorerUrl
+} from '@/popup/services/chain-explorer'
 import { useSettingsStore } from '@/store/settings-store'
 import { useWalletStore } from '@/store/wallet-store'
 import { buildAccountKey } from '@/store/account-data-store'
@@ -76,6 +79,7 @@ import {
   getActivityProgressSteps,
   getActivityStatusPresentation,
   getActivitySwapPresentation,
+  getClusterSettledDestination,
   buildActivityExecutionAddressModes,
   isOwnedAccountTransfer,
   isActivityRecoveryTransition,
@@ -413,11 +417,20 @@ export function MultichainActivityDetail({
     () => buildActivityExecutionAddressModes(accountNetworks),
     [accountNetworks]
   )
+  const privateFundingPlanId = getConfidentialFundingPlanId(visibleItem.id)
+  const activeConfidentialPlan =
+    confidentialPlan?.transactionId === visibleItem.id &&
+    confidentialPlan.network === network &&
+    confidentialPlan.keyDomainId === visibleItem.scope.keyDomainId &&
+    confidentialPlan.accountId === visibleItem.scope.accountId
+      ? confidentialPlan
+      : null
   const swap = getActivitySwapPresentation(
     visibleItem,
     assetMetadata,
     chainMetadata,
-    executionAddressModes
+    executionAddressModes,
+    getClusterSettledDestination(visibleItem, activeConfidentialPlan)
   )
   const transferRecipient = getActivityTransferRecipient(visibleItem)
   const swapSourceMethod = getActivitySwapSourceMethodLabel(visibleItem, swap?.source?.symbol)
@@ -500,19 +513,15 @@ export function MultichainActivityDetail({
   const explorerUrl = explorerReference?.chainId
     ? formatChainTransactionExplorerUrl(explorerReference.chainId, explorerReference.hash, network)
     : ''
+  const sender = visibleItem.snapshot?.sender
+  const senderExplorerUrl = sender
+    ? formatChainAddressExplorerUrl(sender.chainId, sender.address, network)
+    : ''
   const usesShieldedPoolSource =
     visibleItem.source === 'zcash-v1' &&
     visibleItem.kind === 'transfer' &&
     direction === 'outgoing' &&
     visibleItem.snapshot?.sender === undefined
-  const privateFundingPlanId = getConfidentialFundingPlanId(visibleItem.id)
-  const activeConfidentialPlan =
-    confidentialPlan?.transactionId === visibleItem.id &&
-    confidentialPlan.network === network &&
-    confidentialPlan.keyDomainId === visibleItem.scope.keyDomainId &&
-    confidentialPlan.accountId === visibleItem.scope.accountId
-      ? confidentialPlan
-      : null
   const needsSubmissionCheck =
     activeConfidentialPlan !== null && needsConfidentialSubmissionCheck(activeConfidentialPlan)
   const canCheckSubmission =
@@ -1087,14 +1096,34 @@ export function MultichainActivityDetail({
           </DetailRow>
         )}
         {(visibleItem.kind !== 'shield' || visibleItem.snapshot?.shield) &&
-          visibleItem.snapshot?.sender &&
+          sender &&
           visibleItem.snapshot?.shield?.sourceDomain !== 'shield' && (
             <DetailRow label="From">
-              <span
-                className="max-w-[220px] truncate font-mono text-sm"
-                title={visibleItem.snapshot.sender.address}
-              >
-                {formatSortAddress(visibleItem.snapshot.sender.address)}
+              <span className="flex min-w-0 max-w-[220px] items-center gap-1.5">
+                {senderExplorerUrl ? (
+                  <a
+                    href={senderExplorerUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title={sender.address}
+                    className="min-w-0 truncate font-mono text-sm text-primary hover:underline"
+                  >
+                    {formatSortAddress(sender.address)}
+                  </a>
+                ) : (
+                  <span className="min-w-0 truncate font-mono text-sm" title={sender.address}>
+                    {formatSortAddress(sender.address)}
+                  </span>
+                )}
+                <button
+                  type="button"
+                  aria-label="Copy sender address"
+                  title="Copy sender address"
+                  className="shrink-0 text-muted hover:text-foreground"
+                  onClick={() => void copyToClipboard(sender.address, 'sender')}
+                >
+                  <CopyFeedbackIcon copied={isCopied('sender')} width={14} height={14} />
+                </button>
               </span>
             </DetailRow>
           )}

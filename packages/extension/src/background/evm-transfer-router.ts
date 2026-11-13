@@ -57,6 +57,12 @@ export interface BackgroundEvmTransferRouteController {
     expectedOwner: string,
     executionModeValue?: unknown
   ) => Promise<string>
+  readonly getTokenBalance: (
+    token: string,
+    expectedWalletId: string,
+    expectedAccountId: string,
+    executionModeValue?: unknown
+  ) => Promise<string>
   readonly approve: (
     transactionIdValue: string,
     payloadFingerprint: string
@@ -249,6 +255,23 @@ export class BackgroundEvmTransferRouter {
       token,
       spender,
       expectedOwner,
+      executionMode
+    )
+  }
+
+  async getTokenBalance(
+    chainIdValue: string,
+    token: string,
+    expectedWalletId: string,
+    expectedAccountId: string,
+    executionMode: EvmTransferExecutionMode = 'main'
+  ): Promise<string> {
+    const chain = parseChainId(chainIdValue)
+    if (chain.namespace !== 'eip155') throw new Error('EVM balance requires an EVM chain')
+    return this.requireController(chain.id).getTokenBalance(
+      token,
+      expectedWalletId,
+      expectedAccountId,
       executionMode
     )
   }

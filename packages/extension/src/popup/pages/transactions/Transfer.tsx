@@ -18,6 +18,8 @@ import {
 import { getChainEndpointRuntimeKey } from '@/core/chains/chain-endpoint-settings'
 import { resolveChainIconAlias } from '@/lib/chain-icon'
 import { cn } from '@/lib/utils'
+import { classifyError } from '@/lib/errors'
+import { getSwapQuoteFailureMessage } from '@/popup/services/swap-quote-error-message'
 import { useWalletStore } from '@/store/wallet-store'
 import { useSettingsStore } from '@/store/settings-store'
 import { useNavigate } from '@/popup/provider/Router'
@@ -44,6 +46,12 @@ import { ChainIcon } from '@/popup/components/common/ChainIcon'
 import { ExecutionAccountIcon } from '@/popup/components/account/ExecutionAccountSelector'
 import nearLogo from '@/images/figma-near-confidential.svg'
 import { Button } from '@/popup/components/ui/button'
+import { NetworkFeeTierPicker } from '@/popup/components/transaction/NetworkFeeTierPicker'
+import {
+  areEvmFeeSelectionsEqual,
+  formatEvmWeiAsGwei,
+  type EvmFeeSelection
+} from '@/infrastructure/chains/evm'
 import { Skeleton } from '@/popup/components/ui/skeleton'
 import {
   Dialog,
@@ -239,6 +247,7 @@ function MethodCard({
   estimate,
   fee,
   loading,
+  disabled,
   onClick
 }: {
   title: 'Cluster' | 'Directly'
@@ -248,6 +257,7 @@ function MethodCard({
   estimate: MoveMethodEstimate | null
   fee: { value: string; detail: string | null }
   loading?: boolean
+  disabled?: boolean
   onClick: () => void
 }) {
   return (
@@ -257,8 +267,9 @@ function MethodCard({
       aria-label={title}
       aria-checked={selected}
       onClick={onClick}
+      disabled={disabled}
       className={cn(
-        'relative flex min-h-[144px] flex-col rounded-xl border bg-wallet-surface px-3 py-3 text-left text-xs leading-4',
+        'relative flex min-h-[144px] min-w-0 flex-col overflow-hidden rounded-xl border bg-wallet-surface px-3 py-3 text-left text-xs leading-4 disabled:cursor-not-allowed disabled:opacity-50',
         selected ? 'border-primary/60' : 'border-white/10'
       )}
     >
@@ -286,7 +297,7 @@ function MethodCard({
           <span className="shrink-0 text-muted">Time (est.)</span>
           <span className="min-w-0 text-right">
             {loading ? (
-              <Skeleton className="ml-auto h-4 w-16" />
+              <Skeleton className="ml-auto h-4 w-full max-w-16" />
             ) : estimate ? (
               <>
                 <span className="block">{estimate.time}</span>
@@ -300,7 +311,7 @@ function MethodCard({
         <span className="shrink-0 text-muted">Fee (est.)</span>
         <span className="min-w-0 break-words text-right">
           {loading ? (
-            <Skeleton className="ml-auto h-4 w-24" />
+            <Skeleton className="ml-auto h-4 w-full max-w-24" />
           ) : (
             <>
               <span className="block">{fee.value}</span>
@@ -387,7 +398,8 @@ function TransferForm() {
     model: portfolio,
     status: loadState,
     settled: portfolioSettled,
-    refresh: refreshPortfolio
+    refresh: refreshPortfolio,
+    readLatest: readLatestPortfolio
   } = useHomePortfolio(effective?.walletId ?? null, effective?.accountId ?? null)
   const [retry, setRetry] = useState(0)
   const [assetPickerOpen, setAssetPickerOpen] = useState(false)
@@ -407,6 +419,10 @@ function TransferForm() {
   const [to, setTo] = useState<TransferDomain>(initialDraft.to)
   const [amount, setAmount] = useState(initialDraft.amount)
   const [method, setMethod] = useState<'cluster' | 'directly'>(initialDraft.method)
+  const [evmMoveFee, setEvmMoveFee] = useState<EvmFeeSelection>({
+    kind: 'tier',
+    tier: 'standard'
+  })
   const [maxSelected, setMaxSelected] = useState(initialDraft.maxSelected)
   const [loadedPreference, setLoadedPreference] = useState<{
     key: string
@@ -525,12 +541,12 @@ function TransferForm() {
       accountId: effective.accountId
     }
     void confidentialFundingClient
-      .refreshBalances(scope, true)
+      .refreshBalances(scope, false)
       .then(balances => {
         if (cancelled) return
         setShieldSnapshot({ key: scopeKey, balances })
         setShieldConnection('connected')
-        void refreshPortfolio(true)
+        void readLatestPortfolio()
       })
       .catch(() => {
         if (!cancelled) {
@@ -562,6 +578,7 @@ function TransferForm() {
     setDestinationAssetId(draft.destinationAssetId ?? null)
     setAmount(draft.amount)
     setMethod(draft.method)
+    setEvmMoveFee({ kind: 'tier', tier: 'standard' })
     setMaxSelected(draft.maxSelected)
     setPreparingShield(false)
     setConfirmingShield(false)
@@ -764,6 +781,9 @@ function TransferForm() {
   ])
   const selected =
     assets.find(item => item.asset.asset.id === (selectedAssetId ?? defaultAssetId)) ?? null
+  useEffect(() => {
+    setEvmMoveFee({ kind: 'tier', tier: 'standard' })
+  }, [selected?.chain.chain.id])
   const requestedChainId = selectedAssetId?.split('/')[0]
   const requestedChain = portfolio?.chains.find(chain => chain.chain.id === requestedChainId)
   const requestedAssetKnown =
@@ -979,6 +999,10 @@ function TransferForm() {
       setRouteSnapshot({ key: routeKey, status: 'unsupported' })
       return
     }
+    if (!amount.trim()) {
+      setRouteSnapshot(null)
+      return
+    }
     const match = /^eip155:([1-9][0-9]*)$/.exec(selected.chain.chain.id)
     if (!match) {
       setRouteSnapshot({ key: routeKey, status: 'unsupported' })
@@ -1023,7 +1047,7 @@ function TransferForm() {
     return () => {
       cancelled = true
     }
-  }, [routeKey, selected?.chain.chain.id, eligible, supportedPair, retry])
+  }, [routeKey, selected?.chain.chain.id, eligible, supportedPair, retry, amount])
 
   const nativeMaximumEnabled = Boolean(
     selected &&
@@ -1143,7 +1167,7 @@ function TransferForm() {
       : null
   const amountError = fundingRoute ? shieldAmountState?.error : amountState?.error
   const confidentialRouteError =
-    supportedPair && selected && routeState === 'unsupported' && !clusterAvailable
+    supportedPair && selected && amount.trim() && routeState === 'unsupported' && !clusterAvailable
       ? 'Confidential transfers are unavailable for this asset.'
       : null
   const estimateAmountRaw = useMemo(() => {
@@ -1183,7 +1207,7 @@ function TransferForm() {
   const clusterEstimate = useMoveMethodEstimate({
     enabled:
       canEstimateMethods && Boolean(managedAsset && effective && shieldConnection === 'connected'),
-    requestKey: `${methodEstimateKey}:${shieldConnection}`,
+    requestKey: `${methodEstimateKey}:${shieldConnection}:${JSON.stringify(evmMoveFee)}`,
     estimate: async signal => {
       const request = buildShieldTransferRequest({
         network: currentNetwork,
@@ -1195,7 +1219,8 @@ function TransferForm() {
         amountRaw: estimateAmountRaw!,
         asset: selected!.asset,
         chain: selected!.chain,
-        managed: managedAsset!
+        managed: managedAsset!,
+        ...(from === 'shield' ? {} : { feeSelection: evmMoveFee })
       })
       const preview = await confidentialFundingClient.preview(request)
       signal.throwIfAborted()
@@ -1203,32 +1228,25 @@ function TransferForm() {
     }
   })
   const clusterQuoted = Boolean(
-    canEstimateMethods &&
-    managedAsset &&
-    shieldConnection === 'connected' &&
-    clusterEstimate.value?.routeFeeRaw !== null &&
-    clusterEstimate.value
+    canEstimateMethods && managedAsset && shieldConnection === 'connected' && clusterEstimate.value
   )
-  const directQuoted = Boolean(
-    canEstimateMethods &&
-    methodAvailable &&
-    directEstimate.value?.routeFeeRaw !== null &&
-    directEstimate.value
-  )
+  const directQuoted = Boolean(canEstimateMethods && methodAvailable && directEstimate.value)
   const selectedEstimate = method === 'cluster' ? clusterEstimate : directEstimate
+  const clusterUnavailable = getSwapQuoteFailureMessage(clusterEstimate.errorMessage) === 'no route'
+  const directUnavailable =
+    directEstimate.errorMessage === 'Move route unavailable' ||
+    getSwapQuoteFailureMessage(directEstimate.errorMessage) === 'no route'
   const quoteMinimumError = useMemo(() => {
     if (!selected) return null
-    for (const candidate of [clusterEstimate.errorMessage, directEstimate.errorMessage]) {
-      if (!candidate) continue
-      const message = formatMoveQuoteMinimumError(
-        candidate,
-        selected.asset.metadata.decimals,
-        formatSymbol(selected.asset.metadata.symbol)
-      )
-      if (message) return message
-    }
-    return null
-  }, [selected, clusterEstimate.errorMessage, directEstimate.errorMessage])
+    const message = selectedEstimate.errorMessage
+    return message
+      ? formatMoveQuoteMinimumError(
+          message,
+          selected.asset.metadata.decimals,
+          formatSymbol(selected.asset.metadata.symbol)
+        )
+      : null
+  }, [selected, selectedEstimate.errorMessage])
   const showGenericEstimateError =
     clusterPair &&
     selectedEstimate.error &&
@@ -1236,8 +1254,8 @@ function TransferForm() {
     !clusterEstimate.loading &&
     !directEstimate.loading
   const transferError =
-    quoteMinimumError ??
     amountError ??
+    quoteMinimumError ??
     confidentialRouteError ??
     ((fundingRoute ? shieldAmountState?.amountRaw : amountState?.amountRaw)
       ? tokenFeeBalanceError
@@ -1247,7 +1265,16 @@ function TransferForm() {
       return
     setMethod('cluster')
   }, [clusterPair, clusterAvailable, method])
-  const shieldReviewKey = `${routeKey}:${method}:${currentAmount}:${shieldAmountState?.amountRaw ?? ''}`
+  useEffect(() => {
+    if (method === 'cluster' && clusterUnavailable && directQuoted) {
+      userPickedMethod.current = false
+      setMethod('directly')
+    } else if (method === 'directly' && directUnavailable && clusterQuoted) {
+      userPickedMethod.current = false
+      setMethod('cluster')
+    }
+  }, [method, clusterUnavailable, directUnavailable, clusterQuoted, directQuoted])
+  const shieldReviewKey = `${routeKey}:${method}:${currentAmount}:${shieldAmountState?.amountRaw ?? ''}:${JSON.stringify(evmMoveFee)}`
   const latestShieldReviewKey = useRef(shieldReviewKey)
   latestShieldReviewKey.current = shieldReviewKey
   const activeShieldReview = preparedShield?.key === shieldReviewKey ? preparedShield.review : null
@@ -1441,7 +1468,7 @@ function TransferForm() {
       if (!scopeStillCurrent()) return
       setShieldSnapshot({ key: scopeKey, balances })
       setShieldConnection('connected')
-      void refreshPortfolio(true)
+      void readLatestPortfolio()
     } catch (error) {
       if (!scopeStillCurrent()) return
       setShieldConnection('required')
@@ -1475,6 +1502,7 @@ function TransferForm() {
         asset: selected.asset,
         chain: selected.chain,
         managed: managedAsset,
+        ...(from === 'shield' ? {} : { feeSelection: evmMoveFee }),
         ...(from === 'shield' && destination ? { destination } : {})
       })
       const result = await confidentialFundingClient.prepare(request)
@@ -1495,8 +1523,14 @@ function TransferForm() {
       setConfirmUncertain(false)
       setPreparedShield({ key, review: result })
     } catch (error) {
-      if (scopeStillCurrent())
-        setShieldError(error instanceof Error ? error.message : 'Shield review is unavailable')
+      if (scopeStillCurrent()) {
+        const message = error instanceof Error ? error.message : ''
+        setShieldError(
+          message === 'Gas limit is below the estimated gas required'
+            ? 'Gas limit is below the estimated gas required. Edit the network fee and try again.'
+            : classifyError(error).userMessage
+        )
+      }
     } finally {
       if (scopeStillCurrent()) setPreparingShield(false)
     }
@@ -1603,7 +1637,7 @@ function TransferForm() {
     } catch (error) {
       const status = await checkShieldPlan(pending.planId)
       if (status === 'prepared' && scopeStillCurrent())
-        setShieldError(error instanceof Error ? error.message : 'Shield transfer could not start')
+        setShieldError(classifyError(error).userMessage)
     } finally {
       if (scopeStillCurrent()) setConfirmingShield(false)
     }
@@ -1625,6 +1659,23 @@ function TransferForm() {
     }
   }, [selected, assetPrices, currentAmount])
 
+  const changeShieldFee = async (next: EvmFeeSelection) => {
+    const review = activeShieldReview
+    if (!review?.sourceEvmFee || areEvmFeeSelectionsEqual(next, evmMoveFee)) return
+    if (confirmAttemptedPlanId.current === review.planId)
+      throw new Error('Check transfer status before changing network fee.')
+    setCancellingShield(true)
+    try {
+      await confidentialFundingClient.cancel(review.planId)
+      if (!scopeStillCurrent()) return
+      setPreparedShield(null)
+      setShieldError(null)
+      setEvmMoveFee(next)
+    } finally {
+      if (scopeStillCurrent()) setCancellingShield(false)
+    }
+  }
+
   if (activeShieldReview && selected) {
     const output = formatBaseUnitAmount(
       activeShieldReview.expectedOutputRaw,
@@ -1641,7 +1692,10 @@ function TransferForm() {
     const fee =
       quoteFeeRaw !== null ? (
         <AmountDisplay
-          value={formatBaseUnitAmount(quoteFeeRaw, selected.asset.metadata.decimals)}
+          value={`${BigInt(quoteFeeRaw) < 0n ? '-' : ''}${formatBaseUnitAmount(
+            (BigInt(quoteFeeRaw) < 0n ? -BigInt(quoteFeeRaw) : BigInt(quoteFeeRaw)).toString(),
+            selected.asset.metadata.decimals
+          )}`}
           symbol={symbol}
           profile="fee"
         />
@@ -1727,24 +1781,94 @@ function TransferForm() {
               content: (
                 <span className="flex flex-col items-end gap-1">
                   <span className="flex items-center gap-2">
-                    <span className="text-xs text-muted">Route</span>
+                    <span className="text-xs text-muted">Net quote difference</span>
                     {fee}
                   </span>
-                  {networkFee && (
-                    <span className="flex items-center gap-2">
-                      <span className="text-xs text-muted">
-                        {activeShieldReview.operation === 'cluster' ? 'Max network' : 'Network'}
-                      </span>
+                </span>
+              )
+            },
+            ...(networkFee
+              ? [
+                  {
+                    label: 'Max network fee',
+                    content: activeShieldReview.sourceEvmFee ? (
+                      <NetworkFeeTierPicker
+                        chainFamily="evm"
+                        tier={evmMoveFee.kind === 'tier' ? evmMoveFee.tier : 'standard'}
+                        selection={evmMoveFee}
+                        feeModel={
+                          activeShieldReview.sourceEvmFee.transactionType === 'legacy'
+                            ? 'legacy'
+                            : 'eip1559'
+                        }
+                        customDefaults={{
+                          gasLimit: activeShieldReview.sourceEvmFee.gasLimit,
+                          maxFeePerGasWei: activeShieldReview.sourceEvmFee.maxFeePerGasWei ?? '0',
+                          maxPriorityFeePerGasWei:
+                            activeShieldReview.sourceEvmFee.maxPriorityFeePerGasWei ?? '0',
+                          gasPriceWei: activeShieldReview.sourceEvmFee.gasPriceWei
+                        }}
+                        amount={formatBaseUnitAmount(networkFee.raw, networkFee.decimals)}
+                        symbol={formatSymbol(networkFee.symbol)}
+                        onTierChange={tier => changeShieldFee({ kind: 'tier', tier })}
+                        onSelectionChange={changeShieldFee}
+                        disabled={
+                          cancellingShield ||
+                          confirmingShield ||
+                          confirmUncertain ||
+                          preparingShield
+                        }
+                        details={
+                          <div className="space-y-2 border-t border-border/60 pt-3 text-xs">
+                            <div className="flex justify-between gap-3">
+                              <span className="text-muted">Gas limit</span>
+                              <span>{activeShieldReview.sourceEvmFee.gasLimit}</span>
+                            </div>
+                            {activeShieldReview.sourceEvmFee.transactionType === 'legacy' ? (
+                              <div className="flex justify-between gap-3">
+                                <span className="text-muted">Gas price</span>
+                                <span>
+                                  {formatEvmWeiAsGwei(
+                                    activeShieldReview.sourceEvmFee.gasPriceWei ?? '0'
+                                  )}{' '}
+                                  GWEI
+                                </span>
+                              </div>
+                            ) : (
+                              <>
+                                <div className="flex justify-between gap-3">
+                                  <span className="text-muted">Max fee per gas</span>
+                                  <span>
+                                    {formatEvmWeiAsGwei(
+                                      activeShieldReview.sourceEvmFee.maxFeePerGasWei ?? '0'
+                                    )}{' '}
+                                    GWEI
+                                  </span>
+                                </div>
+                                <div className="flex justify-between gap-3">
+                                  <span className="text-muted">Priority fee per gas</span>
+                                  <span>
+                                    {formatEvmWeiAsGwei(
+                                      activeShieldReview.sourceEvmFee.maxPriorityFeePerGasWei ?? '0'
+                                    )}{' '}
+                                    GWEI
+                                  </span>
+                                </div>
+                              </>
+                            )}
+                          </div>
+                        }
+                      />
+                    ) : (
                       <AmountDisplay
                         value={formatBaseUnitAmount(networkFee.raw, networkFee.decimals)}
                         symbol={formatSymbol(networkFee.symbol)}
                         profile="fee"
                       />
-                    </span>
-                  )}
-                </span>
-              )
-            }
+                    )
+                  }
+                ]
+              : [])
           ]}
           error={
             shieldError ? (
@@ -1767,6 +1891,7 @@ function TransferForm() {
           cancelDisabled={cancellingShield}
           confirmDisabled={
             !scopeStillCurrent() ||
+            cancellingShield ||
             (!confirmUncertain && activeShieldReview.expiresAt <= Date.now())
           }
           onCancel={() => void cancelShieldReview()}
@@ -1947,7 +2072,9 @@ function TransferForm() {
               aria-label="Transfer method"
               className={cn(
                 'mt-auto grid shrink-0 gap-2.5 pt-4',
-                clusterAvailable && methodAvailable ? 'grid-cols-2' : 'grid-cols-1'
+                clusterAvailable && methodAvailable
+                  ? 'grid-cols-[minmax(0,1fr)_minmax(0,1fr)]'
+                  : 'grid-cols-1'
               )}
             >
               {clusterAvailable && (
@@ -1956,6 +2083,7 @@ function TransferForm() {
                   detail="Multiple transactions"
                   recommended
                   selected={method === 'cluster'}
+                  disabled={clusterUnavailable}
                   estimate={clusterEstimate.value}
                   loading={
                     canEstimateMethods &&
@@ -1975,6 +2103,7 @@ function TransferForm() {
                   detail="One transaction"
                   recommended={false}
                   selected={method === 'directly'}
+                  disabled={directUnavailable}
                   estimate={directEstimate.value}
                   loading={canEstimateMethods && methodAvailable && directEstimate.loading}
                   fee={formatMoveMethodFee(directEstimate.value, selected.asset)}
@@ -1986,13 +2115,48 @@ function TransferForm() {
               )}
             </div>
           )}
+        {fundingRoute &&
+          selected?.chain.chain.family === 'evm' &&
+          from !== 'shield' &&
+          evmMoveFee.kind !== 'tier' && (
+            <div className="mt-3 flex items-center justify-between gap-3 border-t border-border/60 pt-3 text-xs">
+              <span className="text-muted">Network fee</span>
+              <NetworkFeeTierPicker
+                chainFamily="evm"
+                tier="standard"
+                selection={evmMoveFee}
+                feeModel={evmMoveFee.kind === 'legacy' ? 'legacy' : 'eip1559'}
+                amount={
+                  clusterEstimate.value?.sourceNetworkFee
+                    ? formatBaseUnitAmount(
+                        clusterEstimate.value.sourceNetworkFee.raw,
+                        clusterEstimate.value.sourceNetworkFee.decimals
+                      )
+                    : '—'
+                }
+                symbol={
+                  clusterEstimate.value?.sourceNetworkFee?.symbol ??
+                  nativeFeeAsset?.metadata.symbol ??
+                  selected.chain.chain.displayName
+                }
+                onTierChange={tier => {
+                  setEvmMoveFee({ kind: 'tier', tier })
+                  setShieldError(null)
+                }}
+                onSelectionChange={next => {
+                  setEvmMoveFee(next)
+                  setShieldError(null)
+                }}
+              />
+            </div>
+          )}
         {showGenericEstimateError && (
           <InlineError
             message="Transfer estimate unavailable. Try again."
             onRetry={() => setRetry(value => value + 1)}
           />
         )}
-        {supportedPair && routeState === 'error' && (
+        {supportedPair && amount.trim() && routeState === 'error' && (
           <InlineError
             message="Transfer availability could not be checked."
             onRetry={() => setRetry(value => value + 1)}

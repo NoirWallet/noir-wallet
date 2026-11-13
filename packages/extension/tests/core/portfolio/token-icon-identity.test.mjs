@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { getTokenIconCandidates } from '../../../src/popup/components/tokens/token-icon-candidates.ts'
+import {
+  getTokenIconCandidates,
+  isBundledEthIconIdentity
+} from '../../../src/popup/components/tokens/token-icon-candidates.ts'
 
 const providerIcon = 'https://tokens.example/provider-eth.png'
 const candidates = (assetId, blockchain = 'arb', contractAddress = null) =>
@@ -58,4 +61,17 @@ test('does not give unrelated native coins or custom contracts the ETH identity'
   ]) {
     assert.equal(candidates(assetId, chain, contract)[0], providerIcon, assetId)
   }
+})
+
+test('a custom EVM native ETH uses ETH artwork only for its exact asset identity', () => {
+  assert.equal(isBundledEthIconIdentity('eip155:46630/slip44:60', undefined, 'ETH'), true)
+  assert.equal(isBundledEthIconIdentity('eip155:46630/slip44:60', undefined, 'OKB'), false)
+  assert.equal(
+    isBundledEthIconIdentity(
+      'eip155:46630/erc20:0x3333333333333333333333333333333333333333',
+      undefined,
+      'ETH'
+    ),
+    false
+  )
 })

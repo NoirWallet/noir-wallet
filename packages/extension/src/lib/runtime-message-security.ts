@@ -20,6 +20,7 @@ import { isZcashOperationAnalyticsContext } from './analytics/operations'
 import { isDiagnosticContextId } from './diagnostic-log'
 import type { ZcashTransactionContext } from '@/core/worker/types'
 import { parseSelectedNetworkFamilies } from '@/core/wallet/account-network-selection'
+import { parseEvmFeeSelection } from '@/infrastructure/chains/evm/evm-fee-tier'
 
 export interface RuntimeMessageSenderLike {
   readonly id?: string
@@ -188,6 +189,10 @@ const isWalletBackupVerification: RuntimeFieldValidator = value => {
 }
 const isEvmAddress: RuntimeFieldValidator = value =>
   typeof value === 'string' && /^0x[0-9a-fA-F]{40}$/.test(value)
+const isEvmChainId: RuntimeFieldValidator = value =>
+  typeof value === 'string' && /^eip155:(0|[1-9][0-9]{0,19})$/.test(value)
+const isScopedAccountId: RuntimeFieldValidator = value =>
+  typeof value === 'string' && value.length > 0 && value.length <= 256
 const isEvmWeiFeeCap: RuntimeFieldValidator = value =>
   typeof value === 'string' &&
   /^(?:0|[1-9][0-9]{0,77})$/.test(value) &&
@@ -261,24 +266,12 @@ const isNetworkFeeTier: RuntimeFieldValidator = value =>
   value === 'low' || value === 'standard' || value === 'fast'
 const isEvmFeeSelection: RuntimeFieldValidator = value => {
   if (!isRuntimeRecord(value)) return false
-  if (
-    value.kind === 'tier' &&
-    Object.keys(value).length === 2 &&
-    Object.prototype.hasOwnProperty.call(value, 'tier')
-  ) {
-    return isNetworkFeeTier(value.tier)
+  try {
+    parseEvmFeeSelection(value)
+    return true
+  } catch {
+    return false
   }
-  if (
-    value.kind === 'custom' &&
-    Object.keys(value).length === 2 &&
-    Object.prototype.hasOwnProperty.call(value, 'maxPriorityFeePerGasWei') &&
-    typeof value.maxPriorityFeePerGasWei === 'string' &&
-    /^(?:0|[1-9][0-9]*)$/.test(value.maxPriorityFeePerGasWei)
-  ) {
-    const priorityFee = BigInt(value.maxPriorityFeePerGasWei)
-    return priorityFee > 0n && priorityFee <= 10_000_000_000_000n
-  }
-  return false
 }
 const isAssetMarketHistoryRange: RuntimeFieldValidator = value =>
   value === '1d' ||
@@ -598,6 +591,12 @@ const TRUSTED_RUNTIME_SCHEMAS: Readonly<Record<string, RuntimeMessageSchema>> = 
     required: { action: isPortfolioAction },
     optional: { assetId: isShortString }
   },
+  GET_TOKEN_CONTRACT_ICON: {
+    required: {
+      identity: value =>
+        typeof value === 'string' && /^eip155:[1-9][0-9]*\/erc20:0x[0-9a-f]{40}$/.test(value)
+    }
+  },
   GET_RHEA_SWAP_TOKENS: {
     required: {
       direction: isRheaSwapDirection,
@@ -732,6 +731,15 @@ const TRUSTED_RUNTIME_SCHEMAS: Readonly<Record<string, RuntimeMessageSchema>> = 
     },
     optional: { executionMode: value => value === 'main' || value === 'private' }
   },
+  GET_EVM_TOKEN_BALANCE: {
+    required: {
+      chainId: isEvmChainId,
+      token: isEvmAddress,
+      walletId: isScopedAccountId,
+      accountId: isScopedAccountId,
+      executionMode: value => value === 'main' || value === 'private'
+    }
+  },
   PREPARE_EVM_TRANSFER: {
     required: { intent: isRecord },
     optional: {
@@ -856,7 +864,8 @@ const TRUSTED_RUNTIME_SCHEMAS: Readonly<Record<string, RuntimeMessageSchema>> = 
     required: {
       walletId: isShortString,
       accountId: isShortString,
-      families: isSelectedNetworkFamilies
+      families: isSelectedNetworkFamilies,
+      chainIds: isChainIdArray
     },
     optional: { birthdayHeight: isPositiveBirthdayHeight }
   },
@@ -1043,6 +1052,7 @@ const TRUSTED_RUNTIME_CONTEXTS: Readonly<Record<string, readonly OwnExtensionSen
     GET_BITCOIN_ACTIVITY: ['extension-page'],
     GET_BITCOIN_WALLET_IDENTITY: ['extension-page'],
     GET_ASSET_PRICES: ['extension-page'],
+    GET_TOKEN_CONTRACT_ICON: ['extension-page'],
     GET_RHEA_SWAP_TOKENS: ['extension-page'],
     QUOTE_RHEA_SWAP: ['extension-page'],
     SELECT_RHEA_SWAP_ROUTE: ['extension-page'],
@@ -1097,6 +1107,7 @@ const TRUSTED_RUNTIME_CONTEXTS: Readonly<Record<string, readonly OwnExtensionSen
     GET_EVM_PORTFOLIO: ['extension-page'],
     GET_EVM_CONFIRMATION_ESTIMATE: ['extension-page'],
     GET_EVM_TOKEN_ALLOWANCE: ['extension-page'],
+    GET_EVM_TOKEN_BALANCE: ['extension-page'],
     PREPARE_EVM_TRANSFER: ['extension-page'],
     ESTIMATE_EVM_TRANSFER_FEE: ['extension-page'],
     ESTIMATE_EVM_CONTRACT_CALL_FEE: ['extension-page'],

@@ -1,6 +1,6 @@
 import { isZcashHardwareKeySource } from '@/core/wallet/hardware-wallet-data'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useLocation, useSearchParams } from 'react-router-dom'
 import { Icon } from '@iconify/react'
 import Big from '@/lib/big'
 import type { PortfolioReadModel } from '@/core/portfolio'
@@ -76,6 +76,8 @@ import { getFundingSourceUnavailableReason } from '@/core/wallet/funding-source'
 import type { KeySource } from '@/types/wallet'
 
 export function AssetDetail() {
+  const location = useLocation()
+  const sendOriginPath = `${location.pathname}${location.search}`
   const [searchParams] = useSearchParams()
   const requestedAssetId = searchParams.get('assetId')
   const { goBack, navigate } = useNavigate()
@@ -440,7 +442,9 @@ export function AssetDetail() {
       return
     }
     if (chain.chain.family === 'zcash') {
-      navigate(`/send/zcash?from=${zcashFundingSource}`)
+      navigate(
+        `/send/zcash?from=${zcashFundingSource}&originPath=${encodeURIComponent(sendOriginPath)}`
+      )
       return
     }
     const query = new URLSearchParams({ assetId: asset.asset.id })
@@ -503,7 +507,10 @@ export function AssetDetail() {
       query.set('sourceWalletId', effectiveWalletId)
       query.set('sourceAccountId', effectiveAccountId)
     }
-    if (chain?.chain.family === 'zcash' && zcashFundingSource === 'shielded') {
+    if (
+      chain?.chain.family === 'zcash' &&
+      (searchParams.get('domain') === 'shield' || zcashFundingSource === 'shielded')
+    ) {
       query.set('balanceDomain', 'shield')
       query.set('shieldZecSource', 'native')
     } else {
@@ -581,7 +588,8 @@ export function AssetDetail() {
         action: 'send' as const,
         label: 'Send',
         disabled: Boolean(getFundingSourceUnavailableReason(zcashKeySource, privacy)),
-        onClick: () => navigate(`/send/zcash?from=${privacy}`)
+        onClick: () =>
+          navigate(`/send/zcash?from=${privacy}&originPath=${encodeURIComponent(sendOriginPath)}`)
       },
       {
         action: 'receive' as const,
@@ -596,7 +604,10 @@ export function AssetDetail() {
         action: 'move' as const,
         label: 'Move',
         disabled: Boolean(getFundingSourceUnavailableReason(zcashKeySource, privacy)),
-        onClick: () => navigate(`/send/zcash?move=1&from=${privacy}`)
+        onClick: () =>
+          navigate(
+            `/send/zcash?move=1&from=${privacy}&originPath=${encodeURIComponent(sendOriginPath)}`
+          )
       },
       ...(privacy === 'transparent'
         ? [

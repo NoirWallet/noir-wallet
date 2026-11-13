@@ -1,5 +1,5 @@
 import type { ChainDefinition } from '@/core/chains/registry'
-import type { AccountData, Network } from '@/types'
+import type { AccountData, Network, WalletItem } from '@/types'
 
 export type AccountNetworkFamily = ChainDefinition['family']
 
@@ -55,4 +55,43 @@ export function isAccountNetworkEnabled(
     return true
   }
   return parseSelectedNetworkFamilies(selections[network]).includes(family)
+}
+
+export function parseSelectedChainIds(value: unknown): readonly string[] {
+  if (
+    !Array.isArray(value) ||
+    value.length === 0 ||
+    value.some(
+      chainId => typeof chainId !== 'string' || chainId.length === 0 || chainId.length > 128
+    ) ||
+    new Set(value).size !== value.length
+  ) {
+    throw new Error('Select at least one supported chain')
+  }
+  return Object.freeze([...value] as string[])
+}
+
+export function isAccountChainEnabled(
+  account: AccountData,
+  network: Network,
+  family: AccountNetworkFamily,
+  chainId: string
+): boolean {
+  if (!isAccountNetworkEnabled(account, network, family)) return false
+  const selected = account.networkChainSelections?.[network]
+  return selected === undefined || parseSelectedChainIds(selected).includes(chainId)
+}
+
+export function isRetainedV1UpgradeAccount(
+  wallet: WalletItem | null | undefined,
+  account: AccountData | null | undefined,
+  network: Network
+): boolean {
+  return Boolean(
+    wallet &&
+    account &&
+    wallet.secretPhraseOrigin === undefined &&
+    (wallet.keySource === undefined || wallet.keySource === 'software') &&
+    account.networkSelections?.[network]
+  )
 }

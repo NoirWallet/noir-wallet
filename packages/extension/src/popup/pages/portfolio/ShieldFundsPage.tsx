@@ -9,6 +9,7 @@ import { useAccountDataStore } from '@/store/account-data-store'
 import { useSettingsStore } from '@/store/settings-store'
 import { useActiveAccountNetworks } from '@/popup/hooks/useActiveAccountNetworks'
 import { useHomePortfolio } from '@/popup/hooks/useHomePortfolio'
+import { useShieldBalances } from '@/popup/hooks/useShieldBalances'
 import { resolveEffectiveActiveAccountIdentity } from '@/popup/lib/effective-active-account'
 import { assetPriceClient } from '@/popup/services/asset-price-client'
 import {
@@ -58,7 +59,7 @@ function ShieldFundsContent() {
     currentAccountId,
     nativeAccount: activeAccount
   })
-  const { model, status, refresh } = useHomePortfolio(
+  const { model, status, refresh, readLatest } = useHomePortfolio(
     account?.walletId ?? null,
     account?.accountId ?? null
   )
@@ -105,6 +106,25 @@ function ShieldFundsContent() {
     zcashKeySource
   })
   const { near, canManageNear, hasZcash, providersFor } = shieldActions
+  const shieldScopeKey = `${currentNetwork}:${account?.walletId ?? ''}:${account?.accountId ?? ''}`
+  const {
+    connecting: nearConnecting,
+    error: nearBalanceError,
+    refreshBalances: refreshNearBalances
+  } = useShieldBalances({
+    active: true,
+    enabled: canManageNear && near.status !== 'ready',
+    scopeKey: shieldScopeKey,
+    scope: account
+      ? {
+          network: currentNetwork,
+          keyDomainId: account.walletId,
+          accountId: account.accountId
+        }
+      : null,
+    refreshPortfolio: refresh,
+    readProjection: readLatest
+  })
   const zcashMoveSource = getDefaultZcashSelfMoveSource({
     addresses: zcashAccount?.addresses,
     balance: zcashBalance,
@@ -146,7 +166,7 @@ function ShieldFundsContent() {
   const totalLabel = balancesHidden
     ? '••••'
     : total === null
-      ? status === 'loading' || (zcash && pricesLoading)
+      ? status === 'loading' || nearConnecting || (zcash && pricesLoading)
         ? '…'
         : '—'
       : formatFiatAmount(total, { showSign: true })
@@ -275,10 +295,10 @@ function ShieldFundsContent() {
         </div>
         <div className="mt-7 flex items-center justify-between">
           <h2 className="text-sm text-wallet-secondary">Shield Vault</h2>
-          {status === 'error' && (
+          {(status === 'error' || nearBalanceError) && (
             <button
               type="button"
-              onClick={() => void refresh(true)}
+              onClick={() => void (nearBalanceError ? refreshNearBalances(true) : refresh(true))}
               className="text-xs text-primary"
             >
               Retry
@@ -296,7 +316,9 @@ function ShieldFundsContent() {
               const label = balancesHidden
                 ? '••••'
                 : fiat === null || fiat === undefined
-                  ? status === 'loading' || (provider === 'zcash-shield' && pricesLoading)
+                  ? status === 'loading' ||
+                    (provider === 'near-confidential' && nearConnecting) ||
+                    (provider === 'zcash-shield' && pricesLoading)
                     ? '…'
                     : '—'
                   : formatFiatAmount(fiat, { showSign: true })

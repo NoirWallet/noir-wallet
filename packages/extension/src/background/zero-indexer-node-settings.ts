@@ -25,6 +25,8 @@ const REGISTRY_TIMEOUT_MS = 3_000
 const PROBE_CACHE_MAX_AGE_MS = 5 * 60_000
 const mutationQueue = new SerialTaskQueue()
 const refreshDedup = new DedupPromise<ZeroIndexerNodeStatus>()
+let registrySuccessAt = 0
+let registryAttemptAt = 0
 
 async function verifyZcashRpcEndpoint(
   endpoint: { url: string },
@@ -182,11 +184,16 @@ export function getZeroIndexerNodeStatus(refresh = false): Promise<ZeroIndexerNo
 
 async function refreshZeroIndexerNodeStatus(): Promise<ZeroIndexerNodeStatus> {
   let registry = await readRegistry()
-  try {
-    registry = await fetchRegistry()
-    await chrome.storage.local.set({ [ZERO_INDEXER_REGISTRY_CACHE_KEY]: registry })
-  } catch {
-    // The cached registry and bundled defaults keep node selection usable offline.
+  const now = Date.now()
+  if (now - registrySuccessAt >= 5 * 60_000 && now - registryAttemptAt >= 60_000) {
+    registryAttemptAt = now
+    try {
+      registry = await fetchRegistry()
+      await chrome.storage.local.set({ [ZERO_INDEXER_REGISTRY_CACHE_KEY]: registry })
+      registrySuccessAt = Date.now()
+    } catch {
+      // The cached registry and bundled defaults keep node selection usable offline.
+    }
   }
 
   const network = DEFAULT_NETWORK

@@ -2,6 +2,8 @@ import { test } from 'node:test'
 import { expect } from '@playwright/test'
 import { summarizePortfolioFiat } from '../../../src/popup/components/portfolio/portfolio-prices.ts'
 import { getActivityTransactionReferences } from '../../../src/popup/services/activity-transaction-references.ts'
+import { shouldWarnSmallTransfer } from '../../../src/popup/services/activity-small-transfer-warning.ts'
+import { getActivityAddressAlias } from '../../../src/popup/services/activity-address-alias.ts'
 import {
   getHomeAssetBreakdown,
   hasCompletePortfolioTotal,
@@ -63,6 +65,70 @@ test('Home action source follows the selected balance domain', () => {
   expect(selectHomeActionSource(model, 'public', 'swap')?.asset.asset.id).toBe(zcash.asset.id)
   expect(selectHomeActionSource(model, 'private', 'swap')?.asset.asset.id).toBe(evm.asset.id)
   expect(selectHomeActionSource({ ...model, assets: [zcash] }, 'private', 'swap')).toBeNull()
+})
+
+test('small incoming warning requires an unfamiliar full source and a known small value', () => {
+  const chainId = 'eip155:1'
+  const assetId = 'eip155:1/slip44:60'
+  const sender = { chainId, address: '0x1111111111111111111111111111111111111111' }
+  const item = {
+    id: 'small-receipt',
+    kind: 'receive',
+    createdAt: 2,
+    snapshot: {
+      direction: 'incoming',
+      sender,
+      primaryAmount: { assetId, amountRaw: '10000000000000' }
+    }
+  }
+  const input = {
+    item,
+    history: [item],
+    ownedAddresses: [],
+    contactAddresses: [],
+    assetMetadata: new Map([[assetId, { metadata: { decimals: 18 } }]]),
+    prices: { quotes: [{ assetId, priceUsd: '1000', freshness: 'fresh' }] }
+  }
+  expect(shouldWarnSmallTransfer(input)).toBe(true)
+  expect(shouldWarnSmallTransfer({ ...input, ownedAddresses: [sender] })).toBe(false)
+  expect(shouldWarnSmallTransfer({ ...input, contactAddresses: [sender] })).toBe(false)
+  expect(
+    shouldWarnSmallTransfer({
+      ...input,
+      history: [
+        {
+          createdAt: 1,
+          snapshot: { direction: 'outgoing', recipient: sender }
+        },
+        item
+      ]
+    })
+  ).toBe(false)
+  expect(shouldWarnSmallTransfer({ ...input, prices: null })).toBe(false)
+  expect(
+    shouldWarnSmallTransfer({
+      ...input,
+      prices: { quotes: [{ assetId, priceUsd: '1000', freshness: 'stale' }] }
+    })
+  ).toBe(false)
+  expect(
+    shouldWarnSmallTransfer({
+      ...input,
+      item: {
+        ...item,
+        snapshot: { ...item.snapshot, primaryAmount: { assetId, amountRaw: '0' } }
+      },
+      prices: null
+    })
+  ).toBe(true)
+})
+
+test('NEAR Intents alias requires the exact treasury address on a supported chain', () => {
+  const treasury = '0x2CfF890f0378a11913B6129B2E97417a2c302680'
+  expect(getActivityAddressAlias('eip155:42161', treasury)).toBe('NEAR Intents')
+  expect(getActivityAddressAlias('eip155:11155111', treasury)).toBeNull()
+  expect(getActivityAddressAlias('eip155:42161', treasury.slice(0, -1) + '1')).toBeNull()
+  expect(getActivityAddressAlias('eip155:42161', treasury.slice(0, 10))).toBeNull()
 })
 
 test('NEAR Confidential ZEC stays separate from on-chain ZEC and inside its account and network', () => {
@@ -807,6 +873,31 @@ test('Activity details show the outgoing hash before destination settlement', ()
     {
       id: 'origin',
       label: 'Transaction Hash',
+      hash: outgoingHash,
+      chainId: 'eip155:1'
+    }
+  ])
+  expect(
+    getActivityTransactionReferences({
+      segments: [
+        {
+          id: 'origin',
+          role: 'origin',
+          target: { kind: 'onchain', chainId: 'eip155:1' },
+          evidence: { transactionHash: outgoingHash }
+        },
+        {
+          id: 'relay',
+          role: 'relay',
+          target: { kind: 'relay', provider: 'NEAR Intents' },
+          evidence: { transactionHash: outgoingHash }
+        }
+      ]
+    })
+  ).toEqual([
+    {
+      id: 'origin',
+      label: 'Outgoing Hash',
       hash: outgoingHash,
       chainId: 'eip155:1'
     }

@@ -10,6 +10,7 @@ export function NearConfidentialHoldingRow({
   entry,
   balancesHidden,
   chain,
+  iconChain,
   showProvider = false,
   showQuantitySymbol = true,
   pricesLoading = false,
@@ -18,6 +19,7 @@ export function NearConfidentialHoldingRow({
   readonly entry: NearConfidentialHolding
   readonly balancesHidden: boolean
   readonly chain?: PortfolioChainView['chain']
+  readonly iconChain?: string
   readonly showProvider?: boolean
   readonly showQuantitySymbol?: boolean
   readonly pricesLoading?: boolean
@@ -33,7 +35,8 @@ export function NearConfidentialHoldingRow({
         symbol={symbol}
         icon={asset.iconUrl}
         blockchain={
-          chain ? resolveChainIconAlias(chain.family, chain.displayName, chain.id) : undefined
+          iconChain ??
+          (chain ? resolveChainIconAlias(chain.family, chain.displayName, chain.id) : undefined)
         }
         size={36}
         className="shrink-0"

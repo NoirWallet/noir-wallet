@@ -1,14 +1,16 @@
 /**
  * Token selector component for Swap and other scenarios
  */
-import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import type { SwapToken } from '@/core/services/intents-api'
+import { Icon } from '@iconify/react'
 import { RHEA_SWAP_CHAIN_CATALOG } from '@/core/services/rhea-swap'
 import type { InspectedTokenAddress } from '@/popup/services/token-address-discovery'
 import { formatChainName, formatSymbol } from '@/lib/format'
 import { TokenIcon } from './TokenIcon'
 import { TokenBalanceDisplay } from './TokenBalanceDisplay'
 import { TokenSelectorView } from './TokenSelectorView'
+import type { TokenSelectionItem } from './TokenSelectionList'
 import { sortTokensByBalanceValue } from './token-balance-order'
 import { swapTokenCatalogClient } from '@/popup/services/swap-token-catalog-client'
 import {
@@ -21,15 +23,19 @@ import {
   isSelectableSwapBlockchain
 } from '@/popup/services/chain-selection-availability'
 import { useWalletStore } from '@/store/wallet-store'
-import {
-  orderNetworkIdsByRecency,
-  recordRecentChainSelection,
-  tokenSelectorChainOrderStorageKey
-} from './token-selector-chain-order'
 
 const MAX_RENDERED_TOKENS = 100
 
+export interface TokenSelectorExtraItem extends TokenSelectionItem {
+  readonly blockchain: string
+  readonly searchTerms: readonly string[]
+  readonly lowBalance?: boolean
+  readonly selected?: boolean
+  readonly onSelect: () => void
+}
+
 export interface TokenSelectorProps {
+  accountScope?: Readonly<{ walletId: string; accountId: string }> | null
   selectedToken?: SwapToken
   onSelect: (token: SwapToken) => void
   tokens?: readonly SwapToken[]
@@ -44,9 +50,17 @@ export interface TokenSelectorProps {
   emptyMessage?: string
   unavailableNetworks?: readonly Readonly<{ id: string; label: string; iconChain: string }>[]
   onDiscoveredToken?: (result: InspectedTokenAddress) => string | void
+  onVisibleTokensChange?: (
+    tokens: readonly SwapToken[],
+    filter: { readonly search: string; readonly network: string }
+  ) => void
+  balanceLoadStates?: ReadonlyMap<string, 'loading' | 'error'>
+  onRetryBalances?: () => void
+  extraItems?: readonly TokenSelectorExtraItem[]
 }
 
 export function TokenSelector({
+  accountScope,
   selectedToken,
   onSelect,
   tokens: providedTokens,
@@ -60,23 +74,15 @@ export function TokenSelector({
   excludeAssetId,
   emptyMessage = 'No tokens found',
   unavailableNetworks = [],
-  onDiscoveredToken
+  onDiscoveredToken,
+  onVisibleTokensChange,
+  balanceLoadStates,
+  onRetryBalances,
+  extraItems = []
 }: TokenSelectorProps) {
   const currentNetwork = useWalletStore(state => state.currentNetwork)
   const currentWalletId = useWalletStore(state => state.currentWalletId)
   const currentAccountId = useWalletStore(state => state.currentAccountId)
-  const chainOrderKey = useMemo(
-    () =>
-      currentWalletId && currentAccountId
-        ? tokenSelectorChainOrderStorageKey({
-            network: currentNetwork,
-            walletId: currentWalletId,
-            accountId: currentAccountId
-          })
-        : null,
-    [currentAccountId, currentNetwork, currentWalletId]
-  )
-  const [recentChainIds, setRecentChainIds] = useState<readonly string[]>([])
   const [search, setSearch] = useState('')
   const [selectedBlockchain, setSelectedBlockchain] = useState('all')
   const [fetchedTokens, setFetchedTokens] = useState<readonly SwapToken[]>([])
@@ -93,44 +99,6 @@ export function TokenSelector({
     [providedTokens, fetchedTokens]
   )
   const loading = !hasProvidedTokens && fetchedLoading
-
-  useEffect(() => {
-    if (!chainOrderKey) {
-      setRecentChainIds([])
-      return
-    }
-    let cancelled = false
-    void chrome.storage.session
-      .get(chainOrderKey)
-      .then(result => {
-        if (cancelled) return
-        const stored = result[chainOrderKey]
-        setRecentChainIds(
-          Array.isArray(stored)
-            ? stored.filter((value): value is string => typeof value === 'string')
-            : []
-        )
-      })
-      .catch(() => {
-        if (!cancelled) setRecentChainIds([])
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [chainOrderKey])
-
-  const selectBlockchain = useCallback(
-    (chainId: string) => {
-      setSelectedBlockchain(chainId)
-      if (!chainOrderKey) return
-      setRecentChainIds(current => {
-        const next = recordRecentChainSelection(current, chainId)
-        void chrome.storage.session.set({ [chainOrderKey]: next }).catch(() => {})
-        return next
-      })
-    },
-    [chainOrderKey]
-  )
 
   useEffect(() => {
     if (hasProvidedTokens) return
@@ -165,13 +133,14 @@ export function TokenSelector({
         options.set(token.blockchain, formatChainName(token.blockchain))
       }
     }
+    for (const item of extraItems) {
+      if (!options.has(item.blockchain)) {
+        options.set(item.blockchain, formatChainName(item.blockchain))
+      }
+    }
     const base = [...options].map(([id, label]) => ({ id, label }))
-    const orderedIds = orderNetworkIdsByRecency(
-      base.map(option => option.id),
-      recentChainIds
-    )
-    return orderedIds.map(id => base.find(option => option.id === id)!)
-  }, [tokens, recentChainIds])
+    return base
+  }, [tokens, extraItems])
   const effectiveBlockchain =
     selectedBlockchain === 'all' || networkOptions.some(option => option.id === selectedBlockchain)
       ? selectedBlockchain
@@ -238,71 +207,98 @@ export function TokenSelector({
     }
   }, [filterKey, filteredTokens])
   const visibleLimit = renderWindow.filter === filterKey ? renderWindow.count : MAX_RENDERED_TOKENS
-  const visibleTokens = filteredTokens.slice(0, visibleLimit)
-
-  const selectorItems = visibleTokens.map(token => {
-    const balance = balances?.get(token.assetId)
-    const symbol = formatSymbol(token.symbol)
-    const chainName = formatChainName(token.blockchain)
-    return {
-      key: token.blockchain + ':' + token.assetId,
-      symbol,
-      icon: <TokenIcon token={token} size={32} />,
-      subtitle: chainName,
-      ariaLabel:
-        symbol +
-        ' on ' +
-        chainName +
-        (balances === undefined
-          ? ''
-          : balance === undefined
-            ? ', balance unavailable'
-            : ', balance ' + balance + ' ' + symbol),
-      balance:
-        balances !== undefined && balance === undefined ? (
-          <span className="text-xs text-muted" title="Balance unavailable">
-            Unavailable
-          </span>
-        ) : balance === undefined ? undefined : (
-          <TokenBalanceDisplay
-            amount={balance}
-            symbol={symbol}
-            priceUsd={token.price}
-            approximateFiat
-          />
-        )
-    }
+  const visibleTokens = useMemo(
+    () => filteredTokens.slice(0, visibleLimit),
+    [filteredTokens, visibleLimit]
+  )
+  const visibleExtraItems = extraItems.filter(item => {
+    if (effectiveBlockchain !== 'all' && item.blockchain !== effectiveBlockchain) return false
+    const query = search.trim().toLowerCase()
+    return !query || item.searchTerms.some(term => term.toLowerCase().includes(query))
   })
+  useEffect(() => {
+    onVisibleTokensChange?.(visibleTokens, { search, network: effectiveBlockchain })
+  }, [onVisibleTokensChange, visibleTokens, search, effectiveBlockchain])
+
+  const selectorItems = [
+    ...visibleExtraItems,
+    ...visibleTokens.map(token => {
+      const balance = balances?.get(token.assetId)
+      const balanceLoadState = balanceLoadStates?.get(token.assetId)
+      const symbol = formatSymbol(token.symbol)
+      const chainName = formatChainName(token.blockchain)
+      return {
+        key: token.blockchain + ':' + token.assetId,
+        symbol,
+        icon: <TokenIcon token={token} size={32} />,
+        subtitle: chainName,
+        ariaLabel:
+          symbol +
+          ' on ' +
+          chainName +
+          (balances === undefined
+            ? ''
+            : balance === undefined
+              ? ', balance unavailable'
+              : ', balance ' + balance + ' ' + symbol),
+        balance:
+          balances !== undefined && balance === undefined ? (
+            <span
+              className="text-xs text-muted"
+              title={balanceLoadState === 'loading' ? 'Loading balance' : 'Balance unavailable'}
+            >
+              {balanceLoadState === 'loading' ? 'Loading...' : 'Unavailable'}
+            </span>
+          ) : balance === undefined ? undefined : (
+            <TokenBalanceDisplay
+              amount={balance}
+              symbol={symbol}
+              priceUsd={token.price}
+              approximateFiat
+            />
+          )
+      }
+    })
+  ]
   const discoveryChain = RHEA_SWAP_CHAIN_CATALOG.find(
     chain => chain.walletFamily === 'evm' && chain.blockchain === effectiveBlockchain
   )
   return (
     <TokenSelectorView
+      accountScope={accountScope}
       search={search}
       onSearchChange={setSearch}
       networks={selectorNetworks}
       selectedNetwork={effectiveBlockchain}
-      onNetworkChange={selectBlockchain}
+      onNetworkChange={setSelectedBlockchain}
       items={selectorItems}
       selectedKey={
-        selectedToken ? selectedToken.blockchain + ':' + selectedToken.assetId : undefined
+        visibleExtraItems.find(item => item.selected)?.key ??
+        (selectedToken ? selectedToken.blockchain + ':' + selectedToken.assetId : undefined)
       }
       onSelect={key => {
+        const extra = visibleExtraItems.find(item => item.key === key)
+        if (extra) {
+          extra.onSelect()
+          return
+        }
         const selected = visibleTokens.find(token => token.blockchain + ':' + token.assetId === key)
         if (selected) onSelect(selected)
       }}
       lowBalanceKeys={
-        balances
-          ? new Set(
-              visibleTokens
-                .filter(token => balances.get(token.assetId) === '0')
-                .map(token => token.blockchain + ':' + token.assetId)
-            )
+        balances || visibleExtraItems.some(item => item.lowBalance)
+          ? new Set([
+              ...visibleTokens
+                .filter(token => balances?.get(token.assetId) === '0')
+                .map(token => token.blockchain + ':' + token.assetId),
+              ...visibleExtraItems.filter(item => item.lowBalance).map(item => item.key)
+            ])
           : undefined
       }
       loading={
         loading ||
         (filteredTokens.length === 0 &&
+          visibleExtraItems.length === 0 &&
           (catalogLoading || (!search.trim() && defaultCatalogLoading)))
       }
       emptyMessage={emptyMessage}
@@ -317,11 +313,22 @@ export function TokenSelector({
           : undefined
       }
       status={
-        catalogLoading && search.trim().length > 0 ? (
-          <p role="status" className="mt-2 text-xs text-muted">
-            Searching more networks...
-          </p>
-        ) : undefined
+        <>
+          {catalogLoading && search.trim().length > 0 && (
+            <p role="status" className="mt-2 text-xs text-muted">
+              Searching more networks...
+            </p>
+          )}
+          {onRetryBalances && [...(balanceLoadStates?.values() ?? [])].includes('error') && (
+            <button
+              type="button"
+              onClick={onRetryBalances}
+              className="mt-2 flex items-center gap-1 text-xs text-primary"
+            >
+              <Icon icon="lucide:refresh-cw" width={14} height={14} /> Retry balances
+            </button>
+          )}
+        </>
       }
       onScroll={event => {
         const list = event.currentTarget

@@ -98,7 +98,7 @@ export interface EvmDAppReadRpc {
 
 export interface EvmLatestBlockFee {
   readonly blockNumber: string
-  readonly baseFeePerGas: string
+  readonly baseFeePerGas: string | null
 }
 
 export interface EvmTransactionRpc {
@@ -109,6 +109,7 @@ export interface EvmTransactionRpc {
   readonly simulateCall: (call: EvmRpcCall, signal?: AbortSignal) => Promise<string>
   readonly estimateGas: (call: EvmRpcCall, signal?: AbortSignal) => Promise<string>
   readonly getMaximumPriorityFeePerGas: (signal?: AbortSignal) => Promise<string>
+  readonly getGasPrice: (signal?: AbortSignal) => Promise<string>
   readonly getLatestBlockFee: (signal?: AbortSignal) => Promise<EvmLatestBlockFee>
 }
 
@@ -540,9 +541,14 @@ export function createEvmRpcClient(
       }
       return Object.freeze({
         blockNumber: parseQuantity(result.number, 'latest block number').toString(),
-        baseFeePerGas: parseQuantity(result.baseFeePerGas, 'latest base fee per gas').toString()
+        baseFeePerGas:
+          result.baseFeePerGas === undefined || result.baseFeePerGas === null
+            ? null
+            : parseQuantity(result.baseFeePerGas, 'latest base fee per gas').toString()
       })
     },
+    getGasPrice: async (signal?: AbortSignal) =>
+      parseQuantity(await request('eth_gasPrice', [], signal), 'gas price').toString(),
     broadcastRawTransaction: async (rawTransaction: string, signal?: AbortSignal) => {
       if (
         !/^0x(?:[0-9a-f]{2})+$/.test(rawTransaction) ||

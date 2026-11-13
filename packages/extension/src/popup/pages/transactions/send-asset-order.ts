@@ -3,6 +3,7 @@ import {
   parseTokenBalanceDecimal
 } from '@/popup/components/tokens/token-balance-format'
 import { formatBaseUnitDecimalAmount } from '@/lib/number-format'
+import { getAssetDomainRaw } from '@/popup/services/asset-domains'
 import type { PortfolioReadModel } from '@/core/portfolio'
 import { findAssetPrice, type AssetPriceReadModel } from '@/core/prices'
 import { resolveChainIconAlias } from '@/lib/chain-icon'
@@ -24,7 +25,7 @@ export type SendAssetSelectionRow =
   | Readonly<{
       kind: 'portfolio'
       key: string
-      amount: string
+      amount: string | null
       priceUsd: string | null
       entry: SendAsset
     }>
@@ -44,7 +45,7 @@ export interface SendAssetNetworkOption {
 
 export interface SendAssetOrderCandidate {
   readonly key: string
-  readonly amount: string
+  readonly amount: string | null
   readonly priceUsd: string | number | null
 }
 
@@ -159,10 +160,10 @@ export function buildSendAssetSelectionModel(input: {
     ...filteredAssets.map(entry => ({
       kind: 'portfolio' as const,
       key: entry.asset.asset.id,
-      amount: formatBaseUnitDecimalAmount(
-        entry.asset.balance.totalRaw,
-        entry.asset.metadata.decimals
-      ),
+      amount: (() => {
+        const raw = getAssetDomainRaw(entry.asset, 'public')
+        return raw === null ? null : formatBaseUnitDecimalAmount(raw, entry.asset.metadata.decimals)
+      })(),
       priceUsd: findAssetPrice(input.prices, entry.asset.asset.id)?.priceUsd ?? null,
       entry
     })),

@@ -39,6 +39,9 @@ export class RheaSwapClientError extends Error {
 
 export function getRheaSwapErrorMessage(error: unknown): string {
   if (!(error instanceof RheaSwapClientError)) return classifyError(error).userMessage
+  if (error.message === 'RHEA Swap returned an invalid response') {
+    return 'Swap provider returned an invalid quote. Try again.'
+  }
   return (
     getSwapQuoteFailureMessage(error) ??
     classifyError(new Error(readSwapErrorReason(error.message))).userMessage

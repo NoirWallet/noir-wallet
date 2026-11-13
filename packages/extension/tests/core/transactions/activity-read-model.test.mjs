@@ -352,6 +352,39 @@ test.describe('Activity read model', () => {
     expect(filterActivityItems({ ...selection, selectedChainIds: [arbitrumChainId] })).toEqual([])
   })
 
+  test('Shield provider Activity keeps NEAR Confidential and Zcash records separate', () => {
+    const zcashChainId = 'bip122:00040fe8ec8471911baa1db1266ea15d'
+    const zcash = {
+      id: 'zcash-shield',
+      source: 'zcash-v1',
+      kind: 'receive',
+      assetDomains: ['shield'],
+      snapshot: { primaryAmount: { assetId: `${zcashChainId}/slip44:133`, amountRaw: '1' } },
+      segments: []
+    }
+    const near = {
+      id: 'near-confidential',
+      source: 'wallet-v2',
+      kind: 'swap',
+      snapshot: {
+        primaryAmount: { assetId: 'eip155:1/slip44:60', amountRaw: '1' },
+        shield: { sourceDomain: 'shield', destinationDomain: 'public' }
+      },
+      segments: [{ target: { kind: 'protocol', provider: 'Confidential Intents' } }]
+    }
+    const selection = { items: [zcash, near], selectedChainIds: ['eip155:1'], domain: 'shield' }
+    expect(
+      filterActivityItems({ ...selection, shieldProvider: 'zcash-shield' }).map(item => item.id)
+    ).toEqual(['zcash-shield'])
+    expect(
+      filterActivityItems({
+        ...selection,
+        shieldProvider: 'near-confidential',
+        confidentialIntentsOnly: true
+      }).map(item => item.id)
+    ).toEqual(['near-confidential'])
+  })
+
   test('preserves a persisted pre-finality reorg through the strict Activity boundary', () => {
     const value = graph()
     value.root.reconfirming = true

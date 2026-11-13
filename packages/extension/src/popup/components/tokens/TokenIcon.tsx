@@ -70,7 +70,7 @@ export function TokenIcon({
   const blockchain = blockchainProp || token?.blockchain
   const bundledIconForSymbol = bundledTokenIcons[symbol.toUpperCase()]
   const marketAsset = assetId ? findBundledWalletMarketAssetId(assetId) : null
-  const mappedIcon = isBundledEthIconIdentity(assetId, token)
+  const mappedIcon = isBundledEthIconIdentity(assetId, token, symbol)
     ? ethIcon
     : marketAsset === MARKET_ASSETS.usdc
       ? usdcIcon
@@ -100,10 +100,16 @@ export function TokenIcon({
     bundledIcon,
     contractIcon: contractIcon?.identity === contractIdentity ? contractIcon.icon : undefined
   })
-  const [failedIconUrls, setFailedIconUrls] = useState<readonly string[]>([])
+  const iconIdentity = `${assetId ?? ''}:${blockchain ?? ''}:${symbol}`
+  const [failedIcons, setFailedIcons] = useState<{
+    identity: string
+    urls: readonly string[]
+  }>({ identity: iconIdentity, urls: [] })
   const containerRef = useRef<HTMLDivElement>(null)
   const iconUrl = iconCandidates.find(
-    candidate => !failedIconUrls.includes(candidate) && !hasTokenIconUrlFailed(candidate)
+    candidate =>
+      !(failedIcons.identity === iconIdentity && failedIcons.urls.includes(candidate)) &&
+      !hasTokenIconUrlFailed(candidate)
   )
 
   useEffect(() => {
@@ -143,6 +149,7 @@ export function TokenIcon({
       </div>
       {iconUrl && (
         <img
+          key={iconIdentity}
           src={iconUrl}
           alt={symbol}
           className="absolute inset-0 h-full w-full rounded-full object-cover"
@@ -151,9 +158,13 @@ export function TokenIcon({
           }}
           onError={() => {
             recordTokenIconUrlFailure(iconUrl)
-            setFailedIconUrls(current =>
-              current.includes(iconUrl) ? current : [...current, iconUrl]
-            )
+            setFailedIcons(current => {
+              const urls = current.identity === iconIdentity ? current.urls : []
+              return {
+                identity: iconIdentity,
+                urls: urls.includes(iconUrl) ? urls : [...urls, iconUrl]
+              }
+            })
           }}
         />
       )}

@@ -53,7 +53,6 @@ import {
 } from '@/infrastructure/chains/evm'
 import { useTransferFeePreview } from '@/popup/hooks/useTransferFeePreview'
 import { useEvmConfirmationEstimate } from '@/popup/hooks/useEvmConfirmationEstimate'
-import { estimateConfidentialSendTime } from '@/popup/services/send-time-estimate'
 import { useTransferMaximum } from '@/popup/hooks/useTransferMaximum'
 import {
   createNativeTransferSource,
@@ -245,14 +244,16 @@ export function EvmSendForm({
   )?.value
   const privateSourceAddress = accountNetwork?.privateExecutionAddress
   const bundledAsset = asset.source !== 'user-added'
-  const availableRaw = resolveEvmSendAvailableRaw(asset.balance, sourceMode)
+  const domainAvailableRaw = resolveEvmSendAvailableRaw(asset.balance, sourceMode)
+  const availableRaw = domainAvailableRaw ?? '0'
   const evmNative = portfolio.assets.find(
     candidate =>
       candidate.asset.chainId === asset.asset.chainId && candidate.asset.kind === 'native'
   )
   const nativeSymbol = evmNative?.metadata.symbol ?? 'Native asset'
   const nativeDecimals = evmNative?.metadata.decimals ?? 18
-  const nativeAvailableRaw = resolveEvmSendAvailableRaw(evmNative?.balance, sourceMode)
+  const domainNativeAvailableRaw = resolveEvmSendAvailableRaw(evmNative?.balance, sourceMode)
+  const nativeAvailableRaw = domainNativeAvailableRaw ?? '0'
   const tokenFeeBalanceError = getEvmTokenFeeBalanceError(
     asset.asset.kind,
     nativeAvailableRaw,
@@ -466,7 +467,10 @@ export function EvmSendForm({
     maximumRaw: maximum.value?.amountRaw ?? null
   })
   const spendableRaw = transferAvailability.amountRaw
-  const validAmount = isTransferAmountSpendable(amountRaw, spendableRaw)
+  const validAmount =
+    domainAvailableRaw !== null &&
+    domainNativeAvailableRaw !== null &&
+    isTransferAmountSpendable(amountRaw, spendableRaw)
   const privatePreviewInputs = {
     network: networkMode,
     walletId: walletId ?? '',
@@ -1137,7 +1141,9 @@ export function EvmSendForm({
               className="min-w-0 truncate"
               title={transferAvailability.display}
             >
-              {formatTokenQuantity(transferAvailability.display)}
+              {domainAvailableRaw === null
+                ? 'Unavailable'
+                : formatTokenQuantity(transferAvailability.display)}
             </span>
           }
           maxButton={
@@ -1308,15 +1314,6 @@ export function EvmSendForm({
                 '—'
               )
             }
-            time={
-              privatePreviewReady ? (
-                <span title="Source-network confirmation only; confidential routing adds time.">
-                  {estimateConfidentialSendTime(undefined, confirmationTime)}
-                </span>
-              ) : (
-                '—'
-              )
-            }
             extra={
               privatePreviewReady && privatePreview ? (
                 <div className="flex justify-between gap-3 border-t border-white/10 pt-3">
@@ -1345,6 +1342,8 @@ export function EvmSendForm({
                 chainFamily="evm"
                 tier={feeSelection.kind === 'tier' ? feeSelection.tier : 'standard'}
                 selection={feeSelection}
+                customDefaults={feePreview.details}
+                feeModel={feePreview.details?.transactionType ?? 'eip1559'}
                 amount={previewFee}
                 symbol={nativeSymbol}
                 layout="inline"
@@ -1353,9 +1352,11 @@ export function EvmSendForm({
               />
             }
             time={
-              <span title="Approximate first confirmation; actual time depends on network conditions.">
-                {confirmationTime}
-              </span>
+              confirmationTime === '—' ? undefined : (
+                <span title="Approximate first confirmation; actual time depends on network conditions.">
+                  {confirmationTime}
+                </span>
+              )
             }
           />
         )}
@@ -1536,6 +1537,13 @@ export function EvmSendForm({
                         review.feeSelection.kind === 'tier' ? review.feeSelection.tier : 'standard'
                       }
                       selection={review.feeSelection}
+                      feeModel={summary.fields.transactionType === 'legacy' ? 'legacy' : 'eip1559'}
+                      customDefaults={{
+                        gasLimit: summary.fields.gasLimit,
+                        maxFeePerGasWei: summary.fields.maxFeePerGasWei ?? '0',
+                        maxPriorityFeePerGasWei: summary.fields.maxPriorityFeePerGasWei ?? '0',
+                        gasPriceWei: summary.fields.gasPriceWei
+                      }}
                       amount={fee}
                       symbol={nativeSymbol}
                       onTierChange={tier => handleReviewFeeSelectionChange({ kind: 'tier', tier })}
@@ -1544,23 +1552,40 @@ export function EvmSendForm({
                       details={
                         <div className="space-y-2 border-t border-border/60 pt-3 text-xs">
                           <div className="flex justify-between gap-3">
-                            <span className="text-muted">Max fee per gas</span>
-                            <AmountDisplay
-                              value={formatEvmWeiAsGwei(summary.fields.maxFeePerGasWei ?? '0')}
-                              symbol="GWEI"
-                              profile="fee"
-                            />
+                            <span className="text-muted">Gas limit</span>
+                            <span>{summary.fields.gasLimit}</span>
                           </div>
-                          <div className="flex justify-between gap-3">
-                            <span className="text-muted">Priority fee per gas</span>
-                            <AmountDisplay
-                              value={formatEvmWeiAsGwei(
-                                summary.fields.maxPriorityFeePerGasWei ?? '0'
-                              )}
-                              symbol="GWEI"
-                              profile="fee"
-                            />
-                          </div>
+                          {summary.fields.transactionType === 'legacy' ? (
+                            <div className="flex justify-between gap-3">
+                              <span className="text-muted">Gas price</span>
+                              <AmountDisplay
+                                value={formatEvmWeiAsGwei(summary.fields.gasPriceWei ?? '0')}
+                                symbol="GWEI"
+                                profile="fee"
+                              />
+                            </div>
+                          ) : (
+                            <>
+                              <div className="flex justify-between gap-3">
+                                <span className="text-muted">Max fee per gas</span>
+                                <AmountDisplay
+                                  value={formatEvmWeiAsGwei(summary.fields.maxFeePerGasWei ?? '0')}
+                                  symbol="GWEI"
+                                  profile="fee"
+                                />
+                              </div>
+                              <div className="flex justify-between gap-3">
+                                <span className="text-muted">Priority fee per gas</span>
+                                <AmountDisplay
+                                  value={formatEvmWeiAsGwei(
+                                    summary.fields.maxPriorityFeePerGasWei ?? '0'
+                                  )}
+                                  symbol="GWEI"
+                                  profile="fee"
+                                />
+                              </div>
+                            </>
+                          )}
                         </div>
                       }
                     />

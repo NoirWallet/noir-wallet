@@ -358,6 +358,8 @@ test('keeps contract discovery retryable after rate limiting and distinguishes m
   })
   await expect(service.refresh(assetId, '1d')).resolves.toBeNull()
   catalogStatus = 200
+  await expect(service.refresh(assetId, '1d')).resolves.toBeNull()
+  now += 60_001
   await expect(service.refresh(assetId, '1d')).rejects.toBeInstanceOf(
     UnsupportedAssetMarketHistoryError
   )
