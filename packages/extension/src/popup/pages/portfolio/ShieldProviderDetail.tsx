@@ -49,6 +49,7 @@ import { MultichainActivityDetail } from '@/popup/components/transaction/Multich
 import { openModal } from '@/popup/provider/ModalManager'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/popup/components/ui/tabs'
 import { Button } from '@/popup/components/ui/button'
+import { withShieldAsset } from '@/popup/services/shield-action-selection'
 import {
   resolveShieldZcashVaultEntry,
   shieldZcashEnablePath
@@ -244,6 +245,10 @@ function ShieldProviderContent() {
         : '—'
       : formatFiatAmount(providerFiat, { showSign: true })
   const mode = searchParams.get('mode') === 'private' ? 'private' : 'public'
+  const movePath = withShieldAsset(
+    `/transfer?entry=shield&provider=near-confidential&mode=${mode}${requestedAssetId ? `&from=${mode}&to=shield` : ''}`,
+    requestedAssetId
+  )
   const refreshShieldBalances = async () => {
     if (!account || !canManageNear || connecting || !mounted.current) return
     setConnecting(true)
@@ -412,7 +417,14 @@ function ShieldProviderContent() {
               <>
                 <button
                   type="button"
-                  onClick={() => navigate('/shield-withdraw?provider=near-confidential')}
+                  onClick={() =>
+                    navigate(
+                      withShieldAsset(
+                        '/shield-withdraw?provider=near-confidential',
+                        requestedAssetId
+                      )
+                    )
+                  }
                   disabled={!canManageNear}
                   className="wallet-interactive flex h-[74px] min-w-0 flex-col items-center justify-center gap-2 rounded-lg bg-[var(--color-wallet-surface)] text-xs enabled:hover:bg-[var(--color-wallet-selected)] enabled:active:bg-white/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 disabled:opacity-45"
                 >
@@ -421,7 +433,14 @@ function ShieldProviderContent() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => navigate('/shield-deposit?provider=near-confidential')}
+                  onClick={() =>
+                    navigate(
+                      withShieldAsset(
+                        '/shield-deposit?provider=near-confidential',
+                        requestedAssetId
+                      )
+                    )
+                  }
                   disabled={!canManageNear}
                   className="wallet-interactive flex h-[74px] min-w-0 flex-col items-center justify-center gap-2 rounded-lg bg-[var(--color-wallet-surface)] text-xs enabled:hover:bg-[var(--color-wallet-selected)] enabled:active:bg-white/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 disabled:opacity-45"
                 >
@@ -430,9 +449,7 @@ function ShieldProviderContent() {
                 </button>
                 <button
                   type="button"
-                  onClick={() =>
-                    navigate(`/transfer?entry=shield&provider=near-confidential&mode=${mode}`)
-                  }
+                  onClick={() => navigate(movePath)}
                   disabled={!canManageNear}
                   className="wallet-interactive flex h-[74px] min-w-0 flex-col items-center justify-center gap-2 rounded-lg bg-[var(--color-wallet-surface)] text-xs enabled:hover:bg-[var(--color-wallet-selected)] enabled:active:bg-white/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 disabled:opacity-45"
                 >
@@ -441,7 +458,11 @@ function ShieldProviderContent() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => navigate('/shield-swap?provider=near-confidential')}
+                  onClick={() =>
+                    navigate(
+                      withShieldAsset('/shield-swap?provider=near-confidential', requestedAssetId)
+                    )
+                  }
                   disabled={!canManageNear}
                   className="wallet-interactive flex h-[74px] min-w-0 flex-col items-center justify-center gap-2 rounded-lg bg-[var(--color-wallet-surface)] text-xs enabled:hover:bg-[var(--color-wallet-selected)] enabled:active:bg-white/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 disabled:opacity-45"
                 >
@@ -597,9 +618,7 @@ function ShieldProviderContent() {
                   <p>No shielded assets yet,</p>
                   <button
                     type="button"
-                    onClick={() =>
-                      navigate(`/transfer?entry=shield&provider=near-confidential&mode=${mode}`)
-                    }
+                    onClick={() => navigate(movePath)}
                     disabled={!canManageNear}
                     className="wallet-interactive rounded-sm enabled:hover:text-foreground focus-visible:outline-2 focus-visible:outline-primary disabled:opacity-45"
                   >

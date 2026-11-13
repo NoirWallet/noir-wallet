@@ -16,7 +16,11 @@ import {
   summarizeKnownShieldFiat,
   type ShieldProvider
 } from '@/popup/services/asset-domains'
-import { selectShieldActions, type ShieldAction } from '@/popup/services/shield-action-selection'
+import {
+  selectShieldActions,
+  withShieldAsset,
+  type ShieldAction
+} from '@/popup/services/shield-action-selection'
 import { useLocation, useNavigate } from '@/popup/provider/Router'
 import { PageHeader } from '@/popup/components/common/PageHeader'
 import { WalletActionIcon } from '@/popup/components/common/WalletActionIcon'
@@ -147,15 +151,17 @@ function ShieldFundsContent() {
         ]
       : providersFor(action)
   const mode = new URLSearchParams(location.search).get('mode') === 'private' ? 'private' : 'public'
+  const requestedAssetId = new URLSearchParams(location.search).get('assetId')
+  const movePath = withShieldAsset(
+    `/transfer?entry=shield&provider=near-confidential&mode=${mode}${requestedAssetId ? `&from=${mode}&to=shield` : ''}`,
+    requestedAssetId
+  )
   const runAction = (provider: ShieldProvider, action: ShieldAction, auto = false) => {
     setPendingAction(null)
-    const go = auto ? replace : navigate
+    const go = (path: string) =>
+      (auto ? replace : navigate)(withShieldAsset(path, requestedAssetId))
     if (action === 'move') {
-      go(
-        provider === 'zcash-shield'
-          ? '/send/zcash?move=1&from=transparent'
-          : `/transfer?entry=shield&provider=near-confidential&mode=${mode}`
-      )
+      go(provider === 'zcash-shield' ? '/send/zcash?move=1&from=transparent' : movePath)
       return
     }
     if (action === 'receive') {
@@ -179,15 +185,11 @@ function ShieldFundsContent() {
   }
   const openAction = (action: ShieldAction) => {
     if (action === 'move') {
-      navigate(
-        canManageNear
-          ? `/transfer?entry=shield&mode=${mode}`
-          : '/send/zcash?move=1&from=transparent'
-      )
+      navigate(canManageNear ? movePath : '/send/zcash?move=1&from=transparent')
       return
     }
     if (action === 'receive') {
-      navigate('/shield-deposit')
+      navigate(withShieldAsset('/shield-deposit', requestedAssetId))
       return
     }
     if (action === 'send') {
@@ -219,18 +221,14 @@ function ShieldFundsContent() {
     handledActionQuery.current = location.search
     const providers = availableProviders(requestedAction)
     if (requestedAction === 'move' && providers.length > 0) {
-      replace(
-        canManageNear
-          ? `/transfer?entry=shield&mode=${mode}`
-          : '/send/zcash?move=1&from=transparent'
-      )
+      replace(canManageNear ? movePath : '/send/zcash?move=1&from=transparent')
     } else if (requestedAction === 'receive' && providers.length > 0) {
-      replace('/shield-deposit')
+      replace(withShieldAsset('/shield-deposit', requestedAssetId))
     } else if (requestedAction === 'send' && canManageNear)
       runAction('near-confidential', requestedAction, true)
     else if (providers.length === 1) runAction(providers[0]!, requestedAction, true)
     else {
-      replace('/shield-funds')
+      replace(withShieldAsset(`/shield-funds?mode=${mode}`, requestedAssetId))
       if (providers.length > 1) setPendingAction(requestedAction)
     }
   }, [requestedAction, model, status, accountLoading, location.search, replace])
@@ -303,7 +301,12 @@ function ShieldFundsContent() {
                     currentWalletId &&
                     currentAccountId
                       ? navigate(shieldZcashEnablePath(currentWalletId, currentAccountId))
-                      : navigate(`/shield-provider?provider=${provider}&mode=${mode}`)
+                      : navigate(
+                          withShieldAsset(
+                            `/shield-provider?provider=${provider}&mode=${mode}`,
+                            requestedAssetId
+                          )
+                        )
                   }
                   className="wallet-interactive flex h-[154px] min-w-0 flex-col overflow-hidden rounded-lg bg-wallet-surface text-left hover:brightness-110 active:brightness-95 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary"
                 >

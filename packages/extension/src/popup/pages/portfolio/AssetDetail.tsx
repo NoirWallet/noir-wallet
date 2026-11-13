@@ -1001,7 +1001,7 @@ export function AssetDetail() {
               label="Shielded"
               onClick={() =>
                 navigate(
-                  `/shield-funds?mode=${searchParams.get('mode') === 'private' ? 'private' : 'public'}`
+                  `/shield-funds?mode=${actionDomain}&assetId=${encodeURIComponent(asset.asset.id)}`
                 )
               }
             />

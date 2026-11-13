@@ -147,7 +147,8 @@ export function useSwapState(
         ? getSavedSwapDestinationAssetId(saved, source?.assetId)
         : undefined
     setTokenIn(source)
-    setSelectedSourceAssetId(source && source.assetId === saved?.tokenInId ? source.assetId : null)
+    // Restored preferences are defaults, not an explicit selection in this visit.
+    setSelectedSourceAssetId(null)
     setTokenOut(
       [...sources, ...destinations].find(token => token.assetId === destinationId) ?? null
     )

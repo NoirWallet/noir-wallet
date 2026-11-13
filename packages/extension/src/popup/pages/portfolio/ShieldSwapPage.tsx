@@ -118,7 +118,7 @@ function ShieldSwapForm({
 }: ShieldSwapPageProps) {
   const [params] = useSearchParams()
   const { navigate } = useNavigate()
-  const routeSourceAssetId = params.get('assetId')
+  const routeSourceAssetId = params.get('assetId') ?? params.get('source')
   const routeDestinationAssetId = params.get('destination')
   const providerIsNear =
     params.get('provider') === null || params.get('provider') === 'near-confidential'
