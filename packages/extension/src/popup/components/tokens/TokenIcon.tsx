@@ -15,7 +15,8 @@ import {
 } from './token-icon-failure-cache'
 import { ChainIcon } from '../common/ChainIcon'
 import { Icon } from '@iconify/react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { swapTokenCatalogClient } from '@/popup/services/swap-token-catalog-client'
 import {
   lookupTokenContractIcon,
   resolveAssetIdContractIconIdentity,
@@ -63,6 +64,9 @@ export function TokenIcon({
 }: TokenIconProps) {
   const symbol = formatSymbol(token?.symbol || symbolProp)
   const assetId = token?.assetId || assetIdProp
+  const catalogIcon = useSyncExternalStore(swapTokenCatalogClient.subscribeIcons, () =>
+    swapTokenCatalogClient.getIcon(assetId)
+  )
   const blockchain = blockchainProp || token?.blockchain
   const bundledIconForSymbol = bundledTokenIcons[symbol.toUpperCase()]
   const marketAsset = assetId ? findBundledWalletMarketAssetId(assetId) : null
@@ -89,7 +93,7 @@ export function TokenIcon({
   } | null>(null)
   const iconCandidates = getTokenIconCandidates({
     token,
-    icon: iconProp,
+    icon: iconProp ?? catalogIcon,
     assetId,
     blockchain,
     nativeChain,

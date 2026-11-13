@@ -710,6 +710,7 @@ const TRUSTED_RUNTIME_SCHEMAS: Readonly<Record<string, RuntimeMessageSchema>> = 
   REMOVE_USER_EVM_ASSET: { required: { assetId: isShortString } },
   SET_TOKEN_HIDDEN: { required: { assetId: isShortString, hidden: isBoolean } },
   REFRESH_INTENTS_PROTOCOL_ASSETS: { optional: { force: isBoolean } },
+  GET_SWAP_TOKEN_CATALOG: {},
   GET_PORTFOLIO: {
     required: { action: isPortfolioAction },
     optional: { forceDiscovery: isBoolean, chainIds: isChainIdArray }
@@ -1091,6 +1092,7 @@ const TRUSTED_RUNTIME_CONTEXTS: Readonly<Record<string, readonly OwnExtensionSen
     REMOVE_USER_EVM_ASSET: ['extension-page'],
     SET_TOKEN_HIDDEN: ['extension-page'],
     REFRESH_INTENTS_PROTOCOL_ASSETS: ['extension-page'],
+    GET_SWAP_TOKEN_CATALOG: ['extension-page'],
     GET_PORTFOLIO: ['extension-page'],
     GET_EVM_PORTFOLIO: ['extension-page'],
     GET_EVM_CONFIRMATION_ESTIMATE: ['extension-page'],

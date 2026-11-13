@@ -10,6 +10,7 @@ import {
   parseQuoteSuccessResponse,
   parseSwapStatusResponse,
   parseSwapTokenCatalogResponse,
+  refreshSwapTokenIcons,
   refreshSwapTokenCatalog
 } from '../../../src/core/services/intents-api.ts'
 
@@ -187,7 +188,8 @@ test.describe('CoinGecko token icon parsing', () => {
     }
 
     try {
-      await expect(refreshSwapTokenCatalog()).resolves.toEqual([
+      await refreshSwapTokenCatalog()
+      await expect(refreshSwapTokenIcons()).resolves.toEqual([
         { ...token, icon: rheaIcon, coingeckoIcon: coinGeckoIcon }
       ])
       expect(
@@ -234,6 +236,8 @@ test.describe('CoinGecko token icon parsing', () => {
     }
 
     try {
+      await fetchIntentsWalletTokens()
+      await refreshSwapTokenIcons()
       await expect(fetchIntentsWalletTokens()).resolves.toEqual([{ ...token, coingeckoIcon }])
       expect(
         requestedUrls.some(url => url.endsWith('/get_multichain_lending_tokens_data?chains=near'))
@@ -293,11 +297,13 @@ test.describe('CoinGecko token icon parsing', () => {
     }
 
     try {
-      await expect(refreshSwapTokenCatalog()).resolves.toEqual([
+      await refreshSwapTokenCatalog()
+      await expect(refreshSwapTokenIcons()).resolves.toEqual([
         { ...goodToken, icon: rheaIcon, coingeckoIcon: null },
         { ...unavailableToken, coingeckoIcon: null }
       ])
-      await expect(refreshSwapTokenCatalog()).resolves.toEqual([
+      await refreshSwapTokenCatalog()
+      await expect(refreshSwapTokenIcons()).resolves.toEqual([
         { ...goodToken, icon: rheaIcon, coingeckoIcon: null },
         { ...unavailableToken, coingeckoIcon: null }
       ])

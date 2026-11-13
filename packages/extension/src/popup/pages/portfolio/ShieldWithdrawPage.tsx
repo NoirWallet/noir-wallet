@@ -7,7 +7,7 @@ import nearLogo from '@/images/figma-near-confidential.svg'
 import { isAddress } from 'viem'
 import { resolveEvmChainIconAlias } from '@/config/icons'
 import type { IntentsManagedAsset } from '@/core/services/intents-managed-assets'
-import { fetchSwapTokens, getCachedTokens, type SwapToken } from '@/core/services/intents-api'
+import { getCachedTokens, type SwapToken } from '@/core/services/intents-api'
 import type { ConfidentialFundingReview } from '@/core/services/confidential-funding'
 import {
   formatBaseUnitAmount,
@@ -257,7 +257,7 @@ export function ShieldWithdrawForm({
             setManagedAssets(resolveManagedIntentsCatalog(cached))
           }
         }
-        const refreshed = await fetchSwapTokens()
+        const refreshed = await swapTokenCatalogClient.refresh()
         if (current && refreshed.length) {
           setCatalogTokens(refreshed)
           setManagedAssets(resolveManagedIntentsCatalog(refreshed))

@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Icon } from '@iconify/react'
-import { fetchSwapTokens, getCachedTokens, type SwapToken } from '@/core/services/intents-api'
+import { getCachedTokens, type SwapToken } from '@/core/services/intents-api'
 import type { ConfidentialFundingReview } from '@/core/services/confidential-funding'
 import { formatBaseUnitAmount, formatBaseUnitDecimalAmount } from '@/lib/number-format'
 import { formatSortAddress, formatSymbol } from '@/lib/format'
@@ -229,7 +229,7 @@ function ShieldSwapForm({
           const cached = await swapTokenCatalogClient.readCached()
           if (current && cached.length) setTokens(cached)
         }
-        const refreshed = await fetchSwapTokens()
+        const refreshed = await swapTokenCatalogClient.refresh()
         if (current && refreshed.length) {
           setTokens(refreshed)
         }

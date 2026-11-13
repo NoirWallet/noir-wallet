@@ -386,7 +386,12 @@ import { readLedgerProvisioningCredential } from './ledger-signing-bridge'
 import type { ChromeTokenVisibilityRepository } from '@/infrastructure/portfolio/chrome-token-visibility'
 import type { DetectedEvmAssetRecord, UserEvmAssetRecord } from '@/core/chains/user-assets'
 import { createBackgroundUserEvmAssetRuntime } from './user-evm-assets'
-import { fetchSwapTokens, type SwapToken } from '@/core/services/intents-api'
+import { type SwapToken } from '@/core/services/intents-api'
+import {
+  readBackgroundSwapCatalog,
+  refreshBackgroundSwapCatalog,
+  SWAP_CATALOG_REFRESH_ALARM
+} from './swap-token-catalog'
 import { resolveManagedIntentsAssets } from '@/core/services/intents-managed-assets'
 import { getBundledInitialProductAssetDefinitions } from '@/core/chains/registry'
 import {
@@ -395,7 +400,6 @@ import {
   type IntentsProtocolAssetPriceMapping
 } from '@/core/services/intents-wallet-assets'
 
-import { ChromeSwapTokenCatalogCacheRepository } from '@/infrastructure/persistence/chrome-swap-token-catalog-cache'
 import {
   getActionFailureNotificationCopy,
   TRANSACTION_PENDING_MESSAGE
@@ -613,7 +617,6 @@ let intentsProtocolAssetIds: readonly string[] = Object.freeze([])
 let intentsProtocolPriceMappings: readonly IntentsProtocolAssetPriceMapping[] = Object.freeze([])
 let intentsProtocolAssetRefresh: Promise<void> | null = null
 let intentsProtocolAssetsReady = false
-const swapTokenCatalogCache = new ChromeSwapTokenCatalogCacheRepository()
 let evmDAppHandler!: ReturnType<typeof createBackgroundEvmDAppHandler>
 let evmDAppOrigins: EvmDAppOriginRuntime
 let bitcoinDAppHandler!: ReturnType<typeof createBackgroundBitcoinDAppHandler>
@@ -1452,18 +1455,8 @@ function refreshIntentsProtocolAssets(force = false): Promise<void> {
   if (intentsProtocolAssetRefresh) return intentsProtocolAssetRefresh
 
   const operation = (async () => {
-    let fullCatalog: readonly SwapToken[]
-    try {
-      fullCatalog = await fetchSwapTokens(force)
-      if (fullCatalog.length === 0) throw new Error('Intents token catalog is unavailable')
-      await swapTokenCatalogCache.put(fullCatalog).catch(error => {
-        console.warn('[Intents assets] Token catalog cache write failed', error)
-      })
-    } catch (error) {
-      const cached = await swapTokenCatalogCache.readFresh()
-      if (!cached) throw error
-      fullCatalog = cached.tokens
-    }
+    const fullCatalog = await refreshBackgroundSwapCatalog(force)
+    if (fullCatalog.length === 0) throw new Error('Intents token catalog is unavailable')
     const walletTokens = fullCatalog.filter(token =>
       resolveIntentsWalletAsset(token, DEFAULT_NETWORK)
     )
@@ -2240,6 +2233,13 @@ chrome.alarms.onAlarm.addListener(alarm => {
   }
   void runtimeNetworkReady
     .then(() => {
+      if (alarm.name === SWAP_CATALOG_REFRESH_ALARM) {
+        if (DEFAULT_NETWORK === 'mainnet') {
+          void refreshBackgroundSwapCatalog().catch(() => {})
+        } else {
+          void chrome.alarms.clear(SWAP_CATALOG_REFRESH_ALARM)
+        }
+      }
       if (alarm.name === WALLET_AUTO_LOCK_ALARM) {
         backgroundAutoLock.reconcile().catch(error => {
           console.warn('[Background] Auto-lock reconciliation failed:', error)
@@ -3679,6 +3679,15 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
       .catch(error => {
         sendResponse({ error: mapEvmWalletRuntimeError(error) })
       })
+    return true
+  }
+
+  if (message.type === 'GET_SWAP_TOKEN_CATALOG') {
+    void readBackgroundSwapCatalog()
+      .then(tokens => sendResponse({ result: tokens }))
+      .catch(() =>
+        sendResponse({ error: 'Token list is temporarily unavailable. Please try again shortly.' })
+      )
     return true
   }
 
