@@ -2272,7 +2272,11 @@ export class DAppHandler {
       throw error
     }
 
-    return await new Promise<DAppApprovalDecision>(resolve => {
+    return await new Promise<DAppApprovalDecision>((resolve, reject) => {
+      let retriedWithoutPosition = false
+      const failWindowCreation = () => {
+        reject(new Error('Wallet approval window could not be opened.'))
+      }
       chrome.windows.create(
         {
           url: `index.html#approval?requestId=${requestId}`,
@@ -2283,17 +2287,33 @@ export class DAppHandler {
           top,
           focused: true
         },
-        window => {
+        function handleApprovalWindow(window) {
+          const windowError = chrome.runtime.lastError?.message
+          if (
+            !window?.id &&
+            !retriedWithoutPosition &&
+            (left !== undefined || top !== undefined) &&
+            /bounds|screen space/i.test(windowError ?? '')
+          ) {
+            retriedWithoutPosition = true
+            try {
+              chrome.windows.create(
+                {
+                  url: `index.html#approval?requestId=${requestId}`,
+                  type: 'popup',
+                  width: windowWidth,
+                  height: windowHeight,
+                  focused: true
+                },
+                handleApprovalWindow
+              )
+            } catch {
+              failWindowCreation()
+            }
+            return
+          }
           if (!window || !window.id) {
-            pendingRequestsManager.cancel(requestId)
-            releaseLaunch()
-            resolve({
-              approved: false,
-              requestId,
-              walletId: capturedWalletId,
-              accountId: capturedAccountId,
-              authorizationRevision
-            })
+            failWindowCreation()
             return
           }
 
@@ -2542,7 +2562,12 @@ export class DAppHandler {
           releaseLaunch()
         }
       )
-    }).finally(releaseLaunch)
+    })
+      .catch(error => {
+        pendingRequestsManager.cancel(requestId)
+        throw error
+      })
+      .finally(releaseLaunch)
   }
 
   async revokePermission(origin: string): Promise<void> {

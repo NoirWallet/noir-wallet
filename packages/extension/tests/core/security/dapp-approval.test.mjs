@@ -135,10 +135,15 @@ test('repeated connection focuses one approval and cancellation allows a fresh r
   const second = handler.requestExternalApproval('https://dapp.example', 'evmConnect', {
     accounts: []
   })
-  assert.equal((await sendApprovalMessage(requestId, {
-    type: 'DAPP_APPROVAL_RESULT',
-    success: false
-  })).success, true)
+  assert.equal(
+    (
+      await sendApprovalMessage(requestId, {
+        type: 'DAPP_APPROVAL_RESULT',
+        success: false
+      })
+    ).success,
+    true
+  )
   assert.deepEqual(await Promise.all([first, second]), [
     { approved: false, requestId },
     { approved: false, requestId }
@@ -178,6 +183,63 @@ test('cancellation before window creation does not install approval listeners', 
     assert.equal(listeners.size, 0)
   } finally {
     chrome.windows.create = originalCreate
+  }
+})
+
+test('approval popup retries invalid bounds and reports creation failure without user rejection', async () => {
+  const handler = new DAppHandler()
+  const originalGetLastFocused = chrome.windows.getLastFocused
+  const originalCreate = chrome.windows.create
+  const options = []
+  chrome.windows.getLastFocused = async () => ({ left: 1000, top: 0, width: 1440 })
+  chrome.windows.create = (createOptions, callback) => {
+    options.push(createOptions)
+    approvalUrl = createOptions.url
+    if (options.length === 1) {
+      chrome.runtime.lastError = {
+        message:
+          'Invalid value for bounds. Bounds must be at least 50% within visible screen space.'
+      }
+      callback(undefined)
+      delete chrome.runtime.lastError
+      return
+    }
+    callback({ id: 7 })
+    notifyApprovalOpened?.()
+    notifyApprovalOpened = undefined
+  }
+  try {
+    const opened = waitForApprovalOpened()
+    const approval = handler.requestExternalApproval('https://dapp.example', 'evmConnect', {
+      accounts: []
+    })
+    await opened
+    const requestId = new URLSearchParams(approvalUrl.split('?')[1]).get('requestId')
+    assert.ok(requestId)
+    assert.equal(options.length, 2)
+    assert.equal(typeof options[0].left, 'number')
+    assert.equal(Object.hasOwn(options[1], 'left'), false)
+    assert.equal(Object.hasOwn(options[1], 'top'), false)
+    await sendApprovalMessage(requestId, { type: 'DAPP_APPROVAL_RESULT', success: false })
+    assert.equal((await approval).approved, false)
+
+    chrome.windows.create = (createOptions, callback) => {
+      approvalUrl = createOptions.url
+      chrome.runtime.lastError = { message: 'Window creation failed.' }
+      callback(undefined)
+      delete chrome.runtime.lastError
+    }
+    await assert.rejects(
+      handler.requestExternalApproval('https://dapp.example', 'evmConnect', { accounts: [] }),
+      /Wallet approval window could not be opened/
+    )
+    const failedRequestId = new URLSearchParams(approvalUrl.split('?')[1]).get('requestId')
+    assert.equal(pendingRequestsManager.get(failedRequestId), null)
+    assert.equal(listeners.size, 0)
+  } finally {
+    chrome.windows.getLastFocused = originalGetLastFocused
+    chrome.windows.create = originalCreate
+    delete chrome.runtime.lastError
   }
 })
 
