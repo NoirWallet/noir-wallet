@@ -46,11 +46,13 @@ export function BalanceDomainTabs({
             value !== domain &&
               'border-white/10 bg-white/5 font-medium text-muted hover:bg-white/10',
             value === domain && 'font-medium',
-            value === domain && domain === 'public' && 'border-white text-black',
-            value === domain && domain === 'private' && 'border-private-action text-white',
+            value === domain && domain === 'public' && 'border-white bg-white text-black',
+            value === domain &&
+              domain === 'private' &&
+              'border-private-action bg-private-action text-white',
             value === domain &&
               domain === 'shield' &&
-              'border-success text-black shadow-[0_0_6px_var(--color-success)]'
+              'border-success bg-success text-black shadow-[0_0_6px_var(--color-success)]'
           )}
         >
           <span

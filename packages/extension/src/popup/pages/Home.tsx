@@ -22,6 +22,7 @@ import { formatSortAddress, getAccountDisplayName } from '@/lib/format'
 import { formatFiatAmount, formatTokenPrice, formatTokenQuantity } from '@/lib/number-format'
 import { safeBig } from '@/lib/big'
 import { getAccountAddresses } from '@/core/wallet/account-addresses'
+import { isZcashHardwareKeySource } from '@/core/wallet/hardware-wallet-data'
 import { AddressTypeLabel } from '../components/account/AddressType'
 import { useSpeedUp } from '../hooks/useSpeedUp'
 import { useResyncZcash } from '../hooks/useResyncZcash'
@@ -197,8 +198,13 @@ export function Home() {
       ['zcash', 'evm', 'bitcoin'].includes(network.chain.family)
     ) ?? Boolean(currentAccount)
   const activeTab = resolveHomeDefaultTab(location.search)
-  const assetDomain = resolveHomeAssetDomain(location.search)
-  const privateMode = dappExecutionMode.state?.mode === 'private'
+  const hardwareWallet =
+    storageV2Account?.walletSource.kind === 'hardware' ||
+    isZcashHardwareKeySource(currentWallet?.keySource)
+  const requestedAssetDomain = resolveHomeAssetDomain(location.search)
+  const assetDomain =
+    hardwareWallet && requestedAssetDomain === 'private' ? 'all' : requestedAssetDomain
+  const privateMode = !hardwareWallet && dappExecutionMode.state?.mode === 'private'
   const actionDomain = assetDomain === 'all' ? (privateMode ? 'private' : 'public') : assetDomain
   const publicSendSource =
     assetDomain === 'public' ? selectHomeActionSource(multichainPortfolio, 'public', 'send') : null
@@ -804,11 +810,13 @@ export function Home() {
           className="min-w-0 flex-1"
         />
         <div data-testid="home-header-actions" className="flex shrink-0 items-center gap-3">
-          <WalletModeSwitch
-            state={dappExecutionMode.state}
-            busy={dappExecutionMode.loading || dappExecutionMode.updating}
-            onChange={mode => void handleDAppExecutionModeChange(mode)}
-          />
+          {!hardwareWallet && (
+            <WalletModeSwitch
+              state={dappExecutionMode.state}
+              busy={dappExecutionMode.loading || dappExecutionMode.updating}
+              onChange={mode => void handleDAppExecutionModeChange(mode)}
+            />
+          )}
           <Popover>
             <PopoverTrigger asChild>
               <button
@@ -888,6 +896,7 @@ export function Home() {
             </div>
             <div className="flex items-center justify-center">
               <AssetDomainSelector
+                domains={hardwareWallet ? ['all', 'public', 'shield'] : undefined}
                 value={assetDomain}
                 totals={domainTotals}
                 loading={domainLoading}

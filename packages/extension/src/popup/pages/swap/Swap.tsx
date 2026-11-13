@@ -10,6 +10,7 @@ import {
 import {
   buildShieldSwapZecSourceOptions,
   parseShieldSwapZecSourceParam,
+  resolveShieldNativeZecSwapAvailable,
   shieldSwapZecSourceParam,
   SHIELD_SWAP_ZEC_INTENTS_SELECTION_ID,
   SHIELD_SWAP_ZEC_NATIVE_SELECTION_ID,
@@ -106,6 +107,7 @@ import type { FundingSource } from '@/types/wallet'
 import { PageHeader } from '../../components/common/PageHeader'
 import { BalanceDomainTabs, type BalanceDomain } from '../../components/account/BalanceDomainTabs'
 import { getPrivateTransferChainIds } from '@/popup/services/private-balance-transfer'
+import { supportsEvmPrivateExecution } from '@/core/chains/evm'
 import { InlineError } from '../../components/common/InlineError'
 import { AmountDisplay } from '../../components/common/AmountDisplay'
 import { Button } from '../../components/ui/button'
@@ -470,17 +472,60 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
   const storeBalance = getCurrentBalance()
 
   const privateExecutionSupported = Boolean(
+    supportsEvmPrivateExecution(storageV2Account?.walletSource) &&
     storageV2Account?.networks.some(
       network => network.chain.family === 'evm' && network.privateExecutionAddress
     )
   )
+  const confidentialShieldAvailable =
+    getPrivateTransferChainIds(storageV2Account, currentNetwork === 'mainnet').length > 0
+  const nativeZecShieldAvailable = resolveShieldNativeZecSwapAvailable({
+    network: currentNetwork,
+    portfolio: null,
+    enabledFlags: __ENABLED_CHAIN_FEATURE_FLAGS__,
+    zcashAccountEnabled: Boolean(
+      storageV2Account?.networks.some(network => network.chain.family === 'zcash')
+    )
+  })
+  const hardwareVendor =
+    storageV2Account?.walletSource.kind === 'hardware'
+      ? storageV2Account.walletSource.hardware.vendor
+      : undefined
+  const zcashKeySource =
+    hardwareVendor && isZcashHardwareKeySource(hardwareVendor)
+      ? hardwareVendor
+      : currentWallet?.keySource
+  const shieldOnlyZecAccount = Boolean(
+    isHardwareWallet &&
+    getFundingSourceUnavailableReason(zcashKeySource, 'transparent') &&
+    storageV2Account?.networks.length &&
+    storageV2Account.networks.every(network => network.chain.family === 'zcash')
+  )
   const availableBalanceDomains: BalanceDomain[] = [
-    'public',
+    ...(!shieldOnlyZecAccount || !nativeZecShieldAvailable ? (['public'] as const) : []),
     ...(privateExecutionSupported ? (['private'] as const) : []),
-    ...(getPrivateTransferChainIds(storageV2Account, currentNetwork === 'mainnet').length > 0
-      ? (['shield'] as const)
-      : [])
+    ...(confidentialShieldAvailable || nativeZecShieldAvailable ? (['shield'] as const) : [])
   ]
+  useEffect(() => {
+    if (
+      !shieldOnlyZecAccount ||
+      !nativeZecShieldAvailable ||
+      crossChainSendRequested ||
+      privateTransferRequested ||
+      isPrivateFunding ||
+      publicPrivacySendRequested
+    )
+      return
+    setShieldSwapSelected(true)
+    setShieldZecSource('native-shielded')
+  }, [
+    shieldOnlyZecAccount,
+    nativeZecShieldAvailable,
+    crossChainSendRequested,
+    privateTransferRequested,
+    isPrivateFunding,
+    publicPrivacySendRequested
+  ])
   const walletActionMode = useWalletActionExecutionMode(
     privateExecutionSupported,
     effectiveWalletId,
@@ -509,15 +554,16 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
             network.chain.id === useSettingsStore.getState().chainEndpointSettings.activeEvmChainId
         )?.chain.id ?? storageV2Account.networks[0]?.chain.id)
       : undefined
-  const privateSwapChainId =
-    storageV2Account?.networks.find(
-      network =>
-        network.chain.id === useSettingsStore.getState().chainEndpointSettings.activeEvmChainId &&
-        network.privateExecutionAddress
-    )?.chain.id ??
-    storageV2Account?.networks.find(
-      network => network.chain.family === 'evm' && network.privateExecutionAddress
-    )?.chain.id
+  const privateSwapChainId = privateExecutionSupported
+    ? (storageV2Account?.networks.find(
+        network =>
+          network.chain.id === useSettingsStore.getState().chainEndpointSettings.activeEvmChainId &&
+          network.privateExecutionAddress
+      )?.chain.id ??
+      storageV2Account?.networks.find(
+        network => network.chain.family === 'evm' && network.privateExecutionAddress
+      )?.chain.id)
+    : undefined
   const swap = useSwapState(
     lockedAssetFlowRequested || crossChainSendRequested ? null : swapPreferenceScope,
     {
@@ -714,17 +760,20 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
     searchParams.get('sourceAccountId') === effectiveAccountId
       ? requestedSwapMode
       : null
-  const sourceMode: QuoteDepositExecutionMode = publicPrivacySendRequested
+  const requestedSourceMode = publicPrivacySendRequested
     ? 'main'
     : sourceModeSelection?.scope === walletSourcesScope
       ? sourceModeSelection.mode
       : (routeSourceMode ?? walletActionMode.mode)
+  const sourceMode: QuoteDepositExecutionMode =
+    requestedSourceMode === 'private' && !privateExecutionSupported ? 'main' : requestedSourceMode
   const setSourceMode = useCallback(
     (mode: QuoteDepositExecutionMode) => {
+      if (mode === 'private' && !privateExecutionSupported) return
       walletActionMode.setMode(mode)
       if (walletSourcesScope) setSourceModeSelection({ scope: walletSourcesScope, mode })
     },
-    [walletActionMode.setMode, walletSourcesScope]
+    [privateExecutionSupported, walletActionMode.setMode, walletSourcesScope]
   )
   const destinationWalletActionMode = useWalletActionExecutionMode(
     privateExecutionSupported,
@@ -927,12 +976,12 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
   )
   const sourcePrivateExecutionAddress = useMemo(
     () =>
-      walletSourceQuoteTarget?.kind === 'evm'
+      privateExecutionSupported && walletSourceQuoteTarget?.kind === 'evm'
         ? storageV2Account?.networks.find(
             network => network.chain.id === walletSourceQuoteTarget.chain.id
           )?.privateExecutionAddress
         : undefined,
-    [storageV2Account, walletSourceQuoteTarget]
+    [privateExecutionSupported, storageV2Account, walletSourceQuoteTarget]
   )
   const mainWalletOwnedSource = useMemo(
     () =>
@@ -960,7 +1009,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
   )
   const executionSourceMode: QuoteDepositExecutionMode = publicPrivacySendRequested
     ? 'main'
-    : privateTransferRequested
+    : privateTransferRequested && privateExecutionSupported
       ? 'private'
       : !isPrivateFunding && sourceMode === 'private' && walletOwnedSourceBase?.family === 'evm'
         ? 'private'
@@ -1093,13 +1142,15 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
   const privateExecutionAddresses = useMemo(
     () =>
       new Map(
-        storageV2Account?.networks.flatMap(network =>
-          network.privateExecutionAddress
-            ? [[network.chain.id, network.privateExecutionAddress] as const]
-            : []
-        ) ?? []
+        privateExecutionSupported
+          ? (storageV2Account?.networks.flatMap(network =>
+              network.privateExecutionAddress
+                ? [[network.chain.id, network.privateExecutionAddress] as const]
+                : []
+            ) ?? [])
+          : []
       ),
-    [storageV2Account?.networks]
+    [privateExecutionSupported, storageV2Account?.networks]
   )
   const supportsPrivateDestination = useCallback(
     (token: RheaSwapToken, mode: QuoteDepositExecutionMode = 'private') =>
@@ -1329,12 +1380,12 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
   )
   const destinationPrivateExecutionAddress = useMemo(
     () =>
-      walletDestinationTarget?.kind === 'evm'
+      privateExecutionSupported && walletDestinationTarget?.kind === 'evm'
         ? storageV2Account?.networks.find(
             network => network.chain.id === walletDestinationTarget.chain.id
           )?.privateExecutionAddress
         : undefined,
-    [storageV2Account, walletDestinationTarget]
+    [privateExecutionSupported, storageV2Account, walletDestinationTarget]
   )
   const destinationMode: QuoteDepositExecutionMode = ordinarySwapRequested
     ? executionSourceMode
@@ -2493,8 +2544,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
         typeof target === 'string'
           ? target
           : record.sourceMode === 'private' && target?.kind === 'evm'
-            ? storageV2Account?.networks.find(network => network.chain.id === target.chain.id)
-                ?.privateExecutionAddress
+            ? privateExecutionAddresses.get(target.chain.id)
             : target?.address
       if (
         record.customRecipient ||
@@ -4765,6 +4815,17 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
   }, [searchParams])
 
   useEffect(() => {
+    if (
+      shieldSwapSelected &&
+      !confidentialShieldAvailable &&
+      nativeZecShieldAvailable &&
+      shieldZecSource !== 'native-shielded'
+    ) {
+      setShieldZecSource('native-shielded')
+    }
+  }, [shieldSwapSelected, confidentialShieldAvailable, nativeZecShieldAvailable, shieldZecSource])
+
+  useEffect(() => {
     if (!shieldNativeZecSwap || !ordinarySwapRequested) return
     setFundingSource('shielded')
     const zec =
@@ -4794,7 +4855,9 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
     if (domain === 'shield') {
       handleSourceModeChange(sourceMode, true)
       setShieldSwapSelected(true)
-      if (!parseShieldSwapZecSourceParam(searchParams.get('shieldZecSource'))) {
+      if (!confidentialShieldAvailable && nativeZecShieldAvailable) {
+        setShieldZecSource('native-shielded')
+      } else if (!parseShieldSwapZecSourceParam(searchParams.get('shieldZecSource'))) {
         setShieldZecSource('intents')
       }
       return

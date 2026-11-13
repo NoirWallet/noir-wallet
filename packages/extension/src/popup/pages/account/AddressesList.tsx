@@ -35,6 +35,7 @@ import { useWalletStore } from '@/store/wallet-store'
 import { AccountAvatar } from '../../components/account/AccountAvatar'
 import { availableSoftwareAccountFamilies } from '@/popup/services/account-network-selection-client'
 import { useDAppExecutionMode } from '@/popup/hooks/useDAppExecutionMode'
+import { supportsEvmPrivateExecution } from '@/core/chains/evm'
 
 interface AddressQrTarget {
   readonly network: AccountNetworkView
@@ -400,9 +401,15 @@ export function AddressesList() {
     walletId,
     accountId
   )
-  const defaultMode = executionMode.state?.mode === 'private' ? 'private' : 'public'
+  const [privateExecutionSupported, setPrivateExecutionSupported] = useState(false)
+  const defaultMode =
+    privateExecutionSupported && executionMode.state?.mode === 'private' ? 'private' : 'public'
   const requestedMode =
-    explicitMode === 'private' || explicitMode === 'public' ? explicitMode : defaultMode
+    explicitMode === 'private' && !privateExecutionSupported
+      ? 'public'
+      : explicitMode === 'private' || explicitMode === 'public'
+        ? explicitMode
+        : defaultMode
   const requestedZcashMode = explicitMode === 'private' ? 'private' : 'public'
   const [networkQuery, setNetworkQuery] = useState('')
   const availableFamilies = useMemo(() => availableSoftwareAccountFamilies(), [])
@@ -423,7 +430,7 @@ export function AddressesList() {
         )
       : []
   const [selectedMode, setMode] = useState<'public' | 'private' | null>(null)
-  const mode = selectedMode ?? defaultMode
+  const mode = privateExecutionSupported ? (selectedMode ?? defaultMode) : 'public'
   const activeMode = scopedReceive ? requestedMode : mode
   const [evmExpanded, setEvmExpanded] = useState(false)
   const [networks, setNetworks] = useState<readonly AccountNetworkView[]>([])
@@ -444,6 +451,7 @@ export function AddressesList() {
   useEffect(() => {
     let cancelled = false
     setNetworks([])
+    setPrivateExecutionSupported(false)
     setAccountIdentity(null)
     setQrTarget(null)
     setPrivateAddressAction(null)
@@ -468,7 +476,16 @@ export function AddressesList() {
           setError('No enabled network addresses are available for this account.')
           return
         }
-        setNetworks(entry.networks)
+        const canUsePrivate = supportsEvmPrivateExecution(entry.walletSource)
+        setPrivateExecutionSupported(canUsePrivate)
+        setNetworks(
+          canUsePrivate
+            ? entry.networks
+            : entry.networks.map(network => ({
+                ...network,
+                privateExecutionAddress: undefined
+              }))
+        )
         setAccountIdentity({ name: entry.accountDisplayName })
       } catch {
         if (!cancelled) {

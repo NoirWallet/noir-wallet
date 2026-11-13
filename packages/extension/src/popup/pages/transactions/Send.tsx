@@ -93,7 +93,10 @@ import {
   getActiveAccountScopeKey
 } from '@/popup/lib/active-account-scope'
 import { getZcashChainId } from '@/core/chains/registry'
-import { resolveZcashSelfMove } from '@/popup/services/zcash-self-move'
+import {
+  getDefaultZcashSelfMoveSource,
+  resolveZcashSelfMove
+} from '@/popup/services/zcash-self-move'
 import {
   estimateConfidentialSendTime,
   estimateZcashSendTime
@@ -113,7 +116,8 @@ function MoveLayout({
   fromAddress,
   toAddress,
   from,
-  onReverse
+  onReverse,
+  canReverse
 }: {
   amount: ReactNode
   balance: string
@@ -123,6 +127,7 @@ function MoveLayout({
   toAddress: string
   from: FundingSource
   onReverse: () => void
+  canReverse: boolean
 }) {
   const accountCard = (label: 'From' | 'To', source: FundingSource, address: string) => (
     <div className="min-w-0 rounded-xl border border-white/5 bg-wallet-surface px-4 py-4">
@@ -176,15 +181,17 @@ function MoveLayout({
       <div>
         {accountCard('From', from, fromAddress)}
         <div className="relative h-2.5">
-          <button
-            type="button"
-            aria-label="Switch move direction"
-            title="Switch move direction"
-            onClick={onReverse}
-            className="absolute left-1/2 top-1/2 z-10 flex size-8 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-lg border border-white/10 bg-card text-foreground transition-colors hover:bg-wallet-selected"
-          >
-            <Icon icon="lucide:arrow-down-up" width={18} height={18} />
-          </button>
+          {canReverse && (
+            <button
+              type="button"
+              aria-label="Switch move direction"
+              title="Switch move direction"
+              onClick={onReverse}
+              className="absolute left-1/2 top-1/2 z-10 flex size-8 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-lg border border-white/10 bg-card text-foreground transition-colors hover:bg-wallet-selected"
+            >
+              <Icon icon="lucide:arrow-down-up" width={18} height={18} />
+            </button>
+          )}
         </div>
         {accountCard('To', from === 'transparent' ? 'shielded' : 'transparent', toAddress)}
       </div>
@@ -272,8 +279,15 @@ export function Send({
     accountDisplayNames
   )
   const isHardwareWallet = isZcashHardwareKeySource(currentWallet?.keySource)
+  // Keep a bare Move route stable while balances refresh; entry points pass a funded source explicitly.
+  const defaultMoveSource = getDefaultZcashSelfMoveSource({
+    addresses: currentAccount?.addresses,
+    balance: null,
+    keySource: currentWallet?.keySource,
+    network: currentNetwork
+  })
   const fundingSource = isSelfMove
-    ? (moveSource ?? 'transparent')
+    ? (moveSource ?? defaultMoveSource ?? 'transparent')
     : getFundingSourceUnavailableReason(currentWallet?.keySource, selectedFundingSource)
       ? 'shielded'
       : selectedFundingSource
@@ -286,10 +300,16 @@ export function Send({
   const selfMove = isSelfMove
     ? resolveZcashSelfMove(currentAccount?.addresses, fundingSource, currentNetwork)
     : null
-  const moveUnavailable =
+  const moveUnavailableReason = getFundingSourceUnavailableReason(
+    currentWallet?.keySource,
+    fundingSource
+  )
+  const moveUnavailable = isSelfMove && (!selfMove || Boolean(moveUnavailableReason))
+  const reverseSource = fundingSource === 'transparent' ? 'shielded' : 'transparent'
+  const canReverseMove =
     isSelfMove &&
-    (!selfMove ||
-      Boolean(getFundingSourceUnavailableReason(currentWallet?.keySource, fundingSource)))
+    resolveZcashSelfMove(currentAccount?.addresses, reverseSource, currentNetwork) !== null &&
+    !getFundingSourceUnavailableReason(currentWallet?.keySource, reverseSource)
 
   const { sendTransaction } = useTransaction()
 
@@ -316,7 +336,7 @@ export function Send({
   const shieldableBalance = getShieldableTransparentBalance(balance)
 
   const reverseMove = () => {
-    if (!isSelfMove) return
+    if (!canReverseMove) return
     setShowReview(false)
     setToAddress('')
     setSelectedRecipient(null)
@@ -325,7 +345,7 @@ export function Send({
     setMemo('')
     const params = new URLSearchParams({
       move: '1',
-      from: fundingSource === 'transparent' ? 'shielded' : 'transparent',
+      from: reverseSource,
       mode: walletMode
     })
     navigate(`/send/zcash?${params.toString()}`, { replace: true })
@@ -439,7 +459,12 @@ export function Send({
     feeTier,
     fundingSource,
     enabled:
-      active && !sendPrivately && !!effectiveToAddress && !!fromAddress && !recipientFormatError
+      active &&
+      !sendPrivately &&
+      !moveUnavailable &&
+      !!effectiveToAddress &&
+      !!fromAddress &&
+      !recipientFormatError
   })
   const isMaxTransferAmount =
     !!maxTransfer.maxAmount && safeBig(amount || '0').eq(maxTransfer.maxAmount)
@@ -461,6 +486,7 @@ export function Send({
     enabled:
       active &&
       !sendPrivately &&
+      !moveUnavailable &&
       safeBig(amount || '0').gt(0) &&
       !!effectiveToAddress &&
       !recipientFormatError &&
@@ -474,7 +500,10 @@ export function Send({
     ? maxTransfer.loadingByTier
     : feeEstimate.loadingByTier
   const feeRequired =
-    !!effectiveToAddress && safeBig(amount || '0').gt(0) && recipientFormatError === null
+    !moveUnavailable &&
+    !!effectiveToAddress &&
+    safeBig(amount || '0').gt(0) &&
+    recipientFormatError === null
   const feeError = feeRequired && (isMaxFeeMode ? maxTransfer.error : feeEstimate.error)
   const feeReady =
     feeRequired &&
@@ -491,6 +520,7 @@ export function Send({
       : !feeEstimate.loading && !!feeEstimate.feeQuote && feeEstimate.feeZats !== null)
   const displayedFeeLoading = feeRequired && !feeReady && !feeError
   const retryFeeEstimate = () => {
+    if (moveUnavailable) return
     if (isMaxFeeMode) void maxTransfer.request()
     else feeEstimate.retry()
   }
@@ -558,13 +588,13 @@ export function Send({
     if (previousRouteIdentity.current === routeIdentity) return
     previousRouteIdentity.current = routeIdentity
     setShowReview(false)
-    setFundingSource(moveSource ?? 'transparent')
+    setFundingSource(moveSource ?? defaultMoveSource ?? 'transparent')
     setToAddress('')
     setSelectedRecipient(null)
     setAmount('')
     setMaxSelected(false)
     setMemo('')
-  }, [moveSource, routeIdentity, walletMode])
+  }, [moveSource, routeIdentity, walletMode, defaultMoveSource])
 
   useEffect(() => {
     const activeScope = getActiveAccountScopeKey()
@@ -913,6 +943,7 @@ export function Send({
                     disabled={
                       !fromAddress ||
                       !effectiveToAddress ||
+                      moveUnavailable ||
                       safeBig(effectiveMaxStr).lte(0) ||
                       maxTransfer.loading ||
                       (isTransparentToShieldMove &&
@@ -941,9 +972,15 @@ export function Send({
                 toAddress={effectiveToAddress}
                 from={fundingSource}
                 onReverse={reverseMove}
+                canReverse={canReverseMove}
               />
               {moveUnavailable && (
-                <InlineError message="This account cannot move ZEC between Transparent and Shield." />
+                <InlineError
+                  message={
+                    moveUnavailableReason ??
+                    'This account cannot move ZEC between Transparent and Shield.'
+                  }
+                />
               )}
               {isTransparentToShieldMove &&
                 !moveUnavailable &&

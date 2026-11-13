@@ -73,6 +73,7 @@ import {
 import { BitcoinAccountTypeSelector } from '@/popup/components/bitcoin/BitcoinAccountTypeSelector'
 import { resolveEffectiveActiveAccountIdentity } from '@/popup/lib/effective-active-account'
 import { getFundingSourceUnavailableReason } from '@/core/wallet/funding-source'
+import type { KeySource } from '@/types/wallet'
 
 export function AssetDetail() {
   const [searchParams] = useSearchParams()
@@ -256,7 +257,11 @@ export function AssetDetail() {
         assetId: asset.asset.id
       })
     : null
-  const actionDomain = searchParams.get('mode') === 'private' ? 'private' : 'public'
+  const actionDomain =
+    searchParams.get('mode') === 'private' &&
+    (chain?.chain.family !== 'evm' || privateTransferEligible)
+      ? 'private'
+      : 'public'
   const activityFilterDomain = searchParams.get('history') === 'shield' ? 'shield' : undefined
   useEffect(() => {
     if (!privateTransferEligible || !effectiveWalletId || !effectiveAccountId) return
@@ -328,9 +333,19 @@ export function AssetDetail() {
   const quote = asset ? findAssetPrice(prices, asset.asset.id) : undefined
   const explorerUrl =
     asset && chain ? formatChainAssetExplorerUrl(chain.chain.id, asset.asset, currentNetwork) : ''
+  const zcashKeySource: KeySource | undefined = storageV2Account
+    ? storageV2Account.walletSource.kind === 'hardware'
+      ? isZcashHardwareKeySource(storageV2Account.walletSource.hardware.vendor)
+        ? storageV2Account.walletSource.hardware.vendor
+        : undefined
+      : storageV2Account.walletSource.kind
+    : currentWallet?.keySource
+  const zcashFundingSource = getFundingSourceUnavailableReason(zcashKeySource, 'transparent')
+    ? 'shielded'
+    : 'transparent'
   const fundingUnavailableReason =
     chain?.chain.family === 'zcash'
-      ? getFundingSourceUnavailableReason(currentWallet?.keySource, 'transparent')
+      ? getFundingSourceUnavailableReason(zcashKeySource, zcashFundingSource)
       : undefined
   const canSend = Boolean(
     chain &&
@@ -425,7 +440,7 @@ export function AssetDetail() {
       return
     }
     if (chain.chain.family === 'zcash') {
-      navigate('/send/zcash?from=transparent')
+      navigate(`/send/zcash?from=${zcashFundingSource}`)
       return
     }
     const query = new URLSearchParams({ assetId: asset.asset.id })
@@ -488,7 +503,13 @@ export function AssetDetail() {
       query.set('sourceWalletId', effectiveWalletId)
       query.set('sourceAccountId', effectiveAccountId)
     }
-    query.set('balanceDomain', domain)
+    if (chain?.chain.family === 'zcash' && zcashFundingSource === 'shielded') {
+      query.set('balanceDomain', 'shield')
+      query.set('shieldZecSource', 'native')
+    } else {
+      query.set('balanceDomain', domain)
+      if (chain?.chain.family === 'zcash') query.set('fundingSource', zcashFundingSource)
+    }
     navigate(`/swap?${query.toString()}`)
   }
 
@@ -554,39 +575,43 @@ export function AssetDetail() {
     }
   ]
 
-  const zcashActions = (privacy: 'transparent' | 'shielded') => [
-    {
-      action: 'send' as const,
-      label: 'Send',
-      disabled: Boolean(getFundingSourceUnavailableReason(currentWallet?.keySource, privacy)),
-      onClick: () => navigate(`/send/zcash?from=${privacy}`)
-    },
-    {
-      action: 'receive' as const,
-      label: 'Receive',
-      disabled: !canReceive,
-      onClick: () =>
-        navigate(
-          `/addresses-list?${new URLSearchParams({ walletId: effectiveWalletId ?? '', accountId: effectiveAccountId ?? '', chainId: chain?.chain.id ?? '', privacy })}`
-        )
-    },
-    {
-      action: 'move' as const,
-      label: 'Move',
-      disabled: Boolean(getFundingSourceUnavailableReason(currentWallet?.keySource, privacy)),
-      onClick: () => navigate(`/send/zcash?move=1&from=${privacy}`)
-    },
-    ...(privacy === 'transparent'
-      ? [
-          {
-            action: 'swap' as const,
-            label: 'Swap',
-            disabled: !canSwap,
-            onClick: () => handleSwap('public')
-          }
-        ]
-      : [])
-  ]
+  const zcashActions = (privacy: 'transparent' | 'shielded') =>
+    [
+      {
+        action: 'send' as const,
+        label: 'Send',
+        disabled: Boolean(getFundingSourceUnavailableReason(zcashKeySource, privacy)),
+        onClick: () => navigate(`/send/zcash?from=${privacy}`)
+      },
+      {
+        action: 'receive' as const,
+        label: 'Receive',
+        disabled: !canReceive,
+        onClick: () =>
+          navigate(
+            `/addresses-list?${new URLSearchParams({ walletId: effectiveWalletId ?? '', accountId: effectiveAccountId ?? '', chainId: chain?.chain.id ?? '', privacy })}`
+          )
+      },
+      {
+        action: 'move' as const,
+        label: 'Move',
+        disabled: Boolean(getFundingSourceUnavailableReason(zcashKeySource, privacy)),
+        onClick: () => navigate(`/send/zcash?move=1&from=${privacy}`)
+      },
+      ...(privacy === 'transparent'
+        ? [
+            {
+              action: 'swap' as const,
+              label: 'Swap',
+              disabled: !canSwap,
+              onClick: () => handleSwap('public')
+            }
+          ]
+        : [])
+    ].filter(
+      action =>
+        !getFundingSourceUnavailableReason(zcashKeySource, privacy) || action.action === 'receive'
+    )
 
   const handleActivityClick = useCallback(
     async (item: ActivityItem) => {
@@ -737,7 +762,7 @@ export function AssetDetail() {
     },
     {
       domain: 'private',
-      address: accountNetwork?.privateExecutionAddress,
+      address: privateTransferEligible ? accountNetwork?.privateExecutionAddress : undefined,
       label: 'View Private address'
     }
   ].flatMap(({ domain, address, label }) => {
@@ -1011,7 +1036,12 @@ export function AssetDetail() {
         {chain.chain.family === 'evm' && (
           <section className="py-2" aria-label="Account balances">
             {categories?.domains
-              .filter(domain => domain !== 'all')
+              .filter(
+                (domain): domain is 'public' | 'private' | 'shield' =>
+                  domain !== 'all' &&
+                  (domain === 'public' ||
+                    supportsEvmPrivateExecution(storageV2Account?.walletSource))
+              )
               .map(domain => {
                 const raw = categories.raw[domain]
                 return (

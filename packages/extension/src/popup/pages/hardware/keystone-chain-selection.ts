@@ -33,7 +33,7 @@ export function buildKeystoneNetworkBundles(
   return Object.freeze([
     {
       id: 'multi-chain',
-      name: 'Multi-chain',
+      name: multiCoin.length === 1 && multiCoin[0] === 'evm' ? 'EVM networks' : 'Multi-chain',
       firmwareDescription: 'Multi-Coin firmware',
       requestedNetworks: multiCoin,
       comingSoonNetworks: comingSoonNetworks(KEYSTONE_PRODUCT_CHAINS_BY_PROFILE['multi-coin']),

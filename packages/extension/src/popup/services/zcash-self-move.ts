@@ -47,3 +47,20 @@ export function getAvailableZcashSelfMoveSources(options: {
       safeBig(getFundingBalance(balance, source).available).gt(0)
   )
 }
+
+export function getDefaultZcashSelfMoveSource(options: {
+  addresses: AccountAddresses | null | undefined
+  balance: ZcashBalance | null | undefined
+  keySource: KeySource | undefined
+  network: Network
+}): FundingSource | null {
+  const available = getAvailableZcashSelfMoveSources(options)
+  if (available.length > 0) return available[0]
+  return (
+    (['transparent', 'shielded'] as const).find(
+      source =>
+        resolveZcashSelfMove(options.addresses, source, options.network) !== null &&
+        !getFundingSourceUnavailableReason(options.keySource, source)
+    ) ?? null
+  )
+}

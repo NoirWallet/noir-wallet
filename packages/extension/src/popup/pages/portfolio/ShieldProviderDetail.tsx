@@ -12,6 +12,7 @@ import {
 import type { AssetPriceReadModel } from '@/core/prices'
 import { findAssetPrice } from '@/core/prices'
 import { useWalletStore } from '@/store/wallet-store'
+import { useAccountDataStore } from '@/store/account-data-store'
 import Big from '@/lib/big'
 import { confidentialFundingClient } from '@/popup/services/confidential-funding-client'
 import { useSettingsStore } from '@/store/settings-store'
@@ -54,6 +55,7 @@ import {
   resolveShieldZcashVaultEntry,
   shieldZcashEnablePath
 } from '@/popup/services/shield-zcash-entry'
+import { getDefaultZcashSelfMoveSource } from '@/popup/services/zcash-self-move'
 
 export function ShieldProviderDetail() {
   const currentWalletId = useWalletStore(state => state.currentWalletId)
@@ -104,6 +106,13 @@ function ShieldProviderContent() {
       ? state.getAccount(currentWalletId, currentAccountId)
       : undefined
   )
+  const zcashBalance = useAccountDataStore(state => state.getCurrentBalance())
+  const zcashMoveSource = getDefaultZcashSelfMoveSource({
+    addresses: walletAccount?.addresses,
+    balance: zcashBalance,
+    keySource: currentWallet?.keySource,
+    network: currentNetwork
+  })
 
   useEffect(() => {
     mounted.current = true
@@ -493,8 +502,10 @@ function ShieldProviderContent() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => navigate('/send/zcash?move=1&from=transparent')}
-                  disabled={!hasZcashAccount}
+                  onClick={() => {
+                    if (zcashMoveSource) navigate(`/send/zcash?move=1&from=${zcashMoveSource}`)
+                  }}
+                  disabled={!hasZcashAccount || !zcashMoveSource}
                   className="wallet-interactive flex h-[74px] min-w-0 flex-col items-center justify-center gap-2 rounded-lg bg-[var(--color-wallet-surface)] text-xs enabled:hover:bg-[var(--color-wallet-selected)] enabled:active:bg-white/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 disabled:opacity-45"
                 >
                   <WalletActionIcon action="move" size={20} />
