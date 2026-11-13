@@ -150,6 +150,15 @@ export function TokenSelectionList({
               {item.balance}
             </div>
           )}
+          {selectedKey === item.key && (
+            <Icon
+              icon="lucide:check"
+              width={16}
+              height={16}
+              className="shrink-0 text-primary"
+              aria-hidden="true"
+            />
+          )}
         </button>
       ))}
     </div>

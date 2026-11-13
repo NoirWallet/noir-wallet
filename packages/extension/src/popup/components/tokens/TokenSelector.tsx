@@ -2,22 +2,20 @@
  * Token selector component for Swap and other scenarios
  */
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
-import { Icon } from '@iconify/react'
 import type { SwapToken } from '@/core/services/intents-api'
+import { RHEA_SWAP_CHAIN_CATALOG } from '@/core/services/rhea-swap'
+import type { InspectedTokenAddress } from '@/popup/services/token-address-discovery'
 import { formatChainName, formatSymbol } from '@/lib/format'
 import { TokenIcon } from './TokenIcon'
 import { TokenBalanceDisplay } from './TokenBalanceDisplay'
-import { TokenSelectionList, TokenSelectionSearch } from './TokenSelectionList'
+import { TokenSelectorView } from './TokenSelectorView'
 import { sortTokensByBalanceValue } from './token-balance-order'
-import { ListSkeleton } from '../ui/skeleton'
 import { swapTokenCatalogClient } from '@/popup/services/swap-token-catalog-client'
 import {
   compareSwapTokenSearchRelevance,
   matchesSwapTokenSearch
 } from '@/popup/services/swap-token-selection'
-import { cn } from '@/lib/utils'
 import { createDebugRequestId, logDebugTiming } from '@/lib/debug-performance'
-import { ChainIcon } from '../common/ChainIcon'
 import {
   deferredChainChoices,
   isSelectableSwapBlockchain
@@ -26,16 +24,8 @@ import { useWalletStore } from '@/store/wallet-store'
 import {
   orderNetworkIdsByRecency,
   recordRecentChainSelection,
-  tokenSelectorChainOrderStorageKey,
-  TOKEN_SELECTOR_VISIBLE_CHAINS
+  tokenSelectorChainOrderStorageKey
 } from './token-selector-chain-order'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuTrigger
-} from '../ui/dropdown-menu'
 
 const MAX_RENDERED_TOKENS = 100
 
@@ -53,6 +43,7 @@ export interface TokenSelectorProps {
   excludeAssetId?: string
   emptyMessage?: string
   unavailableNetworks?: readonly Readonly<{ id: string; label: string; iconChain: string }>[]
+  onDiscoveredToken?: (result: InspectedTokenAddress) => string | void
 }
 
 export function TokenSelector({
@@ -68,7 +59,8 @@ export function TokenSelector({
   networkFilterStyle = 'dropdown',
   excludeAssetId,
   emptyMessage = 'No tokens found',
-  unavailableNetworks = []
+  unavailableNetworks = [],
+  onDiscoveredToken
 }: TokenSelectorProps) {
   const currentNetwork = useWalletStore(state => state.currentNetwork)
   const currentWalletId = useWalletStore(state => state.currentWalletId)
@@ -184,13 +176,18 @@ export function TokenSelector({
     selectedBlockchain === 'all' || networkOptions.some(option => option.id === selectedBlockchain)
       ? selectedBlockchain
       : 'all'
-  const selectedNetwork = networkOptions.find(option => option.id === effectiveBlockchain)
-  const selectedNetworkLabel = selectedNetwork?.label ?? 'All Networks'
-  const primaryNetworks = networkOptions.slice(0, TOKEN_SELECTOR_VISIBLE_CHAINS)
-  const moreNetworks = networkOptions.slice(TOKEN_SELECTOR_VISIBLE_CHAINS)
-  const unavailableNetworkOptions = unavailableNetworks.filter(
-    option => !networkOptions.some(available => available.id === option.id)
-  )
+  const selectorNetworks = [
+    ...networkOptions.map(option => ({ ...option, iconChain: option.id })),
+    ...unavailableNetworks
+      .filter(option => !networkOptions.some(available => available.id === option.id))
+      .map(option => ({ ...option, disabledReason: 'Unavailable' })),
+    ...deferredChainChoices(__ENABLED_CHAIN_FEATURE_FLAGS__).map(option => ({
+      id: `coming-soon:${option.family}`,
+      label: option.label,
+      iconChain: option.iconAlias,
+      disabledReason: 'Coming soon'
+    }))
+  ]
   const filterKey = `${effectiveBlockchain}:${search}`
   const filteredTokens = useMemo(() => {
     const startedAt = performance.now()
@@ -243,326 +240,90 @@ export function TokenSelector({
   const visibleLimit = renderWindow.filter === filterKey ? renderWindow.count : MAX_RENDERED_TOKENS
   const visibleTokens = filteredTokens.slice(0, visibleLimit)
 
+  const selectorItems = visibleTokens.map(token => {
+    const balance = balances?.get(token.assetId)
+    const symbol = formatSymbol(token.symbol)
+    const chainName = formatChainName(token.blockchain)
+    return {
+      key: token.blockchain + ':' + token.assetId,
+      symbol,
+      icon: <TokenIcon token={token} size={32} />,
+      subtitle: chainName,
+      ariaLabel:
+        symbol +
+        ' on ' +
+        chainName +
+        (balance === undefined ? '' : ', balance ' + balance + ' ' + symbol),
+      balance:
+        balance === undefined ? undefined : (
+          <TokenBalanceDisplay
+            amount={balance}
+            symbol={symbol}
+            priceUsd={token.price}
+            approximateFiat
+          />
+        )
+    }
+  })
+  const discoveryChain = RHEA_SWAP_CHAIN_CATALOG.find(
+    chain => chain.walletFamily === 'evm' && chain.blockchain === effectiveBlockchain
+  )
   return (
-    <div
-      className={cn(
-        'flex flex-col',
-        fullHeight
-          ? 'h-full min-h-0'
-          : networkFilterStyle === 'icons'
-            ? 'h-[min(78vh,510px)]'
-            : 'h-[60vh]'
-      )}
-    >
-      <div
-        className={cn('sticky top-0 z-10', networkFilterStyle === 'icons' ? 'pb-3 pt-1.5' : 'py-4')}
-      >
-        <TokenSelectionSearch
-          value={search}
-          onChange={setSearch}
-          ariaLabel="Search tokens"
-          className={cn(
-            'h-10',
-            networkFilterStyle === 'icons' && 'h-[45px] rounded-xl border-transparent bg-card'
-          )}
-          autoFocus
-        />
-        {networkFilterStyle === 'icons' ? (
-          <div
-            className="mt-4 flex items-center gap-2 overflow-x-auto pb-1"
-            role="group"
-            aria-label="Filter assets by network"
-          >
-            <button
-              type="button"
-              onClick={() => selectBlockchain('all')}
-              aria-pressed={effectiveBlockchain === 'all'}
-              className={cn(
-                'wallet-interactive flex size-10 shrink-0 items-center justify-center rounded-md border text-sm hover:bg-accent active:bg-white/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2',
-                effectiveBlockchain === 'all'
-                  ? 'border-primary text-foreground'
-                  : 'border-transparent bg-card text-muted hover:text-foreground'
-              )}
-              title="All networks"
-            >
-              All
-            </button>
-            {primaryNetworks.map(option => (
-              <button
-                key={option.id}
-                type="button"
-                onClick={() => selectBlockchain(option.id)}
-                aria-label={option.label}
-                aria-pressed={effectiveBlockchain === option.id}
-                title={option.label}
-                className={cn(
-                  'wallet-interactive flex size-10 shrink-0 items-center justify-center rounded-md border hover:bg-accent active:bg-white/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2',
-                  effectiveBlockchain === option.id
-                    ? 'border-primary bg-primary/10'
-                    : 'border-transparent bg-card hover:bg-accent'
-                )}
-              >
-                <ChainIcon
-                  chain={option.id}
-                  width={28}
-                  height={28}
-                  className="rounded-[4px]"
-                  showTooltip={false}
-                  alt=""
-                  aria-hidden="true"
-                />
-              </button>
-            ))}
-            {(moreNetworks.length > 0 ||
-              unavailableNetworkOptions.length > 0 ||
-              deferredChainChoices(__ENABLED_CHAIN_FEATURE_FLAGS__).length > 0) && (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <button
-                    type="button"
-                    aria-label="More networks"
-                    title="More networks"
-                    className={cn(
-                      'wallet-interactive flex size-10 shrink-0 items-center justify-center rounded-md border text-sm hover:bg-accent active:bg-white/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2',
-                      moreNetworks.some(option => option.id === effectiveBlockchain)
-                        ? 'border-primary bg-primary/10'
-                        : 'border-transparent bg-card hover:bg-accent'
-                    )}
-                  >
-                    <Icon icon="lucide:ellipsis" width={17} height={17} />
-                  </button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="min-w-[180px]">
-                  <DropdownMenuRadioGroup
-                    value={effectiveBlockchain}
-                    onValueChange={selectBlockchain}
-                  >
-                    {moreNetworks.map(option => (
-                      <DropdownMenuRadioItem
-                        key={option.id}
-                        value={option.id}
-                        className="cursor-pointer"
-                      >
-                        <ChainIcon
-                          chain={option.id}
-                          width={16}
-                          height={16}
-                          className="rounded-[4px]"
-                          showTooltip={false}
-                          alt=""
-                          aria-hidden="true"
-                        />
-                        <span>{option.label}</span>
-                      </DropdownMenuRadioItem>
-                    ))}
-                    {unavailableNetworkOptions.map(option => (
-                      <DropdownMenuRadioItem
-                        key={option.id}
-                        value={option.id}
-                        disabled
-                        className="text-muted data-[disabled]:opacity-100"
-                      >
-                        <ChainIcon
-                          chain={option.iconChain}
-                          width={16}
-                          height={16}
-                          className="rounded-[4px]"
-                          showTooltip={false}
-                          alt=""
-                          aria-hidden="true"
-                        />
-                        <span className="flex-1">{option.label}</span>
-                        <span className="text-[10px]">Unavailable</span>
-                      </DropdownMenuRadioItem>
-                    ))}
-                    {deferredChainChoices(__ENABLED_CHAIN_FEATURE_FLAGS__).map(option => (
-                      <DropdownMenuRadioItem
-                        key={option.family}
-                        value={`coming-soon:${option.family}`}
-                        disabled
-                        className="text-muted data-[disabled]:opacity-100"
-                      >
-                        <ChainIcon
-                          chain={option.iconAlias}
-                          width={16}
-                          height={16}
-                          className="rounded-[4px]"
-                          showTooltip={false}
-                          alt=""
-                          aria-hidden="true"
-                        />
-                        <span className="flex-1">{option.label}</span>
-                        <span className="text-[10px]">Coming soon</span>
-                      </DropdownMenuRadioItem>
-                    ))}
-                  </DropdownMenuRadioGroup>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            )}
-          </div>
-        ) : (
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button
-                type="button"
-                aria-label={`Filter assets by network: ${selectedNetworkLabel}`}
-                className="wallet-interactive mt-3 inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-lg bg-card px-3 text-xs text-foreground hover:bg-accent active:bg-white/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2"
-              >
-                {selectedNetwork ? (
-                  <ChainIcon
-                    chain={selectedNetwork.id}
-                    width={16}
-                    height={16}
-                    className="rounded-[4px]"
-                    showTooltip={false}
-                    alt=""
-                    aria-hidden="true"
-                  />
-                ) : (
-                  <Icon icon="lucide:network" width={16} height={16} className="text-muted" />
-                )}
-                <span>{selectedNetworkLabel}</span>
-                <Icon icon="lucide:chevron-down" width={13} height={13} className="text-muted" />
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="min-w-[180px]">
-              <DropdownMenuRadioGroup value={effectiveBlockchain} onValueChange={selectBlockchain}>
-                <DropdownMenuRadioItem value="all" className="cursor-pointer">
-                  <Icon icon="lucide:network" width={16} height={16} className="text-muted" />
-                  <span>All Networks</span>
-                </DropdownMenuRadioItem>
-                {networkOptions.map(option => (
-                  <DropdownMenuRadioItem
-                    key={option.id}
-                    value={option.id}
-                    className="cursor-pointer"
-                  >
-                    <ChainIcon
-                      chain={option.id}
-                      width={16}
-                      height={16}
-                      className="rounded-[4px]"
-                      showTooltip={false}
-                      alt=""
-                      aria-hidden="true"
-                    />
-                    <span>{option.label}</span>
-                  </DropdownMenuRadioItem>
-                ))}
-                {unavailableNetworkOptions.map(option => (
-                  <DropdownMenuRadioItem
-                    key={option.id}
-                    value={option.id}
-                    disabled
-                    className="text-muted data-[disabled]:opacity-100"
-                  >
-                    <ChainIcon
-                      chain={option.iconChain}
-                      width={16}
-                      height={16}
-                      className="rounded-[4px]"
-                      showTooltip={false}
-                      alt=""
-                      aria-hidden="true"
-                    />
-                    <span className="flex-1">{option.label}</span>
-                    <span className="text-[10px]">Unavailable</span>
-                  </DropdownMenuRadioItem>
-                ))}
-                {deferredChainChoices(__ENABLED_CHAIN_FEATURE_FLAGS__).map(option => (
-                  <DropdownMenuRadioItem
-                    key={option.family}
-                    value={`coming-soon:${option.family}`}
-                    disabled
-                    className="text-muted data-[disabled]:opacity-100"
-                  >
-                    <ChainIcon
-                      chain={option.iconAlias}
-                      width={16}
-                      height={16}
-                      className="rounded-[4px]"
-                      showTooltip={false}
-                      alt=""
-                      aria-hidden="true"
-                    />
-                    <span className="flex-1">{option.label}</span>
-                    <span className="text-[10px]">Coming soon</span>
-                  </DropdownMenuRadioItem>
-                ))}
-              </DropdownMenuRadioGroup>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        )}
-        {catalogLoading && search.trim().length > 0 && (
+    <TokenSelectorView
+      search={search}
+      onSearchChange={setSearch}
+      networks={selectorNetworks}
+      selectedNetwork={effectiveBlockchain}
+      onNetworkChange={selectBlockchain}
+      items={selectorItems}
+      selectedKey={
+        selectedToken ? selectedToken.blockchain + ':' + selectedToken.assetId : undefined
+      }
+      onSelect={key => {
+        const selected = visibleTokens.find(token => token.blockchain + ':' + token.assetId === key)
+        if (selected) onSelect(selected)
+      }}
+      lowBalanceKeys={
+        balances
+          ? new Set(
+              visibleTokens
+                .filter(token => balances.get(token.assetId) === '0')
+                .map(token => token.blockchain + ':' + token.assetId)
+            )
+          : undefined
+      }
+      loading={
+        loading ||
+        (filteredTokens.length === 0 &&
+          (catalogLoading || (!search.trim() && defaultCatalogLoading)))
+      }
+      emptyMessage={emptyMessage}
+      fullHeight={fullHeight || networkFilterStyle === 'icons'}
+      discovery={
+        onDiscoveredToken && currentWalletId && currentAccountId
+          ? {
+              scopeKey: `${currentNetwork}:${currentWalletId}:${currentAccountId}`,
+              chainId: discoveryChain ? `eip155:${discoveryChain.apiChainId}` : null,
+              onAdded: onDiscoveredToken
+            }
+          : undefined
+      }
+      status={
+        catalogLoading && search.trim().length > 0 ? (
           <p role="status" className="mt-2 text-xs text-muted">
             Searching more networks...
           </p>
-        )}
-      </div>
-      {networkFilterStyle === 'icons' && <p className="pb-1 pt-2 text-xs text-muted">Token</p>}
-      <div
-        className={cn(
-          'min-h-0 flex-1 overflow-y-auto',
-          networkFilterStyle === 'icons' && fullHeight && '-mx-4'
-        )}
-        onScroll={event => {
-          const list = event.currentTarget
-          if (
-            visibleLimit < filteredTokens.length &&
-            list.scrollHeight - list.scrollTop - list.clientHeight < 200
-          ) {
-            setRenderWindow({ filter: filterKey, count: visibleLimit + MAX_RENDERED_TOKENS })
-          }
-        }}
-      >
-        {loading ? (
-          <ListSkeleton rows={5} label="Loading tokens" className="px-1" />
-        ) : filteredTokens.length === 0 ? (
-          catalogLoading || (!search.trim() && defaultCatalogLoading) ? (
-            <ListSkeleton rows={3} label="Searching tokens" className="px-1" />
-          ) : (
-            <div className="py-8 text-center text-muted">{emptyMessage}</div>
-          )
-        ) : (
-          <TokenSelectionList
-            items={visibleTokens.map(token => {
-              const balance = balances?.get(token.assetId)
-              const symbol = formatSymbol(token.symbol)
-              const chainName = formatChainName(token.blockchain)
-              return {
-                key: `${token.blockchain}:${token.assetId}`,
-                symbol,
-                icon: <TokenIcon token={token} size={networkFilterStyle === 'icons' ? 32 : 30} />,
-                subtitle: chainName,
-                ariaLabel: `${symbol} on ${chainName}${balance === undefined ? '' : `, balance ${balance} ${symbol}`}`,
-                balance:
-                  balance === undefined ? undefined : (
-                    <TokenBalanceDisplay
-                      amount={balance}
-                      symbol={symbol}
-                      showSymbol={false}
-                      priceUsd={token.price}
-                      className={
-                        networkFilterStyle === 'icons' ? '[&>p:first-child]:font-sans' : undefined
-                      }
-                    />
-                  )
-              }
-            })}
-            selectedKey={
-              selectedToken ? `${selectedToken.blockchain}:${selectedToken.assetId}` : undefined
-            }
-            onSelect={key => {
-              const selected = visibleTokens.find(
-                token => `${token.blockchain}:${token.assetId}` === key
-              )
-              if (selected) onSelect(selected)
-            }}
-            variant={networkFilterStyle === 'icons' ? 'icons' : 'default'}
-            rowClassName={networkFilterStyle === 'icons' && !fullHeight ? 'px-2.5' : undefined}
-          />
-        )}
-      </div>
-    </div>
+        ) : undefined
+      }
+      onScroll={event => {
+        const list = event.currentTarget
+        if (
+          visibleLimit < filteredTokens.length &&
+          list.scrollHeight - list.scrollTop - list.clientHeight < 200
+        ) {
+          setRenderWindow({ filter: filterKey, count: visibleLimit + MAX_RENDERED_TOKENS })
+        }
+      }}
+    />
   )
 }

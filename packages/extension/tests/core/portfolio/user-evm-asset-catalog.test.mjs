@@ -17,6 +17,11 @@ import {
   getUserEvmAssetCatalogStorageKey,
   parseUserEvmAssetCatalogSnapshot
 } from '../../../src/infrastructure/chains/evm/index.ts'
+import {
+  addInspectedToken,
+  findVerifiedRheaSwapToken,
+  inspectTokenAddress
+} from '../../../src/popup/services/token-address-discovery.ts'
 
 const NOW = Date.parse('2026-08-15T03:00:00.000Z')
 const CONTRACT = '0x1111111111111111111111111111111111111111'
@@ -153,6 +158,72 @@ test('re-attests metadata on confirmation, persists the Token, and clears its Po
   await expect(coordinator.remove(ASSET_ID)).resolves.toBe(true)
   expect(deletedPoolMappings).toEqual([ASSET_ID])
   await expect(coordinator.list()).resolves.toEqual([])
+})
+
+test('address discovery keeps inspection separate from addition and rejects a cross-chain result', async () => {
+  const previousChrome = globalThis.chrome
+  const { chains } = createContext()
+  const candidate = createUserEvmAssetCandidate(chains, {
+    chainId: 'eip155:1',
+    contractAddress: CONTRACT,
+    metadata: { name: 'Test Token', symbol: 'TEST', decimals: 18 },
+    inspectedAt: NOW
+  })
+  const otherChain = createUserEvmAssetCandidate(chains, {
+    chainId: 'eip155:8453',
+    contractAddress: CONTRACT,
+    metadata: candidate.metadata,
+    inspectedAt: NOW
+  })
+  const requests = []
+  let inspectResult = otherChain
+  globalThis.chrome = {
+    runtime: {
+      sendMessage: async message => {
+        requests.push(message.type)
+        return {
+          result:
+            message.type === 'INSPECT_USER_EVM_ASSET'
+              ? inspectResult
+              : createUserEvmAssetRecord(chains, candidate, NOW + 1)
+        }
+      }
+    }
+  }
+  try {
+    await expect(
+      inspectTokenAddress({ chainId: 'eip155:1', contractAddress: CONTRACT })
+    ).rejects.toThrow(/different network or address/)
+    expect(requests).toEqual(['INSPECT_USER_EVM_ASSET'])
+
+    inspectResult = candidate
+    const inspected = await inspectTokenAddress({
+      chainId: 'eip155:1',
+      contractAddress: CONTRACT
+    })
+    expect(inspected.token).toMatchObject({
+      assetId: ASSET_ID,
+      blockchain: 'eth',
+      contractAddress: CONTRACT
+    })
+    expect(requests).toEqual(['INSPECT_USER_EVM_ASSET', 'INSPECT_USER_EVM_ASSET'])
+    const added = await addInspectedToken(inspected.candidate)
+    expect(added.assetId).toBe(ASSET_ID)
+    expect(requests.at(-1)).toBe('ADD_USER_EVM_ASSET')
+
+    const catalogToken = {
+      ...added,
+      rheaChainId: '1',
+      tokenListChainId: 1,
+      rheaAddress: CONTRACT,
+      isNative: false,
+      sources: ['verified-catalog']
+    }
+    expect(findVerifiedRheaSwapToken(candidate, [catalogToken])).toBe(catalogToken)
+    expect(findVerifiedRheaSwapToken(otherChain, [catalogToken])).toBeNull()
+  } finally {
+    globalThis.chrome = previousChrome
+  }
 })
 
 test('retains stored Tokens promoted to bundled assets without registering them twice', async () => {

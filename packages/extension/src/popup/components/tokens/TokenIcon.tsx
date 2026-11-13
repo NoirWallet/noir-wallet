@@ -63,7 +63,7 @@ export function TokenIcon({
 }: TokenIconProps) {
   const symbol = formatSymbol(token?.symbol || symbolProp)
   const assetId = token?.assetId || assetIdProp
-  const blockchain = token?.blockchain || blockchainProp
+  const blockchain = blockchainProp || token?.blockchain
   const bundledIconForSymbol = bundledTokenIcons[symbol.toUpperCase()]
   const marketAsset = assetId ? findBundledWalletMarketAssetId(assetId) : null
   const mappedIcon = isBundledEthIconIdentity(assetId, token)

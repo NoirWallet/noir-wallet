@@ -151,7 +151,8 @@ export function buildSendAssetSelectionModel(input: {
     return [
       entry.asset.metadata.symbol,
       entry.asset.metadata.name,
-      entry.chain.chain.displayName
+      entry.chain.chain.displayName,
+      entry.asset.asset.reference
     ].some(value => value.toLowerCase().includes(query))
   })
   const orderedRows = sortSendAssetsByBalanceValue<SendAssetSelectionRow>([

@@ -1,8 +1,9 @@
 import { useState, type ReactNode } from 'react'
 import { Icon } from '@iconify/react'
 import { formatSymbol } from '@/lib/format'
-import { formatBaseUnitDecimalAmount, formatTokenQuantity } from '@/lib/number-format'
+import { formatBaseUnitDecimalAmount } from '@/lib/number-format'
 import { TokenIcon } from './TokenIcon'
+import { TokenBalanceDisplay } from './TokenBalanceDisplay'
 import { partitionShieldSourceTokenRows } from './shield-source-token-groups'
 import { TokenSelectionList, type TokenSelectionItem } from './TokenSelectionList'
 import { cn } from '@/lib/utils'
@@ -13,9 +14,12 @@ export interface ShieldSourceTokenPickerItem {
   readonly symbol: string
   readonly iconUrl?: string
   readonly chainName?: string
+  readonly chainId?: string
   readonly badgeBlockchain?: string
+  readonly nativeIconChain?: string
   readonly availableRaw: string
   readonly decimals: number
+  readonly priceUsd?: string | number | null
   readonly disabledReason?: string
 }
 
@@ -35,28 +39,7 @@ export function ShieldSourceTokenPickerRows({
     items.map(item => Object.freeze({ item, availableRaw: item.availableRaw }))
   )
   const toSelectionItem = (item: ShieldSourceTokenPickerItem): TokenSelectionItem => {
-    const balance = formatBaseUnitDecimalAmount(item.availableRaw, item.decimals)
-    return {
-      key: item.key,
-      symbol: formatSymbol(item.symbol),
-      icon: (
-        <TokenIcon
-          assetId={item.assetId}
-          symbol={formatSymbol(item.symbol)}
-          icon={item.iconUrl}
-          blockchain={item.badgeBlockchain}
-          size={30}
-        />
-      ),
-      subtitle: item.chainName,
-      balance: (
-        <span className="block truncate text-sm tabular-nums">
-          {balancesHidden ? '••••' : formatTokenQuantity(balance)}
-        </span>
-      ),
-      balanceTitle: balancesHidden ? undefined : balance,
-      disabledReason: item.disabledReason
-    }
+    return shieldSourceSelectionItem(item, balancesHidden)
   }
   const selectedKey = items.find(item => item.assetId === selectedAssetId)?.key
   const selectKey = (key: string) => {
@@ -70,7 +53,6 @@ export function ShieldSourceTokenPickerRows({
         items={funded.map(toSelectionItem)}
         selectedKey={selectedKey}
         onSelect={selectKey}
-        variant="source"
         className="space-y-1"
       />
       {lowBalance.length > 0 && (
@@ -83,13 +65,45 @@ export function ShieldSourceTokenPickerRows({
             items={lowBalance.map(toSelectionItem)}
             selectedKey={selectedKey}
             onSelect={selectKey}
-            variant="source"
             className="space-y-1"
           />
         </ClientSection>
       )}
     </div>
   )
+}
+
+export function shieldSourceSelectionItem(
+  item: ShieldSourceTokenPickerItem,
+  balancesHidden: boolean
+): TokenSelectionItem {
+  const balance = formatBaseUnitDecimalAmount(item.availableRaw, item.decimals)
+  return {
+    key: item.key,
+    symbol: formatSymbol(item.symbol),
+    icon: (
+      <TokenIcon
+        assetId={item.assetId}
+        symbol={formatSymbol(item.symbol)}
+        icon={item.iconUrl}
+        blockchain={item.badgeBlockchain}
+        nativeChain={item.nativeIconChain}
+        size={32}
+      />
+    ),
+    subtitle: item.chainName,
+    balance: (
+      <TokenBalanceDisplay
+        amount={balance}
+        symbol={formatSymbol(item.symbol)}
+        priceUsd={item.priceUsd}
+        approximateFiat
+        balancesHidden={balancesHidden}
+      />
+    ),
+    balanceTitle: balancesHidden ? undefined : balance,
+    disabledReason: item.disabledReason
+  }
 }
 
 function ClientSection({

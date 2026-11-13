@@ -1,28 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useSearchParams } from 'react-router-dom'
-import { Icon } from '@iconify/react'
 import type { PortfolioReadModel } from '@/core/portfolio'
 import { findAssetPrice, type AssetPriceReadModel } from '@/core/prices'
 import { formatSortAddress } from '@/lib/format'
 import { resolveChainIconAlias } from '@/lib/chain-icon'
-import {
-  TokenSelectionList,
-  TokenSelectionSearch,
-  type TokenSelectionItem
-} from '@/popup/components/tokens/TokenSelectionList'
+import type { TokenSelectionItem } from '@/popup/components/tokens/TokenSelectionList'
+import { TokenSelectorView } from '@/popup/components/tokens/TokenSelectorView'
 import { PageHeader } from '@/popup/components/common/PageHeader'
 import { InlineError } from '@/popup/components/common/InlineError'
 import { SendRouteMenu } from '@/popup/components/transaction/SendRouteMenu'
-import { ChainIcon } from '@/popup/components/common/ChainIcon'
 import { TokenIcon } from '@/popup/components/tokens/TokenIcon'
 import { TokenBalanceDisplay } from '@/popup/components/tokens/TokenBalanceDisplay'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuTrigger
-} from '@/popup/components/ui/dropdown-menu'
 import type { EvmTransferSubmission } from '@/popup/services/evm-wallet-client'
 import { useNavigate } from '@/popup/provider/Router'
 import { useWalletStore } from '@/store/wallet-store'
@@ -32,7 +20,7 @@ import type { FundingSource } from '@/types'
 import type { ShieldProvider } from '@/popup/services/asset-domains'
 import { Send } from './Send'
 import { ShieldSendProviderTabs } from '@/popup/components/portfolio/ShieldSendProviderTabs'
-import { ShieldSourceTokenPickerRows } from '@/popup/components/tokens/ShieldSourceTokenPickerRows'
+import { shieldSourceSelectionItem } from '@/popup/components/tokens/ShieldSourceTokenPickerRows'
 import { getPrivateTransferChainIds } from '@/popup/services/private-balance-transfer'
 import { EvmSendForm } from './EvmSendForm'
 import {
@@ -136,7 +124,10 @@ function AssetSelection({
 }) {
   const [query, setQuery] = useState('')
   const [selectedNetwork, setSelectedNetwork] = useState('all')
-  const { networkOptions, selectedNetworkOption, selectedNetworkLabel, orderedRows } = useMemo(
+  const walletId = useWalletStore(state => state.currentWalletId)
+  const accountId = useWalletStore(state => state.currentAccountId)
+  const runtimeNetwork = useWalletStore(state => state.currentNetwork)
+  const { networkOptions, orderedRows } = useMemo(
     () =>
       buildSendAssetSelectionModel({
         assets,
@@ -152,176 +143,132 @@ function AssetSelection({
     [assets, prices, query, selectedNetwork, zcashTotal, zcashEnabled, zcashNetwork, zecPrice]
   )
   return (
-    <div className="page-content !px-4 pt-5">
-      <TokenSelectionSearch
-        value={query}
-        onChange={setQuery}
-        placeholder="Search your assets"
-        ariaLabel="Search your assets"
-        className="h-[46px] rounded-xl"
-      />
-
-      <div className="mb-2 mt-3">
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button
-              type="button"
-              className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-lg bg-card px-3 text-xs text-foreground transition-colors hover:bg-accent"
-            >
-              {selectedNetworkOption ? (
-                <ChainIcon
-                  chain={selectedNetworkOption.iconAlias}
-                  width={16}
-                  height={16}
-                  className="rounded-[4px]"
-                  showTooltip={false}
-                  alt=""
-                  aria-hidden="true"
-                />
-              ) : (
-                <Icon icon="lucide:network" width={16} height={16} className="text-muted" />
-              )}
-              {selectedNetworkLabel}
-              <Icon icon="lucide:chevron-down" width={13} height={13} className="text-muted" />
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="min-w-[120px]">
-            <DropdownMenuRadioGroup
-              value={selectedNetworkOption ? selectedNetwork : 'all'}
-              onValueChange={setSelectedNetwork}
-            >
-              <DropdownMenuRadioItem value="all" className="cursor-pointer">
-                <Icon icon="lucide:network" width={16} height={16} className="text-muted" />
-                <span>All Networks</span>
-              </DropdownMenuRadioItem>
-              {networkOptions.map(option => (
-                <DropdownMenuRadioItem
-                  key={option.id}
-                  value={option.id}
-                  disabled={option.disabled}
-                  className={
-                    option.disabled ? 'text-muted data-[disabled]:opacity-100' : 'cursor-pointer'
-                  }
-                >
-                  <ChainIcon
-                    chain={option.iconAlias}
-                    width={16}
-                    height={16}
-                    className="rounded-[4px]"
-                    showTooltip={false}
-                    alt=""
-                    aria-hidden="true"
-                  />
-                  <span className="flex-1">{option.label}</span>
-                  {option.disabled && <span className="text-[10px]">Coming soon</span>}
-                </DropdownMenuRadioItem>
-              ))}
-            </DropdownMenuRadioGroup>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
-
-      <div>
-        <TokenSelectionList
-          variant="send"
-          items={orderedRows.map((row): TokenSelectionItem => {
-            if (row.kind === 'zcash') {
-              const networkName = zcashNetwork === 'testnet' ? 'Zcash Testnet' : 'Zcash'
-              return {
-                key: row.key,
-                symbol: 'ZEC',
-                ariaLabel: `Send ZEC on ${networkName}`,
-                subtitle: networkName,
-                icon: (
-                  <TokenIcon
-                    symbol="ZEC"
-                    nativeChain="zcash"
-                    blockchain="zec"
-                    size={32}
-                    className="shrink-0"
-                  />
-                ),
-                balance: (
-                  <TokenBalanceDisplay
-                    amount={row.amount}
-                    symbol="ZEC"
-                    priceUsd={row.priceUsd}
-                    approximateFiat
-                  />
-                )
+    <div className="page-content flex min-h-0 flex-col !px-4 pt-4">
+      <TokenSelectorView
+        search={query}
+        onSearchChange={setQuery}
+        networks={networkOptions.map(option => ({
+          id: option.id,
+          label: option.label,
+          iconChain: option.iconAlias,
+          disabledReason: option.disabled ? 'Coming soon' : undefined
+        }))}
+        selectedNetwork={selectedNetwork}
+        onNetworkChange={setSelectedNetwork}
+        discovery={
+          walletId && accountId
+            ? {
+                scopeKey: `${runtimeNetwork}:${walletId}:${accountId}`,
+                chainId: selectedNetwork.startsWith('eip155:') ? selectedNetwork : null,
+                onAdded: () => {
+                  onRetry()
+                  return 'Added to wallet'
+                }
               }
-            }
-            const { entry } = row
-            const customToken =
-              entry.asset.asset.kind === 'token' && entry.asset.source === 'user-added'
-            const networkName = entry.chain.chain.displayName
+            : undefined
+        }
+        items={orderedRows.map((row): TokenSelectionItem => {
+          if (row.kind === 'zcash') {
+            const networkName = zcashNetwork === 'testnet' ? 'Zcash Testnet' : 'Zcash'
             return {
               key: row.key,
-              symbol: entry.asset.metadata.symbol,
-              symbolSuffix: customToken ? (
-                <span className="shrink-0 rounded bg-white/8 px-1.5 py-0.5 text-[9px] text-muted">
-                  Custom
-                </span>
-              ) : undefined,
-              ariaLabel: `Send ${entry.asset.metadata.symbol}${customToken ? ' custom Token' : ''} on ${networkName}`,
-              subtitle: `${networkName}${customToken ? ` · ${formatSortAddress(entry.asset.asset.reference)}` : ''}`,
+              symbol: 'ZEC',
+              ariaLabel: `Send ZEC on ${networkName}`,
+              subtitle: networkName,
               icon: (
                 <TokenIcon
-                  assetId={entry.asset.asset.id}
-                  symbol={entry.asset.metadata.symbol}
-                  icon={entry.asset.metadata.iconUrl}
-                  blockchain={resolveChainIconAlias(
-                    entry.chain.chain.family,
-                    networkName,
-                    entry.chain.chain.id
-                  )}
+                  symbol="ZEC"
+                  nativeChain="zcash"
+                  blockchain="zec"
                   size={32}
                   className="shrink-0"
                 />
               ),
-              balance:
-                entry.chain.chain.family === 'bitcoin' && entry.asset.updatedAt === 0 ? (
-                  <p className="min-w-0 truncate text-right text-sm font-medium">
-                    {entry.chain.status === 'error' ? 'Unavailable' : 'Updating…'}
-                  </p>
-                ) : (
-                  <TokenBalanceDisplay
-                    amount={row.amount}
-                    symbol={entry.asset.metadata.symbol}
-                    priceUsd={row.priceUsd}
-                    approximateFiat
-                  />
-                )
+              balance: (
+                <TokenBalanceDisplay
+                  amount={row.amount}
+                  symbol="ZEC"
+                  priceUsd={row.priceUsd}
+                  approximateFiat
+                />
+              )
             }
-          })}
-          onSelect={key => {
-            const row = orderedRows.find(item => item.key === key)
-            if (row?.kind === 'zcash') onSelectZcash()
-            else if (row) onSelect(row.entry)
-          }}
-          emptyMessage={!loadingAdditional && !additionalError ? 'No assets found' : undefined}
-        />
-        {loadingAdditional && (
-          <div
-            role="status"
-            aria-label="Loading additional networks"
-            className="flex animate-pulse items-center gap-3 py-3"
-          >
-            <div className="size-10 rounded-full bg-card" />
-            <div className="flex-1 space-y-2">
-              <div className="h-3 w-16 rounded bg-card" />
-              <div className="h-2.5 w-28 rounded bg-card/70" />
-            </div>
-          </div>
-        )}
-        {additionalError && (
-          <InlineError
-            message="Additional networks are unavailable."
-            onRetry={onRetry}
-            className="mt-2 px-3 py-2.5"
-          />
-        )}
-      </div>
+          }
+          const { entry } = row
+          const customToken =
+            entry.asset.asset.kind === 'token' && entry.asset.source === 'user-added'
+          const networkName = entry.chain.chain.displayName
+          return {
+            key: row.key,
+            symbol: entry.asset.metadata.symbol,
+            symbolSuffix: customToken ? (
+              <span className="shrink-0 rounded bg-white/8 px-1.5 py-0.5 text-[9px] text-muted">
+                Custom
+              </span>
+            ) : undefined,
+            ariaLabel: `Send ${entry.asset.metadata.symbol}${customToken ? ' custom Token' : ''} on ${networkName}`,
+            subtitle: `${networkName}${customToken ? ` · ${formatSortAddress(entry.asset.asset.reference)}` : ''}`,
+            icon: (
+              <TokenIcon
+                assetId={entry.asset.asset.id}
+                symbol={entry.asset.metadata.symbol}
+                icon={entry.asset.metadata.iconUrl}
+                blockchain={resolveChainIconAlias(
+                  entry.chain.chain.family,
+                  networkName,
+                  entry.chain.chain.id
+                )}
+                size={32}
+                className="shrink-0"
+              />
+            ),
+            balance:
+              entry.chain.chain.family === 'bitcoin' && entry.asset.updatedAt === 0 ? (
+                <p className="min-w-0 truncate text-right text-sm font-medium">
+                  {entry.chain.status === 'error' ? 'Unavailable' : 'Updating…'}
+                </p>
+              ) : (
+                <TokenBalanceDisplay
+                  amount={row.amount}
+                  symbol={entry.asset.metadata.symbol}
+                  priceUsd={row.priceUsd}
+                  approximateFiat
+                />
+              )
+          }
+        })}
+        onSelect={key => {
+          const row = orderedRows.find(item => item.key === key)
+          if (row?.kind === 'zcash') onSelectZcash()
+          else if (row) onSelect(row.entry)
+        }}
+        emptyMessage={!loadingAdditional && !additionalError ? 'No assets found' : 'Loading tokens'}
+        lowBalanceKeys={new Set(orderedRows.filter(row => row.amount === '0').map(row => row.key))}
+        afterRows={
+          <>
+            {loadingAdditional && (
+              <div
+                role="status"
+                aria-label="Loading additional networks"
+                className="flex animate-pulse items-center gap-3 py-3"
+              >
+                <div className="size-10 rounded-full bg-card" />
+                <div className="flex-1 space-y-2">
+                  <div className="h-3 w-16 rounded bg-card" />
+                  <div className="h-2.5 w-28 rounded bg-card/70" />
+                </div>
+              </div>
+            )}
+            {additionalError && (
+              <InlineError
+                message="Additional networks are unavailable."
+                onRetry={onRetry}
+                className="mt-2 px-3 py-2.5"
+              />
+            )}
+          </>
+        }
+      />
     </div>
   )
 }
@@ -368,6 +315,7 @@ export function MultichainSend({
     provider: ShieldProvider
   } | null>(null)
   const [sourcePickerQuery, setSourcePickerQuery] = useState('')
+  const [sourcePickerNetwork, setSourcePickerNetwork] = useState('all')
   const [nearSourceOptions, setNearSourceOptions] = useState<{
     key: string
     value: ShieldWithdrawSourcePickerState
@@ -466,6 +414,7 @@ export function MultichainSend({
   }
   const openSourcePicker = (mode: 'shield' | 'zcash-public', provider: ShieldProvider) => {
     setSourcePickerQuery('')
+    setSourcePickerNetwork('all')
     setSourcePicker({ mode, provider })
   }
   const [{ reviewing: shieldReviewing, busy: shieldBusy }, setShieldState] = useState({
@@ -945,6 +894,60 @@ export function MultichainSend({
   )
   const zcashPickerVisible =
     zcashEnabled && `zec zcash ${currentNetwork}`.includes(sourcePickerQuery.trim().toLowerCase())
+  const nearSourceVisible =
+    sourcePicker?.mode === 'shield' && sourcePicker.provider === 'near-confidential'
+  const sourcePickerNetworks = nearSourceVisible
+    ? [
+        ...new Map(
+          (nearPicker?.items ?? []).map(item => {
+            const id = item.chainId ?? item.badgeBlockchain ?? 'near'
+            return [
+              id,
+              {
+                id,
+                label: item.chainName ?? 'NEAR Confidential',
+                iconChain: item.badgeBlockchain ?? id
+              }
+            ] as const
+          })
+        ).values()
+      ]
+    : [
+        {
+          id: 'zec',
+          label: currentNetwork === 'testnet' ? 'Zcash Testnet' : 'Zcash',
+          iconChain: 'zec'
+        }
+      ]
+  const sourcePickerRows = nearSourceVisible
+    ? (searchedNearItems ?? [])
+        .filter(
+          item =>
+            sourcePickerNetwork === 'all' ||
+            (item.chainId ?? item.badgeBlockchain ?? 'near') === sourcePickerNetwork
+        )
+        .map(item => shieldSourceSelectionItem(item, nearPicker?.balancesHidden ?? false))
+    : zcashPickerVisible && (sourcePickerNetwork === 'all' || sourcePickerNetwork === 'zec')
+      ? [
+          {
+            key: ZEC_ZCASH_ASSET,
+            symbol: 'ZEC',
+            subtitle: currentNetwork === 'testnet' ? 'Zcash Testnet' : 'Zcash',
+            icon: <TokenIcon symbol="ZEC" nativeChain="zcash" blockchain="zec" size={32} />,
+            balance: (
+              <TokenBalanceDisplay
+                amount={
+                  sourcePicker?.mode === 'zcash-public'
+                    ? (zcashBalance?.transparent ?? '0')
+                    : (zcashBalance?.shielded ?? '0')
+                }
+                symbol="ZEC"
+                priceUsd={zecPrice}
+              />
+            )
+          }
+        ]
+      : []
   return (
     <div className="page-container" data-wallet-mode={walletMode}>
       {!(nearActive && shieldReviewing) && (
@@ -990,71 +993,60 @@ export function MultichainSend({
       )}
       {sourcePicker && (
         <div className="page-content flex min-h-0 flex-col !px-4 pt-4">
-          <TokenSelectionSearch
-            value={sourcePickerQuery}
-            onChange={setSourcePickerQuery}
-            placeholder="Search token"
-            ariaLabel="Search token"
-          />
-          {sourcePicker.mode === 'shield' && (
-            <div className="-mx-4 mt-3">
-              <ShieldSendProviderTabs
-                value={sourcePicker.provider}
-                onChange={provider => setSourcePicker({ ...sourcePicker, provider })}
-                availableProviders={availableShieldProviders}
-              />
-            </div>
-          )}
-          <div className="min-h-0 flex-1 overflow-y-auto pt-2">
-            {sourcePicker.mode === 'shield' && sourcePicker.provider === 'near-confidential' ? (
-              searchedNearItems?.length ? (
-                <ShieldSourceTokenPickerRows
-                  items={searchedNearItems}
-                  balancesHidden={nearPicker?.balancesHidden ?? false}
-                  selectedAssetId={nearPicker?.selectedAssetId}
-                  onSelect={assetId => {
-                    nearPicker?.onSelect(assetId)
-                    setDomainSession({ ...currentSession, shieldProvider: 'near-confidential' })
-                    setSourcePicker(null)
-                  }}
-                />
-              ) : (
-                <p className="py-8 text-center text-sm text-muted">
-                  {visibleModel ? 'No tokens found' : 'Loading tokens'}
-                </p>
-              )
-            ) : zcashPickerVisible ? (
-              <TokenSelectionList
-                variant="source"
-                items={[
-                  {
-                    key: ZEC_ZCASH_ASSET,
-                    symbol: 'ZEC',
-                    subtitle: currentNetwork === 'testnet' ? 'Zcash Testnet' : 'Zcash',
-                    icon: <TokenIcon symbol="ZEC" nativeChain="zcash" blockchain="zec" size={30} />,
-                    balance: (
-                      <TokenBalanceDisplay
-                        amount={
-                          sourcePicker.mode === 'zcash-public'
-                            ? (zcashBalance?.transparent ?? '0')
-                            : (zcashBalance?.shielded ?? '0')
+          <TokenSelectorView
+            search={sourcePickerQuery}
+            onSearchChange={setSourcePickerQuery}
+            networks={sourcePickerNetworks}
+            selectedNetwork={sourcePickerNetwork}
+            onNetworkChange={setSourcePickerNetwork}
+            toolbar={
+              sourcePicker.mode === 'shield' ? (
+                <div className="-mx-4 mt-3">
+                  <ShieldSendProviderTabs
+                    value={sourcePicker.provider}
+                    onChange={provider => {
+                      setSourcePickerNetwork('all')
+                      setSourcePicker({ ...sourcePicker, provider })
+                    }}
+                    availableProviders={availableShieldProviders}
+                  />
+                </div>
+              ) : undefined
+            }
+            items={sourcePickerRows}
+            selectedKey={
+              nearSourceVisible
+                ? nearPicker?.items.find(item => item.assetId === nearPicker.selectedAssetId)?.key
+                : ZEC_ZCASH_ASSET
+            }
+            lowBalanceKeys={
+              nearSourceVisible
+                ? new Set(
+                    (nearPicker?.items ?? [])
+                      .filter(item => {
+                        try {
+                          return BigInt(item.availableRaw) <= 0n
+                        } catch {
+                          return true
                         }
-                        symbol="ZEC"
-                        priceUsd={zecPrice}
-                      />
-                    )
-                  }
-                ]}
-                selectedKey={ZEC_ZCASH_ASSET}
-                onSelect={() => {
-                  if (sourcePicker.mode === 'shield') selectZcash('shielded')
-                  setSourcePicker(null)
-                }}
-              />
-            ) : (
-              <p className="py-8 text-center text-sm text-muted">No tokens found</p>
-            )}
-          </div>
+                      })
+                      .map(item => item.key)
+                  )
+                : undefined
+            }
+            onSelect={key => {
+              if (nearSourceVisible) {
+                const item = nearPicker?.items.find(row => row.key === key)
+                if (!item) return
+                nearPicker?.onSelect(item.assetId)
+                setDomainSession({ ...currentSession, shieldProvider: 'near-confidential' })
+              } else {
+                if (sourcePicker.mode === 'shield') selectZcash('shielded')
+              }
+              setSourcePicker(null)
+            }}
+            emptyMessage={visibleModel ? 'No tokens found' : 'Loading tokens'}
+          />
         </div>
       )}
       {currentSession.shieldEntry && (

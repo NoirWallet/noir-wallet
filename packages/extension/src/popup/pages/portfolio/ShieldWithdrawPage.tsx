@@ -312,8 +312,17 @@ export function ShieldWithdrawForm({
         symbol: row.item.asset.metadata.symbol,
         iconUrl: row.item.asset.metadata.iconUrl,
         chainName: row.item.chain.chain.displayName,
+        chainId: row.item.chain.chain.id,
+        badgeBlockchain: resolveChainIconAlias(
+          row.item.chain.chain.family,
+          row.item.chain.chain.displayName,
+          row.item.chain.chain.id
+        ),
+        nativeIconChain:
+          row.item.asset.metadata.symbol.toUpperCase() === 'ZEC' ? 'zcash' : undefined,
         availableRaw: shieldFundingAvailableRaw(row.item, displayBalances),
-        decimals: row.item.asset.metadata.decimals
+        decimals: row.item.asset.metadata.decimals,
+        priceUsd: row.priceUsd
       })),
     [displayBalances, prices, sources]
   )

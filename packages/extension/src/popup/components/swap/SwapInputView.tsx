@@ -174,6 +174,7 @@ interface SwapAssetCardProps {
   direction: 'From' | 'To'
   token: SwapToken | null
   tokenBadgeBlockchain?: string
+  tokenNetworkLabel?: string
   amount: string
   fiatValue: string
   accountAddress?: string
@@ -244,6 +245,7 @@ export function SwapAssetCard({
   direction,
   token,
   tokenBadgeBlockchain,
+  tokenNetworkLabel,
   amount,
   fiatValue,
   accountAddress,
@@ -422,7 +424,7 @@ export function SwapAssetCard({
               )}
             </span>
             <span className="mt-0.5 block truncate text-xs leading-4 text-muted">
-              {token ? formatChainName(token.blockchain) : 'Choose network'}
+              {token ? (tokenNetworkLabel ?? formatChainName(token.blockchain)) : 'Choose network'}
             </span>
           </span>
         </button>

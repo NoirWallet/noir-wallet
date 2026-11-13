@@ -2,6 +2,7 @@ import { startTransition, useCallback, useEffect, useMemo, useRef, useState } fr
 import type { RheaSwapToken } from '@/core/services/rhea-swap'
 import type { PortfolioReadModel } from '@/core/portfolio'
 import { TokenSelector, type TokenSelectorProps } from '../tokens/TokenSelector'
+import { findVerifiedRheaSwapToken } from '@/popup/services/token-address-discovery'
 import { ListSkeleton } from '../ui/skeleton'
 import { usePortfolioUpdates } from '@/popup/hooks/usePortfolioUpdates'
 import { isPortfolioModelForScope, readCachedPortfolio } from '@/popup/services/portfolio-cache'
@@ -29,7 +30,7 @@ interface SwapBalanceScope {
 
 interface SwapTokenSelectorProps extends Omit<
   TokenSelectorProps,
-  'tokens' | 'onSelect' | 'balances'
+  'tokens' | 'onSelect' | 'balances' | 'onDiscoveredToken'
 > {
   readonly initialTokens: readonly RheaSwapToken[]
   readonly loadTokens: (
@@ -191,6 +192,11 @@ export function SwapTokenSelector({
         defaultCatalogLoading={curatedLoading}
         balances={balances}
         catalogLoading={loading}
+        onDiscoveredToken={result => {
+          const matched = findVerifiedRheaSwapToken(result.candidate, tokens)
+          if (!matched) return 'Added to wallet; unavailable for swapping'
+          onSelect(matched, scopedPortfolio)
+        }}
         onSelect={token => {
           const selected = tokens.find(
             candidate =>
