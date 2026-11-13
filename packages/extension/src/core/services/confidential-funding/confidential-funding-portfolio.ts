@@ -7,6 +7,7 @@ import type {
 import type { AssetRegistry } from '@/core/chains/registry'
 import { getZcashChainId } from '@/core/chains/registry'
 import type { SwapToken } from '@/core/services/intents-api'
+import { isDeprecatedIntentsToken } from '@/core/services/intents-evm-assets'
 import type { IntentsManagedAsset } from '@/core/services/intents-managed-assets'
 import type { Network } from '@/types'
 
@@ -85,6 +86,7 @@ export function buildConfidentialPortfolioView(
   const entries = [...byProtocolId].flatMap(([protocolAssetId, { balance }]) => {
     if (balance.available === '0') return []
     const token = tokenById.get(protocolAssetId)
+    if (token && isDeprecatedIntentsToken(token)) return []
     const managed = managedById.get(protocolAssetId)
     const mappedAssetId = mappedById.get(protocolAssetId)
     const registered = mappedAssetId ? assets.get(mappedAssetId) : undefined

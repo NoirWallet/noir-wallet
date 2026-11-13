@@ -28,8 +28,14 @@ test('projects Shield-only holdings independently of Public assets and preserves
     price: 1,
     priceUpdatedAt: '2026-01-01T00:00:00Z'
   }
+  const legacyId = 'nep245:v2_1.omni.hot.tg:56_2w93GqMcEmQFDru84j3HZZWt557r'
+  const legacyBalance = Object.freeze({
+    tokenId: confidentialPrivateTokenId(legacyId),
+    available: '1000000000000000000'
+  })
   const view = buildConfidentialPortfolioView(
     [
+      legacyBalance,
       { tokenId: protocolAssetId, available: '9' },
       { tokenId: confidentialPrivateTokenId(protocolAssetId), available: '42' },
       { tokenId: confidentialPrivateTokenId(zcashProtocolId), available: '140000' },
@@ -38,6 +44,7 @@ test('projects Shield-only holdings independently of Public assets and preserves
     ],
     [
       token,
+      { ...token, assetId: legacyId, symbol: 'USDC(DEPRECATED)', decimals: 18 },
       {
         assetId: zcashProtocolId,
         blockchain: 'zec',
@@ -65,6 +72,7 @@ test('projects Shield-only holdings independently of Public assets and preserves
     }
   )
   expect(view.status).toBe('ready')
+  expect(getConfidentialAvailableForAsset([legacyBalance], legacyId)).toBe('1000000000000000000')
   expect(view.assets).toEqual([
     expect.objectContaining({
       tokenId: confidentialPrivateTokenId(protocolAssetId),

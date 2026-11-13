@@ -192,14 +192,11 @@ export class RheaSwapService {
     await Promise.all(Array.from({ length: Math.min(4, chainIds.length) }, worker))
     const unique = new Map<string, RheaSwapToken>()
     for (const token of tokens) {
+      if (isDeprecatedIntentsToken(token)) continue
       const key = token.isNative
         ? `${token.rheaChainId}:native:${token.assetId}`
         : `${token.rheaChainId}:${token.rheaAddress}`
       const previous = unique.get(key)
-      if (previous && isDeprecatedIntentsToken(previous) !== isDeprecatedIntentsToken(token)) {
-        if (isDeprecatedIntentsToken(previous)) unique.set(key, token)
-        continue
-      }
       unique.set(
         key,
         previous

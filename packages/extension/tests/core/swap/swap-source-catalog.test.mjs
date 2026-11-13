@@ -160,6 +160,14 @@ it('selects the current BNB USDC protocol route when legacy and current rows sha
   )
   const catalog = await service.listTokens({ direction: 'from', tokenListChainIds: [56] })
   assert.deepEqual(catalog.tokens[0].sources, [])
+  const legacyOnlyService = new RheaSwapService(
+    { getFromTokens: async () => normalizeFromTokenList({ legacy }, 56) },
+    new MemoryRheaSwapQuoteSessionStore()
+  )
+  assert.deepEqual(
+    (await legacyOnlyService.listTokens({ direction: 'from', tokenListChainIds: [56] })).tokens,
+    []
+  )
 })
 
 it('does not treat a protocol native asset ID from another EVM chain as Arbitrum ETH', () => {

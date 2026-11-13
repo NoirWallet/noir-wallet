@@ -82,6 +82,7 @@ test('prefers the current BSC representation when a deprecated row shares its co
     assetId: `nep141:bnb-${contractAddress}.omdep.near`,
     symbol: 'USDT'
   }
+  expect(resolveIntentsEvmAssets([legacy], getEvmNetworkConfigs('mainnet'))).toEqual([])
   const assets = resolveIntentsEvmAssets([legacy, current], getEvmNetworkConfigs('mainnet'))
   expect(assets).toHaveLength(1)
   expect(assets[0]).toMatchObject({

@@ -63,6 +63,7 @@ export function resolveIntentsEvmAssets(
 
   const resolved = new Map<string, IntentsEvmAsset>()
   for (const token of tokens) {
+    if (isDeprecatedIntentsToken(token)) continue
     const iconUrl = resolveSwapTokenIconUrl(token)
     const network = networkByAlias.get(token.blockchain.trim().toLowerCase())
     if (
@@ -75,12 +76,7 @@ export function resolveIntentsEvmAssets(
     }
     const contractAddress = token.contractAddress.toLowerCase() as `0x${string}`
     const assetId = `${network.chainId}/erc20:${contractAddress}`
-    const previous = resolved.get(assetId)
-    if (
-      previous &&
-      !(isDeprecatedIntentsToken({ symbol: previous.symbol }) && !isDeprecatedIntentsToken(token))
-    )
-      continue
+    if (resolved.has(assetId)) continue
     resolved.set(
       assetId,
       Object.freeze({

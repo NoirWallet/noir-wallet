@@ -206,6 +206,21 @@ it('polls after one signed recovery fails and still attempts the other chains', 
 
 it('maps supported RHEA destinations to wallet asset identities', () => {
   assert.equal(resolveRheaSwapCanonicalAssetId(protocolUsdc), canonicalUsdc)
+  for (const [alias, chain, contract] of [
+    ['bnb', 56, '0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d'],
+    ['pol', 137, '0xc2132d05d31c914a87c6611c10748aeb04b58e8f'],
+    ['avax', 43114, '0x9702230a8ea53601f5cd2dc00fdbc13d4df4a8c7']
+  ]) {
+    const protocolId = `nep141:${alias}-${contract}.omdep.near`
+    assert.equal(resolveRheaSwapCanonicalAssetId(protocolId), `eip155:${chain}/erc20:${contract}`)
+    assert.equal(resolveRheaSwapCanonicalAssetId(protocolId, 'testnet'), null)
+  }
+  assert.equal(
+    resolveRheaSwapCanonicalAssetId(
+      'nep141:unsupported-0x1111111111111111111111111111111111111111.omdep.near'
+    ),
+    null
+  )
   assert.equal(
     resolveRheaSwapCanonicalAssetId('nep141:zec.omft.near'),
     'bip122:00040fe8ec8471911baa1db1266ea15d/slip44:133'
