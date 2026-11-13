@@ -5764,16 +5764,19 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
           }
         />
       )}
-      {ordinarySwapRequested && viewStep === 'input' && !shieldReviewing && (
-        <BalanceDomainTabs
-          value={displayedBalanceDomain}
-          available={availableBalanceDomains}
-          onChange={handleBalanceDomainChange}
-          allowReselect
-          disabled={shieldBusy || isPreparingReview}
-          className="shrink-0 justify-center px-4 pb-3 pt-3"
-        />
-      )}
+      {ordinarySwapRequested &&
+        viewStep === 'input' &&
+        !shieldReviewing &&
+        availableBalanceDomains.length > 1 && (
+          <BalanceDomainTabs
+            value={displayedBalanceDomain}
+            available={availableBalanceDomains}
+            onChange={handleBalanceDomainChange}
+            allowReselect
+            disabled={shieldBusy || isPreparingReview}
+            className="shrink-0 justify-center px-4 pb-3 pt-3"
+          />
+        )}
       <div className="contents" inert={balanceDomainPending} aria-busy={balanceDomainPending}>
         {ordinarySwapRequested &&
           (visitedShieldScope === shieldPanelScope || confidentialShieldSwapActive) && (
