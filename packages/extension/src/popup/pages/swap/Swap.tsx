@@ -188,6 +188,7 @@ import {
 
 import { resolveEffectiveActiveAccountIdentity } from '@/popup/lib/effective-active-account'
 import { getRheaSwapErrorMessage, rheaSwapClient } from '@/popup/services/rhea-swap-client'
+import { SWAP_QUOTE_DISPLAY_ERROR } from '@/popup/services/swap-quote-error-message'
 import {
   intentsAssetManagerClient,
   resolveManagedIntentsCatalogAsset
@@ -2287,7 +2288,9 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
         maximumRaw: null
       }).display
     : undefined
-  const spendableBalance = swap.isZecSource ? zcashAvailability.amount : walletSpendableBalance
+  const spendableBalance = swap.isZecSource
+    ? zcashAvailability.amount
+    : (walletAvailability?.display ?? '—')
   useEffect(() => {
     if (!swap.isZecSource || viewStep !== 'input' || reviewAfterQuoteRefresh.current !== null)
       return
@@ -2689,7 +2692,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
             setQuoteReceivedAt(null)
             swap.setAmountOut('')
             swap.setDepositAddress('')
-            swap.setQuoteError(getRheaSwapErrorMessage(error))
+            swap.setQuoteError(SWAP_QUOTE_DISPLAY_ERROR)
             setQuoteRetryable(classified.retryable)
           } finally {
             if (requestSequence === quoteRequestSequence.current) swap.setIsQuoting(false)
@@ -3216,7 +3219,10 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
           if (isPrivateFunding) {
             setIsPrivateFundingSubmitting(false)
           }
-          const message = getRheaSwapErrorMessage(error)
+          const message =
+            failedStage === 'refresh-review-quote'
+              ? SWAP_QUOTE_DISPLAY_ERROR
+              : getRheaSwapErrorMessage(error)
           if (viewStep === 'review' || lockedAssetFlowRequested || feeTierOverride)
             setTransferPreparationError(message)
           else {
@@ -4641,7 +4647,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
         setQuoteReceivedAt(null)
         swap.setAmountOut('')
         setQuoteRetryable(true)
-        swap.setQuoteError(getRheaSwapErrorMessage(error))
+        swap.setQuoteError(SWAP_QUOTE_DISPLAY_ERROR)
       }
     } finally {
       if (sequence === quoteRequestSequence.current) swap.setIsQuoting(false)
@@ -4890,7 +4896,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
               : 'shrink-0 rounded-full bg-white/7 px-1.5 py-0.5 text-[10px] text-muted'
           }
         >
-          {fundingSource === 'shielded' ? 'Shield' : 'Public'}
+          {fundingSource === 'shielded' ? 'Shield' : 'Transparent'}
         </span>
         <Icon icon="lucide:chevron-down" width={12} className="shrink-0" />
       </button>
@@ -5173,7 +5179,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
             badge: swap.isZecSource
               ? fundingSource === 'shielded'
                 ? 'Shield'
-                : 'Public'
+                : 'Transparent'
               : executionSourceMode === 'private'
                 ? 'Private'
                 : 'Public'
@@ -5193,7 +5199,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
               : isZecDestination
                 ? zecDestinationType === 'shielded'
                   ? 'Shield'
-                  : 'Public'
+                  : 'Transparent'
                 : destinationMode === 'private'
                   ? 'Private'
                   : 'Public'
@@ -5486,7 +5492,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
                   ? 'Private'
                   : 'Public'
                 : fundingSource === 'transparent'
-                  ? 'Public'
+                  ? 'Transparent'
                   : 'Shield'
         }
         onAmountInChange={value => {
@@ -5565,7 +5571,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
               : isZecDestination && !requiresRecipientAddress
                 ? zecDestinationType === 'shielded'
                   ? 'Shield'
-                  : 'Public'
+                  : 'Transparent'
                 : undefined
         }
         destinationAssetLocked={isPrivateFunding || privateTransferRequested}

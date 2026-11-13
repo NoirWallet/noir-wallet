@@ -104,6 +104,7 @@ export const CONFIDENTIAL_FUNDING_MONITOR_ALARM = 'confidential-funding-monitor'
 
 const EXTERNAL_DEPOSIT_STATUS_BACKOFF_INITIAL_MS = 10_000
 const EXTERNAL_DEPOSIT_STATUS_BACKOFF_MAX_MS = 120_000
+const EXTERNAL_DEPOSIT_STATUS_FRESH_MS = 20_000
 const CONFIDENTIAL_FUNDING_MONITOR_DELAY_MINUTES = 20 / 60
 export type ClusterRejectionReason = 'APP_FEE_REJECTED_2002' | 'BACKEND_CONFIRMED_REJECTION'
 const TERMINAL_PHASES = new Set<ConfidentialFundingPlan['phase']>([
@@ -478,11 +479,15 @@ export class ConfidentialFundingCoordinator {
     }>
   >()
   private readonly cancellingPlans = new Set<string>()
-  private readonly refreshingExternalDeposits = new Map<string, Promise<ExternalShieldDeposit>>()
+  private readonly refreshingExternalDeposits = new Map<
+    string,
+    Readonly<{ promise: Promise<ExternalShieldDeposit>; force: boolean }>
+  >()
   private readonly oneClickStatusQueries = new Map<string, Promise<ConfidentialStatus>>()
   private readonly oneClickStatusState = new Map<
     string,
-    { backoffUntil: number; backoffMs: number }
+    | { kind: 'fresh'; until: number; status: ConfidentialStatus }
+    | { kind: 'backoff'; until: number; backoffMs: number }
   >()
   private readonly externalBalanceRefreshQueues = new Map<string, Promise<void>>()
   private readonly reconciledTerminalExternalDeposits = new Set<string>()
@@ -809,22 +814,27 @@ export class ConfidentialFundingCoordinator {
 
   private async fetchOneClickDepositStatus(
     depositAddress: string,
-    depositMemo?: string
+    depositMemo?: string,
+    force = false
   ): Promise<ConfidentialStatus> {
     const key = this.oneClickStatusKey(depositAddress, depositMemo)
-    const state = this.oneClickStatusState.get(key)
-    // Only a rate-limited or failing provider pauses status reads; a healthy one is always read
-    // fresh so recovery never settles on a stale phase.
-    if (state && this.now() < state.backoffUntil) {
-      throw new ConfidentialFundingApiError('Deposit status polling is in backoff', 429, true)
-    }
     const pending = this.oneClickStatusQueries.get(key)
     if (pending) return pending
+    const state = this.oneClickStatusState.get(key)
+    if (state && this.now() < state.until) {
+      if (state.kind === 'backoff')
+        throw new ConfidentialFundingApiError('Deposit status polling is in backoff', 429, true)
+      if (!force) return state.status
+    }
 
     const operation = this.options.api
       .getOneClickStatus(depositAddress, depositMemo)
       .then(status => {
-        this.oneClickStatusState.delete(key)
+        this.oneClickStatusState.set(key, {
+          kind: 'fresh',
+          until: this.now() + EXTERNAL_DEPOSIT_STATUS_FRESH_MS,
+          status
+        })
         return status
       })
       .catch(error => {
@@ -832,12 +842,18 @@ export class ConfidentialFundingCoordinator {
           const previous = this.oneClickStatusState.get(key)
           const backoffMs = Math.min(
             Math.max(
-              (previous?.backoffMs ?? EXTERNAL_DEPOSIT_STATUS_BACKOFF_INITIAL_MS / 2) * 2,
+              (previous?.kind === 'backoff'
+                ? previous.backoffMs
+                : EXTERNAL_DEPOSIT_STATUS_BACKOFF_INITIAL_MS / 2) * 2,
               EXTERNAL_DEPOSIT_STATUS_BACKOFF_INITIAL_MS
             ),
             EXTERNAL_DEPOSIT_STATUS_BACKOFF_MAX_MS
           )
-          this.oneClickStatusState.set(key, { backoffUntil: this.now() + backoffMs, backoffMs })
+          this.oneClickStatusState.set(key, {
+            kind: 'backoff',
+            until: this.now() + backoffMs,
+            backoffMs
+          })
         }
         throw error
       })
@@ -851,10 +867,15 @@ export class ConfidentialFundingCoordinator {
   }
 
   private async readExternalDepositProviderStatus(
-    record: ExternalShieldDeposit
+    record: ExternalShieldDeposit,
+    force = false
   ): Promise<ConfidentialStatus | null> {
     try {
-      return await this.fetchOneClickDepositStatus(record.depositAddress, record.depositMemo)
+      return await this.fetchOneClickDepositStatus(
+        record.depositAddress,
+        record.depositMemo,
+        force
+      )
     } catch (error) {
       if (
         error instanceof ConfidentialFundingApiError &&
@@ -867,19 +888,29 @@ export class ConfidentialFundingCoordinator {
     }
   }
 
-  async refreshExternalDeposit(depositId: string): Promise<ExternalShieldDeposit> {
+  async refreshExternalDeposit(depositId: string, force = true): Promise<ExternalShieldDeposit> {
     const pending = this.refreshingExternalDeposits.get(depositId)
-    if (pending) return pending
-    const operation = this.refreshExternalDepositExclusive(depositId).finally(() => {
-      if (this.refreshingExternalDeposits.get(depositId) === operation) {
+    if (pending) {
+      return force && !pending.force
+        ? pending.promise.then(
+            () => this.refreshExternalDeposit(depositId, true),
+            () => this.refreshExternalDeposit(depositId, true)
+          )
+        : pending.promise
+    }
+    const operation = this.refreshExternalDepositExclusive(depositId, force).finally(() => {
+      if (this.refreshingExternalDeposits.get(depositId)?.promise === operation) {
         this.refreshingExternalDeposits.delete(depositId)
       }
     })
-    this.refreshingExternalDeposits.set(depositId, operation)
+    this.refreshingExternalDeposits.set(depositId, { promise: operation, force })
     return operation
   }
 
-  private async refreshExternalDepositExclusive(depositId: string): Promise<ExternalShieldDeposit> {
+  private async refreshExternalDepositExclusive(
+    depositId: string,
+    force: boolean
+  ): Promise<ExternalShieldDeposit> {
     let record = await this.getExternalDeposit(depositId)
     if (
       !(await this.options.repository.get(
@@ -896,7 +927,7 @@ export class ConfidentialFundingCoordinator {
     }
     if (record.phase === 'ready') {
       if (record.settledOutputRaw === undefined) {
-        const status = await this.readExternalDepositProviderStatus(record)
+        const status = await this.readExternalDepositProviderStatus(record, force)
         if (!status) {
           await this.scheduleMonitoring()
           return record
@@ -939,7 +970,7 @@ export class ConfidentialFundingCoordinator {
       await this.markExternalDepositGraphReconciled(record)
       return record
     }
-    const status = await this.readExternalDepositProviderStatus(record)
+    const status = await this.readExternalDepositProviderStatus(record, force)
     if (!status) {
       await this.scheduleMonitoring()
       return record
@@ -2454,7 +2485,7 @@ export class ConfidentialFundingCoordinator {
             !this.reconciledTerminalExternalDeposits.has(record.depositId)))
     )
     const externalResults = await Promise.allSettled(
-      external.map(record => this.refreshExternalDeposit(record.depositId))
+      external.map(record => this.refreshExternalDeposit(record.depositId, false))
     )
     if (
       plans.some((_, index) => results[index].status === 'rejected') ||

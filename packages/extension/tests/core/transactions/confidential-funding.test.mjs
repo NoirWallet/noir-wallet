@@ -31,8 +31,16 @@ import {
   depositSourceAssetId,
   depositStatusLabel,
   depositTokenForNetwork,
+  formatDepositAmount,
+  formatMinimumDepositPaymentAmount,
   listDepositTokenChoices
 } from '../../../src/popup/services/shield-deposit-options.ts'
+
+test('minimum deposit display rounds up without changing the exact payment amount', () => {
+  const raw = '8000000000000000001'
+  expect(formatMinimumDepositPaymentAmount(raw, 18)).toBe('8.000001')
+  expect(formatDepositAmount(raw, 18)).toBe('8.000000000000000001')
+})
 
 test('uses the selected EVM private refund address while Zcash retains a transparent refund', () => {
   const publicAddress = '0x1111111111111111111111111111111111111111'
@@ -464,7 +472,24 @@ test.describe('confidential funding safety rules', () => {
       coordinator.createExternalDeposit({ ...request, refundAddress: address })
     ).rejects.toThrow('request ID was reused')
     const unfunded = await coordinator.refreshExternalDeposit(created.depositId)
-    now += 3 * 60 * 60 * 1000
+    const afterInitialStatus = statusCalls
+    await Promise.all([
+      coordinator.refreshExternalDeposit(created.depositId, false),
+      coordinator.refreshExternalDeposit(created.depositId, false)
+    ])
+    expect(statusCalls).toBe(afterInitialStatus)
+    await Promise.all([
+      coordinator.refreshExternalDeposit(created.depositId, false),
+      coordinator.refreshExternalDeposit(created.depositId, true),
+      coordinator.refreshExternalDeposit(created.depositId, true)
+    ])
+    expect(statusCalls).toBe(afterInitialStatus + 1)
+    now += 20_000
+    await coordinator.refreshExternalDeposit(created.depositId, false)
+    expect(statusCalls).toBe(afterInitialStatus + 2)
+    await coordinator.refreshExternalDeposit(created.depositId)
+    expect(statusCalls).toBe(afterInitialStatus + 3)
+    now = unfunded.updatedAt + 3 * 60 * 60 * 1000
     expect(shouldAutoRefreshExternalShieldDeposit(unfunded, now - 1)).toBe(true)
     const beforePause = { statusCalls, monitoringCalls }
     await new ConfidentialFundingCoordinator(coordinatorOptions).resumeAll()

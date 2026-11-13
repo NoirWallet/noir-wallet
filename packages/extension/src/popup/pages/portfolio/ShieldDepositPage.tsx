@@ -31,6 +31,7 @@ import {
   depositTokenForNetwork,
   listDepositTokenChoices,
   formatDepositAmount,
+  formatMinimumDepositPaymentAmount,
   hasDepositSettlementShortfall
 } from '@/popup/services/shield-deposit-options'
 import {
@@ -142,11 +143,18 @@ function ShieldDepositContent() {
   const checkInFlightRef = useRef(false)
   const refreshRequests = useRef(new Map<string, Promise<ExternalShieldDeposit>>())
   const depositPollDelayMsRef = useRef(20_000)
-  const refreshDepositRecord = useCallback((depositId: string, scope: string) => {
+  const refreshDepositRecord = useCallback((depositId: string, scope: string, force = true) => {
     const key = `${scope}:${depositId}`
     const existing = refreshRequests.current.get(key)
-    if (existing) return existing
-    const request = externalShieldDepositClient.refresh(depositId).finally(() => {
+    if (existing) {
+      return force
+        ? existing.then(
+            () => externalShieldDepositClient.refresh(depositId, true),
+            () => externalShieldDepositClient.refresh(depositId, true)
+          )
+        : existing
+    }
+    const request = externalShieldDepositClient.refresh(depositId, force).finally(() => {
       if (refreshRequests.current.get(key) === request) refreshRequests.current.delete(key)
     })
     refreshRequests.current.set(key, request)
@@ -372,7 +380,7 @@ function ShieldDepositContent() {
       inFlight = true
       const checkAttemptAtStart = checkAttemptRef.current
       const manualCheckInFlightAtStart = checkInFlightRef.current
-      void refreshDepositRecord(viewedRecord.depositId, scopeKey)
+      void refreshDepositRecord(viewedRecord.depositId, scopeKey, false)
         .then(updated => {
           depositPollDelayMsRef.current = 20_000
           if (
@@ -640,7 +648,9 @@ function ShieldDepositContent() {
             near && canPay ? (
               <p className="text-center text-base font-medium">
                 {viewedRecord.amountMode === 'minimum' ? 'Send at least' : 'Send exactly'}{' '}
-                {formatDepositAmount(
+                {(viewedRecord.amountMode === 'minimum'
+                  ? formatMinimumDepositPaymentAmount
+                  : formatDepositAmount)(
                   payment?.paymentAmountRaw ?? viewedRecord.amountRaw,
                   viewedRecord.sourceDecimals
                 )}{' '}

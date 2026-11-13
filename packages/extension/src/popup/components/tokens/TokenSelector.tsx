@@ -253,9 +253,17 @@ export function TokenSelector({
         symbol +
         ' on ' +
         chainName +
-        (balance === undefined ? '' : ', balance ' + balance + ' ' + symbol),
+        (balances === undefined
+          ? ''
+          : balance === undefined
+            ? ', balance unavailable'
+            : ', balance ' + balance + ' ' + symbol),
       balance:
-        balance === undefined ? undefined : (
+        balances !== undefined && balance === undefined ? (
+          <span className="text-xs text-muted" title="Balance unavailable">
+            Unavailable
+          </span>
+        ) : balance === undefined ? undefined : (
           <TokenBalanceDisplay
             amount={balance}
             symbol={symbol}

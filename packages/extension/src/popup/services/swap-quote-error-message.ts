@@ -1,5 +1,7 @@
 import { getRheaSwapMinimumAmountMessage } from '@/core/services/rhea-swap/rhea-swap-error'
 
+export const SWAP_QUOTE_DISPLAY_ERROR = 'no route'
+
 export function readSwapErrorReason(message: string, depth = 0): string {
   if (depth >= 4) return ''
   const start = message.indexOf('{')

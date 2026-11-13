@@ -271,16 +271,20 @@ function formatSwapTokenPortfolioBalance(
 ): string | undefined {
   const owned = receiveTargets && resolveWalletOwnedQuoteAsset(token, portfolio, receiveTargets)
   if (owned) {
-    const availableRaw =
-      resolveWalletSwapSourceAvailableRaw(owned, evmExecutionMode) ??
-      owned.asset.balance.availableRaw ??
-      owned.asset.balance.totalRaw
+    const availableRaw = resolveWalletSwapSourceAvailableRaw(owned, evmExecutionMode)
+    if (availableRaw === undefined) return undefined
     return formatBaseUnitDecimalAmount(availableRaw, owned.asset.metadata.decimals)
   }
   const evm = resolveIntentsEvmAssets([token], getEvmNetworkConfigs(DEFAULT_NETWORK))[0]
   if (!evm) return undefined
   const asset = portfolio.assets.find(candidate => candidate.asset.id === evm.assetId)
   if (!asset || asset.metadata.decimals !== token.decimals) return undefined
+  if (
+    evmExecutionMode === 'private' &&
+    asset.balance.privateOnchainRaw === undefined &&
+    asset.balance.privateRaw === undefined
+  )
+    return undefined
   const availableRaw = resolveAccountAvailableRaw(asset.balance, evmExecutionMode)
   return formatBaseUnitDecimalAmount(availableRaw, asset.metadata.decimals)
 }

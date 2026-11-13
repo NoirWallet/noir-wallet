@@ -1,5 +1,5 @@
 import type { PortfolioAssetView } from '@/core/portfolio'
-import { formatSymbol } from '@/lib/format'
+import { findBundledWalletMarketAssetId } from '@/popup/components/tokens/token-display-policy'
 import type { NearConfidentialHolding } from './near-confidential-holdings'
 
 export interface ShieldVaultNearIconEntry {
@@ -22,14 +22,15 @@ function normalizeIconUrl(iconUrl: string | undefined): string | null {
   return trimmed.toLowerCase()
 }
 
-/** Dedup key follows the icon surface users actually see, not one row per chain. */
+/** Group known shared asset icons, then identical URLs, without conflating unknown tickers. */
 export function nearConfidentialVaultIconKey(entry: NearConfidentialHolding): string {
+  const assetId = entry.asset.assetId ?? entry.asset.protocolAssetId
+  const marketAssetId = assetId ? findBundledWalletMarketAssetId(assetId) : null
+  if (marketAssetId) return `market:${marketAssetId}`
   const icon = normalizeIconUrl(entry.asset.iconUrl)
   if (icon) return `icon:${icon}`
-  const assetId = entry.asset.assetId ?? entry.asset.protocolAssetId
   if (assetId) return `asset:${assetId}`
-  const symbol = formatSymbol(entry.asset.symbol ?? '').toUpperCase()
-  return symbol ? `symbol:${symbol}` : `token:${entry.asset.tokenId}`
+  return `token:${entry.asset.tokenId}`
 }
 
 export function zcashShieldVaultIconKey(asset: PortfolioAssetView): string {

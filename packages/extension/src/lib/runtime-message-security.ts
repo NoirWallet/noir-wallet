@@ -657,7 +657,10 @@ const TRUSTED_RUNTIME_SCHEMAS: Readonly<Record<string, RuntimeMessageSchema>> = 
   CREATE_EXTERNAL_SHIELD_DEPOSIT: { required: { request: isRecord } },
   GET_EXTERNAL_SHIELD_DEPOSIT: { required: { depositId: isShortString } },
   LIST_EXTERNAL_SHIELD_DEPOSITS: { required: { scope: isRecord } },
-  REFRESH_EXTERNAL_SHIELD_DEPOSIT: { required: { depositId: isShortString } },
+  REFRESH_EXTERNAL_SHIELD_DEPOSIT: {
+    required: { depositId: isShortString },
+    optional: { force: isBoolean }
+  },
   CONFIRM_CONFIDENTIAL_FUNDING: {
     required: { planId: isShortString, payloadFingerprint: isEvmPayloadFingerprint }
   },

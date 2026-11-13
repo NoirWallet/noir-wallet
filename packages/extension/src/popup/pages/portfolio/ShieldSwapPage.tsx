@@ -41,6 +41,7 @@ import {
 } from '@/popup/services/confidential-funding-client'
 import { resolveManagedIntentsCatalog } from '@/popup/services/intents-asset-manager-client'
 import { swapTokenCatalogClient } from '@/popup/services/swap-token-catalog-client'
+import { SWAP_QUOTE_DISPLAY_ERROR } from '@/popup/services/swap-quote-error-message'
 import {
   hasShieldTransferStarted,
   formatShieldQuoteTime,
@@ -1080,7 +1081,7 @@ function ShieldSwapForm({
             <span>
               {previewError === CONFIDENTIAL_PREVIEW_CONNECTION_ERROR
                 ? 'Refresh Shield balances to get a quote.'
-                : previewError}
+                : SWAP_QUOTE_DISPLAY_ERROR}
             </span>
             <button
               type="button"

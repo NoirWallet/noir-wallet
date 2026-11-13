@@ -939,7 +939,7 @@ export function Send({
                 onReverse={reverseMove}
               />
               {moveUnavailable && (
-                <InlineError message="This account cannot move ZEC between Public and Shield." />
+                <InlineError message="This account cannot move ZEC between Transparent and Shield." />
               )}
               {isTransparentToShieldMove &&
                 !moveUnavailable &&
@@ -1022,7 +1022,7 @@ export function Send({
                 <SendFieldLabel>Send from</SendFieldLabel>
                 <BalanceDomainTabs
                   value={fundingSource === 'shielded' ? 'shield' : 'public'}
-                  labels={{ public: 'Public' }}
+                  labels={{ public: 'Transparent' }}
                   available={(['public', 'shield'] as const).filter(domain =>
                     fundingOptions.some(
                       option =>

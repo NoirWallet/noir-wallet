@@ -258,7 +258,7 @@ function MethodCard({
       aria-checked={selected}
       onClick={onClick}
       className={cn(
-        'relative flex min-h-[150px] flex-col rounded-xl border bg-wallet-surface px-3 py-4 text-left text-xs leading-4',
+        'relative flex min-h-[144px] flex-col rounded-xl border bg-wallet-surface px-3 py-3 text-left text-xs leading-4',
         selected ? 'border-primary/60' : 'border-white/10'
       )}
     >
@@ -1807,7 +1807,7 @@ function TransferForm() {
         }
       />
       <div className="page-content flex min-h-0 flex-col !px-4 !pb-2 !pt-3">
-        <div className="flex min-h-[155px] shrink-0 flex-col items-center justify-center gap-2 py-3">
+        <div className="flex min-h-[145px] shrink-0 flex-col items-center justify-center gap-2 py-3">
           <input
             id="transfer-amount"
             aria-label="Transfer amount"
@@ -1870,7 +1870,7 @@ function TransferForm() {
             </button>
           </div>
         </div>
-        <div className="mt-4 shrink-0">
+        <div className="mt-3 shrink-0">
           <DomainCard
             label="From"
             accountName={accountName}
@@ -1946,7 +1946,7 @@ function TransferForm() {
               role="radiogroup"
               aria-label="Transfer method"
               className={cn(
-                'mt-auto grid shrink-0 gap-2.5 pt-6',
+                'mt-auto grid shrink-0 gap-2.5 pt-4',
                 clusterAvailable && methodAvailable ? 'grid-cols-2' : 'grid-cols-1'
               )}
             >

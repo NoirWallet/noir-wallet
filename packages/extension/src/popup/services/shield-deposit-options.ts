@@ -17,7 +17,8 @@ import type { SwapToken } from '@/core/services/intents-api'
 import { resolveManagedIntentsCatalogAsset } from './intents-asset-manager-client'
 import { DEFAULT_NETWORK } from '@/lib/runtime-network'
 import { parseZcashAddress } from '@/core/address-book/address-book'
-import { formatBaseUnitDecimalAmount, parseDisplayUnitAmount } from '@/lib/number-format'
+import { formatBaseUnitDecimalAmount, formatDecimalAmount, parseDisplayUnitAmount } from '@/lib/number-format'
+import Big from '@/lib/big'
 import { isAddress, zeroAddress } from 'viem'
 import type { AccountNetworkView } from './account-networks-client'
 import type { ExternalShieldDeposit } from './confidential-funding-client'
@@ -185,6 +186,16 @@ export function formatDepositAmount(raw: string, decimals: number | undefined): 
   } catch {
     return null
   }
+}
+
+export function formatMinimumDepositPaymentAmount(
+  raw: string,
+  decimals: number | undefined
+): string | null {
+  const exact = formatDepositAmount(raw, decimals)
+  return exact === null
+    ? null
+    : formatDecimalAmount(exact, { maximumFractionDigits: 6, roundingMode: Big.roundUp })
 }
 
 export function hasDepositSettlementShortfall(record: ExternalShieldDeposit): boolean {

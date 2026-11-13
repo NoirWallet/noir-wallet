@@ -138,6 +138,40 @@ it('keeps a newly selected source while the page still has an older wallet sourc
   )
 })
 
+it('does not show a total balance as a private balance before the private breakdown is known', () => {
+  const token = {
+    assetId: 'nep141:eth-usdc.omft.near',
+    blockchain: 'eth',
+    symbol: 'USDC',
+    contractAddress: '0xA0b86991c6218b36c1d19d4a2e9eb0ce3606eb48',
+    decimals: 6
+  }
+  const asset = {
+    asset: { id: 'eip155:1/erc20:0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48' },
+    metadata: { decimals: 6 },
+    balance: { availableRaw: '10000000', mainRaw: '9000000' }
+  }
+  const input = {
+    tokens: [token],
+    portfolio: { assets: [asset] },
+    receiveTargets: null,
+    zcashAvailable: '0',
+    evmExecutionMode: 'private'
+  }
+  assert.equal(buildWalletSwapSourceBalances(input).has(token.assetId), false)
+  assert.equal(
+    buildWalletSwapSourceBalances({
+      ...input,
+      portfolio: { assets: [{ ...asset, balance: { ...asset.balance, privateRaw: '1000000' } }] }
+    }).get(token.assetId),
+    '1'
+  )
+  assert.equal(
+    buildWalletSwapSourceBalances({ ...input, evmExecutionMode: 'main' }).get(token.assetId),
+    '9'
+  )
+})
+
 it('keeps a reversed source while wallet-owned assets are still loading', () => {
   const selection = resolveSwapTokenSelection({
     tokens: [zec, eth],

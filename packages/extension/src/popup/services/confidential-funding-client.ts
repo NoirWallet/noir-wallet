@@ -390,9 +390,9 @@ export function createExternalShieldDepositClient(
       if (!Array.isArray(result)) throw new Error('External Shield deposit history is unavailable')
       return Object.freeze(result.map(parseExternalDeposit))
     },
-    refresh: async (depositId: string): Promise<ExternalShieldDeposit> =>
+    refresh: async (depositId: string, force = true): Promise<ExternalShieldDeposit> =>
       parseExternalDeposit(
-        unwrap(await send({ type: 'REFRESH_EXTERNAL_SHIELD_DEPOSIT', depositId }))
+        unwrap(await send({ type: 'REFRESH_EXTERNAL_SHIELD_DEPOSIT', depositId, force }))
       )
   })
 }
