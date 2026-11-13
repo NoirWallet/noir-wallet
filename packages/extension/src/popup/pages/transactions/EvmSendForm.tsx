@@ -53,6 +53,7 @@ import {
 } from '@/infrastructure/chains/evm'
 import { useTransferFeePreview } from '@/popup/hooks/useTransferFeePreview'
 import { useEvmConfirmationEstimate } from '@/popup/hooks/useEvmConfirmationEstimate'
+import { estimateConfidentialSendTime } from '@/popup/services/send-time-estimate'
 import { useTransferMaximum } from '@/popup/hooks/useTransferMaximum'
 import {
   createNativeTransferSource,
@@ -781,7 +782,7 @@ export function EvmSendForm({
       (review !== null
         ? review.intentKey === intentKey && !updatingFee
         : !feePreview.loading && feePreview.details !== null),
-    fallbackEnabled: active && route === 'onchain',
+    fallbackEnabled: active && (route === 'onchain' || sendPrivately),
     chainId: chain.chain.id,
     requestKey: `${accountContextKey}:${intentKey}:${JSON.stringify(feeSelection)}:${review?.value.graph.root.id ?? 'preview'}`,
     feeEstimate: review ? reviewedFeeEstimate : feePreview.details
@@ -1303,6 +1304,15 @@ export function EvmSendForm({
                     profile="fee"
                   />
                 )
+              ) : (
+                '—'
+              )
+            }
+            time={
+              privatePreviewReady ? (
+                <span title="Source-network confirmation only; confidential routing adds time.">
+                  {estimateConfidentialSendTime(undefined, confirmationTime)}
+                </span>
               ) : (
                 '—'
               )

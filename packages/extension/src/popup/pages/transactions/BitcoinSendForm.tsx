@@ -62,6 +62,7 @@ import { DEFAULT_NETWORK_FEE_TIER, type NetworkFeeTier } from '@/core/transactio
 import { useActiveAccountNetworks } from '@/popup/hooks/useActiveAccountNetworks'
 import { usePortfolioUpdates } from '@/popup/hooks/usePortfolioUpdates'
 import { useTransferFeePreview } from '@/popup/hooks/useTransferFeePreview'
+import { estimateBitcoinSendTime } from '@/popup/services/send-time-estimate'
 import { useTransferMaximum } from '@/popup/hooks/useTransferMaximum'
 import { resolvePortfolioTransferAvailability } from '@/popup/services/transfer-availability'
 import {
@@ -580,6 +581,7 @@ export function BitcoinSendForm({
                 />
               </div>
             }
+            time={estimateBitcoinSendTime(feeTier)}
             extra={
               <div className="border-t border-white/10 pt-3 text-muted">
                 {bitcoinAccountTypeDescription(bitcoinAddressType)}

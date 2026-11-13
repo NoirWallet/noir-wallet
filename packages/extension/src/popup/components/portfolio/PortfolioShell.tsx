@@ -510,7 +510,10 @@ export function PortfolioShell({
             description="Noir Wallet is reconnecting automatically."
           />
         ) : model.status === 'empty' ? (
-          <StatePanel icon="lucide:layers" title="No networks available" />
+          <StatePanel
+            icon="lucide:layers"
+            title={domain === 'all' ? 'No networks available' : 'No assets found'}
+          />
         ) : showContent && selectedChainIds.length === 0 ? (
           <StatePanel icon="lucide:network" title="No network selected" />
         ) : showContent &&

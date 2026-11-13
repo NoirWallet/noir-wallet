@@ -20,6 +20,7 @@ import { useWalletStore } from '@/store/wallet-store'
 import { useSettingsStore } from '@/store/settings-store'
 import { useActiveAccountNetworks } from '@/popup/hooks/useActiveAccountNetworks'
 import { useConfidentialFundingPreview } from '@/popup/hooks/useConfidentialFundingPreview'
+import { useEvmConfirmationEstimate } from '@/popup/hooks/useEvmConfirmationEstimate'
 import { useShieldBalances } from '@/popup/hooks/useShieldBalances'
 import { resolveEffectiveActiveAccountIdentity } from '@/popup/lib/effective-active-account'
 import { assetPriceClient } from '@/popup/services/asset-price-client'
@@ -60,7 +61,6 @@ import { swapTokenCatalogClient } from '@/popup/services/swap-token-catalog-clie
 import {
   buildExternalShieldWithdrawRequest,
   hasShieldTransferStarted,
-  formatShieldQuoteTime,
   isUnsignedShieldTerminal,
   matchesExternalShieldWithdrawReview,
   listShieldFundingAssets,
@@ -77,6 +77,10 @@ import {
   normalizePrivateBalanceTransferInput,
   resolvePrivateBalanceTransferAmount
 } from '@/popup/services/private-balance-transfer'
+import {
+  estimateConfidentialSendTime,
+  estimateZcashSendTime
+} from '@/popup/services/send-time-estimate'
 
 function withdrawChainIconAlias(chain: ShieldFundingAsset['chain']['chain']): string {
   return chain.family === 'evm'
@@ -385,6 +389,15 @@ export function ShieldWithdrawForm({
         )
       : null
   const destinationNetwork = destination?.chain.chain
+  const evmConfirmationTime = useEvmConfirmationEstimate({
+    enabled: false,
+    fallbackEnabled: active && destinationNetwork?.family === 'evm',
+    requestKey: scopeKey,
+    chainId: destinationNetwork?.id ?? '',
+    feeEstimate: null
+  })
+  const destinationConfirmationTime =
+    destinationNetwork?.family === 'zcash' ? estimateZcashSendTime() : evmConfirmationTime
   const availableRaw = shieldFundingAvailableRaw(source, displayBalances)
   const displayedAsset = source?.asset ?? initialAsset
   const amountState = source
@@ -702,14 +715,23 @@ export function ShieldWithdrawForm({
                 />
               )
             },
-            ...(prepared.review.quoteTimeEstimateSeconds === undefined
-              ? []
-              : [
-                  {
-                    label: 'Estimated time',
-                    content: formatShieldQuoteTime(prepared.review.quoteTimeEstimateSeconds)
+            {
+              label: 'Estimated time',
+              content: (
+                <span
+                  title={
+                    prepared.review.quoteTimeEstimateSeconds === undefined
+                      ? 'Destination-network confirmation only; confidential routing adds time.'
+                      : undefined
                   }
-                ]),
+                >
+                  {estimateConfidentialSendTime(
+                    prepared.review.quoteTimeEstimateSeconds,
+                    destinationConfirmationTime
+                  )}
+                </span>
+              )
+            },
             ...(prepared.review.sourceNetworkFee
               ? [
                   {
@@ -913,9 +935,22 @@ export function ShieldWithdrawForm({
                 : '—'
             }
             time={
-              preview?.timeEstimateSeconds === undefined
-                ? '—'
-                : formatShieldQuoteTime(preview.timeEstimateSeconds)
+              previewRequest && destination && !previewError ? (
+                <span
+                  title={
+                    preview?.timeEstimateSeconds === undefined
+                      ? 'Destination-network confirmation only; confidential routing adds time.'
+                      : undefined
+                  }
+                >
+                  {estimateConfidentialSendTime(
+                    preview?.timeEstimateSeconds,
+                    destinationConfirmationTime
+                  )}
+                </span>
+              ) : (
+                '—'
+              )
             }
           />
         </div>

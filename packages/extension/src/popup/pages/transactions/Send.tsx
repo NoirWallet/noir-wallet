@@ -95,6 +95,10 @@ import {
 import { getZcashChainId } from '@/core/chains/registry'
 import { resolveZcashSelfMove } from '@/popup/services/zcash-self-move'
 import {
+  estimateConfidentialSendTime,
+  estimateZcashSendTime
+} from '@/popup/services/send-time-estimate'
+import {
   getZcashTransparentToShieldMoveAmountError,
   isZcashSendRecipientReady,
   resolveZcashSendRecipientInput,
@@ -1147,6 +1151,7 @@ export function Send({
                     hideLabel
                   />
                 }
+                time={estimateZcashSendTime()}
               />
             </div>
           )}
@@ -1188,6 +1193,15 @@ export function Send({
                       }
                       symbol="ZEC"
                     />
+                  ) : (
+                    '—'
+                  )
+                }
+                time={
+                  privatePreviewReady ? (
+                    <span title="Zcash confirmation only; confidential routing adds time.">
+                      {estimateConfidentialSendTime(undefined, estimateZcashSendTime())}
+                    </span>
                   ) : (
                     '—'
                   )

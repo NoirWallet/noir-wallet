@@ -4,6 +4,7 @@ import {
   parseSelectedNetworkFamilies,
   type AccountNetworkFamily
 } from '@/core/wallet/account-network-selection'
+import { parseV1EncryptedCredentialEnvelope } from '@/infrastructure/keyring/migration/v1-credential-envelope'
 
 export const WALLET_STATE_KEY = 'wallet_state'
 const DELETED_WALLETS_KEY = 'wallet_deleted_ids'
@@ -315,6 +316,63 @@ export function readWalletMetadata(): Promise<WalletSnapshot | null> {
           parseDeletedIds(saved[DELETED_ACCOUNTS_KEY])
         )
       : null
+  })
+}
+
+export function migrateRetainedV1NetworkSelections(): Promise<boolean> {
+  return withMetadataLock(async () => {
+    const saved = await chrome.storage.local.get(WALLET_STATE_KEY)
+    const snapshot = parseSnapshot(saved[WALLET_STATE_KEY])
+    if (!snapshot) return false
+
+    const candidates = snapshot.state.wallets.filter(
+      wallet =>
+        wallet.secretPhraseOrigin === undefined &&
+        (wallet.keySource === undefined || wallet.keySource === 'software') &&
+        wallet.accounts.some(
+          account =>
+            account.networkSelections?.mainnet === undefined ||
+            account.networkSelections?.testnet === undefined
+        )
+    )
+    if (candidates.length === 0) return false
+
+    const credentialKeys = candidates.map(wallet => `seed_${wallet.id}`)
+    const credentials = await chrome.storage.local.get(credentialKeys)
+    const retainedWalletIds = new Set<string>()
+    for (const [index, wallet] of candidates.entries()) {
+      try {
+        parseV1EncryptedCredentialEnvelope(credentials[credentialKeys[index]])
+        retainedWalletIds.add(wallet.id)
+      } catch {
+        // An unrecognized credential is not evidence of a retained V1 wallet.
+      }
+    }
+    if (retainedWalletIds.size === 0) return false
+
+    await chrome.storage.local.set({
+      [WALLET_STATE_KEY]: {
+        ...snapshot,
+        state: {
+          ...snapshot.state,
+          wallets: snapshot.state.wallets.map(wallet =>
+            retainedWalletIds.has(wallet.id)
+              ? {
+                  ...wallet,
+                  accounts: wallet.accounts.map(account => ({
+                    ...account,
+                    networkSelections: {
+                      mainnet: account.networkSelections?.mainnet ?? ['zcash'],
+                      testnet: account.networkSelections?.testnet ?? ['zcash']
+                    }
+                  }))
+                }
+              : wallet
+          )
+        }
+      }
+    })
+    return true
   })
 }
 

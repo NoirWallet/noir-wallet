@@ -5620,13 +5620,20 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
       : swap.quoteError)
   const preparingSimplifiedTransfer =
     lockedAssetFlowRequested && autoReviewRequested && viewStep === 'input'
-  const publicPrivacySendUnavailable = publicPrivacySendRequested
-    ? !publicPrivacySendRouteReady
-      ? 'This Send request has changed.'
-      : !walletSourcesLoading && !publicPrivacySendFundingReady
-        ? 'Public funds are unavailable for this Send.'
-        : null
-    : null
+  const publicPrivacySendInitializing =
+    walletSourcesLoading ||
+    !swap.selectionReady ||
+    swap.areTokensLoading ||
+    swap.destinationTokensLoading ||
+    lockedAssetSelectionPending
+  const publicPrivacySendUnavailable =
+    publicPrivacySendRequested && !publicPrivacySendInitializing
+      ? !publicPrivacySendRouteReady
+        ? 'This Send request has changed.'
+        : lockedAssetFlowReady && !publicPrivacySendFundingReady
+          ? 'Public funds are unavailable for this Send.'
+          : null
+      : null
   const crossChainSendUnavailable = crossChainSendRequested
     ? currentNetwork !== 'mainnet'
       ? 'Cross-chain Send is available in Mainnet Mode.'

@@ -171,6 +171,37 @@ test('Home ZEC display combines on-chain and NEAR Confidential balances without 
   ).toBeNull()
 })
 
+test('Home domain projection keeps pending balances on their own networks', () => {
+  const evmChain = { chain: { id: 'eip155:1', family: 'evm' }, status: 'ready', assets: [] }
+  const zcashChain = {
+    chain: { id: 'bip122:00040fe8ec8471911baa1db1266ea15d', family: 'zcash' },
+    status: 'loading',
+    assets: []
+  }
+  const model = { status: 'partial', assets: [], chains: [evmChain, zcashChain] }
+  const privateModel = projectPortfolioForDomain(model, 'private')
+  expect(privateModel.chains.map(chain => chain.chain.id)).toEqual([evmChain.chain.id])
+  expect(privateModel.status).toBe('ready')
+  expect(projectPortfolioForDomain(model, 'public').chains.map(chain => chain.chain.id)).toEqual([
+    evmChain.chain.id,
+    zcashChain.chain.id
+  ])
+  expect(projectPortfolioForDomain(model, 'shield').chains.map(chain => chain.chain.id)).toEqual([
+    evmChain.chain.id,
+    zcashChain.chain.id
+  ])
+  expect(projectPortfolioForDomain({ ...model, chains: [zcashChain] }, 'private')).toMatchObject({
+    status: 'empty',
+    chains: []
+  })
+  expect(
+    projectPortfolioForDomain(
+      { ...model, chains: [{ ...evmChain, status: 'loading' }, zcashChain] },
+      'private'
+    ).status
+  ).toBe('loading')
+})
+
 test('Home total requires a complete current-account Portfolio and ready prices', () => {
   const model = { scope: { keyDomainId: 'wallet-a', accountId: 'account-a' }, status: 'ready' }
   const fiat = { missingAssetCount: 0, staleAssetCount: 0 }
@@ -304,8 +335,8 @@ test('home asset domains count each EVM and Zcash balance once', () => {
   const model = {
     assets: [evmAsset, zcashAsset],
     chains: [
-      { chain: { id: evmAsset.asset.chainId }, assets: [evmAsset] },
-      { chain: { id: zcashAsset.asset.chainId }, assets: [zcashAsset] }
+      { chain: { id: evmAsset.asset.chainId, family: 'evm' }, assets: [evmAsset] },
+      { chain: { id: zcashAsset.asset.chainId, family: 'zcash' }, assets: [zcashAsset] }
     ]
   }
   const prices = {
@@ -367,6 +398,12 @@ test('home asset domains count each EVM and Zcash balance once', () => {
     )
   ).toBeNull()
   expect(getAssetDomainRaw(zcashAsset, 'shield')).toBe('6')
+  expect(getAssetDomainRaw(zcashAsset, 'private')).toBe('0')
+  expect(projectPortfolioForDomain(model, 'public').chains[1].assets[0].balance.totalRaw).toBe('4')
+  expect(projectPortfolioForDomain(model, 'shield').chains[1].assets[0].balance.totalRaw).toBe('6')
+  expect(projectPortfolioForDomain(model, 'private').chains.map(chain => chain.chain.id)).toEqual([
+    evmAsset.asset.chainId
+  ])
   expect(
     projectPortfolioForDomain(model, 'shield').assets.map(asset => asset.balance.totalRaw)
   ).toEqual(['20', '6'])
@@ -589,7 +626,7 @@ test('home asset domains count each EVM and Zcash balance once', () => {
     shieldUsd: '40',
     shieldUsdPartial: true,
     privateUsd: '60',
-    privateUsdPartial: true
+    privateUsdPartial: false
   })
   expect(getAssetDomainRaw({ ...evmAsset, balance: { totalRaw: '100' } }, 'public')).toBeNull()
   expect(getHomeAssetBreakdown({ ...input, liveMultichainTotal: false })).toBeNull()

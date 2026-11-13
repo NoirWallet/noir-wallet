@@ -107,13 +107,14 @@ export function MultichainPortfolioPanel({
   }, [accountId, walletId])
 
   const visibleModel = isPortfolioModelForScope(model, walletId, accountId) ? model : null
+  const domainModel = visibleModel ? projectPortfolioForDomain(visibleModel, domain) : null
   const availableChainIds = resolvePortfolioChainSelection(
-    visibleModel,
+    domainModel,
     null,
     __ENABLED_CHAIN_FEATURE_FLAGS__
   )
   const selectedChainIds = resolvePortfolioChainSelection(
-    visibleModel,
+    domainModel,
     hideToolbar ? null : persistedChainSelection,
     __ENABLED_CHAIN_FEATURE_FLAGS__
   )
@@ -187,7 +188,7 @@ export function MultichainPortfolioPanel({
 
   return (
     <PortfolioShell
-      model={projectPortfolioForDomain(visibleModel, domain)}
+      model={domainModel!}
       sourceModel={visibleModel}
       domain={domain}
       hideToolbar={hideToolbar}
