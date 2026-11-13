@@ -3,6 +3,11 @@ import { readBoundedResponseText } from '@/lib/fetch-utils'
 import { getRheaSwapMinimumAmountMessage } from './rhea-swap-error'
 
 const MAXIMUM_QUOTE_ERROR_BYTES = 64 * 1024
+const CROSSCHAIN_PATHS: Readonly<Record<string, string>> = {
+  '/api/swap/quote': '/crosschain/swap/quote',
+  '/api/swap/swap': '/crosschain/swap/swap',
+  '/api/swap/report': '/crosschain/swap/report'
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -31,13 +36,18 @@ function readQuoteFailure(value: unknown, depth = 0): 'timeout' | 'no-route' | n
   return failure
 }
 
-/** Preserve quote failure categories before SDK 2.0.6 discards envelope metadata. */
+/** Adapt SDK 2.0.6 endpoints and preserve quote failure categories. */
 export function createRheaSwapFetch(fetchImplementation: typeof fetch): typeof fetch {
   return async (input, init) => {
+    const url = new URL(input instanceof Request ? input.url : String(input))
+    const path = CROSSCHAIN_PATHS[url.pathname]
+    if (path) {
+      url.pathname = path
+      input = input instanceof Request ? new Request(url, input) : url
+    }
     const response = await fetchImplementation(input, init)
-    const url = input instanceof Request ? input.url : String(input)
     if (
-      new URL(url).pathname !== '/api/swap/quote' ||
+      url.pathname !== '/crosschain/swap/quote' ||
       response.status === 401 ||
       response.status === 403 ||
       response.status === 429

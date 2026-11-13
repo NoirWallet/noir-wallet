@@ -430,7 +430,7 @@ function AppContent() {
           location.pathname === '/view-seed-phrase' &&
           new URLSearchParams(location.search).get('backup') === '1'
         ) && <SecretPhraseBackupBanner />}
-      <div className="min-h-0 flex-1">
+      <div className="flex min-h-0 flex-1 items-center justify-center">
         <AppRoutes />
       </div>
     </div>
@@ -468,7 +468,7 @@ function App() {
       <RouterProvider initialPath={initialPath}>
         <DialogProvider>
           {isEvmWalletChoice ? (
-            <div className="h-full w-full bg-background">
+            <div className="flex h-full w-full items-center justify-center bg-background">
               <Routes>
                 <Route path="/evm-wallet-choice" element={<EvmWalletChoice />} />
               </Routes>

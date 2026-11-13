@@ -40,6 +40,14 @@ function binding() {
   }
 }
 
+function nativeWrappedNearBinding() {
+  const value = binding()
+  return {
+    ...value,
+    origin: { ...value.origin, protocolAssetId: 'nep141:wrap.near' }
+  }
+}
+
 function plan() {
   return {
     quoteHandle: binding().quoteHandle,
@@ -67,6 +75,34 @@ function plan() {
         actions: [{ type: 'Transfer', params: { deposit: '2' } }]
       }
     ]
+  }
+}
+
+function wrappedNearPlan(existingDeposit = '0') {
+  const actions = []
+  if (existingDeposit !== '0') {
+    actions.push({
+      type: 'FunctionCall',
+      params: {
+        methodName: 'near_deposit',
+        args: {},
+        gas: '50000000000000',
+        deposit: existingDeposit
+      }
+    })
+  }
+  actions.push({
+    type: 'FunctionCall',
+    params: {
+      methodName: 'ft_transfer_call',
+      args: { receiver_id: 'router.near', amount: '1000', msg: 'swap' },
+      gas: '100000000000000',
+      deposit: '1'
+    }
+  })
+  return {
+    ...plan(),
+    transactions: [{ signerId: sender, receiverId: 'wrap.near', actions }]
   }
 }
 
@@ -112,6 +148,7 @@ function createHarness(overrides = {}) {
   let preparedIndex = 0
   let confirmedIndex = 0
   const calls = []
+  const preparedTransactions = []
   const store = createStore()
   const repository = new InMemoryTransactionRepository()
   const submission = {
@@ -145,6 +182,7 @@ function createHarness(overrides = {}) {
     async prepare(_keyDomainId, payload) {
       const index = preparedIndex++
       calls.push(`prepare:${index}`)
+      preparedTransactions.push(payload.transaction)
       return {
         commandId: `command-near-${index}`,
         chainId: 'near:mainnet',
@@ -199,6 +237,10 @@ function createHarness(overrides = {}) {
         blockHeight: 10
       }
     },
+    async getFungibleTokenBalance() {
+      calls.push('wrapped-balance')
+      return { contractId: 'wrap.near', accountId: sender, amountRaw: '0' }
+    },
     async broadcastSignedTransaction(transaction) {
       const index = transaction === 'AQ==' ? 0 : 1
       calls.push(`broadcast:${index}`)
@@ -229,6 +271,7 @@ function createHarness(overrides = {}) {
   return {
     coordinator,
     calls,
+    preparedTransactions,
     repository,
     store,
     setNow(value) {
@@ -236,6 +279,56 @@ function createHarness(overrides = {}) {
     }
   }
 }
+
+test('wraps only the missing wNEAR before a native NEAR swap transfer', async () => {
+  for (const [balance, existingDeposit, expectedDeposits] of [
+    ['600', '0', ['400']],
+    ['1000', '0', []],
+    ['600', '400', ['400']],
+    ['600', '100', ['100', '300']]
+  ]) {
+    const harness = createHarness({
+      service: {
+        async readNearTransactionBatchPlan() {
+          return wrappedNearPlan(existingDeposit)
+        }
+      },
+      rpc: {
+        async getFungibleTokenBalance() {
+          return { contractId: 'wrap.near', accountId: sender, amountRaw: balance }
+        }
+      }
+    })
+    await harness.coordinator.prepare(binding().quoteHandle, nativeWrappedNearBinding())
+    const [transaction] = harness.preparedTransactions
+    expect(
+      transaction.actions.filter(action => action.methodName === 'near_deposit')
+    ).toMatchObject(expectedDeposits.map(depositYocto => ({ depositYocto })))
+    expect(transaction.actions.at(-1).methodName).toBe('ft_transfer_call')
+  }
+})
+
+test('does not wrap a NEP-141 source even when the build transfers wNEAR', async () => {
+  const harness = createHarness({
+    service: {
+      async readNearTransactionBatchPlan() {
+        return wrappedNearPlan()
+      }
+    }
+  })
+  await harness.coordinator.prepare(binding().quoteHandle, {
+    ...binding(),
+    origin: {
+      ...binding().origin,
+      assetId: 'near:mainnet/nep141:wrap.near',
+      protocolAssetId: 'nep141:wrap.near'
+    }
+  })
+  expect(harness.calls).not.toContain('wrapped-balance')
+  expect(harness.preparedTransactions[0].actions.map(action => action.methodName)).toEqual([
+    'ft_transfer_call'
+  ])
+})
 
 test('signs and broadcasts every NEAR transaction before reporting the final hash', async () => {
   const harness = createHarness()

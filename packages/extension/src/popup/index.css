@@ -267,7 +267,7 @@ html[data-surface='side-panel'] #root {
 }
 
 /* Full browser tab (hardware wallet flows): show the app as a centered card */
-@media (min-width: 600px) and (min-height: 700px) {
+@media (min-width: 600px) {
   html:not([data-surface='side-panel']),
   html:not([data-surface='side-panel']) body,
   html:not([data-surface='side-panel']) #root {
@@ -279,7 +279,9 @@ html[data-surface='side-panel'] #root {
 
   html:not([data-surface='side-panel']) .page-container {
     max-width: 420px;
+    min-height: 0;
     max-height: 760px;
+    margin-inline: auto;
     border: 1px solid var(--color-border);
     border-radius: 16px;
     overflow: hidden;

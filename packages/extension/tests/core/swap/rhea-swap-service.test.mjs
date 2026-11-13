@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import { expect } from '@playwright/test'
 import { normalizeQuote, serializeQuoteRequest } from '@rhea-finance/cross-chain-aggregation-dex'
+import { RheaSwapCatalogClient } from '../../../src/core/services/rhea-swap/rhea-swap-catalog-client.ts'
 import { getZcashChainId } from '../../../src/core/chains/registry/index.ts'
 import { parseTrustedExtensionRuntimeMessage } from '../../../src/lib/runtime-message-security.ts'
 import { readRheaDestinationHash } from '../../../src/core/services/rhea-swap/rhea-order-status.ts'
@@ -38,6 +39,100 @@ const quoteRequest = Object.freeze({
   slippageBps: 50,
   sender: 't1sender',
   recipient: 'alice.near'
+})
+
+test('uses crosschain endpoints and the selected persisted quote bridge provider through the SDK', async () => {
+  const calls = []
+  const client = new RheaSwapCatalogClient({
+    baseUrl: 'https://api.rhea.finance',
+    apiKey: 'test-access-token',
+    retry: { maxRetries: 0 },
+    now: () => 1_000,
+    fetch: async (input, init) => {
+      const path = new URL(String(input)).pathname
+      const body = JSON.parse(init.body)
+      calls.push({ path, body, headers: init.headers })
+      let data = {}
+      if (path === '/crosschain/swap/quote') {
+        data = {
+          isCrossChain: true,
+          chainType: 'zcash',
+          bestQuote: {
+            router: 'nearintents',
+            bridgeProvider: 'first-bridge',
+            amountOut: '2500',
+            minAmountOut: '2400',
+            expiresAt: 31_000
+          },
+          allQuotes: [
+            {
+              router: 'alternate',
+              bridgeProvider: 'selected-bridge',
+              amountOut: '2300',
+              minAmountOut: '2200',
+              expiresAt: 31_000
+            }
+          ]
+        }
+      } else if (path === '/crosschain/swap/swap') {
+        data = {
+          isCrossChain: true,
+          chainType: 'zcash',
+          router: body.router,
+          fromChain: body.fromChain,
+          toChain: body.toChain,
+          tokenIn: sourceAsset,
+          tokenOut: destinationAsset,
+          amountIn: body.amountIn,
+          estimatedOut: body.expectedOut,
+          minAmountOut: body.minAmountOut,
+          tx: { kind: 'zcash_transfer', amount: body.amountIn, depositAddress: 't1deposit' }
+        }
+      } else {
+        expect(path).toBe('/crosschain/swap/report')
+      }
+      return new Response(JSON.stringify({ code: 0, msg: 'success', data }), {
+        headers: { 'content-type': 'application/json' }
+      })
+    }
+  })
+  const sessions = new MemoryRheaSwapQuoteSessionStore()
+  let handle = 0
+  const options = { now: () => 1_000, createHandle: () => String(++handle) }
+  const service = new RheaSwapService(client, sessions, options)
+  const initial = await service.quote(quoteRequest, undefined, {
+    walletId: 'wallet-1',
+    accountId: 'account-1',
+    purpose: 'wallet-swap'
+  })
+  const selected = await service.selectRoute(initial.quoteHandle, 1)
+  const restored = new RheaSwapService(client, sessions, options)
+  await Promise.all([restored.prepare(initial.quoteHandle), restored.prepare(selected.quoteHandle)])
+  expect(
+    calls
+      .filter(call => call.path.endsWith('/swap'))
+      .map(call => call.body.bridgeProvider)
+      .sort()
+  ).toEqual(['first-bridge', 'selected-bridge'])
+  const built = await restored.readPreparedBuild(selected.quoteHandle)
+  expect(built.request.bridgeProvider).toBe('selected-bridge')
+  await client.reportRaw({ from_hash: 'test-source-hash' })
+  expect(calls.map(call => call.path)).toEqual([
+    '/crosschain/swap/quote',
+    '/crosschain/swap/swap',
+    '/crosschain/swap/swap',
+    '/crosschain/swap/report'
+  ])
+  for (const call of calls)
+    expect(new Headers(call.headers).get('Authorization')).toBe('Bearer test-access-token')
+  const saved = await sessions.get(selected.quoteHandle)
+  await sessions.put({
+    ...saved,
+    build: { ...saved.build, request: { ...saved.build.request, bridgeProvider: 'first-bridge' } }
+  })
+  await expect(restored.readPreparedBuild(selected.quoteHandle)).rejects.toThrow(
+    /does not match its quote/
+  )
 })
 
 test('reads destination hashes from RHEA status across EVM and non-EVM routes', () => {

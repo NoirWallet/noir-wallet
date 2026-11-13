@@ -1,4 +1,5 @@
 import { DEFAULT_NETWORK } from '@/lib/runtime-network'
+import { WNEAR_NEAR_ASSET } from '@/config/intents'
 import type { ChainEndpointSettings } from '@/core/chains/chain-endpoint-settings'
 import { resolveNearRuntimeNetworkConfig } from '@/core/chains/solana-near-runtime-config'
 import { parseAccountId } from '@/core/accounts/domain'
@@ -36,13 +37,19 @@ import {
 import type { TransactionRepository } from '@/ports/repositories'
 import { credentialSession } from './credential-session'
 import { nearLedgerSigningBridge } from './ledger-signing-bridge'
-import { encodeNearDAppFunctionArgs, parseNearDAppTransactionBatch } from './near-dapp-codecs'
+import {
+  encodeNearDAppFunctionArgs,
+  parseNearDAppTransactionBatch,
+  type NearTransactionRequest
+} from './near-dapp-codecs'
 import { loadActiveNearTransferContext, type ActiveNearTransferContext } from './near-transfer'
 import { NEAR_TRANSACTION_MONITOR_ALARM } from './near-transaction-monitor'
 import { RHEA_SWAP_TRANSACTION_MONITOR_ALARM } from './rhea-swap-transaction-monitor'
 
 const STORAGE_PREFIX = 'rhea_swap_near:'
 const MAXIMUM_U64 = 18_446_744_073_709_551_615n
+const WRAP_NEAR_GAS = '50000000000000'
+const WNEAR_CONTRACT_ID = WNEAR_NEAR_ASSET.slice('nep141:'.length)
 const MAXIMUM_SIGNED_TRANSACTION_BYTES = 256 * 1024
 
 type PendingNearCommand = Readonly<{
@@ -254,6 +261,28 @@ async function fingerprintBatch(fingerprints: readonly string[]): Promise<string
   return [...digest].map(byte => byte.toString(16).padStart(2, '0')).join('')
 }
 
+function readNearCallArgs(
+  args: Readonly<Record<string, unknown>> | readonly number[]
+): Record<string, unknown> {
+  const decoded: unknown = Array.isArray(args)
+    ? JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(Uint8Array.from(args)))
+    : args
+  if (!decoded || typeof decoded !== 'object' || Array.isArray(decoded)) {
+    throw new Error('RHEA Swap NEAR function-call arguments are invalid')
+  }
+  return decoded as Record<string, unknown>
+}
+
+function readWrappedTransferAmount(
+  args: Readonly<Record<string, unknown>> | readonly number[]
+): bigint {
+  const amount = readNearCallArgs(args).amount
+  if (typeof amount !== 'string' || !/^[1-9][0-9]*$/.test(amount)) {
+    throw new Error('RHEA Swap wNEAR transfer amount is invalid')
+  }
+  return BigInt(amount)
+}
+
 export class ChromeSessionRheaSwapNearStore implements RheaSwapNearPendingStore {
   async get(quoteHandle: string): Promise<PendingNearExecution | null> {
     const key = this.key(quoteHandle)
@@ -287,7 +316,10 @@ export interface RheaSwapNearCoordinatorOptions {
     'readNearTransactionBatchPlan' | 'recordTransactionSubmission' | 'reportSubmission' | 'discard'
   >
   readonly signer: Pick<NearMultichainSigningClient, 'prepare' | 'confirm' | 'cancel'>
-  readonly rpc: Pick<NearReadRpc, 'assertExpectedChain' | 'getAccessKey' | 'getTransactionStatus'> &
+  readonly rpc: Pick<
+    NearReadRpc,
+    'assertExpectedChain' | 'getAccessKey' | 'getFungibleTokenBalance' | 'getTransactionStatus'
+  > &
     Pick<NearBroadcastRpc, 'broadcastSignedTransaction'>
   readonly pending: RheaSwapNearPendingStore
   readonly repository: Pick<TransactionRepository, 'create' | 'get' | 'applySegmentEvent'>
@@ -324,17 +356,18 @@ export class RheaSwapNearCoordinator {
       }
     ])
     await this.options.rpc.assertExpectedChain()
+    const preparedRequests = await this.prepareWrappedNearActions(requests, binding, sender)
     const accessKey = await this.options.rpc.getAccessKey(sender, context.publicKey)
     if (!accessKey || accessKey.permission.kind !== 'full-access') {
       throw new Error('RHEA Swap NEAR execution requires an active full-access key')
     }
     const baseNonce = BigInt(accessKey.nonce)
-    if (baseNonce + BigInt(requests.length) > MAXIMUM_U64) {
+    if (baseNonce + BigInt(preparedRequests.length) > MAXIMUM_U64) {
       throw new Error('RHEA Swap NEAR access-key nonce is exhausted')
     }
     const prepared: Awaited<ReturnType<NearMultichainSigningClient['prepare']>>[] = []
     try {
-      for (const [index, request] of requests.entries()) {
+      for (const [index, request] of preparedRequests.entries()) {
         const command = await this.options.signer.prepare(context.chainAccount.scope.keyDomainId, {
           kind: 'near-transaction',
           chainId: context.chainAccount.scope.chainId,
@@ -604,6 +637,64 @@ export class RheaSwapNearCoordinator {
     ) {
       throw new Error('RHEA Swap NEAR binding does not match its build')
     }
+  }
+
+  private async prepareWrappedNearActions(
+    requests: readonly NearTransactionRequest[],
+    binding: RheaSwapTransactionBinding,
+    sender: string
+  ): Promise<readonly NearTransactionRequest[]> {
+    if (
+      binding.origin.assetId !== 'near:mainnet/slip44:397' ||
+      binding.origin.protocolAssetId !== WNEAR_NEAR_ASSET
+    ) {
+      return requests
+    }
+    const transfers = requests.flatMap(request =>
+      request.receiverId === WNEAR_CONTRACT_ID
+        ? request.actions.filter(
+            action => action.type === 'functionCall' && action.methodName === 'ft_transfer_call'
+          )
+        : []
+    )
+    if (transfers.length === 0) return requests
+
+    let available = BigInt(
+      (await this.options.rpc.getFungibleTokenBalance(WNEAR_CONTRACT_ID, sender)).amountRaw
+    )
+    let transferred = 0n
+    return requests.map(request => {
+      if (request.receiverId !== WNEAR_CONTRACT_ID) return request
+      const actions: NearTransactionRequest['actions'][number][] = []
+      for (const action of request.actions) {
+        if (action.type === 'functionCall' && action.methodName === 'near_deposit') {
+          available += BigInt(action.deposit)
+        }
+        if (action.type === 'functionCall' && action.methodName === 'ft_transfer_call') {
+          const amount = readWrappedTransferAmount(action.args)
+          transferred += amount
+          if (transferred > BigInt(binding.originAmountRaw)) {
+            throw new Error('RHEA Swap wNEAR transfer exceeds the reviewed amount')
+          }
+          if (available < amount) {
+            const deficit = amount - available
+            actions.push(
+              Object.freeze({
+                type: 'functionCall' as const,
+                methodName: 'near_deposit',
+                args: Object.freeze({}),
+                gas: WRAP_NEAR_GAS,
+                deposit: deficit.toString()
+              })
+            )
+            available += deficit
+          }
+          available -= amount
+        }
+        actions.push(action)
+      }
+      return Object.freeze({ ...request, actions: Object.freeze(actions) })
+    })
   }
 
   private async loadSupportedContext(): Promise<{

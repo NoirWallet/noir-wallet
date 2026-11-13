@@ -1002,7 +1002,8 @@ export class RheaSwapService {
       build.router !== quote.route.router ||
       build.request?.sender !== quote.buildContext.request.sender ||
       build.request?.recipient !== quote.buildContext.request.recipient ||
-      build.request?.confidentiality !== quote.buildContext.request.confidentiality
+      build.request?.confidentiality !== quote.buildContext.request.confidentiality ||
+      build.request?.bridgeProvider !== quote.raw.bestQuote.bridgeProvider
     ) {
       throw new Error('RHEA Swap build does not match its quote')
     }
