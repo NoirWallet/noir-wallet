@@ -150,7 +150,10 @@ import {
   canUseEstimatedEvmSwapMaximum
 } from '@/popup/services/swap-maximum'
 import { useTransferMaximum } from '@/popup/hooks/useTransferMaximum'
-import { estimateRheaRouteMaximum } from '@/popup/services/transfer-maximum'
+import {
+  estimateRheaRouteMaximum,
+  fallbackTransferMaximum
+} from '@/popup/services/transfer-maximum'
 import {
   createRheaSwapBinding,
   listWalletSwapSourceTokens,
@@ -2180,6 +2183,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
   )
   const routeMaximum = useTransferMaximum({
     prefetch: walletOwnedSource?.family === 'evm',
+    fallback: walletOwnedSource ? () => fallbackTransferMaximum(walletOwnedSource) : undefined,
     // Keep the entered amount stable; review validates expired fee estimates on demand.
     refreshOnExpiry: false,
     enabled: canEstimateRouteMaximum,
@@ -2223,10 +2227,6 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
       reviewAfterQuoteRefresh.current = null
       maxQuoteAdjustmentCount.current = 0
     }
-    if (routeMaximum.error) {
-      if (swap.amountIn) swap.updateAmountIn('')
-      return
-    }
     if (routeMaximum.value) {
       const maximumAmount = formatBaseUnitDecimalAmount(
         routeMaximum.value.amountRaw,
@@ -2236,6 +2236,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
         swap.updateAmountIn(maximumAmount)
       return
     }
+    if (routeMaximum.error) return
     if (
       !canEstimateRouteMaximum ||
       routeMaximum.loading ||
@@ -2260,7 +2261,8 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
     maxSelected &&
     !swap.isZecSource &&
     walletOwnedSource?.asset.asset.kind === 'native' &&
-    routeMaximum.error
+    routeMaximum.error &&
+    !routeMaximum.value
       ? 'Unable to calculate Max. Try again.'
       : null
   const walletAvailability = walletOwnedSource
