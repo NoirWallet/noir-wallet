@@ -38,7 +38,7 @@ import {
 type ZcashHistory = 'new' | 'date' | 'height'
 
 export function ManageAccountNetworksPage() {
-  const { goBack } = useNavigate()
+  const { goBack, navigate } = useNavigate()
   const { confirm } = useDialog()
   const [params] = useSearchParams()
   const walletId = params.get('walletId')
@@ -232,8 +232,8 @@ export function ManageAccountNetworksPage() {
         chainIds: nextSelected,
         ...(birthdayHeight === undefined ? {} : { birthdayHeight })
       })
-      if (!attempts.current.isCurrent(attempt)) return
       await rehydrateWalletStore()
+      if (!attempts.current.isCurrent(attempt)) return
       if (attempts.current.isCurrent(attempt)) {
         setSelected(nextSelected)
         if (returnAfterSave) {
@@ -371,7 +371,7 @@ export function ManageAccountNetworksPage() {
               Adding a network creates an address from your existing recovery phrase. No funds move.
             </span>
           </p>
-          <Button className="h-[45px] w-full" disabled={saving} onClick={goBack}>
+          <Button className="h-[45px] w-full" onClick={() => navigate('/', { replace: true })}>
             Continue
           </Button>
         </div>
