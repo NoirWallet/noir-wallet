@@ -220,6 +220,33 @@ test.describe('Account networks coordinator', () => {
     expect(() => parseSelectedChainIds([evmChainId, evmChainId])).toThrow()
     expect(isAccountChainEnabled(account, 'testnet', 'evm', evmChainId)).toBe(true)
     expect(isAccountChainEnabled(account, 'testnet', 'evm', secondEvmChainId)).toBe(false)
+    expect(
+      isAccountChainEnabled(
+        { networkSelections: { testnet: ['evm'] } },
+        'testnet',
+        'evm',
+        evmChainId
+      )
+    ).toBe(true)
+    expect(
+      isAccountChainEnabled(
+        { networkSelections: { testnet: ['evm'] } },
+        'testnet',
+        'evm',
+        'eip155:999'
+      )
+    ).toBe(false)
+    expect(
+      isAccountChainEnabled(
+        {
+          networkSelections: { testnet: ['evm'] },
+          networkChainSelections: { testnet: [evmChainId, 'eip155:999'] }
+        },
+        'testnet',
+        'evm',
+        'eip155:999'
+      )
+    ).toBe(true)
     const coordinator = new AccountNetworksCoordinator({
       repository: repository(source),
       chains,

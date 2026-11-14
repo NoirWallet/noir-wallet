@@ -17,6 +17,8 @@ import {
 import { getFullZcashRecoveryBirthdayHeight } from '@/core/wallet/birthday-height'
 import { zcashWalletRuntimeClient } from '../../services/zcash-wallet-runtime-client'
 import { DEFAULT_NETWORK } from '@/lib/runtime-network'
+import { resolveEvmNetworkCatalog } from '@/core/chains/evm-runtime-config'
+import { useSettingsStore } from '@/store/settings-store'
 import { getUtcDayStartTimestamp } from '@/lib/zcash-birthday'
 import { resolveChainIconAlias } from '@/lib/chain-icon'
 import { LatestAttempt } from '@/lib/async-utils'
@@ -46,20 +48,36 @@ export function ManageAccountNetworksPage() {
   const currentAccountId = useWalletStore(state => state.currentAccountId)
   const accountDisplayNames = useWalletStore(state => state.accountDisplayNames)
   const currentNetwork = useWalletStore(state => state.currentNetwork)
+  const chainEndpointSettings = useSettingsStore(state => state.chainEndpointSettings)
+  const loadSettings = useSettingsStore(state => state.loadSettings)
   const account = wallet?.accounts.find(item => item.id === accountId)
   const guideMode =
     params.get('guide') === 'v1' && isRetainedV1UpgradeAccount(wallet, account, currentNetwork)
   const available = useMemo(() => availableSoftwareAccountFamilies(), [])
+  const builtinChains = useMemo(
+    () =>
+      createBuildFeatureGatedChainRegistry(
+        createInitialProductChainRegistry(DEFAULT_NETWORK)
+      ).list(),
+    []
+  )
   const chains = useMemo(
     () =>
-      createBuildFeatureGatedChainRegistry(createInitialProductChainRegistry(DEFAULT_NETWORK))
+      createBuildFeatureGatedChainRegistry(
+        createInitialProductChainRegistry(
+          DEFAULT_NETWORK,
+          resolveEvmNetworkCatalog(DEFAULT_NETWORK, chainEndpointSettings).filter(
+            network => network.source === 'custom'
+          )
+        )
+      )
         .list()
         .filter(chain => available.includes(chain.family)),
-    [available]
+    [available, chainEndpointSettings]
   )
   const initial =
     account?.networkChainSelections?.[DEFAULT_NETWORK] ??
-    chains
+    builtinChains
       .filter(chain =>
         (account?.networkSelections?.[DEFAULT_NETWORK] ?? available).includes(chain.family)
       )
@@ -82,6 +100,10 @@ export function ManageAccountNetworksPage() {
   const initializedScope = useRef<string | null>(null)
 
   useEffect(() => {
+    void loadSettings().catch(() => {})
+  }, [loadSettings])
+
+  useEffect(() => {
     const pending = attempts.current
     return () => pending.invalidate()
   }, [])
@@ -102,7 +124,7 @@ export function ManageAccountNetworksPage() {
     initializedScope.current = scope
     setSelected(
       account?.networkChainSelections?.[DEFAULT_NETWORK] ??
-        chains
+        builtinChains
           .filter(chain =>
             (account?.networkSelections?.[DEFAULT_NETWORK] ?? available).includes(chain.family)
           )
@@ -110,7 +132,7 @@ export function ManageAccountNetworksPage() {
     )
     setGuideStartingChains(
       account?.networkChainSelections?.[DEFAULT_NETWORK] ??
-        chains
+        builtinChains
           .filter(chain =>
             (account?.networkSelections?.[DEFAULT_NETWORK] ?? available).includes(chain.family)
           )
@@ -124,7 +146,7 @@ export function ManageAccountNetworksPage() {
     attempts.current.invalidate()
     savingRef.current = false
     setSaving(false)
-  }, [walletId, accountId, currentNetwork, account, available, chains])
+  }, [walletId, accountId, currentNetwork, account, available, builtinChains])
 
   if (
     !walletId ||

@@ -5396,8 +5396,12 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
       .runScopedMutation([{ walletId, accountId }], async () => {
         const families = parseSelectedNetworkFamilies(message.families)
         const selectedChainIds = parseSelectedChainIds(message.chainIds)
+        const customEvmNetworks = resolveEvmNetworkCatalog(
+          DEFAULT_NETWORK,
+          await chainEndpointSettingsCoordinator.read()
+        ).filter(network => network.source === 'custom')
         const availableChains = createBuildFeatureGatedChainRegistry(
-          createInitialProductChainRegistry(DEFAULT_NETWORK)
+          createInitialProductChainRegistry(DEFAULT_NETWORK, customEvmNetworks)
         ).list()
         const selectedChains = selectedChainIds.map(chainId =>
           availableChains.find(chain => chain.id === chainId)
