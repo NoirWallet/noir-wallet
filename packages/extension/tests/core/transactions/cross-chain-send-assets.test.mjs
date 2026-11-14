@@ -5,7 +5,9 @@ import {
   getCrossChainSendDestinationAssetId,
   isCrossChainSendDestination,
   isCrossChainSendRecipientValid,
-  resolveCrossChainSendDestinationByWalletAssetId
+  resolveCrossChainSendDestinationByWalletAssetId,
+  resolveCrossChainSendRouteAssetDisplay,
+  resolveCrossChainSendRouteDraft
 } from '../../../src/popup/services/cross-chain-send-assets.ts'
 
 const eth = {
@@ -23,6 +25,67 @@ const eth = {
   isNative: true
 }
 const enabledChains = { evm: true, solana: true }
+
+test('cross-chain Send route draft stays bound to its source account and same asset', () => {
+  const route = {
+    network: 'mainnet',
+    walletId: 'wallet-1',
+    accountId: 'account-1',
+    currentWalletId: 'wallet-1',
+    currentAccountId: 'account-1',
+    routeWalletId: 'wallet-1',
+    routeAccountId: 'account-1',
+    navigationState: null,
+    sourceAssetId: 'eip155:42161/slip44:60',
+    destinationAssetId: 'eip155:1/slip44:60',
+    recipient: '0x1111111111111111111111111111111111111111',
+    amount: '0.000001'
+  }
+  expect(resolveCrossChainSendRouteDraft(route)).toMatchObject({
+    recipient: route.recipient,
+    amount: route.amount,
+    sourceSymbol: 'ETH',
+    destinationName: 'Ethereum'
+  })
+  expect(resolveCrossChainSendRouteDraft({ ...route, accountId: 'account-2' })).toBeNull()
+  const navigationState = {
+    crossChainSendRouteAccount: {
+      walletId: route.routeWalletId,
+      accountId: route.routeAccountId,
+      sourceAssetId: route.sourceAssetId,
+      destinationAssetId: route.destinationAssetId
+    }
+  }
+  expect(
+    resolveCrossChainSendRouteDraft({
+      ...route,
+      walletId: null,
+      accountId: null,
+      currentWalletId: null,
+      currentAccountId: null,
+      navigationState
+    })
+  ).toMatchObject({ recipient: route.recipient, amount: route.amount })
+  expect(
+    resolveCrossChainSendRouteDraft({
+      ...route,
+      walletId: null,
+      accountId: null,
+      currentWalletId: 'wallet-2',
+      currentAccountId: 'account-2',
+      navigationState
+    })
+  ).toBeNull()
+  expect(
+    resolveCrossChainSendRouteAssetDisplay({ ...route, accountId: 'account-2' })
+  ).toMatchObject({
+    sourceSymbol: 'ETH',
+    destinationName: 'Ethereum'
+  })
+  expect(
+    resolveCrossChainSendRouteDraft({ ...route, destinationAssetId: 'eip155:1/slip44:0' })
+  ).toBeNull()
+})
 
 test('cross-chain Send uses verified asset identities and excludes the source network', () => {
   const baseEth = { ...eth, rheaChainId: '8453', tokenListChainId: 8453, blockchain: 'base' }

@@ -1,19 +1,19 @@
-import { useState, type ReactNode } from 'react'
+import { useState } from 'react'
 import { Icon } from '@iconify/react'
 import type { RheaSwapToken } from '@/core/services/rhea-swap'
 import { formatChainName, formatSymbol } from '@/lib/format'
-import { formatFiatAmount, formatTokenQuantity } from '@/lib/number-format'
+import { formatTokenQuantity } from '@/lib/number-format'
 import { ChainSelector, type ChainSelectorOption } from '@/popup/components/common/ChainSelector'
 import { ChainIcon } from '@/popup/components/common/ChainIcon'
 import { InlineError } from '@/popup/components/common/InlineError'
-import { TokenIcon } from '@/popup/components/tokens/TokenIcon'
-import { Button } from '@/popup/components/ui/button'
 import {
   SendAmountInputCard,
   SendFieldLabel,
   SendRecipientInputCard,
   SendRouteInfoCard,
-  SendSourceSection
+  SendAssetHeader,
+  SendFormView,
+  SendFormActions
 } from './SendInputCards'
 
 interface CrossChainSendFormViewProps {
@@ -23,11 +23,13 @@ interface CrossChainSendFormViewProps {
   readonly onSelectDestination: (chainId: string) => void
   readonly amount: string
   readonly estimatedOut: string
-  readonly fromFiat: string
   readonly recipient: string
   readonly spendableBalance: string
   readonly sourceBadge?: string
-  readonly sourceAccountAction?: ReactNode
+  readonly initializing?: boolean
+  readonly destinationNameFallback?: string
+  readonly sourceSymbolFallback?: string
+  readonly sourceNetworkNameFallback?: string
   readonly isQuoting: boolean
   readonly quoteError?: string | null
   readonly recipientError?: string | null
@@ -60,11 +62,13 @@ export function CrossChainSendFormView({
   onSelectDestination,
   amount,
   estimatedOut,
-  fromFiat,
   recipient,
   spendableBalance,
   sourceBadge,
-  sourceAccountAction,
+  initializing = false,
+  destinationNameFallback,
+  sourceSymbolFallback,
+  sourceNetworkNameFallback,
   isQuoting,
   quoteError,
   recipientError,
@@ -90,141 +94,146 @@ export function CrossChainSendFormView({
   onReview
 }: CrossChainSendFormViewProps) {
   const [networkPickerOpen, setNetworkPickerOpen] = useState(false)
-  const sourceSymbol = formatSymbol(tokenIn?.symbol) || 'Token'
-  const destinationName = tokenOut ? formatChainName(tokenOut.blockchain) : 'Select network'
+  const sourceSymbol = formatSymbol(tokenIn?.symbol) || sourceSymbolFallback || 'Token'
+  const destinationName = tokenOut
+    ? formatChainName(tokenOut.blockchain)
+    : destinationNameFallback || 'Select network'
 
   return (
     <>
-      <div className="page-content min-h-0 space-y-4 !px-4 pt-4">
-        <SendSourceSection
-          domain={sourceBadge === 'Private' ? 'private' : 'public'}
-          availableDomains={[sourceBadge === 'Private' ? 'private' : 'public']}
-          onDomainChange={() => {}}
-          sourceAction={sourceAccountAction}
-          recipient={
-            <div className="order-2">
-              <div className="mb-2 flex min-w-0 items-center justify-between gap-2">
-                <SendFieldLabel>Send to</SendFieldLabel>
-                <button
-                  type="button"
-                  onClick={() => setNetworkPickerOpen(true)}
-                  disabled={destinationAssetsLoading && destinationOptions.length === 0}
-                  aria-label={`Select destination network, ${destinationName}`}
-                  className="inline-flex min-w-0 items-center gap-1.5 text-xs hover:text-primary disabled:opacity-50"
-                >
-                  {tokenOut && (
-                    <ChainIcon
-                      chain={tokenOut.blockchain}
-                      width={16}
-                      height={16}
-                      showTooltip={false}
-                    />
-                  )}
-                  <span className="max-w-32 truncate">{destinationName}</span>
-                  <Icon icon="lucide:chevron-down" width={13} height={13} />
-                </button>
-              </div>
-              <SendRecipientInputCard
-                id="cross-chain-send-recipient"
-                value={recipient}
-                onChange={onRecipientChange}
-                placeholder="Enter address"
-                hideLabel
-                variant="filled"
-                invalid={Boolean(recipientError)}
-                onSelectRecipient={onSelectRecipient}
-              />
-              {recipientError && <InlineError message={recipientError} className="mt-2" />}
-            </div>
-          }
-          amountInput={
-            <SendAmountInputCard
-              ariaLabel={`${sourceSymbol} amount`}
-              value={amount}
-              onChange={onAmountChange}
-              available={spendableBalance}
-              symbol={sourceSymbol}
-              inline
-              disabled={sourceAssetsLoading}
-            />
-          }
-          assetSelector={
-            <span className="inline-flex min-w-0 items-center gap-1.5 text-sm font-medium">
-              <TokenIcon token={tokenIn ?? undefined} size={24} showChainBadge={false} />
-              <span className="min-w-0 text-left">
-                <span className="block truncate">{sourceSymbol}</span>
-                {tokenIn && (
-                  <span className="block truncate text-[10px] text-muted">
-                    {formatChainName(tokenIn.blockchain)}
-                  </span>
+      <SendFormView
+        domain={sourceBadge === 'Private' ? 'private' : 'public'}
+        availableDomains={[sourceBadge === 'Private' ? 'private' : 'public']}
+        onDomainChange={() => {}}
+        disabled={initializing}
+        recipient={
+          <div className="order-2">
+            <div className="mb-2 flex min-w-0 items-center justify-between gap-2">
+              <SendFieldLabel>Send to</SendFieldLabel>
+              <button
+                type="button"
+                onClick={() => setNetworkPickerOpen(true)}
+                disabled={
+                  initializing || (destinationAssetsLoading && destinationOptions.length === 0)
+                }
+                aria-label={`Select destination network, ${destinationName}`}
+                className="inline-flex min-w-0 items-center gap-1.5 text-xs hover:text-primary disabled:opacity-50"
+              >
+                {(tokenOut || destinationNameFallback) && (
+                  <ChainIcon
+                    chain={tokenOut?.blockchain ?? destinationNameFallback ?? ''}
+                    width={16}
+                    height={16}
+                    showTooltip={false}
+                  />
                 )}
-              </span>
-            </span>
-          }
-          balance={formatTokenQuantity(spendableBalance)}
-          maxButton={
-            <button
-              type="button"
-              onClick={onMaxClick}
-              disabled={!onMaxClick || maxLoading || maxDisabled}
-              title={maxDisabled ? maxDisabledReason : 'Max'}
-              aria-label="Max"
-              className="shrink-0 font-medium text-foreground disabled:opacity-40"
-            >
-              {maxLoading ? (
-                <Icon icon="lucide:loader-circle" className="size-3 animate-spin" />
-              ) : (
-                'Max'
-              )}
-            </button>
-          }
-        />
-        {fromFiat && (
-          <p className="text-xs text-muted">{formatFiatAmount(fromFiat, { showSign: true })}</p>
-        )}
+                <span className="max-w-32 truncate">{destinationName}</span>
+                <Icon icon="lucide:chevron-down" width={13} height={13} />
+              </button>
+            </div>
+            <SendRecipientInputCard
+              id="cross-chain-send-recipient"
+              value={recipient}
+              onChange={onRecipientChange}
+              placeholder="Enter address"
+              hideLabel
+              disabled={initializing}
+              variant="filled"
+              invalid={Boolean(recipientError)}
+              onSelectRecipient={onSelectRecipient}
+            />
+            {recipientError && <InlineError message={recipientError} className="mt-2" />}
+          </div>
+        }
+        amountInput={
+          <SendAmountInputCard
+            ariaLabel={`${sourceSymbol} amount`}
+            value={amount}
+            onChange={onAmountChange}
+            available={spendableBalance}
+            symbol={sourceSymbol}
+            inline
+            disabled={initializing || sourceAssetsLoading}
+          />
+        }
+        assetSelector={
+          <SendAssetHeader
+            assetId={tokenIn?.assetId}
+            symbol={sourceSymbol}
+            icon={tokenIn?.icon ?? undefined}
+            networkName={
+              tokenIn ? formatChainName(tokenIn.blockchain) : (sourceNetworkNameFallback ?? '')
+            }
+            blockchain={tokenIn?.blockchain ?? sourceNetworkNameFallback}
+            variant="pill"
+          />
+        }
+        balance={formatTokenQuantity(spendableBalance)}
+        maxButton={
+          <button
+            type="button"
+            onClick={onMaxClick}
+            disabled={initializing || !onMaxClick || maxLoading || maxDisabled}
+            title={maxDisabled ? maxDisabledReason : 'Max'}
+            aria-label="Max"
+            className="rounded-md bg-white/10 px-2 py-1 font-medium text-muted disabled:opacity-40"
+          >
+            {maxLoading ? (
+              <Icon icon="lucide:loader-circle" className="size-3 animate-spin" />
+            ) : (
+              'Max'
+            )}
+          </button>
+        }
+        footer={
+          <SendFormActions
+            onContinue={onReview}
+            disabled={initializing || !canGetQuote || hasInsufficientFunds || actionLoading}
+            loading={actionLoading}
+          />
+        }
+      >
         {hasInsufficientFunds && (
           <InlineError message={insufficientMessage ?? 'Insufficient balance'} />
         )}
 
-        {tokenOut && estimatedOut && (
-          <SendRouteInfoCard
-            provider={providerName}
-            extra={
-              <div className="flex min-w-0 items-center justify-between gap-2">
-                <span className="text-muted">Estimated receive</span>
-                <span
-                  className="min-w-0 truncate text-right"
-                  title={`${estimatedOut} ${sourceSymbol}`}
+        <SendRouteInfoCard
+          provider={providerName ?? '—'}
+          fee="—"
+          time="—"
+          extra={
+            <>
+              <div className="flex min-h-5 items-center justify-between gap-3">
+                <span className="text-muted">Slippage</span>
+                <button
+                  type="button"
+                  onClick={onOpenSlippage}
+                  disabled={initializing}
+                  className="inline-flex items-center gap-1 hover:text-primary"
+                  aria-label={`Set slippage, currently ${slippage}%`}
                 >
-                  {formatTokenQuantity(estimatedOut)} {sourceSymbol}
-                </span>
+                  {slippage}% <Icon icon="lucide:chevron-down" width={12} />
+                </button>
               </div>
-            }
-          />
-        )}
-        <button
-          type="button"
-          onClick={onOpenSlippage}
-          className="flex w-full items-center justify-end gap-1 text-xs text-muted hover:text-foreground"
-          aria-label={`Set slippage, currently ${slippage}%`}
-        >
-          Slippage {slippage}% <Icon icon="lucide:chevron-down" width={12} />
-        </button>
+              {tokenOut && estimatedOut && (
+                <div className="flex min-w-0 items-center justify-between gap-2">
+                  <span className="text-muted">Est. receive</span>
+                  <span
+                    className="min-w-0 truncate text-right"
+                    title={`${estimatedOut} ${sourceSymbol}`}
+                  >
+                    {formatTokenQuantity(estimatedOut)} {sourceSymbol}
+                  </span>
+                </div>
+              )}
+            </>
+          }
+        />
         {catalogError && <InlineError message="Unable to load assets" onRetry={onRetryCatalog} />}
         {quoteError && (
           <InlineError message={quoteError} onRetry={onRetryQuote} retrying={isQuoting} />
         )}
-      </div>
-      <div className="page-footer">
-        <Button
-          onClick={onReview}
-          disabled={!canGetQuote || hasInsufficientFunds || actionLoading}
-          isLoading={isQuoting || actionLoading}
-          className="h-[45px] w-full text-base font-semibold text-black"
-        >
-          Review Send
-        </Button>
-      </div>
+      </SendFormView>
       <ChainSelector
         open={networkPickerOpen}
         onOpenChange={setNetworkPickerOpen}

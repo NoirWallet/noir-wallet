@@ -1,7 +1,8 @@
 import { getEvmNetworkConfigs } from '@/config/networks'
 import { RHEA_SWAP_CHAIN_CATALOG, type RheaSwapToken } from '@/core/services/rhea-swap'
 import { parseSolanaPublicKey } from '@/core/chains/solana'
-import { parseAssetId } from '@/core/chains/registry'
+import { getInitialProductChainDefinitions, parseAssetId } from '@/core/chains/registry'
+import type { Network } from '@/types'
 
 type SendAssetIdentity = Readonly<{
   chainId: string
@@ -11,6 +12,90 @@ type SendAssetIdentity = Readonly<{
 
 export type CrossChainSendAssetGroup = 'ETH' | 'USDC'
 export type CrossChainSendCapabilities = Readonly<{ evm: boolean; solana: boolean }>
+
+export function resolveCrossChainSendRouteAssetDisplay(
+  input: Readonly<{
+    network: Network
+    sourceAssetId: string | null
+    destinationAssetId: string | null
+  }>
+) {
+  if (input.network !== 'mainnet' || !input.sourceAssetId || !input.destinationAssetId) return null
+  try {
+    const source = parseAssetId(input.sourceAssetId)
+    const destination = parseAssetId(input.destinationAssetId)
+    const group = getCrossChainSendAssetGroup(source)
+    if (!group || getCrossChainSendAssetGroup(destination) !== group) return null
+    const chains = getInitialProductChainDefinitions(input.network)
+    const sourceChain = chains.find(chain => chain.id === source.chainId)
+    const destinationChain = chains.find(chain => chain.id === destination.chainId)
+    if (!sourceChain || !destinationChain || sourceChain.id === destinationChain.id) return null
+    return {
+      sourceSymbol: group,
+      sourceNetworkName: sourceChain.displayName,
+      destinationName: destinationChain.displayName
+    }
+  } catch {
+    return null
+  }
+}
+
+export function resolveCrossChainSendRouteDraft(
+  input: Readonly<{
+    network: Network
+    walletId: string | null
+    accountId: string | null
+    currentWalletId: string | null
+    currentAccountId: string | null
+    routeWalletId: string | null
+    routeAccountId: string | null
+    navigationState: unknown
+    sourceAssetId: string | null
+    destinationAssetId: string | null
+    recipient: string | null
+    amount: string | null
+  }>
+) {
+  const display = resolveCrossChainSendRouteAssetDisplay(input)
+  const routeAccount =
+    typeof input.navigationState === 'object' &&
+    input.navigationState !== null &&
+    'crossChainSendRouteAccount' in input.navigationState
+      ? input.navigationState.crossChainSendRouteAccount
+      : null
+  const navigationMatches =
+    !input.walletId &&
+    !input.accountId &&
+    !input.currentWalletId &&
+    !input.currentAccountId &&
+    typeof routeAccount === 'object' &&
+    routeAccount !== null &&
+    'walletId' in routeAccount &&
+    routeAccount.walletId === input.routeWalletId &&
+    'accountId' in routeAccount &&
+    routeAccount.accountId === input.routeAccountId &&
+    'sourceAssetId' in routeAccount &&
+    routeAccount.sourceAssetId === input.sourceAssetId &&
+    'destinationAssetId' in routeAccount &&
+    routeAccount.destinationAssetId === input.destinationAssetId
+  if (
+    !display ||
+    !input.routeWalletId ||
+    !input.routeAccountId ||
+    !(
+      (input.walletId === input.routeWalletId && input.accountId === input.routeAccountId) ||
+      navigationMatches
+    )
+  )
+    return null
+  return {
+    ...display,
+    walletId: input.routeWalletId,
+    accountId: input.routeAccountId,
+    recipient: input.recipient ?? '',
+    amount: input.amount ?? ''
+  }
+}
 
 const SOLANA_USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const MAINNET_EVM_NETWORKS = getEvmNetworkConfigs('mainnet')

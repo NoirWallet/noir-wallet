@@ -10,6 +10,70 @@ import { BalanceHelp } from './BalanceHelp'
 import { safeBig } from '@/lib/big'
 import { Tooltip } from '../ui/tooltip'
 import { BalanceDomainTabs, type BalanceDomain } from '../account/BalanceDomainTabs'
+import { Button } from '../ui/button'
+import { Switch } from '../ui/switch'
+
+export function SendFormView({
+  children,
+  footer,
+  ...source
+}: Parameters<typeof SendSourceSection>[0] & {
+  readonly children?: ReactNode
+  readonly footer: ReactNode
+}) {
+  return (
+    <>
+      <div className="page-content min-h-0 space-y-4 !px-4 pt-4">
+        <SendSourceSection {...source} />
+        {children}
+      </div>
+      <div className="page-footer">{footer}</div>
+    </>
+  )
+}
+
+export function SendFormActions({
+  onContinue,
+  disabled,
+  loading,
+  privacy
+}: {
+  readonly onContinue: () => void
+  readonly disabled: boolean
+  readonly loading?: boolean
+  readonly privacy?: { readonly checked: boolean; readonly onChange: () => void }
+}) {
+  return (
+    <>
+      {privacy && (
+        <button
+          type="button"
+          role="switch"
+          aria-label="Send privately"
+          aria-checked={privacy.checked}
+          onClick={privacy.onChange}
+          className={cn(
+            'mb-4 flex w-full items-center justify-center gap-1.5 text-sm',
+            privacy.checked ? 'text-primary' : 'text-muted'
+          )}
+        >
+          <Icon icon="lucide:shield-check" width={15} height={15} className="text-primary" />
+          Send privately
+          <Switch checked={privacy.checked} size="sm" />
+        </button>
+      )}
+      <Button
+        size="wallet"
+        className="h-[45px] w-full"
+        disabled={disabled}
+        isLoading={loading}
+        onClick={onContinue}
+      >
+        Continue
+      </Button>
+    </>
+  )
+}
 
 /** Keeps source and recipient headings at the same visual level. */
 export function SendFieldLabel({ children }: { readonly children: ReactNode }) {

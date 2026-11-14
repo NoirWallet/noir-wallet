@@ -7,8 +7,6 @@ import { ChainIcon } from '@/popup/components/common/ChainIcon'
 import { InlineError } from '@/popup/components/common/InlineError'
 import { formatSendFiatValue } from '@/popup/components/transaction/send-input-model'
 import { resolveChainIconAlias } from '@/lib/chain-icon'
-import { Button } from '@/popup/components/ui/button'
-import { Switch } from '@/popup/components/ui/switch'
 import nearLogo from '@/images/figma-near-confidential.svg'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/popup/components/ui/dialog'
 import { ChainSelector } from '@/popup/components/common/ChainSelector'
@@ -33,7 +31,8 @@ import { NetworkFeeTierPicker } from '@/popup/components/transaction/NetworkFeeT
 import {
   SendAmountInputCard,
   SendRouteInfoCard,
-  SendSourceSection,
+  SendFormView,
+  SendFormActions,
   SendFieldLabel,
   SendAssetHeader,
   SendRecipientAddress,
@@ -1093,128 +1092,93 @@ export function EvmSendForm({
 
   return (
     <>
-      <div className="page-content min-h-0 space-y-4 !px-4 pt-4">
-        <SendSourceSection
-          domain="public"
-          disabled={preparing || approving || updatingFee}
-          availableDomains={shieldSourceAvailable ? ['public', 'shield'] : ['public']}
-          onDomainChange={domain => {
-            if (domain === 'shield') onSelectShield(validRecipient ? recipient : '')
-          }}
-          amountInput={
-            <SendAmountInputCard
-              ariaLabel={`${asset.metadata.symbol} amount`}
-              value={amount}
-              onChange={value => {
-                if (/^\d*\.?\d*$/.test(value)) {
-                  invalidateMaximum()
-                  setAmount(value)
-                }
-              }}
-              available={transferAvailability.display}
-              symbol={asset.metadata.symbol}
-              priceUsd={priceUsd}
-              inline
-            />
-          }
-          assetSelector={
-            <SendAssetHeader
-              assetId={asset.asset.id}
-              symbol={asset.metadata.symbol}
-              icon={asset.metadata.iconUrl}
-              networkName={chain.chain.displayName}
-              blockchain={resolveChainIconAlias(
-                chain.chain.family,
-                chain.chain.displayName,
-                chain.chain.id
-              )}
-              onSelectAsset={onSelectAsset}
-              variant="pill"
-            />
-          }
-          balance={
-            <span
-              data-testid="send-available-balance"
-              className="min-w-0 truncate"
-              title={transferAvailability.display}
-            >
-              {domainAvailableRaw === null
-                ? 'Unavailable'
-                : formatTokenQuantity(transferAvailability.display)}
-            </span>
-          }
-          maxButton={
-            <button
-              type="button"
-              aria-label="Max"
-              aria-pressed={maxSelected}
-              disabled={
-                route === 'pending' ||
-                !sourceAddress ||
-                BigInt(availableRaw) <= 0n ||
-                (asset.asset.kind === 'native' && !validRecipient) ||
-                maximum.loading
+      <SendFormView
+        domain="public"
+        disabled={preparing || approving || updatingFee}
+        availableDomains={shieldSourceAvailable ? ['public', 'shield'] : ['public']}
+        onDomainChange={domain => {
+          if (domain === 'shield') onSelectShield(validRecipient ? recipient : '')
+        }}
+        amountInput={
+          <SendAmountInputCard
+            ariaLabel={`${asset.metadata.symbol} amount`}
+            value={amount}
+            onChange={value => {
+              if (/^\d*\.?\d*$/.test(value)) {
+                invalidateMaximum()
+                setAmount(value)
               }
-              onClick={
-                asset.asset.kind === 'token'
-                  ? () => {
-                      setError(null)
-                      setMaxSelected(true)
-                      setAmount(transferAvailability.display)
-                    }
-                  : handleMaximum
-              }
-              className="rounded-md bg-white/10 px-2 py-1 font-medium text-muted aria-pressed:bg-primary/15 aria-pressed:text-primary disabled:opacity-40"
-            >
-              Max
-            </button>
-          }
-          recipient={
-            <div>
-              <div className="mb-2 flex items-center justify-between text-xs">
-                <SendFieldLabel>Send to</SendFieldLabel>
-                {!sendPrivately && destinationNetworks.length > 1 ? (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => setNetworkPickerOpen(true)}
-                      className="inline-flex items-center gap-1.5 text-foreground hover:text-primary"
-                      aria-label={`Select destination network, ${chain.chain.displayName}`}
-                    >
-                      <ChainIcon
-                        chain={resolveChainIconAlias(
-                          chain.chain.family,
-                          chain.chain.displayName,
-                          chain.chain.id
-                        )}
-                        width={16}
-                        height={16}
-                        className="rounded-[4px]"
-                        showTooltip={false}
-                      />
-                      {chain.chain.displayName}
-                      <Icon icon="lucide:chevron-down" width={13} height={13} />
-                    </button>
-                    <ChainSelector
-                      open={networkPickerOpen}
-                      onOpenChange={setNetworkPickerOpen}
-                      selectedId={asset.asset.id}
-                      label={`Networks for ${asset.metadata.symbol}`}
-                      options={destinationNetworks.map(option => ({
-                        id: option.assetId,
-                        name: option.name,
-                        icon: option.icon
-                      }))}
-                      onSelect={destinationAssetId =>
-                        onSelectDestinationNetwork(destinationAssetId, {
-                          recipient,
-                          amount: maxSelected ? '' : amount
-                        })
-                      }
-                    />
-                  </>
-                ) : (
-                  <span className="inline-flex items-center gap-1.5 text-foreground">
+            }}
+            available={transferAvailability.display}
+            symbol={asset.metadata.symbol}
+            priceUsd={priceUsd}
+            inline
+          />
+        }
+        assetSelector={
+          <SendAssetHeader
+            assetId={asset.asset.id}
+            symbol={asset.metadata.symbol}
+            icon={asset.metadata.iconUrl}
+            networkName={chain.chain.displayName}
+            blockchain={resolveChainIconAlias(
+              chain.chain.family,
+              chain.chain.displayName,
+              chain.chain.id
+            )}
+            onSelectAsset={onSelectAsset}
+            variant="pill"
+          />
+        }
+        balance={
+          <span
+            data-testid="send-available-balance"
+            className="min-w-0 truncate"
+            title={transferAvailability.display}
+          >
+            {domainAvailableRaw === null
+              ? 'Unavailable'
+              : formatTokenQuantity(transferAvailability.display)}
+          </span>
+        }
+        maxButton={
+          <button
+            type="button"
+            aria-label="Max"
+            aria-pressed={maxSelected}
+            disabled={
+              route === 'pending' ||
+              !sourceAddress ||
+              BigInt(availableRaw) <= 0n ||
+              (asset.asset.kind === 'native' && !validRecipient) ||
+              maximum.loading
+            }
+            onClick={
+              asset.asset.kind === 'token'
+                ? () => {
+                    setError(null)
+                    setMaxSelected(true)
+                    setAmount(transferAvailability.display)
+                  }
+                : handleMaximum
+            }
+            className="rounded-md bg-white/10 px-2 py-1 font-medium text-muted aria-pressed:bg-primary/15 aria-pressed:text-primary disabled:opacity-40"
+          >
+            Max
+          </button>
+        }
+        recipient={
+          <div>
+            <div className="mb-2 flex items-center justify-between text-xs">
+              <SendFieldLabel>Send to</SendFieldLabel>
+              {!sendPrivately && destinationNetworks.length > 1 ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setNetworkPickerOpen(true)}
+                    className="inline-flex items-center gap-1.5 text-foreground hover:text-primary"
+                    aria-label={`Select destination network, ${chain.chain.displayName}`}
+                  >
                     <ChainIcon
                       chain={resolveChainIconAlias(
                         chain.chain.family,
@@ -1227,49 +1191,106 @@ export function EvmSendForm({
                       showTooltip={false}
                     />
                     {chain.chain.displayName}
-                  </span>
-                )}
-              </div>
-              <SendRecipientInputCard
-                id="evm-send-recipient"
-                value={recipient}
-                onChange={value => {
-                  invalidateMaximum()
-                  if (maxSelected) setAmount('')
-                  setRecipient(value.trim())
-                  setSelectedRecipient(null)
-                }}
-                placeholder="Enter address"
-                variant="filled"
-                hideLabel
-                onSelectRecipient={() => void handleSelectRecipient()}
-              />
-              {recipient && !validRecipient && (
-                <div className="mt-2 flex items-start justify-between gap-3 px-1 text-xs text-danger">
-                  <p className="min-w-0 flex-1">
-                    {recipientPolicyError ?? 'Enter a valid non-zero EVM address.'}
-                  </p>
-                  {canMoveRecipient && recipientPolicyError && (
-                    <button
-                      type="button"
-                      onClick={() => void handleMoveRecipient()}
-                      className="inline-flex shrink-0 items-center gap-1 font-medium text-primary"
-                    >
-                      <Icon
-                        icon="lucide:arrow-right-left"
-                        width={13}
-                        height={13}
-                        aria-hidden="true"
-                      />
-                      Move
-                    </button>
-                  )}
-                </div>
+                    <Icon icon="lucide:chevron-down" width={13} height={13} />
+                  </button>
+                  <ChainSelector
+                    open={networkPickerOpen}
+                    onOpenChange={setNetworkPickerOpen}
+                    selectedId={asset.asset.id}
+                    label={`Networks for ${asset.metadata.symbol}`}
+                    options={destinationNetworks.map(option => ({
+                      id: option.assetId,
+                      name: option.name,
+                      icon: option.icon
+                    }))}
+                    onSelect={destinationAssetId =>
+                      onSelectDestinationNetwork(destinationAssetId, {
+                        recipient,
+                        amount: maxSelected ? '' : amount
+                      })
+                    }
+                  />
+                </>
+              ) : (
+                <span className="inline-flex items-center gap-1.5 text-foreground">
+                  <ChainIcon
+                    chain={resolveChainIconAlias(
+                      chain.chain.family,
+                      chain.chain.displayName,
+                      chain.chain.id
+                    )}
+                    width={16}
+                    height={16}
+                    className="rounded-[4px]"
+                    showTooltip={false}
+                  />
+                  {chain.chain.displayName}
+                </span>
               )}
             </div>
-          }
-        />
-
+            <SendRecipientInputCard
+              id="evm-send-recipient"
+              value={recipient}
+              onChange={value => {
+                invalidateMaximum()
+                if (maxSelected) setAmount('')
+                setRecipient(value.trim())
+                setSelectedRecipient(null)
+              }}
+              placeholder="Enter address"
+              variant="filled"
+              hideLabel
+              onSelectRecipient={() => void handleSelectRecipient()}
+            />
+            {recipient && !validRecipient && (
+              <div className="mt-2 flex items-start justify-between gap-3 px-1 text-xs text-danger">
+                <p className="min-w-0 flex-1">
+                  {recipientPolicyError ?? 'Enter a valid non-zero EVM address.'}
+                </p>
+                {canMoveRecipient && recipientPolicyError && (
+                  <button
+                    type="button"
+                    onClick={() => void handleMoveRecipient()}
+                    className="inline-flex shrink-0 items-center gap-1 font-medium text-primary"
+                  >
+                    <Icon
+                      icon="lucide:arrow-right-left"
+                      width={13}
+                      height={13}
+                      aria-hidden="true"
+                    />
+                    Move
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        }
+        footer={
+          <SendFormActions
+            privacy={
+              sourceMode === 'main' && networkMode === 'mainnet' && support.support === 'supported'
+                ? {
+                    checked: sendPrivately,
+                    onChange: () => changePrivacyRoute(sendPrivately ? null : privacyScope)
+                  }
+                : undefined
+            }
+            disabled={
+              !validAmount ||
+              !validRecipient ||
+              maximumPending ||
+              !sourceAddress ||
+              route === 'pending' ||
+              (sendPrivately && !privatePreviewReady) ||
+              tokenFeeBalanceError !== null ||
+              (route === 'onchain' && feePreview.loading)
+            }
+            loading={preparing || (route === 'onchain' && feePreview.loading)}
+            onContinue={handleContinue}
+          />
+        }
+      >
         {sendPrivately && (
           <SendRouteInfoCard
             provider={
@@ -1378,42 +1399,7 @@ export function EvmSendForm({
               className="px-1"
             />
           ))}
-      </div>
-
-      <div className="page-footer">
-        {sourceMode === 'main' && networkMode === 'mainnet' && support.support === 'supported' && (
-          <button
-            type="button"
-            role="switch"
-            aria-label="Send privately"
-            aria-checked={sendPrivately}
-            onClick={() => changePrivacyRoute(sendPrivately ? null : privacyScope)}
-            className={`mb-4 flex w-full items-center justify-center gap-1.5 text-sm disabled:opacity-40 ${sendPrivately ? 'text-primary' : 'text-muted'}`}
-          >
-            <Icon icon="lucide:shield-check" width={15} height={15} className="text-primary" />
-            Send privately
-            <Switch checked={sendPrivately} size="sm" />
-          </button>
-        )}
-        <Button
-          size="wallet"
-          className="h-[45px] w-full"
-          disabled={
-            !validAmount ||
-            !validRecipient ||
-            maximumPending ||
-            !sourceAddress ||
-            route === 'pending' ||
-            (sendPrivately && !privatePreviewReady) ||
-            tokenFeeBalanceError !== null ||
-            (route === 'onchain' && feePreview.loading)
-          }
-          isLoading={preparing || (route === 'onchain' && feePreview.loading)}
-          onClick={handleContinue}
-        >
-          Continue
-        </Button>
-      </div>
+      </SendFormView>
 
       <Dialog
         open={active && review !== null}

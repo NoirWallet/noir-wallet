@@ -1216,7 +1216,16 @@ export function MultichainSend({
                     })}`,
                     {
                       replace: true,
-                      state: { returnToSendAssetId: selection.asset.asset.id, sendEntry }
+                      state: {
+                        returnToSendAssetId: selection.asset.asset.id,
+                        sendEntry,
+                        crossChainSendRouteAccount: {
+                          walletId: effectiveWalletId,
+                          accountId: effectiveAccountId,
+                          sourceAssetId: selection.asset.asset.id,
+                          destinationAssetId
+                        }
+                      }
                     }
                   )
                 }}
