@@ -5140,11 +5140,11 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
 
   useEffect(() => {
     const parsed = parseShieldSwapZecSourceParam(searchParams.get('shieldZecSource'))
-    if (parsed)
+    if (parsed && accountNetworksReady)
       setShieldZecSource(
         parsed === 'native-shielded' && !nativeZecShieldAvailable ? 'intents' : parsed
       )
-  }, [searchParams, nativeZecShieldAvailable])
+  }, [searchParams, accountNetworksReady, nativeZecShieldAvailable])
 
   useEffect(() => {
     if (!shieldSwapSelected || !accountNetworksReady) return
