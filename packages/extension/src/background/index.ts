@@ -69,6 +69,8 @@ import { transactionMonitor } from './transaction-monitor'
 import { zcashTxMonitor, computeExpiryHeight } from './zcash-tx-monitor'
 import { formatLogError } from '@/lib/log-format'
 import { logger } from '@/lib/logger'
+import { toHardwarePcztError } from '@/core/zcash/hardware-pczt'
+import { formatHardwareSigningError } from '@/lib/hardware-signing-error'
 import { appendDiagnosticLog, exportDiagnosticLogs } from '@/lib/diagnostic-log-store'
 import { parseDiagnosticLogDraft, sanitizeDiagnosticMessage } from '@/lib/diagnostic-log'
 import { logDebugTiming, traceDebugStage } from '@/lib/debug-performance'
@@ -5891,7 +5893,10 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
         })
       })
       .then(txHash => sendResponse({ success: true, txHash }))
-      .catch(error =>
+      .catch(error => {
+        logger.error(
+          `[Hardware signing] Keystone submission failed: ${formatHardwareSigningError(toHardwarePcztError('prepare', error))}`
+        )
         sendResponse({
           success: false,
           error:
@@ -5899,11 +5904,11 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
               ? TRANSACTION_PENDING_MESSAGE
               : error instanceof Error
                 ? error.message
-                : 'Hardware transaction failed',
+                : formatHardwareSigningError(error),
           completionPending: error instanceof TimeoutError || isTransactionSubmissionUnknown(error),
           retryable: !consumed
         })
-      )
+      })
     return true
   }
 
@@ -5971,7 +5976,10 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
         })
       })
       .then(txHash => sendResponse({ success: true, txHash }))
-      .catch(error =>
+      .catch(error => {
+        logger.error(
+          `[Hardware signing] Ledger submission failed: ${formatHardwareSigningError(toHardwarePcztError('prepare', error))}`
+        )
         sendResponse({
           success: false,
           error:
@@ -5979,11 +5987,11 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
               ? TRANSACTION_PENDING_MESSAGE
               : error instanceof Error
                 ? error.message
-                : 'Ledger transaction failed',
+                : formatHardwareSigningError(error),
           completionPending: error instanceof TimeoutError || isTransactionSubmissionUnknown(error),
           retryable: !consumed
         })
-      )
+      })
     return true
   }
 

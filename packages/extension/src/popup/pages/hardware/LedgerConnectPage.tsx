@@ -49,6 +49,8 @@ import { cn } from '@/lib/utils'
 import { getNewPasswordValidationError, isNewPasswordValid } from '@/core/wallet/password-policy'
 import { useWalletStore } from '@/store/wallet-store'
 import { nextHardwareWalletName } from '@/lib/hardware-connect-options'
+import { formatHardwareSigningError } from '@/lib/hardware-signing-error'
+import { logger } from '@/lib/logger'
 import {
   MAX_LEDGER_ACCOUNT_INDEX,
   parseLedgerAccountIndex,
@@ -186,10 +188,11 @@ export function LedgerConnectPage() {
         if (!disposed) setExistingCredential(credential)
       })
       .catch(cause => {
-        if (!disposed)
-          setCredentialReadError(
-            cause instanceof Error ? cause.message : 'Ledger Wallet unavailable'
-          )
+        if (!disposed) {
+          const message = formatHardwareSigningError(cause)
+          logger.error(`[Hardware connection] Ledger credential loading failed: ${message}`)
+          setCredentialReadError(message)
+        }
       })
       .finally(() => {
         if (!disposed) setCredentialLoading(false)
@@ -294,7 +297,9 @@ export function LedgerConnectPage() {
       refreshPreviews(page)
     } catch (cause) {
       if (!controller.signal.aborted) {
-        setError(cause instanceof Error ? cause.message : 'Unable to read Ledger accounts')
+        const message = formatHardwareSigningError(cause)
+        logger.error(`[Hardware connection] Ledger account discovery failed: ${message}`)
+        setError(message)
         setStep('accounts')
       }
     } finally {
@@ -342,7 +347,9 @@ export function LedgerConnectPage() {
       setStep('configure')
     } catch (cause) {
       if (!controller.signal.aborted) {
-        setError(cause instanceof Error ? cause.message : 'Ledger confirmation failed')
+        const message = formatHardwareSigningError(cause)
+        logger.error(`[Hardware connection] Ledger account confirmation failed: ${message}`)
+        setError(message)
         setStep(current.pickers.length ? 'accounts' : 'connect')
       }
     } finally {
@@ -400,7 +407,9 @@ export function LedgerConnectPage() {
       else await confirmAccounts()
     } catch (cause) {
       if (!controller.signal.aborted) {
-        setError(cause instanceof Error ? cause.message : 'Ledger connection failed')
+        const message = formatHardwareSigningError(cause)
+        logger.error(`[Hardware connection] Ledger connection failed: ${message}`)
+        setError(message)
         setStep('connect')
       }
     } finally {
@@ -456,7 +465,9 @@ export function LedgerConnectPage() {
       setConfirmPassword('')
       setStep('success')
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Ledger setup failed')
+      const message = formatHardwareSigningError(cause)
+      logger.error(`[Hardware connection] Ledger provisioning failed: ${message}`)
+      setError(message)
     } finally {
       provisioning.current = false
       setCreating(false)

@@ -958,11 +958,12 @@ const TRUSTED_RUNTIME_SCHEMAS: Readonly<Record<string, RuntimeMessageSchema>> = 
   SUBMIT_HARDWARE_PCZT: {
     required: {
       requestId: isShortString,
+      transactionId: isShortString,
       signedPcztBase64: isCanonicalHardwarePcztBase64
     }
   },
   SUBMIT_LEDGER_SIGNATURES: {
-    required: { requestId: isShortString, signatures: isRecord }
+    required: { requestId: isShortString, transactionId: isShortString, signatures: isRecord }
   },
   START_TRANSACTION_MONITOR: { required: { swap: isRecord } },
   STOP_TRANSACTION_MONITOR: { required: { depositAddress: isShortString } },
@@ -1379,7 +1380,14 @@ export function isOwnExtensionRouteSender(
   const url = getOwnExtensionSenderUrl(sender, extensionId)
   if (!url || url.pathname !== '/index.html') return false
 
-  const hashRoute = url.hash.slice(1).split('?')[0]
+  let routeUrl = url
+  // Chrome omits fragments from MessageSender.url. The top-level tab URL
+  // supplies the route only when it describes this exact extension document.
+  if (!url.hash && sender.frameId === 0 && Number.isInteger(sender.tab?.id)) {
+    const tabUrl = parseUrl(sender.tab?.url)
+    if (tabUrl && tabUrl.href.split('#')[0] === url.href) routeUrl = tabUrl
+  }
+  const hashRoute = routeUrl.hash.slice(1).split('?')[0]
   const normalizedRoute = hashRoute.startsWith('/') ? hashRoute : `/${hashRoute}`
   if (normalizedRoute !== route) return false
   if (expected?.tabId !== undefined && sender.tab?.id !== expected.tabId) return false

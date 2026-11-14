@@ -8,6 +8,27 @@ import {
   type DiagnosticLogEntry
 } from '../../../src/lib/diagnostic-log'
 import { parseTrustedExtensionRuntimeMessage } from '../../../src/lib/runtime-message-security'
+import { formatHardwareSigningError } from '../../../src/lib/hardware-signing-error'
+
+test('hardware diagnostics retain vendor error reasons without leaking signed payloads', () => {
+  const encoded = 'cGN6dA'.repeat(40)
+  const bytes = `[${Array.from({ length: 64 }, (_, i) => i).join(', ')}]`
+  const address = `u1${'a'.repeat(70)}`
+  const failure = Object.assign(
+    new Error(
+      `Failed to combine PCZT: SignatureMismatch ${encoded} ${bytes} address=${address} amount=1.25 ZEC`
+    ),
+    { statusCode: 0x6985 }
+  )
+  const message = formatHardwareSigningError(failure)
+  expect(message).toContain('Failed to combine PCZT: SignatureMismatch')
+  expect(message).toContain('statusCode=27013')
+  for (const sensitive of [encoded, bytes, address, '1.25'])
+    expect(message).not.toContain(sensitive)
+  expect(formatHardwareSigningError('Failed to parse PCZT bytes: UnknownVersion(3)')).toBe(
+    'Failed to parse PCZT bytes: UnknownVersion(3)'
+  )
+})
 
 function makeEntry(id: number, timestamp: number, byteSize = 100): DiagnosticLogEntry {
   return {

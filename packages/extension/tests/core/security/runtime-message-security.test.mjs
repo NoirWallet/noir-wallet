@@ -320,6 +320,44 @@ test.describe('Runtime message security', () => {
     expect(
       isOwnExtensionRouteSender(popupSender, extensionId, '/hardware/sign', { tabId: 4 })
     ).toBe(false)
+    const chromeHardwareSender = {
+      id: extensionId,
+      url: `chrome-extension://${extensionId}/index.html`,
+      frameId: 0,
+      tab: {
+        id: 4,
+        windowId: 8,
+        url: `chrome-extension://${extensionId}/index.html#/hardware/sign?req=hardware-request-1`
+      }
+    }
+    expect(
+      isOwnExtensionRouteSender(chromeHardwareSender, extensionId, '/hardware/sign', {
+        tabId: 4,
+        windowId: 8
+      })
+    ).toBe(true)
+    for (const sender of [
+      { ...chromeHardwareSender, frameId: 1 },
+      { ...chromeHardwareSender, frameId: undefined },
+      { ...chromeHardwareSender, url: `chrome-extension://${extensionId}/index.html#/approval` },
+      { ...chromeHardwareSender, tab: { ...chromeHardwareSender.tab, id: 5 } },
+      { ...chromeHardwareSender, tab: { ...chromeHardwareSender.tab, windowId: 9 } },
+      {
+        ...chromeHardwareSender,
+        tab: {
+          ...chromeHardwareSender.tab,
+          url: `chrome-extension://${extensionId}/other.html#/hardware/sign`
+        }
+      },
+      {
+        ...chromeHardwareSender,
+        tab: { ...chromeHardwareSender.tab, url: 'https://site.example/index.html#/hardware/sign' }
+      }
+    ]) {
+      expect(
+        isOwnExtensionRouteSender(sender, extensionId, '/hardware/sign', { tabId: 4, windowId: 8 })
+      ).toBe(false)
+    }
     expect(
       isOwnExtensionServiceWorkerSender(
         serviceWorkerSender,
@@ -1003,6 +1041,7 @@ test.describe('Runtime message security', () => {
       parseTrustedExtensionRuntimeMessage({
         type: 'SUBMIT_HARDWARE_PCZT',
         requestId: 'hardware-request-1',
+        transactionId: 'transaction-1',
         signedPcztBase64: 'ZWZnaA=='
       })
     ).toMatchObject({ type: 'SUBMIT_HARDWARE_PCZT' })
@@ -1010,6 +1049,7 @@ test.describe('Runtime message security', () => {
       parseTrustedExtensionRuntimeMessage({
         type: 'SUBMIT_LEDGER_SIGNATURES',
         requestId: 'hardware-request-1',
+        transactionId: 'transaction-1',
         signatures: { orchard: [], transparentInputSigs: [], ironwood: [] }
       })
     ).toMatchObject({ type: 'SUBMIT_LEDGER_SIGNATURES' })
@@ -1017,6 +1057,7 @@ test.describe('Runtime message security', () => {
       parseTrustedExtensionRuntimeMessage({
         type: 'SUBMIT_HARDWARE_PCZT',
         requestId: 'hardware-request-1',
+        transactionId: 'transaction-1',
         signedPcztBase64: 'not base64'
       })
     ).toThrow(/schema/i)
@@ -1024,10 +1065,28 @@ test.describe('Runtime message security', () => {
       parseTrustedExtensionRuntimeMessage({
         type: 'SUBMIT_HARDWARE_PCZT',
         requestId: 'hardware-request-1',
+        transactionId: 'transaction-1',
         origin: 'https://dapp.example',
         signedPcztBase64: 'ZWZnaA=='
       })
     ).toThrow(/schema/i)
+    for (const payload of [
+      { type: 'SUBMIT_HARDWARE_PCZT', signedPcztBase64: 'ZWZnaA==' },
+      {
+        type: 'SUBMIT_LEDGER_SIGNATURES',
+        signatures: { orchard: [], transparentInputSigs: [], ironwood: [] }
+      }
+    ]) {
+      for (const transactionId of [undefined, '', 1]) {
+        expect(() =>
+          parseTrustedExtensionRuntimeMessage({
+            ...payload,
+            requestId: 'hardware-request-1',
+            ...(transactionId === undefined ? {} : { transactionId })
+          })
+        ).toThrow(/schema/i)
+      }
+    }
     expect(
       parseTrustedExtensionRuntimeMessage({
         type: 'INSPECT_NEXT_ZCASH_ACCOUNT_HISTORY',

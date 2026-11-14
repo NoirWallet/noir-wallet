@@ -50,6 +50,9 @@ import {
   TRANSACTION_PENDING_MESSAGE
 } from '@/lib/transaction-status-copy'
 import { publishHardwareSignResult } from '@/lib/hardware-sign-result'
+import { toHardwarePcztError } from '@/core/zcash/hardware-pczt'
+import { formatHardwareSigningError } from '@/lib/hardware-signing-error'
+import { logger } from '@/lib/logger'
 
 type Step =
   | 'building'
@@ -255,17 +258,10 @@ export function KeystoneSignPage() {
         setStep(res.vendor === 'ledger' ? 'ledger-review' : 'show-qr')
       } catch (e) {
         if (invalidated.current) return
-        const raw = e instanceof Error ? e.message : ''
-        if (raw.includes('SAPLING_UNSUPPORTED')) {
-          setRetryable(false)
-          setError(
-            'This transfer needs to spend Sapling funds, which Keystone cannot sign. ' +
-              'Move or shield your Sapling balance into Orchard using a software wallet ' +
-              'with the same recovery phrase, then send from Keystone.'
-          )
-        } else {
-          setError(classifyError(e).userMessage)
-        }
+        const message = formatHardwareSigningError(e)
+        logger.error(`[Hardware signing] Build failed: ${message}`)
+        if (message.includes('SAPLING_UNSUPPORTED')) setRetryable(false)
+        setError(message)
         recordHardwareSignFailure(req.kind, 'build')
         recordHardwareOperationOutcome(req, requestId, 'failed')
         setStep('failed')
@@ -288,7 +284,14 @@ export function KeystoneSignPage() {
       setRequest(req)
       await buildPczt(req)
     }
-    start()
+    void start().catch(cause => {
+      if (invalidated.current) return
+      const message = formatHardwareSigningError(cause)
+      logger.error(`[Hardware signing] Request loading failed: ${message}`)
+      setError(message)
+      setRetryable(false)
+      setStep('failed')
+    })
   }, [requestId, buildPczt])
 
   const reportDappResult = (
@@ -321,6 +324,7 @@ export function KeystoneSignPage() {
 
     let transactionId: string | null = null
     let broadcastHash: string | null = null
+    let failureStage: 'record' | 'prepare' = 'record'
     try {
       if (!feeZec) {
         throw new Error('Network fee estimate is unavailable. Review the transaction again.')
@@ -358,6 +362,7 @@ export function KeystoneSignPage() {
       setTransactionTimestamp(addResponse.transaction.timestamp)
 
       setRetryable(false)
+      failureStage = 'prepare'
       const submission = await chrome.runtime.sendMessage(
         'signatures' in signed
           ? {
@@ -501,6 +506,9 @@ export function KeystoneSignPage() {
       }
     } catch (e) {
       if (e instanceof TimeoutError && transactionId && !broadcastHash) {
+        logger.warn(
+          `[Hardware signing] ${vendor} submission pending: ${formatHardwareSigningError(e)}`
+        )
         setError(TRANSACTION_PENDING_MESSAGE)
         setStep('pending')
         return
@@ -522,6 +530,10 @@ export function KeystoneSignPage() {
         return
       }
       const classified = classifyError(e)
+      const failure = toHardwarePcztError(failureStage, e)
+      logger.error(
+        `[Hardware signing] ${vendor} submission failed: ${formatHardwareSigningError(failure)}`
+      )
       recordHardwareSignFailure(request.kind, 'broadcast')
       recordHardwareOperationOutcome(request, requestId, 'failed')
       reportDappResult(request, { success: false, error: classified.technicalMessage })
@@ -530,7 +542,7 @@ export function KeystoneSignPage() {
         expire()
         return
       }
-      setError(classified.userMessage)
+      setError(formatHardwareSigningError(failure))
       setStep('failed')
     }
   }
@@ -539,7 +551,9 @@ export function KeystoneSignPage() {
     try {
       await submitHardwareSignature({ signedPcztBase64: bytesToBase64(parseSignedPczt(ur)) })
     } catch (cause) {
-      setScanError(classifyError(cause).userMessage)
+      const message = formatHardwareSigningError(cause)
+      logger.error(`[Hardware signing] Keystone QR decoding failed: ${message}`)
+      setScanError(message)
       setScannerKey(key => key + 1)
     }
   }
@@ -580,6 +594,8 @@ export function KeystoneSignPage() {
       await submitHardwareSignature({ signatures })
     } catch (cause) {
       if (invalidated.current || controller.signal.aborted) return
+      const message = formatHardwareSigningError(cause)
+      logger.error(`[Hardware signing] Ledger device signing failed: ${message}`)
       if (
         request.fundingSource === 'transparent' &&
         !transparentInputRebuiltRef.current &&
@@ -592,7 +608,7 @@ export function KeystoneSignPage() {
         )
         return
       }
-      setError(classifyError(cause).userMessage)
+      setError(message)
       setRetryable(true)
       recordHardwareSignFailure(request.kind, 'sign')
       recordHardwareOperationOutcome(request, requestId, 'failed')

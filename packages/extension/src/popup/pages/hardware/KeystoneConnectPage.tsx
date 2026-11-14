@@ -32,7 +32,8 @@ import { getNewPasswordValidationError, isNewPasswordValid } from '@/core/wallet
 import { formatSortAddress } from '@/lib/format'
 import { ANALYTICS_EVENTS, PAGE_IDS, sendAnalyticsEvent } from '@/lib/analytics'
 import keystoneLogo from '@/images/keystone-logo.webp'
-import { classifyError } from '@/lib/errors'
+import { formatHardwareSigningError } from '@/lib/hardware-signing-error'
+import { logger } from '@/lib/logger'
 import { DEFAULT_NETWORK } from '@/lib/runtime-network'
 import { accountNetworksClient } from '../../services/account-networks-client'
 import { keystoneHardwareProvisioningClient } from '../../services/hardware-provisioning-client'
@@ -272,7 +273,9 @@ export function KeystoneConnectPage() {
       })
       setStep('success')
     } catch (e) {
-      setCreateError(classifyError(e).userMessage)
+      const message = formatHardwareSigningError(e)
+      logger.error(`[Hardware connection] Keystone provisioning failed: ${message}`)
+      setCreateError(message)
     } finally {
       setIsCreating(false)
     }
