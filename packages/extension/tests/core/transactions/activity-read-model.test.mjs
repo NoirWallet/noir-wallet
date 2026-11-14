@@ -609,6 +609,55 @@ test.describe('Activity read model', () => {
     ).toContain(receipt.id)
   })
 
+  test('keeps a Zcash cross-chain transfer when its destination receive is newer', () => {
+    const destinationHash = 'b'.repeat(64)
+    const transfer = {
+      ...supplemental({
+        id: 'zcash-v1:cross-chain-transfer',
+        source: 'zcash-v1',
+        chainId: zcashChainId,
+        assetId: zecAssetId,
+        hash: 'a'.repeat(64),
+        updatedAt: 1_100
+      }),
+      segments: [
+        {
+          id: 'zcash-v1:cross-chain-transfer:origin',
+          role: 'origin',
+          target: { kind: 'onchain', chainId: zcashChainId },
+          status: 'final',
+          evidence: { transactionHash: 'a'.repeat(64) }
+        },
+        {
+          id: 'zcash-v1:cross-chain-transfer:destination',
+          role: 'destination',
+          target: { kind: 'onchain', chainId: zcashChainId },
+          status: 'final',
+          evidence: { transactionHash: destinationHash }
+        }
+      ]
+    }
+    const receive = {
+      ...supplemental({
+        id: 'zcash-v1:destination-receive',
+        source: 'zcash-v1',
+        chainId: zcashChainId,
+        assetId: zecAssetId,
+        hash: destinationHash,
+        updatedAt: 1_200
+      }),
+      kind: 'receive'
+    }
+
+    const model = buildActivityReadModel({
+      scope,
+      localGraphs: [],
+      supplementalItems: [transfer, receive]
+    })
+
+    expect(model.items.map(item => item.id)).toEqual([receive.id, transfer.id])
+  })
+
   test('keeps a wallet-created Bitcoin transaction ahead of its Esplora duplicate', () => {
     const bitcoinHash = 'A'.repeat(64)
     const remoteDuplicate = supplemental({
