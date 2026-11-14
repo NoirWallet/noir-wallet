@@ -269,7 +269,7 @@ function MethodCard({
       onClick={onClick}
       disabled={disabled}
       className={cn(
-        'relative flex min-h-[144px] min-w-0 flex-col overflow-hidden rounded-xl border bg-wallet-surface px-3 py-3 text-left text-xs leading-4 disabled:cursor-not-allowed disabled:opacity-50',
+        'relative flex min-h-[180px] min-w-0 flex-col overflow-hidden rounded-xl border bg-wallet-surface px-3 py-3 text-left text-xs leading-4 disabled:cursor-not-allowed disabled:opacity-50',
         selected ? 'border-primary/60' : 'border-white/10'
       )}
     >
@@ -1261,10 +1261,16 @@ function TransferForm() {
       ? tokenFeeBalanceError
       : null)
   useEffect(() => {
-    if (!clusterPair || !clusterAvailable || userPickedMethod.current || method === 'cluster')
+    if (
+      !clusterPair ||
+      !clusterAvailable ||
+      clusterUnavailable ||
+      userPickedMethod.current ||
+      method === 'cluster'
+    )
       return
     setMethod('cluster')
-  }, [clusterPair, clusterAvailable, method])
+  }, [clusterPair, clusterAvailable, clusterUnavailable, method])
   useEffect(() => {
     if (method === 'cluster' && clusterUnavailable && directQuoted) {
       userPickedMethod.current = false
@@ -1525,10 +1531,14 @@ function TransferForm() {
     } catch (error) {
       if (scopeStillCurrent()) {
         const message = error instanceof Error ? error.message : ''
+        const classifiedMessage = classifyError(error).userMessage
         setShieldError(
           message === 'Gas limit is below the estimated gas required'
             ? 'Gas limit is below the estimated gas required. Edit the network fee and try again.'
-            : classifyError(error).userMessage
+            : classifiedMessage === 'Insufficient native balance for the amount and network fee.' &&
+                nativeFeeAsset
+              ? `Insufficient ${formatSymbol(nativeFeeAsset.metadata.symbol)} balance for the amount and network fee.`
+              : classifiedMessage
         )
       }
     } finally {

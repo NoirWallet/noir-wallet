@@ -5109,8 +5109,10 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
   }
 
   const updateShieldZecSourceInUrl = useCallback(
-    (kind: ShieldSwapZecSourceKind) => {
+    (kind: ShieldSwapZecSourceKind, sourceAssetId: string) => {
       const params = new URLSearchParams(searchParams)
+      params.delete('assetId')
+      params.set('source', sourceAssetId)
       params.set('balanceDomain', 'shield')
       params.set('shieldZecSource', shieldSwapZecSourceParam(kind))
       if (effectiveWalletId && effectiveAccountId) {
@@ -5127,10 +5129,14 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
   }, [selectNativeZecSource])
 
   const activateShieldIntentsZecSwap = useCallback(() => {
+    const sourceAssetId = shieldZecSourceOptions.find(
+      option => option.kind === 'intents'
+    )?.intentsWalletAssetId
+    if (!sourceAssetId) return
     setShieldZecSource('intents')
     setShieldSwapSelected(true)
-    updateShieldZecSourceInUrl('intents')
-  }, [updateShieldZecSourceInUrl])
+    updateShieldZecSourceInUrl('intents', sourceAssetId)
+  }, [shieldZecSourceOptions, updateShieldZecSourceInUrl])
 
   useEffect(() => {
     const parsed = parseShieldSwapZecSourceParam(searchParams.get('shieldZecSource'))

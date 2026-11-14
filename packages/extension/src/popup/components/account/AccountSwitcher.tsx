@@ -25,6 +25,11 @@ import { ChainIcon } from '../common/ChainIcon'
 import evmGroupIcon from '@/images/figma-evm-group.svg'
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover'
 import { isRetainedV1UpgradeAccount } from '@/core/wallet/account-network-selection'
+import {
+  createBuildFeatureGatedChainRegistry,
+  createInitialProductChainRegistry
+} from '@/core/chains/registry'
+import { resolveChainIconAlias } from '@/lib/chain-icon'
 import { cn } from '@/lib/utils'
 import type { ActiveAccountIdentity } from '@/popup/lib/effective-active-account'
 import { AccountAvatar as AccountAvatarImage } from './AccountAvatar'
@@ -148,11 +153,24 @@ function AccountAddressPopover({
     (left, right) => Number(left.privacy === 'shielded') - Number(right.privacy === 'shielded')
   )
   const evmAddress = evmMode === 'private' ? evmAddresses.privateAddress : evmAddresses.mainAddress
+  const currentNetwork = useWalletStore(state => state.currentNetwork)
+  const guideOnlyZcash = Boolean(
+    onAddNetworks && zcash && evm.length === 0 && otherAddresses.length === 0
+  )
+  const otherChainIcons = useMemo(
+    () =>
+      createBuildFeatureGatedChainRegistry(createInitialProductChainRegistry(currentNetwork))
+        .list()
+        .filter(chain => chain.family === 'evm')
+        .slice(0, 6),
+    [currentNetwork]
+  )
 
   return (
     <div
       className={cn(
         '@container z-[70] w-[281px] rounded-md border border-white/10 bg-wallet-surface p-3 shadow-2xl',
+        onAddNetworks && 'bg-[#303041]',
         className
       )}
     >
@@ -318,20 +336,43 @@ function AccountAddressPopover({
       {account.networks.length === 0 && (
         <p className="py-2 text-center text-xs text-muted">No addresses available</p>
       )}
-      <button
-        type="button"
-        onClick={onViewAll}
-        className="wallet-interactive mt-2 flex h-8 w-full items-center justify-center gap-1 rounded-sm border-t border-white/10 pt-1 text-xs text-wallet-secondary hover:bg-white/6 hover:text-white active:bg-white/10 focus-visible:outline-2 focus-visible:outline-primary"
-      >
-        View all <Icon icon="lucide:chevron-right" width={13} height={13} />
-      </button>
+      {guideOnlyZcash && (
+        <div className="flex items-center justify-between gap-2 pb-1 pt-2">
+          <p className="text-sm text-wallet-secondary">Other chains</p>
+          <span className="flex shrink-0 items-center" aria-hidden="true">
+            {otherChainIcons.map(chain => (
+              <ChainIcon
+                key={chain.id}
+                chain={resolveChainIconAlias(chain.family, chain.displayName, chain.id)}
+                showTooltip={false}
+                alt=""
+                className="-ml-1 size-4 rounded bg-wallet-surface first:ml-0"
+              />
+            ))}
+          </span>
+        </div>
+      )}
+      {!guideOnlyZcash && (
+        <button
+          type="button"
+          onClick={onViewAll}
+          className="wallet-interactive mt-2 flex h-8 w-full items-center justify-center gap-1 rounded-sm border-t border-white/10 pt-1 text-xs text-wallet-secondary hover:bg-white/6 hover:text-white active:bg-white/10 focus-visible:outline-2 focus-visible:outline-primary"
+        >
+          View all <Icon icon="lucide:chevron-right" width={13} height={13} />
+        </button>
+      )}
       {onAddNetworks && (
         <button
           type="button"
           onClick={onAddNetworks}
-          className="wallet-interactive flex h-8 w-full items-center justify-center gap-1 rounded-sm text-xs text-primary hover:bg-white/6 focus-visible:outline-2 focus-visible:outline-primary"
+          className="wallet-interactive mt-2 flex min-h-[65px] w-full flex-col justify-center rounded-lg border border-white/10 bg-[#202029] px-3 text-left hover:bg-white/6 active:bg-white/10 focus-visible:outline-2 focus-visible:outline-primary"
         >
-          <Icon icon="lucide:plus" width={13} height={13} /> Add More Networks
+          <span className="flex w-full items-center justify-between gap-2 text-sm font-medium text-foreground">
+            Add More Networks <Icon icon="lucide:chevron-right" width={15} height={15} />
+          </span>
+          <span className="mt-1 w-full truncate text-xs text-muted">
+            Ethereum, BNB Chain, Base and more…
+          </span>
         </button>
       )}
     </div>
@@ -510,7 +551,7 @@ export function AccountSwitcher({
     setAddressesOpen(false)
     setDrawerOpen(false)
     navigate(
-      `/account-networks?walletId=${encodeURIComponent(account.walletId)}&accountId=${encodeURIComponent(account.accountId)}`
+      `/account-networks?walletId=${encodeURIComponent(account.walletId)}&accountId=${encodeURIComponent(account.accountId)}&guide=v1`
     )
   }
 

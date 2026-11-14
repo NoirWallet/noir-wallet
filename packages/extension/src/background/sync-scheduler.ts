@@ -27,6 +27,7 @@ export type SyncStateSnapshot = {
   accountId?: string
   etaMs?: number | null
   syncReason?: SyncReason | null
+  transactionHistoryRefreshFailed?: boolean
   balance?: ZcashBalance | null
 }
 
@@ -122,6 +123,13 @@ export class SyncScheduler {
             .getWalletSyncState(backgroundZcashWalletRuntime.getNetwork(), targetWalletId)
             .syncReason
         : null,
+      transactionHistoryRefreshFailed:
+        targetWalletId && targetAccountId
+          ? backgroundZcashWalletRuntime.hasTransactionHistoryRefreshFailure(
+              targetWalletId,
+              targetAccountId
+            )
+          : false,
       walletId: targetWalletId ?? undefined,
       accountId: targetAccountId ?? undefined,
       ...(targetWalletId && targetAccountId

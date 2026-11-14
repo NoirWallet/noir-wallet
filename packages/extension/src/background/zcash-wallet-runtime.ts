@@ -361,6 +361,8 @@ export class BackgroundZcashWalletRuntime {
   private accountMappingCache = new Map<string, AccountMappingEntry>()
   private walletSummaryCache = new Map<string, WalletSummaryCacheEntry>()
   private wasmTxHistoryCache = new Map<string, WasmTransactionEntry[]>()
+  private historyRefreshFailures = new Set<string>()
+  private historyRefreshRevisions = new Map<string, number>()
   private readonly recipientRecovery = new TransactionRecipientRecovery({
     isActive: (network, walletId, accountId) =>
       !this.isLocked() &&
@@ -849,15 +851,21 @@ export class BackgroundZcashWalletRuntime {
     return `${walletId}:${accountId}`
   }
 
+  hasTransactionHistoryRefreshFailure(walletId: string, accountId: string): boolean {
+    return this.historyRefreshFailures.has(`${this.network}:${walletId}:${accountId}`)
+  }
+
   private clearTransactionHistoryCache(walletId?: string, accountId?: string): void {
     this.recipientRecovery.cancel(walletId, accountId)
     if (!walletId) {
       this.wasmTxHistoryCache.clear()
+      this.historyRefreshFailures.clear()
       return
     }
 
     if (accountId) {
       this.wasmTxHistoryCache.delete(this.transactionHistoryCacheKey(walletId, accountId))
+      this.historyRefreshFailures.delete(`${this.network}:${walletId}:${accountId}`)
       return
     }
 
@@ -866,6 +874,9 @@ export class BackgroundZcashWalletRuntime {
       if (key.startsWith(prefix)) {
         this.wasmTxHistoryCache.delete(key)
       }
+    }
+    for (const key of this.historyRefreshFailures) {
+      if (key.startsWith(`${this.network}:${walletId}:`)) this.historyRefreshFailures.delete(key)
     }
   }
 
@@ -2844,6 +2855,18 @@ export class BackgroundZcashWalletRuntime {
     const account = this.store.getAccount(walletId, accountId)
     if (!account || !isAccountNetworkEnabled(account, this.network, 'zcash')) return
 
+    const network = this.network
+    const historyScope = `${network}:${walletId}:${accountId}`
+    const runtimeGeneration = this.walletRuntimeGeneration.get(walletId) ?? 0
+    const revision = (this.historyRefreshRevisions.get(historyScope) ?? 0) + 1
+    this.historyRefreshRevisions.set(historyScope, revision)
+    const canApplyStatus = () =>
+      this.network === network &&
+      this.walletCores.get(walletId) === core &&
+      (this.walletRuntimeGeneration.get(walletId) ?? 0) === runtimeGeneration &&
+      this.historyRefreshRevisions.get(historyScope) === revision &&
+      !!this.store.getAccount(walletId, accountId)
+
     try {
       const wasmAccountId = await this.resolveWasmAccountId(walletId, accountId, core)
       if (wasmAccountId == null) return
@@ -2884,6 +2907,7 @@ export class BackgroundZcashWalletRuntime {
         }
       }
       let transparentReceiveTransactions: Transaction[] = []
+      let transparentHistoryFailed = false
 
       try {
         transparentReceiveTransactions = await fetchTransparentReceiveTransactions(
@@ -2897,6 +2921,7 @@ export class BackgroundZcashWalletRuntime {
           }
         )
       } catch {
+        transparentHistoryFailed = true
         logger.warn('transparent receive history fetch failed', walletId, accountId)
       }
 
@@ -2910,6 +2935,10 @@ export class BackgroundZcashWalletRuntime {
         newWasmTransactionCount = merged.newWasmTransactionCount
         return associateIncomingIntentsTransactions(merged.transactions)
       })
+      if (canApplyStatus()) {
+        if (transparentHistoryFailed) this.historyRefreshFailures.add(historyScope)
+        else this.historyRefreshFailures.delete(historyScope)
+      }
       void observeZcashReceipts(
         { keyDomainId: walletId, accountId },
         persistedTransactions,
@@ -2928,6 +2957,16 @@ export class BackgroundZcashWalletRuntime {
         logger.warn('transaction recipient recovery failed', walletId, accountId)
       })
     } catch {
+      if (canApplyStatus()) {
+        this.historyRefreshFailures.add(historyScope)
+        void chrome.runtime
+          .sendMessage({
+            type: 'TRANSACTION_UPDATED',
+            accountKey: buildAccountKey(network, walletId, accountId),
+            transactionId: 'wasm-history'
+          })
+          .catch(() => {})
+      }
       logger.warn('refreshTransactionHistoryFromWasm failed', walletId, accountId)
     }
   }

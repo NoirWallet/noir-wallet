@@ -90,6 +90,8 @@ import {
 import { selectShieldActions, type ShieldAction } from '../services/shield-action-selection'
 import { getPrivateTransferChainIds } from '../services/private-balance-transfer'
 import { isRetainedV1UpgradeAccount } from '@/core/wallet/account-network-selection'
+import shieldYourFundsTitle from '@/images/figma-shield-your-funds.svg'
+import shieldGuideBackground from '@/images/figma-shield-guide-background.svg'
 
 const evmOperationsEnabled = resolveEvmFeatureRuntimePolicy(
   __ENABLED_CHAIN_FEATURE_FLAGS__
@@ -993,7 +995,7 @@ export function Home() {
         <div
           data-testid="home-actions"
           data-layout={isTestnet ? 'centered' : 'distributed'}
-          className="mb-5 flex justify-evenly gap-[13px] px-4"
+          className={`${showV1NetworkGuide && !shieldIntroSeen ? 'mb-1' : 'mb-5'} flex justify-evenly gap-[13px] px-4`}
         >
           {actionDomain === 'public' && (
             <>
@@ -1042,7 +1044,13 @@ export function Home() {
                 }
               />
             )}
-          <div className="relative">
+          <div
+            className={
+              showV1NetworkGuide && !shieldIntroSeen
+                ? 'relative flex min-w-0 flex-1 rounded-xl ring-2 ring-[#00d18a]/45'
+                : 'relative flex min-w-0 flex-1'
+            }
+          >
             <WalletActionButton
               icon={<WalletShieldFundsIcon />}
               label="Shielded"
@@ -1058,25 +1066,28 @@ export function Home() {
                 navigate.navigate(`/shield-funds?mode=${privateMode ? 'private' : 'public'}`)
               }}
             />
-            {showV1NetworkGuide && !shieldIntroSeen && (
-              <span className="pointer-events-none absolute -top-8 right-0 z-20 whitespace-nowrap rounded bg-primary px-2 py-1 text-xs text-primary-foreground shadow-md">
-                Explore Shielded
-              </span>
-            )}
           </div>
         </div>
-        {showV1NetworkGuide && currentWalletId && currentAccountId && (
-          <button
-            type="button"
-            onClick={() =>
-              navigate.navigate(
-                `/account-networks?walletId=${encodeURIComponent(currentWalletId)}&accountId=${encodeURIComponent(currentAccountId)}`
-              )
-            }
-            className="mx-5 mb-3 flex items-center gap-1.5 text-sm text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-          >
-            <Icon icon="lucide:plus" className="size-4" /> Add More Networks
-          </button>
+        {showV1NetworkGuide && !shieldIntroSeen && (
+          <div className="relative mx-4 mb-5 min-h-[97px]">
+            <img
+              src={shieldGuideBackground}
+              alt=""
+              aria-hidden="true"
+              className="absolute inset-0 h-full w-full"
+            />
+            <div className="relative px-4 pb-3 pt-[25px]">
+              <img
+                src={shieldYourFundsTitle}
+                alt="Shield your funds"
+                className="h-[18px] w-[195px]"
+              />
+              <p className="mt-2 text-xs font-light leading-[18px] text-wallet-secondary">
+                Shielded moves your assets into private vaults, so your balance can’t be traced back
+                to you.
+              </p>
+            </div>
+          </div>
         )}
 
         {/* Tabs */}
@@ -1281,6 +1292,25 @@ export function Home() {
                   ))}
                 </div>
               </>
+            )}
+            {showV1NetworkGuide && currentWalletId && currentAccountId && (
+              <button
+                type="button"
+                onClick={() =>
+                  navigate.navigate(
+                    `/account-networks?walletId=${encodeURIComponent(currentWalletId)}&accountId=${encodeURIComponent(currentAccountId)}&guide=v1`
+                  )
+                }
+                className="wallet-interactive mx-4 mb-6 mt-5 flex min-h-[73px] w-[calc(100%-2rem)] flex-col justify-center rounded-lg border border-white/10 bg-wallet-surface px-3 text-left hover:bg-white/10 active:bg-white/15 focus-visible:outline-2 focus-visible:outline-primary"
+              >
+                <span className="flex w-full items-center justify-between gap-2">
+                  <span className="text-base font-medium">Add More Networks</span>
+                  <span className="flex shrink-0 items-center gap-1 text-sm font-medium text-[#00d18a]">
+                    Add now <Icon icon="lucide:chevron-right" width={14} height={14} />
+                  </span>
+                </span>
+                <span className="mt-1 text-xs text-muted">Ethereum, BNB Chain, Base and more…</span>
+              </button>
             )}
           </TabsContent>
 

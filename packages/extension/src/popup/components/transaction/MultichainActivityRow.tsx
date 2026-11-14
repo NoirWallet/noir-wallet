@@ -193,7 +193,7 @@ function SwapActivityRow({
               </p>
             )}
         </div>
-        <div className="min-w-0 justify-self-end text-right">
+        <div className="w-full min-w-0 justify-self-end text-right">
           {presentation.isExternalDeposit ? (
             <p
               title={
@@ -348,7 +348,12 @@ export function MultichainActivityRow({
           </p>
         </div>
 
-        <div className={cn('min-w-0 justify-self-end text-right', showChanges && 'max-w-[145px]')}>
+        <div
+          className={cn(
+            'w-full min-w-0 justify-self-end text-right',
+            showChanges && 'max-w-[145px]'
+          )}
+        >
           {showChanges && summaryChange ? (
             <div data-activity-asset-changes>
               <p

@@ -39,6 +39,8 @@ import {
   getConfidentialFundingPlanId
 } from '@/popup/services/confidential-funding-client'
 import { getClusterSettledDestination } from './multichain-activity-presentation'
+import type { SyncStateSnapshot } from '@/background/sync-scheduler'
+import { useWalletStore } from '@/store/wallet-store'
 
 interface MultichainActivityPanelProps {
   readonly walletId: string | null
@@ -131,6 +133,7 @@ export function MultichainActivityPanel({
   focusTransactionId
 }: MultichainActivityPanelProps) {
   const requestSequence = useRef(0)
+  const historyStatusRequestSequence = useRef(0)
   const olderRequestSequence = useRef(0)
   const focusedTransactionId = useRef<string | null>(null)
   const scopedInitialModel = isActivityModelForScope(initialModel, walletId, accountId)
@@ -142,6 +145,7 @@ export function MultichainActivityPanel({
   )
   const [visibleLimit, setVisibleLimit] = useState(pageSize)
   const [olderStatus, setOlderStatus] = useState<'ready' | 'loading' | 'error'>('ready')
+  const [historyRefreshFailed, setHistoryRefreshFailed] = useState(false)
   const [smallTransferPrices, setSmallTransferPrices] = useState<AssetPriceReadModel | null>(null)
   const [clusterSettlements, setClusterSettlements] = useState<{
     scope: string
@@ -246,6 +250,40 @@ export function MultichainActivityPanel({
           : selectedChainIds,
     [network, selectedChainIds, shieldProvider]
   )
+  const showsTransparentHistory =
+    selectedChainIds.includes(getZcashChainId(network)) &&
+    !confidentialIntentsOnly &&
+    !shieldProvider &&
+    (filterDomain === undefined || filterDomain === 'public')
+
+  const readHistoryRefreshStatus = useCallback(async () => {
+    const request = ++historyStatusRequestSequence.current
+    if (!walletId || !accountId || !showsTransparentHistory) return
+    try {
+      const snapshot = (await chrome.runtime.sendMessage({
+        type: 'GET_SYNC_STATE',
+        walletId,
+        accountId
+      })) as Partial<SyncStateSnapshot>
+      if (
+        request === historyStatusRequestSequence.current &&
+        snapshot.walletId === walletId &&
+        snapshot.accountId === accountId
+      ) {
+        setHistoryRefreshFailed(snapshot.transactionHistoryRefreshFailed === true)
+      }
+    } catch {
+      // Keep the last known history state until Background can answer again.
+    }
+  }, [accountId, showsTransparentHistory, walletId])
+
+  useEffect(() => {
+    setHistoryRefreshFailed(false)
+    void readHistoryRefreshStatus()
+    return () => {
+      historyStatusRequestSequence.current += 1
+    }
+  }, [network, readHistoryRefreshStatus])
 
   const load = useCallback(async () => {
     const request = ++requestSequence.current
@@ -336,6 +374,8 @@ export function MultichainActivityPanel({
         return
       }
 
+      void readHistoryRefreshStatus()
+
       void evmWalletClient
         .getActivity('read', 'all')
         .then(next => {
@@ -352,7 +392,7 @@ export function MultichainActivityPanel({
       cancelled = true
       chrome.runtime.onMessage.removeListener(listener)
     }
-  }, [accountId, network, walletId])
+  }, [accountId, network, readHistoryRefreshStatus, walletId])
 
   const visibleModel = isActivityModelForScope(model, walletId, accountId) ? model : null
   const selectedNetwork =
@@ -576,6 +616,24 @@ export function MultichainActivityPanel({
         )
       })
     : null
+  const historyIssueBanner =
+    historyRefreshFailed && showsTransparentHistory ? (
+      <div className="px-5 py-2">
+        <InlineError
+          message="Unable to refresh Zcash history"
+          onRetry={() => {
+            const active = useWalletStore.getState()
+            if (
+              active.currentNetwork !== network ||
+              active.currentWalletId !== walletId ||
+              active.currentAccountId !== accountId
+            )
+              return
+            void chrome.runtime.sendMessage({ type: 'BACKGROUND_SYNC' }).catch(() => {})
+          }}
+        />
+      </div>
+    ) : null
 
   const toolbar = showToolbar ? (
     <div className="shrink-0 px-4 pb-3 pt-3">
@@ -641,6 +699,7 @@ export function MultichainActivityPanel({
         {sectionHeading}
         {toolbar}
         {recoveryBanners}
+        {historyIssueBanner}
         <ListSkeleton rows={3} label="Loading activity" className="px-5 py-3" />
       </section>
     )
@@ -652,6 +711,7 @@ export function MultichainActivityPanel({
         {sectionHeading}
         {toolbar}
         {recoveryBanners}
+        {historyIssueBanner}
         <div className={cn('flex items-center px-6', compact ? 'min-h-28 py-4' : 'min-h-48 py-8')}>
           <InlineError
             message="Unable to load activity"
@@ -665,12 +725,14 @@ export function MultichainActivityPanel({
   }
 
   if (!visibleModel || visibleItems.length === 0) {
-    if (hideWhenEmpty && status === 'ready' && !olderControl) return fullHistoryLink
+    if (hideWhenEmpty && status === 'ready' && !olderControl && !historyIssueBanner)
+      return fullHistoryLink
     return (
       <section aria-label="Multichain activity" className={sectionClassName}>
         {sectionHeading}
         {toolbar}
         {recoveryBanners}
+        {historyIssueBanner}
         <EmptyState
           icon="lucide:inbox"
           title={filterAssetId ? 'No activity for this asset' : 'No activity yet'}
@@ -687,6 +749,7 @@ export function MultichainActivityPanel({
       {sectionHeading}
       {toolbar}
       {recoveryBanners}
+      {historyIssueBanner}
       <div className="space-y-4 pb-4">
         {groups.map(([date, items]) => (
           <section key={date} aria-label={date}>
