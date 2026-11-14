@@ -562,6 +562,7 @@ const TRUSTED_RUNTIME_SCHEMAS: Readonly<Record<string, RuntimeMessageSchema>> = 
     }
   },
   GET_WALLET_SESSION_STATE: {},
+  CHECK_WALLET_AUTO_LOCK: {},
   GET_BACKGROUND_INITIALIZATION_STATE: {},
   GET_NETWORK_MODE: {},
   GET_ZERO_INDEXER_OPTIONS: { required: { network: isNetworkMode } },
@@ -1035,6 +1036,7 @@ const TRUSTED_RUNTIME_CONTEXTS: Readonly<Record<string, readonly OwnExtensionSen
     CANCEL_LEDGER_SIGNING_REQUEST: ['extension-page'],
     GET_HARDWARE_TRANSFER_VENDOR: ['extension-page'],
     GET_WALLET_SESSION_STATE: ['extension-page'],
+    CHECK_WALLET_AUTO_LOCK: ['extension-page'],
     GET_BACKGROUND_INITIALIZATION_STATE: ['extension-page'],
     GET_NETWORK_MODE: ['extension-page'],
     GET_ZERO_INDEXER_OPTIONS: ['offscreen-document'],

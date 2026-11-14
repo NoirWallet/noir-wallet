@@ -9,7 +9,6 @@ import { toast } from '@/store/toast-store'
 import { needsUnlock } from '@/lib/lock-utils'
 import { SecureStorage } from '@/core/wallet/secure-storage'
 import { accountNetworksClient } from '../services/account-networks-client'
-import { hasAttestedCredentialSession } from '@/core/wallet/credential-session-client'
 import { didCredentialSessionEnd } from '@/core/wallet/credential-session-state'
 import { getTransactionToastCopy } from '@/lib/transaction-status-copy'
 import { useBetaInviteActivation } from './useBetaInviteActivation'
@@ -99,9 +98,21 @@ export function useAppRouting() {
 
   // Auto-lock handler
   const handleAutoLock = useCallback(async () => {
-    if (hasAnyWallet && (await hasAttestedCredentialSession().catch(() => false))) {
-      await zcashWalletRuntimeClient.lock()
-      routeToUnlock()
+    if (!hasAnyWallet) return
+    // Another extension page may still be active (for example a hardware setup
+    // tab while the side panel is idle). Only Background can decide whether
+    // the shared activity deadline has expired; page timers are wakeups only.
+    try {
+      const response: unknown = await chrome.runtime.sendMessage({ type: 'CHECK_WALLET_AUTO_LOCK' })
+      if (
+        response &&
+        typeof response === 'object' &&
+        'active' in response &&
+        response.active === false
+      )
+        routeToUnlock()
+    } catch {
+      // Background's alarm remains responsible for enforcing the deadline.
     }
   }, [hasAnyWallet, routeToUnlock])
 

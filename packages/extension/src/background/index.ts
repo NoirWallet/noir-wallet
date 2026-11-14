@@ -3300,6 +3300,15 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
     return true
   }
 
+  if (message.type === 'CHECK_WALLET_AUTO_LOCK') {
+    backgroundAutoLock
+      .reconcile()
+      .then(() => credentialSession.hasUnlockSession())
+      .then(active => sendResponse({ active }))
+      .catch(() => sendResponse({ error: 'Unable to check wallet auto-lock' }))
+    return true
+  }
+
   if (message.type === 'GET_WALLET_SESSION_STATE') {
     credentialSession
       .hasUnlockSession()

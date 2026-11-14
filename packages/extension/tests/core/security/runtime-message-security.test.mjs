@@ -337,6 +337,12 @@ test.describe('Runtime message security', () => {
     ).toBe(true)
     expect(isTrustedRuntimeMessageSender('PORTFOLIO_UPDATED', popupSender, extensionId)).toBe(false)
     expect(isTrustedRuntimeMessageSender('WALLET_LOCKED', popupSender, extensionId)).toBe(true)
+    expect(isTrustedRuntimeMessageSender('CHECK_WALLET_AUTO_LOCK', popupSender, extensionId)).toBe(
+      true
+    )
+    expect(
+      isTrustedRuntimeMessageSender('CHECK_WALLET_AUTO_LOCK', contentScriptSender, extensionId)
+    ).toBe(false)
     expect(
       isTrustedRuntimeMessageSender('GET_BACKGROUND_INITIALIZATION_STATE', popupSender, extensionId)
     ).toBe(true)
@@ -1197,6 +1203,12 @@ test.describe('Runtime message security', () => {
     expect(parseTrustedExtensionRuntimeMessage({ type: 'GET_WALLET_SESSION_STATE' })).toMatchObject(
       { type: 'GET_WALLET_SESSION_STATE' }
     )
+    expect(parseTrustedExtensionRuntimeMessage({ type: 'CHECK_WALLET_AUTO_LOCK' })).toEqual({
+      type: 'CHECK_WALLET_AUTO_LOCK'
+    })
+    expect(() =>
+      parseTrustedExtensionRuntimeMessage({ type: 'CHECK_WALLET_AUTO_LOCK', active: true })
+    ).toThrow()
     expect(
       parseTrustedExtensionRuntimeMessage({ type: 'GET_BACKGROUND_INITIALIZATION_STATE' })
     ).toMatchObject({ type: 'GET_BACKGROUND_INITIALIZATION_STATE' })
