@@ -160,6 +160,68 @@ test('re-attests metadata on confirmation, persists the Token, and clears its Po
   await expect(coordinator.list()).resolves.toEqual([])
 })
 
+test('shares ERC-20 preview reads, refreshes expired metadata, and retries failed reads', async () => {
+  const { chains, bundledAssets } = createContext()
+  const catalog = createMemoryRepository()
+  let now = NOW
+  let fail = true
+  const metadataRpc = createMetadataRpc(readIndex => {
+    if (fail) throw new Error('RPC unavailable')
+    return { name: 'Test Token', symbol: 'TEST', decimals: readIndex === 0 ? 18 : 6 }
+  })
+  const coordinator = new UserEvmAssetCoordinator({
+    chains,
+    bundledAssets,
+    repository: catalog.repository,
+    resolveRpc: () => metadataRpc.rpc,
+    now: () => now
+  })
+  const input = { chainId: 'eip155:1', contractAddress: CONTRACT }
+
+  await expect(coordinator.inspect(input)).rejects.toThrow('RPC unavailable')
+  fail = false
+  const [first, second] = await Promise.all([
+    coordinator.inspect(input),
+    coordinator.inspect(input)
+  ])
+  expect(first.metadata.decimals).toBe(18)
+  expect(second.metadata).toEqual(first.metadata)
+  expect(metadataRpc.readCount).toBe(3)
+
+  now += 5 * 60 * 1000 - 1
+  expect((await coordinator.inspect(input)).metadata.decimals).toBe(18)
+  expect(metadataRpc.readCount).toBe(3)
+  now += 1
+  expect((await coordinator.inspect(input)).metadata.decimals).toBe(6)
+  expect(metadataRpc.readCount).toBe(6)
+})
+
+test('Intents catalog verification reads current decimals after a cached preview', async () => {
+  const { chains, bundledAssets } = createContext()
+  const catalog = createMemoryRepository()
+  const metadataRpc = createMetadataRpc(readIndex => ({
+    name: 'Test Token',
+    symbol: 'TEST',
+    decimals: readIndex === 0 ? 18 : 6
+  }))
+  const coordinator = new UserEvmAssetCoordinator({
+    chains,
+    bundledAssets,
+    repository: catalog.repository,
+    resolveRpc: () => metadataRpc.rpc,
+    now: () => NOW
+  })
+
+  expect(
+    (await coordinator.inspect({ chainId: 'eip155:1', contractAddress: CONTRACT })).metadata
+      .decimals
+  ).toBe(18)
+  await expect(
+    coordinator.ensure({ chainId: 'eip155:1', contractAddress: CONTRACT, expectedDecimals: 6 })
+  ).resolves.toMatchObject({ metadata: { decimals: 6 } })
+  expect(metadataRpc.readCount).toBe(6)
+})
+
 test('address discovery keeps inspection separate from addition and rejects a cross-chain result', async () => {
   const previousChrome = globalThis.chrome
   const { chains } = createContext()

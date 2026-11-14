@@ -21,6 +21,7 @@ import { DEFAULT_REQUEST_TIMEOUT_MS } from '@/config/extension'
 import { RHEA_SWAP_TRANSACTION_MONITOR_ALARM } from './rhea-swap-transaction-monitor'
 import type { FundingSource, QuoteBinding } from '@/types/wallet'
 import { safeBig } from '@/lib/big'
+import { PersistentRheaSwapCatalogCache } from '@/infrastructure/persistence/rhea-swap-catalog-cache'
 
 export async function readRheaZcashTransferDeadline(
   binding: QuoteBinding | undefined,
@@ -417,6 +418,15 @@ export function createBackgroundRheaSwapService(): RheaSwapService | null {
   })
   service = new RheaSwapService(client, new ChromeRheaSwapQuoteStore())
   return service
+}
+
+let publicCatalog: PersistentRheaSwapCatalogCache | undefined
+
+export function readBackgroundRheaSwapCatalog(input: Parameters<RheaSwapService['listTokens']>[0]) {
+  const service = createBackgroundRheaSwapService()
+  if (!service) throw new Error('RHEA Swap is unavailable')
+  publicCatalog ??= new PersistentRheaSwapCatalogCache(request => service.listTokens(request))
+  return publicCatalog.read(input)
 }
 
 export async function recordRheaSwapGraphBroadcast(graph: TransactionGraph): Promise<void> {

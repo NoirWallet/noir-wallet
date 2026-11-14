@@ -179,7 +179,11 @@ import {
   createBackgroundAssetMarketHistoryService,
   createBackgroundAssetPriceService
 } from './asset-prices'
-import { createBackgroundRheaSwapService, readRheaZcashTransferDeadline } from './rhea-swap'
+import {
+  createBackgroundRheaSwapService,
+  readBackgroundRheaSwapCatalog,
+  readRheaZcashTransferDeadline
+} from './rhea-swap'
 import { getSafeRheaSwapRuntimeErrorMessage } from '@/core/services/rhea-swap/rhea-swap-error'
 import {
   assertPrivateQuoteRoute,
@@ -3989,7 +3993,7 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
       })
     const operation =
       message.type === 'GET_RHEA_SWAP_TOKENS'
-        ? rheaSwapService.listTokens({
+        ? readBackgroundRheaSwapCatalog({
             direction: message.direction as 'from' | 'cross-chain-to',
             tokenListChainIds: message.tokenListChainIds as readonly number[]
           })

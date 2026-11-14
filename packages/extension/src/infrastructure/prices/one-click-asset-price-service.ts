@@ -406,11 +406,23 @@ export class OneClickAssetPriceService {
           )
         }
       }
+      const mappedAssetIds = new Set(this.options.mappings.map(mapping => mapping.assetId))
+      const previousQuotes = assetId
+        ? (cached?.quotes.filter(quote => quote.assetId !== assetId) ?? [])
+        : (cached?.quotes.filter(
+            quote =>
+              !mappedAssetIds.has(quote.assetId) &&
+              now - quote.sourceUpdatedAt >= -MAX_CLOCK_SKEW_MS &&
+              now - quote.sourceUpdatedAt <= ASSET_PRICE_EXPIRES_MS
+          ) ?? [])
+      const capacity = MAXIMUM_ASSET_PRICE_ITEMS - resolved.size
       const snapshot = Object.freeze({
         version: PRICE_CACHE_VERSION,
         fetchedAt: assetId ? (cached?.fetchedAt ?? 0) : now,
         quotes: Object.freeze([
-          ...(assetId ? (cached?.quotes.filter(quote => quote.assetId !== assetId) ?? []) : []),
+          ...previousQuotes
+            .sort((left, right) => right.sourceUpdatedAt - left.sourceUpdatedAt)
+            .slice(0, capacity),
           ...resolved.values()
         ])
       })

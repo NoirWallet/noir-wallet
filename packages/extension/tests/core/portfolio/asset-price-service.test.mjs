@@ -375,6 +375,53 @@ test('serves fresh prices, keeps bounded stale cache, and expires old quotes ins
   expect(expired.missingAssetIds).toEqual(mappings.map(item => item.assetId))
 })
 
+test('preserves shared prices when a dynamic asset catalog changes', async () => {
+  const mappings = uniqueSourceMappings(createMappings().mappings).slice(0, 2)
+  let now = Date.parse('2026-08-09T10:00:00.000Z')
+  let stored = null
+  let fetchCount = 0
+  const cache = {
+    get: async () => stored,
+    put: async value => {
+      stored = value
+    }
+  }
+  const createService = mapping =>
+    new OneClickAssetPriceService({
+      mappings: [mapping],
+      cache,
+      now: () => now,
+      fetch: async () => {
+        fetchCount += 1
+        return new Response(JSON.stringify([token(mapping, now, fetchCount)]))
+      }
+    })
+  const first = createService(mappings[0])
+  const second = createService(mappings[1])
+
+  await first.refresh()
+  now += 61_000
+  await second.refresh()
+  expect(stored.quotes.map(quote => quote.assetId)).toEqual([
+    mappings[0].assetId,
+    mappings[1].assetId
+  ])
+  await expect(first.refresh()).resolves.toMatchObject({
+    status: 'ready',
+    quotes: [{ assetId: mappings[0].assetId, freshness: 'fresh' }]
+  })
+  expect(fetchCount).toBe(2)
+
+  now += 5 * 60_000
+  await expect(first.readCached()).resolves.toMatchObject({
+    status: 'partial',
+    quotes: [{ assetId: mappings[0].assetId, freshness: 'stale' }]
+  })
+  now += 30 * 60_000
+  await second.refresh()
+  expect(stored.quotes.map(quote => quote.assetId)).toEqual([mappings[1].assetId])
+})
+
 test('treats a discovered token with no provider price as missing without dropping other prices', async () => {
   const { mappings } = createMappings()
   const now = Date.parse('2026-08-09T10:00:00.000Z')
