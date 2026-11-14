@@ -1,12 +1,8 @@
 import { type SwapToken } from '@/core/services/intents-api'
-import zecIcon from '@/images/zec.svg'
-import usdcIcon from '@/images/usdc.svg'
-import ethIcon from '@/images/eth.svg'
 import { cn } from '@/lib/utils'
 import { formatSymbol } from '@/lib/format'
 import { findBundledWalletMarketAssetId, isBundledWalletAsset } from './token-display-policy'
 import { MARKET_ASSETS } from '@/config/asset-market-assets'
-import { formatConfiguredChainIconUrl } from '@/config/icons'
 import { getTokenIconCandidates, isBundledEthIconIdentity } from './token-icon-candidates'
 import {
   clearTokenIconUrlFailure,
@@ -45,8 +41,9 @@ const sizeMap = {
 }
 
 const bundledTokenIcons: Readonly<Record<string, string>> = Object.freeze({
-  USDC: usdcIcon,
-  ZEC: zecIcon
+  ETH: 'https://coin-images.coingecko.com/coins/images/279/large/ethereum.png',
+  USDC: 'https://coin-images.coingecko.com/coins/images/6319/large/usdc.png',
+  ZEC: 'https://coin-images.coingecko.com/coins/images/486/large/circle-zcash-color.png'
 })
 
 export function TokenIcon({
@@ -71,14 +68,12 @@ export function TokenIcon({
   const bundledIconForSymbol = bundledTokenIcons[symbol.toUpperCase()]
   const marketAsset = assetId ? findBundledWalletMarketAssetId(assetId) : null
   const mappedIcon = isBundledEthIconIdentity(assetId, token, symbol)
-    ? ethIcon
+    ? bundledTokenIcons.ETH
     : marketAsset === MARKET_ASSETS.usdc
-      ? usdcIcon
+      ? bundledTokenIcons.USDC
       : marketAsset === MARKET_ASSETS.zec
-        ? zecIcon
-        : marketAsset === MARKET_ASSETS.bnb
-          ? formatConfiguredChainIconUrl('bsc')
-          : undefined
+        ? bundledTokenIcons.ZEC
+        : undefined
   const nativeToken =
     (token !== undefined && token.contractAddress == null) || nativeChain !== undefined
   const bundledIcon =

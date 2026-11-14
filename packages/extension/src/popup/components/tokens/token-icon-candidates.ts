@@ -117,6 +117,14 @@ function isRetiredIconSource(value: string, depth = 0): boolean {
   }
 }
 
+function isOnlineIconUrl(value: string): boolean {
+  try {
+    return new URL(value).protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
 export function getTokenIconCandidates({
   token,
   icon,
@@ -147,6 +155,7 @@ export function getTokenIconCandidates({
       (candidate, index): candidate is string =>
         typeof candidate === 'string' &&
         candidate.length > 0 &&
+        isOnlineIconUrl(candidate) &&
         !isRetiredIconSource(candidate) &&
         candidates.indexOf(candidate) === index
     )
