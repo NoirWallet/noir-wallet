@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Icon } from '@iconify/react'
 import { getCachedTokens, type SwapToken } from '@/core/services/intents-api'
@@ -92,7 +92,15 @@ export function ShieldSwapPage(props: ShieldSwapPageProps) {
   const walletId = useWalletStore(state => state.currentWalletId)
   const accountId = useWalletStore(state => state.currentAccountId)
   const network = useWalletStore(state => state.currentNetwork)
-  return <ShieldSwapForm key={`${network}:${walletId}:${accountId}`} {...props} />
+  const scopeKey = `${network}:${walletId}:${accountId}`
+  const inactiveProps = useRef<{ scopeKey: string; props: ShieldSwapPageProps } | null>(null)
+  if (props.active) inactiveProps.current = { scopeKey, props: { ...props, active: false } }
+  // Keep the Shield draft mounted, but stop catalog updates from recalculating its hidden form.
+  const formProps =
+    props.active || inactiveProps.current?.scopeKey !== scopeKey
+      ? props
+      : inactiveProps.current.props
+  return <MemoShieldSwapForm key={scopeKey} {...formProps} />
 }
 
 function ShieldSwapForm({
@@ -1310,3 +1318,5 @@ function ShieldSwapForm({
     </div>
   )
 }
+
+const MemoShieldSwapForm = memo(ShieldSwapForm)

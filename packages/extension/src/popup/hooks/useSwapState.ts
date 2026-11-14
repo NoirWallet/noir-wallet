@@ -33,64 +33,51 @@ export function useSwapState(
   // Modes share catalog metadata, but retain separate saved pairs and quote state.
   const catalogScope = options.catalogScope === undefined ? preferenceScope : options.catalogScope
   const initializedCatalogContext = useRef<string | null>(null)
-  const [initialSelection] = useState(() =>
-    preferenceScope ? useSwapPreferences.getState().tokenSelections[preferenceScope] : undefined
-  )
-  const [initialCatalogs] = useState(() => ({
-    sources: options.enabledChains
-      ? readCachedTokenCatalogByChain(
-          'from',
-          getEnabledSwapChains(options.enabledChains).map(chain => chain.tokenListChainId)
-        )
-      : [],
-    destinations: options.enabledChains
-      ? readCachedTokenCatalogByChain('cross-chain-to', ALL_DESTINATION_CHAIN_IDS)
-      : []
-  }))
-  const initialSavedSourceAssetId = isSwapAssetOnEnabledChain(
-    initialSelection?.tokenInId,
-    options.enabledChains
-  )
-    ? initialSelection?.tokenInId
-    : undefined
-  const initialDestinationAssetId =
-    !initialSavedSourceAssetId ||
-    (isSwapAssetOnEnabledChain(options.sourceAssetId, options.enabledChains) &&
-      options.sourceAssetId !== initialSavedSourceAssetId)
-      ? undefined
-      : getSavedSwapDestinationAssetId(initialSelection, initialSavedSourceAssetId)
-  const initialPlan = buildInitialSwapCatalogPlan({
-    ...options,
-    savedSourceAssetId: initialSavedSourceAssetId,
-    savedDestinationAssetId: initialDestinationAssetId
+  const [initialState] = useState(() => {
+    const selection = preferenceScope
+      ? useSwapPreferences.getState().tokenSelections[preferenceScope]
+      : undefined
+    const savedSourceAssetId = isSwapAssetOnEnabledChain(
+      selection?.tokenInId,
+      options.enabledChains
+    )
+      ? selection?.tokenInId
+      : undefined
+    const destinationAssetId =
+      !savedSourceAssetId ||
+      (isSwapAssetOnEnabledChain(options.sourceAssetId, options.enabledChains) &&
+        options.sourceAssetId !== savedSourceAssetId)
+        ? undefined
+        : getSavedSwapDestinationAssetId(selection, savedSourceAssetId)
+    const plan = buildInitialSwapCatalogPlan({
+      ...options,
+      savedSourceAssetId,
+      savedDestinationAssetId: destinationAssetId
+    })
+    const sources = readCachedTokenCatalogByChain('from', plan.sourceChainIds)
+    const destinations = readCachedTokenCatalogByChain('cross-chain-to', plan.destinationChainIds)
+    const tokenIn = preferenceScope
+      ? pickProvisionalSwapSource(sources, options.sourceAssetId ?? savedSourceAssetId)
+      : null
+    const tokenOut = tokenIn
+      ? (destinations.find(token => token.assetId === destinationAssetId) ??
+        sources.find(token => token.assetId === destinationAssetId) ??
+        null)
+      : null
+    return {
+      sources,
+      destinations,
+      tokenIn,
+      tokenOut: tokenOut?.assetId === tokenIn?.assetId ? null : tokenOut
+    }
   })
-
-  const initialTokenIn = preferenceScope
-    ? pickProvisionalSwapSource(
-        initialCatalogs.sources.filter(token =>
-          initialPlan.sourceChainIds.includes(token.tokenListChainId)
-        ),
-        initialSavedSourceAssetId
-      )
-    : null
-  const initialTokenOut = initialTokenIn
-    ? (initialCatalogs.destinations.find(token => token.assetId === initialDestinationAssetId) ??
-      initialCatalogs.sources.find(token => token.assetId === initialDestinationAssetId) ??
-      null)
-    : null
-  const [tokenIn, setTokenIn] = useState<RheaSwapToken | null>(initialTokenIn)
+  const [tokenIn, setTokenIn] = useState<RheaSwapToken | null>(initialState.tokenIn)
   const [selectedSourceAssetId, setSelectedSourceAssetId] = useState<string | null>(null)
-  const [tokenOut, setTokenOut] = useState<RheaSwapToken | null>(
-    initialTokenIn && initialTokenOut && initialTokenIn.assetId === initialTokenOut.assetId
-      ? null
-      : initialTokenOut
-  )
-  const [sourceCatalog, setSourceCatalog] = useState<readonly RheaSwapToken[]>(
-    initialCatalogs.sources ?? []
-  )
+  const [tokenOut, setTokenOut] = useState<RheaSwapToken | null>(initialState.tokenOut)
+  const [sourceCatalog, setSourceCatalog] = useState<readonly RheaSwapToken[]>(initialState.sources)
   const [crossChainDestinationCatalog, setCrossChainDestinationCatalog] = useState<
     readonly RheaSwapToken[]
-  >(initialCatalogs.destinations ?? [])
+  >(initialState.destinations)
   const selectorSourceCatalog = useRef<readonly RheaSwapToken[]>([])
   const [amountIn, setAmountIn] = useState('')
   const [amountOut, setAmountOut] = useState('')
@@ -139,8 +126,16 @@ export function useSwapState(
       : undefined
     const sources = sourceCatalog
     const destinations = crossChainDestinationCatalog
+    const plan = buildInitialSwapCatalogPlan({
+      ...options,
+      savedSourceAssetId: saved?.tokenInId,
+      savedDestinationAssetId: getSavedSwapDestinationAssetId(saved)
+    })
     const source = preferenceScope
-      ? pickProvisionalSwapSource(sources, saved?.tokenInId ?? undefined)
+      ? pickProvisionalSwapSource(
+          sources.filter(token => plan.sourceChainIds.includes(token.tokenListChainId)),
+          saved?.tokenInId ?? undefined
+        )
       : null
     const destinationId =
       source?.assetId === saved?.tokenInId
@@ -216,16 +211,11 @@ export function useSwapState(
         setDestinationTokensLoading(false)
         return
       }
-      const cachedSources = readCachedTokenCatalogByChain(
-        'from',
-        getEnabledSwapChains(options.enabledChains).map(chain => chain.tokenListChainId)
-      )
-      const cachedPlannedSources = cachedSources.filter(token =>
-        plan.sourceChainIds.includes(token.tokenListChainId)
-      )
+      const cachedSources = readCachedTokenCatalogByChain('from', plan.sourceChainIds)
+      const cachedPlannedSources = cachedSources
       const cachedDestinations = readCachedTokenCatalogByChain(
         'cross-chain-to',
-        ALL_DESTINATION_CHAIN_IDS
+        plan.destinationChainIds
       )
       const knownSources = new Set(sourceCatalog)
       const knownDestinations = new Set(crossChainDestinationCatalog)
@@ -344,6 +334,7 @@ export function useSwapState(
   }, [
     catalogRequestId,
     catalogScope,
+    preferenceScope,
     options.sourceAssetId,
     options.destinationAssetId,
     options.destinationApiChainId,

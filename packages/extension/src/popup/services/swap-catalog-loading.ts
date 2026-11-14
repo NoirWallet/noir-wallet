@@ -147,6 +147,8 @@ export function buildInitialSwapCatalogPlan(options: SwapInitialCatalogOptions) 
       chain => chain.apiChainId === assetChain(options.savedSourceAssetId)?.apiChainId
     ) ??
     preferredSource ??
+    enabled.find(chain => chain.blockchain === 'zec') ??
+    enabled.find(chain => chain.blockchain === 'eth') ??
     enabled[0]
   if (!source) return { sourceChainIds: [], destinationChainIds: [] }
   const savedDestination =
@@ -157,7 +159,10 @@ export function buildInitialSwapCatalogPlan(options: SwapInitialCatalogOptions) 
   const target =
     explicitDestination ??
     savedDestination ??
-    enabled.find(chain => chain.apiChainId !== source.apiChainId)
+    (source.walletFamily === 'evm'
+      ? undefined
+      : (enabled.find(chain => chain.blockchain === 'eth') ??
+        enabled.find(chain => chain.apiChainId !== source.apiChainId)))
   return {
     sourceChainIds: [source.tokenListChainId],
     destinationChainIds:
