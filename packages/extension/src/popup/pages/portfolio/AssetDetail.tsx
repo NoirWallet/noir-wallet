@@ -500,22 +500,24 @@ export function AssetDetail() {
     }
   }
 
-  const handleSwap = (domain: 'public' | 'private' = actionDomain) => {
+  const handleSwap = (
+    domain: 'public' | 'private' = actionDomain,
+    fundingSource: 'transparent' | 'shielded' = searchParams.get('domain') === 'shield'
+      ? 'shielded'
+      : zcashFundingSource
+  ) => {
     if (!asset || !canSwap) return
     const query = new URLSearchParams({ source: asset.asset.id })
     if (effectiveWalletId && effectiveAccountId) {
       query.set('sourceWalletId', effectiveWalletId)
       query.set('sourceAccountId', effectiveAccountId)
     }
-    if (
-      chain?.chain.family === 'zcash' &&
-      (searchParams.get('domain') === 'shield' || zcashFundingSource === 'shielded')
-    ) {
+    if (chain?.chain.family === 'zcash' && fundingSource === 'shielded') {
       query.set('balanceDomain', 'shield')
       query.set('shieldZecSource', 'native')
     } else {
       query.set('balanceDomain', domain)
-      if (chain?.chain.family === 'zcash') query.set('fundingSource', zcashFundingSource)
+      if (chain?.chain.family === 'zcash') query.set('fundingSource', fundingSource)
     }
     navigate(`/swap?${query.toString()}`)
   }
@@ -609,16 +611,12 @@ export function AssetDetail() {
             `/send/zcash?move=1&from=${privacy}&originPath=${encodeURIComponent(sendOriginPath)}`
           )
       },
-      ...(privacy === 'transparent'
-        ? [
-            {
-              action: 'swap' as const,
-              label: 'Swap',
-              disabled: !canSwap,
-              onClick: () => handleSwap('public')
-            }
-          ]
-        : [])
+      {
+        action: 'swap' as const,
+        label: 'Swap',
+        disabled: !canSwap,
+        onClick: () => handleSwap('public', privacy)
+      }
     ].filter(
       action =>
         !getFundingSourceUnavailableReason(zcashKeySource, privacy) || action.action === 'receive'
