@@ -1,4 +1,5 @@
 import { test } from 'node:test'
+import { createRequire } from 'node:module'
 import { expect } from '@playwright/test'
 import {
   DIAGNOSTIC_LOG_MAX_AGE_MS,
@@ -8,7 +9,13 @@ import {
   type DiagnosticLogEntry
 } from '../../../src/lib/diagnostic-log'
 import { parseTrustedExtensionRuntimeMessage } from '../../../src/lib/runtime-message-security'
-import { formatHardwareSigningError } from '../../../src/lib/hardware-signing-error'
+import {
+  formatHardwareSigningError,
+  isHardwareDeviceSelectionCancelled
+} from '../../../src/lib/hardware-signing-error'
+const { DeviceExchangeError, NoAccessibleDeviceError, OpeningConnectionError } = createRequire(
+  import.meta.url
+)('@ledgerhq/device-management-kit')
 
 test('hardware diagnostics retain vendor error reasons without leaking signed payloads', () => {
   const encoded = 'cGN6dA'.repeat(40)
@@ -28,6 +35,44 @@ test('hardware diagnostics retain vendor error reasons without leaking signed pa
   expect(formatHardwareSigningError('Failed to parse PCZT bytes: UnknownVersion(3)')).toBe(
     'Failed to parse PCZT bytes: UnknownVersion(3)'
   )
+  // Use the installed SDK's non-Error wrappers, as returned by WebHID/BLE.
+  const denied = new DOMException('Access denied to HID device', 'NotAllowedError')
+  const wrapped = new NoAccessibleDeviceError(denied)
+  const usbMessage = formatHardwareSigningError(wrapped)
+  expect(usbMessage).toContain('NoAccessibleDeviceError')
+  expect(usbMessage).toContain('NotAllowedError')
+  expect(usbMessage).toContain('Access denied to HID device')
+  expect(isHardwareDeviceSelectionCancelled(wrapped)).toBe(false)
+  expect(
+    isHardwareDeviceSelectionCancelled(new NoAccessibleDeviceError('No selected device'))
+  ).toBe(true)
+  expect(
+    isHardwareDeviceSelectionCancelled(
+      new DOMException('User cancelled the requestDevice() chooser.', 'NotFoundError')
+    )
+  ).toBe(true)
+  expect(
+    isHardwareDeviceSelectionCancelled(
+      new DOMException('Bluetooth adapter not available', 'NotFoundError')
+    )
+  ).toBe(false)
+  const deviceError = new DeviceExchangeError({
+    tag: 'ZcashAppCommandError',
+    errorCode: '6a80',
+    originalError: failure
+  })
+  const connection = new OpeningConnectionError(
+    new Error('HID connection failed', { cause: deviceError })
+  )
+  const connectionMessage = formatHardwareSigningError(connection)
+  expect(connectionMessage).toContain('ConnectionOpeningError')
+  expect(connectionMessage).toContain('ZcashAppCommandError')
+  expect(connectionMessage).toContain('errorCode=6a80')
+  expect(connectionMessage).toContain('SignatureMismatch')
+  for (const sensitive of [encoded, bytes, address, '1.25'])
+    expect(connectionMessage).not.toContain(sensitive)
+  Object.assign(connection, { err: connection })
+  expect(formatHardwareSigningError(connection)).toContain('Circular error')
 })
 
 function makeEntry(id: number, timestamp: number, byteSize = 100): DiagnosticLogEntry {

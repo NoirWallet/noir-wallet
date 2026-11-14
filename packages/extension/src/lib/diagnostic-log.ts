@@ -43,15 +43,19 @@ function projectError(error: unknown, seen: WeakSet<object>, depth: number): unk
     const fields: Record<string, unknown> = {}
     for (const key of [
       'name',
+      '_tag',
       'message',
       'code',
+      'errorCode',
       'status',
       'statusCode',
       'type',
       'retryable',
       'details',
       'stack',
-      'cause'
+      'cause',
+      'originalError',
+      'err'
     ]) {
       let owner: object | null = error
       let descriptor: PropertyDescriptor | undefined
@@ -85,8 +89,8 @@ function projectError(error: unknown, seen: WeakSet<object>, depth: number): unk
       } else {
         continue
       }
-      if (key === 'cause') {
-        fields.cause = projectError(value, seen, depth + 1)
+      if (key === 'cause' || key === 'originalError' || key === 'err') {
+        fields[key] = projectError(value, seen, depth + 1)
       } else if (
         typeof value === 'string' ||
         typeof value === 'number' ||

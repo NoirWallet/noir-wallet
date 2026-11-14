@@ -49,7 +49,10 @@ import { cn } from '@/lib/utils'
 import { getNewPasswordValidationError, isNewPasswordValid } from '@/core/wallet/password-policy'
 import { useWalletStore } from '@/store/wallet-store'
 import { nextHardwareWalletName } from '@/lib/hardware-connect-options'
-import { formatHardwareSigningError } from '@/lib/hardware-signing-error'
+import {
+  formatHardwareSigningError,
+  isHardwareDeviceSelectionCancelled
+} from '@/lib/hardware-signing-error'
 import { logger } from '@/lib/logger'
 import {
   MAX_LEDGER_ACCOUNT_INDEX,
@@ -393,8 +396,10 @@ export function LedgerConnectPage() {
       awaitingDevice: true
     })
     setStep('waiting')
+    let deviceSelected = false
     try {
       const device = await discoverLedger(transport, controller.signal)
+      deviceSelected = true
       controller.signal.throwIfAborted()
       const pickers = selectedFamilies.filter(
         (family): family is LedgerSelectableFamily =>
@@ -408,6 +413,12 @@ export function LedgerConnectPage() {
     } catch (cause) {
       if (!controller.signal.aborted) {
         const message = formatHardwareSigningError(cause)
+        if (!deviceSelected && isHardwareDeviceSelectionCancelled(cause)) {
+          logger.info(`[Hardware connection] Ledger device selection cancelled: ${message}`)
+          setError('')
+          setStep('connect')
+          return
+        }
         logger.error(`[Hardware connection] Ledger connection failed: ${message}`)
         setError(message)
         setStep('connect')

@@ -15,7 +15,8 @@ export async function launchHardwareSignSurface(
 
   const signWindow = await chrome.windows.create({
     url,
-    type: 'popup',
+    // Extension popups lack the toolbar Chrome needs to host device choosers.
+    type: 'normal',
     width: UI_CONFIG.DAPP_WINDOW.WIDTH,
     height: UI_CONFIG.DAPP_WINDOW.HEIGHT,
     focused: true

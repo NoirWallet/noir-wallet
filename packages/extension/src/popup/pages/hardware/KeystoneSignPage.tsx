@@ -51,7 +51,10 @@ import {
 } from '@/lib/transaction-status-copy'
 import { publishHardwareSignResult } from '@/lib/hardware-sign-result'
 import { toHardwarePcztError } from '@/core/zcash/hardware-pczt'
-import { formatHardwareSigningError } from '@/lib/hardware-signing-error'
+import {
+  formatHardwareSigningError,
+  isHardwareDeviceSelectionCancelled
+} from '@/lib/hardware-signing-error'
 import { logger } from '@/lib/logger'
 
 type Step =
@@ -574,10 +577,12 @@ export function KeystoneSignPage() {
         : 'Select your Ledger over Bluetooth'
     )
     setStep('ledger-device')
+    let deviceSelected = false
     try {
       // Browser device prompts must start from the button's user gesture.
       const devicePromise = discoverLedger(transport, controller.signal)
       const device = await devicePromise
+      deviceSelected = true
       controller.signal.throwIfAborted()
       const signatures = await signLedgerPczt({
         transport,
@@ -597,6 +602,12 @@ export function KeystoneSignPage() {
     } catch (cause) {
       if (invalidated.current || controller.signal.aborted) return
       const message = formatHardwareSigningError(cause)
+      if (!deviceSelected && isHardwareDeviceSelectionCancelled(cause)) {
+        logger.info(`[Hardware signing] Ledger device selection cancelled: ${message}`)
+        setError(null)
+        setStep('ledger-review')
+        return
+      }
       logger.error(`[Hardware signing] Ledger device signing failed: ${message}`)
       if (
         request.fundingSource === 'transparent' &&
