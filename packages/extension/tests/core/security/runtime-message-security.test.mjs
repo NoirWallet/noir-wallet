@@ -1885,6 +1885,22 @@ test.describe('Runtime message security', () => {
       parseTrustedExtensionRuntimeMessage({
         type: 'QUOTE_RHEA_SWAP',
         request,
+        purpose: 'wallet-swap',
+        zcashFundingSource: 'shielded'
+      })
+    ).toMatchObject({ zcashFundingSource: 'shielded' })
+    expect(() =>
+      parseTrustedExtensionRuntimeMessage({
+        type: 'QUOTE_RHEA_SWAP',
+        request,
+        purpose: 'wallet-swap',
+        zcashFundingSource: 'private'
+      })
+    ).toThrow(/schema/i)
+    expect(
+      parseTrustedExtensionRuntimeMessage({
+        type: 'QUOTE_RHEA_SWAP',
+        request,
         purpose: 'private-swap'
       })
     ).toMatchObject({ purpose: 'private-swap' })

@@ -91,6 +91,7 @@ export interface RheaSwapQuoteSessionRecord {
   readonly privateSwapScope?: Readonly<{
     walletId: string
     accountId: string
+    zcashFundingSource?: 'transparent' | 'shielded'
     purpose?:
       | 'wallet-swap'
       | 'public-cross-chain-send'
@@ -369,7 +370,7 @@ export class RheaSwapService {
     const record = await this.requireSession(quoteHandle)
     if (
       record.privateSwapScope?.purpose === 'wallet-swap' &&
-      transfer.fundingSource !== 'transparent'
+      transfer.fundingSource !== (record.privateSwapScope.zcashFundingSource ?? 'transparent')
     ) {
       throw new Error('Swap funding source has changed. Get a new quote.')
     }

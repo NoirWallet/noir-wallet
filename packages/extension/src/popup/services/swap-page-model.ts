@@ -558,6 +558,7 @@ export function buildLiveSwapQuoteRequest(input: {
   readonly recipientAddress: string
   readonly privateRecipientAddress?: string
   readonly confidentiality?: 'basic'
+  readonly zcashFundingSource?: 'transparent' | 'shielded'
   readonly blocked: boolean
 }): Readonly<{
   key: string
@@ -612,9 +613,15 @@ export function buildLiveSwapQuoteRequest(input: {
       scopeKey: JSON.stringify([
         input.tokenIn.assetId,
         input.tokenOut.assetId,
+        input.zcashFundingSource ?? null,
         { ...request, amountIn: undefined }
       ]),
-      key: JSON.stringify([input.tokenIn.assetId, input.tokenOut.assetId, request]),
+      key: JSON.stringify([
+        input.tokenIn.assetId,
+        input.tokenOut.assetId,
+        input.zcashFundingSource ?? null,
+        request
+      ]),
       amount,
       slippageTolerance,
       request,

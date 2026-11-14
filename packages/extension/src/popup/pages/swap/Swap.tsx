@@ -2596,6 +2596,9 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
       quoteMode,
       refundAddress: resolvedRefundAddress,
       recipientAddress: resolvedRecipientAddress,
+      ...(quotePurpose === 'wallet-swap' && swap.isZecSource
+        ? { zcashFundingSource: fundingSource }
+        : {}),
       ...(privateSwapRequested && destinationMode === 'private' && !isZecDestination
         ? { privateRecipientAddress: destinationPrivateExecutionAddress ?? '' }
         : {}),
@@ -2656,6 +2659,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
     swap.selectionReady,
     swap.isZecSource,
     resolvedRefundAddress,
+    fundingSource,
     resolvedRecipientAddress,
     executionSourceMode,
     destinationMode,
@@ -2889,7 +2893,11 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
       () => {
         void (async () => {
           try {
-            const result = await rheaSwapClient.quote(quoteRequest.request, quotePurpose)
+            const result = await rheaSwapClient.quote(
+              quoteRequest.request,
+              quotePurpose,
+              quotePurpose === 'wallet-swap' && swap.isZecSource ? fundingSource : undefined
+            )
             if (requestSequence !== quoteRequestSequence.current) {
               void rheaSwapClient.discard(result.quoteHandle).catch(() => {})
               return
@@ -2941,7 +2949,9 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
     swap.setDepositAddress,
     swap.setIsQuoting,
     swap.setQuoteError,
-    quotePurpose
+    quotePurpose,
+    fundingSource,
+    swap.isZecSource
   ])
 
   const reviewLiveQuote = useCallback(
@@ -2999,7 +3009,11 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
         if (requestSequence !== quoteRequestSequence.current) return
         if (forceQuote || !resultToReview || !isRheaSwapQuoteFresh(resultToReview)) {
           resultToReview = await measure('refresh-review-quote', () =>
-            rheaSwapClient.quote(liveQuoteRequest.request, quotePurpose)
+            rheaSwapClient.quote(
+              liveQuoteRequest.request,
+              quotePurpose,
+              quotePurpose === 'wallet-swap' && swap.isZecSource ? fundingSource : undefined
+            )
           )
           newlyQuoted = true
           if (requestSequence !== quoteRequestSequence.current) {

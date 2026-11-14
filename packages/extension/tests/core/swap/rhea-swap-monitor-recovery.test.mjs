@@ -515,6 +515,27 @@ it('retains older quote timing budgets when saving new sessions and rejects inva
     (await store.get(current.quoteHandle)).privateSwapScope,
     current.privateSwapScope
   )
+  const zcashShielded = {
+    ...current,
+    quoteHandle: 'rhea-quote:zcash-shielded-source',
+    request: {
+      ...current.request,
+      fromChain: 'zcash',
+      tokenIn: { chain: 'zcash', address: 'nep141:zec.omft.near' },
+      sender: 't1source'
+    },
+    privateSwapScope: {
+      walletId: 'wallet:monitor',
+      accountId: 'account:monitor',
+      purpose: 'wallet-swap',
+      zcashFundingSource: 'shielded'
+    }
+  }
+  await store.put(zcashShielded)
+  assert.deepEqual(
+    (await new ChromeRheaSwapQuoteStore().get(zcashShielded.quoteHandle)).privateSwapScope,
+    zcashShielded.privateSwapScope
+  )
 
   for (const [field, value] of [
     ['quoteWaitingTimeMs', -1],

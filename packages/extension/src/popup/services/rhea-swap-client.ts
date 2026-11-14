@@ -184,11 +184,17 @@ export function createRheaSwapClient(
         | 'private-swap'
         | 'private-transfer'
         | 'private-cross-chain-send'
-        | 'public-private-send'
+        | 'public-private-send',
+      zcashFundingSource?: 'transparent' | 'shielded'
     ): Promise<RheaSwapQuoteView> => {
       const request = parseRheaSwapQuoteRequest(requestValue)
       return unwrap(
-        await send({ type: 'QUOTE_RHEA_SWAP', request, ...(purpose ? { purpose } : {}) }),
+        await send({
+          type: 'QUOTE_RHEA_SWAP',
+          request,
+          ...(purpose ? { purpose } : {}),
+          ...(zcashFundingSource ? { zcashFundingSource } : {})
+        }),
         parseRheaSwapQuoteView
       )
     },

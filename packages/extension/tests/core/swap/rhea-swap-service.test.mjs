@@ -1027,6 +1027,30 @@ test('quote and build remain bound across a session-store reload', async () => {
       fundingSource: 'transparent'
     })
   ).resolves.toBe(31_000)
+  const shieldedSwapService = new RheaSwapService(client, new MemoryRheaSwapQuoteSessionStore(), {
+    now: () => 2_000,
+    createHandle: () => 'wallet-swap-shielded-source'
+  })
+  const shieldedSwapQuote = await shieldedSwapService.quote(confidentialQuoteRequest, undefined, {
+    ...privateSwapScope,
+    purpose: 'wallet-swap',
+    zcashFundingSource: 'shielded'
+  })
+  await shieldedSwapService.prepare(shieldedSwapQuote.quoteHandle)
+  await expect(
+    shieldedSwapService.readZcashTransferDeadline(shieldedSwapQuote.quoteHandle, {
+      ...depositTransfer,
+      fundingSource: 'shielded'
+    })
+  ).resolves.toBe(31_000)
+  for (const fundingSource of [undefined, 'transparent']) {
+    await expect(
+      shieldedSwapService.readZcashTransferDeadline(shieldedSwapQuote.quoteHandle, {
+        ...depositTransfer,
+        fundingSource
+      })
+    ).rejects.toThrow(/funding source/)
+  }
   for (const altered of [
     { executionId: 'another-execution' },
     { to: 't1anotherdeposit' },

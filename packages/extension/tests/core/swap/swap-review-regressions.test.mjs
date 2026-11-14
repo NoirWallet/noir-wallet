@@ -168,6 +168,27 @@ it('retains the reviewed sender, recipient, amount and privacy mode when a quote
   })
   assert.notEqual(changedToken.key, quote.key)
   assert.notEqual(changedToken.scopeKey, quote.scopeKey)
+  const zcashSource = {
+    ...input,
+    tokenIn: {
+      ...token,
+      assetId: 'zec',
+      rheaChainId: 'zcash',
+      rheaAddress: 'nep141:zec.omft.near',
+      symbol: 'ZEC',
+      decimals: 8
+    },
+    refundAddress: 't1source',
+    zcashFundingSource: 'transparent'
+  }
+  const transparentZec = buildLiveSwapQuoteRequest(zcashSource)
+  const shieldedZec = buildLiveSwapQuoteRequest({
+    ...zcashSource,
+    zcashFundingSource: 'shielded'
+  })
+  assert.notEqual(shieldedZec.key, transparentZec.key)
+  assert.notEqual(shieldedZec.scopeKey, transparentZec.scopeKey)
+  assert.deepEqual(shieldedZec.request, transparentZec.request)
   assert.equal(buildLiveSwapQuoteRequest({ ...input, amountIn: '0.0000001' }), null)
   assert.equal(buildLiveSwapQuoteRequest({ ...input, amountIn: '0.5000001' }), null)
   assert.equal(buildLiveSwapQuoteRequest({ ...input, amountIn: '0.000001' }).request.amountIn, '1')

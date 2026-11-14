@@ -4000,6 +4000,16 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
                   catalog.accounts
                 ) === 'confidential'
               const purpose = message.purpose as PrivateQuotePurpose | undefined
+              const requestedZcashFundingSource = message.zcashFundingSource
+              if (
+                requestedZcashFundingSource !== undefined &&
+                (purpose !== 'wallet-swap' ||
+                  request.fromChain !== 'zcash' ||
+                  (requestedZcashFundingSource !== 'transparent' &&
+                    requestedZcashFundingSource !== 'shielded'))
+              ) {
+                throw new Error('Swap funding source is invalid.')
+              }
               if (
                 purpose === 'wallet-swap' ||
                 purpose === 'public-cross-chain-send' ||
@@ -4010,7 +4020,13 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
                 return rheaSwapService.quote(request, undefined, {
                   walletId: account!.walletId,
                   accountId: account!.accountId,
-                  purpose
+                  purpose,
+                  ...(purpose === 'wallet-swap' && request.fromChain === 'zcash'
+                    ? {
+                        zcashFundingSource:
+                          requestedZcashFundingSource === 'shielded' ? 'shielded' : 'transparent'
+                      }
+                    : {})
                 })
               }
               if (purpose === 'public-private-send') {

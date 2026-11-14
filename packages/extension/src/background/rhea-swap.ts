@@ -187,10 +187,15 @@ function parseStoredRecord(value: unknown): RheaSwapQuoteSessionRecord {
     privateSwapScope !== undefined &&
     (!isRecord(privateSwapScope) ||
       Object.keys(privateSwapScope).some(
-        key => !['walletId', 'accountId', 'purpose'].includes(key)
+        key => !['walletId', 'accountId', 'purpose', 'zcashFundingSource'].includes(key)
       ) ||
       typeof privateSwapScope.walletId !== 'string' ||
       typeof privateSwapScope.accountId !== 'string' ||
+      (privateSwapScope.zcashFundingSource !== undefined &&
+        (privateSwapScope.purpose !== 'wallet-swap' ||
+          request.fromChain !== 'zcash' ||
+          (privateSwapScope.zcashFundingSource !== 'transparent' &&
+            privateSwapScope.zcashFundingSource !== 'shielded'))) ||
       (privateSwapScope.purpose !== undefined &&
         privateSwapScope.purpose !== 'wallet-swap' &&
         privateSwapScope.purpose !== 'public-cross-chain-send' &&
@@ -296,6 +301,13 @@ function parseStoredRecord(value: unknown): RheaSwapQuoteSessionRecord {
           privateSwapScope: Object.freeze({
             walletId: readStoredString(privateSwapScope.walletId, 'Private Swap wallet ID', 160),
             accountId: readStoredString(privateSwapScope.accountId, 'Private Swap Account ID', 160),
+            ...(privateSwapScope.zcashFundingSource === undefined
+              ? {}
+              : {
+                  zcashFundingSource: privateSwapScope.zcashFundingSource as
+                    | 'transparent'
+                    | 'shielded'
+                }),
             ...(privateSwapScope.purpose === undefined
               ? {}
               : {
