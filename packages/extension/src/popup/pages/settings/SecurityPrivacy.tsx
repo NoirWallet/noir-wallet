@@ -226,7 +226,7 @@ export function SecurityPrivacy() {
               <div>
                 <div className="text-sm">Share Google Analytics</div>
                 <div className="text-xs text-muted mt-1 leading-relaxed">
-                  Noir Wallet service metrics continue when this is off.
+                  Wallet addresses are never included in analytics.
                 </div>
               </div>
               <div className="pt-0.5">
