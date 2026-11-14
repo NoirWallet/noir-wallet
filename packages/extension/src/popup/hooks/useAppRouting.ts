@@ -6,7 +6,6 @@ import { useAccountDataStore } from '@/store/account-data-store'
 import { useOnboardingStore } from '@/store/onboarding-store'
 import { zcashWalletRuntimeClient } from '@/popup/services/zcash-wallet-runtime-client'
 import { toast } from '@/store/toast-store'
-import { needsUnlock } from '@/lib/lock-utils'
 import { SecureStorage } from '@/core/wallet/secure-storage'
 import { accountNetworksClient } from '../services/account-networks-client'
 import { didCredentialSessionEnd } from '@/core/wallet/credential-session-state'
@@ -260,8 +259,13 @@ export function useAppRouting() {
         return
       }
 
-      // Use unified lock check
-      const unlockNeeded = await needsUnlock()
+      // Startup can overlap another page's unlock. Let Background recheck the
+      // shared session inside its lock transition instead of locking a stale read.
+      const session: unknown = await chrome.runtime.sendMessage({ type: 'CHECK_WALLET_AUTO_LOCK' })
+      if (!session || typeof session !== 'object' || !('active' in session)) {
+        throw new Error('Unable to check wallet auto-lock')
+      }
+      const unlockNeeded = session.active !== true
 
       if (unlockNeeded) {
         // Build redirect URL with current route and parameters
@@ -288,7 +292,6 @@ export function useAppRouting() {
         }
 
         replace(`/unlock?${redirectParams.toString()}`)
-        void zcashWalletRuntimeClient.lock().catch(() => {})
         return
       }
 

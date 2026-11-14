@@ -1069,20 +1069,22 @@ export class DAppHandler {
   private async switchActiveAccount(walletId: string, accountId: string): Promise<void> {
     const wallet = useWalletStore.getState().getWallet(walletId)
     const restoreFromSession =
-      !backgroundZcashWalletRuntime.isLocked() &&
-      Boolean(wallet && !isZcashHardwareKeySource(wallet.keySource)) &&
-      backgroundZcashWalletRuntime.getSessionPassword() === null
-    if (restoreFromSession && !(await credentialSession.bindZcashCredential(walletId))) {
+      Boolean(wallet) && backgroundZcashWalletRuntime.getSessionPassword() === null
+    if (
+      restoreFromSession &&
+      !isZcashHardwareKeySource(wallet?.keySource) &&
+      !(await credentialSession.bindZcashCredential(walletId))
+    ) {
       await backgroundZcashWalletRuntime.lock().catch(() => {})
       throw new Error('Wallet credential is not available in the active session')
     }
     await switchActiveAccountPersistently(walletId, accountId)
-    if (!backgroundZcashWalletRuntime.isLocked()) {
-      if (restoreFromSession) {
-        await backgroundZcashWalletRuntime.restoreFromCredentialSession(walletId, accountId)
-      } else {
-        await backgroundZcashWalletRuntime.ensureWalletCoreAccount(walletId, accountId)
+    if (restoreFromSession) {
+      if (!(await backgroundZcashWalletRuntime.restoreFromCredentialSession(walletId, accountId))) {
+        throw new Error('Wallet credential session could not restore the selected account')
       }
+    } else if (!backgroundZcashWalletRuntime.isLocked()) {
+      await backgroundZcashWalletRuntime.ensureWalletCoreAccount(walletId, accountId)
     }
     syncScheduler.onAccountSwitched(walletId)
 

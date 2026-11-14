@@ -310,6 +310,83 @@ test('same-wallet session restoration preserves an in-flight backup authorizatio
   }
 })
 
+for (const vendor of ['keystone', 'ledger']) {
+  test(`${vendor} restores a cold runtime from an attested session without a software capsule`, async () => {
+    const originalState = useWalletStore.getState()
+    const originalEpoch = credentialSession.getUnlockEpoch
+    const originalPassword = credentialSession.getProvisioningPassword
+    const runtime = new BackgroundZcashWalletRuntime()
+    let epoch = 'unlock-1'
+    let completeInspection = async () => {}
+    let restored = 0
+    try {
+      useWalletStore.setState({
+        currentWalletId: 'hardware-wallet',
+        currentAccountId: 'hardware-account',
+        wallets: [
+          {
+            id: 'hardware-wallet',
+            keySource: vendor,
+            createdAt: 1,
+            accounts: [{ id: 'hardware-account', derivationIndex: 0 }]
+          }
+        ]
+      })
+      credentialSession.getUnlockEpoch = async () => epoch
+      credentialSession.getProvisioningPassword = async () => 'synthetic-password'
+      runtime.inspectWalletCredential = async () => {
+        await completeInspection()
+        return { status: 'valid', credential: { kind: 'hardware', hw: {} } }
+      }
+      runtime.ensureWalletCoreAccount = async (walletId, accountId) => {
+        assert.equal(walletId, 'hardware-wallet')
+        assert.equal(accountId, 'hardware-account')
+        assert.equal(runtime.getSessionPassword(), 'synthetic-password')
+        restored++
+      }
+
+      assert.equal(runtime.isLocked(), true)
+      assert.equal(
+        await runtime.restoreFromCredentialSession('hardware-wallet', 'hardware-account'),
+        true
+      )
+      assert.equal(runtime.isLocked(), false)
+      assert.equal(restored, 1)
+
+      runtime.beginLock()
+      completeInspection = async () => {
+        epoch = 'unlock-2'
+      }
+      assert.equal(
+        await runtime.restoreFromCredentialSession('hardware-wallet', 'hardware-account'),
+        false
+      )
+      assert.equal(runtime.isLocked(), true)
+
+      completeInspection = async () => {
+        runtime.beginLock()
+      }
+      assert.equal(
+        await runtime.restoreFromCredentialSession('hardware-wallet', 'hardware-account'),
+        false
+      )
+      assert.equal(runtime.getSessionPassword(), null)
+      assert.equal(restored, 1)
+
+      runtime.inspectWalletCredential = async () => ({ status: 'missing' })
+      await assert.rejects(
+        runtime.restoreFromCredentialSession('hardware-wallet', 'hardware-account'),
+        /Hardware Wallet credential is unavailable/
+      )
+      assert.equal(runtime.isLocked(), true)
+    } finally {
+      credentialSession.getUnlockEpoch = originalEpoch
+      credentialSession.getProvisioningPassword = originalPassword
+      useWalletStore.setState(originalState, true)
+    }
+  })
+}
+
 const lockFunctionNames = [
   'performWalletLockState',
   'performKeyringRuntimesResetAfterCredentialChange'

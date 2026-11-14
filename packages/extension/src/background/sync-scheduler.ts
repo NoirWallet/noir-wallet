@@ -576,8 +576,9 @@ export class SyncScheduler {
             : null
           if (
             !currentWalletId ||
-            isZcashHardwareKeySource(wallet?.keySource) ||
-            !(await credentialSession.bindZcashCredential(currentWalletId)) ||
+            !wallet ||
+            (!isZcashHardwareKeySource(wallet.keySource) &&
+              !(await credentialSession.bindZcashCredential(currentWalletId))) ||
             !(await backgroundZcashWalletRuntime.restoreFromCredentialSession(
               currentWalletId,
               currentAccountId || undefined

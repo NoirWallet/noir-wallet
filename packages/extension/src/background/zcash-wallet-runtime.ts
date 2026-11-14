@@ -2436,20 +2436,58 @@ export class BackgroundZcashWalletRuntime {
     return this.sessionCredentialWalletId === walletId
   }
 
+  private async restoreHardwareFromCredentialSession(
+    wallet: WalletItem,
+    account: AccountData
+  ): Promise<boolean> {
+    const generation = this.passwordGeneration
+    const network = this.network
+    const epoch = await credentialSession.getUnlockEpoch()
+    if (epoch === null) return false
+    const password = await credentialSession.getProvisioningPassword()
+    const inspected = await this.inspectWalletCredential(wallet, password)
+    if (inspected.status !== 'valid' || inspected.credential.kind !== 'hardware') {
+      throw new Error('Hardware Wallet credential is unavailable')
+    }
+    const currentEpoch = await credentialSession.getUnlockEpoch()
+    const currentWallet = this.store.getWallet(wallet.id)
+    if (
+      currentEpoch !== epoch ||
+      this.passwordGeneration !== generation ||
+      this.network !== network ||
+      currentWallet?.keySource !== wallet.keySource ||
+      currentWallet?.createdAt !== wallet.createdAt ||
+      !currentWallet.accounts.some(candidate => candidate.id === account.id)
+    ) {
+      return false
+    }
+
+    // Hardware has no software capsule to bind. Recover its encrypted UFVK
+    // through the attested global session, entirely inside Background.
+    this.cancelActiveRestore()
+    this.setSessionPassword(password)
+    this.sessionCredentialWalletId = null
+    this.currentWalletId = wallet.id
+    await this.ensureWalletCoreAccount(wallet.id, account.id)
+    return this.passwordGeneration === generation + 1 && !this.isLocked()
+  }
+
   /**
-   * Restore a software wallet after Background memory loss without receiving
-   * its password or mnemonic. The selected credential must already be bound
-   * directly from Offscreen to the Zcash Worker.
+   * Restore after Background memory loss using the attested Offscreen session.
+   * Software credentials must already be bound directly to the Zcash Worker.
    */
   async restoreFromCredentialSession(walletId: string, accountId?: string): Promise<boolean> {
     const wallet = this.store.getWallet(walletId)
-    if (!wallet || isZcashHardwareKeySource(wallet.keySource)) return false
+    if (!wallet) return false
 
     const account = accountId
       ? wallet.accounts.find(candidate => candidate.id === accountId)
       : wallet.accounts.find(candidate => candidate.id === this.store.currentAccountId) ||
         wallet.accounts[0]
     if (!account) return false
+    if (isZcashHardwareKeySource(wallet.keySource)) {
+      return this.restoreHardwareFromCredentialSession(wallet, account)
+    }
 
     this.cancelActiveRestore()
     for (const [otherWalletId, otherCore] of this.walletCores) {

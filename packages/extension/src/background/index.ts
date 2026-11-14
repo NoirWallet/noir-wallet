@@ -6271,8 +6271,13 @@ function restoreBackgroundZcashRuntimeFromSession(): Promise<boolean> {
     const { currentWalletId, currentAccountId } = useWalletStore.getState()
     if (!currentWalletId) return false
     const wallet = useWalletStore.getState().getWallet(currentWalletId)
-    if (!wallet || isZcashHardwareKeySource(wallet.keySource)) return false
-    if (!(await credentialSession.bindZcashCredential(currentWalletId))) return false
+    if (!wallet) return false
+    if (
+      !isZcashHardwareKeySource(wallet.keySource) &&
+      !(await credentialSession.bindZcashCredential(currentWalletId))
+    ) {
+      return false
+    }
     await backgroundZcashWalletRuntime.initialize()
     return backgroundZcashWalletRuntime.restoreFromCredentialSession(
       currentWalletId,
@@ -7057,27 +7062,23 @@ async function handleSwitchWalletAccount(walletId: string, accountId: string) {
         return { selectionStatus: selection.status, generationId: selection.generationId }
       })
     }
-    const restoreFromSession =
+    const restoreFromSession = backgroundZcashWalletRuntime.getSessionPassword() === null
+    // Restore the selected credential without requiring a Zcash binding for
+    // the previous account. Hardware credentials have no software capsule.
+    if (
+      restoreFromSession &&
       !isZcashHardwareKeySource(wallet.keySource) &&
-      backgroundZcashWalletRuntime.getSessionPassword() === null
-    // Native accounts have no current Zcash binding. Restore the selected
-    // software credential directly instead of requiring the previous account.
-    if (restoreFromSession && !(await credentialSession.bindZcashCredential(walletId))) {
+      !(await credentialSession.bindZcashCredential(walletId))
+    ) {
       await backgroundZcashWalletRuntime.lock().catch(() => {})
       throw new Error('Wallet credential is not available in the active session')
     }
-    if (
-      !restoreFromSession &&
-      backgroundZcashWalletRuntime.isLocked() &&
-      !(await restoreBackgroundZcashRuntimeFromSession())
-    ) {
-      throw new Error('Wallet is locked. Please unlock and try again.')
-    }
-
     const selection = await switchActiveAccountPersistently(walletId, accountId)
     pendingRequestsManager.cancelExceptContext(walletId, accountId)
     if (restoreFromSession) {
-      await backgroundZcashWalletRuntime.restoreFromCredentialSession(walletId, accountId)
+      if (!(await backgroundZcashWalletRuntime.restoreFromCredentialSession(walletId, accountId))) {
+        throw new Error('Wallet credential session could not restore the selected account')
+      }
     } else {
       await backgroundZcashWalletRuntime.ensureWalletCoreAccount(walletId, accountId)
     }
@@ -7156,11 +7157,11 @@ async function prepareWalletCoreForTx(walletId?: string, accountId?: string) {
   const targetWallet = state.getWallet(targetWalletId)
   if (!targetWallet) throw new Error('Wallet not found')
 
-  if (
-    backgroundZcashWalletRuntime.getSessionPassword() === null &&
-    !isZcashHardwareKeySource(targetWallet.keySource)
-  ) {
-    if (!(await credentialSession.bindZcashCredential(targetWalletId))) {
+  if (backgroundZcashWalletRuntime.getSessionPassword() === null) {
+    if (
+      !isZcashHardwareKeySource(targetWallet.keySource) &&
+      !(await credentialSession.bindZcashCredential(targetWalletId))
+    ) {
       await backgroundZcashWalletRuntime.lock().catch(() => {})
       throw new Error('Wallet locked and no attested credential session is available')
     }
