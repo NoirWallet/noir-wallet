@@ -76,7 +76,6 @@ export function ManageAccountNetworksPage() {
       )
       .map(chain => chain.id)
   const [selected, setSelected] = useState<readonly string[]>(initial)
-  const [guideStartingChains, setGuideStartingChains] = useState<readonly string[]>(initial)
   const [successNotice, setSuccessNotice] = useState<{
     title: string
     chainName: string
@@ -116,14 +115,6 @@ export function ManageAccountNetworksPage() {
     if (initializedScope.current === scope) return
     initializedScope.current = scope
     setSelected(
-      account?.networkChainSelections?.[DEFAULT_NETWORK] ??
-        chains
-          .filter(chain =>
-            (account?.networkSelections?.[DEFAULT_NETWORK] ?? available).includes(chain.family)
-          )
-          .map(chain => chain.id)
-    )
-    setGuideStartingChains(
       account?.networkChainSelections?.[DEFAULT_NETWORK] ??
         chains
           .filter(chain =>
@@ -273,16 +264,61 @@ export function ManageAccountNetworksPage() {
   }
 
   if (guideMode) {
-    const currentChains = chains.filter(chain => guideStartingChains.includes(chain.id))
-    const addableChains = chains.filter(chain => !guideStartingChains.includes(chain.id))
+    const currentChains = chains.filter(chain => selected.includes(chain.id))
+    const addableChains = chains.filter(chain => !selected.includes(chain.id))
     const successChain = chains.find(chain => chain.id === successNotice?.chainId)
     const zcashAddress =
       account.networkAddresses?.[DEFAULT_NETWORK]?.transparent ?? account.addresses.transparent
     return (
       <div className="page-container">
-        <PageHeader title="Add Networks" />
+        <PageHeader title="Add Networks" showBack onBack={() => navigate('/', { replace: true })} />
         <div className="page-content min-w-0 px-4 pb-4 pt-0">
-          <section aria-label="Current networks">
+          {addableChains.length > 0 && (
+            <section aria-label="Add networks">
+              <div className="mb-3 flex items-center justify-between gap-2">
+                <h2 className="text-sm font-medium text-muted">Add Networks</h2>
+                <button
+                  type="button"
+                  disabled={saving}
+                  onClick={() =>
+                    void save(
+                      chains.map(chain => chain.id),
+                      false
+                    )
+                  }
+                  className="wallet-interactive min-h-[26px] rounded-md bg-[#414152] px-2 text-sm font-medium text-white enabled:hover:bg-white/25 disabled:opacity-50"
+                >
+                  Add all
+                </button>
+              </div>
+              <div className="overflow-hidden rounded-lg bg-wallet-surface">
+                {addableChains.map(chain => (
+                  <div
+                    key={chain.id}
+                    className="flex min-h-[72px] items-center gap-3 px-4 hover:bg-white/[0.06]"
+                  >
+                    <ChainIcon
+                      chain={resolveChainIconAlias(chain.family, chain.displayName, chain.id)}
+                      showTooltip={false}
+                      className="size-8 shrink-0 rounded-md"
+                    />
+                    <span className="min-w-0 flex-1 truncate text-base font-medium">
+                      {chain.displayName}
+                    </span>
+                    <button
+                      type="button"
+                      disabled={saving}
+                      onClick={() => void save([...selected, chain.id], false)}
+                      className="wallet-interactive min-h-[26px] min-w-[52px] shrink-0 rounded-md bg-[#414152] px-2 text-sm font-medium text-white enabled:hover:bg-white/25 disabled:cursor-default"
+                    >
+                      Add
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+          <section aria-label="Current networks" className={addableChains.length ? 'mt-6' : ''}>
             <h2 className="mb-3 text-sm font-medium text-muted">Currently</h2>
             <div className="space-y-2">
               {currentChains.map(chain => (
@@ -310,54 +346,6 @@ export function ManageAccountNetworksPage() {
               ))}
             </div>
           </section>
-          {addableChains.length > 0 && (
-            <section aria-label="Add networks" className="mt-6">
-              <div className="mb-3 flex items-center justify-between gap-2">
-                <h2 className="text-sm font-medium text-muted">Add Networks</h2>
-                <button
-                  type="button"
-                  disabled={saving || addableChains.every(chain => selected.includes(chain.id))}
-                  onClick={() =>
-                    void save(
-                      chains.map(chain => chain.id),
-                      false
-                    )
-                  }
-                  className="wallet-interactive min-h-[26px] rounded-md bg-[#414152] px-2 text-sm font-medium text-white enabled:hover:bg-white/25 disabled:opacity-50"
-                >
-                  Add all
-                </button>
-              </div>
-              <div className="overflow-hidden rounded-lg bg-wallet-surface">
-                {addableChains.map(chain => {
-                  const added = selected.includes(chain.id)
-                  return (
-                    <div
-                      key={chain.id}
-                      className="flex min-h-[72px] items-center gap-3 px-4 hover:bg-white/[0.06]"
-                    >
-                      <ChainIcon
-                        chain={resolveChainIconAlias(chain.family, chain.displayName, chain.id)}
-                        showTooltip={false}
-                        className="size-8 shrink-0 rounded-md"
-                      />
-                      <span className="min-w-0 flex-1 truncate text-base font-medium">
-                        {chain.displayName}
-                      </span>
-                      <button
-                        type="button"
-                        disabled={saving || added}
-                        onClick={() => void save([...selected, chain.id], false)}
-                        className={`wallet-interactive min-h-[26px] min-w-[52px] shrink-0 rounded-md px-2 text-sm font-medium ${added ? 'border border-white/20 text-muted' : 'bg-[#414152] text-white enabled:hover:bg-white/25'} disabled:cursor-default`}
-                      >
-                        {added ? 'Added' : 'Add'}
-                      </button>
-                    </div>
-                  )
-                })}
-              </div>
-            </section>
-          )}
         </div>
         <div className="page-footer space-y-3">
           {error && (
