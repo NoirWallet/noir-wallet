@@ -43,10 +43,8 @@ import { PageHeader } from '@/popup/components/common/PageHeader'
 import { ChainIcon } from '@/popup/components/common/ChainIcon'
 import { ChainSelector, type ChainSelectorOption } from '@/popup/components/common/ChainSelector'
 import { TokenIcon } from '@/popup/components/tokens/TokenIcon'
-import {
-  TokenSelectionList,
-  TokenSelectionSearch
-} from '@/popup/components/tokens/TokenSelectionList'
+import { TokenSelectorDialog } from '@/popup/components/tokens/TokenSelectorDialog'
+import { TokenSelectorView } from '@/popup/components/tokens/TokenSelectorView'
 import { ShieldProviderLogo, SHIELD_PROVIDERS } from '@/popup/components/portfolio/shield-providers'
 import type { ShieldProvider } from '@/popup/services/asset-domains'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/popup/components/ui/dialog'
@@ -1212,16 +1210,14 @@ function ShieldDepositContent() {
           </section>
         </DialogContent>
       </Dialog>
-      <Dialog open={picker !== null} onOpenChange={open => !open && setPicker(null)}>
+      <Dialog open={picker === 'provider'} onOpenChange={open => !open && setPicker(null)}>
         <DialogContent
           position="bottom"
           showCloseButton={false}
           className="flex max-h-[90dvh] min-h-[320px] flex-col gap-0 bg-background p-0"
         >
           <div className="flex h-14 shrink-0 items-center justify-between px-4">
-            <DialogTitle className="text-base font-medium">
-              {picker === 'provider' ? 'Shield Provider' : 'Select Token'}
-            </DialogTitle>
+            <DialogTitle className="text-base font-medium">Shield Provider</DialogTitle>
             <button
               type="button"
               aria-label="Close"
@@ -1232,70 +1228,65 @@ function ShieldDepositContent() {
             </button>
           </div>
           <DialogDescription className="sr-only">Choose deposit source</DialogDescription>
-          {picker === 'provider' && (
-            <div className="min-h-0 overflow-y-auto px-4 pb-5">
-              {(['near-confidential', 'zcash-shield'] as const).map(item => (
-                <button
-                  key={item}
-                  type="button"
-                  disabled={item === 'near-confidential' ? !canManageNear : !canReceiveZcash}
-                  aria-pressed={provider === item}
-                  onClick={() => selectProvider(item)}
-                  className="wallet-interactive flex h-16 w-full items-center gap-3 rounded-lg px-2 text-left text-sm enabled:hover:bg-wallet-selected disabled:opacity-45"
-                >
-                  <ShieldProviderLogo provider={item} size={32} />
-                  <span className="flex-1">{SHIELD_PROVIDERS[item].detailName}</span>
-                  {provider === item && (
-                    <Icon icon="lucide:check" width={18} className="text-primary" />
-                  )}
-                </button>
-              ))}
-            </div>
-          )}
-          {picker === 'token' && (
-            <div className="min-h-0 overflow-y-auto px-4 pb-5">
-              <TokenSelectionSearch
-                ariaLabel="Search token"
-                placeholder="Search token"
-                value={tokenSearch}
-                onChange={setTokenSearch}
-                className="mb-3 h-12 rounded-lg border-white/10 bg-card"
-              />
-              <TokenSelectionList
-                items={tokenChoices
-                  .filter(choice =>
-                    choice.token.symbol.toLowerCase().includes(tokenSearch.trim().toLowerCase())
-                  )
-                  .map(choice => ({
-                    key: choice.id,
-                    symbol: formatSymbol(choice.token.symbol),
-                    icon: (
-                      <TokenIcon
-                        assetId={choice.token.assetId}
-                        symbol={formatSymbol(choice.token.symbol)}
-                        icon={resolveSwapTokenIconUrl(choice.token)}
-                        size={32}
-                      />
-                    ),
-                    subtitle: choice.distinguish
-                      ? choice.token.contractAddress
-                        ? `${choice.token.contractAddress.slice(0, 8)}...${choice.token.contractAddress.slice(-6)}`
-                        : choice.token.assetId
-                      : undefined,
-                    subtitleTitle: choice.distinguish ? choice.token.assetId : undefined
-                  }))}
-                selectedKey={selectedChoiceId ?? undefined}
-                onSelect={key => {
-                  const choice = tokenChoices.find(item => item.id === key)
-                  if (choice) selectToken(choice)
-                }}
-                variant="deposit"
-                emptyMessage="No tokens found"
-              />
-            </div>
-          )}
+          <div className="min-h-0 overflow-y-auto px-4 pb-5">
+            {(['near-confidential', 'zcash-shield'] as const).map(item => (
+              <button
+                key={item}
+                type="button"
+                disabled={item === 'near-confidential' ? !canManageNear : !canReceiveZcash}
+                aria-pressed={provider === item}
+                onClick={() => selectProvider(item)}
+                className="wallet-interactive flex h-16 w-full items-center gap-3 rounded-lg px-2 text-left text-sm enabled:hover:bg-wallet-selected disabled:opacity-45"
+              >
+                <ShieldProviderLogo provider={item} size={32} />
+                <span className="flex-1">{SHIELD_PROVIDERS[item].detailName}</span>
+                {provider === item && (
+                  <Icon icon="lucide:check" width={18} className="text-primary" />
+                )}
+              </button>
+            ))}
+          </div>
         </DialogContent>
       </Dialog>
+      <TokenSelectorDialog
+        open={picker === 'token'}
+        onOpenChange={open => !open && setPicker(null)}
+      >
+        <TokenSelectorView
+          search={tokenSearch}
+          onSearchChange={setTokenSearch}
+          networks={[]}
+          selectedNetwork="all"
+          onNetworkChange={() => {}}
+          items={tokenChoices
+            .filter(choice =>
+              choice.token.symbol.toLowerCase().includes(tokenSearch.trim().toLowerCase())
+            )
+            .map(choice => ({
+              key: choice.id,
+              symbol: formatSymbol(choice.token.symbol),
+              icon: (
+                <TokenIcon
+                  assetId={choice.token.assetId}
+                  symbol={formatSymbol(choice.token.symbol)}
+                  icon={resolveSwapTokenIconUrl(choice.token)}
+                  size={32}
+                />
+              ),
+              subtitle: choice.distinguish
+                ? choice.token.contractAddress
+                  ? `${choice.token.contractAddress.slice(0, 8)}...${choice.token.contractAddress.slice(-6)}`
+                  : choice.token.assetId
+                : undefined,
+              subtitleTitle: choice.distinguish ? choice.token.assetId : undefined
+            }))}
+          selectedKey={selectedChoiceId ?? undefined}
+          onSelect={key => {
+            const choice = tokenChoices.find(item => item.id === key)
+            if (choice) selectToken(choice)
+          }}
+        />
+      </TokenSelectorDialog>
       <ChainSelector
         open={networkPickerOpen}
         onOpenChange={setNetworkPickerOpen}

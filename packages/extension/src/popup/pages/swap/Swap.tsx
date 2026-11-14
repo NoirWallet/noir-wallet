@@ -4,8 +4,12 @@ import {
   type ShieldSourceTokenPickerItem
 } from '@/popup/components/tokens/ShieldSourceTokenPickerRows'
 import { TokenSelectorView } from '@/popup/components/tokens/TokenSelectorView'
+import {
+  TokenSelectorContent,
+  TokenSelectorDialog,
+  tokenSelectorDialogClassName
+} from '@/popup/components/tokens/TokenSelectorDialog'
 import type { TokenSelectorExtraItem } from '@/popup/components/tokens/TokenSelector'
-import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/popup/components/ui/dialog'
 import { resolveManagedIntentsCatalog } from '@/popup/services/intents-asset-manager-client'
 import {
   listShieldFundingAssets,
@@ -4792,168 +4796,153 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
             (!privateSwapRequested || isSelectablePrivateSource(token))
         )
       await openModal({
-        title: crossChainSendRequested ? 'Select network' : 'Select Token',
         position: 'center',
         showCloseButton: false,
-        className:
-          '!inset-0 !h-dvh !max-h-dvh !w-full !max-w-none !translate-x-0 !translate-y-0 !rounded-none !border-0 !p-0 !gap-0 flex flex-col bg-background shadow-none [&_[data-slot=dialog-header]]:h-14 [&_[data-slot=dialog-header]]:shrink-0 [&_[data-slot=dialog-header]]:justify-center [&_[data-slot=dialog-title]]:text-center [&_[data-slot=dialog-title]]:text-lg [&_[data-slot=dialog-title]]:font-medium',
+        className: tokenSelectorDialogClassName,
         body: resolve => (
-          <>
-            <button
-              type="button"
-              onClick={() => resolve(undefined)}
-              aria-label="Back"
-              className="absolute left-4 top-3 z-10 flex size-8 items-center justify-center"
-            >
-              <Icon icon="lucide:chevron-left" width={22} height={22} />
-            </button>
-            <div className="min-h-0 flex-1 px-4 pb-2">
-              <SwapTokenSelector
-                fullHeight
-                accountScope={effectiveAccount}
-                extraItems={
-                  type === 'in' && ordinarySwapRequested
-                    ? shieldPickerRows
-                        .filter(
-                          row =>
-                            row.key === SHIELD_SWAP_ZEC_TRANSPARENT_SELECTION_ID ||
+          <TokenSelectorContent
+            title={crossChainSendRequested ? 'Select network' : 'Select Token'}
+            onBack={() => resolve(undefined)}
+          >
+            <SwapTokenSelector
+              fullHeight
+              accountScope={effectiveAccount}
+              extraItems={
+                type === 'in' && ordinarySwapRequested
+                  ? shieldPickerRows
+                      .filter(
+                        row =>
+                          row.key === SHIELD_SWAP_ZEC_TRANSPARENT_SELECTION_ID ||
+                          row.key === SHIELD_SWAP_ZEC_NATIVE_SELECTION_ID
+                      )
+                      .map(
+                        (row): TokenSelectorExtraItem => ({
+                          ...shieldSourceSelectionItem(row, balancesHidden),
+                          blockchain: 'zec',
+                          searchTerms: [
+                            'ZEC',
+                            'Zcash',
+                            row.key === SHIELD_SWAP_ZEC_TRANSPARENT_SELECTION_ID
+                              ? 'transparent'
+                              : 'shield'
+                          ],
+                          lowBalance: BigInt(row.availableRaw) <= 0n,
+                          selected:
                             row.key === SHIELD_SWAP_ZEC_NATIVE_SELECTION_ID
-                        )
-                        .map(
-                          (row): TokenSelectorExtraItem => ({
-                            ...shieldSourceSelectionItem(row, balancesHidden),
-                            blockchain: 'zec',
-                            searchTerms: [
-                              'ZEC',
-                              'Zcash',
+                              ? shieldNativeZecSwap
+                              : swap.isZecSource &&
+                                !shieldSwapSelected &&
+                                fundingSource === 'transparent',
+                          onSelect: () => {
+                            resolve(undefined)
+                            selectNativeZecSource(
                               row.key === SHIELD_SWAP_ZEC_TRANSPARENT_SELECTION_ID
                                 ? 'transparent'
-                                : 'shield'
-                            ],
-                            lowBalance: BigInt(row.availableRaw) <= 0n,
-                            selected:
-                              row.key === SHIELD_SWAP_ZEC_NATIVE_SELECTION_ID
-                                ? shieldNativeZecSwap
-                                : swap.isZecSource &&
-                                  !shieldSwapSelected &&
-                                  fundingSource === 'transparent',
-                            onSelect: () => {
-                              resolve(undefined)
-                              selectNativeZecSource(
-                                row.key === SHIELD_SWAP_ZEC_TRANSPARENT_SELECTION_ID
-                                  ? 'transparent'
-                                  : 'shielded'
-                              )
-                            }
-                          })
-                        )
-                    : undefined
-                }
-                unavailableNetworks={getUnavailableSwapNetworks(enabledSwapChains)}
-                initialTokens={
-                  type === 'in'
-                    ? filterSources(swap.sourceTokens)
-                    : filterDestinations(swap.destinationTokens)
-                }
-                loadTokens={(onTokens, isCancelled) =>
-                  swap
-                    .loadSelectorTokens(
-                      type === 'in' ? 'from' : 'cross-chain-to',
-                      tokens =>
-                        onTokens(
-                          type === 'out' ? filterDestinations(tokens) : filterSources(tokens)
-                        ),
-                      isCancelled
-                    )
-                    .then(tokens =>
-                      type === 'out' ? filterDestinations(tokens) : filterSources(tokens)
-                    )
-                }
-                balanceScope={
-                  walletSourcesScope &&
-                  effectiveWalletId &&
-                  effectiveAccountId &&
-                  selectorBalanceMode !== null
-                    ? {
-                        scopeKey: walletSourcesScope,
-                        walletId: effectiveWalletId,
-                        accountId: effectiveAccountId,
-                        initialPortfolio: portfolio,
-                        receiveTargets,
-                        zcashAvailable:
-                          type === 'in'
-                            ? zcashAvailableBalance
-                            : zecDestinationType === 'transparent'
-                              ? getFundingBalance(storeBalance, 'transparent').available
-                              : storeBalance?.available || '0',
-                        evmExecutionMode: selectorBalanceMode
-                      }
-                    : undefined
-                }
-                excludeAssetId={
-                  allowPairSwitch
-                    ? undefined
-                    : type === 'in'
-                      ? swap.tokenOut?.assetId
-                      : swap.tokenIn?.assetId
-                }
-                emptyMessage={
-                  type === 'in'
-                    ? 'No source assets are available'
-                    : 'No destination assets are available'
-                }
-                selectedToken={(type === 'in' ? swap.tokenIn : swap.tokenOut) || undefined}
-                onSelect={(token, selectedPortfolio) => {
-                  if (
-                    selectedPortfolio &&
-                    walletSourcesScope &&
-                    activeScopeRef.current === walletSourcesScope &&
-                    isPortfolioModelForScope(
-                      selectedPortfolio,
-                      effectiveWalletId,
-                      effectiveAccountId
-                    )
-                  ) {
-                    selectedPortfolioVersion.current += 1
-                    updatedPortfolioVersion.current += 1
-                    setPortfolioSnapshot({ scope: walletSourcesScope, value: selectedPortfolio })
-                    cacheSwapWalletSources(walletSourcesScope, {
-                      portfolio: selectedPortfolio,
-                      receiveTargets
-                    })
-                  }
-                  if (
-                    type === 'out' &&
-                    privateDestinationSelectionRequested &&
-                    !isConfidentialSwapDestinationSupported(token)
+                                : 'shielded'
+                            )
+                          }
+                        })
+                      )
+                  : undefined
+              }
+              unavailableNetworks={getUnavailableSwapNetworks(enabledSwapChains)}
+              initialTokens={
+                type === 'in'
+                  ? filterSources(swap.sourceTokens)
+                  : filterDestinations(swap.destinationTokens)
+              }
+              loadTokens={(onTokens, isCancelled) =>
+                swap
+                  .loadSelectorTokens(
+                    type === 'in' ? 'from' : 'cross-chain-to',
+                    tokens =>
+                      onTokens(type === 'out' ? filterDestinations(tokens) : filterSources(tokens)),
+                    isCancelled
                   )
-                    return
-                  resolve(undefined)
-                  const oppositeToken = type === 'in' ? swap.tokenOut : swap.tokenIn
-                  if (
-                    allowPairSwitch &&
-                    oppositeToken &&
-                    findSwapTokenInCatalog([oppositeToken], token)
-                  ) {
-                    handleSwitchTokens()
-                    return
-                  }
-                  reviewAfterQuoteRefresh.current = null
-                  setMaxSelected(false)
-                  if (type === 'in') {
-                    swap.selectTokenIn(token)
-                  } else if (
-                    !crossChainSendRequested ||
-                    isCrossChainSendDestination(swap.tokenIn, token, CROSS_CHAIN_SEND_CAPABILITIES)
-                  ) {
-                    if (requestedDestinationAssetId)
-                      initializedDestinationScope.current = `${walletSourcesScope}:${requestedDestinationAssetId}`
-                    swap.selectTokenOut(token)
-                  }
-                }}
-              />
-            </div>
-          </>
+                  .then(tokens =>
+                    type === 'out' ? filterDestinations(tokens) : filterSources(tokens)
+                  )
+              }
+              balanceScope={
+                walletSourcesScope &&
+                effectiveWalletId &&
+                effectiveAccountId &&
+                selectorBalanceMode !== null
+                  ? {
+                      scopeKey: walletSourcesScope,
+                      walletId: effectiveWalletId,
+                      accountId: effectiveAccountId,
+                      initialPortfolio: portfolio,
+                      receiveTargets,
+                      zcashAvailable:
+                        type === 'in'
+                          ? zcashAvailableBalance
+                          : zecDestinationType === 'transparent'
+                            ? getFundingBalance(storeBalance, 'transparent').available
+                            : storeBalance?.available || '0',
+                      evmExecutionMode: selectorBalanceMode
+                    }
+                  : undefined
+              }
+              excludeAssetId={
+                allowPairSwitch
+                  ? undefined
+                  : type === 'in'
+                    ? swap.tokenOut?.assetId
+                    : swap.tokenIn?.assetId
+              }
+              emptyMessage={
+                type === 'in'
+                  ? 'No source assets are available'
+                  : 'No destination assets are available'
+              }
+              selectedToken={(type === 'in' ? swap.tokenIn : swap.tokenOut) || undefined}
+              onSelect={(token, selectedPortfolio) => {
+                if (
+                  selectedPortfolio &&
+                  walletSourcesScope &&
+                  activeScopeRef.current === walletSourcesScope &&
+                  isPortfolioModelForScope(selectedPortfolio, effectiveWalletId, effectiveAccountId)
+                ) {
+                  selectedPortfolioVersion.current += 1
+                  updatedPortfolioVersion.current += 1
+                  setPortfolioSnapshot({ scope: walletSourcesScope, value: selectedPortfolio })
+                  cacheSwapWalletSources(walletSourcesScope, {
+                    portfolio: selectedPortfolio,
+                    receiveTargets
+                  })
+                }
+                if (
+                  type === 'out' &&
+                  privateDestinationSelectionRequested &&
+                  !isConfidentialSwapDestinationSupported(token)
+                )
+                  return
+                resolve(undefined)
+                const oppositeToken = type === 'in' ? swap.tokenOut : swap.tokenIn
+                if (
+                  allowPairSwitch &&
+                  oppositeToken &&
+                  findSwapTokenInCatalog([oppositeToken], token)
+                ) {
+                  handleSwitchTokens()
+                  return
+                }
+                reviewAfterQuoteRefresh.current = null
+                setMaxSelected(false)
+                if (type === 'in') {
+                  swap.selectTokenIn(token)
+                } else if (
+                  !crossChainSendRequested ||
+                  isCrossChainSendDestination(swap.tokenIn, token, CROSS_CHAIN_SEND_CAPABILITIES)
+                ) {
+                  if (requestedDestinationAssetId)
+                    initializedDestinationScope.current = `${walletSourcesScope}:${requestedDestinationAssetId}`
+                  swap.selectTokenOut(token)
+                }
+              }}
+            />
+          </TokenSelectorContent>
         )
       })
     },
@@ -6679,68 +6668,49 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
           purpose="destination"
         />
       )}
-      <Dialog open={shieldZecPickerOpen} onOpenChange={setShieldZecPickerOpen}>
-        <DialogContent
-          showCloseButton={false}
-          className="!inset-0 !h-dvh !max-h-dvh !w-full !max-w-none !translate-x-0 !translate-y-0 !rounded-none !border-0 !p-0 !gap-0 flex flex-col bg-background shadow-none"
-        >
-          <div className="relative flex h-14 shrink-0 items-center justify-center px-4">
-            <button
-              type="button"
-              aria-label="Back"
-              onClick={() => setShieldZecPickerOpen(false)}
-              className="wallet-interactive absolute left-4 flex size-8 items-center justify-center rounded-md"
-            >
-              <Icon icon="lucide:chevron-left" width={22} height={22} />
-            </button>
-            <DialogTitle className="text-lg font-medium">Select Token</DialogTitle>
-          </div>
-          <DialogDescription className="sr-only">Choose a source asset</DialogDescription>
-          <div className="min-h-0 flex-1 px-4 pb-2">
-            <TokenSelectorView
-              accountScope={effectiveAccount}
-              search={shieldPickerSearch}
-              onSearchChange={setShieldPickerSearch}
-              networks={shieldPickerNetworks}
-              selectedNetwork={shieldPickerNetwork}
-              onNetworkChange={setShieldPickerNetwork}
-              items={shieldPickerRows
-                .filter(row => shieldPickerNetwork === 'all' || row.chainId === shieldPickerNetwork)
-                .filter(
-                  row =>
-                    !shieldPickerSearch.trim() ||
-                    row.symbol.toLowerCase().includes(shieldPickerSearch.trim().toLowerCase())
-                )
-                .map(row => shieldSourceSelectionItem(row, balancesHidden))}
-              lowBalanceKeys={
-                new Set(
-                  shieldPickerRows.filter(row => BigInt(row.availableRaw) <= 0n).map(row => row.key)
-                )
-              }
-              selectedKey={
-                shieldZecSource === 'native-shielded'
-                  ? SHIELD_SWAP_ZEC_NATIVE_SELECTION_ID
-                  : SHIELD_SWAP_ZEC_INTENTS_SELECTION_ID
-              }
-              onSelect={selectionId => {
-                if (selectionId === SHIELD_SWAP_ZEC_TRANSPARENT_SELECTION_ID)
-                  selectNativeZecSource('transparent')
-                else if (selectionId === SHIELD_SWAP_ZEC_NATIVE_SELECTION_ID)
-                  activateShieldNativeZecSwap()
-                else if (selectionId === SHIELD_SWAP_ZEC_INTENTS_SELECTION_ID)
-                  activateShieldIntentsZecSwap()
-                else {
-                  setShieldZecSource('intents')
-                  navigate(
-                    `/shield-swap?${new URLSearchParams({ provider: 'near-confidential', source: selectionId })}`
-                  )
-                }
-                setShieldZecPickerOpen(false)
-              }}
-            />
-          </div>
-        </DialogContent>
-      </Dialog>
+      <TokenSelectorDialog open={shieldZecPickerOpen} onOpenChange={setShieldZecPickerOpen}>
+        <TokenSelectorView
+          accountScope={effectiveAccount}
+          search={shieldPickerSearch}
+          onSearchChange={setShieldPickerSearch}
+          networks={shieldPickerNetworks}
+          selectedNetwork={shieldPickerNetwork}
+          onNetworkChange={setShieldPickerNetwork}
+          items={shieldPickerRows
+            .filter(row => shieldPickerNetwork === 'all' || row.chainId === shieldPickerNetwork)
+            .filter(
+              row =>
+                !shieldPickerSearch.trim() ||
+                row.symbol.toLowerCase().includes(shieldPickerSearch.trim().toLowerCase())
+            )
+            .map(row => shieldSourceSelectionItem(row, balancesHidden))}
+          lowBalanceKeys={
+            new Set(
+              shieldPickerRows.filter(row => BigInt(row.availableRaw) <= 0n).map(row => row.key)
+            )
+          }
+          selectedKey={
+            shieldZecSource === 'native-shielded'
+              ? SHIELD_SWAP_ZEC_NATIVE_SELECTION_ID
+              : SHIELD_SWAP_ZEC_INTENTS_SELECTION_ID
+          }
+          onSelect={selectionId => {
+            if (selectionId === SHIELD_SWAP_ZEC_TRANSPARENT_SELECTION_ID)
+              selectNativeZecSource('transparent')
+            else if (selectionId === SHIELD_SWAP_ZEC_NATIVE_SELECTION_ID)
+              activateShieldNativeZecSwap()
+            else if (selectionId === SHIELD_SWAP_ZEC_INTENTS_SELECTION_ID)
+              activateShieldIntentsZecSwap()
+            else {
+              setShieldZecSource('intents')
+              navigate(
+                `/shield-swap?${new URLSearchParams({ provider: 'near-confidential', source: selectionId })}`
+              )
+            }
+            setShieldZecPickerOpen(false)
+          }}
+        />
+      </TokenSelectorDialog>
     </div>
   )
 }

@@ -38,10 +38,8 @@ import { PageHeader } from '@/popup/components/common/PageHeader'
 import { InlineError } from '@/popup/components/common/InlineError'
 import { AmountDisplay } from '@/popup/components/common/AmountDisplay'
 import { TokenIcon } from '@/popup/components/tokens/TokenIcon'
-import {
-  TokenSelectionList,
-  TokenSelectionSearch
-} from '@/popup/components/tokens/TokenSelectionList'
+import { TokenSelectorDialog } from '@/popup/components/tokens/TokenSelectorDialog'
+import { TokenSelectorView } from '@/popup/components/tokens/TokenSelectorView'
 import { ChainIcon } from '@/popup/components/common/ChainIcon'
 import { ChainSelector, type ChainSelectorOption } from '@/popup/components/common/ChainSelector'
 import { ExecutionAccountIcon } from '@/popup/components/account/ExecutionAccountSelector'
@@ -2229,126 +2227,84 @@ function TransferForm() {
         </Button>
       </div>
 
-      <Dialog open={assetPickerOpen} onOpenChange={setAssetPickerOpen}>
-        <DialogContent
-          position="bottom"
-          data-wallet-mode={walletMode}
-          className="flex max-h-[75dvh] flex-col gap-4 p-4"
-        >
-          <DialogHeader className="shrink-0">
-            <DialogTitle>Select asset</DialogTitle>
-            <DialogDescription className="sr-only">Choose an asset to transfer.</DialogDescription>
-          </DialogHeader>
-          <div className="shrink-0">
-            <TokenSelectionSearch
-              ariaLabel="Search tokens"
-              placeholder="Search token"
-              value={assetSearch}
-              onChange={setAssetSearch}
-              className="h-12 rounded-lg border-white/5 bg-card"
-            />
-          </div>
-          <div className="flex shrink-0 gap-2 overflow-x-auto pb-1">
-            <button
-              type="button"
-              aria-label="All networks"
-              aria-pressed={assetChainId === 'all'}
-              onClick={() => setAssetChainId('all')}
-              className={cn(
-                'wallet-interactive h-10 shrink-0 rounded-md border bg-card px-2 text-sm',
-                assetChainId === 'all' ? 'border-primary' : 'border-white/10'
-              )}
-            >
-              All
-            </button>
-            {Array.from(
-              new Map(pickerRows.map(item => [item.chain.chain.id, item.chain])).values()
-            ).map(chain => (
-              <button
-                key={chain.chain.id}
-                type="button"
-                aria-label={chain.chain.displayName}
-                aria-pressed={assetChainId === chain.chain.id}
-                onClick={() => setAssetChainId(chain.chain.id)}
-                className={cn(
-                  'wallet-interactive flex size-10 shrink-0 items-center justify-center rounded-md border bg-card',
-                  assetChainId === chain.chain.id ? 'border-primary' : 'border-white/10'
-                )}
-              >
-                <ChainIcon
-                  chain={resolveChainIconAlias(
-                    chain.chain.family,
-                    chain.chain.displayName,
-                    chain.chain.id
+      <TokenSelectorDialog
+        open={assetPickerOpen}
+        onOpenChange={setAssetPickerOpen}
+        title="Select asset"
+        walletMode={walletMode}
+      >
+        <TokenSelectorView
+          search={assetSearch}
+          onSearchChange={setAssetSearch}
+          networks={Array.from(
+            new Map(pickerRows.map(item => [item.chain.chain.id, item.chain])).values()
+          ).map(chain => ({
+            id: chain.chain.id,
+            label: chain.chain.displayName,
+            iconChain: resolveChainIconAlias(
+              chain.chain.family,
+              chain.chain.displayName,
+              chain.chain.id
+            )
+          }))}
+          selectedNetwork={assetChainId}
+          onNetworkChange={setAssetChainId}
+          selectedKey={selected?.asset.asset.id}
+          items={pickerRows
+            .filter(
+              item =>
+                (assetChainId === 'all' || item.chain.chain.id === assetChainId) &&
+                `${item.asset.metadata.symbol} ${item.asset.metadata.name} ${item.chain.chain.displayName}`
+                  .toLowerCase()
+                  .includes(assetSearch.trim().toLowerCase())
+            )
+            .map(item => ({
+              key: item.asset.asset.id,
+              symbol: formatSymbol(item.asset.metadata.symbol),
+              icon: (
+                <TokenIcon
+                  assetId={item.asset.asset.id}
+                  symbol={formatSymbol(item.asset.metadata.symbol)}
+                  icon={item.asset.metadata.iconUrl}
+                  blockchain={resolveChainIconAlias(
+                    item.chain.chain.family,
+                    item.chain.chain.displayName,
+                    item.chain.chain.id
                   )}
-                  width={28}
-                  height={28}
+                  size={32}
                 />
-              </button>
-            ))}
-          </div>
-          <div className="min-h-0 overflow-y-auto">
-            <TokenSelectionList
-              variant="transfer"
-              className="space-y-1"
-              items={pickerRows
-                .filter(
-                  item =>
-                    (assetChainId === 'all' || item.chain.chain.id === assetChainId) &&
-                    `${item.asset.metadata.symbol} ${item.asset.metadata.name} ${item.chain.chain.displayName}`
-                      .toLowerCase()
-                      .includes(assetSearch.trim().toLowerCase())
-                )
-                .map(item => ({
-                  key: item.asset.asset.id,
-                  symbol: formatSymbol(item.asset.metadata.symbol),
-                  icon: (
-                    <TokenIcon
-                      assetId={item.asset.asset.id}
-                      symbol={formatSymbol(item.asset.metadata.symbol)}
-                      icon={item.asset.metadata.iconUrl}
-                      blockchain={resolveChainIconAlias(
-                        item.chain.chain.family,
-                        item.chain.chain.displayName,
-                        item.chain.chain.id
-                      )}
-                      size={32}
-                    />
-                  ),
-                  subtitle: item.chain.chain.displayName,
-                  balance: (
-                    <span className="block truncate text-base tabular-nums">
-                      {formatTokenQuantity(
-                        formatBaseUnitAmount(item.sourceRaw, item.asset.metadata.decimals)
-                      )}
-                      <span className="block truncate text-xs text-muted">
-                        {item.valueUsd !== null ? formatFiatAmount(item.valueUsd) : '—'}
-                      </span>
-                    </span>
-                  )
-                }))}
-              onSelect={key => {
-                const item = pickerRows.find(row => row.asset.asset.id === key)
-                if (!item) return
-                userEditedMove.current = true
-                setSelectedAssetId(item.asset.asset.id)
-                setDestinationAssetId(null)
-                setAmount('')
-                setMaxSelected(false)
-                setAssetPickerOpen(false)
-              }}
-              emptyMessage={
-                pickerRows.length === 0
-                  ? loadState === 'loading' ||
-                    (from === 'shield' && shieldConnection === 'checking')
-                    ? 'Loading assets…'
-                    : 'No assets available'
-                  : 'No assets found'
-              }
-            />
-          </div>
-        </DialogContent>
-      </Dialog>
+              ),
+              subtitle: item.chain.chain.displayName,
+              balance: (
+                <span className="block truncate text-base tabular-nums">
+                  {formatTokenQuantity(
+                    formatBaseUnitAmount(item.sourceRaw, item.asset.metadata.decimals)
+                  )}
+                  <span className="block truncate text-xs text-muted">
+                    {item.valueUsd !== null ? formatFiatAmount(item.valueUsd) : '—'}
+                  </span>
+                </span>
+              )
+            }))}
+          onSelect={key => {
+            const item = pickerRows.find(row => row.asset.asset.id === key)
+            if (!item) return
+            userEditedMove.current = true
+            setSelectedAssetId(item.asset.asset.id)
+            setDestinationAssetId(null)
+            setAmount('')
+            setMaxSelected(false)
+            setAssetPickerOpen(false)
+          }}
+          emptyMessage={
+            pickerRows.length === 0
+              ? loadState === 'loading' || (from === 'shield' && shieldConnection === 'checking')
+                ? 'Loading assets…'
+                : 'No assets available'
+              : 'No assets found'
+          }
+        />
+      </TokenSelectorDialog>
       <ChainSelector
         open={networkPickerOpen}
         onOpenChange={setNetworkPickerOpen}

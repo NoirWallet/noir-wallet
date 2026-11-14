@@ -23,6 +23,7 @@ import { AmountDisplay } from '@/popup/components/common/AmountDisplay'
 import { TokenIcon } from '@/popup/components/tokens/TokenIcon'
 import { TokenBalanceDisplay } from '@/popup/components/tokens/TokenBalanceDisplay'
 import { TokenSelectorView } from '@/popup/components/tokens/TokenSelectorView'
+import { TokenSelectorDialog } from '@/popup/components/tokens/TokenSelectorDialog'
 import {
   shieldSourceSelectionItem,
   type ShieldSourceTokenPickerItem
@@ -37,7 +38,6 @@ import {
   type ConfidentialActivityTarget
 } from '@/popup/components/transaction/ConfidentialActivitySheet'
 import { Button } from '@/popup/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/popup/components/ui/dialog'
 import {
   CONFIDENTIAL_PREVIEW_CONNECTION_ERROR,
   confidentialFundingClient,
@@ -1236,85 +1236,67 @@ function ShieldSwapForm({
           Swap
         </Button>
       </div>
-      <Dialog open={active && picker !== null} onOpenChange={open => !open && setPicker(null)}>
-        <DialogContent
-          showCloseButton={false}
-          className="!inset-0 !h-dvh !max-h-dvh !w-full !max-w-none !translate-x-0 !translate-y-0 !rounded-none !border-0 !p-0 !gap-0 flex flex-col bg-background shadow-none"
-        >
-          <div className="relative flex h-14 shrink-0 items-center justify-center px-4">
-            <button
-              type="button"
-              aria-label="Back"
-              onClick={() => setPicker(null)}
-              className="wallet-interactive absolute left-4 flex size-8 items-center justify-center rounded-md focus-visible:outline-2 focus-visible:outline-primary"
-            >
-              <Icon icon="lucide:chevron-left" width={22} height={22} />
-            </button>
-            <DialogTitle className="text-lg font-medium">Select Token</DialogTitle>
-          </div>
-          <DialogDescription className="sr-only">Choose a token for this swap</DialogDescription>
-          <div className="min-h-0 flex-1 px-4 pb-2">
-            <TokenSelectorView
-              accountScope={account}
-              search={search}
-              onSearchChange={setSearch}
-              networks={pickerNetworks}
-              selectedNetwork={pickerNetwork}
-              onNetworkChange={setPickerNetwork}
-              items={pickerItems}
-              selectedKey={
-                picker === 'from'
-                  ? (zecSourceOptions.find(
-                      option => option.intentsWalletAssetId === confidentialFromAssetId
-                    )?.selectionId ??
-                    fromId ??
-                    undefined)
-                  : to?.asset.asset.id
-              }
-              lowBalanceKeys={
-                new Set(
-                  picker === 'from'
-                    ? fromPickerItems
-                        .filter(item => {
-                          try {
-                            return BigInt(item.availableRaw) <= 0n
-                          } catch {
-                            return true
-                          }
-                        })
-                        .map(item => item.key)
-                    : pickable
-                        .filter(asset => shieldSwapFormBalance(asset, displayBalances) === '0')
-                        .map(asset => asset.asset.asset.id)
-                )
-              }
-              onSelect={key => {
-                if (picker === 'to') {
-                  setToId(key)
-                  setError(null)
-                } else if (key === SHIELD_SWAP_ZEC_TRANSPARENT_SELECTION_ID) {
-                  onSelectTransparentZecSwap?.()
-                } else if (key === SHIELD_SWAP_ZEC_NATIVE_SELECTION_ID) {
-                  onSelectNativeZecSwap?.()
-                } else {
-                  const intents = zecSourceOptions.find(option => option.kind === 'intents')
-                  setFromId(
-                    key === SHIELD_SWAP_ZEC_INTENTS_SELECTION_ID
-                      ? (intents?.intentsWalletAssetId ?? key)
-                      : key
-                  )
-                  setAmount('')
-                  setError(null)
-                }
-                setPicker(null)
-              }}
-              emptyMessage={
-                status === 'loading' ? 'Loading Shield tokens…' : 'No Shield tokens found'
-              }
-            />
-          </div>
-        </DialogContent>
-      </Dialog>
+      <TokenSelectorDialog
+        open={active && picker !== null}
+        onOpenChange={open => !open && setPicker(null)}
+      >
+        <TokenSelectorView
+          accountScope={account}
+          search={search}
+          onSearchChange={setSearch}
+          networks={pickerNetworks}
+          selectedNetwork={pickerNetwork}
+          onNetworkChange={setPickerNetwork}
+          items={pickerItems}
+          selectedKey={
+            picker === 'from'
+              ? (zecSourceOptions.find(
+                  option => option.intentsWalletAssetId === confidentialFromAssetId
+                )?.selectionId ??
+                fromId ??
+                undefined)
+              : to?.asset.asset.id
+          }
+          lowBalanceKeys={
+            new Set(
+              picker === 'from'
+                ? fromPickerItems
+                    .filter(item => {
+                      try {
+                        return BigInt(item.availableRaw) <= 0n
+                      } catch {
+                        return true
+                      }
+                    })
+                    .map(item => item.key)
+                : pickable
+                    .filter(asset => shieldSwapFormBalance(asset, displayBalances) === '0')
+                    .map(asset => asset.asset.asset.id)
+            )
+          }
+          onSelect={key => {
+            if (picker === 'to') {
+              setToId(key)
+              setError(null)
+            } else if (key === SHIELD_SWAP_ZEC_TRANSPARENT_SELECTION_ID) {
+              onSelectTransparentZecSwap?.()
+            } else if (key === SHIELD_SWAP_ZEC_NATIVE_SELECTION_ID) {
+              onSelectNativeZecSwap?.()
+            } else {
+              const intents = zecSourceOptions.find(option => option.kind === 'intents')
+              setFromId(
+                key === SHIELD_SWAP_ZEC_INTENTS_SELECTION_ID
+                  ? (intents?.intentsWalletAssetId ?? key)
+                  : key
+              )
+              setAmount('')
+              setError(null)
+            }
+            setPicker(null)
+          }}
+          emptyMessage={status === 'loading' ? 'Loading Shield tokens…' : 'No Shield tokens found'}
+        />
+      </TokenSelectorDialog>
     </div>
   )
 }

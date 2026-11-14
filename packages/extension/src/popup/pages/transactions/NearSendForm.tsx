@@ -3,7 +3,6 @@ import { parseNearAccountId } from '@/core/chains/near'
 import type { PortfolioAssetView, PortfolioChainView } from '@/core/portfolio'
 import { formatSortAddress } from '@/lib/format'
 import { AmountDisplay } from '@/popup/components/common/AmountDisplay'
-import { BalanceDomainTabs } from '@/popup/components/account/BalanceDomainTabs'
 import {
   formatBaseUnitAmount,
   formatBaseUnitDecimalAmount,
@@ -12,24 +11,19 @@ import {
 } from '@/lib/number-format'
 import { formatPortfolioNetworkName } from '@/popup/components/portfolio/portfolio-format'
 import { Icon } from '@iconify/react'
-import { TokenIcon } from '@/popup/components/tokens/TokenIcon'
+import { TransactionReviewView } from '@/popup/components/transaction/TransactionReviewView'
 import { RecipientSelector } from '@/popup/components/transaction/RecipientSelector'
 import {
   SendAssetHeader,
   SendAmountInputCard,
-  SendAmountRow,
+  SendFormActions,
+  SendFormView,
+  SendFieldLabel,
   SendRouteInfoCard,
   SendRecipientAddress,
   SendRecipientInputCard
 } from '@/popup/components/transaction/SendInputCards'
-import { Button } from '@/popup/components/ui/button'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle
-} from '@/popup/components/ui/dialog'
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/popup/components/ui/dialog'
 import { openModal } from '@/popup/provider/ModalManager'
 import {
   nearWalletClient,
@@ -61,15 +55,6 @@ interface PreparedReview {
   readonly recipient: string
   readonly amountRaw: string
   readonly value: NearTransferReview
-}
-
-function ReviewLine({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="flex min-w-0 items-start justify-between gap-4 py-2.5">
-      <span className="shrink-0 text-xs text-muted">{label}</span>
-      <div className="min-w-0 text-right text-xs font-medium">{children}</div>
-    </div>
-  )
 }
 
 export function NearSendForm({
@@ -321,90 +306,94 @@ export function NearSendForm({
 
   return (
     <>
-      <div className="page-content flex flex-col gap-4">
-        <div className="order-3">
-          <SendAmountRow
-            amountInput={
-              <SendAmountInputCard
-                ariaLabel={`${asset.metadata.symbol} amount`}
-                value={amount}
-                onChange={value => {
-                  if (/^\d*\.?\d*$/.test(value)) {
-                    invalidateMaximum()
-                    setAmount(value)
-                  }
-                }}
-                available={transferAvailability.display}
-                symbol={asset.metadata.symbol}
-                priceUsd={priceUsd}
-                inline
-              />
-            }
-            assetSelector={
-              <SendAssetHeader
-                assetId={asset.asset.id}
-                symbol={asset.metadata.symbol}
-                icon={asset.metadata.iconUrl}
-                networkName={networkName}
-                nativeChain={asset.asset.kind === 'native' ? 'near' : undefined}
-                blockchain={asset.asset.kind === 'token' ? 'near' : undefined}
-                variant="pill"
-              />
-            }
-            balance={
-              <span title={transferAvailability.display}>
-                {formatTokenQuantity(transferAvailability.display)}
-              </span>
-            }
-            maxButton={
-              <button
-                type="button"
-                aria-label="Max"
-                aria-pressed={maxSelected}
-                disabled={
-                  BigInt(asset.balance.availableRaw) <= 0n ||
-                  (asset.asset.kind === 'native' && !parsedRecipient) ||
-                  maximum.loading
-                }
-                onClick={() => void handleMaximum()}
-                className="rounded-md bg-white/10 px-2 py-1 font-medium text-muted aria-pressed:bg-primary/15 aria-pressed:text-primary disabled:opacity-40"
-              >
-                Max
-              </button>
-            }
-          />
-        </div>
-
-        <div className="order-1 flex items-center justify-between gap-3">
-          <span className="text-sm text-muted">Send from</span>
-          <BalanceDomainTabs value="public" available={['public']} onChange={() => {}} />
-        </div>
-
-        <div className="order-2">
-          <div className="mb-2 flex items-center justify-between text-xs">
-            <span className="text-muted">Send to</span>
-            <span>{networkName}</span>
-          </div>
-          <SendRecipientInputCard
-            id="near-send-recipient"
-            value={recipient}
+      <SendFormView
+        domain="public"
+        availableDomains={['public']}
+        onDomainChange={() => {}}
+        amountInput={
+          <SendAmountInputCard
+            ariaLabel={`${asset.metadata.symbol} amount`}
+            value={amount}
             onChange={value => {
-              invalidateMaximum()
-              if (maxSelected) setAmount('')
-              setRecipient(value.trim())
-              setSelectedRecipient(null)
+              if (/^\d*\.?\d*$/.test(value)) {
+                invalidateMaximum()
+                setAmount(value)
+              }
             }}
-            placeholder={recipientPlaceholder}
-            variant="filled"
-            hideLabel
-            onSelectRecipient={() => void handleSelectRecipient()}
+            available={transferAvailability.display}
+            symbol={asset.metadata.symbol}
+            priceUsd={priceUsd}
+            inline
           />
-          {recipient && !parsedRecipient && (
-            <p className="mt-2 px-1 text-xs text-danger">Enter a valid NEAR account ID.</p>
-          )}
-        </div>
-
-        <div className="order-4">
+        }
+        assetSelector={
+          <SendAssetHeader
+            assetId={asset.asset.id}
+            symbol={asset.metadata.symbol}
+            icon={asset.metadata.iconUrl}
+            networkName={networkName}
+            nativeChain={asset.asset.kind === 'native' ? 'near' : undefined}
+            blockchain={asset.asset.kind === 'token' ? 'near' : undefined}
+            variant="pill"
+          />
+        }
+        balance={
+          <span title={transferAvailability.display}>
+            {formatTokenQuantity(transferAvailability.display)}
+          </span>
+        }
+        maxButton={
+          <button
+            type="button"
+            aria-label="Max"
+            aria-pressed={maxSelected}
+            disabled={
+              BigInt(asset.balance.availableRaw) <= 0n ||
+              (asset.asset.kind === 'native' && !parsedRecipient) ||
+              maximum.loading
+            }
+            onClick={() => void handleMaximum()}
+            className="rounded-md bg-white/10 px-2 py-1 font-medium text-muted aria-pressed:bg-primary/15 aria-pressed:text-primary disabled:opacity-40"
+          >
+            Max
+          </button>
+        }
+        recipient={
+          <div className="space-y-2">
+            <div className="flex items-center justify-between text-xs">
+              <SendFieldLabel>Send to</SendFieldLabel>
+              <span>{networkName}</span>
+            </div>
+            <SendRecipientInputCard
+              id="near-send-recipient"
+              value={recipient}
+              onChange={value => {
+                invalidateMaximum()
+                if (maxSelected) setAmount('')
+                setRecipient(value.trim())
+                setSelectedRecipient(null)
+              }}
+              placeholder={recipientPlaceholder}
+              variant="filled"
+              hideLabel
+              onSelectRecipient={() => void handleSelectRecipient()}
+            />
+            {recipient && !parsedRecipient && (
+              <p className="mt-2 px-1 text-xs text-danger">Enter a valid NEAR account ID.</p>
+            )}
+          </div>
+        }
+        footer={
+          <SendFormActions
+            disabled={
+              !amountWithinBalance || !parsedRecipient || maximumPending || feePreview.loading
+            }
+            loading={preparing || feePreview.loading}
+            onContinue={handleContinue}
+          />
+        }
+      >
+        <div>
           <SendRouteInfoCard
             fee={
               <span>
@@ -432,20 +421,7 @@ export function NearSendForm({
             {error}
           </p>
         )}
-      </div>
-
-      <div className="page-footer">
-        <Button
-          className="h-[45px] w-full"
-          disabled={
-            !amountWithinBalance || !parsedRecipient || maximumPending || feePreview.loading
-          }
-          isLoading={preparing || feePreview.loading}
-          onClick={handleContinue}
-        >
-          Continue
-        </Button>
-      </div>
+      </SendFormView>
 
       <Dialog
         open={review !== null}
@@ -455,73 +431,75 @@ export function NearSendForm({
       >
         <DialogContent
           position="bottom"
-          className="max-h-[calc(100dvh-12px)] gap-0 overflow-y-auto p-0"
-          showCloseButton={!approving}
+          className="flex h-dvh max-h-dvh flex-col gap-0 overflow-hidden rounded-none border-0 bg-background p-0 shadow-none"
+          showCloseButton={false}
+          aria-labelledby="near-send-review-title"
         >
-          <DialogHeader className="px-5 pb-4 pt-5">
-            <DialogTitle className="text-center">Review Send</DialogTitle>
-            <DialogDescription className="sr-only">
-              Review the NEAR recipient and maximum network fee before signing.
-            </DialogDescription>
-          </DialogHeader>
+          <DialogTitle className="sr-only" aria-hidden="true">
+            Confirm Send
+          </DialogTitle>
+          <DialogDescription className="sr-only">
+            Review the NEAR recipient and maximum network fee before signing.
+          </DialogDescription>
 
           {review && summary?.schema === 'near.transaction.v1' && (
-            <>
-              <div className="flex flex-col items-center pb-4">
-                <TokenIcon
-                  assetId={asset.asset.id}
-                  symbol={asset.metadata.symbol}
-                  icon={asset.metadata.iconUrl}
-                  nativeChain={asset.asset.kind === 'native' ? 'near' : undefined}
-                  blockchain={asset.asset.kind === 'token' ? 'near' : undefined}
-                  size="xl"
-                />
-                <div className="mt-3 max-w-full text-center text-2xl font-bold">
-                  <AmountDisplay value={reviewAmount} symbol={asset.metadata.symbol} />
-                </div>
-                <p className="mt-1 text-xs text-muted">{networkName}</p>
-              </div>
-
-              <div className="mx-5 rounded-xl border border-border/60 bg-card/60 px-4">
-                <ReviewLine label="Send To">
-                  <SendRecipientAddress
-                    address={review.recipient}
-                    name={
-                      selectedRecipient?.address === review.recipient
-                        ? selectedRecipient.name
-                        : undefined
-                    }
-                  />
-                </ReviewLine>
-                <ReviewLine label="From">
-                  <span className="font-mono text-muted" title={summary.fields.signerId}>
-                    {formatSortAddress(summary.fields.signerId)}
-                  </span>
-                </ReviewLine>
-                <ReviewLine label="Network fee">
-                  <AmountDisplay value={fee} symbol="NEAR" profile="fee" />
-                </ReviewLine>
-                {asset.asset.kind === 'native' && (
-                  <ReviewLine label="Maximum total">
-                    <AmountDisplay value={total} symbol="NEAR" />
-                  </ReviewLine>
-                )}
-              </div>
-
-              <div className="flex gap-3 p-5">
-                <Button
-                  variant="outline"
-                  className="h-[45px] flex-1"
-                  disabled={approving}
-                  onClick={() => void handleCloseReview()}
-                >
-                  Cancel
-                </Button>
-                <Button className="h-[45px] flex-1" isLoading={approving} onClick={handleApprove}>
-                  Send
-                </Button>
-              </div>
-            </>
+            <TransactionReviewView
+              title="Confirm Send"
+              titleId="near-send-review-title"
+              variant="figma"
+              asset={{
+                assetId: asset.asset.id,
+                symbol: asset.metadata.symbol,
+                icon: asset.metadata.iconUrl,
+                nativeChain: asset.asset.kind === 'native' ? 'near' : undefined,
+                blockchain: asset.asset.kind === 'token' ? 'near' : undefined
+              }}
+              amount={reviewAmount}
+              amountPrefix="-"
+              network={networkName}
+              rows={[
+                {
+                  label: 'Recipient',
+                  content: (
+                    <SendRecipientAddress
+                      address={review.recipient}
+                      name={
+                        selectedRecipient?.address === review.recipient
+                          ? selectedRecipient.name
+                          : undefined
+                      }
+                    />
+                  )
+                },
+                {
+                  label: 'From',
+                  content: (
+                    <span className="font-mono text-muted" title={summary.fields.signerId}>
+                      {formatSortAddress(summary.fields.signerId)}
+                    </span>
+                  )
+                },
+                { label: 'Network', content: networkName },
+                {
+                  label: 'Network fee',
+                  content: <AmountDisplay value={fee} symbol="NEAR" profile="fee" />
+                },
+                ...(asset.asset.kind === 'native'
+                  ? [
+                      {
+                        label: 'Maximum total',
+                        content: <AmountDisplay value={total} symbol="NEAR" />
+                      }
+                    ]
+                  : [])
+              ]}
+              confirmLabel="Confirm"
+              confirming={approving}
+              submitting={approving}
+              cancelDisabled={approving}
+              onCancel={() => void handleCloseReview()}
+              onConfirm={handleApprove}
+            />
           )}
         </DialogContent>
       </Dialog>

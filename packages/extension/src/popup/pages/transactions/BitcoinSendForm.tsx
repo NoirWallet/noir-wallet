@@ -7,16 +7,8 @@ import {
 } from '@/core/chains/bitcoin'
 import { formatSortAddress } from '@/lib/format'
 import { AmountDisplay } from '@/popup/components/common/AmountDisplay'
-import { BalanceDomainTabs } from '@/popup/components/account/BalanceDomainTabs'
-import { Button } from '@/popup/components/ui/button'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle
-} from '@/popup/components/ui/dialog'
-import { TokenIcon } from '@/popup/components/tokens/TokenIcon'
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/popup/components/ui/dialog'
+import { TransactionReviewView } from '@/popup/components/transaction/TransactionReviewView'
 import {
   BitcoinWalletClientError,
   bitcoinWalletClient,
@@ -53,7 +45,9 @@ import { NetworkFeeTierPicker } from '@/popup/components/transaction/NetworkFeeT
 import {
   SendAssetHeader,
   SendAmountInputCard,
-  SendAmountRow,
+  SendFormActions,
+  SendFormView,
+  SendFieldLabel,
   SendRouteInfoCard,
   SendRecipientAddress,
   SendRecipientInputCard
@@ -82,15 +76,6 @@ interface PreparedReview {
   readonly amountRaw: string
   readonly feeTier: NetworkFeeTier
   readonly value: BitcoinTransferReview
-}
-
-function ReviewLine({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="flex min-w-0 items-start justify-between gap-4 py-2.5">
-      <span className="shrink-0 text-xs text-muted">{label}</span>
-      <div className="min-w-0 text-right text-xs font-medium">{children}</div>
-    </div>
-  )
 }
 
 export function BitcoinSendForm({
@@ -463,97 +448,101 @@ export function BitcoinSendForm({
 
   return (
     <>
-      <div className="page-content flex flex-col gap-4">
-        <div className="order-3">
-          <SendAmountRow
-            amountInput={
-              <SendAmountInputCard
-                ariaLabel="BTC amount"
-                value={amount}
-                onChange={value => {
-                  if (/^\d*\.?\d*$/.test(value)) {
-                    setAmount(value)
-                    setSendMaximum(false)
-                  }
-                }}
-                available={availableDisplay}
-                symbol="BTC"
-                priceUsd={balanceKnown ? priceUsd : null}
-                inline
-              />
-            }
-            assetSelector={
-              <SendAssetHeader
-                assetId={asset.asset.id}
-                symbol="BTC"
-                icon={asset.metadata.iconUrl}
-                networkName={formatPortfolioNetworkName(chain)}
-                nativeChain="bitcoin"
-                variant="pill"
-              />
-            }
-            balance={
-              <span title={balanceKnown ? availableDisplay : undefined}>
-                {balanceKnown ? formatTokenQuantity(availableDisplay) : '—'}
-              </span>
-            }
-            maxButton={
-              <button
-                type="button"
-                aria-label="Max"
-                aria-pressed={sendMaximum}
-                disabled={
-                  !balanceKnown ||
-                  BigInt(selectedAvailableRaw) <= 0n ||
-                  !parsedRecipient ||
-                  maximum.loading
-                }
-                onClick={() => {
-                  setSendMaximum(true)
-                  void maximum.request()
-                }}
-                className="rounded-md bg-white/10 px-2 py-1 font-medium text-muted aria-pressed:bg-primary/15 aria-pressed:text-primary disabled:opacity-40"
-              >
-                Max
-              </button>
-            }
-          />
-        </div>
-
-        <div className="order-1 flex items-center justify-between gap-3">
-          <span className="text-sm text-muted">Send from</span>
-          <BalanceDomainTabs value="public" available={['public']} onChange={() => {}} />
-        </div>
-
-        <div className="order-2">
-          <div className="mb-2 flex items-center justify-between text-xs">
-            <span className="text-muted">Send to</span>
-            <span>{formatPortfolioNetworkName(chain)}</span>
-          </div>
-          <SendRecipientInputCard
-            id="bitcoin-send-recipient"
-            value={recipient}
+      <SendFormView
+        domain="public"
+        availableDomains={['public']}
+        onDomainChange={() => {}}
+        amountInput={
+          <SendAmountInputCard
+            ariaLabel="BTC amount"
+            value={amount}
             onChange={value => {
-              setRecipient(value.trim())
-              setSelectedRecipient(null)
+              if (/^\d*\.?\d*$/.test(value)) {
+                setAmount(value)
+                setSendMaximum(false)
+              }
             }}
-            placeholder={
-              chain.chain.network.kind === 'testnet' ? 'Bitcoin testnet address' : 'Bitcoin address'
-            }
-            variant="filled"
-            hideLabel
-            onSelectRecipient={() => void handleSelectRecipient()}
+            available={availableDisplay}
+            symbol="BTC"
+            priceUsd={balanceKnown ? priceUsd : null}
+            inline
           />
-          {recipient && !parsedRecipient && (
-            <p className="mt-2 px-1 text-xs text-danger">
-              {chain.chain.network.kind === 'testnet'
-                ? 'Enter a valid Bitcoin testnet address.'
-                : 'Enter a valid Bitcoin address.'}
-            </p>
-          )}
-        </div>
-
-        <div className="order-4">
+        }
+        assetSelector={
+          <SendAssetHeader
+            assetId={asset.asset.id}
+            symbol="BTC"
+            icon={asset.metadata.iconUrl}
+            networkName={formatPortfolioNetworkName(chain)}
+            nativeChain="bitcoin"
+            variant="pill"
+          />
+        }
+        balance={
+          <span title={balanceKnown ? availableDisplay : undefined}>
+            {balanceKnown ? formatTokenQuantity(availableDisplay) : '—'}
+          </span>
+        }
+        maxButton={
+          <button
+            type="button"
+            aria-label="Max"
+            aria-pressed={sendMaximum}
+            disabled={
+              !balanceKnown ||
+              BigInt(selectedAvailableRaw) <= 0n ||
+              !parsedRecipient ||
+              maximum.loading
+            }
+            onClick={() => {
+              setSendMaximum(true)
+              void maximum.request()
+            }}
+            className="rounded-md bg-white/10 px-2 py-1 font-medium text-muted aria-pressed:bg-primary/15 aria-pressed:text-primary disabled:opacity-40"
+          >
+            Max
+          </button>
+        }
+        recipient={
+          <div className="space-y-2">
+            <div className="flex items-center justify-between text-xs">
+              <SendFieldLabel>Send to</SendFieldLabel>
+              <span>{formatPortfolioNetworkName(chain)}</span>
+            </div>
+            <SendRecipientInputCard
+              id="bitcoin-send-recipient"
+              value={recipient}
+              onChange={value => {
+                setRecipient(value.trim())
+                setSelectedRecipient(null)
+              }}
+              placeholder={
+                chain.chain.network.kind === 'testnet'
+                  ? 'Bitcoin testnet address'
+                  : 'Bitcoin address'
+              }
+              variant="filled"
+              hideLabel
+              onSelectRecipient={() => void handleSelectRecipient()}
+            />
+            {recipient && !parsedRecipient && (
+              <p className="mt-2 px-1 text-xs text-danger">
+                {chain.chain.network.kind === 'testnet'
+                  ? 'Enter a valid Bitcoin testnet address.'
+                  : 'Enter a valid Bitcoin address.'}
+              </p>
+            )}
+          </div>
+        }
+        footer={
+          <SendFormActions
+            disabled={!validAmount || !parsedRecipient || maximum.loading || feePreview.loading}
+            loading={preparing || maximum.loading || feePreview.loading}
+            onContinue={handleContinue}
+          />
+        }
+      >
+        <div>
           <SendRouteInfoCard
             fee={
               <div className="flex min-w-0 items-center gap-1.5">
@@ -603,18 +592,7 @@ export function BitcoinSendForm({
             {error}
           </p>
         )}
-      </div>
-
-      <div className="page-footer">
-        <Button
-          className="h-[45px] w-full"
-          disabled={!validAmount || !parsedRecipient || maximum.loading || feePreview.loading}
-          isLoading={preparing || maximum.loading || feePreview.loading}
-          onClick={handleContinue}
-        >
-          Continue
-        </Button>
-      </div>
+      </SendFormView>
 
       <Dialog
         open={review !== null}
@@ -624,76 +602,77 @@ export function BitcoinSendForm({
       >
         <DialogContent
           position="bottom"
-          className="max-h-[calc(100dvh-12px)] gap-0 overflow-y-auto p-0"
-          showCloseButton={!approving}
+          className="flex h-dvh max-h-dvh flex-col gap-0 overflow-hidden rounded-none border-0 bg-background p-0 shadow-none"
+          showCloseButton={false}
+          aria-labelledby="bitcoin-send-review-title"
         >
-          <DialogHeader className="px-5 pb-4 pt-5">
-            <DialogTitle className="text-center">Review Send</DialogTitle>
-            <DialogDescription className="sr-only">
-              Review the Bitcoin recipient, inputs, and exact network fee before sending.
-            </DialogDescription>
-          </DialogHeader>
+          <DialogTitle className="sr-only" aria-hidden="true">
+            Confirm Send
+          </DialogTitle>
+          <DialogDescription className="sr-only">
+            Review the Bitcoin recipient, inputs, and exact network fee before sending.
+          </DialogDescription>
 
           {review && summary?.schema === 'bitcoin.psbt.v1' && (
-            <>
-              <div className="flex flex-col items-center pb-4">
-                <TokenIcon symbol="BTC" nativeChain="bitcoin" size="xl" />
-                <div className="mt-3 max-w-full px-5 text-center text-2xl font-bold">
-                  <AmountDisplay value={reviewAmount} symbol="BTC" />
-                </div>
-                <p className="mt-1 text-xs text-muted">{formatPortfolioNetworkName(chain)}</p>
-              </div>
-
-              <div className="mx-5 rounded-xl border border-border/60 bg-card/60 px-4">
-                <ReviewLine label="Send To">
-                  <SendRecipientAddress
-                    address={review.recipient}
-                    name={
-                      selectedRecipient?.address === review.recipient
-                        ? selectedRecipient.name
-                        : undefined
-                    }
-                  />
-                </ReviewLine>
-                <ReviewLine label="Network">{formatPortfolioNetworkName(chain)}</ReviewLine>
-                <ReviewLine label="From">
-                  <span className="font-mono text-muted" title={summary.fields.signer}>
-                    {formatSortAddress(summary.fields.signer)}
-                  </span>
-                </ReviewLine>
-                <ReviewLine label="Inputs">{summary.fields.inputs.length}</ReviewLine>
-                <ReviewLine label="Network fee">
-                  <NetworkFeeTierPicker
-                    chainFamily="bitcoin"
-                    tier={review.feeTier}
-                    amount={fee}
-                    symbol="BTC"
-                    onTierChange={handleReviewFeeTierChange}
-                    disabled={updatingFee || approving}
-                  />
-                </ReviewLine>
-                <ReviewLine label="Total">
-                  <AmountDisplay value={total} symbol="BTC" />
-                </ReviewLine>
-                <ReviewLine label="Address type">
-                  {formatBitcoinInputAddressType(summary.fields.inputs)}
-                </ReviewLine>
-              </div>
-
-              <div className="flex gap-3 p-5">
-                <Button
-                  variant="outline"
-                  className="h-[45px] flex-1"
-                  disabled={approving}
-                  onClick={() => void handleCloseReview()}
-                >
-                  Cancel
-                </Button>
-                <Button className="h-[45px] flex-1" isLoading={approving} onClick={handleApprove}>
-                  Send
-                </Button>
-              </div>
-            </>
+            <TransactionReviewView
+              title="Confirm Send"
+              titleId="bitcoin-send-review-title"
+              variant="figma"
+              asset={{ symbol: 'BTC', nativeChain: 'bitcoin' }}
+              amount={reviewAmount}
+              amountPrefix="-"
+              network={formatPortfolioNetworkName(chain)}
+              rows={[
+                {
+                  label: 'Recipient',
+                  content: (
+                    <SendRecipientAddress
+                      address={review.recipient}
+                      name={
+                        selectedRecipient?.address === review.recipient
+                          ? selectedRecipient.name
+                          : undefined
+                      }
+                    />
+                  )
+                },
+                { label: 'Network', content: formatPortfolioNetworkName(chain) },
+                {
+                  label: 'From',
+                  content: (
+                    <span className="font-mono text-muted" title={summary.fields.signer}>
+                      {formatSortAddress(summary.fields.signer)}
+                    </span>
+                  )
+                },
+                { label: 'Inputs', content: summary.fields.inputs.length },
+                {
+                  label: 'Network fee',
+                  content: (
+                    <NetworkFeeTierPicker
+                      chainFamily="bitcoin"
+                      tier={review.feeTier}
+                      amount={fee}
+                      symbol="BTC"
+                      onTierChange={handleReviewFeeTierChange}
+                      disabled={updatingFee || approving}
+                    />
+                  )
+                },
+                { label: 'Total', content: <AmountDisplay value={total} symbol="BTC" /> },
+                {
+                  label: 'Address type',
+                  content: formatBitcoinInputAddressType(summary.fields.inputs)
+                }
+              ]}
+              confirmLabel="Confirm"
+              confirming={approving}
+              submitting={approving}
+              preparing={updatingFee}
+              cancelDisabled={approving}
+              onCancel={() => void handleCloseReview()}
+              onConfirm={handleApprove}
+            />
           )}
         </DialogContent>
       </Dialog>

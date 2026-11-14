@@ -464,8 +464,8 @@ function App() {
   const isEvmWalletChoice = initialPath.split('?')[0] === '/evm-wallet-choice'
 
   return (
-    <ModalProvider>
-      <RouterProvider initialPath={initialPath}>
+    <RouterProvider initialPath={initialPath}>
+      <ModalProvider>
         <DialogProvider>
           {isEvmWalletChoice ? (
             <div className="flex h-full w-full items-center justify-center bg-background">
@@ -482,8 +482,8 @@ function App() {
             </>
           )}
         </DialogProvider>
-      </RouterProvider>
-    </ModalProvider>
+      </ModalProvider>
+    </RouterProvider>
   )
 }
 
