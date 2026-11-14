@@ -29,13 +29,18 @@ function privacyLabel(address: AccountNetworkAddressView): 'Shielded' | 'Transpa
   return address.privacy === 'transparent' ? 'Transparent' : 'Shielded'
 }
 
-const blockTimeCache = new Map<string, number>()
+const BLOCK_TIME_CACHE_TTL_MS = 60_000
+const blockTimeCache = new Map<string, { timestamp: number; fetchedAt: number }>()
 const pendingBlockTimes = new Map<string, DedupPromise<number>>()
 
 async function getCachedBlockTime(height: number): Promise<number> {
   const key = `${DEFAULT_NETWORK}:${height}`
   const cached = blockTimeCache.get(key)
-  if (cached !== undefined) return cached
+  if (cached) {
+    const age = Date.now() - cached.fetchedAt
+    if (age >= 0 && age < BLOCK_TIME_CACHE_TTL_MS) return cached.timestamp
+    blockTimeCache.delete(key)
+  }
 
   let pending = pendingBlockTimes.get(key)
   if (!pending) {
@@ -47,7 +52,7 @@ async function getCachedBlockTime(height: number): Promise<number> {
     return await pending.run(
       () => zcashWalletRuntimeClient.getBlockTime(height),
       timestamp => {
-        blockTimeCache.set(key, timestamp)
+        blockTimeCache.set(key, { timestamp, fetchedAt: Date.now() })
       }
     )
   } finally {
