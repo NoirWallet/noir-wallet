@@ -150,6 +150,7 @@ async function harness(
     authSignatures: 0,
     monitoring: 0,
     refreshes: 0,
+    refreshTargets: [],
     statuses: withdraws.map(() => (phase === 'processing' ? 'PROCESSING' : 'PENDING_DEPOSIT')),
     settledOutputs: new Map(),
     session: {
@@ -355,8 +356,9 @@ async function harness(
       scheduleMonitoring: async () => {
         state.monitoring += 1
       },
-      refreshPortfolio: async () => {
+      refreshPortfolio: async target => {
         state.refreshes += 1
+        state.refreshTargets.push(target ?? null)
       }
     })
   return { initial, state, store, repository, restart }
@@ -1733,6 +1735,7 @@ test.describe('confidential funding persisted recovery', () => {
     ])
     h.state.statuses = ['SUCCESS', 'PROCESSING', 'PROCESSING']
     expect((await h.restart().continuePlan(h.initial.planId)).phase).toBe('processing')
+    expect(h.state.refreshTargets).toEqual([{ ...scope, chainIds: ['eip155:1'] }])
     h.state.statuses = ['PROCESSING', 'SUCCESS', null]
     const intermediate = await h.restart().continuePlan(h.initial.planId)
     expect(intermediate.withdraws.map(row => row.status)).toEqual([
@@ -1741,6 +1744,10 @@ test.describe('confidential funding persisted recovery', () => {
       'PROCESSING'
     ])
     expect(intermediate.withdraws[0].transactionHash).toBe('hash-0')
+    expect(h.state.refreshTargets).toEqual([
+      { ...scope, chainIds: ['eip155:1'] },
+      { ...scope, chainIds: ['eip155:1'] }
+    ])
     h.state.statuses = ['FAILED', 'PROCESSING', 'SUCCESS']
     const ready = await h.restart().continuePlan(h.initial.planId)
     expect(ready.phase).toBe('ready')
@@ -1751,9 +1758,10 @@ test.describe('confidential funding persisted recovery', () => {
     expect(
       graph.segments.filter(row => row.role === 'destination').every(row => row.status === 'final')
     ).toBe(true)
-    expect(h.state.refreshes).toBe(1)
+    expect(h.state.refreshes).toBe(3)
+    expect(h.state.refreshTargets.at(-1)).toBeNull()
     await h.restart().resumeAll()
-    expect(h.state.refreshes).toBe(1)
+    expect(h.state.refreshes).toBe(3)
   })
 
   test('keeps a destination hash visible while a confidential withdraw is processing', async () => {
@@ -1777,7 +1785,7 @@ test.describe('confidential funding persisted recovery', () => {
     const partial = await h.restart().continuePlan(h.initial.planId)
     expect(partial.phase).toBe('partial')
     expect(partial.withdraws.map(row => row.status)).toEqual(['SUCCESS', 'REFUNDED', 'FAILED'])
-    expect(h.state.refreshes).toBe(1)
+    expect(h.state.refreshes).toBe(2)
     expect(h.state.submissions).toHaveLength(0)
   })
 

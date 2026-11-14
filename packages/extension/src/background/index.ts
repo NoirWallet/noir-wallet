@@ -1280,18 +1280,31 @@ async function reloadMultichainRuntime(
         intentsProtocolAssets,
         intentsFullCatalogTokens,
         settings,
-        async () => {
-          await portfolioCoordinator?.refreshActive()
-          const { currentWalletId, currentAccountId } = useWalletStore.getState()
-          if (currentWalletId && currentAccountId) {
-            await chrome.runtime
-              .sendMessage({
-                type: 'PORTFOLIO_UPDATED',
-                walletId: currentWalletId,
-                accountId: currentAccountId
-              })
-              .catch(() => {})
+        async target => {
+          if (!portfolioCoordinator) return
+          if (target) {
+            const active = await portfolioCoordinator.readCachedActive()
+            if (
+              active?.scope.keyDomainId !== target.keyDomainId ||
+              active.scope.accountId !== target.accountId
+            )
+              return
           }
+          const refreshed = await portfolioCoordinator.refreshActive(target?.chainIds)
+          if (
+            !refreshed ||
+            (target &&
+              (refreshed.scope.keyDomainId !== target.keyDomainId ||
+                refreshed.scope.accountId !== target.accountId))
+          )
+            return
+          await chrome.runtime
+            .sendMessage({
+              type: 'PORTFOLIO_UPDATED',
+              walletId: refreshed.scope.keyDomainId,
+              accountId: refreshed.scope.accountId
+            })
+            .catch(() => {})
         },
         confidentialFundingStore
       )

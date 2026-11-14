@@ -228,7 +228,13 @@ export interface ConfidentialFundingCoordinatorOptions {
   readonly protocolTokens?: readonly SwapToken[]
   readonly getProtocolTokens?: () => readonly SwapToken[]
   readonly scheduleMonitoring?: () => Promise<void>
-  readonly refreshPortfolio?: () => Promise<void>
+  readonly refreshPortfolio?: (
+    target?: Readonly<{
+      keyDomainId: string
+      accountId: string
+      chainIds: readonly string[]
+    }>
+  ) => Promise<void>
   readonly onActivityChanged?: (
     scope: Readonly<{
       network: Network
@@ -3840,6 +3846,15 @@ export class ConfidentialFundingCoordinator {
             : undefined
       })
     })
+    const newlySettled = rows.some((row, index) => {
+      const current = normalizeStatus(row.status)
+      const previous = normalizeStatus(plan.withdraws[index].status)
+      return (
+        (current === 'SUCCESS' || current === 'COMPLETED') &&
+        previous !== 'SUCCESS' &&
+        previous !== 'COMPLETED'
+      )
+    })
     const settlement = aggregateConfidentialSettlement(rows.map(row => row.status))
     for (const row of rows) {
       const status = normalizeStatus(row.status)
@@ -3886,6 +3901,14 @@ export class ConfidentialFundingCoordinator {
     if (isTerminalPhase(next.phase)) {
       await this.readAndCacheBalancesForPlan(next, accessToken).catch(() => [])
       await this.options.refreshPortfolio?.().catch(() => {})
+    } else if (newlySettled) {
+      await this.options
+        .refreshPortfolio?.({
+          keyDomainId: plan.keyDomainId,
+          accountId: plan.accountId,
+          chainIds: [plan.destination.chainId]
+        })
+        .catch(() => {})
     }
     return next
   }

@@ -25,7 +25,8 @@ import { accountContextTransition } from './account-context-transition'
 import { ConfidentialFundingApi } from './confidential-funding-api'
 import {
   CONFIDENTIAL_FUNDING_MONITOR_ALARM,
-  ConfidentialFundingCoordinator
+  ConfidentialFundingCoordinator,
+  type ConfidentialFundingCoordinatorOptions
 } from './confidential-funding-coordinator'
 import { ConfidentialFundingSigner } from './confidential-funding-signer'
 import { ChromeConfidentialFundingStore } from './confidential-funding-store'
@@ -37,7 +38,7 @@ export function createBackgroundConfidentialFundingCoordinator(
   protocolAssets: readonly AssetDefinitionInput[],
   protocolTokens: readonly SwapToken[],
   endpointSettings: ChainEndpointSettings,
-  refreshPortfolio: () => Promise<void>,
+  refreshPortfolio: NonNullable<ConfidentialFundingCoordinatorOptions['refreshPortfolio']>,
   store: ChromeConfidentialFundingStore = new ChromeConfidentialFundingStore()
 ): ConfidentialFundingCoordinator | null {
   const config = getConfidentialFundingNetworkConfig(DEFAULT_NETWORK)
