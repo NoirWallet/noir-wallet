@@ -23,12 +23,37 @@ import { getOwnExtensionSenderContext } from '@/lib/runtime-message-security'
 import { useWalletStore } from '@/store/wallet-store'
 import { DEFAULT_NETWORK } from '@/lib/runtime-network'
 import { getZcashDerivationPaths } from '@/lib/zcash-derivation'
+import { DedupPromise } from '@/lib/async-utils'
 
 function privacyLabel(address: AccountNetworkAddressView): 'Shielded' | 'Transparent' {
   return address.privacy === 'transparent' ? 'Transparent' : 'Shielded'
 }
 
 const blockTimeCache = new Map<string, number>()
+const pendingBlockTimes = new Map<string, DedupPromise<number>>()
+
+async function getCachedBlockTime(height: number): Promise<number> {
+  const key = `${DEFAULT_NETWORK}:${height}`
+  const cached = blockTimeCache.get(key)
+  if (cached !== undefined) return cached
+
+  let pending = pendingBlockTimes.get(key)
+  if (!pending) {
+    pending = new DedupPromise<number>()
+    pendingBlockTimes.set(key, pending)
+  }
+
+  try {
+    return await pending.run(
+      () => zcashWalletRuntimeClient.getBlockTime(height),
+      timestamp => {
+        blockTimeCache.set(key, timestamp)
+      }
+    )
+  } finally {
+    if (pendingBlockTimes.get(key) === pending) pendingBlockTimes.delete(key)
+  }
+}
 
 export function ZcashSettings() {
   const openResyncZcash = useResyncZcash()
@@ -155,10 +180,7 @@ export function ZcashSettings() {
         if (height <= 0 || source === 'fallback') return
 
         try {
-          const blockKey = `${DEFAULT_NETWORK}:${height}`
-          const timestamp =
-            blockTimeCache.get(blockKey) ?? (await zcashWalletRuntimeClient.getBlockTime(height))
-          blockTimeCache.set(blockKey, timestamp)
+          const timestamp = await getCachedBlockTime(height)
           if (!cancelled) {
             setBirthdayDate(
               getBirthdayDateFromBlockTimestamp(timestamp)?.format('MMM D, YYYY') ?? null
