@@ -1,4 +1,4 @@
-import { createInitialProductChainRegistry, type ChainDefinition } from '@/core/chains/registry'
+import type { ChainDefinition } from '@/core/chains/registry'
 import type { AccountData, Network, WalletItem } from '@/types'
 
 export type AccountNetworkFamily = ChainDefinition['family']
@@ -11,18 +11,6 @@ const FAMILIES = new Set<AccountNetworkFamily>([
   'tron',
   'near'
 ])
-const BUILTIN_CHAIN_IDS: Record<Network, ReadonlySet<string>> = {
-  mainnet: new Set(
-    createInitialProductChainRegistry('mainnet')
-      .list()
-      .map(chain => chain.id)
-  ),
-  testnet: new Set(
-    createInitialProductChainRegistry('testnet')
-      .list()
-      .map(chain => chain.id)
-  )
-}
 
 export function parseSelectedNetworkFamilies(value: unknown): readonly AccountNetworkFamily[] {
   if (
@@ -91,9 +79,7 @@ export function isAccountChainEnabled(
 ): boolean {
   if (!isAccountNetworkEnabled(account, network, family)) return false
   const selected = account.networkChainSelections?.[network]
-  return selected === undefined
-    ? BUILTIN_CHAIN_IDS[network].has(chainId)
-    : parseSelectedChainIds(selected).includes(chainId)
+  return selected === undefined || parseSelectedChainIds(selected).includes(chainId)
 }
 
 export function isRetainedV1UpgradeAccount(

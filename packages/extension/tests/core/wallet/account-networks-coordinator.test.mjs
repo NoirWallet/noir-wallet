@@ -235,6 +235,14 @@ test.describe('Account networks coordinator', () => {
         'evm',
         'eip155:999'
       )
+    ).toBe(true)
+    expect(
+      isAccountChainEnabled(
+        { networkSelections: { testnet: ['zcash'] } },
+        'testnet',
+        'evm',
+        'eip155:999'
+      )
     ).toBe(false)
     expect(
       isAccountChainEnabled(

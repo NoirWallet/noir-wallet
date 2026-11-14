@@ -54,13 +54,6 @@ export function ManageAccountNetworksPage() {
   const guideMode =
     params.get('guide') === 'v1' && isRetainedV1UpgradeAccount(wallet, account, currentNetwork)
   const available = useMemo(() => availableSoftwareAccountFamilies(), [])
-  const builtinChains = useMemo(
-    () =>
-      createBuildFeatureGatedChainRegistry(
-        createInitialProductChainRegistry(DEFAULT_NETWORK)
-      ).list(),
-    []
-  )
   const chains = useMemo(
     () =>
       createBuildFeatureGatedChainRegistry(
@@ -77,7 +70,7 @@ export function ManageAccountNetworksPage() {
   )
   const initial =
     account?.networkChainSelections?.[DEFAULT_NETWORK] ??
-    builtinChains
+    chains
       .filter(chain =>
         (account?.networkSelections?.[DEFAULT_NETWORK] ?? available).includes(chain.family)
       )
@@ -124,7 +117,7 @@ export function ManageAccountNetworksPage() {
     initializedScope.current = scope
     setSelected(
       account?.networkChainSelections?.[DEFAULT_NETWORK] ??
-        builtinChains
+        chains
           .filter(chain =>
             (account?.networkSelections?.[DEFAULT_NETWORK] ?? available).includes(chain.family)
           )
@@ -132,7 +125,7 @@ export function ManageAccountNetworksPage() {
     )
     setGuideStartingChains(
       account?.networkChainSelections?.[DEFAULT_NETWORK] ??
-        builtinChains
+        chains
           .filter(chain =>
             (account?.networkSelections?.[DEFAULT_NETWORK] ?? available).includes(chain.family)
           )
@@ -146,7 +139,7 @@ export function ManageAccountNetworksPage() {
     attempts.current.invalidate()
     savingRef.current = false
     setSaving(false)
-  }, [walletId, accountId, currentNetwork, account, available, builtinChains])
+  }, [walletId, accountId, currentNetwork, account, available, chains])
 
   if (
     !walletId ||
