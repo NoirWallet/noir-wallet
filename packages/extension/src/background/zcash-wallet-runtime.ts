@@ -1107,6 +1107,13 @@ export class BackgroundZcashWalletRuntime {
       storePatch.syncReason = null
     }
     this.accountDataStore.setWalletSyncStateFor(this.network, walletId, storePatch)
+    if (!state.isSyncing) {
+      for (const account of this.store.getWallet(walletId)?.accounts ?? []) {
+        if (isAccountNetworkEnabled(account, this.network, 'zcash')) {
+          this.broadcastPortfolioUpdate(walletId, account.id)
+        }
+      }
+    }
 
     this.broadcastSyncProgress({
       ...state,
@@ -1154,6 +1161,12 @@ export class BackgroundZcashWalletRuntime {
 
   private setBalanceFor(walletId: string, accountId: string, balance: ZcashBalance): void {
     this.accountDataStore.setBalanceFor(this.network, walletId, accountId, balance)
+    this.broadcastPortfolioUpdate(walletId, accountId)
+  }
+
+  private broadcastPortfolioUpdate(walletId: string, accountId: string): void {
+    // Unified asset views read Background's projection rather than SYNC_PROGRESS balances.
+    chrome.runtime.sendMessage({ type: 'PORTFOLIO_UPDATED', walletId, accountId }).catch(() => {})
   }
 
   private broadcastBalanceUpdate(walletId: string, accountId: string, balance: ZcashBalance): void {
