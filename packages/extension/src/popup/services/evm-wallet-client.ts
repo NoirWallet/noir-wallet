@@ -259,9 +259,14 @@ function parseFeeEstimate(
     'gasLimit'
   ]
   const hasAmountIndependent = Object.prototype.hasOwnProperty.call(record, 'amountIndependent')
+  const hasFeeModel = Object.prototype.hasOwnProperty.call(record, 'transactionType')
   assertExactKeys(
     record,
-    hasAmountIndependent ? [...expectedKeys, 'amountIndependent'] : expectedKeys,
+    [
+      ...expectedKeys,
+      ...(hasFeeModel ? ['transactionType', 'gasPriceWei'] : []),
+      ...(hasAmountIndependent ? ['amountIndependent'] : [])
+    ],
     'EVM fee estimate'
   )
   if (hasAmountIndependent && typeof record.amountIndependent !== 'boolean') {
@@ -291,6 +296,17 @@ function parseFeeEstimate(
   }
   if (BigInt(record.maxPriorityFeePerGasWei as string) > maxFeePerGas) {
     throw new Error('Invalid EVM priority fee estimate')
+  }
+  if (
+    hasFeeModel &&
+    !(
+      (record.transactionType === 'eip1559' && record.gasPriceWei === null) ||
+      (record.transactionType === 'legacy' &&
+        record.gasPriceWei === record.maxFeePerGasWei &&
+        record.maxPriorityFeePerGasWei === '0')
+    )
+  ) {
+    throw new Error('Invalid EVM fee model estimate')
   }
   if (record.amountIndependent === true && (!nativeTransfer || gasLimit !== 21_000n)) {
     throw new Error('Invalid EVM amount-independent estimate')

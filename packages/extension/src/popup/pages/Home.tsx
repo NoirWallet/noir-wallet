@@ -161,6 +161,10 @@ export function Home() {
     currentNetwork
   )
   const [shieldIntroSeen, setShieldIntroSeen] = useState(true)
+  const showShieldIntro =
+    showV1NetworkGuide &&
+    !currentAccount?.networkSelections?.[currentNetwork]?.includes('evm') &&
+    !shieldIntroSeen
   useEffect(() => {
     if (!showV1NetworkGuide || !currentWalletId || !currentAccountId) return
     const key = `v1_shield_intro_seen:${currentWalletId}:${currentAccountId}`
@@ -995,7 +999,7 @@ export function Home() {
         <div
           data-testid="home-actions"
           data-layout={isTestnet ? 'centered' : 'distributed'}
-          className={`${showV1NetworkGuide && !shieldIntroSeen ? 'mb-1' : 'mb-5'} flex justify-evenly gap-[13px] px-4`}
+          className={`${showShieldIntro ? 'mb-1' : 'mb-5'} flex justify-evenly gap-[13px] px-4`}
         >
           {actionDomain === 'public' && (
             <>
@@ -1046,7 +1050,7 @@ export function Home() {
             )}
           <div
             className={
-              showV1NetworkGuide && !shieldIntroSeen
+              showShieldIntro
                 ? 'relative flex min-w-0 flex-1 rounded-xl ring-2 ring-[#00d18a]/45'
                 : 'relative flex min-w-0 flex-1'
             }
@@ -1054,7 +1058,7 @@ export function Home() {
             <WalletActionButton
               icon={<WalletShieldFundsIcon />}
               label="Shielded"
-              active={showV1NetworkGuide && !shieldIntroSeen}
+              active={showShieldIntro}
               disabled={modeSwitchPending}
               onClick={() => {
                 if (showV1NetworkGuide && currentWalletId && currentAccountId) {
@@ -1068,7 +1072,7 @@ export function Home() {
             />
           </div>
         </div>
-        {showV1NetworkGuide && !shieldIntroSeen && (
+        {showShieldIntro && (
           <div className="relative mx-4 mb-5 min-h-[97px]">
             <img
               src={shieldGuideBackground}

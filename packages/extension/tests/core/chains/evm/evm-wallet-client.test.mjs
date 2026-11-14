@@ -247,6 +247,8 @@ test.describe('Popup EVM wallet client', () => {
     const calls = []
     const estimate = {
       chainId,
+      transactionType: 'eip1559',
+      gasPriceWei: null,
       maximumFeeWei: '63000',
       maxFeePerGasWei: '3',
       maxPriorityFeePerGasWei: '1',
@@ -304,6 +306,25 @@ test.describe('Popup EVM wallet client', () => {
     await expect(wrongFee.estimateTransferFee(intent)).rejects.toMatchObject({
       code: 'invalid-response'
     })
+    const legacy = {
+      ...estimate,
+      transactionType: 'legacy',
+      gasPriceWei: '3',
+      maxPriorityFeePerGasWei: '0'
+    }
+    await expect(
+      createEvmWalletClient(async () => ({ result: legacy })).estimateTransferFee(intent)
+    ).resolves.toEqual(legacy)
+    for (const invalid of [
+      { ...estimate, transactionType: 'unknown' },
+      { ...estimate, gasPriceWei: '3' },
+      { ...legacy, gasPriceWei: '4' },
+      { ...legacy, maxPriorityFeePerGasWei: '1' }
+    ]) {
+      await expect(
+        createEvmWalletClient(async () => ({ result: invalid })).estimateTransferFee(intent)
+      ).rejects.toMatchObject({ code: 'invalid-response' })
+    }
   })
   test('binds an allowance read to its chain and selected owner and rejects malformed values', async () => {
     const messages = []
