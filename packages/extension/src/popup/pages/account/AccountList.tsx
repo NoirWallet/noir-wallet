@@ -20,7 +20,7 @@ import { cn } from '@/lib/utils'
 import { useWalletStore } from '@/store/wallet-store'
 import { useAccountDataStore } from '@/store/account-data-store'
 import { useSettingsStore } from '@/store/settings-store'
-import { formatWalletName, getAccountDisplayName } from '@/lib/format'
+import { getAccountDisplayName } from '@/lib/format'
 import { formatFiatAmount } from '@/lib/number-format'
 import type { AccountData, WalletItem } from '@/types'
 import type { AccountPortfolioValueSnapshot } from '@/core/wallet/account-portfolio-value'
@@ -431,11 +431,8 @@ export function AccountList() {
                               catalogNetworksByAccount.get(accountListKey(wallet.id, account.id)) ??
                               []
                             }
-                            walletDisplayName={formatWalletName(wallet, wallets)}
-                            showWalletName={true}
                             switchingAccountKey={switchingAccountKey}
                             onSelect={handleAccountSelect}
-                            onRenameWallet={name => handleWalletRename(wallet.id, name)}
                             onRenameAccount={name =>
                               handleAccountRename(wallet.id, account.id, name)
                             }
@@ -559,7 +556,6 @@ export function AccountList() {
                               catalogNetworksByAccount.get(accountListKey(wallet.id, account.id)) ??
                               []
                             }
-                            showWalletName={false}
                             switchingAccountKey={switchingAccountKey}
                             onSelect={handleAccountSelect}
                             onRenameAccount={name =>
@@ -636,11 +632,8 @@ export function AccountList() {
                               catalogNetworksByAccount.get(accountListKey(wallet.id, account.id)) ??
                               []
                             }
-                            walletDisplayName={formatWalletName(wallet, wallets)}
-                            showWalletName={true}
                             switchingAccountKey={switchingAccountKey}
                             onSelect={handleAccountSelect}
-                            onRenameWallet={name => handleWalletRename(wallet.id, name)}
                             onRenameAccount={name =>
                               handleAccountRename(wallet.id, account.id, name)
                             }
@@ -747,11 +740,6 @@ function NativeAccountItem({
                 endContent={<AccountChainIcons networks={account.networks} />}
               />
             </div>
-            {isPrivateKey && (
-              <p className="truncate text-xs text-muted" title={account.walletDisplayName}>
-                {account.walletDisplayName}
-              </p>
-            )}
             {switching || removing ? (
               <Icon
                 icon="lucide:loader-2"
@@ -824,12 +812,9 @@ function AccountItem({
   account,
   wallet,
   networks,
-  walletDisplayName,
-  showWalletName = true,
   switchingAccountKey,
   onSelect,
   onAddAccount,
-  onRenameWallet,
   onRenameAccount,
   addingAccount = false,
   portfolioValue,
@@ -838,12 +823,9 @@ function AccountItem({
   account: AccountData
   wallet: WalletItem
   networks: readonly AccountNetworkView[]
-  walletDisplayName?: string
-  showWalletName?: boolean
   switchingAccountKey: string | null
   onSelect: (accountId: string, walletId: string) => void
   onAddAccount?: () => void
-  onRenameWallet?: (name: string) => Promise<void>
   onRenameAccount: (name: string) => Promise<void>
   addingAccount?: boolean
   portfolioValue: AccountPortfolioValueSnapshot | null
@@ -852,10 +834,8 @@ function AccountItem({
   const { navigate } = useNavigate()
   const { currentWalletId, getCurrentAccount, accountDisplayNames } = useWalletStore()
   const currentAccount = getCurrentAccount()
-  const [editingAccountName, setEditingAccountName] = useState(false)
-  const [editingWalletName, setEditingWalletName] = useState(false)
+  const [editingName, setEditingName] = useState(false)
   const selectionStartedWhileEditing = useRef(false)
-  const editingName = editingAccountName || editingWalletName
 
   const displayName = getAccountDisplayName(
     wallet.id,
@@ -898,7 +878,7 @@ function AccountItem({
                 value={displayName}
                 kind="account"
                 onSave={onRenameAccount}
-                onEditingChange={setEditingAccountName}
+                onEditingChange={setEditingName}
                 className="text-base font-medium leading-[21px]"
                 disabled={switchingAccountKey === itemKey}
                 endContent={<AccountChainIcons networks={networks} />}
@@ -914,23 +894,6 @@ function AccountItem({
             ) : (
               <AccountTotalValue snapshot={portfolioValue} hidden={balancesHidden} />
             )}
-            {showWalletName &&
-              (onRenameWallet ? (
-                <InlineEditableName
-                  value={walletDisplayName || wallet.name}
-                  kind="wallet"
-                  onSave={onRenameWallet}
-                  onEditingChange={setEditingWalletName}
-                  className="text-xs text-muted"
-                />
-              ) : (
-                <span
-                  className="block max-w-full truncate text-xs text-muted"
-                  title={walletDisplayName || wallet.name}
-                >
-                  {walletDisplayName || wallet.name}
-                </span>
-              ))}
           </div>
           <div className="pointer-events-auto flex shrink-0 items-center gap-1">
             <SelectedAccountIndicator selected={isActiveAccount} />
