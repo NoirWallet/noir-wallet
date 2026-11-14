@@ -614,8 +614,7 @@ const TRUSTED_RUNTIME_SCHEMAS: Readonly<Record<string, RuntimeMessageSchema>> = 
         value === 'private-transfer' ||
         value === 'private-cross-chain-send' ||
         value === 'public-private-send',
-      zcashFundingSource: (value: unknown) =>
-        value === 'transparent' || value === 'shielded'
+      zcashFundingSource: (value: unknown) => value === 'transparent' || value === 'shielded'
     }
   },
   SELECT_RHEA_SWAP_ROUTE: {
