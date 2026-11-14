@@ -6,10 +6,29 @@ interface TokenIconCandidateInput {
   readonly token?: Pick<SwapToken, 'blockchain' | 'contractAddress' | 'icon' | 'coingeckoIcon'>
   readonly icon?: string
   readonly assetId?: string
+  readonly symbol?: string
   readonly blockchain?: string
   readonly nativeChain?: string
   readonly bundledIcon?: string
   readonly contractIcon?: string
+}
+
+const customTokenIcons: Readonly<Record<string, string>> = Object.freeze({
+  [MARKET_ASSETS.eth]: 'https://assets.zknoir.com/chain/ethereum.svg'
+})
+
+export function formatTokenIcon({
+  assetId,
+  token,
+  symbol,
+  icon
+}: Pick<TokenIconCandidateInput, 'assetId' | 'token' | 'symbol' | 'icon'>): string | undefined {
+  const marketAsset = isBundledEthIconIdentity(assetId, token, symbol)
+    ? MARKET_ASSETS.eth
+    : assetId
+      ? findBundledWalletMarketAssetId(assetId)
+      : null
+  return (marketAsset ? customTokenIcons[marketAsset] : undefined) ?? icon
 }
 
 const nativeAssetIconUrls: Readonly<Record<string, string>> = Object.freeze({
@@ -129,6 +148,7 @@ export function getTokenIconCandidates({
   token,
   icon,
   assetId,
+  symbol,
   bundledIcon,
   contractIcon
 }: TokenIconCandidateInput): readonly string[] {
@@ -141,6 +161,7 @@ export function getTokenIconCandidates({
       ? nativeIcon
       : undefined
   const candidates = [
+    formatTokenIcon({ assetId, token, symbol }),
     bundledIcon,
     preferredNativeIcon,
     providerIcon,

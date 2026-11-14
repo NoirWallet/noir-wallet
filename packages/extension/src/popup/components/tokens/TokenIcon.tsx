@@ -90,6 +90,7 @@ export function TokenIcon({
     token,
     icon: iconProp ?? catalogIcon,
     assetId,
+    symbol,
     blockchain,
     nativeChain,
     bundledIcon,

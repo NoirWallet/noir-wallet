@@ -103,7 +103,10 @@ test('ignores stale bundled icon URLs in persisted token metadata', () => {
       token: { blockchain: 'eth', contractAddress: null, icon: 'chrome-extension://old/eth.svg' },
       bundledIcon: 'https://coin-images.coingecko.com/coins/images/279/large/ethereum.png'
     })
-  ).toEqual(['https://coin-images.coingecko.com/coins/images/279/large/ethereum.png'])
+  ).toEqual([
+    'https://assets.zknoir.com/chain/ethereum.svg',
+    'https://coin-images.coingecko.com/coins/images/279/large/ethereum.png'
+  ])
 })
 
 test('uses trusted built-in native assets only for a branded fallback', () => {

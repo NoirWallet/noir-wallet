@@ -13,7 +13,7 @@ const candidates = (assetId, blockchain = 'arb', contractAddress = null) =>
     icon: 'https://tokens.example/cached-eth.png'
   })
 
-test('wallet and Swap ETH identities preserve supplied token artwork across networks', () => {
+test('wallet and Swap ETH identities share custom artwork with supplied fallbacks across networks', () => {
   const expected = candidates('eip155:1/slip44:60', 'eth')
   for (const assetId of [
     'eip155:42161/slip44:60',
@@ -26,13 +26,17 @@ test('wallet and Swap ETH identities preserve supplied token artwork across netw
   ]) {
     assert.deepEqual(candidates(assetId), expected, assetId)
   }
-  assert.deepEqual(expected, [providerIcon, 'https://tokens.example/cached-eth.png'])
+  assert.deepEqual(expected, [
+    'https://assets.zknoir.com/chain/ethereum.svg',
+    providerIcon,
+    'https://tokens.example/cached-eth.png'
+  ])
   assert.deepEqual(
     getTokenIconCandidates({
       assetId: 'nep141:arb.omft.near',
       token: { blockchain: 'arb', contractAddress: null, icon: 'https://tokens.example/to.png' }
     }),
-    ['https://tokens.example/to.png']
+    ['https://assets.zknoir.com/chain/ethereum.svg', 'https://tokens.example/to.png']
   )
 })
 
