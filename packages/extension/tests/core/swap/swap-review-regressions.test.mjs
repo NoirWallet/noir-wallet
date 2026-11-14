@@ -17,6 +17,7 @@ import {
 } from '../../../src/popup/services/shield-swap-zec-sources.ts'
 import {
   getRheaSwapErrorMessage,
+  getRheaSwapQuoteFailure,
   RheaSwapClientError
 } from '../../../src/popup/services/rhea-swap-client.ts'
 import { getSwapQuoteFailureMessage } from '../../../src/popup/services/swap-quote-error-message.ts'
@@ -325,6 +326,14 @@ it('keeps minimum amounts while removing nested provider metadata without changi
     'Minimum swap amount is $1,000.'
   )
   assert.equal(getSwapQuoteFailureMessage(new Error('No route found')), 'no route')
+  assert.deepEqual(getRheaSwapQuoteFailure(new RheaSwapClientError('No route found')), {
+    message: 'no route',
+    retryable: false
+  })
+  assert.deepEqual(getRheaSwapQuoteFailure(new RheaSwapClientError('fetch failed')), {
+    message: 'Network error. Please check your internet connection.',
+    retryable: true
+  })
   assert.equal(getSwapQuoteFailureMessage(new Error('Shield balance is insufficient')), null)
   assert.equal(getSwapQuoteFailureMessage(new Error('Confidential quote has expired')), null)
   assert.equal(

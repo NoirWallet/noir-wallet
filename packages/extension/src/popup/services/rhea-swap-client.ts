@@ -48,6 +48,19 @@ export function getRheaSwapErrorMessage(error: unknown): string {
   )
 }
 
+export function getRheaSwapQuoteFailure(error: unknown): {
+  message: string
+  retryable: boolean
+} {
+  const specific = getSwapQuoteFailureMessage(error)
+  return {
+    message: getRheaSwapErrorMessage(error),
+    retryable: specific
+      ? specific === 'Request timed out.' || specific === 'Quote unavailable. Please try again.'
+      : classifyError(error).retryable
+  }
+}
+
 interface RuntimeMessenger {
   (message: Readonly<Record<string, unknown>>): Promise<unknown>
 }

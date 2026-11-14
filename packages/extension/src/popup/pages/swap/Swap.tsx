@@ -192,8 +192,11 @@ import {
 } from '@/popup/services/portfolio-cache'
 
 import { resolveEffectiveActiveAccountIdentity } from '@/popup/lib/effective-active-account'
-import { getRheaSwapErrorMessage, rheaSwapClient } from '@/popup/services/rhea-swap-client'
-import { SWAP_QUOTE_DISPLAY_ERROR } from '@/popup/services/swap-quote-error-message'
+import {
+  getRheaSwapErrorMessage,
+  getRheaSwapQuoteFailure,
+  rheaSwapClient
+} from '@/popup/services/rhea-swap-client'
 import {
   intentsAssetManagerClient,
   resolveManagedIntentsCatalogAsset
@@ -2899,6 +2902,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
           } catch (error) {
             if (requestSequence !== quoteRequestSequence.current) return
             const classified = classifyError(error)
+            const quoteFailure = getRheaSwapQuoteFailure(error)
             console.error('[Private Transfer] Quote failed', {
               flow: isPrivateFunding
                 ? 'main-to-private'
@@ -2916,8 +2920,8 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
             setQuoteReceivedAt(null)
             swap.setAmountOut('')
             swap.setDepositAddress('')
-            swap.setQuoteError(SWAP_QUOTE_DISPLAY_ERROR)
-            setQuoteRetryable(classified.retryable)
+            swap.setQuoteError(quoteFailure.message)
+            setQuoteRetryable(quoteFailure.retryable)
           } finally {
             if (requestSequence === quoteRequestSequence.current) swap.setIsQuoting(false)
           }
@@ -5027,8 +5031,9 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
         setLiveQuoteKey(null)
         setQuoteReceivedAt(null)
         swap.setAmountOut('')
-        setQuoteRetryable(true)
-        swap.setQuoteError(SWAP_QUOTE_DISPLAY_ERROR)
+        const quoteFailure = getRheaSwapQuoteFailure(error)
+        setQuoteRetryable(quoteFailure.retryable)
+        swap.setQuoteError(quoteFailure.message)
       }
     } finally {
       if (sequence === quoteRequestSequence.current) swap.setIsQuoting(false)
