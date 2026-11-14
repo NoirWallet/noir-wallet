@@ -60,7 +60,7 @@ const chainLabels = Object.freeze({
 const chainIconAliases = Object.freeze({
   zcash: 'zcash',
   bitcoin: 'bitcoin',
-  evm: 'ethereum',
+  evm: 'evm',
   solana: 'solana',
   tron: 'tron',
   near: 'near'
