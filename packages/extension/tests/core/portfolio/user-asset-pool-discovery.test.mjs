@@ -69,7 +69,7 @@ function serviceFor(responseFactory, options = {}) {
   const service = new DexScreenerPoolDiscoveryService({
     resolvePolicy: getUserAssetDexPoolDiscoveryPolicy,
     cache: cache.repository,
-    now: () => options.now ?? NOW,
+    now: () => (typeof options.now === 'function' ? options.now() : (options.now ?? NOW)),
     fetch: async (url, init) => {
       requests.push({ url: String(url), init })
       return responseFactory()
@@ -180,7 +180,8 @@ test('discovers by exact chain and contract, rejects a price outlier, and caches
 
 test('requires the exact token as base and a trusted DEX and quote asset', async () => {
   const policy = getUserAssetDexPoolDiscoveryPolicy('eip155:1')
-  const { service } = serviceFor(
+  let now = NOW
+  const { requests, service } = serviceFor(
     () =>
       new Response(
         JSON.stringify([
@@ -202,10 +203,52 @@ test('requires the exact token as base and a trusted DEX and quote asset', async
             quoteToken: { address: TOKEN }
           }
         ])
+      ),
+    { now: () => now }
+  )
+
+  await expect(service.discover(ASSET_ID)).resolves.toEqual({ status: 'unavailable' })
+  await expect(service.discover(ASSET_ID)).resolves.toEqual({ status: 'unavailable' })
+  expect(requests).toHaveLength(1)
+
+  now += 60_000
+  await expect(service.discover(ASSET_ID)).resolves.toEqual({ status: 'unavailable' })
+  expect(requests).toHaveLength(2)
+})
+
+test('forced discovery can replace a cached unavailable result with an eligible pool', async () => {
+  let eligible = false
+  const { requests, service } = serviceFor(
+    () =>
+      new Response(
+        JSON.stringify(
+          eligible
+            ? [
+                pair({
+                  pairAddress: '0x2222222222222222222222222222222222222222',
+                  liquidityUsd: 1_000_000,
+                  volume24hUsd: 100_000
+                })
+              ]
+            : []
+        )
       )
   )
 
   await expect(service.discover(ASSET_ID)).resolves.toEqual({ status: 'unavailable' })
+  eligible = true
+  await expect(service.discover(ASSET_ID)).resolves.toEqual({ status: 'unavailable' })
+  expect(requests).toHaveLength(1)
+
+  await expect(service.discover(ASSET_ID, true)).resolves.toMatchObject({
+    status: 'available',
+    source: 'network'
+  })
+  await expect(service.discover(ASSET_ID)).resolves.toMatchObject({
+    status: 'available',
+    source: 'cache'
+  })
+  expect(requests).toHaveLength(2)
 })
 
 test('accepts a single pool only at the stronger liquidity, volume, and age thresholds', async () => {
@@ -268,10 +311,13 @@ test('rejects malformed, duplicate, and oversized remote responses without persi
           pair({ pairAddress: '0x2222222222222222222222222222222222222222' })
         ])
       ),
-    () => new Response(JSON.stringify('x'.repeat(600_000)))
+    () => new Response(JSON.stringify('x'.repeat(600_000))),
+    () => new Response('unavailable', { status: 503 })
   ]) {
-    const { cache, service } = serviceFor(responseFactory)
+    const { cache, requests, service } = serviceFor(responseFactory)
     await expect(service.discover(ASSET_ID)).resolves.toEqual({ status: 'failed' })
+    await expect(service.discover(ASSET_ID)).resolves.toEqual({ status: 'failed' })
+    expect(requests).toHaveLength(2)
     expect(cache.stored).toBeNull()
   }
 })
