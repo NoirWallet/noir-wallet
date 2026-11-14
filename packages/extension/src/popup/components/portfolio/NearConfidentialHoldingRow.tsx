@@ -69,7 +69,7 @@ export function NearConfidentialHoldingRow({
             {balancesHidden
               ? '••••'
               : entry.amount === null
-                ? 'Unavailable'
+                ? '—'
                 : formatFiatAmount(entry.fiat ?? '0', { showSign: true })}
           </span>
         )}
@@ -80,7 +80,7 @@ export function NearConfidentialHoldingRow({
           {balancesHidden
             ? '••••'
             : entry.amount === null
-              ? 'Unavailable'
+              ? '—'
               : `${formatTokenQuantity(entry.amount)}${showQuantitySymbol ? ` ${symbol}` : ''}`}
         </span>
       </span>

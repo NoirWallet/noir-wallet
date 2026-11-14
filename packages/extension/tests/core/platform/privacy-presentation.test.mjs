@@ -853,7 +853,7 @@ test('Activity details show the outgoing hash before destination settlement', ()
   ).toEqual([
     {
       id: 'destination',
-      label: 'Destination Hash',
+      label: 'Transaction Hash',
       hash: destinationHash,
       chainId: 'eip155:1'
     }
@@ -889,8 +889,80 @@ test('Activity details show the outgoing hash before destination settlement', ()
         {
           id: 'relay',
           role: 'relay',
-          target: { kind: 'relay', provider: 'NEAR Intents' },
+          target: { kind: 'protocol', provider: 'Confidential Intents' },
+          evidence: { transactionHash: `0x${'C'.repeat(64)}` }
+        }
+      ]
+    })
+  ).toEqual([
+    {
+      id: 'origin',
+      label: 'Transaction Hash',
+      hash: outgoingHash,
+      chainId: 'eip155:1'
+    }
+  ])
+  expect(
+    getActivityTransactionReferences({
+      segments: [
+        {
+          id: 'origin',
+          role: 'origin',
+          target: { kind: 'onchain', chainId: 'eip155:1' },
           evidence: { transactionHash: outgoingHash }
+        },
+        {
+          id: 'relay',
+          role: 'relay',
+          target: { kind: 'protocol', provider: 'Confidential Intents' },
+          evidence: { transactionHash: outgoingHash }
+        },
+        {
+          id: 'destination',
+          role: 'destination',
+          target: { kind: 'onchain', chainId: 'eip155:42161' },
+          evidence: { transactionHash: outgoingHash }
+        }
+      ]
+    })
+  ).toEqual([
+    { id: 'origin', label: 'Outgoing Hash', hash: outgoingHash, chainId: 'eip155:1' },
+    { id: 'destination', label: 'Destination Hash', hash: outgoingHash, chainId: 'eip155:42161' }
+  ])
+  expect(
+    getActivityTransactionReferences({
+      segments: [
+        {
+          id: 'origin',
+          role: 'origin',
+          target: { kind: 'protocol', provider: 'Confidential Intents' },
+          evidence: { transactionHash: outgoingHash }
+        },
+        {
+          id: 'relay',
+          role: 'relay',
+          target: { kind: 'onchain', chainId: 'eip155:1' },
+          evidence: { transactionHash: outgoingHash }
+        }
+      ]
+    })
+  ).toEqual([{ id: 'relay', label: 'Transaction Hash', hash: outgoingHash, chainId: 'eip155:1' }])
+  const base58Hash = '3s'.repeat(32)
+  const differentlyCasedBase58Hash = '3S'.repeat(32)
+  expect(
+    getActivityTransactionReferences({
+      segments: [
+        {
+          id: 'origin',
+          role: 'origin',
+          target: { kind: 'onchain', chainId: 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp' },
+          evidence: { transactionHash: base58Hash }
+        },
+        {
+          id: 'relay',
+          role: 'relay',
+          target: { kind: 'protocol', provider: 'Confidential Intents' },
+          evidence: { transactionHash: differentlyCasedBase58Hash }
         }
       ]
     })
@@ -898,8 +970,9 @@ test('Activity details show the outgoing hash before destination settlement', ()
     {
       id: 'origin',
       label: 'Outgoing Hash',
-      hash: outgoingHash,
-      chainId: 'eip155:1'
-    }
+      hash: base58Hash,
+      chainId: 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp'
+    },
+    { id: 'relay', label: 'Relay Hash', hash: differentlyCasedBase58Hash, chainId: null }
   ])
 })

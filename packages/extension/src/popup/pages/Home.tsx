@@ -949,7 +949,7 @@ export function Home() {
                   aria-label="Total assets unavailable"
                   className="text-xl font-semibold leading-[37.4px] text-muted"
                 >
-                  Unavailable
+                  —
                 </p>
               ) : (
                 <p

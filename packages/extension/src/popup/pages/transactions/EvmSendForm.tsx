@@ -1136,9 +1136,7 @@ export function EvmSendForm({
             className="min-w-0 truncate"
             title={transferAvailability.display}
           >
-            {domainAvailableRaw === null
-              ? 'Unavailable'
-              : formatTokenQuantity(transferAvailability.display)}
+            {domainAvailableRaw === null ? '—' : formatTokenQuantity(transferAvailability.display)}
           </span>
         }
         maxButton={

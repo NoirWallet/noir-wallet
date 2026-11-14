@@ -149,7 +149,7 @@ export function TokenSelector({
     ...networkOptions.map(option => ({ ...option, iconChain: option.id })),
     ...unavailableNetworks
       .filter(option => !networkOptions.some(available => available.id === option.id))
-      .map(option => ({ ...option, disabledReason: 'Unavailable' })),
+      .map(option => ({ ...option, disabledReason: 'Swaps are not supported on this network' })),
     ...deferredChainChoices(__ENABLED_CHAIN_FEATURE_FLAGS__).map(option => ({
       id: `coming-soon:${option.family}`,
       label: option.label,
@@ -223,8 +223,7 @@ export function TokenSelector({
   const selectorItems = [
     ...visibleExtraItems,
     ...visibleTokens.map(token => {
-      const balance = balances?.get(token.assetId)
-      const balanceLoadState = balanceLoadStates?.get(token.assetId)
+      const balance = balances === undefined ? undefined : (balances.get(token.assetId) ?? '0')
       const symbol = formatSymbol(token.symbol)
       const chainName = formatChainName(token.blockchain)
       return {
@@ -236,20 +235,9 @@ export function TokenSelector({
           symbol +
           ' on ' +
           chainName +
-          (balances === undefined
-            ? ''
-            : balance === undefined
-              ? ', balance unavailable'
-              : ', balance ' + balance + ' ' + symbol),
+          (balances === undefined ? '' : ', balance ' + balance + ' ' + symbol),
         balance:
-          balances !== undefined && balance === undefined ? (
-            <span
-              className="text-xs text-muted"
-              title={balanceLoadState === 'loading' ? 'Loading balance' : 'Balance unavailable'}
-            >
-              {balanceLoadState === 'loading' ? 'Loading...' : 'Unavailable'}
-            </span>
-          ) : balance === undefined ? undefined : (
+          balance === undefined ? undefined : (
             <TokenBalanceDisplay
               amount={balance}
               symbol={symbol}
@@ -289,7 +277,9 @@ export function TokenSelector({
         balances || visibleExtraItems.some(item => item.lowBalance)
           ? new Set([
               ...visibleTokens
-                .filter(token => balances?.get(token.assetId) === '0')
+                .filter(
+                  token => balances !== undefined && (balances.get(token.assetId) ?? '0') === '0'
+                )
                 .map(token => token.blockchain + ':' + token.assetId),
               ...visibleExtraItems.filter(item => item.lowBalance).map(item => item.key)
             ])

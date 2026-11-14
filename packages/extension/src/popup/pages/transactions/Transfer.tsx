@@ -268,7 +268,7 @@ function MethodCard({
       onClick={onClick}
       disabled={disabled}
       className={cn(
-        'relative flex min-h-[180px] min-w-0 flex-col overflow-hidden rounded-xl border bg-wallet-surface px-3 py-3 text-left text-xs leading-4 disabled:cursor-not-allowed disabled:opacity-50',
+        'relative flex min-h-[180px] min-w-0 flex-col rounded-xl border bg-wallet-surface px-3 py-3 text-left text-xs leading-4 disabled:cursor-not-allowed disabled:opacity-50',
         selected ? 'border-primary/60' : 'border-white/10'
       )}
     >
@@ -1708,19 +1708,14 @@ function TransferForm() {
       targetAsset && targetAsset.asset.metadata.decimals !== selected.asset.metadata.decimals
         ? null
         : shieldQuoteFeeRaw(activeShieldReview)
-    const fee =
-      quoteFeeRaw !== null ? (
+    const quoteDifference =
+      quoteFeeRaw !== null && BigInt(quoteFeeRaw) > 0n ? (
         <AmountDisplay
-          value={`${BigInt(quoteFeeRaw) < 0n ? '-' : ''}${formatBaseUnitAmount(
-            (BigInt(quoteFeeRaw) < 0n ? -BigInt(quoteFeeRaw) : BigInt(quoteFeeRaw)).toString(),
-            selected.asset.metadata.decimals
-          )}`}
+          value={formatBaseUnitAmount(quoteFeeRaw, selected.asset.metadata.decimals)}
           symbol={symbol}
           profile="fee"
         />
-      ) : (
-        'Included in quote'
-      )
+      ) : null
     const networkFee = activeShieldReview.sourceNetworkFee
     return (
       <div className="page-container">
@@ -1795,17 +1790,7 @@ function TransferForm() {
             ...(activeShieldReview.operation === 'cluster'
               ? [{ label: 'Split transfers', content: `${activeShieldReview.withdrawCount}` }]
               : []),
-            {
-              label: 'Estimated fee',
-              content: (
-                <span className="flex flex-col items-end gap-1">
-                  <span className="flex items-center gap-2">
-                    <span className="text-xs text-muted">Net quote difference</span>
-                    {fee}
-                  </span>
-                </span>
-              )
-            },
+            ...(quoteDifference ? [{ label: 'Quote difference', content: quoteDifference }] : []),
             ...(networkFee
               ? [
                   {

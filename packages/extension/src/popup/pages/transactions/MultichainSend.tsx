@@ -239,11 +239,11 @@ function AssetSelection({
             balance:
               row.amount === null ? (
                 <p className="min-w-0 truncate text-right text-sm font-medium text-muted">
-                  {entry.chain.status === 'loading' ? 'Updating…' : 'Unavailable'}
+                  {entry.chain.status === 'loading' ? 'Updating…' : '—'}
                 </p>
               ) : entry.chain.chain.family === 'bitcoin' && entry.asset.updatedAt === 0 ? (
                 <p className="min-w-0 truncate text-right text-sm font-medium">
-                  {entry.chain.status === 'error' ? 'Unavailable' : 'Updating…'}
+                  {entry.chain.status === 'error' ? '—' : 'Updating…'}
                 </p>
               ) : (
                 <TokenBalanceDisplay

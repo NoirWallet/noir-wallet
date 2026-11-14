@@ -316,6 +316,9 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
   const [shieldZecSource, setShieldZecSource] = useState<ShieldSwapZecSourceKind | null>(
     () => parseShieldSwapZecSourceParam(searchParams.get('shieldZecSource')) ?? 'intents'
   )
+  const shieldSourceInitialized = useRef(
+    parseShieldSwapZecSourceParam(searchParams.get('shieldZecSource')) !== null
+  )
   const [shieldZecPickerOpen, setShieldZecPickerOpen] = useState(false)
   const [shieldPickerSearch, setShieldPickerSearch] = useState('')
   const [shieldPickerNetwork, setShieldPickerNetwork] = useState('all')
@@ -533,16 +536,6 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
       storageV2Account?.networks.some(network => network.chain.family === 'zcash')
     )
   })
-  useEffect(() => {
-    if (
-      location.pathname === '/shield-swap' &&
-      nativeZecShieldAvailable &&
-      !searchParams.has('shieldZecSource') &&
-      !searchParams.has('assetId') &&
-      !searchParams.has('source')
-    )
-      setShieldZecSource('native-shielded')
-  }, [location.pathname, nativeZecShieldAvailable, searchParams])
   const hardwareVendor =
     storageV2Account?.walletSource.kind === 'hardware'
       ? storageV2Account.walletSource.hardware.vendor
@@ -593,7 +586,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
         effectiveWalletId,
         effectiveAccountId,
         currentNetwork,
-        walletActionMode.mode
+        shieldNativeZecSwap ? 'shield' : walletActionMode.mode
       )
   const savedTokenSelection = useSwapPreferences(state =>
     swapPreferenceScope ? state.tokenSelections[swapPreferenceScope] : undefined
@@ -601,6 +594,47 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
   const [swapPreferencesHydrated, setSwapPreferencesHydrated] = useState(
     useSwapPreferences.persist.hasHydrated()
   )
+  const defaultShieldZecSource: ShieldSwapZecSourceKind =
+    nativeZecShieldAvailable &&
+    searchParams.get('provider') !== 'near-confidential' &&
+    !searchParams.has('assetId') &&
+    !searchParams.has('source')
+      ? 'native-shielded'
+      : 'intents'
+  const shieldSourceAccountScope = accountNetworksReady
+    ? `${currentNetwork}:${effectiveWalletId}:${effectiveAccountId}`
+    : null
+  const previousShieldSourceAccountScope = useRef<string | null>(null)
+  useEffect(() => {
+    if (!shieldSourceAccountScope) return
+    if (
+      previousShieldSourceAccountScope.current &&
+      previousShieldSourceAccountScope.current !== shieldSourceAccountScope
+    ) {
+      const routeSource = parseShieldSwapZecSourceParam(searchParams.get('shieldZecSource'))
+      shieldSourceInitialized.current = routeSource !== null
+      setShieldZecSource(routeSource ?? 'intents')
+    }
+    previousShieldSourceAccountScope.current = shieldSourceAccountScope
+  }, [shieldSourceAccountScope, searchParams])
+  useEffect(() => {
+    if (
+      shieldSwapSelected &&
+      !shieldSourceInitialized.current &&
+      accountNetworksReady &&
+      swapPreferencesHydrated &&
+      swapPreferenceScope
+    ) {
+      shieldSourceInitialized.current = true
+      setShieldZecSource(defaultShieldZecSource)
+    }
+  }, [
+    shieldSwapSelected,
+    accountNetworksReady,
+    swapPreferencesHydrated,
+    swapPreferenceScope,
+    defaultShieldZecSource
+  ])
   const storedQuoteMode = useSwapPreferences(state => state.quoteMode)
   const setQuoteMode = useSwapPreferences(state => state.setQuoteMode)
   const defaultSwapChainId =
@@ -634,13 +668,15 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
       defaultSourceChainId:
         isPrivateFunding && privateFundingDestinationChain
           ? `eip155:${privateFundingDestinationChain}`
-          : !crossChainSendRequested &&
-              !privateTransferRequested &&
-              !isPrivateFunding &&
-              !publicPrivacySendRequested &&
-              walletActionMode.mode === 'private'
-            ? privateSwapChainId
-            : defaultSwapChainId
+          : shieldNativeZecSwap
+            ? storageV2Account?.networks.find(network => network.chain.family === 'zcash')?.chain.id
+            : !crossChainSendRequested &&
+                !privateTransferRequested &&
+                !isPrivateFunding &&
+                !publicPrivacySendRequested &&
+                walletActionMode.mode === 'private'
+              ? privateSwapChainId
+              : defaultSwapChainId
     }
   )
   const { addRecentRecipientAddress } = useSwapPreferences()
@@ -1261,6 +1297,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
     !privateTransferRequested &&
     !isPrivateFunding &&
     !publicPrivacySendRequested &&
+    !shieldSwapSelected &&
     sourceMode === 'private'
   const ordinarySwapRequested =
     !crossChainSendRequested &&
@@ -2174,10 +2211,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
       destinationScope && initializedDestinationScope.current !== destinationScope
         ? requestedDestinationToken?.assetId
         : null
-    const availableSourceTokens =
-      ordinarySwapRequested && sourceMode === 'private'
-        ? privateSwapSourceTokens
-        : swap.sourceTokens
+    const availableSourceTokens = privateSwapRequested ? privateSwapSourceTokens : swap.sourceTokens
     const resolved = resolveSwapTokenSelection({
       tokens: swap.tokens,
       sourceTokens: availableSourceTokens,
@@ -2193,10 +2227,9 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
             swap.crossChainDestinationTokens,
             privateDestinationSelectionRequested ? 'basic' : undefined
           ),
-      walletSourceTokens:
-        ordinarySwapRequested && sourceMode === 'private'
-          ? privateWalletSwapSourceTokens
-          : walletSwapSourceTokens,
+      walletSourceTokens: privateSwapRequested
+        ? privateWalletSwapSourceTokens
+        : walletSwapSourceTokens,
       savedSelection: savedTokenSelection,
       requestedSourceAssetId: requestedSourceToken?.assetId,
       requestedDestinationAssetId: destinationRequest,
@@ -2253,18 +2286,17 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
         resolvedDestinationAssetId: resolved.tokenOut?.assetId
       })
     ) {
-      if (tokenIn && (swap.tokenIn?.assetId !== tokenIn.assetId || swap.tokenOut)) {
+      if (
+        tokenIn &&
+        (swap.tokenIn?.assetId !== tokenIn.assetId ||
+          (destinationRequest && swap.tokenOut?.assetId !== destinationRequest))
+      ) {
         swap.setProvisionalTokenIn(tokenIn)
       }
       return
     }
     if (!resolved.tokenIn) {
-      if (
-        ordinarySwapRequested &&
-        sourceMode === 'private' &&
-        swap.tokenIn &&
-        !isSelectablePrivateSource(swap.tokenIn)
-      ) {
+      if (privateSwapRequested && swap.tokenIn && !isSelectablePrivateSource(swap.tokenIn)) {
         swap.clearTokenPairForFlow()
         return
       }
@@ -2720,7 +2752,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
       walletActionMode.loading ||
       destinationWalletActionMode.loading ||
       legacyShieldSwapRequested ||
-      (ordinarySwapRequested && sourceMode === 'private' && executionSourceMode !== 'private') ||
+      (privateSwapRequested && executionSourceMode !== 'private') ||
       (crossChainSendRequested &&
         (currentNetwork !== 'mainnet' ||
           !crossChainSendSourceReady ||
@@ -4716,11 +4748,12 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
       setSourceMode('main')
       setFundingSource(source)
       setShieldSwapSelected(source === 'shielded')
+      shieldSourceInitialized.current = true
       setShieldZecSource(source === 'shielded' ? 'native-shielded' : 'intents')
       const zec =
         swap.sourceTokens.find(isZecToken) ??
         swap.tokens.find(token => isZecToken(token as (typeof swap.sourceTokens)[number]))
-      if (zec) swap.selectTokenIn(zec)
+      if (zec && source === 'transparent') swap.selectTokenIn(zec)
       const params = new URLSearchParams(searchParams)
       params.delete('source')
       params.delete('assetId')
@@ -5227,6 +5260,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
       option => option.kind === 'intents'
     )?.intentsWalletAssetId
     if (!sourceAssetId) return
+    shieldSourceInitialized.current = true
     setShieldZecSource('intents')
     setShieldSwapSelected(true)
     updateShieldZecSourceInUrl('intents', sourceAssetId)
@@ -5234,10 +5268,12 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
 
   useEffect(() => {
     const parsed = parseShieldSwapZecSourceParam(searchParams.get('shieldZecSource'))
-    if (parsed && accountNetworksReady)
+    if (parsed && accountNetworksReady) {
+      shieldSourceInitialized.current = true
       setShieldZecSource(
         parsed === 'native-shielded' && !nativeZecShieldAvailable ? 'intents' : parsed
       )
+    }
   }, [searchParams, accountNetworksReady, nativeZecShieldAvailable])
 
   useEffect(() => {
@@ -5291,22 +5327,20 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
     if (!availableBalanceDomains.includes(domain)) return
     setAmountFocusToken(value => value + 1)
     if (domain === 'shield') {
-      handleSourceModeChange(sourceMode, true)
+      handleSourceModeChange('main', true)
       setShieldSwapSelected(true)
       if (
-        nativeZecShieldAvailable &&
-        !parseShieldSwapZecSourceParam(searchParams.get('shieldZecSource')) &&
-        !searchParams.has('assetId') &&
-        !searchParams.has('source')
+        !shieldSourceInitialized.current &&
+        accountNetworksReady &&
+        swapPreferencesHydrated &&
+        swapPreferenceScope
       ) {
-        setShieldZecSource('native-shielded')
-      } else if (!parseShieldSwapZecSourceParam(searchParams.get('shieldZecSource'))) {
-        setShieldZecSource('intents')
+        shieldSourceInitialized.current = true
+        setShieldZecSource(defaultShieldZecSource)
       }
       return
     }
     setShieldSwapSelected(false)
-    setShieldZecSource('intents')
     if (domain === 'public') {
       handleSourceModeChange('main', true)
       return

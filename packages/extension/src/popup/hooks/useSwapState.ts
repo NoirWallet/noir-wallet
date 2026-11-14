@@ -414,6 +414,9 @@ export function useSwapState(
   useEffect(() => {
     if (
       tokenOut &&
+      !areTokensLoading &&
+      !destinationTokensLoading &&
+      selectionScope === preferenceScope &&
       !destinationTokens.some(
         token =>
           token.rheaChainId === tokenOut.rheaChainId && token.rheaAddress === tokenOut.rheaAddress
@@ -423,7 +426,14 @@ export function useSwapState(
       setAmountOut('')
       setQuoteError(null)
     }
-  }, [destinationTokens, tokenOut])
+  }, [
+    areTokensLoading,
+    destinationTokensLoading,
+    selectionScope,
+    preferenceScope,
+    destinationTokens,
+    tokenOut
+  ])
 
   // Derived state
   const isZecSource = isZecToken(tokenIn)

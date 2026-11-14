@@ -966,7 +966,7 @@ export function ShieldWithdrawForm({
             No supported network for this token
           </p>
         )}
-        {previewError && (
+        {!error && !balanceError && previewError && (
           <div
             role="alert"
             className="flex items-center justify-between gap-2 text-xs text-warning"

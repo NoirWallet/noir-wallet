@@ -208,7 +208,7 @@ export function BitcoinSendForm({
   const availableDisplay = balanceKnown
     ? transferAvailability.display
     : chain.status === 'error'
-      ? 'Unavailable'
+      ? '—'
       : 'Updating…'
   useEffect(() => {
     if (sendMaximum && maximum.value)

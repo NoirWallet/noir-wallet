@@ -104,14 +104,14 @@ export function AssetDomainSelector({
                     balancesHidden
                       ? undefined
                       : totals[domain] === null
-                        ? 'Unavailable'
+                        ? '—'
                         : formatAssetDomainFiat(totals[domain], partialTotals?.[domain])
                   }
                 >
                   {balancesHidden
                     ? '••••'
                     : totals[domain] === null
-                      ? 'Unavailable'
+                      ? '—'
                       : formatAssetDomainFiat(totals[domain], partialTotals?.[domain])}
                 </span>
               )}

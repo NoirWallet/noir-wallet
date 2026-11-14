@@ -642,7 +642,7 @@ export function PortfolioShell({
                           ? '••••'
                           : chainFiat === null
                             ? getPortfolioChainBalanceStatus(chain) === 'unavailable'
-                              ? 'Unavailable'
+                              ? '—'
                               : formatFiatAmount('0', { showSign: true })
                             : formatFiatAmount(chainFiat, { showSign: true })}
                       </span>

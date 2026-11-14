@@ -13,6 +13,26 @@ export function isActivityTransactionHash(hash: string, chainId: string | null):
   return hash.length > 0 && !/^0x[0-9a-fA-F]{8}$/.test(hash)
 }
 
+function sameTransactionHash(
+  left: ActivityTransactionReference,
+  hash: string,
+  chainId: string | null
+): boolean {
+  if (left.hash === hash) return true
+  if (/^0x[0-9a-fA-F]{64}$/.test(left.hash) && /^0x[0-9a-fA-F]{64}$/.test(hash)) {
+    return left.hash.toLowerCase() === hash.toLowerCase()
+  }
+  if (
+    left.chainId?.startsWith('bip122:') &&
+    chainId?.startsWith('bip122:') &&
+    /^[0-9a-fA-F]{64}$/.test(left.hash) &&
+    /^[0-9a-fA-F]{64}$/.test(hash)
+  ) {
+    return left.hash.toLowerCase() === hash.toLowerCase()
+  }
+  return false
+}
+
 export function getActivityTransactionReferences(
   item: ActivityItem
 ): readonly ActivityTransactionReference[] {
@@ -27,39 +47,33 @@ export function getActivityTransactionReferences(
         )
     )
     .sort((left, right) => roleOrder[left.role] - roleOrder[right.role])
-  const originHash = hashedSegments.find(segment => segment.role === 'origin')?.evidence
-    ?.transactionHash
-  const seen = new Set<string>()
-  return hashedSegments.flatMap(segment => {
+  const references: ActivityTransactionReference[] = []
+  for (const segment of hashedSegments) {
     const hash = segment.evidence?.transactionHash
-    if (!hash) return []
-    if (
-      segment.role === 'relay' &&
-      segment.target.kind === 'relay' &&
-      originHash?.toLowerCase() === hash.toLowerCase()
-    )
-      return []
+    if (!hash) continue
     const chainId = segment.target.kind === 'onchain' ? segment.target.chainId : null
-    const identity = `${chainId ?? ''}:${hash.toLowerCase()}`
-    if (seen.has(identity)) return []
-    seen.add(identity)
+    const duplicateIndex = references.findIndex(
+      reference =>
+        sameTransactionHash(reference, hash, chainId) &&
+        (!reference.chainId || !chainId || reference.chainId === chainId)
+    )
     const label =
-      hashedSegments.length === 1 && item.segments.length === 1
-        ? 'Transaction Hash'
-        : segment.role === 'origin'
-          ? 'Outgoing Hash'
-          : segment.role === 'destination'
-            ? 'Destination Hash'
-            : segment.role === 'refund'
-              ? 'Refund Hash'
-              : 'Relay Hash'
-    return [
-      Object.freeze({
-        id: segment.id,
-        label,
-        hash,
-        chainId
-      })
-    ]
-  })
+      segment.role === 'origin'
+        ? 'Outgoing Hash'
+        : segment.role === 'destination'
+          ? 'Destination Hash'
+          : segment.role === 'refund'
+            ? 'Refund Hash'
+            : 'Relay Hash'
+    if (duplicateIndex >= 0) {
+      if (!references[duplicateIndex]!.chainId && chainId) {
+        references[duplicateIndex] = Object.freeze({ id: segment.id, label, hash, chainId })
+      }
+      continue
+    }
+    references.push(Object.freeze({ id: segment.id, label, hash, chainId }))
+  }
+  return references.length === 1
+    ? [Object.freeze({ ...references[0]!, label: 'Transaction Hash' })]
+    : references
 }
