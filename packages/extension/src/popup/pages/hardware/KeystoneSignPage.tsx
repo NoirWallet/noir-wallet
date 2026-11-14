@@ -77,7 +77,7 @@ export function KeystoneSignPage() {
   const [step, setStep] = useState<Step>('building')
   const [request, setRequest] = useState<HardwareSignRequest | null>(null)
   const [pcztBytes, setPcztBytes] = useState<Uint8Array | null>(null)
-  const [vendor, setVendor] = useState<'keystone' | 'ledger'>('keystone')
+  const [vendor, setVendor] = useState<'keystone' | 'ledger' | null>(null)
   const [ledgerPayload, setLedgerPayload] = useState<LedgerSigningPayload | null>(null)
   const [ledgerDisplayAddress, setLedgerDisplayAddress] = useState<string | null>(null)
   const [ledgerDeviceModel, setLedgerDeviceModel] = useState<string>()
@@ -282,6 +282,8 @@ export function KeystoneSignPage() {
         return
       }
       setRequest(req)
+      const keySource = useWalletStore.getState().getWallet(req.walletId)?.keySource
+      if (keySource === 'ledger' || keySource === 'keystone') setVendor(keySource)
       await buildPczt(req)
     }
     void start().catch(cause => {
@@ -618,15 +620,16 @@ export function KeystoneSignPage() {
     }
   }
 
-  const deviceName = vendor === 'ledger' ? 'Ledger' : 'Keystone'
-  const title =
+  const deviceName = vendor === 'ledger' ? 'Ledger' : vendor === 'keystone' ? 'Keystone' : null
+  const operation =
     request?.kind === 'shield'
-      ? `Shield with ${deviceName}`
+      ? 'Shield'
       : request?.kind === 'unshield'
-        ? `Unshield with ${deviceName}`
+        ? 'Unshield'
         : request?.kind === 'swap'
-          ? `Swap with ${deviceName}`
-          : `Send with ${deviceName}`
+          ? 'Swap'
+          : 'Send'
+  const title = deviceName ? `${operation} with ${deviceName}` : operation
 
   return (
     <div className="page-container page-container--tab">
@@ -664,9 +667,11 @@ export function KeystoneSignPage() {
                   </div>
                 </div>
               )}
-              <div className="flex justify-center pt-2">
-                <Skeleton className="size-52 rounded-lg" />
-              </div>
+              {vendor === 'keystone' && (
+                <div className="flex justify-center pt-2">
+                  <Skeleton className="size-52 rounded-lg" />
+                </div>
+              )}
             </HardwareSigningProgress>
           </div>
           <div className="page-footer">

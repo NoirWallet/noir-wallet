@@ -1,4 +1,5 @@
 import { DedupPromise } from '@/lib/async-utils'
+import { safeBig } from '@/lib/big'
 import { marginalFeeForTier } from '@/core/zcash/fee-policy'
 import type { FeeQuote, FeeTier } from '@/config/fee'
 import type { FundingSource } from '@/types'
@@ -80,6 +81,10 @@ export class MaxTransferEstimateCache {
     return this.scope
   }
 
+  get canEstimate(): boolean {
+    return this.context.enabled && safeBig(this.context.available).gt(0)
+  }
+
   setContext(context: MaxTransferContext): void {
     const nextScope = contextKey(context)
     if (nextScope === this.scope) return
@@ -106,9 +111,7 @@ export class MaxTransferEstimateCache {
     const estimate = this.estimates.get(key)
     return {
       estimate:
-        this.context.enabled &&
-        estimate &&
-        validEstimate(estimate, tier, this.now(), this.quote?.id)
+        this.canEstimate && estimate && validEstimate(estimate, tier, this.now(), this.quote?.id)
           ? estimate
           : null,
       pending: this.pending.has(key),
@@ -122,7 +125,7 @@ export class MaxTransferEstimateCache {
     retry = false,
     refresh = false
   ): Promise<MaxTransferEstimate | null> {
-    if (!this.context.enabled || !to) return null
+    if (!this.canEstimate || !to) return null
     if (refresh) this.refresh()
     const key = entryKey(to, tier)
     const current = this.peek(to, tier).estimate
@@ -137,15 +140,35 @@ export class MaxTransferEstimateCache {
     const { memo, fundingSource } = this.context
     const promise = (async () => {
       try {
-        const quote = await this.getQuote(generation)
+        let quote = await this.getQuote(generation)
         if (!quote || generation !== this.generation) return null
-        const estimate = await this.client.estimateMaxTransfer({
-          to,
-          memo,
-          fundingSource,
-          marginalFeeZats: marginalFeeForTier(tier, quote.standardMarginalFeeZats),
-          feeQuoteId: quote.id
-        })
+        const estimateWithQuote = (selected: FeeQuote) =>
+          this.client.estimateMaxTransfer({
+            to,
+            memo,
+            fundingSource,
+            marginalFeeZats: marginalFeeForTier(tier, selected.standardMarginalFeeZats),
+            feeQuoteId: selected.id
+          })
+        let estimate: MaxTransferEstimate
+        try {
+          estimate = await estimateWithQuote(quote)
+        } catch (cause) {
+          if (
+            !(cause instanceof Error) ||
+            cause.message !==
+              'Network fee expired or changed. Review the updated fee before confirming.'
+          )
+            throw cause
+          if (generation !== this.generation || (this.revisions.get(key) ?? 0) !== revision)
+            return this.peek(to, tier).estimate
+          // A Worker/RPC reload can invalidate an otherwise unexpired quote.
+          // Refresh this read-only preview once; execution still reviews its fee.
+          if (this.quote?.id === quote.id) this.quote = null
+          quote = await this.getQuote(generation)
+          if (!quote || generation !== this.generation) return null
+          estimate = await estimateWithQuote(quote)
+        }
         if (generation !== this.generation) return null
         if ((this.revisions.get(key) ?? 0) !== revision) return this.peek(to, tier).estimate
         if (!validEstimate(estimate, tier, this.now(), quote.id) || this.quote?.id !== quote.id)
@@ -172,7 +195,7 @@ export class MaxTransferEstimateCache {
   }
 
   update(to: string, tier: FeeTier, estimate: MaxTransferEstimate): void {
-    if (!this.context.enabled || !to) return
+    if (!this.canEstimate || !to) return
     const key = entryKey(to, tier)
     this.revisions.set(key, (this.revisions.get(key) ?? 0) + 1)
     if (!validEstimate(estimate, tier, this.now())) {

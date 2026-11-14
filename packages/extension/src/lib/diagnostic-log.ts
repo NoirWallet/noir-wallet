@@ -3,6 +3,14 @@ import { wordlist } from '@scure/bip39/wordlists/english'
 const MAX_DEPTH = 4
 const recoveryWords = new Set(wordlist)
 const nativeStackGetter = Object.getOwnPropertyDescriptor(new Error(), 'stack')?.get
+const nativeDomExceptionGetters = new Map(
+  ['name', 'message', 'code'].map(key => [
+    key,
+    typeof DOMException === 'undefined'
+      ? undefined
+      : Object.getOwnPropertyDescriptor(DOMException.prototype, key)?.get
+  ])
+)
 
 export const DIAGNOSTIC_LOG_MAX_ENTRIES = 500
 export const DIAGNOSTIC_LOG_MAX_AGE_MS = 24 * 60 * 60 * 1000
@@ -65,6 +73,15 @@ function projectError(error: unknown, seen: WeakSet<object>, depth: number): unk
         // V8 exposes its lazy native stack through a shared accessor. Custom
         // accessors stay excluded, just like other error payload properties.
         value = nativeStackGetter.call(error)
+      } else if (
+        typeof DOMException !== 'undefined' &&
+        error instanceof DOMException &&
+        descriptor.get &&
+        descriptor.get === nativeDomExceptionGetters.get(key)
+      ) {
+        // Browser transport failures use native prototype accessors. Only call
+        // the captured intrinsic; user-defined getters remain excluded.
+        value = descriptor.get.call(error)
       } else {
         continue
       }

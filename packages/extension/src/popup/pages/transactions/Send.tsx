@@ -827,8 +827,6 @@ export function Send({
             navigate('/transaction-result')
           } else if (result.status === 'timeout') {
             toast.error('Hardware signing timed out', 'The transaction form has been restored.')
-          } else {
-            toast.info('Hardware signing cancelled')
           }
         } catch (cause) {
           toast.error('Could not open hardware signing', classifyError(cause).userMessage)

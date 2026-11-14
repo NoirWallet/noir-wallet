@@ -4156,8 +4156,6 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
               })
             } else if (result.status === 'timeout') {
               toast.error('Hardware signing timed out', 'The swap review has been restored.')
-            } else {
-              toast.info('Hardware signing cancelled')
             }
           } catch (cause) {
             toast.error('Could not open hardware signing', classifyError(cause).userMessage)
