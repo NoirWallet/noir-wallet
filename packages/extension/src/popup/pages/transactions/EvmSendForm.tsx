@@ -11,13 +11,7 @@ import { Button } from '@/popup/components/ui/button'
 import { Switch } from '@/popup/components/ui/switch'
 import nearLogo from '@/images/figma-near-confidential.svg'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/popup/components/ui/dialog'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuTrigger
-} from '@/popup/components/ui/dropdown-menu'
+import { ChainSelector } from '@/popup/components/common/ChainSelector'
 import {
   EvmWalletClientError,
   evmWalletClient,
@@ -148,6 +142,7 @@ export function EvmSendForm({
   sourceMode,
   onFundPrivate,
   initialRecipient,
+  initialAmount,
   initialDraft,
   onSubmitted
 }: {
@@ -171,6 +166,7 @@ export function EvmSendForm({
   sourceMode: EvmSendSourceMode
   onFundPrivate?: () => void
   initialRecipient?: string
+  initialAmount?: string
   initialDraft?: Readonly<{
     recipient: string
     amount: string
@@ -179,8 +175,9 @@ export function EvmSendForm({
   }>
   onSubmitted: (submission: EvmTransferSubmission) => void
 }) {
-  const [amount, setAmount] = useState('')
+  const [amount, setAmount] = useState(initialAmount ?? '')
   const [privateSendScope, setPrivateSendScope] = useState<string | null>(null)
+  const [networkPickerOpen, setNetworkPickerOpen] = useState(false)
   const [recipient, setRecipient] = useState(initialRecipient ?? '')
   const [selectedRecipient, setSelectedRecipient] = useState<{
     address: string
@@ -1177,53 +1174,45 @@ export function EvmSendForm({
               <div className="mb-2 flex items-center justify-between text-xs">
                 <SendFieldLabel>Send to</SendFieldLabel>
                 {!sendPrivately && destinationNetworks.length > 1 ? (
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <button
-                        type="button"
-                        className="inline-flex items-center gap-1.5 text-foreground hover:text-primary"
-                        aria-label={`Select destination network, ${chain.chain.displayName}`}
-                      >
-                        <ChainIcon
-                          chain={resolveChainIconAlias(
-                            chain.chain.family,
-                            chain.chain.displayName,
-                            chain.chain.id
-                          )}
-                          width={16}
-                          height={16}
-                          className="rounded-[4px]"
-                          showTooltip={false}
-                        />
-                        {chain.chain.displayName}
-                        <Icon icon="lucide:chevron-down" width={13} height={13} />
-                      </button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" className="min-w-[150px]">
-                      <DropdownMenuRadioGroup
-                        value={asset.asset.id}
-                        onValueChange={destinationAssetId =>
-                          onSelectDestinationNetwork(destinationAssetId, {
-                            recipient,
-                            amount: maxSelected ? '' : amount
-                          })
-                        }
-                      >
-                        {destinationNetworks.map(option => (
-                          <DropdownMenuRadioItem key={option.assetId} value={option.assetId}>
-                            <ChainIcon
-                              chain={option.icon}
-                              width={16}
-                              height={16}
-                              className="rounded-[4px]"
-                              showTooltip={false}
-                            />
-                            {option.name}
-                          </DropdownMenuRadioItem>
-                        ))}
-                      </DropdownMenuRadioGroup>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setNetworkPickerOpen(true)}
+                      className="inline-flex items-center gap-1.5 text-foreground hover:text-primary"
+                      aria-label={`Select destination network, ${chain.chain.displayName}`}
+                    >
+                      <ChainIcon
+                        chain={resolveChainIconAlias(
+                          chain.chain.family,
+                          chain.chain.displayName,
+                          chain.chain.id
+                        )}
+                        width={16}
+                        height={16}
+                        className="rounded-[4px]"
+                        showTooltip={false}
+                      />
+                      {chain.chain.displayName}
+                      <Icon icon="lucide:chevron-down" width={13} height={13} />
+                    </button>
+                    <ChainSelector
+                      open={networkPickerOpen}
+                      onOpenChange={setNetworkPickerOpen}
+                      selectedId={asset.asset.id}
+                      label={`Networks for ${asset.metadata.symbol}`}
+                      options={destinationNetworks.map(option => ({
+                        id: option.assetId,
+                        name: option.name,
+                        icon: option.icon
+                      }))}
+                      onSelect={destinationAssetId =>
+                        onSelectDestinationNetwork(destinationAssetId, {
+                          recipient,
+                          amount: maxSelected ? '' : amount
+                        })
+                      }
+                    />
+                  </>
                 ) : (
                   <span className="inline-flex items-center gap-1.5 text-foreground">
                     <ChainIcon

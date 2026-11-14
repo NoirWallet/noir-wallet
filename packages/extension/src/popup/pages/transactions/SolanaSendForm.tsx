@@ -75,14 +75,23 @@ function ReviewLine({ label, children }: { label: string; children: React.ReactN
 export function SolanaSendForm({
   selection,
   priceUsd,
+  initialRecipient,
+  initialAmount,
+  onDraftChange,
   onSubmitted
 }: {
   readonly selection: SolanaSendAsset
   readonly priceUsd: string | null
+  readonly initialRecipient?: string
+  readonly initialAmount?: string
+  readonly onDraftChange?: (
+    assetId: string,
+    draft: Readonly<{ recipient: string; amount: string }>
+  ) => void
   readonly onSubmitted: (submission: SolanaTransferSubmission) => void
 }) {
-  const [amount, setAmount] = useState('')
-  const [recipient, setRecipient] = useState('')
+  const [amount, setAmount] = useState(initialAmount ?? '')
+  const [recipient, setRecipient] = useState(initialRecipient ?? '')
   const [selectedRecipient, setSelectedRecipient] = useState<{
     address: string
     name: string
@@ -96,6 +105,10 @@ export function SolanaSendForm({
   const asset = selection.asset
   const chain = selection.chain
   const networkName = formatPortfolioNetworkName(chain)
+
+  useEffect(() => {
+    onDraftChange?.(asset.asset.id, { recipient, amount: maxSelected ? '' : amount })
+  }, [amount, asset.asset.id, maxSelected, onDraftChange, recipient])
 
   useEffect(
     () => () => {

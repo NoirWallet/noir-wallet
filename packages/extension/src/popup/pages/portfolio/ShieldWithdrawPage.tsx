@@ -36,6 +36,7 @@ import {
 } from '@/popup/components/transaction/SendInputCards'
 import { AmountDisplay } from '@/popup/components/common/AmountDisplay'
 import { ChainIcon } from '@/popup/components/common/ChainIcon'
+import { ChainSelector, type ChainSelectorOption } from '@/popup/components/common/ChainSelector'
 import { TokenIcon } from '@/popup/components/tokens/TokenIcon'
 import {
   ShieldSourceTokenPickerRows,
@@ -173,7 +174,8 @@ export function ShieldWithdrawForm({
   const [destinationNetworkId, setDestinationNetworkId] = useState<string | null>(routeNetworkId)
   const [amount, setAmount] = useState('')
   const [recipient, setRecipient] = useState(routeRecipient)
-  const [picker, setPicker] = useState<'source' | 'network' | 'recipient' | 'slippage' | null>(null)
+  const [picker, setPicker] = useState<'source' | 'recipient' | 'slippage' | null>(null)
+  const [networkPickerOpen, setNetworkPickerOpen] = useState(false)
   const [slippage, setSlippage] = useState(0.5)
   const [prepared, setPrepared] = useState<Readonly<{
     review: ConfidentialFundingReview
@@ -225,7 +227,10 @@ export function ShieldWithdrawForm({
   }, [active, providerIsNear, navigate])
 
   useEffect(() => {
-    if (!active) setPicker(null)
+    if (!active) {
+      setPicker(null)
+      setNetworkPickerOpen(false)
+    }
   }, [active])
 
   useEffect(() => {
@@ -238,6 +243,7 @@ export function ShieldWithdrawForm({
     setAmount('')
     setRecipient(routeRecipient)
     setPicker(null)
+    setNetworkPickerOpen(false)
     setPrepared(null)
     setBusy(false)
     setUncertain(false)
@@ -379,6 +385,13 @@ export function ShieldWithdrawForm({
     if (!sourceId && source) setSourceId(source.asset.asset.id)
   }
   const destinations = source ? listShieldSendDestinations(source, options, network) : []
+  const networkOptions: ChainSelectorOption[] = [
+    ...new Map(destinations.map(item => [item.chain.chain.id, item])).values()
+  ].map(item => ({
+    id: item.chain.chain.id,
+    name: item.chain.chain.displayName,
+    icon: withdrawChainIconAlias(item.chain.chain)
+  }))
   const selectedDestinationNetworkId = destinationNetworkId ?? source?.chain.chain.id ?? null
   const destination =
     source && selectedDestinationNetworkId
@@ -863,7 +876,7 @@ export function ShieldWithdrawForm({
               disabled={busy || destinations.length === 0}
               onClick={() => {
                 keepSelectedSource()
-                setPicker('network')
+                setNetworkPickerOpen(true)
               }}
               className="wallet-interactive inline-flex min-w-0 items-center gap-1.5 hover:text-primary disabled:opacity-50"
               aria-label={`Destination network, ${destinationNetwork?.displayName ?? 'select network'}`}
@@ -1026,11 +1039,9 @@ export function ShieldWithdrawForm({
           <DialogTitle>
             {picker === 'source'
               ? 'Select Token'
-              : picker === 'network'
-                ? 'Network'
-                : picker === 'slippage'
-                  ? 'Slippage'
-                  : 'Recipient'}
+              : picker === 'slippage'
+                ? 'Slippage'
+                : 'Recipient'}
           </DialogTitle>
           <DialogDescription className="sr-only">Set Send {picker}</DialogDescription>
           {picker === 'source' && sources.length === 0 && (
@@ -1060,40 +1071,6 @@ export function ShieldWithdrawForm({
                 setPicker(null)
               }}
             />
-          ) : picker === 'network' ? (
-            [...new Map(destinations.map(item => [item.chain.chain.id, item])).values()].map(
-              item => (
-                <button
-                  key={item.chain.chain.id}
-                  type="button"
-                  aria-pressed={selectedDestinationNetworkId === item.chain.chain.id}
-                  onClick={() => {
-                    const next = selectShieldWithdrawDestinationForNetwork(
-                      destinations,
-                      source,
-                      item.chain.chain.id
-                    )
-                    if (next) {
-                      if (selectedDestinationNetworkId !== item.chain.chain.id) setRecipient('')
-                      setDestinationNetworkId(item.chain.chain.id)
-                    }
-                    setPicker(null)
-                  }}
-                  className={`wallet-interactive flex w-full items-center gap-3 rounded-md px-2 py-3 text-left text-sm hover:bg-wallet-selected active:bg-white/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 ${selectedDestinationNetworkId === item.chain.chain.id ? 'bg-wallet-selected' : ''}`}
-                >
-                  <ChainIcon
-                    chain={withdrawChainIconAlias(item.chain.chain)}
-                    width={28}
-                    height={28}
-                    className="shrink-0 rounded-md"
-                  />
-                  <span className="min-w-0 flex-1 truncate">{item.chain.chain.displayName}</span>
-                  {selectedDestinationNetworkId === item.chain.chain.id && (
-                    <Icon icon="lucide:check" width={17} height={17} className="text-primary" />
-                  )}
-                </button>
-              )
-            )
           ) : picker === 'source' ? (
             <ShieldSourceTokenPickerRows
               items={sourcePickerItems}
@@ -1114,6 +1091,18 @@ export function ShieldWithdrawForm({
           ) : null}
         </DialogContent>
       </Dialog>
+      <ChainSelector
+        open={active && networkPickerOpen}
+        onOpenChange={setNetworkPickerOpen}
+        options={networkOptions}
+        selectedId={selectedDestinationNetworkId}
+        onSelect={id => {
+          const next = selectShieldWithdrawDestinationForNetwork(destinations, source, id)
+          if (!next) return
+          if (selectedDestinationNetworkId !== id) setRecipient('')
+          setDestinationNetworkId(id)
+        }}
+      />
     </div>
   )
 }

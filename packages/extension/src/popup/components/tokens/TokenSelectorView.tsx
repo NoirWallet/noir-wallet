@@ -2,13 +2,7 @@ import { useEffect, useRef, useState, type ReactNode, type UIEventHandler } from
 import { Icon } from '@iconify/react'
 import { cn } from '@/lib/utils'
 import { ChainIcon } from '../common/ChainIcon'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuTrigger
-} from '../ui/dropdown-menu'
+import { ChainSelector } from '../common/ChainSelector'
 import { ListSkeleton } from '../ui/skeleton'
 import {
   TokenSelectionList,
@@ -101,6 +95,7 @@ export function TokenSelectorView({
           accountId
         })
       : null
+  const [networkPickerOpen, setNetworkPickerOpen] = useState(false)
   const [recentChainIds, setRecentChainIds] = useState<readonly string[]>([])
   const pendingRecentChainIds = useRef<readonly string[] | null>(null)
   useEffect(() => {
@@ -241,6 +236,22 @@ export function TokenSelectorView({
         className
       )}
     >
+      <ChainSelector
+        open={networkPickerOpen}
+        onOpenChange={setNetworkPickerOpen}
+        selectedId={effectiveNetwork}
+        onSelect={selectNetwork}
+        options={[
+          { id: 'all', name: 'All networks' },
+          ...networks.map(network => ({
+            id: network.id,
+            name: network.label,
+            icon: network.iconChain,
+            disabled: Boolean(network.disabledReason),
+            note: network.disabledReason
+          }))
+        ]}
+      />
       <div className="shrink-0 pb-2 pt-1.5">
         <TokenSelectionSearch
           value={search}
@@ -297,53 +308,20 @@ export function TokenSelectorView({
               </button>
             ))}
             {(more.length > 0 || disabled.length > 0) && (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <button
-                    type="button"
-                    aria-label="More networks"
-                    title="More networks"
-                    className={cn(
-                      'wallet-interactive flex size-10 shrink-0 items-center justify-center rounded-md border bg-card focus-visible:outline-2 focus-visible:outline-primary',
-                      more.some(network => network.id === effectiveNetwork)
-                        ? 'border-primary bg-primary/10'
-                        : 'border-transparent'
-                    )}
-                  >
-                    <Icon icon="lucide:ellipsis" width={17} height={17} />
-                  </button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="min-w-[180px]">
-                  <DropdownMenuRadioGroup value={effectiveNetwork} onValueChange={selectNetwork}>
-                    {[...more, ...disabled].map(network => (
-                      <DropdownMenuRadioItem
-                        key={network.id}
-                        value={network.id}
-                        disabled={Boolean(network.disabledReason)}
-                        className={
-                          network.disabledReason
-                            ? 'text-muted data-[disabled]:opacity-100'
-                            : 'cursor-pointer'
-                        }
-                      >
-                        <ChainIcon
-                          chain={network.iconChain}
-                          width={16}
-                          height={16}
-                          className="rounded-[4px]"
-                          showTooltip={false}
-                          alt=""
-                          aria-hidden="true"
-                        />
-                        <span className="flex-1">{network.label}</span>
-                        {network.disabledReason && (
-                          <span className="text-[10px]">{network.disabledReason}</span>
-                        )}
-                      </DropdownMenuRadioItem>
-                    ))}
-                  </DropdownMenuRadioGroup>
-                </DropdownMenuContent>
-              </DropdownMenu>
+              <button
+                type="button"
+                aria-label="More networks"
+                title="More networks"
+                onClick={() => setNetworkPickerOpen(true)}
+                className={cn(
+                  'wallet-interactive flex size-10 shrink-0 items-center justify-center rounded-md border bg-card focus-visible:outline-2 focus-visible:outline-primary',
+                  more.some(network => network.id === effectiveNetwork)
+                    ? 'border-primary bg-primary/10'
+                    : 'border-transparent'
+                )}
+              >
+                <Icon icon="lucide:ellipsis" width={17} height={17} />
+              </button>
             )}
           </div>
         )}

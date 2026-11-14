@@ -5,7 +5,7 @@ import { getCachedTokens, type SwapToken } from '@/core/services/intents-api'
 import type { ConfidentialFundingReview } from '@/core/services/confidential-funding'
 import type { PortfolioReadModel } from '@/core/portfolio'
 import { formatBaseUnitAmount, formatBaseUnitDecimalAmount } from '@/lib/number-format'
-import { formatSortAddress, formatSymbol } from '@/lib/format'
+import { formatSymbol } from '@/lib/format'
 import { resolveChainIconAlias } from '@/lib/chain-icon'
 import { useWalletStore } from '@/store/wallet-store'
 import { useSettingsStore } from '@/store/settings-store'
@@ -61,6 +61,7 @@ import {
   buildShieldSwapPreviewRequest,
   formatShieldSwapPreviewRate,
   matchesShieldSwapReview,
+  shieldOriginIdentifiers,
   shieldSwapFormAmountError,
   shieldSwapFormBalance
 } from '@/popup/services/shield-swap-form'
@@ -72,35 +73,6 @@ import {
   SHIELD_SWAP_ZEC_TRANSPARENT_SELECTION_ID
 } from '@/popup/services/shield-swap-zec-sources'
 import { ZEC_DECIMALS } from '@/config/wallet'
-
-function shieldOriginIdentifier(
-  asset: ShieldFundingAsset,
-  options: readonly ShieldFundingAsset[]
-): string | null {
-  const peers = options.filter(
-    candidate =>
-      candidate.chain.chain.id === asset.chain.chain.id &&
-      candidate.asset.metadata.symbol === asset.asset.metadata.symbol
-  )
-  if (asset.asset.asset.kind === 'native' && peers.length === 1) return null
-  const identityOf = (candidate: ShieldFundingAsset) => {
-    const reference = candidate.asset.asset.reference
-    return peers.some(other => other !== candidate && other.asset.asset.reference === reference)
-      ? candidate.managed.protocolAssetId
-      : reference
-  }
-  const identity = identityOf(asset)
-  const peerIdentities = peers.filter(candidate => candidate !== asset).map(identityOf)
-  const initial = formatSortAddress(identity)
-  if (peerIdentities.every(candidate => formatSortAddress(candidate) !== initial)) return initial
-  for (let visible = 7; visible <= identity.length; visible += 1) {
-    const short = (value: string) =>
-      value.length > visible * 2 ? `${value.slice(0, visible)}...${value.slice(-visible)}` : value
-    const label = short(identity)
-    if (peerIdentities.every(candidate => short(candidate) !== label)) return label
-  }
-  return identity
-}
 
 interface ShieldSwapPageProps {
   readonly active: boolean
@@ -255,11 +227,7 @@ function ShieldSwapForm({
     () => listShieldFundingAssets(model, managedAssets, tokens, network),
     [model, managedAssets, tokens, network]
   )
-  const originIdentifiers = useMemo(
-    () =>
-      new Map(options.map(asset => [asset.asset.asset.id, shieldOriginIdentifier(asset, options)])),
-    [options]
-  )
+  const originIdentifiers = useMemo(() => shieldOriginIdentifiers(options), [options])
   const portfolioBalances = useMemo(() => shieldPortfolioBalances(model), [model])
   const trustedBalances = balanceRefreshRequired ? null : currentBalances
   const displayBalances = balanceRefreshRequired ? null : (currentBalances ?? portfolioBalances)
@@ -365,20 +333,35 @@ function ShieldSwapForm({
       : null
   const fromToken = tokens.find(token => token.assetId === from?.managed.protocolAssetId) ?? null
   const toToken = tokens.find(token => token.assetId === to?.managed.protocolAssetId) ?? null
+  const tokenPrices = useMemo(
+    () => new Map(tokens.map(token => [token.assetId, token.price] as const)),
+    [tokens]
+  )
   const { fromFiat, toFiat } = getSwapAmountValues({
     amountIn: amount,
     amountOut: previewOutput ?? '',
     tokenInPrice: fromToken?.price,
     tokenOutPrice: toToken?.price
   })
-  const pickable = (picker === 'from' ? sourceChoices : options).filter(
-    asset =>
-      asset.managed.protocolAssetId !==
-        (picker === 'from' ? to?.managed.protocolAssetId : from?.managed.protocolAssetId) &&
-      `${asset.asset.metadata.symbol} ${asset.asset.metadata.name} ${asset.asset.asset.reference}`
-        .toLowerCase()
-        .includes(search.trim().toLowerCase())
-  )
+  const pickable = useMemo(() => {
+    if (picker === null) return []
+    const excluded = picker === 'from' ? to?.managed.protocolAssetId : from?.managed.protocolAssetId
+    const needle = search.trim().toLowerCase()
+    return (picker === 'from' ? sourceChoices : options).filter(
+      asset =>
+        asset.managed.protocolAssetId !== excluded &&
+        `${asset.asset.metadata.symbol} ${asset.asset.metadata.name} ${asset.asset.asset.reference}`
+          .toLowerCase()
+          .includes(needle)
+    )
+  }, [
+    picker,
+    to?.managed.protocolAssetId,
+    from?.managed.protocolAssetId,
+    search,
+    sourceChoices,
+    options
+  ])
   const fromPickerItems = useMemo((): readonly ShieldSourceTokenPickerItem[] => {
     if (picker !== 'from') return []
     const needle = search.trim().toLowerCase()
@@ -417,7 +400,9 @@ function ShieldSwapForm({
           availableRaw: option.availableRaw,
           decimals: option.decimals,
           priceUsd:
-            tokens.find(token => token.assetId === option.intentsWalletAssetId)?.price ??
+            (option.intentsWalletAssetId
+              ? tokenPrices.get(option.intentsWalletAssetId)
+              : undefined) ??
             (option.kind === 'native-shielded'
               ? tokens.find(token => token.blockchain === 'zec' && token.symbol === 'ZEC')?.price
               : null),
@@ -441,13 +426,21 @@ function ShieldSwapForm({
           ),
           availableRaw: shieldFundingAvailableRaw(asset, displayBalances),
           decimals: asset.asset.metadata.decimals,
-          priceUsd:
-            tokens.find(token => token.assetId === asset.managed.protocolAssetId)?.price ?? null
+          priceUsd: tokenPrices.get(asset.managed.protocolAssetId) ?? null
         })
       )
       .filter(row => matchesSearch([row.symbol]))
     return Object.freeze([...transparentZecRow, ...zecRows, ...nonZecRows])
-  }, [picker, pickable, search, zecSourceOptions, displayBalances, tokens, nativeZecTransparentRaw])
+  }, [
+    picker,
+    pickable,
+    search,
+    zecSourceOptions,
+    displayBalances,
+    tokens,
+    tokenPrices,
+    nativeZecTransparentRaw
+  ])
   const pickerNetworks = useMemo(() => {
     const choices = picker === 'from' ? sourceChoices : options
     const networks = new Map<string, { id: string; label: string; iconChain: string }>()
@@ -482,8 +475,9 @@ function ShieldSwapForm({
     }
     return [...networks.values()]
   }, [picker, sourceChoices, options, zecSourceOptions, nativeZecTransparentRaw])
-  const pickerItems =
-    picker === 'from'
+  const pickerItems = useMemo(() => {
+    if (picker === null) return []
+    return picker === 'from'
       ? fromPickerItems
           .filter(item => {
             if (pickerNetwork === 'all') return true
@@ -518,9 +512,7 @@ function ShieldSwapForm({
               <TokenBalanceDisplay
                 amount={shieldSwapFormBalance(asset, displayBalances) ?? '—'}
                 symbol={formatSymbol(asset.asset.metadata.symbol)}
-                priceUsd={
-                  tokens.find(token => token.assetId === asset.managed.protocolAssetId)?.price
-                }
+                priceUsd={tokenPrices.get(asset.managed.protocolAssetId)}
                 approximateFiat
                 balancesHidden={hidden}
               />
@@ -529,6 +521,17 @@ function ShieldSwapForm({
               ? undefined
               : (shieldSwapFormBalance(asset, displayBalances) ?? undefined)
           }))
+  }, [
+    picker,
+    fromPickerItems,
+    pickerNetwork,
+    sourceChoices,
+    hidden,
+    pickable,
+    originIdentifiers,
+    displayBalances,
+    tokenPrices
+  ])
   const fromZecSource =
     from?.asset.metadata.symbol.toUpperCase() === 'ZEC'
       ? zecSourceOptions.find(option => option.intentsWalletAssetId === from?.asset.asset.id)

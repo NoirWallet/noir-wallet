@@ -347,6 +347,12 @@ export function MultichainSend({
     key: string
     assetIds: readonly string[]
   } | null>(null)
+  const [nonEvmDraft, setNonEvmDraft] = useState<{
+    key: string
+    assetId: string
+    recipient: string
+    amount: string
+  } | null>(null)
   const { activeAccount: storageV2Account } = useActiveAccountNetworks()
   const effectiveAccount = resolveEffectiveActiveAccountIdentity({
     currentWalletId,
@@ -362,6 +368,19 @@ export function MultichainSend({
     chainEndpointRuntimeKey
   ])
   const sendEntryKey = `${location.key}:${scopeKey}`
+  const handleNonEvmDraftChange = useCallback(
+    (assetId: string, draft: Readonly<{ recipient: string; amount: string }>) => {
+      setNonEvmDraft(previous =>
+        previous?.key === sendEntryKey &&
+        previous.assetId === assetId &&
+        previous.recipient === draft.recipient &&
+        previous.amount === draft.amount
+          ? previous
+          : { key: sendEntryKey, assetId, ...draft }
+      )
+    },
+    [sendEntryKey]
+  )
   useEffect(() => {
     setSourcePicker(null)
     setNearSourceOptions(null)
@@ -463,6 +482,13 @@ export function MultichainSend({
     network?: string
     endpointRuntimeKey?: string
     sendEntry?: 'asset-detail' | 'shield'
+    crossChainReturnDraft?: {
+      sourceAssetId: string
+      walletId: string
+      accountId: string
+      recipient: string
+      amount: string
+    }
   } | null
   const sendEntry =
     navigationSnapshot?.sendEntry === 'asset-detail' || navigationSnapshot?.sendEntry === 'shield'
@@ -625,6 +651,12 @@ export function MultichainSend({
       ? (selectionSnapshot.value?.asset.asset.id ?? null)
       : requestedAssetId
   const selection = assets.find(item => item.asset.asset.id === selectedAssetId) ?? null
+  const returnDraft =
+    navigationSnapshot?.crossChainReturnDraft?.sourceAssetId === selection?.asset.asset.id &&
+    navigationSnapshot?.crossChainReturnDraft?.walletId === effectiveWalletId &&
+    navigationSnapshot?.crossChainReturnDraft?.accountId === effectiveAccountId
+      ? navigationSnapshot.crossChainReturnDraft
+      : null
   const crossChainGroup =
     selection?.chain.chain.family === 'evm' && currentNetwork === 'mainnet'
       ? getCrossChainSendAssetGroup(selection.asset.asset)
@@ -867,6 +899,10 @@ export function MultichainSend({
     getCrossChainSendAssetGroup(selection.asset.asset)
       ? selection.asset.asset.id
       : null
+  const activeNonEvmDraft =
+    nonEvmDraft?.key === sendEntryKey && nonEvmDraft.assetId === nonEvmCrossChainSourceAssetId
+      ? nonEvmDraft
+      : null
   const publicPrivateDraft =
     selection && effectiveWalletId && effectiveAccountId
       ? parsePublicPrivateEvmSendDraft(searchParams, {
@@ -999,7 +1035,11 @@ export function MultichainSend({
                       source: nonEvmCrossChainSourceAssetId,
                       sourceMode: 'main',
                       sourceWalletId: effectiveWalletId,
-                      sourceAccountId: effectiveAccountId
+                      sourceAccountId: effectiveAccountId,
+                      ...(activeNonEvmDraft?.recipient
+                        ? { recipient: activeNonEvmDraft.recipient }
+                        : {}),
+                      ...(activeNonEvmDraft?.amount ? { amount: activeNonEvmDraft.amount } : {})
                     })}`,
                     {
                       replace: true,
@@ -1198,11 +1238,13 @@ export function MultichainSend({
                     : undefined
                 }
                 initialRecipient={
-                  currentSession.publicRecipient &&
-                  /^0x[0-9a-fA-F]{40}$/.test(currentSession.publicRecipient)
-                    ? currentSession.publicRecipient
+                  /^0x[0-9a-fA-F]{40}$/.test(
+                    returnDraft?.recipient ?? currentSession.publicRecipient
+                  )
+                    ? (returnDraft?.recipient ?? currentSession.publicRecipient)
                     : undefined
                 }
+                initialAmount={returnDraft?.amount}
                 initialDraft={publicPrivateDraft ?? undefined}
                 onSubmitted={value => setSubmission({ family: 'evm', value })}
               />
@@ -1219,6 +1261,9 @@ export function MultichainSend({
               key={`${sendEntryKey}:${selection.asset.asset.id}`}
               selection={selection}
               priceUsd={availableUsdPrice(selection.asset, assetPrices)}
+              initialRecipient={returnDraft?.recipient}
+              initialAmount={returnDraft?.amount}
+              onDraftChange={handleNonEvmDraftChange}
               onSubmitted={value => setSubmission({ family: 'solana', value })}
             />
           ) : selection?.chain.chain.family === 'near' ? (

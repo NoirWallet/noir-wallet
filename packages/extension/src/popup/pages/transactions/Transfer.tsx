@@ -43,6 +43,7 @@ import {
   TokenSelectionSearch
 } from '@/popup/components/tokens/TokenSelectionList'
 import { ChainIcon } from '@/popup/components/common/ChainIcon'
+import { ChainSelector, type ChainSelectorOption } from '@/popup/components/common/ChainSelector'
 import { ExecutionAccountIcon } from '@/popup/components/account/ExecutionAccountSelector'
 import nearLogo from '@/images/figma-near-confidential.svg'
 import { Button } from '@/popup/components/ui/button'
@@ -406,7 +407,6 @@ function TransferForm() {
   const [assetSearch, setAssetSearch] = useState('')
   const [assetChainId, setAssetChainId] = useState('all')
   const [networkPickerOpen, setNetworkPickerOpen] = useState(false)
-  const [networkSearch, setNetworkSearch] = useState('')
   const [destinationAssetId, setDestinationAssetId] = useState<string | null>(
     initialDraft.destinationAssetId ?? null
   )
@@ -925,6 +925,17 @@ function TransferForm() {
     currentNetwork,
     eligibleChainIds
   ])
+  const destinationNetworkOptions: ChainSelectorOption[] = [
+    ...new Map(destinationOptions.map(item => [item.chain.chain.id, item])).values()
+  ].map(item => ({
+    id: item.chain.chain.id,
+    name: item.chain.chain.displayName,
+    icon: resolveChainIconAlias(
+      item.chain.chain.family,
+      item.chain.chain.displayName,
+      item.chain.chain.id
+    )
+  }))
   const destination =
     from === 'shield'
       ? (destinationOptions.find(item => item.asset.asset.id === destinationAssetId) ??
@@ -2056,7 +2067,6 @@ function TransferForm() {
                 : networkIcon
             }
             onNetworkClick={() => {
-              setNetworkSearch('')
               setNetworkPickerOpen(true)
             }}
             showNetwork={from === 'shield'}
@@ -2339,67 +2349,23 @@ function TransferForm() {
           </div>
         </DialogContent>
       </Dialog>
-      <Dialog open={networkPickerOpen} onOpenChange={setNetworkPickerOpen}>
-        <DialogContent
-          position="bottom"
-          showCloseButton={false}
-          data-wallet-mode={walletMode}
-          className="inset-0 flex h-full flex-col gap-4 rounded-none border-0 bg-background p-0 shadow-none"
-        >
-          <DialogTitle className="sr-only">Select Network</DialogTitle>
-          <DialogDescription className="sr-only">
-            Choose the network to receive your funds.
-          </DialogDescription>
-          <PageHeader title="Select Network" showBack onBack={() => setNetworkPickerOpen(false)} />
-          <div className="min-h-0 overflow-y-auto px-4 pb-4">
-            <input
-              aria-label="Search networks"
-              placeholder="Search network"
-              value={networkSearch}
-              onChange={event => setNetworkSearch(event.target.value)}
-              className="mb-4 h-12 w-full rounded-lg border border-white/5 bg-card px-3 text-sm outline-none focus:border-primary"
-            />
-            <p className="mb-2 text-xs text-muted">Networks for {symbol}</p>
-            <div className="space-y-1">
-              {destinationOptions
-                .filter(item =>
-                  item.chain.chain.displayName
-                    .toLowerCase()
-                    .includes(networkSearch.trim().toLowerCase())
-                )
-                .map(item => (
-                  <button
-                    type="button"
-                    key={item.asset.asset.id}
-                    aria-label={item.chain.chain.displayName}
-                    aria-pressed={destination?.asset.asset.id === item.asset.asset.id}
-                    onClick={() => {
-                      userEditedMove.current = true
-                      setDestinationAssetId(item.asset.asset.id)
-                      setNetworkPickerOpen(false)
-                      setShieldError(null)
-                    }}
-                    className={cn(
-                      'wallet-interactive flex h-16 w-full items-center gap-3 rounded-lg px-3 text-left text-base hover:bg-wallet-selected',
-                      destination?.asset.asset.id === item.asset.asset.id && 'bg-wallet-selected'
-                    )}
-                  >
-                    <ChainIcon
-                      chain={resolveChainIconAlias(
-                        item.chain.chain.family,
-                        item.chain.chain.displayName,
-                        item.chain.chain.id
-                      )}
-                      width={28}
-                      height={28}
-                    />
-                    <span>{item.chain.chain.displayName}</span>
-                  </button>
-                ))}
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <ChainSelector
+        open={networkPickerOpen}
+        onOpenChange={setNetworkPickerOpen}
+        options={destinationNetworkOptions}
+        selectedId={destination?.chain.chain.id ?? null}
+        label={`Networks for ${symbol}`}
+        onSelect={id => {
+          const item =
+            destination?.chain.chain.id === id
+              ? destination
+              : destinationOptions.find(option => option.chain.chain.id === id)
+          if (!item) return
+          userEditedMove.current = true
+          setDestinationAssetId(item.asset.asset.id)
+          setShieldError(null)
+        }}
+      />
       <Dialog
         open={domainPicker !== null}
         onOpenChange={open => {

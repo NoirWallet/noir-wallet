@@ -26,6 +26,7 @@ export function SendSourceSection({
   balance,
   maxButton,
   recipient,
+  sourceAction,
   domain,
   availableDomains,
   onDomainChange,
@@ -36,6 +37,7 @@ export function SendSourceSection({
   readonly balance: ReactNode
   readonly maxButton: ReactNode
   readonly recipient?: ReactNode
+  readonly sourceAction?: ReactNode
   readonly domain: BalanceDomain
   readonly availableDomains: readonly BalanceDomain[]
   readonly onDomainChange: (domain: BalanceDomain) => void
@@ -44,12 +46,14 @@ export function SendSourceSection({
   const sourceSection = (
     <div className="order-1 flex min-w-0 items-center justify-between gap-3">
       <SendFieldLabel>Send from</SendFieldLabel>
-      <BalanceDomainTabs
-        value={domain}
-        available={availableDomains}
-        onChange={onDomainChange}
-        disabled={disabled}
-      />
+      {sourceAction ?? (
+        <BalanceDomainTabs
+          value={domain}
+          available={availableDomains}
+          onChange={onDomainChange}
+          disabled={disabled}
+        />
+      )}
     </div>
   )
   return (

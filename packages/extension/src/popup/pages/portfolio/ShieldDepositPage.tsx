@@ -41,6 +41,7 @@ import {
 import { useWalletStore } from '@/store/wallet-store'
 import { PageHeader } from '@/popup/components/common/PageHeader'
 import { ChainIcon } from '@/popup/components/common/ChainIcon'
+import { ChainSelector, type ChainSelectorOption } from '@/popup/components/common/ChainSelector'
 import { TokenIcon } from '@/popup/components/tokens/TokenIcon'
 import {
   TokenSelectionList,
@@ -56,7 +57,7 @@ import {
 } from '@/popup/components/common/CopyToast'
 import { InlineError } from '@/popup/components/common/InlineError'
 
-type Picker = 'provider' | 'token' | 'network' | null
+type Picker = 'provider' | 'token' | null
 
 function depositChainIconAlias(network: ChainDefinition): string {
   return network.family === 'evm'
@@ -113,6 +114,7 @@ function ShieldDepositContent() {
   const { copyToClipboard, showToast, isCopied } = useCopyToClipboard()
   const [catalog, setCatalog] = useState<readonly SwapToken[]>([])
   const [picker, setPicker] = useState<Picker>(null)
+  const [networkPickerOpen, setNetworkPickerOpen] = useState(false)
   const [tokenId, setTokenId] = useState<string | null | undefined>(undefined)
   const [tokenSearch, setTokenSearch] = useState('')
   const [networkId, setNetworkId] = useState<string | null>(null)
@@ -176,6 +178,7 @@ function ShieldDepositContent() {
     providerRef.current = nextProvider
     setShowZcashAddress(false)
     setPicker(null)
+    setNetworkPickerOpen(false)
     setBusy(false)
     setRefreshing(false)
     setCheckResult(null)
@@ -319,6 +322,11 @@ function ShieldDepositContent() {
   const availableNetworks = networks.filter(
     network => depositTokenForNetwork(tokens, selectedChoiceId, network) !== null
   )
+  const networkOptions: ChainSelectorOption[] = availableNetworks.map(network => ({
+    id: network.id,
+    name: network.displayName,
+    icon: depositChainIconAlias(network)
+  }))
   const selectedNetwork = networks.find(network => network.id === networkId) ?? null
   const selectedToken = depositTokenForNetwork(tokens, selectedChoiceId, selectedNetwork)
   const displayedToken =
@@ -541,11 +549,11 @@ function ShieldDepositContent() {
     setError(null)
     setPicker(null)
   }
-  const selectNetwork = (network: ChainDefinition) => {
-    setNetworkId(network.id)
+  const selectNetwork = (id: string) => {
+    if (!availableNetworks.some(network => network.id === id)) return
+    setNetworkId(id)
     requestIdRef.current = null
     setError(null)
-    setPicker(null)
   }
   const selectProvider = (nextProvider: ShieldProvider) => {
     if (nextProvider === 'near-confidential' && !canManageNear) return
@@ -1042,7 +1050,7 @@ function ShieldDepositContent() {
               </button>
               <button
                 type="button"
-                onClick={() => setPicker('network')}
+                onClick={() => setNetworkPickerOpen(true)}
                 disabled={loading || !displayedToken || availableNetworks.length === 0}
                 className="wallet-interactive flex h-[62px] w-full items-center gap-2.5 rounded-lg bg-wallet-surface px-4 text-left enabled:hover:bg-wallet-selected enabled:active:bg-white/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 disabled:opacity-50"
               >
@@ -1212,11 +1220,7 @@ function ShieldDepositContent() {
         >
           <div className="flex h-14 shrink-0 items-center justify-between px-4">
             <DialogTitle className="text-base font-medium">
-              {picker === 'provider'
-                ? 'Shield Provider'
-                : picker === 'token'
-                  ? 'Select Token'
-                  : 'Select Network'}
+              {picker === 'provider' ? 'Shield Provider' : 'Select Token'}
             </DialogTitle>
             <button
               type="button"
@@ -1290,28 +1294,15 @@ function ShieldDepositContent() {
               />
             </div>
           )}
-          {picker === 'network' && (
-            <div className="min-h-0 overflow-y-auto px-4 pb-5">
-              {availableNetworks.map(network => (
-                <button
-                  key={network.id}
-                  type="button"
-                  onClick={() => selectNetwork(network)}
-                  className="wallet-interactive flex h-14 w-full items-center gap-3 border-b border-white/5 text-left text-sm hover:bg-white/5 active:bg-white/10 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary"
-                >
-                  <ChainIcon
-                    chain={depositChainIconAlias(network)}
-                    width={28}
-                    height={28}
-                    className="rounded-md"
-                  />
-                  {network.displayName}
-                </button>
-              ))}
-            </div>
-          )}
         </DialogContent>
       </Dialog>
+      <ChainSelector
+        open={networkPickerOpen}
+        onOpenChange={setNetworkPickerOpen}
+        options={networkOptions}
+        selectedId={networkId}
+        onSelect={selectNetwork}
+      />
       <CopyToast show={showToast} />
     </div>
   )

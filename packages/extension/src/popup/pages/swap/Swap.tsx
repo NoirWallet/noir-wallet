@@ -84,6 +84,7 @@ import { SwapTokenSelector } from '../../components/swap/SwapTokenSelector'
 import { SlippageSettingContent, SwapSettingsButton } from '../../components/swap/SlippageSetting'
 import { SwapReviewView } from '../../components/swap/SwapReviewView'
 import { SwapInputView } from '../../components/swap/SwapInputView'
+import { CrossChainSendFormView } from '../../components/transaction/CrossChainSendFormView'
 import { calculateSwapPriceImpact } from '../../components/swap/swap-estimate'
 import { useSwapState } from '../../hooks/useSwapState'
 import {
@@ -183,7 +184,9 @@ import { useActiveAccountNetworks } from '@/popup/hooks/useActiveAccountNetworks
 import {
   canReverseSwapPair,
   findSwapTokenInCatalog,
-  isSwapAssetOnEnabledChain
+  getEnabledSwapChains,
+  isSwapAssetOnEnabledChain,
+  mergeTokenCatalogs
 } from '@/popup/services/swap-catalog-loading'
 import {
   isPortfolioModelForScope,
@@ -350,11 +353,21 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
       : null
   const requestedCrossChainSourceMode = searchParams.get('sourceMode')
   const returnFromCrossChainSend = () => {
-    if (returnToSendAssetId) {
-      navigate(
-        `/send?assetId=${encodeURIComponent(returnToSendAssetId)}&sourceMode=${sourceMode}`,
-        { replace: true, state: { sendEntry } }
-      )
+    const sourceAssetId = returnToSendAssetId ?? requestedSourceAssetId
+    if (sourceAssetId) {
+      navigate(`/send?assetId=${encodeURIComponent(sourceAssetId)}&sourceMode=${sourceMode}`, {
+        replace: true,
+        state: {
+          sendEntry,
+          crossChainReturnDraft: {
+            sourceAssetId,
+            walletId: effectiveWalletId,
+            accountId: effectiveAccountId,
+            recipient: swap.recipientAddress,
+            amount: swap.amountIn
+          }
+        }
+      })
     } else {
       goBack()
     }
@@ -649,9 +662,13 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
   const portfolio = portfolioSnapshot.scope === walletSourcesScope ? portfolioSnapshot.value : null
   const receiveTargets =
     receiveTargetsSnapshot.scope === walletSourcesScope ? receiveTargetsSnapshot.value : null
+  const shieldCatalogTokens = useMemo(
+    () => mergeTokenCatalogs(swap.sourceTokens, swap.crossChainDestinationTokens),
+    [swap.sourceTokens, swap.crossChainDestinationTokens]
+  )
   const shieldManagedAssets = useMemo(
-    () => resolveManagedIntentsCatalog(swap.tokens),
-    [swap.tokens]
+    () => resolveManagedIntentsCatalog(shieldCatalogTokens),
+    [shieldCatalogTokens]
   )
   const managedAssetsByChainAndProtocolId = useMemo(
     () =>
@@ -662,8 +679,9 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
   )
   const shieldDisplayBalances = useMemo(() => shieldPortfolioBalances(portfolio), [portfolio])
   const shieldFundingOptions = useMemo(
-    () => listShieldFundingAssets(portfolio, shieldManagedAssets, swap.tokens, currentNetwork),
-    [portfolio, shieldManagedAssets, swap.tokens, currentNetwork]
+    () =>
+      listShieldFundingAssets(portfolio, shieldManagedAssets, shieldCatalogTokens, currentNetwork),
+    [portfolio, shieldManagedAssets, shieldCatalogTokens, currentNetwork]
   )
   const shieldSourceChoices = useMemo(() => {
     const funded = shieldFundingSources(shieldFundingOptions, shieldDisplayBalances)
@@ -695,8 +713,9 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
       currentWallet?.keySource
     ]
   )
-  const shieldPickerRows = useMemo(
-    (): readonly ShieldSourceTokenPickerItem[] => [
+  const shieldPickerRows = useMemo((): readonly ShieldSourceTokenPickerItem[] => {
+    const pricesByAssetId = new Map(shieldCatalogTokens.map(token => [token.assetId, token.price]))
+    return [
       ...(nativeZecShieldAvailable &&
       !getFundingSourceUnavailableReason(zcashKeySource, 'transparent')
         ? [
@@ -745,20 +764,18 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
           ),
           availableRaw: shieldFundingAvailableRaw(asset, shieldDisplayBalances),
           decimals: asset.asset.metadata.decimals,
-          priceUsd: swap.tokens.find(token => token.assetId === asset.managed.protocolAssetId)
-            ?.price
+          priceUsd: pricesByAssetId.get(asset.managed.protocolAssetId)
         }))
-    ],
-    [
-      nativeZecShieldAvailable,
-      zcashKeySource,
-      storeBalance,
-      shieldZecSourceOptions,
-      shieldSourceChoices,
-      shieldDisplayBalances,
-      swap.tokens
     ]
-  )
+  }, [
+    nativeZecShieldAvailable,
+    zcashKeySource,
+    storeBalance,
+    shieldZecSourceOptions,
+    shieldSourceChoices,
+    shieldDisplayBalances,
+    shieldCatalogTokens
+  ])
   const shieldPickerNetworks = useMemo(
     () => [
       ...new Map(
@@ -5368,17 +5385,24 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
     }
   }
 
+  const resumingApprovalReview =
+    walletSourcesScope !== null && approvalReviewScope === walletSourcesScope
+
   // Render content based on view step
   const renderContent = () => {
-    if (viewStep === 'input' && approvalReviewScope === walletSourcesScope) {
+    if (viewStep === 'input' && resumingApprovalReview) {
       const message = swap.quoteError || transferPreparationError
       return (
         <div className="flex min-h-0 flex-1 flex-col px-5 pt-6">
-          <p className="text-sm font-medium">Step 2 · Swap</p>
+          <p className="text-sm font-medium">
+            {crossChainSendRequested ? 'Send' : 'Step 2 · Swap'}
+          </p>
           <p className="mt-3 text-sm text-muted">
             {swap.tokenIn && swap.tokenOut
               ? `${swap.amountIn} ${formatSymbol(swap.tokenIn.symbol)} → ${formatSymbol(swap.tokenOut.symbol)}`
-              : 'Refreshing swap quote'}
+              : crossChainSendRequested
+                ? 'Refreshing send quote'
+                : 'Refreshing swap quote'}
           </p>
           {message ? (
             <InlineError
@@ -5405,7 +5429,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
               className="w-full"
               onClick={handleReturnToInput}
             >
-              Back to Swap
+              {crossChainSendRequested ? 'Back to Send' : 'Back to Swap'}
             </Button>
           </div>
         </div>
@@ -5428,7 +5452,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
                 disabled={isPreparingReview || !liveQuoteRequest || walletSourcesLoading}
                 isLoading={isPreparingReview}
               >
-                Continue Swap
+                {crossChainSendRequested ? 'Continue Send' : 'Continue Swap'}
               </Button>
               <Button
                 variant="outline"
@@ -5851,10 +5875,15 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
           signingActionLabel={
             privateBalanceTransferRequested
               ? 'Confirm transfer'
-              : rheaSigningReview?.kind === 'solana-transaction' ||
+              : crossChainSendRequested
+                ? rheaSigningReview?.kind === 'solana-transaction' ||
                   rheaSigningReview?.kind === 'near-transaction-batch'
-                ? 'Sign & Submit Swap'
-                : 'Sign Swap Order'
+                  ? 'Sign & Submit Send'
+                  : 'Sign Send Order'
+                : rheaSigningReview?.kind === 'solana-transaction' ||
+                    rheaSigningReview?.kind === 'near-transaction-batch'
+                  ? 'Sign & Submit Swap'
+                  : 'Sign Swap Order'
           }
           insufficient={hasInsufficientFunds || preparedFeeUnaffordable}
         />
@@ -5871,6 +5900,132 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
       liveQuoteKey === liveQuoteRequest.key &&
       quoteResult !== null &&
       !swap.isQuoting
+    if (crossChainSendRequested) {
+      const destinations = swap.destinationTokens.filter(token =>
+        isCrossChainSendDestination(swap.tokenIn, token, CROSS_CHAIN_SEND_CAPABILITIES)
+      )
+      const destinationOptions = getEnabledSwapChains(enabledSwapChains)
+        .filter(chain => chain.walletFamily === 'evm' || chain.walletFamily === 'solana')
+        .map(chain => {
+          const isSourceChain = chain.apiChainId === swap.tokenIn?.rheaChainId
+          const available =
+            isSourceChain || destinations.some(token => token.rheaChainId === chain.apiChainId)
+          return {
+            id: chain.apiChainId,
+            name: chain.displayName,
+            icon: chain.blockchain,
+            disabled: !available,
+            note: available
+              ? undefined
+              : swap.destinationTokensLoading
+                ? 'Loading'
+                : 'Same asset unavailable'
+          }
+        })
+      return (
+        <CrossChainSendFormView
+          tokenIn={swap.tokenIn}
+          tokenOut={swap.tokenOut}
+          destinationOptions={destinationOptions}
+          onSelectDestination={chainId => {
+            if (chainId === swap.tokenIn?.rheaChainId) {
+              returnFromCrossChainSend()
+              return
+            }
+            const destination = destinations.find(token => token.rheaChainId === chainId)
+            if (!destination) return
+            reviewAfterQuoteRefresh.current = null
+            setMaxSelected(false)
+            swap.selectTokenOut(destination)
+          }}
+          amount={swap.amountIn}
+          estimatedOut={swap.displayOut}
+          fromFiat={swap.fromFiat}
+          recipient={resolvedRecipientAddress}
+          spendableBalance={spendableBalance}
+          sourceBadge={executionSourceMode === 'private' ? 'Private' : 'Public'}
+          sourceAccountAction={sourceAccountAction}
+          isQuoting={swap.isQuoting}
+          quoteError={
+            crossChainPrivateSourceUnavailable
+              ? 'Confidential source is unavailable for this asset.'
+              : swap.tokenOut && resolvedRecipientAddress && !crossChainSendRecipientReady
+                ? 'Enter a valid address on the destination network.'
+                : swap.quoteError
+          }
+          recipientError={recipientError}
+          catalogError={swap.catalogError}
+          sourceAssetsLoading={swap.areTokensLoading && swap.sourceTokens.length === 0}
+          destinationAssetsLoading={
+            swap.destinationTokensLoading && swap.destinationTokens.length === 0
+          }
+          hasInsufficientFunds={hasInsufficientFunds || Boolean(nativeMaxError)}
+          insufficientMessage={
+            nativeMaxError ??
+            (swap.tokenIn ? `Insufficient ${swap.tokenIn.symbol} balance` : undefined)
+          }
+          maxLoading={routeMaximum.loading}
+          maxDisabled={
+            !resolvedRecipientAddress ||
+            Boolean(
+              walletOwnedSource &&
+              (BigInt(walletOwnedSource.asset.balance.availableRaw) === 0n ||
+                (walletOwnedSource.asset.asset.kind === 'native' && !canEstimateRouteMaximum))
+            )
+          }
+          maxDisabledReason={
+            walletOwnedSource && BigInt(walletOwnedSource.asset.balance.availableRaw) === 0n
+              ? 'No available balance'
+              : !resolvedRecipientAddress
+                ? 'Enter a destination address to use Max'
+                : 'Max is unavailable for this route'
+          }
+          canGetQuote={canGetQuote}
+          actionLoading={isPreparingReview}
+          providerName={liveQuoteRequest?.key === liveQuoteKey ? quoteResult?.router : undefined}
+          slippage={swap.slippage}
+          onAmountChange={value => {
+            reviewAfterQuoteRefresh.current = null
+            setMaxSelected(false)
+            maxQuoteAdjustmentCount.current = 0
+            swap.updateAmountIn(value)
+          }}
+          onMaxClick={
+            walletOwnedSource
+              ? () => {
+                  if (walletOwnedSource.asset.asset.kind === 'native' && !canEstimateRouteMaximum)
+                    return
+                  reviewAfterQuoteRefresh.current = null
+                  setMaxSelected(true)
+                  maxQuoteAdjustmentCount.current = 0
+                  if (walletOwnedSource.asset.asset.kind === 'native') {
+                    swap.updateAmountIn('')
+                    void routeMaximum.request()
+                  } else swap.updateAmountIn(walletSpendableBalance)
+                }
+              : undefined
+          }
+          onRecipientChange={handleRecipientAddressChange}
+          onSelectRecipient={recipientChainId ? handleSelectRecipient : undefined}
+          onRetryCatalog={() => {
+            if (accountNetworksError) void refreshAccountNetworks()
+            swap.retryTokenCatalog()
+          }}
+          onRetryQuote={
+            swap.quoteError && quoteRetryable && liveQuoteRequest
+              ? () => {
+                  reviewAfterQuoteRefresh.current = null
+                  swap.setQuoteError(null)
+                  swap.setIsQuoting(true)
+                  setQuoteRefreshTick(current => current + 1)
+                }
+              : undefined
+          }
+          onOpenSlippage={handleOpenSlippageSetting}
+          onReview={() => void reviewLiveQuote()}
+        />
+      )
+    }
     return (
       <SwapInputView
         tokenIn={swap.tokenIn}
@@ -6195,8 +6350,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
       }
     >
       {!shieldReviewing &&
-        (viewStep === 'review' ||
-          (approvalReviewScope === walletSourcesScope && viewStep === 'input')) && (
+        (viewStep === 'review' || (resumingApprovalReview && viewStep === 'input')) && (
           <div className="flex h-14 shrink-0 items-center justify-between bg-background px-5">
             <h1 className="min-w-0 truncate text-lg font-medium leading-[23px]">
               {publicPrivacySendRequested || crossChainSendRequested
@@ -6219,7 +6373,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
         )}
       {!shieldReviewing &&
         viewStep !== 'review' &&
-        !(approvalReviewScope === walletSourcesScope && viewStep === 'input') && (
+        !(resumingApprovalReview && viewStep === 'input') && (
           <PageHeader
             title={
               viewStep === 'approval-pending'
@@ -6245,7 +6399,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
         )}
       {ordinarySwapRequested &&
         viewStep === 'input' &&
-        approvalReviewScope !== walletSourcesScope &&
+        !resumingApprovalReview &&
         !shieldReviewing &&
         availableBalanceDomains.length > 1 && (
           <BalanceDomainTabs
@@ -6269,7 +6423,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
                 active={confidentialShieldSwapActive}
                 portfolio={portfolio}
                 portfolioLoading={walletSourcesLoading}
-                tokens={swap.tokens}
+                tokens={shieldCatalogTokens}
                 onReadPortfolio={readLatestPortfolio}
                 onRefreshPortfolio={refreshShieldPortfolio}
                 amountFocusToken={amountFocusToken}
