@@ -9,11 +9,17 @@ import {
 } from '@/lib/number-format'
 
 import { cn } from '@/lib/utils'
+import { formatSymbol } from '@/lib/format'
 import type { PortfolioAssetView } from '@/core/portfolio'
 import { findAssetPrice, type AssetPriceReadModel } from '@/core/prices'
 import { resolveChainIconAlias } from '@/lib/chain-icon'
 import { ChainIcon } from '@/popup/components/common/ChainIcon'
+import type { SwapToken } from '@/core/services/intents-api'
 import { TokenIcon } from '@/popup/components/tokens/TokenIcon'
+import {
+  lookupSwapTokenForWalletAsset,
+  resolvePortfolioAssetIconUrl
+} from '@/popup/components/tokens/portfolio-token-swap-icon'
 import { BalanceHelp } from '@/popup/components/transaction/BalanceHelp'
 import { getPortfolioAssetUsdValue } from './portfolio-prices'
 import { formatDisplayAmount } from './portfolio-format'
@@ -62,6 +68,7 @@ interface PortfolioAssetGroupCardProps {
   readonly directAsset?: boolean
   readonly onToggle?: () => void
   readonly onSelectAsset?: (assetId: string) => void
+  readonly swapCatalog?: readonly SwapToken[]
 }
 
 interface PortfolioAssetBalanceRowProps {
@@ -73,6 +80,27 @@ interface PortfolioAssetBalanceRowProps {
   readonly pricesLoading?: boolean
   readonly showUnitPrice?: boolean
   readonly onSelectAsset?: (assetId: string) => void
+  readonly swapCatalog?: readonly SwapToken[]
+}
+
+function portfolioTokenIconProps(
+  asset: PortfolioAssetView,
+  catalog: readonly SwapToken[] | undefined,
+  blockchain?: string
+) {
+  const assetId = asset.asset.id
+  const swapToken = catalog ? lookupSwapTokenForWalletAsset(assetId, catalog) : null
+  return {
+    token: swapToken ?? undefined,
+    assetId,
+    symbol: formatSymbol(asset.metadata.symbol),
+    icon: resolvePortfolioAssetIconUrl({
+      assetId,
+      metadataIconUrl: asset.metadata.iconUrl,
+      catalog
+    }),
+    blockchain: blockchain ?? swapToken?.blockchain
+  }
 }
 
 function assetAmount(asset: PortfolioAssetView): Big {
@@ -89,9 +117,9 @@ function PendingAssetAmount({ amount, symbol }: { readonly amount: Big; readonly
     <div className="flex min-w-0 items-center justify-end gap-1 px-3 pb-2.5 text-[11px] text-muted">
       <span
         className="min-w-0 break-all text-right"
-        title={`${amount.toFixed()} ${symbol} pending`}
+        title={`${amount.toFixed()} ${formatSymbol(symbol)} pending`}
       >
-        {formatDisplayAmount(amount)} {symbol} pending
+        {formatDisplayAmount(amount)} {formatSymbol(symbol)} pending
       </span>
       <BalanceHelp kind="pending" />
     </div>
@@ -149,7 +177,8 @@ function PortfolioAssetBalanceRow({
   leading,
   pricesLoading = false,
   showUnitPrice = true,
-  onSelectAsset
+  onSelectAsset,
+  swapCatalog
 }: PortfolioAssetBalanceRowProps) {
   const amount = assetAmount(entry.asset)
   const pendingAmount = assetPendingAmount(entry.asset)
@@ -165,7 +194,7 @@ function PortfolioAssetBalanceRow({
     <div>
       <button
         type="button"
-        aria-label={`View ${entry.asset.metadata.symbol} details on ${entry.chain.chain.displayName}`}
+        aria-label={`View ${formatSymbol(entry.asset.metadata.symbol)} details on ${entry.chain.chain.displayName}`}
         onClick={() => onSelectAsset?.(entry.asset.asset.id)}
         className={cn(
           'wallet-interactive flex min-h-[72px] w-full min-w-0 items-center gap-3 px-4 py-2.5 text-left hover:bg-white/[0.05] active:bg-white/10 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary',
@@ -182,16 +211,16 @@ function PortfolioAssetBalanceRow({
           />
         ) : (
           <TokenIcon
-            assetId={entry.asset.asset.id}
-            symbol={entry.asset.metadata.symbol}
-            icon={entry.asset.metadata.iconUrl}
+            {...portfolioTokenIconProps(entry.asset, swapCatalog, chainAlias)}
             size={32}
             className="shrink-0"
           />
         )}
         <div className="min-w-0 flex-1">
           <p className="truncate text-base font-medium">
-            {leading === 'chain' ? entry.chain.chain.displayName : entry.asset.metadata.symbol}
+            {leading === 'chain'
+              ? entry.chain.chain.displayName
+              : formatSymbol(entry.asset.metadata.symbol)}
           </p>
           {showUnitPrice && (
             <UnitPrice
@@ -210,19 +239,22 @@ function PortfolioAssetBalanceRow({
               {balancesHidden
                 ? '••••'
                 : fiat === null
-                  ? '—'
+                  ? formatFiatAmount('0', { showSign: true })
                   : formatFiatAmount(fiat, { showSign: true })}
             </p>
           )}
           <p className="mt-0.5 break-all text-xs text-muted">
             {balancesHidden
               ? '••••'
-              : `${formatDisplayAmount(amount)} ${entry.asset.metadata.symbol}`}
+              : `${formatDisplayAmount(amount)} ${formatSymbol(entry.asset.metadata.symbol)}`}
           </p>
         </div>
       </button>
       {!balancesHidden && (
-        <PendingAssetAmount amount={pendingAmount} symbol={entry.asset.metadata.symbol} />
+        <PendingAssetAmount
+          amount={pendingAmount}
+          symbol={formatSymbol(entry.asset.metadata.symbol)}
+        />
       )}
     </div>
   )
@@ -241,7 +273,8 @@ export function PortfolioAssetGroupCard({
   pricesLoading = false,
   directAsset = false,
   onToggle,
-  onSelectAsset
+  onSelectAsset,
+  swapCatalog
 }: PortfolioAssetGroupCardProps) {
   const totalAmount = group.entries.reduce(
     (sum, entry) => sum.plus(assetAmount(entry.asset)),
@@ -253,6 +286,15 @@ export function PortfolioAssetGroupCard({
   )
   const fiat = getAvailablePortfolioAssetGroupUsdValue(group, prices)
   const unitQuote = getPortfolioAssetGroupUnitQuote(group, prices)
+  const representativeAsset = group.entries[0]?.asset
+  const chainBadge =
+    directAsset && group.entries[0]
+      ? resolveChainIconAlias(
+          group.entries[0].chain.chain.family,
+          group.entries[0].chain.chain.displayName,
+          group.entries[0].chain.chain.id
+        )
+      : undefined
 
   return (
     <article className="overflow-hidden">
@@ -260,8 +302,8 @@ export function PortfolioAssetGroupCard({
         type="button"
         aria-label={
           directAsset
-            ? `View ${group.symbol} details on ${group.entries[0]?.chain.chain.displayName}`
-            : `${expanded ? 'Collapse' : 'Expand'} ${group.symbol} networks`
+            ? `View ${formatSymbol(group.symbol)} details on ${group.entries[0]?.chain.chain.displayName}`
+            : `${expanded ? 'Collapse' : 'Expand'} ${formatSymbol(group.symbol)} networks`
         }
         aria-expanded={directAsset ? undefined : expanded}
         onClick={() =>
@@ -276,25 +318,21 @@ export function PortfolioAssetGroupCard({
         <PortfolioAssetRowContent
           icon={
             <TokenIcon
-              assetId={group.representativeAssetId}
-              symbol={group.symbol}
-              icon={group.iconUrl}
-              blockchain={
-                directAsset && group.entries[0]
-                  ? resolveChainIconAlias(
-                      group.entries[0].chain.chain.family,
-                      group.entries[0].chain.chain.displayName,
-                      group.entries[0].chain.chain.id
-                    )
-                  : undefined
-              }
+              {...(representativeAsset
+                ? portfolioTokenIconProps(representativeAsset, swapCatalog, chainBadge)
+                : {
+                    assetId: group.representativeAssetId,
+                    symbol: formatSymbol(group.symbol),
+                    icon: group.iconUrl,
+                    blockchain: chainBadge
+                  })}
               size={36}
               className="shrink-0"
             />
           }
           title={
             <>
-              <p className="truncate text-base font-medium">{group.symbol}</p>
+              <p className="truncate text-base font-medium">{formatSymbol(group.symbol)}</p>
               {!group.bundled && (
                 <span className="shrink-0 rounded bg-white/8 px-1.5 py-0.5 text-[9px] text-muted">
                   Custom
@@ -319,12 +357,14 @@ export function PortfolioAssetGroupCard({
                   {balancesHidden
                     ? '••••'
                     : fiat === null
-                      ? '—'
+                      ? formatFiatAmount('0', { showSign: true })
                       : formatFiatAmount(fiat, { showSign: true })}
                 </p>
               )}
               <p className="mt-0.5 break-all text-xs text-muted">
-                {balancesHidden ? '••••' : `${formatDisplayAmount(totalAmount)} ${group.symbol}`}
+                {balancesHidden
+                  ? '••••'
+                  : `${formatDisplayAmount(totalAmount)} ${formatSymbol(group.symbol)}`}
               </p>
             </>
           }
@@ -338,11 +378,13 @@ export function PortfolioAssetGroupCard({
           />
         )}
       </button>
-      {!balancesHidden && <PendingAssetAmount amount={pendingAmount} symbol={group.symbol} />}
+      {!balancesHidden && (
+        <PendingAssetAmount amount={pendingAmount} symbol={formatSymbol(group.symbol)} />
+      )}
       {!directAsset && expanded && (
         <div
           role="region"
-          aria-label={`${group.symbol} network balances`}
+          aria-label={`${formatSymbol(group.symbol)} network balances`}
           className="divide-y divide-border/70 border-t border-border/70"
         >
           {group.entries.map(entry => (

@@ -85,8 +85,8 @@ export function initialMoveDraft(input: {
   if (restored) return restored
   const domains = resolveTransferDomains({
     mode: input.mode,
-    from: input.routeFrom ?? (input.entry === 'shield' ? 'public' : null),
-    to: input.routeTo ?? (input.entry === 'shield' ? 'shield' : null)
+    from: input.routeFrom ?? input.mode,
+    to: input.routeTo ?? 'shield'
   })
   return {
     scope: input.scope,

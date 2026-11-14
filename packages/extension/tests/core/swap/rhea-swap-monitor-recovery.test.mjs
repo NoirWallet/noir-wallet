@@ -206,6 +206,21 @@ it('polls after one signed recovery fails and still attempts the other chains', 
 
 it('maps supported RHEA destinations to wallet asset identities', () => {
   assert.equal(resolveRheaSwapCanonicalAssetId(protocolUsdc), canonicalUsdc)
+  for (const [alias, chain, contract] of [
+    ['bnb', 56, '0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d'],
+    ['pol', 137, '0xc2132d05d31c914a87c6611c10748aeb04b58e8f'],
+    ['avax', 43114, '0x9702230a8ea53601f5cd2dc00fdbc13d4df4a8c7']
+  ]) {
+    const protocolId = `nep141:${alias}-${contract}.omdep.near`
+    assert.equal(resolveRheaSwapCanonicalAssetId(protocolId), `eip155:${chain}/erc20:${contract}`)
+    assert.equal(resolveRheaSwapCanonicalAssetId(protocolId, 'testnet'), null)
+  }
+  assert.equal(
+    resolveRheaSwapCanonicalAssetId(
+      'nep141:unsupported-0x1111111111111111111111111111111111111111.omdep.near'
+    ),
+    null
+  )
   assert.equal(
     resolveRheaSwapCanonicalAssetId('nep141:zec.omft.near'),
     'bip122:00040fe8ec8471911baa1db1266ea15d/slip44:133'
@@ -229,11 +244,11 @@ it('maps supported RHEA destinations to wallet asset identities', () => {
 })
 
 it('uses the earlier of the SDK age limit and provider expiration', () => {
-  assert.equal(getRheaSwapQuoteDeadline({ receivedAt: 1_000, expiresAt: 90_000 }), 31_000)
+  assert.equal(getRheaSwapQuoteDeadline({ receivedAt: 1_000, expiresAt: 400_000 }), 301_000)
   assert.equal(getRheaSwapQuoteDeadline({ receivedAt: 1_000, expiresAt: 20_000 }), 20_000)
-  assert.equal(isRheaSwapQuoteFresh({ receivedAt: 1_000, expiresAt: null }, 30_999), true)
-  assert.equal(isRheaSwapQuoteFresh({ receivedAt: 1_000, expiresAt: null }, 31_000), false)
-  assert.equal(isRheaSwapQuoteFresh({ receivedAt: 1_000, expiresAt: null }, 31_001), false)
+  assert.equal(isRheaSwapQuoteFresh({ receivedAt: 1_000, expiresAt: null }, 300_999), true)
+  assert.equal(isRheaSwapQuoteFresh({ receivedAt: 1_000, expiresAt: null }, 301_000), false)
+  assert.equal(isRheaSwapQuoteFresh({ receivedAt: 1_000, expiresAt: null }, 301_001), false)
   assert.equal(isRheaSwapQuoteFresh({ receivedAt: 1_000, expiresAt: null }, 999), false)
   assert.equal(isRheaSwapQuoteFresh({ receivedAt: Number.NaN, expiresAt: null }, 1_000), false)
 })
@@ -365,6 +380,7 @@ it('settles the original Zcash record and retries reporting without polling a te
   }
   const options = {
     loadZcashTransactions: async () => [tx],
+    revealDestinationAsset: async assetId => calls.push(`reveal:${assetId}`),
     updateZcashTransaction: async (_key, id, updates) => {
       assert.equal(id, tx.id)
       Object.assign(tx, updates)
@@ -376,6 +392,7 @@ it('settles the original Zcash record and retries reporting without polling a te
   await monitor.check(pending)
   assert.equal(tx.status, 'success')
   assert.equal(tx.destinationTxHash, '0x' + 'b'.repeat(64))
+  assert.equal(calls.filter(call => call === `reveal:${canonicalUsdc}`).length, 1)
   assert.equal(values.get('rhea_swap_pending_transactions')[0].settled, true)
   assert.equal(calls.includes('discard'), false)
 
@@ -387,6 +404,7 @@ it('settles the original Zcash record and retries reporting without polling a te
     }
   }
   await resumed.recheckNow()
+  assert.equal(calls.filter(call => call === `reveal:${canonicalUsdc}`).length, 1)
   assert.deepEqual(values.get('rhea_swap_pending_transactions'), [])
   assert.equal(calls.filter(call => call === 'status').length, 1)
   assert.equal(calls.filter(call => call === 'report').length, 2)
@@ -496,6 +514,27 @@ it('retains older quote timing budgets when saving new sessions and rejects inva
   assert.deepEqual(
     (await store.get(current.quoteHandle)).privateSwapScope,
     current.privateSwapScope
+  )
+  const zcashShielded = {
+    ...current,
+    quoteHandle: 'rhea-quote:zcash-shielded-source',
+    request: {
+      ...current.request,
+      fromChain: 'zcash',
+      tokenIn: { chain: 'zcash', address: 'nep141:zec.omft.near' },
+      sender: 't1source'
+    },
+    privateSwapScope: {
+      walletId: 'wallet:monitor',
+      accountId: 'account:monitor',
+      purpose: 'wallet-swap',
+      zcashFundingSource: 'shielded'
+    }
+  }
+  await store.put(zcashShielded)
+  assert.deepEqual(
+    (await new ChromeRheaSwapQuoteStore().get(zcashShielded.quoteHandle)).privateSwapScope,
+    zcashShielded.privateSwapScope
   )
 
   for (const [field, value] of [

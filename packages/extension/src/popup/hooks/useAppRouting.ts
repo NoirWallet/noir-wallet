@@ -6,10 +6,8 @@ import { useAccountDataStore } from '@/store/account-data-store'
 import { useOnboardingStore } from '@/store/onboarding-store'
 import { zcashWalletRuntimeClient } from '@/popup/services/zcash-wallet-runtime-client'
 import { toast } from '@/store/toast-store'
-import { needsUnlock } from '@/lib/lock-utils'
 import { SecureStorage } from '@/core/wallet/secure-storage'
 import { accountNetworksClient } from '../services/account-networks-client'
-import { hasAttestedCredentialSession } from '@/core/wallet/credential-session-client'
 import { didCredentialSessionEnd } from '@/core/wallet/credential-session-state'
 import { getTransactionToastCopy } from '@/lib/transaction-status-copy'
 import { useBetaInviteActivation } from './useBetaInviteActivation'
@@ -52,6 +50,7 @@ export function useAppRouting() {
   const isHardwareTab = useRef(window.location.hash.includes('/hardware/'))
   const isActivationDApp = useRef(window.location.hash.includes('from=dapp'))
   const isUpdatePage = useRef(window.location.hash.includes('/update'))
+  const isTokenManagerEntry = useRef(window.location.hash === '#/manage-tokens')
   const { status: betaInviteStatus } = useBetaInviteActivation()
   const inviteReturnRoute = useRef(
     getPendingBetaInviteReturnRoute(
@@ -98,9 +97,21 @@ export function useAppRouting() {
 
   // Auto-lock handler
   const handleAutoLock = useCallback(async () => {
-    if (hasAnyWallet && (await hasAttestedCredentialSession().catch(() => false))) {
-      await zcashWalletRuntimeClient.lock()
-      routeToUnlock()
+    if (!hasAnyWallet) return
+    // Another extension page may still be active (for example a hardware setup
+    // tab while the side panel is idle). Only Background can decide whether
+    // the shared activity deadline has expired; page timers are wakeups only.
+    try {
+      const response: unknown = await chrome.runtime.sendMessage({ type: 'CHECK_WALLET_AUTO_LOCK' })
+      if (
+        response &&
+        typeof response === 'object' &&
+        'active' in response &&
+        response.active === false
+      )
+        routeToUnlock()
+    } catch {
+      // Background's alarm remains responsible for enforcing the deadline.
     }
   }, [hasAnyWallet, routeToUnlock])
 
@@ -248,8 +259,13 @@ export function useAppRouting() {
         return
       }
 
-      // Use unified lock check
-      const unlockNeeded = await needsUnlock()
+      // Startup can overlap another page's unlock. Let Background recheck the
+      // shared session inside its lock transition instead of locking a stale read.
+      const session: unknown = await chrome.runtime.sendMessage({ type: 'CHECK_WALLET_AUTO_LOCK' })
+      if (!session || typeof session !== 'object' || !('active' in session)) {
+        throw new Error('Unable to check wallet auto-lock')
+      }
+      const unlockNeeded = session.active !== true
 
       if (unlockNeeded) {
         // Build redirect URL with current route and parameters
@@ -269,11 +285,13 @@ export function useAppRouting() {
           // Hardware tabs must return to their flow (with query, e.g. sign request id)
           redirectParams.set('redirect', `${currentPath}${location.search || ''}`)
         } else {
-          redirectParams.set('redirect', inviteReturnRoute.current ?? '/')
+          redirectParams.set(
+            'redirect',
+            inviteReturnRoute.current ?? (isTokenManagerEntry.current ? '/manage-tokens' : '/')
+          )
         }
 
         replace(`/unlock?${redirectParams.toString()}`)
-        void zcashWalletRuntimeClient.lock().catch(() => {})
         return
       }
 
@@ -296,7 +314,7 @@ export function useAppRouting() {
 
       // dApp windows and hardware tabs stay on their route; normal popup goes home
       if ((!isDApp.current || isActivationDApp.current) && !isHardwareTab.current) {
-        replace(inviteReturnRoute.current ?? '/')
+        replace(inviteReturnRoute.current ?? (isTokenManagerEntry.current ? '/manage-tokens' : '/'))
       }
     } catch (error) {
       console.error('[useAppRouting] Initialization error:', error)

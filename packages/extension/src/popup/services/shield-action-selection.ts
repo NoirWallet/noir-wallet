@@ -11,6 +11,14 @@ import type { ShieldProvider } from './asset-domains'
 
 export type ShieldAction = 'send' | 'receive' | 'move' | 'swap'
 
+export function withShieldAsset(path: string, assetId: string | null): string {
+  if (!assetId) return path
+  const [pathname, search] = path.split('?')
+  const params = new URLSearchParams(search)
+  params.set('assetId', assetId)
+  return `${pathname}?${params.toString()}`
+}
+
 export function selectShieldActions(input: {
   readonly model: PortfolioReadModel | null
   readonly prices: AssetPriceReadModel | null

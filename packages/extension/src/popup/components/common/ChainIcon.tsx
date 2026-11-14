@@ -1,8 +1,8 @@
-import { GENERIC_CHAIN_ICON_URL, isDynamicEvmChainIcon } from '@/config/icons'
-import { formatChainIconUrl, resolveRemoteEvmChainIconUrl } from '@/lib/chain-icon'
+import { formatChainIconUrl } from '@/lib/chain-icon'
 import { formatChainName } from '@/lib/format'
 import { cn } from '@/lib/utils'
-import { useEffect, useState } from 'react'
+import { Icon } from '@iconify/react'
+import { useState } from 'react'
 
 interface ChainIconProps extends Omit<React.ImgHTMLAttributes<HTMLImageElement>, 'src'> {
   chain: string
@@ -20,40 +20,42 @@ export function ChainIcon({
   ...props
 }: ChainIconProps) {
   const chainName = formatChainName(chain)
-  const [remoteIcon, setRemoteIcon] = useState<{ chain: string; url: string } | null>(null)
-  const iconUrl = remoteIcon?.chain === chain ? remoteIcon.url : formatChainIconUrl(chain)
+  const iconUrl = formatChainIconUrl(chain)
   const [loadedIconUrl, setLoadedIconUrl] = useState<string | null>(null)
   const [failedIconUrl, setFailedIconUrl] = useState<string | null>(null)
-  const hasFailed = failedIconUrl === iconUrl
-  const displayedIconUrl = hasFailed ? GENERIC_CHAIN_ICON_URL : iconUrl
-  const isLoaded = loadedIconUrl === displayedIconUrl
+  const isLoaded = loadedIconUrl === iconUrl
 
-  useEffect(() => {
-    if (!isDynamicEvmChainIcon(chain)) return
-    let cancelled = false
-    void resolveRemoteEvmChainIconUrl(chain).then(url => {
-      if (!cancelled && url) setRemoteIcon({ chain, url })
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [chain])
+  if (!iconUrl || failedIconUrl === iconUrl) {
+    return (
+      <span
+        role="img"
+        aria-label={alt || chainName}
+        className={cn(
+          'inline-flex items-center justify-center rounded-[20%] bg-card text-muted',
+          className
+        )}
+        style={{ width: props.width, height: props.height, ...props.style }}
+        title={showTooltip ? chainName : undefined}
+      >
+        <Icon icon="lucide:network" className="size-[65%]" aria-hidden="true" />
+      </span>
+    )
+  }
 
   return (
     <img
-      src={displayedIconUrl}
+      src={iconUrl}
       alt={alt || chainName}
       crossOrigin={crossOrigin}
       className={cn(
         'bg-card object-cover',
         !isLoaded && 'animate-pulse',
         className,
-        chain.trim().toLowerCase() === 'evm' && 'bg-transparent',
         'rounded-[20%]'
       )}
       title={showTooltip ? chainName : undefined}
       onLoad={event => {
-        setLoadedIconUrl(displayedIconUrl)
+        setLoadedIconUrl(iconUrl)
         onLoad?.(event)
       }}
       onError={event => {

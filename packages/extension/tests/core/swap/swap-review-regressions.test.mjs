@@ -4,12 +4,23 @@ import { selectWalletOwnedQuoteAssetExecution } from '../../../src/popup/service
 import { resolveSwapMaximumAdjustment } from '../../../src/popup/services/swap-maximum.ts'
 import {
   buildLiveSwapQuoteRequest,
-  resolveScopedSwapZcashRecipient
+  hasSwapQuoteTermsChanged,
+  isAcceptedSwapReview,
+  resolveScopedSwapZcashRecipient,
+  resolveShieldDomainZecFundingSource,
+  shieldConfidentialSwapActive
 } from '../../../src/popup/services/swap-page-model.ts'
 import {
+  buildShieldSwapZecSourceOptions,
+  SHIELD_SWAP_ZEC_INTENTS_SELECTION_ID,
+  SHIELD_SWAP_ZEC_NATIVE_SELECTION_ID
+} from '../../../src/popup/services/shield-swap-zec-sources.ts'
+import {
   getRheaSwapErrorMessage,
+  getRheaSwapQuoteFailure,
   RheaSwapClientError
 } from '../../../src/popup/services/rhea-swap-client.ts'
+import { getSwapQuoteFailureMessage } from '../../../src/popup/services/swap-quote-error-message.ts'
 import {
   getRheaSwapMinimumAmountMessage,
   getSafeRheaSwapRuntimeErrorMessage
@@ -147,9 +158,72 @@ it('retains the reviewed sender, recipient, amount and privacy mode when a quote
   )
   assert.equal(quote.request.confidentiality, 'basic')
   assert.equal(quote.request.slippageBps, 100)
+  const fastQuote = buildLiveSwapQuoteRequest({ ...input, quoteMode: 'fast' })
+  assert.equal(fastQuote.request.quoteMode, 'fast')
+  assert.notEqual(fastQuote.key, quote.key)
+  assert.notEqual(fastQuote.scopeKey, quote.scopeKey)
+  const changedToken = buildLiveSwapQuoteRequest({
+    ...input,
+    tokenOut: { ...input.tokenOut, rheaAddress: 'different-usdc', decimals: 5 }
+  })
+  assert.notEqual(changedToken.key, quote.key)
+  assert.notEqual(changedToken.scopeKey, quote.scopeKey)
+  const zcashSource = {
+    ...input,
+    tokenIn: {
+      ...token,
+      assetId: 'zec',
+      rheaChainId: 'zcash',
+      rheaAddress: 'nep141:zec.omft.near',
+      symbol: 'ZEC',
+      decimals: 8
+    },
+    refundAddress: 't1source',
+    zcashFundingSource: 'transparent'
+  }
+  const transparentZec = buildLiveSwapQuoteRequest(zcashSource)
+  const shieldedZec = buildLiveSwapQuoteRequest({
+    ...zcashSource,
+    zcashFundingSource: 'shielded'
+  })
+  assert.notEqual(shieldedZec.key, transparentZec.key)
+  assert.notEqual(shieldedZec.scopeKey, transparentZec.scopeKey)
+  assert.deepEqual(shieldedZec.request, transparentZec.request)
   assert.equal(buildLiveSwapQuoteRequest({ ...input, amountIn: '0.0000001' }), null)
   assert.equal(buildLiveSwapQuoteRequest({ ...input, amountIn: '0.5000001' }), null)
   assert.equal(buildLiveSwapQuoteRequest({ ...input, amountIn: '0.000001' }).request.amountIn, '1')
+})
+
+it('requires a fresh, matching and explicitly accepted swap review before execution', () => {
+  const now = 10_000
+  const quote = {
+    quoteHandle: 'quote-a',
+    recipient: 'recipient',
+    estimatedOut: '100',
+    minAmountOut: '90',
+    router: 'router',
+    receivedAt: now,
+    expiresAt: now + 60_000
+  }
+  const input = {
+    quote,
+    review: { ...quote, executionId: 'execution-a' },
+    acceptedHandle: 'quote-a',
+    quoteKey: 'request-a',
+    requestKey: 'request-a',
+    now
+  }
+  assert.equal(isAcceptedSwapReview(input), true)
+  assert.equal(isAcceptedSwapReview({ ...input, acceptedHandle: null }), false)
+  assert.equal(
+    isAcceptedSwapReview({ ...input, review: { ...input.review, quoteHandle: 'quote-old' } }),
+    false
+  )
+  assert.equal(isAcceptedSwapReview({ ...input, requestKey: 'request-b' }), false)
+  assert.equal(isAcceptedSwapReview({ ...input, now: now + 60_000 }), false)
+  assert.equal(hasSwapQuoteTermsChanged(quote, { ...quote, quoteHandle: 'quote-b' }), false)
+  assert.equal(hasSwapQuoteTermsChanged(quote, { ...quote, minAmountOut: '89' }), true)
+  assert.equal(hasSwapQuoteTermsChanged(quote, { ...quote, recipient: 'other' }), true)
 })
 
 it('binds the Public to Private preview to its account, quote inputs and fee context', () => {
@@ -260,6 +334,29 @@ it('keeps minimum amounts while removing nested provider metadata without changi
     getRheaSwapErrorMessage(new RheaSwapClientError('{invalid response')),
     'An unexpected error occurred. Please try again.'
   )
+  assert.equal(
+    getSwapQuoteFailureMessage(
+      new Error(
+        'No confidential route available: quote failed (400): {"msg":"transport timeout","reason":"quote_timeout"}'
+      )
+    ),
+    'Request timed out.'
+  )
+  assert.equal(
+    getSwapQuoteFailureMessage(new Error('Temporary swap limits: minimum swap amount is $1,000')),
+    'Minimum swap amount is $1,000.'
+  )
+  assert.equal(getSwapQuoteFailureMessage(new Error('No route found')), 'no route')
+  assert.deepEqual(getRheaSwapQuoteFailure(new RheaSwapClientError('No route found')), {
+    message: 'no route',
+    retryable: false
+  })
+  assert.deepEqual(getRheaSwapQuoteFailure(new RheaSwapClientError('fetch failed')), {
+    message: 'Network error. Please check your internet connection.',
+    retryable: true
+  })
+  assert.equal(getSwapQuoteFailureMessage(new Error('Shield balance is insufficient')), null)
+  assert.equal(getSwapQuoteFailureMessage(new Error('Confidential quote has expired')), null)
   assert.equal(
     getRheaSwapErrorMessage(
       new RheaSwapClientError('{"message":"Request timed out","path":"/internal"}')
@@ -414,4 +511,98 @@ it('identifies native gas insufficiency in Swap and Transfer without hiding unre
     assert.equal(classifyError(error).retryable, false)
   }
   assert.equal(getRheaSwapErrorMessage(new Error('Request timed out')), 'Request timed out.')
+})
+
+it('keeps Shield native ZEC swap on shielded funding without merging confidential balances', () => {
+  assert.equal(
+    resolveShieldDomainZecFundingSource({
+      ordinarySwapRequested: true,
+      shieldZecSource: 'native-shielded',
+      isZecSource: true,
+      selectedFundingSource: 'transparent'
+    }),
+    'shielded'
+  )
+  assert.equal(
+    resolveShieldDomainZecFundingSource({
+      ordinarySwapRequested: true,
+      shieldZecSource: 'intents',
+      isZecSource: true,
+      selectedFundingSource: 'transparent'
+    }),
+    'transparent'
+  )
+  assert.equal(
+    shieldConfidentialSwapActive({ shieldSwapSelected: true, shieldZecSource: 'native-shielded' }),
+    false
+  )
+  assert.equal(
+    shieldConfidentialSwapActive({ shieldSwapSelected: true, shieldZecSource: 'intents' }),
+    true
+  )
+})
+
+it('lists Intents and native Shield ZEC as separate selectable sources with distinct balances', () => {
+  const previousFlags = globalThis.__ENABLED_CHAIN_FEATURE_FLAGS__
+  globalThis.__ENABLED_CHAIN_FEATURE_FLAGS__ = ['chain.zcash']
+  try {
+    const input = {
+      network: 'mainnet',
+      sources: [
+        {
+          asset: {
+            asset: { id: 'wallet-zec-intents', chainId: 'near:mainnet', kind: 'token' },
+            metadata: { symbol: 'ZEC', decimals: 8, name: 'ZEC' },
+            balance: { totalRaw: '0' }
+          },
+          chain: { chain: { id: 'near:mainnet', family: 'near', displayName: 'NEAR' } },
+          managed: { protocolAssetId: 'nep141:zec.omft.near', assetId: 'wallet-zec-intents' }
+        }
+      ],
+      balances: [{ tokenId: 'nep141:zec.omft.near', available: '120000000' }],
+      portfolio: {
+        assets: [
+          {
+            asset: {
+              id: 'zcash:zec:mainnet:native',
+              chainId: 'bip122:00040fe8ec8471911baa1db1266ea15d',
+              kind: 'native'
+            },
+            metadata: { symbol: 'ZEC', decimals: 8, name: 'ZEC' },
+            balance: {
+              totalRaw: '50000000',
+              transparentRaw: '0',
+              shieldedRaw: '50000000',
+              shieldedPendingRaw: '10000000'
+            }
+          }
+        ],
+        chains: []
+      },
+      enabledFlags: ['chain.zcash'],
+      zcashAccountEnabled: true,
+      keySource: 'software'
+    }
+    const options = buildShieldSwapZecSourceOptions(input)
+    assert.equal(options.length, 2)
+    assert.equal(options[0].selectionId, SHIELD_SWAP_ZEC_INTENTS_SELECTION_ID)
+    assert.equal(options[0].availableRaw, '120000000')
+    assert.equal(options[0].badgeBlockchain, 'near')
+    assert.equal(options[1].selectionId, SHIELD_SWAP_ZEC_NATIVE_SELECTION_ID)
+    assert.equal(options[1].availableRaw, '40000000')
+    assert.equal(options[1].badgeBlockchain, 'zec')
+    const pendingOnly = buildShieldSwapZecSourceOptions({
+      ...input,
+      portfolio: {
+        ...input.portfolio,
+        assets: input.portfolio.assets.map(asset => ({
+          ...asset,
+          balance: { ...asset.balance, shieldedPendingRaw: asset.balance.shieldedRaw }
+        }))
+      }
+    })
+    assert.equal(pendingOnly[1].availableRaw, '0')
+  } finally {
+    globalThis.__ENABLED_CHAIN_FEATURE_FLAGS__ = previousFlags
+  }
 })

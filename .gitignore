@@ -46,3 +46,6 @@ packages/evm-history-worker/.wrangler/
 packages/example/public/extension/*.zip
 packages/example/public/extension/version.json
 packages/zcash-wallet-wasm/
+
+# Local UI acceptance suites, configuration, scripts, and dedicated helpers.
+packages/extension/tests/.local/

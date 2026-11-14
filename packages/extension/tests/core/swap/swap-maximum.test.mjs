@@ -50,16 +50,21 @@ test('native Max waits for its route estimate before allowing an inherited trans
   expect(isSwapMaximumQuotePending({ ...initial, nativeSource: false, loading: true })).toBe(true)
 })
 
-test('reuses a measured EVM Max only for the exact prepared amount and fee tier', () => {
+test('reuses a measured EVM Max only while fresh for the exact prepared amount and fee tier', () => {
   const base = {
     source: input().source,
     review: input().review,
     currentAmount: '0.5',
-    maximum: { amountRaw: '500000', networkFeeRaw: '100000' },
+    maximum: { amountRaw: '500000', networkFeeRaw: '100000', expiresAt: Date.now() + 30_000 },
     fallbackUsed: false,
     refreshingFees: false
   }
   expect(canUseEstimatedEvmSwapMaximum(base)).toBe(true)
+  expect(canUseEstimatedEvmSwapMaximum(base, base.maximum.expiresAt)).toBe(false)
+  expect(canUseEstimatedEvmSwapMaximum(base, base.maximum.expiresAt + 1)).toBe(false)
+  expect(
+    canUseEstimatedEvmSwapMaximum({ ...base, maximum: { ...base.maximum, expiresAt: undefined } })
+  ).toBe(false)
   expect(canUseEstimatedEvmSwapMaximum({ ...base, fallbackUsed: true })).toBe(false)
   expect(canUseEstimatedEvmSwapMaximum({ ...base, refreshingFees: true })).toBe(false)
   expect(canUseEstimatedEvmSwapMaximum({ ...base, currentAmount: '0.6' })).toBe(false)

@@ -4,6 +4,7 @@ import {
   confidentialFundingClient,
   type PrepareConfidentialFundingRequest
 } from '@/popup/services/confidential-funding-client'
+import { getSwapQuoteFailureMessage } from '@/popup/services/swap-quote-error-message'
 
 const PREVIEW_DEBOUNCE_MS = 350
 const PREVIEW_EXPIRY_BUFFER_MS = 5_000
@@ -72,7 +73,9 @@ export function useConfidentialFundingPreview(
             setState({
               key,
               value: null,
-              error: error instanceof Error ? error.message : 'Shield quote unavailable',
+              error:
+                getSwapQuoteFailureMessage(error) ??
+                (error instanceof Error ? error.message : 'Shield quote unavailable'),
               loading: false
             })
         })

@@ -19,13 +19,15 @@ import {
 import type { TransactionGraph } from '@/core/transactions/domain'
 import { DEFAULT_REQUEST_TIMEOUT_MS } from '@/config/extension'
 import { RHEA_SWAP_TRANSACTION_MONITOR_ALARM } from './rhea-swap-transaction-monitor'
-import type { QuoteBinding } from '@/types/wallet'
+import type { FundingSource, QuoteBinding } from '@/types/wallet'
 import { safeBig } from '@/lib/big'
+import { PersistentRheaSwapCatalogCache } from '@/infrastructure/persistence/rhea-swap-catalog-cache'
 
 export async function readRheaZcashTransferDeadline(
   binding: QuoteBinding | undefined,
   to: string | undefined,
-  amount: string | undefined
+  amount: string | undefined,
+  fundingSource: FundingSource | undefined
 ): Promise<number | undefined> {
   if (binding?.provider !== 'rhea-cross-chain-dex') return undefined
   const service = createBackgroundRheaSwapService()
@@ -39,7 +41,8 @@ export async function readRheaZcashTransferDeadline(
   return service.readZcashTransferDeadline(binding.quoteHandle, {
     executionId: binding.executionId,
     to,
-    amountZats: amountZats.toFixed(0)
+    amountZats: amountZats.toFixed(0),
+    fundingSource
   })
 }
 
@@ -185,10 +188,15 @@ function parseStoredRecord(value: unknown): RheaSwapQuoteSessionRecord {
     privateSwapScope !== undefined &&
     (!isRecord(privateSwapScope) ||
       Object.keys(privateSwapScope).some(
-        key => !['walletId', 'accountId', 'purpose'].includes(key)
+        key => !['walletId', 'accountId', 'purpose', 'zcashFundingSource'].includes(key)
       ) ||
       typeof privateSwapScope.walletId !== 'string' ||
       typeof privateSwapScope.accountId !== 'string' ||
+      (privateSwapScope.zcashFundingSource !== undefined &&
+        (privateSwapScope.purpose !== 'wallet-swap' ||
+          request.fromChain !== 'zcash' ||
+          (privateSwapScope.zcashFundingSource !== 'transparent' &&
+            privateSwapScope.zcashFundingSource !== 'shielded'))) ||
       (privateSwapScope.purpose !== undefined &&
         privateSwapScope.purpose !== 'wallet-swap' &&
         privateSwapScope.purpose !== 'public-cross-chain-send' &&
@@ -294,6 +302,13 @@ function parseStoredRecord(value: unknown): RheaSwapQuoteSessionRecord {
           privateSwapScope: Object.freeze({
             walletId: readStoredString(privateSwapScope.walletId, 'Private Swap wallet ID', 160),
             accountId: readStoredString(privateSwapScope.accountId, 'Private Swap Account ID', 160),
+            ...(privateSwapScope.zcashFundingSource === undefined
+              ? {}
+              : {
+                  zcashFundingSource: privateSwapScope.zcashFundingSource as
+                    | 'transparent'
+                    | 'shielded'
+                }),
             ...(privateSwapScope.purpose === undefined
               ? {}
               : {
@@ -403,6 +418,15 @@ export function createBackgroundRheaSwapService(): RheaSwapService | null {
   })
   service = new RheaSwapService(client, new ChromeRheaSwapQuoteStore())
   return service
+}
+
+let publicCatalog: PersistentRheaSwapCatalogCache | undefined
+
+export function readBackgroundRheaSwapCatalog(input: Parameters<RheaSwapService['listTokens']>[0]) {
+  const service = createBackgroundRheaSwapService()
+  if (!service) throw new Error('RHEA Swap is unavailable')
+  publicCatalog ??= new PersistentRheaSwapCatalogCache(request => service.listTokens(request))
+  return publicCatalog.read(input)
 }
 
 export async function recordRheaSwapGraphBroadcast(graph: TransactionGraph): Promise<void> {

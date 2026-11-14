@@ -1,5 +1,4 @@
 import { ZEC_ZCASH_ASSET } from '@/config/intents'
-import { Switch } from '../../components/ui/switch'
 import {
   buildPublicPrivateEvmSendPath,
   parsePublicPrivateEvmSendDraft,
@@ -13,7 +12,7 @@ import {
   getPublicPrivateSendRouteCost
 } from '@/popup/services/public-private-send-preview'
 import { isZcashHardwareKeySource } from '@/core/wallet/hardware-wallet-data'
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { Icon } from '@iconify/react'
 import { Button } from '../../components/ui/button'
 import { PageHeader } from '../../components/common/PageHeader'
@@ -23,7 +22,11 @@ import { RecipientSelector } from '../../components/transaction/RecipientSelecto
 import { InlineError } from '@/popup/components/common/InlineError'
 import {
   SendAmountInputCard,
+  SendFormActions,
+  SendFormView,
   SendAssetHeader,
+  SendFieldLabel,
+  SendRouteInfoCard,
   SendRecipientAddress,
   SendRecipientInputCard
 } from '../../components/transaction/SendInputCards'
@@ -37,6 +40,10 @@ import { Dialog, DialogContent, DialogTitle, DialogDescription } from '../../com
 import { useWalletStore } from '@/store/wallet-store'
 import { useAccountDataStore } from '@/store/account-data-store'
 import { useTransactionResultStore } from '@/store/transaction-result-store'
+import {
+  retryZcashBalanceRead,
+  useZcashBalanceReadStatus
+} from '@/popup/hooks/usePersistedExtensionContextSync'
 import { useLocation, useNavigate } from '../../provider/Router'
 import { formatSortAddress, getAccountDisplayName } from '@/lib/format'
 import {
@@ -46,7 +53,10 @@ import {
 } from '@/lib/number-format'
 import { cn } from '@/lib/utils'
 import { AmountDisplay } from '@/popup/components/common/AmountDisplay'
+import { TransactionReviewView } from '@/popup/components/transaction/TransactionReviewView'
+import { BalanceDomainTabs } from '@/popup/components/account/BalanceDomainTabs'
 import { TokenIcon } from '../../components/tokens/TokenIcon'
+import { ChainIcon } from '../../components/common/ChainIcon'
 import nearLogo from '@/images/figma-near-confidential.svg'
 import zcashShieldLogo from '@/images/figma-zcash-shield.svg'
 import { useTransaction } from '../../hooks/useTransaction'
@@ -72,7 +82,11 @@ import { safeBig } from '@/lib/big'
 
 import { ZEC_DECIMALS } from '@/config/wallet'
 import { useZnsResolve } from '../../hooks/useZnsResolve'
-import { isTransparentZcashAddress, sanitizeMemoForRecipient } from '@/lib/zcash-memo'
+import {
+  isTransparentZcashAddress,
+  sanitizeMemoForRecipient,
+  supportsZcashMemo
+} from '@/lib/zcash-memo'
 import {
   getShieldableTransparentBalance,
   hasEnoughTransparentBalanceToShield,
@@ -83,7 +97,17 @@ import {
   getActiveAccountScopeKey
 } from '@/popup/lib/active-account-scope'
 import { getZcashChainId } from '@/core/chains/registry'
-import { resolveZcashSelfMove } from '@/popup/services/zcash-self-move'
+import {
+  getDefaultZcashSelfMoveSource,
+  resolveZcashSelfMove
+} from '@/popup/services/zcash-self-move'
+import { estimateZcashSendTime } from '@/popup/services/send-time-estimate'
+import {
+  getZcashTransparentToShieldMoveAmountError,
+  isZcashSendRecipientReady,
+  resolveZcashSendRecipientInput,
+  shouldRetainZcashSendRecipient
+} from './zcash-send-validation'
 
 function MoveLayout({
   amount,
@@ -93,7 +117,8 @@ function MoveLayout({
   fromAddress,
   toAddress,
   from,
-  onReverse
+  onReverse,
+  canReverse
 }: {
   amount: ReactNode
   balance: string
@@ -103,6 +128,7 @@ function MoveLayout({
   toAddress: string
   from: FundingSource
   onReverse: () => void
+  canReverse: boolean
 }) {
   const accountCard = (label: 'From' | 'To', source: FundingSource, address: string) => (
     <div className="min-w-0 rounded-xl border border-white/5 bg-wallet-surface px-4 py-4">
@@ -156,15 +182,17 @@ function MoveLayout({
       <div>
         {accountCard('From', from, fromAddress)}
         <div className="relative h-2.5">
-          <button
-            type="button"
-            aria-label="Switch move direction"
-            title="Switch move direction"
-            onClick={onReverse}
-            className="absolute left-1/2 top-1/2 z-10 flex size-8 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-lg border border-white/10 bg-card text-foreground transition-colors hover:bg-wallet-selected"
-          >
-            <Icon icon="lucide:arrow-down-up" width={18} height={18} />
-          </button>
+          {canReverse && (
+            <button
+              type="button"
+              aria-label="Switch move direction"
+              title="Switch move direction"
+              onClick={onReverse}
+              className="absolute left-1/2 top-1/2 z-10 flex size-8 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-lg border border-white/10 bg-card text-foreground transition-colors hover:bg-wallet-selected"
+            >
+              <Icon icon="lucide:arrow-down-up" width={18} height={18} />
+            </button>
+          )}
         </div>
         {accountCard('To', from === 'transparent' ? 'shielded' : 'transparent', toAddress)}
       </div>
@@ -172,24 +200,42 @@ function MoveLayout({
   )
 }
 
-export function Send() {
+export function Send({
+  active = true,
+  embedded = false,
+  initialFundingSource = 'transparent',
+  fundingSourceSelection,
+  onSelectAsset
+}: {
+  readonly active?: boolean
+  readonly embedded?: boolean
+  readonly initialFundingSource?: FundingSource
+  readonly fundingSourceSelection?: Readonly<{ source: FundingSource; revision: number }> | null
+  readonly onSelectAsset?: (fundingSource: FundingSource) => void
+} = {}) {
   const { goBack, navigate } = useNavigate()
   const location = useLocation()
   const routeParams = new URLSearchParams(location.search)
+  const requestedOriginPath = routeParams.get('originPath')
+  const originPath =
+    requestedOriginPath?.startsWith('/') &&
+    !requestedOriginPath.startsWith('//') &&
+    !requestedOriginPath.startsWith('/send/zcash') &&
+    !requestedOriginPath.startsWith('/transaction-result')
+      ? requestedOriginPath
+      : null
+  const leaveSend = () => (originPath ? navigate(originPath, { replace: true }) : goBack())
   const isSelfMove = routeParams.get('move') === '1'
   const moveSource =
     routeParams.get('from') === 'transparent' || routeParams.get('from') === 'shielded'
       ? (routeParams.get('from') as FundingSource)
       : null
-  const isWholeBalanceShield = isSelfMove && moveSource === 'transparent'
-  const walletMode = routeParams.get('mode') === 'private' ? 'private' : 'public'
+  const walletMode = 'public' as const
   const routeIdentity = JSON.stringify([isSelfMove, routeParams.get('from'), walletMode])
   const previousRouteIdentity = useRef(routeIdentity)
   const [selectedFundingSource, setFundingSource] = useState<FundingSource>(() => {
     const source = routeParams.get('from')
-    return source === 'shielded' || (source !== 'transparent' && walletMode === 'private')
-      ? 'shielded'
-      : 'transparent'
+    return source === 'shielded' || source === 'transparent' ? source : initialFundingSource
   })
   const [privateSendScope, setPrivateSendScope] = useState<string | null>(null)
   const [privatePreview, setPrivatePreview] = useState<{
@@ -199,7 +245,6 @@ export function Send() {
   } | null>(null)
   const [privatePreviewError, setPrivatePreviewError] = useState<string | null>(null)
   const [privatePreviewRetry, setPrivatePreviewRetry] = useState(0)
-  const [sourcePickerOpen, setSourcePickerOpen] = useState(false)
   const [toAddress, setToAddress] = useState('')
   const [selectedRecipient, setSelectedRecipient] = useState<{
     address: string
@@ -208,11 +253,13 @@ export function Send() {
   const [amount, setAmount] = useState('')
   const [maxSelected, setMaxSelected] = useState(false)
   const [memo, setMemo] = useState('')
-  const [showMemo, setShowMemo] = useState(false)
   const [showReview, setShowReview] = useState(false)
   const [isHardwareSigning, setIsHardwareSigning] = useState(false)
   const [isConfirming, setIsConfirming] = useState(false)
   const confirmationInFlight = useRef(false)
+  const activeRef = useRef(active)
+  activeRef.current = active
+  const appliedFundingSourceRevision = useRef<number | null>(null)
   const {
     isShielding: isMigrating,
     handleShieldFunds: handleMigrateNow,
@@ -226,6 +273,12 @@ export function Send() {
   const accountDisplayNames = useWalletStore(state => state.accountDisplayNames)
   const activeScopeRef = useRef<string | null | undefined>(undefined)
   const balance = useAccountDataStore(state => state.getCurrentBalance())
+  const balanceReadStatus = useZcashBalanceReadStatus(
+    currentNetwork,
+    currentWalletId,
+    currentAccountId
+  )
+  const balanceKnown = balance !== null
   const syncState = useAccountDataStore(state =>
     currentWalletId
       ? state.getWalletSyncState(currentNetwork, currentWalletId)
@@ -242,23 +295,49 @@ export function Send() {
     accountDisplayNames
   )
   const isHardwareWallet = isZcashHardwareKeySource(currentWallet?.keySource)
+  // Keep a bare Move route stable while balances refresh; entry points pass a funded source explicitly.
+  const defaultMoveSource = getDefaultZcashSelfMoveSource({
+    addresses: currentAccount?.addresses,
+    balance: null,
+    keySource: currentWallet?.keySource,
+    network: currentNetwork
+  })
   const fundingSource = isSelfMove
-    ? (moveSource ?? 'transparent')
+    ? (moveSource ?? defaultMoveSource ?? 'transparent')
     : getFundingSourceUnavailableReason(currentWallet?.keySource, selectedFundingSource)
       ? 'shielded'
       : selectedFundingSource
+  const isTransparentToShieldMove = isSelfMove && fundingSource === 'transparent'
+  const resultReturnPath = `${embedded ? '/send/zcash' : location.pathname}?${new URLSearchParams({
+    ...(isSelfMove ? { move: '1' } : {}),
+    ...(originPath ? { originPath } : {}),
+    from: fundingSource,
+    mode: walletMode
+  })}`
   const selfMove = isSelfMove
     ? resolveZcashSelfMove(currentAccount?.addresses, fundingSource, currentNetwork)
     : null
-  const moveUnavailable =
+  const moveUnavailableReason = getFundingSourceUnavailableReason(
+    currentWallet?.keySource,
+    fundingSource
+  )
+  const moveUnavailable = isSelfMove && (!selfMove || Boolean(moveUnavailableReason))
+  const reverseSource = fundingSource === 'transparent' ? 'shielded' : 'transparent'
+  const canReverseMove =
     isSelfMove &&
-    (!selfMove ||
-      Boolean(getFundingSourceUnavailableReason(currentWallet?.keySource, fundingSource)))
+    resolveZcashSelfMove(currentAccount?.addresses, reverseSource, currentNetwork) !== null &&
+    !getFundingSourceUnavailableReason(currentWallet?.keySource, reverseSource)
 
   const { sendTransaction } = useTransaction()
 
-  const zns = useZnsResolve(isSelfMove ? '' : toAddress)
-  const effectiveToAddress = isSelfMove ? (selfMove?.toAddress ?? '') : zns.address || toAddress
+  const recipientInput = resolveZcashSendRecipientInput(toAddress, currentNetwork)
+  const zns = useZnsResolve(active && !isSelfMove ? recipientInput.znsInput : '')
+  const effectiveToAddress = isSelfMove
+    ? (selfMove?.toAddress ?? '')
+    : recipientInput.formatError
+      ? ''
+      : zns.address || recipientInput.resolvedAddress
+  const recipientFormatError = isSelfMove ? null : recipientInput.formatError
 
   const feeTier = useSettingsStore(state => state.feeTier)
   const setFeeTier = useSettingsStore(state => state.setFeeTier)
@@ -272,27 +351,25 @@ export function Send() {
   )
   const transparentBalance = safeBig(getShieldableTransparentBalance(balance)).toNumber()
   const shieldableBalance = getShieldableTransparentBalance(balance)
-  const shieldAmountText = formatTokenQuantity(shieldableBalance)
 
   const reverseMove = () => {
-    if (!isSelfMove) return
+    if (!canReverseMove) return
     setShowReview(false)
-    setSourcePickerOpen(false)
     setToAddress('')
     setSelectedRecipient(null)
     setAmount('')
     setMaxSelected(false)
     setMemo('')
-    setShowMemo(false)
     const params = new URLSearchParams({
       move: '1',
-      from: fundingSource === 'transparent' ? 'shielded' : 'transparent',
-      mode: walletMode
+      from: reverseSource,
+      mode: walletMode,
+      ...(originPath ? { originPath } : {})
     })
     navigate(`/send/zcash?${params.toString()}`, { replace: true })
   }
 
-  const isTransparentRecipient = isTransparentZcashAddress(effectiveToAddress)
+  const recipientSupportsMemo = supportsZcashMemo(effectiveToAddress)
   const effectiveMemo = isSelfMove ? '' : sanitizeMemoForRecipient(effectiveToAddress, memo)
   const privacyScope = JSON.stringify([currentNetwork, currentWalletId, currentAccountId])
   const privateSendAvailable =
@@ -303,6 +380,7 @@ export function Send() {
     !getFundingSourceUnavailableReason(currentWallet?.keySource, 'transparent')
   const sendPrivately = privateSendAvailable && privateSendScope === privacyScope
   const previewKey =
+    active &&
     sendPrivately &&
     currentWalletId &&
     currentAccountId &&
@@ -367,6 +445,7 @@ export function Send() {
           setPrivatePreview({ key: previewKey, quote, amountRaw: request.amount })
           expiryTimer = window.setTimeout(
             () => {
+              if (cancelled || currentPreviewKey.current !== previewKey) return
               setPrivatePreview(null)
               setPrivatePreviewError('Quote expired. Try again.')
               if (quoteHandle) void rheaSwapClient.discard(quoteHandle).catch(() => {})
@@ -375,6 +454,10 @@ export function Send() {
             Math.max(0, getRheaSwapQuoteDeadline(quote) - Date.now())
           )
         } catch (error) {
+          if (quoteHandle) {
+            void rheaSwapClient.discard(quoteHandle).catch(() => {})
+            quoteHandle = null
+          }
           if (!cancelled && currentPreviewKey.current === previewKey)
             setPrivatePreviewError(getRheaSwapErrorMessage(error))
         }
@@ -393,7 +476,14 @@ export function Send() {
     memo: effectiveMemo,
     feeTier,
     fundingSource,
-    enabled: !sendPrivately && !isWholeBalanceShield && !!effectiveToAddress && !!fromAddress
+    enabled:
+      active &&
+      balanceKnown &&
+      !sendPrivately &&
+      !moveUnavailable &&
+      !!effectiveToAddress &&
+      !!fromAddress &&
+      !recipientFormatError
   })
   const isMaxTransferAmount =
     !!maxTransfer.maxAmount && safeBig(amount || '0').eq(maxTransfer.maxAmount)
@@ -405,18 +495,18 @@ export function Send() {
     memo: effectiveMemo,
     fundingSource,
     feeTier,
-    scopeKey: JSON.stringify([
-      currentNetwork,
-      currentWalletId,
-      currentAccountId,
-      sourceBalance.available,
-      sourceBalance.pending
-    ]),
     enabled:
+      active &&
+      balanceKnown &&
       !sendPrivately &&
-      !isWholeBalanceShield &&
+      !moveUnavailable &&
       safeBig(amount || '0').gt(0) &&
+      (!isSelfMove ||
+        safeBig(amount).lte(
+          isTransparentToShieldMove ? shieldableBalance : sourceBalance.available
+        )) &&
       !!effectiveToAddress &&
+      !recipientFormatError &&
       !maxSelected &&
       !isMaxTransferAmount
   })
@@ -426,7 +516,11 @@ export function Send() {
   const displayedFeeLoadingByTier = isMaxFeeMode
     ? maxTransfer.loadingByTier
     : feeEstimate.loadingByTier
-  const feeRequired = !!effectiveToAddress && safeBig(amount || '0').gt(0)
+  const feeRequired =
+    !moveUnavailable &&
+    !!effectiveToAddress &&
+    safeBig(amount || '0').gt(0) &&
+    recipientFormatError === null
   const feeError = feeRequired && (isMaxFeeMode ? maxTransfer.error : feeEstimate.error)
   const feeReady =
     feeRequired &&
@@ -443,6 +537,7 @@ export function Send() {
       : !feeEstimate.loading && !!feeEstimate.feeQuote && feeEstimate.feeZats !== null)
   const displayedFeeLoading = feeRequired && !feeReady && !feeError
   const retryFeeEstimate = () => {
+    if (moveUnavailable) return
     if (isMaxFeeMode) void maxTransfer.request()
     else feeEstimate.retry()
   }
@@ -455,12 +550,19 @@ export function Send() {
     fundingSource,
     selectedFeeZats,
     standardFeeZats,
-    maximumAmount: maxTransfer.maxAmount
+    maximumAmount: maxTransfer.maxAmount,
+    capTransparentToShieldable: isTransparentToShieldMove
   })
-  const amountError = getFundingAmountError(amount, sourceBalance, effectiveMaxStr)
-  const amountErrorCopy = getFundingAmountErrorCopy(amountError)
-  const reviewInsufficient = amountError !== null
-  const isValidAmount = !!fromAddress && safeBig(amount || '0').gt(0) && !reviewInsufficient
+  const amountError = isTransparentToShieldMove
+    ? null
+    : getFundingAmountError(amount, sourceBalance, effectiveMaxStr)
+  const amountErrorCopy = isTransparentToShieldMove
+    ? getZcashTransparentToShieldMoveAmountError(amount, balance, effectiveMaxStr)
+    : getFundingAmountErrorCopy(amountError)
+  const reviewInsufficient =
+    amountError !== null || (isTransparentToShieldMove && amountErrorCopy !== undefined)
+  const isValidAmount =
+    balanceKnown && !!fromAddress && safeBig(amount || '0').gt(0) && !reviewInsufficient
   const selectedFeeZec = isMaxFeeMode ? (maxTransfer.fee ?? estimatedFeeZec) : estimatedFeeZec
   const selectedFeeQuote = isMaxFeeMode ? maxTransfer.feeQuote : feeEstimate.feeQuote
   const latestFee = useRef({
@@ -487,28 +589,30 @@ export function Send() {
   }
 
   useEffect(() => {
-    if (showReview && staleSelectedMax) setShowReview(false)
-  }, [showReview, staleSelectedMax])
+    if (showReview && staleSelectedMax && !isConfirming) setShowReview(false)
+  }, [showReview, staleSelectedMax, isConfirming])
 
   useEffect(() => {
-    if (maxSelected) {
+    if (active && maxSelected && effectiveMaxStr) {
       setAmount(effectiveMaxStr)
     }
-  }, [maxSelected, effectiveMaxStr])
+  }, [active, maxSelected, effectiveMaxStr])
+
+  useEffect(() => {
+    if (!active) setShowReview(false)
+  }, [active])
 
   useEffect(() => {
     if (previousRouteIdentity.current === routeIdentity) return
     previousRouteIdentity.current = routeIdentity
     setShowReview(false)
-    setSourcePickerOpen(false)
-    setFundingSource(moveSource ?? (walletMode === 'private' ? 'shielded' : 'transparent'))
+    setFundingSource(moveSource ?? defaultMoveSource ?? 'transparent')
     setToAddress('')
     setSelectedRecipient(null)
     setAmount('')
     setMaxSelected(false)
     setMemo('')
-    setShowMemo(false)
-  }, [moveSource, routeIdentity, walletMode])
+  }, [moveSource, routeIdentity, walletMode, defaultMoveSource])
 
   useEffect(() => {
     const activeScope = getActiveAccountScopeKey()
@@ -517,7 +621,6 @@ export function Send() {
     if (previousScope === undefined || previousScope === activeScope) return
 
     setShowReview(false)
-    setSourcePickerOpen(false)
     setToAddress('')
     setSelectedRecipient(null)
     setAmount('')
@@ -527,20 +630,28 @@ export function Send() {
   }, [currentWalletId, currentAccountId])
 
   const handleSelectFundingSource = (source: FundingSource) => {
-    if (
-      getFundingSourceUnavailableReason(
-        useWalletStore.getState().getCurrentWallet()?.keySource,
-        source
-      )
-    )
-      return
+    if (fundingOptions.find(option => option.type === source)?.disabledReason) return
     setPrivateSendScope(null)
+    if (!shouldRetainZcashSendRecipient(toAddress, currentAccount?.addresses)) {
+      setToAddress('')
+      setSelectedRecipient(null)
+    }
     setFundingSource(source)
-    setSourcePickerOpen(false)
     setAmount('')
     setMaxSelected(false)
     setShowReview(false)
   }
+
+  useLayoutEffect(() => {
+    if (
+      !fundingSourceSelection ||
+      appliedFundingSourceRevision.current === fundingSourceSelection.revision
+    )
+      return
+    appliedFundingSourceRevision.current = fundingSourceSelection.revision
+    if (fundingSource !== fundingSourceSelection.source)
+      handleSelectFundingSource(fundingSourceSelection.source)
+  }, [fundingSourceSelection, fundingSource])
 
   const handleSelectMyAddress = async () => {
     await openModal<string>({
@@ -562,6 +673,7 @@ export function Send() {
   }
 
   const handleContinue = () => {
+    if (!active) return
     if (sendPrivately) {
       if (!privatePreviewReady || !currentWalletId || !currentAccountId || !isValidAmount) return
       navigate(
@@ -573,7 +685,8 @@ export function Send() {
           walletId: currentWalletId,
           accountId: currentAccountId,
           network: currentNetwork
-        })
+        }),
+        { replace: true }
       )
       return
     }
@@ -583,7 +696,9 @@ export function Send() {
       isValidAmount &&
       !reviewInsufficient &&
       feeReady &&
-      (isSelfMove || !zns.loading)
+      !recipientFormatError &&
+      (isSelfMove ||
+        isZcashSendRecipientReady(effectiveToAddress, recipientFormatError, zns.loading))
     ) {
       setShowReview(true)
     }
@@ -596,7 +711,7 @@ export function Send() {
   }
 
   const handleConfirm = async () => {
-    if (isHardwareSigning || confirmationInFlight.current) return
+    if (!active || isHardwareSigning || confirmationInFlight.current) return
     if (
       !isValidAmount ||
       reviewInsufficient ||
@@ -617,6 +732,7 @@ export function Send() {
         const currentQuote = await zcashWalletRuntimeClient.getFeeQuote()
         const latest = latestFee.current
         if (
+          !activeRef.current ||
           getActiveAccountScopeKey() !== activeScope ||
           latest.selectedFeeQuote?.id !== selectedFeeQuote.id ||
           latest.selectedFeeZec !== selectedFeeZec ||
@@ -695,21 +811,22 @@ export function Send() {
             setResult(
               {
                 type: 'zcash',
+                operation: isSelfMove ? 'move' : 'send',
                 step: 'submitted',
                 amount: result.amount,
+                fromAddress,
                 toAddress: effectiveToAddress,
                 txHash: result.txHash,
                 accountKey: result.accountKey,
                 transactionId: result.transactionId,
+                showFrom: true,
                 showTo: true
               },
-              '/'
+              resultReturnPath
             )
             navigate('/transaction-result')
           } else if (result.status === 'timeout') {
             toast.error('Hardware signing timed out', 'The transaction form has been restored.')
-          } else {
-            toast.info('Hardware signing cancelled')
           }
         } catch (cause) {
           toast.error('Could not open hardware signing', classifyError(cause).userMessage)
@@ -725,9 +842,12 @@ export function Send() {
 
       const pendingResult = {
         type: 'zcash',
+        operation: isSelfMove ? 'move' : 'send',
         step: 'pending',
         amount,
+        fromAddress,
         toAddress: effectiveToAddress,
+        showFrom: true,
         showTo: true,
         saveRecipient: {
           chainId: getZcashChainId(currentNetwork),
@@ -740,7 +860,7 @@ export function Send() {
           selfTransfer: Object.values(currentAccount.addresses).includes(effectiveToAddress)
         }
       } as const
-      setResult(pendingResult, '/')
+      setResult(pendingResult, resultReturnPath)
       navigate('/transaction-result')
 
       const result = await sendTransaction({
@@ -791,8 +911,8 @@ export function Send() {
 
   if (!currentAccount) {
     return (
-      <div className="page-container">
-        <PageHeader title={isSelfMove ? 'Move' : 'Send'} showBack />
+      <div className={embedded ? 'flex min-h-0 flex-1 flex-col' : 'page-container'}>
+        {!embedded && <PageHeader title={isSelfMove ? 'Move' : 'Send'} showBack />}
         <div className="flex-1 flex items-center justify-center px-5">
           <p className="text-muted text-center">No account available</p>
         </div>
@@ -800,259 +920,214 @@ export function Send() {
     )
   }
 
-  if (isWholeBalanceShield) {
-    return (
-      <div className="page-container" data-wallet-mode="public">
-        <PageHeader title="Move" showBack onBack={goBack} />
-        <div className="page-content !px-4 pt-4">
+  const recipientView = (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between text-xs">
+        <SendFieldLabel>Send to</SendFieldLabel>
+        <span className="inline-flex items-center gap-1.5 text-foreground">
+          <ChainIcon chain="zcash" width={16} height={16} showTooltip={false} />
+          {currentNetwork === 'testnet' ? 'Zcash Testnet' : 'Zcash'}
+        </span>
+      </div>
+      <SendRecipientInputCard
+        id="zcash-send-recipient"
+        value={toAddress}
+        onChange={value => {
+          setToAddress(value)
+          setSelectedRecipient(null)
+        }}
+        placeholder="Recipient address"
+        variant="filled"
+        hideLabel
+        invalid={Boolean(recipientFormatError)}
+        onSelectRecipient={handleSelectMyAddress}
+      />
+      {recipientFormatError && (
+        <p role="alert" className="mt-1.5 px-1 text-xs text-danger">
+          {recipientFormatError}
+        </p>
+      )}
+      {zns.loading && (
+        <p className="text-muted text-xs mt-1.5 px-1 flex items-center gap-1.5">
+          <Icon icon="lucide:loader-2" width={12} height={12} className="animate-spin" />
+          Resolving name...
+        </p>
+      )}
+      {zns.address && (
+        <p className="text-primary text-xs mt-1.5 px-1 flex items-center gap-1.5">
+          <Icon icon="lucide:check-circle" width={12} height={12} />
+          {formatSortAddress(zns.address)}
+        </p>
+      )}
+      {recipientInput.znsInput && zns.error && (
+        <InlineError
+          className="mt-1.5 px-1"
+          message={zns.error}
+          onRetry={zns.retryable ? zns.retry : undefined}
+          retrying={zns.loading}
+        />
+      )}
+    </div>
+  )
+
+  const sendContent = (
+    <div className={cn('space-y-2', !isSelfMove && 'flex flex-col gap-4 space-y-0')}>
+      {isSelfMove && (
+        <>
           <MoveLayout
             amount={
-              <div
-                className="min-h-12 max-w-full font-semibold leading-tight tabular-nums"
-                style={{
-                  fontSize: `${Math.max(18, Math.min(40, Math.floor(500 / shieldAmountText.length)))}px`
+              <input
+                aria-label="ZEC amount"
+                inputMode="decimal"
+                value={amount}
+                onChange={event => {
+                  if (!/^\d*\.?\d*$/.test(event.target.value)) return
+                  setMaxSelected(false)
+                  setAmount(event.target.value)
                 }}
-              >
-                {shieldAmountText}
-              </div>
+                placeholder="0"
+                aria-invalid={reviewInsufficient || undefined}
+                className="h-12 w-full max-w-[280px] bg-transparent px-2 text-center text-[40px] font-semibold leading-tight tabular-nums outline-none placeholder:text-muted/45"
+                style={{
+                  fontSize: `${Math.max(18, Math.min(40, Math.floor(440 / Math.max(1, amount.length))))}px`
+                }}
+              />
             }
-            balance={shieldableBalance}
+            balance={
+              balanceKnown
+                ? isTransparentToShieldMove
+                  ? shieldableBalance
+                  : sourceBalance.available
+                : '—'
+            }
             max={
-              <span className="rounded-md bg-primary/15 px-2 py-1 font-medium text-primary">
+              <button
+                type="button"
+                aria-label="Max"
+                aria-pressed={maxSelected}
+                aria-busy={maxTransfer.loading || undefined}
+                disabled={
+                  !fromAddress ||
+                  !balanceKnown ||
+                  !effectiveToAddress ||
+                  moveUnavailable ||
+                  safeBig(effectiveMaxStr).lte(0) ||
+                  maxTransfer.loading ||
+                  (isTransparentToShieldMove &&
+                    !hasEnoughTransparentBalanceToShield(shieldableBalance))
+                }
+                onClick={() => {
+                  setMaxSelected(true)
+                  setAmount(effectiveMaxStr)
+                  void maxTransfer.request()
+                }}
+                className="inline-flex items-center gap-1 rounded-md bg-primary/15 px-2 py-1 font-medium text-primary disabled:opacity-40"
+              >
+                {maxTransfer.loading && (
+                  <Icon icon="lucide:loader-2" width={12} height={12} className="animate-spin" />
+                )}
                 Max
-              </span>
+              </button>
             }
             accountName={accountDisplayName}
             fromAddress={fromAddress}
-            toAddress={selfMove?.toAddress ?? ''}
-            from="transparent"
+            toAddress={effectiveToAddress}
+            from={fundingSource}
             onReverse={reverseMove}
+            canReverse={canReverseMove}
           />
           {moveUnavailable && (
             <InlineError
-              className="mt-4"
-              message="This account cannot move ZEC between Public and Shield."
+              message={
+                moveUnavailableReason ??
+                'This account cannot move ZEC between Transparent and Shield.'
+              }
             />
           )}
-          {!moveUnavailable && !hasEnoughTransparentBalanceToShield(shieldableBalance) && (
-            <InlineError className="mt-4" message={MIN_SHIELDING_BALANCE_MESSAGE} />
-          )}
-          {syncState.isSyncing && (
-            <p role="status" className="mt-4 text-xs text-muted">
-              Syncing wallet
+          {isTransparentToShieldMove &&
+            !moveUnavailable &&
+            safeBig(amount || '0').gt(0) &&
+            !amountErrorCopy &&
+            !hasEnoughTransparentBalanceToShield(shieldableBalance) && (
+              <InlineError message={MIN_SHIELDING_BALANCE_MESSAGE} />
+            )}
+          {amountErrorCopy && <InlineError message={amountErrorCopy} />}
+          {!balanceKnown &&
+            balanceReadStatus === 'error' &&
+            currentWalletId &&
+            currentAccountId && (
+              <InlineError
+                message="ZEC balance unavailable."
+                onRetry={() =>
+                  void retryZcashBalanceRead(currentNetwork, currentWalletId, currentAccountId)
+                }
+              />
+            )}
+        </>
+      )}
+
+      {!isSelfMove &&
+        !balanceKnown &&
+        balanceReadStatus === 'error' &&
+        currentWalletId &&
+        currentAccountId && (
+          <InlineError
+            message="ZEC balance unavailable."
+            onRetry={() =>
+              void retryZcashBalanceRead(currentNetwork, currentWalletId, currentAccountId)
+            }
+          />
+        )}
+
+      {!isSelfMove && !sendPrivately && recipientSupportsMemo && (
+        <div className="order-4">
+          <label htmlFor="zcash-send-memo" className="mb-1.5 block px-1 text-xs text-muted">
+            Memo (optional)
+          </label>
+          <textarea
+            id="zcash-send-memo"
+            value={memo}
+            onChange={event => {
+              const encoded = new TextEncoder().encode(event.target.value)
+              if (encoded.length <= 512) setMemo(event.target.value)
+            }}
+            placeholder="Add a private memo"
+            rows={2}
+            className="w-full resize-none rounded-xl border border-border/60 bg-card/50 px-4 py-3 text-sm placeholder:text-muted/50 focus:border-primary/50 focus:outline-none disabled:opacity-40"
+          />
+          {memo && (
+            <p className="mt-1 px-1 text-right text-xs text-muted">
+              {new TextEncoder().encode(memo).length}/512 bytes
             </p>
           )}
         </div>
-        <div className="page-footer">
-          <Button
-            size="wallet"
-            className="h-[45px] w-full"
-            disabled={
-              moveUnavailable ||
-              !fromAddress ||
-              !selfMove?.toAddress ||
-              !hasEnoughTransparentBalanceToShield(shieldableBalance) ||
-              syncState.isSyncing ||
-              isMigrating
-            }
-            onClick={handleMigrateNow}
-          >
-            Move
-          </Button>
-        </div>
-        {migrateSheet}
-      </div>
-    )
-  }
+      )}
 
-  return (
-    <div className="page-container" data-wallet-mode={isSelfMove ? 'public' : walletMode}>
-      <PageHeader title={isSelfMove ? 'Move' : 'Send'} showBack onBack={goBack} />
-      <div className="page-content min-h-0 !px-4 pt-4">
-        <div className={cn('space-y-2', !isSelfMove && 'space-y-4')}>
-          {isSelfMove ? (
-            <>
-              <MoveLayout
-                amount={
-                  <input
-                    aria-label="ZEC amount"
-                    inputMode="decimal"
-                    value={amount}
-                    onChange={event => {
-                      if (!/^\d*\.?\d*$/.test(event.target.value)) return
-                      setMaxSelected(false)
-                      setAmount(event.target.value)
-                    }}
-                    placeholder="0"
-                    aria-invalid={reviewInsufficient || undefined}
-                    className="h-12 w-full max-w-[280px] bg-transparent px-2 text-center text-[40px] font-semibold leading-tight tabular-nums outline-none placeholder:text-muted/45"
-                    style={{
-                      fontSize: `${Math.max(18, Math.min(40, Math.floor(440 / Math.max(1, amount.length))))}px`
-                    }}
-                  />
-                }
-                balance={sourceBalance.available}
-                max={
-                  <button
-                    type="button"
-                    aria-label="Max"
-                    aria-pressed={maxSelected}
-                    disabled={
-                      !fromAddress ||
-                      !effectiveToAddress ||
-                      safeBig(effectiveMaxStr).lte(0) ||
-                      maxTransfer.loading
-                    }
-                    onClick={() => {
-                      setMaxSelected(true)
-                      setAmount(effectiveMaxStr)
-                      void maxTransfer.request()
-                    }}
-                    className="rounded-md bg-primary/15 px-2 py-1 font-medium text-primary disabled:opacity-40"
-                  >
-                    Max
-                  </button>
-                }
-                accountName={accountDisplayName}
-                fromAddress={fromAddress}
-                toAddress={effectiveToAddress}
-                from="shielded"
-                onReverse={reverseMove}
-              />
-              {moveUnavailable && (
-                <InlineError message="This account cannot move ZEC between Public and Shield." />
-              )}
-              {amountErrorCopy && <InlineError message={amountErrorCopy} />}
-            </>
-          ) : (
-            <>
-              <div>
-                <SendAssetHeader
-                  symbol="ZEC"
-                  networkName={currentNetwork === 'testnet' ? 'Zcash Testnet' : 'Zcash'}
-                  nativeChain="zcash"
-                  blockchain="zec"
-                  variant="compact"
-                />
-                {currentNetwork === 'testnet' && (
-                  <p className="mt-1 text-center text-xs text-muted">Zcash Testnet</p>
-                )}
-              </div>
-              <div className="flex min-w-0 items-center justify-between gap-2 text-xs">
-                <span className="shrink-0 text-sm font-medium leading-[18px] text-foreground/80">
-                  From
-                </span>
-                <button
-                  type="button"
-                  aria-label="Choose send source"
-                  aria-haspopup="dialog"
-                  title={fromAddress}
-                  onClick={() => setSourcePickerOpen(true)}
-                  className="flex min-w-0 items-center gap-1.5 text-right text-foreground"
-                >
-                  <span className="min-w-0 truncate">{accountDisplayName}</span>
-                  <span
-                    className={
-                      fundingSource === 'shielded' ? 'shrink-0 text-primary' : 'shrink-0 text-muted'
-                    }
-                  >
-                    {fundingSource === 'shielded' ? 'Shield' : 'Transparent'}
-                  </span>
-                  <Icon icon="lucide:chevron-down" width={14} height={14} className="shrink-0" />
-                </button>
-              </div>
-            </>
-          )}
-
-          {!isSelfMove &&
-            fundingSource === 'shielded' &&
-            currentWallet?.keySource !== 'keystone' && (
-              <ShieldFundsBanner
-                transparentBalance={transparentBalance}
-                action="send"
-                isShielding={isMigrating}
-                onShield={handleMigrateNow}
-              />
-            )}
-
-          {!isSelfMove && (
-            <div>
-              <SendRecipientInputCard
-                id="zcash-send-recipient"
-                value={toAddress}
-                selectedName={
-                  selectedRecipient?.address === toAddress ? selectedRecipient.name : undefined
-                }
-                onChange={value => {
-                  setToAddress(value)
-                  setSelectedRecipient(null)
-                }}
-                placeholder="Enter address"
-                variant="filled"
-                onSelectRecipient={handleSelectMyAddress}
-              />
-              {zns.loading && (
-                <p className="text-muted text-xs mt-1.5 px-1 flex items-center gap-1.5">
-                  <Icon icon="lucide:loader-2" width={12} height={12} className="animate-spin" />
-                  Resolving name...
-                </p>
-              )}
-              {zns.address && (
-                <p className="text-primary text-xs mt-1.5 px-1 flex items-center gap-1.5">
-                  <Icon icon="lucide:check-circle" width={12} height={12} />
-                  {formatSortAddress(zns.address)}
-                </p>
-              )}
-              {zns.error && (
-                <InlineError
-                  className="mt-1.5 px-1"
-                  message={zns.error}
-                  onRetry={zns.retryable ? zns.retry : undefined}
-                  retrying={zns.loading}
-                />
-              )}
-            </div>
-          )}
-
-          {!isSelfMove && (
-            <SendAmountInputCard
-              testId="zcash-amount-card"
-              ariaLabel="ZEC amount"
-              value={amount}
-              onChange={nextAmount => {
-                if (!/^\d*\.?\d*$/.test(nextAmount)) return
-                setMaxSelected(false)
-                setAmount(nextAmount)
-              }}
-              available={sourceBalance.available}
-              pending={sourceBalance.pending}
-              symbol="ZEC"
-              priceUsd={zecPrice}
-              maxSelected={maxSelected}
-              onMax={() => {
-                setMaxSelected(true)
-                setAmount(effectiveMaxStr)
-                void maxTransfer.request()
-              }}
-              maxDisabledReason={
-                !fromAddress
-                  ? 'Source account unavailable'
-                  : safeBig(effectiveMaxStr).lte(0)
-                    ? 'No available balance after fees'
-                    : !effectiveToAddress || zns.loading
-                      ? 'Enter a valid recipient to calculate Max'
-                      : undefined
-              }
-              maxLoading={maxTransfer.loading}
-              invalid={reviewInsufficient}
-              error={amountErrorCopy}
-              variant="filled"
+      {!isSelfMove &&
+        fundingSource === 'shielded' &&
+        Boolean(amount) &&
+        safeBig(amount).gt(sourceBalance.available) &&
+        currentWallet?.keySource !== 'keystone' && (
+          <div className="order-4">
+            <ShieldFundsBanner
+              transparentBalance={transparentBalance}
+              action="send"
+              isShielding={isMigrating}
+              onShield={handleMigrateNow}
             />
-          )}
+          </div>
+        )}
 
-          {!sendPrivately && (
-            <div className="flex min-h-5 items-center justify-between gap-2 text-xs">
-              <span className="text-muted">Fee</span>
+      {!sendPrivately && (
+        <div className="order-5">
+          <SendRouteInfoCard
+            provider={
+              <span className="inline-flex items-center gap-1.5">
+                <img src={zcashShieldLogo} alt="" className="size-5 rounded" />
+                Zcash
+              </span>
+            }
+            fee={
               <FeeTierPicker
                 tier={feeTier}
                 onTierChange={setFeeTier}
@@ -1062,35 +1137,37 @@ export function Send() {
                 allowFallback={!feeRequired}
                 hideLabel
               />
-            </div>
-          )}
-          {!sendPrivately && feeError && (
-            <InlineError
-              className="px-1"
-              message="Could not estimate network fee"
-              onRetry={retryFeeEstimate}
-            />
-          )}
+            }
+            time={estimateZcashSendTime()}
+          />
+        </div>
+      )}
+      {!sendPrivately && maxTransfer.error && !isMaxFeeMode && (
+        <InlineError
+          className="order-3 px-1"
+          message="Could not calculate maximum amount"
+          onRetry={() => void maxTransfer.request()}
+        />
+      )}
+      {!sendPrivately && !amountErrorCopy && feeError && (
+        <InlineError
+          className="order-6 px-1"
+          message={(!isMaxFeeMode && feeEstimate.errorMessage) || 'Could not estimate network fee'}
+          onRetry={retryFeeEstimate}
+        />
+      )}
 
-          {sendPrivately && previewKey && !privatePreview && !privatePreviewError && (
-            <p role="status" className="text-xs text-muted">
-              Getting quote…
-            </p>
-          )}
-          {sendPrivately && privatePreviewReady && privatePreview && (
-            <div className="space-y-2 text-xs">
-              <div className="flex justify-between">
-                <span className="text-muted">Recipient receives</span>
-                <AmountDisplay
-                  value={formatBaseUnitDecimalAmount(
-                    privatePreview.quote.estimatedOut,
-                    ZEC_DECIMALS
-                  )}
-                  symbol="ZEC"
-                />
-              </div>
-              <div className="flex justify-between">
-                <span className="text-muted">Route cost</span>
+      {sendPrivately && (
+        <div className="order-5">
+          <SendRouteInfoCard
+            provider={
+              <span className="inline-flex items-center gap-1.5">
+                <img src={nearLogo} alt="" className="size-5 rounded" />
+                NEAR Confidential Intents
+              </span>
+            }
+            fee={
+              privatePreviewReady && privatePreview ? (
                 <AmountDisplay
                   value={
                     getPublicPrivateSendRouteCost({
@@ -1101,265 +1178,256 @@ export function Send() {
                   }
                   symbol="ZEC"
                 />
-              </div>
-            </div>
+              ) : (
+                '—'
+              )
+            }
+            extra={
+              privatePreviewReady && privatePreview ? (
+                <div className="flex justify-between gap-3 border-t border-white/10 pt-3">
+                  <span className="text-muted">Est. receive</span>
+                  <AmountDisplay
+                    value={formatBaseUnitDecimalAmount(
+                      privatePreview.quote.estimatedOut,
+                      ZEC_DECIMALS
+                    )}
+                    symbol="ZEC"
+                  />
+                </div>
+              ) : undefined
+            }
+          />
+        </div>
+      )}
+      {sendPrivately && privatePreviewError && (
+        <InlineError
+          className="order-6"
+          message={privatePreviewError}
+          onRetry={() => setPrivatePreviewRetry(value => value + 1)}
+        />
+      )}
+
+      {syncState.isSyncing && (
+        <p role="status" className="order-8 text-muted text-xs px-1">
+          {isSelfMove
+            ? 'Syncing wallet'
+            : 'Syncing wallet. Send will start after the current batch.'}
+        </p>
+      )}
+    </div>
+  )
+
+  const actionDisabled =
+    !active ||
+    !effectiveToAddress ||
+    moveUnavailable ||
+    !amount ||
+    !isValidAmount ||
+    reviewInsufficient ||
+    Boolean(recipientFormatError) ||
+    (sendPrivately ? !privatePreviewReady : !feeReady) ||
+    (isSelfMove && syncState.isSyncing) ||
+    (isTransparentToShieldMove && !hasEnoughTransparentBalanceToShield(shieldableBalance)) ||
+    (!isSelfMove &&
+      !isZcashSendRecipientReady(effectiveToAddress, recipientFormatError, zns.loading))
+
+  return (
+    <div
+      className={embedded ? 'flex min-h-0 flex-1 flex-col bg-background' : 'page-container'}
+      data-wallet-mode={isSelfMove ? 'public' : walletMode}
+    >
+      {!embedded && <PageHeader title={isSelfMove ? 'Move' : 'Send'} showBack onBack={leaveSend} />}
+      {isSelfMove ? (
+        <>
+          <div className="page-content min-h-0 !px-4 pt-4">{sendContent}</div>
+          <div className="page-footer">
+            <Button
+              size="wallet"
+              disabled={actionDisabled}
+              onClick={handleContinue}
+              className="w-full h-[45px]"
+            >
+              Move
+            </Button>
+          </div>
+        </>
+      ) : (
+        <SendFormView
+          domain={fundingSource === 'shielded' ? 'shield' : 'public'}
+          availableDomains={(['public', 'shield'] as const).filter(domain =>
+            fundingOptions.some(
+              option =>
+                !option.disabledReason &&
+                option.type === (domain === 'public' ? 'transparent' : 'shielded')
+            )
           )}
-          {sendPrivately && privatePreviewError && (
-            <InlineError
-              message={privatePreviewError}
-              onRetry={() => setPrivatePreviewRetry(value => value + 1)}
-            />
-          )}
-          {isSelfMove || sendPrivately ? null : showMemo ? (
-            <div>
-              <label htmlFor="zcash-send-memo" className="mb-1.5 block px-1 text-xs text-muted">
-                Memo (optional)
-              </label>
-              <textarea
-                id="zcash-send-memo"
-                autoFocus
-                value={memo}
-                onChange={event => {
-                  const encoded = new TextEncoder().encode(event.target.value)
-                  if (encoded.length <= 512) setMemo(event.target.value)
-                }}
-                placeholder={
-                  isTransparentRecipient
-                    ? 'Memo not available for transparent addresses'
-                    : 'Add a private memo'
-                }
-                rows={2}
-                disabled={isTransparentRecipient}
-                className="w-full resize-none rounded-xl border border-border/60 bg-card/50 px-4 py-3 text-sm placeholder:text-muted/50 focus:border-primary/50 focus:outline-none disabled:opacity-40"
-              />
-              {memo && !isTransparentRecipient && (
-                <p className="mt-1 px-1 text-right text-xs text-muted">
-                  {new TextEncoder().encode(memo).length}/512 bytes
-                </p>
+          onDomainChange={domain =>
+            handleSelectFundingSource(domain === 'shield' ? 'shielded' : 'transparent')
+          }
+          sourceAction={
+            <BalanceDomainTabs
+              value={fundingSource === 'shielded' ? 'shield' : 'public'}
+              labels={{ public: 'Transparent' }}
+              available={(['public', 'shield'] as const).filter(domain =>
+                fundingOptions.some(
+                  option =>
+                    !option.disabledReason &&
+                    option.type === (domain === 'public' ? 'transparent' : 'shielded')
+                )
               )}
-            </div>
-          ) : (
+              onChange={domain =>
+                handleSelectFundingSource(domain === 'shield' ? 'shielded' : 'transparent')
+              }
+            />
+          }
+          recipient={recipientView}
+          amountInput={
+            <SendAmountInputCard
+              testId="zcash-amount-card"
+              ariaLabel="ZEC amount"
+              value={amount}
+              onChange={nextAmount => {
+                if (!/^\d*\.?\d*$/.test(nextAmount)) return
+                setMaxSelected(false)
+                setAmount(nextAmount)
+              }}
+              available={balanceKnown ? sourceBalance.available : ''}
+              symbol="ZEC"
+              priceUsd={zecPrice}
+              invalid={reviewInsufficient}
+              error={amountErrorCopy}
+              inline
+            />
+          }
+          assetSelector={
+            <SendAssetHeader
+              symbol="ZEC"
+              networkName={currentNetwork === 'testnet' ? 'Zcash Testnet' : 'Zcash'}
+              nativeChain="zcash"
+              blockchain="zec"
+              variant="pill"
+              onSelectAsset={onSelectAsset ? () => onSelectAsset(fundingSource) : undefined}
+            />
+          }
+          balance={
+            <span title={balanceKnown ? sourceBalance.available : undefined}>
+              {balanceKnown ? formatTokenQuantity(sourceBalance.available) : '—'}
+            </span>
+          }
+          maxButton={
             <button
               type="button"
-              aria-expanded="false"
-              disabled={isTransparentRecipient}
-              onClick={() => setShowMemo(true)}
-              className="flex min-h-11 w-full items-center justify-between rounded-xl bg-card/45 px-4 text-xs text-muted transition-colors hover:bg-card/70 disabled:pointer-events-none disabled:opacity-40"
+              aria-label="Max"
+              aria-pressed={maxSelected}
+              aria-busy={maxTransfer.loading || undefined}
+              disabled={
+                !fromAddress ||
+                !balanceKnown ||
+                safeBig(effectiveMaxStr).lte(0) ||
+                !effectiveToAddress ||
+                zns.loading ||
+                maxTransfer.loading
+              }
+              onClick={() => {
+                setMaxSelected(true)
+                setAmount(effectiveMaxStr)
+                void maxTransfer.request()
+              }}
+              className="inline-flex items-center gap-1 rounded-md bg-primary/15 px-2 py-1 font-medium text-primary disabled:opacity-40"
             >
-              <span>Memo (optional)</span>
-              <Icon icon="lucide:plus" width={16} height={16} />
+              {maxTransfer.loading && (
+                <Icon icon="lucide:loader-2" width={12} height={12} className="animate-spin" />
+              )}
+              Max
             </button>
-          )}
-
-          {syncState.isSyncing && (
-            <p role="status" className="text-muted text-xs px-1">
-              {isSelfMove
-                ? 'Syncing wallet'
-                : 'Syncing wallet. Send will start after the current batch.'}
-            </p>
-          )}
-        </div>
-      </div>
-
-      <div className="page-footer">
-        {privateSendAvailable && (
-          <button
-            type="button"
-            role="switch"
-            aria-label="Send privately"
-            aria-checked={sendPrivately}
-            onClick={() => {
-              setPrivateSendScope(sendPrivately ? null : privacyScope)
-              setMaxSelected(false)
-            }}
-            className={`mb-4 flex w-full items-center justify-center gap-1.5 text-sm ${sendPrivately ? 'text-primary' : 'text-muted'}`}
-          >
-            <Icon icon="lucide:shield-check" width={15} height={15} className="text-primary" />
-            Send privately
-            <Switch checked={sendPrivately} size="sm" />
-          </button>
-        )}
-        <Button
-          size="wallet"
-          disabled={
-            !effectiveToAddress ||
-            moveUnavailable ||
-            !amount ||
-            !isValidAmount ||
-            reviewInsufficient ||
-            (sendPrivately ? !privatePreviewReady : !feeReady) ||
-            (isSelfMove && syncState.isSyncing) ||
-            (!isSelfMove && zns.loading)
           }
-          onClick={handleContinue}
-          className="w-full h-[45px]"
+          footer={
+            <SendFormActions
+              privacy={
+                privateSendAvailable
+                  ? {
+                      checked: sendPrivately,
+                      onChange: () => {
+                        setPrivateSendScope(sendPrivately ? null : privacyScope)
+                        setMaxSelected(false)
+                      }
+                    }
+                  : undefined
+              }
+              disabled={actionDisabled}
+              onContinue={handleContinue}
+            />
+          }
         >
-          {isSelfMove ? 'Move' : 'Continue'}
-        </Button>
-      </div>
+          {sendContent}
+        </SendFormView>
+      )}
 
       <Dialog
-        open={!isSelfMove && sourcePickerOpen}
+        open={showReview}
         onOpenChange={open => {
-          if (!open) setSourcePickerOpen(false)
+          if (!open && (confirmationInFlight.current || isHardwareSigning)) return
+          setShowReview(open)
         }}
       >
         <DialogContent
           position="bottom"
-          aria-label="Choose send source"
           showCloseButton={false}
-          className="gap-0 rounded-t-2xl border-0 bg-wallet-surface p-0"
-        >
-          <DialogTitle className="sr-only">Choose send source</DialogTitle>
-          <DialogDescription className="sr-only">
-            Select the balance to send from.
-          </DialogDescription>
-          <div className="relative flex h-11 items-center justify-end px-4">
-            <button
-              type="button"
-              aria-label="Close"
-              onClick={() => setSourcePickerOpen(false)}
-              className="flex size-8 items-center justify-center"
-            >
-              <Icon icon="lucide:x" width={18} height={18} />
-            </button>
-          </div>
-          <div className="flex flex-col items-center pb-5 pt-1">
-            <TokenIcon symbol="ZEC" nativeChain="zcash" size={40} />
-            <span className="mt-1 text-base font-medium">ZEC</span>
-          </div>
-          <div className="space-y-2 px-4 pb-8">
-            {fundingOptions
-              .filter(option => option.type === 'transparent')
-              .map(option => (
-                <button
-                  key={option.type}
-                  type="button"
-                  disabled={Boolean(option.disabledReason)}
-                  onClick={() => handleSelectFundingSource('transparent')}
-                  className={cn(
-                    'flex min-h-[60px] w-full items-center gap-3 rounded-lg border px-3 text-left text-sm disabled:opacity-40',
-                    fundingSource === 'transparent'
-                      ? 'border-primary bg-[var(--color-wallet-selected)]'
-                      : 'border-white/10 bg-[var(--color-wallet-selected)]'
-                  )}
-                >
-                  <Icon icon="lucide:eye" width={18} height={18} />
-                  <span className="flex-1">Transparent</span>
-                  <span className="max-w-[35%] break-all text-right">
-                    {formatTokenQuantity(option.available)}
-                  </span>
-                </button>
-              ))}
-            <button
-              type="button"
-              disabled
-              aria-label="NEAR Confidential Intents unavailable"
-              className="flex min-h-[60px] w-full items-center gap-3 rounded-lg border border-white/10 bg-[var(--color-wallet-selected)] px-3 text-left text-sm opacity-40"
-            >
-              <img src={nearLogo} alt="" className="size-6 shrink-0 rounded" />
-              <span className="min-w-0 flex-1 truncate">NEAR Confidential Intents</span>
-              <span>—</span>
-            </button>
-            {fundingOptions
-              .filter(option => option.type === 'shielded')
-              .map(option => (
-                <button
-                  key={option.type}
-                  type="button"
-                  disabled={Boolean(option.disabledReason)}
-                  onClick={() => handleSelectFundingSource('shielded')}
-                  className={cn(
-                    'flex min-h-[60px] w-full items-center gap-3 rounded-lg border px-3 text-left text-sm disabled:opacity-40',
-                    fundingSource === 'shielded'
-                      ? 'border-primary bg-[var(--color-wallet-selected)]'
-                      : 'border-white/10 bg-[var(--color-wallet-selected)]'
-                  )}
-                >
-                  <img src={zcashShieldLogo} alt="" className="size-6 shrink-0 rounded" />
-                  <span className="min-w-0 flex-1 truncate">Zcash shield</span>
-                  <span className="max-w-[35%] break-all text-right">
-                    {formatTokenQuantity(option.available)}
-                  </span>
-                </button>
-              ))}
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={showReview} onOpenChange={setShowReview}>
-        <DialogContent
-          position="bottom"
-          showCloseButton={false}
-          aria-label={isSelfMove ? 'Review Move' : 'Review Send'}
+          aria-label={isSelfMove ? 'Confirm Move' : 'Confirm Send'}
           data-wallet-mode={isSelfMove ? 'public' : walletMode}
           className="flex h-dvh max-h-dvh flex-col gap-0 rounded-none border-0 bg-background p-0 shadow-none"
         >
           <DialogTitle className="sr-only">
-            {isSelfMove ? 'Review Move' : 'Review Send'}
+            {isSelfMove ? 'Confirm Move' : 'Confirm Send'}
           </DialogTitle>
           <DialogDescription className="sr-only">
             Review the amount, destination, and fee before {isSelfMove ? 'moving' : 'sending'}.
           </DialogDescription>
-          <div className="relative flex h-14 shrink-0 items-center justify-center">
-            <button
-              type="button"
-              aria-label={isSelfMove ? 'Back to Move' : 'Back to Send'}
-              onClick={() => setShowReview(false)}
-              className="absolute left-4 flex size-7 items-center justify-center"
-            >
-              <Icon icon="lucide:chevron-left" width={22} height={22} />
-            </button>
-            <span className="text-lg font-medium leading-[23px]">
-              {isSelfMove ? 'Moving' : 'Sending'}
-            </span>
-          </div>
-          <div className="min-h-0 flex-1 overflow-y-auto px-4">
-            <div className="flex h-32 flex-col items-center justify-center">
-              <div className="max-w-full text-center text-[40px] font-semibold leading-[37.4px] tracking-[-0.015em]">
-                <AmountDisplay
-                  value={amount}
-                  symbol="ZEC"
-                  className="gap-[0.25em] font-sans tabular-nums"
-                />
-              </div>
-              <p className="mt-3 text-base leading-[21px] text-muted">
-                {formatFiatAmount(
-                  safeBig(amount || '0')
-                    .times(zecPrice || 0)
-                    .toFixed(),
-                  { showSign: true }
-                )}
-              </p>
-            </div>
-            <div className="mt-1 divide-y divide-white/10 text-sm font-medium leading-[18px]">
-              <div className="flex min-h-16 items-center justify-between gap-3">
-                <span className="text-muted">{isSelfMove ? 'Move from' : 'Send from'}</span>
-                <span className="min-w-0 text-right">
-                  <span className="flex items-center justify-end gap-1.5">
-                    {accountDisplayName}
+          <TransactionReviewView
+            title={isSelfMove ? 'Confirm Move' : 'Confirm Send'}
+            showTitle
+            variant="figma"
+            asset={{ symbol: 'ZEC', nativeChain: 'zcash' }}
+            amount={amount}
+            amountPrefix={isConfirming && !isHardwareWallet ? '' : isSelfMove ? '' : '-'}
+            fiatValue={formatFiatAmount(
+              safeBig(amount || '0')
+                .times(zecPrice || 0)
+                .times(isSelfMove ? 1 : -1)
+                .toFixed(),
+              { showSign: true }
+            )}
+            network={currentNetwork === 'testnet' ? 'Zcash Testnet' : 'Zcash'}
+            rows={[
+              {
+                label: isSelfMove ? 'From' : 'Send from',
+                content: (
+                  <span className="min-w-0 text-right">
+                    <span className="flex items-center justify-end gap-1.5">
+                      {accountDisplayName}
+                      <span
+                        className={cn(
+                          'rounded px-1.5 py-0.5 text-xs',
+                          fundingSource === 'shielded'
+                            ? 'bg-primary/10 text-primary'
+                            : 'bg-white/10 text-muted'
+                        )}
+                      >
+                        {fundingSource === 'shielded' ? 'Shield' : 'Transparent'}
+                      </span>
+                    </span>
                     <span
-                      className={cn(
-                        'rounded px-1.5 py-0.5 text-xs',
-                        fundingSource === 'shielded'
-                          ? 'bg-primary/10 text-primary'
-                          : 'bg-white/10 text-muted'
-                      )}
+                      className="block truncate text-xs font-normal leading-4 text-muted"
+                      title={fromAddress}
                     >
-                      {fundingSource === 'shielded' ? 'Shield' : 'Transparent'}
+                      {formatSortAddress(fromAddress)}
                     </span>
                   </span>
-                  <span
-                    className="block truncate text-xs font-normal leading-4 text-muted"
-                    title={fromAddress}
-                  >
-                    {formatSortAddress(fromAddress)}
-                  </span>
-                </span>
-              </div>
-              <div className="flex min-h-16 items-center justify-between gap-3">
-                <span className="text-muted">To</span>
-                <span className="min-w-0 max-w-[70%] text-right">
+                )
+              },
+              {
+                label: isSelfMove ? 'To' : 'Recipient',
+                content: (
                   <SendRecipientAddress
                     address={effectiveToAddress}
                     name={
@@ -1369,64 +1437,56 @@ export function Send() {
                         : undefined)
                     }
                   />
-                </span>
-              </div>
-              <div className="flex min-h-12 items-center justify-between">
-                <span className="text-muted">Network</span>
-                <span>{currentNetwork === 'testnet' ? 'Zcash Testnet' : 'Zcash'}</span>
-              </div>
-              {effectiveMemo && (
-                <div className="flex min-h-12 items-center justify-between gap-3">
-                  <span className="text-muted">Memo</span>
-                  <span className="max-w-[65%] break-all text-right text-xs">{effectiveMemo}</span>
-                </div>
-              )}
-              <div className="flex min-h-12 items-center justify-between gap-2">
-                <span className="text-muted">Network fee</span>
-                <FeeTierPicker
-                  tier={feeTier}
-                  onTierChange={setFeeTier}
-                  feeByTier={displayedFeeByTier}
-                  loading={displayedFeeLoading}
-                  loadingByTier={displayedFeeLoadingByTier}
-                  allowFallback={false}
-                  hideLabel
-                />
-              </div>
-            </div>
-            {feeError && (
-              <InlineError
-                className="mt-3"
-                message="Could not estimate network fee"
-                onRetry={retryFeeEstimate}
-              />
-            )}
-          </div>
-          <div className="flex shrink-0 gap-2.5 px-4 pb-5 pt-2">
-            <Button
-              variant="outline"
-              size="wallet"
-              onClick={() => setShowReview(false)}
-              className="h-[45px] flex-1"
-            >
-              Cancel
-            </Button>
-            <Button
-              size="wallet"
-              onClick={handleConfirm}
-              disabled={
-                moveUnavailable ||
-                reviewInsufficient ||
-                !feeReady ||
-                (isSelfMove && syncState.isSyncing) ||
-                isHardwareSigning ||
-                isConfirming
+                )
+              },
+              {
+                label: 'Network',
+                content: currentNetwork === 'testnet' ? 'Zcash Testnet' : 'Zcash'
+              },
+              ...(effectiveMemo ? [{ label: 'Memo', content: effectiveMemo }] : []),
+              {
+                label: 'Network fee',
+                content: (
+                  <FeeTierPicker
+                    tier={feeTier}
+                    onTierChange={setFeeTier}
+                    feeByTier={displayedFeeByTier}
+                    loading={displayedFeeLoading}
+                    loadingByTier={displayedFeeLoadingByTier}
+                    allowFallback={false}
+                    hideLabel
+                  />
+                )
               }
-              className="h-[45px] flex-1"
-            >
-              {isHardwareSigning ? 'Waiting for hardware wallet...' : 'Confirm'}
-            </Button>
-          </div>
+            ]}
+            error={
+              feeError ? (
+                <InlineError
+                  className="mt-3"
+                  message={
+                    (!isMaxFeeMode && feeEstimate.errorMessage) || 'Could not estimate network fee'
+                  }
+                  onRetry={retryFeeEstimate}
+                />
+              ) : undefined
+            }
+            confirmLabel={isHardwareSigning ? 'Waiting for hardware wallet...' : 'Confirm'}
+            confirming={isConfirming}
+            submitting={isConfirming && !isHardwareWallet}
+            confirmDisabled={
+              !active ||
+              moveUnavailable ||
+              reviewInsufficient ||
+              !feeReady ||
+              (isSelfMove && syncState.isSyncing) ||
+              isHardwareSigning
+            }
+            cancelDisabled={isConfirming || isHardwareSigning}
+            onCancel={() => {
+              if (!confirmationInFlight.current && !isHardwareSigning) setShowReview(false)
+            }}
+            onConfirm={() => void handleConfirm()}
+          />
         </DialogContent>
       </Dialog>
 

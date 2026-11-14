@@ -11,6 +11,7 @@ import type {
 } from '@/core/services/confidential-funding'
 import type { SwapStatus } from '@/core/services/intents-api'
 import type { NetworkFeeTier } from '@/core/transactions/domain'
+import type { EvmFeeSelection } from '@/infrastructure/chains/evm'
 import type { Network } from '@/types'
 
 type RuntimeMessenger = (message: Readonly<Record<string, unknown>>) => Promise<unknown>
@@ -43,6 +44,7 @@ export interface PrepareConfidentialFundingRequest {
   readonly slippageBps: number
   readonly externalRecipient?: string
   readonly feeTier?: NetworkFeeTier
+  readonly feeSelection?: EvmFeeSelection
   readonly dedupKey?: string
 }
 
@@ -112,7 +114,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function unwrap(value: unknown): unknown {
   if (!isRecord(value)) throw new Error('Confidential funding returned an invalid response')
-  if (typeof value.error === 'string') throw new Error(value.error)
+  if (typeof value.error === 'string') {
+    const error = new Error(value.error)
+    if (
+      ['request', 'account', 'quote', 'authorization', 'storage'].includes(
+        String(value.depositStage)
+      )
+    )
+      Object.assign(error, { depositStage: value.depositStage })
+    throw error
+  }
   if (!Object.prototype.hasOwnProperty.call(value, 'result')) {
     throw new Error('Confidential funding returned an invalid response')
   }
@@ -215,7 +226,16 @@ function parseReview(value: unknown): ConfidentialFundingReview {
     (review.sourceNetworkFee !== undefined &&
       (!/^\d+$/.test(review.sourceNetworkFee.raw) ||
         typeof review.sourceNetworkFee.symbol !== 'string' ||
-        !Number.isSafeInteger(review.sourceNetworkFee.decimals)))
+        !Number.isSafeInteger(review.sourceNetworkFee.decimals))) ||
+    (review.sourceEvmFee !== undefined &&
+      (!isRecord(review.sourceEvmFee) ||
+        !/^\d+$/.test(review.sourceEvmFee.gasLimit) ||
+        (review.sourceEvmFee.transactionType === 'legacy'
+          ? !/^\d+$/.test(review.sourceEvmFee.gasPriceWei ?? '')
+          : review.sourceEvmFee.transactionType === 'eip1559'
+            ? !/^\d+$/.test(review.sourceEvmFee.maxFeePerGasWei ?? '') ||
+              !/^\d+$/.test(review.sourceEvmFee.maxPriorityFeePerGasWei ?? '')
+            : true)))
   ) {
     throw new Error('Confidential funding review is invalid')
   }
@@ -276,6 +296,7 @@ function parseExternalDeposit(value: unknown): ExternalShieldDeposit {
     !isRecord(value) ||
     !isRecord(value.source) ||
     value.schemaVersion !== 1 ||
+    (value.amountMode !== undefined && value.amountMode !== 'minimum') ||
     typeof value.depositId !== 'string' ||
     value.transactionId !== `tx:confidential-external:${value.depositId}` ||
     (value.network !== 'mainnet' && value.network !== 'testnet') ||
@@ -286,6 +307,7 @@ function parseExternalDeposit(value: unknown): ExternalShieldDeposit {
     typeof value.source.assetId !== 'string' ||
     typeof value.source.protocolAssetId !== 'string' ||
     !/^[1-9]\d*$/.test(String(value.source.amountRaw)) ||
+    (value.amountMode !== undefined && value.amountMode !== 'minimum') ||
     typeof value.destinationAssetId !== 'string' ||
     typeof value.sourceSymbol !== 'string' ||
     !Number.isSafeInteger(value.sourceDecimals) ||
@@ -379,9 +401,9 @@ export function createExternalShieldDepositClient(
       if (!Array.isArray(result)) throw new Error('External Shield deposit history is unavailable')
       return Object.freeze(result.map(parseExternalDeposit))
     },
-    refresh: async (depositId: string): Promise<ExternalShieldDeposit> =>
+    refresh: async (depositId: string, force = true): Promise<ExternalShieldDeposit> =>
       parseExternalDeposit(
-        unwrap(await send({ type: 'REFRESH_EXTERNAL_SHIELD_DEPOSIT', depositId }))
+        unwrap(await send({ type: 'REFRESH_EXTERNAL_SHIELD_DEPOSIT', depositId, force }))
       )
   })
 }

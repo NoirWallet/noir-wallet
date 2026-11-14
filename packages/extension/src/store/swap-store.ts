@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { createChromeStorageAdapter } from '@/lib/chrome-storage-adapter'
 import type { AddressType } from '@/types'
+import type { RheaSwapQuoteMode } from '@/core/services/rhea-swap'
 
 const MAX_RECENT_ADDRESSES = 5
 
@@ -12,12 +13,14 @@ export interface SavedSwapTokenSelection {
 
 interface SwapPreferences {
   slippage: number
+  quoteMode: RheaSwapQuoteMode
   addressType: AddressType
   recentRefundAddresses: Record<string, string[]>
   recentRecipientAddresses: Record<string, string[]>
   tokenSelections: Record<string, SavedSwapTokenSelection>
 
   setSlippage: (slippage: number) => void
+  setQuoteMode: (mode: RheaSwapQuoteMode) => void
   setAddressType: (type: AddressType) => void
   addRecentRefundAddress: (chain: string, address: string) => void
   addRecentRecipientAddress: (chain: string, address: string) => void
@@ -45,12 +48,14 @@ export const useSwapPreferences = create<SwapPreferences>()(
   persist(
     (set, get) => ({
       slippage: 1,
+      quoteMode: 'best-price',
       addressType: 'shielded',
       recentRefundAddresses: {},
       recentRecipientAddresses: {},
       tokenSelections: {},
 
       setSlippage: slippage => set({ slippage }),
+      setQuoteMode: quoteMode => set({ quoteMode }),
       setAddressType: type => set({ addressType: type }),
       setSavedTokenSelection: (scope, selection) => {
         if (!scope) return
@@ -103,6 +108,7 @@ export const useSwapPreferences = create<SwapPreferences>()(
       storage: createChromeStorageAdapter('local') as any,
       partialize: (state: SwapPreferences) => ({
         slippage: state.slippage,
+        quoteMode: state.quoteMode,
         addressType: state.addressType,
         recentRefundAddresses: state.recentRefundAddresses,
         recentRecipientAddresses: state.recentRecipientAddresses,

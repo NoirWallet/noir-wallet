@@ -5,8 +5,11 @@ import {
   createInitialProductChainRegistry,
   getBundledInitialProductAssetDefinitions,
   parseAssetId,
+  parseAssetDisplayMetadata,
   type AssetRegistryEntry
 } from '@/core/chains/registry'
+import type { SwapToken } from '@/core/services/intents-api'
+import { resolveIntentsEvmAssets } from '@/core/services/intents-evm-assets'
 import {
   userEvmAssetToDefinition,
   type DetectedEvmAssetRecord,
@@ -28,11 +31,12 @@ interface ActivityPresentationCatalogInput {
   readonly endpointSettings: ChainEndpointSettings
   readonly userEvmAssets: readonly UserEvmAssetRecord[]
   readonly detectedEvmAssets?: readonly DetectedEvmAssetRecord[]
+  readonly catalogTokens?: readonly SwapToken[]
   readonly portfolio?: PortfolioReadModel | null
 }
 
 export function mergeActivityAssetMetadata(
-  registryEntries: readonly AssetRegistryEntry[],
+  registryEntries: readonly ActivityAssetMetadata[],
   portfolio: PortfolioReadModel | null | undefined,
   detectedAssets: readonly DetectedEvmAssetRecord[] = []
 ): ReadonlyMap<string, ActivityAssetMetadata> {
@@ -50,9 +54,23 @@ export function mergeActivityAssetMetadata(
       metadata: detected.metadata
     })
   }
-  for (const entry of registryEntries) metadata.set(entry.asset.id, entry)
+  for (const entry of registryEntries) {
+    const fallbackIcon = metadata.get(entry.asset.id)?.metadata.iconUrl
+    metadata.set(
+      entry.asset.id,
+      fallbackIcon && !entry.metadata.iconUrl
+        ? { ...entry, metadata: { ...entry.metadata, iconUrl: fallbackIcon } }
+        : entry
+    )
+  }
   for (const asset of portfolio?.assets ?? []) {
-    metadata.set(asset.asset.id, asset)
+    const fallbackIcon = metadata.get(asset.asset.id)?.metadata.iconUrl
+    metadata.set(
+      asset.asset.id,
+      fallbackIcon && !asset.metadata.iconUrl
+        ? { ...asset, metadata: { ...asset.metadata, iconUrl: fallbackIcon } }
+        : asset
+    )
   }
   return metadata
 }
@@ -62,6 +80,7 @@ export function buildActivityPresentationCatalog({
   endpointSettings,
   userEvmAssets,
   detectedEvmAssets = [],
+  catalogTokens = [],
   portfolio
 }: ActivityPresentationCatalogInput) {
   const evmCatalog = resolveEvmNetworkCatalog(network, endpointSettings)
@@ -71,6 +90,24 @@ export function buildActivityPresentationCatalog({
     ...getBundledInitialProductAssetDefinitions(network, customEvmNetworks),
     ...userEvmAssets.map(userEvmAssetToDefinition)
   ])
+  const catalogMetadata = new Map<string, ActivityAssetMetadata>()
+  for (const token of resolveIntentsEvmAssets(catalogTokens, evmCatalog)) {
+    try {
+      const asset = parseAssetId(token.assetId)
+      const metadata = parseAssetDisplayMetadata({
+        name: token.symbol,
+        symbol: token.symbol,
+        decimals: token.decimals,
+        ...(token.iconUrl ? { iconUrl: token.iconUrl } : {})
+      })
+      catalogMetadata.set(asset.id, {
+        asset: { ...asset, kind: 'token' },
+        metadata
+      })
+    } catch {
+      // Catalog labels and icon URLs outside wallet limits cannot supplement Activity.
+    }
+  }
   const chainMetadata = new Map<string, ActivityChainMetadata>(
     chains.list().map(chain => [
       chain.id,
@@ -82,7 +119,11 @@ export function buildActivityPresentationCatalog({
   )
 
   return Object.freeze({
-    assetMetadata: mergeActivityAssetMetadata(assets.list(), portfolio, detectedEvmAssets),
+    assetMetadata: mergeActivityAssetMetadata(
+      [...catalogMetadata.values(), ...assets.list()],
+      portfolio,
+      detectedEvmAssets
+    ),
     chainMetadata,
     evmChainIds: Object.freeze(evmCatalog.map(config => config.chainId))
   })

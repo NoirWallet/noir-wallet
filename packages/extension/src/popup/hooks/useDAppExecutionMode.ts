@@ -14,6 +14,8 @@ export function useDAppExecutionMode(
   const [error, setError] = useState<string | null>(null)
   const requestVersion = useRef(0)
   const scopeKey = enabled && walletId && accountId ? JSON.stringify([walletId, accountId]) : null
+  const latestScopeKey = useRef(scopeKey)
+  latestScopeKey.current = scopeKey
 
   const refresh = useCallback(async () => {
     if (!scopeKey) {
@@ -27,16 +29,17 @@ export function useDAppExecutionMode(
     setError(null)
     try {
       const next = await dappExecutionModeClient.read()
-      if (version === requestVersion.current) setState(next)
+      if (version === requestVersion.current && latestScopeKey.current === scopeKey) setState(next)
       return next
     } catch (caught) {
-      if (version === requestVersion.current) {
+      if (version === requestVersion.current && latestScopeKey.current === scopeKey) {
         setState(null)
         setError(caught instanceof Error ? caught.message : 'Unable to read dApp account mode')
       }
       throw caught
     } finally {
-      if (version === requestVersion.current) setLoading(false)
+      if (version === requestVersion.current && latestScopeKey.current === scopeKey)
+        setLoading(false)
     }
   }, [scopeKey])
 
@@ -61,15 +64,17 @@ export function useDAppExecutionMode(
       setError(null)
       try {
         const next = await dappExecutionModeClient.set(mode, options)
-        if (version === requestVersion.current) setState(next)
+        if (version === requestVersion.current && latestScopeKey.current === scopeKey)
+          setState(next)
         return next
       } catch (caught) {
-        if (version === requestVersion.current) {
+        if (version === requestVersion.current && latestScopeKey.current === scopeKey) {
           setError(caught instanceof Error ? caught.message : 'Unable to change dApp account mode')
         }
         throw caught
       } finally {
-        if (version === requestVersion.current) setUpdating(false)
+        if (version === requestVersion.current && latestScopeKey.current === scopeKey)
+          setUpdating(false)
       }
     },
     [scopeKey]

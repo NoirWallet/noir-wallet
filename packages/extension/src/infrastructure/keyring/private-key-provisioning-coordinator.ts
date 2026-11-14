@@ -341,7 +341,7 @@ function buildSnapshot(
     id: accountId,
     keyDomainId: identity.keyDomainId,
     accountIndex: 0,
-    displayName: 'Account 1',
+    displayName,
     createdAt: timestamp
   }
   const byChain = new Map<string, DerivedPublicAccount[]>()

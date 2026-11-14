@@ -171,6 +171,84 @@ test.describe('Activity coordinator', () => {
     expect(loadedScopes).toEqual([scope])
   })
 
+  test('projects confirmed Zcash destination receipts into the matching transfer only', async () => {
+    const destinationHash = 'b'.repeat(64)
+    const destinationAsset = 'bip122:00040fe8ec8471911baa1db1266ea15d/slip44:133'
+    const transfer = zcashTransaction({
+      id: 'zcash-v1:private-transfer',
+      txHash: 'a'.repeat(64),
+      destinationTxHash: destinationHash,
+      type: 'swap',
+      amount: '0.0017',
+      fromType: 'transparent',
+      timestamp: 1_100,
+      quoteBinding: {
+        provider: 'rhea-cross-chain-dex',
+        userAction: 'transfer',
+        destinationAsset: 'nep141:zec.omft.near',
+        expectedAmountOut: '137600',
+        recipient: 't1owned'
+      }
+    })
+    const receive = zcashTransaction({
+      id: 'zcash-v1:destination-receive',
+      txHash: destinationHash,
+      type: 'receive',
+      status: 'confirming',
+      confirmations: 1,
+      requiredConfirmations: 10,
+      amount: '0.0014466',
+      to: 't1owned',
+      fromType: 'transparent',
+      timestamp: 1_200
+    })
+    const read = async (receipts, source = transfer) => {
+      const coordinator = new ActivityCoordinator({
+        storageRepository: storage(),
+        transactionRepository: new InMemoryTransactionRepository(),
+        loadZcashTransactions: async () => [source, ...receipts]
+      })
+      return coordinator.readActive()
+    }
+    const settled = await read([receive])
+    const item = settled.items.find(activity => activity.id === transfer.id)
+    expect(settled.items.map(activity => activity.id)).toEqual([receive.id, transfer.id])
+    expect(item.snapshot.counterAmount).toEqual({ assetId: destinationAsset, amountRaw: '137600' })
+    expect(
+      item.segments.find(segment => segment.role === 'destination')?.evidence?.settledAmount
+    ).toEqual({ assetId: destinationAsset, amountRaw: '144660' })
+
+    for (const mismatched of [
+      { ...receive, confirmations: 0, status: 'pending' },
+      { ...receive, network: 'testnet' },
+      { ...receive, txHash: 'c'.repeat(64) },
+      { ...receive, to: 't1other' }
+    ]) {
+      const result = await read([mismatched])
+      expect(
+        result.items
+          .find(activity => activity.id === transfer.id)
+          ?.segments.find(segment => segment.role === 'destination')?.evidence?.settledAmount
+      ).toBeUndefined()
+    }
+    const noRecipient = await read([receive], {
+      ...transfer,
+      quoteBinding: { ...transfer.quoteBinding, recipient: undefined }
+    })
+    expect(
+      noRecipient.items
+        .find(activity => activity.id === transfer.id)
+        ?.segments.find(segment => segment.role === 'destination')?.evidence?.settledAmount
+    ).toBeUndefined()
+    const otherRecipient = { ...receive, id: 'zcash-v1:other-receive', to: 't1other' }
+    const sameHash = await read([receive, otherRecipient])
+    expect(
+      sameHash.items
+        .find(activity => activity.id === transfer.id)
+        ?.segments.find(segment => segment.role === 'destination')?.evidence?.settledAmount
+    ).toEqual({ assetId: destinationAsset, amountRaw: '144660' })
+  })
+
   test('returns null without an active generation or Account', async () => {
     const repository = await repositoryWithEvmTransfer()
     const noPointer = new ActivityCoordinator({

@@ -38,6 +38,38 @@ export interface IntentsEvmAsset {
   readonly iconUrl?: string
 }
 
+// Retain confirmed retirements even when an older catalog has no label or the row is removed.
+// Other HOT assets (including Optimism, Monad and X Layer) remain supported.
+const DEPRECATED_HOT_ASSET_IDS = new Set(
+  [
+    '56_11111111111111111111',
+    '56_2w93GqMcEmQFDru84j3HZZWt557r',
+    '56_2CMMyVTGZkeyNZTSvS5sarzfir6g',
+    '56_24S22V8GMmQN8t6PbCdRb3mBewAd',
+    '56_SZzgw3HSudhZcTwPWUTi2RJB19t',
+    '56_12zbnsg6xndDVj25QyL82YMPudb',
+    '56_28V9BijGeZDBFEEtkAcnJo4tPRH4',
+    '137_11111111111111111111',
+    '137_qiStmoQJDQPTebaPjgx5VBxZv6L',
+    '137_3hpYoaLtt8MP1Z2GH1U473DMRKgr',
+    '137_2jwTGwKRX3AEe7tyzDrxtDjEFgSt',
+    '43114_11111111111111111111',
+    '43114_3atVJH3r5c4GqiSYmg9fECvjc47o',
+    '43114_372BeH7ENZieCaabwkbWkBiTTgXp',
+    '9745_11111111111111111111',
+    '9745_3aL9skCy1yhPoDB8oKMmRHRN7SJW'
+  ].map(id => `nep245:v2_1.omni.hot.tg:${id}`)
+)
+
+export function isDeprecatedIntentsToken(
+  token: Readonly<{ assetId?: string; symbol?: string }>
+): boolean {
+  return (
+    (token.assetId !== undefined && DEPRECATED_HOT_ASSET_IDS.has(token.assetId)) ||
+    (token.symbol?.trim().toUpperCase().endsWith('(DEPRECATED)') ?? false)
+  )
+}
+
 export function resolveIntentsEvmChainId(
   blockchain: string,
   networks: readonly EvmNetworkConfig[]
@@ -59,6 +91,7 @@ export function resolveIntentsEvmAssets(
 
   const resolved = new Map<string, IntentsEvmAsset>()
   for (const token of tokens) {
+    if (isDeprecatedIntentsToken(token)) continue
     const iconUrl = resolveSwapTokenIconUrl(token)
     const network = networkByAlias.get(token.blockchain.trim().toLowerCase())
     if (

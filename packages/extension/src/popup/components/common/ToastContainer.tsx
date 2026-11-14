@@ -4,7 +4,7 @@ import { useToastStore, type ToastType } from '@/store/toast-store'
 const iconConfig: Record<ToastType, { icon: string; color: string; bg: string }> = {
   success: { icon: 'lucide:check', color: 'text-primary', bg: 'bg-primary/20' },
   error: { icon: 'lucide:x', color: 'text-red-500', bg: 'bg-red-500/20' },
-  warning: { icon: 'lucide:alert-triangle', color: 'text-yellow-500', bg: 'bg-yellow-500/20' },
+  warning: { icon: 'lucide:alert-triangle', color: 'text-warning', bg: 'bg-warning-surface' },
   info: { icon: 'lucide:info', color: 'text-primary', bg: 'bg-primary/15' }
 }
 
@@ -104,7 +104,7 @@ export function ToastContainer() {
       <div
         key={toast.id}
         data-toast-variant="compact"
-        className="pointer-events-auto w-full max-w-[340px] animate-in rounded-xl border border-white/10 bg-card px-4 py-3 shadow-lg fade-in slide-in-from-top-2 duration-200"
+        className={`pointer-events-auto w-full max-w-[340px] animate-in rounded-xl border px-4 py-3 shadow-lg fade-in slide-in-from-top-2 duration-200 ${toast.type === 'warning' ? 'border-warning/20 bg-warning-surface' : 'border-white/10 bg-card'}`}
       >
         <div className="flex items-start gap-3">
           <div
@@ -113,8 +113,16 @@ export function ToastContainer() {
             <Icon icon={config.icon} width={16} height={16} className={config.color} />
           </div>
           <div className="min-w-0 flex-1">
-            <p className="text-sm font-medium">{toast.title}</p>
-            {toast.description && <p className="mt-0.5 text-xs text-muted">{toast.description}</p>}
+            <p className={`text-sm font-medium ${toast.type === 'warning' ? 'text-warning' : ''}`}>
+              {toast.title}
+            </p>
+            {toast.description && (
+              <p
+                className={`mt-0.5 text-xs ${toast.type === 'warning' ? 'text-warning' : 'text-muted'}`}
+              >
+                {toast.description}
+              </p>
+            )}
           </div>
           <button
             type="button"

@@ -21,6 +21,7 @@ export async function setAccountNetworkSelection(input: {
   readonly walletId: string
   readonly accountId: string
   readonly families: readonly AccountNetworkFamily[]
+  readonly chainIds: readonly string[]
   readonly birthdayHeight?: number
 }): Promise<void> {
   const response: unknown = await chrome.runtime.sendMessage({
@@ -28,6 +29,7 @@ export async function setAccountNetworkSelection(input: {
     walletId: input.walletId,
     accountId: input.accountId,
     families: input.families,
+    chainIds: input.chainIds,
     ...(input.birthdayHeight === undefined ? {} : { birthdayHeight: input.birthdayHeight })
   })
   if (

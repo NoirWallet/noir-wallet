@@ -20,6 +20,7 @@ import { isZcashOperationAnalyticsContext } from './analytics/operations'
 import { isDiagnosticContextId } from './diagnostic-log'
 import type { ZcashTransactionContext } from '@/core/worker/types'
 import { parseSelectedNetworkFamilies } from '@/core/wallet/account-network-selection'
+import { parseEvmFeeSelection } from '@/infrastructure/chains/evm/evm-fee-tier'
 
 export interface RuntimeMessageSenderLike {
   readonly id?: string
@@ -188,6 +189,10 @@ const isWalletBackupVerification: RuntimeFieldValidator = value => {
 }
 const isEvmAddress: RuntimeFieldValidator = value =>
   typeof value === 'string' && /^0x[0-9a-fA-F]{40}$/.test(value)
+const isEvmChainId: RuntimeFieldValidator = value =>
+  typeof value === 'string' && /^eip155:(0|[1-9][0-9]{0,19})$/.test(value)
+const isScopedAccountId: RuntimeFieldValidator = value =>
+  typeof value === 'string' && value.length > 0 && value.length <= 256
 const isEvmWeiFeeCap: RuntimeFieldValidator = value =>
   typeof value === 'string' &&
   /^(?:0|[1-9][0-9]{0,77})$/.test(value) &&
@@ -241,6 +246,8 @@ const isRheaSwapQuoteRequest: RuntimeFieldValidator = value => {
 }
 const isRheaSwapQuoteHandle: RuntimeFieldValidator = value =>
   typeof value === 'string' && /^rhea-quote:[0-9A-Za-z:_-]{1,128}$/.test(value)
+const isRheaSwapRouteIndex: RuntimeFieldValidator = value =>
+  Number.isSafeInteger(value) && (value as number) >= 1 && (value as number) <= 12
 const isRheaSwapSourceHash: RuntimeFieldValidator = value =>
   typeof value === 'string' &&
   value.length > 0 &&
@@ -259,24 +266,12 @@ const isNetworkFeeTier: RuntimeFieldValidator = value =>
   value === 'low' || value === 'standard' || value === 'fast'
 const isEvmFeeSelection: RuntimeFieldValidator = value => {
   if (!isRuntimeRecord(value)) return false
-  if (
-    value.kind === 'tier' &&
-    Object.keys(value).length === 2 &&
-    Object.prototype.hasOwnProperty.call(value, 'tier')
-  ) {
-    return isNetworkFeeTier(value.tier)
+  try {
+    parseEvmFeeSelection(value)
+    return true
+  } catch {
+    return false
   }
-  if (
-    value.kind === 'custom' &&
-    Object.keys(value).length === 2 &&
-    Object.prototype.hasOwnProperty.call(value, 'maxPriorityFeePerGasWei') &&
-    typeof value.maxPriorityFeePerGasWei === 'string' &&
-    /^(?:0|[1-9][0-9]*)$/.test(value.maxPriorityFeePerGasWei)
-  ) {
-    const priorityFee = BigInt(value.maxPriorityFeePerGasWei)
-    return priorityFee > 0n && priorityFee <= 10_000_000_000_000n
-  }
-  return false
 }
 const isAssetMarketHistoryRange: RuntimeFieldValidator = value =>
   value === '1d' ||
@@ -567,6 +562,7 @@ const TRUSTED_RUNTIME_SCHEMAS: Readonly<Record<string, RuntimeMessageSchema>> = 
     }
   },
   GET_WALLET_SESSION_STATE: {},
+  CHECK_WALLET_AUTO_LOCK: {},
   GET_BACKGROUND_INITIALIZATION_STATE: {},
   GET_NETWORK_MODE: {},
   GET_ZERO_INDEXER_OPTIONS: { required: { network: isNetworkMode } },
@@ -596,6 +592,12 @@ const TRUSTED_RUNTIME_SCHEMAS: Readonly<Record<string, RuntimeMessageSchema>> = 
     required: { action: isPortfolioAction },
     optional: { assetId: isShortString }
   },
+  GET_TOKEN_CONTRACT_ICON: {
+    required: {
+      identity: value =>
+        typeof value === 'string' && /^eip155:[1-9][0-9]*\/erc20:0x[0-9a-f]{40}$/.test(value)
+    }
+  },
   GET_RHEA_SWAP_TOKENS: {
     required: {
       direction: isRheaSwapDirection,
@@ -612,8 +614,12 @@ const TRUSTED_RUNTIME_SCHEMAS: Readonly<Record<string, RuntimeMessageSchema>> = 
         value === 'private-swap' ||
         value === 'private-transfer' ||
         value === 'private-cross-chain-send' ||
-        value === 'public-private-send'
+        value === 'public-private-send',
+      zcashFundingSource: (value: unknown) => value === 'transparent' || value === 'shielded'
     }
+  },
+  SELECT_RHEA_SWAP_ROUTE: {
+    required: { quoteHandle: isRheaSwapQuoteHandle, routeIndex: isRheaSwapRouteIndex }
   },
   PREPARE_RHEA_SWAP: { required: { quoteHandle: isRheaSwapQuoteHandle } },
   GET_RHEA_SWAP_EVM_PLAN: { required: { quoteHandle: isRheaSwapQuoteHandle } },
@@ -652,7 +658,10 @@ const TRUSTED_RUNTIME_SCHEMAS: Readonly<Record<string, RuntimeMessageSchema>> = 
   CREATE_EXTERNAL_SHIELD_DEPOSIT: { required: { request: isRecord } },
   GET_EXTERNAL_SHIELD_DEPOSIT: { required: { depositId: isShortString } },
   LIST_EXTERNAL_SHIELD_DEPOSITS: { required: { scope: isRecord } },
-  REFRESH_EXTERNAL_SHIELD_DEPOSIT: { required: { depositId: isShortString } },
+  REFRESH_EXTERNAL_SHIELD_DEPOSIT: {
+    required: { depositId: isShortString },
+    optional: { force: isBoolean }
+  },
   CONFIRM_CONFIDENTIAL_FUNDING: {
     required: { planId: isShortString, payloadFingerprint: isEvmPayloadFingerprint }
   },
@@ -702,6 +711,7 @@ const TRUSTED_RUNTIME_SCHEMAS: Readonly<Record<string, RuntimeMessageSchema>> = 
   REMOVE_USER_EVM_ASSET: { required: { assetId: isShortString } },
   SET_TOKEN_HIDDEN: { required: { assetId: isShortString, hidden: isBoolean } },
   REFRESH_INTENTS_PROTOCOL_ASSETS: { optional: { force: isBoolean } },
+  GET_SWAP_TOKEN_CATALOG: {},
   GET_PORTFOLIO: {
     required: { action: isPortfolioAction },
     optional: { forceDiscovery: isBoolean, chainIds: isChainIdArray }
@@ -722,6 +732,15 @@ const TRUSTED_RUNTIME_SCHEMAS: Readonly<Record<string, RuntimeMessageSchema>> = 
       expectedOwner: isEvmAddress
     },
     optional: { executionMode: value => value === 'main' || value === 'private' }
+  },
+  GET_EVM_TOKEN_BALANCE: {
+    required: {
+      chainId: isEvmChainId,
+      token: isEvmAddress,
+      walletId: isScopedAccountId,
+      accountId: isScopedAccountId,
+      executionMode: value => value === 'main' || value === 'private'
+    }
   },
   PREPARE_EVM_TRANSFER: {
     required: { intent: isRecord },
@@ -847,7 +866,8 @@ const TRUSTED_RUNTIME_SCHEMAS: Readonly<Record<string, RuntimeMessageSchema>> = 
     required: {
       walletId: isShortString,
       accountId: isShortString,
-      families: isSelectedNetworkFamilies
+      families: isSelectedNetworkFamilies,
+      chainIds: isChainIdArray
     },
     optional: { birthdayHeight: isPositiveBirthdayHeight }
   },
@@ -938,11 +958,12 @@ const TRUSTED_RUNTIME_SCHEMAS: Readonly<Record<string, RuntimeMessageSchema>> = 
   SUBMIT_HARDWARE_PCZT: {
     required: {
       requestId: isShortString,
+      transactionId: isShortString,
       signedPcztBase64: isCanonicalHardwarePcztBase64
     }
   },
   SUBMIT_LEDGER_SIGNATURES: {
-    required: { requestId: isShortString, signatures: isRecord }
+    required: { requestId: isShortString, transactionId: isShortString, signatures: isRecord }
   },
   START_TRANSACTION_MONITOR: { required: { swap: isRecord } },
   STOP_TRANSACTION_MONITOR: { required: { depositAddress: isShortString } },
@@ -1016,6 +1037,7 @@ const TRUSTED_RUNTIME_CONTEXTS: Readonly<Record<string, readonly OwnExtensionSen
     CANCEL_LEDGER_SIGNING_REQUEST: ['extension-page'],
     GET_HARDWARE_TRANSFER_VENDOR: ['extension-page'],
     GET_WALLET_SESSION_STATE: ['extension-page'],
+    CHECK_WALLET_AUTO_LOCK: ['extension-page'],
     GET_BACKGROUND_INITIALIZATION_STATE: ['extension-page'],
     GET_NETWORK_MODE: ['extension-page'],
     GET_ZERO_INDEXER_OPTIONS: ['offscreen-document'],
@@ -1034,8 +1056,10 @@ const TRUSTED_RUNTIME_CONTEXTS: Readonly<Record<string, readonly OwnExtensionSen
     GET_BITCOIN_ACTIVITY: ['extension-page'],
     GET_BITCOIN_WALLET_IDENTITY: ['extension-page'],
     GET_ASSET_PRICES: ['extension-page'],
+    GET_TOKEN_CONTRACT_ICON: ['extension-page'],
     GET_RHEA_SWAP_TOKENS: ['extension-page'],
     QUOTE_RHEA_SWAP: ['extension-page'],
+    SELECT_RHEA_SWAP_ROUTE: ['extension-page'],
     PREPARE_RHEA_SWAP: ['extension-page'],
     GET_RHEA_SWAP_EVM_PLAN: ['extension-page'],
     GET_RHEA_SWAP_EVM_SIGNATURE_PLAN: ['extension-page'],
@@ -1082,10 +1106,12 @@ const TRUSTED_RUNTIME_CONTEXTS: Readonly<Record<string, readonly OwnExtensionSen
     REMOVE_USER_EVM_ASSET: ['extension-page'],
     SET_TOKEN_HIDDEN: ['extension-page'],
     REFRESH_INTENTS_PROTOCOL_ASSETS: ['extension-page'],
+    GET_SWAP_TOKEN_CATALOG: ['extension-page'],
     GET_PORTFOLIO: ['extension-page'],
     GET_EVM_PORTFOLIO: ['extension-page'],
     GET_EVM_CONFIRMATION_ESTIMATE: ['extension-page'],
     GET_EVM_TOKEN_ALLOWANCE: ['extension-page'],
+    GET_EVM_TOKEN_BALANCE: ['extension-page'],
     PREPARE_EVM_TRANSFER: ['extension-page'],
     ESTIMATE_EVM_TRANSFER_FEE: ['extension-page'],
     ESTIMATE_EVM_CONTRACT_CALL_FEE: ['extension-page'],
@@ -1354,7 +1380,14 @@ export function isOwnExtensionRouteSender(
   const url = getOwnExtensionSenderUrl(sender, extensionId)
   if (!url || url.pathname !== '/index.html') return false
 
-  const hashRoute = url.hash.slice(1).split('?')[0]
+  let routeUrl = url
+  // Chrome omits fragments from MessageSender.url. The top-level tab URL
+  // supplies the route only when it describes this exact extension document.
+  if (!url.hash && sender.frameId === 0 && Number.isInteger(sender.tab?.id)) {
+    const tabUrl = parseUrl(sender.tab?.url)
+    if (tabUrl && tabUrl.href.split('#')[0] === url.href) routeUrl = tabUrl
+  }
+  const hashRoute = routeUrl.hash.slice(1).split('?')[0]
   const normalizedRoute = hashRoute.startsWith('/') ? hashRoute : `/${hashRoute}`
   if (normalizedRoute !== route) return false
   if (expected?.tabId !== undefined && sender.tab?.id !== expected.tabId) return false

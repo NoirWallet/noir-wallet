@@ -2,6 +2,9 @@ import { test } from 'node:test'
 import { expect } from '@playwright/test'
 import { ConfidentialFundingApi } from '../../../src/background/confidential-funding-api.ts'
 import { ConfidentialFundingCoordinator } from '../../../src/background/confidential-funding-coordinator.ts'
+import { createBackgroundConfidentialFundingCoordinator } from '../../../src/background/confidential-funding.ts'
+import { userEvmAssetToDefinition } from '../../../src/core/chains/user-assets/user-evm-asset.ts'
+import { getActiveChainEndpointSettings } from '../../../src/core/chains/chain-endpoint-settings.ts'
 import { InMemoryTransactionRepository } from '../../../src/infrastructure/persistence/repositories/in-memory-transaction-repository.ts'
 import { assertPersistableTransactionGraph } from '../../../src/infrastructure/persistence/repositories/transaction-repository-support.ts'
 import {
@@ -23,10 +26,59 @@ import {
 import { confidentialPrivateTokenId } from '../../../src/core/services/confidential-funding/confidential-funding-portfolio.ts'
 import { getEvmNetworkConfigs } from '../../../src/config/networks.ts'
 import {
+  availableDepositTokens,
+  defaultDepositRefundAddress,
+  depositSourceAssetId,
   depositStatusLabel,
   depositTokenForNetwork,
+  formatDepositAmount,
+  formatMinimumDepositPaymentAmount,
   listDepositTokenChoices
 } from '../../../src/popup/services/shield-deposit-options.ts'
+
+test('minimum deposit display rounds up without changing the exact payment amount', () => {
+  const raw = '8000000000000000001'
+  expect(formatMinimumDepositPaymentAmount(raw, 18)).toBe('8.000001')
+  expect(formatDepositAmount(raw, 18)).toBe('8.000000000000000001')
+})
+
+test('uses the selected EVM private refund address while Zcash retains a transparent refund', () => {
+  const publicAddress = '0x1111111111111111111111111111111111111111'
+  const privateAddress = '0x2222222222222222222222222222222222222222'
+  const zcashAddress = 't1QexampleTransparentAddress'
+  const evm = { id: 'eip155:56', family: 'evm' }
+  const zcash = { id: 'zcash:mainnet', family: 'zcash' }
+  const networks = [
+    {
+      chain: evm,
+      privateExecutionAddress: privateAddress,
+      addresses: [{ value: publicAddress, privacy: 'transparent' }]
+    },
+    {
+      chain: zcash,
+      addresses: [{ value: zcashAddress, privacy: 'transparent' }]
+    }
+  ]
+  expect(defaultDepositRefundAddress(evm, networks)).toBe(privateAddress)
+  expect(defaultDepositRefundAddress(zcash, networks)).toBe(zcashAddress)
+})
+
+test('offers current BNB deposits without exposing the deprecated protocol token', () => {
+  const bnb = { id: 'eip155:56', family: 'evm' }
+  const current = {
+    assetId: 'nep141:bnb.omdep.near',
+    blockchain: 'bsc',
+    symbol: 'BNB',
+    decimals: 18
+  }
+  const deprecated = {
+    ...current,
+    assetId: 'nep245:v2_1.omni.hot.tg:56_11111111111111111111',
+    symbol: 'BNB(DEPRECATED)'
+  }
+  expect(depositSourceAssetId(current, bnb)).toBe('eip155:56/slip44:714')
+  expect(availableDepositTokens([deprecated, current], [bnb])).toEqual([current])
+})
 
 test('resolves the selected deposit token only on the explicitly selected network', () => {
   const ethereum = { id: 'eip155:1' }
@@ -64,6 +116,120 @@ const apiConfig = {
 }
 
 test.describe('confidential funding safety rules', () => {
+  test('persisted catalog assets do not shadow verified receiving assets or bypass quarantine checks', t => {
+    for (const key of ['__CONFIDENTIAL_ONE_CLICK_API_URL__', '__RHEA_SWAP_ACCESS_TOKEN__']) {
+      const previous = Object.getOwnPropertyDescriptor(globalThis, key)
+      Object.defineProperty(globalThis, key, { value: '', configurable: true })
+      t.after(() => {
+        if (previous) Object.defineProperty(globalThis, key, previous)
+        else delete globalThis[key]
+      })
+    }
+    const network = getEvmNetworkConfigs('mainnet')
+    for (const [chainId, blockchain, contractAddress, decimals, protocolAssetId] of [
+      [
+        'eip155:1',
+        'eth',
+        '0xdac17f958d2ee523a2206206994597c13d831ec7',
+        6,
+        'nep141:eth-0xdac17f958d2ee523a2206206994597c13d831ec7.omft.near'
+      ],
+      [
+        'eip155:56',
+        'bsc',
+        '0x55d398326f99059ff775485246999027b3197955',
+        18,
+        'nep141:bnb-0x55d398326f99059ff775485246999027b3197955.omdep.near'
+      ]
+    ]) {
+      const assetId = `${chainId}/erc20:${contractAddress}`
+      const token = {
+        assetId: protocolAssetId,
+        blockchain,
+        contractAddress,
+        decimals,
+        symbol: 'USDT'
+      }
+      const definition = userEvmAssetToDefinition({
+        chainId,
+        contractAddress,
+        assetId,
+        source: 'intents-catalog',
+        addedAt: 1,
+        metadata: { name: 'Tether USD', symbol: 'USDT', decimals }
+      })
+      const create = (entry, tokens = [token]) =>
+        createBackgroundConfidentialFundingCoordinator(
+          network,
+          [],
+          [entry],
+          [],
+          tokens,
+          getActiveChainEndpointSettings(),
+          async () => {}
+        )
+      const source = { chainId, assetId, protocolAssetId }
+      expect(definition.verification).toBe('unverified')
+      expect(create(definition).hasExternalDepositAsset(source)).toBe(true)
+      expect(create(definition, []).hasExternalDepositAsset(source)).toBe(false)
+      expect(
+        create({ ...definition, verification: 'blocked' }).hasExternalDepositAsset(source)
+      ).toBe(false)
+      const conflicting = {
+        ...definition,
+        metadata: { ...definition.metadata, decimals: decimals + 1 }
+      }
+      expect(create(conflicting).hasExternalDepositAsset(source)).toBe(false)
+      expect(
+        create({
+          ...conflicting,
+          source: 'user-added',
+          verification: 'user-approved'
+        }).hasExternalDepositAsset(source)
+      ).toBe(false)
+    }
+  })
+
+  test('external ERC20 deposits bind the selected protocol representation to its chain, contract and decimals', () => {
+    const contractAddress = '0x55d398326f99059ff775485246999027b3197955'
+    const assetId = `eip155:56/erc20:${contractAddress}`
+    const legacy = {
+      assetId: 'nep245:v2_1.omni.hot.tg:56_2CMMyVTGZkeyNZTSvS5sarzfir6g',
+      blockchain: 'bsc',
+      symbol: 'USDT(DEPRECATED)',
+      decimals: 18,
+      contractAddress
+    }
+    const current = {
+      ...legacy,
+      assetId: `nep141:bnb-${contractAddress}.omdep.near`,
+      symbol: 'USDT'
+    }
+    let catalog = [legacy, current]
+    const coordinator = new ConfidentialFundingCoordinator({
+      network: 'mainnet',
+      evmNetworks: getEvmNetworkConfigs('mainnet'),
+      assets: {
+        get: id =>
+          id === assetId ? { asset: { namespace: 'erc20' }, metadata: { decimals: 18 } } : undefined
+      },
+      assetMappings: [{ assetId, protocolAssetId: legacy.assetId }],
+      getProtocolTokens: () => catalog
+    })
+    const source = { chainId: 'eip155:56', assetId, protocolAssetId: current.assetId }
+    expect(coordinator.hasExternalDepositAsset(source)).toBe(true)
+    for (const replacement of [
+      { ...current, contractAddress: '0x1111111111111111111111111111111111111111' },
+      { ...current, blockchain: 'base' },
+      { ...current, decimals: 6 }
+    ]) {
+      catalog = [legacy, replacement]
+      expect(coordinator.hasExternalDepositAsset(source)).toBe(false)
+    }
+    catalog = [legacy]
+    expect(coordinator.hasExternalDepositAsset(source)).toBe(false)
+  })
+
   test('external Shield deposit is account-bound, idempotent and recovers from status without local signing', async () => {
     const address = '0x1111111111111111111111111111111111111111'
     const refundAddress = '0x2222222222222222222222222222222222222222'
@@ -117,6 +283,33 @@ test.describe('confidential funding safety rules', () => {
               depositAddress: '0x3333333333333333333333333333333333333333',
               depositMemo: 'memo-1',
               deadline: new Date(60_000).toISOString()
+            }
+          }
+        },
+        async quoteFlexibleDeposit(request) {
+          return {
+            correlationId: 'flexible-external-quote',
+            quoteRequest: {
+              dry: false,
+              swapType: 'FLEX_INPUT',
+              confidentiality: 'basic',
+              originAsset: request.originAsset,
+              destinationAsset: request.originAsset,
+              amount: '35000000000001',
+              refundTo: request.refundTo,
+              depositType: 'ORIGIN_CHAIN',
+              refundType: 'ORIGIN_CHAIN',
+              recipient: request.signerId,
+              recipientType: 'CONFIDENTIAL_INTENTS',
+              slippageTolerance: 0
+            },
+            quote: {
+              amountIn: '35000000000001',
+              minAmountIn: '35000000000001',
+              amountOut: '35000000000001',
+              minAmountOut: '35000000000001',
+              depositAddress: '0x4444444444444444444444444444444444444444',
+              deadline: new Date(now + 60_000).toISOString()
             }
           }
         },
@@ -202,7 +395,7 @@ test.describe('confidential funding safety rules', () => {
       ),
       assetMappings: [{ assetId: source.assetId, protocolAssetId: source.protocolAssetId }],
       now: () => now,
-      createId: () => 'external-one',
+      createId: () => (records.has('external-one') ? 'external-two' : 'external-one'),
       scheduleMonitoring: async () => {
         monitoringCalls += 1
       }
@@ -279,7 +472,24 @@ test.describe('confidential funding safety rules', () => {
       coordinator.createExternalDeposit({ ...request, refundAddress: address })
     ).rejects.toThrow('request ID was reused')
     const unfunded = await coordinator.refreshExternalDeposit(created.depositId)
-    now += 3 * 60 * 60 * 1000
+    const afterInitialStatus = statusCalls
+    await Promise.all([
+      coordinator.refreshExternalDeposit(created.depositId, false),
+      coordinator.refreshExternalDeposit(created.depositId, false)
+    ])
+    expect(statusCalls).toBe(afterInitialStatus)
+    await Promise.all([
+      coordinator.refreshExternalDeposit(created.depositId, false),
+      coordinator.refreshExternalDeposit(created.depositId, true),
+      coordinator.refreshExternalDeposit(created.depositId, true)
+    ])
+    expect(statusCalls).toBe(afterInitialStatus + 1)
+    now += 20_000
+    await coordinator.refreshExternalDeposit(created.depositId, false)
+    expect(statusCalls).toBe(afterInitialStatus + 2)
+    await coordinator.refreshExternalDeposit(created.depositId)
+    expect(statusCalls).toBe(afterInitialStatus + 3)
+    now = unfunded.updatedAt + 3 * 60 * 60 * 1000
     expect(shouldAutoRefreshExternalShieldDeposit(unfunded, now - 1)).toBe(true)
     const beforePause = { statusCalls, monitoringCalls }
     await new ConfidentialFundingCoordinator(coordinatorOptions).resumeAll()
@@ -459,6 +669,91 @@ test.describe('confidential funding safety rules', () => {
     expect(cachedBalance).toEqual([
       { tokenId: source.protocolAssetId, available: '2', source: 'intents' }
     ])
+    const { amountRaw: _amountRaw, ...sourceWithoutAmount } = source
+    const minimumRequest = { ...request, requestId: 'minimum-one', source: sourceWithoutAmount }
+    const minimumDeposit = await coordinator.createExternalDeposit(minimumRequest)
+    expect(minimumDeposit).toMatchObject({
+      amountMode: 'minimum',
+      amountRaw: '35000000000001',
+      source: { amountRaw: '35000000000001' },
+      slippageBps: 0
+    })
+    expect((await coordinator.createExternalDeposit(minimumRequest)).depositId).toBe(
+      minimumDeposit.depositId
+    )
+    await expect(coordinator.createExternalDeposit({ ...minimumRequest, source })).rejects.toThrow(
+      'request ID was reused'
+    )
+  })
+
+  test('discovers the provider minimum and binds a flexible external deposit quote', async () => {
+    const originalFetch = globalThis.fetch
+    const requests = []
+    const signerId = '0x1111111111111111111111111111111111111111'
+    const refundTo = '0x2222222222222222222222222222222222222222'
+    const asset = 'nep141:eth.omft.near'
+    let tamper = false
+    let drySucceeds = false
+    let finalMinimumTooHigh = false
+    globalThis.fetch = async (_url, init) => {
+      const request = JSON.parse(init.body)
+      requests.push(request)
+      if (request.dry && !drySucceeds) {
+        return new Response(
+          JSON.stringify({ message: 'Amount is too low for bridge, try at least 35000000000001' }),
+          { status: 400 }
+        )
+      }
+      return new Response(
+        JSON.stringify({
+          correlationId: 'flex-quote',
+          quoteRequest: { ...request, recipient: tamper ? refundTo : request.recipient },
+          quote: {
+            amountIn: request.amount,
+            minAmountIn: request.dry
+              ? '35000000000001'
+              : finalMinimumTooHigh
+                ? '35000000000002'
+                : request.amount,
+            amountOut: request.amount,
+            minAmountOut: request.amount,
+            depositAddress: '0x3333333333333333333333333333333333333333',
+            deadline: new Date(Date.now() + 60_000).toISOString()
+          }
+        }),
+        { status: 201 }
+      )
+    }
+    try {
+      const api = new ConfidentialFundingApi(apiConfig, 'https://near.example.test', '')
+      const input = { originAsset: asset, signerId, refundTo }
+      const quote = await api.quoteFlexibleDeposit(input)
+      expect(requests.map(request => [request.dry, request.amount, request.swapType])).toEqual([
+        [true, '1', 'FLEX_INPUT'],
+        [false, '35000000000001', 'FLEX_INPUT']
+      ])
+      expect(requests.every(request => request.slippageTolerance === 0)).toBe(true)
+      expect(requests.every(request => request.referral === 'noir_receive')).toBe(true)
+      expect(quote.quote.minAmountIn).toBe('35000000000001')
+      tamper = true
+      await expect(api.quoteFlexibleDeposit(input)).rejects.toThrow(
+        'Flexible external Shield quote does not match'
+      )
+      tamper = false
+      drySucceeds = true
+      const discovered = await api.quoteFlexibleDeposit(input)
+      expect(requests.slice(-2).map(request => [request.dry, request.amount])).toEqual([
+        [true, '1'],
+        [false, '35000000000001']
+      ])
+      expect(discovered.quote.minAmountIn).toBe('35000000000001')
+      finalMinimumTooHigh = true
+      await expect(api.quoteFlexibleDeposit(input)).rejects.toThrow(
+        'Flexible external Shield quote does not match'
+      )
+    } finally {
+      globalThis.fetch = originalFetch
+    }
   })
   test('does not turn a malformed balance response into a confirmed zero', async () => {
     const originalFetch = globalThis.fetch
@@ -542,6 +837,7 @@ test.describe('confidential funding safety rules', () => {
       const request = JSON.parse(init.body)
       expect(request).toMatchObject({
         swapType: 'EXACT_OUTPUT',
+        referral: 'noir_send',
         depositType: 'ORIGIN_CHAIN',
         recipientType: 'DESTINATION_CHAIN',
         confidentiality: 'basic',
@@ -687,6 +983,7 @@ test.describe('confidential funding safety rules', () => {
     try {
       const api = new ConfidentialFundingApi(apiConfig, 'https://near.example.test', 'swap-jwt')
       const withdrawal = {
+        referral: 'noir_send',
         originAsset: 'nep141:eth.omft.near',
         destinationAsset: 'nep141:usdc.omft.near',
         amountRaw: '1000',
@@ -701,7 +998,8 @@ test.describe('confidential funding safety rules', () => {
       const quotedWithdrawal = await api.quote(withdrawal)
       expect(quoteRequests[0].dry).toBe(true)
       expect(quoteRequests[0].appFees).toBeUndefined()
-      expect(quoteRequests[1].referral).toBe('noir_swap')
+      expect(quoteRequests[0].referral).toBe('noir_send')
+      expect(quoteRequests[1].referral).toBe('noir_send')
       expect(quoteRequests[1].appFees).toEqual([{ recipient: 'platform.near', fee: 50 }])
       expect(quotedWithdrawal.quoteRequest.appFees).toEqual([
         { recipient: 'platform.near', fee: 50 },
@@ -710,18 +1008,22 @@ test.describe('confidential funding safety rules', () => {
       expect(feeReads).toBe(1)
       await api.quote({
         ...withdrawal,
+        referral: 'noir_move',
         depositType: 'ORIGIN_CHAIN',
         recipientType: 'CONFIDENTIAL_INTENTS'
       })
       expect(quoteRequests[2].appFees).toBeUndefined()
+      expect(quoteRequests[2].referral).toBe('noir_move')
       expect(feeReads).toBe(1)
       await api.quote({
         ...withdrawal,
+        referral: 'noir_swap',
         recipient: withdrawal.signerId,
         recipientType: 'CONFIDENTIAL_INTENTS',
         dry: true
       })
       expect(quoteRequests[4]).toMatchObject({
+        referral: 'noir_swap',
         swapType: 'EXACT_INPUT',
         depositType: 'CONFIDENTIAL_INTENTS',
         recipientType: 'CONFIDENTIAL_INTENTS',

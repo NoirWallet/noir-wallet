@@ -242,7 +242,7 @@ function itemIdentityKeys(item: ActivityItem): readonly string[] {
   const keys = [`source:${item.source}:${item.id}`]
   for (const segment of item.segments) {
     if (segment.target.kind !== 'onchain' || !segment.evidence?.transactionHash) continue
-    if (item.source === 'wallet-v2' && item.segments.length > 1 && segment.role !== 'origin') {
+    if (item.segments.length > 1 && segment.role !== 'origin') {
       continue
     }
     keys.push(

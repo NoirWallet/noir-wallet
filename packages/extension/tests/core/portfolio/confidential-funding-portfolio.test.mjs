@@ -4,6 +4,7 @@ import { expect } from '@playwright/test'
 import { ConfidentialFundingCoordinator } from '../../../src/background/confidential-funding-coordinator.ts'
 import {
   buildConfidentialPortfolioView,
+  excludeDeprecatedConfidentialAssets,
   confidentialPrivateTokenId,
   filterConfidentialPortfolioMappings,
   getConfidentialAvailableForAsset,
@@ -28,8 +29,14 @@ test('projects Shield-only holdings independently of Public assets and preserves
     price: 1,
     priceUpdatedAt: '2026-01-01T00:00:00Z'
   }
+  const legacyId = 'nep245:v2_1.omni.hot.tg:56_2w93GqMcEmQFDru84j3HZZWt557r'
+  const legacyBalance = Object.freeze({
+    tokenId: confidentialPrivateTokenId(legacyId),
+    available: '1000000000000000000'
+  })
   const view = buildConfidentialPortfolioView(
     [
+      legacyBalance,
       { tokenId: protocolAssetId, available: '9' },
       { tokenId: confidentialPrivateTokenId(protocolAssetId), available: '42' },
       { tokenId: confidentialPrivateTokenId(zcashProtocolId), available: '140000' },
@@ -38,6 +45,7 @@ test('projects Shield-only holdings independently of Public assets and preserves
     ],
     [
       token,
+      { ...token, assetId: legacyId, symbol: 'USDC(DEPRECATED)', decimals: 18 },
       {
         assetId: zcashProtocolId,
         blockchain: 'zec',
@@ -65,6 +73,7 @@ test('projects Shield-only holdings independently of Public assets and preserves
     }
   )
   expect(view.status).toBe('ready')
+  expect(getConfidentialAvailableForAsset([legacyBalance], legacyId)).toBe('1000000000000000000')
   expect(view.assets).toEqual([
     expect.objectContaining({
       tokenId: confidentialPrivateTokenId(protocolAssetId),
@@ -116,6 +125,84 @@ test('only counts the verified treasury token as Shield balance', () => {
       asset
     )
   ).toBeNull()
+})
+
+test('removes retired cached Shield balances from every projection without changing on-chain funds', () => {
+  const legacyId = 'nep245:v2_1.omni.hot.tg:56_11111111111111111111'
+  const currentId = 'nep141:bnb.omdep.near'
+  const assetId = 'eip155:56/slip44:714'
+  const holding = {
+    tokenId: confidentialPrivateTokenId(legacyId),
+    protocolAssetId: legacyId,
+    assetId,
+    chainId: 'eip155:56',
+    symbol: 'BNB',
+    decimals: 18,
+    availableRaw: '25'
+  }
+  const asset = {
+    asset: { id: assetId },
+    balance: {
+      totalRaw: '175',
+      mainRaw: '100',
+      privateRaw: '75',
+      privateOnchainRaw: '50',
+      confidentialRaw: '25',
+      spendableRaw: '150',
+      availableRaw: '150'
+    }
+  }
+  const model = {
+    assets: [asset],
+    chains: [{ assets: [asset] }],
+    confidential: { status: 'ready', assets: [holding] }
+  }
+  const filtered = excludeDeprecatedConfidentialAssets(model)
+  expect(filtered.confidential.assets).toEqual([])
+  expect(filtered.assets[0].balance).toEqual({
+    ...asset.balance,
+    totalRaw: '150',
+    privateRaw: '50',
+    confidentialRaw: '0'
+  })
+  expect(filtered.chains[0].assets[0]).toBe(filtered.assets[0])
+  expect(excludeDeprecatedConfidentialAssets(filtered)).toBe(filtered)
+  expect(model.assets[0].balance.totalRaw).toBe('175')
+  expect(model.confidential.assets).toEqual([holding])
+
+  const current = {
+    ...holding,
+    tokenId: confidentialPrivateTokenId(currentId),
+    protocolAssetId: currentId,
+    availableRaw: '7'
+  }
+  const both = excludeDeprecatedConfidentialAssets({
+    ...model,
+    confidential: { status: 'ready', assets: [holding, current] }
+  })
+  expect(both.confidential.assets).toEqual([current])
+  expect(both.assets[0].balance).toMatchObject({
+    totalRaw: '157',
+    privateRaw: '57',
+    confidentialRaw: '7',
+    spendableRaw: '150'
+  })
+  expect(
+    buildConfidentialPortfolioView(
+      [{ tokenId: holding.tokenId, available: holding.availableRaw }],
+      [],
+      [],
+      [],
+      { get: () => undefined }
+    ).assets
+  ).toEqual([])
+  expect(
+    mergeConfidentialBalancesIntoPortfolio(
+      model,
+      [{ assetId, protocolAssetId: legacyId }],
+      [{ tokenId: holding.tokenId, available: holding.availableRaw }]
+    ).assets[0].balance.confidentialRaw
+  ).toBe('0')
 })
 
 test('keeps Confidential balances out of directly spendable on-chain balances', () => {

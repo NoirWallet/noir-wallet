@@ -39,7 +39,7 @@ export function ZcashSyncProgress({
     <Tooltip
       content={
         <div className="flex flex-col items-center gap-0.5">
-          <span className="text-xs font-semibold">Syncing Zcash</span>
+          <span className="text-xs font-semibold">Zcash Syncing</span>
           <span className="font-mono text-[10px] opacity-80">
             Height: {formatSyncHeight(currentHeight)} / {formatSyncHeight(latestHeight)}
           </span>

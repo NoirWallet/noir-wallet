@@ -112,9 +112,9 @@ test('refreshes only cached custom prices while viewing a bundled asset', async 
   expect(calls).toEqual(['read'])
   await service.refresh(customAssetId)
   expect(calls).toHaveLength(4)
-  expect(calls).toEqual(expect.arrayContaining([
-    'read', 'bundled-price-read', 'bundled-market-read', customAssetId
-  ]))
+  expect(calls).toEqual(
+    expect.arrayContaining(['read', 'bundled-price-read', 'bundled-market-read', customAssetId])
+  )
   await service.refresh(customAssetId.toUpperCase())
   expect(calls).toHaveLength(7)
   expect(calls).toContain(customAssetId.toUpperCase())
@@ -375,6 +375,53 @@ test('serves fresh prices, keeps bounded stale cache, and expires old quotes ins
   expect(expired.missingAssetIds).toEqual(mappings.map(item => item.assetId))
 })
 
+test('preserves shared prices when a dynamic asset catalog changes', async () => {
+  const mappings = uniqueSourceMappings(createMappings().mappings).slice(0, 2)
+  let now = Date.parse('2026-08-09T10:00:00.000Z')
+  let stored = null
+  let fetchCount = 0
+  const cache = {
+    get: async () => stored,
+    put: async value => {
+      stored = value
+    }
+  }
+  const createService = mapping =>
+    new OneClickAssetPriceService({
+      mappings: [mapping],
+      cache,
+      now: () => now,
+      fetch: async () => {
+        fetchCount += 1
+        return new Response(JSON.stringify([token(mapping, now, fetchCount)]))
+      }
+    })
+  const first = createService(mappings[0])
+  const second = createService(mappings[1])
+
+  await first.refresh()
+  now += 61_000
+  await second.refresh()
+  expect(stored.quotes.map(quote => quote.assetId)).toEqual([
+    mappings[0].assetId,
+    mappings[1].assetId
+  ])
+  await expect(first.refresh()).resolves.toMatchObject({
+    status: 'ready',
+    quotes: [{ assetId: mappings[0].assetId, freshness: 'fresh' }]
+  })
+  expect(fetchCount).toBe(2)
+
+  now += 5 * 60_000
+  await expect(first.readCached()).resolves.toMatchObject({
+    status: 'partial',
+    quotes: [{ assetId: mappings[0].assetId, freshness: 'stale' }]
+  })
+  now += 30 * 60_000
+  await second.refresh()
+  expect(stored.quotes.map(quote => quote.assetId)).toEqual([mappings[1].assetId])
+})
+
 test('treats a discovered token with no provider price as missing without dropping other prices', async () => {
   const { mappings } = createMappings()
   const now = Date.parse('2026-08-09T10:00:00.000Z')
@@ -488,6 +535,69 @@ test('rejects unexpected fields on a mapped quote and falls back without exposin
       )
   })
   await expect(service.refresh()).resolves.toMatchObject({ status: 'error', quotes: [] })
+})
+
+test('prices a migrated contract from its current bridge while preserving exact protocol mappings', async () => {
+  const now = Date.parse('2026-11-12T03:00:00.000Z')
+  const contract = '0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d'
+  const assetId = `eip155:56/erc20:${contract}`
+  const oldToken = {
+    assetId: 'nep245:v2_1.omni.hot.tg:56_2w93GqMcEmQFDru84j3HZZWt557r',
+    blockchain: 'bsc',
+    contractAddress: contract,
+    decimals: 18,
+    symbol: 'USDC(DEPRECATED)',
+    price: 0.99,
+    priceUpdatedAt: new Date(now).toISOString()
+  }
+  const currentToken = {
+    ...oldToken,
+    assetId: `nep141:bnb-${contract}.omdep.near`,
+    symbol: 'USDC',
+    price: 0.999501
+  }
+  const contractMapping = {
+    assetId,
+    marketAssetId: 'usd-coin',
+    sourceBlockchain: 'bsc',
+    sourceContractAddress: contract,
+    sourceDecimals: 18
+  }
+  const refresh = (tokens, mapping = contractMapping) =>
+    new OneClickAssetPriceService({
+      mappings: [mapping],
+      now: () => now,
+      cache: { get: async () => null, put: async () => {} },
+      fetch: async () => Response.json(tokens)
+    }).refresh()
+
+  for (const tokens of [
+    [oldToken, currentToken],
+    [currentToken, oldToken]
+  ]) {
+    expect(await refresh(tokens)).toMatchObject({
+      status: 'ready',
+      quotes: [{ assetId, priceUsd: '0.999501' }],
+      missingAssetIds: []
+    })
+  }
+  expect(
+    await refresh([oldToken, currentToken], {
+      assetId,
+      marketAssetId: 'usd-coin',
+      sourceAssetId: oldToken.assetId
+    })
+  ).toMatchObject({ quotes: [{ assetId, priceUsd: '0.99' }] })
+
+  for (const candidate of [
+    { ...currentToken, decimals: 6 },
+    { ...currentToken, unexpectedRemoteField: true }
+  ]) {
+    expect(await refresh([oldToken, candidate])).toMatchObject({ status: 'error', quotes: [] })
+  }
+  expect(
+    await refresh([currentToken, { ...currentToken, assetId: 'nep141:ambiguous.near' }])
+  ).toMatchObject({ status: 'error', quotes: [] })
 })
 
 test('caches validated DEX changes, deduplicates shared pools, and expires failed refreshes', async () => {

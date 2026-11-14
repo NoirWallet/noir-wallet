@@ -7,6 +7,7 @@ import type {
 import type { AssetRegistry } from '@/core/chains/registry'
 import { getZcashChainId } from '@/core/chains/registry'
 import type { SwapToken } from '@/core/services/intents-api'
+import { isDeprecatedIntentsToken } from '@/core/services/intents-evm-assets'
 import type { IntentsManagedAsset } from '@/core/services/intents-managed-assets'
 import type { Network } from '@/types'
 
@@ -85,11 +86,19 @@ export function buildConfidentialPortfolioView(
   const entries = [...byProtocolId].flatMap(([protocolAssetId, { balance }]) => {
     if (balance.available === '0') return []
     const token = tokenById.get(protocolAssetId)
+    if (isDeprecatedIntentsToken({ assetId: protocolAssetId, symbol: token?.symbol })) return []
     const managed = managedById.get(protocolAssetId)
     const mappedAssetId = mappedById.get(protocolAssetId)
     const registered = mappedAssetId ? assets.get(mappedAssetId) : undefined
     const assetId = managed?.assetId ?? registered?.asset.id
     const chainId = managed?.chainId ?? registered?.asset.chainId
+    const bundledMetadata =
+      token &&
+      registered?.source === 'bundled' &&
+      assetId === registered.asset.id &&
+      token.decimals === registered.metadata.decimals
+        ? registered.metadata
+        : null
     const iconUrl = token ? (token.icon ?? token.coingeckoIcon ?? undefined) : undefined
     const priceUsd = token && token.price > 0 ? new Big(token.price).toFixed() : undefined
     return [
@@ -102,10 +111,11 @@ export function buildConfidentialPortfolioView(
         ...(token
           ? {
               blockchain: token.blockchain,
-              symbol: token.symbol,
-              name: token.symbol,
+              symbol: bundledMetadata?.symbol ?? token.symbol,
+              name: bundledMetadata?.name ?? token.symbol,
               decimals: token.decimals,
               ...(iconUrl ? { iconUrl } : {}),
+              ...(token.coingeckoId ? { coingeckoId: token.coingeckoId } : {}),
               ...(priceUsd && priceUsd.length <= 128
                 ? {
                     priceUsd,
@@ -129,7 +139,9 @@ function mergeAsset(
   if (!mapping || asset.balance.mainRaw === undefined || asset.balance.privateRaw === undefined) {
     return asset
   }
-  const confidentialRaw = getConfidentialAvailableForAsset(balances, mapping.protocolAssetId) ?? '0'
+  const confidentialRaw = isDeprecatedIntentsToken({ assetId: mapping.protocolAssetId })
+    ? '0'
+    : (getConfidentialAvailableForAsset(balances, mapping.protocolAssetId) ?? '0')
   const previousConfidential = BigInt(asset.balance.confidentialRaw ?? '0')
   const privateOnchain = BigInt(
     asset.balance.privateOnchainRaw ??
@@ -164,4 +176,41 @@ export function mergeConfidentialBalancesIntoPortfolio(
     })
   )
   return Object.freeze({ ...model, assets: Object.freeze(assets), chains: Object.freeze(chains) })
+}
+
+export function excludeDeprecatedConfidentialAssets(model: PortfolioReadModel): PortfolioReadModel {
+  const confidential = model.confidential
+  if (!confidential) return model
+  const hidden = confidential.assets.filter(asset =>
+    isDeprecatedIntentsToken({ assetId: asset.protocolAssetId, symbol: asset.symbol })
+  )
+  if (hidden.length === 0) return model
+  const visible = confidential.assets.filter(asset => !hidden.includes(asset))
+  const hiddenMappings = new Map(
+    hidden.flatMap(asset =>
+      asset.assetId
+        ? [
+            [
+              asset.assetId,
+              {
+                assetId: asset.assetId,
+                protocolAssetId:
+                  visible.find(current => current.assetId === asset.assetId)?.protocolAssetId ??
+                  asset.protocolAssetId
+              }
+            ] as const
+          ]
+        : []
+    )
+  )
+  // Replace only the projected Shield portion; public and private on-chain balances stay intact.
+  const projected = mergeConfidentialBalancesIntoPortfolio(
+    model,
+    [...hiddenMappings.values()],
+    visible.map(asset => ({ tokenId: asset.tokenId, available: asset.availableRaw }))
+  )
+  return Object.freeze({
+    ...projected,
+    confidential: Object.freeze({ ...confidential, assets: Object.freeze(visible) })
+  })
 }

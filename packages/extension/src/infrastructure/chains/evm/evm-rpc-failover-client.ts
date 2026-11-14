@@ -180,6 +180,7 @@ export function createEvmRpcFailoverClient(
       run(state => state.client.estimateGas(call, signal), signal),
     getMaximumPriorityFeePerGas: (signal?: AbortSignal) =>
       run(state => state.client.getMaximumPriorityFeePerGas(signal), signal),
+    getGasPrice: (signal?: AbortSignal) => run(state => state.client.getGasPrice(signal), signal),
     getLatestBlockFee: (signal?: AbortSignal): Promise<EvmLatestBlockFee> =>
       run(state => state.client.getLatestBlockFee(signal), signal),
     broadcastRawTransaction: (rawTransaction: string, signal?: AbortSignal) =>

@@ -314,7 +314,7 @@ export function TransactionDetailContent({
         {intentsDepositAddress && (
           <DetailRow label="NEAR Intents">
             <a
-              href={getIntentsExplorerUrl(intentsDepositAddress)}
+              href={getIntentsExplorerUrl(intentsDepositAddress, localTx.type)}
               target="_blank"
               rel="noopener noreferrer"
               className="text-primary hover:underline"

@@ -68,16 +68,20 @@ function Tooltip({
   children,
   side,
   sideOffset,
-  className
+  className,
+  open,
+  onOpenChange
 }: {
   content: React.ReactNode
   children: React.ReactNode
   side?: 'top' | 'bottom' | 'left' | 'right'
   sideOffset?: number
   className?: string
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
 }) {
   return (
-    <_Tooltip>
+    <_Tooltip open={open} onOpenChange={onOpenChange}>
       <TooltipTrigger asChild>{children}</TooltipTrigger>
       <TooltipContent side={side} sideOffset={sideOffset} className={className}>
         {content}

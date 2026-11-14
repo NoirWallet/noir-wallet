@@ -5,8 +5,10 @@ import { getChainFromAssetId } from '@/lib/format'
 import { createDebugRequestId, logDebugTiming, traceDebugStage } from '@/lib/debug-performance'
 import { resolveEvmChainIconAlias } from '@/config/icons'
 import { BITCOIN_CHAIN_IDS, ZCASH_CHAIN_IDS } from '@/core/chains/registry/chain-ids'
+import { isDeprecatedIntentsToken } from '@/core/services/intents-evm-assets'
 
 export interface SwapInitialCatalogOptions {
+  readonly catalogScope?: string | null
   readonly sourceAssetId?: string | null
   readonly destinationAssetId?: string | null
   readonly destinationApiChainId?: string | null
@@ -145,6 +147,8 @@ export function buildInitialSwapCatalogPlan(options: SwapInitialCatalogOptions) 
       chain => chain.apiChainId === assetChain(options.savedSourceAssetId)?.apiChainId
     ) ??
     preferredSource ??
+    enabled.find(chain => chain.blockchain === 'zec') ??
+    enabled.find(chain => chain.blockchain === 'eth') ??
     enabled[0]
   if (!source) return { sourceChainIds: [], destinationChainIds: [] }
   const savedDestination =
@@ -155,7 +159,10 @@ export function buildInitialSwapCatalogPlan(options: SwapInitialCatalogOptions) 
   const target =
     explicitDestination ??
     savedDestination ??
-    enabled.find(chain => chain.apiChainId !== source.apiChainId)
+    (source.walletFamily === 'evm'
+      ? undefined
+      : (enabled.find(chain => chain.blockchain === 'eth') ??
+        enabled.find(chain => chain.apiChainId !== source.apiChainId)))
   return {
     sourceChainIds: [source.tokenListChainId],
     destinationChainIds:
@@ -185,10 +192,16 @@ export function mergeTokenCatalogs(
   const tokens = new Map<string, RheaSwapToken>()
   for (const catalog of catalogs) {
     for (const token of catalog) {
+      if (isDeprecatedIntentsToken(token)) continue
       tokens.set(`${token.rheaChainId}:${token.rheaAddress}`, token)
     }
   }
-  return Object.freeze([...tokens.values()])
+  const merged = [...tokens.values()]
+  const first = catalogs[0]
+  if (first?.length === merged.length && merged.every((token, index) => token === first[index])) {
+    return first
+  }
+  return Object.freeze(merged)
 }
 
 export function findSwapTokenInCatalog(
@@ -255,8 +268,9 @@ export async function loadTokenCatalogByChain(
         const result = await traceDebugStage(requestId, `list-chain-${chainId}`, () =>
           client.listTokens({ direction, tokenListChainIds: [chainId] }, { bypassCache })
         )
-        tokens.push(...result.tokens)
-        if (!isCancelled() && result.tokens.length > 0) onTokens(result.tokens)
+        const available = result.tokens.filter(token => !isDeprecatedIntentsToken(token))
+        tokens.push(...available)
+        if (!isCancelled() && available.length > 0) onTokens(available)
       } catch {
         // A failed chain must not discard catalogs that are already usable.
       }

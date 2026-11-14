@@ -8,7 +8,7 @@ import { useBetaInviteBinding } from '../../hooks/useBetaInviteBinding'
 
 export function CongratulationsPage() {
   const { replace } = useNavigate()
-  const { flowMode, dappRequestId, reset } = useOnboardingStore()
+  const { dappRequestId, reset } = useOnboardingStore()
   const { status, changeCode, error, busy, activate } = useBetaInviteBinding()
   const activationPending = status.required && status.state.phase !== 'activated'
 
@@ -23,12 +23,7 @@ export function CongratulationsPage() {
       return
     }
 
-    // Normal onboarding flow
-    if (flowMode === 'addWallet') {
-      replace('/account-list')
-    } else {
-      replace('/')
-    }
+    replace('/')
   }
 
   return (

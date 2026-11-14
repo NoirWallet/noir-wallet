@@ -67,7 +67,6 @@ export function ZeroIndexerNodes() {
 
   useEffect(() => {
     mounted.current = true
-    let active = true
     const onChanged = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
       if (
         (area === 'local' &&
@@ -79,11 +78,8 @@ export function ZeroIndexerNodes() {
         void loadStatus()
     }
     chrome.storage.onChanged.addListener(onChanged)
-    void loadStatus().then(() => {
-      if (active) void loadStatus(true)
-    })
+    void loadStatus()
     return () => {
-      active = false
       mounted.current = false
       revision.current += 1
       chrome.storage.onChanged.removeListener(onChanged)
@@ -215,7 +211,7 @@ export function ZeroIndexerNodes() {
   return (
     <div className="page-container">
       <PageHeader
-        title="Broadcast Nodes"
+        title="ZeroIndexer Nodes"
         showBack
         action={{
           ariaLabel: 'Refresh broadcast nodes',

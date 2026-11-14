@@ -334,7 +334,7 @@ export function getStandardTransactionResultCopy(
       return { title: '', description: '', resultStatus: 'loading' }
     case 'pending':
       return {
-        title: options.error ? 'Transaction Pending' : 'Building Transaction',
+        title: options.error ? 'Transaction Pending' : 'Transaction Submitting',
         description: options.error || '',
         resultStatus: options.error ? 'warning' : 'loading'
       }
@@ -348,7 +348,7 @@ export function getStandardTransactionResultCopy(
       return {
         title: 'Confirming',
         description: '',
-        resultStatus: 'submitted'
+        resultStatus: 'loading'
       }
     case 'success':
       return {

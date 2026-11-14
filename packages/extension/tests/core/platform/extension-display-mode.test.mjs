@@ -157,7 +157,7 @@ test.describe('extension display mode', () => {
     ])
   })
 
-  test('opens side-panel hardware signing in a focused standalone window', async () => {
+  test('opens side-panel hardware signing in a focused browser window with device chooser support', async () => {
     const calls = []
     const signTab = { id: 42 }
     globalThis.chrome = {
@@ -182,7 +182,7 @@ test.describe('extension display mode', () => {
     expect(calls).toEqual([
       {
         url: 'chrome-extension://wallet/index.html#/hardware/sign?req=x',
-        type: 'popup',
+        type: 'normal',
         width: 375,
         height: 632,
         focused: true

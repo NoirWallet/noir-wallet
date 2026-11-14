@@ -8,8 +8,12 @@ import { getTransactionStatusToneClassName } from '@/lib/transaction-status-pres
 import { AmountDisplay } from '@/popup/components/common/AmountDisplay'
 import { Button } from '@/popup/components/ui/button'
 import { PageHeader } from '@/popup/components/common/PageHeader'
-import { TokenIcon } from '@/popup/components/tokens/TokenIcon'
-import { TransactionResult } from '@/popup/components/transaction/TransactionResult'
+import { ChainIcon } from '@/popup/components/common/ChainIcon'
+import { resolveChainIconAlias } from '@/lib/chain-icon'
+import {
+  TransactionResult,
+  TransactionResultDetailRow
+} from '@/popup/components/transaction/TransactionResult'
 import type { EvmTransferActivity } from '@/popup/services/evm-transfer-activity'
 import { shouldApplyOnchainTransactionStatus } from '@/popup/services/evm-transaction-result-status'
 import { formatBaseUnitAmount } from '@/lib/number-format'
@@ -49,15 +53,6 @@ interface OnchainTransactionResultProps {
   readonly showTotal: boolean
   readonly onDone: (outcome: OnchainResultOutcome) => void
   readonly onViewActivity: (transactionId: TransactionId) => void
-}
-
-function DetailLine({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="flex min-w-0 items-center justify-between gap-4 py-2.5">
-      <span className="shrink-0 text-xs text-muted">{label}</span>
-      <div className="min-w-0 text-right text-xs font-medium">{children}</div>
-    </div>
-  )
 }
 
 export function OnchainTransactionResult({
@@ -142,6 +137,7 @@ export function OnchainTransactionResult({
   const transactionHash = activity?.transactionHash ?? segmentEvidence?.transactionHash
   const replacementTransactionHash =
     activity?.replacementTransactionHash ?? segmentEvidence?.replacementTransactionHash
+  const sender = graph.root.intent?.sender?.address
   const recipient = graph.root.intent?.recipient?.address
   const explorerUrl =
     transactionHash && explorerBaseUrl
@@ -177,8 +173,10 @@ export function OnchainTransactionResult({
         status={presentation.resultStatus}
         title={presentation.title}
         description={resultAction === 'retry' ? undefined : presentation.description}
-        className={compactDetails ? 'pb-0 pt-4' : 'py-3'}
-        bodyClassName={compactDetails ? 'my-0' : 'my-2'}
+        layout="single-asset"
+        onClose={() => onDone(getOnchainResultExitOutcome(status))}
+        className={compactDetails ? 'pb-0' : undefined}
+        bodyClassName={compactDetails ? 'mt-5' : undefined}
         footer={
           <div className="flex w-full flex-col gap-2">
             {resultAction === 'explorer' && explorerUrl ? (
@@ -203,29 +201,39 @@ export function OnchainTransactionResult({
         }
       >
         <div className="w-full">
-          <div className="mb-3 flex max-w-full min-w-0 items-start justify-center gap-2 px-3">
-            <TokenIcon
-              assetId={asset.asset.id}
-              symbol={asset.metadata.symbol}
-              icon={asset.metadata.iconUrl}
-              size="sm"
-            />
-            <div className="min-w-0 text-center text-xl font-semibold leading-tight">
+          <div>
+            <TransactionResultDetailRow label="Amount">
               <AmountDisplay value={amount} symbol={asset.metadata.symbol} />
-            </div>
-          </div>
-
-          <div className="divide-y divide-border/60 border-y border-border/60">
-            <DetailLine label="Network">{formatPortfolioNetworkName(chain)}</DetailLine>
+            </TransactionResultDetailRow>
+            {sender && (
+              <TransactionResultDetailRow label="Send from">
+                <span className="font-mono" title={sender}>
+                  {formatSortAddress(sender)}
+                </span>
+              </TransactionResultDetailRow>
+            )}
             {recipient && (
-              <DetailLine label="Send to">
-                <span className="font-mono text-muted" title={recipient}>
+              <TransactionResultDetailRow label="Recipient">
+                <span className="font-mono" title={recipient}>
                   {formatSortAddress(recipient)}
                 </span>
-              </DetailLine>
+              </TransactionResultDetailRow>
             )}
+            <TransactionResultDetailRow label="Network">
+              <span className="inline-flex items-center justify-end gap-1.5">
+                <ChainIcon
+                  chain={resolveChainIconAlias(
+                    chain.chain.family,
+                    chain.chain.displayName,
+                    chain.chain.id
+                  )}
+                  className="size-4"
+                />
+                {formatPortfolioNetworkName(chain)}
+              </span>
+            </TransactionResultDetailRow>
             {transactionHash && (
-              <DetailLine label="Transaction ID">
+              <TransactionResultDetailRow label="Transaction Hash">
                 <a
                   href={explorerUrl ?? undefined}
                   target="_blank"
@@ -236,10 +244,10 @@ export function OnchainTransactionResult({
                   {formatSortAddress(transactionHash)}
                   <Icon icon="lucide:external-link" width={12} height={12} />
                 </a>
-              </DetailLine>
+              </TransactionResultDetailRow>
             )}
             {replacementTransactionHash && replacementExplorerUrl && (
-              <DetailLine label="Replacement">
+              <TransactionResultDetailRow label="Replacement">
                 <a
                   href={replacementExplorerUrl}
                   target="_blank"
@@ -250,25 +258,25 @@ export function OnchainTransactionResult({
                   {formatSortAddress(replacementTransactionHash)}
                   <Icon icon="lucide:external-link" width={12} height={12} />
                 </a>
-              </DetailLine>
+              </TransactionResultDetailRow>
             )}
-            <DetailLine label="Status">
+            <TransactionResultDetailRow label="Status">
               <span className={getTransactionStatusToneClassName(presentation.tone)}>
                 {presentation.label}
               </span>
-            </DetailLine>
+            </TransactionResultDetailRow>
             {status === 'failed' && presentation.tone === 'error' && (
-              <DetailLine label="Reason">
+              <TransactionResultDetailRow label="Reason">
                 {getOnchainTransactionFailureLabel(activity?.failureCode)}
-              </DetailLine>
+              </TransactionResultDetailRow>
             )}
-            <DetailLine label={feeLabel}>
+            <TransactionResultDetailRow label={feeLabel}>
               <AmountDisplay value={fee} symbol={feeSymbol} profile="fee" />
-            </DetailLine>
+            </TransactionResultDetailRow>
             {total && (
-              <DetailLine label={totalLabel}>
+              <TransactionResultDetailRow label={totalLabel}>
                 <AmountDisplay value={total} symbol={asset.metadata.symbol} />
-              </DetailLine>
+              </TransactionResultDetailRow>
             )}
           </div>
 

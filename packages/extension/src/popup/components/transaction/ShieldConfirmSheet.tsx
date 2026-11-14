@@ -76,7 +76,7 @@ export function ShieldConfirmSheet({
           <div className="mb-3">
             <TokenIcon symbol="ZEC" nativeChain="zcash" size="xl" />
           </div>
-          <span className="mb-1 text-xs text-muted">Public balance</span>
+          <span className="mb-1 text-xs text-muted">Transparent balance</span>
           <div className="max-w-full text-center text-2xl font-bold">
             <AmountDisplay value={transparentBalance} symbol="ZEC" />
           </div>

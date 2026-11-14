@@ -5,6 +5,7 @@ export {
   assertDirectConfidentialWithdrawIntentBinding,
   assertConfidentialIntentBinding,
   assertConfidentialQuoteBinding,
+  assertFlexibleExternalDepositQuoteBinding,
   canRetryConfidentialSubmission,
   fingerprintConfidentialValue,
   fingerprintDirectConfidentialApproval,

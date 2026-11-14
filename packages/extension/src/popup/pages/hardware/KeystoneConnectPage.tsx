@@ -32,7 +32,8 @@ import { getNewPasswordValidationError, isNewPasswordValid } from '@/core/wallet
 import { formatSortAddress } from '@/lib/format'
 import { ANALYTICS_EVENTS, PAGE_IDS, sendAnalyticsEvent } from '@/lib/analytics'
 import keystoneLogo from '@/images/keystone-logo.webp'
-import { classifyError } from '@/lib/errors'
+import { formatHardwareSigningError } from '@/lib/hardware-signing-error'
+import { logger } from '@/lib/logger'
 import { DEFAULT_NETWORK } from '@/lib/runtime-network'
 import { accountNetworksClient } from '../../services/account-networks-client'
 import { keystoneHardwareProvisioningClient } from '../../services/hardware-provisioning-client'
@@ -44,6 +45,9 @@ import {
 } from './keystone-chain-selection'
 
 type Step = 'networks' | 'guide' | 'scan' | 'configure' | 'success'
+type ProjectedAccount =
+  | ReturnType<typeof projectKeystoneMultiCoinAccounts>[number]
+  | ReturnType<typeof projectKeystoneBitcoinAccounts>[number]
 
 const chainLabels = Object.freeze({
   zcash: 'ZEC',
@@ -57,7 +61,7 @@ const chainLabels = Object.freeze({
 const chainIconAliases = Object.freeze({
   zcash: 'zcash',
   bitcoin: 'bitcoin',
-  evm: 'ethereum',
+  evm: 'evm',
   solana: 'solana',
   tron: 'tron',
   near: 'near'
@@ -73,6 +77,7 @@ export function KeystoneConnectPage() {
   const [scanError, setScanError] = useState<string | null>(null)
   const [scannerKey, setScannerKey] = useState(0)
   const [connection, setConnection] = useState<KeystoneConnectionAccount | null>(null)
+  const [projectedAccounts, setProjectedAccounts] = useState<readonly ProjectedAccount[]>([])
   const [accountIndex, setAccountIndex] = useState(0)
 
   const [walletName, setWalletName] = useState('Keystone Wallet 1')
@@ -148,18 +153,6 @@ export function KeystoneConnectPage() {
     }
   }, [loadWalletInventory])
 
-  const projectedAccounts = useMemo(() => {
-    if (!connection || connection.firmwareProfile === 'cypherpunk') return []
-    return connection.firmwareProfile === 'multi-coin'
-      ? projectKeystoneMultiCoinAccounts(
-          filterKeystoneMultiAccountsPayload(
-            connection.accountExport,
-            selectedBundle?.requestedNetworks ?? []
-          ),
-          DEFAULT_NETWORK
-        )
-      : projectKeystoneBitcoinAccounts(connection.accountExport, DEFAULT_NETWORK)
-  }, [connection, selectedBundle])
   const projectedAccountIndexes = useMemo(
     () =>
       [...new Set(projectedAccounts.map(account => account.accountIndex))].sort((a, b) => a - b),
@@ -177,12 +170,29 @@ export function KeystoneConnectPage() {
     try {
       if (!selectedFirmwareProfile) throw new Error('Select a Keystone setup first')
       const parsed = parseKeystoneConnectionAccount(selectedFirmwareProfile, ur)
+      const accounts =
+        parsed.firmwareProfile === 'multi-coin'
+          ? projectKeystoneMultiCoinAccounts(
+              filterKeystoneMultiAccountsPayload(
+                parsed.accountExport,
+                selectedBundle?.requestedNetworks ?? []
+              ),
+              DEFAULT_NETWORK
+            )
+          : parsed.firmwareProfile === 'bitcoin-only'
+            ? projectKeystoneBitcoinAccounts(parsed.accountExport, DEFAULT_NETWORK)
+            : []
       setConnection(parsed)
+      setProjectedAccounts(accounts)
       setAccountIndex(0)
       setScanError(null)
       setStep('configure')
-    } catch (e) {
-      setScanError(classifyError(e).userMessage)
+    } catch {
+      setConnection(null)
+      setProjectedAccounts([])
+      setScanError(
+        'Unable to use this QR for the selected networks. Check the Keystone firmware and scan its account connection QR again.'
+      )
       setScannerKey(k => k + 1)
     }
   }
@@ -263,7 +273,9 @@ export function KeystoneConnectPage() {
       })
       setStep('success')
     } catch (e) {
-      setCreateError(classifyError(e).userMessage)
+      const message = formatHardwareSigningError(e)
+      logger.error(`[Hardware connection] Keystone provisioning failed: ${message}`)
+      setCreateError(message)
     } finally {
       setIsCreating(false)
     }

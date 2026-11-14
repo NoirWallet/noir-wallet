@@ -142,6 +142,7 @@ function parseConfidentialView(value: unknown): ConfidentialPortfolioView {
         'name',
         'decimals',
         'iconUrl',
+        'coingeckoId',
         'priceUsd',
         'priceUpdatedAt'
       ],
@@ -215,6 +216,9 @@ function parseConfidentialView(value: unknown): ConfidentialPortfolioView {
         : { name: readBoundedString(item.name, 'Confidential name', 128) }),
       ...(decimals === undefined ? {} : { decimals: decimals as number }),
       ...(iconUrl === undefined ? {} : { iconUrl }),
+      ...(item.coingeckoId === undefined
+        ? {}
+        : { coingeckoId: readBoundedString(item.coingeckoId, 'Confidential CoinGecko ID', 128) }),
       ...(priceUsd === undefined ? {} : { priceUsd }),
       ...(priceUpdatedAt === undefined ? {} : { priceUpdatedAt })
     })

@@ -9,6 +9,196 @@ import { Input } from '../ui/input'
 import { BalanceHelp } from './BalanceHelp'
 import { safeBig } from '@/lib/big'
 import { Tooltip } from '../ui/tooltip'
+import { BalanceDomainTabs, type BalanceDomain } from '../account/BalanceDomainTabs'
+import { Button } from '../ui/button'
+import { Switch } from '../ui/switch'
+
+export function SendFormView({
+  children,
+  footer,
+  ...source
+}: Parameters<typeof SendSourceSection>[0] & {
+  readonly children?: ReactNode
+  readonly footer: ReactNode
+}) {
+  return (
+    <>
+      <div className="page-content min-h-0 space-y-4 !px-4 pt-4">
+        <SendSourceSection {...source} />
+        {children}
+      </div>
+      <div className="page-footer">{footer}</div>
+    </>
+  )
+}
+
+export function SendFormActions({
+  onContinue,
+  disabled,
+  loading,
+  privacy
+}: {
+  readonly onContinue: () => void
+  readonly disabled: boolean
+  readonly loading?: boolean
+  readonly privacy?: { readonly checked: boolean; readonly onChange: () => void }
+}) {
+  return (
+    <>
+      {privacy && (
+        <button
+          type="button"
+          role="switch"
+          aria-label="Send privately"
+          aria-checked={privacy.checked}
+          onClick={privacy.onChange}
+          className={cn(
+            'mb-4 flex w-full items-center justify-center gap-1.5 text-sm',
+            privacy.checked ? 'text-primary' : 'text-muted'
+          )}
+        >
+          <Icon icon="lucide:shield-check" width={15} height={15} className="text-primary" />
+          Send privately
+          <Switch checked={privacy.checked} size="sm" />
+        </button>
+      )}
+      <Button
+        size="wallet"
+        className="h-[45px] w-full"
+        disabled={disabled}
+        isLoading={loading}
+        onClick={onContinue}
+      >
+        Continue
+      </Button>
+    </>
+  )
+}
+
+/** Keeps source and recipient headings at the same visual level. */
+export function SendFieldLabel({ children }: { readonly children: ReactNode }) {
+  return (
+    <span className="shrink-0 font-sans text-sm font-medium text-wallet-field-label">
+      {children}
+    </span>
+  )
+}
+
+export function SendSourceSection({
+  amountInput,
+  assetSelector,
+  balance,
+  maxButton,
+  recipient,
+  sourceAction,
+  domain,
+  availableDomains,
+  onDomainChange,
+  disabled
+}: {
+  readonly amountInput: ReactNode
+  readonly assetSelector: ReactNode
+  readonly balance: ReactNode
+  readonly maxButton: ReactNode
+  readonly recipient?: ReactNode
+  readonly sourceAction?: ReactNode
+  readonly domain: BalanceDomain
+  readonly availableDomains: readonly BalanceDomain[]
+  readonly onDomainChange: (domain: BalanceDomain) => void
+  readonly disabled?: boolean
+}) {
+  const sourceSection = (
+    <div className="order-1 flex min-w-0 items-center justify-between gap-3">
+      <SendFieldLabel>Send from</SendFieldLabel>
+      {sourceAction ?? (
+        <BalanceDomainTabs
+          value={domain}
+          available={availableDomains}
+          onChange={onDomainChange}
+          disabled={disabled}
+        />
+      )}
+    </div>
+  )
+  return (
+    <>
+      {sourceSection}
+      {recipient}
+      <div className="order-3">
+        <SendAmountRow
+          amountInput={amountInput}
+          assetSelector={assetSelector}
+          balance={balance}
+          maxButton={maxButton}
+        />
+      </div>
+    </>
+  )
+}
+
+export function SendAmountRow({
+  amountInput,
+  assetSelector,
+  balance,
+  maxButton
+}: {
+  readonly amountInput: ReactNode
+  readonly assetSelector: ReactNode
+  readonly balance: ReactNode
+  readonly maxButton: ReactNode
+}) {
+  return (
+    <div className="space-y-2">
+      <div className="flex min-w-0 items-center justify-between gap-2 text-sm">
+        <SendFieldLabel>Amount</SendFieldLabel>
+        <div className="flex max-w-[70%] min-w-0 items-center gap-2 text-xs text-muted">
+          <span className="min-w-0 truncate">Bal. {balance}</span>
+          <span className="shrink-0">{maxButton}</span>
+        </div>
+      </div>
+      <div className="flex min-h-14 min-w-0 items-center gap-2 rounded-[10px] border border-white/10 bg-wallet-surface px-4 focus-within:border-white/35">
+        <div className="min-w-0 flex-1">{amountInput}</div>
+        <div className="min-w-0 max-w-[55%] shrink-0">{assetSelector}</div>
+      </div>
+    </div>
+  )
+}
+
+export function SendRouteInfoCard({
+  provider,
+  fee,
+  time,
+  extra
+}: {
+  readonly provider?: ReactNode
+  readonly fee?: ReactNode
+  readonly time?: ReactNode
+  readonly extra?: ReactNode
+}) {
+  return (
+    <div className="space-y-3 rounded-lg border border-white/15 px-4 py-4 text-xs">
+      {provider !== undefined && (
+        <div className="flex min-h-5 items-center justify-between gap-3">
+          <span className="text-muted">Provider</span>
+          <div className="min-w-0 text-right">{provider}</div>
+        </div>
+      )}
+      {fee !== undefined && (
+        <div className="flex min-h-5 items-center justify-between gap-3">
+          <span className="text-muted">Fee</span>
+          <div className="min-w-0 text-right">{fee}</div>
+        </div>
+      )}
+      {time !== undefined && (
+        <div className="flex min-h-5 items-center justify-between gap-3">
+          <span className="text-muted">Est. time</span>
+          <div className="min-w-0 text-right">{time}</div>
+        </div>
+      )}
+      {extra}
+    </div>
+  )
+}
 
 export function SendRecipientInputCard({
   id,
@@ -16,9 +206,11 @@ export function SendRecipientInputCard({
   onChange,
   placeholder,
   label = 'Send to',
+  hideLabel = false,
   variant = 'outline',
   invalid = false,
   autoFocus = false,
+  disabled = false,
   selectedName,
   onSelectRecipient
 }: {
@@ -27,20 +219,28 @@ export function SendRecipientInputCard({
   readonly onChange: (value: string) => void
   readonly placeholder: string
   readonly label?: string
+  readonly hideLabel?: boolean
   readonly variant?: 'outline' | 'filled'
   readonly invalid?: boolean
   readonly autoFocus?: boolean
+  readonly disabled?: boolean
   readonly selectedName?: string
   readonly onSelectRecipient?: () => void
 }) {
   return (
     <div className={cn('space-y-1.5', variant === 'filled' && 'space-y-3')}>
-      <div className="flex min-w-0 items-center justify-between gap-2">
+      <div
+        className={cn(
+          'flex min-w-0 items-center justify-between gap-2',
+          hideLabel && !selectedName && 'sr-only'
+        )}
+      >
         <label
           htmlFor={id}
           className={cn(
             'block px-1 text-xs font-medium text-foreground/80',
-            variant === 'filled' && 'px-0 text-sm leading-[18px]'
+            variant === 'filled' && 'px-0 text-sm leading-[18px]',
+            hideLabel && 'sr-only'
           )}
         >
           {label}
@@ -55,6 +255,7 @@ export function SendRecipientInputCard({
         id={id}
         aria-label={label}
         aria-invalid={invalid || undefined}
+        disabled={disabled}
         value={value}
         onChange={event => onChange(event.target.value)}
         placeholder={placeholder}
@@ -130,9 +331,11 @@ export function SendAmountInputCard({
   showBalanceHelp = false,
   headerAction,
   hero = false,
+  inline = false,
   variant = 'outline',
   title,
-  testId
+  testId,
+  disabled = false
 }: {
   readonly ariaLabel: string
   readonly value: string
@@ -152,9 +355,11 @@ export function SendAmountInputCard({
   readonly showBalanceHelp?: boolean
   readonly headerAction?: ReactNode
   readonly hero?: boolean
+  readonly inline?: boolean
   readonly variant?: 'outline' | 'filled'
   readonly title?: string
   readonly testId?: string
+  readonly disabled?: boolean
 }) {
   const amountFiat = formatSendFiatValue(value, priceUsd)
   const availableFiat = formatSendFiatValue(available, priceUsd)
@@ -183,13 +388,13 @@ export function SendAmountInputCard({
   return (
     <div
       data-testid={filled ? (testId ?? 'send-amount-card') : undefined}
-      className={cn('space-y-1.5', filled && 'space-y-3', hero && 'space-y-0')}
+      className={cn('space-y-1.5', filled && 'space-y-3', (hero || inline) && 'w-full space-y-0')}
     >
       <div
         className={cn(
           'flex items-center justify-between gap-2 px-1',
           filled && 'px-0',
-          hero && 'sr-only'
+          (hero || inline) && 'sr-only'
         )}
       >
         <span
@@ -217,7 +422,7 @@ export function SendAmountInputCard({
         title={title}
         className={cn(
           'min-h-[92px] rounded-2xl border px-4 py-3 transition-colors focus-within:border-white/60',
-          hero
+          hero || inline
             ? 'min-h-10 rounded-none border-transparent px-0 py-0 focus-within:border-transparent'
             : filled
               ? cn(
@@ -238,6 +443,7 @@ export function SendAmountInputCard({
         >
           <input
             aria-label={ariaLabel}
+            disabled={disabled}
             inputMode="decimal"
             value={value}
             title={hero && value ? value : undefined}
@@ -255,8 +461,8 @@ export function SendAmountInputCard({
             className={cn(
               'min-w-0 flex-1 bg-transparent font-sans text-2xl tabular-nums text-foreground outline-none placeholder:text-muted/45',
               filled && 'h-[53px] text-base font-medium',
-              hero &&
-                'h-10 px-2 text-center text-[40px] font-semibold leading-[37.4px] tracking-[-0.015em]'
+              hero && 'h-12 px-2 text-center text-[40px] font-semibold leading-tight',
+              inline && 'h-12 text-xl font-medium'
             )}
           />
           {onMax && (
@@ -280,7 +486,7 @@ export function SendAmountInputCard({
         <div
           className={cn(
             'mt-3 flex min-w-0 items-center justify-between gap-3 text-xs leading-4',
-            (hero || filled) && 'hidden'
+            (hero || inline || filled) && 'hidden'
           )}
         >
           <span className="shrink-0 text-muted">{amountFiat ? `~${amountFiat}` : '—'}</span>
@@ -345,8 +551,42 @@ export function SendAssetHeader({
   readonly nativeChain?: 'zcash' | 'bitcoin' | 'solana' | 'near'
   readonly blockchain?: string
   readonly onSelectAsset?: () => void
-  readonly variant?: 'default' | 'compact'
+  readonly variant?: 'default' | 'compact' | 'pill'
 }) {
+  if (variant === 'pill') {
+    const content = (
+      <>
+        <TokenIcon
+          assetId={assetId}
+          symbol={symbol}
+          icon={icon}
+          nativeChain={nativeChain}
+          blockchain={blockchain ?? nativeChain}
+          size={24}
+        />
+        <span className="max-w-28 truncate">{symbol}</span>
+        {onSelectAsset && <Icon icon="lucide:chevron-down" width={15} height={15} />}
+      </>
+    )
+    return (
+      <div data-testid="send-asset-header" className="flex justify-center">
+        {onSelectAsset ? (
+          <button
+            type="button"
+            onClick={onSelectAsset}
+            aria-label={`Select send asset, ${symbol} on ${networkName}`}
+            className="inline-flex h-9 max-w-full items-center gap-2 rounded-full bg-wallet-surface px-2.5 text-sm font-medium hover:bg-wallet-selected"
+          >
+            {content}
+          </button>
+        ) : (
+          <div className="inline-flex h-9 max-w-full items-center gap-2 rounded-full bg-wallet-surface px-2.5 text-sm font-medium">
+            {content}
+          </div>
+        )}
+      </div>
+    )
+  }
   if (variant === 'compact') {
     const content = (
       <>
@@ -412,7 +652,7 @@ export function SendNetworkFeeCard({
   return (
     <div
       data-testid="send-network-fee"
-      className="flex min-h-12 items-center justify-between gap-4 rounded-xl bg-card/45 px-4 py-3"
+      className="flex min-h-12 items-center justify-between gap-4 rounded-lg border border-white/15 px-4 py-3"
     >
       <span className="shrink-0 text-xs text-muted">{label}</span>
       <div className="flex min-w-0 items-center gap-1.5 text-right text-xs font-medium">

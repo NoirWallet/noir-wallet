@@ -20,6 +20,7 @@ import {
 } from '@/core/chains/evm'
 import { parseKeyDomainId, parseSigningSummary, type SigningSummary } from '@/core/keyring/domain'
 import { parsePortfolioReadModel, type PortfolioReadModel } from '@/core/portfolio'
+import { excludeDeprecatedConfidentialAssets } from '@/core/services/confidential-funding/confidential-funding-portfolio'
 import {
   getTransactionProtocolIntentKind,
   parseTransactionGraph,
@@ -173,6 +174,13 @@ export interface EvmWalletClient {
     expectedOwner: string,
     executionMode?: 'main' | 'private'
   ) => Promise<string>
+  readonly getTokenBalance: (request: {
+    readonly chainId: string
+    readonly token: string
+    readonly walletId: string
+    readonly accountId: string
+    readonly executionMode: 'main' | 'private'
+  }) => Promise<string>
   readonly prepareCancel: (
     chainId: string,
     originalTransactionId: TransactionId,
@@ -251,9 +259,14 @@ function parseFeeEstimate(
     'gasLimit'
   ]
   const hasAmountIndependent = Object.prototype.hasOwnProperty.call(record, 'amountIndependent')
+  const hasFeeModel = Object.prototype.hasOwnProperty.call(record, 'transactionType')
   assertExactKeys(
     record,
-    hasAmountIndependent ? [...expectedKeys, 'amountIndependent'] : expectedKeys,
+    [
+      ...expectedKeys,
+      ...(hasFeeModel ? ['transactionType', 'gasPriceWei'] : []),
+      ...(hasAmountIndependent ? ['amountIndependent'] : [])
+    ],
     'EVM fee estimate'
   )
   if (hasAmountIndependent && typeof record.amountIndependent !== 'boolean') {
@@ -283,6 +296,17 @@ function parseFeeEstimate(
   }
   if (BigInt(record.maxPriorityFeePerGasWei as string) > maxFeePerGas) {
     throw new Error('Invalid EVM priority fee estimate')
+  }
+  if (
+    hasFeeModel &&
+    !(
+      (record.transactionType === 'eip1559' && record.gasPriceWei === null) ||
+      (record.transactionType === 'legacy' &&
+        record.gasPriceWei === record.maxFeePerGasWei &&
+        record.maxPriorityFeePerGasWei === '0')
+    )
+  ) {
+    throw new Error('Invalid EVM fee model estimate')
   }
   if (record.amountIndependent === true && (!nativeTransfer || gasLimit !== 21_000n)) {
     throw new Error('Invalid EVM amount-independent estimate')
@@ -882,7 +906,9 @@ export function createEvmWalletClient(sendMessage: EvmRuntimeMessenger): EvmWall
           detectedAssets,
           protocolAssets
         )
-        return parsePortfolioReadModel(result.model, chains, assets)
+        return excludeDeprecatedConfidentialAssets(
+          parsePortfolioReadModel(result.model, chains, assets)
+        )
       })
     },
     getActivity: async (
@@ -1087,6 +1113,36 @@ export function createEvmWalletClient(sendMessage: EvmRuntimeMessenger): EvmWall
           return value
         }
       )
+    },
+    getTokenBalance: async (request: {
+      readonly chainId: string
+      readonly token: string
+      readonly walletId: string
+      readonly accountId: string
+      readonly executionMode: 'main' | 'private'
+    }) => {
+      const chainId = parseClientInput(() => parseChainId(request.chainId))
+      if (
+        chainId.namespace !== 'eip155' ||
+        !/^0x[0-9a-fA-F]{40}$/.test(request.token) ||
+        !request.walletId ||
+        !request.accountId ||
+        request.walletId.length > 256 ||
+        request.accountId.length > 256 ||
+        (request.executionMode !== 'main' && request.executionMode !== 'private')
+      ) {
+        throw new EvmWalletClientError('invalid-request', 'Invalid EVM balance request')
+      }
+      return send({ type: 'GET_EVM_TOKEN_BALANCE', ...request, chainId: chainId.id }, value => {
+        if (
+          typeof value !== 'string' ||
+          !/^(0|[1-9][0-9]{0,77})$/.test(value) ||
+          BigInt(value) > (1n << 256n) - 1n
+        ) {
+          throw new Error('Invalid EVM balance response')
+        }
+        return value
+      })
     },
     prepareCancel: async (
       chainId: string,

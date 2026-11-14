@@ -50,6 +50,12 @@ import {
   TRANSACTION_PENDING_MESSAGE
 } from '@/lib/transaction-status-copy'
 import { publishHardwareSignResult } from '@/lib/hardware-sign-result'
+import { toHardwarePcztError } from '@/core/zcash/hardware-pczt'
+import {
+  formatHardwareSigningError,
+  isHardwareDeviceSelectionCancelled
+} from '@/lib/hardware-signing-error'
+import { logger } from '@/lib/logger'
 
 type Step =
   | 'building'
@@ -74,7 +80,7 @@ export function KeystoneSignPage() {
   const [step, setStep] = useState<Step>('building')
   const [request, setRequest] = useState<HardwareSignRequest | null>(null)
   const [pcztBytes, setPcztBytes] = useState<Uint8Array | null>(null)
-  const [vendor, setVendor] = useState<'keystone' | 'ledger'>('keystone')
+  const [vendor, setVendor] = useState<'keystone' | 'ledger' | null>(null)
   const [ledgerPayload, setLedgerPayload] = useState<LedgerSigningPayload | null>(null)
   const [ledgerDisplayAddress, setLedgerDisplayAddress] = useState<string | null>(null)
   const [ledgerDeviceModel, setLedgerDeviceModel] = useState<string>()
@@ -255,17 +261,10 @@ export function KeystoneSignPage() {
         setStep(res.vendor === 'ledger' ? 'ledger-review' : 'show-qr')
       } catch (e) {
         if (invalidated.current) return
-        const raw = e instanceof Error ? e.message : ''
-        if (raw.includes('SAPLING_UNSUPPORTED')) {
-          setRetryable(false)
-          setError(
-            'This transfer needs to spend Sapling funds, which Keystone cannot sign. ' +
-              'Move or shield your Sapling balance into Orchard using a software wallet ' +
-              'with the same recovery phrase, then send from Keystone.'
-          )
-        } else {
-          setError(classifyError(e).userMessage)
-        }
+        const message = formatHardwareSigningError(e)
+        logger.error(`[Hardware signing] Build failed: ${message}`)
+        if (message.includes('SAPLING_UNSUPPORTED')) setRetryable(false)
+        setError(message)
         recordHardwareSignFailure(req.kind, 'build')
         recordHardwareOperationOutcome(req, requestId, 'failed')
         setStep('failed')
@@ -286,9 +285,18 @@ export function KeystoneSignPage() {
         return
       }
       setRequest(req)
+      const keySource = useWalletStore.getState().getWallet(req.walletId)?.keySource
+      if (keySource === 'ledger' || keySource === 'keystone') setVendor(keySource)
       await buildPczt(req)
     }
-    start()
+    void start().catch(cause => {
+      if (invalidated.current) return
+      const message = formatHardwareSigningError(cause)
+      logger.error(`[Hardware signing] Request loading failed: ${message}`)
+      setError(message)
+      setRetryable(false)
+      setStep('failed')
+    })
   }, [requestId, buildPczt])
 
   const reportDappResult = (
@@ -321,6 +329,7 @@ export function KeystoneSignPage() {
 
     let transactionId: string | null = null
     let broadcastHash: string | null = null
+    let failureStage: 'record' | 'prepare' = 'record'
     try {
       if (!feeZec) {
         throw new Error('Network fee estimate is unavailable. Review the transaction again.')
@@ -358,6 +367,7 @@ export function KeystoneSignPage() {
       setTransactionTimestamp(addResponse.transaction.timestamp)
 
       setRetryable(false)
+      failureStage = 'prepare'
       const submission = await chrome.runtime.sendMessage(
         'signatures' in signed
           ? {
@@ -487,7 +497,13 @@ export function KeystoneSignPage() {
           console.error('[HardwareSign] Failed to report result to the origin surface:', cause)
         }
       }
-      recordHardwareOperationOutcome(request, requestId, 'broadcast', transactionId ?? undefined)
+      recordHardwareOperationOutcome(
+        request,
+        requestId,
+        'broadcast',
+        transactionId ?? undefined,
+        sentAmount
+      )
       setTxHash(hash)
       setStep('success')
       if (request.reportToOrigin && originResultPublished) {
@@ -495,6 +511,9 @@ export function KeystoneSignPage() {
       }
     } catch (e) {
       if (e instanceof TimeoutError && transactionId && !broadcastHash) {
+        logger.warn(
+          `[Hardware signing] ${vendor} submission pending: ${formatHardwareSigningError(e)}`
+        )
         setError(TRANSACTION_PENDING_MESSAGE)
         setStep('pending')
         return
@@ -516,6 +535,10 @@ export function KeystoneSignPage() {
         return
       }
       const classified = classifyError(e)
+      const failure = toHardwarePcztError(failureStage, e)
+      logger.error(
+        `[Hardware signing] ${vendor} submission failed: ${formatHardwareSigningError(failure)}`
+      )
       recordHardwareSignFailure(request.kind, 'broadcast')
       recordHardwareOperationOutcome(request, requestId, 'failed')
       reportDappResult(request, { success: false, error: classified.technicalMessage })
@@ -524,7 +547,7 @@ export function KeystoneSignPage() {
         expire()
         return
       }
-      setError(classified.userMessage)
+      setError(formatHardwareSigningError(failure))
       setStep('failed')
     }
   }
@@ -533,7 +556,9 @@ export function KeystoneSignPage() {
     try {
       await submitHardwareSignature({ signedPcztBase64: bytesToBase64(parseSignedPczt(ur)) })
     } catch (cause) {
-      setScanError(classifyError(cause).userMessage)
+      const message = formatHardwareSigningError(cause)
+      logger.error(`[Hardware signing] Keystone QR decoding failed: ${message}`)
+      setScanError(message)
       setScannerKey(key => key + 1)
     }
   }
@@ -552,10 +577,12 @@ export function KeystoneSignPage() {
         : 'Select your Ledger over Bluetooth'
     )
     setStep('ledger-device')
+    let deviceSelected = false
     try {
       // Browser device prompts must start from the button's user gesture.
       const devicePromise = discoverLedger(transport, controller.signal)
       const device = await devicePromise
+      deviceSelected = true
       controller.signal.throwIfAborted()
       const signatures = await signLedgerPczt({
         transport,
@@ -574,6 +601,14 @@ export function KeystoneSignPage() {
       await submitHardwareSignature({ signatures })
     } catch (cause) {
       if (invalidated.current || controller.signal.aborted) return
+      const message = formatHardwareSigningError(cause)
+      if (!deviceSelected && isHardwareDeviceSelectionCancelled(cause)) {
+        logger.info(`[Hardware signing] Ledger device selection cancelled: ${message}`)
+        setError(null)
+        setStep('ledger-review')
+        return
+      }
+      logger.error(`[Hardware signing] Ledger device signing failed: ${message}`)
       if (
         request.fundingSource === 'transparent' &&
         !transparentInputRebuiltRef.current &&
@@ -586,7 +621,7 @@ export function KeystoneSignPage() {
         )
         return
       }
-      setError(classifyError(cause).userMessage)
+      setError(message)
       setRetryable(true)
       recordHardwareSignFailure(request.kind, 'sign')
       recordHardwareOperationOutcome(request, requestId, 'failed')
@@ -596,15 +631,16 @@ export function KeystoneSignPage() {
     }
   }
 
-  const deviceName = vendor === 'ledger' ? 'Ledger' : 'Keystone'
-  const title =
+  const deviceName = vendor === 'ledger' ? 'Ledger' : vendor === 'keystone' ? 'Keystone' : null
+  const operation =
     request?.kind === 'shield'
-      ? `Shield with ${deviceName}`
+      ? 'Shield'
       : request?.kind === 'unshield'
-        ? `Unshield with ${deviceName}`
+        ? 'Unshield'
         : request?.kind === 'swap'
-          ? `Swap with ${deviceName}`
-          : `Send with ${deviceName}`
+          ? 'Swap'
+          : 'Send'
+  const title = deviceName ? `${operation} with ${deviceName}` : operation
 
   return (
     <div className="page-container page-container--tab">
@@ -642,9 +678,11 @@ export function KeystoneSignPage() {
                   </div>
                 </div>
               )}
-              <div className="flex justify-center pt-2">
-                <Skeleton className="size-52 rounded-lg" />
-              </div>
+              {vendor === 'keystone' && (
+                <div className="flex justify-center pt-2">
+                  <Skeleton className="size-52 rounded-lg" />
+                </div>
+              )}
             </HardwareSigningProgress>
           </div>
           <div className="page-footer">

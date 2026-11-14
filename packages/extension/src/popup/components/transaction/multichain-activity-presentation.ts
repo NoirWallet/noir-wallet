@@ -7,7 +7,7 @@ import type {
   TransactionSegmentEvidence,
   TransactionSegmentTarget
 } from '@/core/transactions/domain'
-import { formatSortAddress } from '@/lib/format'
+import { formatSortAddress, formatSymbol } from '@/lib/format'
 import { parseAssetId } from '@/core/chains/registry'
 import type {
   ActivityAssetMetadata,
@@ -21,6 +21,7 @@ import type {
   ConfidentialWithdrawRow
 } from '@/core/services/confidential-funding'
 import { getActivityInteractionPresentation } from './activity-interaction-adapters'
+import { getActivityAddressAlias } from '@/popup/services/activity-address-alias'
 import type { TransactionProgressStep } from '@/popup/services/transaction-progress'
 import {
   getLifecycleStatusPresentation,
@@ -122,6 +123,22 @@ export function isOwnedAccountTransfer(route: ActivitySwapPresentation): boolean
   )
 }
 
+export function isDirectAccountMove(item: ActivityItem, route: ActivitySwapPresentation): boolean {
+  const sourceMode = route.sourceAccountMode
+  const destinationMode = route.destinationAccountMode
+  return (
+    !item.snapshot?.shield &&
+    item.snapshot?.direction === 'outgoing' &&
+    item.snapshot.protocol?.provider === 'rhea-cross-chain-dex' &&
+    item.snapshot.protocol.userAction === 'transfer' &&
+    ((sourceMode === 'Public' && destinationMode === 'Confidential') ||
+      (sourceMode === 'Confidential' && destinationMode === 'Public')) &&
+    route.source?.assetId !== undefined &&
+    route.source.assetId === route.destination?.assetId &&
+    route.sourceNetwork === route.destinationNetwork
+  )
+}
+
 export function getActivityAccountRouteLabel(route: ActivitySwapPresentation): string {
   const label = (mode: ActivitySwapPresentation['sourceAccountMode']) =>
     mode === 'Confidential' ? 'Private' : (mode ?? '')
@@ -130,6 +147,8 @@ export function getActivityAccountRouteLabel(route: ActivitySwapPresentation): s
 
 export function getActivityRouteTitle(item: ActivityItem, route: ActivitySwapPresentation): string {
   if (item.snapshot?.shield) {
+    if (item.snapshot.direction === 'self' && item.snapshot.shield.operation !== 'swap')
+      return 'Move'
     return item.snapshot.shield.operation === 'cluster'
       ? 'Move'
       : item.snapshot.shield.operation === 'deposit'
@@ -138,6 +157,7 @@ export function getActivityRouteTitle(item: ActivityItem, route: ActivitySwapPre
           ? 'Swap'
           : 'Send'
   }
+  if (isDirectAccountMove(item, route)) return 'Move'
   if (isAccountModeTransfer(item, route)) {
     return isOwnedAccountTransfer(route) ? 'Account Transfer' : 'Transfer'
   }
@@ -205,11 +225,49 @@ export function buildActivityExecutionAddressModes(
   return modes
 }
 
+export function getClusterSettledDestination(
+  item: ActivityItem,
+  plan: ConfidentialFundingPlan | null
+): TransactionAssetAmount | undefined {
+  const assetId = item.snapshot?.counterAmount?.assetId
+  if (
+    item.snapshot?.shield?.operation !== 'cluster' ||
+    item.status !== 'final' ||
+    item.completeness !== 'complete' ||
+    !plan ||
+    plan.operation !== 'cluster' ||
+    plan.phase !== 'ready' ||
+    plan.transactionId !== item.id ||
+    plan.keyDomainId !== item.scope.keyDomainId ||
+    plan.accountId !== item.scope.accountId ||
+    plan.destination.assetId !== assetId ||
+    plan.withdraws.length === 0 ||
+    plan.withdraws.length !== item.segments.filter(segment => segment.role === 'destination').length
+  )
+    return undefined
+
+  let amountRaw = 0n
+  const sequences = new Set<number>()
+  for (const row of plan.withdraws) {
+    if (
+      !['SUCCESS', 'COMPLETED'].includes(row.status.toUpperCase()) ||
+      !row.settledOutputRaw ||
+      !/^[1-9]\d*$/.test(row.settledOutputRaw) ||
+      sequences.has(row.sequence)
+    )
+      return undefined
+    sequences.add(row.sequence)
+    amountRaw += BigInt(row.settledOutputRaw)
+  }
+  return { assetId, amountRaw: amountRaw.toString() }
+}
+
 export function getActivitySwapPresentation(
   item: ActivityItem,
   assetMetadata: ReadonlyMap<string, ActivityAssetMetadata>,
   chainMetadata: ReadonlyMap<string, ActivityChainMetadata>,
-  executionAddressModes: ReadonlyMap<string, 'Public' | 'Confidential'> = new Map()
+  executionAddressModes: ReadonlyMap<string, 'Public' | 'Confidential'> = new Map(),
+  confirmedDestination?: TransactionAssetAmount
 ): ActivitySwapPresentation | null {
   if (
     item.snapshot?.shield === undefined &&
@@ -230,16 +288,17 @@ export function getActivitySwapPresentation(
     item.snapshot?.direction === 'incoming' &&
     item.snapshot.shield?.operation === 'deposit'
   const source = resolveActivityDisplayAmount(item.snapshot?.primaryAmount, assetMetadata)
-  const settledAmount =
-    isExternalDeposit && item.status === 'final'
-      ? item.segments.find(
-          segment =>
-            segment.role === 'destination' &&
-            segment.status === 'final' &&
-            segment.target.kind === 'protocol' &&
-            segment.target.provider === 'Confidential Intents'
-        )?.evidence?.settledAmount
+  const settledDestination =
+    item.status === 'final' && item.completeness === 'complete'
+      ? item.segments.find(segment => segment.role === 'destination' && segment.status === 'final')
       : undefined
+  const settledAmount =
+    confirmedDestination ??
+    settledDestination?.evidence?.settledAmount ??
+    settledDestination?.evidence?.assetEffects?.changes.find(
+      change =>
+        change.direction === 'incoming' && change.assetId === item.snapshot?.counterAmount?.assetId
+    )
   const destination = resolveActivityDisplayAmount(
     settledAmount ?? item.snapshot?.counterAmount,
     assetMetadata
@@ -389,7 +448,7 @@ export function resolveActivityDisplayAmount(
   if (!metadata) return undefined
   return Object.freeze({
     assetId: amount.assetId,
-    symbol: metadata.symbol,
+    symbol: formatSymbol(metadata.symbol),
     formatted: formatActivityTokenAmount(amount.amountRaw, metadata.decimals),
     exact: formatBaseUnitDecimalAmount(amount.amountRaw, metadata.decimals),
     ...(metadata.iconUrl ? { iconUrl: metadata.iconUrl } : {})
@@ -434,7 +493,9 @@ function isSignedOrderOrigin(segment: ActivitySegment): boolean {
 }
 
 export function getActivityDetailTitle(item: ActivityItem, interactionTitle?: string): string {
-  if (item.snapshot?.shield)
+  if (item.snapshot?.shield) {
+    if (item.snapshot.direction === 'self' && item.snapshot.shield.operation !== 'swap')
+      return 'Move'
     return item.snapshot.shield.operation === 'cluster'
       ? 'Move'
       : item.snapshot.shield.operation === 'deposit'
@@ -442,6 +503,7 @@ export function getActivityDetailTitle(item: ActivityItem, interactionTitle?: st
         : item.snapshot.shield.operation === 'swap'
           ? 'Shield Swap'
           : 'Send'
+  }
   if (isConfidentialFundingActivity(item)) return 'Add to Confidential'
   if (item.failureCode === 'refunded') return 'Refund'
   if (
@@ -747,14 +809,29 @@ export function getActivitySegmentStatusPresentation(
   })
 }
 
+function resolveShieldAuthorizationOrigin(
+  item: ActivityItem,
+  origin: ActivitySegment | undefined
+): ActivitySegment | undefined {
+  const hasShieldRelay = item.segments.some(segment => segment.role === 'relay')
+  const shield = item.snapshot?.shield
+  if (!hasShieldRelay || !shield || origin?.target.kind !== 'protocol') return undefined
+  const mergesAuthorizationWithRelay =
+    (shield.operation === 'withdraw' && item.snapshot?.direction === 'outgoing') ||
+    (item.snapshot?.direction === 'self' && shield.operation !== 'swap')
+  return mergesAuthorizationWithRelay ? origin : undefined
+}
+
 export function getActivityProgressSteps(
   item: ActivityItem,
   chainName: (chainId: string) => string
 ): readonly TransactionProgressStep[] {
   const origin = item.segments.find(segment => segment.role === 'origin')
+  const shieldSendAuthorization = resolveShieldAuthorizationOrigin(item, origin)
   return item.segments
     .filter(
       segment =>
+        segment !== shieldSendAuthorization &&
         (segment.role !== 'refund' ||
           segment.status !== 'created' ||
           segment.evidence?.transactionHash !== undefined) &&
@@ -763,6 +840,30 @@ export function getActivityProgressSteps(
           segment.status !== 'created')
     )
     .map(segment => {
+      if (
+        shieldSendAuthorization &&
+        segment.role === 'relay' &&
+        shieldSendAuthorization.status !== 'final'
+      ) {
+        const authorizationStatus = shieldSendAuthorization.status
+        return {
+          id: segment.id,
+          label: 'Shield processing',
+          detail: segment.target.kind === 'protocol' ? segment.target.provider : undefined,
+          state:
+            authorizationStatus === 'failed'
+              ? 'failed'
+              : authorizationStatus === 'created'
+                ? 'pending'
+                : 'active',
+          statusLabel:
+            authorizationStatus === 'failed'
+              ? 'Authorization failed'
+              : authorizationStatus === 'created'
+                ? 'Waiting for authorization'
+                : 'Authorizing'
+        } as const
+      }
       const presentation = getActivitySegmentStatusPresentation(segment, item)
       const signedOrderSubmitted =
         isSignedOrderOrigin(segment) &&
@@ -833,13 +934,14 @@ function getActivityTitle(item: ActivityItem, chainId?: string): string {
 export function getActivityRowTextPresentation(
   item: ActivityItem,
   primarySymbol: string | undefined,
-  counterSymbol: string | undefined,
+  rawCounterSymbol: string | undefined,
   networkName: string,
   chainId?: string
 ): ActivityRowTextPresentation {
   const interaction = getActivityInteractionPresentation(item, chainId)
   const title = interaction?.title ?? getActivityTitle(item, chainId)
-  const symbol = primarySymbol?.trim()
+  const symbol = formatSymbol(primarySymbol)
+  const counterSymbol = formatSymbol(rawCounterSymbol)
   const sender = item.snapshot?.sender?.address
   const recipient = getActivityTransferRecipient(item)
   const direction = item.snapshot?.direction
@@ -869,20 +971,25 @@ export function getActivityRowTextPresentation(
   }
 
   if (interaction) {
+    const addressLabel = interaction.targetAddress
+      ? (getActivityAddressAlias(chainId, interaction.targetAddress) ??
+        formatSortAddress(interaction.targetAddress))
+      : null
     return {
       title,
-      subtitle: interaction.targetAddress
-        ? `${interaction.targetLabel}: ${formatSortAddress(interaction.targetAddress)}`
-        : networkName
+      subtitle: addressLabel ? `${interaction.targetLabel}: ${addressLabel}` : networkName
     }
   }
 
   const counterparty = isIncoming ? sender : recipient
+  const counterpartyChainId = isIncoming
+    ? item.snapshot?.sender?.chainId
+    : item.snapshot?.recipient?.chainId
   const counterpartyLabel = isIncoming ? 'From' : 'To'
   return {
     title: symbol ? `${title} ${symbol}` : title,
     subtitle: counterparty
-      ? `${counterpartyLabel}: ${formatSortAddress(counterparty)}`
+      ? `${counterpartyLabel}: ${getActivityAddressAlias(counterpartyChainId, counterparty) ?? formatSortAddress(counterparty)}`
       : networkName
   }
 }

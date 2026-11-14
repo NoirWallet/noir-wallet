@@ -153,6 +153,7 @@ export function SwapStatusDisplay({
   )
 
   const labels = getSwapActionLabels(actionName)
+  const showExchangeAmounts = !actionName || actionName === 'Swap'
   const showFee = !!fee
 
   return (
@@ -185,17 +186,27 @@ export function SwapStatusDisplay({
       <div className="w-full space-y-3">
         <TransactionProgressSteps steps={progress.steps} className="pb-2" />
         <div className="flex min-w-0 items-center justify-between gap-3 border-b border-white/10 py-3">
-          <span className="text-sm text-muted">{labels.sendLabel}</span>
-          <AmountDisplay value={amountIn} symbol={tokenInSymbol} className="text-sm font-medium" />
-        </div>
-        <div className="flex min-w-0 items-center justify-between gap-3 border-b border-white/10 py-3">
-          <span className="text-sm text-muted">{labels.receiveLabel}</span>
+          <span className="text-sm text-muted">
+            {showExchangeAmounts ? labels.sendLabel : 'Amount'}
+          </span>
           <AmountDisplay
-            value={amountOut}
-            symbol={tokenOutSymbol}
+            value={amountIn}
+            symbol={tokenInSymbol}
+            prefix={showExchangeAmounts ? '- ' : undefined}
             className="text-sm font-medium"
           />
         </div>
+        {showExchangeAmounts && (
+          <div className="flex min-w-0 items-center justify-between gap-3 border-b border-white/10 py-3">
+            <span className="text-sm text-muted">{labels.receiveLabel}</span>
+            <AmountDisplay
+              value={amountOut}
+              symbol={tokenOutSymbol}
+              prefix="+ "
+              className="text-sm font-medium"
+            />
+          </div>
+        )}
 
         {showFee && (
           <div className="flex min-w-0 items-center justify-between gap-3 border-b border-white/10 py-3">

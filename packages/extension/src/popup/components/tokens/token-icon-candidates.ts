@@ -6,9 +6,29 @@ interface TokenIconCandidateInput {
   readonly token?: Pick<SwapToken, 'blockchain' | 'contractAddress' | 'icon' | 'coingeckoIcon'>
   readonly icon?: string
   readonly assetId?: string
+  readonly symbol?: string
   readonly blockchain?: string
   readonly nativeChain?: string
   readonly bundledIcon?: string
+  readonly contractIcon?: string
+}
+
+const customTokenIcons: Readonly<Record<string, string>> = Object.freeze({
+  [MARKET_ASSETS.eth]: 'https://assets.zknoir.com/chain/ethereum.svg'
+})
+
+export function formatTokenIcon({
+  assetId,
+  token,
+  symbol,
+  icon
+}: Pick<TokenIconCandidateInput, 'assetId' | 'token' | 'symbol' | 'icon'>): string | undefined {
+  const marketAsset = isBundledEthIconIdentity(assetId, token, symbol)
+    ? MARKET_ASSETS.eth
+    : assetId
+      ? findBundledWalletMarketAssetId(assetId)
+      : null
+  return (marketAsset ? customTokenIcons[marketAsset] : undefined) ?? icon
 }
 
 const nativeAssetIconUrls: Readonly<Record<string, string>> = Object.freeze({
@@ -50,13 +70,22 @@ function getBundledNativeIconFallback(
 
 export function isBundledEthIconIdentity(
   assetId: string | undefined,
-  token?: Pick<SwapToken, 'contractAddress'>
+  token?: Pick<SwapToken, 'contractAddress'>,
+  symbol?: string
 ): boolean {
-  if (!assetId || findBundledWalletMarketAssetId(assetId) !== MARKET_ASSETS.eth) return false
+  if (!assetId) return false
   if (/^eip155:[1-9][0-9]*\/slip44:60$/.test(assetId)) {
-    return token === undefined || token.contractAddress == null
+    return (
+      (token === undefined || token.contractAddress == null) &&
+      (findBundledWalletMarketAssetId(assetId) === MARKET_ASSETS.eth ||
+        symbol?.toUpperCase() === 'ETH')
+    )
   }
-  return token?.contractAddress == null && token !== undefined
+  return (
+    findBundledWalletMarketAssetId(assetId) === MARKET_ASSETS.eth &&
+    token?.contractAddress == null &&
+    token !== undefined
+  )
 }
 
 function isCoinGeckoIconUrl(value: string | undefined): boolean {
@@ -107,21 +136,39 @@ function isRetiredIconSource(value: string, depth = 0): boolean {
   }
 }
 
+function isOnlineIconUrl(value: string): boolean {
+  try {
+    return new URL(value).protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
 export function getTokenIconCandidates({
   token,
   icon,
   assetId,
-  bundledIcon
+  symbol,
+  bundledIcon,
+  contractIcon
 }: TokenIconCandidateInput): readonly string[] {
   const providerIcon = isPublicIpfsIconUrl(token?.icon ?? undefined) ? undefined : token?.icon
   const metadataIcon = isCoinGeckoIconUrl(icon) || isPublicIpfsIconUrl(icon) ? undefined : icon
   const coinGeckoIcon = isCoinGeckoIconUrl(icon) ? icon : token?.coingeckoIcon
+  const nativeIcon = getBundledNativeIconFallback(assetId, token)
+  const preferredNativeIcon =
+    assetId && findBundledWalletMarketAssetId(assetId) === MARKET_ASSETS.avax
+      ? nativeIcon
+      : undefined
   const candidates = [
+    formatTokenIcon({ assetId, token, symbol }),
     bundledIcon,
+    preferredNativeIcon,
     providerIcon,
     metadataIcon,
     coinGeckoIcon,
-    getBundledNativeIconFallback(assetId, token)
+    isCoinGeckoIconUrl(contractIcon) ? contractIcon : undefined,
+    nativeIcon
   ]
 
   return Object.freeze(
@@ -129,6 +176,7 @@ export function getTokenIconCandidates({
       (candidate, index): candidate is string =>
         typeof candidate === 'string' &&
         candidate.length > 0 &&
+        isOnlineIconUrl(candidate) &&
         !isRetiredIconSource(candidate) &&
         candidates.indexOf(candidate) === index
     )

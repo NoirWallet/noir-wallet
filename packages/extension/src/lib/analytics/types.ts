@@ -23,6 +23,8 @@ export interface AnalyticsEventPayload {
 
 /** Call-site options for tracking an event (all fields optional). */
 export interface TrackOptions {
+  /** Validated financial metrics for the first-party collector only. */
+  collector?: import('./collector-metrics.ts').CollectorMetrics
   /** Controlled chain family; defaults to Zcash for legacy call sites. */
   chain?: import('./constants.ts').AnalyticsChain
   /** Scoped to the event name; used locally for channel deduplication and never uploaded. */

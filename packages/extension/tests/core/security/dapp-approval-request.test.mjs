@@ -1,24 +1,10 @@
 import { test } from 'node:test'
 import { expect } from '@playwright/test'
-import { readFileSync } from 'node:fs'
 import { parsePendingApprovalResponse } from '../../../src/popup/services/dapp-approval-request.ts'
 import {
   parseEvmGasFundingDetails,
   resolveEvmGasFundingPreview
 } from '../../../src/popup/services/evm-gas-funding.ts'
-
-const approvalPageSource = readFileSync(
-  new URL('../../../src/popup/pages/dapp/ApprovalPage.tsx', import.meta.url),
-  'utf8'
-)
-const signingReviewSource = readFileSync(
-  new URL('../../../src/popup/components/signing/SigningSummaryReview.tsx', import.meta.url),
-  'utf8'
-)
-const approvalPresentationSource = readFileSync(
-  new URL('../../../src/popup/components/dapp/ApprovalRequestPresentation.tsx', import.meta.url),
-  'utf8'
-)
 
 const requestId = 'approval-1'
 
@@ -156,31 +142,5 @@ test.describe('dApp approval request boundary', () => {
     for (const value of [undefined, null, [], {}, { request: null }]) {
       expect(parsePendingApprovalResponse(value, requestId).status).toBe('error')
     }
-  })
-
-  test('uses the dApp identity header across network, transaction, and signing approvals', () => {
-    expect(approvalPageSource).toContain('<DAppRequestHeader')
-    expect(approvalPageSource).not.toContain('<ApprovalRequestHeader')
-    expect(signingReviewSource).toContain("source.kind === 'dapp'")
-    expect(signingReviewSource).toContain('<DAppRequestHeader')
-  })
-
-  test('uses a focused message card and keeps technical signing data under Advanced', () => {
-    expect(signingReviewSource).toContain('const isDAppMessage')
-    expect(signingReviewSource).toContain('<DAppMessageReview')
-    expect(signingReviewSource).toContain('aria-label="Message"')
-    expect(signingReviewSource).toContain('<DAppNetworkCard')
-    expect(signingReviewSource).toContain('<details className="group">')
-    expect(signingReviewSource).toContain("{source.kind === 'wallet' && (")
-  })
-
-  test('uses the shared network and transaction cards for dApp approvals', () => {
-    expect(approvalPageSource).toContain('<DAppNetworkCard')
-    expect(signingReviewSource).toContain('const isDAppTransaction')
-    expect(signingReviewSource).toContain('<DAppTransactionReview')
-    expect(signingReviewSource).not.toContain('className="divide-y divide-border px-4"')
-    expect(approvalPresentationSource).not.toContain(
-      'className="divide-y divide-border overflow-hidden rounded-2xl'
-    )
   })
 })

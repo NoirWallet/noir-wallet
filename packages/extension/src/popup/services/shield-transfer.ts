@@ -1,6 +1,11 @@
 import type { PortfolioAssetView, PortfolioChainView, PortfolioReadModel } from '@/core/portfolio'
 import type { IntentsManagedAsset } from '@/core/services/intents-managed-assets'
 import type { SwapToken } from '@/core/services/intents-api'
+import { isDeprecatedIntentsToken } from '@/core/services/intents-evm-assets'
+import { findAssetPrice, type AssetPriceReadModel } from '@/core/prices'
+import { getEvmNetworkConfigs } from '@/config/networks'
+import Big from '@/lib/big'
+import { formatBaseUnitDecimalAmount } from '@/lib/number-format'
 import {
   createAssetRegistry,
   createInitialProductChainRegistry,
@@ -14,13 +19,16 @@ import {
 } from '@/core/prices/asset-market-mappings'
 import type { Network } from '@/types'
 import { isAddress } from 'viem'
+import { parseZcashAddress } from '@/core/address-book/address-book'
 import type { PrepareConfidentialFundingRequest } from './confidential-funding-client'
+import type { EvmFeeSelection } from '@/infrastructure/chains/evm'
 import type {
   ConfidentialFundingPlan,
   ConfidentialFundingReview
 } from '@/core/services/confidential-funding'
 import { getConfidentialAvailableForAsset } from '@/core/services/confidential-funding'
 import type { TransferDomain } from './private-balance-transfer'
+import { getCrossChainSendAssetGroup } from './cross-chain-send-assets'
 
 type ShieldTransferAsset = Pick<
   IntentsManagedAsset,
@@ -31,6 +39,7 @@ export type ShieldFundingAsset = Readonly<{
   asset: PortfolioAssetView
   chain: PortfolioChainView
   managed: ShieldTransferAsset
+  marketAssetId?: string
 }>
 
 export function formatShieldQuoteTime(seconds: number): string {
@@ -125,6 +134,10 @@ export function listShieldFundingAssets(
   network: Network
 ): readonly ShieldFundingAsset[] {
   if (!model) return []
+  const tokensByAssetId = new Map<string, SwapToken>()
+  for (const token of catalogTokens) {
+    if (!tokensByAssetId.has(token.assetId)) tokensByAssetId.set(token.assetId, token)
+  }
   const chains = new Map<string, PortfolioChainView>(
     model.chains.map(chain => [chain.chain.id, chain])
   )
@@ -143,7 +156,7 @@ export function listShieldFundingAssets(
   })
   const native = getAssetProtocolSourceMappings(network, bundled).flatMap(mapping => {
     const entry = bundled.get(mapping.assetId)
-    const token = catalogTokens.find(candidate => candidate.assetId === mapping.protocolAssetId)
+    const token = tokensByAssetId.get(mapping.protocolAssetId)
     return entry?.asset.kind === 'native' &&
       (entry.asset.chainId.startsWith('eip155:') || entry.asset.chainId === zcashChainId) &&
       token?.decimals === entry.metadata.decimals
@@ -167,11 +180,12 @@ export function listShieldFundingAssets(
     const chain =
       chains.get(managed.chainId) ??
       (managed.chainId === zcashChainId ? zcashRouteChain : undefined)
-    const token = catalogTokens.find(candidate => candidate.assetId === managed.protocolAssetId)
+    const token = tokensByAssetId.get(managed.protocolAssetId)
     if (
       (chain?.chain.family !== 'evm' && chain?.chain.id !== zcashChainId) ||
       chain.chain.capabilities.transaction.status !== 'available' ||
       !token ||
+      isDeprecatedIntentsToken(token) ||
       token.decimals !== managed.decimals ||
       token.blockchain !== managed.blockchain
     )
@@ -180,7 +194,7 @@ export function listShieldFundingAssets(
     const asset = fundingAssetView(model, managed, token.symbol, holding)
     if (!asset) return []
     seen.add(managed.protocolAssetId)
-    return [{ asset, chain, managed }]
+    return [{ asset, chain, managed, marketAssetId: token.coingeckoId?.trim() || undefined }]
   })
 }
 
@@ -228,6 +242,57 @@ export function shieldFundingSources(
     : []
 }
 
+export function selectDefaultShieldWithdrawSource(
+  options: readonly ShieldFundingAsset[],
+  balances: readonly Readonly<{ tokenId: string; available: string }>[] | null,
+  model: PortfolioReadModel | null,
+  prices: AssetPriceReadModel | null,
+  network: Network
+): ShieldFundingAsset | null {
+  const funded = shieldFundingSources(options, balances)
+  let highestValue: Big | null = null
+  let highestValueSource: ShieldFundingAsset | null = null
+  for (const option of funded) {
+    const holding =
+      model?.confidential?.status === 'ready'
+        ? model.confidential.assets.find(
+            item =>
+              item.protocolAssetId === option.managed.protocolAssetId &&
+              (item.assetId === undefined || item.assetId === option.asset.asset.id) &&
+              (item.chainId === undefined || item.chainId === option.asset.asset.chainId)
+          )
+        : undefined
+    const priceUsd = findAssetPrice(prices, option.asset.asset.id)?.priceUsd ?? holding?.priceUsd
+    if (!priceUsd) continue
+    const value = new Big(
+      formatBaseUnitDecimalAmount(
+        shieldFundingAvailableRaw(option, balances),
+        option.asset.metadata.decimals
+      )
+    ).times(priceUsd)
+    if (!highestValue || value.gt(highestValue)) {
+      highestValue = value
+      highestValueSource = option
+    }
+  }
+  if (highestValueSource) return highestValueSource
+  if (funded.length > 0) return funded[0]!
+
+  const ethereumUsdc = getEvmNetworkConfigs(network)
+    .find(config => config.chainId === 'eip155:1')
+    ?.usdcContract?.toLowerCase()
+  return (
+    options.find(
+      option =>
+        option.asset.asset.chainId === 'eip155:1' &&
+        option.asset.asset.namespace === 'erc20' &&
+        option.asset.asset.reference.toLowerCase() === ethereumUsdc
+    ) ??
+    options[0] ??
+    null
+  )
+}
+
 export function resolveShieldManagedAsset(
   asset: PortfolioAssetView,
   managed: readonly IntentsManagedAsset[],
@@ -243,6 +308,7 @@ export function resolveShieldManagedAsset(
       tokens.some(
         token =>
           token.assetId === item.protocolAssetId &&
+          !isDeprecatedIntentsToken(token) &&
           token.blockchain === item.blockchain &&
           token.decimals === item.decimals
       )
@@ -258,7 +324,7 @@ export function resolveShieldManagedAsset(
   const token = tokens.find(
     item => item.assetId === mapping.protocolAssetId && item.decimals === asset.metadata.decimals
   )
-  if (!token) return null
+  if (!token || isDeprecatedIntentsToken(token)) return null
   return Object.freeze({
     assetId: asset.asset.id,
     chainId: asset.asset.chainId,
@@ -278,18 +344,22 @@ export function isClusterTransferRoute(from: TransferDomain, to: TransferDomain)
   return (from === 'public' && to === 'private') || (from === 'private' && to === 'public')
 }
 
+function isValidShieldFundingAsset(item: ShieldFundingAsset): boolean {
+  return (
+    item.chain.chain.capabilities.transaction.status === 'available' &&
+    item.asset.asset.chainId === item.chain.chain.id &&
+    item.managed.assetId === item.asset.asset.id &&
+    item.managed.chainId === item.chain.chain.id
+  )
+}
+
 function isShieldMoveDestination(
   source: ShieldFundingAsset,
   destination: ShieldFundingAsset,
   network: Network
 ): boolean {
-  const valid = (item: ShieldFundingAsset) =>
-    item.chain.chain.family === 'evm' &&
-    item.chain.chain.capabilities.transaction.status === 'available' &&
-    item.asset.asset.chainId === item.chain.chain.id &&
-    item.managed.assetId === item.asset.asset.id &&
-    item.managed.chainId === item.chain.chain.id
-  if (!valid(source) || !valid(destination)) return false
+  if (!isValidShieldFundingAsset(source) || !isValidShieldFundingAsset(destination)) return false
+  if (source.chain.chain.family !== 'evm' || destination.chain.chain.family !== 'evm') return false
   if (source.asset.asset.id === destination.asset.asset.id) {
     return source.managed.protocolAssetId === destination.managed.protocolAssetId
   }
@@ -323,6 +393,58 @@ export function listShieldMoveDestinations(
   return options.filter(option => isShieldMoveDestination(source, option, network))
 }
 
+function isShieldSendDestination(
+  source: ShieldFundingAsset,
+  destination: ShieldFundingAsset,
+  network: Network
+): boolean {
+  if (!isValidShieldFundingAsset(source) || !isValidShieldFundingAsset(destination)) return false
+  const zcashChainId = getZcashChainId(network)
+  if (source.chain.chain.family !== 'evm' && source.chain.chain.id !== zcashChainId) return false
+  if (destination.chain.chain.id === zcashChainId) {
+    return (
+      source.managed.protocolAssetId === destination.managed.protocolAssetId &&
+      source.asset.asset.id === destination.asset.asset.id
+    )
+  }
+  if (destination.chain.chain.family !== 'evm') return false
+  if (source.asset.asset.id === destination.asset.asset.id)
+    return source.managed.protocolAssetId === destination.managed.protocolAssetId
+  if (network !== 'mainnet' || source.chain.chain.id === destination.chain.chain.id) return false
+  const sourceGroup = getCrossChainSendAssetGroup(source.asset.asset)
+  const destinationGroup = getCrossChainSendAssetGroup(destination.asset.asset)
+  if (sourceGroup && destinationGroup) return sourceGroup === destinationGroup
+  return Boolean(
+    source.marketAssetId &&
+    source.marketAssetId === destination.marketAssetId &&
+    source.asset.metadata.symbol === destination.asset.metadata.symbol
+  )
+}
+
+export function listShieldSendDestinations(
+  source: ShieldFundingAsset,
+  options: readonly ShieldFundingAsset[],
+  network: Network
+): readonly ShieldFundingAsset[] {
+  return options.filter(option => isShieldSendDestination(source, option, network))
+}
+
+export function isShieldWithdrawRecipient(
+  recipient: string,
+  destination: ShieldFundingAsset | null,
+  network: Network
+): boolean {
+  if (!destination) return false
+  if (destination.chain.chain.id === getZcashChainId(network)) {
+    try {
+      return parseZcashAddress(recipient, network).address === recipient
+    } catch {
+      return false
+    }
+  }
+  return isAddress(recipient) && !/^0x0{40}$/i.test(recipient)
+}
+
 export function matchesShieldReview(
   review: ConfidentialFundingReview,
   request: PrepareConfidentialFundingRequest
@@ -344,7 +466,7 @@ export function matchesShieldReview(
 
 export function shieldQuoteFeeRaw(review: ConfidentialFundingReview): string | null {
   const difference = BigInt(review.sourceAmountRaw) - BigInt(review.expectedOutputRaw)
-  return difference >= 0n ? difference.toString() : null
+  return difference.toString()
 }
 
 export function hasShieldTransferStarted(plan: ConfidentialFundingPlan): boolean {
@@ -377,26 +499,17 @@ export function buildExternalShieldWithdrawRequest(
     accountId: string
     amountRaw: string
     recipient: string
-    source: Readonly<{
-      asset: PortfolioAssetView
-      chain: PortfolioChainView
-      managed: ShieldTransferAsset
-    }>
-    destination: Readonly<{
-      asset: PortfolioAssetView
-      chain: PortfolioChainView
-      managed: ShieldTransferAsset
-    }>
+    source: ShieldFundingAsset
+    destination: ShieldFundingAsset
     slippageBps: number
   }>
 ): PrepareConfidentialFundingRequest {
   if (
-    !isAddress(input.recipient) ||
-    /^0x0{40}$/i.test(input.recipient) ||
+    !isShieldWithdrawRecipient(input.recipient, input.destination, input.network) ||
     !/^[1-9]\d*$/.test(input.amountRaw) ||
     (input.source.chain.chain.family !== 'evm' &&
       input.source.chain.chain.id !== getZcashChainId(input.network)) ||
-    input.destination.chain.chain.family !== 'evm' ||
+    !isShieldSendDestination(input.source, input.destination, input.network) ||
     input.source.asset.asset.id !== input.source.managed.assetId ||
     input.destination.asset.asset.id !== input.destination.managed.assetId ||
     input.source.chain.chain.id !== input.source.managed.chainId ||
@@ -462,6 +575,7 @@ export function buildShieldTransferRequest(
     chain: PortfolioChainView
     managed: ShieldTransferAsset
     destination?: ShieldFundingAsset
+    feeSelection?: EvmFeeSelection
   }>
 ): PrepareConfidentialFundingRequest {
   const source: ShieldFundingAsset = {
@@ -508,6 +622,7 @@ export function buildShieldTransferRequest(
     destinationDomain: input.to,
     source: Object.freeze({ ...sourceRoute, amountRaw: input.amountRaw }),
     destination: destinationRoute,
-    slippageBps: 50
+    slippageBps: 50,
+    ...(input.from === 'shield' || !input.feeSelection ? {} : { feeSelection: input.feeSelection })
   })
 }

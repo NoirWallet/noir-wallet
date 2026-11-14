@@ -104,6 +104,7 @@ export async function refreshPortfolioFromCache(
   const forceAll =
     options.forceDiscovery === true || (options.forceRefresh === true && !scopedCached)
   let requestedChainIds: readonly string[] | undefined
+  let claimedResources: readonly string[] = []
 
   if (forceAll) {
     requestedChainIds = undefined
@@ -115,6 +116,7 @@ export async function refreshPortfolioFromCache(
     const candidates = portfolioChainIdsForAutomaticRefresh(scopedCached, options)
     const claimed = await automaticRefreshSession.claim(refreshScope(scope), candidates)
     if (claimed.length === 0) return scopedCached
+    claimedResources = claimed
     requestedChainIds = claimed
   } else {
     const selectedChainIds = options.refreshChainIds?.length
@@ -124,6 +126,7 @@ export async function refreshPortfolioFromCache(
       ...(selectedChainIds ?? [FULL_PORTFOLIO_RESOURCE])
     ])
     if (claimed.length === 0) return null
+    claimedResources = claimed
     requestedChainIds = selectedChainIds ? claimed : undefined
   }
 
@@ -135,14 +138,37 @@ export async function refreshPortfolioFromCache(
     if (!isPortfolioModelForScope(refreshed, scope.walletId, scope.accountId)) {
       throw new Error('Portfolio response does not match the active Account')
     }
+    const retryableChainIds = new Set<string>(
+      refreshed.chains.flatMap(chain =>
+        chain.chain.family !== 'zcash' &&
+        (chain.status === 'error' ||
+          chain.errorCodes.length > 0 ||
+          (chain.status === 'loading' && chain.assets.length === 0))
+          ? [chain.chain.id]
+          : []
+      )
+    )
     if (!scopedCached && !options.forceRefresh && !options.forceDiscovery && !requestedChainIds) {
       await automaticRefreshSession.claim(
         refreshScope(scope),
-        refreshed.chains.flatMap(chain => (chain.chain.family === 'zcash' ? [] : [chain.chain.id]))
+        refreshed.chains.flatMap(chain =>
+          chain.chain.family === 'zcash' || retryableChainIds.has(chain.chain.id)
+            ? []
+            : [chain.chain.id]
+        )
       )
+    }
+    const retryableClaims = claimedResources.filter(
+      resource => resource === FULL_PORTFOLIO_RESOURCE || retryableChainIds.has(resource)
+    )
+    if (retryableChainIds.size > 0 && retryableClaims.length > 0) {
+      await automaticRefreshSession.release(refreshScope(scope), retryableClaims)
     }
     return refreshed
   } catch (error) {
+    if (claimedResources.length > 0) {
+      await automaticRefreshSession.release(refreshScope(scope), claimedResources).catch(() => {})
+    }
     if (scopedCached) return scopedCached
     throw error
   }

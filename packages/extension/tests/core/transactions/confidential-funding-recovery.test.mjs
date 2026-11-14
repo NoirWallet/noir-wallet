@@ -150,7 +150,9 @@ async function harness(
     authSignatures: 0,
     monitoring: 0,
     refreshes: 0,
+    refreshTargets: [],
     statuses: withdraws.map(() => (phase === 'processing' ? 'PROCESSING' : 'PENDING_DEPOSIT')),
+    settledOutputs: new Map(),
     session: {
       accessToken: 'token',
       refreshToken: 'refresh',
@@ -251,6 +253,9 @@ async function harness(
       if (status === null) throw new ConfidentialFundingApiError('unavailable', 503, false)
       return {
         status,
+        ...(status === 'SUCCESS' && state.settledOutputs.has(sequence)
+          ? { settledAmountOutRaw: state.settledOutputs.get(sequence) }
+          : {}),
         ...(status === 'SUCCESS' || state.processingHashes.has(sequence)
           ? { transactionHash: `hash-${sequence}` }
           : {})
@@ -351,8 +356,9 @@ async function harness(
       scheduleMonitoring: async () => {
         state.monitoring += 1
       },
-      refreshPortfolio: async () => {
+      refreshPortfolio: async target => {
         state.refreshes += 1
+        state.refreshTargets.push(target ?? null)
       }
     })
   return { initial, state, store, repository, restart }
@@ -411,7 +417,9 @@ function directPreparationHarness(protocolTokens) {
         address: signerId,
         peaAddress,
         addressIndex: 0,
-        context: { chainAccount: { scope: { ...scope, accountId: state.identityAccount, chainId } } }
+        context: {
+          chainAccount: { scope: { ...scope, accountId: state.identityAccount, chainId } }
+        }
       }
     },
     signMessage: async input => {
@@ -507,9 +515,7 @@ function directPreparationHarness(protocolTokens) {
     repository: new InMemoryTransactionRepository(),
     assets: {
       get: id =>
-        id === assetId
-          ? nativeAsset
-          : { metadata: { decimals: id === zcashAssetId ? 8 : 18 } },
+        id === assetId ? nativeAsset : { metadata: { decimals: id === zcashAssetId ? 8 : 18 } },
       list: () => [nativeAsset]
     },
     evmNetworks: [],
@@ -593,17 +599,33 @@ test.describe('confidential funding persisted recovery', () => {
         source: { ...source, amountRaw: '1000' }
       })
     ).rejects.toThrow('EVM signing chain')
+    const zecDestination = {
+      chainId: source.chainId,
+      chainName: source.chainName,
+      assetId: source.assetId,
+      protocolAssetId: source.protocolAssetId
+    }
     await expect(
-      h.coordinator.prepare({
-        ...withdraw,
-        destination: { ...withdraw.destination, ...source }
-      })
-    ).rejects.toThrow('EVM signing chain')
+      h.coordinator.prepare({ ...withdraw, destination: zecDestination })
+    ).rejects.toThrow('request is invalid')
     h.state.formalQuoteAppFees = [{ recipient: 'platform.near', fee: 50 }]
     await expect(h.coordinator.confirm(review.planId, review.payloadFingerprint)).rejects.toThrow(
       'unexpected signature'
     )
     expect(h.state.signingChains).toEqual(['eip155:1'])
+    const zecRecipient = 't1XVXWCvpMgBvUaed4XDqWtgQgJSu1Ghz7F'
+    const zecReview = await h.coordinator.prepare({
+      ...withdraw,
+      destination: zecDestination,
+      externalRecipient: zecRecipient
+    })
+    expect(zecReview.destinationAddress).toBe(zecRecipient)
+    expect(h.state.lastQuoteRequest).toMatchObject({
+      destinationAsset: h.zcashProtocolId,
+      recipient: zecRecipient,
+      recipientType: 'DESTINATION_CHAIN'
+    })
+    expect(h.state.identityChains.slice(-2)).toEqual(['eip155:1', 'eip155:1'])
   })
 
   test('quotes a Confidential ZEC to EVM swap and an EVM to Confidential ZEC swap', async () => {
@@ -654,7 +676,7 @@ test.describe('confidential funding persisted recovery', () => {
         source: { ...zec, amountRaw: '10' },
         destination: zec
       })
-    ).rejects.toThrow('EVM signing chain')
+    ).rejects.toThrow('route is invalid')
   })
   test('rejects a Shield source whose catalog precision changed before preparation', async () => {
     const h = directPreparationHarness([
@@ -747,9 +769,7 @@ test.describe('confidential funding persisted recovery', () => {
     })
     expect(h.state.quoteCalls.slice(1)).toHaveLength(3)
     expect(
-      h.state.quoteCalls
-        .slice(1)
-        .reduce((sum, quote) => sum + BigInt(quote.amountRaw), 0n)
+      h.state.quoteCalls.slice(1).reduce((sum, quote) => sum + BigInt(quote.amountRaw), 0n)
     ).toBe(57n)
     expect(h.state.formalQuotes).toBe(0)
     expect(h.state.signatures).toBe(0)
@@ -1123,7 +1143,7 @@ test.describe('confidential funding persisted recovery', () => {
         return transactionHash
       }
     })
-    const review = await coordinator.prepare({
+    const request = {
       network: 'mainnet',
       ...scope,
       operation: 'deposit',
@@ -1138,8 +1158,36 @@ test.describe('confidential funding persisted recovery', () => {
       },
       destination: { chainId: 'eip155:1', chainName: 'eth', assetId, protocolAssetId },
       slippageBps: 100
-    })
+    }
+    const review = await coordinator.prepare(request)
     const stored = await store.getPlan(review.planId)
+    const customReview = await coordinator.prepare({
+      ...request,
+      feeSelection: {
+        kind: 'custom',
+        gasLimit: '25000',
+        maxFeePerGasWei: '4000000000',
+        maxPriorityFeePerGasWei: '1500000000'
+      }
+    })
+    const customPlan = await store.getPlan(customReview.planId)
+    expect(customReview.planId).not.toBe(review.planId)
+    expect(customReview.payloadFingerprint).not.toBe(review.payloadFingerprint)
+    expect(customReview.sourceEvmFee).toMatchObject({
+      transactionType: 'eip1559',
+      gasLimit: '25000',
+      maxFeePerGasWei: '4000000000',
+      maxPriorityFeePerGasWei: '1500000000'
+    })
+    expect(customPlan.preparedDeposit.preparedTransfer.transaction).toMatchObject({
+      gasLimit: '25000',
+      maxFeePerGas: '4000000000',
+      maxPriorityFeePerGas: '1500000000'
+    })
+    await expect(
+      coordinator.confirm(customReview.planId, review.payloadFingerprint)
+    ).rejects.toThrow('approval')
+    expect(state.broadcasts).toBe(0)
     expect(state.prepared.from.toLowerCase()).toBe(peaAddress)
     expect(stored.depositQuote.quoteRequest.refundTo).toBe(peaAddress)
     expect(JSON.stringify(stored.preparedDeposit.preparedTransfer)).not.toBe(
@@ -1680,8 +1728,14 @@ test.describe('confidential funding persisted recovery', () => {
 
   test('settles staggered children monotonically across restart and temporary RPC failure', async () => {
     const h = await harness('processing')
+    h.state.settledOutputs = new Map([
+      [0, '80'],
+      [1, '90'],
+      [2, '100']
+    ])
     h.state.statuses = ['SUCCESS', 'PROCESSING', 'PROCESSING']
     expect((await h.restart().continuePlan(h.initial.planId)).phase).toBe('processing')
+    expect(h.state.refreshTargets).toEqual([{ ...scope, chainIds: ['eip155:1'] }])
     h.state.statuses = ['PROCESSING', 'SUCCESS', null]
     const intermediate = await h.restart().continuePlan(h.initial.planId)
     expect(intermediate.withdraws.map(row => row.status)).toEqual([
@@ -1690,18 +1744,24 @@ test.describe('confidential funding persisted recovery', () => {
       'PROCESSING'
     ])
     expect(intermediate.withdraws[0].transactionHash).toBe('hash-0')
+    expect(h.state.refreshTargets).toEqual([
+      { ...scope, chainIds: ['eip155:1'] },
+      { ...scope, chainIds: ['eip155:1'] }
+    ])
     h.state.statuses = ['FAILED', 'PROCESSING', 'SUCCESS']
     const ready = await h.restart().continuePlan(h.initial.planId)
     expect(ready.phase).toBe('ready')
     expect(ready.withdraws.map(row => row.transactionHash)).toEqual(['hash-0', 'hash-1', 'hash-2'])
+    expect(ready.withdraws.map(row => row.settledOutputRaw)).toEqual(['80', '90', '100'])
     const graph = await h.repository.get(scope, h.initial.transactionId)
     expect(graph.root.status).toBe('final')
     expect(
       graph.segments.filter(row => row.role === 'destination').every(row => row.status === 'final')
     ).toBe(true)
-    expect(h.state.refreshes).toBe(1)
+    expect(h.state.refreshes).toBe(3)
+    expect(h.state.refreshTargets.at(-1)).toBeNull()
     await h.restart().resumeAll()
-    expect(h.state.refreshes).toBe(1)
+    expect(h.state.refreshes).toBe(3)
   })
 
   test('keeps a destination hash visible while a confidential withdraw is processing', async () => {
@@ -1725,7 +1785,7 @@ test.describe('confidential funding persisted recovery', () => {
     const partial = await h.restart().continuePlan(h.initial.planId)
     expect(partial.phase).toBe('partial')
     expect(partial.withdraws.map(row => row.status)).toEqual(['SUCCESS', 'REFUNDED', 'FAILED'])
-    expect(h.state.refreshes).toBe(1)
+    expect(h.state.refreshes).toBe(2)
     expect(h.state.submissions).toHaveLength(0)
   })
 

@@ -2,8 +2,12 @@ import type { PortfolioReadModel } from '@/core/portfolio'
 import { decodeFunctionData, parseAbi } from 'viem'
 import { parseZcashAddress } from '@/core/address-book/address-book'
 import { isZecToken, type SwapToken } from '@/core/services/intents-api'
+import { getEvmNetworkConfigs } from '@/config/networks'
+import { resolveIntentsEvmAssets } from '@/core/services/intents-evm-assets'
+import { DEFAULT_NETWORK } from '@/lib/runtime-network'
 import {
   RHEA_SWAP_CHAIN_CATALOG,
+  type RheaSwapQuoteView,
   type RheaSwapQuoteRequest,
   type RheaSwapReviewView,
   type RheaSwapToken
@@ -24,7 +28,9 @@ import {
   type WalletOwnedQuoteAsset
 } from '@/popup/services/quote-deposit-transfer-client'
 import type { AdditionalReceiveTargetsView } from '@/popup/services/receive-targets-client'
-import type { Network } from '@/types'
+import type { FundingSource, Network } from '@/types'
+import type { ShieldSwapZecSourceKind } from '@/popup/services/shield-swap-zec-sources'
+import { isRheaSwapQuoteFresh } from '@/core/services/rhea-swap/rhea-swap-quote-validity'
 import { resolveAccountAvailableRaw } from '@/popup/services/transfer-availability'
 import {
   filterCrossChainSendDestinations,
@@ -90,6 +96,64 @@ export {
   getRheaSwapQuoteDeadline,
   isRheaSwapQuoteFresh
 } from '@/core/services/rhea-swap/rhea-swap-quote-validity'
+
+export function hasSwapQuoteTermsChanged(
+  previous: RheaSwapQuoteView,
+  next: RheaSwapQuoteView
+): boolean {
+  return (
+    previous.estimatedOut !== next.estimatedOut ||
+    previous.minAmountOut !== next.minAmountOut ||
+    previous.router !== next.router ||
+    previous.recipient !== next.recipient
+  )
+}
+
+export function isAcceptedSwapReview(input: {
+  readonly quote: RheaSwapQuoteView | null
+  readonly review: RheaSwapReviewView | null
+  readonly acceptedHandle: string | null
+  readonly quoteKey: string | null
+  readonly requestKey: string | null | undefined
+  readonly now?: number
+}): boolean {
+  const { quote, review, acceptedHandle, quoteKey, requestKey } = input
+  return Boolean(
+    quote &&
+    review &&
+    acceptedHandle === quote.quoteHandle &&
+    review.quoteHandle === quote.quoteHandle &&
+    quoteKey &&
+    quoteKey === requestKey &&
+    isRheaSwapQuoteFresh(quote, input.now)
+  )
+}
+
+export function resolveShieldDomainZecFundingSource(input: {
+  readonly ordinarySwapRequested: boolean
+  readonly shieldZecSource: ShieldSwapZecSourceKind | null
+  readonly isZecSource: boolean
+  readonly selectedFundingSource: FundingSource
+  readonly publicPrivacySendRequested?: boolean
+}): FundingSource {
+  if (input.publicPrivacySendRequested && input.isZecSource) return 'transparent'
+  if (
+    input.ordinarySwapRequested &&
+    input.shieldZecSource === 'native-shielded' &&
+    input.isZecSource
+  ) {
+    return 'shielded'
+  }
+  if (input.ordinarySwapRequested && input.isZecSource) return 'transparent'
+  return input.selectedFundingSource
+}
+
+export function shieldConfidentialSwapActive(input: {
+  readonly shieldSwapSelected: boolean
+  readonly shieldZecSource: ShieldSwapZecSourceKind | null
+}): boolean {
+  return input.shieldSwapSelected && input.shieldZecSource !== 'native-shielded'
+}
 
 export function resolveSwapReviewAction(input: {
   readonly isZecSource: boolean
@@ -199,6 +263,32 @@ export function isPreparedSwapFeeUnaffordable(
   return requiredRaw > BigInt(prepared.source.networkFeeAsset.balance.availableRaw)
 }
 
+function formatSwapTokenPortfolioBalance(
+  token: RheaSwapToken,
+  portfolio: PortfolioReadModel,
+  receiveTargets: AdditionalReceiveTargetsView | null,
+  evmExecutionMode: 'main' | 'private'
+): string | undefined {
+  const owned = receiveTargets && resolveWalletOwnedQuoteAsset(token, portfolio, receiveTargets)
+  if (owned) {
+    const availableRaw = resolveWalletSwapSourceAvailableRaw(owned, evmExecutionMode)
+    if (availableRaw === undefined) return undefined
+    return formatBaseUnitDecimalAmount(availableRaw, owned.asset.metadata.decimals)
+  }
+  const evm = resolveIntentsEvmAssets([token], getEvmNetworkConfigs(DEFAULT_NETWORK))[0]
+  if (!evm) return undefined
+  const asset = portfolio.assets.find(candidate => candidate.asset.id === evm.assetId)
+  if (!asset || asset.metadata.decimals !== token.decimals) return undefined
+  if (
+    evmExecutionMode === 'private' &&
+    asset.balance.privateOnchainRaw === undefined &&
+    asset.balance.privateRaw === undefined
+  )
+    return undefined
+  const availableRaw = resolveAccountAvailableRaw(asset.balance, evmExecutionMode)
+  return formatBaseUnitDecimalAmount(availableRaw, asset.metadata.decimals)
+}
+
 export function buildWalletSwapSourceBalances(input: {
   readonly tokens: readonly RheaSwapToken[]
   readonly portfolio: PortfolioReadModel | null
@@ -212,15 +302,14 @@ export function buildWalletSwapSourceBalances(input: {
       balances.set(token.assetId, input.zcashAvailable)
       continue
     }
-    if (!input.portfolio || !input.receiveTargets) continue
-    const source = resolveWalletOwnedQuoteAsset(token, input.portfolio, input.receiveTargets)
-    if (!source) continue
-    const availableRaw = resolveWalletSwapSourceAvailableRaw(source, input.evmExecutionMode)
-    if (availableRaw === undefined) continue
-    balances.set(
-      token.assetId,
-      formatBaseUnitDecimalAmount(availableRaw, source.asset.metadata.decimals)
+    if (!input.portfolio) continue
+    const formatted = formatSwapTokenPortfolioBalance(
+      token,
+      input.portfolio,
+      input.receiveTargets,
+      input.evmExecutionMode
     )
+    if (formatted !== undefined) balances.set(token.assetId, formatted)
   }
   return balances
 }
@@ -410,11 +499,11 @@ export function resolveConfidentialFundingDestinationToken(input: {
 export function resolvePreferredSwapSourceAssetId(
   tokens: readonly RheaSwapToken[],
   portfolio: PortfolioReadModel | null,
-  receiveTargets: AdditionalReceiveTargetsView | null
+  receiveTargets: AdditionalReceiveTargetsView | null,
+  preferFiatBalance = false
 ): string | undefined {
   const zcash = tokens.find(isZecToken)
-  if (zcash) return zcash.assetId
-
+  if (!preferFiatBalance && zcash) return zcash.assetId
   const walletOwnedSources = tokens.map(token => ({
     token,
     source:
@@ -422,6 +511,37 @@ export function resolvePreferredSwapSourceAssetId(
         ? resolveWalletOwnedQuoteAsset(token, portfolio, receiveTargets)
         : null
   }))
+  const now = Date.now()
+  const valued = preferFiatBalance
+    ? walletOwnedSources
+        .map(({ token, source }) => {
+          const price = Number(token.price)
+          const updatedAt = token.priceUpdatedAt ? Date.parse(token.priceUpdatedAt) : NaN
+          const balance = source
+            ? Number(
+                formatBaseUnitDecimalAmount(
+                  resolveAccountAvailableRaw(source.asset.balance, 'private'),
+                  source.asset.metadata.decimals
+                )
+              )
+            : 0
+          return {
+            token,
+            value:
+              Number.isFinite(price) &&
+              price > 0 &&
+              Number.isFinite(updatedAt) &&
+              updatedAt <= now &&
+              now - updatedAt <= 86_400_000 &&
+              Number.isFinite(balance) &&
+              balance > 0
+                ? price * balance
+                : 0
+          }
+        })
+        .sort((left, right) => right.value - left.value)
+    : []
+  if (valued[0]?.value > 0) return valued[0].token.assetId
   return (
     walletOwnedSources.find(candidate => candidate.source?.asset.asset.kind === 'native')?.token
       .assetId ?? tokens[0]?.assetId
@@ -433,10 +553,12 @@ export function buildLiveSwapQuoteRequest(input: {
   readonly tokenOut: RheaSwapToken | null
   readonly amountIn: string
   readonly slippage: number
+  readonly quoteMode?: RheaSwapQuoteRequest['quoteMode']
   readonly refundAddress: string
   readonly recipientAddress: string
   readonly privateRecipientAddress?: string
   readonly confidentiality?: 'basic'
+  readonly zcashFundingSource?: 'transparent' | 'shielded'
   readonly blocked: boolean
 }): Readonly<{
   key: string
@@ -463,49 +585,46 @@ export function buildLiveSwapQuoteRequest(input: {
     const amount = parseDisplayUnitAmount(input.amountIn, input.tokenIn.decimals)
     if (BigInt(amount) <= 0n) return null
     const slippageTolerance = Math.round(input.slippage * 100)
+    const request: RheaSwapQuoteRequest = {
+      fromChain: input.tokenIn.rheaChainId,
+      toChain: input.tokenOut.rheaChainId,
+      tokenIn: {
+        chain: input.tokenIn.rheaChainId,
+        address: input.tokenIn.rheaAddress,
+        symbol: input.tokenIn.symbol,
+        decimals: input.tokenIn.decimals,
+        isNative: input.tokenIn.isNative
+      },
+      tokenOut: {
+        chain: input.tokenOut.rheaChainId,
+        address: input.tokenOut.rheaAddress,
+        symbol: input.tokenOut.symbol,
+        decimals: input.tokenOut.decimals,
+        isNative: input.tokenOut.isNative
+      },
+      amountIn: amount,
+      slippageBps: slippageTolerance,
+      quoteMode: input.quoteMode ?? 'best-price',
+      sender: input.refundAddress,
+      recipient: input.recipientAddress,
+      ...(input.confidentiality === undefined ? {} : { confidentiality: input.confidentiality })
+    }
     return Object.freeze({
       scopeKey: JSON.stringify([
         input.tokenIn.assetId,
         input.tokenOut.assetId,
-        input.refundAddress,
-        input.recipientAddress,
-        slippageTolerance,
-        input.confidentiality ?? null
+        input.zcashFundingSource ?? null,
+        { ...request, amountIn: undefined }
       ]),
       key: JSON.stringify([
         input.tokenIn.assetId,
         input.tokenOut.assetId,
-        amount,
-        input.refundAddress,
-        input.recipientAddress,
-        slippageTolerance,
-        input.confidentiality ?? null
+        input.zcashFundingSource ?? null,
+        request
       ]),
       amount,
       slippageTolerance,
-      request: {
-        fromChain: input.tokenIn.rheaChainId,
-        toChain: input.tokenOut.rheaChainId,
-        tokenIn: {
-          chain: input.tokenIn.rheaChainId,
-          address: input.tokenIn.rheaAddress,
-          symbol: input.tokenIn.symbol,
-          decimals: input.tokenIn.decimals,
-          isNative: input.tokenIn.isNative
-        },
-        tokenOut: {
-          chain: input.tokenOut.rheaChainId,
-          address: input.tokenOut.rheaAddress,
-          symbol: input.tokenOut.symbol,
-          decimals: input.tokenOut.decimals,
-          isNative: input.tokenOut.isNative
-        },
-        amountIn: amount,
-        slippageBps: slippageTolerance,
-        sender: input.refundAddress,
-        recipient: input.recipientAddress,
-        ...(input.confidentiality === undefined ? {} : { confidentiality: input.confidentiality })
-      },
+      request,
       ...(input.confidentiality === undefined ? {} : { confidentiality: input.confidentiality })
     })
   } catch {
@@ -541,4 +660,12 @@ export function isSwapQuoteRefreshReady(
     target.scopeKey === request.scopeKey &&
     target.amount === request.amount
   )
+}
+
+/** Skip auto-focus when the user is already editing another text control. */
+export function shouldDeferSwapAmountFocus(activeElement: Element | null): boolean {
+  if (!activeElement || activeElement === document.body) return false
+  const tag = activeElement.tagName
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true
+  return activeElement.getAttribute('contenteditable') === 'true'
 }

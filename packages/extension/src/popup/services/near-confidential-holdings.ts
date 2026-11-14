@@ -10,7 +10,9 @@ import { ASSET_PRICE_FRESH_MS, findAssetPrice, type AssetPriceReadModel } from '
 import { getAssetProtocolSourceMappings } from '@/core/prices/asset-market-mappings'
 import Big from '@/lib/big'
 import { formatBaseUnitDecimalAmount } from '@/lib/number-format'
+import { formatSymbol } from '@/lib/format'
 import type { Network } from '@/types'
+import { excludeDeprecatedConfidentialAssets } from '@/core/services/confidential-funding/confidential-funding-portfolio'
 
 type ConfidentialAsset = NonNullable<PortfolioReadModel['confidential']>['assets'][number]
 
@@ -87,15 +89,78 @@ export function resolveNearConfidentialZecHolding(input: {
   })
 }
 
+export function projectNearConfidentialZecForHome(
+  displayedModel: PortfolioReadModel,
+  sourceModel: PortfolioReadModel,
+  domain: 'all' | 'public' | 'shield' | 'private'
+): Readonly<{ model: PortfolioReadModel; protocolAssetId: string }> | null {
+  if (domain !== 'all' && domain !== 'shield') return null
+  if (
+    displayedModel.scope.keyDomainId !== sourceModel.scope.keyDomainId ||
+    displayedModel.scope.accountId !== sourceModel.scope.accountId
+  )
+    return null
+  const holding = resolveNearConfidentialZecHolding({
+    model: sourceModel,
+    network: 'mainnet',
+    walletId: sourceModel.scope.keyDomainId,
+    accountId: sourceModel.scope.accountId
+  })
+  if (!holding || BigInt(holding.availableRaw) === 0n) return null
+  const sourceAsset = sourceModel.assets.find(asset => asset.asset.id === holding.assetId)
+  const displayedChain = displayedModel.chains.find(
+    chain =>
+      chain.assets.some(asset => asset.asset.id === holding.assetId) ||
+      chain.chain.id === sourceAsset?.asset.chainId
+  )
+  if (!sourceAsset || !displayedChain || displayedChain.chain.family !== 'zcash') return null
+  const displayedAsset = displayedModel.assets.find(asset => asset.asset.id === holding.assetId)
+  const asset = displayedAsset ?? sourceAsset
+  const mergedAsset = Object.freeze({
+    ...asset,
+    balance: Object.freeze({
+      ...asset.balance,
+      totalRaw: (
+        BigInt(displayedAsset?.balance.totalRaw ?? '0') + BigInt(holding.availableRaw)
+      ).toString(),
+      pendingRaw: domain === 'shield' ? '0' : asset.balance.pendingRaw
+    })
+  })
+  return Object.freeze({
+    protocolAssetId: holding.protocolAssetId,
+    model: Object.freeze({
+      ...displayedModel,
+      assets: Object.freeze([
+        ...displayedModel.assets.filter(item => item.asset.id !== holding.assetId),
+        mergedAsset
+      ]),
+      chains: Object.freeze(
+        displayedModel.chains.map(chain =>
+          chain.chain.id === displayedChain.chain.id
+            ? Object.freeze({
+                ...chain,
+                assets: Object.freeze([
+                  ...chain.assets.filter(item => item.asset.id !== holding.assetId),
+                  mergedAsset
+                ])
+              })
+            : chain
+        )
+      )
+    })
+  })
+}
+
 export function resolveConfidentialDetailAssetId(
   model: PortfolioReadModel | null,
   tokenId: string
 ): string | null {
   if (model?.confidential?.status !== 'ready') return null
-  const matches = model.confidential.assets.filter(entry => entry.tokenId === tokenId)
+  const holdings = excludeDeprecatedConfidentialAssets(model).confidential!.assets
+  const matches = holdings.filter(entry => entry.tokenId === tokenId)
   if (matches.length !== 1) return null
   const holding = matches[0]!
-  if (model.confidential.assets.filter(entry => entry.assetId === holding.assetId).length !== 1) {
+  if (holdings.filter(entry => entry.assetId === holding.assetId).length !== 1) {
     return null
   }
   const asset = model.assets.find(item => item.asset.id === holding.assetId)
@@ -194,7 +259,8 @@ function holdingIdentityLabel(
   assets: readonly ConfidentialAsset[]
 ): string | null {
   if (!asset.symbol) return null
-  const siblings = assets.filter(item => item.symbol?.toLowerCase() === asset.symbol?.toLowerCase())
+  const symbol = formatSymbol(asset.symbol).toLowerCase()
+  const siblings = assets.filter(item => formatSymbol(item.symbol).toLowerCase() === symbol)
   if (siblings.length < 2) return null
   const network = asset.blockchain ?? asset.chainId
   if (
@@ -210,7 +276,7 @@ export function summarizeNearConfidentialHoldings(
   model: PortfolioReadModel | null,
   prices: AssetPriceReadModel | null = null
 ): NearConfidentialSummary {
-  const confidential = model?.confidential
+  const confidential = model ? excludeDeprecatedConfidentialAssets(model).confidential : undefined
   if (!confidential || confidential.status !== 'ready') {
     return Object.freeze({ status: 'unavailable', entries: Object.freeze([]), fiat: null })
   }

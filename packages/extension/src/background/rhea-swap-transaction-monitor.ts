@@ -23,7 +23,14 @@ import { parseKeyDomainId } from '@/core/keyring/domain'
 import { getRheaSwapProgressStatus } from '@/lib/swap-progress'
 import { DedupPromise, SerialTaskQueue } from '@/lib/async-utils'
 import { ANALYTICS_EVENTS, trackEvent } from '@/background/analytics/reporter'
-import { transactionAnalyticsFamily } from '@/core/transactions/transaction-analytics'
+import {
+  transactionAnalyticsAssetAmount,
+  transactionAnalyticsAssetMetadata,
+  transactionAnalyticsFamily,
+  transactionAnalyticsInputAmount,
+  transactionAnalyticsInputMetadata
+} from '@/core/transactions/transaction-analytics'
+import { sanitizeAnalyticsAmount } from '@/lib/analytics/collector-metrics'
 
 export const RHEA_SWAP_TRANSACTION_MONITOR_ALARM = 'rhea-swap-transaction-monitor-alarm'
 
@@ -49,6 +56,7 @@ export interface RheaSwapPortfolioRefreshRequest {
 
 export interface RheaSwapTransactionMonitorOptions {
   readonly refreshPortfolio?: (request: RheaSwapPortfolioRefreshRequest) => Promise<void>
+  readonly revealDestinationAsset?: (assetId: string) => Promise<void>
   readonly prepareZcashDestinationCatchUp?: (scope: TransactionAccountScope) => Promise<void>
   readonly notifyStatus?: (quoteHandle: string, status: SwapStatus) => void
   readonly loadZcashAccountScopes?: () => readonly AccountScope[]
@@ -457,6 +465,8 @@ export class RheaSwapTransactionMonitor {
         ...(destinationHash ? { destinationTxHash: destinationHash } : {}),
         notified: true
       })
+      if (!isTransfer && value.destinationAsset)
+        await this.revealDestinationAsset(value.destinationAsset)
       await this.refreshPortfolio(
         { keyDomainId: value.walletId, accountId: value.accountId },
         value.destinationAsset ? [parseAssetId(value.destinationAsset).chainId] : []
@@ -474,6 +484,16 @@ export class RheaSwapTransactionMonitor {
         chain: 'zcash',
         hasTransaction: 1,
         idempotencyKey: `rhea-completed:${value.quoteHandle}`,
+        inputSymbol: 'ZEC',
+        collector: {
+          ...(status === 'completed' && sanitizeAnalyticsAmount(transaction.amount)
+            ? { inputAmount: transaction.amount }
+            : {}),
+          sourceDomain: transaction.fromType === 'shielded' ? 'shield' : 'public',
+          activityType: 'swap',
+          transferType: 'unknown',
+          ...(status === 'completed' ? { settlement: 'confirmed' } : {})
+        },
         extra: {
           status:
             status === 'completed' ? 'SUCCESS' : status === 'refunded' ? 'REFUNDED' : 'FAILED',
@@ -639,6 +659,8 @@ export class RheaSwapTransactionMonitor {
           ? { externalReference: orderReference }
           : { transactionHash: sourceHash })
       })
+      if (binding.userAction !== 'transfer')
+        await this.revealDestinationAsset(binding.destination.assetId)
       await this.refreshPortfolio(graph.root.scope, [
         binding.origin.chainId,
         binding.destination.chainId
@@ -689,6 +711,8 @@ export class RheaSwapTransactionMonitor {
         externalReference: binding.executionId,
         ...(orderStatus.destinationHash ? { transactionHash: orderStatus.destinationHash } : {})
       })
+      if (binding.userAction !== 'transfer')
+        await this.revealDestinationAsset(binding.destination.assetId)
       await this.refreshPortfolio(graph.root.scope, [
         binding.origin.chainId,
         binding.destination.chainId
@@ -723,10 +747,25 @@ export class RheaSwapTransactionMonitor {
     ) {
       const chain = transactionAnalyticsFamily(binding.origin.chainId)
       if (chain) {
+        const settledAmount = latest.segments.find(segment => segment.role === 'destination')
+          ?.evidence?.settledAmount
         trackEvent(ANALYTICS_EVENTS.SWAP_COMPLETED, {
           chain,
           hasTransaction: 1,
           idempotencyKey: `rhea-terminal:${binding.quoteHandle}`,
+          inputSymbol: transactionAnalyticsInputMetadata(latest)?.symbol,
+          outputSymbol: transactionAnalyticsAssetMetadata(settledAmount)?.symbol,
+          collector: {
+            ...(status === 'SUCCESS'
+              ? {
+                  inputAmount: transactionAnalyticsInputAmount(latest),
+                  outputAmount: transactionAnalyticsAssetAmount(settledAmount),
+                  settlement: 'confirmed' as const
+                }
+              : {}),
+            activityType: 'swap',
+            transferType: 'unknown'
+          },
           extra: { status, action: 'Swap', sourceFamily: chain }
         })
       }
@@ -806,6 +845,16 @@ export class RheaSwapTransactionMonitor {
       })
     } catch (error) {
       console.warn('[RHEA Swap Monitor] Portfolio refresh after completion failed:', error)
+    }
+  }
+
+  private async revealDestinationAsset(assetId: string): Promise<void> {
+    try {
+      await this.options.revealDestinationAsset?.(assetId)
+    } catch (error) {
+      console.warn('[RHEA Swap Monitor] Destination asset reveal failed', {
+        errorName: error instanceof Error ? error.name : 'UnknownError'
+      })
     }
   }
 

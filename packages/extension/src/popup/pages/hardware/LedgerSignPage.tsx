@@ -16,6 +16,8 @@ import {
 } from '../../services/ledger-signing-client'
 import type { LedgerTransport } from '@/lib/ledger/device'
 import { swapApprovalContinuationClient } from '../../services/swap-approval-continuation-client'
+import { formatHardwareSigningError } from '@/lib/hardware-signing-error'
+import { logger } from '@/lib/logger'
 
 export function LedgerSignPage() {
   const { navigate } = useNavigate()
@@ -45,7 +47,9 @@ export function LedgerSignPage() {
       })
       .catch(cause => {
         if (!disposed) {
-          setError(cause instanceof Error ? cause.message : 'Request unavailable')
+          const message = formatHardwareSigningError(cause)
+          logger.error(`[Hardware signing] Ledger request loading failed: ${message}`)
+          setError(message)
           setStep('error')
         }
       })
@@ -106,6 +110,7 @@ export function LedgerSignPage() {
     abort.current = new AbortController()
     setInteraction(`Open the ${ledgerRequestDeviceApp(view.request)} app on your Ledger`)
     setStep('signing')
+    let stage = 'device signing'
     try {
       const response = await signLedgerDeviceRequest(view.request, {
         transport,
@@ -113,6 +118,7 @@ export function LedgerSignPage() {
         onInteraction: () => setInteraction('Review and confirm on your Ledger')
       })
       abort.current.signal.throwIfAborted()
+      stage = 'submission'
       await submitLedgerSigningView(view, response)
       terminal.current = true
       if (view.family === 'evm' && view.transactionId) {
@@ -123,7 +129,9 @@ export function LedgerSignPage() {
       }
       setStep('success')
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Ledger signing failed')
+      const message = formatHardwareSigningError(cause)
+      logger.error(`[Hardware signing] Ledger ${stage} failed: ${message}`)
+      setError(message)
       setStep('error')
     } finally {
       signing.current = false

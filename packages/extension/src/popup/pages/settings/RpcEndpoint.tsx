@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Icon } from '@iconify/react'
-import { DEFAULT_NETWORK, getNetworkConfig } from '@/lib/runtime-network'
+import { DEFAULT_NETWORK } from '@/lib/runtime-network'
 import {
   ensureRpcEndpointPreferencesLoaded,
   getRpcEndpointGroups,
@@ -56,22 +56,17 @@ type PingResult =
   | { readonly status: 'ok'; readonly latencyMs: number }
   | { readonly status: 'unreachable' }
 
-const isFixedTestnetEndpoint = DEFAULT_NETWORK === 'testnet'
-const fixedTestnetEndpointGroups: readonly RpcEndpointGroup[] | null = isFixedTestnetEndpoint
-  ? [
-      {
-        chain: 'zcash',
-        label: 'Zcash Testnet',
-        iconChain: 'zec',
-        options: [
-          {
-            ...RPC_DEFAULT_ENDPOINTS.zcash.testnet,
-            url: getNetworkConfig('testnet').rpcUrl
-          }
-        ]
-      }
-    ]
-  : null
+const testnetEndpointGroups: readonly RpcEndpointGroup[] | null =
+  DEFAULT_NETWORK === 'testnet'
+    ? [
+        {
+          chain: 'zcash',
+          label: 'Zcash Testnet',
+          iconChain: 'zec',
+          options: [RPC_DEFAULT_ENDPOINTS.zcash.testnet]
+        }
+      ]
+    : null
 
 function pingKey(chain: RpcEndpointChain, optionId: string): string {
   return `${chain}:${optionId}`
@@ -162,7 +157,7 @@ export function RpcEndpoint({ chainId }: { readonly chainId: string }) {
   const [saving, setSaving] = useState(false)
   const [displayedRpcEndpointGroups, setDisplayedRpcEndpointGroups] = useState<
     readonly RpcEndpointGroup[]
-  >(fixedTestnetEndpointGroups ?? getRpcEndpointGroups())
+  >(testnetEndpointGroups ?? getRpcEndpointGroups())
   const [editingRegistryChain, setEditingRegistryChain] = useState<RpcEndpointChain | null>(null)
   const [pings, setPings] = useState<Record<string, PingResult>>({})
   const [applyingKey, setApplyingKey] = useState<string | null>(null)
@@ -173,7 +168,7 @@ export function RpcEndpoint({ chainId }: { readonly chainId: string }) {
 
   useEffect(() => {
     loadSettings().catch(() => {})
-    if (isFixedTestnetEndpoint) return
+    if (testnetEndpointGroups) return
     let active = true
     ensureRpcEndpointPreferencesLoaded()
       .then(preferences => {
@@ -225,10 +220,7 @@ export function RpcEndpoint({ chainId }: { readonly chainId: string }) {
   )
   const zcashCustom = findChainEndpointOverride(settings, zcashOption.chainId)?.rpc
   const option = isZcash ? zcashOption : options.find(item => item.chainId === chainId)
-  const selectedRpc =
-    option && !(isZcash && isFixedTestnetEndpoint)
-      ? findChainEndpointOverride(settings, option.chainId)?.rpc
-      : undefined
+  const selectedRpc = option ? findChainEndpointOverride(settings, option.chainId)?.rpc : undefined
   const selectedAutoEndpoint = option && getRpcAutoFirstEndpoint(option)
   const editingRpc = editing ? findChainEndpointOverride(settings, editing.chainId)?.rpc : undefined
   const editingAutoEndpoint = editing ? getRpcAutoFirstEndpoint(editing) : null
@@ -264,7 +256,7 @@ export function RpcEndpoint({ chainId }: { readonly chainId: string }) {
   }, [zcashOption, zcashCustom?.url, settings, editingRegistryGroup, editing])
 
   const handleZcashSelect = async (chain: RpcEndpointChain, option: RpcEndpointOption) => {
-    if (isFixedTestnetEndpoint || applyingKey || saving) return
+    if (applyingKey || saving) return
     const operation = ++settingsOperation.current
     const key = pingKey(chain, option.id)
     setApplyingKey(key)
@@ -289,7 +281,7 @@ export function RpcEndpoint({ chainId }: { readonly chainId: string }) {
   }
 
   const selectZcashAuto = async () => {
-    if (isFixedTestnetEndpoint || applyingKey || saving) return
+    if (applyingKey || saving) return
     const operation = ++settingsOperation.current
     setApplyingKey('zcash:auto')
     try {
@@ -436,11 +428,7 @@ export function RpcEndpoint({ chainId }: { readonly chainId: string }) {
               {!isLoaded
                 ? 'Loading...'
                 : (selectedRpc?.label ??
-                  (isZcash
-                    ? isFixedTestnetEndpoint
-                      ? (zcashSelectedEndpoint?.label ?? 'Default')
-                      : 'Auto'
-                    : `Auto · ${selectedAutoEndpoint?.label ?? 'Default'}`))}
+                  (isZcash ? 'Auto' : `Auto · ${selectedAutoEndpoint?.label ?? 'Default'}`))}
               {isLoaded &&
                 ` · ${(
                   selectedRpc?.url ??
@@ -472,40 +460,37 @@ export function RpcEndpoint({ chainId }: { readonly chainId: string }) {
             <DialogTitle>{editingRegistryGroup?.label} RPC</DialogTitle>
           </DialogHeader>
           <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
-            {!isFixedTestnetEndpoint && (
-              <button
-                type="button"
-                aria-label="Use automatic Zcash RPC"
-                aria-pressed={!zcashCustom}
-                disabled={applyingKey !== null || saving}
-                onClick={() => void selectZcashAuto()}
-                className={cn(
-                  'flex w-full items-center gap-3 rounded-lg border px-3 py-2.5 text-left',
-                  !zcashCustom ? 'border-primary/50 bg-primary/5' : 'border-border/60'
+            <button
+              type="button"
+              aria-label="Use automatic Zcash RPC"
+              aria-pressed={!zcashCustom}
+              disabled={applyingKey !== null || saving}
+              onClick={() => void selectZcashAuto()}
+              className={cn(
+                'flex w-full items-center gap-3 rounded-lg border px-3 py-2.5 text-left',
+                !zcashCustom ? 'border-primary/50 bg-primary/5' : 'border-border/60'
+              )}
+            >
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm font-medium">Auto</span>
+                {zcashAutoEndpoint && (
+                  <span className="block truncate text-[11px] text-muted">
+                    Starts with {zcashAutoEndpoint.label} ·{' '}
+                    {zcashAutoEndpoint.url.replace(/^https?:\/\//, '')}
+                  </span>
                 )}
-              >
-                <span className="min-w-0 flex-1">
-                  <span className="block text-sm font-medium">Auto</span>
-                  {zcashAutoEndpoint && (
-                    <span className="block truncate text-[11px] text-muted">
-                      Starts with {zcashAutoEndpoint.label} ·{' '}
-                      {zcashAutoEndpoint.url.replace(/^https?:\/\//, '')}
-                    </span>
-                  )}
-                </span>
-                {!zcashCustom && <Icon icon="lucide:check" className="size-4 text-primary" />}
-              </button>
-            )}
+              </span>
+              {!zcashCustom && <Icon icon="lucide:check" className="size-4 text-primary" />}
+            </button>
             {editingRegistryGroup?.options.map(option => {
-              const selected =
-                isFixedTestnetEndpoint || (zcashCustom && isSameRpcUrl(zcashCustom.url, option.url))
+              const selected = Boolean(zcashCustom && isSameRpcUrl(zcashCustom.url, option.url))
               const isApplying = applyingKey === pingKey(editingRegistryGroup.chain, option.id)
               return (
                 <button
                   key={option.id}
                   type="button"
                   aria-label={`Use ${option.label} RPC`}
-                  disabled={isFixedTestnetEndpoint || applyingKey !== null || saving}
+                  disabled={applyingKey !== null || saving}
                   onClick={() => void handleZcashSelect(editingRegistryGroup.chain, option)}
                   className={cn(
                     'flex w-full min-w-0 items-center gap-3 rounded-xl border bg-card px-3 py-2.5 text-left transition-colors disabled:cursor-not-allowed',
@@ -544,24 +529,22 @@ export function RpcEndpoint({ chainId }: { readonly chainId: string }) {
               )
             })}
           </div>
-          {!isFixedTestnetEndpoint && (
-            <CustomRpcSection
-              endpoints={getSavedRpcEndpoints(settings, zcashOption)}
-              selectedUrl={zcashCustom?.url}
-              option={zcashOption}
-              pings={pings}
-              disabled={saving || applyingKey !== null}
-              onAdd={() => {
-                setEditingRegistryChain(null)
-                openEditor(zcashOption, true)
-              }}
-              onSelect={rpc => void selectZcashCustom(rpc)}
-              onRemove={rpc => {
-                setEditingRegistryChain(null)
-                setDeleteTarget({ chainId: zcashOption.chainId, rpc })
-              }}
-            />
-          )}
+          <CustomRpcSection
+            endpoints={getSavedRpcEndpoints(settings, zcashOption)}
+            selectedUrl={zcashCustom?.url}
+            option={zcashOption}
+            pings={pings}
+            disabled={saving || applyingKey !== null}
+            onAdd={() => {
+              setEditingRegistryChain(null)
+              openEditor(zcashOption, true)
+            }}
+            onSelect={rpc => void selectZcashCustom(rpc)}
+            onRemove={rpc => {
+              setEditingRegistryChain(null)
+              setDeleteTarget({ chainId: zcashOption.chainId, rpc })
+            }}
+          />
         </DialogContent>
       </Dialog>
 

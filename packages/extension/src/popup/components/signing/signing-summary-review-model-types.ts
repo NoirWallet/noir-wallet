@@ -31,6 +31,22 @@ export interface SigningSummaryReviewIssue {
   readonly description: string
 }
 
+export interface TokenAuthorizationReview {
+  readonly protocol: 'Permit' | 'Permit2'
+  readonly kind: 'allowance' | 'transfer'
+  readonly owner: string
+  readonly spender: string
+  readonly signatureDeadline: string
+  readonly tokens: readonly {
+    readonly contractAddress: string
+    readonly assetId: string
+    readonly symbol: string | null
+    readonly amount: string
+    readonly unlimited: boolean
+    readonly expiration?: string
+  }[]
+}
+
 export interface SigningSummaryReviewModel {
   readonly title: string
   readonly description?: string
@@ -38,12 +54,14 @@ export interface SigningSummaryReviewModel {
   readonly level: SigningReviewLevel
   readonly issues: readonly SigningSummaryReviewIssue[]
   readonly sections: readonly SigningSummaryReviewSection[]
+  readonly tokenAuthorization?: TokenAuthorizationReview
 }
 
 export interface SigningSummaryReviewPresentation {
   readonly title: string
   readonly description?: string
   readonly sections: readonly SigningSummaryReviewSection[]
+  readonly tokenAuthorization?: TokenAuthorizationReview
 }
 
 export function reviewRow(

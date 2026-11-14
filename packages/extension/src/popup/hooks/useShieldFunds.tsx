@@ -205,8 +205,6 @@ export function useShieldFunds(pageId: string): UseShieldFundsResult {
               navigate('/transaction-result')
             } else if (result.status === 'timeout') {
               toast.error('Hardware signing timed out', 'The shield action is available again.')
-            } else {
-              toast.info('Hardware signing cancelled')
             }
           } catch (cause) {
             toast.error('Could not open hardware signing', classifyError(cause).userMessage)

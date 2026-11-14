@@ -329,7 +329,9 @@ test('outbox survives serialization and rejects queued duplicate keys', () => {
   const now = 1_000_000
   const entry = {
     id: 'event-1',
-    payload: buildPayload(ANALYTICS_EVENTS.SEND_SUCCEEDED, {}),
+    payload: buildPayload(ANALYTICS_EVENTS.SEND_SUCCEEDED, {
+      collector: { inputAmount: '0.000000000000000001', usdAmount: '12.34' }
+    }),
     idempotencyKey: 'hashed-key',
     attempts: 0,
     createdAt: now

@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import { expect } from '@playwright/test'
 import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
+import { proveHardwarePczt } from '../../../src/core/zcash/hardware-pczt.ts'
 
 import {
   consumePreparedHardwareSignRequest,
@@ -15,6 +16,62 @@ import {
 
 const require = createRequire(import.meta.url)
 const ts = require('typescript')
+
+test('PCZT failures retain their stage and never submit an unparsed or uncombined transaction', async () => {
+  for (const [failedStage, code] of [
+    ['parse-wallet', 'HW-PCZT-01'],
+    ['parse-device', 'HW-PCZT-02'],
+    ['combine', 'HW-PCZT-03'],
+    ['prove-send', 'HW-PCZT-04'],
+    [null, null]
+  ]) {
+    let sent = 0
+    const freed = []
+    const original = 'Invalid(DeserializeUnexpectedEnd)'
+    const failAt = stage => {
+      if (stage === failedStage) throw original
+    }
+    const combined = {
+      free: () => {
+        throw new Error('WASM already owns this object')
+      }
+    }
+    const full = {
+      free: () => freed.push('wallet'),
+      combine: () => {
+        failAt('combine')
+        return combined
+      }
+    }
+    const signed = { free: () => freed.push('device') }
+    const submission = proveHardwarePczt({
+      readFull: () => {
+        failAt('parse-wallet')
+        return full
+      },
+      readSigned: () => {
+        failAt('parse-device')
+        return signed
+      },
+      proveAndSend: async value => {
+        expect(value).toBe(combined)
+        sent += 1
+        failAt('prove-send')
+        return 'synthetic-transaction-id'
+      }
+    })
+    if (failedStage) await expect(submission).rejects.toThrow(`[${code}] ${original}`)
+    else await expect(submission).resolves.toBe('synthetic-transaction-id')
+    expect(sent).toBe(failedStage === null || failedStage === 'prove-send' ? 1 : 0)
+    expect(freed).toEqual(
+      failedStage === 'parse-wallet'
+        ? []
+        : failedStage === 'parse-device'
+          ? ['wallet']
+          : ['device', 'wallet']
+    )
+  }
+})
 
 function loadHardwarePcztBuild(walletCore, keySource = 'ledger') {
   const source = readFileSync(new URL('../../../src/background/index.ts', import.meta.url), 'utf8')

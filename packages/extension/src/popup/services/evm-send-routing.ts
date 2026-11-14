@@ -25,11 +25,9 @@ export function resolveEvmSendAvailableRaw(
       }
     | undefined,
   sourceMode: 'main' | 'private'
-): string {
-  if (!balance) return '0'
-  return sourceMode === 'private'
-    ? (balance.privateOnchainRaw ?? '0')
-    : (balance.mainRaw ?? balance.availableRaw)
+): string | null {
+  if (!balance) return null
+  return sourceMode === 'private' ? (balance.privateOnchainRaw ?? null) : (balance.mainRaw ?? null)
 }
 
 export function resolveEvmSendRoute(

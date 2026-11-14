@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import type { DAppExecutionMode, DAppExecutionModeState } from '@/core/dapp/dapp-execution-mode'
 import { cn } from '@/lib/utils'
 
@@ -10,11 +11,17 @@ export function WalletModeSwitch({
   readonly busy: boolean
   readonly onChange: (mode: DAppExecutionMode) => void
 }) {
+  const [intent, setIntent] = useState<DAppExecutionMode | null>(null)
+  useEffect(() => {
+    if (!busy) setIntent(null)
+  }, [busy, state?.mode])
+  const visualMode = intent ?? state?.mode ?? 'main'
   return (
     <div
       role="radiogroup"
       aria-label="Wallet mode"
       aria-busy={busy}
+      data-visual-mode={visualMode}
       className="flex h-8 w-[141px] shrink-0 items-center gap-1 rounded-xl bg-white/6 p-1"
     >
       {(['main', 'private'] as const).map(mode => (
@@ -29,12 +36,15 @@ export function WalletModeSwitch({
               ? 'Private mode unavailable for this account'
               : undefined
           }
-          disabled={busy || !state || (mode === 'private' && !state.privateAvailable)}
-          onClick={() => onChange(mode)}
+          disabled={!state || (mode === 'private' && !state.privateAvailable)}
+          onClick={() => {
+            setIntent(mode)
+            onChange(mode)
+          }}
           className={cn(
-            'wallet-interactive h-6 min-w-0 flex-1 rounded-lg text-[13px] font-normal leading-[17px] enabled:active:brightness-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:cursor-not-allowed disabled:opacity-45',
-            (state?.mode ?? 'main') === mode && 'font-medium',
-            (state?.mode ?? 'main') === mode
+            'wallet-interactive h-6 min-w-0 flex-1 rounded-lg text-[13px] font-normal leading-[17px] transition-[opacity,transform,background-color] duration-150 ease-out enabled:active:brightness-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:cursor-not-allowed disabled:opacity-45 motion-reduce:transition-none',
+            visualMode === mode ? 'scale-100 opacity-100 font-medium' : 'scale-[0.97] opacity-80',
+            visualMode === mode
               ? mode === 'private'
                 ? 'bg-wallet-mode text-white'
                 : 'bg-wallet-selected text-foreground'

@@ -35,6 +35,7 @@ function createSchedulerHarness() {
   const messages = []
   const runtime = {
     getNetwork: () => 'mainnet',
+    hasTransactionHistoryRefreshFailure: () => false,
     finishSyncPreflight: () => {},
     initialize: async () => {
       initializationCount++
@@ -86,6 +87,61 @@ function createSchedulerHarness() {
     messages
   }
 }
+
+test('sync snapshots keep transaction history refresh failures scoped to the requested account', () => {
+  const failures = new Set()
+  const scheduler = loadScheduler({
+    './zcash-wallet-runtime': {
+      backgroundZcashWalletRuntime: {
+        getNetwork: () => 'mainnet',
+        hasTransactionHistoryRefreshFailure: (walletId, accountId) =>
+          failures.has(`${walletId}:${accountId}`)
+      }
+    },
+    '@/store/wallet-store': {
+      useWalletStore: {
+        getState: () => ({
+          currentWalletId: 'wallet-a',
+          currentAccountId: 'account-a',
+          currentNetwork: 'mainnet',
+          getWallet: () => ({
+            accounts: [
+              { id: 'account-a', enabledNetworks: {} },
+              { id: 'account-b', enabledNetworks: {} }
+            ]
+          })
+        })
+      }
+    },
+    '@/core/wallet/account-network-selection': { isAccountNetworkEnabled: () => true },
+    '@/store/account-data-store': {
+      useAccountDataStore: {
+        getState: () => ({
+          getWalletSyncState: () => ({ syncReason: null }),
+          getBalance: () => null
+        })
+      }
+    }
+  })
+  assert.equal(
+    scheduler.getSyncState('wallet-a', 'account-a').transactionHistoryRefreshFailed,
+    false
+  )
+  failures.add('wallet-a:account-a')
+  assert.equal(
+    scheduler.getSyncState('wallet-a', 'account-a').transactionHistoryRefreshFailed,
+    true
+  )
+  assert.equal(
+    scheduler.getSyncState('wallet-a', 'account-b').transactionHistoryRefreshFailed,
+    false
+  )
+  failures.delete('wallet-a:account-a')
+  assert.equal(
+    scheduler.getSyncState('wallet-a', 'account-a').transactionHistoryRefreshFailed,
+    false
+  )
+})
 
 test('a wallet with Zcash disabled cannot start foreground or transaction catch-up sync', async () => {
   const { scheduler, wallet } = createSchedulerHarness()
@@ -164,7 +220,12 @@ test('sync snapshot reads the current background balance for the requested accou
     ['testnet_wallet-a_account-a', { total: '5' }]
   ])
   const scheduler = loadScheduler({
-    './zcash-wallet-runtime': { backgroundZcashWalletRuntime: { getNetwork: () => 'mainnet' } },
+    './zcash-wallet-runtime': {
+      backgroundZcashWalletRuntime: {
+        getNetwork: () => 'mainnet',
+        hasTransactionHistoryRefreshFailure: () => false
+      }
+    },
     '@/store/wallet-store': { useWalletStore: { getState: () => selected } },
     '@/core/wallet/account-network-selection': { isAccountNetworkEnabled },
     '@/store/account-data-store': {

@@ -37,7 +37,8 @@ interface ListDAppChainAccountsOptions {
     source: KeyDomainSource,
     walletId: string,
     accountId: string,
-    family: AccountNetworkFamily
+    family: AccountNetworkFamily,
+    chainId: string
   ) => boolean | Promise<boolean>
   readonly resolveAddress: (
     context: DAppChainAccountAddressContext
@@ -56,7 +57,8 @@ export async function filterEnabledDAppContext<
     context.chainAccount.scope.keyDomainId,
     context.chainAccount.scope.accountId,
     DEFAULT_NETWORK,
-    family
+    family,
+    context.chainAccount.scope.chainId
   ))
     ? context
     : null
@@ -66,9 +68,17 @@ export const isDAppNetworkEnabled = (
   source: KeyDomainSource,
   walletId: string,
   accountId: string,
-  family: AccountNetworkFamily
+  family: AccountNetworkFamily,
+  chainId: string
 ): Promise<boolean> =>
-  isStoredAccountNetworkEnabledForSource(source, walletId, accountId, DEFAULT_NETWORK, family)
+  isStoredAccountNetworkEnabledForSource(
+    source,
+    walletId,
+    accountId,
+    DEFAULT_NETWORK,
+    family,
+    chainId
+  )
 
 function descriptorId(reference: AccountRef): string {
   return JSON.stringify([reference.walletId, reference.accountId])
@@ -113,7 +123,8 @@ export async function listDAppChainAccounts(
         keyDomain.source,
         account.keyDomainId,
         account.id,
-        options.family
+        options.family,
+        options.chainId
       ))
     ) {
       continue

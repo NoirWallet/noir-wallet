@@ -2,11 +2,7 @@ import { chromium, expect, test, type BrowserContext, type Page } from '@playwri
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import {
-  captureScreenshot,
-  extensionDir,
-  waitForBackgroundWalletInitialization
-} from '../helpers/extension-fixtures'
+import { extensionDir, waitForBackgroundWalletInitialization } from '../helpers/extension-fixtures'
 
 async function launchProfile(userDataDir: string): Promise<BrowserContext> {
   return chromium.launchPersistentContext(userDataDir, {
@@ -156,19 +152,6 @@ test('quarantines invalid legacy walletData without creating an empty target', a
     const verifier = await context.newPage()
     await verifier.setViewportSize({ width: 375, height: 600 })
     await verifier.goto(`chrome-extension://${extensionId}/index.html?migration-quarantine=1`)
-
-    await expect(
-      verifier.getByRole('heading', { name: 'Wallet upgrade failed', exact: true })
-    ).toBeVisible()
-    await expect(verifier.getByRole('button', { name: 'Retry', exact: true })).toBeEnabled()
-    await expect(verifier.getByText('Your existing wallet data is still stored')).toBeVisible()
-    await expect(verifier.getByRole('button', { name: /skip|continue|reset/i })).toHaveCount(0)
-    await captureScreenshot(verifier, 'wallet-metadata-upgrade-failed.png')
-
-    await verifier.getByRole('button', { name: 'Retry', exact: true }).click()
-    await expect(
-      verifier.getByRole('heading', { name: 'Wallet upgrade failed', exact: true })
-    ).toBeVisible()
 
     await expect
       .poll(

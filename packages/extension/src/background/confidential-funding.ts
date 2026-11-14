@@ -25,7 +25,8 @@ import { accountContextTransition } from './account-context-transition'
 import { ConfidentialFundingApi } from './confidential-funding-api'
 import {
   CONFIDENTIAL_FUNDING_MONITOR_ALARM,
-  ConfidentialFundingCoordinator
+  ConfidentialFundingCoordinator,
+  type ConfidentialFundingCoordinatorOptions
 } from './confidential-funding-coordinator'
 import { ConfidentialFundingSigner } from './confidential-funding-signer'
 import { ChromeConfidentialFundingStore } from './confidential-funding-store'
@@ -37,7 +38,7 @@ export function createBackgroundConfidentialFundingCoordinator(
   protocolAssets: readonly AssetDefinitionInput[],
   protocolTokens: readonly SwapToken[],
   endpointSettings: ChainEndpointSettings,
-  refreshPortfolio: () => Promise<void>,
+  refreshPortfolio: NonNullable<ConfidentialFundingCoordinatorOptions['refreshPortfolio']>,
   store: ChromeConfidentialFundingStore = new ChromeConfidentialFundingStore()
 ): ConfidentialFundingCoordinator | null {
   const config = getConfidentialFundingNetworkConfig(DEFAULT_NETWORK)
@@ -48,15 +49,20 @@ export function createBackgroundConfidentialFundingCoordinator(
     ...userEvmAssets,
     ...protocolAssets
   ]
-  const existingIds = new Set(
-    existingDefinitions.map(
-      asset =>
-        `${asset.chainId}/${asset.namespace}:${asset.namespace === 'erc20' ? asset.reference.toLowerCase() : asset.reference}`
-    )
-  )
+  const definitionId = (asset: AssetDefinitionInput): string =>
+    `${asset.chainId}/${asset.namespace}:${asset.namespace === 'erc20' ? asset.reference.toLowerCase() : asset.reference}`
+  const existingAssets = createAssetRegistry(chains, existingDefinitions)
   const confidentialEvmAssets = resolveIntentsEvmAssets(protocolTokens, evmNetworks)
   const confidentialEvmDefinitions = confidentialEvmAssets
-    .filter(asset => !existingIds.has(asset.assetId))
+    .filter(asset => {
+      const existing = existingAssets.inspect(asset.assetId)
+      // Auto-registered catalog assets remain unverified in the wallet registry.
+      // A matching current protocol definition may supply this runtime's trust.
+      return (
+        !existing ||
+        (existing.verification === 'unverified' && existing.metadata.decimals === asset.decimals)
+      )
+    })
     .flatMap(asset => {
       try {
         const metadata = parseAssetDisplayMetadata({
@@ -80,8 +86,9 @@ export function createBackgroundConfidentialFundingCoordinator(
         return []
       }
     })
+  const protocolDefinitionIds = new Set(confidentialEvmDefinitions.map(definitionId))
   const assets = createAssetRegistry(chains, [
-    ...existingDefinitions,
+    ...existingDefinitions.filter(asset => !protocolDefinitionIds.has(definitionId(asset))),
     ...confidentialEvmDefinitions
   ])
   const storage = new IndexedDbStorageV2Repository()

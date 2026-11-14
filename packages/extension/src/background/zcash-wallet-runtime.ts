@@ -83,6 +83,7 @@ import {
 
 import { safeBig } from '@/lib/big'
 import { normalizeTxHash } from '@/lib/tx-history-dedup'
+import { observeZcashReceipts } from './analytics/observations'
 import {
   isMnemonicWordCount,
   WALLET_CONFIG,
@@ -229,6 +230,9 @@ function getSyncBatchSize(remainingRange: number, isCurrentWallet: boolean): num
 
   if (remainingRange > 50_000) return cap
   if (remainingRange > 10_000) return Math.min(cap, MID)
+  // Near tip, keep the active wallet's uninterruptible WASM batch short enough
+  // for account switches to reach the journal-safe abort check promptly.
+  if (isCurrentWallet && remainingRange <= 1_000) return Math.min(MIN, 100)
   return MIN
 }
 
@@ -357,6 +361,8 @@ export class BackgroundZcashWalletRuntime {
   private accountMappingCache = new Map<string, AccountMappingEntry>()
   private walletSummaryCache = new Map<string, WalletSummaryCacheEntry>()
   private wasmTxHistoryCache = new Map<string, WasmTransactionEntry[]>()
+  private historyRefreshFailures = new Set<string>()
+  private historyRefreshRevisions = new Map<string, number>()
   private readonly recipientRecovery = new TransactionRecipientRecovery({
     isActive: (network, walletId, accountId) =>
       !this.isLocked() &&
@@ -845,15 +851,21 @@ export class BackgroundZcashWalletRuntime {
     return `${walletId}:${accountId}`
   }
 
+  hasTransactionHistoryRefreshFailure(walletId: string, accountId: string): boolean {
+    return this.historyRefreshFailures.has(`${this.network}:${walletId}:${accountId}`)
+  }
+
   private clearTransactionHistoryCache(walletId?: string, accountId?: string): void {
     this.recipientRecovery.cancel(walletId, accountId)
     if (!walletId) {
       this.wasmTxHistoryCache.clear()
+      this.historyRefreshFailures.clear()
       return
     }
 
     if (accountId) {
       this.wasmTxHistoryCache.delete(this.transactionHistoryCacheKey(walletId, accountId))
+      this.historyRefreshFailures.delete(`${this.network}:${walletId}:${accountId}`)
       return
     }
 
@@ -862,6 +874,9 @@ export class BackgroundZcashWalletRuntime {
       if (key.startsWith(prefix)) {
         this.wasmTxHistoryCache.delete(key)
       }
+    }
+    for (const key of this.historyRefreshFailures) {
+      if (key.startsWith(`${this.network}:${walletId}:`)) this.historyRefreshFailures.delete(key)
     }
   }
 
@@ -1092,6 +1107,13 @@ export class BackgroundZcashWalletRuntime {
       storePatch.syncReason = null
     }
     this.accountDataStore.setWalletSyncStateFor(this.network, walletId, storePatch)
+    if (!state.isSyncing) {
+      for (const account of this.store.getWallet(walletId)?.accounts ?? []) {
+        if (isAccountNetworkEnabled(account, this.network, 'zcash')) {
+          this.broadcastPortfolioUpdate(walletId, account.id)
+        }
+      }
+    }
 
     this.broadcastSyncProgress({
       ...state,
@@ -1139,6 +1161,12 @@ export class BackgroundZcashWalletRuntime {
 
   private setBalanceFor(walletId: string, accountId: string, balance: ZcashBalance): void {
     this.accountDataStore.setBalanceFor(this.network, walletId, accountId, balance)
+    this.broadcastPortfolioUpdate(walletId, accountId)
+  }
+
+  private broadcastPortfolioUpdate(walletId: string, accountId: string): void {
+    // Unified asset views read Background's projection rather than SYNC_PROGRESS balances.
+    chrome.runtime.sendMessage({ type: 'PORTFOLIO_UPDATED', walletId, accountId }).catch(() => {})
   }
 
   private broadcastBalanceUpdate(walletId: string, accountId: string, balance: ZcashBalance): void {
@@ -1863,7 +1891,7 @@ export class BackgroundZcashWalletRuntime {
         // Re-check under the lock: a concurrent unlock or the sync readiness
         // path may have already created/restored this account in the same WASM
         // instance. Adopt it instead of issuing a duplicate create.
-        if (core.hasAccount() && core.accountIndex === index) {
+        if (await core.hasAccountForDerivation(index)) {
           this.bindCredentialToCore(core, credential, index)
           return
         }
@@ -2421,20 +2449,58 @@ export class BackgroundZcashWalletRuntime {
     return this.sessionCredentialWalletId === walletId
   }
 
+  private async restoreHardwareFromCredentialSession(
+    wallet: WalletItem,
+    account: AccountData
+  ): Promise<boolean> {
+    const generation = this.passwordGeneration
+    const network = this.network
+    const epoch = await credentialSession.getUnlockEpoch()
+    if (epoch === null) return false
+    const password = await credentialSession.getProvisioningPassword()
+    const inspected = await this.inspectWalletCredential(wallet, password)
+    if (inspected.status !== 'valid' || inspected.credential.kind !== 'hardware') {
+      throw new Error('Hardware Wallet credential is unavailable')
+    }
+    const currentEpoch = await credentialSession.getUnlockEpoch()
+    const currentWallet = this.store.getWallet(wallet.id)
+    if (
+      currentEpoch !== epoch ||
+      this.passwordGeneration !== generation ||
+      this.network !== network ||
+      currentWallet?.keySource !== wallet.keySource ||
+      currentWallet?.createdAt !== wallet.createdAt ||
+      !currentWallet.accounts.some(candidate => candidate.id === account.id)
+    ) {
+      return false
+    }
+
+    // Hardware has no software capsule to bind. Recover its encrypted UFVK
+    // through the attested global session, entirely inside Background.
+    this.cancelActiveRestore()
+    this.setSessionPassword(password)
+    this.sessionCredentialWalletId = null
+    this.currentWalletId = wallet.id
+    await this.ensureWalletCoreAccount(wallet.id, account.id)
+    return this.passwordGeneration === generation + 1 && !this.isLocked()
+  }
+
   /**
-   * Restore a software wallet after Background memory loss without receiving
-   * its password or mnemonic. The selected credential must already be bound
-   * directly from Offscreen to the Zcash Worker.
+   * Restore after Background memory loss using the attested Offscreen session.
+   * Software credentials must already be bound directly to the Zcash Worker.
    */
   async restoreFromCredentialSession(walletId: string, accountId?: string): Promise<boolean> {
     const wallet = this.store.getWallet(walletId)
-    if (!wallet || isZcashHardwareKeySource(wallet.keySource)) return false
+    if (!wallet) return false
 
     const account = accountId
       ? wallet.accounts.find(candidate => candidate.id === accountId)
       : wallet.accounts.find(candidate => candidate.id === this.store.currentAccountId) ||
         wallet.accounts[0]
     if (!account) return false
+    if (isZcashHardwareKeySource(wallet.keySource)) {
+      return this.restoreHardwareFromCredentialSession(wallet, account)
+    }
 
     this.cancelActiveRestore()
     for (const [otherWalletId, otherCore] of this.walletCores) {
@@ -2458,7 +2524,7 @@ export class BackgroundZcashWalletRuntime {
         const dbKey = `${this.network}_${walletId}`
         await core.ensureInitialized(dbKey)
 
-        if (!core.hasAccount() || core.accountIndex !== account.derivationIndex) {
+        if (!(await core.hasAccountForDerivation(account.derivationIndex))) {
           const restored = await core.restoreFromDB(account.derivationIndex)
           if (!restored) {
             try {
@@ -2840,6 +2906,18 @@ export class BackgroundZcashWalletRuntime {
     const account = this.store.getAccount(walletId, accountId)
     if (!account || !isAccountNetworkEnabled(account, this.network, 'zcash')) return
 
+    const network = this.network
+    const historyScope = `${network}:${walletId}:${accountId}`
+    const runtimeGeneration = this.walletRuntimeGeneration.get(walletId) ?? 0
+    const revision = (this.historyRefreshRevisions.get(historyScope) ?? 0) + 1
+    this.historyRefreshRevisions.set(historyScope, revision)
+    const canApplyStatus = () =>
+      this.network === network &&
+      this.walletCores.get(walletId) === core &&
+      (this.walletRuntimeGeneration.get(walletId) ?? 0) === runtimeGeneration &&
+      this.historyRefreshRevisions.get(historyScope) === revision &&
+      !!this.store.getAccount(walletId, accountId)
+
     try {
       const wasmAccountId = await this.resolveWasmAccountId(walletId, accountId, core)
       if (wasmAccountId == null) return
@@ -2880,6 +2958,7 @@ export class BackgroundZcashWalletRuntime {
         }
       }
       let transparentReceiveTransactions: Transaction[] = []
+      let transparentHistoryFailed = false
 
       try {
         transparentReceiveTransactions = await fetchTransparentReceiveTransactions(
@@ -2893,11 +2972,12 @@ export class BackgroundZcashWalletRuntime {
           }
         )
       } catch {
+        transparentHistoryFailed = true
         logger.warn('transparent receive history fetch failed', walletId, accountId)
       }
 
       let newWasmTransactionCount = 0
-      await mutateTransactions(accountKey, currentTransactions => {
+      const persistedTransactions = await mutateTransactions(accountKey, currentTransactions => {
         const merged = mergeTransactionsWithWasmHistory(
           currentTransactions,
           wasmTransactions,
@@ -2906,6 +2986,15 @@ export class BackgroundZcashWalletRuntime {
         newWasmTransactionCount = merged.newWasmTransactionCount
         return associateIncomingIntentsTransactions(merged.transactions)
       })
+      if (canApplyStatus()) {
+        if (transparentHistoryFailed) this.historyRefreshFailures.add(historyScope)
+        else this.historyRefreshFailures.delete(historyScope)
+      }
+      void observeZcashReceipts(
+        { keyDomainId: walletId, accountId },
+        persistedTransactions,
+        walletCreatedTxids
+      ).catch(() => {})
       chrome.runtime
         .sendMessage({
           type: 'TRANSACTION_UPDATED',
@@ -2919,6 +3008,16 @@ export class BackgroundZcashWalletRuntime {
         logger.warn('transaction recipient recovery failed', walletId, accountId)
       })
     } catch {
+      if (canApplyStatus()) {
+        this.historyRefreshFailures.add(historyScope)
+        void chrome.runtime
+          .sendMessage({
+            type: 'TRANSACTION_UPDATED',
+            accountKey: buildAccountKey(network, walletId, accountId),
+            transactionId: 'wasm-history'
+          })
+          .catch(() => {})
+      }
       logger.warn('refreshTransactionHistoryFromWasm failed', walletId, accountId)
     }
   }
@@ -3030,8 +3129,9 @@ export class BackgroundZcashWalletRuntime {
 
     if (targetAccountId) {
       const account = this.store.getAccount(targetWalletId, targetAccountId)
+      if (!account) throw new Error('Account not found')
 
-      if (account && core.hasAccount() && core.accountIndex === account.derivationIndex) {
+      if (await core.hasAccountForDerivation(account.derivationIndex)) {
         if (!core.isReady() && !this.isLocked()) {
           await this.restoreSessionToCore(targetWalletId, core, account.derivationIndex)
         }
@@ -3039,6 +3139,9 @@ export class BackgroundZcashWalletRuntime {
       }
 
       await this.ensureWalletCoreAccount(targetWalletId, targetAccountId)
+      if (!(await core.hasAccountForDerivation(account.derivationIndex))) {
+        throw new Error('Active Zcash account could not be restored')
+      }
     }
 
     return core
@@ -3109,12 +3212,14 @@ export class BackgroundZcashWalletRuntime {
     const firstAccount =
       enabledAccounts.find(account => account.id === this.store.currentAccountId) ??
       enabledAccounts[0]
-    if (firstAccount && core.accountIndex !== firstAccount.derivationIndex) {
+    if (firstAccount && !(await core.hasAccountForDerivation(firstAccount.derivationIndex))) {
+      // Credential binding changes the derivation index, but does not select the WASM account.
+      const restored = await core.restoreFromDB(firstAccount.derivationIndex)
+      if (!restored) throw new Error('Active Zcash account could not be restored')
       if (credential) {
         this.bindCredentialToCore(core, credential, firstAccount.derivationIndex)
       } else {
-        const restored = await core.restoreFromDB(firstAccount.derivationIndex)
-        if (restored) core.setSessionCredential(firstAccount.derivationIndex)
+        core.setSessionCredential(firstAccount.derivationIndex)
       }
     }
   }
@@ -3236,7 +3341,7 @@ export class BackgroundZcashWalletRuntime {
       if (!account) return
       if (!isAccountNetworkEnabled(account, this.network, 'zcash')) return
 
-      if (core.hasAccount() && core.accountIndex === account.derivationIndex) {
+      if (await core.hasAccountForDerivation(account.derivationIndex)) {
         if (!core.isReady() && !this.isLocked()) {
           await this.restoreSessionToCore(wid, core, account.derivationIndex)
         }
@@ -3467,6 +3572,9 @@ export class BackgroundZcashWalletRuntime {
       )
     }
 
+    if (!(await core.restoreFromDB(account.derivationIndex))) {
+      throw new Error('Active Zcash account could not be restored after resync')
+    }
     this.bindCredentialToCore(core, credential, account.derivationIndex)
 
     logger.log('Zcash resync: triggering wallet sync...', walletId, accountId)
@@ -3479,7 +3587,8 @@ export class BackgroundZcashWalletRuntime {
   async addNewWallet(
     seedPhrase: string,
     walletName?: string,
-    accountName: string = 'Account 1'
+    accountName: string = 'Account 1',
+    selectedNetworkFamilies?: readonly AccountNetworkFamily[]
   ): Promise<{ walletId: string; seedPhrase: string }> {
     if (!this.password) {
       throw new Error('Password not set')
@@ -3506,32 +3615,35 @@ export class BackgroundZcashWalletRuntime {
       }
     }
 
-    const cachedChainTip = selectCachedChainTipHeight(
-      this.store.wallets.flatMap(wallet => {
-        const syncState = this.accountDataStore.getWalletSyncState(this.network, wallet.id)
-        return [syncState.latestHeight, syncState.currentHeight]
-      })
-    )
-    let birthdayHeight = getSafeNewWalletBirthdayHeight(cachedChainTip)
-    if (cachedChainTip) {
-      logger.log(`Using cached safe birthday for new wallet: ${birthdayHeight}`)
-    } else {
-      try {
-        const heightCore = this.getOrCreateWalletCore(`__height_query_${this.network}`)
-        await heightCore.ensureInitialized()
-        const queriedChainTip = await withTimeout(
-          heightCore.getLatestBlock(),
-          OPTIONAL_NEW_WALLET_CHAIN_TIP_TIMEOUT_MS,
-          'new wallet chain tip'
-        )
-        const validatedChainTip = selectCachedChainTipHeight([queriedChainTip])
-        if (validatedChainTip === null) {
-          throw new Error('Invalid chain tip for new wallet birthday')
+    let birthdayHeight: number | undefined
+    if (selectedNetworkFamilies?.includes('zcash') !== false) {
+      const cachedChainTip = selectCachedChainTipHeight(
+        this.store.wallets.flatMap(wallet => {
+          const syncState = this.accountDataStore.getWalletSyncState(this.network, wallet.id)
+          return [syncState.latestHeight, syncState.currentHeight]
+        })
+      )
+      birthdayHeight = getSafeNewWalletBirthdayHeight(cachedChainTip)
+      if (cachedChainTip) {
+        logger.log(`Using cached safe birthday for new wallet: ${birthdayHeight}`)
+      } else {
+        try {
+          const heightCore = this.getOrCreateWalletCore(`__height_query_${this.network}`)
+          await heightCore.ensureInitialized()
+          const queriedChainTip = await withTimeout(
+            heightCore.getLatestBlock(),
+            OPTIONAL_NEW_WALLET_CHAIN_TIP_TIMEOUT_MS,
+            'new wallet chain tip'
+          )
+          const validatedChainTip = selectCachedChainTipHeight([queriedChainTip])
+          if (validatedChainTip === null) {
+            throw new Error('Invalid chain tip for new wallet birthday')
+          }
+          birthdayHeight = getSafeNewWalletBirthdayHeight(validatedChainTip)
+          logger.log(`Using latest safe birthday for new wallet: ${birthdayHeight}`)
+        } catch {
+          logger.warn('Failed to get latest block for new wallet birthday')
         }
-        birthdayHeight = getSafeNewWalletBirthdayHeight(validatedChainTip)
-        logger.log(`Using latest safe birthday for new wallet: ${birthdayHeight}`)
-      } catch {
-        logger.warn('Failed to get latest block for new wallet birthday')
       }
     }
 
@@ -3542,7 +3654,8 @@ export class BackgroundZcashWalletRuntime {
       walletName || `Wallet ${Date.now()}`,
       false, // shouldReset (ignored if skipInit)
       true, // skipInit
-      birthdayHeight || undefined
+      birthdayHeight,
+      selectedNetworkFamilies
     )
 
     await this.addWalletToList({
@@ -3919,6 +4032,10 @@ export class BackgroundZcashWalletRuntime {
             this.bindCredentialToCore(core, credential, derivationIndex)
           }
         } else {
+          if (!(await core.hasAccountForDerivation(derivationIndex))) {
+            const restored = await core.restoreFromDB(derivationIndex)
+            if (!restored) throw new Error('Active Zcash account could not be restored')
+          }
           this.bindCredentialToCore(core, credential, derivationIndex)
         }
 

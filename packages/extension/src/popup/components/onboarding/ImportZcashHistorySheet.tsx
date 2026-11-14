@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
-import { Icon } from '@iconify/react'
 import { Button } from '../ui/button'
-import { Input } from '../ui/input'
-import { DatePicker } from '../ui/date-picker'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../ui/dialog'
 import { InlineError } from '../common/InlineError'
+import {
+  ZcashHistoryFields,
+  type ZcashHistoryMode,
+  type ZcashRestoreMethod
+} from '../common/ZcashHistoryFields'
 import { useNavigate } from '../../provider/Router'
 import { useOnboardingStore } from '@/store/onboarding-store'
 import { zcashWalletRuntimeClient } from '@/popup/services/zcash-wallet-runtime-client'
@@ -12,13 +14,9 @@ import { getFullZcashRecoveryBirthdayHeight } from '@/core/wallet/birthday-heigh
 import { DEFAULT_NETWORK } from '@/lib/runtime-network'
 import { classifyError } from '@/lib/errors'
 import { LatestAttempt } from '@/lib/async-utils'
-import { cn } from '@/lib/utils'
 import { getUtcDayStartTimestamp } from '@/lib/zcash-birthday'
 import dayjs from '@/lib/dayjs'
 import { getImportZcashHistoryDefaults } from '@/popup/services/import-zcash-history-selection'
-
-type HistoryMode = 'new' | 'restore'
-type RestoreMethod = 'date' | 'height'
 
 class ZcashHistoryValidationError extends Error {}
 
@@ -37,8 +35,10 @@ export function ImportZcashHistorySheet({ onClose }: { readonly onClose: () => v
   const [initialSelection] = useState(() =>
     getImportZcashHistoryDefaults(birthdayHeight, importZcashHistorySelection)
   )
-  const [historyMode, setHistoryMode] = useState<HistoryMode>(initialSelection.historyMode)
-  const [restoreMethod, setRestoreMethod] = useState<RestoreMethod>(initialSelection.restoreMethod)
+  const [historyMode, setHistoryMode] = useState<ZcashHistoryMode>(initialSelection.historyMode)
+  const [restoreMethod, setRestoreMethod] = useState<ZcashRestoreMethod>(
+    initialSelection.restoreMethod
+  )
   const [syncDate, setSyncDate] = useState<dayjs.Dayjs | null>(
     initialSelection.syncDate ? dayjs(initialSelection.syncDate) : null
   )
@@ -64,12 +64,12 @@ export function ImportZcashHistorySheet({ onClose }: { readonly onClose: () => v
     setRetryable(false)
   }
 
-  const selectHistoryMode = (mode: HistoryMode) => {
+  const selectHistoryMode = (mode: ZcashHistoryMode) => {
     resetPendingContinue()
     setHistoryMode(mode)
   }
 
-  const selectRestoreMethod = (method: RestoreMethod) => {
+  const selectRestoreMethod = (method: ZcashRestoreMethod) => {
     resetPendingContinue()
     setRestoreMethod(method)
   }
@@ -93,7 +93,7 @@ export function ImportZcashHistorySheet({ onClose }: { readonly onClose: () => v
 
     if (!syncDate) {
       throw new ZcashHistoryValidationError(
-        'Select the approximate date of the first ZEC transaction.'
+        'Select a date before your account’s first transaction.'
       )
     }
     const timestamp = getUtcDayStartTimestamp(syncDate)
@@ -152,80 +152,32 @@ export function ImportZcashHistorySheet({ onClose }: { readonly onClose: () => v
         className="max-h-[85vh] grid-rows-[auto_minmax(0,1fr)_auto] gap-0 p-0"
       >
         <DialogHeader className="px-5 pb-4 pt-5">
-          <DialogTitle>Zcash history</DialogTitle>
-          <DialogDescription>Has this phrase received ZEC before?</DialogDescription>
+          <DialogTitle className="sr-only">Zcash account setup</DialogTitle>
+          <DialogDescription className="pr-8">
+            Has this phrase received ZEC before?
+          </DialogDescription>
         </DialogHeader>
 
         <fieldset
           disabled={flowMode === 'addWallet' && isImporting}
           className="min-h-0 min-w-0 overflow-y-auto px-5 pb-4"
         >
-          <div role="radiogroup" aria-label="Zcash history" className="space-y-2">
-            <HistoryChoice
-              title="New to Zcash"
-              selected={historyMode === 'new'}
-              onSelect={() => selectHistoryMode('new')}
-            />
-            <HistoryChoice
-              title="Restore Zcash history"
-              selected={historyMode === 'restore'}
-              onSelect={() => selectHistoryMode('restore')}
-            />
-          </div>
-
-          {historyMode === 'restore' && (
-            <div className="mt-4 space-y-3 border-t border-white/10 pt-4">
-              <div
-                role="radiogroup"
-                aria-label="Zcash history start"
-                className="grid grid-cols-2 gap-2"
-              >
-                <RestoreMethodChoice
-                  label="Date"
-                  icon="lucide:calendar-days"
-                  selected={restoreMethod === 'date'}
-                  onSelect={() => selectRestoreMethod('date')}
-                />
-                <RestoreMethodChoice
-                  label="Block height"
-                  icon="lucide:blocks"
-                  selected={restoreMethod === 'height'}
-                  onSelect={() => selectRestoreMethod('height')}
-                />
-              </div>
-              {restoreMethod === 'height' ? (
-                <div>
-                  <label className="mb-2 block text-sm text-muted">Block height</label>
-                  <Input
-                    type="text"
-                    inputMode="numeric"
-                    value={syncHeight}
-                    onChange={event => {
-                      resetPendingContinue()
-                      setSyncHeight(event.target.value)
-                    }}
-                    placeholder={`At least ${fullRecoveryHeight.toLocaleString()}`}
-                    aria-label="Zcash birthday height"
-                    className="h-[45px] rounded-xl font-mono"
-                  />
-                </div>
-              ) : (
-                <div>
-                  <label className="mb-2 block text-sm text-muted">First ZEC transaction</label>
-                  <DatePicker
-                    value={syncDate}
-                    onChange={value => {
-                      setSyncDate(value)
-                      selectRestoreMethod('date')
-                    }}
-                    ariaLabel="First ZEC transaction date"
-                    minDate={dayjs(DEFAULT_NETWORK === 'mainnet' ? '2018-10-01' : '2018-01-01')}
-                    placeholder="Select date"
-                  />
-                </div>
-              )}
-            </div>
-          )}
+          <ZcashHistoryFields
+            historyMode={historyMode}
+            restoreMethod={restoreMethod}
+            syncDate={syncDate}
+            syncHeight={syncHeight}
+            onHistoryModeChange={selectHistoryMode}
+            onRestoreMethodChange={selectRestoreMethod}
+            onSyncDateChange={value => {
+              setSyncDate(value)
+              selectRestoreMethod('date')
+            }}
+            onSyncHeightChange={value => {
+              resetPendingContinue()
+              setSyncHeight(value)
+            }}
+          />
         </fieldset>
 
         <div className="px-5 pb-5 pt-2">
@@ -248,75 +200,5 @@ export function ImportZcashHistorySheet({ onClose }: { readonly onClose: () => v
         </div>
       </DialogContent>
     </Dialog>
-  )
-}
-
-function RestoreMethodChoice({
-  label,
-  icon,
-  selected,
-  onSelect
-}: {
-  readonly label: string
-  readonly icon: string
-  readonly selected: boolean
-  readonly onSelect: () => void
-}) {
-  return (
-    <button
-      type="button"
-      role="radio"
-      aria-label={label}
-      aria-checked={selected}
-      onClick={onSelect}
-      className={cn(
-        'flex min-h-14 flex-col items-center justify-center gap-1 rounded-xl border px-1.5 py-2 text-center text-[11px] font-medium transition-colors',
-        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50',
-        selected
-          ? 'border-primary/60 bg-primary/5 text-foreground'
-          : 'border-white/10 bg-card text-muted hover:border-white/20 hover:text-foreground'
-      )}
-    >
-      <Icon icon={icon} width={16} height={16} aria-hidden="true" />
-      <span>{label}</span>
-    </button>
-  )
-}
-
-function HistoryChoice({
-  title,
-  selected,
-  onSelect
-}: {
-  readonly title: string
-  readonly selected: boolean
-  readonly onSelect: () => void
-}) {
-  return (
-    <button
-      type="button"
-      role="radio"
-      aria-label={title}
-      aria-checked={selected}
-      onClick={onSelect}
-      className={cn(
-        'flex min-h-12 w-full items-center gap-3 rounded-xl border px-4 py-3 text-left transition-colors',
-        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50',
-        selected
-          ? 'border-primary/60 bg-primary/5'
-          : 'border-white/10 bg-card hover:border-white/20'
-      )}
-    >
-      <span
-        aria-hidden="true"
-        className={cn(
-          'flex size-4 shrink-0 items-center justify-center rounded-full border-2',
-          selected ? 'border-primary' : 'border-muted'
-        )}
-      >
-        {selected && <span className="size-2 rounded-full bg-primary" />}
-      </span>
-      <span className="text-sm font-medium text-foreground">{title}</span>
-    </button>
   )
 }

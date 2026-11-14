@@ -117,6 +117,30 @@ interface DAppPermission {
   timestamp: number
 }
 
+interface DAppApprovalDecision {
+  approved: boolean
+  requestId: string
+  walletId: string
+  accountId: string
+  authorizationRevision: number
+  marginalFeeZats?: number
+  feeQuoteId?: string
+  feeTier?: FeeTier
+  feeZats?: number
+  selectedIds?: string[]
+  selectedScopes?: Readonly<Record<string, readonly string[]>>
+  transferPrivacyRevision?: number
+}
+
+const CONNECT_APPROVAL_ACTIONS = new Set([
+  'connect',
+  'evmConnect',
+  'bitcoinConnect',
+  'solanaConnect',
+  'nearConnect',
+  'multichainConnect'
+])
+
 const APPROVAL_ACTION_PREFIXES = Object.freeze({
   zcash: Object.freeze(['connect', 'sendTransaction', 'signMessage', 'shieldFunds']),
   evm: Object.freeze([
@@ -152,6 +176,11 @@ interface BatchAccountBalance {
 
 export class DAppHandler {
   private permissions: Map<string, DAppPermission> = new Map()
+  private approvalWindowLaunch: Promise<void> = Promise.resolve()
+  private readonly activeConnectApprovals = new Map<
+    string,
+    { promise: Promise<DAppApprovalDecision>; windowId?: number }
+  >()
   private isReady = false
   private signMessageInFlight = new Map<
     string,
@@ -1040,20 +1069,22 @@ export class DAppHandler {
   private async switchActiveAccount(walletId: string, accountId: string): Promise<void> {
     const wallet = useWalletStore.getState().getWallet(walletId)
     const restoreFromSession =
-      !backgroundZcashWalletRuntime.isLocked() &&
-      Boolean(wallet && !isZcashHardwareKeySource(wallet.keySource)) &&
-      backgroundZcashWalletRuntime.getSessionPassword() === null
-    if (restoreFromSession && !(await credentialSession.bindZcashCredential(walletId))) {
+      Boolean(wallet) && backgroundZcashWalletRuntime.getSessionPassword() === null
+    if (
+      restoreFromSession &&
+      !isZcashHardwareKeySource(wallet?.keySource) &&
+      !(await credentialSession.bindZcashCredential(walletId))
+    ) {
       await backgroundZcashWalletRuntime.lock().catch(() => {})
       throw new Error('Wallet credential is not available in the active session')
     }
     await switchActiveAccountPersistently(walletId, accountId)
-    if (!backgroundZcashWalletRuntime.isLocked()) {
-      if (restoreFromSession) {
-        await backgroundZcashWalletRuntime.restoreFromCredentialSession(walletId, accountId)
-      } else {
-        await backgroundZcashWalletRuntime.ensureWalletCoreAccount(walletId, accountId)
+    if (restoreFromSession) {
+      if (!(await backgroundZcashWalletRuntime.restoreFromCredentialSession(walletId, accountId))) {
+        throw new Error('Wallet credential session could not restore the selected account')
       }
+    } else if (!backgroundZcashWalletRuntime.isLocked()) {
+      await backgroundZcashWalletRuntime.ensureWalletCoreAccount(walletId, accountId)
     }
     syncScheduler.onAccountSwitched(walletId)
 
@@ -2134,65 +2165,120 @@ export class DAppHandler {
       readonly onEvmTransferPrivacyChange?: (enabled: boolean) => Promise<unknown>
       readonly cancelOnNetworkFeeTierChangeError?: boolean
     }
-  ): Promise<{
-    approved: boolean
-    requestId: string
-    walletId: string
-    accountId: string
-    authorizationRevision: number
-    marginalFeeZats?: number
-    feeQuoteId?: string
-    feeTier?: FeeTier
-    feeZats?: number
-    selectedIds?: string[]
-    selectedScopes?: Readonly<Record<string, readonly string[]>>
-    transferPrivacyRevision?: number
-  }> {
+  ): Promise<DAppApprovalDecision> {
+    if (!CONNECT_APPROVAL_ACTIONS.has(action)) {
+      return this.createUserApprovalWithId(origin, action, data, options)
+    }
+
+    const state = useWalletStore.getState()
+    const key = JSON.stringify([
+      origin,
+      action,
+      state.currentNetwork,
+      state.currentWalletId,
+      backgroundZcashWalletRuntime.getCurrentAccount()?.id,
+      data
+    ])
+    const active = this.activeConnectApprovals.get(key)
+    if (active) {
+      if (active.windowId !== undefined) {
+        await chrome.windows.update(active.windowId, { focused: true }).catch(() => {})
+      }
+      return active.promise
+    }
+
+    const entry = {} as { promise: Promise<DAppApprovalDecision>; windowId?: number }
+    entry.promise = this.createUserApprovalWithId(origin, action, data, options, windowId => {
+      entry.windowId = windowId
+    })
+    this.activeConnectApprovals.set(key, entry)
+    try {
+      return await entry.promise
+    } finally {
+      if (this.activeConnectApprovals.get(key) === entry) {
+        this.activeConnectApprovals.delete(key)
+      }
+    }
+  }
+
+  private async createUserApprovalWithId(
+    origin: string,
+    action: string,
+    data?: any,
+    options?: {
+      readonly onNetworkFeeTierChange?: (tier: 'low' | 'standard' | 'fast') => Promise<unknown>
+      readonly onEvmFeeSelectionChange?: (selection: EvmFeeSelection) => Promise<unknown>
+      readonly onEvmTransferPrivacyChange?: (enabled: boolean) => Promise<unknown>
+      readonly cancelOnNetworkFeeTierChangeError?: boolean
+    },
+    onWindowCreated?: (windowId: number) => void
+  ): Promise<DAppApprovalDecision> {
     const capturedWalletId = useWalletStore.getState().currentWalletId || ''
     const account = backgroundZcashWalletRuntime.getCurrentAccount()
     const capturedAccountId = account?.id || ''
     const capturedNetwork = useWalletStore.getState().currentNetwork
-    const authorizationRevision = await dappManager.getAuthorizationRevision(origin)
-    const executionModeRequestToken =
-      capturedWalletId &&
-      capturedAccountId &&
-      APPROVAL_ACTION_PREFIXES.evm.some(candidate => candidate === action)
-        ? dappExecutionModeRequestGate.capture({
-            network: DEFAULT_NETWORK,
-            keyDomainId: capturedWalletId,
-            accountId: capturedAccountId
-          })
-        : null
-
-    if (executionModeRequestToken) {
-      await dappExecutionModeRequestGate.waitForStable(executionModeRequestToken)
-    }
-    await closeAllPopupWindows()
-    if (executionModeRequestToken) {
-      await dappExecutionModeRequestGate.waitForStable(executionModeRequestToken)
-    }
-
-    const requestId = pendingRequestsManager.create(
-      origin,
-      action,
-      data,
-      capturedWalletId,
-      capturedAccountId,
-      capturedNetwork,
-      authorizationRevision
-    )
-
-    const lastWindow = await chrome.windows.getLastFocused()
+    let releaseLaunch = () => {}
+    const nextLaunch = new Promise<void>(resolve => {
+      releaseLaunch = resolve
+    })
+    const previousLaunch = this.approvalWindowLaunch
+    this.approvalWindowLaunch = nextLaunch
+    await previousLaunch
+    let authorizationRevision = 0
+    let requestId = ''
+    let left: number | undefined
+    let top: number | undefined
     const windowWidth = UI_CONFIG.DAPP_WINDOW.WIDTH
     const windowHeight = UI_CONFIG.DAPP_WINDOW.HEIGHT
+    try {
+      authorizationRevision = await dappManager.getAuthorizationRevision(origin)
+      const executionModeRequestToken =
+        capturedWalletId &&
+        capturedAccountId &&
+        APPROVAL_ACTION_PREFIXES.evm.some(candidate => candidate === action)
+          ? dappExecutionModeRequestGate.capture({
+              network: DEFAULT_NETWORK,
+              keyDomainId: capturedWalletId,
+              accountId: capturedAccountId
+            })
+          : null
 
-    const left =
-      lastWindow?.left !== undefined && lastWindow?.width !== undefined
-        ? lastWindow.left + lastWindow.width - windowWidth - 20
-        : undefined
-    const top = lastWindow?.top !== undefined ? lastWindow.top + 100 : undefined
+      if (executionModeRequestToken) {
+        await dappExecutionModeRequestGate.waitForStable(executionModeRequestToken)
+      }
+      pendingRequestsManager.cancelAll()
+      await closeAllPopupWindows()
+      if (executionModeRequestToken) {
+        await dappExecutionModeRequestGate.waitForStable(executionModeRequestToken)
+      }
 
-    return new Promise(resolve => {
+      requestId = pendingRequestsManager.create(
+        origin,
+        action,
+        data,
+        capturedWalletId,
+        capturedAccountId,
+        capturedNetwork,
+        authorizationRevision
+      )
+
+      const lastWindow = await chrome.windows.getLastFocused()
+
+      left =
+        lastWindow?.left !== undefined && lastWindow?.width !== undefined
+          ? lastWindow.left + lastWindow.width - windowWidth - 20
+          : undefined
+      top = lastWindow?.top !== undefined ? lastWindow.top + 100 : undefined
+    } catch (error) {
+      releaseLaunch()
+      throw error
+    }
+
+    return await new Promise<DAppApprovalDecision>((resolve, reject) => {
+      let retriedWithoutPosition = false
+      const failWindowCreation = () => {
+        reject(new Error('Wallet approval window could not be opened.'))
+      }
       chrome.windows.create(
         {
           url: `index.html#approval?requestId=${requestId}`,
@@ -2203,20 +2289,38 @@ export class DAppHandler {
           top,
           focused: true
         },
-        window => {
+        function handleApprovalWindow(window) {
+          const windowError = chrome.runtime.lastError?.message
+          if (
+            !window?.id &&
+            !retriedWithoutPosition &&
+            (left !== undefined || top !== undefined) &&
+            /bounds|screen space/i.test(windowError ?? '')
+          ) {
+            retriedWithoutPosition = true
+            try {
+              chrome.windows.create(
+                {
+                  url: `index.html#approval?requestId=${requestId}`,
+                  type: 'popup',
+                  width: windowWidth,
+                  height: windowHeight,
+                  focused: true
+                },
+                handleApprovalWindow
+              )
+            } catch {
+              failWindowCreation()
+            }
+            return
+          }
           if (!window || !window.id) {
-            pendingRequestsManager.cancel(requestId)
-            resolve({
-              approved: false,
-              requestId,
-              walletId: capturedWalletId,
-              accountId: capturedAccountId,
-              authorizationRevision
-            })
+            failWindowCreation()
             return
           }
 
           const windowId = window.id
+          onWindowCreated?.(windowId)
 
           let finished = false
           let feeUpdateInFlight = false
@@ -2426,7 +2530,9 @@ export class DAppHandler {
               })
               .catch(error => {
                 finish(false)
-                sendResponse({ error: error instanceof Error ? error.message : 'Approval expired' })
+                sendResponse({
+                  error: error instanceof Error ? error.message : 'Approval expired'
+                })
               })
             return true
           }
@@ -2434,6 +2540,10 @@ export class DAppHandler {
           removeCancellationListener = pendingRequestsManager.onCancel(requestId, () =>
             finish(false)
           )
+          if (finished) {
+            releaseLaunch()
+            return
+          }
 
           chrome.runtime.onMessage.addListener(messageListener)
 
@@ -2451,9 +2561,15 @@ export class DAppHandler {
             },
             action === 'evmGasFunding' ? EVM_GAS_FUNDING_APPROVAL_TIMEOUT_MS : 120000
           )
+          releaseLaunch()
         }
       )
     })
+      .catch(error => {
+        pendingRequestsManager.cancel(requestId)
+        throw error
+      })
+      .finally(releaseLaunch)
   }
 
   async revokePermission(origin: string): Promise<void> {

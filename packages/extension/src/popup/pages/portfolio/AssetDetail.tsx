@@ -1,9 +1,8 @@
 import { isZcashHardwareKeySource } from '@/core/wallet/hardware-wallet-data'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useLocation, useSearchParams } from 'react-router-dom'
 import { Icon } from '@iconify/react'
 import Big from '@/lib/big'
-import { PAGE_IDS } from '@/lib/analytics'
 import type { PortfolioReadModel } from '@/core/portfolio'
 import { supportsEvmPrivateExecution } from '@/core/chains/evm'
 import type { ActivityItem } from '@/core/activity'
@@ -17,11 +16,13 @@ import {
   formatPercentage,
   formatFiatAmount,
   formatTokenPrice,
-  formatBaseUnitAmount
+  formatBaseUnitAmount,
+  formatBaseUnitDecimalAmount
 } from '@/lib/number-format'
 
 import { resolveChainIconAlias } from '@/lib/chain-icon'
 import { cn } from '@/lib/utils'
+import { formatSortAddress, formatSymbol } from '@/lib/format'
 import { getAssetDetailCategories, getZcashPrivacyBalanceDisplay } from './asset-detail-balance'
 import { getChainEndpointRuntimeKey } from '@/core/chains/chain-endpoint-settings'
 import { useWalletStore } from '@/store/wallet-store'
@@ -35,15 +36,11 @@ import {
   useCopyToClipboard
 } from '@/popup/components/common/CopyToast'
 import { TokenIcon } from '@/popup/components/tokens/TokenIcon'
-import { AccountDomainBadge } from '@/popup/components/account/AccountDomainBadge'
-import { AssetDomainSelector } from '@/popup/components/portfolio/AssetDomainSelector'
+import { AssetBalanceRow } from '@/popup/components/portfolio/AssetBalanceRow'
+import { PrivateAddressWarningDialog } from '@/popup/components/account/PrivateAddressWarningDialog'
 import { confidentialFundingClient } from '@/popup/services/confidential-funding-client'
-import { swapTokenCatalogClient } from '@/popup/services/swap-token-catalog-client'
-import { resolveManagedIntentsCatalog } from '@/popup/services/intents-asset-manager-client'
-import { listShieldFundingAssets } from '@/popup/services/shield-transfer'
+import { getPrivateTransferChainIds } from '@/popup/services/private-balance-transfer'
 import { resolveNearConfidentialZecHolding } from '@/popup/services/near-confidential-holdings'
-import nearLogo from '@/images/figma-near-confidential.svg'
-import type { SwapToken } from '@/core/services/intents-api'
 
 import { formatDisplayTokenAmount } from '@/popup/components/portfolio/portfolio-format'
 import {
@@ -65,25 +62,28 @@ import { MultichainActivityPanel } from '@/popup/components/transaction/Multicha
 import { MultichainActivityDetail } from '@/popup/components/transaction/MultichainActivityDetail'
 import { openModal } from '@/popup/provider/ModalManager'
 import { MarketPriceChart } from '@/popup/components/portfolio/MarketPriceChart'
-import { WalletActionButton } from '@/popup/components/common/WalletActionButton'
+import {
+  WalletActionButton,
+  WalletShieldFundsIcon
+} from '@/popup/components/common/WalletActionButton'
 import {
   bitcoinAddressBalancesClient,
   type BitcoinAddressBalanceCatalogView
 } from '@/popup/services/bitcoin-address-balances-client'
 import { BitcoinAccountTypeSelector } from '@/popup/components/bitcoin/BitcoinAccountTypeSelector'
-import { useShieldFunds } from '@/popup/hooks/useShieldFunds'
 import { resolveEffectiveActiveAccountIdentity } from '@/popup/lib/effective-active-account'
 import { getFundingSourceUnavailableReason } from '@/core/wallet/funding-source'
-import { resolveZcashSelfMove } from '@/popup/services/zcash-self-move'
+import type { KeySource } from '@/types/wallet'
 
 export function AssetDetail() {
+  const location = useLocation()
+  const sendOriginPath = `${location.pathname}${location.search}`
   const [searchParams] = useSearchParams()
   const requestedAssetId = searchParams.get('assetId')
   const { goBack, navigate } = useNavigate()
   const currentWalletId = useWalletStore(state => state.currentWalletId)
   const currentAccountId = useWalletStore(state => state.currentAccountId)
   const currentWallet = useWalletStore(state => state.getCurrentWallet())
-  const currentAccount = useWalletStore(state => state.getCurrentAccount())
   const currentNetwork = useWalletStore(state => state.currentNetwork)
   const { activeAccount: storageV2Account } = useActiveAccountNetworks()
   const effectiveAccount = resolveEffectiveActiveAccountIdentity({
@@ -117,12 +117,11 @@ export function AssetDetail() {
   )
   const [bitcoinAccountSwitching, setBitcoinAccountSwitching] = useState(false)
   const [bitcoinAccountError, setBitcoinAccountError] = useState<string | null>(null)
-  const [shieldTokens, setShieldTokens] = useState<readonly SwapToken[]>([])
-  const [shieldLoading, setShieldLoading] = useState(false)
-  const [shieldError, setShieldError] = useState(false)
-  const [shieldRetry, setShieldRetry] = useState(0)
-  const { copyToClipboard, showToast, isCopied } = useCopyToClipboard()
-  const { isShielding, handleShieldFunds, shieldSheet } = useShieldFunds(PAGE_IDS.ASSET_DETAIL)
+  const { copyToClipboard, showToast, isCopied, copyFailed } = useCopyToClipboard()
+  const [privateCopyAddress, setPrivateCopyAddress] = useState<string | null>(null)
+  useEffect(() => {
+    setPrivateCopyAddress(null)
+  }, [effectiveWalletId, effectiveAccountId, currentNetwork, requestedAssetId])
 
   const load = useCallback(
     async (forceRefresh = false) => {
@@ -242,7 +241,6 @@ export function AssetDetail() {
     evmAccountNetwork?.privateExecutionAddress &&
     evmMainAddress
   )
-  const requestedDomain = searchParams.get('domain')
   const categories =
     asset && visibleModel
       ? getAssetDetailCategories(
@@ -261,106 +259,48 @@ export function AssetDetail() {
         assetId: asset.asset.id
       })
     : null
-  const detailDomain = categories?.domains.find(domain => domain === requestedDomain) ?? 'all'
-  const nearShieldSelected = chain?.chain.family === 'evm' && detailDomain === 'shield'
-  const canMoveZcashShield =
-    chain?.chain.family === 'zcash' &&
-    detailDomain === 'shield' &&
-    resolveZcashSelfMove(currentAccount?.addresses, 'shielded', currentNetwork) !== null &&
-    !getFundingSourceUnavailableReason(currentWallet?.keySource, 'shielded')
-  const shieldAssetSupported = listShieldFundingAssets(
-    visibleModel,
-    resolveManagedIntentsCatalog(shieldTokens),
-    shieldTokens,
-    currentNetwork
-  ).some(source => source.asset.asset.id === asset?.asset.id)
+  const actionDomain =
+    searchParams.get('mode') === 'private' &&
+    (chain?.chain.family !== 'evm' || privateTransferEligible)
+      ? 'private'
+      : 'public'
+  const activityFilterDomain = searchParams.get('history') === 'shield' ? 'shield' : undefined
   useEffect(() => {
-    if (
-      !nearShieldSelected ||
-      !privateTransferEligible ||
-      !effectiveWalletId ||
-      !effectiveAccountId
-    )
-      return
+    if (!privateTransferEligible || !effectiveWalletId || !effectiveAccountId) return
     let active = true
-    setShieldLoading(true)
-    setShieldError(false)
-    void Promise.allSettled([
-      confidentialFundingClient
-        .refreshBalances(
-          {
-            network: currentNetwork,
-            keyDomainId: effectiveWalletId,
-            accountId: effectiveAccountId
-          },
-          true
-        )
-        .then(async () => {
-          if (active) await readLatest()
-        }),
-      swapTokenCatalogClient.refresh().then(tokens => {
-        if (active) setShieldTokens(tokens)
+    void confidentialFundingClient
+      .refreshBalances(
+        {
+          network: currentNetwork,
+          keyDomainId: effectiveWalletId,
+          accountId: effectiveAccountId
+        },
+        true
+      )
+      .then(async () => {
+        if (active) await readLatest()
       })
-    ])
-      .then(results => {
-        if (!active) return
-        setShieldError(results.some(result => result.status === 'rejected'))
-      })
-      .finally(() => {
-        if (active) setShieldLoading(false)
-      })
+      .catch(() => {})
     return () => {
       active = false
     }
-  }, [
-    nearShieldSelected,
-    privateTransferEligible,
-    effectiveWalletId,
-    effectiveAccountId,
-    currentNetwork,
-    shieldRetry
-  ])
-  const activityFilterDomain =
-    (chain?.chain.family === 'evm' || chain?.chain.family === 'zcash') &&
-    (detailDomain === 'public' || detailDomain === 'shield' || detailDomain === 'private')
-      ? detailDomain
-      : undefined
-  const actionDomain =
-    detailDomain === 'all'
-      ? searchParams.get('mode') === 'private'
-        ? 'private'
-        : 'public'
-      : detailDomain
+  }, [privateTransferEligible, effectiveWalletId, effectiveAccountId, currentNetwork])
 
-  const handleMove = () => {
+  const handleMove = (from: 'public' | 'private' = actionDomain) => {
     if (!asset) return
-    const mode = searchParams.get('mode') === 'private' ? 'private' : 'public'
     const moveAssetHint = {
       scope: `${currentNetwork}:${effectiveWalletId ?? ''}:${effectiveAccountId ?? ''}:${chainEndpointRuntimeKey}`,
       assetId: asset.asset.id,
       symbol: asset.metadata.symbol,
       iconUrl: asset.metadata.iconUrl
     }
-    if (canMoveZcashShield) {
-      navigate(`/send/zcash?move=1&from=shielded&mode=${mode}`)
-      return
-    }
     if (!privateTransferEligible) return
-    if (nearShieldSelected) {
-      if (!shieldAssetSupported) return
-      navigate(
-        `/transfer?${new URLSearchParams({ assetId: asset.asset.id, provider: 'near-confidential', from: 'shield', to: mode, mode, entry: 'asset-detail' })}`,
-        { state: { moveAssetHint } }
-      )
-      return
-    }
-    const from = actionDomain === 'private' ? 'private' : 'public'
     navigate(
       `/transfer?${new URLSearchParams({
         assetId: asset.asset.id,
         entry: 'asset-detail',
         from,
-        to: from === 'public' ? 'private' : 'public',
+        to: 'shield',
         mode: searchParams.get('mode') === 'private' ? 'private' : 'public'
       })}`,
       { state: { moveAssetHint } }
@@ -395,12 +335,19 @@ export function AssetDetail() {
   const quote = asset ? findAssetPrice(prices, asset.asset.id) : undefined
   const explorerUrl =
     asset && chain ? formatChainAssetExplorerUrl(chain.chain.id, asset.asset, currentNetwork) : ''
+  const zcashKeySource: KeySource | undefined = storageV2Account
+    ? storageV2Account.walletSource.kind === 'hardware'
+      ? isZcashHardwareKeySource(storageV2Account.walletSource.hardware.vendor)
+        ? storageV2Account.walletSource.hardware.vendor
+        : undefined
+      : storageV2Account.walletSource.kind
+    : currentWallet?.keySource
+  const zcashFundingSource = getFundingSourceUnavailableReason(zcashKeySource, 'transparent')
+    ? 'shielded'
+    : 'transparent'
   const fundingUnavailableReason =
     chain?.chain.family === 'zcash'
-      ? getFundingSourceUnavailableReason(
-          currentWallet?.keySource,
-          detailDomain === 'public' ? 'transparent' : 'shielded'
-        )
+      ? getFundingSourceUnavailableReason(zcashKeySource, zcashFundingSource)
       : undefined
   const canSend = Boolean(
     chain &&
@@ -488,32 +435,20 @@ export function AssetDetail() {
     }
   }, [asset?.asset.id, historyRange, historyRetry])
 
-  const handleSend = () => {
+  const handleSend = (domain: 'public' | 'private' = actionDomain) => {
     if (!asset || !chain || !canSend) return
-    if (nearShieldSelected) {
-      if (privateTransferEligible && shieldAssetSupported)
-        navigate(
-          `/shield-withdraw?provider=near-confidential&assetId=${encodeURIComponent(asset.asset.id)}`
-        )
-      return
-    }
-    const domain = chain?.chain.family === 'evm' ? actionDomain : detailDomain
     if (chain.chain.family === 'evm' && domain === 'private') {
-      handleMove()
+      handleMove(domain)
       return
     }
     if (chain.chain.family === 'zcash') {
       navigate(
-        domain === 'shield'
-          ? '/send/zcash?from=shielded'
-          : domain === 'public'
-            ? '/send/zcash?from=transparent'
-            : '/send/zcash'
+        `/send/zcash?from=${zcashFundingSource}&originPath=${encodeURIComponent(sendOriginPath)}`
       )
       return
     }
     const query = new URLSearchParams({ assetId: asset.asset.id })
-    if (searchParams.get('mode') === 'private') query.set('mode', 'private')
+    if (domain === 'private') query.set('mode', 'private')
     if (chain.chain.family === 'evm') {
       if (domain === 'public') query.set('sourceMode', 'main')
     }
@@ -530,23 +465,16 @@ export function AssetDetail() {
     })
   }
 
-  const handleReceive = () => {
+  const handleReceive = (domain: 'public' | 'private' = actionDomain) => {
     if (!chain || !canReceive || !effectiveWalletId || !effectiveAccountId) return
-    if (nearShieldSelected) {
-      if (asset && privateTransferEligible && shieldAssetSupported)
-        navigate(
-          `/shield-deposit?provider=near-confidential&assetId=${encodeURIComponent(asset.asset.id)}`
-        )
-      return
-    }
     const query = new URLSearchParams({
       walletId: effectiveWalletId,
       accountId: effectiveAccountId,
       chainId: chain.chain.id,
-      mode: actionDomain === 'private' ? 'private' : 'public'
+      mode: domain
     })
     if (chain.chain.family === 'zcash') {
-      query.set('privacy', detailDomain === 'public' ? 'transparent' : 'shielded')
+      query.set('privacy', 'transparent')
     }
     navigate(`/addresses-list?${query.toString()}`)
   }
@@ -572,18 +500,127 @@ export function AssetDetail() {
     }
   }
 
-  const handleSwap = () => {
+  const handleSwap = (
+    domain: 'public' | 'private' = actionDomain,
+    fundingSource: 'transparent' | 'shielded' = searchParams.get('domain') === 'shield'
+      ? 'shielded'
+      : zcashFundingSource
+  ) => {
     if (!asset || !canSwap) return
-    if (nearShieldSelected) {
-      if (privateTransferEligible && shieldAssetSupported)
-        navigate(
-          `/shield-swap?provider=near-confidential&destination=${encodeURIComponent(asset.asset.id)}`
-        )
-      return
+    const query = new URLSearchParams({ source: asset.asset.id })
+    if (effectiveWalletId && effectiveAccountId) {
+      query.set('sourceWalletId', effectiveWalletId)
+      query.set('sourceAccountId', effectiveAccountId)
     }
-    const query = new URLSearchParams({ destination: asset.asset.id })
+    if (chain?.chain.family === 'zcash' && fundingSource === 'shielded') {
+      query.set('balanceDomain', 'shield')
+      query.set('shieldZecSource', 'native')
+    } else {
+      query.set('balanceDomain', domain)
+      if (chain?.chain.family === 'zcash') query.set('fundingSource', fundingSource)
+    }
     navigate(`/swap?${query.toString()}`)
   }
+
+  const confidentialActions = () => {
+    if (
+      !asset ||
+      getPrivateTransferChainIds(storageV2Account, currentNetwork === 'mainnet').length === 0
+    )
+      return []
+    const query = new URLSearchParams({ provider: 'near-confidential', assetId: asset.asset.id })
+    return [
+      {
+        action: 'send' as const,
+        label: 'Send',
+        onClick: () => navigate(`/shield-withdraw?${query}`)
+      },
+      {
+        action: 'receive' as const,
+        label: 'Receive',
+        onClick: () => navigate(`/shield-deposit?${query}`)
+      },
+      ...(chain?.chain.family === 'evm'
+        ? [
+            {
+              action: 'move' as const,
+              label: 'Move',
+              onClick: () =>
+                navigate(
+                  `/transfer?${query}&entry=asset-detail&from=shield&to=${actionDomain}&mode=${actionDomain}`
+                )
+            }
+          ]
+        : []),
+      { action: 'swap' as const, label: 'Swap', onClick: () => navigate(`/shield-swap?${query}`) }
+    ]
+  }
+
+  const accountActions = (domain: 'public' | 'private') => [
+    ...(domain === 'public'
+      ? [
+          {
+            action: 'send' as const,
+            label: 'Send',
+            disabled: !canSend,
+            onClick: () => handleSend(domain)
+          },
+          {
+            action: 'receive' as const,
+            label: 'Receive',
+            disabled: !canReceive,
+            onClick: () => handleReceive(domain)
+          }
+        ]
+      : []),
+    ...(privateTransferEligible
+      ? [{ action: 'move' as const, label: 'Move', onClick: () => handleMove(domain) }]
+      : []),
+    {
+      action: 'swap' as const,
+      label: 'Swap',
+      disabled: !canSwap || (domain === 'private' && !privateTransferEligible),
+      onClick: () => handleSwap(domain)
+    }
+  ]
+
+  const zcashActions = (privacy: 'transparent' | 'shielded') =>
+    [
+      {
+        action: 'send' as const,
+        label: 'Send',
+        disabled: Boolean(getFundingSourceUnavailableReason(zcashKeySource, privacy)),
+        onClick: () =>
+          navigate(`/send/zcash?from=${privacy}&originPath=${encodeURIComponent(sendOriginPath)}`)
+      },
+      {
+        action: 'receive' as const,
+        label: 'Receive',
+        disabled: !canReceive,
+        onClick: () =>
+          navigate(
+            `/addresses-list?${new URLSearchParams({ walletId: effectiveWalletId ?? '', accountId: effectiveAccountId ?? '', chainId: chain?.chain.id ?? '', privacy })}`
+          )
+      },
+      {
+        action: 'move' as const,
+        label: 'Move',
+        disabled: Boolean(getFundingSourceUnavailableReason(zcashKeySource, privacy)),
+        onClick: () =>
+          navigate(
+            `/send/zcash?move=1&from=${privacy}&originPath=${encodeURIComponent(sendOriginPath)}`
+          )
+      },
+      {
+        action: 'swap' as const,
+        label: 'Swap',
+        disabled: !canSwap,
+        onClick: () => handleSwap('public', privacy)
+      }
+    ].filter(
+      action =>
+        !getFundingSourceUnavailableReason(zcashKeySource, privacy) || action.action === 'receive'
+    )
 
   const handleActivityClick = useCallback(
     async (item: ActivityItem) => {
@@ -666,10 +703,18 @@ export function AssetDetail() {
     chain.chain.displayName,
     chain.chain.id
   )
-  const displayRaw = categories?.raw[detailDomain] ?? null
+  const displayRaw =
+    categories?.raw.all == null
+      ? null
+      : (BigInt(categories.raw.all) + BigInt(nearConfidentialZec?.availableRaw ?? '0')).toString()
   const detailAmount =
     displayRaw === null ? '—' : formatDisplayTokenAmount(displayRaw, asset.metadata.decimals)
-  const detailFiat = categories?.fiat[detailDomain] ?? null
+  const detailFiat =
+    displayRaw === null || !quote
+      ? null
+      : new Big(formatBaseUnitDecimalAmount(displayRaw, asset.metadata.decimals))
+          .times(quote.priceUsd)
+          .toFixed()
   const contractAddress = asset.asset.kind === 'token' ? asset.asset.reference : null
   const isZcashAsset = chain.chain.family === 'zcash'
   const hasPendingBalance = asset.balance.pendingRaw !== '0'
@@ -693,6 +738,31 @@ export function AssetDetail() {
       ? accountNetwork?.addresses.find(address => address.privacy === 'transparent')?.value
       : (preferredBitcoinAddress?.value ??
         accountNetwork?.addresses.find(address => address.preferredForReceive)?.value)
+  const formatBalanceFiat = (value: string | null | undefined) =>
+    value == null ? '—' : formatFiatAmount(value, { showSign: true })
+  const renderBalanceAddress = (
+    address: string | undefined,
+    label: string,
+    privateAddress = false
+  ) =>
+    address ? (
+      <>
+        <span className="min-w-0 truncate" title={address}>
+          {formatSortAddress(address)}
+        </span>
+        <button
+          type="button"
+          aria-label={`Copy ${label} address`}
+          onClick={() => {
+            if (privateAddress) setPrivateCopyAddress(address)
+            else void copyToClipboard(address, label)
+          }}
+          className="wallet-interactive flex size-5 shrink-0 items-center justify-center rounded text-muted hover:text-foreground"
+        >
+          <CopyFeedbackIcon copied={isCopied(label)} width={12} />
+        </button>
+      </>
+    ) : null
   const historyLinks = [
     {
       domain: 'public',
@@ -701,11 +771,11 @@ export function AssetDetail() {
     },
     {
       domain: 'private',
-      address: accountNetwork?.privateExecutionAddress,
+      address: privateTransferEligible ? accountNetwork?.privateExecutionAddress : undefined,
       label: 'View Private address'
     }
   ].flatMap(({ domain, address, label }) => {
-    if (!address || (detailDomain !== 'all' && detailDomain !== domain)) return []
+    if (!address) return []
     const href = formatChainAddressExplorerUrl(chain.chain.id, address, currentNetwork)
     return href ? [{ domain, label, href }] : []
   })
@@ -739,7 +809,7 @@ export function AssetDetail() {
           </a>
         </span>
       ))}
-      {detailDomain === 'all' && categories?.domains.includes('shield') && (
+      {categories?.domains.includes('shield') && (
         <>
           {historyLinks.length > 0 && (
             <span aria-hidden="true" className="text-muted">
@@ -751,12 +821,19 @@ export function AssetDetail() {
             className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:underline"
             onClick={() => {
               const query = new URLSearchParams(searchParams)
-              query.set('domain', 'shield')
+              if (activityFilterDomain === 'shield') query.delete('history')
+              else query.set('history', 'shield')
               navigate(`/asset-detail?${query}`, { replace: true })
             }}
           >
-            Shield history
-            <Icon icon="lucide:chevron-right" width={13} height={13} />
+            {activityFilterDomain === 'shield' ? 'All activity' : 'Shield history'}
+            <Icon
+              icon={
+                activityFilterDomain === 'shield' ? 'lucide:chevron-left' : 'lucide:chevron-right'
+              }
+              width={13}
+              height={13}
+            />
           </button>
         </>
       )}
@@ -768,25 +845,25 @@ export function AssetDetail() {
   if (searchParams.get('view') === 'info') {
     return (
       <div className="page-container">
-        <CopyToast show={showToast} />
+        <CopyToast show={showToast} error={copyFailed} message="Address copied" />
         <PageHeader title="Token details" showBack onBack={goBack} />
         <div className="page-content">
           <div className="flex items-center gap-3 py-5">
             <TokenIcon
               assetId={asset.asset.id}
-              symbol={asset.metadata.symbol}
+              symbol={formatSymbol(asset.metadata.symbol)}
               icon={asset.metadata.iconUrl}
               size={48}
             />
             <div>
-              <p className="font-medium">{asset.metadata.name}</p>
-              <p className="text-sm text-muted">{asset.metadata.symbol}</p>
+              <p className="font-medium">{formatSymbol(asset.metadata.name)}</p>
+              <p className="text-sm text-muted">{formatSymbol(asset.metadata.symbol)}</p>
             </div>
           </div>
           <dl className="divide-y divide-border/60">
             <div className="flex justify-between gap-4 py-4 text-sm">
-              <dt className="text-muted">{nearShieldSelected ? 'Shield provider' : 'Network'}</dt>
-              <dd>{nearShieldSelected ? 'NEAR Confidential' : chain.chain.displayName}</dd>
+              <dt className="text-muted">Network</dt>
+              <dd>{chain.chain.displayName}</dd>
             </div>
             {preferredBitcoinAddress && (
               <div className="flex items-center gap-3 py-4">
@@ -809,7 +886,7 @@ export function AssetDetail() {
                 <button
                   type="button"
                   aria-label="Receive Bitcoin"
-                  onClick={handleReceive}
+                  onClick={() => handleReceive()}
                   disabled={!canReceive}
                   className="wallet-interactive flex size-8 shrink-0 items-center justify-center rounded-full text-muted hover:bg-white/10 hover:text-foreground"
                 >
@@ -817,7 +894,7 @@ export function AssetDetail() {
                 </button>
               </div>
             )}
-            {contractAddress && !nearShieldSelected && (
+            {contractAddress && (
               <div className="flex items-center gap-3 py-4">
                 <div className="min-w-0 flex-1">
                   <dt className="text-xs text-muted">Contract address</dt>
@@ -834,7 +911,7 @@ export function AssetDetail() {
               </div>
             )}
           </dl>
-          {explorerUrl && !nearShieldSelected && (
+          {explorerUrl && (
             <a
               href={explorerUrl}
               target="_blank"
@@ -855,14 +932,26 @@ export function AssetDetail() {
       className="page-container"
       data-wallet-mode={searchParams.get('mode') === 'private' ? 'private' : 'public'}
     >
-      <CopyToast show={showToast} />
+      <CopyToast show={showToast} error={copyFailed} message="Address copied" />
+      <PrivateAddressWarningDialog
+        address={privateCopyAddress}
+        onClose={() => setPrivateCopyAddress(null)}
+        onConfirm={() => {
+          if (!privateCopyAddress) return
+          void copyToClipboard(privateCopyAddress, 'Private', { toastOnSuccess: true }).then(
+            copied => {
+              if (copied) setPrivateCopyAddress(null)
+            }
+          )
+        }}
+      />
       <PageHeader
-        title={asset.metadata.symbol}
+        title={formatSymbol(asset.metadata.symbol)}
         showBack
         onBack={goBack}
         action={{
           ariaLabel: 'Token details',
-          icon: <Icon icon="lucide:info" width={19} height={19} />,
+          icon: <Icon icon="lucide:ellipsis-vertical" width={19} height={19} />,
           onClick: () => {
             const query = new URLSearchParams(searchParams)
             query.set('view', 'info')
@@ -876,50 +965,22 @@ export function AssetDetail() {
           <div data-testid="asset-detail-token-icon">
             <TokenIcon
               assetId={asset.asset.id}
-              symbol={asset.metadata.symbol}
+              symbol={formatSymbol(asset.metadata.symbol)}
               icon={asset.metadata.iconUrl}
               blockchain={chainAlias}
-              size="xl"
+              size={52}
             />
           </div>
           <p
-            className="mt-4 max-w-full break-all text-[28px] font-medium leading-tight"
+            className="mt-4 max-w-full break-all text-[26px] font-medium leading-tight"
             title={
               displayRaw === null
                 ? undefined
-                : `${formatBaseUnitAmount(displayRaw, asset.metadata.decimals)} ${asset.metadata.symbol}`
+                : `${formatBaseUnitAmount(displayRaw, asset.metadata.decimals)} ${formatSymbol(asset.metadata.symbol)}`
             }
           >
-            {detailAmount} {asset.metadata.symbol}
+            {detailAmount} {formatSymbol(asset.metadata.symbol)}
           </p>
-          {categories && categories.domains.length > 1 && (
-            <div className="mt-2">
-              <AssetDomainSelector
-                value={detailDomain}
-                domains={categories.domains}
-                totals={categories.fiat}
-                balancesHidden={false}
-                onChange={domain => {
-                  const query = new URLSearchParams(searchParams)
-                  query.set('domain', domain)
-                  navigate(`/asset-detail?${query}`, { replace: true })
-                }}
-              />
-            </div>
-          )}
-          {nearShieldSelected && <p className="mt-1 text-xs text-muted">NEAR Confidential</p>}
-          {nearShieldSelected && shieldLoading && displayRaw === null && (
-            <Skeleton className="mt-2 h-4 w-20" />
-          )}
-          {nearShieldSelected && shieldError && (
-            <button
-              type="button"
-              onClick={() => setShieldRetry(value => value + 1)}
-              className="mt-2 text-xs text-primary"
-            >
-              Retry
-            </button>
-          )}
           {priceStatus === 'loading' && detailFiat === null ? (
             <Skeleton className="mt-2 h-4 w-20" />
           ) : (
@@ -927,28 +988,9 @@ export function AssetDetail() {
               {detailFiat === null ? '—' : formatFiatAmount(detailFiat, { showSign: true })}
             </p>
           )}
-          {isZcashAsset &&
-            detailDomain !== 'shield' &&
-            BigInt(asset.balance.shieldableRaw ?? '0') > 0n && (
-              <button
-                type="button"
-                onClick={handleShieldFunds}
-                disabled={isShielding}
-                aria-label="Shield transparent ZEC"
-                className="wallet-interactive mt-3 inline-flex h-8 items-center justify-center gap-1.5 rounded-full border border-primary/20 bg-primary/8 px-3.5 text-xs font-medium text-primary/90 enabled:hover:border-primary/30 enabled:hover:bg-primary/12 enabled:active:bg-primary/16 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                <Icon icon="lucide:shield" width={12} height={12} />
-                <span>{isShielding ? 'Shielding...' : 'Shield'}</span>
-              </button>
-            )}
         </section>
 
-        <div
-          className={cn(
-            'flex justify-center pb-5',
-            chain.chain.family === 'evm' && actionDomain !== 'private' ? 'gap-2' : 'gap-8'
-          )}
-        >
+        <div className="flex justify-center gap-2 pb-3">
           <WalletActionButton
             icon={
               <WalletActionIcon
@@ -960,42 +1002,19 @@ export function AssetDetail() {
             label={actionDomain === 'private' && chain.chain.family === 'evm' ? 'Move' : 'Send'}
             disabled={
               !canSend ||
-              (nearShieldSelected &&
-                (!privateTransferEligible ||
-                  !shieldAssetSupported ||
-                  displayRaw === null ||
-                  displayRaw === '0')) ||
               (actionDomain === 'private' &&
                 chain.chain.family === 'evm' &&
                 !privateTransferEligible)
             }
-            onClick={handleSend}
+            onClick={() => handleSend()}
             title={fundingUnavailableReason}
           />
           {(actionDomain !== 'private' || chain.chain.family !== 'evm') && (
             <WalletActionButton
               icon={<WalletActionIcon action="receive" />}
               label="Receive"
-              disabled={
-                !canReceive ||
-                (nearShieldSelected && (!privateTransferEligible || !shieldAssetSupported))
-              }
-              onClick={handleReceive}
-            />
-          )}
-          {((chain.chain.family === 'evm' && actionDomain !== 'private') ||
-            (chain.chain.family === 'zcash' && detailDomain === 'shield')) && (
-            <WalletActionButton
-              icon={<WalletActionIcon action="move" />}
-              label="Move"
-              disabled={
-                (chain.chain.family === 'evm' && !privateTransferEligible) ||
-                (nearShieldSelected &&
-                  (!shieldAssetSupported || displayRaw === null || displayRaw === '0')) ||
-                (chain.chain.family === 'zcash' &&
-                  (!canMoveZcashShield || displayRaw === null || displayRaw === '0'))
-              }
-              onClick={handleMove}
+              disabled={!canReceive}
+              onClick={() => handleReceive()}
             />
           )}
           <WalletActionButton
@@ -1003,42 +1022,62 @@ export function AssetDetail() {
             label="Swap"
             disabled={
               !canSwap ||
-              (nearShieldSelected &&
-                (!privateTransferEligible ||
-                  !shieldAssetSupported ||
-                  displayRaw === null ||
-                  displayRaw === '0')) ||
               (chain.chain.family === 'evm' &&
                 actionDomain === 'private' &&
                 !privateTransferEligible)
             }
-            onClick={handleSwap}
+            onClick={() => handleSwap()}
             title={fundingUnavailableReason}
           />
+          {(isZcashAsset || privateTransferEligible) && (
+            <WalletActionButton
+              icon={<WalletShieldFundsIcon />}
+              label="Shielded"
+              onClick={() =>
+                navigate(
+                  `/shield-funds?mode=${actionDomain}&assetId=${encodeURIComponent(asset.asset.id)}`
+                )
+              }
+            />
+          )}
         </div>
 
-        {chain.chain.family === 'evm' && detailDomain === 'all' && (
-          <section className="space-y-3 border-t border-border py-4" aria-label="Account balances">
-            <h2 className="text-sm font-semibold">Account balances</h2>
+        {chain.chain.family === 'evm' && (
+          <section className="py-2" aria-label="Account balances">
             {categories?.domains
-              .filter(domain => domain !== 'all')
+              .filter(
+                (domain): domain is 'public' | 'private' | 'shield' =>
+                  domain !== 'all' &&
+                  (domain === 'public' ||
+                    supportsEvmPrivateExecution(storageV2Account?.walletSource))
+              )
               .map(domain => {
                 const raw = categories.raw[domain]
                 return (
-                  <div key={domain} className="flex items-center justify-between gap-4 text-sm">
-                    <AccountDomainBadge domain={domain} />
-                    <span
-                      className="min-w-0 truncate text-right"
-                      title={
-                        raw === null
-                          ? undefined
-                          : `${formatBaseUnitAmount(raw, asset.metadata.decimals)} ${asset.metadata.symbol}`
-                      }
-                    >
-                      {raw === null ? '—' : formatDisplayTokenAmount(raw, asset.metadata.decimals)}{' '}
-                      {asset.metadata.symbol}
-                    </span>
-                  </div>
+                  <AssetBalanceRow
+                    key={domain}
+                    label={
+                      domain === 'shield' ? 'Shielded' : domain === 'private' ? 'Private' : 'Public'
+                    }
+                    subtitle={
+                      domain === 'shield'
+                        ? 'NEAR Confidential Intents'
+                        : domain === 'private'
+                          ? renderBalanceAddress(
+                              accountNetwork?.privateExecutionAddress,
+                              'Private',
+                              true
+                            )
+                          : renderBalanceAddress(publicAddress, 'Public')
+                    }
+                    balance={
+                      raw === null
+                        ? '—'
+                        : `${formatDisplayTokenAmount(raw, asset.metadata.decimals)} ${formatSymbol(asset.metadata.symbol)}`
+                    }
+                    fiat={formatBalanceFiat(categories.fiat[domain])}
+                    actions={domain === 'shield' ? confidentialActions() : accountActions(domain)}
+                  />
                 )
               })}
           </section>
@@ -1080,81 +1119,48 @@ export function AssetDetail() {
         )}
 
         {isZcashAsset && (
-          <section
-            className="space-y-3 border-t border-border py-4"
-            aria-label="Zcash balance breakdown"
-          >
-            <h2 className="text-sm font-semibold">Account balances</h2>
-            <div className="flex items-center justify-between gap-4 text-sm">
-              <AccountDomainBadge domain="shield" />
-              {zcashDisplay ? (
-                <span
-                  className="min-w-0 break-all text-right text-sm"
-                  title={`${formatBaseUnitAmount(asset.balance.shieldedRaw ?? '0', asset.metadata.decimals)} ZEC`}
-                >
-                  <span className="block">{zcashDisplay.shielded} ZEC</span>
-                  {zcashDisplay.shieldedPending && (
-                    <span className="block text-xs text-muted">
-                      {zcashDisplay.shieldedPending} ZEC pending
-                    </span>
-                  )}
-                </span>
-              ) : (
-                <Skeleton className="h-4 w-20" />
+          <section className="py-2" aria-label="Zcash balance breakdown">
+            <AssetBalanceRow
+              label="Transparent"
+              actions={zcashActions('transparent')}
+              subtitle={renderBalanceAddress(publicAddress, 'Transparent')}
+              balance={
+                zcashDisplay ? `${zcashDisplay.transparent} ZEC` : <Skeleton className="h-4 w-20" />
+              }
+              fiat={formatBalanceFiat(categories?.fiat.public)}
+              pending={
+                zcashDisplay?.transparentPending
+                  ? `${zcashDisplay.transparentPending} ZEC pending`
+                  : undefined
+              }
+            />
+            <AssetBalanceRow
+              label="Zcash Shield"
+              actions={zcashActions('shielded')}
+              subtitle={renderBalanceAddress(
+                accountNetwork?.addresses.find(address => address.privacy === 'shielded')?.value,
+                'Zcash Shield'
               )}
-            </div>
-            <div className="flex items-center justify-between gap-4 text-sm">
-              <AccountDomainBadge domain="public" chainFamily="zcash" />
-              {zcashDisplay ? (
-                <span
-                  className="min-w-0 break-all text-right text-sm"
-                  title={`${formatBaseUnitAmount(asset.balance.transparentRaw ?? '0', asset.metadata.decimals)} ZEC`}
-                >
-                  <span className="block">{zcashDisplay.transparent} ZEC</span>
-                  {zcashDisplay.transparentPending && (
-                    <span className="block text-xs text-muted">
-                      {zcashDisplay.transparentPending} ZEC pending
-                    </span>
-                  )}
-                </span>
-              ) : (
-                <Skeleton className="h-4 w-20" />
-              )}
-            </div>
+              balance={
+                zcashDisplay ? `${zcashDisplay.shielded} ZEC` : <Skeleton className="h-4 w-20" />
+              }
+              fiat={formatBalanceFiat(categories?.fiat.shield)}
+              pending={
+                zcashDisplay?.shieldedPending
+                  ? `${zcashDisplay.shieldedPending} ZEC pending`
+                  : undefined
+              }
+            />
             {nearConfidentialZec && (
-              <button
-                type="button"
-                onClick={() =>
-                  navigate(
-                    `/shield-swap?provider=near-confidential&destination=${encodeURIComponent(asset.asset.id)}`
-                  )
-                }
-                className="flex w-full items-center justify-between gap-4 text-left text-sm hover:text-primary"
-                aria-label="Swap NEAR Confidential ZEC"
-              >
-                <span className="inline-flex min-w-0 items-center gap-1.5 text-xs">
-                  <img src={nearLogo} alt="" className="size-4 shrink-0 rounded" />
-                  <span className="min-w-0 truncate">NEAR Confidential Intents</span>
-                </span>
-                <span className="flex min-w-0 items-center gap-1.5">
-                  <span
-                    className="min-w-0 truncate text-right"
-                    title={`${nearConfidentialZec.amount} ZEC`}
-                  >
-                    {formatDisplayTokenAmount(
-                      nearConfidentialZec.availableRaw,
-                      asset.metadata.decimals
-                    )}{' '}
-                    ZEC
-                  </span>
-                  <Icon
-                    icon="lucide:chevron-right"
-                    width={14}
-                    height={14}
-                    className="shrink-0 text-muted"
-                  />
-                </span>
-              </button>
+              <AssetBalanceRow
+                label="Shielded"
+                actions={confidentialActions()}
+                subtitle="NEAR Confidential Intents"
+                balance={`${formatDisplayTokenAmount(nearConfidentialZec.availableRaw, asset.metadata.decimals)} ZEC`}
+                fiat={formatBalanceFiat(
+                  quote ? new Big(nearConfidentialZec.amount).times(quote.priceUsd).toFixed() : null
+                )}
+              />
             )}
           </section>
         )}
@@ -1186,23 +1192,25 @@ export function AssetDetail() {
           />
         )}
 
-        {hasPendingBalance && !isZcashAsset && !nearShieldSelected && (
+        {hasPendingBalance && !isZcashAsset && (
           <section className="space-y-3 border-t border-border py-4" aria-label="Balance breakdown">
             <h2 className="text-sm font-semibold">Balance</h2>
             <div className="flex items-center justify-between gap-4 text-sm">
               <span className="text-muted">Pending</span>
               <span
                 className="min-w-0 break-all text-right text-sm"
-                title={`${formatBaseUnitAmount(asset.balance.pendingRaw, asset.metadata.decimals)} ${asset.metadata.symbol}`}
+                title={`${formatBaseUnitAmount(asset.balance.pendingRaw, asset.metadata.decimals)} ${formatSymbol(asset.metadata.symbol)}`}
               >
-                {display.pending} {asset.metadata.symbol}
+                {display.pending} {formatSymbol(asset.metadata.symbol)}
               </span>
             </div>
           </section>
         )}
 
         <section className="border-t border-border pt-4">
-          <h2 className="text-sm font-semibold">Activity</h2>
+          <h2 className="text-sm font-semibold">
+            {activityFilterDomain === 'shield' ? 'Shield history' : 'Recent activity'}
+          </h2>
           <div className="-mx-5 mt-2">
             <MultichainActivityPanel
               walletId={effectiveWalletId}
@@ -1212,15 +1220,12 @@ export function AssetDetail() {
               accountNetworks={storageV2Account?.networks}
               filterAssetId={asset.asset.id}
               filterDomain={activityFilterDomain}
-              accountMode={
-                chain.chain.family === 'evm' && actionDomain === 'private' ? 'private' : 'main'
-              }
+              accountMode={'main'}
               showToolbar={false}
               pageSize={5}
               localPagination
               historyFooter={
-                historyLinks.length > 0 ||
-                (detailDomain === 'all' && categories?.domains.includes('shield'))
+                historyLinks.length > 0 || categories?.domains.includes('shield')
                   ? historyFooter
                   : null
               }
@@ -1230,7 +1235,6 @@ export function AssetDetail() {
           </div>
         </section>
       </div>
-      {shieldSheet}
     </div>
   )
 }

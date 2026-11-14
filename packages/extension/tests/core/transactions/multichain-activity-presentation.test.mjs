@@ -13,6 +13,7 @@ import {
   getActivitySegmentStatusPresentation,
   getActivityStatusPresentation,
   getActivitySwapPresentation,
+  getClusterSettledDestination,
   getActivitySwapSourceMethodLabel,
   hasMatchingActivityTokenIcons,
   isAccountModeTransfer
@@ -84,7 +85,7 @@ test.describe('Multichain Activity presentation', () => {
       sourceAccountMode: 'Public',
       destinationAccountMode: 'Confidential'
     })
-    expect(getActivityRouteTitle(item, route)).toBe('Account Transfer')
+    expect(getActivityRouteTitle(item, route)).toBe('Move')
     expect(hasMatchingActivityTokenIcons(route)).toBe(true)
     expect(
       hasMatchingActivityTokenIcons({
@@ -548,5 +549,77 @@ test.describe('Multichain Activity presentation', () => {
       label: 'Pending',
       tone: 'neutral'
     })
+  })
+
+  test('uses only the complete, scoped Cluster settlement instead of its quote', () => {
+    const assetId = 'eip155:8453/erc20:0x833589fcd6edb6e08f4c7c32d4f71b54bda02913'
+    const item = {
+      id: 'tx:confidential:cluster-plan',
+      scope: { keyDomainId: 'wallet:cluster', accountId: 'account:cluster' },
+      kind: 'withdraw',
+      status: 'final',
+      completeness: 'complete',
+      snapshot: {
+        schemaVersion: 1,
+        shield: {
+          schemaVersion: 1,
+          operation: 'cluster',
+          sourceDomain: 'public',
+          destinationDomain: 'private'
+        },
+        primaryAmount: { assetId, amountRaw: '160000' },
+        counterAmount: { assetId, amountRaw: '144700' }
+      },
+      segments: [0, 1, 2].map(sequence => ({
+        id: `destination:${sequence}`,
+        role: 'destination',
+        target: { kind: 'onchain', chainId: 'eip155:8453' },
+        status: 'final'
+      }))
+    }
+    const plan = {
+      operation: 'cluster',
+      phase: 'ready',
+      transactionId: item.id,
+      keyDomainId: item.scope.keyDomainId,
+      accountId: item.scope.accountId,
+      destination: { assetId },
+      withdraws: [40828, 51918, 52052].map((value, sequence) => ({
+        sequence,
+        status: 'SUCCESS',
+        settledOutputRaw: String(value)
+      }))
+    }
+    const settled = getClusterSettledDestination(item, plan)
+    expect(settled).toEqual({ assetId, amountRaw: '144798' })
+    const route = getActivitySwapPresentation(
+      item,
+      new Map([[assetId, { metadata: { symbol: 'USDC', decimals: 6 } }]]),
+      new Map(),
+      new Map(),
+      settled
+    )
+    expect(route?.destinationIsSettled).toBe(true)
+    expect(route?.destination?.exact).toBe('0.144798')
+    expect(getClusterSettledDestination(item, { ...plan, phase: 'processing' })).toBeUndefined()
+    expect(
+      getClusterSettledDestination(item, {
+        ...plan,
+        withdraws: [
+          { ...plan.withdraws[0], status: 'SUCCESS' },
+          { ...plan.withdraws[1], status: 'PROCESSING' },
+          plan.withdraws[2]
+        ]
+      })
+    ).toBeUndefined()
+    expect(
+      getClusterSettledDestination(item, { ...plan, accountId: 'account:other' })
+    ).toBeUndefined()
+    expect(
+      getClusterSettledDestination(item, {
+        ...plan,
+        destination: { assetId: 'eip155:1/slip44:60' }
+      })
+    ).toBeUndefined()
   })
 })

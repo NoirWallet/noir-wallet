@@ -9,38 +9,76 @@ export function useMoveMethodEstimate({
   readonly enabled: boolean
   readonly requestKey: string
   readonly estimate: (signal: AbortSignal) => Promise<MoveMethodEstimate>
-}): { value: MoveMethodEstimate | null; loading: boolean } {
+}): {
+  value: MoveMethodEstimate | null
+  loading: boolean
+  error: boolean
+  errorMessage: string | null
+} {
   const estimateRef = useRef(estimate)
   estimateRef.current = estimate
   const [state, setState] = useState<{
     key: string
     value: MoveMethodEstimate | null
     loading: boolean
-  }>({ key: '', value: null, loading: false })
+    error: boolean
+    errorMessage: string | null
+  }>({ key: '', value: null, loading: false, error: false, errorMessage: null })
   useEffect(() => {
     const controller = new AbortController()
-    let timer: ReturnType<typeof setTimeout>
-    setState({ key: requestKey, value: null, loading: enabled })
+    setState(previous =>
+      previous.key === requestKey
+        ? { ...previous, loading: enabled, error: false, errorMessage: null }
+        : { key: requestKey, value: null, loading: enabled, error: false, errorMessage: null }
+    )
     if (!enabled) return () => controller.abort()
-    const refresh = async () => {
-      setState({ key: requestKey, value: null, loading: true })
+    // These are indicative fees, not execution quotes. Review obtains a fresh
+    // quote; polling here repeatedly prepares routes while the user is idle.
+    const timer = setTimeout(async () => {
       try {
         const value = await estimateRef.current(controller.signal)
-        if (controller.signal.aborted) return
-        const expiresIn = Math.min(30_000, value.expiresAt - Date.now())
-        setState({ key: requestKey, value: expiresIn > 0 ? value : null, loading: false })
-        if (expiresIn > 0) timer = setTimeout(() => void refresh(), expiresIn)
-      } catch {
-        if (!controller.signal.aborted) setState({ key: requestKey, value: null, loading: false })
+        if (!controller.signal.aborted)
+          setState({
+            key: requestKey,
+            value,
+            loading: false,
+            error: false,
+            errorMessage: null
+          })
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          const message = error instanceof Error ? error.message : null
+          setState(previous =>
+            previous.key === requestKey
+              ? {
+                  ...previous,
+                  loading: false,
+                  error: true,
+                  errorMessage: message
+                }
+              : {
+                  key: requestKey,
+                  value: null,
+                  loading: false,
+                  error: true,
+                  errorMessage: message
+                }
+          )
+        }
       }
-    }
-    timer = setTimeout(() => void refresh(), 450)
+    }, 450)
     return () => {
       controller.abort()
       clearTimeout(timer)
     }
   }, [enabled, requestKey])
-  return enabled && state.key === requestKey
-    ? { value: state.value, loading: state.loading }
-    : { value: null, loading: false }
+  if (!enabled || state.key !== requestKey) {
+    return { value: null, loading: false, error: false, errorMessage: null }
+  }
+  return {
+    value: state.value,
+    loading: state.loading,
+    error: state.error,
+    errorMessage: state.errorMessage
+  }
 }

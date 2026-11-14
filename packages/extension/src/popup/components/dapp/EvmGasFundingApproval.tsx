@@ -131,7 +131,7 @@ export function EvmGasFundingApproval(props: EvmGasFundingApprovalProps) {
           <section className="overflow-hidden rounded-2xl border border-border bg-card/35">
             <div className="flex items-center gap-3 border-b border-border px-4 py-3.5">
               <span className="flex size-9 items-center justify-center rounded-xl bg-primary/10 text-primary">
-                <Icon icon="solar:incognito-outline" width={20} height={20} />
+                <Icon icon="noir:private-assets" width={20} height={20} />
               </span>
               <div className="min-w-0">
                 <p className="text-sm font-medium">Confidential account</p>

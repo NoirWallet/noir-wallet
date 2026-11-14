@@ -71,7 +71,8 @@ export interface AccountNetworksCoordinatorOptions {
       readonly keyDomainId: KeyDomainId
       readonly accountId: AccountId
     },
-    family: AccountNetworkFamily
+    family: AccountNetworkFamily,
+    chainId: string
   ) => boolean | Promise<boolean>
   readonly getZcashShieldedReceiveAddress?: (scope: {
     readonly keyDomainId: KeyDomainId
@@ -102,7 +103,12 @@ export class AccountNetworksCoordinator {
       chainIds: (
         await Promise.all(
           active.availableChainAccounts.map(async item =>
-            (await this.networkEnabled(selection, item.chain.family, active.catalog.keyDomains))
+            (await this.networkEnabled(
+              selection,
+              item.chain.family,
+              item.chain.id,
+              active.catalog.keyDomains
+            ))
               ? item.chain.id
               : null
           )
@@ -114,12 +120,13 @@ export class AccountNetworksCoordinator {
   private async networkEnabled(
     scope: { readonly keyDomainId: KeyDomainId; readonly accountId: AccountId },
     family: AccountNetworkFamily,
+    chainId: string,
     keyDomains: readonly { readonly id: KeyDomainId; readonly source: { readonly kind: string } }[]
   ): Promise<boolean> {
     if (keyDomains.find(item => item.id === scope.keyDomainId)?.source.kind !== 'software') {
       return true
     }
-    return (await this.options.isNetworkEnabled?.(scope, family)) ?? true
+    return (await this.options.isNetworkEnabled?.(scope, family, chainId)) ?? true
   }
 
   async readCatalog(
@@ -163,6 +170,7 @@ export class AccountNetworksCoordinator {
                   !(await this.networkEnabled(
                     chainAccount.scope,
                     chain.family,
+                    chain.id,
                     snapshot.keyDomains
                   ))
                 )
@@ -363,7 +371,13 @@ export function createBackgroundAccountNetworksCoordinator(
     bitcoinDerivation,
     evmPeaDerivation,
     getZcashShieldedReceiveAddress,
-    isNetworkEnabled: (scope, family) =>
-      isStoredAccountNetworkEnabled(scope.keyDomainId, scope.accountId, DEFAULT_NETWORK, family)
+    isNetworkEnabled: (scope, family, chainId) =>
+      isStoredAccountNetworkEnabled(
+        scope.keyDomainId,
+        scope.accountId,
+        DEFAULT_NETWORK,
+        family,
+        chainId
+      )
   })
 }

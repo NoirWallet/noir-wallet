@@ -1,6 +1,8 @@
 import { getActivityAssetEffects, type ActivityItem, type ActivityReadModel } from '@/core/activity'
-import { parseAssetId } from '@/core/chains/registry'
+import { getZcashChainId, parseAssetId } from '@/core/chains/registry'
 import { resolveActivityChainId } from '@/popup/components/transaction/activity-chain'
+
+const ZCASH_CHAIN_IDS = new Set([getZcashChainId('mainnet'), getZcashChainId('testnet')])
 
 export function isActivityModelForScope(
   model: ActivityReadModel | null | undefined,
@@ -32,6 +34,7 @@ export function filterActivityItems(input: {
   readonly domain?: 'public' | 'private' | 'shield'
   readonly accountMode?: 'main' | 'private'
   readonly confidentialIntentsOnly?: boolean
+  readonly shieldProvider?: 'near-confidential' | 'zcash-shield'
   readonly executionAddressModes?: ReadonlyMap<string, 'Public' | 'Confidential'>
 }): readonly ActivityItem[] {
   const selectedChainIdSet = new Set(input.selectedChainIds)
@@ -69,6 +72,20 @@ export function filterActivityItems(input: {
         senderMode !== recipientMode)
     const shieldActivity =
       shield?.sourceDomain === 'shield' || shield?.destinationDomain === 'shield'
+    const hasConfidentialIntentsSegment = item.segments.some(
+      segment =>
+        segment.target.kind === 'protocol' && segment.target.provider === 'Confidential Intents'
+    )
+    const providerMatches =
+      input.shieldProvider === undefined ||
+      (input.shieldProvider === 'near-confidential'
+        ? hasConfidentialIntentsSegment
+        : !hasConfidentialIntentsSegment &&
+          (item.source === 'zcash-v1' ||
+            item.segments.some(
+              segment =>
+                segment.target.kind === 'onchain' && ZCASH_CHAIN_IDS.has(segment.target.chainId)
+            )))
     // Shield activity belongs to a separate asset domain, independent of EVM execution mode.
     const modeMatches =
       input.accountMode === undefined ||
@@ -80,7 +97,11 @@ export function filterActivityItems(input: {
       crossModeMove
     return (
       chainId !== undefined &&
-      (input.confidentialIntentsOnly || selectedChainIdSet.has(chainId)) &&
+      providerMatches &&
+      (input.confidentialIntentsOnly ||
+        (input.shieldProvider === 'zcash-shield'
+          ? ZCASH_CHAIN_IDS.has(chainId)
+          : selectedChainIdSet.has(chainId))) &&
       (!input.confidentialIntentsOnly ||
         item.segments.some(
           segment =>

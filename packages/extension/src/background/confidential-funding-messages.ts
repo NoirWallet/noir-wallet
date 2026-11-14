@@ -23,6 +23,7 @@ interface PlanMessage {
 
 interface ExternalDepositMessage {
   readonly depositId: string
+  readonly force?: boolean
 }
 
 const handlers = {
@@ -43,7 +44,7 @@ const handlers = {
   REFRESH_EXTERNAL_SHIELD_DEPOSIT: (
     { coordinator }: FundingContext,
     message: ExternalDepositMessage
-  ) => coordinator.refreshExternalDeposit(message.depositId),
+  ) => coordinator.refreshExternalDeposit(message.depositId, message.force !== false),
   CONFIRM_CONFIDENTIAL_FUNDING: (
     { coordinator }: FundingContext,
     message: PlanMessage & Readonly<{ payloadFingerprint: string }>

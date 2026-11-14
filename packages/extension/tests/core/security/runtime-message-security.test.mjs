@@ -20,12 +20,45 @@ import {
 const extensionId = 'abcdefghijklmnopabcdefghijklmnop'
 
 test.describe('Runtime message security', () => {
+  test('accepts scoped read-only EVM token balance requests only from extension pages', () => {
+    const message = {
+      type: 'GET_EVM_TOKEN_BALANCE',
+      chainId: 'eip155:42161',
+      token: '0x2222222222222222222222222222222222222222',
+      walletId: 'wallet-1',
+      accountId: 'account-1',
+      executionMode: 'main'
+    }
+    expect(parseTrustedExtensionRuntimeMessage(message)).toEqual(message)
+    expect(
+      isTrustedRuntimeMessageSender(
+        message.type,
+        { id: extensionId, url: `chrome-extension://${extensionId}/index.html` },
+        extensionId
+      )
+    ).toBe(true)
+    expect(() => parseTrustedExtensionRuntimeMessage({ ...message, token: 'invalid' })).toThrow()
+    expect(() =>
+      parseTrustedExtensionRuntimeMessage({ ...message, chainId: 'eip155:01' })
+    ).toThrow()
+    expect(() =>
+      parseTrustedExtensionRuntimeMessage({ ...message, walletId: 'x'.repeat(257) })
+    ).toThrow()
+    expect(() =>
+      parseTrustedExtensionRuntimeMessage({ ...message, executionMode: 'all' })
+    ).toThrow()
+    expect(() =>
+      parseTrustedExtensionRuntimeMessage({ ...message, address: message.token })
+    ).toThrow()
+  })
+
   test('limits account network changes to extension pages and valid family selections', () => {
     const message = {
       type: 'SET_ACCOUNT_NETWORK_SELECTION',
       walletId: 'wallet-1',
       accountId: 'account-1',
-      families: ['evm', 'zcash']
+      families: ['evm', 'zcash'],
+      chainIds: ['eip155:1', 'bip122:000000000019d6689c085ae165831e93']
     }
     expect(parseTrustedExtensionRuntimeMessage(message)).toEqual(message)
     expect(
@@ -44,6 +77,9 @@ test.describe('Runtime message security', () => {
     ).toBe(false)
     for (const families of [[], ['evm', 'evm'], ['unknown']]) {
       expect(() => parseTrustedExtensionRuntimeMessage({ ...message, families })).toThrow()
+    }
+    for (const chainIds of [[], ['eip155:1', 'eip155:1'], ['invalid']]) {
+      expect(() => parseTrustedExtensionRuntimeMessage({ ...message, chainIds })).toThrow()
     }
   })
 
@@ -284,6 +320,44 @@ test.describe('Runtime message security', () => {
     expect(
       isOwnExtensionRouteSender(popupSender, extensionId, '/hardware/sign', { tabId: 4 })
     ).toBe(false)
+    const chromeHardwareSender = {
+      id: extensionId,
+      url: `chrome-extension://${extensionId}/index.html`,
+      frameId: 0,
+      tab: {
+        id: 4,
+        windowId: 8,
+        url: `chrome-extension://${extensionId}/index.html#/hardware/sign?req=hardware-request-1`
+      }
+    }
+    expect(
+      isOwnExtensionRouteSender(chromeHardwareSender, extensionId, '/hardware/sign', {
+        tabId: 4,
+        windowId: 8
+      })
+    ).toBe(true)
+    for (const sender of [
+      { ...chromeHardwareSender, frameId: 1 },
+      { ...chromeHardwareSender, frameId: undefined },
+      { ...chromeHardwareSender, url: `chrome-extension://${extensionId}/index.html#/approval` },
+      { ...chromeHardwareSender, tab: { ...chromeHardwareSender.tab, id: 5 } },
+      { ...chromeHardwareSender, tab: { ...chromeHardwareSender.tab, windowId: 9 } },
+      {
+        ...chromeHardwareSender,
+        tab: {
+          ...chromeHardwareSender.tab,
+          url: `chrome-extension://${extensionId}/other.html#/hardware/sign`
+        }
+      },
+      {
+        ...chromeHardwareSender,
+        tab: { ...chromeHardwareSender.tab, url: 'https://site.example/index.html#/hardware/sign' }
+      }
+    ]) {
+      expect(
+        isOwnExtensionRouteSender(sender, extensionId, '/hardware/sign', { tabId: 4, windowId: 8 })
+      ).toBe(false)
+    }
     expect(
       isOwnExtensionServiceWorkerSender(
         serviceWorkerSender,
@@ -301,6 +375,12 @@ test.describe('Runtime message security', () => {
     ).toBe(true)
     expect(isTrustedRuntimeMessageSender('PORTFOLIO_UPDATED', popupSender, extensionId)).toBe(false)
     expect(isTrustedRuntimeMessageSender('WALLET_LOCKED', popupSender, extensionId)).toBe(true)
+    expect(isTrustedRuntimeMessageSender('CHECK_WALLET_AUTO_LOCK', popupSender, extensionId)).toBe(
+      true
+    )
+    expect(
+      isTrustedRuntimeMessageSender('CHECK_WALLET_AUTO_LOCK', contentScriptSender, extensionId)
+    ).toBe(false)
     expect(
       isTrustedRuntimeMessageSender('GET_BACKGROUND_INITIALIZATION_STATE', popupSender, extensionId)
     ).toBe(true)
@@ -961,6 +1041,7 @@ test.describe('Runtime message security', () => {
       parseTrustedExtensionRuntimeMessage({
         type: 'SUBMIT_HARDWARE_PCZT',
         requestId: 'hardware-request-1',
+        transactionId: 'transaction-1',
         signedPcztBase64: 'ZWZnaA=='
       })
     ).toMatchObject({ type: 'SUBMIT_HARDWARE_PCZT' })
@@ -968,6 +1049,7 @@ test.describe('Runtime message security', () => {
       parseTrustedExtensionRuntimeMessage({
         type: 'SUBMIT_LEDGER_SIGNATURES',
         requestId: 'hardware-request-1',
+        transactionId: 'transaction-1',
         signatures: { orchard: [], transparentInputSigs: [], ironwood: [] }
       })
     ).toMatchObject({ type: 'SUBMIT_LEDGER_SIGNATURES' })
@@ -975,6 +1057,7 @@ test.describe('Runtime message security', () => {
       parseTrustedExtensionRuntimeMessage({
         type: 'SUBMIT_HARDWARE_PCZT',
         requestId: 'hardware-request-1',
+        transactionId: 'transaction-1',
         signedPcztBase64: 'not base64'
       })
     ).toThrow(/schema/i)
@@ -982,10 +1065,28 @@ test.describe('Runtime message security', () => {
       parseTrustedExtensionRuntimeMessage({
         type: 'SUBMIT_HARDWARE_PCZT',
         requestId: 'hardware-request-1',
+        transactionId: 'transaction-1',
         origin: 'https://dapp.example',
         signedPcztBase64: 'ZWZnaA=='
       })
     ).toThrow(/schema/i)
+    for (const payload of [
+      { type: 'SUBMIT_HARDWARE_PCZT', signedPcztBase64: 'ZWZnaA==' },
+      {
+        type: 'SUBMIT_LEDGER_SIGNATURES',
+        signatures: { orchard: [], transparentInputSigs: [], ironwood: [] }
+      }
+    ]) {
+      for (const transactionId of [undefined, '', 1]) {
+        expect(() =>
+          parseTrustedExtensionRuntimeMessage({
+            ...payload,
+            requestId: 'hardware-request-1',
+            ...(transactionId === undefined ? {} : { transactionId })
+          })
+        ).toThrow(/schema/i)
+      }
+    }
     expect(
       parseTrustedExtensionRuntimeMessage({
         type: 'INSPECT_NEXT_ZCASH_ACCOUNT_HISTORY',
@@ -1161,6 +1262,12 @@ test.describe('Runtime message security', () => {
     expect(parseTrustedExtensionRuntimeMessage({ type: 'GET_WALLET_SESSION_STATE' })).toMatchObject(
       { type: 'GET_WALLET_SESSION_STATE' }
     )
+    expect(parseTrustedExtensionRuntimeMessage({ type: 'CHECK_WALLET_AUTO_LOCK' })).toEqual({
+      type: 'CHECK_WALLET_AUTO_LOCK'
+    })
+    expect(() =>
+      parseTrustedExtensionRuntimeMessage({ type: 'CHECK_WALLET_AUTO_LOCK', active: true })
+    ).toThrow()
     expect(
       parseTrustedExtensionRuntimeMessage({ type: 'GET_BACKGROUND_INITIALIZATION_STATE' })
     ).toMatchObject({ type: 'GET_BACKGROUND_INITIALIZATION_STATE' })
@@ -1400,6 +1507,34 @@ test.describe('Runtime message security', () => {
       type: 'PREPARE_EVM_TRANSFER',
       intent: transferIntent,
       feeSelection: { kind: 'custom', maxPriorityFeePerGasWei: '1500000000' }
+    })
+    const customSelection = {
+      kind: 'custom',
+      maxPriorityFeePerGasWei: '1500000000',
+      maxFeePerGasWei: '10000000000',
+      gasLimit: '25000'
+    }
+    expect(
+      parseTrustedExtensionRuntimeMessage({
+        type: 'PREPARE_EVM_TRANSFER',
+        intent: transferIntent,
+        feeSelection: customSelection
+      })
+    ).toEqual({
+      type: 'PREPARE_EVM_TRANSFER',
+      intent: transferIntent,
+      feeSelection: customSelection
+    })
+    expect(
+      parseTrustedExtensionRuntimeMessage({
+        type: 'PREPARE_EVM_TRANSFER',
+        intent: transferIntent,
+        feeSelection: { kind: 'legacy', gasPriceWei: '1000000000', gasLimit: '25000' }
+      })
+    ).toEqual({
+      type: 'PREPARE_EVM_TRANSFER',
+      intent: transferIntent,
+      feeSelection: { kind: 'legacy', gasPriceWei: '1000000000', gasLimit: '25000' }
     })
     expect(() =>
       parseTrustedExtensionRuntimeMessage({
@@ -1817,6 +1952,22 @@ test.describe('Runtime message security', () => {
       type: 'QUOTE_RHEA_SWAP',
       request
     })
+    expect(
+      parseTrustedExtensionRuntimeMessage({
+        type: 'QUOTE_RHEA_SWAP',
+        request,
+        purpose: 'wallet-swap',
+        zcashFundingSource: 'shielded'
+      })
+    ).toMatchObject({ zcashFundingSource: 'shielded' })
+    expect(() =>
+      parseTrustedExtensionRuntimeMessage({
+        type: 'QUOTE_RHEA_SWAP',
+        request,
+        purpose: 'wallet-swap',
+        zcashFundingSource: 'private'
+      })
+    ).toThrow(/schema/i)
     expect(
       parseTrustedExtensionRuntimeMessage({
         type: 'QUOTE_RHEA_SWAP',

@@ -32,8 +32,6 @@ import { WALLET_CONFIG } from '@/config/wallet'
 import { getOwnExtensionSenderContext } from '@/lib/runtime-message-security'
 import { offerSaveRecipient } from '@/popup/services/save-recipient-prompt'
 import { evmWalletClient } from '@/popup/services/evm-wallet-client'
-import { intentsAssetManagerClient } from '@/popup/services/intents-asset-manager-client'
-import { getChainFromAssetId } from '@/lib/format'
 import { resolveSwapStatusPollingProvider } from '@/popup/services/swap-page-model'
 import {
   confidentialFundingClient,
@@ -59,7 +57,6 @@ export function TransactionResultPage() {
     useTransactionResultStore()
   const dataRef = useRef(data)
   const leavingResultRef = useRef(false)
-  const revealedSwapDepositRef = useRef<string | null>(null)
   const [destinationConfirmations, setDestinationConfirmations] = useState<number | null>(null)
   const [resumingConfidentialFunding, setResumingConfidentialFunding] = useState(false)
   const [originActivity, setOriginActivity] = useState<ActivityItem | null>(null)
@@ -284,31 +281,6 @@ export function TransactionResultPage() {
 
     return () => controller.abort()
   }, [currentNetwork, destinationZcashTxHash, waitsForZcashDestination])
-
-  useEffect(() => {
-    const destinationAsset =
-      data?.type === 'swap' ? (data.destinationAsset ?? data.status?.destinationAsset) : undefined
-    if (
-      data?.type !== 'swap' ||
-      data.status?.status !== 'SUCCESS' ||
-      !destinationAsset ||
-      isZcashDestination({
-        destinationAsset,
-        destinationChain: data.destinationChain
-      }) ||
-      revealedSwapDepositRef.current === data.depositAddress
-    ) {
-      return
-    }
-    revealedSwapDepositRef.current = data.depositAddress
-    const destinationChainId = getChainFromAssetId(destinationAsset)
-    void intentsAssetManagerClient
-      .showProtocolAsset(destinationAsset)
-      .then(enabled =>
-        enabled ? evmWalletClient.getPortfolio('refresh', { chainIds: [destinationChainId] }) : null
-      )
-      .catch(() => {})
-  }, [data])
 
   useEffect(() => {
     const listener = (message: any, sender: chrome.runtime.MessageSender) => {
@@ -591,6 +563,12 @@ export function TransactionResultPage() {
         <PageHeader title="" />
         <StandardTransactionResult
           step={resultStep}
+          operation={
+            data.operation ??
+            (resultTransaction?.type === 'shield' || resultTransaction?.type === 'unshield'
+              ? 'move'
+              : 'send')
+          }
           amount={data.amount}
           fromAddress={data.fromAddress}
           toAddress={data.toAddress}

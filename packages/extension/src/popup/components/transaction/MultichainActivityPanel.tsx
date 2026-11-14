@@ -27,6 +27,20 @@ import {
   resolveAvailableActivityChainSelection
 } from '@/popup/services/activity-list-model'
 import { buildActivityExecutionAddressModes } from './multichain-activity-presentation'
+import { accountNetworksClient } from '@/popup/services/account-networks-client'
+import { assetPriceClient } from '@/popup/services/asset-price-client'
+import type { AssetPriceReadModel } from '@/core/prices'
+import { useAddressBookStore } from '@/store/address-book-store'
+import { shouldWarnSmallTransfer } from '@/popup/services/activity-small-transfer-warning'
+import { getZcashChainId } from '@/core/chains/registry'
+import type { TransactionAssetAmount } from '@/core/transactions/domain'
+import {
+  confidentialFundingClient,
+  getConfidentialFundingPlanId
+} from '@/popup/services/confidential-funding-client'
+import { getClusterSettledDestination } from './multichain-activity-presentation'
+import type { SyncStateSnapshot } from '@/background/sync-scheduler'
+import { useWalletStore } from '@/store/wallet-store'
 
 interface MultichainActivityPanelProps {
   readonly walletId: string | null
@@ -39,13 +53,18 @@ interface MultichainActivityPanelProps {
   readonly filterAssetId?: string
   readonly filterDomain?: 'public' | 'private' | 'shield'
   readonly confidentialIntentsOnly?: boolean
+  readonly shieldProvider?: 'near-confidential' | 'zcash-shield'
   readonly showToolbar?: boolean
   readonly maxItems?: number
   readonly pageSize?: number
   readonly localPagination?: boolean
   readonly historyFooter?: ReactNode
   readonly compact?: boolean
+  readonly heading?: string
+  readonly hideWhenEmpty?: boolean
   readonly accountMode?: DAppExecutionMode
+  /** Total view: list every execution mode instead of only the current one. */
+  readonly allExecutionModes?: boolean
   readonly focusTransactionId?: string | null
 }
 
@@ -100,16 +119,21 @@ export function MultichainActivityPanel({
   filterAssetId,
   filterDomain,
   confidentialIntentsOnly = false,
+  shieldProvider,
   showToolbar = true,
   maxItems,
   pageSize = ACTIVITY_DISPLAY_PAGE_SIZE,
   localPagination = false,
   historyFooter,
   compact = false,
+  heading,
+  hideWhenEmpty = false,
   accountMode,
+  allExecutionModes = false,
   focusTransactionId
 }: MultichainActivityPanelProps) {
   const requestSequence = useRef(0)
+  const historyStatusRequestSequence = useRef(0)
   const olderRequestSequence = useRef(0)
   const focusedTransactionId = useRef<string | null>(null)
   const scopedInitialModel = isActivityModelForScope(initialModel, walletId, accountId)
@@ -121,14 +145,62 @@ export function MultichainActivityPanel({
   )
   const [visibleLimit, setVisibleLimit] = useState(pageSize)
   const [olderStatus, setOlderStatus] = useState<'ready' | 'loading' | 'error'>('ready')
+  const [historyRefreshFailed, setHistoryRefreshFailed] = useState(false)
+  const [smallTransferPrices, setSmallTransferPrices] = useState<AssetPriceReadModel | null>(null)
+  const [clusterSettlements, setClusterSettlements] = useState<{
+    scope: string
+    amounts: ReadonlyMap<string, TransactionAssetAmount>
+  } | null>(null)
+  const [ownedAddresses, setOwnedAddresses] = useState<
+    readonly { chainId: string; address: string }[] | null
+  >(null)
+  const contacts = useAddressBookStore(state => state.contacts)
   const historyPageCount = useRef(1)
   const scopeKey = JSON.stringify([walletId ?? '', accountId ?? ''])
+  useEffect(() => {
+    let active = true
+    setOwnedAddresses(null)
+    if (walletId) {
+      void accountNetworksClient
+        .getCatalog()
+        .then(catalog => {
+          if (!active || !catalog) return
+          setOwnedAddresses(
+            catalog.accounts.flatMap(account =>
+              account.networks.flatMap(entry => [
+                ...entry.addresses.map(address => ({
+                  chainId: entry.chain.id,
+                  address: address.value
+                })),
+                ...(entry.privateExecutionAddress
+                  ? [{ chainId: entry.chain.id, address: entry.privateExecutionAddress }]
+                  : [])
+              ])
+            )
+          )
+        })
+        .catch(() => {})
+    }
+    void assetPriceClient
+      .getPrices('read')
+      .then(prices => {
+        if (active) setSmallTransferPrices(prices)
+      })
+      .catch(() => {})
+    return () => {
+      active = false
+    }
+  }, [walletId, network])
   const persistedChainSelection = useSettingsStore(
     state => state.portfolioChainSelectionByAccount[scopeKey]
   )
   const setPortfolioChainSelection = useSettingsStore(state => state.setPortfolioChainSelection)
   const endpointSettings = useSettingsStore(state => state.chainEndpointSettings)
-  const { userAssets: userEvmAssets, detectedAssets: detectedEvmAssets } = useActivityEvmAssets()
+  const {
+    userAssets: userEvmAssets,
+    detectedAssets: detectedEvmAssets,
+    catalogTokens
+  } = useActivityEvmAssets()
   const filteredChainId = filterAssetId
     ? portfolio?.assets.find(asset => asset.asset.id === filterAssetId)?.asset.chainId
     : undefined
@@ -140,9 +212,10 @@ export function MultichainActivityPanel({
         endpointSettings,
         userEvmAssets,
         detectedEvmAssets,
+        catalogTokens,
         portfolio
       }),
-    [endpointSettings, network, portfolio, userEvmAssets, detectedEvmAssets]
+    [endpointSettings, network, portfolio, userEvmAssets, detectedEvmAssets, catalogTokens]
   )
   const executionAddressModes = useMemo(
     () => buildActivityExecutionAddressModes(accountNetworks),
@@ -168,14 +241,56 @@ export function MultichainActivityPanel({
     [availableChainIds, filteredChainId, persistedChainSelection]
   )
   const selectedChainKey = selectedChainIds.join(',')
+  const providerChainIds = useMemo(
+    () =>
+      shieldProvider === 'zcash-shield'
+        ? [getZcashChainId(network)]
+        : shieldProvider === 'near-confidential'
+          ? undefined
+          : selectedChainIds,
+    [network, selectedChainIds, shieldProvider]
+  )
+  const showsTransparentHistory =
+    selectedChainIds.includes(getZcashChainId(network)) &&
+    !confidentialIntentsOnly &&
+    !shieldProvider &&
+    (filterDomain === undefined || filterDomain === 'public')
+
+  const readHistoryRefreshStatus = useCallback(async () => {
+    const request = ++historyStatusRequestSequence.current
+    if (!walletId || !accountId || !showsTransparentHistory) return
+    try {
+      const snapshot = (await chrome.runtime.sendMessage({
+        type: 'GET_SYNC_STATE',
+        walletId,
+        accountId
+      })) as Partial<SyncStateSnapshot>
+      if (
+        request === historyStatusRequestSequence.current &&
+        snapshot.walletId === walletId &&
+        snapshot.accountId === accountId
+      ) {
+        setHistoryRefreshFailed(snapshot.transactionHistoryRefreshFailed === true)
+      }
+    } catch {
+      // Keep the last known history state until Background can answer again.
+    }
+  }, [accountId, showsTransparentHistory, walletId])
+
+  useEffect(() => {
+    setHistoryRefreshFailed(false)
+    void readHistoryRefreshStatus()
+    return () => {
+      historyStatusRequestSequence.current += 1
+    }
+  }, [network, readHistoryRefreshStatus])
 
   const load = useCallback(async () => {
     const request = ++requestSequence.current
     olderRequestSequence.current += 1
     setOlderStatus('ready')
     setStatus('loading')
-    const chainIds =
-      !focusTransactionId && selectedChainKey ? selectedChainKey.split(',') : undefined
+    const chainIds = !focusTransactionId && providerChainIds?.length ? providerChainIds : undefined
     let localModelAvailable = false
     try {
       const local = await evmWalletClient.getActivity(
@@ -187,7 +302,7 @@ export function MultichainActivityPanel({
       if (isActivityModelForScope(local, walletId, accountId)) {
         localModelAvailable = true
         setModel(local)
-        if (local.items.length > 0) setStatus('ready')
+        setStatus('ready')
       }
     } catch {
       // A supplemental refresh can still recover when the local read is temporarily unavailable.
@@ -216,7 +331,7 @@ export function MultichainActivityPanel({
       if (request !== requestSequence.current) return
       setStatus(localModelAvailable ? 'ready' : 'error')
     }
-  }, [accountId, filteredChainId, focusTransactionId, selectedChainKey, walletId])
+  }, [accountId, filteredChainId, focusTransactionId, providerChainIds, walletId])
 
   useEffect(() => {
     const retainedModel = isActivityModelForScope(initialModel, walletId, accountId)
@@ -259,6 +374,8 @@ export function MultichainActivityPanel({
         return
       }
 
+      void readHistoryRefreshStatus()
+
       void evmWalletClient
         .getActivity('read', 'all')
         .then(next => {
@@ -275,7 +392,7 @@ export function MultichainActivityPanel({
       cancelled = true
       chrome.runtime.onMessage.removeListener(listener)
     }
-  }, [accountId, network, walletId])
+  }, [accountId, network, readHistoryRefreshStatus, walletId])
 
   const visibleModel = isActivityModelForScope(model, walletId, accountId) ? model : null
   const selectedNetwork =
@@ -315,12 +432,15 @@ export function MultichainActivityPanel({
         assetId: filterAssetId,
         domain: filterDomain,
         confidentialIntentsOnly,
-        accountMode: filterAssetId ? undefined : accountMode,
+        shieldProvider,
+        accountMode: filterAssetId || allExecutionModes ? undefined : accountMode,
         executionAddressModes
       }),
     [
       accountMode,
+      allExecutionModes,
       confidentialIntentsOnly,
+      shieldProvider,
       executionAddressModes,
       filterAssetId,
       filterDomain,
@@ -391,6 +511,43 @@ export function MultichainActivityPanel({
     () => visibleItems.slice(0, maxItems ?? visibleLimit),
     [maxItems, visibleItems, visibleLimit]
   )
+  const clusterSettlementScope = JSON.stringify([network, walletId, accountId])
+  useEffect(() => {
+    let active = true
+    const completedClusters = displayedItems.filter(
+      item => item.snapshot?.shield?.operation === 'cluster' && item.status === 'final'
+    )
+    if (completedClusters.length === 0) {
+      setClusterSettlements({ scope: clusterSettlementScope, amounts: new Map() })
+      return
+    }
+    void Promise.all(
+      completedClusters.map(async item => {
+        const planId = getConfidentialFundingPlanId(item.id)
+        if (!planId) return null
+        try {
+          const plan = await confidentialFundingClient.get(planId)
+          if (plan.network !== network) return null
+          const settled = getClusterSettledDestination(item, plan)
+          return settled ? ([item.id, settled] as const) : null
+        } catch {
+          return null
+        }
+      })
+    ).then(entries => {
+      if (active) {
+        setClusterSettlements({
+          scope: clusterSettlementScope,
+          amounts: new Map(
+            entries.filter((entry): entry is NonNullable<typeof entry> => entry !== null)
+          )
+        })
+      }
+    })
+    return () => {
+      active = false
+    }
+  }, [clusterSettlementScope, displayedItems, network])
   const canLoadOlder =
     maxItems === undefined &&
     (visibleItems.length > visibleLimit ||
@@ -410,7 +567,7 @@ export function MultichainActivityPanel({
     setOlderStatus('loading')
     try {
       const next = await evmWalletClient.getActivity('refresh', 'all', {
-        ...(selectedChainIds.length > 0 ? { chainIds: selectedChainIds } : {}),
+        ...(providerChainIds?.length ? { chainIds: providerChainIds } : {}),
         historyPageCount: nextPageCount
       })
       if (request !== olderRequestSequence.current || refreshRequest !== requestSequence.current)
@@ -459,6 +616,24 @@ export function MultichainActivityPanel({
         )
       })
     : null
+  const historyIssueBanner =
+    historyRefreshFailed && showsTransparentHistory ? (
+      <div className="px-5 py-2">
+        <InlineError
+          message="Unable to refresh Zcash history"
+          onRetry={() => {
+            const active = useWalletStore.getState()
+            if (
+              active.currentNetwork !== network ||
+              active.currentWalletId !== walletId ||
+              active.currentAccountId !== accountId
+            )
+              return
+            void chrome.runtime.sendMessage({ type: 'BACKGROUND_SYNC' }).catch(() => {})
+          }}
+        />
+      </div>
+    ) : null
 
   const toolbar = showToolbar ? (
     <div className="shrink-0 px-4 pb-3 pt-3">
@@ -515,11 +690,16 @@ export function MultichainActivityPanel({
     </div>
   ) : null
 
+  const sectionClassName = cn('min-h-0', heading && 'border-t border-white/[0.08] pt-4')
+  const sectionHeading = heading ? <h2 className="px-4 text-sm font-semibold">{heading}</h2> : null
+
   if (status === 'loading' && (!visibleModel || visibleItems.length === 0)) {
     return (
-      <section aria-label="Multichain activity" className="min-h-0">
+      <section aria-label="Multichain activity" className={sectionClassName}>
+        {sectionHeading}
         {toolbar}
         {recoveryBanners}
+        {historyIssueBanner}
         <ListSkeleton rows={3} label="Loading activity" className="px-5 py-3" />
       </section>
     )
@@ -527,9 +707,11 @@ export function MultichainActivityPanel({
 
   if (status === 'error' && !visibleModel) {
     return (
-      <section aria-label="Multichain activity" className="min-h-0">
+      <section aria-label="Multichain activity" className={sectionClassName}>
+        {sectionHeading}
         {toolbar}
         {recoveryBanners}
+        {historyIssueBanner}
         <div className={cn('flex items-center px-6', compact ? 'min-h-28 py-4' : 'min-h-48 py-8')}>
           <InlineError
             message="Unable to load activity"
@@ -543,10 +725,14 @@ export function MultichainActivityPanel({
   }
 
   if (!visibleModel || visibleItems.length === 0) {
+    if (hideWhenEmpty && status === 'ready' && !olderControl && !historyIssueBanner)
+      return fullHistoryLink
     return (
-      <section aria-label="Multichain activity" className="min-h-0">
+      <section aria-label="Multichain activity" className={sectionClassName}>
+        {sectionHeading}
         {toolbar}
         {recoveryBanners}
+        {historyIssueBanner}
         <EmptyState
           icon="lucide:inbox"
           title={filterAssetId ? 'No activity for this asset' : 'No activity yet'}
@@ -559,9 +745,11 @@ export function MultichainActivityPanel({
   }
 
   return (
-    <section aria-label="Multichain activity" className="min-h-0">
+    <section aria-label="Multichain activity" className={sectionClassName}>
+      {sectionHeading}
       {toolbar}
       {recoveryBanners}
+      {historyIssueBanner}
       <div className="space-y-4 pb-4">
         {groups.map(([date, items]) => (
           <section key={date} aria-label={date}>
@@ -583,6 +771,22 @@ export function MultichainActivityPanel({
                     chainIconAlias={chain?.iconAlias}
                     chainId={chainId}
                     executionAddressModes={executionAddressModes}
+                    settledDestination={
+                      clusterSettlements?.scope === clusterSettlementScope
+                        ? clusterSettlements.amounts.get(item.id)
+                        : undefined
+                    }
+                    smallTransferWarning={shouldWarnSmallTransfer({
+                      item,
+                      history: visibleModel?.items ?? [],
+                      historyComplete: visibleModel?.hasMore !== true,
+                      ownedAddresses,
+                      contactAddresses: contacts
+                        .filter(contact => contact.network === network)
+                        .map(contact => ({ chainId: contact.chainId, address: contact.address })),
+                      assetMetadata,
+                      prices: smallTransferPrices
+                    })}
                     onClick={onItemClick}
                   />
                 )

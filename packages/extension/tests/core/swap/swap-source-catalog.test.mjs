@@ -119,6 +119,57 @@ it('retains Arbitrum ETH as a Private destination after merging native provider 
   assert.equal(destinations[0].symbol, 'ETH')
 })
 
+it('selects the current BNB USDC protocol route when legacy and current rows share a contract', async () => {
+  const contract = '0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d'
+  const legacyId = 'nep245:v2_1.omni.hot.tg:56_2w93GqMcEmQFDru84j3HZZWt557r'
+  const currentId = `nep141:bnb-${contract}.omdep.near`
+  const legacy = {
+    assetId: legacyId,
+    address: contract,
+    contractAddress: contract,
+    symbol: 'USDC(DEPRECATED)',
+    decimals: 18,
+    sources: ['nearintents']
+  }
+  const current = { ...legacy, assetId: currentId, symbol: 'USDC' }
+
+  for (const entries of [
+    [legacy, current],
+    [current, legacy]
+  ]) {
+    const normalized = normalizeFromTokenList(
+      Object.fromEntries(entries.map((row, index) => [`${row.assetId}:${index}`, row])),
+      56
+    )
+    assert.equal(normalized.length, 2)
+    const service = new RheaSwapService(
+      { getFromTokens: async () => normalized },
+      new MemoryRheaSwapQuoteSessionStore()
+    )
+    const catalog = await service.listTokens({ direction: 'from', tokenListChainIds: [56] })
+    assert.deepEqual(catalog.failedChainIds, [])
+    assert.equal(catalog.tokens.length, 1)
+    assert.equal(catalog.tokens[0].assetId, currentId)
+    assert.equal(catalog.tokens[0].symbol, 'USDC')
+  }
+
+  const normalized = normalizeFromTokenList({ legacy, current }, 56)
+  const service = new RheaSwapService(
+    { getFromTokens: async () => [normalized[0], { ...normalized[1], sources: [] }] },
+    new MemoryRheaSwapQuoteSessionStore()
+  )
+  const catalog = await service.listTokens({ direction: 'from', tokenListChainIds: [56] })
+  assert.deepEqual(catalog.tokens[0].sources, [])
+  const legacyOnlyService = new RheaSwapService(
+    { getFromTokens: async () => normalizeFromTokenList({ legacy }, 56) },
+    new MemoryRheaSwapQuoteSessionStore()
+  )
+  assert.deepEqual(
+    (await legacyOnlyService.listTokens({ direction: 'from', tokenListChainIds: [56] })).tokens,
+    []
+  )
+})
+
 it('does not treat a protocol native asset ID from another EVM chain as Arbitrum ETH', () => {
   const item = arbitrumNativeCatalog().find(item => item.sources.includes('nearIntents'))
 

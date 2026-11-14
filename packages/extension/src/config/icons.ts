@@ -1,11 +1,9 @@
 import { getEvmNetworkConfigs } from './networks'
 
 const CHAIN_ICON_BASE_URL = 'https://assets.zknoir.com/chain'
-export const GENERIC_CHAIN_ICON_URL = '/icons/chains/network.svg'
 
 interface ChainIconConfig {
-  readonly file?: string
-  readonly url?: string
+  readonly file: string
 }
 
 const CHAIN_ICONS: Readonly<Record<string, ChainIconConfig>> = Object.freeze({
@@ -20,13 +18,13 @@ const CHAIN_ICONS: Readonly<Record<string, ChainIconConfig>> = Object.freeze({
   bitcoin: { file: 'bitcoin.svg' },
   bsc: { file: 'bsc.svg' },
   btc: { file: 'bitcoin.svg' },
-  'custom-evm': { url: GENERIC_CHAIN_ICON_URL },
   eth: { file: 'ethereum.svg' },
   ethereum: { file: 'ethereum.svg' },
-  evm: { url: '/icons/chains/evm.svg' },
+  evm: { file: 'evm.svg' },
   gnosis: { file: 'gnosis.svg' },
   monad: { file: 'monad.svg' },
   near: { file: 'near.svg' },
+  network: { file: 'network.svg' },
   op: { file: 'optimism.svg' },
   optimism: { file: 'optimism.svg' },
   plasma: { file: 'plasma.svg' },
@@ -42,13 +40,13 @@ const CHAIN_ICONS: Readonly<Record<string, ChainIconConfig>> = Object.freeze({
   zec: { file: 'zcash.svg' }
 })
 
-export function formatConfiguredChainIconUrl(chain: string): string {
-  const normalized = chain.trim().toLowerCase()
-  if (isDynamicEvmChainIcon(normalized)) return GENERIC_CHAIN_ICON_URL
+export function formatConfiguredChainIconUrl(chain: string): string | undefined {
+  const value = chain.trim().toLowerCase()
+  const oldLocalIcon = /^\/icons\/chains\/([a-z0-9-]+)\.(?:svg|png|webp)$/.exec(value)
+  const normalized = oldLocalIcon?.[1] ?? value
+  if (isDynamicEvmChainIcon(normalized)) return undefined
   const config = CHAIN_ICONS[normalized]
-  if (config?.url) return config.url
-  const file = config?.file ?? `${encodeURIComponent(normalized)}.svg`
-  return `${CHAIN_ICON_BASE_URL}/${file}`
+  return config ? `${CHAIN_ICON_BASE_URL}/${config.file}` : undefined
 }
 
 export function isDynamicEvmChainIcon(chain: string): boolean {

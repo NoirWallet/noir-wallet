@@ -254,7 +254,7 @@ test('network icons follow chain identity through approval and saved settings, i
   assert.equal(saved.iconChain, 'eip155:57073')
   assert.equal(saved.nativeCurrency.symbol, 'LETH')
   assert.equal(saved.displayName, 'Local EVM')
-  assert.equal(formatConfiguredChainIconUrl(saved.iconChain), '/icons/chains/network.svg')
+  assert.equal(formatConfiguredChainIconUrl(saved.iconChain), undefined)
   assert.equal(getEvmAssetDefinitions(saved)[0].metadata.iconUrl, undefined)
 
   const unknown = harness()

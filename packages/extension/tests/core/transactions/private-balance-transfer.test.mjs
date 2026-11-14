@@ -15,11 +15,16 @@ import {
   buildShieldTransferRequest,
   listShieldFundingAssets,
   listShieldMoveDestinations,
+  listShieldSendDestinations,
+  selectDefaultShieldWithdrawSource,
   selectShieldWithdrawDestinationForNetwork,
   shieldFundingSources,
   shieldPortfolioBalances
 } from '../../../src/popup/services/shield-transfer.ts'
-import { buildShieldSwapRequest } from '../../../src/popup/services/shield-swap-form.ts'
+import {
+  buildShieldSwapRequest,
+  buildShieldSwapPreviewRequest
+} from '../../../src/popup/services/shield-swap-form.ts'
 import { initialMoveDraft } from '../../../src/popup/pages/transactions/move-draft.ts'
 import {
   readShieldMovePreference,
@@ -65,6 +70,16 @@ test('defaults Shield Move and keeps preferences scoped to a supported account a
     initialMoveDraft({
       state: null,
       scope,
+      mode: 'private',
+      routeFrom: null,
+      routeTo: null,
+      routeAssetId: null
+    })
+  ).toMatchObject({ from: 'private', to: 'shield', assetId: null, amount: '' })
+  expect(
+    initialMoveDraft({
+      state: null,
+      scope,
       mode: 'public',
       routeFrom: null,
       routeTo: null,
@@ -72,6 +87,28 @@ test('defaults Shield Move and keeps preferences scoped to a supported account a
       entry: 'shield'
     })
   ).toMatchObject({ from: 'public', to: 'shield', assetId: null, amount: '' })
+  expect(
+    initialMoveDraft({
+      state: null,
+      scope,
+      mode: 'private',
+      routeFrom: null,
+      routeTo: null,
+      routeAssetId: null,
+      entry: 'shield'
+    })
+  ).toMatchObject({ from: 'private', to: 'shield', assetId: null, amount: '' })
+  expect(
+    initialMoveDraft({
+      state: null,
+      scope,
+      mode: 'private',
+      routeFrom: 'shield',
+      routeTo: 'public',
+      routeAssetId: 'eip155:1/slip44:60',
+      entry: 'asset-detail'
+    })
+  ).toMatchObject({ from: 'shield', to: 'public', assetId: 'eip155:1/slip44:60' })
   expect(shieldMovePreferenceKey('mainnet', 'wallet-1', 'account-1')).not.toBe(
     shieldMovePreferenceKey('testnet', 'wallet-1', 'account-1')
   )
@@ -153,6 +190,64 @@ test('keeps the selected Shield withdrawal token when choosing its network', () 
     arbitrumUsdc
   )
   expect(selectShieldWithdrawDestinationForNetwork(options, baseUsdc, 'eip155:137')).toBeNull()
+})
+
+test('defaults Shield withdrawal to the highest USD balance or Ethereum USDC when empty', () => {
+  const usdcContract = getEvmNetworkConfigs('mainnet')
+    .find(config => config.chainId === 'eip155:1')
+    .usdcContract.toLowerCase()
+  const option = (chainId, reference, protocolAssetId, decimals) => ({
+    chain: { chain: { id: chainId } },
+    asset: {
+      asset: { id: `${chainId}/erc20:${reference}`, chainId, namespace: 'erc20', reference },
+      metadata: { decimals }
+    },
+    managed: { protocolAssetId }
+  })
+  const baseUsdc = option('eip155:8453', `0x${'1'.repeat(40)}`, 'base-usdc', 6)
+  const ethereumUsdc = option('eip155:1', usdcContract, 'ethereum-usdc', 6)
+  const ethereumOther = option('eip155:1', `0x${'2'.repeat(40)}`, 'other', 18)
+  const options = [baseUsdc, ethereumOther, ethereumUsdc]
+  const balances = [
+    { tokenId: 'base-usdc', available: '10000000' },
+    { tokenId: 'other', available: '1000000000000000000' },
+    { tokenId: 'ethereum-usdc', available: '2000000' }
+  ]
+  const model = {
+    confidential: {
+      status: 'ready',
+      assets: [
+        { protocolAssetId: 'base-usdc', availableRaw: '10000000', priceUsd: '1' },
+        { protocolAssetId: 'other', availableRaw: '1000000000000000000', priceUsd: '20' },
+        { protocolAssetId: 'ethereum-usdc', availableRaw: '2000000', priceUsd: '1' }
+      ]
+    }
+  }
+
+  expect(selectDefaultShieldWithdrawSource(options, balances, model, null, 'mainnet')).toBe(
+    ethereumOther
+  )
+  expect(
+    selectDefaultShieldWithdrawSource(
+      options,
+      balances,
+      model,
+      {
+        quotes: [{ assetId: ethereumUsdc.asset.asset.id, priceUsd: '15' }]
+      },
+      'mainnet'
+    )
+  ).toBe(ethereumUsdc)
+  expect(selectDefaultShieldWithdrawSource(options, balances, null, null, 'mainnet')).toBe(baseUsdc)
+  expect(
+    selectDefaultShieldWithdrawSource(
+      options,
+      balances.map(balance => ({ ...balance, available: '0' })),
+      model,
+      null,
+      'mainnet'
+    )
+  ).toBe(ethereumUsdc)
 })
 
 test('uses independently held Shield tokens without adding them to Public assets', () => {
@@ -264,6 +359,18 @@ test('uses independently held Shield tokens without adding them to Public assets
     source: { assetId: sourceId, protocolAssetId: sourceProtocolId, amountRaw: '1250000' },
     destination: { assetId: destinationId, protocolAssetId: destinationProtocolId }
   })
+  const unfundedSwap = {
+    network: 'mainnet',
+    keyDomainId: 'wallet',
+    accountId: 'account',
+    from: sources[0],
+    to: options.find(item => item.asset.asset.id === destinationId),
+    amount: '1.25',
+    balances: [],
+    slippageBps: 50
+  }
+  expect(buildShieldSwapPreviewRequest(unfundedSwap).source.amountRaw).toBe('1250000')
+  expect(() => buildShieldSwapRequest(unfundedSwap)).toThrow('Shield swap is unavailable')
   expect(
     listShieldFundingAssets(
       {
@@ -302,7 +409,40 @@ test('uses independently held Shield tokens without adding them to Public assets
     shieldPortfolioBalances(withZcash)
   ).find(item => item.asset.asset.id === zcashAssetId)
   expect(zcashSource?.asset.balance.confidentialRaw).toBe('140000')
+  const zcashRecipient = 't1XVXWCvpMgBvUaed4XDqWtgQgJSu1Ghz7F'
   expect(
+    listShieldSendDestinations(zcashSource, withZcashOptions, 'mainnet').map(
+      item => item.asset.asset.id
+    )
+  ).toContain(zcashAssetId)
+  expect(
+    buildExternalShieldWithdrawRequest({
+      network: 'mainnet',
+      keyDomainId: 'wallet',
+      accountId: 'account',
+      amountRaw: '100000',
+      recipient: zcashRecipient,
+      source: zcashSource,
+      destination: zcashSource,
+      slippageBps: 50
+    })
+  ).toMatchObject({
+    destination: { chainId: ZCASH_CHAIN_IDS.mainnet, protocolAssetId: zcashProtocolId },
+    externalRecipient: zcashRecipient
+  })
+  expect(() =>
+    buildExternalShieldWithdrawRequest({
+      network: 'mainnet',
+      keyDomainId: 'wallet',
+      accountId: 'account',
+      amountRaw: '100000',
+      recipient: `0x${'3'.repeat(40)}`,
+      source: zcashSource,
+      destination: zcashSource,
+      slippageBps: 50
+    })
+  ).toThrow('Shield withdrawal is unavailable')
+  expect(() =>
     buildExternalShieldWithdrawRequest({
       network: 'mainnet',
       keyDomainId: 'wallet',
@@ -313,10 +453,7 @@ test('uses independently held Shield tokens without adding them to Public assets
       destination: withZcashOptions.find(item => item.asset.asset.id === destinationId),
       slippageBps: 50
     })
-  ).toMatchObject({
-    source: { assetId: zcashAssetId, protocolAssetId: zcashProtocolId, amountRaw: '100000' },
-    destination: { chainId: 'eip155:1', protocolAssetId: destinationProtocolId }
-  })
+  ).toThrow('Shield withdrawal is unavailable')
 })
 
 test('binds a Shield ETH Move to the selected EVM destination asset', () => {
@@ -401,6 +538,28 @@ test('binds a Shield ETH Move to the selected EVM destination asset', () => {
   })
   const fake = options.find(item => item.asset.asset.id === fakeAssetId)
   expect(fake).toBeDefined()
+  const sendInput = {
+    network: 'mainnet',
+    keyDomainId: 'wallet',
+    accountId: 'account',
+    amountRaw: input.amountRaw,
+    recipient: `0x${'3'.repeat(40)}`,
+    source,
+    destination,
+    slippageBps: 50
+  }
+  expect(buildExternalShieldWithdrawRequest(sendInput)).toMatchObject({
+    operation: 'withdraw',
+    externalRecipient: sendInput.recipient,
+    source: { assetId: source.asset.asset.id, amountRaw: input.amountRaw },
+    destination: { assetId: destination.asset.asset.id }
+  })
+  expect(buildExternalShieldWithdrawRequest({ ...sendInput, destination: source })).toMatchObject({
+    destination: { assetId: source.asset.asset.id }
+  })
+  expect(() => buildExternalShieldWithdrawRequest({ ...sendInput, destination: fake })).toThrow(
+    'Shield withdrawal is unavailable'
+  )
   expect(() => buildShieldTransferRequest({ ...input, destination: fake })).toThrow(
     'Shield transfer is unavailable'
   )
@@ -467,6 +626,33 @@ test('lists official cross-network USDC destinations from the managed catalog', 
   expect(selectMoveAsset(['eip155:1', 'eip155:8453'], 'eip155:10/slip44:60')).toBe(sourceAssetId)
   expect(selectMoveAsset(['eip155:8453'])).toBe(destinationAssetId)
   expect(selectMoveAsset(['eip155:1', 'eip155:8453'], null, [])).toBeNull()
+  const fundedBase = moveAssets.map(item =>
+    item.asset.asset.id === destinationAssetId
+      ? {
+          ...item,
+          asset: {
+            ...item.asset,
+            balance: {
+              ...item.asset.balance,
+              totalRaw: '25000',
+              mainRaw: '25000',
+              privateRaw: '0'
+            }
+          }
+        }
+      : item
+  )
+  expect(
+    selectShieldMoveAssetId({
+      assets: fundedBase,
+      eligibleChainIds: ['eip155:1', 'eip155:8453'],
+      managedAssets: managed,
+      catalogTokens: tokens,
+      network: 'mainnet',
+      from: 'public',
+      preferredAssetId: sourceAssetId
+    })
+  ).toBe(destinationAssetId)
   const source = options.find(item => item.asset.asset.id === sourceAssetId)
   expect(source).toBeDefined()
   expect(
@@ -474,6 +660,62 @@ test('lists official cross-network USDC destinations from the managed catalog', 
   ).toEqual([sourceAssetId, destinationAssetId])
   const destination = options.find(item => item.asset.asset.id === destinationAssetId)
   expect(destination.asset.metadata.decimals).toBe(6)
+  const currentBridge = {
+    ...destination,
+    managed: { ...destination.managed, protocolAssetId: 'nep245:current-bridge:base-usdc' }
+  }
+  expect(listShieldSendDestinations(source, [currentBridge], 'mainnet')).toEqual([currentBridge])
+  expect(
+    buildExternalShieldWithdrawRequest({
+      network: 'mainnet',
+      keyDomainId: 'wallet',
+      accountId: 'account',
+      source,
+      destination: currentBridge,
+      amountRaw: '10000',
+      recipient: `0x${'3'.repeat(40)}`,
+      slippageBps: 50
+    }).destination.protocolAssetId
+  ).toBe(currentBridge.managed.protocolAssetId)
+  const bnbTokens = [
+    ...tokens.map(token => ({ ...token, coingeckoId: 'usd-coin' })),
+    {
+      assetId: 'nep141:bnb-0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d.omdep.near',
+      blockchain: 'bsc',
+      contractAddress: '0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d',
+      symbol: 'USDC',
+      decimals: 18,
+      coingeckoId: 'usd-coin'
+    },
+    {
+      assetId: 'nep141:bnb-0x55d398326f99059ff775485246999027b3197955.omdep.near',
+      blockchain: 'bsc',
+      contractAddress: '0x55d398326f99059ff775485246999027b3197955',
+      symbol: 'USDT',
+      decimals: 18,
+      coingeckoId: 'tether'
+    }
+  ]
+  const sendOptions = listShieldFundingAssets(
+    {
+      ...model,
+      chains: [
+        ...model.chains,
+        { chain: chains.resolve('eip155:56'), status: 'ready', assets: [], errorCodes: [] }
+      ]
+    },
+    resolveManagedIntentsAssets(bnbTokens, 'mainnet', getEvmNetworkConfigs('mainnet')),
+    bnbTokens,
+    'mainnet'
+  )
+  const sendSource = sendOptions.find(item => item.asset.asset.id === sourceAssetId)
+  expect(
+    listShieldSendDestinations(sendSource, sendOptions, 'mainnet').map(item => item.asset.asset.id)
+  ).toEqual([
+    sourceAssetId,
+    destinationAssetId,
+    'eip155:56/erc20:0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d'
+  ])
   expect(
     buildShieldTransferRequest({
       network: 'mainnet',

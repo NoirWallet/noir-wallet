@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { Icon } from '@iconify/react'
 import zamaLogo from '@/images/figma-zama.png'
 import privacyPoolsLogo from '@/images/figma-privacy-pools.png'
 import { formatFiatAmount } from '@/lib/number-format'
@@ -8,6 +9,7 @@ import { useAccountDataStore } from '@/store/account-data-store'
 import { useSettingsStore } from '@/store/settings-store'
 import { useActiveAccountNetworks } from '@/popup/hooks/useActiveAccountNetworks'
 import { useHomePortfolio } from '@/popup/hooks/useHomePortfolio'
+import { useShieldBalances } from '@/popup/hooks/useShieldBalances'
 import { resolveEffectiveActiveAccountIdentity } from '@/popup/lib/effective-active-account'
 import { assetPriceClient } from '@/popup/services/asset-price-client'
 import {
@@ -15,13 +17,26 @@ import {
   summarizeKnownShieldFiat,
   type ShieldProvider
 } from '@/popup/services/asset-domains'
-import { selectShieldActions, type ShieldAction } from '@/popup/services/shield-action-selection'
+import {
+  selectShieldActions,
+  withShieldAsset,
+  type ShieldAction
+} from '@/popup/services/shield-action-selection'
 import { useLocation, useNavigate } from '@/popup/provider/Router'
 import { PageHeader } from '@/popup/components/common/PageHeader'
 import { WalletActionIcon } from '@/popup/components/common/WalletActionIcon'
 import { ShieldProviderLogo, SHIELD_PROVIDERS } from '@/popup/components/portfolio/shield-providers'
 import { TokenIcon } from '@/popup/components/tokens/TokenIcon'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/popup/components/ui/dialog'
+import {
+  nearConfidentialVaultIcons,
+  zcashShieldVaultIcons
+} from '@/popup/services/shield-vault-display-icons'
+import {
+  resolveShieldZcashVaultEntry,
+  shieldZcashEnablePath
+} from '@/popup/services/shield-zcash-entry'
+import { getDefaultZcashSelfMoveSource } from '@/popup/services/zcash-self-move'
 
 export function ShieldFundsPage() {
   const currentWalletId = useWalletStore(state => state.currentWalletId)
@@ -44,7 +59,7 @@ function ShieldFundsContent() {
     currentAccountId,
     nativeAccount: activeAccount
   })
-  const { model, status, refresh } = useHomePortfolio(
+  const { model, status, refresh, readLatest } = useHomePortfolio(
     account?.walletId ?? null,
     account?.accountId ?? null
   )
@@ -91,6 +106,31 @@ function ShieldFundsContent() {
     zcashKeySource
   })
   const { near, canManageNear, hasZcash, providersFor } = shieldActions
+  const shieldScopeKey = `${currentNetwork}:${account?.walletId ?? ''}:${account?.accountId ?? ''}`
+  const {
+    connecting: nearConnecting,
+    error: nearBalanceError,
+    refreshBalances: refreshNearBalances
+  } = useShieldBalances({
+    active: true,
+    enabled: canManageNear && near.status !== 'ready',
+    scopeKey: shieldScopeKey,
+    scope: account
+      ? {
+          network: currentNetwork,
+          keyDomainId: account.walletId,
+          accountId: account.accountId
+        }
+      : null,
+    refreshPortfolio: refresh,
+    readProjection: readLatest
+  })
+  const zcashMoveSource = getDefaultZcashSelfMoveSource({
+    addresses: zcashAccount?.addresses,
+    balance: zcashBalance,
+    keySource: zcashKeySource,
+    network: currentNetwork
+  })
   const zcash = useMemo(
     () =>
       model
@@ -99,6 +139,23 @@ function ShieldFundsContent() {
     [model, prices]
   )
   const hasNear = canManageNear || near.entries.length > 0
+  const zcashAccountData = useWalletStore(state =>
+    currentWalletId && currentAccountId
+      ? state.getAccount(currentWalletId, currentAccountId)
+      : undefined
+  )
+  const zcashVaultEntry = resolveShieldZcashVaultEntry({
+    network: currentNetwork,
+    keySource: zcashKeySource,
+    account: zcashAccountData,
+    hasPortfolioZcash: hasZcash,
+    enabledFlags: __ENABLED_CHAIN_FEATURE_FLAGS__
+  })
+  const nearVaultIcons = useMemo(() => nearConfidentialVaultIcons(near.entries), [near.entries])
+  const zcashVaultIcons = useMemo(
+    () => zcashShieldVaultIcons(zcash?.entries.map(entry => entry.asset) ?? []),
+    [zcash?.entries]
+  )
   const shieldTotal = model
     ? summarizeKnownShieldFiat(
         hasNear ? near : null,
@@ -109,7 +166,7 @@ function ShieldFundsContent() {
   const totalLabel = balancesHidden
     ? '••••'
     : total === null
-      ? status === 'loading' || (zcash && pricesLoading)
+      ? status === 'loading' || nearConnecting || (zcash && pricesLoading)
         ? '…'
         : '—'
       : formatFiatAmount(total, { showSign: true })
@@ -117,19 +174,24 @@ function ShieldFundsContent() {
     action === 'move'
       ? [
           ...(canManageNear ? (['near-confidential'] as const) : []),
-          ...(hasZcash ? (['zcash-shield'] as const) : [])
+          ...(hasZcash && zcashMoveSource ? (['zcash-shield'] as const) : [])
         ]
       : providersFor(action)
   const mode = new URLSearchParams(location.search).get('mode') === 'private' ? 'private' : 'public'
+  const requestedAssetId = new URLSearchParams(location.search).get('assetId')
+  const movePath = withShieldAsset(
+    `/transfer?entry=shield&provider=near-confidential&mode=${mode}${requestedAssetId ? `&from=${mode}&to=shield` : ''}`,
+    requestedAssetId
+  )
+  const zcashMovePath = zcashMoveSource ? `/send/zcash?move=1&from=${zcashMoveSource}` : null
   const runAction = (provider: ShieldProvider, action: ShieldAction, auto = false) => {
     setPendingAction(null)
-    const go = auto ? replace : navigate
+    const go = (path: string) =>
+      (auto ? replace : navigate)(withShieldAsset(path, requestedAssetId))
     if (action === 'move') {
-      go(
-        provider === 'zcash-shield'
-          ? '/send/zcash?move=1&from=transparent'
-          : '/transfer?entry=shield&provider=near-confidential'
-      )
+      if (provider === 'zcash-shield') {
+        if (zcashMovePath) go(zcashMovePath)
+      } else go(movePath)
       return
     }
     if (action === 'receive') {
@@ -137,7 +199,8 @@ function ShieldFundsContent() {
       return
     }
     if (action === 'swap') {
-      go('/shield-swap?provider=near-confidential')
+      if (provider === 'near-confidential' && canManageNear)
+        go('/shield-swap?provider=near-confidential')
       return
     }
     if (provider === 'zcash-shield') {
@@ -152,11 +215,17 @@ function ShieldFundsContent() {
   }
   const openAction = (action: ShieldAction) => {
     if (action === 'move') {
-      navigate(canManageNear ? '/transfer?entry=shield' : '/send/zcash?move=1&from=transparent')
+      if (canManageNear) navigate(movePath)
+      else if (zcashMovePath) navigate(zcashMovePath)
       return
     }
     if (action === 'receive') {
-      navigate('/shield-deposit')
+      navigate(withShieldAsset('/shield-deposit', requestedAssetId))
+      return
+    }
+    if (action === 'send') {
+      const provider = canManageNear ? 'near-confidential' : hasZcash ? 'zcash-shield' : null
+      if (provider) runAction(provider, action)
       return
     }
     const providers = availableProviders(action)
@@ -182,13 +251,15 @@ function ShieldFundsContent() {
       return
     handledActionQuery.current = location.search
     const providers = availableProviders(requestedAction)
-    if (requestedAction === 'move' && providers.length > 0) {
-      replace(canManageNear ? '/transfer?entry=shield' : '/send/zcash?move=1&from=transparent')
+    if (requestedAction === 'move' && (canManageNear || zcashMovePath)) {
+      replace(canManageNear ? movePath : zcashMovePath!)
     } else if (requestedAction === 'receive' && providers.length > 0) {
-      replace('/shield-deposit')
-    } else if (providers.length === 1) runAction(providers[0]!, requestedAction, true)
+      replace(withShieldAsset('/shield-deposit', requestedAssetId))
+    } else if (requestedAction === 'send' && canManageNear)
+      runAction('near-confidential', requestedAction, true)
+    else if (providers.length === 1) runAction(providers[0]!, requestedAction, true)
     else {
-      replace('/shield-funds')
+      replace(withShieldAsset(`/shield-funds?mode=${mode}`, requestedAssetId))
       if (providers.length > 1) setPendingAction(requestedAction)
     }
   }, [requestedAction, model, status, accountLoading, location.search, replace])
@@ -224,10 +295,10 @@ function ShieldFundsContent() {
         </div>
         <div className="mt-7 flex items-center justify-between">
           <h2 className="text-sm text-wallet-secondary">Shield Vault</h2>
-          {status === 'error' && (
+          {(status === 'error' || nearBalanceError) && (
             <button
               type="button"
-              onClick={() => void refresh(true)}
+              onClick={() => void (nearBalanceError ? refreshNearBalances(true) : refresh(true))}
               className="text-xs text-primary"
             >
               Retry
@@ -236,22 +307,40 @@ function ShieldFundsContent() {
         </div>
         <div className="mt-3 grid grid-cols-2 gap-3">
           {(['near-confidential', 'zcash-shield'] as const)
-            .filter(provider => (provider === 'near-confidential' ? hasNear : hasZcash))
+            .filter(provider =>
+              provider === 'near-confidential' ? hasNear : zcashVaultEntry.showVaultCard
+            )
             .map(provider => {
               const group = provider === 'zcash-shield' ? zcash : undefined
               const fiat = provider === 'near-confidential' ? near.fiat : group?.fiat
               const label = balancesHidden
                 ? '••••'
                 : fiat === null || fiat === undefined
-                  ? status === 'loading' || (provider === 'zcash-shield' && pricesLoading)
+                  ? status === 'loading' ||
+                    (provider === 'near-confidential' && nearConnecting) ||
+                    (provider === 'zcash-shield' && pricesLoading)
                     ? '…'
                     : '—'
                   : formatFiatAmount(fiat, { showSign: true })
+              const zcashNeedsEnable =
+                provider === 'zcash-shield' && !zcashVaultEntry.hasActiveZcash
               return (
                 <button
                   key={provider}
                   type="button"
-                  onClick={() => navigate(`/shield-provider?provider=${provider}&mode=${mode}`)}
+                  onClick={() =>
+                    zcashNeedsEnable &&
+                    zcashVaultEntry.canEnableZcash &&
+                    currentWalletId &&
+                    currentAccountId
+                      ? navigate(shieldZcashEnablePath(currentWalletId, currentAccountId))
+                      : navigate(
+                          withShieldAsset(
+                            `/shield-provider?provider=${provider}&mode=${mode}`,
+                            requestedAssetId
+                          )
+                        )
+                  }
                   className="wallet-interactive flex h-[154px] min-w-0 flex-col overflow-hidden rounded-lg bg-wallet-surface text-left hover:brightness-110 active:brightness-95 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary"
                 >
                   <span
@@ -266,39 +355,49 @@ function ShieldFundsContent() {
                     </span>
                   </span>
                   <span className="flex h-9 items-center justify-between gap-1 bg-white/5 px-2.5 text-xs">
-                    <span className="flex min-w-0 items-center">
-                      {provider === 'near-confidential'
-                        ? near.entries
-                            .slice(0, 4)
-                            .map((entry, index) => (
-                              <TokenIcon
-                                key={entry.asset.tokenId}
-                                assetId={entry.asset.assetId}
-                                symbol={entry.asset.symbol ?? '?'}
-                                icon={entry.asset.iconUrl}
-                                size={16}
-                                className={index ? '-ml-1 shrink-0' : 'shrink-0'}
-                              />
-                            ))
-                        : group?.entries
-                            .slice(0, 4)
-                            .map((entry, index) => (
-                              <TokenIcon
-                                key={entry.asset.asset.id}
-                                assetId={entry.asset.asset.id}
-                                symbol={entry.asset.metadata.symbol}
-                                icon={entry.asset.metadata.iconUrl}
-                                size={16}
-                                className={index ? '-ml-1 shrink-0' : 'shrink-0'}
-                              />
-                            ))}
-                    </span>
-                    <span
-                      className="max-w-[100px] truncate"
-                      title={balancesHidden ? undefined : label}
-                    >
-                      {label}
-                    </span>
+                    {zcashNeedsEnable && zcashVaultEntry.canEnableZcash ? (
+                      <span className="flex w-full items-center justify-between gap-2 text-xs text-primary">
+                        <span>Enable Zcash</span>
+                        <Icon
+                          icon="lucide:chevron-right"
+                          width={14}
+                          height={14}
+                          aria-hidden="true"
+                        />
+                      </span>
+                    ) : (
+                      <>
+                        <span className="flex min-w-0 items-center">
+                          {provider === 'near-confidential'
+                            ? nearVaultIcons.map((entry, index) => (
+                                <TokenIcon
+                                  key={entry.key}
+                                  assetId={entry.assetId}
+                                  symbol={entry.symbol}
+                                  icon={entry.icon}
+                                  size={16}
+                                  className={index ? '-ml-1 shrink-0' : 'shrink-0'}
+                                />
+                              ))
+                            : zcashVaultIcons.map((entry, index) => (
+                                <TokenIcon
+                                  key={entry.key}
+                                  assetId={entry.assetId}
+                                  symbol={entry.symbol}
+                                  icon={entry.icon}
+                                  size={16}
+                                  className={index ? '-ml-1 shrink-0' : 'shrink-0'}
+                                />
+                              ))}
+                        </span>
+                        <span
+                          className="max-w-[100px] truncate"
+                          title={balancesHidden ? undefined : label}
+                        >
+                          {zcashNeedsEnable ? '—' : label}
+                        </span>
+                      </>
+                    )}
                   </span>
                 </button>
               )
@@ -328,6 +427,48 @@ function ShieldFundsContent() {
             </div>
           ))}
         </div>
+        <section aria-labelledby="shield-explanation" className="mt-8">
+          <h2 id="shield-explanation" className="text-sm text-wallet-secondary">
+            How Shielded Works?
+          </h2>
+          <div className="mt-5 space-y-7">
+            {[
+              {
+                icon: 'noir:shield-assets',
+                title: 'Held by the route, not Noir',
+                description:
+                  'When you shield, your funds move to the route you pick. That route’s protocol holds them, not Noir.'
+              },
+              {
+                icon: 'lucide:lock',
+                title: 'Only you can move them',
+                description: 'Only your account can send, swap or move them.'
+              },
+              {
+                icon: 'lucide:globe',
+                title: 'Breaks the on-chain link',
+                description:
+                  'Funds that go through Shield are no longer linked to your Public address.'
+              },
+              {
+                icon: 'lucide:list',
+                title: 'Each route has trade-offs',
+                description:
+                  'Before you move in or receive, check what it supports, how fast and costly it is, and who runs it.'
+              }
+            ].map(item => (
+              <div key={item.title} className="flex items-start gap-4">
+                <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-success/15 text-success">
+                  <Icon icon={item.icon} width={19} height={19} />
+                </span>
+                <div className="min-w-0">
+                  <h3 className="text-sm font-semibold leading-5">{item.title}</h3>
+                  <p className="mt-2 text-xs leading-4 text-wallet-secondary">{item.description}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
       </div>
       <Dialog open={pendingAction !== null} onOpenChange={open => !open && setPendingAction(null)}>
         <DialogContent position="bottom" className="gap-2 bg-wallet-surface p-4 pb-6">

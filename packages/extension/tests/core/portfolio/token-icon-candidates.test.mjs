@@ -8,7 +8,7 @@ import {
   recordTokenIconUrlFailure
 } from '../../../src/popup/components/tokens/token-icon-failure-cache.ts'
 
-test('leaves native assets without metadata images to the local placeholder', () => {
+test('leaves native assets without metadata images to the neutral placeholder', () => {
   expect(
     getTokenIconCandidates({
       token: {
@@ -93,6 +93,20 @@ test('does not derive contract image URLs and accepts supplied CoinGecko metadat
       }
     })
   ).toEqual(['https://coin-images.coingecko.com/coins/images/54725/large/fogo.png?1749218789'])
+})
+
+test('ignores stale bundled icon URLs in persisted token metadata', () => {
+  expect(
+    getTokenIconCandidates({
+      assetId: 'eip155:1/slip44:60',
+      icon: '/icons/chains/ethereum.svg',
+      token: { blockchain: 'eth', contractAddress: null, icon: 'chrome-extension://old/eth.svg' },
+      bundledIcon: 'https://coin-images.coingecko.com/coins/images/279/large/ethereum.png'
+    })
+  ).toEqual([
+    'https://assets.zknoir.com/chain/ethereum.svg',
+    'https://coin-images.coingecko.com/coins/images/279/large/ethereum.png'
+  ])
 })
 
 test('uses trusted built-in native assets only for a branded fallback', () => {

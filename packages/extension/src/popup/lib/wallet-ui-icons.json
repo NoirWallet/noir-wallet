@@ -3,6 +3,12 @@
   "width": 24,
   "height": 24,
   "icons": {
+    "list": {
+      "body": "<g fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01\"/></g>"
+    },
+    "history": {
+      "body": "<g fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M3 12a9 9 0 1 0 2.64-6.36L3 8\"/><path d=\"M3 3v5h5m4-1v5l4 2\"/></g>"
+    },
     "arrow-down-left": {
       "body": "<g fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M17 7 7 17\" />\n  <path d=\"M17 17H7V7\" /></g>"
     },

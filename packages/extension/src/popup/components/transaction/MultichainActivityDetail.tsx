@@ -23,7 +23,10 @@ import { formatEvmWeiAsGwei } from '@/infrastructure/chains/evm'
 import { openHardwareEvmSignTab } from '@/lib/hardware-tab'
 import { openModal } from '@/popup/provider/ModalManager'
 import { bitcoinWalletClient } from '@/popup/services/bitcoin-wallet-client'
-import { formatChainTransactionExplorerUrl } from '@/popup/services/chain-explorer'
+import {
+  formatChainAddressExplorerUrl,
+  formatChainTransactionExplorerUrl
+} from '@/popup/services/chain-explorer'
 import { useSettingsStore } from '@/store/settings-store'
 import { useWalletStore } from '@/store/wallet-store'
 import { buildAccountKey } from '@/store/account-data-store'
@@ -64,6 +67,7 @@ import {
 import {
   getActivityDetailTitle,
   getActivityRouteTitle,
+  isDirectAccountMove,
   getClusterBatchStatusLabel,
   getClusterChildStatusLabel,
   getActivityTransferRecipient,
@@ -75,6 +79,7 @@ import {
   getActivityProgressSteps,
   getActivityStatusPresentation,
   getActivitySwapPresentation,
+  getClusterSettledDestination,
   buildActivityExecutionAddressModes,
   isOwnedAccountTransfer,
   isActivityRecoveryTransition,
@@ -168,7 +173,11 @@ export function MultichainActivityDetail({
   const { copyToClipboard, showToast, isCopied, copyFailed } = useCopyToClipboard()
   const [privateCopyAddress, setPrivateCopyAddress] = useState<string | null>(null)
   const endpointSettings = useSettingsStore(state => state.chainEndpointSettings)
-  const { userAssets: userEvmAssets, detectedAssets: detectedEvmAssets } = useActivityEvmAssets()
+  const {
+    userAssets: userEvmAssets,
+    detectedAssets: detectedEvmAssets,
+    catalogTokens
+  } = useActivityEvmAssets()
   const currentWalletId = useWalletStore(state => state.currentWalletId)
   const currentAccountId = useWalletStore(state => state.currentAccountId)
   const currentNetwork = useWalletStore(state => state.currentNetwork)
@@ -399,19 +408,29 @@ export function MultichainActivityDetail({
         endpointSettings,
         userEvmAssets,
         detectedEvmAssets,
+        catalogTokens,
         portfolio
       }),
-    [endpointSettings, network, portfolio, userEvmAssets, detectedEvmAssets]
+    [endpointSettings, network, portfolio, userEvmAssets, detectedEvmAssets, catalogTokens]
   )
   const executionAddressModes = useMemo(
     () => buildActivityExecutionAddressModes(accountNetworks),
     [accountNetworks]
   )
+  const privateFundingPlanId = getConfidentialFundingPlanId(visibleItem.id)
+  const activeConfidentialPlan =
+    confidentialPlan?.transactionId === visibleItem.id &&
+    confidentialPlan.network === network &&
+    confidentialPlan.keyDomainId === visibleItem.scope.keyDomainId &&
+    confidentialPlan.accountId === visibleItem.scope.accountId
+      ? confidentialPlan
+      : null
   const swap = getActivitySwapPresentation(
     visibleItem,
     assetMetadata,
     chainMetadata,
-    executionAddressModes
+    executionAddressModes,
+    getClusterSettledDestination(visibleItem, activeConfidentialPlan)
   )
   const transferRecipient = getActivityTransferRecipient(visibleItem)
   const swapSourceMethod = getActivitySwapSourceMethodLabel(visibleItem, swap?.source?.symbol)
@@ -435,6 +454,14 @@ export function MultichainActivityDetail({
     ? (assetMetadata.get(swapSourceAmount.assetId)?.metadata ?? swapSourceAmount.metadata)?.decimals
     : undefined
   const direction = visibleItem.snapshot?.direction
+  const isShieldMove = Boolean(
+    visibleItem.snapshot?.shield &&
+    direction === 'self' &&
+    visibleItem.snapshot.shield.operation !== 'swap'
+  )
+  const isMove = isShieldMove || (swap !== null && isDirectAccountMove(visibleItem, swap))
+  const isShieldSend =
+    visibleItem.snapshot?.shield?.operation === 'withdraw' && direction === 'outgoing'
   const isIncoming = visibleItem.kind === 'receive' || direction === 'incoming'
   const sign = isIncoming ? '+' : direction === 'outgoing' ? '−' : ''
   const displayedSign = visibleItem.failureCode === 'refunded' ? '+' : sign
@@ -486,19 +513,15 @@ export function MultichainActivityDetail({
   const explorerUrl = explorerReference?.chainId
     ? formatChainTransactionExplorerUrl(explorerReference.chainId, explorerReference.hash, network)
     : ''
+  const sender = visibleItem.snapshot?.sender
+  const senderExplorerUrl = sender
+    ? formatChainAddressExplorerUrl(sender.chainId, sender.address, network)
+    : ''
   const usesShieldedPoolSource =
     visibleItem.source === 'zcash-v1' &&
     visibleItem.kind === 'transfer' &&
     direction === 'outgoing' &&
     visibleItem.snapshot?.sender === undefined
-  const privateFundingPlanId = getConfidentialFundingPlanId(visibleItem.id)
-  const activeConfidentialPlan =
-    confidentialPlan?.transactionId === visibleItem.id &&
-    confidentialPlan.network === network &&
-    confidentialPlan.keyDomainId === visibleItem.scope.keyDomainId &&
-    confidentialPlan.accountId === visibleItem.scope.accountId
-      ? confidentialPlan
-      : null
   const needsSubmissionCheck =
     activeConfidentialPlan !== null && needsConfidentialSubmissionCheck(activeConfidentialPlan)
   const canCheckSubmission =
@@ -749,24 +772,33 @@ export function MultichainActivityDetail({
 
   const progressReferences = new Map<string, ReactNode>()
   if (isCrossChain) {
+    const originHash = transactionReferences.find(candidate =>
+      visibleItem.segments.some(segment => segment.id === candidate.id && segment.role === 'origin')
+    )?.hash
     for (const segment of visibleItem.segments) {
       const reference = transactionReferences.find(candidate => candidate.id === segment.id)
+      const distinctReference =
+        segment.role === 'relay' && reference?.hash === originHash ? undefined : reference
       const unverifiedReplacementHash = segment.evidence?.replacementTransactionHash
       const chainId = segment.target.kind === 'onchain' ? segment.target.chainId : null
       const replacementHash =
         unverifiedReplacementHash && isActivityTransactionHash(unverifiedReplacementHash, chainId)
           ? unverifiedReplacementHash
           : undefined
-      if (!reference && !replacementHash) continue
+      if (!distinctReference && !replacementHash) continue
       progressReferences.set(
         segment.id,
         <div className="space-y-1">
-          {reference && (
+          {distinctReference && (
             <TransactionReference
-              value={reference.hash}
+              value={distinctReference.hash}
               url={
-                reference.chainId
-                  ? formatChainTransactionExplorerUrl(reference.chainId, reference.hash, network)
+                distinctReference.chainId
+                  ? formatChainTransactionExplorerUrl(
+                      distinctReference.chainId,
+                      distinctReference.hash,
+                      network
+                    )
                   : ''
               }
               compact
@@ -790,6 +822,24 @@ export function MultichainActivityDetail({
       )
     }
   }
+
+  const statusRow = (
+    <DetailRow label="Status">
+      <span
+        data-activity-status-value
+        className={cn(
+          'text-sm',
+          getTransactionStatusToneClassName(needsSubmissionCheck ? 'warning' : status.tone)
+        )}
+      >
+        {needsSubmissionCheck
+          ? 'Needs attention'
+          : activeConfidentialPlan?.operation === 'cluster'
+            ? getClusterBatchStatusLabel(activeConfidentialPlan)
+            : status.label}
+      </span>
+    </DetailRow>
+  )
 
   return (
     <article
@@ -841,10 +891,14 @@ export function MultichainActivityDetail({
               </div>
               {swap.destination && (
                 <div className="mt-1 max-w-full break-all font-sans text-sm text-muted tabular-nums">
-                  {swap.destinationIsSettled ? 'Received' : 'Expected'}{' '}
+                  {isShieldSend
+                    ? 'Recipient receives'
+                    : swap.destinationIsSettled
+                      ? 'Received'
+                      : 'Expected'}{' '}
                   <AmountDisplay
                     value={swap.destination.exact}
-                    prefix="+"
+                    prefix={isShieldSend ? '' : '+'}
                     symbol={swap.destination.symbol}
                   />
                 </div>
@@ -922,19 +976,28 @@ export function MultichainActivityDetail({
               </DetailRow>
             ) : (
               <DetailRow label="Route">
-                <span className="flex max-w-[245px] min-w-0 flex-wrap items-center justify-end gap-x-1.5 gap-y-1 text-right text-sm">
+                <span className="flex min-w-0 max-w-[calc(100vw-110px)] items-center justify-end gap-1 whitespace-nowrap text-right text-xs">
                   <SwapChainIcon alias={swap.sourceChainIconAlias} />
-                  <span>{swap.sourceNetwork}</span>
-                  <Icon icon="lucide:arrow-right" width={13} height={13} className="text-muted" />
+                  <span className="min-w-0 truncate" title={swap.sourceNetwork}>
+                    {swap.sourceNetwork}
+                  </span>
+                  <Icon
+                    icon="lucide:arrow-right"
+                    width={13}
+                    height={13}
+                    className="shrink-0 text-muted"
+                  />
                   <SwapChainIcon alias={swap.destinationChainIconAlias} />
-                  <span>{swap.destinationNetwork}</span>
+                  <span className="min-w-0 truncate" title={swap.destinationNetwork}>
+                    {swap.destinationNetwork}
+                  </span>
                 </span>
               </DetailRow>
             )}
             {swap.sourceAccountMode &&
               swap.destinationAccountMode &&
               swap.sourceAccountMode !== swap.destinationAccountMode && (
-                <DetailRow label="Account">
+                <DetailRow label={isMove ? 'Move direction' : 'Account'}>
                   <span className="flex items-center gap-1.5">
                     {swap.sourceAccountMode === 'External' ? (
                       <span className="text-sm">External</span>
@@ -997,21 +1060,7 @@ export function MultichainActivityDetail({
             {new Date(visibleItem.createdAt).toLocaleString()}
           </span>
         </DetailRow>
-        <DetailRow label="Status">
-          <span
-            data-activity-status-value
-            className={cn(
-              'text-sm',
-              getTransactionStatusToneClassName(needsSubmissionCheck ? 'warning' : status.tone)
-            )}
-          >
-            {needsSubmissionCheck
-              ? 'Needs attention'
-              : activeConfidentialPlan?.operation === 'cluster'
-                ? getClusterBatchStatusLabel(activeConfidentialPlan)
-                : status.label}
-          </span>
-        </DetailRow>
+        {!isShieldMove && statusRow}
         {activeConfidentialPlan?.operation === 'cluster' && (
           <>
             <DetailRow label="Method">
@@ -1047,14 +1096,34 @@ export function MultichainActivityDetail({
           </DetailRow>
         )}
         {(visibleItem.kind !== 'shield' || visibleItem.snapshot?.shield) &&
-          visibleItem.snapshot?.sender &&
+          sender &&
           visibleItem.snapshot?.shield?.sourceDomain !== 'shield' && (
             <DetailRow label="From">
-              <span
-                className="max-w-[220px] truncate font-mono text-sm"
-                title={visibleItem.snapshot.sender.address}
-              >
-                {formatSortAddress(visibleItem.snapshot.sender.address)}
+              <span className="flex min-w-0 max-w-[220px] items-center gap-1.5">
+                {senderExplorerUrl ? (
+                  <a
+                    href={senderExplorerUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title={sender.address}
+                    className="min-w-0 truncate font-mono text-sm text-primary hover:underline"
+                  >
+                    {formatSortAddress(sender.address)}
+                  </a>
+                ) : (
+                  <span className="min-w-0 truncate font-mono text-sm" title={sender.address}>
+                    {formatSortAddress(sender.address)}
+                  </span>
+                )}
+                <button
+                  type="button"
+                  aria-label="Copy sender address"
+                  title="Copy sender address"
+                  className="shrink-0 text-muted hover:text-foreground"
+                  onClick={() => void copyToClipboard(sender.address, 'sender')}
+                >
+                  <CopyFeedbackIcon copied={isCopied('sender')} width={14} height={14} />
+                </button>
               </span>
             </DetailRow>
           )}
@@ -1137,6 +1206,7 @@ export function MultichainActivityDetail({
             />
           </DetailRow>
         )}
+        {isShieldMove && statusRow}
         {!isCrossChain &&
           transactionReferences.map(reference => (
             <DetailRow key={reference.id} label={reference.label}>

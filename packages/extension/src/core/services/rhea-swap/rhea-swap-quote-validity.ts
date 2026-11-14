@@ -1,4 +1,4 @@
-export const RHEA_SWAP_MAX_QUOTE_AGE_MS = 30_000
+export const RHEA_SWAP_MAX_QUOTE_AGE_MS = 5 * 60_000
 
 export function assertRheaSwapSubmissionDeadline(
   deadline: number | undefined,

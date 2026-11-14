@@ -1,33 +1,42 @@
 import { formatFiatAmount, formatTokenPrice, formatTokenQuantity } from '@/lib/number-format'
+import { formatSymbol } from '@/lib/format'
 import type { NearConfidentialHolding } from '@/popup/services/near-confidential-holdings'
 import type { PortfolioChainView } from '@/core/portfolio'
 import { resolveChainIconAlias } from '@/lib/chain-icon'
 import { TokenIcon } from '@/popup/components/tokens/TokenIcon'
+import { Skeleton } from '@/popup/components/ui/skeleton'
 
 export function NearConfidentialHoldingRow({
   entry,
   balancesHidden,
   chain,
+  iconChain,
   showProvider = false,
+  showQuantitySymbol = true,
+  pricesLoading = false,
   onClick
 }: {
   readonly entry: NearConfidentialHolding
   readonly balancesHidden: boolean
   readonly chain?: PortfolioChainView['chain']
+  readonly iconChain?: string
   readonly showProvider?: boolean
+  readonly showQuantitySymbol?: boolean
+  readonly pricesLoading?: boolean
   readonly onClick?: () => void
 }) {
   const { asset } = entry
-  const symbol = asset.symbol ?? 'Unknown token'
+  const symbol = formatSymbol(asset.symbol) || 'Unknown token'
   const price = entry.priceUsd ? formatTokenPrice(entry.priceUsd, { showSign: true }) : '—'
   const content = (
     <>
       <TokenIcon
-        assetId={asset.assetId}
-        symbol={asset.symbol ?? '?'}
+        assetId={asset.assetId ?? asset.protocolAssetId}
+        symbol={symbol}
         icon={asset.iconUrl}
         blockchain={
-          chain ? resolveChainIconAlias(chain.family, chain.displayName, chain.id) : undefined
+          iconChain ??
+          (chain ? resolveChainIconAlias(chain.family, chain.displayName, chain.id) : undefined)
         }
         size={36}
         className="shrink-0"
@@ -50,16 +59,20 @@ export function NearConfidentialHoldingRow({
         </span>
       </span>
       <span className="min-w-0 max-w-[45%] text-right">
-        <span
-          className="block break-all text-base font-medium"
-          title={balancesHidden ? undefined : (entry.fiat ?? undefined)}
-        >
-          {balancesHidden
-            ? '••••'
-            : entry.fiat === null
-              ? '—'
-              : formatFiatAmount(entry.fiat, { showSign: true })}
-        </span>
+        {!balancesHidden && entry.amount !== null && entry.fiat === null && pricesLoading ? (
+          <Skeleton className="ml-auto h-4 w-16" />
+        ) : (
+          <span
+            className="block break-all text-base font-medium"
+            title={balancesHidden ? undefined : (entry.fiat ?? undefined)}
+          >
+            {balancesHidden
+              ? '••••'
+              : entry.amount === null
+                ? '—'
+                : formatFiatAmount(entry.fiat ?? '0', { showSign: true })}
+          </span>
+        )}
         <span
           className="block break-all text-xs text-muted"
           title={balancesHidden ? undefined : (entry.amount ?? undefined)}
@@ -68,7 +81,7 @@ export function NearConfidentialHoldingRow({
             ? '••••'
             : entry.amount === null
               ? '—'
-              : `${formatTokenQuantity(entry.amount)} ${symbol}`}
+              : `${formatTokenQuantity(entry.amount)}${showQuantitySymbol ? ` ${symbol}` : ''}`}
         </span>
       </span>
     </>

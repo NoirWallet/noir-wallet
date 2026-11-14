@@ -1,3 +1,4 @@
+import { withTimeout } from '@/lib/async-utils'
 import type { MnemonicWordCount } from '@/config/wallet'
 import type { AccountNetworkFamily } from '@/core/wallet/account-network-selection'
 import type { SoftwareWalletAddressPreview } from '@/background/software-wallet-provisioning'
@@ -48,7 +49,15 @@ function responseRecord(value: unknown): RuntimeResponse | null {
 }
 
 async function send(message: Readonly<Record<string, unknown>>): Promise<RuntimeResponse> {
-  const response = responseRecord(await chrome.runtime.sendMessage(message))
+  const pending = chrome.runtime.sendMessage(message)
+  const isFeeRequest =
+    message.type === 'GET_ZCASH_FEE_QUOTE' ||
+    message.type === 'ESTIMATE_ZCASH_TRANSFER_FEE' ||
+    message.type === 'ESTIMATE_ZCASH_MAX_TRANSFER' ||
+    message.type === 'ESTIMATE_ZCASH_SHIELD_FEE'
+  const response = responseRecord(
+    await (isFeeRequest ? withTimeout(pending, 60_000, 'Zcash fee estimate') : pending)
+  )
   if (!response) throw new Error('Wallet Background returned an invalid response')
   return response
 }

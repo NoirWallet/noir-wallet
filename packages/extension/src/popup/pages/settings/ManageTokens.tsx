@@ -12,6 +12,7 @@ import {
 import { useSettingsStore } from '@/store/settings-store'
 import { toast } from '@/store/toast-store'
 import { ChainIcon } from '../../components/common/ChainIcon'
+import { ChainSelector, type ChainSelectorOption } from '../../components/common/ChainSelector'
 import { NetworkFilter } from '../../components/common/NetworkFilter'
 import { PageHeader } from '../../components/common/PageHeader'
 import { InlineError } from '../../components/common/InlineError'
@@ -26,13 +27,6 @@ import {
   DialogTitle
 } from '../../components/ui/dialog'
 import { Input } from '../../components/ui/input'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuTrigger
-} from '../../components/ui/dropdown-menu'
 import { userEvmAssetsClient } from '../../services/user-evm-assets-client'
 import { swapTokenCatalogClient } from '../../services/swap-token-catalog-client'
 import {
@@ -83,6 +77,7 @@ export function ManageTokens() {
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(false)
   const [addOpen, setAddOpen] = useState(false)
+  const [networkSelectorOpen, setNetworkSelectorOpen] = useState(false)
   const [chainId, setChainId] = useState<string>(
     addTokenNetworks.find(network => !network.disabled)?.chainId ?? ''
   )
@@ -101,6 +96,13 @@ export function ManageTokens() {
   const isEvmNetwork = selectedNetwork?.family === 'evm'
   const referencePresentation = getAddTokenReferencePresentation(selectedNetwork)
   const verifiedToken = getVerifiedTokenPresentation(candidate)
+  const addTokenNetworkOptions: readonly ChainSelectorOption[] = addTokenNetworks.map(network => ({
+    id: network.chainId,
+    name: network.displayName,
+    icon: network.iconChain,
+    disabled: network.disabled,
+    ...(network.disabled ? { note: 'Coming soon' } : {})
+  }))
 
   const managedAssets = useMemo(
     () =>
@@ -181,7 +183,7 @@ export function ManageTokens() {
       .then(async tokens => {
         if (cancelled) return
         setCatalogAssets(resolveManagedIntentsCatalog(tokens))
-        await intentsAssetManagerClient.ensureDefaults(tokens, { forceProtocolRefresh: true })
+        await intentsAssetManagerClient.ensureDefaults(tokens)
         if (!cancelled) {
           const result = await userEvmAssetsClient.listManaged()
           setAssets(result.userAssets)
@@ -217,7 +219,10 @@ export function ManageTokens() {
   const setAddDialogOpen = (open: boolean) => {
     if (!open && (inspecting || adding)) return
     setAddOpen(open)
-    if (!open) resetAddForm()
+    if (!open) {
+      setNetworkSelectorOpen(false)
+      resetAddForm()
+    }
   }
 
   const inspect = async () => {
@@ -364,11 +369,6 @@ export function ManageTokens() {
       <PageHeader title="Manage Tokens" showBack />
 
       <div className="page-content space-y-3 pb-5">
-        <p className="text-xs leading-5 text-muted">
-          Choose which Intents Tokens appear in Assets. Gas Tokens and supported stablecoins are
-          enabled by default; other supported Tokens can be enabled here.
-        </p>
-
         <Input
           aria-label="Search Tokens"
           value={searchQuery}
@@ -412,10 +412,6 @@ export function ManageTokens() {
                   ? 'No matching Tokens'
                   : 'No Tokens found'}
             </p>
-            <Button variant="outline" className="mt-4 h-9" onClick={openAddToken}>
-              <Icon icon="lucide:plus" className="size-4" />
-              Add Token
-            </Button>
           </div>
         )}
 
@@ -503,65 +499,32 @@ export function ManageTokens() {
 
       <Dialog open={addOpen} onOpenChange={setAddDialogOpen}>
         <DialogContent position="bottom" className="max-h-[88vh] overflow-y-auto">
-          <DialogHeader>
+          <DialogHeader className="mb-6">
             <DialogTitle>Add Token</DialogTitle>
           </DialogHeader>
 
           <div className="space-y-1.5 text-xs text-muted">
-            <span>Network</span>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <button
-                  type="button"
-                  aria-label="Token network"
-                  disabled={Boolean(candidate) || inspecting || adding}
-                  className="flex h-11 w-full items-center gap-2 rounded-xl border border-input bg-card px-3 text-left text-sm text-foreground outline-none transition-colors hover:border-foreground/20 focus-visible:border-primary disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {selectedNetwork && (
-                    <ChainIcon
-                      chain={selectedNetwork.iconChain}
-                      className="size-5 shrink-0 rounded-full bg-white"
-                      showTooltip={false}
-                    />
-                  )}
-                  <span className="min-w-0 flex-1 truncate">
-                    {selectedNetwork?.displayName ?? 'Select network'}
-                  </span>
-                  <Icon icon="lucide:chevron-down" className="size-4 shrink-0 text-muted" />
-                </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent
-                align="start"
-                className="max-h-64 min-w-[var(--radix-dropdown-menu-trigger-width)]"
-              >
-                <DropdownMenuRadioGroup
-                  value={chainId}
-                  onValueChange={value => {
-                    setChainId(value)
-                    setCandidate(null)
-                  }}
-                >
-                  {addTokenNetworks.map(network => (
-                    <DropdownMenuRadioItem
-                      key={network.chainId}
-                      value={network.chainId}
-                      disabled={network.disabled}
-                      className={
-                        network.disabled ? 'text-muted data-[disabled]:opacity-100' : undefined
-                      }
-                    >
-                      <ChainIcon
-                        chain={network.iconChain}
-                        className="size-5 rounded-full bg-white"
-                        showTooltip={false}
-                      />
-                      <span className="flex-1">{network.displayName}</span>
-                      {network.disabled && <span className="text-[10px]">Coming soon</span>}
-                    </DropdownMenuRadioItem>
-                  ))}
-                </DropdownMenuRadioGroup>
-              </DropdownMenuContent>
-            </DropdownMenu>
+            <span className="block">Network</span>
+            <button
+              type="button"
+              aria-label="Token network"
+              aria-haspopup="dialog"
+              disabled={Boolean(candidate) || inspecting || adding}
+              onClick={() => setNetworkSelectorOpen(true)}
+              className="flex h-11 w-full items-center gap-2 rounded-xl border border-input bg-card px-3 text-left text-sm text-foreground outline-none transition-colors hover:border-foreground/20 focus-visible:border-primary disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {selectedNetwork && (
+                <ChainIcon
+                  chain={selectedNetwork.iconChain}
+                  className="size-5 shrink-0 rounded-full bg-white"
+                  showTooltip={false}
+                />
+              )}
+              <span className="min-w-0 flex-1 truncate">
+                {selectedNetwork?.displayName ?? 'Select network'}
+              </span>
+              <Icon icon="lucide:chevron-right" className="size-4 shrink-0 text-muted" />
+            </button>
           </div>
 
           <label className="space-y-1.5 text-xs text-muted">
@@ -603,7 +566,7 @@ export function ManageTokens() {
             </div>
           )}
 
-          <div className="flex gap-2 rounded-xl border border-warning/25 bg-warning/10 px-3 py-2.5 text-xs leading-5 text-warning">
+          <div className="flex gap-2 rounded-xl border border-warning/25 bg-warning-surface px-3 py-2.5 text-xs leading-5 text-warning">
             <Icon icon="lucide:triangle-alert" className="mt-0.5 size-4 shrink-0" />
             <span>Anyone can create a Token. Only add tokens you trust.</span>
           </div>
@@ -632,6 +595,16 @@ export function ManageTokens() {
               Verify Token
             </Button>
           )}
+          <ChainSelector
+            open={networkSelectorOpen}
+            onOpenChange={setNetworkSelectorOpen}
+            options={addTokenNetworkOptions}
+            selectedId={chainId}
+            onSelect={id => {
+              setChainId(id)
+              setCandidate(null)
+            }}
+          />
         </DialogContent>
       </Dialog>
 

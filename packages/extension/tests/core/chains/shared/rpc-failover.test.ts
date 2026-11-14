@@ -457,7 +457,8 @@ test('restores a Zcash selection from cache without rewriting it on registry fai
     setActiveRpcEndpointOverride('zcash')
     expect(getActiveRpcEndpointOption('zcash').id).toBe('preferred')
     await expect(refreshRpcEndpointRegistry()).resolves.toEqual({ zcash: 'preferred' })
-    expect(writes).toEqual([])
+    expect(writes).toEqual([{ rpc_registry_refresh_v1: { attemptAt: expect.any(Number) } }])
+    expect(storedSettings.state.rpcEndpointPreferences).toEqual({ zcash: 'preferred' })
 
     setActiveRpcEndpointPreferences({ zcash: 'fallback' })
     await expect(ensureRpcEndpointPreferencesLoaded()).resolves.toEqual({ zcash: 'fallback' })

@@ -1,4 +1,5 @@
 import { formatFeeAmount, formatReviewAmount } from '@/lib/number-format'
+import { formatSymbol } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { CopyFeedbackIcon, CopyToast, useCopyToClipboard } from './CopyToast'
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover'
@@ -9,15 +10,18 @@ interface AmountDisplayProps {
   readonly prefix?: string
   readonly profile?: 'review' | 'fee'
   readonly className?: string
+  readonly showDetails?: boolean
 }
 
 export function AmountDisplay({
   value,
-  symbol,
+  symbol: rawSymbol,
   prefix = '',
   profile = 'review',
-  className
+  className,
+  showDetails = true
 }: AmountDisplayProps) {
+  const symbol = formatSymbol(rawSymbol)
   const { copyToClipboard, showToast, copiedKey } = useCopyToClipboard()
   const review = formatReviewAmount(value)
   const display = profile === 'fee' ? formatFeeAmount(value) : review.display
@@ -25,6 +29,16 @@ export function AmountDisplay({
   if (review.exact === null) {
     return (
       <span className={cn('font-sans tabular-nums', className)}>
+        {display}
+        {symbol ? ` ${symbol}` : ''}
+      </span>
+    )
+  }
+
+  if (!showDetails || profile === 'fee') {
+    return (
+      <span className={cn('break-all font-sans tabular-nums', className)}>
+        {prefix}
         {display}
         {symbol ? ` ${symbol}` : ''}
       </span>

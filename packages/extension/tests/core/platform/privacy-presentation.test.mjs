@@ -2,6 +2,8 @@ import { test } from 'node:test'
 import { expect } from '@playwright/test'
 import { summarizePortfolioFiat } from '../../../src/popup/components/portfolio/portfolio-prices.ts'
 import { getActivityTransactionReferences } from '../../../src/popup/services/activity-transaction-references.ts'
+import { shouldWarnSmallTransfer } from '../../../src/popup/services/activity-small-transfer-warning.ts'
+import { getActivityAddressAlias } from '../../../src/popup/services/activity-address-alias.ts'
 import {
   getHomeAssetBreakdown,
   hasCompletePortfolioTotal,
@@ -16,6 +18,7 @@ import {
 } from '../../../src/popup/services/asset-domains.ts'
 import { projectPortfolioForChains } from '../../../src/popup/services/portfolio-presentation.ts'
 import {
+  projectNearConfidentialZecForHome,
   resolveConfidentialDetailAssetId,
   resolveNearConfidentialZecHolding
 } from '../../../src/popup/services/near-confidential-holdings.ts'
@@ -62,6 +65,70 @@ test('Home action source follows the selected balance domain', () => {
   expect(selectHomeActionSource(model, 'public', 'swap')?.asset.asset.id).toBe(zcash.asset.id)
   expect(selectHomeActionSource(model, 'private', 'swap')?.asset.asset.id).toBe(evm.asset.id)
   expect(selectHomeActionSource({ ...model, assets: [zcash] }, 'private', 'swap')).toBeNull()
+})
+
+test('small incoming warning requires an unfamiliar full source and a known small value', () => {
+  const chainId = 'eip155:1'
+  const assetId = 'eip155:1/slip44:60'
+  const sender = { chainId, address: '0x1111111111111111111111111111111111111111' }
+  const item = {
+    id: 'small-receipt',
+    kind: 'receive',
+    createdAt: 2,
+    snapshot: {
+      direction: 'incoming',
+      sender,
+      primaryAmount: { assetId, amountRaw: '10000000000000' }
+    }
+  }
+  const input = {
+    item,
+    history: [item],
+    ownedAddresses: [],
+    contactAddresses: [],
+    assetMetadata: new Map([[assetId, { metadata: { decimals: 18 } }]]),
+    prices: { quotes: [{ assetId, priceUsd: '1000', freshness: 'fresh' }] }
+  }
+  expect(shouldWarnSmallTransfer(input)).toBe(true)
+  expect(shouldWarnSmallTransfer({ ...input, ownedAddresses: [sender] })).toBe(false)
+  expect(shouldWarnSmallTransfer({ ...input, contactAddresses: [sender] })).toBe(false)
+  expect(
+    shouldWarnSmallTransfer({
+      ...input,
+      history: [
+        {
+          createdAt: 1,
+          snapshot: { direction: 'outgoing', recipient: sender }
+        },
+        item
+      ]
+    })
+  ).toBe(false)
+  expect(shouldWarnSmallTransfer({ ...input, prices: null })).toBe(false)
+  expect(
+    shouldWarnSmallTransfer({
+      ...input,
+      prices: { quotes: [{ assetId, priceUsd: '1000', freshness: 'stale' }] }
+    })
+  ).toBe(false)
+  expect(
+    shouldWarnSmallTransfer({
+      ...input,
+      item: {
+        ...item,
+        snapshot: { ...item.snapshot, primaryAmount: { assetId, amountRaw: '0' } }
+      },
+      prices: null
+    })
+  ).toBe(true)
+})
+
+test('NEAR Intents alias requires the exact treasury address on a supported chain', () => {
+  const treasury = '0x2CfF890f0378a11913B6129B2E97417a2c302680'
+  expect(getActivityAddressAlias('eip155:42161', treasury)).toBe('NEAR Intents')
+  expect(getActivityAddressAlias('eip155:11155111', treasury)).toBeNull()
+  expect(getActivityAddressAlias('eip155:42161', treasury.slice(0, -1) + '1')).toBeNull()
+  expect(getActivityAddressAlias('eip155:42161', treasury.slice(0, 10))).toBeNull()
 })
 
 test('NEAR Confidential ZEC stays separate from on-chain ZEC and inside its account and network', () => {
@@ -116,6 +183,91 @@ test('NEAR Confidential ZEC stays separate from on-chain ZEC and inside its acco
   ).toBeNull()
 })
 
+test('Home ZEC display combines on-chain and NEAR Confidential balances without changing source balances', () => {
+  const assetId = 'bip122:00040fe8ec8471911baa1db1266ea15d/slip44:133'
+  const chainId = 'bip122:00040fe8ec8471911baa1db1266ea15d'
+  const asset = {
+    asset: { id: assetId, chainId },
+    metadata: { decimals: 8, symbol: 'ZEC' },
+    balance: {
+      totalRaw: '300000000',
+      transparentRaw: '100000000',
+      shieldedRaw: '200000000',
+      availableRaw: '250000000',
+      pendingRaw: '0'
+    }
+  }
+  const model = {
+    scope: { keyDomainId: 'wallet-a', accountId: 'account-a' },
+    assets: [asset],
+    chains: [{ chain: { id: chainId, family: 'zcash' }, assets: [asset] }],
+    confidential: {
+      status: 'ready',
+      assets: [
+        {
+          tokenId: 'private-zec',
+          protocolAssetId: 'nep141:zec.omft.near',
+          assetId,
+          chainId,
+          availableRaw: '125000000',
+          decimals: 8
+        }
+      ]
+    }
+  }
+  const total = projectNearConfidentialZecForHome(model, model, 'all')
+  const shield = projectNearConfidentialZecForHome(
+    projectPortfolioForDomain(model, 'shield'),
+    model,
+    'shield'
+  )
+  expect(total?.model.assets[0].balance.totalRaw).toBe('425000000')
+  expect(shield?.model.assets[0].balance.totalRaw).toBe('325000000')
+  expect(total?.model.assets[0].balance.availableRaw).toBe('250000000')
+  expect(model.assets[0].balance.totalRaw).toBe('300000000')
+  expect(
+    projectNearConfidentialZecForHome(projectPortfolioForDomain(model, 'public'), model, 'public')
+  ).toBeNull()
+  expect(
+    projectNearConfidentialZecForHome(
+      model,
+      { ...model, scope: { ...model.scope, accountId: 'other' } },
+      'all'
+    )
+  ).toBeNull()
+})
+
+test('Home domain projection keeps pending balances on their own networks', () => {
+  const evmChain = { chain: { id: 'eip155:1', family: 'evm' }, status: 'ready', assets: [] }
+  const zcashChain = {
+    chain: { id: 'bip122:00040fe8ec8471911baa1db1266ea15d', family: 'zcash' },
+    status: 'loading',
+    assets: []
+  }
+  const model = { status: 'partial', assets: [], chains: [evmChain, zcashChain] }
+  const privateModel = projectPortfolioForDomain(model, 'private')
+  expect(privateModel.chains.map(chain => chain.chain.id)).toEqual([evmChain.chain.id])
+  expect(privateModel.status).toBe('ready')
+  expect(projectPortfolioForDomain(model, 'public').chains.map(chain => chain.chain.id)).toEqual([
+    evmChain.chain.id,
+    zcashChain.chain.id
+  ])
+  expect(projectPortfolioForDomain(model, 'shield').chains.map(chain => chain.chain.id)).toEqual([
+    evmChain.chain.id,
+    zcashChain.chain.id
+  ])
+  expect(projectPortfolioForDomain({ ...model, chains: [zcashChain] }, 'private')).toMatchObject({
+    status: 'empty',
+    chains: []
+  })
+  expect(
+    projectPortfolioForDomain(
+      { ...model, chains: [{ ...evmChain, status: 'loading' }, zcashChain] },
+      'private'
+    ).status
+  ).toBe('loading')
+})
+
 test('Home total requires a complete current-account Portfolio and ready prices', () => {
   const model = { scope: { keyDomainId: 'wallet-a', accountId: 'account-a' }, status: 'ready' }
   const fiat = { missingAssetCount: 0, staleAssetCount: 0 }
@@ -144,6 +296,19 @@ test('Home renders available valuations during partial refreshes instead of an e
   expect(status({ ...model, status: 'partial' })).toBe('partial')
   expect(status({ ...model, status: 'error' })).toBe('partial')
   expect(status(model, 'loading', 'loading')).toBe('partial')
+  expect(
+    status(
+      {
+        ...model,
+        status: 'loading',
+        chains: [{ status: 'loading', assets: [] }],
+        confidential: { status: 'ready', assets: [] }
+      },
+      'loading',
+      'loading',
+      { ...fiat, pricedAssetCount: 0 }
+    )
+  ).toBe('partial')
   expect(status(model, 'ready', 'error', { ...fiat, staleAssetCount: 1 })).toBe('partial')
   expect(status(model, 'ready', 'ready', { ...fiat, missingAssetCount: 1 })).toBe('partial')
   expect(status({ ...model, scope: { ...model.scope, accountId: 'account-b' } })).toBe(
@@ -159,10 +324,48 @@ test('Home distinguishes an initial load, an unavailable valuation and a confirm
   expect(status(null, 'loading', 'ready')).toBe('loading')
   expect(status(null, 'error', 'ready')).toBe('unavailable')
   expect(status(model, 'ready', 'loading', { ...fiat, missingAssetCount: 1 })).toBe('loading')
-  expect(status(model, 'ready', 'error', { ...fiat, missingAssetCount: 1 })).toBe('unavailable')
+  expect(status(model, 'ready', 'error', { ...fiat, missingAssetCount: 1 })).toBe('ready')
   expect(status({ ...model, status: 'partial' }, 'ready', 'ready')).toBe('unavailable')
+  expect(
+    status(
+      {
+        ...model,
+        status: 'partial',
+        chains: [
+          { status: 'ready', assets: [] },
+          { status: 'loading', assets: [] }
+        ]
+      },
+      'loading',
+      'loading'
+    )
+  ).toBe('partial')
+  expect(
+    status(
+      {
+        ...model,
+        status: 'partial',
+        chains: [{ status: 'ready', assets: [{ balance: { totalRaw: '1' } }] }]
+      },
+      'ready',
+      'ready',
+      { ...fiat, missingAssetCount: 1 }
+    )
+  ).toBe('partial')
   expect(status(model, 'ready', 'error')).toBe('ready')
   expect(status({ ...model, status: 'empty' }, 'ready', 'error')).toBe('ready')
+  expect(
+    status(
+      {
+        ...model,
+        chains: [{ status: 'ready', assets: [] }],
+        confidential: { status: 'unavailable', assets: [] }
+      },
+      'ready',
+      'ready',
+      { ...fiat, missingAssetCount: 1 }
+    )
+  ).toBe('partial')
   expect(
     status(
       { ...model, status: 'empty', confidential: { status: 'unavailable', assets: [] } },
@@ -198,8 +401,8 @@ test('home asset domains count each EVM and Zcash balance once', () => {
   const model = {
     assets: [evmAsset, zcashAsset],
     chains: [
-      { chain: { id: evmAsset.asset.chainId }, assets: [evmAsset] },
-      { chain: { id: zcashAsset.asset.chainId }, assets: [zcashAsset] }
+      { chain: { id: evmAsset.asset.chainId, family: 'evm' }, assets: [evmAsset] },
+      { chain: { id: zcashAsset.asset.chainId, family: 'zcash' }, assets: [zcashAsset] }
     ]
   }
   const prices = {
@@ -261,6 +464,12 @@ test('home asset domains count each EVM and Zcash balance once', () => {
     )
   ).toBeNull()
   expect(getAssetDomainRaw(zcashAsset, 'shield')).toBe('6')
+  expect(getAssetDomainRaw(zcashAsset, 'private')).toBe('0')
+  expect(projectPortfolioForDomain(model, 'public').chains[1].assets[0].balance.totalRaw).toBe('4')
+  expect(projectPortfolioForDomain(model, 'shield').chains[1].assets[0].balance.totalRaw).toBe('6')
+  expect(projectPortfolioForDomain(model, 'private').chains.map(chain => chain.chain.id)).toEqual([
+    evmAsset.asset.chainId
+  ])
   expect(
     projectPortfolioForDomain(model, 'shield').assets.map(asset => asset.balance.totalRaw)
   ).toEqual(['20', '6'])
@@ -483,7 +692,7 @@ test('home asset domains count each EVM and Zcash balance once', () => {
     shieldUsd: '40',
     shieldUsdPartial: true,
     privateUsd: '60',
-    privateUsdPartial: true
+    privateUsdPartial: false
   })
   expect(getAssetDomainRaw({ ...evmAsset, balance: { totalRaw: '100' } }, 'public')).toBeNull()
   expect(getHomeAssetBreakdown({ ...input, liveMultichainTotal: false })).toBeNull()
@@ -644,7 +853,7 @@ test('Activity details show the outgoing hash before destination settlement', ()
   ).toEqual([
     {
       id: 'destination',
-      label: 'Destination Hash',
+      label: 'Transaction Hash',
       hash: destinationHash,
       chainId: 'eip155:1'
     }
@@ -667,5 +876,103 @@ test('Activity details show the outgoing hash before destination settlement', ()
       hash: outgoingHash,
       chainId: 'eip155:1'
     }
+  ])
+  expect(
+    getActivityTransactionReferences({
+      segments: [
+        {
+          id: 'origin',
+          role: 'origin',
+          target: { kind: 'onchain', chainId: 'eip155:1' },
+          evidence: { transactionHash: outgoingHash }
+        },
+        {
+          id: 'relay',
+          role: 'relay',
+          target: { kind: 'protocol', provider: 'Confidential Intents' },
+          evidence: { transactionHash: `0x${'C'.repeat(64)}` }
+        }
+      ]
+    })
+  ).toEqual([
+    {
+      id: 'origin',
+      label: 'Transaction Hash',
+      hash: outgoingHash,
+      chainId: 'eip155:1'
+    }
+  ])
+  expect(
+    getActivityTransactionReferences({
+      segments: [
+        {
+          id: 'origin',
+          role: 'origin',
+          target: { kind: 'onchain', chainId: 'eip155:1' },
+          evidence: { transactionHash: outgoingHash }
+        },
+        {
+          id: 'relay',
+          role: 'relay',
+          target: { kind: 'protocol', provider: 'Confidential Intents' },
+          evidence: { transactionHash: outgoingHash }
+        },
+        {
+          id: 'destination',
+          role: 'destination',
+          target: { kind: 'onchain', chainId: 'eip155:42161' },
+          evidence: { transactionHash: outgoingHash }
+        }
+      ]
+    })
+  ).toEqual([
+    { id: 'origin', label: 'Outgoing Hash', hash: outgoingHash, chainId: 'eip155:1' },
+    { id: 'destination', label: 'Destination Hash', hash: outgoingHash, chainId: 'eip155:42161' }
+  ])
+  expect(
+    getActivityTransactionReferences({
+      segments: [
+        {
+          id: 'origin',
+          role: 'origin',
+          target: { kind: 'protocol', provider: 'Confidential Intents' },
+          evidence: { transactionHash: outgoingHash }
+        },
+        {
+          id: 'relay',
+          role: 'relay',
+          target: { kind: 'onchain', chainId: 'eip155:1' },
+          evidence: { transactionHash: outgoingHash }
+        }
+      ]
+    })
+  ).toEqual([{ id: 'relay', label: 'Transaction Hash', hash: outgoingHash, chainId: 'eip155:1' }])
+  const base58Hash = '3s'.repeat(32)
+  const differentlyCasedBase58Hash = '3S'.repeat(32)
+  expect(
+    getActivityTransactionReferences({
+      segments: [
+        {
+          id: 'origin',
+          role: 'origin',
+          target: { kind: 'onchain', chainId: 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp' },
+          evidence: { transactionHash: base58Hash }
+        },
+        {
+          id: 'relay',
+          role: 'relay',
+          target: { kind: 'protocol', provider: 'Confidential Intents' },
+          evidence: { transactionHash: differentlyCasedBase58Hash }
+        }
+      ]
+    })
+  ).toEqual([
+    {
+      id: 'origin',
+      label: 'Outgoing Hash',
+      hash: base58Hash,
+      chainId: 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp'
+    },
+    { id: 'relay', label: 'Relay Hash', hash: differentlyCasedBase58Hash, chainId: null }
   ])
 })

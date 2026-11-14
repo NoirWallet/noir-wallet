@@ -51,8 +51,19 @@ export interface SwitcherGroup {
   readonly accounts: readonly SwitcherAccount[]
 }
 
-const IMPORTED_PRIVATE_KEY_GROUP_ID = 'imported-private-key'
-const IMPORTED_PRIVATE_KEY_GROUP_NAME = 'Imported Private Key'
+interface AccountDisplayOrder {
+  readonly isPinned: boolean
+  readonly createdAt: number
+  readonly accountIndex: number
+}
+
+function compareAccountDisplayOrder(left: AccountDisplayOrder, right: AccountDisplayOrder): number {
+  return (
+    Number(right.isPinned) - Number(left.isPinned) ||
+    left.createdAt - right.createdAt ||
+    (left.accountIndex ?? 0) - (right.accountIndex ?? 0)
+  )
+}
 
 export function buildAccountSwitcherGroups(input: {
   readonly wallets: WalletItem[]
@@ -63,42 +74,73 @@ export function buildAccountSwitcherGroups(input: {
 }): readonly SwitcherGroup[] {
   const { wallets, catalogAccounts, accountDisplayNames, currentWalletId, currentAccountId } = input
   const hasRetainedSelection = Boolean(currentWalletId && currentAccountId)
-  const groups = new Map<string, { name: string; accounts: SwitcherAccount[] }>()
+  const groups = new Map<string, { name: string; createdAt: number; accounts: SwitcherAccount[] }>()
+  const accountOrder = new Map<string, AccountDisplayOrder>()
+  const pinnedAccounts: SwitcherAccount[] = []
+  const retainedWalletIds = new Set(wallets.map(wallet => wallet.id))
   const catalogByKey = new Map(
     catalogAccounts.map(account => [accountListKey(account.walletId, account.accountId), account])
   )
   const retained = new Set<string>()
   for (const wallet of wallets) {
-    const group = { name: formatWalletName(wallet, wallets), accounts: [] as SwitcherAccount[] }
+    const group = {
+      name: formatWalletName(wallet, wallets),
+      createdAt: wallet.createdAt,
+      accounts: [] as SwitcherAccount[]
+    }
     for (const account of wallet.accounts) {
       const key = accountListKey(wallet.id, account.id)
       retained.add(key)
       if (account.isHidden) continue
-      group.accounts.push({
+      accountOrder.set(key, {
+        isPinned: Boolean(account.isPinned),
+        createdAt: wallet.createdAt,
+        accountIndex: account.derivationIndex
+      })
+      const item = {
         walletId: wallet.id,
         accountId: account.id,
         name: getAccountDisplayName(wallet.id, account.id, account.name, accountDisplayNames),
         networks: catalogByKey.get(key)?.networks ?? [],
         active: wallet.id === currentWalletId && account.id === currentAccountId
-      })
+      }
+      if (account.isPinned) pinnedAccounts.push(item)
+      else group.accounts.push(item)
     }
     groups.set(`wallet:${wallet.id}`, group)
   }
   for (const account of catalogAccounts) {
     if (retained.has(accountListKey(account.walletId, account.accountId))) continue
-    const isPrivateKey = account.walletSource.kind === 'private-key'
-    const groupId = isPrivateKey ? IMPORTED_PRIVATE_KEY_GROUP_ID : `wallet:${account.walletId}`
+    const groupId =
+      account.walletSource.kind === 'private-key' ? 'private-keys' : `wallet:${account.walletId}`
     const group = groups.get(groupId) ?? {
-      name: isPrivateKey ? IMPORTED_PRIVATE_KEY_GROUP_NAME : account.walletDisplayName,
+      name:
+        account.walletSource.kind === 'private-key'
+          ? 'Imported Private Keys'
+          : account.walletDisplayName,
+      createdAt: account.walletCreatedAt ?? Number.MAX_SAFE_INTEGER,
       accounts: []
     }
+    if (!retainedWalletIds.has(account.walletId)) {
+      group.createdAt = Math.min(
+        group.createdAt,
+        account.walletCreatedAt ?? Number.MAX_SAFE_INTEGER
+      )
+    }
+    accountOrder.set(accountListKey(account.walletId, account.accountId), {
+      isPinned: false,
+      createdAt: account.walletCreatedAt ?? Number.MAX_SAFE_INTEGER,
+      accountIndex: account.accountIndex
+    })
     group.accounts.push({
       walletId: account.walletId,
       accountId: account.accountId,
       name: getAccountDisplayName(
         account.walletId,
         account.accountId,
-        account.accountDisplayName,
+        account.walletSource.kind === 'private-key' && account.accountDisplayName === 'Account 1'
+          ? account.walletDisplayName
+          : account.accountDisplayName,
         accountDisplayNames
       ),
       networks: account.networks,
@@ -106,9 +148,29 @@ export function buildAccountSwitcherGroups(input: {
     })
     groups.set(groupId, group)
   }
-  return [...groups]
+  const sortAccounts = (accounts: SwitcherAccount[]) =>
+    accounts.sort((left, right) =>
+      compareAccountDisplayOrder(
+        accountOrder.get(accountListKey(left.walletId, left.accountId))!,
+        accountOrder.get(accountListKey(right.walletId, right.accountId))!
+      )
+    )
+  const regularGroups = [...groups]
     .filter(([, group]) => group.accounts.length > 0)
-    .map(([id, group]) => ({ id, ...group }))
+    .sort(([, left], [, right]) =>
+      compareAccountDisplayOrder(
+        { isPinned: false, createdAt: left.createdAt, accountIndex: 0 },
+        { isPinned: false, createdAt: right.createdAt, accountIndex: 0 }
+      )
+    )
+    .map(([id, group]) => ({
+      id,
+      name: group.name,
+      accounts: sortAccounts(group.accounts)
+    }))
+  return pinnedAccounts.length
+    ? [{ id: 'pinned', name: 'Pinned', accounts: sortAccounts(pinnedAccounts) }, ...regularGroups]
+    : regularGroups
 }
 
 export function accountListKey(walletId: string, accountId: string): string {
@@ -224,26 +286,50 @@ export function buildVisibleAccountList(input: {
   const filteredAccounts = accounts.filter(account =>
     matchesAccountSearch(account, input.searchQuery)
   )
+  const accountOrder = new Map(
+    input.wallets.flatMap(wallet =>
+      wallet.accounts.map(
+        account =>
+          [
+            accountListKey(wallet.id, account.id),
+            {
+              isPinned: Boolean(account.isPinned),
+              createdAt: wallet.createdAt,
+              accountIndex: account.derivationIndex
+            }
+          ] as const
+      )
+    )
+  )
   const sortedAccounts = [...filteredAccounts].sort((left, right) => {
-    if (left.isPinned !== right.isPinned) return left.isPinned ? -1 : 1
-    if (left.isHidden !== right.isHidden) return left.isHidden ? 1 : -1
-    return 0
+    return (
+      compareAccountDisplayOrder(
+        accountOrder.get(accountListKey(left.walletId, left.id))!,
+        accountOrder.get(accountListKey(right.walletId, right.id))!
+      ) || Number(left.isHidden) - Number(right.isHidden)
+    )
   })
   const retainedAccountKeys = new Set(
     accounts.map(account => accountListKey(account.walletId, account.id))
   )
   const query = input.searchQuery.trim().toLowerCase()
-  const nativeAccounts = input.nativeAccounts.filter(account => {
-    if (retainedAccountKeys.has(accountListKey(account.walletId, account.accountId))) return false
-    return (
-      !query ||
-      account.accountDisplayName.toLowerCase().includes(query) ||
-      account.walletDisplayName.toLowerCase().includes(query) ||
-      (account.walletSource.kind === 'private-key' && 'imported private key'.includes(query)) ||
-      account.networks.some(network => network.chain.displayName.toLowerCase().includes(query)) ||
-      catalogAddresses(account).some(address => address.toLowerCase().includes(query))
+  const nativeAccounts = input.nativeAccounts
+    .filter(account => {
+      if (retainedAccountKeys.has(accountListKey(account.walletId, account.accountId))) return false
+      return (
+        !query ||
+        account.accountDisplayName.toLowerCase().includes(query) ||
+        account.walletDisplayName.toLowerCase().includes(query) ||
+        (account.walletSource.kind === 'private-key' && 'imported private key'.includes(query)) ||
+        account.networks.some(network => network.chain.displayName.toLowerCase().includes(query)) ||
+        catalogAddresses(account).some(address => address.toLowerCase().includes(query))
+      )
+    })
+    .map(account =>
+      account.walletSource.kind === 'private-key' && account.accountDisplayName === 'Account 1'
+        ? { ...account, accountDisplayName: account.walletDisplayName }
+        : account
     )
-  })
   const filteredAccountKeys = new Set(
     filteredAccounts.map(account => accountListKey(account.walletId, account.id))
   )
@@ -300,14 +386,14 @@ export function buildVisibleAccountList(input: {
       ensureWalletGroup(account.walletId, account).accounts.push({ kind: 'native', account })
       continue
     }
-    const id = IMPORTED_PRIVATE_KEY_GROUP_ID
+    const id = 'private-keys'
     let group = groups.get(id)
     if (!group) {
       group = {
         kind: 'private-key',
         id,
         walletId: null,
-        displayName: IMPORTED_PRIVATE_KEY_GROUP_NAME,
+        displayName: 'Imported Private Keys',
         hardwareVendor: null,
         addAccount: null,
         createdAt: Number.MAX_SAFE_INTEGER,
@@ -319,7 +405,12 @@ export function buildVisibleAccountList(input: {
     group.accounts.push({ kind: 'native', account })
   }
   const regularEntries = [...groups.values()]
-    .sort((left, right) => left.createdAt - right.createdAt)
+    .sort((left, right) =>
+      compareAccountDisplayOrder(
+        { isPinned: false, createdAt: left.createdAt, accountIndex: 0 },
+        { isPinned: false, createdAt: right.createdAt, accountIndex: 0 }
+      )
+    )
     .map(({ createdAt: _createdAt, ...group }) => {
       if (group.kind === 'private-key') {
         group.accounts.sort(
@@ -330,6 +421,12 @@ export function buildVisibleAccountList(input: {
             (right.kind === 'native'
               ? (right.account.walletCreatedAt ?? Number.MAX_SAFE_INTEGER)
               : 0)
+        )
+      } else {
+        group.accounts.sort(
+          (left, right) =>
+            (left.kind === 'retained' ? left.account.derivationIndex : left.account.accountIndex) -
+            (right.kind === 'retained' ? right.account.derivationIndex : right.account.accountIndex)
         )
       }
       return Object.freeze({ ...group, accounts: Object.freeze(group.accounts) })

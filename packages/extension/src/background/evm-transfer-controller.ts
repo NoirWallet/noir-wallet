@@ -27,6 +27,8 @@ import {
 } from '@/infrastructure/chains/evm'
 import { accountContextTransition } from './account-context-transition'
 import { traceDebugStage } from '@/lib/debug-performance'
+import { DedupPromise } from '@/lib/async-utils'
+import { DEFAULT_NETWORK } from '@/lib/runtime-network'
 
 export interface BackgroundEvmTransferControllerOptions {
   readonly orchestrator: EvmTransferOrchestrator
@@ -42,6 +44,7 @@ export interface BackgroundEvmTransferControllerOptions {
     context: ActiveEvmPortfolioContext
   ) => Promise<PeaEvmExecutionAccount>
   readonly readTokenAllowance: (token: string, owner: string, spender: string) => Promise<string>
+  readonly readTokenBalance: (token: string, owner: string) => Promise<string>
   readonly validateRheaSwapQuote?: (
     quoteHandle: string,
     executionMode: EvmTransferExecutionMode | undefined,
@@ -89,6 +92,9 @@ export class BackgroundEvmTransferController {
   private readonly resolveExternalSigner: BackgroundEvmTransferControllerOptions['resolveExternalSigner']
   private readonly resolvePrivateExecutionAccount?: BackgroundEvmTransferControllerOptions['resolvePrivateExecutionAccount']
   private readonly readTokenAllowance: BackgroundEvmTransferControllerOptions['readTokenAllowance']
+  private readonly readTokenBalance: BackgroundEvmTransferControllerOptions['readTokenBalance']
+  private readonly tokenBalanceCache = new Map<string, { raw: string; expiresAt: number }>()
+  private readonly tokenBalanceReads = new Map<string, DedupPromise<string>>()
   private readonly validateRheaSwapQuote?: BackgroundEvmTransferControllerOptions['validateRheaSwapQuote']
 
   constructor(options: BackgroundEvmTransferControllerOptions) {
@@ -97,6 +103,7 @@ export class BackgroundEvmTransferController {
     this.resolveExternalSigner = options.resolveExternalSigner
     this.resolvePrivateExecutionAccount = options.resolvePrivateExecutionAccount
     this.readTokenAllowance = options.readTokenAllowance
+    this.readTokenBalance = options.readTokenBalance
     this.validateRheaSwapQuote = options.validateRheaSwapQuote
   }
 
@@ -150,6 +157,84 @@ export class BackgroundEvmTransferController {
       }
       return this.readTokenAllowance(token, owner, spender)
     })
+  }
+
+  async getTokenBalance(
+    token: string,
+    expectedWalletId: string,
+    expectedAccountId: string,
+    executionModeValue: unknown = 'main'
+  ): Promise<string> {
+    if (!/^0x[0-9a-fA-F]{40}$/.test(token)) throw new Error('Invalid EVM token address')
+    if (executionModeValue !== 'main' && executionModeValue !== 'private') {
+      throw new Error('Invalid EVM balance execution mode')
+    }
+    const { context, owner } = await accountContextTransition.runActiveOperation(async () => {
+      const context = await this.requireActiveContext()
+      const scope = context.chainAccount.scope
+      if (scope.keyDomainId !== expectedWalletId || scope.accountId !== expectedAccountId) {
+        throw new Error('EVM balance account does not match the active account')
+      }
+      const owner =
+        executionModeValue === 'private'
+          ? (await this.requirePrivateExecutionAccount(context)).address
+          : parseEvmAccountBinding(context.chainAccount, scope.chainId).address
+      return { context, owner }
+    })
+    const scope = context.chainAccount.scope
+    const key = JSON.stringify([
+      DEFAULT_NETWORK,
+      context.generationId,
+      context.chainAccount.id,
+      scope.keyDomainId,
+      scope.accountId,
+      scope.chainId,
+      executionModeValue,
+      token.toLowerCase(),
+      owner.toLowerCase()
+    ])
+    const cached = this.tokenBalanceCache.get(key)
+    const fromCache = Boolean(cached && cached.expiresAt > Date.now())
+    let raw: string
+    if (fromCache) {
+      raw = cached!.raw
+    } else {
+      let read = this.tokenBalanceReads.get(key)
+      if (!read) {
+        read = new DedupPromise<string>()
+        this.tokenBalanceReads.set(key, read)
+      }
+      raw = await read
+        .run(async () => {
+          const value = await this.readTokenBalance(token, owner)
+          if (!/^(0|[1-9][0-9]{0,77})$/.test(value) || BigInt(value) > (1n << 256n) - 1n) {
+            throw new Error('Invalid EVM token balance')
+          }
+          return value
+        })
+        .finally(() => {
+          if (!read?.isPending) this.tokenBalanceReads.delete(key)
+        })
+    }
+    await accountContextTransition.runActiveOperation(async () => {
+      const latest = await this.requireActiveContext()
+      if (
+        latest.generationId !== context.generationId ||
+        latest.chainAccount.id !== context.chainAccount.id ||
+        latest.chainAccount.scope.keyDomainId !== scope.keyDomainId ||
+        latest.chainAccount.scope.accountId !== scope.accountId ||
+        latest.chainAccount.scope.chainId !== scope.chainId
+      ) {
+        throw new Error('EVM balance account changed during read')
+      }
+    })
+    if (!fromCache) {
+      if (this.tokenBalanceCache.size >= 128) {
+        this.tokenBalanceCache.delete(this.tokenBalanceCache.keys().next().value!)
+      }
+      this.tokenBalanceCache.set(key, { raw, expiresAt: Date.now() + 30_000 })
+    }
+    return raw
   }
 
   async prepare(
