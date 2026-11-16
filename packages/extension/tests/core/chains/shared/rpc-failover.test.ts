@@ -488,3 +488,64 @@ test('restores a Zcash selection from cache without rewriting it on registry fai
     else globalThis.chrome = originalChrome
   }
 })
+
+test('loads the runtime testnet registry without using or overwriting mainnet preferences', async () => {
+  const { initializeRuntimeNetwork, getNetworkConfig } =
+    await import('../../../../src/lib/runtime-network')
+  const originalChrome = globalThis.chrome
+  const originalFetch = globalThis.fetch
+  const settings = {
+    state: { networkMode: 'testnet', rpcEndpointPreferences: { zcash: 'preferred' } },
+    version: 0
+  }
+  const cached = {
+    version: 1,
+    updatedAt: '2026-11-16T00:00:00.000Z',
+    chains: ['mainnet', 'testnet'].map(network => ({
+      id: `zcash-${network}`,
+      chain: 'zcash',
+      network,
+      label: `Zcash ${network}`,
+      iconChain: 'zec',
+      probe: 'zcash-lightwalletd-grpc-web',
+      endpoints: [{ id: 'chainsafe', label: network, url: `https://${network}.example.com` }]
+    }))
+  }
+  const writes: unknown[] = []
+  globalThis.chrome = {
+    storage: {
+      local: {
+        get: async () => ({
+          wallet_settings: settings,
+          rpc_registry_cache_v1: cached,
+          rpc_registry_refresh_v1: { successAt: Date.now() }
+        }),
+        set: async (value: unknown) => {
+          writes.push(value)
+        }
+      }
+    }
+  } as typeof chrome
+  globalThis.fetch = async () => {
+    throw new Error('Unexpected network request')
+  }
+  try {
+    await initializeRuntimeNetwork()
+    expect(getNetworkConfig('testnet').rpcUrl).toBe(
+      'https://zcash-wallet-grpc-testnet.deltarpc.com'
+    )
+    await syncActiveRpcEndpointPreferencesFromStorage()
+    expect(getRpcEndpointOptions('zcash').map(endpoint => endpoint.url)).toEqual([
+      'https://testnet.example.com'
+    ])
+    expect(getNetworkConfig('testnet').rpcUrl).toBe('https://testnet.example.com')
+    expect(getNetworkConfig('mainnet').rpcUrl).not.toBe('https://testnet.example.com')
+    await refreshRpcEndpointRegistry()
+    expect(writes).toEqual([])
+    expect(settings.state.rpcEndpointPreferences.zcash).toBe('preferred')
+  } finally {
+    globalThis.fetch = originalFetch
+    if (originalChrome === undefined) delete globalThis.chrome
+    else globalThis.chrome = originalChrome
+  }
+})
