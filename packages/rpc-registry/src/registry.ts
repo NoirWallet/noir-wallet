@@ -131,9 +131,7 @@ export const RPC_REGISTRY: RpcRegistryDocument = {
           id: 'deltarpc',
           label: 'DeltaRPC',
           url: 'https://zcash-wallet-grpc-testnet.deltarpc.com'
-        },
-        { id: 'zec-rocks', label: 'zec.rocks', url: 'https://testnet.zec.rocks' },
-        { id: 'chainsafe', label: 'ChainSafe', url: 'https://zcash-testnet.chainsafe.dev' }
+        }
       ]
     },
     chain('eip155:1', MAINNET, 'Ethereum', 'eth', EVM, [
