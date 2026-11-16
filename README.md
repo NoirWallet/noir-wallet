@@ -168,6 +168,7 @@ The current V2 extension supports the optional `fundingSource` parameter for SDK
 - [Provider API](./packages/docs/content/docs/developers/provider-api.mdx): methods, request and response types, and limitations.
 - [SDK package README](./packages/sdk/README.md): package installation and quick start.
 
+
 ## Release
 
 See the [CI/CD and release runbook](./docs/release-workflow.md) for PR development previews,
