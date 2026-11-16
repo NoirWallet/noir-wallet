@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
+  projectSwapCollector,
   resolveSwapAnalyticsAction,
   resolveSwapAnalyticsContext
 } from '../../../src/popup/services/swap-event-model.ts'
@@ -31,6 +32,55 @@ test('Swap page only reports actual swaps to the Swap funnel', () => {
     isTransfer: true,
     kind: 'transfer'
   })
+})
+
+test('Swap collector uses the reviewed confidential route and a fresh source price', () => {
+  const now = Date.parse('2026-01-01T12:00:00Z')
+  const collector = projectSwapCollector({
+    amountIn: '1.23456789',
+    sourcePrice: 2.5,
+    sourcePriceUpdatedAt: new Date(now - 60_000).toISOString(),
+    now,
+    purpose: 'public-private-send',
+    confidentiality: 'basic',
+    isTransfer: true,
+    isZecSource: false,
+    isZecDestination: false,
+    executionSourceMode: 'main',
+    destinationMode: 'main',
+    hasExternalRecipient: true
+  })
+  assert.equal(collector.inputAmount, '1.23456789')
+  assert.equal(collector.usdAmount, '3.08641973')
+  assert.equal(collector.valuation, 'partial')
+  assert.equal(collector.sourceDomain, 'public')
+  assert.equal(collector.destinationDomain, 'private')
+  assert.equal(collector.privacyRoute, 'confidential')
+  assert.equal(collector.provider, 'near_confidential')
+  assert.equal(collector.outputAmount, undefined)
+})
+
+test('Private balance alone does not imply confidential execution or fresh valuation', () => {
+  const now = Date.parse('2026-01-01T12:00:00Z')
+  const collector = projectSwapCollector({
+    amountIn: '4',
+    sourcePrice: 10,
+    sourcePriceUpdatedAt: new Date(now - 600_000).toISOString(),
+    now,
+    purpose: 'private-cross-chain-send',
+    isTransfer: true,
+    isZecSource: false,
+    isZecDestination: false,
+    executionSourceMode: 'private',
+    destinationMode: 'main',
+    hasExternalRecipient: true
+  })
+  assert.equal(collector.sourceDomain, 'private')
+  assert.equal(collector.destinationDomain, undefined)
+  assert.equal(collector.privacyRoute, undefined)
+  assert.equal(collector.provider, undefined)
+  assert.equal(collector.usdAmount, undefined)
+  assert.equal(collector.valuation, 'unavailable')
 })
 
 test('Swap analytics uses the actual source chain and route direction', () => {

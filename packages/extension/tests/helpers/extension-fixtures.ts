@@ -99,11 +99,11 @@ export async function selectImportedZcashHistory(
   const zcash = page.getByRole('checkbox', { name: 'Zcash' })
   if ((await zcash.getAttribute('data-state')) !== 'checked') await zcash.click()
   await page.getByRole('button', { name: 'Continue' }).click()
-  await expect(page.getByRole('radio', { name: 'New to Zcash' })).toBeVisible()
+  await expect(page.getByRole('radio', { name: 'New Zcash Account' })).toBeVisible()
   if (options.birthdayHeight === undefined) {
-    await page.getByRole('radio', { name: 'New to Zcash' }).click()
+    await page.getByRole('radio', { name: 'New Zcash Account' }).click()
   } else {
-    await page.getByRole('radio', { name: 'Restore Zcash history' }).click()
+    await page.getByRole('radio', { name: 'Restore Zcash Account' }).click()
     await page.getByRole('radio', { name: 'Block height' }).click()
     await page
       .getByRole('textbox', { name: 'Zcash birthday height' })
@@ -136,7 +136,7 @@ export async function selectNewZcashAccountHistory(page: Page): Promise<void> {
   await expect(page.getByRole('dialog', { name: 'Zcash account history' })).toBeVisible({
     timeout: 60_000
   })
-  await page.getByRole('radio', { name: 'New Zcash account' }).click()
+  await page.getByRole('radio', { name: 'New Zcash Account' }).click()
   await page.getByRole('button', { name: 'Continue' }).click()
 }
 

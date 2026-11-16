@@ -1,4 +1,5 @@
 const STORAGE_KEY = 'popup_automatic_refresh_attempts_v1'
+const STORAGE_LOCK = 'noir-popup-automatic-refresh-attempts'
 const SCHEMA_VERSION = 1
 const MAX_ENTRIES = 512
 const MAX_ENTRY_AGE_MS = 24 * 60 * 60 * 1000
@@ -67,8 +68,14 @@ function attemptKey(scope: string, resource: string): string {
   return `${stableScopeHash(scope)}:${resource}`
 }
 
+async function withStorageLock<T>(operation: () => Promise<T>): Promise<T> {
+  if (typeof navigator === 'undefined' || !navigator.locks) return operation()
+  return await navigator.locks.request(STORAGE_LOCK, operation)
+}
+
 export class AutomaticRefreshSession {
   private readonly fallbackAttempts = new Map<string, number>()
+  private storageWriteFailed = false
   private queue: Promise<void> = Promise.resolve()
 
   constructor(private readonly storage?: SessionStorageArea) {}
@@ -92,47 +99,55 @@ export class AutomaticRefreshSession {
     }
     if (resources.length === 0) return Promise.resolve(Object.freeze([]))
 
-    const operation = this.queue.then(async () => {
-      let attempts = new Map(this.fallbackAttempts)
-      const storage =
-        this.storage ?? (typeof chrome === 'undefined' ? undefined : chrome.storage.session)
-      if (storage) {
-        try {
-          const stored = await storage.get(STORAGE_KEY)
-          const persisted = parseAttempts(stored[STORAGE_KEY], now)
-          for (const [key, attemptedAt] of persisted) {
-            attempts.set(key, Math.max(attempts.get(key) ?? 0, attemptedAt))
+    const operation = this.queue.then(() =>
+      withStorageLock(async () => {
+        let attempts = new Map(this.fallbackAttempts)
+        const storage =
+          this.storage ?? (typeof chrome === 'undefined' ? undefined : chrome.storage.session)
+        if (storage) {
+          try {
+            const stored = await storage.get(STORAGE_KEY)
+            const persisted = parseAttempts(stored[STORAGE_KEY], now)
+            if (this.storageWriteFailed) {
+              for (const [key, attemptedAt] of persisted) {
+                attempts.set(key, Math.max(attempts.get(key) ?? 0, attemptedAt))
+              }
+            } else {
+              attempts = persisted
+            }
+          } catch {
+            // Session storage can be unavailable during extension reload. The in-memory
+            // fallback still prevents duplicate requests in the current Popup lifecycle.
           }
-        } catch {
-          // Session storage can be unavailable during extension reload. The in-memory
-          // fallback still prevents duplicate requests in the current Popup lifecycle.
         }
-      }
 
-      const claimed = resources.filter(resource => {
-        const key = attemptKey(scope, resource)
-        const lastAttemptAt = attempts.get(key)
-        if (lastAttemptAt !== undefined && now - lastAttemptAt < cooldownMs) return false
-        attempts.set(key, now)
-        return true
+        const claimed = resources.filter(resource => {
+          const key = attemptKey(scope, resource)
+          const lastAttemptAt = attempts.get(key)
+          if (lastAttemptAt !== undefined && now - lastAttemptAt < cooldownMs) return false
+          attempts.set(key, now)
+          return true
+        })
+
+        this.fallbackAttempts.clear()
+        for (const [key, attemptedAt] of [...attempts.entries()]
+          .sort((left, right) => right[1] - left[1])
+          .slice(0, MAX_ENTRIES)) {
+          this.fallbackAttempts.set(key, attemptedAt)
+        }
+
+        if (claimed.length > 0 && storage) {
+          try {
+            await storage.set({ [STORAGE_KEY]: serializeAttempts(this.fallbackAttempts) })
+            this.storageWriteFailed = false
+          } catch {
+            this.storageWriteFailed = true
+            // The fallback map above remains authoritative until session storage recovers.
+          }
+        }
+        return Object.freeze(claimed)
       })
-
-      this.fallbackAttempts.clear()
-      for (const [key, attemptedAt] of [...attempts.entries()]
-        .sort((left, right) => right[1] - left[1])
-        .slice(0, MAX_ENTRIES)) {
-        this.fallbackAttempts.set(key, attemptedAt)
-      }
-
-      if (claimed.length > 0 && storage) {
-        try {
-          await storage.set({ [STORAGE_KEY]: serializeAttempts(this.fallbackAttempts) })
-        } catch {
-          // The fallback map above remains authoritative until session storage recovers.
-        }
-      }
-      return Object.freeze(claimed)
-    })
+    )
 
     this.queue = operation.then(
       () => undefined,
@@ -150,34 +165,42 @@ export class AutomaticRefreshSession {
     }
     if (resources.length === 0) return Promise.resolve()
 
-    const operation = this.queue.then(async () => {
-      let attempts = new Map(this.fallbackAttempts)
-      const storage =
-        this.storage ?? (typeof chrome === 'undefined' ? undefined : chrome.storage.session)
-      if (storage) {
-        try {
-          const stored = await storage.get(STORAGE_KEY)
-          const persisted = parseAttempts(stored[STORAGE_KEY], now)
-          for (const [key, attemptedAt] of persisted) {
-            attempts.set(key, Math.max(attempts.get(key) ?? 0, attemptedAt))
+    const operation = this.queue.then(() =>
+      withStorageLock(async () => {
+        let attempts = new Map(this.fallbackAttempts)
+        const storage =
+          this.storage ?? (typeof chrome === 'undefined' ? undefined : chrome.storage.session)
+        if (storage) {
+          try {
+            const stored = await storage.get(STORAGE_KEY)
+            const persisted = parseAttempts(stored[STORAGE_KEY], now)
+            if (this.storageWriteFailed) {
+              for (const [key, attemptedAt] of persisted) {
+                attempts.set(key, Math.max(attempts.get(key) ?? 0, attemptedAt))
+              }
+            } else {
+              attempts = persisted
+            }
+          } catch {
+            // The in-memory state remains sufficient to release the current Popup claim.
           }
-        } catch {
-          // The in-memory state remains sufficient to release the current Popup claim.
         }
-      }
 
-      for (const resource of resources) attempts.delete(attemptKey(scope, resource))
-      this.fallbackAttempts.clear()
-      for (const [key, attemptedAt] of attempts) this.fallbackAttempts.set(key, attemptedAt)
+        for (const resource of resources) attempts.delete(attemptKey(scope, resource))
+        this.fallbackAttempts.clear()
+        for (const [key, attemptedAt] of attempts) this.fallbackAttempts.set(key, attemptedAt)
 
-      if (storage) {
-        try {
-          await storage.set({ [STORAGE_KEY]: serializeAttempts(this.fallbackAttempts) })
-        } catch {
-          // The released in-memory claim still permits retry in the current lifecycle.
+        if (storage) {
+          try {
+            await storage.set({ [STORAGE_KEY]: serializeAttempts(this.fallbackAttempts) })
+            this.storageWriteFailed = false
+          } catch {
+            this.storageWriteFailed = true
+            // The released in-memory claim still permits retry in the current lifecycle.
+          }
         }
-      }
-    })
+      })
+    )
 
     this.queue = operation.then(
       () => undefined,

@@ -1,4 +1,9 @@
-import { NOIR_SWAP_REFERRAL, type ConfidentialFundingNetworkConfig } from '@/config/intents'
+import {
+  NOIR_RECEIVE_REFERRAL,
+  NOIR_SEND_REFERRAL,
+  type NoirIntentsReferral,
+  type ConfidentialFundingNetworkConfig
+} from '@/config/intents'
 import { parseNearAccountId } from '@/core/chains/near/identifiers'
 import { readRheaDestinationHash } from '@/core/services/rhea-swap/rhea-order-status'
 import { DedupPromise } from '@/lib/async-utils'
@@ -9,7 +14,10 @@ import type {
   ConfidentialSignedPayload,
   ConfidentialWithdrawRequest
 } from '@/core/services/confidential-funding'
-import { assertConfidentialQuoteBinding } from '@/core/services/confidential-funding'
+import {
+  assertConfidentialQuoteBinding,
+  assertFlexibleExternalDepositQuoteBinding
+} from '@/core/services/confidential-funding'
 
 const REQUEST_TIMEOUT_MS = 30_000
 const APP_FEE_CACHE_MS = 5 * 60_000
@@ -411,6 +419,9 @@ function parseQuote(value: unknown): ConfidentialQuote {
     quoteRequest: Object.freeze({ ...value.quoteRequest }),
     quote: Object.freeze({
       amountIn: positiveRaw(quote.amountIn, 'Confidential input amount'),
+      ...(quote.minAmountIn !== undefined
+        ? { minAmountIn: positiveRaw(quote.minAmountIn, 'Confidential minimum input') }
+        : {}),
       amountOut: positiveRaw(quote.amountOut, 'Confidential output amount'),
       minAmountOut: positiveRaw(
         quote.minAmountOut ?? quote.amountOut,
@@ -873,6 +884,7 @@ export class ConfidentialFundingApi {
   }
 
   async quote(input: {
+    readonly referral: NoirIntentsReferral
     readonly originAsset: string
     readonly destinationAsset: string
     readonly amountRaw: string
@@ -913,7 +925,7 @@ export class ConfidentialFundingApi {
       recipient: input.recipient,
       recipientType: input.recipientType,
       deadline: new Date(Date.now() + 60 * 60_000).toISOString(),
-      referral: NOIR_SWAP_REFERRAL,
+      referral: input.referral,
       quoteWaitingTimeMs: 0,
       ...(appFees ? { appFees } : {}),
       confidentiality: 'basic'
@@ -960,6 +972,83 @@ export class ConfidentialFundingApi {
     return quote
   }
 
+  async quoteFlexibleDeposit(input: {
+    readonly originAsset: string
+    readonly signerId: string
+    readonly refundTo: string
+  }): Promise<ConfidentialQuote> {
+    const request = {
+      dry: true,
+      swapType: 'FLEX_INPUT',
+      slippageTolerance: 0,
+      originAsset: input.originAsset,
+      depositType: 'ORIGIN_CHAIN',
+      destinationAsset: input.originAsset,
+      amount: '1',
+      refundTo: input.refundTo,
+      refundType: 'ORIGIN_CHAIN',
+      recipient: input.signerId,
+      recipientType: 'CONFIDENTIAL_INTENTS',
+      deadline: new Date(Date.now() + 60 * 60_000).toISOString(),
+      referral: NOIR_RECEIVE_REFERRAL,
+      quoteWaitingTimeMs: 0,
+      confidentiality: 'basic'
+    }
+    let amountRaw: string
+    try {
+      const discovery = parseQuote(
+        await requestJson(this.oneClickUrl('/quote'), {
+          method: 'POST',
+          body: JSON.stringify(request)
+        })
+      )
+      assertFlexibleExternalDepositQuoteBinding(
+        discovery,
+        {
+          originAsset: input.originAsset,
+          destinationAsset: input.originAsset,
+          amountRaw: '1',
+          signerId: input.signerId,
+          refundTo: input.refundTo,
+          recipient: input.signerId,
+          depositType: 'ORIGIN_CHAIN',
+          refundType: 'ORIGIN_CHAIN',
+          recipientType: 'CONFIDENTIAL_INTENTS',
+          slippageBps: 0
+        },
+        Date.now(),
+        true
+      )
+      amountRaw = discovery.quote.minAmountIn!
+    } catch (error) {
+      const minimum =
+        error instanceof ConfidentialFundingApiError && error.status === 400
+          ? error.message.match(/amount is too low for bridge, try at least ([1-9][0-9]*)/i)?.[1]
+          : undefined
+      if (!minimum || minimum.length > 78) throw error
+      amountRaw = minimum
+    }
+    const quote = parseQuote(
+      await requestJson(this.oneClickUrl('/quote'), {
+        method: 'POST',
+        body: JSON.stringify({ ...request, dry: false, amount: amountRaw })
+      })
+    )
+    assertFlexibleExternalDepositQuoteBinding(quote, {
+      originAsset: input.originAsset,
+      destinationAsset: input.originAsset,
+      amountRaw,
+      signerId: input.signerId,
+      refundTo: input.refundTo,
+      recipient: input.signerId,
+      depositType: 'ORIGIN_CHAIN',
+      refundType: 'ORIGIN_CHAIN',
+      recipientType: 'CONFIDENTIAL_INTENTS',
+      slippageBps: 0
+    })
+    return quote
+  }
+
   async quoteExactOutput(input: {
     readonly asset: string
     readonly amountOutRaw: string
@@ -981,7 +1070,7 @@ export class ConfidentialFundingApi {
       recipient: input.recipient,
       recipientType: 'DESTINATION_CHAIN',
       deadline: new Date(Date.now() + 60 * 60_000).toISOString(),
-      referral: NOIR_SWAP_REFERRAL,
+      referral: NOIR_SEND_REFERRAL,
       quoteWaitingTimeMs: 0,
       ...(appFees.length > 0 ? { appFees } : {}),
       confidentiality: 'basic'

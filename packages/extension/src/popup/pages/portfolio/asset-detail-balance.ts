@@ -1,4 +1,5 @@
 import Big from '@/lib/big'
+import { excludeDeprecatedConfidentialAssets } from '@/core/services/confidential-funding/confidential-funding-portfolio'
 import type { PortfolioAssetView, PortfolioBalanceView, PortfolioReadModel } from '@/core/portfolio'
 import { formatBaseUnitDecimalAmount } from '@/lib/number-format'
 import { formatDisplayTokenAmount } from '@/popup/components/portfolio/portfolio-format'
@@ -18,6 +19,11 @@ export function getAssetDetailCategories(
   raw: Record<AssetDomain, string | null>
   fiat: Record<AssetDomain, string | null>
 } {
+  const visibleModel = excludeDeprecatedConfidentialAssets(model)
+  if (visibleModel !== model) {
+    model = visibleModel
+    asset = model.assets.find(candidate => candidate.asset.id === asset.asset.id) ?? asset
+  }
   const evm = asset.asset.chainId.startsWith('eip155:')
   const zcash = getAssetShieldProvider(asset) === 'zcash-shield'
   const raw: Record<AssetDomain, string | null> = {

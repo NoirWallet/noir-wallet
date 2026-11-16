@@ -17,7 +17,8 @@ export type {
   Caip27InvokeMethodRequest,
   MultichainProvider,
   MultichainProviderListener,
-  MultichainRequestArguments
+  MultichainRequestArguments,
+  WalletTokenMetadata
 } from './chains/multichain'
 
 export type {

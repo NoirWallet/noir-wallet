@@ -181,6 +181,80 @@ function withSummary(fixture) {
   }
 }
 
+function createAccountCore(client) {
+  const source = readFileSync(
+    new URL('../../../src/core/zcash/wallet-core.ts', import.meta.url),
+    'utf8'
+  )
+  const { outputText } = typescript.transpileModule(source, {
+    compilerOptions: {
+      module: typescript.ModuleKind.CommonJS,
+      target: typescript.ScriptTarget.ES2022
+    }
+  })
+  const module = { exports: {} }
+  const dependencies = {
+    '../worker/client': { getWorkerClient: () => client },
+    '@/lib/logger': { logger: { log() {}, warn() {} } },
+    '@/lib/big': { safeBig }
+  }
+  new Function('require', 'module', 'exports', outputText)(
+    specifier => dependencies[specifier] ?? {},
+    module,
+    module.exports
+  )
+  return new module.exports.ZcashWalletCore({ walletId: 'wallet', network: 'mainnet' })
+}
+
+test('registering all Zcash accounts preserves the selected account for transfer estimates', async () => {
+  for (const credentialKind of ['seed', 'hardware', 'session']) {
+    const fixture = createRuntime()
+    fixture.walletState.wallets[0].accounts.push({ id: 'second', derivationIndex: 1 })
+    const requests = []
+    const core = createAccountCore({
+      getAccountIds: async () => [7, 12],
+      getAccountHdIndex: async id => (id === 7 ? 0 : 1),
+      markAccountReady() {},
+      async estimateMaxTransfer(request) {
+        requests.push(request)
+        return { maxAmountZats: '275000', feeZats: '15000' }
+      },
+      async estimateTransferFee(request) {
+        requests.push(request)
+        return { feeZats: '15000', marginalFeeZats: '5000' }
+      }
+    })
+    core.ensureInitialized = async () => {}
+    fixture.runtime.getOrCreateWalletCore = () => core
+    fixture.runtime.isLocked = () => false
+    fixture.runtime.password = credentialKind === 'session' ? null : 'test password'
+    fixture.runtime.hasSessionCredentialFor = () => credentialKind === 'session'
+    fixture.runtime.loadWalletCredential = async () =>
+      credentialKind === 'hardware'
+        ? { kind: 'hardware' }
+        : { kind: 'seed', seedPhrase: 'synthetic test phrase' }
+    fixture.runtime.waitForAccountReady = async () => {}
+
+    await fixture.runtime.ensureAllAccountsRegistered('wallet')
+    const selectedCore = await fixture.runtime.getWalletCore('wallet', 'account')
+    await selectedCore.estimateMaxTransfer('synthetic recipient', undefined, 5000, 'transparent')
+    await selectedCore.estimateTransferFee(
+      'synthetic recipient',
+      '0.00275',
+      undefined,
+      5000,
+      'transparent'
+    )
+
+    assert.equal(selectedCore.accountIndex, 0, credentialKind)
+    assert.deepEqual(
+      requests.map(request => request.accountId),
+      [7, 7],
+      credentialKind
+    )
+  }
+})
+
 test('cancelled chain-height reads abort transport, drain the summary and preserve cached state', async () => {
   const started = deferred()
   const summary = deferred()

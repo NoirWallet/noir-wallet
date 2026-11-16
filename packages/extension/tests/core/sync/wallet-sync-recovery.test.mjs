@@ -10,10 +10,6 @@ const zcashWalletRuntimeSource = readFileSync(
   new URL('../../../src/background/zcash-wallet-runtime.ts', import.meta.url),
   'utf-8'
 )
-const homeSource = readFileSync(
-  new URL('../../../src/popup/pages/Home.tsx', import.meta.url),
-  'utf-8'
-)
 const syncSchedulerSource = readFileSync(
   new URL('../../../src/background/sync-scheduler.ts', import.meta.url),
   'utf-8'
@@ -254,11 +250,6 @@ describe('Wallet sync recovery', () => {
     assert.ok(handlerSource.includes('credentialSession.hasUnlockSession()'))
     assert.ok(handlerSource.includes('credentialSession.getProvisioningPassword()'))
     assert.ok(handlerSource.includes('backgroundZcashWalletRuntime.resyncZcashWallet('))
-  })
-
-  it('does not ask the user to start the automatic recovery manually', () => {
-    assert.ok(!homeSource.includes("syncReason === 'wallet_state_error'"))
-    assert.ok(!homeSource.includes('Resync required'))
   })
 
   it('waits for a confirmed sync abort before account mutations', () => {

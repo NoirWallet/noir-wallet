@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { getTokenIconCandidates } from '../../../src/popup/components/tokens/token-icon-candidates.ts'
+import {
+  getTokenIconCandidates,
+  isBundledEthIconIdentity
+} from '../../../src/popup/components/tokens/token-icon-candidates.ts'
 
 const providerIcon = 'https://tokens.example/provider-eth.png'
 const candidates = (assetId, blockchain = 'arb', contractAddress = null) =>
@@ -10,7 +13,7 @@ const candidates = (assetId, blockchain = 'arb', contractAddress = null) =>
     icon: 'https://tokens.example/cached-eth.png'
   })
 
-test('wallet and Swap ETH identities preserve supplied token artwork across networks', () => {
+test('wallet and Swap ETH identities share custom artwork with supplied fallbacks across networks', () => {
   const expected = candidates('eip155:1/slip44:60', 'eth')
   for (const assetId of [
     'eip155:42161/slip44:60',
@@ -23,13 +26,17 @@ test('wallet and Swap ETH identities preserve supplied token artwork across netw
   ]) {
     assert.deepEqual(candidates(assetId), expected, assetId)
   }
-  assert.deepEqual(expected, [providerIcon, 'https://tokens.example/cached-eth.png'])
+  assert.deepEqual(expected, [
+    'https://assets.zknoir.com/chain/ethereum.svg',
+    providerIcon,
+    'https://tokens.example/cached-eth.png'
+  ])
   assert.deepEqual(
     getTokenIconCandidates({
       assetId: 'nep141:arb.omft.near',
       token: { blockchain: 'arb', contractAddress: null, icon: 'https://tokens.example/to.png' }
     }),
-    ['https://tokens.example/to.png']
+    ['https://assets.zknoir.com/chain/ethereum.svg', 'https://tokens.example/to.png']
   )
 })
 
@@ -58,4 +65,17 @@ test('does not give unrelated native coins or custom contracts the ETH identity'
   ]) {
     assert.equal(candidates(assetId, chain, contract)[0], providerIcon, assetId)
   }
+})
+
+test('a custom EVM native ETH uses ETH artwork only for its exact asset identity', () => {
+  assert.equal(isBundledEthIconIdentity('eip155:46630/slip44:60', undefined, 'ETH'), true)
+  assert.equal(isBundledEthIconIdentity('eip155:46630/slip44:60', undefined, 'OKB'), false)
+  assert.equal(
+    isBundledEthIconIdentity(
+      'eip155:46630/erc20:0x3333333333333333333333333333333333333333',
+      undefined,
+      'ETH'
+    ),
+    false
+  )
 })

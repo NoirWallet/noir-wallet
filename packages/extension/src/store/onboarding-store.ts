@@ -266,15 +266,24 @@ export const useOnboardingStore = create<OnboardingState>((set, get) => ({
   createWallet: async () => {
     set({ isLoading: true, error: null })
     try {
-      const { seedPhrase, password, accountName, verificationPassed, mnemonicWordCount } = get()
+      const {
+        seedPhrase,
+        password,
+        accountName,
+        verificationPassed,
+        mnemonicWordCount,
+        selectedNetworkFamilies
+      } = get()
       if (!verificationPassed || seedPhrase.length !== mnemonicWordCount) {
         throw new Error('Confirm your recovery phrase before creating the wallet')
       }
+      if (!selectedNetworkFamilies?.length) throw new Error('Select at least one network')
       await zcashWalletRuntimeClient.provisionPrimarySoftwareWallet({
         mode: 'create',
         mnemonic: seedPhrase.join(' '),
         password,
-        accountName: normalizeAccountName(accountName)
+        accountName: normalizeAccountName(accountName),
+        selectedNetworkFamilies
       })
       await rehydrateWalletStore()
       sendAnalyticsEvent(ANALYTICS_EVENTS.WALLET_CREATED, { params: { method: 'create' } })
@@ -373,14 +382,22 @@ export const useOnboardingStore = create<OnboardingState>((set, get) => ({
   addWallet: async () => {
     set({ isLoading: true, error: null })
     try {
-      const { seedPhrase, accountName, verificationPassed, mnemonicWordCount } = get()
+      const {
+        seedPhrase,
+        accountName,
+        verificationPassed,
+        mnemonicWordCount,
+        selectedNetworkFamilies
+      } = get()
       if (!verificationPassed || seedPhrase.length !== mnemonicWordCount) {
         throw new Error('Confirm your recovery phrase before creating the wallet')
       }
+      if (!selectedNetworkFamilies?.length) throw new Error('Select at least one network')
       await provisionAdditionalSoftwareWallet({
         mode: 'create',
         mnemonic: seedPhrase.join(' '),
-        accountName: normalizeAccountName(accountName)
+        accountName: normalizeAccountName(accountName),
+        selectedNetworkFamilies
       })
       await rehydrateWalletStore()
       sendAnalyticsEvent(ANALYTICS_EVENTS.WALLET_CREATED, { params: { method: 'create' } })

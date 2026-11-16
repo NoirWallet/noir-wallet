@@ -16,15 +16,29 @@ import {
 import { getFullZcashRecoveryBirthdayHeight } from '@/core/wallet/birthday-height'
 import { zcashWalletRuntimeClient } from '../../services/zcash-wallet-runtime-client'
 import { DEFAULT_NETWORK } from '@/lib/runtime-network'
-import { getUtcDayStartTimestamp } from '@/lib/zcash-birthday'
+import { resolveEvmNetworkCatalog } from '@/core/chains/evm-runtime-config'
+import { useSettingsStore } from '@/store/settings-store'
 import { LatestAttempt } from '@/lib/async-utils'
+import { toast } from '@/store/toast-store'
+import { accountNetworksClient } from '../../services/account-networks-client'
+import {
+  parseZcashHistoryRecoveryHeight,
+  resolveZcashHistoryRecoveryDate
+} from '../../services/import-zcash-history-selection'
 import dayjs from '@/lib/dayjs'
-import type { AccountNetworkFamily } from '@/core/wallet/account-network-selection'
+import {
+  isRetainedV1UpgradeAccount,
+  type AccountNetworkFamily
+} from '@/core/wallet/account-network-selection'
+import {
+  createBuildFeatureGatedChainRegistry,
+  createInitialProductChainRegistry
+} from '@/core/chains/registry'
 
 type ZcashHistory = 'new' | 'date' | 'height'
 
 export function ManageAccountNetworksPage() {
-  const { goBack } = useNavigate()
+  const { goBack, navigate } = useNavigate()
   const { confirm } = useDialog()
   const [params] = useSearchParams()
   const walletId = params.get('walletId')
@@ -32,16 +46,97 @@ export function ManageAccountNetworksPage() {
   const wallet = useWalletStore(state => state.wallets.find(item => item.id === walletId))
   const currentWalletId = useWalletStore(state => state.currentWalletId)
   const currentAccountId = useWalletStore(state => state.currentAccountId)
+  const currentNetwork = useWalletStore(state => state.currentNetwork)
+  const chainEndpointSettings = useSettingsStore(state => state.chainEndpointSettings)
+  const loadSettings = useSettingsStore(state => state.loadSettings)
   const account = wallet?.accounts.find(item => item.id === accountId)
-  const available = useMemo(() => availableSoftwareAccountFamilies(), [])
-  const initial = account?.networkSelections?.[DEFAULT_NETWORK] ?? available
+  const guideMode =
+    params.get('guide') === 'v1' && isRetainedV1UpgradeAccount(wallet, account, currentNetwork)
+  const available = useMemo<readonly AccountNetworkFamily[]>(
+    () =>
+      availableSoftwareAccountFamilies().filter(family => family === 'zcash' || family === 'evm'),
+    []
+  )
+  const chains = useMemo(
+    () =>
+      createBuildFeatureGatedChainRegistry(
+        createInitialProductChainRegistry(
+          DEFAULT_NETWORK,
+          resolveEvmNetworkCatalog(DEFAULT_NETWORK, chainEndpointSettings).filter(
+            network => network.source === 'custom'
+          )
+        )
+      )
+        .list()
+        .filter(chain => available.includes(chain.family)),
+    [available, chainEndpointSettings]
+  )
+  const initial = useMemo(
+    () =>
+      available.filter(
+        family => account?.networkSelections?.[DEFAULT_NETWORK]?.includes(family) ?? true
+      ),
+    [account, available]
+  )
   const [selected, setSelected] = useState<readonly AccountNetworkFamily[]>(initial)
   const [history, setHistory] = useState<ZcashHistory>('new')
   const [date, setDate] = useState<dayjs.Dayjs | null>(null)
   const [height, setHeight] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [addressPreviews, setAddressPreviews] = useState<
+    Partial<Record<AccountNetworkFamily, string>>
+  >({})
+  const [addressesLoading, setAddressesLoading] = useState(false)
+  const [addressRefresh, setAddressRefresh] = useState(0)
+  const [addressPreviewScope, setAddressPreviewScope] = useState<string | null>(null)
+  const previewScope = `${currentNetwork}:${walletId}:${accountId}:${addressRefresh}`
   const attempts = useRef(new LatestAttempt())
+  const savingRef = useRef(false)
+  const initializedScope = useRef<string | null>(null)
+
+  useEffect(() => {
+    void loadSettings().catch(() => {})
+  }, [loadSettings])
+
+  useEffect(() => {
+    if (!walletId || !accountId) return
+    let cancelled = false
+    setAddressPreviewScope(null)
+    setAddressPreviews({})
+    setAddressesLoading(true)
+    void accountNetworksClient
+      .getCatalog()
+      .then(catalog => {
+        if (cancelled) return
+        const networks = catalog?.accounts.find(
+          item => item.walletId === walletId && item.accountId === accountId
+        )?.networks
+        const zcash = networks?.find(network => network.chain.family === 'zcash')
+        const evm = networks?.find(network => network.chain.family === 'evm')
+        const zcashAddress =
+          zcash?.addresses.find(address => address.privacy === 'transparent')?.value ??
+          zcash?.addresses.find(address => address.preferredForReceive)?.value
+        const evmAddress = evm?.addresses.find(address => address.preferredForReceive)?.value
+        setAddressPreviews({
+          ...(zcashAddress ? { zcash: zcashAddress } : {}),
+          ...(evmAddress ? { evm: evmAddress } : {})
+        })
+        setAddressPreviewScope(previewScope)
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setAddressPreviews({})
+          setAddressPreviewScope(previewScope)
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setAddressesLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [walletId, accountId, currentNetwork, addressRefresh, previewScope])
 
   useEffect(() => {
     const pending = attempts.current
@@ -49,14 +144,22 @@ export function ManageAccountNetworksPage() {
   }, [])
 
   useEffect(() => {
-    setSelected(account?.networkSelections?.[DEFAULT_NETWORK] ?? available)
+    if (!account) {
+      initializedScope.current = null
+      return
+    }
+    const scope = `${currentNetwork}:${walletId}:${accountId}`
+    if (initializedScope.current === scope) return
+    initializedScope.current = scope
+    setSelected(initial)
     setHistory('new')
     setDate(null)
     setHeight('')
     setError(null)
     attempts.current.invalidate()
+    savingRef.current = false
     setSaving(false)
-  }, [walletId, accountId, available])
+  }, [walletId, accountId, currentNetwork, account, initial])
 
   if (
     !walletId ||
@@ -85,7 +188,9 @@ export function ManageAccountNetworksPage() {
   const changed = available.some(family => selected.includes(family) !== initial.includes(family))
 
   const save = async () => {
-    if (!changed || selected.length === 0) return
+    if (savingRef.current) return
+    if (selected.length === 0 || !changed) return
+    savingRef.current = true
     const attempt = attempts.current.begin()
     const startingWalletId = currentWalletId
     const startingAccountId = currentAccountId
@@ -94,24 +199,16 @@ export function ManageAccountNetworksPage() {
     try {
       let birthdayHeight: number | undefined
       if (choosingZcashHistory && history === 'height') {
-        const normalized = height.replace(/,/g, '').trim()
-        birthdayHeight = Number(normalized)
-        if (
-          !/^\d+$/.test(normalized) ||
-          !Number.isSafeInteger(birthdayHeight) ||
-          birthdayHeight < recoveryFloor
-        ) {
+        const parsed = parseZcashHistoryRecoveryHeight(height, recoveryFloor)
+        if (parsed.error) {
           throw new Error(`Enter a block height of ${recoveryFloor.toLocaleString()} or later.`)
         }
+        birthdayHeight = parsed.height
       } else if (choosingZcashHistory && history === 'date') {
         if (!date) throw new Error('Select the approximate date of the first ZEC transaction.')
-        birthdayHeight = await zcashWalletRuntimeClient.getBlockByTime(
-          getUtcDayStartTimestamp(date)
+        birthdayHeight = await resolveZcashHistoryRecoveryDate(date, recoveryFloor, timestamp =>
+          zcashWalletRuntimeClient.getBlockByTime(timestamp)
         )
-        if (!Number.isSafeInteger(birthdayHeight) || birthdayHeight <= 0) {
-          throw new Error('The Zcash network returned an invalid block height. Please try again.')
-        }
-        birthdayHeight = Math.max(recoveryFloor, birthdayHeight)
       }
       if (!attempts.current.isCurrent(attempt)) return
       const current = useWalletStore.getState()
@@ -135,32 +232,45 @@ export function ManageAccountNetworksPage() {
         walletId,
         accountId,
         families: selected,
+        chainIds: chains.filter(chain => selected.includes(chain.family)).map(chain => chain.id),
         ...(birthdayHeight === undefined ? {} : { birthdayHeight })
       })
-      if (!attempts.current.isCurrent(attempt)) return
       await rehydrateWalletStore()
-      if (attempts.current.isCurrent(attempt)) goBack()
+      if (!attempts.current.isCurrent(attempt)) return
+      if (guideMode) setAddressRefresh(value => value + 1)
+      toast.success('Networks updated')
+      if (!guideMode) goBack()
     } catch (cause) {
       if (attempts.current.isCurrent(attempt))
         setError(cause instanceof Error ? cause.message : 'Could not update account networks')
     } finally {
-      if (attempts.current.isCurrent(attempt)) setSaving(false)
+      if (attempts.current.isCurrent(attempt)) {
+        savingRef.current = false
+        setSaving(false)
+      }
     }
   }
 
+  const leave = () => (guideMode ? navigate('/', { replace: true }) : goBack())
+
   return (
     <div className="page-container">
-      <PageHeader title="Networks" showBack backDisabled={saving} />
-      <div className="page-content min-w-0 py-5">
-        <h1 className="mb-3 truncate text-base font-medium">{account.name}</h1>
+      <PageHeader title="Add Networks" showBack onBack={leave} backDisabled={saving} />
+      <div className="page-content min-w-0 px-4 pb-4 pt-0">
         <AccountNetworkFamilyChoices
           availableFamilies={available}
           selectedFamilies={selected}
+          initialSelectedFamilies={initial}
+          variant="management"
+          disabled={saving}
+          requireSelection
+          addressPreviews={addressPreviewScope === previewScope ? addressPreviews : {}}
+          addressesLoading={addressPreviewScope !== previewScope || addressesLoading}
+          hideMissingAddressPreviews
           onChange={families => {
             setSelected(families)
             setError(null)
           }}
-          disabled={saving}
         />
         {choosingZcashHistory && (
           <div className="mt-5 border-t border-border pt-4">
@@ -217,21 +327,26 @@ export function ManageAccountNetworksPage() {
           </div>
         )}
       </div>
-      <div className="page-footer">
+      <div className="page-footer space-y-3">
         {error && (
-          <p role="alert" className="mb-2 text-sm text-destructive">
+          <p role="alert" className="text-sm text-destructive">
             {error}
           </p>
         )}
         <Button
           className="h-[45px] w-full"
-          disabled={!changed || selected.length === 0 || saving}
+          disabled={saving || (changed && selected.length === 0) || (!guideMode && !changed)}
           isLoading={saving}
-          onClick={() => void save()}
+          onClick={() => {
+            if (changed) void save()
+            else leave()
+          }}
         >
-          {currentWalletId === walletId && currentAccountId === accountId
-            ? 'Save'
-            : 'Switch account and save'}
+          {changed || !guideMode
+            ? currentWalletId !== walletId || currentAccountId !== accountId
+              ? 'Switch account and save'
+              : 'Save'
+            : 'Done'}
         </Button>
       </div>
     </div>

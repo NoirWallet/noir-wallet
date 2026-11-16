@@ -34,6 +34,8 @@ export interface MultichainRequestArguments {
   method:
     | 'wallet_createSession'
     | 'wallet_getSession'
+    | 'wallet_getTokenList'
+    | 'wallet_openTokenManager'
     | 'wallet_revokeSession'
     | 'wallet_invokeMethod'
   params?: readonly unknown[] | Readonly<Record<string, unknown>>
@@ -41,10 +43,21 @@ export interface MultichainRequestArguments {
 
 export type MultichainProviderListener = (session: Caip25Session) => void
 
+export interface WalletTokenMetadata {
+  readonly assetId: string
+  readonly chainId: string
+  readonly contractAddress: string | null
+  readonly symbol: string
+  readonly decimals: number
+  readonly enabled: boolean
+}
+
 export interface MultichainProvider {
   request<T = unknown>(args: MultichainRequestArguments): Promise<T>
   createSession(params: Caip25CreateSessionRequest): Promise<Caip25Session>
   getSession(): Promise<Caip25Session | null>
+  getTokenList(): Promise<readonly WalletTokenMetadata[]>
+  openTokenManager(): Promise<null>
   invokeMethod<T = unknown>(params: Caip27InvokeMethodRequest): Promise<T>
   revokeSession(): Promise<null>
   on(event: 'wallet_sessionChanged', handler: MultichainProviderListener): MultichainProvider

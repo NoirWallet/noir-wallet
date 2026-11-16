@@ -137,6 +137,8 @@ interface MultichainProvider {
   request: (args: ProviderRequestArguments) => Promise<unknown>
   createSession: (params: Readonly<Record<string, unknown>>) => Promise<unknown>
   getSession: () => Promise<unknown>
+  getTokenList: () => Promise<unknown>
+  openTokenManager: () => Promise<null>
   invokeMethod: (params: Readonly<Record<string, unknown>>) => Promise<unknown>
   revokeSession: () => Promise<null>
   on: (event: 'wallet_sessionChanged', handler: ProviderListener) => MultichainProvider
@@ -306,6 +308,9 @@ function createMultichainProvider(): MultichainProvider {
     createSession: params =>
       requestProvider('multichain', { method: 'wallet_createSession', params }),
     getSession: () => requestProvider('multichain', { method: 'wallet_getSession' }),
+    getTokenList: () => requestProvider('multichain', { method: 'wallet_getTokenList' }),
+    openTokenManager: () =>
+      requestProvider('multichain', { method: 'wallet_openTokenManager' }) as Promise<null>,
     invokeMethod: params =>
       requestProvider('multichain', { method: 'wallet_invokeMethod', params }),
     revokeSession: () =>

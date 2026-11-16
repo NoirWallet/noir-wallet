@@ -114,6 +114,40 @@ test('Zcash pending settlement retains confirmed source status', () => {
   ).toBe('broadcast')
 })
 
+test('Shield Move merges authorization and processing progress like Shield Send', () => {
+  const steps = getActivityProgressSteps(
+    {
+      status: 'confirming',
+      snapshot: {
+        direction: 'self',
+        shield: { operation: 'withdraw', sourceDomain: 'shield', destinationDomain: 'private' }
+      },
+      segments: [
+        {
+          id: 'origin',
+          role: 'origin',
+          target: { kind: 'protocol', provider: 'Confidential Intents' },
+          status: 'final'
+        },
+        {
+          id: 'relay',
+          role: 'relay',
+          target: { kind: 'protocol', provider: 'Confidential Intents' },
+          status: 'confirming'
+        },
+        {
+          id: 'destination',
+          role: 'destination',
+          target: { kind: 'onchain', chainId: 'eip155:42161' },
+          status: 'created'
+        }
+      ]
+    },
+    () => 'Arbitrum'
+  )
+  expect(steps.map(step => step.label)).toEqual(['Shield processing', 'Destination transaction'])
+})
+
 test('RHEA signed orders and relay use the same progress language in Activity', () => {
   const steps = getActivityProgressSteps(
     {

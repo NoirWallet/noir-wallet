@@ -5,13 +5,51 @@ import {
   fetchQuote,
   fetchIntentsWalletTokens,
   fetchSwapStatus,
+  evaluateIntentsStatusQuoteBinding,
   getCachedTokens,
   parseCoinGeckoIconCatalogResponse,
   parseQuoteSuccessResponse,
   parseSwapStatusResponse,
   parseSwapTokenCatalogResponse,
+  refreshSwapTokenIcons,
   refreshSwapTokenCatalog
 } from '../../../src/core/services/intents-api.ts'
+
+test('Intents settlement checks the quoted raw minimum with destination precision', () => {
+  const binding = {
+    originAsset: 'nep141:zec.omft.near',
+    destinationAsset: 'nep141:usdc.omft.near',
+    minAmountOut: '900000'
+  }
+  const status = {
+    status: 'SUCCESS',
+    originAsset: binding.originAsset,
+    destinationAsset: binding.destinationAsset,
+    swapDetails: { amountOutFormatted: '0.9' }
+  }
+  expect(evaluateIntentsStatusQuoteBinding(binding, status, 6)).toBe('valid')
+  expect(
+    evaluateIntentsStatusQuoteBinding(
+      binding,
+      {
+        ...status,
+        swapDetails: { amountOutFormatted: '0.89' }
+      },
+      6
+    )
+  ).toBe('mismatch')
+  expect(evaluateIntentsStatusQuoteBinding(binding, status)).toBe('unknown')
+  expect(
+    evaluateIntentsStatusQuoteBinding(
+      binding,
+      {
+        ...status,
+        destinationAsset: 'nep141:other.omft.near'
+      },
+      6
+    )
+  ).toBe('mismatch')
+})
 
 test('swap quote sends the configured 35 bps app fee', async () => {
   const originalFetch = globalThis.fetch
@@ -187,7 +225,8 @@ test.describe('CoinGecko token icon parsing', () => {
     }
 
     try {
-      await expect(refreshSwapTokenCatalog()).resolves.toEqual([
+      await refreshSwapTokenCatalog()
+      await expect(refreshSwapTokenIcons()).resolves.toEqual([
         { ...token, icon: rheaIcon, coingeckoIcon: coinGeckoIcon }
       ])
       expect(
@@ -234,6 +273,8 @@ test.describe('CoinGecko token icon parsing', () => {
     }
 
     try {
+      await fetchIntentsWalletTokens()
+      await refreshSwapTokenIcons()
       await expect(fetchIntentsWalletTokens()).resolves.toEqual([{ ...token, coingeckoIcon }])
       expect(
         requestedUrls.some(url => url.endsWith('/get_multichain_lending_tokens_data?chains=near'))
@@ -293,11 +334,13 @@ test.describe('CoinGecko token icon parsing', () => {
     }
 
     try {
-      await expect(refreshSwapTokenCatalog()).resolves.toEqual([
+      await refreshSwapTokenCatalog()
+      await expect(refreshSwapTokenIcons()).resolves.toEqual([
         { ...goodToken, icon: rheaIcon, coingeckoIcon: null },
         { ...unavailableToken, coingeckoIcon: null }
       ])
-      await expect(refreshSwapTokenCatalog()).resolves.toEqual([
+      await refreshSwapTokenCatalog()
+      await expect(refreshSwapTokenIcons()).resolves.toEqual([
         { ...goodToken, icon: rheaIcon, coingeckoIcon: null },
         { ...unavailableToken, coingeckoIcon: null }
       ])

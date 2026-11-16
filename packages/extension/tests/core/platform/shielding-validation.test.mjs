@@ -5,8 +5,13 @@ import { mapWasmAccountBalanceToZcashBalance } from '../../../src/core/wallet/ba
 import {
   canShieldTransparentFunds,
   getShieldableTransparentBalance,
-  getShieldInputAmountFromHistory
+  getShieldInputAmountFromHistory,
+  MIN_SHIELDING_BALANCE_MESSAGE
 } from '../../../src/core/zcash/shielding.ts'
+import {
+  getZcashTransparentToShieldMoveAmountError,
+  resolveZcashTransparentShieldFundingBalance
+} from '../../../src/popup/pages/transactions/zcash-send-validation.ts'
 
 const describe = it.describe
 
@@ -144,6 +149,33 @@ describe('Shielding minimum balance regressions', () => {
     assert.match(
       walletRpcErrorsSource,
       /InsufficientFunds[\s\S]*return MIN_SHIELDING_BALANCE_MESSAGE/
+    )
+  })
+
+  it('caps transparent move validation at shieldable confirmed funds', () => {
+    const balance = mapWasmAccountBalanceToZcashBalance({
+      unshielded_balance: 20_000_000,
+      unshielded_shieldable_balance: 8_000_000,
+      unshielded_total_balance: 20_000_000
+    })
+
+    assert.equal(resolveZcashTransparentShieldFundingBalance(balance).available, '0.08')
+    assert.equal(
+      getZcashTransparentToShieldMoveAmountError('0.09', balance),
+      'Amount exceeds available balance.'
+    )
+  })
+
+  it('rejects transparent-to-shield move amounts below the shielding threshold', () => {
+    const balance = mapWasmAccountBalanceToZcashBalance({
+      unshielded_balance: 500_000,
+      unshielded_shieldable_balance: 500_000,
+      unshielded_total_balance: 500_000
+    })
+
+    assert.equal(
+      getZcashTransparentToShieldMoveAmountError('0.0005', balance),
+      MIN_SHIELDING_BALANCE_MESSAGE
     )
   })
 })

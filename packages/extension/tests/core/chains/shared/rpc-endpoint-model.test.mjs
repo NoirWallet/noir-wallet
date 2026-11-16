@@ -48,6 +48,10 @@ test('keeps saved custom endpoints when switching to a preset or default', () =>
   expect(restored.overrides).toEqual([])
   expect(restored.savedRpcEndpoints).toEqual(custom.savedRpcEndpoints)
   expect(() => buildRpcSelectionSettings(custom, arbitrum, 'not a URL')).toThrow()
+
+  expect(() =>
+    buildRpcSelectionSettings(custom, arbitrum, arbitrum.defaultUrl, 'My dRPC', true)
+  ).toThrow('already available as a preset')
 })
 
 test('resolves custom Zcash endpoints by network and keeps them fixed', async () => {

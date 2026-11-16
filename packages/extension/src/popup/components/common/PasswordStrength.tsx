@@ -10,8 +10,8 @@ export function PasswordStrength({ password }: PasswordStrengthProps) {
 
   const strengthColors = {
     'Too Weak': 'bg-danger',
-    Weak: 'bg-orange-500',
-    Medium: 'bg-yellow-500',
+    Weak: 'bg-warning',
+    Medium: 'bg-warning',
     Strong: 'bg-success'
   }
 

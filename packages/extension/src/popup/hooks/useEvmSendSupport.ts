@@ -12,7 +12,8 @@ export function useEvmSendSupport(
     readonly kind: string
     readonly reference: string
   },
-  contextKey: string
+  contextKey: string,
+  enabled = true
 ) {
   const [attempt, setAttempt] = useState(0)
   const [result, setResult] = useState<{ key: string; loading: boolean } | null>(null)
@@ -21,7 +22,7 @@ export function useEvmSendSupport(
   const cached = request ? rheaSwapClient.readCachedTokens(request) : null
   const support = resolveConfidentialEvmAssetSupport({ chain, asset, catalog: cached })
   useEffect(() => {
-    if (!request || cached) return
+    if (!enabled || !request || cached) return
     let cancelled = false
     setResult({ key, loading: true })
     void loadEvmSendCatalog(
@@ -32,7 +33,7 @@ export function useEvmSendSupport(
     return () => {
       cancelled = true
     }
-  }, [key, chain.id, cached])
+  }, [enabled, key, chain.id, cached])
   return {
     support,
     loading:
@@ -41,6 +42,7 @@ export function useEvmSendSupport(
       !cached &&
       (result?.key !== key || result.loading),
     retry: () => {
+      if (!enabled) return
       // Missing capability metadata may have been cached by another consumer.
       if (request) void rheaSwapClient.listTokens(request, { bypassCache: true }).catch(() => {})
       setAttempt(value => value + 1)

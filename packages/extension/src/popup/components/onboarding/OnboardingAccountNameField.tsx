@@ -7,15 +7,20 @@ import {
 interface OnboardingAccountNameFieldProps {
   readonly value: string
   readonly onChange: (value: string) => void
+  readonly label?: string
 }
 
-export function OnboardingAccountNameField({ value, onChange }: OnboardingAccountNameFieldProps) {
+export function OnboardingAccountNameField({
+  value,
+  onChange,
+  label = 'Account name'
+}: OnboardingAccountNameFieldProps) {
   const error = getAccountNameValidationError(value)
 
   return (
     <div>
       <label htmlFor="onboarding-account-name" className="mb-2 block text-sm text-muted">
-        Account name
+        {label}
       </label>
       <Input
         id="onboarding-account-name"

@@ -19,12 +19,19 @@ import {
   payloadDigestRows,
   reviewRow,
   type SigningSummaryReviewModel,
-  type SigningSummaryReviewRow
+  type SigningSummaryReviewRow,
+  type TokenAuthorizationReview
 } from './signing-summary-review-model-types'
+import { decodeEvmPermitReview } from '@/infrastructure/chains/evm/evm-permit-review'
 import { formatEvmWeiAsGwei } from '@/infrastructure/chains/evm'
 import { decodeErc20CalldataRequest } from '@/infrastructure/chains/evm/evm-contract-call-classification'
 import { formatSortAddress } from '@/lib/format'
-import { formatAmount, formatFeeAmount, formatReviewAmount } from '@/lib/number-format'
+import {
+  formatAmount,
+  formatBaseUnitDecimalAmount,
+  formatFeeAmount,
+  formatReviewAmount
+} from '@/lib/number-format'
 
 export interface EvmReviewPresentationOptions {
   readonly nativeCurrency?: { readonly symbol: string; readonly decimals: number }
@@ -353,10 +360,70 @@ export function evmPersonalMessageReview(
   })
 }
 
-export function evmTypedDataReview(summary: EvmTypedDataSummary): SigningSummaryReviewModel {
+function permitTime(raw: string, expiration = false): string {
+  const seconds = BigInt(raw)
+  if (expiration && seconds === 0n) return 'On submission'
+  // Keep timestamps outside the Date range exact instead of rendering an invalid date.
+  if (seconds > 8_640_000_000_000n) return `Unix time ${raw}`
+  return `${new Intl.DateTimeFormat('en-US', {
+    dateStyle: 'medium',
+    timeStyle: 'medium',
+    timeZone: 'UTC'
+  }).format(new Date(Number(seconds) * 1_000))} UTC`
+}
+
+function evmTokenAuthorization(
+  summary: EvmTypedDataSummary,
+  options: EvmReviewPresentationOptions
+): TokenAuthorizationReview | undefined {
+  const permit = decodeEvmPermitReview(summary)
+  if (!permit) return undefined
+  return {
+    protocol: permit.protocol,
+    kind: permit.kind,
+    owner: permit.owner,
+    spender: permit.spender,
+    signatureDeadline: permitTime(permit.signatureDeadlineRaw),
+    tokens: permit.tokens.map(token => {
+      const metadata = options.tokenMetadata?.find(
+        candidate =>
+          candidate.contractAddress.toLowerCase() === token.contractAddress.toLowerCase() &&
+          Number.isInteger(candidate.decimals) &&
+          candidate.decimals >= 0 &&
+          candidate.decimals <= 255
+      )
+      return {
+        contractAddress: token.contractAddress,
+        assetId: `${summary.chainId}/erc20:${token.contractAddress.toLowerCase()}`,
+        symbol: metadata?.symbol ?? null,
+        amount: metadata
+          ? formatBaseUnitDecimalAmount(token.amountRaw, metadata.decimals)
+          : token.amountRaw,
+        unlimited:
+          permit.kind === 'allowance' &&
+          BigInt(token.amountRaw) === (1n << BigInt(token.amountBits)) - 1n,
+        ...(token.expirationRaw !== undefined
+          ? { expiration: permitTime(token.expirationRaw, true) }
+          : {})
+      }
+    })
+  }
+}
+
+export function evmTypedDataReview(
+  summary: EvmTypedDataSummary,
+  options: EvmReviewPresentationOptions = {}
+): SigningSummaryReviewModel {
+  const tokenAuthorization = evmTokenAuthorization(summary, options)
   return completeReviewModel(summary, {
-    title: 'Sign typed data',
-    description: 'This signature may authorize off-chain or on-chain actions.',
+    title: tokenAuthorization
+      ? tokenAuthorization.kind === 'transfer'
+        ? 'Token transfer authorization'
+        : 'Token authorization'
+      : 'Sign typed data',
+    ...(tokenAuthorization
+      ? { tokenAuthorization }
+      : { description: 'This signature may authorize off-chain or on-chain actions.' }),
     sections: [
       {
         title: 'Typed data',

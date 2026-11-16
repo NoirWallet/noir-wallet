@@ -48,6 +48,8 @@ import { getSafeNewWalletBirthdayHeight } from '../wallet/birthday-height'
 import { parseTransferEstimate, parseTransferResult } from '../zcash/transfer-result'
 import { isTransactionSubmissionUnknown } from '../zcash/transfer-result'
 import { encodeWorkerRpcError } from './rpc-errors'
+import { TimeoutError } from '../../lib/async-utils'
+import { proveHardwarePczt, toHardwarePcztError } from '../zcash/hardware-pczt'
 import { parseZeroIndexerRuntimeOptions, type ZeroIndexerOptions } from '../zcash/zero-indexer'
 import { serializeDiagnosticArgs } from '../../lib/diagnostic-log'
 import { traceDebugStage } from '../../lib/debug-performance'
@@ -1422,19 +1424,11 @@ self.addEventListener('message', async (event: MessageEvent<RPCRequest<any>>) =>
         result = await runForWallet(walletId, async () => {
           assertRheaSwapSubmissionDeadline(submissionDeadline)
           const w = getWallet(walletId)
-          const full = Pczt.from_bytes(base64ToBytes(fullBase64))
-          const signed = Pczt.from_bytes(base64ToBytes(signedBase64))
-          try {
-            // Merge the wallet's witnesses with the device's signatures, then
-            // prove and broadcast the now-complete transaction.
-            const combined = full.combine(signed)
-            const txid = await w.pczt_prove_and_send(combined)
-            console.log('[Worker] PCZT prove & send successful, txid:', txid)
-            return txid
-          } finally {
-            full.free()
-            signed.free()
-          }
+          return proveHardwarePczt({
+            readFull: () => Pczt.from_bytes(base64ToBytes(fullBase64)),
+            readSigned: () => Pczt.from_bytes(base64ToBytes(signedBase64)),
+            proveAndSend: combined => w.pczt_prove_and_send(combined)
+          })
         })
         break
       }
@@ -1466,6 +1460,8 @@ self.addEventListener('message', async (event: MessageEvent<RPCRequest<any>>) =>
             } finally {
               signed.free()
             }
+          } catch (error) {
+            throw toHardwarePcztError('apply-signatures', error)
           } finally {
             pczt.free()
           }
@@ -1909,7 +1905,9 @@ self.addEventListener('message', async (event: MessageEvent<RPCRequest<any>>) =>
       id,
       method,
       error: errorMessage,
-      ...(isTransactionSubmissionUnknown(error) ? encodeWorkerRpcError(error) : {})
+      ...(error instanceof TimeoutError || isTransactionSubmissionUnknown(error)
+        ? encodeWorkerRpcError(error)
+        : {})
     }
     self.postMessage(response)
   } finally {

@@ -18,6 +18,8 @@ import { HardwareSigningProgress } from '@/popup/components/hardware/HardwareSig
 import { DetailRow } from '@/popup/components/common/DetailRow'
 import { useLocation } from '@/popup/provider/Router'
 import { ListSkeleton, Skeleton } from '@/popup/components/ui/skeleton'
+import { formatHardwareSigningError } from '@/lib/hardware-signing-error'
+import { logger } from '@/lib/logger'
 
 type Step = 'loading' | 'show-qr' | 'scan' | 'broadcasting' | 'success' | 'failed' | 'invalid'
 
@@ -74,8 +76,13 @@ export function KeystoneBitcoinSignPage() {
         setRequest(value)
         setStep('show-qr')
       })
-      .catch(() => {
-        if (!terminal.current) setStep('invalid')
+      .catch(cause => {
+        if (!terminal.current) {
+          const message = formatHardwareSigningError(cause)
+          logger.error(`[Hardware signing] Keystone Bitcoin request loading failed: ${message}`)
+          setError(message)
+          setStep('invalid')
+        }
       })
   }, [transactionId])
 
@@ -89,8 +96,10 @@ export function KeystoneBitcoinSignPage() {
       let signedPsbtBase64: string
       try {
         signedPsbtBase64 = bytesToBase64(parseSignedBitcoinPsbt(ur))
-      } catch {
-        setScanError('This is not a valid signed Bitcoin transaction from Keystone.')
+      } catch (cause) {
+        const message = formatHardwareSigningError(cause)
+        logger.error(`[Hardware signing] Keystone Bitcoin QR decoding failed: ${message}`)
+        setScanError(message)
         setScannerKey(value => value + 1)
         return
       }
@@ -111,8 +120,10 @@ export function KeystoneBitcoinSignPage() {
         setSubmission(value)
         terminal.current = true
         setStep('success')
-      } catch {
-        setError('The signed transaction could not be verified or broadcast. Start a new send.')
+      } catch (cause) {
+        const message = formatHardwareSigningError(cause)
+        logger.error(`[Hardware signing] Keystone Bitcoin submission failed: ${message}`)
+        setError(message)
         setStep('failed')
       } finally {
         submitting.current = false
@@ -153,7 +164,10 @@ export function KeystoneBitcoinSignPage() {
           icon="lucide:alert-triangle"
           iconClass="text-warning"
           title="Request unavailable"
-          description="This Bitcoin signing request expired, was cancelled, or belongs to another Wallet. Start a new send from Noir Wallet."
+          description={
+            error ??
+            'This Bitcoin signing request expired, was cancelled, or belongs to another Wallet. Start a new send from Noir Wallet.'
+          }
           actionText="Close"
           onAction={() => void close()}
         />

@@ -114,6 +114,7 @@ export function useHomePortfolio(walletId: string | null, accountId: string | nu
     model: isPortfolioModelForScope(model, walletId, accountId) ? model : null,
     status,
     settled,
-    refresh: load
+    refresh: load,
+    readLatest
   }
 }

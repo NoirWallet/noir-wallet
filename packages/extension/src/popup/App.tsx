@@ -56,7 +56,6 @@ import { ShieldProviderDetail } from './pages/portfolio/ShieldProviderDetail'
 import { ShieldFundsPage } from './pages/portfolio/ShieldFundsPage'
 import { ShieldWithdrawPage } from './pages/portfolio/ShieldWithdrawPage'
 import { ShieldDepositPage } from './pages/portfolio/ShieldDepositPage'
-import { ShieldSwapPage } from './pages/portfolio/ShieldSwapPage'
 
 // Swap Page
 import { Swap } from './pages/swap/Swap'
@@ -182,6 +181,15 @@ function ZcashCapabilityEntry({
   return children
 }
 
+function ZcashSendRoute() {
+  const location = useLocation()
+  return new URLSearchParams(location.search).get('move') === '1' ? (
+    <Send />
+  ) : (
+    <MultichainSend initialZcashProvider />
+  )
+}
+
 function VotingCapabilityEntry({ children }: { children: ReactNode }) {
   const { replace } = useNavigate()
   const { activeAccount, loading } = useActiveAccountNetworks()
@@ -238,7 +246,7 @@ function AppRoutes() {
           path="/send/zcash"
           element={
             <ZcashCapabilityEntry fallbackPath="/send">
-              <Send />
+              <ZcashSendRoute />
             </ZcashCapabilityEntry>
           }
         />
@@ -299,7 +307,7 @@ function AppRoutes() {
       <Route path="/shield-funds" element={<ShieldFundsPage />} />
       <Route path="/shield-withdraw" element={<ShieldWithdrawPage />} />
       <Route path="/shield-deposit" element={<ShieldDepositPage />} />
-      <Route path="/shield-swap" element={<ShieldSwapPage />} />
+      <Route path="/shield-swap" element={<Swap />} />
       <Route path="/settings" element={<Settings />} />
       <Route path="/default-evm-wallet" element={<DefaultEvmWallet />} />
       <Route path="/general" element={<General />} />
@@ -422,7 +430,7 @@ function AppContent() {
           location.pathname === '/view-seed-phrase' &&
           new URLSearchParams(location.search).get('backup') === '1'
         ) && <SecretPhraseBackupBanner />}
-      <div className="min-h-0 flex-1">
+      <div className="flex min-h-0 flex-1 items-center justify-center">
         <AppRoutes />
       </div>
     </div>
@@ -456,11 +464,11 @@ function App() {
   const isEvmWalletChoice = initialPath.split('?')[0] === '/evm-wallet-choice'
 
   return (
-    <ModalProvider>
-      <RouterProvider initialPath={initialPath}>
+    <RouterProvider initialPath={initialPath}>
+      <ModalProvider>
         <DialogProvider>
           {isEvmWalletChoice ? (
-            <div className="h-full w-full bg-background">
+            <div className="flex h-full w-full items-center justify-center bg-background">
               <Routes>
                 <Route path="/evm-wallet-choice" element={<EvmWalletChoice />} />
               </Routes>
@@ -474,8 +482,8 @@ function App() {
             </>
           )}
         </DialogProvider>
-      </RouterProvider>
-    </ModalProvider>
+      </ModalProvider>
+    </RouterProvider>
   )
 }
 

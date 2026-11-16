@@ -5,8 +5,89 @@ import { getChainFromAssetId } from '@/lib/format'
 import { createDebugRequestId, logDebugTiming, traceDebugStage } from '@/lib/debug-performance'
 import { resolveEvmChainIconAlias } from '@/config/icons'
 import { BITCOIN_CHAIN_IDS, ZCASH_CHAIN_IDS } from '@/core/chains/registry/chain-ids'
+import { isDeprecatedIntentsToken } from '@/core/services/intents-evm-assets'
+import { ASSET_PRICE_SOURCE_ASSETS } from '@/config/asset-market-assets'
+import { getEvmNetworkConfigs } from '@/config/networks'
+
+const ETHEREUM_USDC_CONTRACT = getEvmNetworkConfigs('mainnet')
+  .find(chain => chain.chainId === 'eip155:1')
+  ?.usdcContract?.toLowerCase()
+
+export function getSwapCatalogDisplaySeeds(chainIds: readonly number[]): readonly RheaSwapToken[] {
+  const supported = new Set(chainIds)
+  const seed = (
+    input: Pick<
+      RheaSwapToken,
+      | 'assetId'
+      | 'blockchain'
+      | 'contractAddress'
+      | 'decimals'
+      | 'symbol'
+      | 'rheaChainId'
+      | 'tokenListChainId'
+      | 'rheaAddress'
+      | 'isNative'
+    >
+  ): RheaSwapToken =>
+    Object.freeze({
+      ...input,
+      icon: null,
+      price: 0,
+      priceUpdatedAt: new Date(0).toISOString(),
+      sources: Object.freeze([]),
+      isDisplaySeed: true
+    })
+  return Object.freeze([
+    ...(supported.has(900010)
+      ? [
+          seed({
+            assetId: ASSET_PRICE_SOURCE_ASSETS.zec,
+            blockchain: 'zec',
+            contractAddress: null,
+            decimals: 8,
+            symbol: 'ZEC',
+            rheaChainId: 'zcash',
+            tokenListChainId: 900010,
+            rheaAddress: 'zec',
+            isNative: true
+          })
+        ]
+      : []),
+    ...(supported.has(1)
+      ? [
+          seed({
+            assetId: ASSET_PRICE_SOURCE_ASSETS.eth,
+            blockchain: 'eth',
+            contractAddress: null,
+            decimals: 18,
+            symbol: 'ETH',
+            rheaChainId: '1',
+            tokenListChainId: 1,
+            rheaAddress: 'eth',
+            isNative: true
+          })
+        ]
+      : []),
+    ...(supported.has(1) && ETHEREUM_USDC_CONTRACT
+      ? [
+          seed({
+            assetId: ASSET_PRICE_SOURCE_ASSETS.usdc,
+            blockchain: 'eth',
+            contractAddress: ETHEREUM_USDC_CONTRACT,
+            decimals: 6,
+            symbol: 'USDC',
+            rheaChainId: '1',
+            tokenListChainId: 1,
+            rheaAddress: ETHEREUM_USDC_CONTRACT,
+            isNative: false
+          })
+        ]
+      : [])
+  ])
+}
 
 export interface SwapInitialCatalogOptions {
+  readonly catalogScope?: string | null
   readonly sourceAssetId?: string | null
   readonly destinationAssetId?: string | null
   readonly destinationApiChainId?: string | null
@@ -145,6 +226,8 @@ export function buildInitialSwapCatalogPlan(options: SwapInitialCatalogOptions) 
       chain => chain.apiChainId === assetChain(options.savedSourceAssetId)?.apiChainId
     ) ??
     preferredSource ??
+    enabled.find(chain => chain.blockchain === 'zec') ??
+    enabled.find(chain => chain.blockchain === 'eth') ??
     enabled[0]
   if (!source) return { sourceChainIds: [], destinationChainIds: [] }
   const savedDestination =
@@ -155,7 +238,10 @@ export function buildInitialSwapCatalogPlan(options: SwapInitialCatalogOptions) 
   const target =
     explicitDestination ??
     savedDestination ??
-    enabled.find(chain => chain.apiChainId !== source.apiChainId)
+    (source.walletFamily === 'evm'
+      ? undefined
+      : (enabled.find(chain => chain.blockchain === 'eth') ??
+        enabled.find(chain => chain.apiChainId !== source.apiChainId)))
   return {
     sourceChainIds: [source.tokenListChainId],
     destinationChainIds:
@@ -185,10 +271,16 @@ export function mergeTokenCatalogs(
   const tokens = new Map<string, RheaSwapToken>()
   for (const catalog of catalogs) {
     for (const token of catalog) {
+      if (isDeprecatedIntentsToken(token)) continue
       tokens.set(`${token.rheaChainId}:${token.rheaAddress}`, token)
     }
   }
-  return Object.freeze([...tokens.values()])
+  const merged = [...tokens.values()]
+  const first = catalogs[0]
+  if (first?.length === merged.length && merged.every((token, index) => token === first[index])) {
+    return first
+  }
+  return Object.freeze(merged)
 }
 
 export function findSwapTokenInCatalog(
@@ -236,6 +328,24 @@ export function readCachedTokenCatalogByChain(
   )
 }
 
+export async function prewarmInitialSwapCatalog(options: SwapInitialCatalogOptions): Promise<void> {
+  const plan = buildInitialSwapCatalogPlan(options)
+  const requests = [
+    ...plan.sourceChainIds.map(chainId => ({ direction: 'from' as const, chainId })),
+    ...plan.destinationChainIds.map(chainId => ({ direction: 'cross-chain-to' as const, chainId }))
+  ]
+  await Promise.all(
+    requests.map(async ({ direction, chainId }) => {
+      if (readCachedTokenCatalogByChain(direction, [chainId]).length > 0) return
+      try {
+        await rheaSwapClient.listTokens({ direction, tokenListChainIds: [chainId] })
+      } catch {
+        // Opening Swap can retry a failed background prewarm.
+      }
+    })
+  )
+}
+
 export async function loadTokenCatalogByChain(
   direction: 'from' | 'cross-chain-to',
   chainIds: readonly number[],
@@ -255,8 +365,9 @@ export async function loadTokenCatalogByChain(
         const result = await traceDebugStage(requestId, `list-chain-${chainId}`, () =>
           client.listTokens({ direction, tokenListChainIds: [chainId] }, { bypassCache })
         )
-        tokens.push(...result.tokens)
-        if (!isCancelled() && result.tokens.length > 0) onTokens(result.tokens)
+        const available = result.tokens.filter(token => !isDeprecatedIntentsToken(token))
+        tokens.push(...available)
+        if (!isCancelled() && available.length > 0) onTokens(available)
       } catch {
         // A failed chain must not discard catalogs that are already usable.
       }

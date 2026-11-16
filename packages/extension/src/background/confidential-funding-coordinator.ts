@@ -1,19 +1,35 @@
 import type { Network } from '@/types'
+import {
+  NOIR_MOVE_REFERRAL,
+  NOIR_RECEIVE_REFERRAL,
+  NOIR_SEND_REFERRAL,
+  NOIR_SWAP_REFERRAL,
+  type NoirIntentsReferral
+} from '@/config/intents'
 import { trackEvent } from '@/background/analytics/reporter'
-import { SerialTaskQueue } from '@/lib/async-utils'
+import { DedupPromise, SerialTaskQueue } from '@/lib/async-utils'
+import { withMetadataLock } from '@/lib/wallet-metadata-storage'
 import {
   projectConfidentialPlanResult,
   projectExternalDepositResult
 } from '@/lib/analytics/operations'
 import {
   hasExternalShieldDepositFunding,
-  shouldAutoRefreshExternalShieldDeposit
+  isExternalShieldDepositExpired,
+  shouldAutoRefreshExternalShieldDeposit,
+  ExternalShieldDepositError,
+  type ExternalShieldDepositFailureStage
 } from '@/core/services/confidential-funding/confidential-external-deposit'
 import { isAddress } from 'viem'
+import { getEvmNetworkConfig } from '@/config/networks'
 import { parseZcashAddress } from '@/core/address-book/address-book'
+import { isValidExternalRecipient } from './confidential-funding-recipient'
 import type { PortfolioReadModel } from '@/core/portfolio'
 import type { SwapToken } from '@/core/services/intents-api'
-import { resolveIntentsEvmChainId } from '@/core/services/intents-evm-assets'
+import {
+  resolveIntentsEvmAssets,
+  resolveIntentsEvmChainId
+} from '@/core/services/intents-evm-assets'
 import { resolveManagedIntentsAssets } from '@/core/services/intents-managed-assets'
 import type { ChainId } from '@/core/chains/domain'
 import { parseAccountId } from '@/core/accounts/domain'
@@ -29,6 +45,7 @@ import {
   assertDirectConfidentialWithdrawIntentBinding,
   assertConfidentialIntentBinding,
   assertConfidentialQuoteBinding,
+  assertFlexibleExternalDepositQuoteBinding,
   createConfidentialFundingGraph,
   createExternalShieldDepositGraph,
   fingerprintConfidentialValue,
@@ -67,8 +84,10 @@ import {
   createEvmTransactionSegmentEvent,
   estimateEvmTransferFee,
   observeEvmTransaction,
+  parseEvmFeeSelection,
   parsePreparedEvmTransfer,
   type EvmBroadcastRpc,
+  type EvmFeeSelection,
   type EvmTransactionRpc
 } from '@/infrastructure/chains/evm'
 import type { EvmNetworkConfig } from '@/config/networks'
@@ -77,16 +96,29 @@ import {
   ConfidentialFundingApi,
   ConfidentialFundingApiError,
   readConfidentialQuoteAppFees,
-  type ConfidentialPrivateOrder
+  type ConfidentialBalance,
+  type ConfidentialPrivateOrder,
+  type ConfidentialStatus
 } from './confidential-funding-api'
 import {
   ConfidentialFundingSigner,
   type ConfidentialSigningIdentity
 } from './confidential-funding-signer'
 import { ChromeConfidentialFundingStore } from './confidential-funding-store'
+import {
+  NativeZecIntentsSwapCoordinator,
+  type NativeZecActiveAccountSnapshot
+} from './native-zec-intents-swap'
+import type { PrepareNativeZecIntentsSwapInput } from '@/core/services/native-zec-intents-swap'
+import type { QuoteBinding } from '@/types/wallet'
 
 const SESSION_REFRESH_BUFFER_MS = 60_000
 export const CONFIDENTIAL_FUNDING_MONITOR_ALARM = 'confidential-funding-monitor'
+
+const EXTERNAL_DEPOSIT_STATUS_BACKOFF_INITIAL_MS = 10_000
+const EXTERNAL_DEPOSIT_STATUS_BACKOFF_MAX_MS = 120_000
+const EXTERNAL_DEPOSIT_STATUS_FRESH_MS = 20_000
+const CONFIDENTIAL_FUNDING_MONITOR_DELAY_MINUTES = 20 / 60
 export type ClusterRejectionReason = 'APP_FEE_REJECTED_2002' | 'BACKEND_CONFIRMED_REJECTION'
 const TERMINAL_PHASES = new Set<ConfidentialFundingPlan['phase']>([
   'ready',
@@ -111,6 +143,34 @@ function isExplicitAppFeeRejection(error: unknown): boolean {
     !error.ambiguous &&
     error.status === 200 &&
     error.businessCode === 2002
+  )
+}
+
+const confidentialMonitoringQueue = new SerialTaskQueue()
+const REFUND_STATUS_CHECK_INTERVAL_MS = 60_000
+
+function refundStatusCheckInterval(plan: ConfidentialFundingPlan, now: number): number {
+  const days = Math.max(0, Math.floor((now - plan.createdAt) / 86_400_000))
+  return Math.min(3_600_000, REFUND_STATUS_CHECK_INTERVAL_MS * 2 ** Math.min(days, 6))
+}
+
+// Execution failure does not prove that the protocol has finished returning funds.
+function needsRefundObservation(plan: ConfidentialFundingPlan): boolean {
+  if (
+    !['failed', 'expired', 'cancelled', 'partial'].includes(plan.phase) ||
+    isRecoverableLocalFailure(plan)
+  )
+    return false
+  if (plan.orderId || plan.withdraws.some(row => row.intentHash)) {
+    return plan.withdraws.some(
+      row => !['SUCCESS', 'COMPLETED', 'REFUNDED'].includes(normalizeStatus(row.status))
+    )
+  }
+  return Boolean(
+    plan.requiresDeposit &&
+    plan.preparedDeposit?.transactionHash &&
+    plan.depositQuote &&
+    plan.errorStatus !== 'DEPOSIT_REVERTED'
   )
 }
 
@@ -151,6 +211,7 @@ interface ConfidentialFundingRouteInput {
   }>
   readonly slippageBps: number
   readonly feeTier?: NetworkFeeTier
+  readonly feeSelection?: EvmFeeSelection
   readonly dedupKey?: string
   readonly externalRecipient?: string
 }
@@ -183,6 +244,14 @@ export type PrepareConfidentialFundingInput = ConfidentialFundingRouteInput &
       }>
   )
 
+function fundingReferral(input: {
+  readonly operation?: 'deposit' | 'withdraw' | 'swap' | 'cluster'
+  readonly externalRecipient?: string
+}): NoirIntentsReferral {
+  if (input.operation === 'swap') return NOIR_SWAP_REFERRAL
+  return input.externalRecipient ? NOIR_SEND_REFERRAL : NOIR_MOVE_REFERRAL
+}
+
 export interface ConfidentialFundingCoordinatorOptions {
   readonly network: Network
   readonly api: ConfidentialFundingApi
@@ -194,8 +263,15 @@ export interface ConfidentialFundingCoordinatorOptions {
   readonly assetMappings: readonly ConfidentialPortfolioAssetMapping[]
   readonly protocolTokens?: readonly SwapToken[]
   readonly getProtocolTokens?: () => readonly SwapToken[]
-  readonly scheduleMonitoring?: () => Promise<void>
-  readonly refreshPortfolio?: () => Promise<void>
+  readonly getNativeZecActiveAccount?: () => NativeZecActiveAccountSnapshot
+  readonly scheduleMonitoring?: (delayInMinutes?: number) => Promise<void>
+  readonly refreshPortfolio?: (
+    target?: Readonly<{
+      keyDomainId: string
+      accountId: string
+      chainIds: readonly string[]
+    }>
+  ) => Promise<void>
   readonly onActivityChanged?: (
     scope: Readonly<{
       network: Network
@@ -209,6 +285,16 @@ export interface ConfidentialFundingCoordinatorOptions {
 
 function isPositiveRaw(value: string): boolean {
   return /^[1-9][0-9]*$/.test(value)
+}
+
+function quotedPrivacyFeeBps(quote: ConfidentialQuote | undefined): number | undefined {
+  if (!quote) return undefined
+  try {
+    const bps = readConfidentialQuoteAppFees(quote).reduce((sum, fee) => sum + fee.fee, 0)
+    return bps <= 10_000 ? bps : undefined
+  } catch {
+    return undefined
+  }
 }
 
 function externalDepositSettlementError(
@@ -388,22 +474,42 @@ function reviewFromPlan(
       ? {
           sourceNetworkFee: Object.freeze({
             raw: (
-              BigInt(prepared.transaction.gasLimit) * BigInt(prepared.transaction.maxFeePerGas)
+              BigInt(prepared.transaction.gasLimit) *
+              BigInt(
+                prepared.transaction.type === 'legacy'
+                  ? prepared.transaction.gasPrice
+                  : prepared.transaction.maxFeePerGas
+              )
             ).toString(),
             symbol: sourceFeeAsset.metadata.symbol,
             decimals: sourceFeeAsset.metadata.decimals
+          }),
+          sourceEvmFee: Object.freeze({
+            transactionType: prepared.transaction.type,
+            gasLimit: prepared.transaction.gasLimit,
+            ...(prepared.transaction.type === 'legacy'
+              ? { gasPriceWei: prepared.transaction.gasPrice }
+              : {
+                  maxFeePerGasWei: prepared.transaction.maxFeePerGas,
+                  maxPriorityFeePerGasWei: prepared.transaction.maxPriorityFeePerGas
+                })
           })
         }
       : {})
   })
 }
 
-function confidentialSigningChainId(sourceChainId: string, destinationChainId: string): ChainId {
+function confidentialSigningChainId(
+  sourceChainId: string,
+  destinationChainId: string,
+  network?: Network
+): ChainId {
   const destination = parseChainId(destinationChainId)
   if (destination.namespace === 'eip155') return destination.id
   const source = parseChainId(sourceChainId)
   if (source.namespace === 'eip155') return source.id
-  throw new Error('Confidential funding requires an EVM signing chain')
+  if (!network) throw new Error('Confidential funding requires an EVM signing chain')
+  return parseChainId(getEvmNetworkConfig(network).chainId).id
 }
 
 function directApprovalIntent(plan: ConfidentialFundingPlan): unknown {
@@ -432,6 +538,10 @@ function directApprovalIntent(plan: ConfidentialFundingPlan): unknown {
 }
 
 export class ConfidentialFundingCoordinator {
+  private readonly balanceRefreshes = new Map<
+    string,
+    DedupPromise<readonly ConfidentialBalance[]>
+  >()
   private readonly rpcByChain = new Map<string, EvmTransactionRpc & EvmBroadcastRpc>()
   private readonly continuingByPlan = new Map<string, Promise<ConfidentialFundingPlan>>()
   private readonly confirmingByPlan = new Map<
@@ -442,30 +552,121 @@ export class ConfidentialFundingCoordinator {
     }>
   >()
   private readonly cancellingPlans = new Set<string>()
-  private readonly refreshingExternalDeposits = new Map<string, Promise<ExternalShieldDeposit>>()
+  private readonly refreshingExternalDeposits = new Map<
+    string,
+    Readonly<{ promise: Promise<ExternalShieldDeposit>; force: boolean }>
+  >()
+  private readonly oneClickStatusQueries = new Map<string, Promise<ConfidentialStatus>>()
+  private readonly oneClickStatusState = new Map<
+    string,
+    | { kind: 'fresh'; until: number; status: ConfidentialStatus }
+    | { kind: 'backoff'; until: number; backoffMs: number }
+  >()
   private readonly externalBalanceRefreshQueues = new Map<string, Promise<void>>()
   private readonly reconciledTerminalExternalDeposits = new Set<string>()
   private readonly prepareQueue = new SerialTaskQueue()
   private readonly reservationQueue = new SerialTaskQueue()
+  private readonly nativeZecIntents: NativeZecIntentsSwapCoordinator
   private readonly now: () => number
   private readonly createId: () => string
 
   constructor(private readonly options: ConfidentialFundingCoordinatorOptions) {
     this.now = options.now ?? Date.now
     this.createId = options.createId ?? (() => crypto.randomUUID())
+    this.nativeZecIntents = new NativeZecIntentsSwapCoordinator({
+      ...options,
+      getActiveAccount: options.getNativeZecActiveAccount
+    })
     for (const network of options.evmNetworks) {
       this.rpcByChain.set(network.chainId, createConfiguredEvmRpcClient(options.network, network))
     }
   }
 
+  prepareNativeZecIntentsSwap(input: PrepareNativeZecIntentsSwapInput) {
+    return this.nativeZecIntents.prepare(input)
+  }
+
+  getNativeZecIntentsSwap(quoteId: string) {
+    return this.nativeZecIntents.get(quoteId)
+  }
+
+  cancelNativeZecIntentsSwap(quoteId: string) {
+    return this.nativeZecIntents.cancel(quoteId)
+  }
+
+  claimNativeZecIntentsSpend(
+    input: Readonly<{
+      walletId: string
+      accountId: string
+      transactionId: string
+      binding: QuoteBinding
+      to: string
+      amount: string
+      fundingSource: string
+    }>
+  ) {
+    return this.nativeZecIntents.claimSpend(input)
+  }
+
   async createExternalDeposit(
     input: CreateExternalShieldDepositInput
   ): Promise<ExternalShieldDeposit> {
-    return this.prepareQueue.run(() => this.createExternalDepositExclusive(input))
+    return this.prepareQueue.run(async () => {
+      let stage: ExternalShieldDepositFailureStage = 'request'
+      try {
+        return await this.createExternalDepositExclusive(input, next => {
+          stage = next
+        })
+      } catch (error) {
+        throw new ExternalShieldDepositError(stage, error)
+      }
+    })
+  }
+
+  hasExternalDepositAsset(source: CreateExternalShieldDepositInput['source']): boolean {
+    const asset = this.options.assets.get(source.assetId)
+    if (!asset) return false
+    const catalog = this.options.getProtocolTokens?.() ?? this.options.protocolTokens
+    if (catalog && asset.asset.namespace === 'erc20') {
+      // A contract may have multiple protocol representations. Bind the selected one
+      // independently of the portfolio's single default mapping for that contract.
+      const token = catalog.find(item => item.assetId === source.protocolAssetId)
+      const resolved = token ? resolveIntentsEvmAssets([token], this.options.evmNetworks)[0] : null
+      return Boolean(
+        resolved &&
+        resolved.assetId === source.assetId &&
+        resolved.chainId === source.chainId &&
+        resolved.decimals === asset.metadata.decimals
+      )
+    }
+    return this.options.assetMappings.some(
+      mapping =>
+        mapping.assetId === source.assetId && mapping.protocolAssetId === source.protocolAssetId
+    )
+  }
+
+  hasCurrentFundingAssets(input: PrepareConfidentialFundingInput): boolean {
+    const catalog = this.options.getProtocolTokens?.() ?? this.options.protocolTokens
+    if (!catalog) return true
+    return [input.source, input.destination].every(route => {
+      const token = catalog.find(item => item.assetId === route.protocolAssetId)
+      const registered = this.options.assets.get(route.assetId)
+      return (
+        token !== undefined &&
+        registered !== undefined &&
+        token.blockchain === route.chainName &&
+        token.decimals === registered.metadata.decimals &&
+        this.options.assetMappings.some(
+          mapping =>
+            mapping.assetId === route.assetId && mapping.protocolAssetId === route.protocolAssetId
+        )
+      )
+    })
   }
 
   private async createExternalDepositExclusive(
-    input: CreateExternalShieldDepositInput
+    input: CreateExternalShieldDepositInput,
+    setStage: (stage: ExternalShieldDepositFailureStage) => void
   ): Promise<ExternalShieldDeposit> {
     const chain = parseChainId(input.source.chainId)
     const isZcash = chain.id === getZcashChainId(this.options.network)
@@ -475,12 +676,8 @@ export class ConfidentialFundingCoordinator {
       (!isZcash && chain.namespace !== 'eip155') ||
       parseAssetId(input.source.assetId).chainId !== chain.id ||
       !asset ||
-      !this.options.assetMappings.some(
-        mapping =>
-          mapping.assetId === input.source.assetId &&
-          mapping.protocolAssetId === input.source.protocolAssetId
-      ) ||
-      !isPositiveRaw(input.source.amountRaw) ||
+      !this.hasExternalDepositAsset(input.source) ||
+      (input.source.amountRaw !== undefined && !isPositiveRaw(input.source.amountRaw)) ||
       !isBoundedLabel(input.source.chainName) ||
       !isBoundedLabel(input.keyDomainId, 512) ||
       !isBoundedLabel(input.accountId, 512) ||
@@ -488,8 +685,8 @@ export class ConfidentialFundingCoordinator {
     )
       throw new Error('External Shield deposit request is invalid')
     const catalog = this.options.getProtocolTokens?.() ?? this.options.protocolTokens
+    const token = catalog?.find(item => item.assetId === input.source.protocolAssetId)
     if (catalog) {
-      const token = catalog.find(item => item.assetId === input.source.protocolAssetId)
       const tokenChainId = token
         ? ['zec', 'zcash'].includes(token.blockchain.trim().toLowerCase())
           ? getZcashChainId(this.options.network)
@@ -510,6 +707,7 @@ export class ConfidentialFundingCoordinator {
     } else if (!isAddress(input.refundAddress) || /^0x0{40}$/i.test(input.refundAddress)) {
       throw new Error('External Shield deposit refund address is invalid')
     }
+    setStage('account')
     const identityChain = isZcash ? this.options.evmNetworks[0]?.chainId : chain.id
     if (!identityChain) throw new Error('External Shield deposit Account has no EVM identity')
     const identity = await this.options.signer.resolveIdentity(parseChainId(identityChain).id)
@@ -529,7 +727,10 @@ export class ConfidentialFundingCoordinator {
         )
       : undefined
     if (existing) {
-      if (existing.phase === 'awaiting-payment' && existing.expiresAt <= this.now()) {
+      if (
+        existing.phase === 'awaiting-payment' &&
+        isExternalShieldDepositExpired(existing, this.now())
+      ) {
         throw new Error('External Shield deposit quote has expired; create a new request')
       }
       if (
@@ -537,7 +738,10 @@ export class ConfidentialFundingCoordinator {
         existing.source.chainName !== input.source.chainName ||
         existing.source.assetId !== input.source.assetId ||
         existing.source.protocolAssetId !== input.source.protocolAssetId ||
-        existing.source.amountRaw !== input.source.amountRaw ||
+        (input.source.amountRaw === undefined
+          ? existing.amountMode !== 'minimum'
+          : existing.amountMode === 'minimum' ||
+            existing.source.amountRaw !== input.source.amountRaw) ||
         existing.refundAddress !== input.refundAddress ||
         existing.signerId !== identity.address
       ) {
@@ -558,35 +762,43 @@ export class ConfidentialFundingCoordinator {
       }
       return existing
     }
-    const quote = await this.options.api.quote({
+    const minimumMode = input.source.amountRaw === undefined
+    setStage('quote')
+    const quote = minimumMode
+      ? await this.options.api.quoteFlexibleDeposit({
+          originAsset: input.source.protocolAssetId,
+          signerId: identity.address,
+          refundTo: input.refundAddress
+        })
+      : await this.options.api.quote({
+          referral: NOIR_RECEIVE_REFERRAL,
+          originAsset: input.source.protocolAssetId,
+          destinationAsset: input.source.protocolAssetId,
+          amountRaw: input.source.amountRaw!,
+          signerId: identity.address,
+          refundTo: input.refundAddress,
+          recipient: identity.address,
+          depositType: 'ORIGIN_CHAIN',
+          refundType: 'ORIGIN_CHAIN',
+          recipientType: 'CONFIDENTIAL_INTENTS',
+          slippageBps: 50,
+          dry: false
+        })
+    const amountRaw = minimumMode ? quote.quote.amountIn : input.source.amountRaw!
+    const binding = {
       originAsset: input.source.protocolAssetId,
       destinationAsset: input.source.protocolAssetId,
-      amountRaw: input.source.amountRaw,
+      amountRaw,
       signerId: identity.address,
       refundTo: input.refundAddress,
       recipient: identity.address,
-      depositType: 'ORIGIN_CHAIN',
-      refundType: 'ORIGIN_CHAIN',
-      recipientType: 'CONFIDENTIAL_INTENTS',
-      slippageBps: 50,
-      dry: false
-    })
-    assertConfidentialQuoteBinding(
-      quote,
-      {
-        originAsset: input.source.protocolAssetId,
-        destinationAsset: input.source.protocolAssetId,
-        amountRaw: input.source.amountRaw,
-        signerId: identity.address,
-        refundTo: input.refundAddress,
-        recipient: identity.address,
-        depositType: 'ORIGIN_CHAIN',
-        refundType: 'ORIGIN_CHAIN',
-        recipientType: 'CONFIDENTIAL_INTENTS',
-        slippageBps: 50
-      },
-      this.now()
-    )
+      depositType: 'ORIGIN_CHAIN' as const,
+      refundType: 'ORIGIN_CHAIN' as const,
+      recipientType: 'CONFIDENTIAL_INTENTS' as const,
+      slippageBps: minimumMode ? 0 : 50
+    }
+    if (minimumMode) assertFlexibleExternalDepositQuoteBinding(quote, binding, this.now())
+    else assertConfidentialQuoteBinding(quote, binding, this.now())
     if (isZcash && quote.quoteRequest.refundTo !== input.refundAddress) {
       throw new Error('External Shield quote changed its Zcash refund address')
     }
@@ -610,6 +822,7 @@ export class ConfidentialFundingCoordinator {
       )
     )
       throw new Error('External Shield service reused a deposit address')
+    setStage('account')
     const currentIdentity = await this.options.signer.resolveIdentity(
       parseChainId(identityChain).id
     )
@@ -621,7 +834,9 @@ export class ConfidentialFundingCoordinator {
     ) {
       throw new Error('External Shield deposit Account changed after quoting')
     }
+    setStage('authorization')
     await this.ensureSession(currentIdentity, true)
+    setStage('account')
     const activeIdentity = await this.options.signer.resolveIdentity(parseChainId(identityChain).id)
     if (
       activeIdentity.context.chainAccount.scope.keyDomainId !== input.keyDomainId ||
@@ -640,18 +855,19 @@ export class ConfidentialFundingCoordinator {
       network: input.network,
       keyDomainId: input.keyDomainId,
       accountId: input.accountId,
-      source: Object.freeze({ ...input.source }),
+      source: Object.freeze({ ...input.source, amountRaw }),
       destinationAssetId: input.source.assetId,
-      sourceSymbol: asset.metadata.symbol,
+      sourceSymbol: token?.symbol ?? asset.metadata.symbol,
       sourceDecimals: asset.metadata.decimals,
       signerId: identity.address,
       depositAddress: quote.quote.depositAddress,
       ...(quote.quote.depositMemo ? { depositMemo: quote.quote.depositMemo } : {}),
       refundAddress: input.refundAddress,
-      amountRaw: input.source.amountRaw,
+      amountRaw,
+      ...(minimumMode ? { amountMode: 'minimum' as const } : {}),
       expectedOutputRaw: quote.quote.amountOut,
       minimumOutputRaw: quote.quote.minAmountOut,
-      slippageBps: 50,
+      slippageBps: binding.slippageBps,
       expiresAt: quoteDeadline(quote),
       phase: 'awaiting-payment',
       ...(input.requestId ? { requestId: input.requestId } : {}),
@@ -659,6 +875,7 @@ export class ConfidentialFundingCoordinator {
       createdAt,
       updatedAt: createdAt
     })
+    setStage('storage')
     await this.options.store.putExternalDeposit(record)
     const result = await this.options.store.withExternalDepositScope(record, () =>
       this.options.repository.create(createExternalShieldDepositGraph(record))
@@ -698,19 +915,105 @@ export class ConfidentialFundingCoordinator {
     )
   }
 
-  async refreshExternalDeposit(depositId: string): Promise<ExternalShieldDeposit> {
-    const pending = this.refreshingExternalDeposits.get(depositId)
+  private oneClickStatusKey(depositAddress: string, depositMemo?: string): string {
+    return `${depositAddress}\0${depositMemo ?? ''}`
+  }
+
+  private async fetchOneClickDepositStatus(
+    depositAddress: string,
+    depositMemo?: string,
+    force = false
+  ): Promise<ConfidentialStatus> {
+    const key = this.oneClickStatusKey(depositAddress, depositMemo)
+    const pending = this.oneClickStatusQueries.get(key)
     if (pending) return pending
-    const operation = this.refreshExternalDepositExclusive(depositId).finally(() => {
-      if (this.refreshingExternalDeposits.get(depositId) === operation) {
-        this.refreshingExternalDeposits.delete(depositId)
-      }
-    })
-    this.refreshingExternalDeposits.set(depositId, operation)
+    const state = this.oneClickStatusState.get(key)
+    if (state && this.now() < state.until) {
+      if (state.kind === 'backoff')
+        throw new ConfidentialFundingApiError('Deposit status polling is in backoff', 429, true)
+      if (!force) return state.status
+    }
+
+    const operation = this.options.api
+      .getOneClickStatus(depositAddress, depositMemo)
+      .then(status => {
+        this.oneClickStatusState.set(key, {
+          kind: 'fresh',
+          until: this.now() + EXTERNAL_DEPOSIT_STATUS_FRESH_MS,
+          status
+        })
+        return status
+      })
+      .catch(error => {
+        if (retryableFundingError(error)) {
+          const previous = this.oneClickStatusState.get(key)
+          const backoffMs = Math.min(
+            Math.max(
+              (previous?.kind === 'backoff'
+                ? previous.backoffMs
+                : EXTERNAL_DEPOSIT_STATUS_BACKOFF_INITIAL_MS / 2) * 2,
+              EXTERNAL_DEPOSIT_STATUS_BACKOFF_INITIAL_MS
+            ),
+            EXTERNAL_DEPOSIT_STATUS_BACKOFF_MAX_MS
+          )
+          this.oneClickStatusState.set(key, {
+            kind: 'backoff',
+            until: this.now() + backoffMs,
+            backoffMs
+          })
+        }
+        throw error
+      })
+      .finally(() => {
+        if (this.oneClickStatusQueries.get(key) === operation) {
+          this.oneClickStatusQueries.delete(key)
+        }
+      })
+    this.oneClickStatusQueries.set(key, operation)
     return operation
   }
 
-  private async refreshExternalDepositExclusive(depositId: string): Promise<ExternalShieldDeposit> {
+  private async readExternalDepositProviderStatus(
+    record: ExternalShieldDeposit,
+    force = false
+  ): Promise<ConfidentialStatus | null> {
+    try {
+      return await this.fetchOneClickDepositStatus(record.depositAddress, record.depositMemo, force)
+    } catch (error) {
+      if (
+        error instanceof ConfidentialFundingApiError &&
+        (error.ambiguous || error.status === 429)
+      ) {
+        return null
+      }
+      if (retryableFundingError(error)) return null
+      throw error
+    }
+  }
+
+  async refreshExternalDeposit(depositId: string, force = true): Promise<ExternalShieldDeposit> {
+    const pending = this.refreshingExternalDeposits.get(depositId)
+    if (pending) {
+      return force && !pending.force
+        ? pending.promise.then(
+            () => this.refreshExternalDeposit(depositId, true),
+            () => this.refreshExternalDeposit(depositId, true)
+          )
+        : pending.promise
+    }
+    const operation = this.refreshExternalDepositExclusive(depositId, force).finally(() => {
+      if (this.refreshingExternalDeposits.get(depositId)?.promise === operation) {
+        this.refreshingExternalDeposits.delete(depositId)
+      }
+    })
+    this.refreshingExternalDeposits.set(depositId, { promise: operation, force })
+    return operation
+  }
+
+  private async refreshExternalDepositExclusive(
+    depositId: string,
+    force: boolean
+  ): Promise<ExternalShieldDeposit> {
     let record = await this.getExternalDeposit(depositId)
     if (
       !(await this.options.repository.get(
@@ -727,10 +1030,11 @@ export class ConfidentialFundingCoordinator {
     }
     if (record.phase === 'ready') {
       if (record.settledOutputRaw === undefined) {
-        const status = await this.options.api.getOneClickStatus(
-          record.depositAddress,
-          record.depositMemo
-        )
+        const status = await this.readExternalDepositProviderStatus(record, force)
+        if (!status) {
+          await this.scheduleMonitoring()
+          return record
+        }
         const normalized = normalizeStatus(status.status)
         if (
           (normalized === 'SUCCESS' || normalized === 'COMPLETED') &&
@@ -748,7 +1052,12 @@ export class ConfidentialFundingCoordinator {
             updatedAt: this.now()
           })
           await this.options.store.putExternalDeposit(record)
-          const event = projectExternalDepositResult(previous, record)
+          const event = projectExternalDepositResult(
+            previous,
+            record,
+            this.options.assets,
+            quotedPrivacyFeeBps(record.quote)
+          )
           if (event) trackEvent(event.name, event.options)
         } else {
           await this.scheduleMonitoring()
@@ -764,10 +1073,11 @@ export class ConfidentialFundingCoordinator {
       await this.markExternalDepositGraphReconciled(record)
       return record
     }
-    const status = await this.options.api.getOneClickStatus(
-      record.depositAddress,
-      record.depositMemo
-    )
+    const status = await this.readExternalDepositProviderStatus(record, force)
+    if (!status) {
+      await this.scheduleMonitoring()
+      return record
+    }
     const normalized = normalizeStatus(status.status)
     if (
       ![
@@ -854,7 +1164,12 @@ export class ConfidentialFundingCoordinator {
         updatedAt: this.now()
       })
       await this.options.store.putExternalDeposit(record)
-      const event = projectExternalDepositResult(previous, record)
+      const event = projectExternalDepositResult(
+        previous,
+        record,
+        this.options.assets,
+        quotedPrivacyFeeBps(record.quote)
+      )
       if (event) trackEvent(event.name, event.options)
     }
     await this.updateExternalDepositGraph(record)
@@ -1035,10 +1350,11 @@ export class ConfidentialFundingCoordinator {
     const sourceSigningChain =
       parseChainId(input.source.chainId).namespace === 'eip155'
         ? input.source.chainId
-        : input.destination.chainId
+        : confidentialSigningChainId(input.source.chainId, input.destination.chainId, input.network)
     const destinationSigningChain = confidentialSigningChainId(
       input.source.chainId,
-      input.destination.chainId
+      input.destination.chainId,
+      input.network
     )
     const sourceIdentity = await this.options.signer.resolveIdentity(sourceSigningChain)
     const destinationIdentity = await this.options.signer.resolveIdentity(destinationSigningChain)
@@ -1080,7 +1396,11 @@ export class ConfidentialFundingCoordinator {
           : ('DESTINATION_CHAIN' as const),
       slippageBps: input.slippageBps
     }
-    const quote = await this.options.api.quote({ ...binding, dry: true })
+    const quote = await this.options.api.quote({
+      ...binding,
+      referral: fundingReferral(input),
+      dry: true
+    })
     assertConfidentialQuoteBinding(quote, binding, this.now())
     const currentIdentity = await this.options.signer.resolveIdentity(sourceSigningChain)
     this.assertSameAccount(sourceIdentity, currentIdentity)
@@ -1132,9 +1452,14 @@ export class ConfidentialFundingCoordinator {
     const depositQuote =
       input.sourceDomain === 'shield'
         ? undefined
-        : await this.options.api.quote({ ...depositBinding, dry: true })
+        : await this.options.api.quote({
+            ...depositBinding,
+            referral: fundingReferral(input),
+            dry: true
+          })
     if (depositQuote) assertConfidentialQuoteBinding(depositQuote, depositBinding, this.now())
     const previews = await this.prepareWithdrawPreviews({
+      referral: fundingReferral(input),
       sourceAsset: input.source.protocolAssetId,
       destinationAsset: input.destination.protocolAssetId,
       spendRaw: depositQuote?.quote.amountOut ?? input.source.amountRaw,
@@ -1181,7 +1506,9 @@ export class ConfidentialFundingCoordinator {
             amountRaw: input.source.amountRaw
           },
           rpc: this.requireRpc(input.source.chainId),
-          feeTier: input.feeTier
+          ...(input.feeSelection
+            ? { feeSelection: input.feeSelection }
+            : { feeTier: input.feeTier })
         })
         const feeAsset = this.options.assets
           .list(parseChainId(input.source.chainId).id)
@@ -1225,10 +1552,11 @@ export class ConfidentialFundingCoordinator {
     const sourceSigningChain =
       parseChainId(input.source.chainId).namespace === 'eip155'
         ? input.source.chainId
-        : input.destination.chainId
+        : confidentialSigningChainId(input.source.chainId, input.destination.chainId, input.network)
     const destinationSigningChain = confidentialSigningChainId(
       input.source.chainId,
-      input.destination.chainId
+      input.destination.chainId,
+      input.network
     )
     const sourceIdentity = await this.options.signer.resolveIdentity(sourceSigningChain)
     const destinationIdentity = await this.options.signer.resolveIdentity(destinationSigningChain)
@@ -1276,7 +1604,9 @@ export class ConfidentialFundingCoordinator {
       `private-funding:${await fingerprintConfidentialValue({
         source: input.source,
         destination: input.destination,
-        slippageBps: input.slippageBps
+        slippageBps: input.slippageBps,
+        feeTier: input.feeTier,
+        feeSelection: input.feeSelection
       })}`
     const sourcePlans = activePlans
       .filter(
@@ -1342,6 +1672,7 @@ export class ConfidentialFundingCoordinator {
     const baseline = getConfidentialAvailableForAsset(balances, input.source.protocolAssetId) ?? '0'
     const requiresDeposit = true
     const depositQuote = await this.options.api.quote({
+      referral: fundingReferral(input),
       originAsset: input.source.protocolAssetId,
       destinationAsset: input.source.protocolAssetId,
       amountRaw: input.source.amountRaw,
@@ -1373,6 +1704,7 @@ export class ConfidentialFundingCoordinator {
     )
     const spendRaw = depositQuote.quote.amountOut
     const previews = await this.prepareWithdrawPreviews({
+      referral: fundingReferral(input),
       sourceAsset: input.source.protocolAssetId,
       destinationAsset: input.destination.protocolAssetId,
       spendRaw,
@@ -1391,7 +1723,7 @@ export class ConfidentialFundingCoordinator {
         amountRaw: input.source.amountRaw
       },
       rpc: this.requireRpc(input.source.chainId),
-      feeTier: input.feeTier
+      ...(input.feeSelection ? { feeSelection: input.feeSelection } : { feeTier: input.feeTier })
     })
     const signing = await this.options.signer.prepareTransaction({
       identity: sourceIdentity,
@@ -1546,6 +1878,7 @@ export class ConfidentialFundingCoordinator {
     }
     const quote = await this.options.api.quote({
       originAsset: input.source.protocolAssetId,
+      referral: fundingReferral(input),
       destinationAsset: isDeposit
         ? input.source.protocolAssetId
         : input.destination.protocolAssetId,
@@ -1604,7 +1937,9 @@ export class ConfidentialFundingCoordinator {
             amountRaw: input.source.amountRaw
           },
           rpc: this.requireRpc(input.source.chainId),
-          feeTier: input.feeTier
+          ...(input.feeSelection
+            ? { feeSelection: input.feeSelection }
+            : { feeTier: input.feeTier })
         })
       : null
     const signing = prepared
@@ -1737,6 +2072,7 @@ export class ConfidentialFundingCoordinator {
         : destinationIdentity.address
     const depositQuote = requiresDeposit
       ? await this.options.api.quote({
+          referral: fundingReferral(input),
           originAsset: input.source.protocolAssetId,
           destinationAsset: input.source.protocolAssetId,
           amountRaw: input.source.amountRaw,
@@ -1772,6 +2108,7 @@ export class ConfidentialFundingCoordinator {
     }
     const spendRaw = depositQuote?.quote.amountOut ?? input.source.amountRaw
     const previews = await this.prepareWithdrawPreviews({
+      referral: fundingReferral(input),
       sourceAsset: input.source.protocolAssetId,
       destinationAsset: input.destination.protocolAssetId,
       spendRaw,
@@ -1799,7 +2136,9 @@ export class ConfidentialFundingCoordinator {
             amountRaw: input.source.amountRaw
           },
           rpc: this.requireRpc(input.source.chainId),
-          feeTier: input.feeTier
+          ...(input.feeSelection
+            ? { feeSelection: input.feeSelection }
+            : { feeTier: input.feeTier })
         })
       : null
     const signing = prepared
@@ -2098,7 +2437,9 @@ export class ConfidentialFundingCoordinator {
   }
 
   async getPlan(planId: string): Promise<ConfidentialFundingPlan> {
-    return this.requirePlan(planId)
+    const plan = await this.requirePlan(planId)
+    if (needsRefundObservation(plan)) return this.continuePlan(planId, true)
+    return plan
   }
 
   async finalizeRejectedCluster(
@@ -2134,7 +2475,10 @@ export class ConfidentialFundingCoordinator {
     return this.continuePlan(planId)
   }
 
-  async enrichPortfolio(model: PortfolioReadModel, refresh = true): Promise<PortfolioReadModel> {
+  async enrichPortfolio(
+    model: PortfolioReadModel,
+    refresh: boolean | 'if-stale' = true
+  ): Promise<PortfolioReadModel> {
     const snapshot = await this.options.store.getBalanceSnapshot(
       this.options.network,
       model.scope.keyDomainId,
@@ -2172,7 +2516,7 @@ export class ConfidentialFundingCoordinator {
             )
       return Object.freeze({ ...merged, confidential })
     }
-    if (!refresh) return project(cached)
+    if (!refresh || (refresh === 'if-stale' && snapshot.fresh)) return project(cached)
     const firstEvm = this.options.evmNetworks[0]
     if (!firstEvm) {
       return project(cached)
@@ -2194,7 +2538,7 @@ export class ConfidentialFundingCoordinator {
     ) {
       return project(cached)
     }
-    const balances = await this.readAndCacheBalances(identity, session.accessToken).catch(
+    const balances = await this.refreshPortfolioBalances(identity, session.accessToken).catch(
       () => cached
     )
     return project(balances)
@@ -2215,7 +2559,31 @@ export class ConfidentialFundingCoordinator {
       throw new Error('Active Wallet Account changed')
     const session = await this.ensureSession(identity, authorize)
     if (!session) throw new Error('Confidential authorization is required')
-    return this.readAndCacheBalances(identity, session.accessToken)
+    try {
+      return await this.refreshPortfolioBalances(identity, session.accessToken)
+    } catch (error) {
+      if (error instanceof ConfidentialFundingApiError && error.status === 401) {
+        await withMetadataLock(async () => {
+          const current = await this.options.store.getSession(
+            scope.network,
+            scope.keyDomainId,
+            scope.accountId
+          )
+          if (
+            current?.accessToken === session.accessToken &&
+            current.refreshToken === session.refreshToken &&
+            current.expiresAt === session.expiresAt &&
+            current.refreshExpiresAt === session.refreshExpiresAt
+          )
+            await this.options.store.deleteSession(
+              scope.network,
+              scope.keyDomainId,
+              scope.accountId
+            )
+        })
+      }
+      throw error
+    }
   }
 
   async cancel(planId: string): Promise<void> {
@@ -2246,7 +2614,9 @@ export class ConfidentialFundingCoordinator {
         plan.network === this.options.network &&
         plan.phase !== 'prepared' &&
         !needsConfidentialSubmissionCheck(plan) &&
-        (!isTerminalPhase(plan.phase) || isRecoverableLocalFailure(plan))
+        (!isTerminalPhase(plan.phase) ||
+          isRecoverableLocalFailure(plan) ||
+          needsRefundObservation(plan))
     )
     const results = await Promise.allSettled(plans.map(plan => this.continuePlan(plan.planId)))
     const external = (await this.options.store.listExternalDeposits()).filter(
@@ -2259,7 +2629,7 @@ export class ConfidentialFundingCoordinator {
             !this.reconciledTerminalExternalDeposits.has(record.depositId)))
     )
     const externalResults = await Promise.allSettled(
-      external.map(record => this.refreshExternalDeposit(record.depositId))
+      external.map(record => this.refreshExternalDeposit(record.depositId, false))
     )
     if (
       plans.some((_, index) => results[index].status === 'rejected') ||
@@ -2281,11 +2651,19 @@ export class ConfidentialFundingCoordinator {
     return [...results, ...externalResults].filter(result => result.status === 'fulfilled').length
   }
 
-  async continuePlan(planId: string): Promise<ConfidentialFundingPlan> {
+  async continuePlan(planId: string, refreshRefund = false): Promise<ConfidentialFundingPlan> {
     const existing = this.continuingByPlan.get(planId)
     if (existing) return existing
-    const operation = this.continuePlanExclusive(planId)
+    const operation = this.continuePlanExclusive(planId, refreshRefund)
       .catch(error => this.handleContinuationError(planId, error))
+      .then(async plan => {
+        if (needsRefundObservation(plan)) {
+          const due =
+            (plan.settlementCheckedAt ?? this.now()) + refundStatusCheckInterval(plan, this.now())
+          await this.scheduleMonitoring(Math.max(0.1, (due - this.now()) / 60_000))
+        }
+        return plan
+      })
       .finally(() => {
         if (this.continuingByPlan.get(planId) === operation) {
           this.continuingByPlan.delete(planId)
@@ -2295,14 +2673,19 @@ export class ConfidentialFundingCoordinator {
     return operation
   }
 
-  private async continuePlanExclusive(planId: string): Promise<ConfidentialFundingPlan> {
+  private async continuePlanExclusive(
+    planId: string,
+    refreshRefund: boolean
+  ): Promise<ConfidentialFundingPlan> {
     let plan = await this.requirePlan(planId)
     if (isRecoverableLocalFailure(plan)) {
       plan = await this.updatePlan(plan, {
         phase: 'deposit-confirming',
         errorStatus: undefined
       })
-    } else if (isTerminalPhase(plan.phase)) return plan
+    } else if (isTerminalPhase(plan.phase)) {
+      return needsRefundObservation(plan) ? this.observeRefund(plan, refreshRefund) : plan
+    }
     if (isClusterRejectionReason(plan.errorStatus)) return this.finishRejectedCluster(plan)
     if (isUnsignedDirectWithdraw(plan) && !this.confirmingByPlan.has(planId)) {
       return this.updatePlan(plan, {
@@ -2439,7 +2822,10 @@ export class ConfidentialFundingCoordinator {
         }
         await this.applyGraphStatus(plan, 'origin', 'final', { transactionHash })
         await this.applyGraphStatus(plan, 'relay', 'final')
-        const ready = await this.updatePlan(plan, { phase: 'ready' })
+        const ready = await this.updatePlan(plan, {
+          phase: 'ready',
+          settledOutputRaw: status.settledAmountOutRaw
+        })
         await this.options.refreshPortfolio?.().catch(() => {})
         return ready
       }
@@ -2531,10 +2917,18 @@ export class ConfidentialFundingCoordinator {
     const sourceAllowed = sourceIsEvm || (shieldSpend && sourceChain.id === zcashChainId)
     const destinationAllowed =
       destinationIsEvm ||
+      (shieldSpend &&
+        value.operation === 'withdraw' &&
+        value.destinationDomain === 'public' &&
+        destinationChain.id === zcashChainId) ||
       (value.operation === 'swap' &&
         value.destinationDomain === 'shield' &&
         destinationChain.id === zcashChainId)
-    if (!sourceAllowed || !destinationAllowed || (!sourceIsEvm && !destinationIsEvm)) {
+    if (
+      !sourceAllowed ||
+      !destinationAllowed ||
+      (!sourceIsEvm && !destinationIsEvm && !(shieldSpend && destinationChain.id === zcashChainId))
+    ) {
       throw new Error('Confidential funding requires an EVM signing chain')
     }
     if (
@@ -2589,36 +2983,17 @@ export class ConfidentialFundingCoordinator {
       value.slippageBps < 0 ||
       value.slippageBps > 10_000 ||
       (value.feeTier !== undefined && !['low', 'standard', 'fast'].includes(value.feeTier)) ||
+      (value.feeSelection !== undefined &&
+        (value.feeTier !== undefined || value.sourceDomain === 'shield' || !sourceIsEvm)) ||
       (value.dedupKey !== undefined && !isBoundedLabel(value.dedupKey, 160)) ||
       (value.externalRecipient !== undefined &&
         (value.operation !== 'withdraw' ||
-          !isAddress(value.externalRecipient) ||
-          /^0x0{40}$/i.test(value.externalRecipient)))
+          !isValidExternalRecipient(value.externalRecipient, destinationChain.id, value.network)))
     ) {
       throw new Error('Confidential funding request is invalid')
     }
-    const catalog = this.options.getProtocolTokens?.() ?? this.options.protocolTokens
-    if (catalog) {
-      const matchesCatalog = (
-        route: Readonly<{
-          assetId: string
-          protocolAssetId: string
-          chainName: string
-        }>
-      ) => {
-        const token = catalog.find(item => item.assetId === route.protocolAssetId)
-        const registered = this.options.assets.get(route.assetId)
-        return (
-          token !== undefined &&
-          registered !== undefined &&
-          token.blockchain === route.chainName &&
-          token.decimals === registered.metadata.decimals
-        )
-      }
-      if (!matchesCatalog(value.source) || !matchesCatalog(value.destination)) {
-        throw new Error('Confidential funding asset catalog changed')
-      }
-    }
+    if (!this.hasCurrentFundingAssets(value))
+      throw new Error('Confidential funding asset catalog changed')
     return Object.freeze({
       ...(value.operation === undefined
         ? {}
@@ -2646,6 +3021,7 @@ export class ConfidentialFundingCoordinator {
       slippageBps: value.slippageBps,
       ...(value.externalRecipient ? { externalRecipient: value.externalRecipient } : {}),
       ...(value.feeTier ? { feeTier: value.feeTier } : {}),
+      ...(value.feeSelection ? { feeSelection: parseEvmFeeSelection(value.feeSelection) } : {}),
       ...(value.dedupKey ? { dedupKey: value.dedupKey } : {})
     }) as PrepareConfidentialFundingInput & {
       readonly source: PrepareConfidentialFundingInput['source'] & { readonly chainId: ChainId }
@@ -2656,6 +3032,7 @@ export class ConfidentialFundingCoordinator {
   }
 
   private async prepareWithdrawPreviews(input: {
+    readonly referral: NoirIntentsReferral
     readonly sourceAsset: string
     readonly destinationAsset: string
     readonly spendRaw: string
@@ -2668,6 +3045,7 @@ export class ConfidentialFundingCoordinator {
       const quotes = await Promise.all(
         amounts.map(amountRaw =>
           this.options.api.quote({
+            referral: input.referral,
             originAsset: input.sourceAsset,
             destinationAsset: input.destinationAsset,
             amountRaw,
@@ -2717,6 +3095,7 @@ export class ConfidentialFundingCoordinator {
     const quotes = await Promise.all(
       plan.splitSourceAmounts.map(sourceAmountRaw =>
         this.options.api.quote({
+          referral: fundingReferral(plan),
           originAsset: plan.source.protocolAssetId,
           destinationAsset: plan.destination.protocolAssetId,
           amountRaw: sourceAmountRaw,
@@ -2855,6 +3234,7 @@ export class ConfidentialFundingCoordinator {
     const quotes = await Promise.all(
       plan.splitSourceAmounts.map(sourceAmountRaw =>
         this.options.api.quote({
+          referral: fundingReferral(plan),
           originAsset: plan.source.protocolAssetId,
           destinationAsset: plan.destination.protocolAssetId,
           amountRaw: sourceAmountRaw,
@@ -3011,6 +3391,7 @@ export class ConfidentialFundingCoordinator {
         plan.operation === 'swap' && plan.swapQuote?.quoteRequest.dry === false
           ? plan.swapQuote
           : await this.options.api.quote({
+              referral: fundingReferral(plan),
               originAsset: plan.source.protocolAssetId,
               destinationAsset: plan.destination.protocolAssetId,
               amountRaw: plan.source.amountRaw,
@@ -3076,7 +3457,11 @@ export class ConfidentialFundingCoordinator {
       })
       const signedPayload = await this.options.signer.signMessage({
         identity: await this.requirePlanIdentity(plan),
-        chainId: confidentialSigningChainId(plan.source.chainId, plan.destination.chainId),
+        chainId: confidentialSigningChainId(
+          plan.source.chainId,
+          plan.destination.chainId,
+          plan.network
+        ),
         payload: binding.payload
       })
       row = Object.freeze({
@@ -3490,6 +3875,41 @@ export class ConfidentialFundingCoordinator {
     })
   }
 
+  private async observeRefund(
+    plan: ConfidentialFundingPlan,
+    refresh: boolean
+  ): Promise<ConfidentialFundingPlan> {
+    const interval = refresh
+      ? REFUND_STATUS_CHECK_INTERVAL_MS
+      : refundStatusCheckInterval(plan, this.now())
+    if (plan.settlementCheckedAt !== undefined && this.now() - plan.settlementCheckedAt < interval)
+      return plan
+    // Persist throttling across service-worker restarts without emitting an activity update.
+    plan = Object.freeze({ ...plan, settlementCheckedAt: this.now() })
+    await this.options.store.putPlan(plan)
+    try {
+      if (plan.orderId || plan.withdraws.some(row => row.intentHash)) {
+        plan = await this.refreshSettlement(plan, undefined, true)
+      } else if (plan.depositQuote) {
+        const status = await this.readStatus(
+          plan,
+          plan.depositQuote.quote.depositAddress,
+          'deposit'
+        )
+        if (status) {
+          const depositSettlementStatus = normalizeStatus(status.status)
+          if (depositSettlementStatus === 'REFUNDED') {
+            plan = await this.updatePlan(plan, { phase: 'refunded' })
+            await this.options.refreshPortfolio?.().catch(() => {})
+          }
+        }
+      }
+    } catch {
+      // Preserve the execution outcome. Observation must never request signatures or resubmit.
+    }
+    return plan
+  }
+
   private async updateClusterOrderObservation(
     plan: ConfidentialFundingPlan,
     order: ConfidentialPrivateOrder
@@ -3505,22 +3925,20 @@ export class ConfidentialFundingCoordinator {
       const canSettleWithoutBroadcast =
         !observed.intentHash && ['FAILED', 'EXPIRED', 'CANCELLED'].includes(serviceStatus)
       return Object.freeze({
-        ...row,
-        status: ['SUCCESS', 'COMPLETED', 'FAILED', 'EXPIRED', 'CANCELLED', 'REFUNDED'].includes(
-          normalizeStatus(row.status)
-        )
-          ? row.status
-          : serviceRefunded || canSettleWithoutBroadcast
-            ? observed.status
-            : 'PROCESSING',
+        ...mergeConfidentialWithdrawObservation(row, {
+          status: serviceRefunded || canSettleWithoutBroadcast ? observed.status : 'PROCESSING',
+          // The private-order hash is not specified as a destination hash on refunds.
+          ...(!serviceRefunded && observed.transactionHash
+            ? { transactionHash: observed.transactionHash }
+            : {}),
+          ...(observed.errorStatus ? { errorStatus: observed.errorStatus } : {})
+        }),
         ...(observed.scheduledAt !== undefined ? { scheduledAt: observed.scheduledAt } : {}),
-        ...(observed.intentHash ? { intentHash: observed.intentHash } : {}),
-        ...(observed.transactionHash ? { transactionHash: observed.transactionHash } : {}),
-        ...(observed.errorStatus ? { errorStatus: observed.errorStatus } : {})
+        ...(observed.intentHash ? { intentHash: observed.intentHash } : {})
       })
     })
     return this.updatePlan(plan, {
-      phase: 'processing',
+      phase: isTerminalPhase(plan.phase) ? plan.phase : 'processing',
       orderId: order.orderId,
       backendStatus: order.status,
       withdraws: Object.freeze(rows)
@@ -3529,16 +3947,29 @@ export class ConfidentialFundingCoordinator {
 
   private async refreshSettlement(
     plan: ConfidentialFundingPlan,
-    accessToken: string
+    accessToken?: string,
+    observationOnly = false
   ): Promise<ConfidentialFundingPlan> {
+    const previousPhase = plan.phase
+    const previousRows = plan.withdraws
     if (plan.operation === 'cluster' && plan.orderId) {
-      const walletToken = await this.ensureOrderHistoryToken(plan)
+      const stored = observationOnly
+        ? await this.options.store.getHistorySession(plan.network, plan.keyDomainId, plan.accountId)
+        : null
+      const walletToken = observationOnly
+        ? stored?.principalType === 'wallet' &&
+          stored.queryAddress.toLowerCase() === plan.signerId.toLowerCase() &&
+          Date.parse(stored.expiresAt) > this.now() + SESSION_REFRESH_BUFFER_MS
+          ? stored.token
+          : undefined
+        : await this.ensureOrderHistoryToken(plan)
       let details: readonly ConfidentialPrivateOrder[] = []
       try {
-        details = await this.options.api.getPrivateOrderDetails({
-          walletToken,
-          orderIds: [plan.orderId]
-        })
+        if (walletToken)
+          details = await this.options.api.getPrivateOrderDetails({
+            walletToken,
+            orderIds: [plan.orderId]
+          })
       } catch (error) {
         if (
           error instanceof ConfidentialFundingApiError &&
@@ -3549,12 +3980,20 @@ export class ConfidentialFundingCoordinator {
             plan.keyDomainId,
             plan.accountId
           )
-          throw new Error('Wallet history authorization is required')
+          if (!observationOnly) throw new Error('Wallet history authorization is required')
         }
-        throw error
+        if (!observationOnly) throw error
       }
       const order = details.find(item => item.orderId === plan.orderId)
-      if (order) plan = await this.updateClusterOrderObservation(plan, order)
+      if (order) {
+        if (observationOnly) {
+          try {
+            plan = await this.updateClusterOrderObservation(plan, order)
+          } catch {
+            // An unbound history response cannot block independent settlement evidence.
+          }
+        } else plan = await this.updateClusterOrderObservation(plan, order)
+      }
     }
     const statuses = await Promise.all(
       plan.withdraws.map(row =>
@@ -3566,8 +4005,21 @@ export class ConfidentialFundingCoordinator {
       return mergeConfidentialWithdrawObservation(row, {
         status: status?.status ?? row.status,
         transactionHash: status?.transactionHash,
-        errorStatus: status?.errorStatus
+        errorStatus: status?.errorStatus,
+        settledOutputRaw:
+          status?.settledAmountOutRaw && isPositiveRaw(status.settledAmountOutRaw)
+            ? status.settledAmountOutRaw
+            : undefined
       })
+    })
+    const newlySettled = rows.some((row, index) => {
+      const current = normalizeStatus(row.status)
+      const previous = normalizeStatus(previousRows[index].status)
+      return (
+        (current === 'SUCCESS' || current === 'COMPLETED') &&
+        previous !== 'SUCCESS' &&
+        previous !== 'COMPLETED'
+      )
     })
     const settlement = aggregateConfidentialSettlement(rows.map(row => row.status))
     for (const row of rows) {
@@ -3594,10 +4046,13 @@ export class ConfidentialFundingCoordinator {
       }
     }
     const next = await this.updatePlan(plan, {
-      phase: phaseForSettlement(settlement),
+      phase:
+        observationOnly && settlement === 'confirming'
+          ? previousPhase
+          : phaseForSettlement(settlement),
       withdraws: Object.freeze(rows),
       backendStatus: undefined,
-      errorStatus: undefined
+      errorStatus: observationOnly ? plan.errorStatus : undefined
     })
     if (settlement === 'success') {
       await this.applyGraphStatus(next, 'relay', 'final')
@@ -3612,9 +4067,22 @@ export class ConfidentialFundingCoordinator {
               : 'relay-failed'
       await this.applyGraphStatus(next, 'relay', 'failed', undefined, aggregateFailure)
     }
-    if (isTerminalPhase(next.phase)) {
-      await this.readAndCacheBalancesForPlan(next, accessToken).catch(() => [])
+    if (
+      isTerminalPhase(next.phase) &&
+      (!observationOnly ||
+        next.phase !== previousPhase ||
+        rows.some((row, index) => row.status !== previousRows[index].status))
+    ) {
+      if (accessToken) await this.readAndCacheBalancesForPlan(next, accessToken).catch(() => [])
       await this.options.refreshPortfolio?.().catch(() => {})
+    } else if (newlySettled) {
+      await this.options
+        .refreshPortfolio?.({
+          keyDomainId: plan.keyDomainId,
+          accountId: plan.accountId,
+          chainIds: [plan.destination.chainId]
+        })
+        .catch(() => {})
     }
     return next
   }
@@ -3741,6 +4209,26 @@ export class ConfidentialFundingCoordinator {
     return authenticated
   }
 
+  private async refreshPortfolioBalances(
+    identity: ConfidentialSigningIdentity,
+    accessToken: string
+  ) {
+    const scope = identity.context.chainAccount.scope
+    const key = JSON.stringify([this.options.network, scope.keyDomainId, scope.accountId])
+    let refresh = this.balanceRefreshes.get(key)
+    if (!refresh) {
+      refresh = new DedupPromise<readonly ConfidentialBalance[]>()
+      this.balanceRefreshes.set(key, refresh)
+    }
+    try {
+      return await refresh.run(() => this.readAndCacheBalances(identity, accessToken))
+    } finally {
+      if (this.balanceRefreshes.get(key) === refresh && !refresh.isPending) {
+        this.balanceRefreshes.delete(key)
+      }
+    }
+  }
+
   private async readAndCacheBalances(identity: ConfidentialSigningIdentity, accessToken: string) {
     const balances = await this.options.api.getBalances(accessToken)
     await this.options.store.putBalances(
@@ -3797,7 +4285,12 @@ export class ConfidentialFundingCoordinator {
           ? {
               feeAssetId: feeAsset,
               maximumFeeRaw: (
-                BigInt(prepared.transaction.gasLimit) * BigInt(prepared.transaction.maxFeePerGas)
+                BigInt(prepared.transaction.gasLimit) *
+                BigInt(
+                  prepared.transaction.type === 'legacy'
+                    ? prepared.transaction.gasPrice
+                    : prepared.transaction.maxFeePerGas
+                )
               ).toString()
             }
           : {}),
@@ -3940,7 +4433,7 @@ export class ConfidentialFundingCoordinator {
 
   private async requirePlanIdentity(plan: ConfidentialFundingPlan) {
     const identity = await this.options.signer.resolveIdentity(
-      confidentialSigningChainId(plan.source.chainId, plan.destination.chainId)
+      confidentialSigningChainId(plan.source.chainId, plan.destination.chainId, plan.network)
     )
     if (
       identity.context.chainAccount.scope.keyDomainId !== plan.keyDomainId ||
@@ -3956,7 +4449,11 @@ export class ConfidentialFundingCoordinator {
             ? plan.source.address.toLowerCase() !== identity.address.toLowerCase() ||
               plan.destination.address.toLowerCase() !== identity.address.toLowerCase()
             : plan.externalRecipient
-              ? !isAddress(plan.externalRecipient) ||
+              ? !isValidExternalRecipient(
+                  plan.externalRecipient,
+                  plan.destination.chainId,
+                  plan.network
+                ) ||
                 plan.externalRecipient.toLowerCase() !== plan.destination.address.toLowerCase() ||
                 plan.source.address.toLowerCase() !== identity.address.toLowerCase()
               : plan.destination.address.toLowerCase() !==
@@ -4000,7 +4497,16 @@ export class ConfidentialFundingCoordinator {
   ): Promise<ConfidentialFundingPlan> {
     const next = Object.freeze({ ...plan, ...changes, updatedAt: this.now() })
     await this.options.store.putPlan(next)
-    const event = projectConfidentialPlanResult(plan, next)
+    const event = projectConfidentialPlanResult(
+      plan,
+      next,
+      this.options.assets,
+      next.operation === 'deposit'
+        ? quotedPrivacyFeeBps(next.depositQuote)
+        : next.operation === 'swap'
+          ? quotedPrivacyFeeBps(next.swapQuote)
+          : undefined
+    )
     if (event) trackEvent(event.name, event.options)
     this.notifyActivityChanged(next)
     return next
@@ -4016,8 +4522,21 @@ export class ConfidentialFundingCoordinator {
       .catch(() => {})
   }
 
-  private async scheduleMonitoring(): Promise<void> {
-    await (this.options.scheduleMonitoring?.() ??
-      chrome.alarms.create(CONFIDENTIAL_FUNDING_MONITOR_ALARM, { delayInMinutes: 0.1 }))
+  private async scheduleMonitoring(delayInMinutes?: number): Promise<void> {
+    await confidentialMonitoringQueue.run(async () => {
+      if (this.options.scheduleMonitoring) {
+        await this.options.scheduleMonitoring(delayInMinutes)
+        return
+      }
+      const delay = delayInMinutes ?? CONFIDENTIAL_FUNDING_MONITOR_DELAY_MINUTES
+      const alarm = await chrome.alarms.get(CONFIDENTIAL_FUNDING_MONITOR_ALARM)
+      if (
+        alarm &&
+        alarm.scheduledTime > this.now() &&
+        alarm.scheduledTime <= this.now() + delay * 60_000
+      )
+        return
+      await chrome.alarms.create(CONFIDENTIAL_FUNDING_MONITOR_ALARM, { delayInMinutes: delay })
+    })
   }
 }

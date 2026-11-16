@@ -250,6 +250,61 @@ test.describe('EVM transfer builder', () => {
     })
   })
 
+  test('binds custom gas caps and limit to the signed transfer and rejects an underestimated limit', async () => {
+    const input = {
+      chainId,
+      chainAccount: account,
+      assets,
+      intent: { assetId: 'eip155:1/slip44:60', recipient, amountRaw: '123' },
+      feeSelection: {
+        kind: 'custom',
+        maxPriorityFeePerGasWei: '1000000000',
+        maxFeePerGasWei: '5000000000',
+        gasLimit: '30000'
+      }
+    }
+    const prepared = await buildEvmTransfer({ ...input, rpc: transactionRpc() })
+    expect(prepared.transaction).toMatchObject({
+      gasLimit: '30000',
+      maxFeePerGas: '5000000000',
+      maxPriorityFeePerGas: '1000000000'
+    })
+    expect(createEvmSigningPreparePayload(prepared).transaction).toEqual(prepared.transaction)
+    await expect(
+      buildEvmTransfer({
+        ...input,
+        rpc: transactionRpc({ estimateGas: async () => '31000' })
+      })
+    ).rejects.toThrow(/below the estimated gas/i)
+  })
+
+  test('uses a legacy gas price when the chain has no base fee', async () => {
+    const prepared = await buildEvmTransfer({
+      chainId,
+      chainAccount: account,
+      assets,
+      intent: { assetId: 'eip155:1/slip44:60', recipient, amountRaw: '123' },
+      feeSelection: { kind: 'legacy', gasPriceWei: '3000000000', gasLimit: '30000' },
+      rpc: transactionRpc({
+        getLatestBlockFee: async () => ({ blockNumber: '100', baseFeePerGas: null }),
+        getGasPrice: async () => '2000000000',
+        getMaximumPriorityFeePerGas: async () => {
+          throw new Error('Legacy chain has no priority fee')
+        }
+      })
+    })
+    expect(prepared.transaction).toMatchObject({
+      type: 'legacy',
+      gasPrice: '3000000000',
+      gasLimit: '30000'
+    })
+    expect((await createEvmSigningSummary(prepared)).fields).toMatchObject({
+      transactionType: 'legacy',
+      gasPriceWei: '3000000000',
+      maximumFeeWei: '90000000000000'
+    })
+  })
+
   test('builds a same-nonce self-transfer with replacement-safe fees for cancellation', async () => {
     const prepared = await buildEvmCancelTransaction({
       chainId,

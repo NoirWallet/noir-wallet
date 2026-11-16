@@ -16,11 +16,11 @@ export function SecretPhraseBackupBanner() {
   return (
     <aside
       aria-label="Secret phrase backup reminder"
-      className="flex shrink-0 items-center gap-3 border-b border-warning/25 bg-warning/10 px-3 py-2"
+      className="flex shrink-0 items-center gap-3 border-b border-warning/25 bg-warning-surface px-3 py-2"
     >
       <Icon icon="lucide:triangle-alert" width={18} height={18} className="shrink-0 text-warning" />
       <div className="min-w-0 flex-1">
-        <p className="break-words text-xs leading-4 text-foreground">
+        <p className="break-words text-xs leading-4 text-warning">
           Back up the secret phrase for {formatWalletName(wallet, wallets)}.
         </p>
       </div>

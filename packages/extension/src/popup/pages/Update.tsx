@@ -107,7 +107,7 @@ export function UpdatePage() {
                   </DialogDescription>
                 </DialogHeader>
 
-                <div className="mt-4 flex items-start gap-2 text-xs leading-relaxed text-muted">
+                <div className="mt-4 flex items-start gap-2 text-xs leading-relaxed text-warning">
                   <Icon icon="lucide:info" width={14} className="mt-0.5 shrink-0 text-warning" />
                   <p>Finish any transaction before restarting.</p>
                 </div>

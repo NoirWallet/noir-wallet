@@ -147,8 +147,8 @@ export function ResyncZcashContent({
           Zcash data could not be loaded. Resync to restore your balance and transaction history.
         </p>
       )}
-      <div className="p-3 bg-yellow-500/10 rounded-lg border border-yellow-500/20">
-        <p className="text-xs text-yellow-500">
+      <div className="p-3 bg-warning-surface rounded-lg border border-warning/20">
+        <p className="text-xs text-warning">
           This rebuilds local Zcash data for every account in this wallet. EVM and Bitcoin data are
           not changed. Use the earliest block/date any Zcash account may have funds; a too-recent
           start point can miss older balances.

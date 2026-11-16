@@ -97,6 +97,7 @@ export interface ConfidentialPortfolioAssetView {
   readonly name?: string
   readonly decimals?: number
   readonly iconUrl?: string
+  readonly coingeckoId?: string
   readonly priceUsd?: string
   readonly priceUpdatedAt?: string
 }

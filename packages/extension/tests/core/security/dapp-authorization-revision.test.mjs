@@ -265,20 +265,20 @@ test('silent auto-connect respects site consent, unlock, and Zcash availability'
   const site = 'https://noirdevelop.refburrow.top'
   for (const boundary of ['third-party', 'revoked', 'selected-account', 'locked', 'disabled']) {
     await t.test(boundary, async () => {
-      const { manager } = managerFixture()
+      const { manager, storage } = managerFixture()
       const { handler, session, enabled } = balanceHandlerFixture(manager)
       const requestOrigin = boundary === 'third-party' ? origin : site
-      if (boundary === 'revoked') await manager.removeConnection(site)
+      if (boundary === 'revoked') {
+        await manager.setAuthorizedAccounts(site, {}, [account], account)
+        await manager.removeConnection(site)
+      }
       if (boundary === 'selected-account')
         await manager.setAuthorizedAccounts(site, {}, [account], account)
       if (boundary === 'locked') session.unlocked = false
       if (boundary === 'disabled') enabled.clear()
       const result = await handler.getSilentAccounts(requestOrigin)
       if (boundary === 'selected-account') {
-        assert.deepEqual(
-          result.accounts.map(item => item.accountId),
-          ['account-1']
-        )
+        assert.deepEqual(result.accounts.map(item => item.accountId), ['account-1'])
       } else {
         assert.equal(result, null)
       }
@@ -286,6 +286,10 @@ test('silent auto-connect respects site consent, unlock, and Zcash availability'
         await manager.getAuthorizedAccounts(requestOrigin),
         boundary === 'selected-account' ? [account] : []
       )
+      if (boundary === 'revoked') {
+        assert.equal(await manager.isRevoked(site), true)
+        assert.equal(await new DAppManager(storage).canAutoConnect(site), false)
+      }
     })
   }
 })
@@ -789,9 +793,33 @@ test('automatic sessions respect exact origins, old manual grants, and explicit 
   await manager.removeEvmAuthorization(site)
   assert.equal(await manager.canAutoConnectSession(site), false)
   assert.equal(await manager.canAutoConnect(site), true)
+  const pendingRevision = await manager.getAuthorizationRevision(site)
   await manager.removeConnection(site)
-  assert.equal(await manager.canAutoConnectSession(site), false)
-  assert.equal(await manager.canAutoConnect(site), false)
+  const reloaded = new DAppManager(storage)
+  assert.equal(await reloaded.canAutoConnectSession(site), false)
+  assert.equal(await reloaded.canAutoConnect(site), false)
+  assert.equal(await reloaded.isRevoked(site), true)
+  await assert.rejects(
+    reloaded.setCaip25Session(site, {}, authorization, session, undefined, pendingRevision, {
+      automatic: true
+    }),
+    /authorization changed/
+  )
+  await assert.rejects(
+    reloaded.setCaip25Session(
+      site,
+      {},
+      authorization,
+      session,
+      undefined,
+      await reloaded.getAuthorizationRevision(site),
+      { automatic: true }
+    ),
+    /authorization changed/
+  )
+  await reloaded.setEvmAuthorizedAccounts(site, {}, [account], account)
+  assert.deepEqual((await reloaded.getEvmAuthorization(site)).accounts, [account])
+  assert.equal(await new DAppManager(storage).canAutoConnectSession(site), false)
 })
 
 test('chain revocation invalidates an in-flight automatic session without blocking Zcash auto-connect', async () => {

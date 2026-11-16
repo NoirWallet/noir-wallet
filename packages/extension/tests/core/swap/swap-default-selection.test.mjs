@@ -111,6 +111,35 @@ it('uses a distinct same-chain token for a single EVM-enabled account', () => {
   )
 })
 
+it('defaults a zero-balance Private Swap from its supported catalog without overriding a draft', () => {
+  const input = {
+    tokens: [eth, usdc],
+    sourceTokens: [{ ...eth, isNative: true }, usdc],
+    walletSourceTokens: [],
+    enabledChains: [ethereumChain],
+    allowUnownedDefaultSource: true,
+    preferStableDestination: true
+  }
+  assert.deepEqual(resolveSwapTokenSelection(input), {
+    tokenIn: input.sourceTokens[0],
+    tokenOut: usdc
+  })
+  assert.deepEqual(
+    resolveSwapTokenSelection({
+      ...input,
+      savedSelection: { tokenInId: usdc.assetId, tokenOutId: eth.assetId }
+    }),
+    { tokenIn: usdc, tokenOut: input.sourceTokens[0] }
+  )
+  assert.deepEqual(
+    resolveSwapTokenSelection({
+      ...input,
+      selectedSourceAssetId: usdc.assetId
+    }),
+    { tokenIn: usdc, tokenOut: input.sourceTokens[0] }
+  )
+})
+
 it('keeps a newly selected source while the page still has an older wallet source list', () => {
   const input = {
     tokens: [zec, eth, usdc],
@@ -135,6 +164,40 @@ it('keeps a newly selected source while the page still has an older wallet sourc
   assert.equal(
     resolveSwapTokenSelection({ ...input, enabledChains: [zcashChain] })?.tokenIn.assetId,
     zec.assetId
+  )
+})
+
+it('does not show a total balance as a private balance before the private breakdown is known', () => {
+  const token = {
+    assetId: 'nep141:eth-usdc.omft.near',
+    blockchain: 'eth',
+    symbol: 'USDC',
+    contractAddress: '0xA0b86991c6218b36c1d19d4a2e9eb0ce3606eb48',
+    decimals: 6
+  }
+  const asset = {
+    asset: { id: 'eip155:1/erc20:0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48' },
+    metadata: { decimals: 6 },
+    balance: { availableRaw: '10000000', mainRaw: '9000000' }
+  }
+  const input = {
+    tokens: [token],
+    portfolio: { assets: [asset] },
+    receiveTargets: null,
+    zcashAvailable: '0',
+    evmExecutionMode: 'private'
+  }
+  assert.equal(buildWalletSwapSourceBalances(input).has(token.assetId), false)
+  assert.equal(
+    buildWalletSwapSourceBalances({
+      ...input,
+      portfolio: { assets: [{ ...asset, balance: { ...asset.balance, privateRaw: '1000000' } }] }
+    }).get(token.assetId),
+    '1'
+  )
+  assert.equal(
+    buildWalletSwapSourceBalances({ ...input, evmExecutionMode: 'main' }).get(token.assetId),
+    '9'
   )
 })
 

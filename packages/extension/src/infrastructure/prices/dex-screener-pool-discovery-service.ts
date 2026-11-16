@@ -11,6 +11,8 @@ const DEFAULT_MAXIMUM_RESPONSE_BYTES = 512 * 1024
 const MAXIMUM_RESPONSE_BYTES = 1024 * 1024
 const MAXIMUM_PAIR_COUNT = 100
 const MAXIMUM_CLOCK_SKEW_MS = 5 * 60 * 1000
+const UNAVAILABLE_RETRY_INTERVAL_MS = 60_000
+const MAXIMUM_UNAVAILABLE_CACHE_ENTRIES = 512
 const EVM_ADDRESS_PATTERN = /^0x[0-9a-fA-F]{40}$/
 const REMOTE_ID_PATTERN = /^[-a-z0-9]{1,64}$/
 const DECIMAL_PATTERN = /^(?:0|[1-9][0-9]{0,63})(?:\.[0-9]{1,18})?$/
@@ -327,6 +329,7 @@ export class DexScreenerPoolDiscoveryService {
   private readonly timeoutMs: number
   private readonly maximumResponseBytes: number
   private readonly operations = new Map<string, DedupPromise<DexPoolDiscoveryResult>>()
+  private readonly unavailableUntil = new Map<string, { observedAt: number; expiresAt: number }>()
 
   constructor(private readonly options: DexScreenerPoolDiscoveryServiceOptions) {
     const fetchImplementation = options.fetch ?? globalThis.fetch.bind(globalThis)
@@ -380,6 +383,18 @@ export class DexScreenerPoolDiscoveryService {
     if (policy.chainId !== parsed.chainId) throw new Error('Pool discovery policy chain mismatch')
     const tokenAddress = normalizeAddress(reference, 'ERC-20 token address')
     const now = this.readNow()
+    const unavailable = this.unavailableUntil.get(assetId)
+    if (
+      unavailable &&
+      !forceRefresh &&
+      now >= unavailable.observedAt &&
+      now < unavailable.expiresAt
+    ) {
+      return Object.freeze({ status: 'unavailable' })
+    }
+    if (unavailable && (now < unavailable.observedAt || now >= unavailable.expiresAt)) {
+      this.unavailableUntil.delete(assetId)
+    }
     let cached: DiscoveredDexPoolMapping | null = null
     try {
       const value = await this.options.cache.get(assetId)
@@ -410,7 +425,10 @@ export class DexScreenerPoolDiscoveryService {
           signal: controller.signal
         }
       )
-      if (!response.ok) return Object.freeze({ status: 'failed' })
+      if (!response.ok) {
+        this.unavailableUntil.delete(assetId)
+        return Object.freeze({ status: 'failed' })
+      }
       const text = await readBoundedResponse(response, this.maximumResponseBytes)
       const value = JSON.parse(text) as unknown
       if (!Array.isArray(value) || value.length > MAXIMUM_PAIR_COUNT) {
@@ -430,6 +448,15 @@ export class DexScreenerPoolDiscoveryService {
       const selected = selectCandidate(candidates, policy, now)
       if (!selected) {
         await this.options.cache.delete(assetId).catch(() => {})
+        this.unavailableUntil.delete(assetId)
+        if (this.unavailableUntil.size >= MAXIMUM_UNAVAILABLE_CACHE_ENTRIES) {
+          const oldestAssetId = this.unavailableUntil.keys().next().value
+          if (oldestAssetId) this.unavailableUntil.delete(oldestAssetId)
+        }
+        this.unavailableUntil.set(assetId, {
+          observedAt: now,
+          expiresAt: Math.min(Number.MAX_SAFE_INTEGER, now + UNAVAILABLE_RETRY_INTERVAL_MS)
+        })
         return Object.freeze({ status: 'unavailable' })
       }
       const pool = parseDiscoveredDexPoolMapping({
@@ -443,6 +470,7 @@ export class DexScreenerPoolDiscoveryService {
         expiresAt: now + policy.mappingTtlMs
       })
       await this.options.cache.put(pool).catch(() => {})
+      this.unavailableUntil.delete(assetId)
       return Object.freeze({
         status: 'available',
         source: 'network',
@@ -450,6 +478,7 @@ export class DexScreenerPoolDiscoveryService {
         observedPriceUsd: selected.priceUsd
       })
     } catch {
+      this.unavailableUntil.delete(assetId)
       return Object.freeze({ status: 'failed' })
     } finally {
       clearTimeout(timeout)

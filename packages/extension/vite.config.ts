@@ -17,7 +17,10 @@ import {
 } from './src/config/multichain-feature-flags'
 import { findProhibitedRuntimeModules } from './scripts/lib/runtime-module-policy.mjs'
 import { collectLedgerDependencyNotices } from './scripts/lib/ledger-dependency-notices.mjs'
-import { resolveHistoryApiOrigin } from './scripts/lib/extension-build-config'
+import {
+  resolveHistoryApiOrigin,
+  shouldEnableAnalyticsReporting
+} from './scripts/lib/extension-build-config'
 import { resolveBetaInviteRequired } from './src/config/beta-invite'
 
 const require = createRequire(import.meta.url)
@@ -38,15 +41,18 @@ const buildChannel = process.env.BUILD_CHANNEL || 'development'
 const betaInviteRequired = resolveBetaInviteRequired(buildChannel, process.env.BETA_INVITE_REQUIRED)
 const debugLogsEnabled = buildChannel !== 'production'
 const isPlaywrightBuild = process.env.PLAYWRIGHT_E2E === '1'
-const analyticsReportingEnabled =
-  buildChannel === 'production' && networkMode === 'mainnet' && !isPlaywrightBuild
+const analyticsReportingEnabled = shouldEnableAnalyticsReporting(
+  buildChannel,
+  networkMode,
+  isPlaywrightBuild
+)
 const gaApiSecret = analyticsReportingEnabled ? process.env.GA_API_SECRET?.trim() || '' : ''
 const customAnalyticsPassword = analyticsReportingEnabled
   ? process.env.CUSTOM_ANALYTICS_PASSWORD || ''
   : ''
 if (analyticsReportingEnabled && (!gaApiSecret || !customAnalyticsPassword.trim())) {
   throw new Error(
-    'Production mainnet analytics requires GA_API_SECRET and CUSTOM_ANALYTICS_PASSWORD build variables'
+    'Distributed mainnet builds require GA_API_SECRET and CUSTOM_ANALYTICS_PASSWORD build variables'
   )
 }
 const localDevelopmentEnv =

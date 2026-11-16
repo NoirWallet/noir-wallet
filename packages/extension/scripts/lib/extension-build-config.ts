@@ -13,6 +13,18 @@ export function resolveDevelopmentExtensionKey(
 
 export const DEFAULT_HISTORY_API_ORIGIN = 'https://history-proxy.zknoir.com'
 
+export function shouldEnableAnalyticsReporting(
+  buildChannel: string,
+  networkMode: string,
+  isBrowserVerification: boolean
+): boolean {
+  return (
+    (buildChannel === 'beta' || buildChannel === 'production') &&
+    networkMode === 'mainnet' &&
+    !isBrowserVerification
+  )
+}
+
 export function resolveHistoryApiOrigin(
   configuredOrigin: string | undefined,
   buildChannel: string

@@ -1,5 +1,6 @@
 import { ANALYTICS_EVENTS, resolveAnalyticsChain } from './constants.ts'
 import type { AnalyticsEventPayload } from './types.ts'
+import { sanitizeAnalyticsAmount } from './collector-metrics.ts'
 
 export const MAX_OUTBOX_EVENTS = 200
 export const MAX_OUTBOX_ATTEMPTS = 3
@@ -33,9 +34,10 @@ function isPayload(value: unknown): value is AnalyticsEventPayload {
     typeof payload.page_id === 'string' &&
     typeof payload.timestamp === 'number' &&
     typeof payload.wallet_address === 'string' &&
-    payload.input_amount === '' &&
-    payload.output_amount === '' &&
-    payload.usd_amount === ''
+    [payload.input_amount, payload.output_amount, payload.usd_amount].every(
+      amount =>
+        amount === '' || (typeof amount === 'string' && sanitizeAnalyticsAmount(amount) === amount)
+    )
   )
 }
 

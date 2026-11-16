@@ -68,7 +68,7 @@ export function ShieldFundsBanner({
   const actionVerb = action === 'send' ? 'send' : action === 'supply' ? 'supply' : 'spend'
 
   return (
-    <div className="flex items-center gap-2 px-3 py-2 bg-warning/10 rounded-lg border border-warning/20 mb-4">
+    <div className="flex items-center gap-2 px-3 py-2 bg-warning-surface rounded-lg border border-warning/20 mb-4">
       <Icon icon="lucide:alert-triangle" width={14} height={14} className="text-warning shrink-0" />
       <p className="flex-1 min-w-0 text-xs text-warning leading-snug">
         <strong>{formatTokenQuantity(transparentBalance)} ZEC</strong> in transparent — shield to{' '}

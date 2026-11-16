@@ -253,6 +253,7 @@ async function inspectRetainedV1Data(page: Page) {
       currentWalletId: walletState?.state?.currentWalletId,
       currentAccountId: walletState?.state?.currentAccountId,
       addresses: walletState?.state?.wallets?.[0]?.accounts?.[0]?.addresses,
+      networkSelections: walletState?.state?.wallets?.[0]?.accounts?.[0]?.networkSelections,
       envelope: local[`seed_${expected.walletId}`],
       manifest,
       quarantine,
@@ -375,7 +376,8 @@ test('upgrades the frozen v1.0.30 Golden Profile and remains idempotent after re
       version: 9,
       currentWalletId: golden.expected.walletId,
       currentAccountId: golden.expected.accountId,
-      addresses: golden.expected.addresses
+      addresses: golden.expected.addresses,
+      networkSelections: { mainnet: ['zcash'], testnet: ['zcash'] }
     })
     if (v1SyncedSnapshot) {
       expect(retainedBeforeUnlock.manifest).toEqual(v1SyncedSnapshot.manifest)
@@ -492,6 +494,10 @@ test('upgrades the frozen v1.0.30 Golden Profile and remains idempotent after re
     const retainedAfterRestart = await inspectRetainedV1Data(restartedPopup)
     expect(retainedAfterRestart.envelope).toEqual(retainedBeforeUnlock.envelope)
     expect(retainedAfterRestart.quarantine).toBeUndefined()
+    expect(retainedAfterRestart.networkSelections).toEqual({
+      mainnet: ['zcash'],
+      testnet: ['zcash']
+    })
     const legacySession = await restartedPopup.evaluate(() =>
       chrome.storage.session.get(['session_password', 'session_key_material'])
     )

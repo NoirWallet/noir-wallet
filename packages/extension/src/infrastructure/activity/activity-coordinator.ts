@@ -63,6 +63,12 @@ export class ActivityCoordinator {
       ? await this.options.filterLocalGraphs(scope, storedLocalGraphs)
       : storedLocalGraphs
     const privateExecutionAddresses = await this.loadPrivateExecutionAddresses(scope, localGraphs)
+    const destinationReceipts = new Map<string, Transaction[]>()
+    for (const transaction of zcashTransactions) {
+      if (transaction.type !== 'receive' || !transaction.txHash) continue
+      const hash = transaction.txHash.toLowerCase()
+      destinationReceipts.set(hash, [...(destinationReceipts.get(hash) ?? []), transaction])
+    }
     const hasMore = await this.options
       .loadSupplementalHasMore?.(scope, accountMode, options.chainIds)
       .catch(() => false)
@@ -70,9 +76,22 @@ export class ActivityCoordinator {
       scope,
       localGraphs,
       supplementalItems: Object.freeze([
-        ...zcashTransactions.map(transaction =>
-          mapZcashV1TransactionToActivityItem(transaction, scope)
-        ),
+        ...zcashTransactions.map(transaction => {
+          const matchingReceipts = destinationReceipts
+            .get(transaction.destinationTxHash?.toLowerCase() ?? '')
+            ?.filter(
+              receipt =>
+                receipt.network === transaction.network &&
+                receipt.fromType === 'transparent' &&
+                receipt.to === transaction.quoteBinding?.recipient &&
+                (receipt.confirmations ?? 0) > 0
+            )
+          return mapZcashV1TransactionToActivityItem(
+            transaction,
+            scope,
+            matchingReceipts?.length === 1 ? matchingReceipts[0] : undefined
+          )
+        }),
         ...supplementalItems
       ]),
       privateExecutionAddresses,

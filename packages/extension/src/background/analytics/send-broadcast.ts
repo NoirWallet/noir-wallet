@@ -1,9 +1,30 @@
 import type { TransactionGraph } from '@/core/transactions/domain'
 import {
+  transactionAnalyticsInputAmount,
+  transactionAnalyticsInputMetadata,
   transactionAnalyticsFamily,
   transactionBroadcasted
 } from '@/core/transactions/transaction-analytics'
 import { ANALYTICS_EVENTS, PAGE_IDS, trackEvent } from './reporter'
+import type { TrackOptions } from '@/lib/analytics/types'
+
+export function projectBackgroundSendBroadcast(
+  graph: TransactionGraph
+): Pick<TrackOptions, 'inputSymbol' | 'collector'> {
+  const metadata = transactionAnalyticsInputMetadata(graph)
+  const inputAmount = transactionAnalyticsInputAmount(graph)
+  const direction = graph.root.intent?.direction
+  const transferType = direction === 'self' ? 'self' : 'unknown'
+  return {
+    inputSymbol: metadata?.symbol,
+    collector: {
+      ...(inputAmount ? { inputAmount } : {}),
+      transferType,
+      activityType: 'transfer' as const,
+      settlement: 'broadcast' as const
+    }
+  }
+}
 
 export function reportBackgroundSendBroadcast(
   graph: TransactionGraph,
@@ -25,6 +46,7 @@ export function reportBackgroundSendBroadcast(
         idempotencyKey: rheaTransfer
           ? `rhea-origin:${binding.quoteHandle}`
           : `send-broadcast:${graph.root.id}`,
+        ...projectBackgroundSendBroadcast(graph),
         ...(rheaTransfer ? { extra: { kind: 'transfer' } } : {})
       })
     ).catch(() => {})

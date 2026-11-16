@@ -12,6 +12,9 @@ test('maps every supported mainnet quote asset to its exact 1Click chain identit
   expect(byAssetId.get('eip155:1/slip44:60')).toBe('nep141:eth.omft.near')
   expect(byAssetId.get('eip155:42161/slip44:60')).toBe('nep141:arb.omft.near')
   expect(byAssetId.get('eip155:8453/slip44:60')).toBe('nep141:base.omft.near')
+  expect(byAssetId.get('eip155:56/slip44:714')).toBe('nep141:bnb.omdep.near')
+  expect(byAssetId.get('eip155:137/slip44:966')).toBe('nep141:pol.omdep.near')
+  expect(byAssetId.get('eip155:43114/slip44:9000')).toBe('nep141:avax.omdep.near')
   expect(byAssetId.get('eip155:10/slip44:60')).toBe(
     'nep245:v2_1.omni.hot.tg:10_11111111111111111111'
   )

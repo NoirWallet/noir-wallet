@@ -2,6 +2,7 @@ import { DEFAULT_REQUEST_TIMEOUT_MS } from '@/config/extension'
 import Big from 'big.js'
 import { readBoundedResponseText } from '@/lib/fetch-utils'
 import { parseAssetId } from '@/core/chains/registry'
+import { isDeprecatedIntentsToken } from '@/core/services/intents-evm-assets'
 import {
   ASSET_PRICE_EXPIRES_MS,
   ASSET_PRICE_FRESH_MS,
@@ -65,6 +66,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function hasOnlyKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
   const keys = new Set(allowed)
   return Object.keys(value).every(key => keys.has(key))
+}
+
+function tokenContractKey(token: Record<string, unknown>): string | null {
+  return typeof token.blockchain === 'string' &&
+    typeof token.contractAddress === 'string' &&
+    /^0x[0-9a-fA-F]{40}$/.test(token.contractAddress)
+    ? `${token.blockchain}:${token.contractAddress.toLowerCase()}`
+    : null
 }
 
 function readTimestamp(value: unknown, label: string): number {
@@ -329,17 +338,36 @@ export class OneClickAssetPriceService {
         }
       }
       const resolved = new Map<string, AssetPriceCacheQuote>()
+      const currentContracts = new Set(
+        decoded.flatMap(token => {
+          if (
+            !isRecord(token) ||
+            typeof token.symbol !== 'string' ||
+            isDeprecatedIntentsToken({
+              assetId: typeof token.assetId === 'string' ? token.assetId : undefined,
+              symbol: token.symbol
+            })
+          )
+            return []
+          const key = tokenContractKey(token)
+          return key === null ? [] : [key]
+        })
+      )
       for (const token of decoded) {
         if (!isRecord(token) || typeof token.assetId !== 'string') continue
-        const contractKey =
-          typeof token.blockchain === 'string' &&
-          typeof token.contractAddress === 'string' &&
-          /^0x[0-9a-fA-F]{40}$/.test(token.contractAddress)
-            ? `${token.blockchain}:${token.contractAddress.toLowerCase()}`
-            : null
+        const contractKey = tokenContractKey(token)
+        // Bridge migrations retain the old protocol token for the same on-chain contract.
+        // Explicit protocol-ID mappings stay exact; contract lookups prefer the current token.
+        const supersededContract =
+          contractKey !== null &&
+          currentContracts.has(contractKey) &&
+          typeof token.symbol === 'string' &&
+          isDeprecatedIntentsToken({ assetId: token.assetId, symbol: token.symbol })
         const mappings = [
           ...(wanted.get(token.assetId) ?? []),
-          ...(contractKey === null ? [] : (wantedContracts.get(contractKey) ?? []))
+          ...(contractKey === null || supersededContract
+            ? []
+            : (wantedContracts.get(contractKey) ?? []))
         ]
         if (mappings.length === 0) continue
         if (
@@ -378,11 +406,23 @@ export class OneClickAssetPriceService {
           )
         }
       }
+      const mappedAssetIds = new Set(this.options.mappings.map(mapping => mapping.assetId))
+      const previousQuotes = assetId
+        ? (cached?.quotes.filter(quote => quote.assetId !== assetId) ?? [])
+        : (cached?.quotes.filter(
+            quote =>
+              !mappedAssetIds.has(quote.assetId) &&
+              now - quote.sourceUpdatedAt >= -MAX_CLOCK_SKEW_MS &&
+              now - quote.sourceUpdatedAt <= ASSET_PRICE_EXPIRES_MS
+          ) ?? [])
+      const capacity = MAXIMUM_ASSET_PRICE_ITEMS - resolved.size
       const snapshot = Object.freeze({
         version: PRICE_CACHE_VERSION,
         fetchedAt: assetId ? (cached?.fetchedAt ?? 0) : now,
         quotes: Object.freeze([
-          ...(assetId ? (cached?.quotes.filter(quote => quote.assetId !== assetId) ?? []) : []),
+          ...previousQuotes
+            .sort((left, right) => right.sourceUpdatedAt - left.sourceUpdatedAt)
+            .slice(0, capacity),
           ...resolved.values()
         ])
       })

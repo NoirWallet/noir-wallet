@@ -5,6 +5,7 @@ import {
   type AnalyticsEventName
 } from './constants.ts'
 import type { TrackOptions } from './types.ts'
+import { sanitizeCollectorMetrics } from './collector-metrics.ts'
 
 type SafeAnalyticsValue = string | number | boolean
 
@@ -14,6 +15,8 @@ type EventFieldPolicy = {
 }
 
 const EVENT_FIELD_POLICIES = {
+  [ANALYTICS_EVENTS.ASSET_RECEIVED]: { params: [], extra: [] },
+  [ANALYTICS_EVENTS.BALANCE_SNAPSHOT]: { params: [], extra: [] },
   [ANALYTICS_EVENTS.EXTENSION_ENGAGEMENT]: { params: [], extra: [] },
   [ANALYTICS_EVENTS.EXTENSION_INSTALLED]: { params: [], extra: [] },
   [ANALYTICS_EVENTS.EXTENSION_UPDATED]: {
@@ -228,6 +231,7 @@ export function sanitizeAnalyticsEvent(
   const policy = EVENT_FIELD_POLICIES[eventName]
   const params = pickAllowedFields(options.params, policy.params, eventName)
   const extra = pickAllowedFields(options.extra, policy.extra, eventName)
+  const collector = sanitizeCollectorMetrics(eventName, options.collector)
   const pageId =
     typeof options.pageId === 'string' && pageIds.has(options.pageId)
       ? options.pageId
@@ -257,7 +261,8 @@ export function sanitizeAnalyticsEvent(
       ...(inputSymbol ? { inputSymbol } : {}),
       ...(outputSymbol ? { outputSymbol } : {}),
       ...(params ? { params } : {}),
-      ...(extra ? { extra } : {})
+      ...(extra ? { extra } : {}),
+      ...(collector ? { collector } : {})
     }
   }
 }

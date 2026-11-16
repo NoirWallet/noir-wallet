@@ -1,6 +1,7 @@
 import { InlineError } from './InlineError'
 import { useState, useEffect } from 'react'
 import { Button } from '../ui/button'
+import { WarningBox } from '../ui/WarningBox'
 import WalletIcon from '@/images/wallet-icon.svg'
 import { PasswordInput } from './PasswordInput'
 import { classifyError } from '@/lib/errors'
@@ -127,7 +128,7 @@ export function UnlockForm({
   const handleForgotPassword = async () => {
     const confirmed = await openModal<boolean>({
       title: 'Reset Wallet',
-      body: (resolve, close) => (
+      body: resolve => (
         <div className="space-y-4">
           <div className="space-y-2">
             <p className="text-sm text-muted">
@@ -139,17 +140,12 @@ export function UnlockForm({
             </p>
           </div>
 
-          <div className="p-3 bg-yellow-500/10 rounded-lg border border-yellow-500/20">
-            <p className="text-xs text-yellow-500">
-              ⚠️ Make sure you have your Secret Recovery Phrase before proceeding.
-            </p>
-          </div>
+          <WarningBox>Make sure you have your Secret Recovery Phrase before proceeding.</WarningBox>
 
           <div className="flex gap-2 pt-2">
             <Button
               variant="outline"
               onClick={() => {
-                close()
                 resolve(false)
               }}
               className="flex-1"
@@ -159,7 +155,6 @@ export function UnlockForm({
             <Button
               variant="destructive"
               onClick={() => {
-                close()
                 resolve(true)
               }}
               className="flex-1"

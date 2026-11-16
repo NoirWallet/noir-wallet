@@ -201,6 +201,7 @@ test('estimates confidential native gas using the actual smaller route and disca
 
 test('re-quotes a smaller bound route when gas costs more than half the native balance', async () => {
   const amounts = []
+  const purposes = []
   const discarded = []
   const token = {
     rheaChainId: '1',
@@ -216,8 +217,9 @@ test('re-quotes a smaller bound route when gas costs more than half the native b
   }
   const dependencies = {
     rhea: {
-      quote: async request => {
+      quote: async (request, purpose) => {
         amounts.push(request.amountIn)
+        purposes.push(purpose)
         return { quoteHandle: request.amountIn }
       },
       prepare: async handle => ({
@@ -245,11 +247,13 @@ test('re-quotes a smaller bound route when gas costs more than half the native b
         tokenOut: token,
         recipient: 'recipient',
         confidential: true,
+        purpose: 'confidential-funding',
         executionMode: 'main'
       },
       dependencies
     )
   ).resolves.toMatchObject({ amountRaw: '300' })
   expect(amounts).toEqual(['500', '250'])
+  expect(purposes).toEqual(['confidential-funding', 'confidential-funding'])
   expect(discarded).toEqual(['500', '250'])
 })

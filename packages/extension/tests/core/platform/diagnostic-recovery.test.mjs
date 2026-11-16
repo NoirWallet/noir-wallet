@@ -72,6 +72,25 @@ test('diagnostics retain safe error chains without running custom getters', () =
   assert.doesNotThrow(() => serializeDiagnosticArgs([outer]))
 })
 
+test('diagnostics retain native browser transport errors without invoking overridden accessors', () => {
+  const error = new DOMException('Bluetooth permission was denied', 'SecurityError')
+  const details = getDiagnosticErrorDetails(error)
+  assert.equal(details.name, 'SecurityError')
+  assert.equal(details.message, 'Bluetooth permission was denied')
+  assert.equal(details.code, 18)
+  let reads = 0
+  Object.defineProperty(error, 'message', {
+    get() {
+      reads++
+      return 'private payload'
+    }
+  })
+  const log = serializeDiagnosticArgs([error])
+  assert.equal(reads, 0)
+  assert.match(log, /SecurityError/)
+  assert.doesNotMatch(log, /private payload/)
+})
+
 test('diagnostics redact every Zcash pool in new and previously persisted messages', () => {
   const message = 'WASM summary: sapling=111, orchard=222, ironwood=333, unshielded=444'
   for (const safe of [serializeDiagnosticArgs([message]), sanitizeDiagnosticMessage(message)]) {

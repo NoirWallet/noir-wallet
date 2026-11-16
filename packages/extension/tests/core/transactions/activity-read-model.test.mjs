@@ -352,6 +352,39 @@ test.describe('Activity read model', () => {
     expect(filterActivityItems({ ...selection, selectedChainIds: [arbitrumChainId] })).toEqual([])
   })
 
+  test('Shield provider Activity keeps NEAR Confidential and Zcash records separate', () => {
+    const zcashChainId = 'bip122:00040fe8ec8471911baa1db1266ea15d'
+    const zcash = {
+      id: 'zcash-shield',
+      source: 'zcash-v1',
+      kind: 'receive',
+      assetDomains: ['shield'],
+      snapshot: { primaryAmount: { assetId: `${zcashChainId}/slip44:133`, amountRaw: '1' } },
+      segments: []
+    }
+    const near = {
+      id: 'near-confidential',
+      source: 'wallet-v2',
+      kind: 'swap',
+      snapshot: {
+        primaryAmount: { assetId: 'eip155:1/slip44:60', amountRaw: '1' },
+        shield: { sourceDomain: 'shield', destinationDomain: 'public' }
+      },
+      segments: [{ target: { kind: 'protocol', provider: 'Confidential Intents' } }]
+    }
+    const selection = { items: [zcash, near], selectedChainIds: ['eip155:1'], domain: 'shield' }
+    expect(
+      filterActivityItems({ ...selection, shieldProvider: 'zcash-shield' }).map(item => item.id)
+    ).toEqual(['zcash-shield'])
+    expect(
+      filterActivityItems({
+        ...selection,
+        shieldProvider: 'near-confidential',
+        confidentialIntentsOnly: true
+      }).map(item => item.id)
+    ).toEqual(['near-confidential'])
+  })
+
   test('preserves a persisted pre-finality reorg through the strict Activity boundary', () => {
     const value = graph()
     value.root.reconfirming = true
@@ -574,6 +607,55 @@ test.describe('Activity read model', () => {
         item => item.id
       )
     ).toContain(receipt.id)
+  })
+
+  test('keeps a Zcash cross-chain transfer when its destination receive is newer', () => {
+    const destinationHash = 'b'.repeat(64)
+    const transfer = {
+      ...supplemental({
+        id: 'zcash-v1:cross-chain-transfer',
+        source: 'zcash-v1',
+        chainId: zcashChainId,
+        assetId: zecAssetId,
+        hash: 'a'.repeat(64),
+        updatedAt: 1_100
+      }),
+      segments: [
+        {
+          id: 'zcash-v1:cross-chain-transfer:origin',
+          role: 'origin',
+          target: { kind: 'onchain', chainId: zcashChainId },
+          status: 'final',
+          evidence: { transactionHash: 'a'.repeat(64) }
+        },
+        {
+          id: 'zcash-v1:cross-chain-transfer:destination',
+          role: 'destination',
+          target: { kind: 'onchain', chainId: zcashChainId },
+          status: 'final',
+          evidence: { transactionHash: destinationHash }
+        }
+      ]
+    }
+    const receive = {
+      ...supplemental({
+        id: 'zcash-v1:destination-receive',
+        source: 'zcash-v1',
+        chainId: zcashChainId,
+        assetId: zecAssetId,
+        hash: destinationHash,
+        updatedAt: 1_200
+      }),
+      kind: 'receive'
+    }
+
+    const model = buildActivityReadModel({
+      scope,
+      localGraphs: [],
+      supplementalItems: [transfer, receive]
+    })
+
+    expect(model.items.map(item => item.id)).toEqual([receive.id, transfer.id])
   })
 
   test('keeps a wallet-created Bitcoin transaction ahead of its Esplora duplicate', () => {

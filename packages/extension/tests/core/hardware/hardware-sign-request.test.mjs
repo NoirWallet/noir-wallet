@@ -2,9 +2,11 @@ import { test } from 'node:test'
 import { expect } from '@playwright/test'
 import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
+import { proveHardwarePczt } from '../../../src/core/zcash/hardware-pczt.ts'
 
 import {
   consumePreparedHardwareSignRequest,
+  isHardwareDAppAuthorizationCurrent,
   isHardwareSignRequestFresh,
   openHardwareSignTab,
   parsePreparedHardwareSignRequest,
@@ -15,6 +17,62 @@ import {
 
 const require = createRequire(import.meta.url)
 const ts = require('typescript')
+
+test('PCZT failures retain their stage and never submit an unparsed or uncombined transaction', async () => {
+  for (const [failedStage, code] of [
+    ['parse-wallet', 'HW-PCZT-01'],
+    ['parse-device', 'HW-PCZT-02'],
+    ['combine', 'HW-PCZT-03'],
+    ['prove-send', 'HW-PCZT-04'],
+    [null, null]
+  ]) {
+    let sent = 0
+    const freed = []
+    const original = 'Invalid(DeserializeUnexpectedEnd)'
+    const failAt = stage => {
+      if (stage === failedStage) throw original
+    }
+    const combined = {
+      free: () => {
+        throw new Error('WASM already owns this object')
+      }
+    }
+    const full = {
+      free: () => freed.push('wallet'),
+      combine: () => {
+        failAt('combine')
+        return combined
+      }
+    }
+    const signed = { free: () => freed.push('device') }
+    const submission = proveHardwarePczt({
+      readFull: () => {
+        failAt('parse-wallet')
+        return full
+      },
+      readSigned: () => {
+        failAt('parse-device')
+        return signed
+      },
+      proveAndSend: async value => {
+        expect(value).toBe(combined)
+        sent += 1
+        failAt('prove-send')
+        return 'synthetic-transaction-id'
+      }
+    })
+    if (failedStage) await expect(submission).rejects.toThrow(`[${code}] ${original}`)
+    else await expect(submission).resolves.toBe('synthetic-transaction-id')
+    expect(sent).toBe(failedStage === null || failedStage === 'prove-send' ? 1 : 0)
+    expect(freed).toEqual(
+      failedStage === 'parse-wallet'
+        ? []
+        : failedStage === 'parse-device'
+          ? ['wallet']
+          : ['device', 'wallet']
+    )
+  }
+})
 
 function loadHardwarePcztBuild(walletCore, keySource = 'ledger') {
   const source = readFileSync(new URL('../../../src/background/index.ts', import.meta.url), 'utf8')
@@ -357,9 +415,24 @@ test.describe('Hardware sign request handoff', () => {
         to: 'u1recipient',
         memo: '',
         dappRequestId: 'dapp-request-1',
+        authorizationRevision: 7,
         origin: 'https://dapp.example'
       })
-    ).toMatchObject({ kind: 'send', memo: '', origin: 'https://dapp.example' })
+    ).toMatchObject({
+      kind: 'send',
+      memo: '',
+      origin: 'https://dapp.example',
+      authorizationRevision: 7
+    })
+    expect(() =>
+      parseHardwareSignRequest({
+        ...base,
+        kind: 'send',
+        to: 'u1recipient',
+        dappRequestId: 'dapp-request-1',
+        origin: 'https://dapp.example'
+      })
+    ).toThrow('Invalid hardware dApp request binding')
     expect(
       parseHardwareSignRequest({
         ...base,
@@ -388,6 +461,30 @@ test.describe('Hardware sign request handoff', () => {
       displayTo: '0xrecipient',
       quoteBinding: { userAction: 'transfer' }
     })
+  })
+
+  test('binds a dApp hardware request to its original authorization revision and account', () => {
+    const request = parseHardwareSignRequest({
+      kind: 'send',
+      walletId: 'wallet-1',
+      accountId: 'account-1',
+      to: 'u1recipient',
+      amount: '1',
+      createdAt: 1_000,
+      dappRequestId: 'dapp-request-1',
+      authorizationRevision: 7,
+      origin: 'https://dapp.example'
+    })
+    const accounts = [{ walletId: 'wallet-1', accountId: 'account-1' }]
+    expect(isHardwareDAppAuthorizationCurrent(request, { revision: 7, accounts })).toBe(true)
+    expect(isHardwareDAppAuthorizationCurrent(request, { revision: 8, accounts })).toBe(false)
+    expect(
+      isHardwareDAppAuthorizationCurrent(request, {
+        revision: 7,
+        accounts: [{ walletId: 'wallet-1', accountId: 'account-2' }]
+      })
+    ).toBe(false)
+    expect(isHardwareDAppAuthorizationCurrent(request, { revision: 7, accounts: [] })).toBe(false)
   })
 
   test('deletes corrupted prepared session state instead of returning it', async () => {
@@ -523,6 +620,7 @@ test.describe('Hardware sign request handoff', () => {
         ...base,
         reportToOrigin: true,
         dappRequestId: 'dapp-request-1',
+        authorizationRevision: 7,
         origin: 'https://dapp.example'
       })
     ).toThrow('Invalid hardware dApp request binding')

@@ -8,7 +8,11 @@ import type { StorageV2ReadRepository } from '@/ports/repositories'
 
 interface TransferAccountContext {
   readonly chainAccount: {
-    readonly scope: { readonly keyDomainId: string; readonly accountId: string }
+    readonly scope: {
+      readonly keyDomainId: string
+      readonly accountId: string
+      readonly chainId: string
+    }
   }
   readonly keyDomainSource: KeyDomainSource
 }
@@ -25,7 +29,8 @@ export async function requireSelectedTransferNetwork<Context extends TransferAcc
       keyDomainId,
       accountId,
       DEFAULT_NETWORK,
-      family
+      family,
+      context.chainAccount.scope.chainId
     ))
   ) {
     throw new Error('The active Account has not enabled this network')

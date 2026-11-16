@@ -39,7 +39,13 @@ export interface EvmFeeTierQuote {
 
 export type EvmFeeSelection =
   | Readonly<{ kind: 'tier'; tier: NetworkFeeTier }>
-  | Readonly<{ kind: 'custom'; maxPriorityFeePerGasWei: string }>
+  | Readonly<{ kind: 'legacy'; gasPriceWei: string; gasLimit?: string }>
+  | Readonly<{
+      kind: 'custom'
+      maxPriorityFeePerGasWei: string
+      maxFeePerGasWei?: string
+      gasLimit?: string
+    }>
 
 const GWEI_IN_WEI = 1_000_000_000n
 export const MAX_CUSTOM_PRIORITY_FEE_GWEI = 10_000n
@@ -49,6 +55,15 @@ function parseUnsignedWei(value: unknown): bigint {
     throw new Error('Invalid EVM custom priority fee')
   }
   return BigInt(value)
+}
+
+function parseCustomGasLimit(value: unknown): string | undefined {
+  if (value === undefined) return undefined
+  const gasLimit = parseUnsignedWei(value)
+  if (gasLimit < 21_000n || gasLimit > 30_000_000n) {
+    throw new Error('Gas limit must be between 21,000 and 30,000,000')
+  }
+  return gasLimit.toString()
 }
 
 export function parseEvmFeeSelection(value: unknown): EvmFeeSelection {
@@ -62,14 +77,42 @@ export function parseEvmFeeSelection(value: unknown): EvmFeeSelection {
   if (record.kind === 'tier' && Object.keys(record).length === 2) {
     return Object.freeze({ kind: 'tier' as const, tier: parseNetworkFeeTier(record.tier) })
   }
-  if (record.kind === 'custom' && Object.keys(record).length === 2) {
+  if (
+    record.kind === 'legacy' &&
+    Object.keys(record).every(key => ['kind', 'gasPriceWei', 'gasLimit'].includes(key))
+  ) {
+    const gasPrice = parseUnsignedWei(record.gasPriceWei)
+    if (gasPrice === 0n || gasPrice > MAX_CUSTOM_PRIORITY_FEE_GWEI * GWEI_IN_WEI) {
+      throw new Error('Gas price must be between 0 and 10,000 GWEI')
+    }
+    const gasLimit = parseCustomGasLimit(record.gasLimit)
+    return Object.freeze({
+      kind: 'legacy' as const,
+      gasPriceWei: gasPrice.toString(),
+      ...(gasLimit ? { gasLimit } : {})
+    })
+  }
+  if (
+    record.kind === 'custom' &&
+    Object.keys(record).every(key =>
+      ['kind', 'maxPriorityFeePerGasWei', 'maxFeePerGasWei', 'gasLimit'].includes(key)
+    )
+  ) {
     const priorityFee = parseUnsignedWei(record.maxPriorityFeePerGasWei)
     if (priorityFee === 0n || priorityFee > MAX_CUSTOM_PRIORITY_FEE_GWEI * GWEI_IN_WEI) {
       throw new Error('EVM custom priority fee must be between 0 and 10,000 GWEI')
     }
+    const maximumFee =
+      record.maxFeePerGasWei === undefined ? null : parseUnsignedWei(record.maxFeePerGasWei)
+    if (maximumFee !== null && (maximumFee < priorityFee || maximumFee > 10_000n * GWEI_IN_WEI)) {
+      throw new Error('Maximum fee must be at least the priority fee and at most 10,000 GWEI')
+    }
+    const gasLimit = parseCustomGasLimit(record.gasLimit)
     return Object.freeze({
       kind: 'custom' as const,
-      maxPriorityFeePerGasWei: priorityFee.toString()
+      maxPriorityFeePerGasWei: priorityFee.toString(),
+      ...(maximumFee === null ? {} : { maxFeePerGasWei: maximumFee.toString() }),
+      ...(gasLimit ? { gasLimit } : {})
     })
   }
   throw new Error('Invalid EVM fee selection')
@@ -100,7 +143,14 @@ export function formatEvmWeiAsGwei(value: string): string {
 export function areEvmFeeSelectionsEqual(left: EvmFeeSelection, right: EvmFeeSelection): boolean {
   return left.kind === 'tier'
     ? right.kind === 'tier' && left.tier === right.tier
-    : right.kind === 'custom' && left.maxPriorityFeePerGasWei === right.maxPriorityFeePerGasWei
+    : left.kind === 'legacy'
+      ? right.kind === 'legacy' &&
+        left.gasPriceWei === right.gasPriceWei &&
+        left.gasLimit === right.gasLimit
+      : right.kind === 'custom' &&
+        left.maxPriorityFeePerGasWei === right.maxPriorityFeePerGasWei &&
+        left.maxFeePerGasWei === right.maxFeePerGasWei &&
+        left.gasLimit === right.gasLimit
 }
 
 function multiplyCeiling(value: bigint, numerator: bigint, denominator: bigint): bigint {
@@ -130,9 +180,15 @@ export function deriveEvmFeeTierQuote(input: {
   )
   if (selection.kind === 'custom') {
     const maxPriorityFeePerGas = BigInt(selection.maxPriorityFeePerGasWei)
-    const maxFeePerGas = input.baseFeePerGas * 2n + maxPriorityFeePerGas
+    const maxFeePerGas = selection.maxFeePerGasWei
+      ? BigInt(selection.maxFeePerGasWei)
+      : input.baseFeePerGas * 2n + maxPriorityFeePerGas
+    if (maxFeePerGas < input.baseFeePerGas + maxPriorityFeePerGas) {
+      throw new Error('Maximum fee must cover the current base fee and priority fee')
+    }
     return Object.freeze({ selection, maxFeePerGas, maxPriorityFeePerGas })
   }
+  if (selection.kind === 'legacy') throw new Error('Legacy gas price requires a legacy network')
   const tier = selection.tier
   const multiplier = EVM_FEE_TIER_MULTIPLIERS[tier]
   const tierPriorityFeePerGas = multiplyCeiling(
@@ -148,4 +204,28 @@ export function deriveEvmFeeTierQuote(input: {
     multiplyCeiling(input.baseFeePerGas, multiplier.baseFeeNumerator, multiplier.denominator) +
     maxPriorityFeePerGas
   return Object.freeze({ selection, maxFeePerGas, maxPriorityFeePerGas })
+}
+
+export function deriveEvmLegacyFeeQuote(input: {
+  readonly tier?: NetworkFeeTier
+  readonly selection?: EvmFeeSelection
+  readonly suggestedGasPrice: bigint
+}): EvmFeeTierQuote {
+  if (input.suggestedGasPrice <= 0n) throw new Error('EVM gas price must be positive')
+  if (input.tier !== undefined && input.selection !== undefined) {
+    throw new Error('EVM fee selection is ambiguous')
+  }
+  const selection = parseEvmFeeSelection(
+    input.selection ?? { kind: 'tier', tier: input.tier ?? DEFAULT_NETWORK_FEE_TIER }
+  )
+  if (selection.kind === 'custom') throw new Error('EIP-1559 fee requires an EIP-1559 network')
+  const gasPrice =
+    selection.kind === 'legacy'
+      ? BigInt(selection.gasPriceWei)
+      : multiplyCeiling(
+          input.suggestedGasPrice,
+          selection.tier === 'fast' ? 125n : selection.tier === 'standard' ? 110n : 100n,
+          100n
+        )
+  return Object.freeze({ selection, maxFeePerGas: gasPrice, maxPriorityFeePerGas: 0n })
 }

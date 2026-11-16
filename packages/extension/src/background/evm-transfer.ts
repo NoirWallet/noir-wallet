@@ -118,6 +118,7 @@ export function createBackgroundEvmTransferController(
     orchestrator: createBackgroundEvmTransferOrchestrator(network, userEvmAssets),
     readTokenAllowance: (token, owner, spender) =>
       readEvmTokenAllowance(allowanceRpc, token, owner, spender),
+    readTokenBalance: (token, owner) => allowanceRpc.getErc20Balance(token, owner),
     loadActiveContext: async () =>
       requireSelectedTransferNetwork(
         await loadActiveEvmPortfolioContext(storageRepository, network.chainId),

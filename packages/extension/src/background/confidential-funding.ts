@@ -25,7 +25,8 @@ import { accountContextTransition } from './account-context-transition'
 import { ConfidentialFundingApi } from './confidential-funding-api'
 import {
   CONFIDENTIAL_FUNDING_MONITOR_ALARM,
-  ConfidentialFundingCoordinator
+  ConfidentialFundingCoordinator,
+  type ConfidentialFundingCoordinatorOptions
 } from './confidential-funding-coordinator'
 import { ConfidentialFundingSigner } from './confidential-funding-signer'
 import { ChromeConfidentialFundingStore } from './confidential-funding-store'
@@ -37,8 +38,9 @@ export function createBackgroundConfidentialFundingCoordinator(
   protocolAssets: readonly AssetDefinitionInput[],
   protocolTokens: readonly SwapToken[],
   endpointSettings: ChainEndpointSettings,
-  refreshPortfolio: () => Promise<void>,
-  store: ChromeConfidentialFundingStore = new ChromeConfidentialFundingStore()
+  refreshPortfolio: NonNullable<ConfidentialFundingCoordinatorOptions['refreshPortfolio']>,
+  store: ChromeConfidentialFundingStore = new ChromeConfidentialFundingStore(),
+  getNativeZecActiveAccount?: ConfidentialFundingCoordinatorOptions['getNativeZecActiveAccount']
 ): ConfidentialFundingCoordinator | null {
   const config = getConfidentialFundingNetworkConfig(DEFAULT_NETWORK)
   if (!config) return null
@@ -48,15 +50,20 @@ export function createBackgroundConfidentialFundingCoordinator(
     ...userEvmAssets,
     ...protocolAssets
   ]
-  const existingIds = new Set(
-    existingDefinitions.map(
-      asset =>
-        `${asset.chainId}/${asset.namespace}:${asset.namespace === 'erc20' ? asset.reference.toLowerCase() : asset.reference}`
-    )
-  )
+  const definitionId = (asset: AssetDefinitionInput): string =>
+    `${asset.chainId}/${asset.namespace}:${asset.namespace === 'erc20' ? asset.reference.toLowerCase() : asset.reference}`
+  const existingAssets = createAssetRegistry(chains, existingDefinitions)
   const confidentialEvmAssets = resolveIntentsEvmAssets(protocolTokens, evmNetworks)
   const confidentialEvmDefinitions = confidentialEvmAssets
-    .filter(asset => !existingIds.has(asset.assetId))
+    .filter(asset => {
+      const existing = existingAssets.inspect(asset.assetId)
+      // Auto-registered catalog assets remain unverified in the wallet registry.
+      // A matching current protocol definition may supply this runtime's trust.
+      return (
+        !existing ||
+        (existing.verification === 'unverified' && existing.metadata.decimals === asset.decimals)
+      )
+    })
     .flatMap(asset => {
       try {
         const metadata = parseAssetDisplayMetadata({
@@ -80,8 +87,9 @@ export function createBackgroundConfidentialFundingCoordinator(
         return []
       }
     })
+  const protocolDefinitionIds = new Set(confidentialEvmDefinitions.map(definitionId))
   const assets = createAssetRegistry(chains, [
-    ...existingDefinitions,
+    ...existingDefinitions.filter(asset => !protocolDefinitionIds.has(definitionId(asset))),
     ...confidentialEvmDefinitions
   ])
   const storage = new IndexedDbStorageV2Repository()
@@ -113,9 +121,18 @@ export function createBackgroundConfidentialFundingCoordinator(
       const cached = getCachedTokens()
       return cached.length > 0 ? cached : protocolTokens
     },
+    getNativeZecActiveAccount,
     assetMappings: Object.freeze([...mappings.values()]),
-    scheduleMonitoring: () =>
-      chrome.alarms.create(CONFIDENTIAL_FUNDING_MONITOR_ALARM, { delayInMinutes: 0.1 }),
+    scheduleMonitoring: async (delayInMinutes = 0.1) => {
+      const alarm = await chrome.alarms.get(CONFIDENTIAL_FUNDING_MONITOR_ALARM)
+      if (
+        alarm &&
+        alarm.scheduledTime > Date.now() &&
+        alarm.scheduledTime <= Date.now() + delayInMinutes * 60_000
+      )
+        return
+      await chrome.alarms.create(CONFIDENTIAL_FUNDING_MONITOR_ALARM, { delayInMinutes })
+    },
     onActivityChanged: async scope => {
       await chrome.runtime.sendMessage({
         type: 'TRANSACTION_UPDATED',

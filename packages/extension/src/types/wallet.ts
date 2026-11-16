@@ -55,6 +55,8 @@ export interface AccountData {
   networkBirthdayHeights?: Partial<Record<Network, number>>
   /** Network-scoped enabled chain families; absent selections retain legacy behavior. */
   networkSelections?: Partial<Record<Network, readonly AccountNetworkFamily[]>>
+  /** Explicit chain choices; absent values retain family-level compatibility. */
+  networkChainSelections?: Partial<Record<Network, readonly string[]>>
   /** A prior Zcash enablement keeps its scan history when the network is selected again. */
   networkZcashHistoryConfigured?: Partial<Record<Network, true>>
   /** Network-scoped receive addresses, including earlier rotated addresses. */

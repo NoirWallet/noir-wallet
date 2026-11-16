@@ -15,6 +15,33 @@ function createStorage(initial = {}) {
   }
 }
 
+function installWebLocksStub() {
+  const previousLocks = Object.getOwnPropertyDescriptor(globalThis.navigator, 'locks')
+  let lockTail = Promise.resolve()
+  Object.defineProperty(globalThis.navigator, 'locks', {
+    configurable: true,
+    value: {
+      request: async (_name, operation) => {
+        const previous = lockTail
+        let release
+        lockTail = new Promise(resolve => {
+          release = resolve
+        })
+        await previous
+        try {
+          return await operation()
+        } finally {
+          release()
+        }
+      }
+    }
+  })
+  return () => {
+    if (previousLocks === undefined) delete globalThis.navigator.locks
+    else Object.defineProperty(globalThis.navigator, 'locks', previousLocks)
+  }
+}
+
 test('claims each automatic resource once per cooldown window', async () => {
   const session = new AutomaticRefreshSession(createStorage())
 
@@ -70,6 +97,55 @@ test('isolates Accounts and resources while serializing concurrent claims', asyn
   await expect(session.claim('wallet-1:account-1', ['portfolio'], 20_000, 1_000)).resolves.toEqual([
     'portfolio'
   ])
+})
+
+test('claims a public resource once across concurrent Popup instances', async () => {
+  const restoreLocks = installWebLocksStub()
+  try {
+    const storage = createStorage()
+    const popup = new AutomaticRefreshSession(storage)
+    const sidePanel = new AutomaticRefreshSession(storage)
+    const [first, second] = await Promise.all([
+      popup.claim('asset-prices:mainnet', ['quotes'], 25_000, 1_000),
+      sidePanel.claim('asset-prices:mainnet', ['quotes'], 25_000, 1_000)
+    ])
+
+    expect([...first, ...second]).toEqual(['quotes'])
+    const claimer = first.length > 0 ? popup : sidePanel
+    const other = first.length > 0 ? sidePanel : popup
+    await claimer.release('asset-prices:mainnet', ['quotes'], 25_100)
+    await expect(other.claim('asset-prices:mainnet', ['quotes'], 25_100, 1_000)).resolves.toEqual([
+      'quotes'
+    ])
+  } finally {
+    restoreLocks()
+  }
+})
+
+test('parallel releases preserve claims for other scopes across Popup instances', async () => {
+  const restoreLocks = installWebLocksStub()
+  try {
+    const storage = createStorage()
+    const popup = new AutomaticRefreshSession(storage)
+    const sidePanel = new AutomaticRefreshSession(storage)
+    await popup.claim('asset-prices:mainnet', ['quotes'], 27_000, 1_000)
+    await sidePanel.claim('intents-default-assets:mainnet', ['catalog'], 27_000, 1_000)
+
+    await Promise.all([
+      popup.release('asset-prices:mainnet', ['quotes'], 27_100),
+      sidePanel.release('intents-default-assets:mainnet', ['catalog'], 27_100)
+    ])
+
+    const reopened = new AutomaticRefreshSession(storage)
+    await expect(
+      reopened.claim('asset-prices:mainnet', ['quotes'], 27_100, 1_000)
+    ).resolves.toEqual(['quotes'])
+    await expect(
+      reopened.claim('intents-default-assets:mainnet', ['catalog'], 27_100, 1_000)
+    ).resolves.toEqual(['catalog'])
+  } finally {
+    restoreLocks()
+  }
 })
 
 test('falls back to memory when session storage is unavailable', async () => {

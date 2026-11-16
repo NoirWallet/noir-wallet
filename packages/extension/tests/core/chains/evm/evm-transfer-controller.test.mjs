@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import { expect } from '@playwright/test'
 
 import { BackgroundEvmTransferController } from '../../../../src/background/evm-transfer-controller.ts'
+import { accountContextTransition } from '../../../../src/background/account-context-transition.ts'
 
 const chainAccount = Object.freeze({
   id: 'chain-account:evm:active',
@@ -40,7 +41,7 @@ const hardwareContext = Object.freeze({
   })
 })
 
-function setup(active = activeContext) {
+function setup(active = activeContext, readBalance = async () => '0') {
   const calls = []
   const signing = Object.freeze({
     commandId: 'signing-command:internal',
@@ -101,7 +102,7 @@ function setup(active = activeContext) {
     results,
     controller: new BackgroundEvmTransferController({
       orchestrator,
-      loadActiveContext: async () => active,
+      loadActiveContext: async () => (typeof active === 'function' ? active() : active),
       resolveExternalSigner: async () => {
         throw new Error('unexpected hardware signer resolution')
       },
@@ -112,6 +113,10 @@ function setup(active = activeContext) {
       readTokenAllowance: async (token, owner, spender) => {
         calls.push(['allowance', token, owner, spender])
         return '2000000'
+      },
+      readTokenBalance: async (token, owner) => {
+        calls.push(['balance', token, owner])
+        return readBalance(token, owner)
       }
     })
   }
@@ -173,6 +178,83 @@ test.describe('Background EVM transfer controller', () => {
       ['allowance', token, privateExecutionAccount.address, spender],
       ['resolve-private', activeContext]
     ])
+  })
+
+  test('keeps catalog token balances scoped to the active account and execution address', async () => {
+    const { calls, controller } = setup()
+    const token = '0x2222222222222222222222222222222222222222'
+    const scope = [chainAccount.scope.keyDomainId, chainAccount.scope.accountId]
+    await expect(controller.getTokenBalance(token, ...scope, 'main')).resolves.toBe('0')
+    await expect(controller.getTokenBalance(token, ...scope, 'main')).resolves.toBe('0')
+    await expect(controller.getTokenBalance(token, ...scope, 'private')).resolves.toBe('0')
+    await expect(
+      controller.getTokenBalance(token, 'wrong-wallet', scope[1], 'main')
+    ).rejects.toThrow(/active account/)
+    expect(calls.filter(call => call[0] === 'balance')).toEqual([
+      ['balance', token, chainAccount.identity.value],
+      ['balance', token, privateExecutionAccount.address]
+    ])
+  })
+
+  test('does not cache a failed catalog token balance read as zero', async () => {
+    let reads = 0
+    const { controller } = setup(activeContext, async () => {
+      reads += 1
+      if (reads === 1) throw new Error('RPC unavailable')
+      return '0'
+    })
+    const token = '0x2222222222222222222222222222222222222222'
+    const scope = [chainAccount.scope.keyDomainId, chainAccount.scope.accountId]
+    await expect(controller.getTokenBalance(token, ...scope)).rejects.toThrow('RPC unavailable')
+    await expect(controller.getTokenBalance(token, ...scope)).resolves.toBe('0')
+    expect(reads).toBe(2)
+  })
+
+  test('does not hold an account switch behind a pending catalog RPC read', async () => {
+    let current = activeContext
+    let startRead
+    let finishRead
+    const started = new Promise(resolve => {
+      startRead = resolve
+    })
+    const pendingRead = new Promise(resolve => {
+      finishRead = resolve
+    })
+    const { controller } = setup(
+      () => current,
+      async () => {
+        startRead()
+        return pendingRead
+      }
+    )
+    const token = '0x2222222222222222222222222222222222222222'
+    const result = controller.getTokenBalance(
+      token,
+      chainAccount.scope.keyDomainId,
+      chainAccount.scope.accountId
+    )
+    await started
+    await accountContextTransition.runAccountSwitch(
+      { walletId: chainAccount.scope.keyDomainId, accountId: 'account:new' },
+      {
+        readCurrent: () => ({
+          walletId: chainAccount.scope.keyDomainId,
+          accountId: chainAccount.scope.accountId
+        }),
+        validateTarget: () => {},
+        commit: async () => {
+          current = {
+            ...activeContext,
+            chainAccount: {
+              ...chainAccount,
+              scope: { ...chainAccount.scope, accountId: 'account:new' }
+            }
+          }
+        }
+      }
+    )
+    finishRead('0')
+    await expect(result).rejects.toThrow(/changed during read/)
   })
 
   test('parses an exact transfer intent and binds it to the active Storage V2 account', async () => {

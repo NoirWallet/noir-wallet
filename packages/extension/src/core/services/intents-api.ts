@@ -17,6 +17,8 @@ import {
 } from '@/lib/fetch-utils'
 import { DedupPromise } from '@/lib/async-utils'
 import { assertMainnetProtocolFeature } from '@/lib/runtime-network'
+import Big from 'big.js'
+import type { QuoteBinding } from '@/types/wallet'
 
 const INTENTS_API_BASE = 'https://api.rhea.finance/api/1click'
 const ONECLICK_TOKENS_API = 'https://1click.chaindefuser.com/v0/tokens'
@@ -34,6 +36,7 @@ export interface SwapToken {
   price: number
   priceUpdatedAt: string
   symbol: string
+  name?: string
   coingeckoId?: string | null
   coingeckoIcon?: string | null
 }
@@ -49,6 +52,7 @@ export interface QuoteParams {
   refundTo: string
   recipient: string
   slippageTolerance?: number
+  validateQuoteRequest?: boolean
   signal?: AbortSignal
 }
 
@@ -98,6 +102,36 @@ export interface SwapStatus {
   }
   originAsset?: string
   destinationAsset?: string
+}
+
+export function evaluateIntentsStatusQuoteBinding(
+  binding: QuoteBinding,
+  status: SwapStatus,
+  destinationDecimals?: number
+): 'valid' | 'mismatch' | 'unknown' {
+  if (binding.originAsset && status.originAsset && status.originAsset !== binding.originAsset) {
+    return 'mismatch'
+  }
+  if (
+    binding.destinationAsset &&
+    status.destinationAsset &&
+    status.destinationAsset !== binding.destinationAsset
+  ) {
+    return 'mismatch'
+  }
+  const actualAmount = status.swapDetails?.amountOutFormatted
+  if (!binding.minAmountOut || !actualAmount) return 'valid'
+  if (
+    destinationDecimals === undefined ||
+    !Number.isSafeInteger(destinationDecimals) ||
+    destinationDecimals < 0 ||
+    !/^(0|[1-9][0-9]*)(\.[0-9]+)?$/.test(actualAmount)
+  ) {
+    return 'unknown'
+  }
+  return new Big(actualAmount).times(new Big(10).pow(destinationDecimals)).lt(binding.minAmountOut)
+    ? 'mismatch'
+    : 'valid'
 }
 
 const QUOTE_RAW_AMOUNT_PATTERN = /^(0|[1-9][0-9]{0,77})$/
@@ -390,20 +424,57 @@ export function parseSwapStatusResponse(value: unknown): SwapStatus {
 let tokenCache: SwapToken[] = []
 let tokenCacheTime = 0
 const TOKEN_CACHE_TTL = 5 * 60 * 1000 // 5 minutes
-const INCOMPLETE_ICON_CACHE_TTL = 30 * 1000
-let tokenCacheTtl = TOKEN_CACHE_TTL
+const ICON_CACHE_TTL = 24 * 60 * 60 * 1000
+const ICON_RETRY_DELAY = 5 * 60 * 1000
 
 // Coalesces concurrent (mount / selector / price-poll) fetches into one request
 const fetchDedup = new DedupPromise<SwapToken[]>()
 
-// 1Click has no icons, so provider icon sources are cached for the current session.
+// Background restores icon metadata and refresh deadlines from the persisted catalog.
 const rheaIconMap = new Map<string, string>()
 const coinGeckoIconMap = new Map<string, string>()
-const loadedCoinGeckoIconIds = new Set<string>()
-const rheaIconChainStates = new Map<
-  string,
-  Readonly<{ complete: boolean; nextAttemptAt: number }>
->()
+export type SwapIconRefreshState = Readonly<
+  Record<
+    string,
+    Readonly<{
+      nextAttemptAt: number
+      failures: number
+    }>
+  >
+>
+const iconRefreshStates = new Map<string, { nextAttemptAt: number; failures: number }>()
+const iconDedup = new DedupPromise<SwapToken[]>()
+
+export function getSwapIconRefreshState(): SwapIconRefreshState {
+  return Object.fromEntries(iconRefreshStates)
+}
+
+export function hydrateSwapTokenCatalog(
+  tokens: readonly SwapToken[],
+  fetchedAt: number,
+  states: SwapIconRefreshState = {}
+): void {
+  if (tokenCacheTime > fetchedAt && tokenCache.length > 0) return
+  tokenCache = [...tokens]
+  tokenCacheTime = fetchedAt
+  for (const [key, state] of Object.entries(states)) iconRefreshStates.set(key, state)
+  for (const token of tokens) {
+    if (token.icon) rheaIconMap.set(token.assetId, token.icon)
+    if (token.coingeckoId && token.coingeckoIcon) {
+      coinGeckoIconMap.set(token.coingeckoId, token.coingeckoIcon)
+    }
+  }
+}
+
+function recordIconAttempt(key: string, succeeded: boolean): void {
+  const failures = succeeded ? 0 : Math.min((iconRefreshStates.get(key)?.failures ?? 0) + 1, 5)
+  iconRefreshStates.set(key, {
+    failures,
+    nextAttemptAt:
+      Date.now() +
+      (succeeded ? ICON_CACHE_TTL : Math.min(ICON_RETRY_DELAY * 2 ** (failures - 1), 60 * 60_000))
+  })
+}
 
 function parseRheaIconCatalogResponse(value: unknown): ReadonlyMap<string, string> {
   if (!Array.isArray(value) || value.length > MAX_TOKEN_COUNT) {
@@ -429,52 +500,34 @@ function parseRheaIconCatalogResponse(value: unknown): ReadonlyMap<string, strin
  * maintaining. Each chain has an independent refresh state so one unavailable
  * chain cannot discard icons loaded for the others.
  */
-async function ensureRheaIconsLoaded(tokens: SwapToken[]): Promise<boolean> {
+async function ensureRheaIconsLoaded(tokens: SwapToken[]): Promise<void> {
   const now = Date.now()
   const tokenChains = [...new Set(tokens.map(token => token.blockchain))]
   const chainsToLoad = tokenChains.filter(chain => {
-    const state = rheaIconChainStates.get(chain)
+    const state = iconRefreshStates.get(`rhea:${chain}`)
     return state === undefined || state.nextAttemptAt <= now
   })
 
-  const results = await Promise.all(
-    chainsToLoad.map(async chain => {
-      try {
-        const url = new URL(TOKEN_ICONS_API)
-        url.searchParams.set('chains', chain)
-        const response = await fetchWithTimeout(url)
-        const icons = parseRheaIconCatalogResponse(await response.json())
-        for (const [assetId, icon] of icons) rheaIconMap.set(assetId, icon)
-        const complete = icons.size > 0
-        const completedAt = Date.now()
-        rheaIconChainStates.set(
-          chain,
-          Object.freeze({
-            complete,
-            nextAttemptAt: completedAt + (complete ? TOKEN_CACHE_TTL : INCOMPLETE_ICON_CACHE_TTL)
-          })
-        )
-        return Object.freeze({ chain, error: undefined })
-      } catch (error) {
-        rheaIconChainStates.set(
-          chain,
-          Object.freeze({
-            complete: false,
-            nextAttemptAt: Date.now() + INCOMPLETE_ICON_CACHE_TTL
-          })
-        )
-        return Object.freeze({ chain, error })
+  // Limit optional metadata traffic instead of flooding the provider on a cold start.
+  let next = 0
+  await Promise.all(
+    Array.from({ length: Math.min(3, chainsToLoad.length) }, async () => {
+      while (next < chainsToLoad.length) {
+        const chain = chainsToLoad[next++]!
+        try {
+          const url = new URL(TOKEN_ICONS_API)
+          url.searchParams.set('chains', chain)
+          const response = await fetchWithTimeout(url, { timeoutMs: 8_000 })
+          const icons = parseRheaIconCatalogResponse(await response.json())
+          for (const [assetId, icon] of icons) rheaIconMap.set(assetId, icon)
+          // A valid empty response is not a transport failure.
+          recordIconAttempt(`rhea:${chain}`, true)
+        } catch {
+          recordIconAttempt(`rhea:${chain}`, false)
+        }
       }
     })
   )
-  const failed = results.filter(result => result.error !== undefined)
-  if (failed.length > 0) {
-    console.error(
-      `Error loading RHEA token icons for chains: ${failed.map(result => result.chain).join(', ')}`,
-      failed[0].error
-    )
-  }
-  return tokenChains.every(chain => rheaIconChainStates.get(chain)?.complete === true)
 }
 
 async function ensureCoinGeckoIconsLoaded(tokens: SwapToken[]): Promise<boolean> {
@@ -487,7 +540,7 @@ async function ensureCoinGeckoIconsLoaded(tokens: SwapToken[]): Promise<boolean>
             typeof id === 'string' &&
             id.length > 0 &&
             !id.startsWith('custom:') &&
-            !loadedCoinGeckoIconIds.has(id)
+            (iconRefreshStates.get(`coingecko:${id}`)?.nextAttemptAt ?? 0) <= Date.now()
         )
     )
   ].slice(0, MAX_COINGECKO_ICON_COUNT)
@@ -500,31 +553,29 @@ async function ensureCoinGeckoIconsLoaded(tokens: SwapToken[]): Promise<boolean>
     url.searchParams.set('per_page', String(MAX_COINGECKO_ICON_COUNT))
     url.searchParams.set('page', '1')
     url.searchParams.set('sparkline', 'false')
-    const response = await fetchWithTimeout(url)
+    const response = await fetchWithTimeout(url, { timeoutMs: 8_000 })
     const icons = parseCoinGeckoIconCatalogResponse(await response.json())
     for (const [id, image] of icons) coinGeckoIconMap.set(id, image)
-    for (const id of ids) loadedCoinGeckoIconIds.add(id)
+    for (const id of ids) recordIconAttempt(`coingecko:${id}`, true)
     return true
-  } catch (error) {
-    console.error('Error loading CoinGecko token icons:', error)
+  } catch {
+    for (const id of ids) recordIconAttempt(`coingecko:${id}`, false)
     return false
   }
 }
 
-async function ensureIconsLoaded(tokens: SwapToken[]): Promise<boolean> {
-  const [rheaComplete, coinGeckoComplete] = await Promise.all([
-    ensureRheaIconsLoaded(tokens),
-    ensureCoinGeckoIconsLoaded(tokens)
-  ])
-  return rheaComplete && coinGeckoComplete
+/** Optional metadata must never delay selecting a token or refreshing its price. */
+export function refreshSwapTokenIcons(): Promise<SwapToken[]> {
+  return iconDedup.run(async () => {
+    await Promise.all([ensureRheaIconsLoaded(tokenCache), ensureCoinGeckoIconsLoaded(tokenCache)])
+    tokenCache = enrichTokenIcons(tokenCache)
+    return tokenCache
+  })
 }
 
-async function fetchAllTokens(): Promise<SwapToken[]> {
-  const response = await fetchWithTimeout(ONECLICK_TOKENS_API)
-  const tokens = parseSwapTokenCatalogResponse(await response.json())
+function enrichTokenIcons(tokens: SwapToken[]): SwapToken[] {
   const previousTokens = new Map(tokenCache.map(token => [token.assetId, token]))
-  const iconsComplete = await ensureIconsLoaded(tokens)
-  const enriched = tokens.map(token => ({
+  return tokens.map(token => ({
     ...token,
     icon:
       rheaIconMap.get(token.assetId) ??
@@ -538,10 +589,14 @@ async function fetchAllTokens(): Promise<SwapToken[]> {
         null)
       : null
   }))
-  tokenCache = enriched
+}
+
+async function fetchAllTokens(): Promise<SwapToken[]> {
+  const response = await fetchWithTimeout(ONECLICK_TOKENS_API)
+  const tokens = parseSwapTokenCatalogResponse(await response.json())
+  tokenCache = enrichTokenIcons(tokens)
   tokenCacheTime = Date.now()
-  tokenCacheTtl = iconsComplete ? TOKEN_CACHE_TTL : INCOMPLETE_ICON_CACHE_TTL
-  return enriched
+  return tokenCache
 }
 
 /** Refreshes the provider catalog and rejects when no fresh response is available. */
@@ -558,7 +613,7 @@ export function refreshSwapTokenCatalog(): Promise<SwapToken[]> {
 export async function fetchSwapTokens(forceRefresh = false): Promise<SwapToken[]> {
   assertMainnetProtocolFeature('Swap')
   const now = Date.now()
-  if (!forceRefresh && tokenCache.length > 0 && now - tokenCacheTime < tokenCacheTtl) {
+  if (!forceRefresh && tokenCache.length > 0 && now - tokenCacheTime < TOKEN_CACHE_TTL) {
     return tokenCache
   }
 
@@ -644,7 +699,7 @@ export async function fetchQuote(params: QuoteParams): Promise<QuoteResult> {
       deadline: new Date(Date.now() + 1 * 60 * 60 * 1000).toISOString(),
       referral: NOIR_SWAP_REFERRAL,
       quoteWaitingTimeMs: 3000,
-      slippageTolerance: params.slippageTolerance || 50,
+      slippageTolerance: params.slippageTolerance ?? 50,
       appFees: NOIR_SWAP_APP_FEES
     }
 
@@ -660,6 +715,31 @@ export async function fetchQuote(params: QuoteParams): Promise<QuoteResult> {
     const data = await response.json()
 
     if (data?.quote) {
+      if (params.validateQuoteRequest && data.quoteRequest !== undefined) {
+        const echoed = data.quoteRequest
+        const sameAddress = (left: unknown, right: string) =>
+          typeof left === 'string' &&
+          (/^0x[0-9a-fA-F]{40}$/.test(right)
+            ? left.toLowerCase() === right.toLowerCase()
+            : left === right)
+        if (
+          !isRecord(echoed) ||
+          [
+            'originAsset',
+            'destinationAsset',
+            'amount',
+            'swapType',
+            'refundType',
+            'recipientType',
+            'depositType'
+          ].some(key => echoed[key] !== requestBody[key as keyof typeof requestBody]) ||
+          !sameAddress(echoed.refundTo, requestBody.refundTo) ||
+          !sameAddress(echoed.recipient, requestBody.recipient) ||
+          Number(echoed.slippageTolerance) !== requestBody.slippageTolerance
+        ) {
+          throw new Error('Near Intents quote changed its request')
+        }
+      }
       return parseQuoteSuccessResponse(data)
     } else {
       return {

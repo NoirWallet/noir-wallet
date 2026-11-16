@@ -6,12 +6,14 @@ import { useSettingsStore } from '@/store/settings-store'
 import { getChainEndpointRuntimeKey } from '@/core/chains/chain-endpoint-settings'
 import { useWalletStore } from '@/store/wallet-store'
 import type { FundingSource } from '@/types'
+import { classifyError } from '@/lib/errors'
 
 interface TierEstimate {
   feeZats: number | null
   feeQuote: FeeQuote | null
   loading: boolean
   error: boolean
+  errorMessage: string | null
   retry: () => void
 }
 
@@ -34,7 +36,13 @@ interface UseFeeEstimateArgs {
 }
 
 type EstimateState = Omit<TierEstimate, 'retry'> & { key: string }
-const emptyEstimate = { feeZats: null, feeQuote: null, loading: false, error: false }
+const emptyEstimate = {
+  feeZats: null,
+  feeQuote: null,
+  loading: false,
+  error: false,
+  errorMessage: null
+}
 
 function useEstimateForTier({
   type,
@@ -116,10 +124,23 @@ function useEstimateForTier({
             marginalFeeForTier(feeTier, result.feeQuote.standardMarginalFeeZats)
         )
           throw new Error('Invalid network fee estimate')
-        setState({ feeZats, feeQuote: result.feeQuote, loading: false, error: false, key })
+        setState({
+          feeZats,
+          feeQuote: result.feeQuote,
+          loading: false,
+          error: false,
+          errorMessage: null,
+          key
+        })
         expiryTimer = setTimeout(retry, Math.max(0, result.feeQuote.expiresAt - Date.now()))
-      } catch {
-        if (current === sequence.current) setState({ ...emptyEstimate, error: true, key })
+      } catch (error) {
+        if (current === sequence.current)
+          setState({
+            ...emptyEstimate,
+            error: true,
+            errorMessage: classifyError(error).userMessage,
+            key
+          })
       }
     }, debounceMs)
     return () => {
@@ -135,6 +156,7 @@ function useEstimateForTier({
         feeQuote: state.feeQuote,
         loading: state.loading,
         error: state.error,
+        errorMessage: state.errorMessage,
         retry
       }
     : { ...emptyEstimate, loading: active, retry }

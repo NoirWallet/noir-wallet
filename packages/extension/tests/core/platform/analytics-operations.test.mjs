@@ -5,7 +5,8 @@ import {
   projectConfidentialPlanResult,
   projectExternalDepositResult,
   projectZcashOperationEvent,
-  resolveZcashAnalyticsOperation
+  resolveZcashAnalyticsOperation,
+  zcashOperationCollector
 } from '../../../src/lib/analytics/operations.ts'
 import { ANALYTICS_EVENTS } from '../../../src/lib/analytics/constants.ts'
 import { ZCASH_CHAIN_IDS } from '../../../src/core/chains/registry/chain-ids.ts'
@@ -151,4 +152,115 @@ test('the runtime context contract rejects event overrides and private transacti
     []
   ])
     assert.equal(isZcashOperationAnalyticsContext(context), false)
+})
+
+test('settled Shield and Cluster events use observed output instead of quoted output', () => {
+  const assets = {
+    get(assetId) {
+      return {
+        metadata:
+          assetId === 'source' ? { symbol: 'USDC', decimals: 6 } : { symbol: 'ETH', decimals: 18 }
+      }
+    }
+  }
+  const base = {
+    planId: 'private-plan-id',
+    phase: 'processing',
+    operation: 'deposit',
+    sourceDomain: 'private',
+    destinationDomain: 'shield',
+    source: { chainId: 'eip155:1', assetId: 'source', amountRaw: '2500000' },
+    destination: { assetId: 'destination' },
+    expectedOutputRaw: '999000000000000000',
+    withdraws: [],
+    requiresDeposit: true
+  }
+  const deposit = projectConfidentialPlanResult(
+    base,
+    { ...base, phase: 'ready', settledOutputRaw: '800000000000000000' },
+    assets,
+    25
+  )
+  assert.equal(deposit.options.collector.inputAmount, '2.5')
+  assert.equal(deposit.options.collector.outputAmount, '0.8')
+  assert.equal(deposit.options.collector.quotedPrivacyFeeBps, 25)
+  assert.equal(deposit.options.collector.sourceDomain, 'private')
+  assert.equal(deposit.options.collector.destinationDomain, 'shield')
+  assert.equal(deposit.options.collector.privacyFeeAmount, undefined)
+
+  const cluster = {
+    ...base,
+    operation: 'cluster',
+    sourceDomain: 'shield',
+    destinationDomain: 'public',
+    requiresDeposit: false,
+    withdraws: [
+      { status: 'SUCCESS', settledOutputRaw: '200000000000000000' },
+      { status: 'COMPLETED', settledOutputRaw: '300000000000000000' }
+    ]
+  }
+  const result = projectConfidentialPlanResult(cluster, { ...cluster, phase: 'ready' }, assets)
+  assert.equal(result.options.collector.inputAmount, '2.5')
+  assert.equal(result.options.collector.outputAmount, '0.5')
+  assert.equal(result.options.idempotencyKey, 'shield-plan:private-plan-id')
+  assert.equal(result.options.collector.sourceDomain, 'shield')
+  assert.equal(result.options.collector.destinationDomain, 'public')
+  assert.equal(
+    projectConfidentialPlanResult(
+      cluster,
+      { ...cluster, phase: 'ready', withdraws: [cluster.withdraws[0], { status: 'SUCCESS' }] },
+      assets
+    ).options.collector.outputAmount,
+    undefined
+  )
+  assert.equal(
+    projectConfidentialPlanResult(cluster, { ...cluster, phase: 'partial' }, assets),
+    null
+  )
+
+  const external = {
+    depositId: 'private-external-id',
+    phase: 'processing',
+    source: { chainId: 'eip155:1' },
+    sourceSymbol: 'USDC',
+    sourceDecimals: 6,
+    destinationAssetId: 'destination',
+    depositedAmountRaw: '1750000',
+    expectedOutputRaw: '999000000000000000'
+  }
+  const settled = projectExternalDepositResult(
+    external,
+    { ...external, phase: 'ready', settledOutputRaw: '700000000000000000' },
+    assets
+  )
+  assert.equal(settled.options.collector.inputAmount, '1.75')
+  assert.equal(settled.options.collector.outputAmount, '0.7')
+  assert.equal(settled.options.collector.activityType, 'receive')
+})
+
+test('Zcash collector context follows the on-chain funding and recipient domains', () => {
+  const transparent = `t1${'A'.repeat(33)}`
+  const shielded = `zs${'A'.repeat(76)}`
+  assert.deepEqual(zcashOperationCollector('shield', undefined, '1.25'), {
+    inputAmount: '1.25',
+    sourceDomain: 'public',
+    destinationDomain: 'shield',
+    privacyRoute: 'zcash_shielded',
+    transferType: 'self',
+    activityType: 'transfer',
+    provider: 'zcash',
+    settlement: 'broadcast'
+  })
+  assert.equal(
+    zcashOperationCollector('send', 'transparent', '2', transparent).privacyRoute,
+    'direct'
+  )
+  assert.equal(
+    zcashOperationCollector('send', 'shielded', '2', shielded).destinationDomain,
+    'shield'
+  )
+  assert.equal(
+    zcashOperationCollector('swap', 'shielded', '2', transparent).destinationDomain,
+    undefined
+  )
 })

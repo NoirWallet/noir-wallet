@@ -33,7 +33,7 @@ const byProtocolId = new Map(
     ] as const
   })
 )
-const EVM_OMFT_TOKEN = /^nep141:([a-z0-9]+)-(0x[0-9a-fA-F]{40})\.omft\.near$/
+const EVM_BRIDGED_TOKEN = /^nep141:([a-z0-9]+)-(0x[0-9a-fA-F]{40})\.(?:omft|omdep)\.near$/
 
 export function resolveRheaSwapCanonicalAssetId(
   protocolAssetId: string,
@@ -47,14 +47,14 @@ export function resolveRheaSwapCanonicalAssetId(
   }
   const mapped = byProtocolId.get(network)?.get(protocolAssetId)
   if (mapped) return parseAssetId(mapped).id
-  const token = EVM_OMFT_TOKEN.exec(protocolAssetId)
+  const token = EVM_BRIDGED_TOKEN.exec(protocolAssetId)
   if (network === 'mainnet' && token) {
     const chainId = resolveIntentsEvmChainId(token[1], getEvmNetworkConfigs(network))
     if (chainId) return createAssetId(parseChainId(chainId).id, 'erc20', token[2].toLowerCase())
   }
   if (protocolAssetId.startsWith('nep141:')) {
     const contractId = protocolAssetId.slice('nep141:'.length)
-    if (contractId.endsWith('.omft.near')) return null
+    if (/\.(?:omft|omdep)\.near$/.test(contractId)) return null
     try {
       return createAssetId(
         parseChainId(getNearNetworkConfig(network).chainId).id,

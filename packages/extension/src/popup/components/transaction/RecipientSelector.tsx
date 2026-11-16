@@ -9,13 +9,14 @@ import {
 } from '@/popup/services/account-networks-client'
 import { useAddressBookStore } from '@/store/address-book-store'
 import { useWalletStore } from '@/store/wallet-store'
-import { AccountAvatar } from '../account/AccountAvatar'
 import { AddAddressDialog } from '../address-book/AddAddressDialog'
 import {
+  getAddressBookContactIconChain,
   getAddressBookNetworkChoice,
   getAddressBookNetworkChoices
 } from '../address-book/address-book-network'
 import { InlineError } from '../common/InlineError'
+import { ChainIcon } from '../common/ChainIcon'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import { ListSkeleton } from '../ui/skeleton'
@@ -77,7 +78,7 @@ export function RecipientSelector({
   includeCurrentAccount = false,
   sendingAddress,
   disablePrivateExecutionAddresses = false,
-  onMoveToPrivate,
+  onShieldedMove,
   onSelect
 }: {
   readonly chainId: string
@@ -86,7 +87,7 @@ export function RecipientSelector({
   readonly includeCurrentAccount?: boolean
   readonly sendingAddress?: string
   readonly disablePrivateExecutionAddresses?: boolean
-  readonly onMoveToPrivate?: (address: string) => void
+  readonly onShieldedMove?: () => void
   readonly onSelect: (address: string, displayName?: string) => void
 }) {
   const contacts = useAddressBookStore(state => state.contacts)
@@ -165,27 +166,42 @@ export function RecipientSelector({
     [chainId, contacts, excludeAddresses]
   )
   const normalizedQuery = query.trim().toLowerCase()
-  const visibleWalletGroups = buildMyWalletRecipientGroups(accountGroups).flatMap(wallet => {
-    const walletMatches = wallet.walletDisplayName.toLowerCase().includes(normalizedQuery)
-    const accounts = walletMatches
-      ? wallet.accounts
-      : wallet.accounts.filter(account => {
-          const displayName = getAccountDisplayName(
-            account.walletId,
-            account.accountId,
-            account.accountDisplayName,
-            accountDisplayNames
-          )
-          return `${displayName} ${account.addresses.map(address => address.value).join(' ')}`
-            .toLowerCase()
-            .includes(normalizedQuery)
-        })
-    return accounts.length > 0 ? [{ ...wallet, accounts }] : []
+  const selectableAccountGroups = accountGroups.flatMap(account => {
+    const addresses = disablePrivateExecutionAddresses
+      ? account.addresses.filter(address => address.executionMode !== 'private')
+      : account.addresses
+    return addresses.length > 0 || account.addresses.length === 0 ? [{ ...account, addresses }] : []
   })
-  const visibleRecipients = savedRecipients.filter(contact =>
-    `${contact.name} ${contact.address}`.toLowerCase().includes(normalizedQuery)
+  const visibleWalletGroups = buildMyWalletRecipientGroups(selectableAccountGroups).flatMap(
+    wallet => {
+      const walletMatches = wallet.walletDisplayName.toLowerCase().includes(normalizedQuery)
+      const accounts = walletMatches
+        ? wallet.accounts
+        : wallet.accounts.filter(account => {
+            const displayName = getAccountDisplayName(
+              account.walletId,
+              account.accountId,
+              account.accountDisplayName,
+              accountDisplayNames
+            )
+            return `${displayName} ${account.addresses.map(address => address.value).join(' ')}`
+              .toLowerCase()
+              .includes(normalizedQuery)
+          })
+      return accounts.length > 0 ? [{ ...wallet, accounts }] : []
+    }
   )
   const isEvm = chainId.startsWith('eip155:')
+  const visibleRecipients = savedRecipients.filter(contact => {
+    if (
+      isEvm &&
+      disablePrivateExecutionAddresses &&
+      resolveEvmAddressRole(contact.address, chainId, catalog?.accounts) === 'confidential'
+    ) {
+      return false
+    }
+    return `${contact.name} ${contact.address}`.toLowerCase().includes(normalizedQuery)
+  })
 
   return (
     <Tabs defaultValue="accounts" className="min-h-0 gap-0">
@@ -208,7 +224,21 @@ export function RecipientSelector({
         </TabsTrigger>
       </TabsList>
 
-      <TabsContent value="accounts" className="max-h-[360px] overflow-y-auto px-1 py-4">
+      <TabsContent value="accounts" className="min-h-0 max-h-[360px] overflow-y-auto px-1 py-4">
+        {isEvm && disablePrivateExecutionAddresses && onShieldedMove && (
+          <div className="mb-5 rounded-lg bg-warning-surface p-3">
+            <div className="flex items-start gap-2 text-warning">
+              <Icon icon="lucide:info" className="mt-0.5 size-4 shrink-0" />
+              <p className="text-sm leading-5">
+                Private Account only accepts{' '}
+                <button type="button" className="font-medium underline" onClick={onShieldedMove}>
+                  Moves from Shield Account
+                </button>
+                .
+              </p>
+            </div>
+          </div>
+        )}
         {loading ? (
           <ListSkeleton rows={3} label="Loading wallet accounts" className="px-1 py-1" card />
         ) : error ? (
@@ -225,37 +255,9 @@ export function RecipientSelector({
         ) : (
           <div className="space-y-5 pb-1">
             {visibleWalletGroups.map(wallet => {
-              const firstAccount = wallet.accounts[0]!
               return (
                 <section key={wallet.walletId}>
-                  <div className="mb-2 flex min-w-0 items-center gap-2 px-1">
-                    <AccountAvatar
-                      walletId={firstAccount.walletId}
-                      accountId={firstAccount.accountId}
-                      className="size-8 shrink-0 rounded-full object-cover"
-                    />
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-xs text-muted">
-                        {wallet.walletDisplayName || 'Wallet'}
-                      </p>
-                      {wallet.accounts.length === 1 && (
-                        <p className="truncate text-sm font-medium">
-                          {getAccountDisplayName(
-                            firstAccount.walletId,
-                            firstAccount.accountId,
-                            firstAccount.accountDisplayName,
-                            accountDisplayNames
-                          )}
-                        </p>
-                      )}
-                    </div>
-                    {wallet.accounts.length === 1 && firstAccount.active && (
-                      <span className="shrink-0 rounded bg-wallet-selected px-2 py-0.5 text-xs font-medium text-foreground">
-                        Current
-                      </span>
-                    )}
-                  </div>
-                  <div className="space-y-3">
+                  <div className="space-y-5">
                     {wallet.accounts.map(group => {
                       const displayName = getAccountDisplayName(
                         group.walletId,
@@ -265,18 +267,27 @@ export function RecipientSelector({
                       )
                       return (
                         <div key={group.key} className="space-y-2">
-                          {wallet.accounts.length > 1 && (
-                            <div className="flex items-center gap-2 px-1 text-xs">
-                              <span className="min-w-0 flex-1 truncate font-medium">
+                          <div className="flex min-w-0 items-center gap-2 px-1">
+                            <div className="flex min-w-0 flex-1 items-baseline gap-2">
+                              <p
+                                className="max-w-[45%] shrink-0 truncate text-xs text-muted"
+                                title={wallet.walletDisplayName || 'Wallet'}
+                              >
+                                {wallet.walletDisplayName || 'Wallet'}
+                              </p>
+                              <p
+                                className="min-w-0 flex-1 truncate text-sm font-medium"
+                                title={displayName}
+                              >
                                 {displayName}
-                              </span>
-                              {group.active && (
-                                <span className="shrink-0 rounded bg-wallet-selected px-2 py-0.5 font-medium text-foreground">
-                                  Current
-                                </span>
-                              )}
+                              </p>
                             </div>
-                          )}
+                            {group.active && !(isEvm && disablePrivateExecutionAddresses) && (
+                              <span className="shrink-0 rounded bg-wallet-selected px-2 py-0.5 text-xs font-medium text-foreground">
+                                Current
+                              </span>
+                            )}
+                          </div>
                           {group.addresses.length === 0 ? (
                             <div className="rounded-lg bg-card px-3 py-2.5 text-xs text-muted opacity-60">
                               Unavailable on this network
@@ -289,10 +300,6 @@ export function RecipientSelector({
                                 sendingAddress,
                                 disablePrivateExecutionAddresses
                               )
-                              const canMove =
-                                group.active &&
-                                address.executionMode === 'private' &&
-                                Boolean(onMoveToPrivate)
                               const addressButton = (
                                 <button
                                   type="button"
@@ -320,7 +327,7 @@ export function RecipientSelector({
                                         <ExecutionAccountBadge mode="private" iconOnly />
                                       ) : (
                                         <Icon
-                                          icon="lucide:eye"
+                                          icon="noir:public-assets"
                                           width={16}
                                           height={16}
                                           className="text-muted"
@@ -329,8 +336,15 @@ export function RecipientSelector({
                                       {address.executionMode === 'private' ? 'Private' : 'Public'}
                                     </span>
                                   )}
+                                  {unavailableReason &&
+                                    isEvm &&
+                                    disablePrivateExecutionAddresses && (
+                                      <span className="min-w-0 truncate text-xs text-muted">
+                                        (Sending account)
+                                      </span>
+                                    )}
                                   <p
-                                    className="min-w-0 flex-1 truncate font-mono text-xs text-foreground"
+                                    className={`min-w-0 flex-1 truncate font-mono text-xs text-foreground ${isEvm ? 'text-right' : ''}`}
                                     title={address.value}
                                   >
                                     {formatSortAddress(address.value)}
@@ -357,23 +371,6 @@ export function RecipientSelector({
                                   ) : (
                                     addressButton
                                   )}
-                                  {canMove && (
-                                    <button
-                                      type="button"
-                                      onClick={() => onMoveToPrivate?.(address.value)}
-                                      aria-label={`Move to ${displayName} Private`}
-                                      title="Move to Private"
-                                      className="flex h-11 shrink-0 items-center gap-1 rounded-lg px-2 text-xs font-medium text-primary hover:bg-primary/10 focus-visible:outline-2 focus-visible:outline-primary"
-                                    >
-                                      <Icon
-                                        icon="lucide:arrow-right-left"
-                                        width={14}
-                                        height={14}
-                                        aria-hidden="true"
-                                      />
-                                      Move
-                                    </button>
-                                  )}
                                 </div>
                               )
                             })
@@ -389,7 +386,7 @@ export function RecipientSelector({
         )}
       </TabsContent>
 
-      <TabsContent value="address-book" className="max-h-[360px] overflow-y-auto px-1 py-4">
+      <TabsContent value="address-book" className="min-h-0 max-h-[360px] overflow-y-auto px-1 py-4">
         {visibleRecipients.length === 0 ? (
           <EmptyState
             icon="lucide:book-user"
@@ -420,15 +417,10 @@ export function RecipientSelector({
               </button>
             )}
             {visibleRecipients.map(contact => {
-              const privateAddress =
-                isEvm &&
-                disablePrivateExecutionAddresses &&
-                resolveEvmAddressRole(contact.address, chainId, catalog?.accounts) ===
-                  'confidential'
               const unavailableReason = getMyAccountRecipientUnavailableReason(
                 {
                   value: contact.address,
-                  executionMode: privateAddress ? 'private' : undefined
+                  executionMode: undefined
                 },
                 sendingAddress,
                 disablePrivateExecutionAddresses
@@ -455,11 +447,12 @@ export function RecipientSelector({
                       {formatSortAddress(contact.address)}
                     </p>
                   </div>
-                  <Icon
-                    icon="lucide:arrow-right"
-                    width={14}
-                    height={14}
-                    className="shrink-0 text-muted"
+                  <ChainIcon
+                    chain={getAddressBookContactIconChain(contact)}
+                    width={20}
+                    height={20}
+                    alt={`${contact.networkName} network`}
+                    className="size-5 shrink-0"
                   />
                 </button>
               )

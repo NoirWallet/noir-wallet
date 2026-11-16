@@ -83,11 +83,12 @@ export function formatChainName(blockchain: string): string {
 }
 
 export function formatSymbol(symbol?: string) {
-  switch (symbol) {
+  const displaySymbol = symbol?.replace(/\s*\(deprecated\)\s*$/i, '').trim() ?? ''
+  switch (displaySymbol) {
     case 'wNEAR':
       return 'NEAR'
     default:
-      return symbol || ''
+      return displaySymbol
   }
 }
 

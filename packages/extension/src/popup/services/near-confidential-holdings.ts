@@ -10,9 +10,24 @@ import { ASSET_PRICE_FRESH_MS, findAssetPrice, type AssetPriceReadModel } from '
 import { getAssetProtocolSourceMappings } from '@/core/prices/asset-market-mappings'
 import Big from '@/lib/big'
 import { formatBaseUnitDecimalAmount } from '@/lib/number-format'
+import { formatSymbol } from '@/lib/format'
+import { resolveEvmChainIconAlias } from '@/config/icons'
 import type { Network } from '@/types'
+import { excludeDeprecatedConfidentialAssets } from '@/core/services/confidential-funding/confidential-funding-portfolio'
 
 type ConfidentialAsset = NonNullable<PortfolioReadModel['confidential']>['assets'][number]
+
+const mainnetChains = createInitialProductChainRegistry('mainnet')
+const mainnetAssets = createAssetRegistry(
+  mainnetChains,
+  getBundledInitialProductAssetDefinitions('mainnet')
+)
+const protocolChainIds = new Map(
+  getAssetProtocolSourceMappings('mainnet', mainnetAssets).map(mapping => [
+    mapping.protocolAssetId,
+    parseAssetId(mapping.assetId).chainId
+  ])
+)
 
 export interface NearConfidentialHolding {
   readonly asset: ConfidentialAsset
@@ -92,10 +107,11 @@ export function resolveConfidentialDetailAssetId(
   tokenId: string
 ): string | null {
   if (model?.confidential?.status !== 'ready') return null
-  const matches = model.confidential.assets.filter(entry => entry.tokenId === tokenId)
+  const holdings = excludeDeprecatedConfidentialAssets(model).confidential!.assets
+  const matches = holdings.filter(entry => entry.tokenId === tokenId)
   if (matches.length !== 1) return null
   const holding = matches[0]!
-  if (model.confidential.assets.filter(entry => entry.assetId === holding.assetId).length !== 1) {
+  if (holdings.filter(entry => entry.assetId === holding.assetId).length !== 1) {
     return null
   }
   const asset = model.assets.find(item => item.asset.id === holding.assetId)
@@ -108,6 +124,8 @@ export function resolveConfidentialDetailAssetId(
 }
 
 export function getNearConfidentialChainId(asset: ConfidentialAsset): string | null {
+  const mapped = protocolChainIds.get(asset.protocolAssetId)
+  if (mapped) return mapped
   if (asset.chainId) return asset.chainId
   if (!asset.assetId) return null
   try {
@@ -115,6 +133,15 @@ export function getNearConfidentialChainId(asset: ConfidentialAsset): string | n
   } catch {
     return null
   }
+}
+
+export function getNearConfidentialIconChain(asset: ConfidentialAsset): string | undefined {
+  const chainId = getNearConfidentialChainId(asset)
+  if (!chainId) return undefined
+  if (chainId.startsWith('eip155:')) return resolveEvmChainIconAlias(chainId)
+  if (chainId === getZcashChainId('mainnet')) return 'zec'
+  const chain = mainnetChains.list().find(candidate => candidate.id === chainId)
+  return chain?.family === 'bitcoin' ? 'btc' : chain?.family === 'near' ? 'near' : undefined
 }
 
 export function listStandaloneNearConfidentialHoldings(
@@ -194,7 +221,8 @@ function holdingIdentityLabel(
   assets: readonly ConfidentialAsset[]
 ): string | null {
   if (!asset.symbol) return null
-  const siblings = assets.filter(item => item.symbol?.toLowerCase() === asset.symbol?.toLowerCase())
+  const symbol = formatSymbol(asset.symbol).toLowerCase()
+  const siblings = assets.filter(item => formatSymbol(item.symbol).toLowerCase() === symbol)
   if (siblings.length < 2) return null
   const network = asset.blockchain ?? asset.chainId
   if (
@@ -210,7 +238,7 @@ export function summarizeNearConfidentialHoldings(
   model: PortfolioReadModel | null,
   prices: AssetPriceReadModel | null = null
 ): NearConfidentialSummary {
-  const confidential = model?.confidential
+  const confidential = model ? excludeDeprecatedConfidentialAssets(model).confidential : undefined
   if (!confidential || confidential.status !== 'ready') {
     return Object.freeze({ status: 'unavailable', entries: Object.freeze([]), fiat: null })
   }

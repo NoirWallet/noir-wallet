@@ -4,6 +4,8 @@ import {
   parseTransaction,
   serializeTransaction,
   type Hex,
+  type TransactionSerializableLegacy,
+  type TransactionSerializedLegacy,
   type TransactionSerializableEIP1559,
   type TransactionSerializedEIP1559
 } from 'viem'
@@ -16,6 +18,7 @@ export interface SignedEvmTransactionEnvelope {
 
 function toSerializableEip1559(prepared: PreparedEvmTransfer): TransactionSerializableEIP1559 {
   const transaction = prepared.transaction
+  if (transaction.type !== 'eip1559') failIntegrity('transaction-type')
   const chainId = Number(transaction.chainId)
   const nonce = Number(transaction.nonce)
   if (!Number.isSafeInteger(chainId) || chainId <= 0 || !Number.isSafeInteger(nonce) || nonce < 0) {
@@ -35,8 +38,30 @@ function toSerializableEip1559(prepared: PreparedEvmTransfer): TransactionSerial
   })
 }
 
+function toSerializableLegacy(prepared: PreparedEvmTransfer): TransactionSerializableLegacy {
+  const transaction = prepared.transaction
+  if (transaction.type !== 'legacy') failIntegrity('transaction-type')
+  const chainId = Number(transaction.chainId)
+  const nonce = Number(transaction.nonce)
+  if (!Number.isSafeInteger(chainId) || chainId <= 0 || !Number.isSafeInteger(nonce) || nonce < 0) {
+    failIntegrity('chain-id')
+  }
+  return Object.freeze({
+    type: 'legacy' as const,
+    chainId,
+    nonce,
+    gasPrice: BigInt(transaction.gasPrice),
+    gas: BigInt(transaction.gasLimit),
+    to: transaction.to as Hex,
+    value: BigInt(transaction.value),
+    data: transaction.input as Hex
+  })
+}
+
 export function serializePreparedEvmUnsignedTransaction(prepared: PreparedEvmTransfer): string {
-  return serializeTransaction(toSerializableEip1559(prepared))
+  return prepared.transaction.type === 'legacy'
+    ? serializeTransaction(toSerializableLegacy(prepared))
+    : serializeTransaction(toSerializableEip1559(prepared))
 }
 
 export async function createKeystoneSignedEvmTransaction(
@@ -46,11 +71,18 @@ export async function createKeystoneSignedEvmTransaction(
   if (!/^0x[0-9a-f]{130}$/.test(signatureHex)) failIntegrity('signature-envelope')
   const yParity = Number.parseInt(signatureHex.slice(-2), 16)
   if (yParity !== 0 && yParity !== 1) failIntegrity('signature-recovery')
-  const rawTransaction = serializeTransaction(toSerializableEip1559(prepared), {
+  const signature = {
     r: signatureHex.slice(0, 66) as Hex,
     s: `0x${signatureHex.slice(66, 130)}` as Hex,
     yParity
-  })
+  }
+  const rawTransaction =
+    prepared.transaction.type === 'legacy'
+      ? serializeTransaction(toSerializableLegacy(prepared), {
+          ...signature,
+          v: 27n + BigInt(yParity)
+        })
+      : serializeTransaction(toSerializableEip1559(prepared), signature)
   const envelope = Object.freeze({
     rawTransaction,
     transactionHash: keccak256(rawTransaction)
@@ -72,22 +104,32 @@ export async function assertSignedEvmTransactionMatchesPrepared(
   signed: SignedEvmTransactionEnvelope
 ): Promise<void> {
   if (
-    !/^0x02(?:[0-9a-f]{2})+$/.test(signed.rawTransaction) ||
+    !/^0x(?:[0-9a-f]{2})+$/.test(signed.rawTransaction) ||
     signed.rawTransaction.length > 2 + 128 * 1024 * 2 ||
     !/^0x[0-9a-f]{64}$/.test(signed.transactionHash)
   ) {
     failIntegrity('envelope')
   }
 
-  const rawTransaction = signed.rawTransaction as TransactionSerializedEIP1559
-  let decoded: TransactionSerializableEIP1559
+  const rawTransaction = signed.rawTransaction as
+    | TransactionSerializedEIP1559
+    | TransactionSerializedLegacy
+  let decoded: ReturnType<typeof parseTransaction>
   try {
     decoded = parseTransaction(rawTransaction)
   } catch {
     failIntegrity('transaction-decode')
   }
 
-  if (decoded.r === undefined || decoded.s === undefined || decoded.yParity === undefined) {
+  const transaction = prepared.transaction
+  if (decoded.type !== transaction.type) failIntegrity('transaction-type')
+  const yParity =
+    decoded.type === 'legacy'
+      ? decoded.v === undefined
+        ? undefined
+        : Number((BigInt(decoded.v) - 35n - BigInt(transaction.chainId) * 2n) % 2n)
+      : decoded.yParity
+  if (decoded.r === undefined || decoded.s === undefined || (yParity !== 0 && yParity !== 1)) {
     failIntegrity('signature-fields')
   }
 
@@ -102,8 +144,7 @@ export async function assertSignedEvmTransactionMatchesPrepared(
 
   let signer: string
   try {
-    const { r: _r, s: _s, v: _v, yParity, ...unsignedTransaction } = decoded
-    const signingHash = keccak256(serializeTransaction(unsignedTransaction))
+    const signingHash = keccak256(serializePreparedEvmUnsignedTransaction(prepared) as Hex)
     const publicKey = signature
       .addRecoveryBit(yParity)
       .recoverPublicKey(signingHash.slice(2))
@@ -113,16 +154,18 @@ export async function assertSignedEvmTransactionMatchesPrepared(
     failIntegrity('signature-recovery')
   }
 
-  const transaction = prepared.transaction
-  if (decoded.type !== 'eip1559') failIntegrity('transaction-type')
   if (keccak256(rawTransaction) !== signed.transactionHash) failIntegrity('transaction-hash')
   if (!equalAddress(signer, prepared.from)) failIntegrity('signer')
   if (decoded.chainId?.toString() !== transaction.chainId) failIntegrity('chain-id')
   if (decoded.nonce?.toString() !== transaction.nonce) failIntegrity('nonce')
-  if (decoded.maxFeePerGas?.toString() !== transaction.maxFeePerGas) failIntegrity('max-fee')
-  // viem omits an RLP-encoded zero priority fee from the parsed transaction.
-  if ((decoded.maxPriorityFeePerGas ?? 0n).toString() !== transaction.maxPriorityFeePerGas) {
-    failIntegrity('priority-fee')
+  if (transaction.type === 'legacy') {
+    if (decoded.gasPrice?.toString() !== transaction.gasPrice) failIntegrity('gas-price')
+  } else {
+    if (decoded.maxFeePerGas?.toString() !== transaction.maxFeePerGas) failIntegrity('max-fee')
+    // viem omits an RLP-encoded zero priority fee from the parsed transaction.
+    if ((decoded.maxPriorityFeePerGas ?? 0n).toString() !== transaction.maxPriorityFeePerGas) {
+      failIntegrity('priority-fee')
+    }
   }
   if (decoded.gas?.toString() !== transaction.gasLimit) failIntegrity('gas-limit')
   if (!equalAddress(decoded.to, transaction.to)) failIntegrity('recipient')

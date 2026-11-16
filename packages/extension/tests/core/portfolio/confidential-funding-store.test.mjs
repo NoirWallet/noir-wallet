@@ -160,6 +160,35 @@ test('persists external Shield deposit quote bindings across a restart', async (
     }
     await store.putExternalDeposit(record)
     expect(await new ChromeConfidentialFundingStore().getExternalDeposit('one')).toEqual(record)
+    const minimumRecord = {
+      ...record,
+      amountMode: 'minimum',
+      slippageBps: 0,
+      quote: {
+        ...record.quote,
+        quoteRequest: {
+          ...record.quote.quoteRequest,
+          dry: false,
+          swapType: 'FLEX_INPUT',
+          slippageTolerance: 0
+        },
+        quote: { ...record.quote.quote, minAmountIn: '1000' }
+      }
+    }
+    await store.putExternalDeposit(minimumRecord)
+    expect(await new ChromeConfidentialFundingStore().getExternalDeposit('one')).toEqual(
+      minimumRecord
+    )
+    await expect(
+      store.putExternalDeposit({
+        ...minimumRecord,
+        quote: {
+          ...minimumRecord.quote,
+          quote: { ...minimumRecord.quote.quote, minAmountIn: '1001' }
+        }
+      })
+    ).rejects.toThrow('Stored external Shield deposit is invalid')
+    await store.putExternalDeposit(record)
     const partial = { ...record, fundingObservedAt: 2_000, providerStatus: 'EXPIRED' }
     const originalSet = local.set
     let releaseWrite

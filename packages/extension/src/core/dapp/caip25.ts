@@ -5,6 +5,8 @@ import { getDAppSessionScopeLimit } from './first-party-policy'
 export const CAIP25_RUNTIME_METHODS = Object.freeze([
   'wallet_createSession',
   'wallet_getSession',
+  'wallet_getTokenList',
+  'wallet_openTokenManager',
   'wallet_revokeSession',
   'wallet_invokeMethod'
 ] as const)

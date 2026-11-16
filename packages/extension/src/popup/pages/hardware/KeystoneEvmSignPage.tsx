@@ -21,6 +21,8 @@ import { DEFAULT_NETWORK } from '@/lib/runtime-network'
 import { resolveEvmNetworkCatalog } from '@/core/chains/evm-runtime-config'
 import { getActiveChainEndpointSettings } from '@/core/chains/chain-endpoint-settings'
 import { ListSkeleton, Skeleton } from '@/popup/components/ui/skeleton'
+import { formatHardwareSigningError } from '@/lib/hardware-signing-error'
+import { logger } from '@/lib/logger'
 
 type Step = 'loading' | 'show-qr' | 'scan' | 'broadcasting' | 'success' | 'failed' | 'invalid'
 
@@ -40,6 +42,7 @@ export function KeystoneEvmSignPage() {
   const [request, setRequest] = useState<EvmExternalSigningRequest | null>(null)
   const [submission, setSubmission] = useState<EvmTransferSubmission | null>(null)
   const [scanError, setScanError] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
   const [scannerKey, setScannerKey] = useState(0)
   const started = useRef(false)
   const terminal = useRef(false)
@@ -82,8 +85,13 @@ export function KeystoneEvmSignPage() {
         setRequest(value)
         setStep('show-qr')
       })
-      .catch(() => {
-        if (!terminal.current) setStep('invalid')
+      .catch(cause => {
+        if (!terminal.current) {
+          const message = formatHardwareSigningError(cause)
+          logger.error(`[Hardware signing] Keystone EVM request loading failed: ${message}`)
+          setError(message)
+          setStep('invalid')
+        }
       })
   }, [transactionId])
 
@@ -98,8 +106,10 @@ export function KeystoneEvmSignPage() {
       try {
         parseKeystoneEthereumSignature(ur)
         signatureCborBase64 = Buffer.from(ur.cbor).toString('base64')
-      } catch {
-        setScanError('This is not a valid EVM signature from Keystone.')
+      } catch (cause) {
+        const message = formatHardwareSigningError(cause)
+        logger.error(`[Hardware signing] Keystone EVM QR decoding failed: ${message}`)
+        setScanError(message)
         setScannerKey(value => value + 1)
         return
       }
@@ -120,7 +130,10 @@ export function KeystoneEvmSignPage() {
         setSubmission(value)
         terminal.current = true
         setStep('success')
-      } catch {
+      } catch (cause) {
+        const message = formatHardwareSigningError(cause)
+        logger.error(`[Hardware signing] Keystone EVM submission failed: ${message}`)
+        setError(message)
         setStep('failed')
       } finally {
         submitting.current = false
@@ -161,7 +174,10 @@ export function KeystoneEvmSignPage() {
           icon="lucide:alert-triangle"
           iconClass="text-warning"
           title="Request unavailable"
-          description="This EVM signing request expired, was cancelled, or belongs to another Wallet. Start a new send from Noir Wallet."
+          description={
+            error ??
+            'This EVM signing request expired, was cancelled, or belongs to another Wallet. Start a new send from Noir Wallet.'
+          }
           actionText="Close"
           onAction={() => void close()}
         />
@@ -260,7 +276,10 @@ export function KeystoneEvmSignPage() {
           icon="lucide:x-circle"
           iconClass="text-danger"
           title="Signature rejected"
-          description="The signature did not match the approved request or active Keystone Account. Start a new send."
+          description={
+            error ??
+            'The signature did not match the approved request or active Keystone Account. Start a new send.'
+          }
           actionText="Close"
           onAction={() => void close()}
         />

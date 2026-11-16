@@ -168,6 +168,18 @@ The current V2 extension supports the optional `fundingSource` parameter for SDK
 - [Provider API](./packages/docs/content/docs/developers/provider-api.mdx): methods, request and response types, and limitations.
 - [SDK package README](./packages/sdk/README.md): package installation and quick start.
 
+## RPC Registry Service
+
+`packages/rpc-registry/` is a Cloudflare Worker serving `GET /v1/rpc-endpoints`; add `?scope=multichain` for the full registry. `GET /v1/zero-indexer-endpoints` serves independent Mainnet and Testnet broadcast-node lists maintained in [zero-indexer-registry.ts](./packages/rpc-registry/src/zero-indexer-registry.ts). `GET /v1/dapps` serves a versioned DApp directory with `id`, `name`, `category`, `url`, and `iconUrl` for each entry; directory inclusion does not grant wallet connection permission. The extension uses cached or bundled ZeroIndexer nodes when that API is unavailable. Its scheduled monitor checks ordinary RPC availability and sends Slack notifications; ZeroIndexer nodes are excluded from that monitor. The domain, schedule, and Durable Object migration are defined in [wrangler.json](./packages/rpc-registry/wrangler.json).
+
+From the repository root, verify the service without deploying or sending notifications:
+
+```bash
+pnpm --filter @noir-wallet/rpc-registry verify # Type checking, core tests, and build dry run
+pnpm --filter @noir-wallet/rpc-registry dev   # Local API at http://localhost:8787
+```
+
+Set `SLACK_WEBHOOK_URL` as a Worker secret for notifications. Local scheduled runs also probe external RPCs and can send notifications when this secret is configured. Failed deliveries remain pending and are retried on a later scheduled run.
 
 ## Release
 

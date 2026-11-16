@@ -4,6 +4,7 @@ import { ZEC_DECIMALS } from '@/config/wallet'
 import { formatBaseUnitAmount, formatBaseUnitDecimalAmount } from '@/lib/number-format'
 import { resolveTransferSpendableRaw } from './transfer-maximum'
 import { getFundingBalance } from '@/core/wallet/funding-balance'
+import { getShieldableTransparentBalance } from '@/core/zcash/shielding'
 import type { FundingSource, ZcashBalance } from '@/types/wallet'
 
 type AccountBalance = Readonly<{
@@ -85,9 +86,15 @@ export function resolveZcashFundingAvailability(input: {
   readonly selectedFeeZats: number
   readonly standardFeeZats: number
   readonly maximumAmount?: string | null
+  readonly capTransparentToShieldable?: boolean
 }): Readonly<{ amount: string; fallbackAmount: string }> {
+  let availableBalance = getFundingBalance(input.balance, input.fundingSource).available
+  if (input.fundingSource === 'transparent' && input.capTransparentToShieldable) {
+    const shieldable = getShieldableTransparentBalance(input.balance)
+    if (safeBig(availableBalance).gt(shieldable)) availableBalance = shieldable
+  }
   return resolveZcashTransferAvailability({
-    availableBalance: getFundingBalance(input.balance, input.fundingSource).available,
+    availableBalance,
     selectedFeeZats: input.selectedFeeZats,
     standardFeeZats: input.standardFeeZats,
     feeAlreadyReservedZats: 0,

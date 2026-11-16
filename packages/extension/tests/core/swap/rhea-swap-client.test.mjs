@@ -27,6 +27,9 @@ function token() {
 
 test('shows the useful minimum from RHEA quote and swap errors', () => {
   expect(
+    getRheaSwapErrorMessage(new RheaSwapClientError('RHEA Swap returned an invalid response'))
+  ).toBe('Swap provider returned an invalid quote. Try again.')
+  expect(
     getRheaSwapErrorMessage(
       new RheaSwapClientError('Temporary swap limits: minimum swap amount is $1,000')
     )

@@ -111,8 +111,9 @@ jobs:
         env:
           BUILD_CHANNEL: ${{ inputs.mode == 'candidate' && 'production' || 'beta' }}
           BETA_INVITE_REQUIRED: ${{ inputs.mode == 'beta' && '1' || '0' }}
-          GA_API_SECRET: ${{ inputs.mode == 'candidate' && secrets.GA_API_SECRET || '' }}
-          CUSTOM_ANALYTICS_PASSWORD: ${{ inputs.mode == 'candidate' && secrets.CUSTOM_ANALYTICS_PASSWORD || '' }}
+          GA_API_SECRET: ${{ secrets.GA_API_SECRET }}
+          CUSTOM_ANALYTICS_PASSWORD: ${{ secrets.CUSTOM_ANALYTICS_PASSWORD }}
+
           EVM_HISTORY_API_ORIGIN: ${{ vars.EVM_HISTORY_API_ORIGIN }}
           RHEA_SWAP_ACCESS_TOKEN: ${{ secrets.RHEA_SWAP_ACCESS_TOKEN }}
         run: pnpm build:extension

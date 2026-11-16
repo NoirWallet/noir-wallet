@@ -71,6 +71,7 @@ test('trackEvent returns immediately while the collector queues and deduplicates
   let networkRequests = 0
   let countryRequests = 0
   let gaRequests = 0
+  const gaBodies = []
   let hangOutboxWrites = false
   globalThis.__APP_VERSION__ = '2.0.0'
   globalThis.__BUILD_CHANNEL__ = 'production'
@@ -103,10 +104,13 @@ test('trackEvent returns immediately while the collector queues and deduplicates
     configurable: true,
     value: { language: 'en-US', userAgent: 'Chrome/150.0 Macintosh' }
   })
-  globalThis.fetch = async url => {
+  globalThis.fetch = async (url, init) => {
     networkRequests++
     if (url === 'https://rpc.zknoir.com/cdn-cgi/trace') countryRequests++
-    if (String(url).startsWith('https://www.google-analytics.com/mp/collect')) gaRequests++
+    if (String(url).startsWith('https://www.google-analytics.com/mp/collect')) {
+      gaRequests++
+      gaBodies.push(init.body)
+    }
     throw new Error('network must not be called by this test')
   }
 
@@ -138,6 +142,12 @@ test('trackEvent returns immediately while the collector queues and deduplicates
     const options = {
       chain: 'evm',
       idempotencyKey: 'local-transaction-id',
+      collector: {
+        inputAmount: '8.000000000000001',
+        privacyFeeAmount: '0.00042',
+        privacyRoute: 'confidential',
+        address: 'private-address'
+      },
       extra: { kind: 'private-transfer', origin: 'private-address', amount: '123.45' }
     }
     assert.equal(trackEvent(ANALYTICS_EVENTS.SEND_SUBMITTED, options), undefined)
@@ -148,6 +158,14 @@ test('trackEvent returns immediately while the collector queues and deduplicates
     assert.equal(networkRequests, 0)
     assert.equal(storage.analytics_collector_outbox_v1.entries.length, 1)
     assert.equal(storage.analytics_collector_outbox_v1.entries[0].payload.chain, 'evm')
+    assert.equal(
+      storage.analytics_collector_outbox_v1.entries[0].payload.input_amount,
+      '8.000000000000001'
+    )
+    assert.equal(
+      JSON.parse(storage.analytics_collector_outbox_v1.entries[0].payload.extra).privacy_fee_amount,
+      '0.00042'
+    )
     assert.ok(
       !JSON.stringify(storage.analytics_collector_outbox_v1).includes('local-transaction-id')
     )
@@ -166,6 +184,9 @@ test('trackEvent returns immediately while the collector queues and deduplicates
     await t.waitFor(() => assert.equal(gaRequests, 1), { timeout: 5_000 })
     assert.equal(countryRequests, 1)
     assert.equal(gaRequests, 1)
+    assert.ok(!JSON.stringify(gaBodies).includes('8.000000000000001'))
+    assert.ok(!JSON.stringify(gaBodies).includes('0.00042'))
+    assert.ok(!JSON.stringify(gaBodies).includes('privacy_fee_amount'))
   } finally {
     globalThis.chrome = previousChrome
     globalThis.fetch = previousFetch

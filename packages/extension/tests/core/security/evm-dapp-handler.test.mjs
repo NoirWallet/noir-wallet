@@ -238,7 +238,12 @@ function harness(overrides = {}) {
         privateTransferCalls.push(input)
         await input.ensureIdentity()
         return {
-          approvalData: { exactOutput: true, minimumOutputRaw: input.intent.amountRaw },
+          approvalData: {
+            exactOutput: true,
+            amountRaw: '2',
+            minimumOutputRaw: input.intent.amountRaw,
+            asset: { symbol: 'ETH', decimals: 18 }
+          },
           async execute() {
             await input.ensureIdentity()
             privateTransferExecutions.push(input)
@@ -935,7 +940,26 @@ test.describe('Background EVM dApp handler', () => {
       resolveExecutionIdentity: async () => ({
         mode: 'private',
         address: privateExecutionAddress
-      })
+      }),
+      transferController: {
+        async approveForDApp(transactionId, _fingerprint, authorize) {
+          await authorize(account)
+          return {
+            status: 'broadcast',
+            graph: {
+              root: { id: transactionId, status: 'broadcast' },
+              segments: [
+                {
+                  role: 'origin',
+                  target: { kind: 'onchain' },
+                  status: 'broadcast',
+                  evidence: { transactionHash: `0x${'55'.repeat(32)}` }
+                }
+              ]
+            }
+          }
+        }
+      }
     })
     await state.handler.request({ method: 'eth_requestAccounts' }, 'https://dapp.example', {})
 
@@ -975,6 +999,22 @@ test.describe('Background EVM dApp handler', () => {
       addressIndex: 0
     })
     expect(state.privateTransferCalls).toHaveLength(0)
+    expect(
+      state.analyticsEvents.find(event => event.name === 'dapp_transaction_sent')?.options
+    ).toMatchObject({
+      inputSymbol: 'ETH',
+      collector: {
+        sourceDomain: 'private',
+        privacyRoute: 'direct',
+        activityType: 'transfer',
+        transferType: 'external',
+        inputAmount: '0.000000000000000001'
+      }
+    })
+    expect(
+      state.analyticsEvents.find(event => event.name === 'dapp_transaction_sent')?.options.collector
+        .outputAmount
+    ).toBeUndefined()
     expect(state.approvalCalls[1].data).toMatchObject({
       executionMode: 'private',
       sendPrivately: false,
@@ -1031,7 +1071,79 @@ test.describe('Background EVM dApp handler', () => {
 
     expect(state.privateTransferCalls).toHaveLength(1)
     expect(state.privateTransferExecutions).toHaveLength(1)
+    expect(
+      state.analyticsEvents.find(event => event.name === 'dapp_transaction_sent')?.options
+    ).toMatchObject({
+      collector: {
+        sourceDomain: 'private',
+        privacyRoute: 'confidential',
+        provider: 'near_confidential',
+        settlement: 'confirmed',
+        inputAmount: '0.000000000000000002',
+        outputAmount: '0.000000000000000001'
+      }
+    })
     expect(state.approvalCalls.map(call => call.action)).toEqual(['evmConnect', 'evmTransaction'])
+  })
+
+  test('classifies decoded calls without inventing DeFi or unknown-token amounts', async () => {
+    const recipient = '0x2222222222222222222222222222222222222222'
+    const approvalCalldata = `0x095ea7b3${'0'.repeat(24)}${'3'.repeat(40)}${'0'.repeat(63)}1`
+    const transferCalldata = `0xa9059cbb${'0'.repeat(24)}${'3'.repeat(40)}${'0'.repeat(63)}1`
+    for (const [calldata, activityType] of [
+      [approvalCalldata, 'approval'],
+      ['0x12345678', 'contract'],
+      [transferCalldata, 'transfer']
+    ]) {
+      const state = harness({
+        transferController: {
+          async approveForDApp(transactionId, _fingerprint, authorize) {
+            await authorize(account)
+            return {
+              status: 'broadcast',
+              graph: {
+                root: { id: transactionId, status: 'broadcast' },
+                segments: [
+                  {
+                    role: 'origin',
+                    target: { kind: 'onchain' },
+                    status: 'broadcast',
+                    evidence: { transactionHash: `0x${'55'.repeat(32)}` }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      })
+      await state.handler.request({ method: 'eth_requestAccounts' }, 'https://dapp.example', {})
+      await state.handler.request(
+        {
+          method: 'eth_sendTransaction',
+          params: [
+            {
+              from: account.chainAccount.identity.value,
+              to: recipient,
+              value: '0x0',
+              data: calldata
+            }
+          ]
+        },
+        'https://dapp.example',
+        {}
+      )
+      const sent = state.analyticsEvents.find(event => event.name === 'dapp_transaction_sent')
+      expect(sent?.options.collector).toMatchObject({
+        sourceDomain: 'public',
+        privacyRoute: 'direct',
+        activityType,
+        settlement: 'broadcast'
+      })
+      expect(sent?.options.collector.inputAmount).toBeUndefined()
+      expect(sent?.options.collector.usdAmount).toBeUndefined()
+      expect(JSON.stringify(sent)).not.toContain(calldata)
+      expect(JSON.stringify(sent)).not.toContain(recipient)
+    }
   })
 
   for (const scenario of [
@@ -1152,6 +1264,7 @@ test.describe('Background EVM dApp handler', () => {
     ).resolves.toBe(`0x${'66'.repeat(32)}`)
     expect(state.preparedTransfers).toHaveLength(0)
     expect(state.approvalCalls.map(call => call.action)).toEqual(['evmConnect'])
+    expect(state.analyticsEvents.some(event => event.name === 'dapp_transaction_sent')).toBe(false)
   })
 
   test('does not return a recovered Private payment after its account changes', async () => {

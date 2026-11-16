@@ -11,6 +11,14 @@ import type { ShieldProvider } from './asset-domains'
 
 export type ShieldAction = 'send' | 'receive' | 'move' | 'swap'
 
+export function withShieldAsset(path: string, assetId: string | null): string {
+  if (!assetId) return path
+  const [pathname, search] = path.split('?')
+  const params = new URLSearchParams(search)
+  params.set('assetId', assetId)
+  return `${pathname}?${params.toString()}`
+}
+
 export function selectShieldActions(input: {
   readonly model: PortfolioReadModel | null
   readonly prices: AssetPriceReadModel | null
@@ -36,10 +44,7 @@ export function selectShieldActions(input: {
     near.entries.some(
       entry => entry.asset.assetId === zcashAssetId && safeBig(entry.asset.availableRaw).gt(0)
     )
-  const hasZcash =
-    account?.networks.some(item => item.chain.family === 'zcash') ??
-    model?.chains.some(chain => chain.chain.family === 'zcash') ??
-    false
+  const hasZcash = account?.networks.some(item => item.chain.family === 'zcash') ?? false
   const zcashMoveSources = hasZcash
     ? getAvailableZcashSelfMoveSources({
         addresses: zcashAddresses,

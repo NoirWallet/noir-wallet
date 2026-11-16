@@ -2,6 +2,7 @@ import { findBuiltinEvmNetworkConfig } from '@/config/networks'
 import { resolveEvmChainIconAlias } from '@/config/icons'
 import { getBitcoinChainId, getZcashChainId, parseChainId } from '@/core/chains/registry'
 import { DEFAULT_NETWORK } from '@/lib/runtime-network'
+import { resolveChainIconAlias } from '@/lib/chain-icon'
 import { parseSupportedBitcoinAddress } from '@/core/chains/bitcoin'
 import { parseZcashAddress } from '@/core/address-book/address-book'
 import type { AccountNetworksCatalogView } from '@/popup/services/account-networks-client'
@@ -19,6 +20,12 @@ export const ALL_EVM_NETWORKS_CHOICE: AddressBookNetworkChoice = {
   chainId: ALL_EVM_NETWORKS_CHAIN_ID,
   name: ALL_EVM_NETWORKS_NAME,
   family: 'evm'
+}
+
+export function getAddressBookContactIconChain(contact: AddressBookContact): string {
+  return contact.chainId === ALL_EVM_NETWORKS_CHAIN_ID
+    ? 'evm'
+    : resolveChainIconAlias(contact.chainFamily, contact.networkName, contact.chainId)
 }
 
 export function getAddressBookNetworkChoice(chainId: string): AddressBookNetworkChoice | null {

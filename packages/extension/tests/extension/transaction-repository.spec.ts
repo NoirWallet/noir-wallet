@@ -1,5 +1,5 @@
 import type { BrowserContext, Page, Worker } from '@playwright/test'
-import { expect, test } from '../helpers/extension-fixtures'
+import { expect, test, waitForBackgroundWalletInitialization } from '../helpers/extension-fixtures'
 
 async function getExtensionWorker(context: BrowserContext): Promise<Worker> {
   return context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker'))
@@ -107,6 +107,7 @@ test('refreshes the active EVM Portfolio through the real MV3 service worker', a
   popup,
   extensionId
 }) => {
+  await waitForBackgroundWalletInitialization(popup)
   const rpcMethods: string[] = []
   await context.route('https://eth.deltarpc.com/**', async route => {
     const request = route.request().postDataJSON() as { id: number; method: string }
@@ -191,9 +192,22 @@ test('refreshes the active EVM Portfolio through the real MV3 service worker', a
 })
 
 test('reads unified Activity through the real MV3 service worker', async ({
+  context,
   popup,
   extensionId
 }) => {
+  await waitForBackgroundWalletInitialization(popup)
+  await context.route('https://history-proxy.zknoir.com/**', async route => {
+    const request = route.request().postDataJSON() as { id: number }
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: request.id,
+        result: { transactions: [], transfers: [] }
+      })
+    })
+  })
   await popup.goto(
     `chrome-extension://${extensionId}/tests/extension/transaction-repository-integration.html`
   )
@@ -254,6 +268,7 @@ test('runs the persisted EVM receipt monitor inside the real MV3 service worker'
   popup,
   extensionId
 }) => {
+  await waitForBackgroundWalletInitialization(popup)
   const transactionHash = `0x${'a'.repeat(64)}`
   const blockHash = `0x${'b'.repeat(64)}`
   await context.route('https://eth.deltarpc.com/**', async route => {

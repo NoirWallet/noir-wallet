@@ -450,7 +450,7 @@ export function parseRheaSwapQuoteView(value: unknown): RheaSwapQuoteView {
       'receivedAt',
       'expiresAt'
     ],
-    [],
+    ['alternatives'],
     'RHEA Swap quote result'
   )
   if (
@@ -464,12 +464,35 @@ export function parseRheaSwapQuoteView(value: unknown): RheaSwapQuoteView {
   ) {
     throw new Error('RHEA Swap quote timestamps are invalid')
   }
+  if (
+    value.alternatives !== undefined &&
+    (!Array.isArray(value.alternatives) || value.alternatives.length > 12)
+  ) {
+    throw new Error('RHEA Swap alternatives are invalid')
+  }
+  const alternatives = (value.alternatives as unknown[] | undefined)?.map((item, index) => {
+    if (!isRecord(item)) throw new Error('RHEA Swap alternative is invalid')
+    assertKeys(
+      item,
+      ['index', 'router', 'estimatedOut', 'minAmountOut'],
+      [],
+      'RHEA Swap alternative'
+    )
+    if (item.index !== index + 1) throw new Error('RHEA Swap alternative index is invalid')
+    return Object.freeze({
+      index: item.index,
+      router: readString(item.router, 'RHEA Swap alternative router', 128),
+      estimatedOut: readRawAmount(item.estimatedOut, 'RHEA Swap alternative output'),
+      minAmountOut: readRawAmount(item.minAmountOut, 'RHEA Swap alternative minimum output')
+    })
+  })
   return Object.freeze({
     quoteHandle: readString(value.quoteHandle, 'RHEA Swap quote handle', 160),
     recipient: readString(value.recipient, 'RHEA Swap recipient'),
     estimatedOut: readRawAmount(value.estimatedOut, 'RHEA Swap estimated output'),
     minAmountOut: readRawAmount(value.minAmountOut, 'RHEA Swap minimum output'),
     router: readString(value.router, 'RHEA Swap router', 128),
+    ...(alternatives === undefined ? {} : { alternatives: Object.freeze(alternatives) }),
     receivedAt: value.receivedAt,
     expiresAt: value.expiresAt
   })
@@ -534,7 +557,7 @@ export function parseRheaSwapReviewView(value: unknown): RheaSwapReviewView {
       'amountIn',
       'execution'
     ],
-    [],
+    ['alternatives'],
     'RHEA Swap review'
   )
   const quote = parseRheaSwapQuoteView({
@@ -544,7 +567,8 @@ export function parseRheaSwapReviewView(value: unknown): RheaSwapReviewView {
     minAmountOut: value.minAmountOut,
     router: value.router,
     receivedAt: value.receivedAt,
-    expiresAt: value.expiresAt
+    expiresAt: value.expiresAt,
+    ...(value.alternatives === undefined ? {} : { alternatives: value.alternatives })
   })
   if (typeof value.isCrossChain !== 'boolean') throw new Error('RHEA Swap route kind is invalid')
   const fromChain = readChainRef(value.fromChain, 'RHEA Swap source chain')

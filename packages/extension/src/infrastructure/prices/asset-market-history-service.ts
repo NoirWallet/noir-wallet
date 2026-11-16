@@ -14,27 +14,28 @@ import {
   type MarketAssetId
 } from '@/core/prices'
 import { DedupPromise } from '@/lib/async-utils'
+import {
+  CoinGeckoPlatformResolver,
+  COIN_GECKO_ASSET_PLATFORMS_URL
+} from '@/core/prices/coingecko-platform-catalog'
+
+export { COIN_GECKO_ASSET_PLATFORMS_URL }
 
 export const COINMARKETCAP_KEYLESS_KLINE_URL =
   'https://pro-api.coinmarketcap.com/public-api/v1/k-line/points'
 export const GECKO_TERMINAL_POOL_OHLCV_URL = 'https://api.geckoterminal.com/api/v2/networks'
 export const COIN_GECKO_MARKET_CHART_URL = 'https://api.coingecko.com/api/v3/coins'
-export const COIN_GECKO_ASSET_PLATFORMS_URL = 'https://api.coingecko.com/api/v3/asset_platforms'
 export const MARKET_HISTORY_FRESH_MS = 15 * 60 * 1000
 export const MARKET_HISTORY_EXPIRES_MS = 6 * 60 * 60 * 1000
 const CACHE_VERSION = 2
 const DEFAULT_MAXIMUM_RESPONSE_BYTES = 256 * 1024
 const MAXIMUM_RESPONSE_BYTES = 1024 * 1024
 const MAXIMUM_PLATFORM_RESPONSE_BYTES = 1024 * 1024
-const MAXIMUM_ASSET_PLATFORMS = 2_048
-const PLATFORM_CATALOG_FRESH_MS = 24 * 60 * 60 * 1000
-const MISSING_PLATFORM_RECHECK_MS = 5 * 60 * 1000
 const MAX_CLOCK_SKEW_MS = 5 * 60 * 1000
 const MAXIMUM_RAW_HISTORY_POINTS = 20_000
 const MAXIMUM_HISTORY_POINTS = 100
 const MAXIMUM_CACHE_ENTRIES = 100
 const REMOTE_ID_PATTERN = /^[-._:a-zA-Z0-9]{1,256}$/
-const ASSET_PLATFORM_ID_PATTERN = /^[-._:a-zA-Z0-9 ]{1,256}$/
 const EVM_CONTRACT_PATTERN = /^0x[0-9a-fA-F]{40}$/
 const EVM_CHAIN_ID_PATTERN = /^eip155:([1-9][0-9]*)$/
 const DECIMAL_PATTERN = /^(?:0|[1-9][0-9]{0,63})(?:\.[0-9]{1,18})?$/
@@ -48,11 +49,6 @@ export class UnsupportedAssetMarketHistoryError extends Error {
     super('Market history is unavailable for this asset')
     this.name = 'UnsupportedAssetMarketHistoryError'
   }
-}
-
-interface AssetPlatformCatalog {
-  readonly fetchedAt: number
-  readonly platformByChainId: ReadonlyMap<string, string | null>
 }
 
 const RANGE_QUERY: Readonly<
@@ -277,36 +273,6 @@ function parseCoinGeckoMarketChartResponse(value: unknown): readonly AssetMarket
   return limitHistoryPoints(points)
 }
 
-function parseAssetPlatformCatalog(value: unknown, fetchedAt: number): AssetPlatformCatalog {
-  if (!Array.isArray(value) || value.length === 0 || value.length > MAXIMUM_ASSET_PLATFORMS) {
-    throw new Error('Invalid CoinGecko asset platform catalog')
-  }
-  const platformByChainId = new Map<string, string | null>()
-  for (const platform of value) {
-    if (
-      !isRecord(platform) ||
-      (platform.chain_identifier !== null &&
-        (typeof platform.chain_identifier !== 'number' ||
-          !Number.isSafeInteger(platform.chain_identifier) ||
-          platform.chain_identifier <= 0))
-    ) {
-      throw new Error('Invalid CoinGecko asset platform catalog')
-    }
-    if (platform.chain_identifier === null) continue
-    if (
-      typeof platform.id !== 'string' ||
-      !ASSET_PLATFORM_ID_PATTERN.test(platform.id) ||
-      platform.id.trim() !== platform.id ||
-      platform.id.length === 0
-    ) {
-      throw new Error('Invalid CoinGecko asset platform catalog')
-    }
-    const chainId = String(platform.chain_identifier)
-    platformByChainId.set(chainId, platformByChainId.has(chainId) ? null : platform.id)
-  }
-  return Object.freeze({ fetchedAt, platformByChainId })
-}
-
 async function readBoundedResponse(response: Response, maximumBytes: number): Promise<string> {
   return readBoundedResponseText(
     response,
@@ -369,8 +335,7 @@ export class AssetMarketHistoryService {
     string,
     DedupPromise<AssetMarketHistoryReadModel | null>
   >()
-  private platformCatalog: AssetPlatformCatalog | null = null
-  private platformCatalogRequest: Promise<AssetPlatformCatalog> | null = null
+  private readonly platformResolver: CoinGeckoPlatformResolver
   private cacheWriteQueue: Promise<void> = Promise.resolve()
 
   constructor(options: AssetMarketHistoryServiceOptions) {
@@ -440,6 +405,11 @@ export class AssetMarketHistoryService {
       timeoutMs,
       maximumResponseBytes
     }
+    this.platformResolver = new CoinGeckoPlatformResolver(
+      () =>
+        this.fetchJson(new URL(COIN_GECKO_ASSET_PLATFORMS_URL), MAXIMUM_PLATFORM_RESPONSE_BYTES),
+      () => this.readNow()
+    )
     this.mappingByAssetId = new Map(mappings.map(mapping => [mapping.assetId, mapping]))
   }
 
@@ -682,47 +652,9 @@ export class AssetMarketHistoryService {
   }
 
   private async resolveCoinGeckoPlatform(chainId: string): Promise<string> {
-    const match = EVM_CHAIN_ID_PATTERN.exec(chainId)
-    if (!match || !Number.isSafeInteger(Number(match[1]))) {
-      throw new Error('Invalid CoinGecko contract chain')
-    }
-    const numericChainId = String(Number(match[1]))
-    const now = this.readNow()
-    const catalog = this.platformCatalog
-    const cachedPlatform = catalog?.platformByChainId.get(numericChainId)
-    const age = catalog ? now - catalog.fetchedAt : Infinity
-    const fresh = age >= 0 && age <= PLATFORM_CATALOG_FRESH_MS
-    const missingRecentlyChecked = age >= 0 && age <= MISSING_PLATFORM_RECHECK_MS
-    const current =
-      catalog && fresh && (cachedPlatform !== undefined || missingRecentlyChecked)
-        ? catalog
-        : await this.loadCoinGeckoPlatforms()
-    const platform = current.platformByChainId.get(numericChainId)
-    if (platform === null) throw new Error('Ambiguous CoinGecko asset platform')
-    if (platform === undefined) throw new UnsupportedAssetMarketHistoryError()
+    const platform = await this.platformResolver.resolve(chainId)
+    if (platform === null) throw new UnsupportedAssetMarketHistoryError()
     return platform
-  }
-
-  private loadCoinGeckoPlatforms(): Promise<AssetPlatformCatalog> {
-    if (this.platformCatalogRequest) return this.platformCatalogRequest
-    const request = (async () => {
-      const catalog = parseAssetPlatformCatalog(
-        await this.fetchJson(
-          new URL(COIN_GECKO_ASSET_PLATFORMS_URL),
-          MAXIMUM_PLATFORM_RESPONSE_BYTES
-        ),
-        this.readNow()
-      )
-      this.platformCatalog = catalog
-      return catalog
-    })()
-    this.platformCatalogRequest = request
-    void request
-      .finally(() => {
-        if (this.platformCatalogRequest === request) this.platformCatalogRequest = null
-      })
-      .catch(() => {})
-    return request
   }
 
   private async fetchJson(

@@ -19,6 +19,7 @@ import {
 import { accountNetworksClient } from '@/popup/services/account-networks-client'
 import { AddAddressDialog } from '@/popup/components/address-book/AddAddressDialog'
 import {
+  getAddressBookContactIconChain,
   getAddressBookNetworkChoices,
   type AddressBookNetworkChoice
 } from '@/popup/components/address-book/address-book-network'
@@ -31,6 +32,7 @@ import {
 } from '@/popup/components/ui/dialog'
 import { initializeAddressBook, useAddressBookStore } from '@/store/address-book-store'
 import type { AddressBookContact } from '@/core/address-book/address-book'
+import { ChainIcon } from '@/popup/components/common/ChainIcon'
 
 export function AddressBook() {
   const contacts = useAddressBookStore(state => state.contacts)
@@ -144,9 +146,13 @@ export function AddressBook() {
                     <p className="min-w-0 flex-1 truncate text-sm font-normal leading-[18px]">
                       {contact.name}
                     </p>
-                    <span className="max-w-[120px] shrink-0 truncate text-xs text-muted">
-                      {contact.networkName}
-                    </span>
+                    <ChainIcon
+                      chain={getAddressBookContactIconChain(contact)}
+                      width={20}
+                      height={20}
+                      alt={`${contact.networkName} network`}
+                      className="size-5 shrink-0"
+                    />
                   </div>
                   <p
                     className="mt-[9px] truncate text-sm leading-[18px] text-muted"

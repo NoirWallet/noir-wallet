@@ -12,6 +12,7 @@ import {
   selectWalletOwnedQuoteAssetExecution
 } from '../../../src/popup/services/quote-deposit-transfer-client.ts'
 import { parseAssetId } from '../../../src/core/chains/registry/asset-id.ts'
+import { mergeTokenCatalogs } from '../../../src/popup/services/swap-catalog-loading.ts'
 import {
   isPreparedSwapFeeUnaffordable,
   isPrivateSwapDestinationSupported,
@@ -1053,6 +1054,49 @@ test.describe('quote deposit transfer client', () => {
       )
     ).toEqual(eth)
     expect(resolveWalletSwapSourceToken(EVM_ASSET_ID, [eth], null, null, mappings)).toEqual(eth)
+
+    const contract = '0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d'
+    const walletAssetId = `${BSC_CHAIN_ID}/erc20:${contract}`
+    const bsc = portfolio()
+    bsc.chains.push({
+      chain: {
+        id: BSC_CHAIN_ID,
+        family: 'evm',
+        capabilities: { transaction: { status: 'available' } }
+      }
+    })
+    bsc.assets.push(
+      {
+        asset: { id: `${BSC_CHAIN_ID}/slip44:714`, chainId: BSC_CHAIN_ID, kind: 'native' },
+        metadata: { symbol: 'BNB', decimals: 18 }
+      },
+      {
+        asset: {
+          id: walletAssetId,
+          chainId: BSC_CHAIN_ID,
+          namespace: 'erc20',
+          reference: contract,
+          kind: 'token'
+        },
+        metadata: { symbol: 'USDC', decimals: 18 }
+      }
+    )
+    const deprecated = {
+      ...token('nep245:v2_1.omni.hot.tg:56_2w93GqMcEmQFDru84j3HZZWt557r', 'bsc', 18),
+      contractAddress: contract,
+      symbol: 'USDC(DEPRECATED)',
+      rheaChainId: '56',
+      rheaAddress: contract
+    }
+    const current = {
+      ...deprecated,
+      assetId: `nep141:bnb-${contract}.omdep.near`,
+      symbol: 'USDC'
+    }
+    const available = mergeTokenCatalogs([current, deprecated])
+    expect(resolveWalletSwapSourceToken(walletAssetId, available, bsc, receiveTargets)).toEqual(
+      current
+    )
   })
 
   test('binds an exact user-added EVM Token as a wallet destination', () => {

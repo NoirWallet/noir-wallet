@@ -19,6 +19,7 @@ import type { Network, SyncReason, ZcashBalance } from '@/types'
 import { isAccountNetworkEnabled } from '@/core/wallet/account-network-selection'
 
 export type SyncStateSnapshot = {
+  network?: Network
   isSyncing: boolean
   syncProgress: number
   currentHeight?: number
@@ -27,6 +28,7 @@ export type SyncStateSnapshot = {
   accountId?: string
   etaMs?: number | null
   syncReason?: SyncReason | null
+  transactionHistoryRefreshFailed?: boolean
   balance?: ZcashBalance | null
 }
 
@@ -104,6 +106,7 @@ export class SyncScheduler {
         latestHeight: 0,
         etaMs: null,
         syncReason: null,
+        network: backgroundZcashWalletRuntime.getNetwork(),
         walletId: targetWalletId,
         accountId: targetAccountId
       }
@@ -112,6 +115,7 @@ export class SyncScheduler {
     const cached = this.syncStates.get(key) || { isSyncing: false, syncProgress: 0 }
     return {
       isSyncing: cached.isSyncing ?? false,
+      network: backgroundZcashWalletRuntime.getNetwork(),
       syncProgress: cached.syncProgress ?? 0,
       currentHeight: cached.currentHeight ?? 0,
       latestHeight: cached.latestHeight ?? 0,
@@ -122,6 +126,13 @@ export class SyncScheduler {
             .getWalletSyncState(backgroundZcashWalletRuntime.getNetwork(), targetWalletId)
             .syncReason
         : null,
+      transactionHistoryRefreshFailed:
+        targetWalletId && targetAccountId
+          ? backgroundZcashWalletRuntime.hasTransactionHistoryRefreshFailure(
+              targetWalletId,
+              targetAccountId
+            )
+          : false,
       walletId: targetWalletId ?? undefined,
       accountId: targetAccountId ?? undefined,
       ...(targetWalletId && targetAccountId
@@ -139,6 +150,7 @@ export class SyncScheduler {
   }
 
   applySyncProgressMessage(message: Partial<SyncStateSnapshot> & { walletId?: string }): void {
+    if (message.network !== backgroundZcashWalletRuntime.getNetwork()) return
     const key = getWalletSyncKey(message.walletId)
     const current = this.syncStates.get(key) || { isSyncing: false, syncProgress: 0 }
     this.syncStates.set(key, {
@@ -169,7 +181,7 @@ export class SyncScheduler {
       this.cancelledPreflightWalletIds.add(walletId)
       backgroundZcashWalletRuntime.finishSyncPreflight(walletId)
       signalSyncAbort(walletId).catch(() => {})
-      logger.log(`Sync abort requested for ${key}`, walletId)
+      logger.log('Sync abort requested', walletId)
     } else {
       for (const k of this.activeSyncPromises.keys()) {
         this.syncAbortFlags.set(k, true)
@@ -510,6 +522,7 @@ export class SyncScheduler {
     chrome.runtime
       .sendMessage({
         type: 'SYNC_PROGRESS',
+        network,
         walletId,
         isSyncing: false,
         syncProgress: 0,
@@ -568,8 +581,9 @@ export class SyncScheduler {
             : null
           if (
             !currentWalletId ||
-            isZcashHardwareKeySource(wallet?.keySource) ||
-            !(await credentialSession.bindZcashCredential(currentWalletId)) ||
+            !wallet ||
+            (!isZcashHardwareKeySource(wallet.keySource) &&
+              !(await credentialSession.bindZcashCredential(currentWalletId))) ||
             !(await backgroundZcashWalletRuntime.restoreFromCredentialSession(
               currentWalletId,
               currentAccountId || undefined
@@ -626,7 +640,7 @@ export class SyncScheduler {
                 : wallet.accounts[0].id
 
             this.abortNonCurrentSyncs(syncTarget)
-            logger.log(`Sync foreground: ${logger.getWalletLabel(syncTarget)}`)
+            logger.log('Sync foreground', syncTarget, accountId)
             const status = await this.runSyncForWallet(syncTarget, accountId, passiveRun)
             if (passiveRun) this.onPassiveSyncOutcome?.(status)
           }

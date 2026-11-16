@@ -35,7 +35,11 @@ export interface CreateEvmTransferGraphInput {
 }
 
 function maximumNetworkFeeRaw(prepared: PreparedEvmTransfer): string {
-  const { gasLimit, maxFeePerGas } = prepared.transaction
+  const { gasLimit } = prepared.transaction
+  const maxFeePerGas =
+    prepared.transaction.type === 'legacy'
+      ? prepared.transaction.gasPrice
+      : prepared.transaction.maxFeePerGas
   if (!/^[1-9][0-9]{0,19}$/.test(gasLimit) || !/^(0|[1-9][0-9]{0,19})$/.test(maxFeePerGas)) {
     throw new Error('Invalid prepared EVM fee limit')
   }
@@ -139,8 +143,14 @@ export function createEvmTransferGraph(input: CreateEvmTransferGraphInput): Tran
         evm: {
           schemaVersion: 1,
           nonce: input.prepared.transaction.nonce,
-          maxFeePerGasWei: input.prepared.transaction.maxFeePerGas,
-          maxPriorityFeePerGasWei: input.prepared.transaction.maxPriorityFeePerGas,
+          maxFeePerGasWei:
+            input.prepared.transaction.type === 'legacy'
+              ? input.prepared.transaction.gasPrice
+              : input.prepared.transaction.maxFeePerGas,
+          maxPriorityFeePerGasWei:
+            input.prepared.transaction.type === 'legacy'
+              ? '0'
+              : input.prepared.transaction.maxPriorityFeePerGas,
           gasLimit: input.prepared.transaction.gasLimit,
           ...(input.prepared.transaction.input.length >= 10
             ? { methodSelector: input.prepared.transaction.input.slice(0, 10).toLowerCase() }

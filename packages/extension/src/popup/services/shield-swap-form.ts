@@ -1,6 +1,7 @@
 import type { Network } from '@/types'
 import type { ConfidentialFundingReview } from '@/core/services/confidential-funding'
 import Big from '@/lib/big'
+import { formatSortAddress } from '@/lib/format'
 import {
   formatBaseUnitDecimalAmount,
   formatTokenQuantity,
@@ -8,6 +9,59 @@ import {
 } from '@/lib/number-format'
 import type { PrepareConfidentialFundingRequest } from './confidential-funding-client'
 import { shieldFundingAvailableRaw, type ShieldFundingAsset } from './shield-transfer'
+
+export function shieldOriginIdentifiers(
+  options: readonly ShieldFundingAsset[]
+): ReadonlyMap<string, string | null> {
+  const groups = new Map<string, ShieldFundingAsset[]>()
+  for (const asset of options) {
+    const key = `${asset.chain.chain.id}\0${asset.asset.metadata.symbol}`
+    const group = groups.get(key) ?? []
+    group.push(asset)
+    groups.set(key, group)
+  }
+  const result = new Map<string, string | null>()
+  for (const group of groups.values()) {
+    const references = new Map<string, number>()
+    for (const asset of group) {
+      const reference = asset.asset.asset.reference
+      references.set(reference, (references.get(reference) ?? 0) + 1)
+    }
+    const identities = group.map(asset =>
+      (references.get(asset.asset.asset.reference) ?? 0) > 1
+        ? asset.managed.protocolAssetId
+        : asset.asset.asset.reference
+    )
+    const unresolved = new Set(group.map((_, index) => index))
+    if (group.length === 1 && group[0].asset.asset.kind === 'native') {
+      result.set(group[0].asset.asset.id, null)
+      continue
+    }
+    const assignUnique = (labels: readonly string[]) => {
+      const counts = new Map<string, number>()
+      for (const label of labels) counts.set(label, (counts.get(label) ?? 0) + 1)
+      for (const index of unresolved) {
+        if (counts.get(labels[index]) === 1) {
+          result.set(group[index].asset.asset.id, labels[index])
+          unresolved.delete(index)
+        }
+      }
+    }
+    assignUnique(identities.map(identity => formatSortAddress(identity)))
+    const longest = identities.reduce((max, identity) => Math.max(max, identity.length), 0)
+    for (let visible = 7; unresolved.size > 0 && visible <= longest; visible += 1) {
+      assignUnique(
+        identities.map(identity =>
+          identity.length > visible * 2
+            ? `${identity.slice(0, visible)}...${identity.slice(-visible)}`
+            : identity
+        )
+      )
+    }
+    for (const index of unresolved) result.set(group[index].asset.asset.id, identities[index])
+  }
+  return result
+}
 
 export function shieldSwapFormBalance(
   asset: ShieldFundingAsset | null,
@@ -57,13 +111,20 @@ export function buildShieldSwapRequest(
     from: ShieldFundingAsset
     to: ShieldFundingAsset
     amount: string
-    balances: readonly Readonly<{ tokenId: string; available: string }>[]
+    balances: readonly Readonly<{ tokenId: string; available: string }>[] | null
     slippageBps: number
-  }>
+  }>,
+  preview = false
 ): PrepareConfidentialFundingRequest {
+  const amountError = shieldSwapFormAmountError(input.amount, input.from, input.balances)
   if (
     input.from.managed.protocolAssetId === input.to.managed.protocolAssetId ||
-    shieldSwapFormAmountError(input.amount, input.from, input.balances) ||
+    (amountError &&
+      !(
+        preview &&
+        (amountError === 'Insufficient Shield balance' ||
+          amountError === 'Refresh your Shield balance')
+      )) ||
     !Number.isSafeInteger(input.slippageBps) ||
     input.slippageBps < 0 ||
     input.slippageBps > 10_000
@@ -94,6 +155,12 @@ export function buildShieldSwapRequest(
     destination,
     slippageBps: input.slippageBps
   })
+}
+
+export function buildShieldSwapPreviewRequest(
+  input: Parameters<typeof buildShieldSwapRequest>[0]
+): PrepareConfidentialFundingRequest {
+  return buildShieldSwapRequest(input, true)
 }
 
 export function matchesShieldSwapReview(

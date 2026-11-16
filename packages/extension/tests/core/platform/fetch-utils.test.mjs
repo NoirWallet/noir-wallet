@@ -108,17 +108,21 @@ describe('bounded fetch response consumption', () => {
       }
     )
   })
-  test('preserves a bounded JSON error detail', async () => {
+  test('preserves a bounded JSON error detail and Retry-After', async () => {
     await withFetch(
       async () =>
         new Response(JSON.stringify({ message: 'Try a smaller amount' }), {
-          status: 400,
-          headers: { 'content-type': 'application/json' }
+          status: 429,
+          headers: { 'content-type': 'application/json', 'retry-after': '120' }
         }),
       async () => {
         await assert.rejects(
           fetchJsonWithTimeout('https://example.test/data'),
-          error => error instanceof FetchHttpError && error.detail === 'Try a smaller amount'
+          error =>
+            error instanceof FetchHttpError &&
+            error.status === 429 &&
+            error.detail === 'Try a smaller amount' &&
+            error.retryAfter === '120'
         )
       }
     )

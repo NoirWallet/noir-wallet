@@ -2,6 +2,25 @@ import type { SwapToken } from '@/core/services/intents-api'
 import type { ChainDefinition } from '@/core/chains/registry'
 import type { SavedSwapTokenSelection } from '@/store/swap-store'
 import { getEnabledSwapChains } from './swap-catalog-loading'
+import { EVM_USDC_PROTOCOL_ASSET_BY_CHAIN_ID } from '@/config/asset-market-assets'
+
+function isNativeToken(token: SwapToken): boolean {
+  return (
+    ('isNative' in token && token.isNative === true) ||
+    (!token.contractAddress &&
+      ((token.blockchain === 'eth' && token.symbol === 'ETH') ||
+        (token.blockchain === 'zec' && token.symbol === 'ZEC')))
+  )
+}
+
+export function getDefaultSwapSourceAssetId(tokens: readonly SwapToken[]): string | undefined {
+  return (
+    tokens.find(token => token.blockchain === 'zec' && isNativeToken(token)) ??
+    tokens.find(token => token.blockchain === 'eth' && isNativeToken(token)) ??
+    tokens.find(isNativeToken) ??
+    tokens[0]
+  )?.assetId
+}
 
 export interface ResolvedSwapTokenSelection {
   readonly tokenIn: SwapToken | null
@@ -9,10 +28,40 @@ export interface ResolvedSwapTokenSelection {
 }
 
 export function matchesSwapTokenSearch(token: SwapToken, search: string): boolean {
-  const normalizedSearch = search.trim().toLowerCase()
-  if (normalizedSearch.length === 0) return true
-  if (token.symbol.toLowerCase().includes(normalizedSearch)) return true
-  return token.contractAddress?.toLowerCase() === normalizedSearch
+  return rankTokenSearchFields(token, search) < 99
+}
+
+export function rankTokenSearchFields(
+  token: Readonly<{
+    symbol?: string
+    name?: string
+    contractAddress?: string | null
+    assetId?: string
+    searchTerms?: readonly string[]
+  }>,
+  search: string
+): number {
+  const query = search.trim().toLowerCase()
+  if (!query) return 0
+  if (token.contractAddress?.toLowerCase() === query) return 0
+  if (query.startsWith('0x')) return 99
+  if (token.symbol?.toLowerCase() === query) return 1
+  if (token.name?.toLowerCase() === query) return 2
+  const terms = [token.assetId, ...(token.searchTerms ?? [])]
+    .filter((term): term is string => Boolean(term))
+    .map(term => term.toLowerCase())
+  if (terms.includes(query)) return 3
+  if (
+    token.symbol?.toLowerCase().startsWith(query) ||
+    token.name?.toLowerCase().startsWith(query)
+  ) {
+    return 4
+  }
+  if (terms.some(term => term.startsWith(query))) return 5
+  if (token.symbol?.toLowerCase().includes(query) || token.name?.toLowerCase().includes(query)) {
+    return 6
+  }
+  return terms.some(term => term.includes(query)) ? 7 : 99
 }
 
 export function compareSwapTokenSearchRelevance(
@@ -20,17 +69,7 @@ export function compareSwapTokenSearchRelevance(
   right: SwapToken,
   search: string
 ): number {
-  const normalizedSearch = search.trim().toLowerCase()
-  if (!normalizedSearch) return 0
-  const rank = (token: SwapToken): number => {
-    const symbol = token.symbol.toLowerCase()
-    if (symbol === normalizedSearch || token.contractAddress?.toLowerCase() === normalizedSearch) {
-      return 0
-    }
-    if (symbol.startsWith(normalizedSearch)) return 1
-    return 2
-  }
-  return rank(left) - rank(right)
+  return rankTokenSearchFields(left, search) - rankTokenSearchFields(right, search)
 }
 
 export function createSwapTokenPreferenceScope(
@@ -69,20 +108,48 @@ function findDefaultDestination(
   tokenIn: SwapToken,
   tokens: readonly SwapToken[],
   walletSourceTokens: readonly SwapToken[],
-  enabledBlockchains: readonly string[]
+  enabledBlockchains: readonly string[],
+  preferStableDestination = false
 ): SwapToken | null {
   const destinations = tokens.filter(token => token.assetId !== tokenIn.assetId)
+  if (tokenIn.blockchain === 'zec' && enabledBlockchains.includes('eth')) {
+    const ethereum = destinations.find(token => token.blockchain === 'eth' && isNativeToken(token))
+    if (ethereum) return ethereum
+  }
+  if (preferStableDestination || tokenIn.blockchain !== 'zec') {
+    const sameChain = destinations.filter(token => token.blockchain === tokenIn.blockchain)
+    const chain = getSwapTokenEvmChainId(tokenIn)
+    const stableAssetId = chain ? EVM_USDC_PROTOCOL_ASSET_BY_CHAIN_ID[chain] : undefined
+    const preferred =
+      tokenIn.symbol.toUpperCase() === 'USDC'
+        ? sameChain.find(isNativeToken)
+        : (sameChain.find(token => token.assetId === stableAssetId) ??
+          sameChain.find(token => token.symbol.toUpperCase() === 'USDC'))
+    if (preferred) return preferred
+  }
+  const walletSourceIds = new Set(walletSourceTokens.map(token => token.assetId))
   for (const blockchain of [tokenIn.blockchain, ...enabledBlockchains]) {
     if (!enabledBlockchains.includes(blockchain)) continue
     const onChain = destinations.filter(token => token.blockchain === blockchain)
     if (onChain.length === 0) continue
-    const owned = walletSourceTokens.find(source =>
-      onChain.some(token => token.assetId === source.assetId)
+    return (
+      onChain.find(isNativeToken) ??
+      onChain.find(token => walletSourceIds.has(token.assetId)) ??
+      onChain[0]
     )
-    if (owned) return onChain.find(token => token.assetId === owned.assetId) ?? null
-    return onChain.find(token => 'isNative' in token && token.isNative === true) ?? onChain[0]
   }
   return null
+}
+
+function getSwapTokenEvmChainId(token: SwapToken): string | undefined {
+  if (
+    'rheaChainId' in token &&
+    typeof token.rheaChainId === 'string' &&
+    /^\d+$/.test(token.rheaChainId)
+  ) {
+    return `eip155:${token.rheaChainId}`
+  }
+  return token.blockchain === 'eth' ? 'eip155:1' : undefined
 }
 
 export function getSwapDestinationTokens<T extends SwapToken>(
@@ -112,6 +179,9 @@ export function resolveSwapTokenSelection(input: {
   readonly requestedDestinationAssetId?: string | null
   readonly selectedSourceAssetId?: string | null
   readonly preferredSourceAssetId?: string
+  readonly preferredDestinationAssetId?: string
+  readonly allowUnownedDefaultSource?: boolean
+  readonly preferStableDestination?: boolean
   readonly enabledChains?: readonly ChainDefinition[]
 }): ResolvedSwapTokenSelection | null {
   const enabledBlockchains = getEnabledSwapChains(input.enabledChains).map(
@@ -120,11 +190,16 @@ export function resolveSwapTokenSelection(input: {
   const walletSourceTokens = input.walletSourceTokens.filter(token =>
     enabledBlockchains.includes(token.blockchain)
   )
+  const defaultSourceTokens = input.allowUnownedDefaultSource
+    ? (input.sourceTokens ?? input.tokens).filter(token =>
+        enabledBlockchains.includes(token.blockchain)
+      )
+    : walletSourceTokens
   const destinationAssetId = input.requestedDestinationAssetId
   const sourceCandidates = destinationAssetId
-    ? walletSourceTokens.filter(token => token.assetId !== destinationAssetId)
-    : walletSourceTokens
-  const requestedSource = input.tokens.find(
+    ? defaultSourceTokens.filter(token => token.assetId !== destinationAssetId)
+    : defaultSourceTokens
+  const requestedSource = (input.sourceTokens ?? input.tokens).find(
     token =>
       token.assetId === input.requestedSourceAssetId &&
       token.assetId !== destinationAssetId &&
@@ -136,14 +211,23 @@ export function resolveSwapTokenSelection(input: {
       token.assetId !== destinationAssetId &&
       enabledBlockchains.includes(token.blockchain)
   )
-  if (!requestedSource && !selectedSource && walletSourceTokens.length === 0) return null
+  const savedSource = (input.sourceTokens ?? input.tokens).find(
+    token =>
+      token.assetId === input.savedSelection?.tokenInId &&
+      token.assetId !== destinationAssetId &&
+      enabledBlockchains.includes(token.blockchain)
+  )
+  if (!requestedSource && !selectedSource && !savedSource && defaultSourceTokens.length === 0) {
+    return null
+  }
+  const defaultSourceAssetId = getDefaultSwapSourceAssetId(sourceCandidates)
   const tokenIn =
     selectedSource ??
     requestedSource ??
-    sourceCandidates.find(token => token.assetId === input.savedSelection?.tokenInId) ??
+    savedSource ??
     sourceCandidates.find(token => token.assetId === input.preferredSourceAssetId) ??
-    sourceCandidates[0] ??
-    (destinationAssetId ? null : walletSourceTokens[0])
+    sourceCandidates.find(token => token.assetId === defaultSourceAssetId) ??
+    (destinationAssetId ? null : defaultSourceTokens[0])
   const destinations = getSwapDestinationTokens(
     tokenIn,
     input.sameChainDestinationTokens ?? input.sourceTokens ?? input.tokens,
@@ -157,7 +241,15 @@ export function resolveSwapTokenSelection(input: {
             input.savedSelection?.tokenInId === tokenIn.assetId &&
             token.assetId === input.savedSelection?.tokenOutId &&
             token.assetId !== tokenIn.assetId
-        ) ?? findDefaultDestination(tokenIn, destinations, walletSourceTokens, enabledBlockchains))
+        ) ??
+        destinations.find(token => token.assetId === input.preferredDestinationAssetId) ??
+        findDefaultDestination(
+          tokenIn,
+          destinations,
+          defaultSourceTokens,
+          enabledBlockchains,
+          input.preferStableDestination
+        ))
       : null)
   return Object.freeze({ tokenIn, tokenOut })
 }

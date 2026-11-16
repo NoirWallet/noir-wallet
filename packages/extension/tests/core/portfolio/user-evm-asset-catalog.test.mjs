@@ -17,6 +17,11 @@ import {
   getUserEvmAssetCatalogStorageKey,
   parseUserEvmAssetCatalogSnapshot
 } from '../../../src/infrastructure/chains/evm/index.ts'
+import {
+  addInspectedToken,
+  findVerifiedRheaSwapToken,
+  inspectTokenAddress
+} from '../../../src/popup/services/token-address-discovery.ts'
 
 const NOW = Date.parse('2026-08-15T03:00:00.000Z')
 const CONTRACT = '0x1111111111111111111111111111111111111111'
@@ -153,6 +158,134 @@ test('re-attests metadata on confirmation, persists the Token, and clears its Po
   await expect(coordinator.remove(ASSET_ID)).resolves.toBe(true)
   expect(deletedPoolMappings).toEqual([ASSET_ID])
   await expect(coordinator.list()).resolves.toEqual([])
+})
+
+test('shares ERC-20 preview reads, refreshes expired metadata, and retries failed reads', async () => {
+  const { chains, bundledAssets } = createContext()
+  const catalog = createMemoryRepository()
+  let now = NOW
+  let fail = true
+  const metadataRpc = createMetadataRpc(readIndex => {
+    if (fail) throw new Error('RPC unavailable')
+    return { name: 'Test Token', symbol: 'TEST', decimals: readIndex === 0 ? 18 : 6 }
+  })
+  const coordinator = new UserEvmAssetCoordinator({
+    chains,
+    bundledAssets,
+    repository: catalog.repository,
+    resolveRpc: () => metadataRpc.rpc,
+    now: () => now
+  })
+  const input = { chainId: 'eip155:1', contractAddress: CONTRACT }
+
+  await expect(coordinator.inspect(input)).rejects.toThrow('RPC unavailable')
+  fail = false
+  const [first, second] = await Promise.all([
+    coordinator.inspect(input),
+    coordinator.inspect(input)
+  ])
+  expect(first.metadata.decimals).toBe(18)
+  expect(second.metadata).toEqual(first.metadata)
+  expect(metadataRpc.readCount).toBe(3)
+
+  now += 5 * 60 * 1000 - 1
+  expect((await coordinator.inspect(input)).metadata.decimals).toBe(18)
+  expect(metadataRpc.readCount).toBe(3)
+  now += 1
+  expect((await coordinator.inspect(input)).metadata.decimals).toBe(6)
+  expect(metadataRpc.readCount).toBe(6)
+})
+
+test('Intents catalog verification reads current decimals after a cached preview', async () => {
+  const { chains, bundledAssets } = createContext()
+  const catalog = createMemoryRepository()
+  const metadataRpc = createMetadataRpc(readIndex => ({
+    name: 'Test Token',
+    symbol: 'TEST',
+    decimals: readIndex === 0 ? 18 : 6
+  }))
+  const coordinator = new UserEvmAssetCoordinator({
+    chains,
+    bundledAssets,
+    repository: catalog.repository,
+    resolveRpc: () => metadataRpc.rpc,
+    now: () => NOW
+  })
+
+  expect(
+    (await coordinator.inspect({ chainId: 'eip155:1', contractAddress: CONTRACT })).metadata
+      .decimals
+  ).toBe(18)
+  await expect(
+    coordinator.ensure({ chainId: 'eip155:1', contractAddress: CONTRACT, expectedDecimals: 6 })
+  ).resolves.toMatchObject({ metadata: { decimals: 6 } })
+  expect(metadataRpc.readCount).toBe(6)
+})
+
+test('address discovery keeps inspection separate from addition and rejects a cross-chain result', async () => {
+  const previousChrome = globalThis.chrome
+  const { chains } = createContext()
+  const candidate = createUserEvmAssetCandidate(chains, {
+    chainId: 'eip155:1',
+    contractAddress: CONTRACT,
+    metadata: { name: 'Test Token', symbol: 'TEST', decimals: 18 },
+    inspectedAt: NOW
+  })
+  const otherChain = createUserEvmAssetCandidate(chains, {
+    chainId: 'eip155:8453',
+    contractAddress: CONTRACT,
+    metadata: candidate.metadata,
+    inspectedAt: NOW
+  })
+  const requests = []
+  let inspectResult = otherChain
+  globalThis.chrome = {
+    runtime: {
+      sendMessage: async message => {
+        requests.push(message.type)
+        return {
+          result:
+            message.type === 'INSPECT_USER_EVM_ASSET'
+              ? inspectResult
+              : createUserEvmAssetRecord(chains, candidate, NOW + 1)
+        }
+      }
+    }
+  }
+  try {
+    await expect(
+      inspectTokenAddress({ chainId: 'eip155:1', contractAddress: CONTRACT })
+    ).rejects.toThrow(/different network or address/)
+    expect(requests).toEqual(['INSPECT_USER_EVM_ASSET'])
+
+    inspectResult = candidate
+    const inspected = await inspectTokenAddress({
+      chainId: 'eip155:1',
+      contractAddress: CONTRACT
+    })
+    expect(inspected.token).toMatchObject({
+      assetId: ASSET_ID,
+      blockchain: 'eth',
+      contractAddress: CONTRACT
+    })
+    expect(requests).toEqual(['INSPECT_USER_EVM_ASSET', 'INSPECT_USER_EVM_ASSET'])
+    const added = await addInspectedToken(inspected.candidate)
+    expect(added.assetId).toBe(ASSET_ID)
+    expect(requests.at(-1)).toBe('ADD_USER_EVM_ASSET')
+
+    const catalogToken = {
+      ...added,
+      rheaChainId: '1',
+      tokenListChainId: 1,
+      rheaAddress: CONTRACT,
+      isNative: false,
+      sources: ['verified-catalog']
+    }
+    expect(findVerifiedRheaSwapToken(candidate, [catalogToken])).toBe(catalogToken)
+    expect(findVerifiedRheaSwapToken(otherChain, [catalogToken])).toBeNull()
+  } finally {
+    globalThis.chrome = previousChrome
+  }
 })
 
 test('retains stored Tokens promoted to bundled assets without registering them twice', async () => {

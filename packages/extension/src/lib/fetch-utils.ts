@@ -22,8 +22,9 @@ export class FetchHttpError extends Error {
   statusText: string
   /** Server-provided error detail parsed from the response body, if any. */
   detail?: string
+  retryAfter?: string
 
-  constructor(status: number, statusText: string, detail?: string) {
+  constructor(status: number, statusText: string, detail?: string, retryAfter?: string) {
     super(
       detail ? `HTTP ${status}: ${detail}` : `HTTP ${status}: ${statusText || 'Request failed'}`
     )
@@ -31,6 +32,7 @@ export class FetchHttpError extends Error {
     this.status = status
     this.statusText = statusText
     this.detail = detail
+    this.retryAfter = retryAfter
   }
 }
 
@@ -170,7 +172,12 @@ async function fetchBytes(
           } catch {
             // Retain the HTTP status when an error body cannot be read.
           }
-          throw new FetchHttpError(response.status, response.statusText, detail)
+          throw new FetchHttpError(
+            response.status,
+            response.statusText,
+            detail,
+            response.headers.get('retry-after') ?? undefined
+          )
         }
         const body = await readBody(response, maxBytes, value => {
           reader = value

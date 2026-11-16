@@ -1,4 +1,5 @@
 import { parseAssetId, type AssetRegistry, type ChainRegistry } from '@/core/chains/registry'
+import type { AssetDisplayMetadata } from '@/core/chains/domain'
 import {
   createUserEvmAssetCandidate,
   createUserEvmAssetRecord,
@@ -12,6 +13,9 @@ import type { UserAssetDexPoolCacheRepository } from '@/infrastructure/prices'
 import { readErc20Metadata } from './evm-erc20-metadata-reader'
 import type { EvmContractRpc } from './evm-rpc-client'
 import type { UserEvmAssetCatalogRepository } from './chrome-user-evm-asset-catalog'
+
+const PREVIEW_METADATA_TTL_MS = 5 * 60 * 1000
+const MAX_PREVIEW_METADATA_ENTRIES = 128
 
 export interface UserEvmAssetCoordinatorOptions {
   readonly chains: ChainRegistry
@@ -41,6 +45,18 @@ function assertIntentsCatalogDecimals(actual: number, expected?: number): void {
 
 export class UserEvmAssetCoordinator {
   private readonly now: () => number
+  private readonly previewMetadata = new Map<
+    string,
+    {
+      readonly rpc: EvmContractRpc
+      readonly metadata: AssetDisplayMetadata
+      readonly readAt: number
+    }
+  >()
+  private readonly pendingPreviewMetadata = new Map<
+    string,
+    { readonly rpc: EvmContractRpc; readonly promise: Promise<AssetDisplayMetadata> }
+  >()
 
   constructor(private readonly options: UserEvmAssetCoordinatorOptions) {
     this.now = options.now ?? Date.now
@@ -87,14 +103,62 @@ export class UserEvmAssetCoordinator {
     readonly chainId: string
     readonly contractAddress: string
   }): Promise<UserEvmAssetCandidate> {
+    return this.inspectInternal(input, true)
+  }
+
+  private async readPreviewMetadata(
+    assetId: string,
+    rpc: EvmContractRpc,
+    contractAddress: string
+  ): Promise<AssetDisplayMetadata> {
+    const cached = this.previewMetadata.get(assetId)
+    const now = this.readNow()
+    if (
+      cached?.rpc === rpc &&
+      now >= cached.readAt &&
+      now - cached.readAt < PREVIEW_METADATA_TTL_MS
+    ) {
+      return cached.metadata
+    }
+    const pending = this.pendingPreviewMetadata.get(assetId)
+    if (pending?.rpc === rpc) return pending.promise
+
+    const promise = readErc20Metadata(rpc, contractAddress)
+      .then(metadata => {
+        if (this.pendingPreviewMetadata.get(assetId)?.promise === promise) {
+          this.previewMetadata.delete(assetId)
+          if (this.previewMetadata.size >= MAX_PREVIEW_METADATA_ENTRIES) {
+            this.previewMetadata.delete(this.previewMetadata.keys().next().value!)
+          }
+          this.previewMetadata.set(assetId, { rpc, metadata, readAt: this.readNow() })
+        }
+        return metadata
+      })
+      .finally(() => {
+        if (this.pendingPreviewMetadata.get(assetId)?.promise === promise) {
+          this.pendingPreviewMetadata.delete(assetId)
+        }
+      })
+    this.pendingPreviewMetadata.set(assetId, { rpc, promise })
+    return promise
+  }
+
+  private async inspectInternal(
+    input: { readonly chainId: string; readonly contractAddress: string },
+    preview: boolean
+  ): Promise<UserEvmAssetCandidate> {
     const identity = normalizeUserEvmAssetIdentity(this.options.chains, input)
     if (this.options.bundledAssets.inspect(identity.assetId)) {
       throw new Error('This Token is already built into the wallet')
     }
-    const metadata = await readErc20Metadata(
-      this.options.resolveRpc(identity.chainId),
-      identity.contractAddress
-    )
+    const rpc = this.options.resolveRpc(identity.chainId)
+    if (!preview) {
+      this.previewMetadata.delete(identity.assetId)
+      this.pendingPreviewMetadata.delete(identity.assetId)
+    }
+    const metadata = preview
+      ? await this.readPreviewMetadata(identity.assetId, rpc, identity.contractAddress)
+      : await readErc20Metadata(rpc, identity.contractAddress)
     const iconUrl = await this.options.resolveIconUrl?.(identity.assetId).catch(() => undefined)
     return createUserEvmAssetCandidate(this.options.chains, {
       ...identity,
@@ -105,10 +169,10 @@ export class UserEvmAssetCoordinator {
 
   async add(expectedCandidate: UserEvmAssetCandidate): Promise<UserEvmAssetRecord> {
     const expected = parseUserEvmAssetCandidate(this.options.chains, expectedCandidate)
-    const current = await this.inspect({
-      chainId: expected.chainId,
-      contractAddress: expected.contractAddress
-    })
+    const current = await this.inspectInternal(
+      { chainId: expected.chainId, contractAddress: expected.contractAddress },
+      false
+    )
     if (!metadataMatches(expected, current)) {
       throw new Error('Token metadata changed before confirmation. Review it again.')
     }
@@ -136,7 +200,7 @@ export class UserEvmAssetCoordinator {
       return catalogRecord
     }
 
-    const inspected = await this.inspect(identity)
+    const inspected = await this.inspectInternal(identity, false)
     assertIntentsCatalogDecimals(inspected.metadata.decimals, input.expectedDecimals)
     const candidate = input.iconUrl
       ? createUserEvmAssetCandidate(this.options.chains, {

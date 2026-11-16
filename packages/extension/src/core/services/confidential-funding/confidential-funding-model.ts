@@ -33,6 +33,7 @@ export interface ConfidentialQuote {
   readonly quoteRequest: Readonly<Record<string, unknown>>
   readonly quote: Readonly<{
     amountIn: string
+    minAmountIn?: string
     amountOut: string
     minAmountOut: string
     depositAddress: string
@@ -61,6 +62,7 @@ export interface ConfidentialWithdrawRow {
   readonly sequence: number
   readonly sourceAmountRaw: string
   readonly amountRaw: string
+  readonly settledOutputRaw?: string
   readonly depositAddress: string
   readonly destinationAddress: string
   readonly destinationChain: string
@@ -172,12 +174,14 @@ export interface ConfidentialFundingPlan {
   readonly approvalExpiresAt: number
   readonly expectedOutputRaw: string
   readonly minimumOutputRaw: string
+  readonly settledOutputRaw?: string
   readonly splitSourceAmounts: readonly string[]
   readonly withdraws: readonly ConfidentialWithdrawRow[]
   readonly frozenRequest?: ConfidentialWithdrawRequest
   readonly requestFingerprint?: string
   readonly orderId?: string
   readonly batchSubmissionAttemptedAt?: number
+  readonly settlementCheckedAt?: number
   readonly backendStatus?: string
   readonly errorStatus?: string
   readonly dedupKey?: string
@@ -235,6 +239,13 @@ export interface ConfidentialFundingReview {
     raw: string
     symbol: string
     decimals: number
+  }>
+  readonly sourceEvmFee?: Readonly<{
+    transactionType: 'eip1559' | 'legacy'
+    gasLimit: string
+    maxFeePerGasWei?: string
+    maxPriorityFeePerGasWei?: string
+    gasPriceWei?: string
   }>
 }
 
@@ -351,28 +362,44 @@ export function mergeConfidentialWithdrawObservation(
     status: string
     transactionHash?: string
     errorStatus?: string
+    settledOutputRaw?: string
   }> | null
 ): ConfidentialWithdrawRow {
   if (!observation) return row
   const current = normalizeChildStatus(row.status)
+  const observed = normalizeChildStatus(observation.status)
   if (current !== 'pending') {
-    // A stale poll must not change a settled child while its siblings are pending.
-    if (normalizeChildStatus(observation.status) !== current) return row
+    // A failed withdrawal can still settle as refunded; other terminal changes are stale.
+    if (
+      observed !== current &&
+      !(observed === 'refunded' && ['failed', 'expired', 'cancelled'].includes(current))
+    ) {
+      return row
+    }
     return Object.freeze({
       ...row,
-      ...(!row.transactionHash && observation.transactionHash
+      ...(observed !== current ? { status: observation.status } : {}),
+      ...(!row.transactionHash && observation.transactionHash && observed !== 'refunded'
         ? { transactionHash: observation.transactionHash }
         : {}),
       ...(!row.errorStatus && observation.errorStatus
         ? { errorStatus: observation.errorStatus }
+        : {}),
+      ...(!row.settledOutputRaw && observation.settledOutputRaw && observed === 'success'
+        ? { settledOutputRaw: observation.settledOutputRaw }
         : {})
     })
   }
   return Object.freeze({
     ...row,
     status: observation.status,
-    ...(observation.transactionHash ? { transactionHash: observation.transactionHash } : {}),
-    ...(observation.errorStatus ? { errorStatus: observation.errorStatus } : {})
+    ...(observation.transactionHash && observed !== 'refunded'
+      ? { transactionHash: observation.transactionHash }
+      : {}),
+    ...(observation.errorStatus ? { errorStatus: observation.errorStatus } : {}),
+    ...(observation.settledOutputRaw && observed === 'success'
+      ? { settledOutputRaw: observation.settledOutputRaw }
+      : {})
   })
 }
 
@@ -482,6 +509,37 @@ export function assertConfidentialQuoteBinding(
     deadline <= now
   ) {
     throw new Error('Confidential quote does not match the requested funding route')
+  }
+}
+
+export function assertFlexibleExternalDepositQuoteBinding(
+  quote: ConfidentialQuote,
+  expected: ConfidentialQuoteBinding,
+  now = Date.now(),
+  dry = false
+): void {
+  const request = quote.quoteRequest
+  const deadline = Date.parse(quote.quote.deadline)
+  if (
+    request.swapType !== 'FLEX_INPUT' ||
+    request.dry !== dry ||
+    request.confidentiality !== 'basic' ||
+    request.originAsset !== expected.originAsset ||
+    request.destinationAsset !== expected.destinationAsset ||
+    request.amount !== expected.amountRaw ||
+    quote.quote.amountIn !== expected.amountRaw ||
+    !/^[1-9][0-9]*$/.test(quote.quote.minAmountIn ?? '') ||
+    (!dry && BigInt(quote.quote.minAmountIn!) > BigInt(expected.amountRaw)) ||
+    !equalAddress(request.refundTo, expected.refundTo ?? expected.signerId) ||
+    request.depositType !== 'ORIGIN_CHAIN' ||
+    request.refundType !== 'ORIGIN_CHAIN' ||
+    !equalAddress(request.recipient, expected.recipient) ||
+    request.recipientType !== 'CONFIDENTIAL_INTENTS' ||
+    Number(request.slippageTolerance) !== expected.slippageBps ||
+    !Number.isSafeInteger(deadline) ||
+    deadline <= now
+  ) {
+    throw new Error('Flexible external Shield quote does not match the requested route')
   }
 }
 

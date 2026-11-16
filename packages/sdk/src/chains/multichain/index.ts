@@ -6,5 +6,6 @@ export type {
   Caip27InvokeMethodRequest,
   MultichainProvider,
   MultichainProviderListener,
-  MultichainRequestArguments
+  MultichainRequestArguments,
+  WalletTokenMetadata
 } from './types'

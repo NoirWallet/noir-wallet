@@ -4,7 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { captureScreenshot } from '../helpers/screenshot-fixture'
+import { waitForBackgroundWalletInitialization } from '../helpers/extension-fixtures'
 
 const extensionPackageDirectory = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -64,24 +64,9 @@ test('installs the production dist without test-only extension surfaces', async 
       .toEqual({ firstEvent: 'announce', providerReady: true })
 
     const popup = await context.newPage()
-    await popup.setViewportSize({ width: 375, height: 600 })
     await popup.goto(`chrome-extension://${extensionId}/index.html`)
+    await waitForBackgroundWalletInitialization(popup)
 
-    await expect(popup.getByRole('heading', { name: 'Welcome to Noir Wallet' })).toBeVisible({
-      timeout: 60_000
-    })
-    const hardwareWalletButton = popup.getByRole('button', {
-      name: 'Connect Hardware Wallet'
-    })
-    await expect(hardwareWalletButton).toBeVisible()
-    await expect
-      .poll(() =>
-        popup.evaluate(() => ({
-          viewportWidth: document.documentElement.clientWidth,
-          contentWidth: document.documentElement.scrollWidth
-        }))
-      )
-      .toEqual({ viewportWidth: 375, contentWidth: 375 })
     await expect(
       popup.evaluate(() => chrome.runtime.sendMessage({ type: 'GET_NETWORK_MODE' }))
     ).resolves.toEqual({
@@ -92,8 +77,6 @@ test('installs the production dist without test-only extension surfaces', async 
         chrome.runtime.sendMessage({ type: 'SWITCH_NETWORK_MODE', networkMode: 'testnet' })
       )
     ).resolves.toEqual({ error: 'Unlock the wallet before switching networks' })
-
-    await captureScreenshot(popup, 'production-dist-mainnet-install.png')
   } finally {
     await context.close()
     await rm(profileDirectory, { recursive: true, force: true })

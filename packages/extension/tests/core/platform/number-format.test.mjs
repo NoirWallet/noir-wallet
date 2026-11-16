@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { expect } from '@playwright/test'
 import Big from '../../../src/lib/big.ts'
+import { formatSendFiatValue } from '../../../src/popup/components/transaction/send-input-model.ts'
 import {
   formatAmount,
   formatBaseUnitAmount,
@@ -23,6 +24,8 @@ test('quantity summaries preserve every integer and never exceed the held magnit
     ['999.999999', '999.9999'],
     ['0.00507328123456789', '0.005073'],
     ['0.0000123456789', '0.00001234'],
+    ['0.99955', '0.9995'],
+    ['0.000000123456789', '0.00000012'],
     ['123456789012345678901234567890.129', '123,456,789,012,345,678,901,234,567,890.12']
   ]
   for (const [value, expected] of cases) {
@@ -36,6 +39,7 @@ test('dust, unknown values and observed zero remain distinguishable', () => {
   assert.equal(formatTokenQuantity('1e-18'), '<0.00000001')
   assert.equal(formatTokenQuantity('-1e-18'), '-<0.00000001')
   assert.equal(formatTokenQuantity('0.00000001'), '0.00000001')
+  assert.equal(formatTokenQuantity('0.0000000000000000000000000000001'), '<0.00000001')
   assert.equal(formatTokenQuantity('0'), '0')
   assert.equal(formatTokenQuantity('-0'), '0')
   for (const value of [
@@ -94,6 +98,12 @@ test('fiat valuations use cents while unit prices retain meaningful small digits
   assert.equal(formatTokenPrice('0.00987654', { showSign: true }), '$0.009877')
   assert.equal(formatTokenPrice('0.000000012345', { showSign: true }), '$0.0₇1235')
   assert.equal(formatTokenPrice('1.999', { showSign: true }), '$2.00')
+})
+
+test('send fiat uses the exact amount and rejects compact display text', () => {
+  assert.equal(formatSendFiatValue('0.004744096852704854', '2707'), '$12.84')
+  assert.equal(formatSendFiatValue('1,234.5', '2'), '$2,469.00')
+  assert.equal(formatSendFiatValue('0.004744…', '2707'), null)
 })
 
 test('fee display rounds up without losing whole units or rendering nonzero as zero', () => {

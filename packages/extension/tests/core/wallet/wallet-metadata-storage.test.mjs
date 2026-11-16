@@ -4,12 +4,14 @@ import {
   commitWalletMetadataDeletion,
   getWalletDeletionRecord,
   markWalletBackupVerified,
+  migrateRetainedV1NetworkSelections,
   readWalletMetadata,
   renameRetainedAccountMetadata,
   renameRetainedWalletMetadata,
   setAccountNetworkSelection,
   writeWalletMetadata
 } from '../../../src/lib/wallet-metadata-storage.ts'
+import { V1_MIGRATION_FIXTURES } from '../../fixtures/v1-migration-fixtures.mjs'
 
 const wallet = {
   id: 'wallet:retained',
@@ -80,6 +82,67 @@ function mockStorage(initial = {}) {
 }
 
 test.describe('Wallet metadata persistence', () => {
+  test('enables only Zcash for retained V1 accounts while preserving explicit selections and V2 defaults', async () => {
+    const retained = V1_MIGRATION_FIXTURES.find(fixture => fixture.id === 'software-single-account')
+    const retainedState = JSON.parse(retained.local.wallet_state)
+    const v1Wallet = retainedState.state.wallets[0]
+    const v1Account = v1Wallet.accounts[0]
+    v1Wallet.accounts.push({
+      ...v1Account,
+      id: 'account:existing-choice',
+      networkSelections: { mainnet: ['zcash', 'evm'] }
+    })
+    const v2Wallet = {
+      ...wallet,
+      id: 'wallet:v2',
+      seedPhraseKey: 'seed_wallet:v2',
+      secretPhraseOrigin: 'imported',
+      accounts: [{ id: 'account:v2' }]
+    }
+    const v2HardwareWallets = ['ledger', 'keystone'].map(keySource => ({
+      ...wallet,
+      id: `wallet:v2-${keySource}`,
+      seedPhraseKey: '',
+      keySource,
+      accounts: [{ id: `account:v2-${keySource}` }]
+    }))
+    retainedState.state.wallets.push(v2Wallet, ...v2HardwareWallets)
+    const storage = mockStorage({
+      wallet_state: retainedState,
+      [`seed_${v1Wallet.id}`]: retained.local[`seed_${v1Wallet.id}`],
+      [`seed_${v2Wallet.id}`]: retained.local[`seed_${v1Wallet.id}`],
+      ...Object.fromEntries(
+        v2HardwareWallets.map(item => [`hw_${item.id}`, retained.local[`seed_${v1Wallet.id}`]])
+      )
+    })
+    try {
+      expect(await migrateRetainedV1NetworkSelections()).toBe(true)
+      const accounts = storage.values.wallet_state.state.wallets
+      expect(accounts[0].accounts[0].networkSelections).toEqual({
+        mainnet: ['zcash'],
+        testnet: ['zcash']
+      })
+      expect(accounts[0].accounts[1].networkSelections).toEqual({
+        mainnet: ['zcash', 'evm'],
+        testnet: ['zcash']
+      })
+      expect(accounts[1].accounts[0].networkSelections).toBeUndefined()
+      expect(accounts[2].accounts[0].networkSelections).toBeUndefined()
+      expect(accounts[3].accounts[0].networkSelections).toBeUndefined()
+      expect(await migrateRetainedV1NetworkSelections()).toBe(false)
+
+      await setAccountNetworkSelection(v1Wallet.id, v1Account.id, 'mainnet', ['zcash', 'evm'])
+      expect(await migrateRetainedV1NetworkSelections()).toBe(false)
+      await writeWalletMetadata(retainedState)
+      expect(storage.values.wallet_state.state.wallets[0].accounts[0].networkSelections).toEqual({
+        mainnet: ['zcash', 'evm'],
+        testnet: ['zcash']
+      })
+    } finally {
+      storage.restore()
+    }
+  })
+
   test('propagates storage faults without replacing existing wallet metadata', async () => {
     const initial = { wallet_state: { state: { wallets: [wallet] } } }
     const storage = mockStorage(initial)
@@ -252,13 +315,17 @@ test.describe('Wallet metadata persistence', () => {
         'account:0',
         'testnet',
         ['evm', 'zcash'],
-        3_000_000
+        3_000_000,
+        ['bip122:05a60a92d99d85997cce3b87616c089f', 'eip155:11155111']
       )
       await writeWalletMetadata({
         state: { ...original.state, zecPrice: 2 }
       })
       const account = storage.values.wallet_state.state.wallets[0].accounts[0]
       expect(account.networkSelections).toEqual({ testnet: ['evm', 'zcash'] })
+      expect(account.networkChainSelections).toEqual({
+        testnet: ['bip122:05a60a92d99d85997cce3b87616c089f', 'eip155:11155111']
+      })
       expect(account.networkBirthdayHeights).toEqual({ testnet: 3_000_000 })
       expect(account.birthdayHeight).toBe(3_000_000)
       expect(storage.values.wallet_state.state.wallets[0].accounts[1]).toMatchObject(otherAccount)

@@ -44,7 +44,8 @@ export interface SingleChainPortfolioCoordinatorOptions {
       readonly keyDomainId: ChainAccount['scope']['keyDomainId']
       readonly accountId: ChainAccount['scope']['accountId']
     },
-    family: AddressOnlyPortfolioFamily
+    family: AddressOnlyPortfolioFamily,
+    chainId: string
   ) => boolean | Promise<boolean>
   readonly readSource: (
     input: ReadSingleChainPortfolioSourceInput
@@ -162,7 +163,8 @@ export class SingleChainPortfolioCoordinator {
       this.options.isNetworkEnabled &&
       !(await this.options.isNetworkEnabled(
         { keyDomainId: selectedAccount.keyDomainId, accountId: selectedAccount.id },
-        this.options.family
+        this.options.family,
+        this.options.chainId
       ))
     ) {
       return null

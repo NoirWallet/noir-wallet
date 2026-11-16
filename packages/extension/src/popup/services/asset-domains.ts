@@ -46,11 +46,12 @@ export function getAssetDomainRaw(asset: PortfolioAssetView, domain: AssetDomain
     return domain === 'shield' ? shield : privateOnchain
   }
   if (ZCASH_CHAIN_ID_SET.has(asset.asset.chainId)) {
+    if (domain === 'private') return '0'
     if (!completeRawParts(balance.totalRaw, [balance.transparentRaw, balance.shieldedRaw])) {
       return null
     }
     if (domain === 'public') return balance.transparentRaw ?? null
-    return domain === 'shield' ? (balance.shieldedRaw ?? null) : '0'
+    return balance.shieldedRaw ?? null
   }
   return domain === 'public' ? balance.totalRaw : '0'
 }
@@ -82,32 +83,57 @@ function projectDisplayAsset(asset: PortfolioAssetView, totalRaw: string): Portf
 
 export function projectPortfolioForDomain(
   model: PortfolioReadModel,
-  domain: AssetDomain
+  domain: AssetDomain,
+  options: Readonly<{ evmPrivateAvailable?: boolean }> = {}
 ): PortfolioReadModel {
   // Display-only: projected totals must never be passed to transaction preparation.
   if (domain === 'all') return model
   const projected = new Map<string, PortfolioAssetView>()
   for (const asset of model.assets) {
     const raw = getAssetDomainRaw(asset, domain)
-    if (raw === null || BigInt(raw) === 0n) continue
+    if (raw === null) continue
+    if (
+      raw === '0' &&
+      options.evmPrivateAvailable === false &&
+      asset.asset.chainId.startsWith('eip155:') &&
+      domain !== 'public'
+    )
+      continue
     projected.set(asset.asset.id, projectDisplayAsset(asset, raw))
   }
+  const chains = model.chains
+    .filter(
+      chain =>
+        domain === 'public' ||
+        chain.chain.family === 'evm' ||
+        (domain === 'shield' && chain.chain.family === 'zcash')
+    )
+    .map(chain =>
+      Object.freeze({
+        ...chain,
+        assets: Object.freeze(
+          chain.assets.flatMap(asset => {
+            const view = projected.get(asset.asset.id)
+            return view ? [view] : []
+          })
+        )
+      })
+    )
+  const status =
+    chains.length === 0
+      ? 'empty'
+      : chains.every(chain => chain.status === 'ready')
+        ? 'ready'
+        : chains.every(chain => chain.status === 'loading')
+          ? 'loading'
+          : chains.every(chain => chain.status === 'error')
+            ? 'error'
+            : 'partial'
   return Object.freeze({
     ...model,
+    status,
     assets: Object.freeze([...projected.values()]),
-    chains: Object.freeze(
-      model.chains.map(chain =>
-        Object.freeze({
-          ...chain,
-          assets: Object.freeze(
-            chain.assets.flatMap(asset => {
-              const view = projected.get(asset.asset.id)
-              return view ? [view] : []
-            })
-          )
-        })
-      )
-    )
+    chains: Object.freeze(chains)
   })
 }
 

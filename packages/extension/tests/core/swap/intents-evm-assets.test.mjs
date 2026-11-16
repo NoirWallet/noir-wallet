@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import { expect } from '@playwright/test'
 import { getEvmNetworkConfigs } from '../../../src/config/networks.ts'
+import { resolveManagedIntentsAssets } from '../../../src/core/services/intents-managed-assets.ts'
 import {
   getDefaultIntentsEvmAssets,
   resolveIntentsEvmAssets,
@@ -63,4 +64,50 @@ test('maps only canonical supported Intents ERC-20 assets to wallet AssetIds', (
     })
   ])
   expect(getDefaultIntentsEvmAssets(assets)).toEqual(assets)
+})
+
+test('prefers the current BSC representation when a deprecated row shares its contract', () => {
+  const contractAddress = '0x55d398326f99059ff775485246999027b3197955'
+  const legacy = {
+    assetId: 'nep245:v2_1.omni.hot.tg:56_2CMMyVTGZkeyNZTSvS5sarzfir6g',
+    blockchain: 'bsc',
+    contractAddress,
+    decimals: 18,
+    price: 1,
+    priceUpdatedAt: updatedAt,
+    symbol: 'USDT(DEPRECATED)'
+  }
+  const current = {
+    ...legacy,
+    assetId: `nep141:bnb-${contractAddress}.omdep.near`,
+    symbol: 'USDT'
+  }
+  expect(
+    resolveIntentsEvmAssets([{ ...legacy, symbol: 'USDT' }], getEvmNetworkConfigs('mainnet'))
+  ).toEqual([])
+  expect(
+    resolveIntentsEvmAssets(
+      [
+        {
+          ...legacy,
+          assetId: 'nep245:v2_1.omni.hot.tg:10_A2ewyUyDp6qsue1jqZsGypkCxRJ',
+          blockchain: 'op',
+          symbol: 'USDC'
+        }
+      ],
+      getEvmNetworkConfigs('mainnet')
+    )
+  ).toHaveLength(1)
+  const assets = resolveIntentsEvmAssets([legacy, current], getEvmNetworkConfigs('mainnet'))
+  expect(assets).toHaveLength(1)
+  expect(assets[0]).toMatchObject({
+    assetId: `eip155:56/erc20:${contractAddress}`,
+    protocolAssetId: current.assetId,
+    symbol: 'USDT'
+  })
+  expect(
+    resolveManagedIntentsAssets([legacy, current], 'mainnet', getEvmNetworkConfigs('mainnet')).find(
+      asset => asset.assetId === `eip155:56/erc20:${contractAddress}`
+    )
+  ).toMatchObject({ protocolAssetId: current.assetId, symbol: 'USDT' })
 })

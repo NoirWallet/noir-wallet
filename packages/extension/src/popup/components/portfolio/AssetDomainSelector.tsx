@@ -3,6 +3,7 @@ import { Icon } from '@iconify/react'
 import { formatAssetDomainFiat, type AssetDomain } from '@/popup/services/asset-domains'
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover'
 import { cn } from '@/lib/utils'
+import { Skeleton } from '../ui/skeleton'
 
 export const ASSET_DOMAIN_LABELS: Record<AssetDomain, string> = {
   all: 'Total assets',
@@ -13,9 +14,9 @@ export const ASSET_DOMAIN_LABELS: Record<AssetDomain, string> = {
 
 const ASSET_DOMAIN_ICONS: Record<AssetDomain, string> = {
   all: 'noir:total-assets',
-  public: 'lucide:eye',
-  shield: 'lucide:shield-check',
-  private: 'lucide:scan-face'
+  public: 'noir:public-assets',
+  shield: 'noir:shield-assets',
+  private: 'noir:private-assets'
 }
 
 export function AssetDomainSelector({
@@ -23,6 +24,7 @@ export function AssetDomainSelector({
   totals,
   partialTotals,
   balancesHidden,
+  loading,
   domains = Object.keys(ASSET_DOMAIN_LABELS) as AssetDomain[],
   onChange
 }: {
@@ -30,6 +32,7 @@ export function AssetDomainSelector({
   readonly totals: Readonly<Record<AssetDomain, string | number | null>>
   readonly partialTotals?: Readonly<Record<AssetDomain, boolean>>
   readonly balancesHidden: boolean
+  readonly loading?: Readonly<Record<AssetDomain, boolean>>
   readonly domains?: readonly AssetDomain[]
   readonly onChange: (domain: AssetDomain) => void
 }) {
@@ -46,7 +49,13 @@ export function AssetDomainSelector({
             icon={ASSET_DOMAIN_ICONS[value]}
             width={14}
             height={14}
-            className="text-wallet-secondary"
+            className={cn(
+              value === 'shield'
+                ? 'text-success'
+                : value === 'private'
+                  ? 'text-private'
+                  : 'text-wallet-secondary'
+            )}
           />
           {ASSET_DOMAIN_LABELS[value]}
           <Icon icon="lucide:chevron-down" width={12} height={12} />
@@ -79,23 +88,33 @@ export function AssetDomainSelector({
                 width={15}
                 height={15}
                 className={cn(
+                  'shrink-0',
+                  (domain === 'all' || domain === 'public') && 'text-wallet-secondary',
                   domain === 'shield' && 'text-success',
                   domain === 'private' && 'text-private'
                 )}
               />
               <span className="shrink-0">{ASSET_DOMAIN_LABELS[domain]}</span>
-              <span
-                className="ml-auto min-w-0 truncate text-right text-sm tabular-nums text-foreground"
-                title={
-                  balancesHidden
-                    ? undefined
-                    : formatAssetDomainFiat(totals[domain], partialTotals?.[domain])
-                }
-              >
-                {balancesHidden
-                  ? '••••'
-                  : formatAssetDomainFiat(totals[domain], partialTotals?.[domain])}
-              </span>
+              {!balancesHidden && loading?.[domain] && totals[domain] === null ? (
+                <Skeleton className="ml-auto h-4 w-16" />
+              ) : (
+                <span
+                  className="ml-auto min-w-0 truncate text-right text-sm tabular-nums text-foreground"
+                  title={
+                    balancesHidden
+                      ? undefined
+                      : totals[domain] === null
+                        ? '—'
+                        : formatAssetDomainFiat(totals[domain], partialTotals?.[domain])
+                  }
+                >
+                  {balancesHidden
+                    ? '••••'
+                    : totals[domain] === null
+                      ? '—'
+                      : formatAssetDomainFiat(totals[domain], partialTotals?.[domain])}
+                </span>
+              )}
             </button>
           ))}
         </div>

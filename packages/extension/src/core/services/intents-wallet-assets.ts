@@ -7,6 +7,7 @@ import { parseNearAccountId } from '@/core/chains/near'
 import { parseSolanaPublicKey } from '@/core/chains/solana'
 
 import { resolveSwapTokenIconUrl, type SwapToken } from './intents-api'
+import { isDeprecatedIntentsToken } from './intents-evm-assets'
 
 export interface IntentsWalletAssetDescriptor {
   readonly assetId: string
@@ -75,7 +76,7 @@ export function resolveIntentsWalletAsset(
   token: SwapToken,
   network: Network
 ): IntentsWalletAssetDescriptor | null {
-  if (network !== 'mainnet') return null
+  if (network !== 'mainnet' || isDeprecatedIntentsToken(token)) return null
   const blockchain = token.blockchain.toLowerCase()
   if (blockchain === 'sol') {
     const chainId = getSolanaNetworkConfig('mainnet').chainId

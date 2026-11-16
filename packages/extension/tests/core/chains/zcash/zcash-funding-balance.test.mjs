@@ -12,7 +12,10 @@ import {
   resolveZcashFundingAvailability,
   resolveZcashTransferAvailability
 } from '../../../../src/popup/services/transfer-availability.ts'
-import { resolveZcashSelfMove } from '../../../../src/popup/services/zcash-self-move.ts'
+import {
+  getDefaultZcashSelfMoveSource,
+  resolveZcashSelfMove
+} from '../../../../src/popup/services/zcash-self-move.ts'
 
 const balance = {
   shielded: '2',
@@ -46,6 +49,13 @@ test('ZEC Move binds each source to the current account opposite native address'
       'mainnet'
     ),
     null
+  )
+  const options = { addresses, balance, network: 'mainnet' }
+  assert.equal(getDefaultZcashSelfMoveSource({ ...options, keySource: 'software' }), 'transparent')
+  assert.equal(getDefaultZcashSelfMoveSource({ ...options, keySource: 'keystone' }), 'shielded')
+  assert.equal(
+    getDefaultZcashSelfMoveSource({ ...options, balance: null, keySource: 'keystone' }),
+    'shielded'
   )
 })
 

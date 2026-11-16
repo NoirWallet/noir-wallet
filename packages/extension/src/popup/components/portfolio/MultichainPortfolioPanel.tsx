@@ -1,11 +1,14 @@
 import { useEffect, useState } from 'react'
 import { Icon } from '@iconify/react'
 import type { PortfolioReadModel } from '@/core/portfolio'
+import { supportsEvmPrivateExecution } from '@/core/chains/evm'
+import type { AccountNetworksView } from '@/popup/services/account-networks-client'
 import { PortfolioShell } from './PortfolioShell'
 import { resolvePortfolioChainSelection } from '@/popup/services/portfolio-presentation'
 import type { AssetPriceReadModel } from '@/core/prices'
 import { ListSkeleton } from '../ui/skeleton'
 import { useSettingsStore } from '@/store/settings-store'
+import { useWalletStore } from '@/store/wallet-store'
 import { getPortfolioRecoveryDelayMs, hasPortfolioBalanceRefreshIssue } from './portfolio-recovery'
 import { hasRetryablePortfolioPriceGap, summarizePortfolioFiat } from './portfolio-prices'
 import {
@@ -22,6 +25,7 @@ interface MultichainPortfolioPanelProps {
   walletId: string | null
   accountId: string | null
   model: PortfolioReadModel | null
+  activeAccount?: AccountNetworksView | null
   status: 'loading' | 'ready' | 'error'
   prices: AssetPriceReadModel | null
   priceStatus?: 'loading' | 'ready' | 'error'
@@ -59,6 +63,7 @@ export function MultichainPortfolioPanel({
   walletId,
   accountId,
   model,
+  activeAccount,
   status,
   prices,
   priceStatus,
@@ -70,12 +75,20 @@ export function MultichainPortfolioPanel({
   onManageTokens
 }: MultichainPortfolioPanelProps) {
   const scopeKey = JSON.stringify([walletId ?? '', accountId ?? ''])
+  const network = useWalletStore(state => state.currentNetwork)
+  const chainListScopeKey = JSON.stringify([network, walletId ?? '', accountId ?? ''])
   const persistedChainSelection = useSettingsStore(
     state => state.portfolioChainSelectionByAccount[scopeKey]
   )
   const portfolioViewMode = useSettingsStore(state => state.portfolioViewMode)
   const setPortfolioViewMode = useSettingsStore(state => state.setPortfolioViewMode)
   const setPortfolioChainSelection = useSettingsStore(state => state.setPortfolioChainSelection)
+  const chainListExpanded = useSettingsStore(
+    state => state.expandedPortfolioChainLists[chainListScopeKey] === true
+  )
+  const setPortfolioChainListExpanded = useSettingsStore(
+    state => state.setPortfolioChainListExpanded
+  )
   const [recoveryAttempt, setRecoveryAttempt] = useState(0)
 
   useEffect(() => {
@@ -98,13 +111,22 @@ export function MultichainPortfolioPanel({
   }, [accountId, walletId])
 
   const visibleModel = isPortfolioModelForScope(model, walletId, accountId) ? model : null
+  const scopedAccount =
+    activeAccount?.walletId === walletId && activeAccount?.accountId === accountId
+      ? activeAccount
+      : null
+  const domainModel = visibleModel
+    ? projectPortfolioForDomain(visibleModel, domain, {
+        evmPrivateAvailable: supportsEvmPrivateExecution(scopedAccount?.walletSource)
+      })
+    : null
   const availableChainIds = resolvePortfolioChainSelection(
-    visibleModel,
+    domainModel,
     null,
     __ENABLED_CHAIN_FEATURE_FLAGS__
   )
   const selectedChainIds = resolvePortfolioChainSelection(
-    visibleModel,
+    domainModel,
     hideToolbar ? null : persistedChainSelection,
     __ENABLED_CHAIN_FEATURE_FLAGS__
   )
@@ -178,7 +200,7 @@ export function MultichainPortfolioPanel({
 
   return (
     <PortfolioShell
-      model={projectPortfolioForDomain(visibleModel, domain)}
+      model={domainModel!}
       sourceModel={visibleModel}
       domain={domain}
       hideToolbar={hideToolbar}
@@ -187,6 +209,10 @@ export function MultichainPortfolioPanel({
       balancesHidden={balancesHidden}
       view={portfolioViewMode}
       onViewChange={setPortfolioViewMode}
+      chainListExpanded={chainListExpanded}
+      onChainListExpandedChange={expanded => {
+        if (walletId && accountId) setPortfolioChainListExpanded(chainListScopeKey, expanded)
+      }}
       refreshing={status === 'loading' || priceStatus === 'loading' || recoveryNeeded}
       refreshDisabled={status === 'loading' || priceStatus === 'loading'}
       selectedChainIds={selectedChainIds}

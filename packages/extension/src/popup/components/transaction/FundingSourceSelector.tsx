@@ -52,7 +52,7 @@ export function FundingSourceSelector({
               <span className="min-w-0 flex-1">
                 <span className="flex items-center gap-1.5 text-sm">
                   <Icon
-                    icon={type === 'transparent' ? 'lucide:eye' : 'lucide:shield-check'}
+                    icon={type === 'transparent' ? 'noir:public-assets' : 'noir:shield-assets'}
                     width={16}
                     className={type === 'shielded' ? 'text-success' : ''}
                   />

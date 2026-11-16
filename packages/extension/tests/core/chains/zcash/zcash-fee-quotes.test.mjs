@@ -36,3 +36,25 @@ test('invalidates an existing quote when the wallet runtime changes', async () =
   registry.invalidateWallet(context.walletId)
   assert.throws(() => registry.validate(context, quote.id, 5_000))
 })
+
+test('keeps the fixed fee reviewable when the RPC recommendation fails or is invalid', async () => {
+  const recommendations = [
+    async () => {
+      throw new Error('GetStandardFee unavailable')
+    },
+    async () => 0,
+    async () => Number.MAX_SAFE_INTEGER
+  ]
+
+  for (const recommend of recommendations) {
+    const registry = new FeeQuoteRegistry(
+      () => 100,
+      () => 'fallback-quote'
+    )
+    const quote = await registry.get(context, recommend)
+    assert.equal(quote.standardMarginalFeeZats, 5_000)
+    assert.equal(registry.validate(context, quote.id, 5_000).id, quote.id)
+    assert.equal(registry.validate(context, quote.id, 20_000).id, quote.id)
+    assert.throws(() => registry.validate(context, quote.id, 7_000))
+  }
+})

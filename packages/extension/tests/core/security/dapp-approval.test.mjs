@@ -12,6 +12,8 @@ const storage = {
 }
 let approvalUrl = ''
 let notifyApprovalOpened
+let approvalWindowCreates = 0
+let approvalWindowFocuses = 0
 
 function waitForApprovalOpened() {
   return new Promise(resolve => {
@@ -50,10 +52,14 @@ globalThis.chrome = {
       return null
     },
     create(options, callback) {
+      approvalWindowCreates += 1
       approvalUrl = options.url
       callback({ id: 7 })
       notifyApprovalOpened?.()
       notifyApprovalOpened = undefined
+    },
+    async update() {
+      approvalWindowFocuses += 1
     },
     async remove() {}
   }
@@ -112,6 +118,157 @@ test('clearing Zcash permissions preserves pending approvals for other chains', 
   } finally {
     for (const id of requestIds) pendingRequestsManager.cancel(id)
   }
+})
+
+test('repeated connection focuses one approval and cancellation allows a fresh request', async () => {
+  const handler = new DAppHandler()
+  const createdBefore = approvalWindowCreates
+  const focusedBefore = approvalWindowFocuses
+  const opened = waitForApprovalOpened()
+  const first = handler.requestExternalApproval('https://dapp.example', 'evmConnect', {
+    accounts: []
+  })
+  await opened
+  const requestId = new URLSearchParams(approvalUrl.split('?')[1]).get('requestId')
+  assert.ok(requestId)
+
+  const second = handler.requestExternalApproval('https://dapp.example', 'evmConnect', {
+    accounts: []
+  })
+  assert.equal(
+    (
+      await sendApprovalMessage(requestId, {
+        type: 'DAPP_APPROVAL_RESULT',
+        success: false
+      })
+    ).success,
+    true
+  )
+  assert.deepEqual(await Promise.all([first, second]), [
+    { approved: false, requestId },
+    { approved: false, requestId }
+  ])
+  assert.equal(approvalWindowCreates - createdBefore, 1)
+  assert.equal(approvalWindowFocuses - focusedBefore, 1)
+  assert.equal(listeners.size, 0)
+
+  const reopened = waitForApprovalOpened()
+  const retry = handler.requestExternalApproval('https://dapp.example', 'evmConnect', {
+    accounts: []
+  })
+  await reopened
+  const nextRequestId = new URLSearchParams(approvalUrl.split('?')[1]).get('requestId')
+  assert.ok(nextRequestId)
+  assert.notEqual(nextRequestId, requestId)
+  await sendApprovalMessage(nextRequestId, { type: 'DAPP_APPROVAL_RESULT', success: false })
+  assert.equal((await retry).approved, false)
+  assert.equal(listeners.size, 0)
+})
+
+test('cancellation before window creation does not install approval listeners', async () => {
+  const handler = new DAppHandler()
+  const originalCreate = chrome.windows.create
+  chrome.windows.create = (options, callback) => {
+    approvalUrl = options.url
+    const requestId = new URLSearchParams(options.url.split('?')[1]).get('requestId')
+    assert.ok(requestId)
+    pendingRequestsManager.cancel(requestId)
+    callback({ id: 7 })
+  }
+  try {
+    const decision = await handler.requestExternalApproval('https://dapp.example', 'evmConnect', {
+      accounts: []
+    })
+    assert.equal(decision.approved, false)
+    assert.equal(listeners.size, 0)
+  } finally {
+    chrome.windows.create = originalCreate
+  }
+})
+
+test('approval popup retries invalid bounds and reports creation failure without user rejection', async () => {
+  const handler = new DAppHandler()
+  const originalGetLastFocused = chrome.windows.getLastFocused
+  const originalCreate = chrome.windows.create
+  const options = []
+  chrome.windows.getLastFocused = async () => ({ left: 1000, top: 0, width: 1440 })
+  chrome.windows.create = (createOptions, callback) => {
+    options.push(createOptions)
+    approvalUrl = createOptions.url
+    if (options.length === 1) {
+      chrome.runtime.lastError = {
+        message:
+          'Invalid value for bounds. Bounds must be at least 50% within visible screen space.'
+      }
+      callback(undefined)
+      delete chrome.runtime.lastError
+      return
+    }
+    callback({ id: 7 })
+    notifyApprovalOpened?.()
+    notifyApprovalOpened = undefined
+  }
+  try {
+    const opened = waitForApprovalOpened()
+    const approval = handler.requestExternalApproval('https://dapp.example', 'evmConnect', {
+      accounts: []
+    })
+    await opened
+    const requestId = new URLSearchParams(approvalUrl.split('?')[1]).get('requestId')
+    assert.ok(requestId)
+    assert.equal(options.length, 2)
+    assert.equal(typeof options[0].left, 'number')
+    assert.equal(Object.hasOwn(options[1], 'left'), false)
+    assert.equal(Object.hasOwn(options[1], 'top'), false)
+    await sendApprovalMessage(requestId, { type: 'DAPP_APPROVAL_RESULT', success: false })
+    assert.equal((await approval).approved, false)
+
+    chrome.windows.create = (createOptions, callback) => {
+      approvalUrl = createOptions.url
+      chrome.runtime.lastError = { message: 'Window creation failed.' }
+      callback(undefined)
+      delete chrome.runtime.lastError
+    }
+    await assert.rejects(
+      handler.requestExternalApproval('https://dapp.example', 'evmConnect', { accounts: [] }),
+      /Wallet approval window could not be opened/
+    )
+    const failedRequestId = new URLSearchParams(approvalUrl.split('?')[1]).get('requestId')
+    assert.equal(pendingRequestsManager.get(failedRequestId), null)
+    assert.equal(listeners.size, 0)
+  } finally {
+    chrome.windows.getLastFocused = originalGetLastFocused
+    chrome.windows.create = originalCreate
+    delete chrome.runtime.lastError
+  }
+})
+
+test('concurrent connection requests from different sites leave only the later approval', async () => {
+  const handler = new DAppHandler()
+  const createdBefore = approvalWindowCreates
+  const firstOpened = waitForApprovalOpened()
+  const first = handler.requestExternalApproval('https://first.example', 'evmConnect', {
+    accounts: []
+  })
+  const second = handler.requestExternalApproval('https://second.example', 'evmConnect', {
+    accounts: []
+  })
+  await firstOpened
+  const firstRequestId = new URLSearchParams(approvalUrl.split('?')[1]).get('requestId')
+  assert.ok(firstRequestId)
+  const secondOpened = waitForApprovalOpened()
+  await secondOpened
+  const secondRequestId = new URLSearchParams(approvalUrl.split('?')[1]).get('requestId')
+  assert.ok(secondRequestId)
+  assert.notEqual(secondRequestId, firstRequestId)
+  assert.equal(approvalWindowCreates - createdBefore, 2)
+  assert.equal((await first).approved, false)
+  assert.equal(pendingRequestsManager.get(firstRequestId), null)
+  assert.ok(pendingRequestsManager.get(secondRequestId))
+  assert.equal(listeners.size, 1)
+  await sendApprovalMessage(secondRequestId, { type: 'DAPP_APPROVAL_RESULT', success: false })
+  assert.equal((await second).approved, false)
+  assert.equal(listeners.size, 0)
 })
 
 test('approval cannot complete while its transaction fee review is changing', async () => {

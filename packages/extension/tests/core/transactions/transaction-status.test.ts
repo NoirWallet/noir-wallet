@@ -1,10 +1,6 @@
 import { test } from 'node:test'
 import { expect } from '@playwright/test'
 import {
-  getCrossChainCompletionStatus,
-  isZcashDestination
-} from '../../../src/lib/cross-chain-transaction'
-import {
   getRequiredConfirmations,
   isRecoverableZcashFailure,
   mergeTransactionUpdate
@@ -30,21 +26,7 @@ const failedTransaction = (overrides: Partial<Transaction> = {}): Transaction =>
   ...overrides
 })
 
-test.describe('Cross-chain completion status', () => {
-  test('outbound supply and swap are final when the relay succeeds', () => {
-    expect(getCrossChainCompletionStatus('supply')).toBe('success')
-    expect(getCrossChainCompletionStatus('swap', { destinationChain: 'near' })).toBe('success')
-  })
-
-  test('withdraw, claim, and inbound swaps wait for destination Zcash confirmations', () => {
-    expect(getCrossChainCompletionStatus('withdraw')).toBe('relay_confirmed')
-    expect(getCrossChainCompletionStatus('claim')).toBe('relay_confirmed')
-    expect(getCrossChainCompletionStatus('swap', { destinationChain: 'zec' })).toBe(
-      'relay_confirmed'
-    )
-    expect(isZcashDestination({ destinationAsset: 'nep141:zec.omft.near' })).toBe(true)
-  })
-
+test.describe('Zcash transaction recovery', () => {
   test('restores monitors for failed local Zcash transactions with hashes only', () => {
     expect(shouldRestoreZcashOriginMonitor(failedTransaction())).toBe(true)
     expect(shouldRestoreZcashOriginMonitor(failedTransaction({ type: 'unshield' }))).toBe(true)

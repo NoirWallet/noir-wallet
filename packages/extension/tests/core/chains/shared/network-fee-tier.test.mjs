@@ -73,4 +73,23 @@ test('rejects malformed, zero, over-precise, and excessive custom priority fees'
   expect(() =>
     parseEvmFeeSelection({ kind: 'custom', maxPriorityFeePerGasWei: '1', extra: true })
   ).toThrow(/selection/i)
+  expect(() =>
+    parseEvmFeeSelection({
+      kind: 'custom',
+      maxPriorityFeePerGasWei: '2000000000',
+      maxFeePerGasWei: '1000000000',
+      gasLimit: '21000'
+    })
+  ).toThrow(/maximum fee/i)
+  expect(() =>
+    deriveEvmFeeTierQuote({
+      selection: {
+        kind: 'custom',
+        maxPriorityFeePerGasWei: '1000000000',
+        maxFeePerGasWei: '2000000000'
+      },
+      baseFeePerGas: 2_000_000_000n,
+      suggestedPriorityFeePerGas: 1_000_000_000n
+    })
+  ).toThrow(/base fee/i)
 })

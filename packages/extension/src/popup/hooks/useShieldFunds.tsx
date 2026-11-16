@@ -184,7 +184,7 @@ export function useShieldFunds(pageId: string): UseShieldFundsResult {
 
           setIsShielding(true)
           try {
-            const result = await openHardwareSignAndWait(request, { presentation: 'window' })
+            const result = await openHardwareSignAndWait(request)
             if (result.status === 'success') {
               setResult(
                 {
@@ -205,8 +205,6 @@ export function useShieldFunds(pageId: string): UseShieldFundsResult {
               navigate('/transaction-result')
             } else if (result.status === 'timeout') {
               toast.error('Hardware signing timed out', 'The shield action is available again.')
-            } else {
-              toast.info('Hardware signing cancelled')
             }
           } catch (cause) {
             toast.error('Could not open hardware signing', classifyError(cause).userMessage)

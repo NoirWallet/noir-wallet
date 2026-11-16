@@ -1,5 +1,9 @@
 import type { PortfolioAssetView, PortfolioChainView } from '@/core/portfolio'
-import { resolveRheaPrivateTransferToken, type RheaSwapToken } from '@/core/services/rhea-swap'
+import {
+  resolveRheaPrivateTransferToken,
+  type RheaSwapQuoteRequest,
+  type RheaSwapToken
+} from '@/core/services/rhea-swap'
 import type { EvmFeeSelection } from '@/infrastructure/chains/evm'
 import type { BitcoinSupportedAddressType } from '@/core/chains/bitcoin'
 import {
@@ -110,10 +114,11 @@ export async function estimateRheaRouteMaximum(
     readonly tokenOut: RheaSwapToken
     readonly recipient: string
     readonly confidential: boolean
-    readonly purpose?: Parameters<typeof rheaSwapClient.quote>[1]
+    readonly purpose: NonNullable<Parameters<typeof rheaSwapClient.quote>[1]>
     readonly executionMode: 'main' | 'private'
     readonly feeTier?: 'low' | 'standard' | 'fast'
     readonly slippageBps?: number
+    readonly quoteMode?: RheaSwapQuoteRequest['quoteMode']
   },
   dependencies: {
     readonly rhea: Pick<
@@ -143,6 +148,7 @@ export async function estimateRheaRouteMaximum(
         sender: input.source.refundAddress,
         recipient: input.recipient,
         slippageBps: input.slippageBps ?? 100,
+        quoteMode: input.quoteMode ?? 'best-price',
         ...(input.confidential ? { confidentiality: 'basic' as const } : {})
       },
       input.purpose
@@ -194,6 +200,7 @@ export async function estimateConfidentialTransferMaximum(input: {
   readonly sender: string
   readonly recipient: string
   readonly executionMode: 'main' | 'private'
+  readonly purpose: 'public-private-send' | 'confidential-funding' | 'private-transfer'
 }) {
   const catalog = await rheaSwapClient.listTokens({
     direction: 'from',
@@ -210,7 +217,7 @@ export async function estimateConfidentialTransferMaximum(input: {
     tokenOut: token,
     recipient: input.recipient,
     confidential: true,
-    ...(input.executionMode === 'private' ? { purpose: 'private-transfer' as const } : {}),
+    purpose: input.purpose,
     executionMode: input.executionMode
   })
 }

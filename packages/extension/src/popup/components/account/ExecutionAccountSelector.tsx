@@ -25,7 +25,7 @@ function PrivateExecutionIcon({
 }) {
   return (
     <Icon
-      icon="solar:incognito-outline"
+      icon="noir:private-assets"
       width={size}
       height={size}
       className={className}
@@ -92,7 +92,7 @@ export function ExecutionAccountIcon({
   return mode === 'private' ? (
     <PrivateExecutionIcon size={size} className={className} />
   ) : (
-    <Icon icon="lucide:wallet" width={size} height={size} className={className} />
+    <Icon icon="noir:public-assets" width={size} height={size} className={className} />
   )
 }
 

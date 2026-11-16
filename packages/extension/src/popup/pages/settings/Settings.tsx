@@ -88,8 +88,12 @@ export function Settings() {
       action: () => navigate('/address-book')
     },
     { label: 'DApps Connection', icon: 'lucide:link', action: () => navigate('/dapp-connections') },
-    { label: 'Preferences', icon: 'lucide:heart', action: () => navigate('/general') },
-    { label: 'Security', icon: 'lucide:shield-check', action: () => navigate('/security-privacy') },
+    { label: 'General', icon: 'lucide:heart', action: () => navigate('/general') },
+    {
+      label: 'Security & Privacy',
+      icon: 'lucide:shield-check',
+      action: () => navigate('/security-privacy')
+    },
     { label: 'Networks', icon: 'lucide:radio', action: () => navigate('/networks') },
     {
       label: 'Default EVM Wallet',

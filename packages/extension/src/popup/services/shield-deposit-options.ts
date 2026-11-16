@@ -9,16 +9,27 @@ import {
   type ChainDefinition
 } from '@/core/chains/registry'
 import { getAssetProtocolSourceMappings } from '@/core/prices/asset-market-mappings'
-import { resolveIntentsEvmChainId } from '@/core/services/intents-evm-assets'
+import {
+  isDeprecatedIntentsToken,
+  resolveIntentsEvmChainId
+} from '@/core/services/intents-evm-assets'
 import type { SwapToken } from '@/core/services/intents-api'
 import { resolveManagedIntentsCatalogAsset } from './intents-asset-manager-client'
 import { DEFAULT_NETWORK } from '@/lib/runtime-network'
 import { parseZcashAddress } from '@/core/address-book/address-book'
-import { formatBaseUnitDecimalAmount, parseDisplayUnitAmount } from '@/lib/number-format'
+import {
+  formatBaseUnitDecimalAmount,
+  formatDecimalAmount,
+  parseDisplayUnitAmount
+} from '@/lib/number-format'
+import Big from '@/lib/big'
 import { isAddress, zeroAddress } from 'viem'
 import type { AccountNetworkView } from './account-networks-client'
 import type { ExternalShieldDeposit } from './confidential-funding-client'
-import { hasExternalShieldDepositFunding } from '@/core/services/confidential-funding/confidential-external-deposit'
+import {
+  hasExternalShieldDepositFunding,
+  isExternalShieldDepositExpired
+} from '@/core/services/confidential-funding/confidential-external-deposit'
 
 const bundledAssetMappings = getAssetProtocolSourceMappings(
   'mainnet',
@@ -63,6 +74,7 @@ export function availableDepositTokens(
   networks: readonly ChainDefinition[]
 ): readonly SwapToken[] {
   return tokens.filter(token => {
+    if (isDeprecatedIntentsToken(token)) return false
     const chainId = depositTokenChainId(token)
     const network = networks.find(candidate => candidate.id === chainId)
     return network !== undefined && depositSourceAssetId(token, network) !== null
@@ -129,6 +141,8 @@ export function defaultDepositRefundAddress(
   accountNetworks: readonly AccountNetworkView[]
 ): string {
   const accountNetwork = accountNetworks.find(item => item.chain.id === network?.id)
+  if (network?.family === 'evm' && accountNetwork?.privateExecutionAddress)
+    return accountNetwork.privateExecutionAddress
   return accountNetwork?.addresses.find(address => address.privacy === 'transparent')?.value ?? ''
 }
 
@@ -181,6 +195,16 @@ export function formatDepositAmount(raw: string, decimals: number | undefined): 
   }
 }
 
+export function formatMinimumDepositPaymentAmount(
+  raw: string,
+  decimals: number | undefined
+): string | null {
+  const exact = formatDepositAmount(raw, decimals)
+  return exact === null
+    ? null
+    : formatDecimalAmount(exact, { maximumFractionDigits: 6, roundingMode: Big.roundUp })
+}
+
 export function hasDepositSettlementShortfall(record: ExternalShieldDeposit): boolean {
   return (
     record.phase === 'ready' &&
@@ -203,7 +227,8 @@ export function depositStatusLabel(record: ExternalShieldDeposit, now: number): 
   if (record.phase === 'awaiting-payment' && hasExternalShieldDepositFunding(record)) {
     return 'Deposit detected'
   }
-  if (record.phase === 'awaiting-payment' && now >= record.expiresAt) return 'Quote expired'
+  if (record.phase === 'awaiting-payment' && isExternalShieldDepositExpired(record, now))
+    return 'Quote expired'
   switch (record.phase) {
     case 'awaiting-payment':
       return 'Awaiting deposit'
@@ -237,7 +262,7 @@ export function depositPaymentProgress(
   const amountUnknown = record.providerStatus === 'INCOMPLETE_DEPOSIT' && !hasDeposit
   const canPay =
     record.phase === 'awaiting-payment' &&
-    now < record.expiresAt &&
+    !isExternalShieldDepositExpired(record, now) &&
     remainingRaw !== '0' &&
     !amountUnknown
   return Object.freeze({

@@ -38,6 +38,76 @@ function deferred() {
 }
 
 describe('dynamic maximum transfer regressions', () => {
+  it('skips empty funding sources and becomes ready when spendable funds arrive', async () => {
+    let calls = 0
+    const quote = { id: 'quote-1', standardMarginalFeeZats: 5000, expiresAt: Date.now() + 60_000 }
+    const cache = new MaxTransferEstimateCache(
+      maxContext({ available: '0', pending: '1' }),
+      undefined,
+      {
+        getFeeQuote: async () => {
+          calls++
+          return quote
+        },
+        estimateMaxTransfer: async () => maxEstimate(quote)
+      }
+    )
+    assert.equal(cache.canEstimate, false)
+    assert.equal(await cache.get('recipient-a', 'standard', true, true), null)
+    assert.equal(calls, 0)
+    assert.deepEqual(cache.peek('recipient-a', 'standard'), {
+      estimate: null,
+      pending: false,
+      error: false
+    })
+    cache.setContext(maxContext())
+    assert.equal(cache.canEstimate, true)
+    assert.ok(await cache.get('recipient-a', 'standard'))
+    assert.equal(calls, 1)
+  })
+
+  it('refreshes an invalidated preview fee once without looping or crossing account scope', async () => {
+    for (const scenario of ['recovered', 'still-invalid', 'account-changed']) {
+      let quoteCalls = 0
+      let estimateCalls = 0
+      const cache = new MaxTransferEstimateCache(maxContext(), undefined, {
+        getFeeQuote: async () => ({
+          id: `quote-${++quoteCalls}`,
+          standardMarginalFeeZats: 5000,
+          expiresAt: Date.now() + 60_000
+        }),
+        estimateMaxTransfer: async input => {
+          estimateCalls++
+          if (estimateCalls === 1 || scenario === 'still-invalid') {
+            if (scenario === 'account-changed')
+              cache.setContext(maxContext({ accountId: 'account-b' }))
+            throw new Error(
+              'Network fee expired or changed. Review the updated fee before confirming.'
+            )
+          }
+          return maxEstimate({
+            id: input.feeQuoteId,
+            standardMarginalFeeZats: 5000,
+            expiresAt: Date.now() + 60_000
+          })
+        }
+      })
+      const result = await cache.get('recipient-a', 'standard')
+      if (scenario === 'recovered') {
+        assert.equal(result.feeQuote.id, 'quote-2')
+        assert.equal(cache.peek('recipient-a', 'standard').error, false)
+      } else {
+        assert.equal(result, null)
+      }
+      assert.equal(estimateCalls, scenario === 'account-changed' ? 1 : 2)
+      assert.equal(quoteCalls, estimateCalls)
+      if (scenario === 'still-invalid') {
+        assert.equal(await cache.get('recipient-a', 'standard'), null)
+        assert.equal(estimateCalls, 2)
+      }
+    }
+  })
+
   it('shares in-flight Max and fee quote, then refreshes after quote expiry', async () => {
     let now = 1000
     let quoteCalls = 0

@@ -3,6 +3,7 @@ import { Icon } from '@iconify/react'
 import evmGroupIcon from '@/images/figma-evm-group.svg'
 import { Button } from '@/popup/components/ui/button'
 import { ChainIcon } from '@/popup/components/common/ChainIcon'
+import { ChainSelector, type ChainSelectorOption } from '@/popup/components/common/ChainSelector'
 import {
   Dialog,
   DialogContent,
@@ -53,6 +54,14 @@ export function AddAddressDialog({
       choice.chainId !== ALL_EVM_NETWORKS_CHOICE.chainId &&
       getAddressBookNetworkChoice(choice.chainId)?.family === 'evm'
   )
+  const evmNetworkOptions: readonly ChainSelectorOption[] = [
+    { id: ALL_EVM_NETWORKS_CHOICE.chainId, name: ALL_EVM_NETWORKS_CHOICE.name, icon: 'evm' },
+    ...evmNetworks.map(choice => ({
+      id: choice.chainId,
+      name: choice.name,
+      icon: choice.iconChain ?? choice.chainId
+    }))
+  ]
   const network =
     detectedNetwork?.family === 'evm'
       ? evmChainId === ALL_EVM_NETWORKS_CHOICE.chainId
@@ -190,59 +199,16 @@ export function AddAddressDialog({
             Save address
           </Button>
         </div>
-        <Dialog open={showNetworks} onOpenChange={setShowNetworks}>
-          <DialogContent
-            position="bottom"
-            className="flex max-h-[calc(100dvh-56px)] flex-col gap-0 bg-popover p-0"
-          >
-            <DialogHeader className="shrink-0 px-5 py-5 text-left">
-              <DialogTitle>Select network</DialogTitle>
-              <DialogDescription className="sr-only">
-                Choose the networks for this address
-              </DialogDescription>
-            </DialogHeader>
-            <div
-              role="radiogroup"
-              aria-label="EVM network scope"
-              className="min-h-0 overflow-y-auto px-5 pb-5"
-            >
-              {[ALL_EVM_NETWORKS_CHOICE, ...evmNetworks].map(choice => (
-                <button
-                  key={choice.chainId}
-                  type="button"
-                  role="radio"
-                  aria-label={choice.name}
-                  aria-checked={evmChainId === choice.chainId}
-                  onClick={() => {
-                    setEvmChainId(choice.chainId)
-                    setError(null)
-                    setShowNetworks(false)
-                  }}
-                  className="wallet-interactive flex min-h-[56px] w-full items-center gap-3 rounded-lg px-2 py-3 text-left hover:bg-accent focus-visible:outline-2 focus-visible:outline-primary"
-                >
-                  {choice.chainId === ALL_EVM_NETWORKS_CHOICE.chainId ? (
-                    <img src={evmGroupIcon} alt="" className="size-8 shrink-0" />
-                  ) : (
-                    <ChainIcon
-                      chain={choice.iconChain ?? choice.chainId}
-                      showTooltip={false}
-                      className="size-8 shrink-0"
-                    />
-                  )}
-                  <span className="min-w-0 flex-1 text-sm">{choice.name}</span>
-                  {evmChainId === choice.chainId && (
-                    <Icon
-                      icon="lucide:check"
-                      width={18}
-                      height={18}
-                      className="shrink-0 text-primary"
-                    />
-                  )}
-                </button>
-              ))}
-            </div>
-          </DialogContent>
-        </Dialog>
+        <ChainSelector
+          open={showNetworks}
+          onOpenChange={setShowNetworks}
+          options={evmNetworkOptions}
+          selectedId={evmChainId}
+          onSelect={id => {
+            setEvmChainId(id)
+            setError(null)
+          }}
+        />
       </DialogContent>
     </Dialog>
   )

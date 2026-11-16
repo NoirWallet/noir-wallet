@@ -247,6 +247,8 @@ test.describe('Popup EVM wallet client', () => {
     const calls = []
     const estimate = {
       chainId,
+      transactionType: 'eip1559',
+      gasPriceWei: null,
       maximumFeeWei: '63000',
       maxFeePerGasWei: '3',
       maxPriorityFeePerGasWei: '1',
@@ -304,6 +306,25 @@ test.describe('Popup EVM wallet client', () => {
     await expect(wrongFee.estimateTransferFee(intent)).rejects.toMatchObject({
       code: 'invalid-response'
     })
+    const legacy = {
+      ...estimate,
+      transactionType: 'legacy',
+      gasPriceWei: '3',
+      maxPriorityFeePerGasWei: '0'
+    }
+    await expect(
+      createEvmWalletClient(async () => ({ result: legacy })).estimateTransferFee(intent)
+    ).resolves.toEqual(legacy)
+    for (const invalid of [
+      { ...estimate, transactionType: 'unknown' },
+      { ...estimate, gasPriceWei: '3' },
+      { ...legacy, gasPriceWei: '4' },
+      { ...legacy, maxPriorityFeePerGasWei: '1' }
+    ]) {
+      await expect(
+        createEvmWalletClient(async () => ({ result: invalid })).estimateTransferFee(intent)
+      ).rejects.toMatchObject({ code: 'invalid-response' })
+    }
   })
   test('binds an allowance read to its chain and selected owner and rejects malformed values', async () => {
     const messages = []
@@ -334,6 +355,30 @@ test.describe('Popup EVM wallet client', () => {
     await expect(
       malformed.getTokenAllowance(chainId, customContract, recipient, from)
     ).rejects.toMatchObject({ code: 'invalid-response' })
+  })
+
+  test('accepts confirmed zero but rejects malformed catalog balance responses', async () => {
+    const messages = []
+    const request = {
+      chainId,
+      token: customContract,
+      walletId: 'wallet-1',
+      accountId: 'account-1',
+      executionMode: 'private'
+    }
+    const client = createEvmWalletClient(async message => {
+      messages.push(message)
+      return { result: '0' }
+    })
+    await expect(client.getTokenBalance(request)).resolves.toBe('0')
+    expect(messages).toEqual([{ type: 'GET_EVM_TOKEN_BALANCE', ...request }])
+    await expect(client.getTokenBalance({ ...request, token: 'invalid' })).rejects.toMatchObject({
+      code: 'invalid-request'
+    })
+    const malformed = createEvmWalletClient(async () => ({ result: '0x0' }))
+    await expect(malformed.getTokenBalance(request)).rejects.toMatchObject({
+      code: 'invalid-response'
+    })
   })
 
   test('atomically validates a custom Token inventory with its Portfolio model', async () => {

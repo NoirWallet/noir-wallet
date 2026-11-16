@@ -3,7 +3,9 @@ import { expect } from '@playwright/test'
 import {
   buildInitialSwapCatalogPlan,
   findSwapTokenInCatalog,
-  loadTokenCatalogByChain
+  loadTokenCatalogByChain,
+  mergeTokenCatalogs,
+  pickProvisionalSwapSource
 } from '../../../src/popup/services/swap-catalog-loading.ts'
 
 const zcashChain = {
@@ -91,7 +93,7 @@ test('publishes a healthy chain before slow chains finish and stops queued work 
   let cancelled = false
   const calls = []
   const published = []
-  const token = { rheaChainId: '1', rheaAddress: 'eth' }
+  const token = { rheaChainId: '1', rheaAddress: 'eth', symbol: 'ETH' }
   const loading = loadTokenCatalogByChain(
     'from',
     [1, 10, 56, 137],
@@ -117,6 +119,39 @@ test('publishes a healthy chain before slow chains finish and stops queued work 
   expect(calls).toEqual([1, 10])
   release()
   expect(await loading).toEqual([token])
+})
+
+test('excludes deprecated routes from cached and live Swap catalogs', async () => {
+  const contract = '0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d'
+  const legacy = {
+    assetId: 'nep245:v2_1.omni.hot.tg:56_2w93GqMcEmQFDru84j3HZZWt557r',
+    blockchain: 'bsc',
+    contractAddress: contract,
+    symbol: 'USDC(DEPRECATED)',
+    rheaChainId: '56',
+    rheaAddress: contract,
+    tokenListChainId: 56
+  }
+  const current = {
+    ...legacy,
+    assetId: `nep141:bnb-${contract}.omdep.near`,
+    symbol: 'USDC'
+  }
+  const cached = mergeTokenCatalogs([current, legacy])
+  expect(cached).toEqual([current])
+  expect(pickProvisionalSwapSource(cached, legacy.assetId)).toEqual(current)
+
+  const published = []
+  const loaded = await loadTokenCatalogByChain(
+    'from',
+    [56],
+    false,
+    tokens => published.push(...tokens),
+    () => false,
+    { listTokens: async () => ({ tokens: [legacy, current], failedChainIds: [] }) }
+  )
+  expect(published).toEqual([current])
+  expect(loaded).toEqual([current])
 })
 
 test('distinguishes a selected token from an asset on another chain', () => {

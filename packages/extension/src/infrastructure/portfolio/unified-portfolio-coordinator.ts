@@ -60,7 +60,8 @@ export interface UnifiedPortfolioCoordinatorOptions {
       readonly keyDomainId: KeyDomainId
       readonly accountId: AccountId
     },
-    family: AccountNetworkFamily
+    family: AccountNetworkFamily,
+    chainId: string
   ) => boolean | Promise<boolean>
   readonly evmPortfolios?: readonly EvmPortfolioSourceRegistration[]
   readonly bitcoinPortfolio?: BitcoinPortfolioSourceReader
@@ -204,7 +205,7 @@ export class UnifiedPortfolioCoordinator {
           active.availableChainAccounts.map(async item =>
             !isSoftwareWallet ||
             !this.options.isNetworkEnabled ||
-            (await this.options.isNetworkEnabled(scope, item.chain.family))
+            (await this.options.isNetworkEnabled(scope, item.chain.family, item.chain.id))
               ? item
               : null
           )

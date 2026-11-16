@@ -129,6 +129,7 @@ export function getActiveZcashRpcUrlForNetwork(network: Network, fallbackUrl: st
 }
 
 const RPC_REGISTRY_CACHE_KEY = 'rpc_registry_cache_v1'
+const RPC_REGISTRY_TIMING_KEY = 'rpc_registry_refresh_v1'
 
 interface StoredRpcPreferences {
   raw: unknown
@@ -195,9 +196,34 @@ async function loadCachedRegistryGroups(): Promise<void> {
 }
 
 async function refreshRegistryGroups(): Promise<boolean> {
+  const stored = await chrome.storage.local
+    .get([RPC_REGISTRY_CACHE_KEY, RPC_REGISTRY_TIMING_KEY])
+    .catch(() => ({}) as Record<string, unknown>)
+  const cached = parseRpcRegistryDocument(stored[RPC_REGISTRY_CACHE_KEY])
+  const timing = stored[RPC_REGISTRY_TIMING_KEY] as
+    | { successAt?: unknown; attemptAt?: unknown }
+    | undefined
+  const recent = (value: unknown, ttl: number) =>
+    typeof value === 'number' && Date.now() >= value && Date.now() - value < ttl
+  if (cached && recent(timing?.successAt, 5 * 60_000)) {
+    applyRegistryGroups(cached)
+    return cached.chains.some(chain => chain.chain === 'zcash' && chain.network === 'mainnet')
+  }
+  if (recent(timing?.attemptAt, 60_000)) {
+    applyRegistryGroups(cached)
+    return false
+  }
+  await chrome.storage.local
+    .set({ [RPC_REGISTRY_TIMING_KEY]: { attemptAt: Date.now() } })
+    .catch(() => {})
   try {
     const registry = await fetchRpcRegistry()
-    await chrome.storage.local.set({ [RPC_REGISTRY_CACHE_KEY]: registry }).catch(() => {})
+    await chrome.storage.local
+      .set({
+        [RPC_REGISTRY_CACHE_KEY]: registry,
+        [RPC_REGISTRY_TIMING_KEY]: { successAt: Date.now(), attemptAt: Date.now() }
+      })
+      .catch(() => {})
     applyRegistryGroups(registry)
     return registry.chains.some(chain => chain.chain === 'zcash' && chain.network === 'mainnet')
   } catch {

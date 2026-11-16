@@ -117,8 +117,9 @@ test('waits for every NEAR origin before reporting the final batch hash', async 
   assert.deepEqual(calls, [`record:${sourceHashes[1]}`, 'report', 'status'])
 })
 
-test('refreshes both affected chains as soon as a RHEA order completes', async () => {
+test('reveals the destination asset before refreshing both chains when a RHEA order completes', async () => {
   const refreshes = []
+  const revealed = []
   const notifications = []
   const service = {
     async recordTransactionSubmission() {},
@@ -134,7 +135,11 @@ test('refreshes both affected chains as soon as a RHEA order completes', async (
   const firstBroadcast = await broadcast(repository, initial, 0, 1_001)
   const fullBroadcast = await broadcast(repository, firstBroadcast, 1, 1_002)
   const monitor = new RheaSwapTransactionMonitor(service, {
-    refreshPortfolio: async request => refreshes.push(request),
+    revealDestinationAsset: async assetId => revealed.push(assetId),
+    refreshPortfolio: async request => {
+      assert.deepEqual(revealed, ['zcash:mainnet/slip44:133'])
+      refreshes.push(request)
+    },
     notifyStatus: (quoteHandle, status) => notifications.push({ quoteHandle, status })
   })
   monitor.repository = repository
@@ -151,6 +156,7 @@ test('refreshes both affected chains as soon as a RHEA order completes', async (
       chainIds: ['near:mainnet', 'zcash:mainnet']
     }
   ])
+  assert.deepEqual(revealed, ['zcash:mainnet/slip44:133'])
   assert.deepEqual(notifications, [
     {
       quoteHandle: 'rhea-quote:monitor',

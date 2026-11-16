@@ -4,6 +4,7 @@ import type { AccountData, Network, WalletItem } from '@/types'
 import { DEFAULT_NETWORK } from '@/lib/runtime-network'
 import { createChromeStorageAdapter } from '@/lib/chrome-storage-adapter'
 import {
+  migrateRetainedV1NetworkSelections,
   refreshWalletMetadata,
   resetWalletMetadata,
   writeWalletMetadata
@@ -342,12 +343,12 @@ export async function migrateWalletDataIfNeeded(): Promise<void> {
       getAll: () => chrome.storage.local.get(null),
       set: values => chrome.storage.local.set(values)
     })
-    if (result.status === 'retained') {
-      await rehydrateWalletStore()
-    }
-
     if (result.status === 'quarantined') {
       throw new Error(`Legacy wallet metadata migration quarantined: ${result.reason}`)
+    }
+    const networkSelectionsMigrated = await migrateRetainedV1NetworkSelections()
+    if (result.status === 'retained' || networkSelectionsMigrated) {
+      await rehydrateWalletStore()
     }
   } catch (error) {
     console.error('[WalletStore] Legacy wallet metadata migration failed')

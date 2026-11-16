@@ -1,4 +1,6 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import type { SwapToken } from '@/core/services/intents-api'
+import { swapTokenCatalogClient } from '@/popup/services/swap-token-catalog-client'
 import { Icon } from '@iconify/react'
 import Big from '@/lib/big'
 import { formatFiatAmount } from '@/lib/number-format'
@@ -57,6 +59,8 @@ interface PortfolioShellProps {
   readonly initialView?: PortfolioViewMode
   readonly view?: PortfolioViewMode
   readonly onViewChange?: (view: PortfolioViewMode) => void
+  readonly chainListExpanded: boolean
+  readonly onChainListExpandedChange: (expanded: boolean) => void
   readonly refreshing?: boolean
   readonly refreshDisabled?: boolean
   readonly selectedChainIds?: readonly string[]
@@ -185,7 +189,7 @@ function UnloadedChainBalance({
                 <p className="mt-0.5 text-xs text-muted">••••</p>
               </>
             ) : unavailable ? (
-              <span className="text-muted">—</span>
+              <span className="text-xs text-muted">Unavailable</span>
             ) : (
               <>
                 <Skeleton className="ml-auto h-4 w-16" />
@@ -217,7 +221,11 @@ function UnloadedChainBalance({
           <Skeleton className="mt-1.5 h-3 w-20" />
         )}
       </div>
-      {unavailable ? <span className="text-muted">—</span> : <Skeleton className="h-4 w-16" />}
+      {unavailable ? (
+        <span className="text-xs text-muted">Unavailable</span>
+      ) : (
+        <Skeleton className="h-4 w-16" />
+      )}
     </div>
   )
 }
@@ -261,6 +269,8 @@ export function PortfolioShell({
   initialView = 'assets',
   view: controlledView,
   onViewChange,
+  chainListExpanded,
+  onChainListExpandedChange,
   refreshing = false,
   refreshDisabled = refreshing,
   selectedChainIds: controlledSelectedChainIds,
@@ -273,17 +283,18 @@ export function PortfolioShell({
   const [localView, setLocalView] = useState<PortfolioViewMode>(initialView)
   const view = controlledView ?? localView
   const setView = onViewChange ?? setLocalView
+  const displayModel = model
   const [localSelectedChainIds, setLocalSelectedChainIds] = useState<readonly string[]>(() =>
-    model.chains
+    displayModel.chains
       .filter(chain => isSelectableChainFamily(chain.chain.family, __ENABLED_CHAIN_FEATURE_FLAGS__))
       .map(chain => chain.chain.id)
   )
   const selectableChains = useMemo(
     () =>
-      model.chains.filter(chain =>
+      displayModel.chains.filter(chain =>
         isSelectableChainFamily(chain.chain.family, __ENABLED_CHAIN_FEATURE_FLAGS__)
       ),
-    [model.chains]
+    [displayModel.chains]
   )
   const availableChainIds = useMemo(
     () => selectableChains.map(chain => chain.chain.id),
@@ -307,6 +318,25 @@ export function PortfolioShell({
     visibleConfidential.flatMap(item => (item.chain ? [item.chain.chain.id] : []))
   )
   const [expandedChainIds, setExpandedChainIds] = useState<ReadonlySet<string>>(() => new Set())
+  const [swapCatalog, setSwapCatalog] = useState<readonly SwapToken[]>([])
+  useEffect(() => {
+    let cancelled = false
+    void swapTokenCatalogClient
+      .readCached()
+      .then(tokens => {
+        if (!cancelled) setSwapCatalog(tokens)
+      })
+      .catch(() => {})
+    void swapTokenCatalogClient
+      .refresh()
+      .then(tokens => {
+        if (!cancelled) setSwapCatalog(tokens)
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [])
   const [lowValueExpanded, setLowValueExpanded] = useState(false)
   const [expandedLowValueChainIds, setExpandedLowValueChainIds] = useState<ReadonlySet<string>>(
     () => new Set()
@@ -344,6 +374,7 @@ export function PortfolioShell({
     () => sortPortfolioChains(visibleChains, prices),
     [prices, visibleChains]
   )
+  const displayedChains = chainListExpanded ? sortedChains : sortedChains.slice(0, 3)
   const sortedNetworkOptions = useMemo(
     () => sortPortfolioChains(selectableChains, prices),
     [selectableChains, prices]
@@ -373,6 +404,7 @@ export function PortfolioShell({
           pricesLoading={pricesLoading}
           onSelectAsset={onSelectAsset}
           directAsset
+          swapCatalog={swapCatalog}
         />
         {unavailableZcash && (
           <div className="px-4 pb-2 pl-16">
@@ -474,7 +506,10 @@ export function PortfolioShell({
             description="Noir Wallet is reconnecting automatically."
           />
         ) : model.status === 'empty' ? (
-          <StatePanel icon="lucide:layers" title="No networks available" />
+          <StatePanel
+            icon="lucide:layers"
+            title={domain === 'all' ? 'No networks available' : 'No assets found'}
+          />
         ) : showContent && selectedChainIds.length === 0 ? (
           <StatePanel icon="lucide:network" title="No network selected" />
         ) : showContent &&
@@ -496,6 +531,7 @@ export function PortfolioShell({
                 chain={chain?.chain}
                 showProvider
                 balancesHidden={balancesHidden}
+                pricesLoading={pricesLoading}
                 onClick={() => onSelectConfidentialAsset?.(entry.asset.tokenId)}
               />
             ))}
@@ -509,29 +545,31 @@ export function PortfolioShell({
               />
             ))}
             {lowValueAssetGroups.length > 0 && (
-              <section className="overflow-hidden rounded-xl border border-border/60 bg-card/40">
-                <button
-                  type="button"
-                  aria-expanded={lowValueExpanded}
-                  aria-label={`${lowValueExpanded ? 'Collapse' : 'Expand'} low value assets`}
-                  onClick={() => setLowValueExpanded(current => !current)}
-                  className="wallet-interactive flex min-h-11 w-full items-center gap-2 px-3 py-2 text-left hover:bg-white/[0.05] active:bg-white/10 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary"
-                >
-                  <Icon icon="lucide:archive" width={16} height={16} className="text-muted" />
-                  <span className="min-w-0 flex-1 text-sm font-medium">Low value</span>
-                  <span className="text-xs text-muted">{lowValueAssetGroups.length} Assets</span>
-                  <Icon
-                    icon="lucide:chevron-down"
-                    width={13}
-                    height={13}
-                    className={cn(
-                      'text-muted transition-transform',
-                      lowValueExpanded && 'rotate-180'
-                    )}
-                  />
-                </button>
+              <section>
+                <div className="mx-4">
+                  <button
+                    type="button"
+                    aria-expanded={lowValueExpanded}
+                    aria-label={`${lowValueExpanded ? 'Collapse' : 'Expand'} low value assets`}
+                    onClick={() => setLowValueExpanded(current => !current)}
+                    className="wallet-interactive flex min-h-11 w-full items-center gap-2 rounded-xl border border-border/60 bg-card/40 px-3 py-2 text-left hover:bg-white/[0.05] active:bg-white/10 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary"
+                  >
+                    <Icon icon="lucide:archive" width={16} height={16} className="text-muted" />
+                    <span className="min-w-0 flex-1 text-sm font-medium">Low value</span>
+                    <span className="text-xs text-muted">{lowValueAssetGroups.length} Assets</span>
+                    <Icon
+                      icon="lucide:chevron-down"
+                      width={13}
+                      height={13}
+                      className={cn(
+                        'text-muted transition-transform',
+                        lowValueExpanded && 'rotate-180'
+                      )}
+                    />
+                  </button>
+                </div>
                 {lowValueExpanded && (
-                  <div className="space-y-2 border-t border-border/60 p-2">
+                  <div className="space-y-2">
                     {lowValueAssetGroups.map(group => renderAssetGroup(group, 'assets:low-value'))}
                   </div>
                 )}
@@ -540,7 +578,7 @@ export function PortfolioShell({
           </div>
         ) : (
           <div className="divide-y divide-white/[0.08] pb-2">
-            {sortedChains.map(chain => {
+            {displayedChains.map(chain => {
               const expanded = expandedChainIds.has(chain.chain.id)
               const confidentialEntries = visibleConfidential.filter(
                 item => item.chain?.chain.id === chain.chain.id
@@ -601,7 +639,9 @@ export function PortfolioShell({
                         {balancesHidden
                           ? '••••'
                           : chainFiat === null
-                            ? '—'
+                            ? getPortfolioChainBalanceStatus(chain) === 'unavailable'
+                              ? '—'
+                              : formatFiatAmount('0', { showSign: true })
                             : formatFiatAmount(chainFiat, { showSign: true })}
                       </span>
                     )}
@@ -652,6 +692,7 @@ export function PortfolioShell({
                           balancesHidden={balancesHidden}
                           pricesLoading={pricesLoading}
                           onSelectAsset={onSelectAsset}
+                          swapCatalog={swapCatalog}
                         />
                       ))}
                       {confidentialEntries.map(({ entry }) => (
@@ -661,6 +702,7 @@ export function PortfolioShell({
                           chain={chain.chain}
                           showProvider
                           balancesHidden={balancesHidden}
+                          pricesLoading={pricesLoading}
                           onClick={() => onSelectConfidentialAsset?.(entry.asset.tokenId)}
                         />
                       ))}
@@ -701,6 +743,7 @@ export function PortfolioShell({
                                 balancesHidden={balancesHidden}
                                 pricesLoading={pricesLoading}
                                 onSelectAsset={onSelectAsset}
+                                swapCatalog={swapCatalog}
                               />
                             ))}
                         </>
@@ -718,9 +761,26 @@ export function PortfolioShell({
                   entry={entry}
                   showProvider
                   balancesHidden={balancesHidden}
+                  pricesLoading={pricesLoading}
                   onClick={() => onSelectConfidentialAsset?.(entry.asset.tokenId)}
                 />
               ))}
+            {sortedChains.length > 3 && (
+              <button
+                type="button"
+                aria-expanded={chainListExpanded}
+                onClick={() => onChainListExpandedChange(!chainListExpanded)}
+                className="wallet-interactive flex min-h-11 w-full items-center justify-center gap-1.5 px-4 py-2 text-sm font-medium text-primary hover:bg-white/[0.05] active:bg-white/10 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary"
+              >
+                {chainListExpanded ? 'Collapse' : 'View more'}
+                <Icon
+                  icon={chainListExpanded ? 'lucide:chevron-up' : 'lucide:chevron-down'}
+                  width={14}
+                  height={14}
+                  aria-hidden="true"
+                />
+              </button>
+            )}
           </div>
         )}
       </div>

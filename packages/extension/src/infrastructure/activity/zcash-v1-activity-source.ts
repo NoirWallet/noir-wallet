@@ -106,6 +106,25 @@ function externalChainId(chain: string, transaction: Transaction): ChainId | nul
   return null
 }
 
+function boundDestinationChainId(
+  transaction: Transaction,
+  destinationAssetId: ReturnType<typeof resolveRheaSwapCanonicalAssetId>
+): ChainId | null {
+  const assetChainId = destinationAssetId ? parseAssetId(destinationAssetId).chainId : null
+  const boundChainId = transaction.quoteBinding?.destinationChain
+    ? externalChainId(transaction.quoteBinding.destinationChain, transaction)
+    : null
+  // Unmapped NEAR protocol tokens can represent assets selected on an external chain.
+  if (
+    boundChainId &&
+    assetChainId === parseChainId('near:mainnet').id &&
+    transaction.quoteBinding?.destinationAsset?.startsWith('nep141:')
+  ) {
+    return boundChainId
+  }
+  return assetChainId ?? boundChainId
+}
+
 function originStatus(transaction: Transaction): TransactionLifecycleStatus {
   if (!transaction.txHash) return transaction.status === 'failed' ? 'failed' : 'created'
   if (transaction.status === 'success' || transaction.status === 'relay_confirmed') return 'final'
@@ -142,7 +161,8 @@ function destinationStatus(transaction: Transaction): TransactionLifecycleStatus
 function crossChainSegments(
   transaction: Transaction,
   zcashChainId: ChainId,
-  relayReference: string | undefined
+  relayReference: string | undefined,
+  destinationReceipt?: Transaction
 ): readonly ActivitySegment[] {
   const failureCode = crossChainFailure(transaction)
   const outboundFromZcash = transaction.type === 'swap' || transaction.type === 'supply'
@@ -153,6 +173,29 @@ function crossChainSegments(
   const originChainId = outboundFromZcash
     ? zcashChainId
     : (externalChainId(originChain, transaction) ?? parseChainId('near:mainnet').id)
+  const destinationAssetId = transaction.quoteBinding?.destinationAsset
+    ? resolveRheaSwapCanonicalAssetId(
+        transaction.quoteBinding.destinationAsset,
+        transaction.network
+      )
+    : null
+  const settledDestinationAmount =
+    transaction.status === 'success' &&
+    destinationAssetId === createAssetId(zcashChainId, 'slip44', '133') &&
+    transaction.destinationTxHash &&
+    /^[0-9a-fA-F]{64}$/.test(transaction.destinationTxHash) &&
+    destinationReceipt?.type === 'receive' &&
+    destinationReceipt.network === transaction.network &&
+    destinationReceipt.fromType === 'transparent' &&
+    destinationReceipt.txHash.toLowerCase() === transaction.destinationTxHash.toLowerCase() &&
+    (destinationReceipt.status === 'confirming' || destinationReceipt.status === 'success') &&
+    (destinationReceipt.confirmations ?? 0) > 0 &&
+    transaction.quoteBinding?.recipient === destinationReceipt.to
+      ? Object.freeze({
+          assetId: destinationAssetId,
+          amountRaw: decimalToRaw(destinationReceipt.amount)
+        })
+      : undefined
   const segments: ActivitySegment[] = [
     Object.freeze({
       id: `${transaction.id}:origin`,
@@ -198,9 +241,7 @@ function crossChainSegments(
     const destinationChainId =
       transaction.type === 'withdraw' || transaction.type === 'claim'
         ? zcashChainId
-        : destinationAssetId
-          ? parseAssetId(destinationAssetId).chainId
-          : undefined
+        : boundDestinationChainId(transaction, destinationAssetId)
     destinationHashes.set(transaction.destinationTxHash.toLowerCase(), {
       hash: transaction.destinationTxHash,
       chain: transaction.quoteBinding?.destinationChain ?? 'Destination chain',
@@ -221,6 +262,11 @@ function crossChainSegments(
         status: destinationStatus(transaction),
         evidence: Object.freeze({
           transactionHash: item.hash,
+          ...(settledDestinationAmount &&
+          chainId === zcashChainId &&
+          item.hash.toLowerCase() === transaction.destinationTxHash?.toLowerCase()
+            ? { settledAmount: settledDestinationAmount }
+            : {}),
           ...(chainId === zcashChainId && transaction.confirmations !== undefined
             ? { confirmations: transaction.confirmations }
             : {}),
@@ -240,11 +286,7 @@ function crossChainSegments(
           transaction.network
         )
       : null
-    const destinationChainId = destinationAssetId
-      ? parseAssetId(destinationAssetId).chainId
-      : transaction.quoteBinding?.destinationChain
-        ? externalChainId(transaction.quoteBinding.destinationChain, transaction)
-        : null
+    const destinationChainId = boundDestinationChainId(transaction, destinationAssetId)
     if (destinationChainId) {
       segments.push(
         Object.freeze({
@@ -261,7 +303,8 @@ function crossChainSegments(
 
 export function mapZcashV1TransactionToActivityItem(
   transaction: Transaction,
-  scope: ActivityScope
+  scope: ActivityScope,
+  destinationReceipt?: Transaction
 ): ActivityItem {
   const chainId = parseChainId(getZcashChainId(transaction.network)).id
   const assetId = createAssetId(chainId, 'slip44', '133')
@@ -291,11 +334,7 @@ export function mapZcashV1TransactionToActivityItem(
           amountRaw: transaction.quoteBinding.expectedAmountOut
         })
       : undefined
-  const finalRecipientChainId = counterAssetId
-    ? parseAssetId(counterAssetId).chainId
-    : transaction.quoteBinding?.destinationChain
-      ? externalChainId(transaction.quoteBinding.destinationChain, transaction)
-      : null
+  const finalRecipientChainId = boundDestinationChainId(transaction, counterAssetId)
   const finalRecipient =
     transaction.type === 'swap' && transaction.quoteBinding?.recipient && finalRecipientChainId
       ? Object.freeze({
@@ -304,7 +343,7 @@ export function mapZcashV1TransactionToActivityItem(
         })
       : undefined
   const segments = crossChain
-    ? crossChainSegments(transaction, chainId, relayReference)
+    ? crossChainSegments(transaction, chainId, relayReference, destinationReceipt)
     : Object.freeze([
         Object.freeze({
           id: `${transaction.id}:zcash`,

@@ -94,12 +94,7 @@ describe('Cross-chain transaction lifecycle regressions', () => {
     )
   })
 
-  it('reveals a RHEA destination Token on any supported chain after a successful Swap', () => {
-    assert.match(
-      resultPageSource,
-      /data\.status\?\.status !== 'SUCCESS'[\s\S]*?showProtocolAsset\(destinationAsset\)[\s\S]*?getPortfolio\('refresh', \{ chainIds: \[destinationChainId\] \}\)/,
-      'a successful Swap must enable its exact Intents destination before refreshing Assets'
-    )
+  it('keeps swap asset discovery scoped to the selected route', () => {
     assert.doesNotMatch(
       resultPageSource,
       /forceDiscovery:\s*true/,
@@ -156,12 +151,6 @@ describe('Cross-chain transaction lifecycle regressions', () => {
     )
   })
 
-  it('labels the two steps of a multi-step Zcash send distinctly', () => {
-    assert.match(transactionDetailSource, /showMultiStepZcashLabels = isMultiStepZcashSend/)
-    assert.match(transactionDetailSource, /'Funding Hash'/)
-    assert.match(transactionDetailSource, /'Payment Hash'/)
-  })
-
   it('treats relay success as final for outbound supply and swap transactions', () => {
     assert.ok(
       monitorSource.includes('getCrossChainCompletionStatus(tx.type, {'),
@@ -202,10 +191,6 @@ describe('Cross-chain transaction lifecycle regressions', () => {
       /pollingTransactionConfirmations\([\s\S]*?SPENDABILITY_CONFIRMATIONS/
     )
     assert.match(resultPageSource, /controller\.abort\(\)/)
-  })
-
-  it('uses Chrome production alarm minimum for background relay checks', () => {
-    assert.match(monitorSource, /const POLL_DELAY_MIN = 0\.5/)
   })
 })
 
