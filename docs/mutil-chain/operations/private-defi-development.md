@@ -136,10 +136,10 @@ Run the offline behavior tests:
 pnpm test
 ```
 
-The protocol test uses deterministic responses in a real MV3 extension and does not broadcast Mainnet funds:
+Run the current MV3 safety checks. They do not cover funded Mainnet Private DeFi transfers:
 
 ```bash
-pnpm test e2e protocol-mainnet
+pnpm test e2e extension
 ```
 
 Run extension type checking and the build for affected extension code:

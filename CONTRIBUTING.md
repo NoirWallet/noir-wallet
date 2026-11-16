@@ -40,7 +40,6 @@ The wallet uses one test entry point from either the repository root or extensio
 pnpm test                            # Offline core tests
 pnpm test e2e extension              # Build and run MV3 safety checks
 pnpm test live                       # Opt-in service checks only
-pnpm test live evm-testnet-live      # Explicit funded project selection
 pnpm test rc                         # Core, MV3 safety checks, and build verification
 ```
 

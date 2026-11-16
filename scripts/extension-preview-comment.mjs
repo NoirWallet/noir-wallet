@@ -66,6 +66,10 @@ function commentBody(repository, run, artifact, forkPreview) {
       lines.push('Swap is unavailable in fork previews because repository secrets are not shared.')
   } else {
     if (run.status !== 'completed') lines.push('Preview package: **building**.')
+    else if (run.conclusion === 'success' && forkPreview)
+      lines.push(
+        'Fork checks passed. No preview package was uploaded. Move the reviewed changes to a repository branch for a configured download.'
+      )
     else if (run.conclusion === 'success')
       lines.push(
         'Preview package: **unavailable or expired**. Re-run Extension CI for this commit.'
