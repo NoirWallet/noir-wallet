@@ -188,7 +188,9 @@ import {
   isSwapMaximumQuotePending,
   resolveSelectedSwapMaximum,
   resolveZcashSwapMaximumAdjustment,
-  canUseEstimatedEvmSwapMaximum
+  resolveZcashSwapRequoteMaximum,
+  canUseEstimatedEvmSwapMaximum,
+  type ZcashSwapMaximumTarget
 } from '@/popup/services/swap-maximum'
 import { useTransferMaximum } from '@/popup/hooks/useTransferMaximum'
 import {
@@ -1261,10 +1263,7 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
     graph: TransactionGraph
   } | null>(null)
   const restoredApprovalId = useRef<string | null>(null)
-  const [zcashMaximumTarget, setZcashMaximumTarget] = useState<{
-    readonly scope: string
-    readonly address: string
-  } | null>(null)
+  const [zcashMaximumTarget, setZcashMaximumTarget] = useState<ZcashSwapMaximumTarget | null>(null)
   const [pendingRheaEvmAfterApproval, setPendingRheaEvmAfterApproval] =
     useState<PendingRheaEvmAfterApproval | null>(null)
   const pendingQuoteTransfer = useRef<PreparedQuoteDepositTransfer | null>(null)
@@ -2807,7 +2806,15 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
     currentNetwork,
     swap.tokenIn?.assetId,
     swap.tokenOut?.assetId,
+    swap.slippage,
+    quoteMode,
+    quotePurpose,
+    shieldNativeZecSwap,
+    executionSourceMode,
+    destinationMode,
+    destinationPrivateExecutionAddress,
     resolvedRecipientAddress,
+    resolvedRefundAddress,
     feeTier,
     fundingSource
   ])
@@ -2888,12 +2895,19 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
     !displayedFeeLoading &&
     displayedFeeByTier.standard === null &&
     displayedFeeByTier.fast === null
+  const zcashRequoteMaximum = resolveZcashSwapRequoteMaximum({
+    maxSelected,
+    scope: zcashMaximumScope,
+    target: zcashMaximumTarget,
+    depositAddress: swap.depositAddress,
+    amount: swap.amountIn
+  })
   const zcashAvailability = resolveZcashFundingAvailability({
     balance: swap.isZecSource ? storeBalance : null,
     fundingSource,
     selectedFeeZats: maximumFeeReserveZats,
     standardFeeZats,
-    maximumAmount: maxTransfer.maxAmount
+    maximumAmount: maxTransfer.maxAmount ?? zcashRequoteMaximum
   })
   const canEstimateRouteMaximum = Boolean(
     !confidentialShieldSwapActive &&
@@ -3811,12 +3825,17 @@ export function Swap({ purpose = 'swap' }: { purpose?: 'swap' | 'cross-chain-sen
                 decimals: tokenIn.decimals
               })
             }
-            if (estimate) {
-              setZcashMaximumTarget({ scope: zcashMaximumScope, address: transferTarget })
+            if (estimate && exactMax !== null) {
+              setZcashMaximumTarget({
+                scope: zcashMaximumScope,
+                address: transferTarget,
+                amount: exactMax
+              })
               maxTransfer.update(estimate, transferTarget)
             }
             if (adjustment) {
               if (viewStep !== 'review') setViewStep('input')
+              swap.setDepositAddress('')
               swap.updateAmountIn(adjustment.amount)
               return
             }
