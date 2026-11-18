@@ -721,26 +721,17 @@ export function parseRheaSwapQuoteRequest(value: unknown): RheaSwapQuoteRequest 
   })
 }
 
-export function toSdkQuoteRequest(
-  value: RheaSwapQuoteRequest,
-  purpose?: PrivateQuotePurpose
-): QuoteRequest {
+export function toSdkQuoteRequest(value: RheaSwapQuoteRequest): QuoteRequest {
   const { quoteMode, ...quoteFields } = value
   const fast = quoteMode === 'fast'
-  const crossChainSend =
-    value.fromChain !== value.toChain &&
-    (purpose === 'public-cross-chain-send' ||
-      purpose === 'private-cross-chain-send' ||
-      purpose === 'public-private-send')
-  const quoteTimeoutMs = crossChainSend ? 4_000 : fast ? 1_500 : 6_000
   return Object.freeze({
     ...quoteFields,
     tokenIn: toSdkQuoteAsset(value.tokenIn),
     tokenOut: toSdkQuoteAsset(value.tokenOut),
     extensions: Object.freeze({ referral: NOIR_SWAP_REFERRAL }),
-    quoteWaitingTimeMs: quoteTimeoutMs,
+    quoteWaitingTimeMs: fast ? 1_500 : 6_000,
     sameChainTimeoutMs: fast ? 500 : 1_500,
-    crossChainTimeoutMs: quoteTimeoutMs
+    crossChainTimeoutMs: fast ? 1_500 : 6_000
   })
 }
 

@@ -22,36 +22,21 @@ it('returns the requested recipient with the quote and binds transfer activity t
     sender: '0x1111111111111111111111111111111111111111',
     recipient: 'alice.near'
   })
-  const sdkRequest = toSdkQuoteRequest(request, 'wallet-swap')
+  const sdkRequest = toSdkQuoteRequest(request)
   assert.equal(sdkRequest.quoteWaitingTimeMs, 6_000)
   assert.equal(sdkRequest.sameChainTimeoutMs, 1_500)
   assert.equal(sdkRequest.crossChainTimeoutMs, 6_000)
   const fastRequest = toSdkQuoteRequest(
-    parseRheaSwapQuoteRequest({ ...request, quoteMode: 'fast' }),
-    'wallet-swap'
+    parseRheaSwapQuoteRequest({ ...request, quoteMode: 'fast' })
   )
   assert.equal(fastRequest.quoteWaitingTimeMs, 1_500)
   assert.equal(fastRequest.sameChainTimeoutMs, 500)
   assert.equal(fastRequest.crossChainTimeoutMs, 1_500)
   assert.equal('quoteMode' in fastRequest, false)
   assert.throws(() => parseRheaSwapQuoteRequest({ ...request, quoteMode: 'turbo' }), /quote mode/)
-  const sameChainSendRequest = toSdkQuoteRequest(
-    {
-      ...request,
-      toChain: request.fromChain,
-      tokenOut: request.tokenIn,
-      recipient: request.sender
-    },
-    'public-private-send'
-  )
-  assert.equal(sameChainSendRequest.quoteWaitingTimeMs, 6_000)
-  assert.equal(sameChainSendRequest.sameChainTimeoutMs, 1_500)
   const service = new RheaSwapService(
     {
-      async quote(quoteRequest) {
-        assert.equal(quoteRequest.quoteWaitingTimeMs, 4_000)
-        assert.equal(quoteRequest.crossChainTimeoutMs, 4_000)
-        assert.equal(quoteRequest.sameChainTimeoutMs, 1_500)
+      async quote() {
         return {
           fromChain: request.fromChain,
           toChain: request.toChain,
@@ -64,7 +49,7 @@ it('returns the requested recipient with the quote and binds transfer activity t
           alternatives: [],
           receivedAt: 1_000,
           expiresAt: 5_000,
-          buildContext: { request: quoteRequest },
+          buildContext: { request: sdkRequest },
           raw: {}
         }
       }
@@ -72,13 +57,7 @@ it('returns the requested recipient with the quote and binds transfer activity t
     new MemoryRheaSwapQuoteSessionStore(),
     { now: () => 2_000 }
   )
-  const quote = parseRheaSwapQuoteView(
-    await service.quote(request, undefined, {
-      walletId: 'wallet-1',
-      accountId: 'account-1',
-      purpose: 'public-cross-chain-send'
-    })
-  )
+  const quote = parseRheaSwapQuoteView(await service.quote(request))
   assert.equal(quote.recipient, 'alice.near')
   assert.throws(() => parseRheaSwapQuoteView({ ...quote, recipient: undefined }), /recipient/)
 

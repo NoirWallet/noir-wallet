@@ -248,7 +248,7 @@ export class RheaSwapService {
   ): Promise<RheaSwapQuoteView> {
     if (this.clearingSessions) throw new Error('RHEA Swap sessions are being cleared')
     const epoch = this.sessionEpoch
-    const request = toSdkQuoteRequest(parseRheaSwapQuoteRequest(value), privateSwapScope?.purpose)
+    const request = toSdkQuoteRequest(parseRheaSwapQuoteRequest(value))
     if (request.fromChain === 'zcash' && privateSwapScope) {
       const expectedFundingSource = request.sender.startsWith('u1') ? 'shielded' : 'transparent'
       if (
