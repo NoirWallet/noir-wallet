@@ -1251,29 +1251,21 @@ async function reloadMultichainRuntime(
     ? createBackgroundEvmPortfolioCoordinator(activeEvm)
     : null
   portfolioCoordinator?.dispose()
-  portfolioCoordinator =
-    evmFeatureRuntimePolicy.newOperationsEnabled ||
-    bitcoinFeatureRuntimePolicy.newOperationsEnabled ||
-    solanaBetaEnabled ||
-    nearBetaEnabled
-      ? createBackgroundPortfolioCoordinator(
-          catalog,
-          customEvmNetworks,
-          userAssets.definitions,
-          intentsProtocolAssets,
-          settings,
-          async (model, refresh) => {
-            try {
-              return (
-                (await confidentialFundingCoordinator?.enrichPortfolio(model, refresh)) ?? model
-              )
-            } catch (error) {
-              logger.warn('Confidential balance projection failed', undefined, undefined, error)
-              return model
-            }
-          }
-        )
-      : null
+  portfolioCoordinator = createBackgroundPortfolioCoordinator(
+    catalog,
+    customEvmNetworks,
+    userAssets.definitions,
+    intentsProtocolAssets,
+    settings,
+    async (model, refresh) => {
+      try {
+        return (await confidentialFundingCoordinator?.enrichPortfolio(model, refresh)) ?? model
+      } catch (error) {
+        logger.warn('Confidential balance projection failed', undefined, undefined, error)
+        return model
+      }
+    }
+  )
   activityCoordinator = createBackgroundActivityCoordinator(bitcoinRpcUrl, settings)
   additionalReceiveTargetsCoordinator =
     createBackgroundAdditionalReceiveTargetsCoordinator(customEvmNetworks)
