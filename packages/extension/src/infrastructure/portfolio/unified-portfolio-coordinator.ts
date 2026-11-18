@@ -28,6 +28,7 @@ const PORTFOLIO_SOURCE_CONCURRENCY = 8
 interface PortfolioRefreshOptions {
   readonly awaitBitcoin?: boolean
   readonly requireNewBitcoinScan?: boolean
+  readonly claimChainRefresh?: (chainId: string) => boolean
   readonly onChainRefreshed?: (chainId: string, chain?: PortfolioChainView) => void
 }
 
@@ -274,7 +275,8 @@ export class UnifiedPortfolioCoordinator {
         const family = chain.family
         if (family !== 'evm' && family !== 'bitcoin' && family !== 'solana' && family !== 'near')
           return undefined
-        const refresh = shouldRefreshChain(chain.id)
+        const refresh =
+          shouldRefreshChain(chain.id) && (options.claimChainRefresh?.(chain.id) ?? true)
         const readSource = async () => {
           const source = await atStage(`${family}-source`, () => {
             if (family === 'bitcoin') return readBitcoin(refresh)

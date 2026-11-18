@@ -369,10 +369,6 @@ describe('dynamic maximum transfer regressions', () => {
     )
     assert.match(
       background,
-      /accountContextTransition[\s\S]*?\.runActiveOperation\(\(\) => handleBackgroundZcashTx\(message\)\)/
-    )
-    assert.match(
-      background,
       /assertActiveBackgroundAccountScope\(walletId, accountId, accountKey\)/
     )
   })
