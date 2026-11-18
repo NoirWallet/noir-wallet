@@ -97,6 +97,9 @@ import { isRetainedV1ZcashOnlyAccount } from '@/core/wallet/account-network-sele
 import shieldYourFundsTitle from '@/images/figma-shield-your-funds.svg'
 import shieldGuideBackground from '@/images/figma-shield-guide-background.svg'
 
+const homeTabTriggerClass =
+  'tab-trigger-custom -mx-2 h-full flex-0 rounded-none px-2 py-0 text-base font-normal text-wallet-secondary data-[state=active]:text-white after:max-w-11'
+
 const evmOperationsEnabled = resolveEvmFeatureRuntimePolicy(
   __ENABLED_CHAIN_FEATURE_FLAGS__
 ).newOperationsEnabled
@@ -1111,22 +1114,13 @@ export function Home() {
         >
           <div className="sticky top-0 z-30 isolate flex h-10 items-center gap-3 border-b border-white/8 bg-background px-5">
             <TabsList className="h-full min-w-0 flex-1 justify-start gap-7 rounded-none bg-transparent! p-0">
-              <TabsTrigger
-                value="assets"
-                className="tab-trigger-custom -mx-2 h-full flex-0 rounded-none px-2 py-0 text-base font-normal text-wallet-secondary data-[state=active]:text-white after:max-w-11"
-              >
+              <TabsTrigger value="assets" className={homeTabTriggerClass}>
                 {ASSET_DOMAIN_LABELS[assetDomain]}
               </TabsTrigger>
-              <TabsTrigger
-                value="dapp"
-                className="tab-trigger-custom h-full flex-0 rounded-none px-0 py-0 text-base font-normal text-wallet-secondary data-[state=active]:text-white after:max-w-11"
-              >
+              <TabsTrigger value="dapp" className={homeTabTriggerClass}>
                 DApp
               </TabsTrigger>
-              <TabsTrigger
-                value="activity"
-                className="tab-trigger-custom h-full flex-0 rounded-none px-0 py-0 text-base font-normal text-wallet-secondary data-[state=active]:text-white after:max-w-11"
-              >
+              <TabsTrigger value="activity" className={homeTabTriggerClass}>
                 Activity
               </TabsTrigger>
             </TabsList>
