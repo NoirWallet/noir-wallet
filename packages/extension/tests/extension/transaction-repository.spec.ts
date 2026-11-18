@@ -1,7 +1,9 @@
 import type { BrowserContext, Page, Worker } from '@playwright/test'
+import { getDefaultEvmRpcEndpoint } from '../../src/config/rpc-endpoints'
 import { expect, test, waitForBackgroundWalletInitialization } from '../helpers/extension-fixtures'
 
-const ethereumMainnetRpcRoute = 'https://ethereum-rpc.publicnode.com/**'
+const ethereumMainnetRpcHost = new URL(getDefaultEvmRpcEndpoint('mainnet', 'eip155:1').url).host
+const ethereumMainnetRpcRoute = (url: URL) => url.host === ethereumMainnetRpcHost
 
 async function getExtensionWorker(context: BrowserContext): Promise<Worker> {
   return context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker'))

@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import { expect } from '@playwright/test'
 
 import { getEvmNetworkConfigs } from '../../../../src/config/networks.ts'
+import { getDefaultEvmRpcEndpoint } from '../../../../src/config/rpc-endpoints.ts'
 import { getEvmRpcEndpointOptions } from '../../../../src/infrastructure/chains/managed-rpc-endpoints.ts'
 import { setActiveRpcRegistryDocument } from '../../../../src/infrastructure/chains/rpc-registry-client.ts'
 import { EvmRpcError } from '../../../../src/infrastructure/chains/evm/evm-rpc-client.ts'
@@ -44,7 +45,7 @@ test.describe('EVM RPC endpoint pools', () => {
     }
   })
 
-  test('ignores a retired Ethereum RPC from the cached registry', () => {
+  test('uses the bundled endpoint when the cached Ethereum registry contains only a retired endpoint', () => {
     setActiveRpcRegistryDocument({
       version: 1,
       updatedAt: '2026-11-02T00:00:00.000Z',
@@ -59,7 +60,7 @@ test.describe('EVM RPC endpoint pools', () => {
     })
     try {
       expect(getEvmRpcEndpointOptions('mainnet', 'eip155:1')).toEqual([
-        { id: 'publicnode', label: 'PublicNode', url: 'https://ethereum-rpc.publicnode.com' }
+        getDefaultEvmRpcEndpoint('mainnet', 'eip155:1')
       ])
     } finally {
       setActiveRpcRegistryDocument(null)
