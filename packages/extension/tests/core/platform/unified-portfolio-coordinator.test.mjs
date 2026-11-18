@@ -802,6 +802,63 @@ test('background Portfolio joins overlapping chain refreshes and leaves fresh au
   expect(requests).toHaveLength(2)
 })
 
+test(
+  'background Portfolio returns cache and starts a queued chain while another chain is busy',
+  { timeout: 2_000 },
+  async () => {
+    const scope = { network: 'mainnet', generationId, keyDomainId, accountId, runtimeKey: 'rpc-1' }
+    const refreshed = new Set()
+    let finishRefresh
+    let startRefresh
+    const started = new Promise(resolve => {
+      startRefresh = resolve
+    })
+    const service = new BackgroundPortfolioService({
+      coordinator: {
+        readCachedActive: async () => serviceModel(scope, refreshed),
+        refreshActive: (chainIds, { claimChainRefresh, onChainRefreshed }) =>
+          new Promise(resolve => {
+            if (chainIds.length === 1) {
+              expect(chainIds).toEqual(['eip155:1'])
+              expect(claimChainRefresh('eip155:1')).toBe(true)
+              refreshed.add('eip155:1')
+              onChainRefreshed('eip155:1', serviceModel(scope, refreshed).chains[0])
+              resolve(serviceModel(scope, refreshed))
+              return
+            }
+            expect(chainIds).toEqual(['eip155:1', 'near:mainnet'])
+            expect(claimChainRefresh('near:mainnet')).toBe(true)
+            finishRefresh = () => {
+              expect(claimChainRefresh('eip155:1')).toBe(false)
+              refreshed.add('near:mainnet')
+              resolve(serviceModel(scope, refreshed))
+            }
+            startRefresh()
+          })
+      },
+      readScope: async () => scope,
+      enrich: async model => model,
+      onUpdated: () => {},
+      markStale: async () => {},
+      ...emptyInvalidations
+    })
+
+    const fullRefresh = service.refreshActive()
+    await started
+    try {
+      await expect(service.readCachedActive()).resolves.toMatchObject({
+        scope: { keyDomainId, accountId }
+      })
+      await expect(service.refreshActive(['eip155:1'])).resolves.toMatchObject({
+        chains: [{ status: 'ready' }, { status: 'loading' }]
+      })
+    } finally {
+      finishRefresh()
+      await fullRefresh
+    }
+  }
+)
+
 test('background Portfolio discards a refresh after the active account changes', async () => {
   const oldScope = {
     network: 'mainnet',
