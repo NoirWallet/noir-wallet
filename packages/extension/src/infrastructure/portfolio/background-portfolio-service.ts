@@ -1,6 +1,7 @@
 import {
   PORTFOLIO_AUTOMATIC_REFRESH_MAX_AGE_MS,
   portfolioChainIdsForAutomaticRefresh,
+  type PortfolioChainView,
   type PortfolioReadModel
 } from '@/core/portfolio'
 import type { StorageV2GenerationId } from '@/ports/repositories'
@@ -270,16 +271,19 @@ export class BackgroundPortfolioService {
             chain => chain.chain.id === chainId && chain.chain.family === 'bitcoin'
           )
       )
-      const batch = this.refreshBatch(scope, newChains, awaitBitcoin)
+      const completions = new Map<string, (succeeded: boolean) => void>()
       for (const chainId of newChains) {
         const key = `${scopeKey(scope)}:${chainId}`
-        const perChain = batch.then(results => results.get(chainId) ?? false)
+        const perChain = new Promise<boolean>(resolve => {
+          completions.set(chainId, resolve)
+        })
         const entry = { promise: perChain, markerRevision: markerRevision(chainId) }
         this.inFlight.set(key, entry)
         void perChain.finally(() => {
           if (this.inFlight.get(key) === entry) this.inFlight.delete(key)
         })
       }
+      void this.refreshBatch(scope, completions, awaitBitcoin)
     }
     const tracked = attempts.map(
       (pending, index) => pending ?? this.inFlight.get(`${scopeKey(scope)}:${selected[index]}`)
@@ -311,7 +315,9 @@ export class BackgroundPortfolioService {
       )
     )
     const newerConfidential = latestInvalidations.flatMap(marker => {
-      if (marker.domain !== 'confidential') return []
+      if (marker.domain !== 'confidential' || (chainIds && !chainIds.includes(marker.chainId))) {
+        return []
+      }
       const previousMarker = invalidated.find(
         item => item.domain === 'confidential' && item.chainId === marker.chainId
       )
@@ -389,38 +395,47 @@ export class BackgroundPortfolioService {
 
   private async refreshBatch(
     scope: BackgroundPortfolioScope,
-    chainIds: readonly string[],
+    completions: Map<string, (succeeded: boolean) => void>,
     awaitBitcoin = false
-  ): Promise<ReadonlyMap<string, boolean>> {
-    const results = new Map<string, boolean>()
-    try {
-      const model = await this.options.coordinator.refreshActive(chainIds, {
-        awaitBitcoin,
-        requireNewBitcoinScan: awaitBitcoin
-      })
-      if (!matchesModel(model, scope) || !(await this.isCurrent(scope))) return results
-      for (const chainId of chainIds) {
-        const chain = model.chains.find(item => item.chain.id === chainId)
-        const succeeded = chain?.status === 'ready'
-        results.set(chainId, succeeded)
+  ): Promise<void> {
+    const complete = (chainId: string, chain?: PortfolioChainView, current = true) => {
+      const resolve = completions.get(chainId)
+      if (!resolve) return
+      completions.delete(chainId)
+      const succeeded = current && chain?.status === 'ready'
+      if (current) {
         const key = `${scopeKey(scope)}:${chainId}`
         if (succeeded) {
           this.failedAt.delete(key)
-          if (chain?.status === 'ready' && chain.assets.length === 0) {
-            this.emptyRefreshedAt.set(key, this.now())
-          } else {
-            this.emptyRefreshedAt.delete(key)
-          }
+          if (chain.assets.length === 0) this.emptyRefreshedAt.set(key, this.now())
+          else this.emptyRefreshedAt.delete(key)
         } else {
           this.failedAt.set(key, this.now())
         }
       }
-    } catch {
-      for (const chainId of chainIds) {
-        this.failedAt.set(`${scopeKey(scope)}:${chainId}`, this.now())
-      }
+      resolve(succeeded)
     }
-    return results
+    try {
+      const model = await this.options.coordinator.refreshActive([...completions.keys()], {
+        awaitBitcoin,
+        requireNewBitcoinScan: awaitBitcoin,
+        onChainRefreshed: (chainId, chain) => {
+          void this.isCurrent(scope)
+            .then(current => complete(chainId, chain, current))
+            .catch(() => complete(chainId, undefined, false))
+        }
+      })
+      const current = matchesModel(model, scope) && (await this.isCurrent(scope))
+      for (const chainId of completions.keys()) {
+        complete(
+          chainId,
+          model?.chains.find(item => item.chain.id === chainId),
+          current
+        )
+      }
+    } catch {
+      for (const chainId of completions.keys()) complete(chainId)
+    }
   }
 
   private async isCurrent(expected: BackgroundPortfolioScope): Promise<boolean> {
