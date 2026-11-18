@@ -3,6 +3,7 @@ import { expect } from '@playwright/test'
 
 import { getEvmNetworkConfigs } from '../../../../src/config/networks.ts'
 import { getEvmRpcEndpointOptions } from '../../../../src/infrastructure/chains/managed-rpc-endpoints.ts'
+import { setActiveRpcRegistryDocument } from '../../../../src/infrastructure/chains/rpc-registry-client.ts'
 import { EvmRpcError } from '../../../../src/infrastructure/chains/evm/evm-rpc-client.ts'
 import { createEvmRpcFailoverClient } from '../../../../src/infrastructure/chains/evm/evm-rpc-failover-client.ts'
 
@@ -43,10 +44,26 @@ test.describe('EVM RPC endpoint pools', () => {
     }
   })
 
-  test('uses only the owned DeltaRPC endpoint for Ethereum mainnet', () => {
-    expect(getEvmRpcEndpointOptions('mainnet', 'eip155:1')).toEqual([
-      { id: 'deltarpc', label: 'DeltaRPC', url: 'https://eth.deltarpc.com' }
-    ])
+  test('ignores a retired Ethereum RPC from the cached registry', () => {
+    setActiveRpcRegistryDocument({
+      version: 1,
+      updatedAt: '2026-11-02T00:00:00.000Z',
+      chains: [
+        {
+          id: 'eip155:1',
+          network: 'mainnet',
+          probe: 'evm-json-rpc',
+          endpoints: [{ id: 'deltarpc', label: 'Retired RPC', url: 'https://retired.example' }]
+        }
+      ]
+    })
+    try {
+      expect(getEvmRpcEndpointOptions('mainnet', 'eip155:1')).toEqual([
+        { id: 'publicnode', label: 'PublicNode', url: 'https://ethereum-rpc.publicnode.com' }
+      ])
+    } finally {
+      setActiveRpcRegistryDocument(null)
+    }
   })
 })
 

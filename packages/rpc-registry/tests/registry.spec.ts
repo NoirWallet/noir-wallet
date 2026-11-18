@@ -46,9 +46,12 @@ test('preserves the V1 response and publishes the multi-chain registry on reques
     'deltarpc-web-eu-2',
     'deltarpc-web-eu-3'
   ])
-  expect(
-    RPC_REGISTRY.chains.find(chain => chain.id === 'eip155:1')?.endpoints.length
-  ).toBeGreaterThan(1)
+  const ethereum = RPC_REGISTRY.chains.find(chain => chain.id === 'eip155:1')
+  expect(ethereum?.endpoints.map(endpoint => endpoint.id)).toEqual([
+    'publicnode',
+    'drpc',
+    'blockpi'
+  ])
   expect(
     RPC_REGISTRY.chains.find(chain => chain.id === 'eip155:9745')?.endpoints.length
   ).toBeGreaterThan(1)

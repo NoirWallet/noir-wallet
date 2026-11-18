@@ -1,6 +1,8 @@
 import type { BrowserContext, Page, Worker } from '@playwright/test'
 import { expect, test, waitForBackgroundWalletInitialization } from '../helpers/extension-fixtures'
 
+const ethereumMainnetRpcRoute = 'https://ethereum-rpc.publicnode.com/**'
+
 async function getExtensionWorker(context: BrowserContext): Promise<Worker> {
   return context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker'))
 }
@@ -214,7 +216,7 @@ test('refreshes the active EVM Portfolio through the real MV3 service worker', a
 }) => {
   await waitForBackgroundWalletInitialization(popup)
   const rpcMethods: string[] = []
-  await context.route('https://eth.deltarpc.com/**', async route => {
+  await context.route(ethereumMainnetRpcRoute, async route => {
     const request = route.request().postDataJSON() as { id: number; method: string }
     rpcMethods.push(request.method)
     const result =
@@ -376,7 +378,7 @@ test('runs the persisted EVM receipt monitor inside the real MV3 service worker'
   await waitForBackgroundWalletInitialization(popup)
   const transactionHash = `0x${'a'.repeat(64)}`
   const blockHash = `0x${'b'.repeat(64)}`
-  await context.route('https://eth.deltarpc.com/**', async route => {
+  await context.route(ethereumMainnetRpcRoute, async route => {
     const request = route.request().postDataJSON() as {
       id: number
       method: string
@@ -449,7 +451,7 @@ test('resumes the persisted EVM receipt monitor after service worker reconstruct
   const transactionHash = `0x${'c'.repeat(64)}`
   const blockHash = `0x${'d'.repeat(64)}`
   const rpcMethods: string[] = []
-  await context.route('https://eth.deltarpc.com/**', async route => {
+  await context.route(ethereumMainnetRpcRoute, async route => {
     const request = route.request().postDataJSON() as { id: number; method: string }
     rpcMethods.push(request.method)
     const result =
