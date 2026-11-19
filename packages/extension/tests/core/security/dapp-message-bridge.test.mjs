@@ -339,10 +339,21 @@ describe('dApp message bridge', () => {
     assert.equal(harness.sentMessages[0].request.method, 'shield_transfer')
   })
 
+  it('forwards Shield disconnect to the background', async () => {
+    const harness = createBridgeHarness([
+      { requestId: 'request-1', result: { layer: 'near-confidential', connected: false } }
+    ])
+
+    await harness.request('shield_disconnect', 'request-1', 'shield')
+
+    assert.equal(harness.sentMessages.length, 1)
+    assert.equal(harness.sentMessages[0].request.method, 'shield_disconnect')
+  })
+
   it('returns code 4200 for an unsupported Shield method', async () => {
     const harness = createBridgeHarness([])
 
-    await harness.request('shield_disconnect', 'request-1', 'shield')
+    await harness.request('shield_sign', 'request-1', 'shield')
 
     assert.equal(harness.sentMessages.length, 0)
     assert.deepEqual(plain(harness.postedMessages), [
