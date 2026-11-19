@@ -219,13 +219,21 @@ export async function fetchWithTimeout(
   })
 }
 
+export async function readBoundedResponseBytes(
+  response: Response,
+  maximumBytes: number
+): Promise<Uint8Array<ArrayBuffer>> {
+  const { bytes } = await readBody(response, maximumBytes, () => {})
+  return bytes
+}
+
 export async function readBoundedResponseText(
   response: Response,
   maximumBytes: number,
   responseTooLarge: () => Error
 ): Promise<string> {
   try {
-    const { bytes } = await readBody(response, maximumBytes, () => {})
+    const bytes = await readBoundedResponseBytes(response, maximumBytes)
     return new TextDecoder().decode(bytes)
   } catch (error) {
     if (error instanceof FetchResponseTooLargeError) throw responseTooLarge()

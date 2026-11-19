@@ -6,6 +6,8 @@ import { findWasmAccountIdByHdIndex, mapWasmAccountIdsByHdIndex } from './accoun
  */
 
 import './wasm-worker-runtime-setup'
+import { nymPrivateBroadcast } from './nym-private-broadcast-setup'
+import { NYM_PRIVATE_BROADCAST } from '../../config/nym-private-broadcast'
 
 self.addEventListener('error', e => e.preventDefault())
 self.addEventListener('unhandledrejection', e => e.preventDefault())
@@ -198,6 +200,18 @@ function feeQuoteContext(walletId: string, accountId: number): FeeQuoteContext {
   return { walletId, accountId, network: entry.network, rpcUrl: entry.lightwalletdUrl }
 }
 
+async function recommendStandardMarginalFee(rpcUrl: string): Promise<number> {
+  const routing =
+    NYM_PRIVATE_BROADCAST.routes.feeQuote && nymPrivateBroadcast
+      ? await nymPrivateBroadcast.readRoutingChoice()
+      : false
+  return fetchStandardMarginalFee(
+    rpcUrl,
+    undefined,
+    routing === true ? NYM_PRIVATE_BROADCAST.feeQuoteTimeoutMs : undefined
+  )
+}
+
 function approvedFee(walletId: string, accountId: number, rate?: number, id?: string) {
   const feeQuote = feeQuotes.validate(feeQuoteContext(walletId, accountId), id, rate)
   return {
@@ -217,7 +231,7 @@ async function estimateFeeSelection(
 ) {
   if (id !== undefined || rate !== undefined) return approvedFee(walletId, accountId, rate, id)
   const context = feeQuoteContext(walletId, accountId)
-  const feeQuote = await feeQuotes.get(context, () => fetchStandardMarginalFee(context.rpcUrl))
+  const feeQuote = await feeQuotes.get(context, () => recommendStandardMarginalFee(context.rpcUrl))
   return { feeQuote, marginalFeeZats: feeQuote.standardMarginalFeeZats }
 }
 const latestZeroIndexerOptions = new Map<string, ZeroIndexerOptions | null>()
@@ -751,6 +765,7 @@ self.addEventListener('message', async (event: MessageEvent<RPCRequest<any>>) =>
           const broadcastOptions = latestZeroIndexerOptions.has(network)
             ? (latestZeroIndexerOptions.get(network) ?? null)
             : parseZeroIndexerRuntimeOptions(zeroIndexerOptions ?? null)
+          nymPrivateBroadcast?.setZeroIndexerUrls(network, broadcastOptions?.urls ?? null)
           const configUnchanged =
             !!entry &&
             entry.network === network &&
@@ -917,6 +932,7 @@ self.addEventListener('message', async (event: MessageEvent<RPCRequest<any>>) =>
         }
         const options = parseZeroIndexerRuntimeOptions(rawOptions)
         latestZeroIndexerOptions.set(network, options)
+        nymPrivateBroadcast?.setZeroIndexerUrls(network, options?.urls ?? null)
         const walletIds = new Set([...wallets.keys(), ...walletOperationChains.keys()])
         for (const walletId of walletIds) {
           await runForWallet(walletId, async () => {
@@ -1484,7 +1500,7 @@ self.addEventListener('message', async (event: MessageEvent<RPCRequest<any>>) =>
                 resolveRequestedAccountId(walletId, getWallet(walletId), accountId, accountIndex)
               )
         const context = feeQuoteContext(walletId, targetId)
-        result = await feeQuotes.get(context, () => fetchStandardMarginalFee(context.rpcUrl))
+        result = await feeQuotes.get(context, () => recommendStandardMarginalFee(context.rpcUrl))
         break
       }
       case 'transaction.send': {
