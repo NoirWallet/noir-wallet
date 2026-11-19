@@ -12,15 +12,20 @@ export const NYM_PRIVATE_BROADCAST = Object.freeze({
   /** Worker-side bound on learning the user's routing choice before a broadcast. */
   workerModeTimeoutMs: 10_000,
   /**
-   * Requests other than the broadcast that follow the user's routing choice. Each has its
-   * own switch, so one can go back to a direct request without touching the others.
+   * Zcash request categories that follow the user's Nym choice. A disabled category uses
+   * its original transport; enabled categories never fall back to direct requests on failure.
    */
   routes: Object.freeze({
+    broadcast: true,
     /**
      * lightwalletd GetStandardFee, asked only while a send is being prepared: sent directly,
      * it would show the node the sender's network address seconds before the broadcast.
      */
-    feeQuote: true
+    feeQuote: true,
+    transactionLookup: true,
+    transparentHistory: true,
+    // Includes address balance reads and the streaming UTXO endpoint used during sync.
+    transparentUtxos: true
   }),
   /**
    * Worker-side bound on a routed fee quote. Covers a warm tunnel and a tunnel build already

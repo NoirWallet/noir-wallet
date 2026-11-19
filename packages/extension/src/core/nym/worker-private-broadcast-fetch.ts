@@ -24,7 +24,6 @@ export interface PrivateBroadcastStats {
 }
 
 export interface PrivateBroadcastFetchController {
-  setZeroIndexerUrls(network: string, urls: readonly string[] | null): void
   /**
    * The user's current routing choice, for callers that size a timeout or label a trace
    * before a routed request. Null when it cannot be learned; such a request is blocked.
@@ -73,8 +72,6 @@ export function installNymPrivateBroadcastFetch(
   }
 ): PrivateBroadcastFetchController {
   const directFetch = scope.fetch.bind(scope)
-  const zeroIndexerUrlsByNetwork = new Map<string, readonly string[]>()
-  let zeroIndexerOrigins: ReadonlySet<string> = new Set()
   const pending = new Map<number, PendingReply>()
   const stats: PrivateBroadcastStats = { routed: 0, blocked: 0, direct: 0 }
   let port: MessagePort | null = null
@@ -216,7 +213,7 @@ export function installNymPrivateBroadcastFetch(
 
   scope.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
     const url = requestUrl(input, options.base)
-    if (!url || !requiresNymRoute(url, zeroIndexerOrigins, options.routes)) {
+    if (!url || !requiresNymRoute(url, options.routes)) {
       return directFetch(input, init)
     }
     let request: Request
@@ -230,19 +227,6 @@ export function installNymPrivateBroadcastFetch(
   }
 
   return {
-    setZeroIndexerUrls(network, urls) {
-      if (urls && urls.length > 0) zeroIndexerUrlsByNetwork.set(network, urls)
-      else zeroIndexerUrlsByNetwork.delete(network)
-      zeroIndexerOrigins = new Set(
-        [...zeroIndexerUrlsByNetwork.values()].flat().flatMap(value => {
-          try {
-            return [new URL(value).origin]
-          } catch {
-            return []
-          }
-        })
-      )
-    },
     async readRoutingChoice() {
       if (!port) return null
       try {

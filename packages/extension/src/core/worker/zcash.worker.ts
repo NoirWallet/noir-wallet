@@ -765,7 +765,6 @@ self.addEventListener('message', async (event: MessageEvent<RPCRequest<any>>) =>
           const broadcastOptions = latestZeroIndexerOptions.has(network)
             ? (latestZeroIndexerOptions.get(network) ?? null)
             : parseZeroIndexerRuntimeOptions(zeroIndexerOptions ?? null)
-          nymPrivateBroadcast?.setZeroIndexerUrls(network, broadcastOptions?.urls ?? null)
           const configUnchanged =
             !!entry &&
             entry.network === network &&
@@ -932,7 +931,6 @@ self.addEventListener('message', async (event: MessageEvent<RPCRequest<any>>) =>
         }
         const options = parseZeroIndexerRuntimeOptions(rawOptions)
         latestZeroIndexerOptions.set(network, options)
-        nymPrivateBroadcast?.setZeroIndexerUrls(network, options?.urls ?? null)
         const walletIds = new Set([...wallets.keys(), ...walletOperationChains.keys()])
         for (const walletId of walletIds) {
           await runForWallet(walletId, async () => {

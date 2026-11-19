@@ -77,7 +77,7 @@ export class NymTunnelSupervisor {
    * the caller take the request back while the tunnel is still being prepared.
    */
   async fetch(request: NymFetchRequest, withdrawn?: AbortSignal): Promise<NymFetchResponse> {
-    const label = `#${++this.requestCount} ${nymRequestLabel(request.url)}`
+    const label = `#${++this.requestCount} ${nymRequestLabel(request)}`
     const log = (message: string) => this.options.log?.(`${label}: ${message}`)
     const queuedAt = this.options.now()
     const since = (from: number) => Math.round(this.options.now() - from)

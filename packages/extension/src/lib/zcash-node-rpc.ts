@@ -1,14 +1,11 @@
+import { NYM_PRIVATE_BROADCAST } from '../config/nym-private-broadcast.ts'
+import { requiresZcashNodeRpcNymRoute } from '../core/nym/private-broadcast-protocol.ts'
 import { nymPrivateTextFetch } from '../core/nym/private-fetch-relay.ts'
 import { readNymPrivateBroadcastEnabled } from '../infrastructure/chains/nym-private-broadcast-preferences.ts'
 import { FetchHttpError, fetchJsonWithTimeout } from './fetch-utils.ts'
 
 const RPC_TIMEOUT_MS = 10_000
 const MAX_RESPONSE_CHARS = 32 * 1024 * 1024
-
-interface ZcashNodeRpcOptions {
-  /** Send through the Nym tunnel; a tunnel failure rejects instead of falling back. */
-  private?: boolean
-}
 
 interface JsonRpcResponse<T> {
   result?: T
@@ -59,11 +56,15 @@ export async function zcashNodeRpc<T>(
   baseUrl: string,
   method: string,
   params: unknown[] = [],
-  signal?: AbortSignal,
-  options: ZcashNodeRpcOptions = {}
+  signal?: AbortSignal
 ): Promise<T> {
+  if (signal?.aborted) throw signal.reason
   const body = JSON.stringify({ jsonrpc: '2.0', id: 1, method, params })
-  const json = options.private
+  const usePrivate =
+    NYM_PRIVATE_BROADCAST.available &&
+    requiresZcashNodeRpcNymRoute(method, NYM_PRIVATE_BROADCAST.routes) &&
+    (await readNymPrivateBroadcastEnabled())
+  const json = usePrivate
     ? await privateNodeRpc<T>(baseUrl, body, signal)
     : await fetchJsonWithTimeout<JsonRpcResponse<T>>(baseUrl, {
         method: 'POST',
@@ -137,10 +138,9 @@ export function getAddressTxids(
 export function getVerboseTransaction(
   baseUrl: string,
   txid: string,
-  signal?: AbortSignal,
-  options?: ZcashNodeRpcOptions
+  signal?: AbortSignal
 ): Promise<VerboseTransaction> {
-  return zcashNodeRpc<VerboseTransaction>(baseUrl, 'getrawtransaction', [txid, 1], signal, options)
+  return zcashNodeRpc<VerboseTransaction>(baseUrl, 'getrawtransaction', [txid, 1], signal)
 }
 
 /** zcashd error code for an unknown txid ("No information available about transaction"). */
@@ -159,11 +159,7 @@ export type TxLookup =
  */
 export async function lookupTransaction(baseUrl: string, txid: string): Promise<TxLookup> {
   try {
-    // A status lookup shortly after broadcast identifies the sender as clearly as the broadcast,
-    // so it follows the same routing choice. An unreadable choice fails this lookup.
-    const tx = await getVerboseTransaction(baseUrl, txid, undefined, {
-      private: await readNymPrivateBroadcastEnabled()
-    })
+    const tx = await getVerboseTransaction(baseUrl, txid)
     if (
       !txid.trim() ||
       typeof tx?.txid !== 'string' ||
@@ -248,12 +244,7 @@ export async function pollingTransactionConfirmations(
  */
 export async function getBlockCount(baseUrl: string): Promise<number | null> {
   try {
-    // The monitor asks this right after a status lookup on the same node. Sent directly, its
-    // timing would let the node match the user's IP address to that lookup, so it follows
-    // the same routing choice.
-    const height = await zcashNodeRpc<number>(baseUrl, 'getblockcount', [], undefined, {
-      private: await readNymPrivateBroadcastEnabled()
-    })
+    const height = await zcashNodeRpc<number>(baseUrl, 'getblockcount')
     return typeof height === 'number' ? height : null
   } catch {
     return null

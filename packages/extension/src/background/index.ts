@@ -2650,10 +2650,14 @@ async function applyLatestZeroIndexerRuntime(): Promise<string | undefined> {
 }
 
 async function getNymPrewarmOrigins(): Promise<string[]> {
+  if (!Object.values(NYM_PRIVATE_BROADCAST.routes).some(Boolean)) return []
   if (!(await readNymPrivateBroadcastEnabled())) return []
-  const zeroIndexer = await readZeroIndexerEnabled()
-    .then(enabled => getZeroIndexerBroadcastOptions(DEFAULT_NETWORK, enabled))
-    .catch(() => null)
+  const zeroIndexer =
+    NYM_PRIVATE_BROADCAST.routes.broadcast || NYM_PRIVATE_BROADCAST.routes.transactionLookup
+      ? await readZeroIndexerEnabled()
+          .then(enabled => getZeroIndexerBroadcastOptions(DEFAULT_NETWORK, enabled))
+          .catch(() => null)
+      : null
   return nymPrewarmOrigins([...(zeroIndexer?.urls ?? []), getNetworkConfig(DEFAULT_NETWORK).rpcUrl])
 }
 

@@ -26,8 +26,10 @@ import {
 const REGISTRY_TIMEOUT_MS = 3_000
 const PROBE_CACHE_MAX_AGE_MS = 5 * 60_000
 
-/** The mixnet may exceed the WASM's default per-endpoint send timeout. */
+/** Broadcast and its ZeroIndexer transaction lookup share the WASM per-endpoint timeout. */
 async function nymSendTimeout(): Promise<Pick<ZeroIndexerOptions, 'sendTimeoutMs'>> {
+  if (!NYM_PRIVATE_BROADCAST.routes.broadcast && !NYM_PRIVATE_BROADCAST.routes.transactionLookup)
+    return {}
   const routed = await readNymPrivateBroadcastEnabled().catch(() => NYM_PRIVATE_BROADCAST.available)
   return routed ? { sendTimeoutMs: NYM_PRIVATE_BROADCAST.zeroIndexerSendTimeoutMs } : {}
 }

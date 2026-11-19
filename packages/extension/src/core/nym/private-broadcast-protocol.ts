@@ -120,38 +120,92 @@ export function nymDestinationHost(value: string): string {
   }
 }
 
-/** A log-safe name for a tunnel request: the lightwalletd method and the destination host. */
-export function nymRequestLabel(value: string): string {
+/** A category and method label without addresses, transaction IDs, or request payloads. */
+export function nymRequestLabel(request: NymFetchRequest): string {
   let method: string | null = null
+  let category: keyof NymRouteSwitches | null = null
   try {
-    method = lightwalletdMethod(new URL(value))
+    method = lightwalletdMethod(new URL(request.url))
+    category = lightwalletdRouteCategory(method)
+    if (!method && request.body) {
+      const body: unknown = JSON.parse(new TextDecoder().decode(request.body))
+      if (body && typeof body === 'object' && !Array.isArray(body)) {
+        const rpcMethod: unknown = (body as Record<string, unknown>).method
+        if (typeof rpcMethod === 'string') {
+          category = zcashNodeRpcRouteCategory(rpcMethod)
+          // Only known RPC methods may appear in the log; all params remain private.
+          if (category) method = rpcMethod
+        }
+      }
+    }
   } catch {
-    // Named by host alone.
+    // An unreadable request still gets the existing host-only label.
   }
-  return `${method || 'request'} @ ${nymDestinationHost(value)}`
+  const categories: Record<keyof NymRouteSwitches, string> = {
+    broadcast: '交易广播',
+    feeQuote: '手续费报价',
+    transactionLookup: '交易查询',
+    transparentHistory: '透明地址历史',
+    transparentUtxos: '透明地址UTXO'
+  }
+  const prefix = category ? `【nym-${categories[category]}】 ` : ''
+  return `${prefix}${method || 'request'} @ ${nymDestinationHost(request.url)}`
 }
 
-/** Requests besides the broadcast that follow the routing choice while their switch is on. */
+/** Only these Zcash request categories participate in Nym routing. */
 export interface NymRouteSwitches {
+  readonly broadcast: boolean
   /** lightwalletd GetStandardFee, asked only while a send is being prepared. */
   readonly feeQuote: boolean
+  readonly transactionLookup: boolean
+  readonly transparentHistory: boolean
+  readonly transparentUtxos: boolean
 }
 
-/**
- * Requests that tie a transaction to the sender's network address. Every broadcast is
- * routed, including the ordinary-RPC fallback after ZeroIndexer fails, so that a Nym
- * failure blocks the broadcast instead of sending it directly. The fee quote precedes a
- * broadcast by seconds and is routed while its switch is on.
- */
-export function requiresNymRoute(
-  url: URL,
-  zeroIndexerOrigins: ReadonlySet<string>,
-  routes: NymRouteSwitches
-): boolean {
-  const method = lightwalletdMethod(url)
-  if (method === 'SendTransaction') return true
-  if (method === 'GetStandardFee') return routes.feeQuote
-  return method === 'GetTransaction' && zeroIndexerOrigins.has(url.origin)
+/** The node height read accompanies transaction monitoring. */
+function zcashNodeRpcRouteCategory(method: string): keyof NymRouteSwitches | null {
+  switch (method) {
+    case 'getrawtransaction':
+    case 'getblockcount':
+      return 'transactionLookup'
+    case 'getaddresstxids':
+      return 'transparentHistory'
+    default:
+      return null
+  }
+}
+
+function lightwalletdRouteCategory(method: string | null): keyof NymRouteSwitches | null {
+  switch (method) {
+    case 'SendTransaction':
+      return 'broadcast'
+    case 'GetStandardFee':
+      return 'feeQuote'
+    case 'GetTransaction':
+      return 'transactionLookup'
+    case 'GetTaddressTxids':
+    case 'GetTaddressTransactions':
+      return 'transparentHistory'
+    case 'GetAddressUtxos':
+    case 'GetAddressUtxosStream':
+    case 'GetTaddressBalance':
+    case 'GetTaddressBalanceStream':
+      return 'transparentUtxos'
+    default:
+      return null
+  }
+}
+
+/** Node RPC helpers are Zcash-only. */
+export function requiresZcashNodeRpcNymRoute(method: string, routes: NymRouteSwitches): boolean {
+  const category = zcashNodeRpcRouteCategory(method)
+  return category !== null && routes[category]
+}
+
+/** Classify Zcash RPC methods independently of which configured endpoint serves them. */
+export function requiresNymRoute(url: URL, routes: NymRouteSwitches): boolean {
+  const category = lightwalletdRouteCategory(lightwalletdMethod(url))
+  return category !== null && routes[category]
 }
 
 /**

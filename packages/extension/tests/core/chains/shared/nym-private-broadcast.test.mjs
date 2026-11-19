@@ -4,7 +4,8 @@ import {
   NYM_PRIVATE_BROADCAST_PORT_MESSAGE,
   planNymTunnelClient,
   nymPrewarmOrigins,
-  requiresNymRoute
+  requiresNymRoute,
+  requiresZcashNodeRpcNymRoute
 } from '../../../../src/core/nym/private-broadcast-protocol.ts'
 import { installNymPrivateBroadcastFetch } from '../../../../src/core/nym/worker-private-broadcast-fetch.ts'
 import { serveNymWorkerPort } from '../../../../src/core/nym/worker-port-host.ts'
@@ -19,7 +20,27 @@ const SERVICE = 'cash.z.wallet.sdk.rpc.CompactTxStreamer'
 const LIGHTWALLETD = 'https://lightwalletd.example'
 const ZERO_INDEXER = 'https://zero-indexer.example'
 
-function createScope(routes = { feeQuote: true }) {
+const ALL_ROUTES = {
+  broadcast: true,
+  feeQuote: true,
+  transactionLookup: true,
+  transparentHistory: true,
+  transparentUtxos: true
+}
+const ROUTED_METHODS = [
+  ['SendTransaction', 'broadcast'],
+  ['GetStandardFee', 'feeQuote'],
+  ['GetTransaction', 'transactionLookup'],
+  ['GetTaddressTxids', 'transparentHistory'],
+  ['GetTaddressTransactions', 'transparentHistory'],
+  ['GetAddressUtxos', 'transparentUtxos'],
+  ['GetAddressUtxosStream', 'transparentUtxos'],
+  ['GetTaddressBalance', 'transparentUtxos'],
+  ['GetTaddressBalanceStream', 'transparentUtxos']
+]
+
+function createScope(overrides = {}) {
+  const routes = { ...ALL_ROUTES, ...overrides }
   const listeners = []
   const directCalls = []
   const directBodies = []
@@ -77,51 +98,50 @@ const send = (scope, origin = LIGHTWALLETD, init = {}) =>
     })
   )
 
-test('every broadcast and only ZeroIndexer transaction lookups require the Nym route', () => {
-  const zeroIndexer = new Set([ZERO_INDEXER])
-  const routes = { feeQuote: false }
-  assert.equal(
-    requiresNymRoute(new URL(`${LIGHTWALLETD}/${SERVICE}/SendTransaction`), zeroIndexer, routes),
-    true
-  )
-  assert.equal(
-    requiresNymRoute(
-      new URL(`${LIGHTWALLETD}/prefix/${SERVICE}/SendTransaction`),
-      zeroIndexer,
-      routes
-    ),
-    true
-  )
-  assert.equal(
-    requiresNymRoute(new URL(`${ZERO_INDEXER}/${SERVICE}/GetTransaction`), zeroIndexer, routes),
-    true
-  )
-  assert.equal(
-    requiresNymRoute(new URL(`${LIGHTWALLETD}/${SERVICE}/GetTransaction`), zeroIndexer, routes),
-    false
-  )
-  assert.equal(
-    requiresNymRoute(new URL(`${LIGHTWALLETD}/${SERVICE}/GetBlockRange`), zeroIndexer, routes),
-    false
-  )
-  assert.equal(
-    requiresNymRoute(new URL(`${LIGHTWALLETD}/SendTransaction`), zeroIndexer, routes),
-    false
-  )
+test('Zcash request categories route independently at every lightwalletd endpoint', () => {
+  for (const [method, category] of ROUTED_METHODS) {
+    for (const origin of [LIGHTWALLETD, ZERO_INDEXER]) {
+      const url = new URL(`${origin}/prefix/${SERVICE}/${method}`)
+      assert.equal(requiresNymRoute(url, ALL_ROUTES), true, method)
+      for (const disabled of Object.keys(ALL_ROUTES)) {
+        assert.equal(
+          requiresNymRoute(url, { ...ALL_ROUTES, [disabled]: false }),
+          disabled !== category,
+          `${method} with ${disabled} disabled`
+        )
+      }
+    }
+  }
+  for (const path of [
+    `${SERVICE}/GetBlockRange`,
+    `${SERVICE}/GetLatestBlock`,
+    `${SERVICE}/GetTreeState`,
+    `${SERVICE}/GetSubtreeRoots`,
+    `${SERVICE}/GetLightdInfo`,
+    'SendTransaction',
+    'shielded-vote/v1/cast-vote',
+    'eth_getBalance'
+  ]) {
+    assert.equal(requiresNymRoute(new URL(`${LIGHTWALLETD}/${path}`), ALL_ROUTES), false, path)
+  }
 })
 
-test('the fee quote requires the Nym route only while its switch is on', () => {
-  const zeroIndexer = new Set([ZERO_INDEXER])
-  const feeQuote = new URL(`${LIGHTWALLETD}/${SERVICE}/GetStandardFee`)
-  assert.equal(requiresNymRoute(feeQuote, zeroIndexer, { feeQuote: true }), true)
-  assert.equal(requiresNymRoute(feeQuote, zeroIndexer, { feeQuote: false }), false)
-  // The switch covers the fee quote alone.
-  assert.equal(
-    requiresNymRoute(new URL(`${LIGHTWALLETD}/${SERVICE}/GetLatestBlock`), zeroIndexer, {
-      feeQuote: true
-    }),
-    false
-  )
+test('Zcash node JSON-RPC methods use the same categories without capturing unrelated reads', () => {
+  for (const [method, category] of [
+    ['getrawtransaction', 'transactionLookup'],
+    ['getblockcount', 'transactionLookup'],
+    ['getaddresstxids', 'transparentHistory']
+  ]) {
+    assert.equal(requiresZcashNodeRpcNymRoute(method, ALL_ROUTES), true)
+    for (const disabled of Object.keys(ALL_ROUTES)) {
+      assert.equal(
+        requiresZcashNodeRpcNymRoute(method, { ...ALL_ROUTES, [disabled]: false }),
+        disabled !== category
+      )
+    }
+  }
+  assert.equal(requiresZcashNodeRpcNymRoute('getblockchaininfo', ALL_ROUTES), false)
+  assert.equal(requiresZcashNodeRpcNymRoute('eth_sendRawTransaction', ALL_ROUTES), false)
 })
 
 test('a broadcast without a tunnel port fails closed and never uses the direct fetch', async () => {
@@ -408,54 +428,78 @@ test('the tunnel host answers the routing question and forwards private requests
   assert.deepEqual(await pendingReply, { id: 6, ok: false, error: 'withdrawn before sending' })
 })
 
-test('ZeroIndexer transaction lookups follow the configured endpoints', async () => {
-  const { scope, controller, directCalls } = createScope()
-  const lookup = () => scope.fetch(`${ZERO_INDEXER}/${SERVICE}/GetTransaction`, { method: 'POST' })
-  await lookup()
-  assert.equal(directCalls.length, 1)
-
-  controller.setZeroIndexerUrls('testnet', [ZERO_INDEXER])
-  await assert.rejects(lookup(), /Private broadcast network unavailable/)
-  assert.equal(directCalls.length, 1)
-
-  controller.setZeroIndexerUrls('testnet', null)
-  await lookup()
-  assert.equal(directCalls.length, 2)
-})
-
-test('a fee quote travels through the tunnel while its switch is on and directly once it is off', async () => {
-  const feeQuoteUrl = `${LIGHTWALLETD}/${SERVICE}/GetStandardFee`
-  const feeQuote = scope => scope.fetch(feeQuoteUrl, { method: 'POST' })
-  {
-    const { scope, controller, directCalls, connectEnabled } = createScope()
-    const seen = []
-    const channel = connectEnabled((message, port) => {
-      seen.push(message.request.url)
-      port.postMessage({
-        id: message.id,
-        ok: true,
-        kind: 'fetch',
-        response: { status: 200, statusText: 'OK', headers: [], body: new Uint8Array([1]) }
+test('each enabled category uses the tunnel and fails closed; disabled categories remain direct', async () => {
+  for (const [method, category] of ROUTED_METHODS) {
+    const url = `${LIGHTWALLETD}/${SERVICE}/${method}`
+    const request = scope =>
+      scope.fetch(new Request(url, { method: 'POST', body: new Uint8Array([1, 2]) }))
+    {
+      const { scope, directCalls, connectEnabled } = createScope()
+      const seen = []
+      const channel = connectEnabled((message, port) => {
+        seen.push(message.request)
+        port.postMessage({
+          id: message.id,
+          ok: true,
+          kind: 'fetch',
+          // Multiple gRPC-Web data/trailer frames must survive byte-for-byte, including streams.
+          response: {
+            status: 200,
+            statusText: 'OK',
+            headers: [],
+            body: new Uint8Array([0, 0, 0, 0, 1, 7, 0, 0, 0, 0, 1, 8, 128, 0, 0, 0, 0])
+          }
+        })
       })
-    })
-    const response = await feeQuote(scope)
-    assert.equal(response.status, 200)
-    assert.deepEqual(seen, [feeQuoteUrl])
-    assert.deepEqual(directCalls, [])
-    assert.equal(controller.stats.routed, 1)
-    channel.port1.close()
-  }
-  {
-    // Without a tunnel the fee quote fails closed, like a broadcast; the caller falls back.
-    const { scope, directCalls } = createScope()
-    await assert.rejects(feeQuote(scope), /Private broadcast network unavailable/)
-    assert.deepEqual(directCalls, [])
-  }
-  {
-    const { scope, controller, directCalls } = createScope({ feeQuote: false })
-    await feeQuote(scope)
-    assert.deepEqual(directCalls, [feeQuoteUrl])
-    assert.equal(controller.stats.direct, 0)
+      try {
+        const response = await request(scope)
+        assert.deepEqual(
+          [...new Uint8Array(await response.arrayBuffer())],
+          [0, 0, 0, 0, 1, 7, 0, 0, 0, 0, 1, 8, 128, 0, 0, 0, 0]
+        )
+        assert.equal(seen[0].url, url)
+        assert.deepEqual([...seen[0].body], [1, 2])
+        assert.deepEqual(directCalls, [])
+      } finally {
+        channel.port1.close()
+      }
+    }
+    {
+      const { scope, directCalls } = createScope()
+      await assert.rejects(request(scope), /Private broadcast network unavailable/)
+      assert.deepEqual(directCalls, [], method)
+    }
+    {
+      const { scope, directCalls, directBodies } = createScope({ [category]: false })
+      await request(scope)
+      assert.deepEqual(directCalls, [url])
+      assert.deepEqual(directBodies, [[1, 2]])
+    }
+    {
+      const { scope, directCalls, connect } = createScope()
+      const channel = connect((message, port) => {
+        assert.equal(message.kind, 'mode')
+        port.postMessage({ id: message.id, ok: true, kind: 'mode', enabled: false })
+      })
+      try {
+        await request(scope)
+        assert.deepEqual(directCalls, [url])
+      } finally {
+        channel.port1.close()
+      }
+    }
+    {
+      const { scope, directCalls, connectEnabled } = createScope()
+      const channel = connectEnabled((message, port) => {
+        port.postMessage({ id: message.id, ok: false, error: 'tunnel failed' })
+      })
+      try {
+        await assert.rejects(request(scope), /Private broadcast did not complete/)
+        assert.deepEqual(directCalls, [], method)
+      } finally {
+        channel.port1.close()
+      }
+    }
   }
 })
 

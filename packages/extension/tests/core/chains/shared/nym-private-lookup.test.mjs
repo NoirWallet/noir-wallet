@@ -4,7 +4,7 @@ import { test } from 'node:test'
 // Evaluated by the config module at import time, as the isolated Nym build defines it.
 globalThis.__NYM_PRIVATE_BROADCAST__ = true
 
-const { lookupTransaction, getVerboseTransaction, getBlockCount } =
+const { lookupTransaction, getAddressTxids, getVerboseTransaction, getBlockCount, zcashNodeRpc } =
   await import('../../../../src/lib/zcash-node-rpc.ts')
 const { parseNymTextReply, parseNymTextRequest, setNymPrivateFetchRelay } =
   await import('../../../../src/core/nym/private-fetch-relay.ts')
@@ -172,13 +172,98 @@ test('with Nym routing turned off the chain tip read uses the direct path', asyn
   assert.deepEqual(directCalls, [NODE])
 })
 
-test('history reads stay on the direct path', async t => {
+test('address history and generic transaction reads use Nym when enabled', async t => {
+  stubNymPreference(t, true)
   const directCalls = stubDirectFetch(t)
+  const requests = []
+  setNymPrivateFetchRelay(async request => {
+    const { method } = JSON.parse(request.bodyText)
+    requests.push(JSON.parse(request.bodyText))
+    return reply(200, {
+      result: method === 'getaddresstxids' ? [TXID] : { txid: TXID, confirmations: 2 }
+    })
+  })
+
+  assert.deepEqual(await getAddressTxids(NODE, 't-address', 123), [TXID])
+  assert.equal((await getVerboseTransaction(NODE, TXID)).confirmations, 2)
+  assert.deepEqual(
+    requests.map(({ method, params }) => [method, params]),
+    [
+      ['getaddresstxids', [{ addresses: ['t-address'], start: 123 }]],
+      ['getrawtransaction', [TXID, 1]]
+    ]
+  )
+  assert.deepEqual(directCalls, [])
+})
+
+test('address history and generic transaction reads use direct fetch when Nym is off', async t => {
+  stubNymPreference(t, false)
+  const directCalls = stubDirectFetch(t, [TXID])
   setNymPrivateFetchRelay(async () => {
     throw new Error('relay must not be used')
   })
+
+  assert.deepEqual(await getAddressTxids(NODE, 't-address'), [TXID])
   await getVerboseTransaction(NODE, TXID)
+  assert.deepEqual(directCalls, [NODE, NODE])
+})
+
+test('unreadable Nym choice blocks address history and generic transaction reads', async t => {
+  stubNymPreference(t, null)
+  const directCalls = stubDirectFetch(t)
+  let relayCalls = 0
+  setNymPrivateFetchRelay(async () => {
+    relayCalls += 1
+    return reply(200, { result: [] })
+  })
+
+  await assert.rejects(getAddressTxids(NODE, 't-address'))
+  await assert.rejects(getVerboseTransaction(NODE, TXID))
+  assert.deepEqual(directCalls, [])
+  assert.equal(relayCalls, 0)
+})
+
+test('Nym failures never retry sensitive JSON-RPC requests directly', async t => {
+  stubNymPreference(t, true)
+  const directCalls = stubDirectFetch(t)
+  setNymPrivateFetchRelay(async () => {
+    throw new Error('Private network unavailable')
+  })
+
+  await assert.rejects(getAddressTxids(NODE, 't-address'))
+  await assert.rejects(getVerboseTransaction(NODE, TXID))
+  assert.deepEqual(directCalls, [])
+})
+
+test('unclassified zcashd JSON-RPC requests still use direct fetch', async t => {
+  stubNymPreference(t, true)
+  const directCalls = stubDirectFetch(t, 'blockhash')
+  setNymPrivateFetchRelay(async () => {
+    throw new Error('relay must not be used')
+  })
+
+  assert.equal(await zcashNodeRpc(NODE, 'getblockhash', [123]), 'blockhash')
   assert.deepEqual(directCalls, [NODE])
+})
+
+test('an already aborted sensitive JSON-RPC request stops before reading settings', async t => {
+  stubNymPreference(t, null)
+  const directCalls = stubDirectFetch(t)
+  let relayCalls = 0
+  setNymPrivateFetchRelay(async () => {
+    relayCalls += 1
+    return reply(200, { result: { txid: TXID } })
+  })
+  const controller = new AbortController()
+  const reason = new DOMException('Request cancelled', 'AbortError')
+  controller.abort(reason)
+
+  await assert.rejects(
+    zcashNodeRpc(NODE, 'getrawtransaction', [TXID, 1], controller.signal),
+    error => error === reason
+  )
+  assert.deepEqual(directCalls, [])
+  assert.equal(relayCalls, 0)
 })
 
 test('relay messages accept only bounded HTTPS text requests and well-formed replies', () => {
