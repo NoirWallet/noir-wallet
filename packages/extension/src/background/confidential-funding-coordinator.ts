@@ -23,6 +23,7 @@ import {
 import { isAddress } from 'viem'
 import { getEvmNetworkConfig } from '@/config/networks'
 import { parseZcashAddress } from '@/core/address-book/address-book'
+import { formatBaseUnitDecimalAmount, parseDisplayUnitAmount } from '@/lib/number-format'
 import { isValidExternalRecipient } from './confidential-funding-recipient'
 import type { PortfolioReadModel } from '@/core/portfolio'
 import type { SwapToken } from '@/core/services/intents-api'
@@ -37,11 +38,25 @@ import { parseAccountId } from '@/core/accounts/domain'
 import { parseKeyDomainId } from '@/core/keyring/domain'
 import type { AssetDefinitionInput, AssetRegistry } from '@/core/chains/registry'
 import { parseAssetId, parseChainId } from '@/core/chains/registry'
-import { getZcashChainId } from '@/core/chains/registry'
+import {
+  createInitialProductChainRegistry,
+  getZcashChainId,
+  selectAdditionalEvmNetworks
+} from '@/core/chains/registry'
 import {
   CONFIDENTIAL_WITHDRAW_DEFAULT_COUNT,
   CONFIDENTIAL_SESSION_REQUIRED_ERROR,
   buildConfidentialPortfolioView,
+  projectShieldDappBalances,
+  projectShieldDappCatalog,
+  projectShieldDappDepositStatus,
+  projectShieldDappOperationDetails,
+  projectShieldDappPlanStatus,
+  projectShieldDappQuote,
+  shieldDappOperationReport,
+  shieldDappPlanAction,
+  shieldSameDecimalsQuoteDifferenceRaw,
+  unknownShieldDappOperation,
   aggregateConfidentialSettlement,
   assertDirectConfidentialWithdrawIntentBinding,
   assertConfidentialIntentBinding,
@@ -63,6 +78,9 @@ import {
   type ConfidentialFundingPreview,
   type ConfidentialFundingReview,
   type ConfidentialPortfolioAssetMapping,
+  type ShieldDappBalance,
+  type ShieldDappOperationDetails,
+  type ShieldDappOperationReport,
   type ConfidentialQuote,
   type ConfidentialWithdrawRequest,
   type ConfidentialWithdrawRow,
@@ -103,6 +121,7 @@ import {
   readConfidentialQuoteAppFees,
   type ConfidentialBalance,
   type ConfidentialPrivateOrder,
+  type ConfidentialSession,
   type ConfidentialStatus
 } from './confidential-funding-api'
 import {
@@ -315,6 +334,43 @@ export interface ConfidentialFundingCoordinatorOptions {
 
 function isPositiveRaw(value: string): boolean {
   return /^[1-9][0-9]*$/.test(value)
+}
+
+function isRawAmount(value: string): boolean {
+  return /^(0|[1-9]\d*)$/.test(value)
+}
+
+/**
+ * A Shield receive is settled by a provider amount, or by the confidential
+ * balance rising at least the quoted minimum. Provider status can lag the credit.
+ */
+function shieldDepositHasArrived(input: {
+  readonly protocolStatus: string
+  readonly settledAmountOutRaw: string | undefined
+  readonly minimumOutputRaw: string
+  readonly baselineRaw: string
+  readonly availableRaw: string
+  readonly balanceRead: boolean
+}): boolean {
+  const normalized = normalizeStatus(input.protocolStatus)
+  if (
+    (normalized === 'SUCCESS' || normalized === 'COMPLETED') &&
+    input.settledAmountOutRaw !== undefined &&
+    isPositiveRaw(input.settledAmountOutRaw) &&
+    isRawAmount(input.minimumOutputRaw) &&
+    BigInt(input.settledAmountOutRaw) >= BigInt(input.minimumOutputRaw)
+  ) {
+    return true
+  }
+  if (!input.balanceRead || normalized === 'PENDING_REFUND') return false
+  if (
+    !isRawAmount(input.baselineRaw) ||
+    !isRawAmount(input.availableRaw) ||
+    !isRawAmount(input.minimumOutputRaw)
+  ) {
+    return false
+  }
+  return BigInt(input.availableRaw) >= BigInt(input.baselineRaw) + BigInt(input.minimumOutputRaw)
 }
 
 function quotedPrivacyFeeBps(quote: ConfidentialQuote | undefined): number | undefined {
@@ -2771,10 +2827,10 @@ export class ConfidentialFundingCoordinator {
     )
   }
 
-  async refreshBalances(
+  private async requireConfidentialSession(
     scope: Readonly<{ network: Network; keyDomainId: string; accountId: string }>,
     authorize: boolean
-  ): Promise<readonly Readonly<{ tokenId: string; available: string; source: string }>[]> {
+  ): Promise<Readonly<{ identity: ConfidentialSigningIdentity; session: ConfidentialSession }>> {
     if (scope.network !== this.options.network) throw new Error('Confidential network changed')
     const firstEvm = this.options.evmNetworks[0]
     if (!firstEvm) throw new Error('Confidential EVM network is unavailable')
@@ -2790,6 +2846,27 @@ export class ConfidentialFundingCoordinator {
       throw new Error('Active Wallet Account changed')
     const session = existingSession ?? (await this.ensureSession(identity, authorize))
     if (!session) throw new Error('Confidential authorization is required')
+    return Object.freeze({ identity, session })
+  }
+
+  async openShieldDappSession(
+    scope: Readonly<{ network: Network; keyDomainId: string; accountId: string }>
+  ): Promise<void> {
+    await this.requireConfidentialSession(scope, true)
+  }
+
+  async closeShieldDappSession(
+    scope: Readonly<{ network: Network; keyDomainId: string; accountId: string }>
+  ): Promise<void> {
+    if (scope.network !== this.options.network) throw new Error('Confidential network changed')
+    await this.options.store.deleteSession(scope.network, scope.keyDomainId, scope.accountId)
+  }
+
+  async refreshBalances(
+    scope: Readonly<{ network: Network; keyDomainId: string; accountId: string }>,
+    authorize: boolean
+  ): Promise<readonly Readonly<{ tokenId: string; available: string; source: string }>[]> {
+    const { identity, session } = await this.requireConfidentialSession(scope, authorize)
     try {
       return await this.refreshPortfolioBalances(identity, session.accessToken)
     } catch (error) {
@@ -2815,6 +2892,619 @@ export class ConfidentialFundingCoordinator {
       }
       throw error
     }
+  }
+
+  private shieldProductChains() {
+    return createInitialProductChainRegistry(
+      this.options.network,
+      selectAdditionalEvmNetworks(this.options.network, this.options.evmNetworks)
+    )
+  }
+
+  private shieldCatalogInputs() {
+    const tokens = this.options.getProtocolTokens?.() ?? this.options.protocolTokens ?? []
+    const managedAssets = (() => {
+      try {
+        return resolveManagedIntentsAssets(tokens, this.options.network, this.options.evmNetworks)
+      } catch {
+        return []
+      }
+    })()
+    const chains = this.shieldProductChains()
+    const zcashChainId = getZcashChainId(this.options.network)
+    return { tokens, managedAssets, chains, zcashChainId }
+  }
+
+  listShieldDappCatalog(): Readonly<{
+    chains: readonly Readonly<{ chainId: string; name: string }>[]
+    tokens: readonly Readonly<{
+      chainId: string
+      assetId: string
+      symbol: string
+      decimals: number
+    }>[]
+  }> {
+    const { tokens, managedAssets, chains, zcashChainId } = this.shieldCatalogInputs()
+    return projectShieldDappCatalog({
+      tokens,
+      managedAssets,
+      mappings: filterConfidentialPortfolioMappings(
+        this.options.assetMappings,
+        this.options.network
+      ),
+      assets: this.options.assets,
+      network: this.options.network,
+      acceptChain: chainId => {
+        try {
+          const chain = chains.resolve(chainId)
+          return (
+            (chain.family === 'evm' || chain.id === zcashChainId) &&
+            chain.capabilities.transaction.status === 'available'
+          )
+        } catch {
+          return false
+        }
+      },
+      chainNameFor: chainId => {
+        try {
+          return chains.resolve(chainId).displayName
+        } catch {
+          return chainId
+        }
+      }
+    })
+  }
+
+  private resolveShieldCatalogToken(chainId: string, assetId: string) {
+    const { tokens, managedAssets } = this.shieldCatalogInputs()
+    const catalog = this.listShieldDappCatalog().tokens.find(
+      token => token.chainId === chainId && token.assetId === assetId
+    )
+    const managed = managedAssets.find(
+      asset => asset.management === 'evm' && asset.chainId === chainId && asset.assetId === assetId
+    )
+    const mapping = managed
+      ? undefined
+      : filterConfidentialPortfolioMappings(this.options.assetMappings, this.options.network).find(
+          item => item.assetId === assetId
+        )
+    const protocolAssetId = managed?.protocolAssetId ?? mapping?.protocolAssetId
+    const protocol = protocolAssetId
+      ? tokens.find(token => token.assetId === protocolAssetId)
+      : undefined
+    if (!catalog || !protocolAssetId || !protocol || protocol.decimals !== catalog.decimals) {
+      throw new Error('Shield token is not available.')
+    }
+    return Object.freeze({
+      chainId,
+      assetId,
+      symbol: catalog.symbol,
+      decimals: catalog.decimals,
+      protocolAssetId,
+      blockchain: protocol.blockchain
+    })
+  }
+
+  private shieldQuoteRecipient(chainId: string, address: string): string {
+    if (chainId.startsWith('eip155:')) {
+      if (!isAddress(address) || /^0x0{40}$/i.test(address)) {
+        throw new Error('Shield destination address is invalid.')
+      }
+      return address
+    }
+    if (chainId === getZcashChainId(this.options.network)) {
+      parseZcashAddress(address, this.options.network)
+      return address
+    }
+    throw new Error('Shield destination chain is invalid.')
+  }
+
+  async quoteShieldDapp(input: {
+    readonly scope: Readonly<{ network: Network; keyDomainId: string; accountId: string }>
+    readonly action: 'receive' | 'transfer'
+    readonly amount: string
+    readonly source: Readonly<{ chainId: string; assetId: string }>
+    readonly destination?: Readonly<{ chainId: string; assetId: string; address: string }>
+  }) {
+    if (input.scope.network !== this.options.network)
+      throw new Error('Confidential network changed')
+    if (input.action === 'transfer' && !input.destination) {
+      throw new Error('Shield destination chain is invalid.')
+    }
+    const source = this.resolveShieldCatalogToken(input.source.chainId, input.source.assetId)
+    let amountRaw: string
+    try {
+      amountRaw = parseDisplayUnitAmount(input.amount, source.decimals)
+    } catch {
+      throw new Error('Shield amount is invalid.')
+    }
+    if (!/^[1-9][0-9]*$/.test(amountRaw)) throw new Error('Shield amount is invalid.')
+    const signingChain = source.chainId.startsWith('eip155:')
+      ? source.chainId
+      : this.options.evmNetworks.find(network => network.chainId.startsWith('eip155:'))?.chainId
+    if (!signingChain) throw new Error('Confidential EVM network is unavailable')
+    const identity = await this.options.signer.resolveIdentity(parseChainId(signingChain).id)
+    if (
+      identity.context.chainAccount.scope.keyDomainId !== input.scope.keyDomainId ||
+      identity.context.chainAccount.scope.accountId !== input.scope.accountId
+    ) {
+      throw new Error('Active Wallet Account changed')
+    }
+    const destination = input.destination
+      ? this.resolveShieldCatalogToken(input.destination.chainId, input.destination.assetId)
+      : source
+    const recipient = input.destination
+      ? this.shieldQuoteRecipient(input.destination.chainId, input.destination.address)
+      : identity.address
+    const binding = Object.freeze(
+      input.action === 'receive'
+        ? {
+            originAsset: source.protocolAssetId,
+            destinationAsset: source.protocolAssetId,
+            amountRaw,
+            signerId: identity.address,
+            recipient: identity.address,
+            depositType: 'ORIGIN_CHAIN' as const,
+            refundType: 'ORIGIN_CHAIN' as const,
+            recipientType: 'CONFIDENTIAL_INTENTS' as const,
+            slippageBps: 50
+          }
+        : {
+            originAsset: source.protocolAssetId,
+            destinationAsset: destination.protocolAssetId,
+            amountRaw,
+            signerId: identity.address,
+            recipient,
+            depositType: 'CONFIDENTIAL_INTENTS' as const,
+            refundType: 'CONFIDENTIAL_INTENTS' as const,
+            recipientType: 'DESTINATION_CHAIN' as const,
+            slippageBps: 50
+          }
+    )
+    const quote = await this.options.api.quote({
+      ...binding,
+      referral: input.action === 'receive' ? NOIR_RECEIVE_REFERRAL : NOIR_SEND_REFERRAL,
+      dry: true
+    })
+    assertConfidentialQuoteBinding(quote, binding, this.now())
+    let projected
+    try {
+      projected = projectShieldDappQuote({
+        action: input.action,
+        amountRaw,
+        amountOutRaw: quote.quote.amountOut,
+        sourceDecimals: source.decimals,
+        destinationDecimals: destination.decimals,
+        sameAsset: source.protocolAssetId === destination.protocolAssetId,
+        expiresAt: quoteDeadline(quote),
+        source: { chainId: source.chainId, assetId: source.assetId, symbol: source.symbol },
+        destination: {
+          chainId: destination.chainId,
+          assetId: destination.assetId,
+          symbol: destination.symbol
+        }
+      })
+    } catch {
+      throw new Error('Shield quote is invalid.')
+    }
+    return projected
+  }
+
+  async prepareShieldDappReceive(input: {
+    readonly scope: Readonly<{ network: Network; keyDomainId: string; accountId: string }>
+    readonly source: Readonly<{ chainId: string; assetId: string }>
+    readonly amount: string
+  }): Promise<{
+    readonly planId: string
+    readonly payloadFingerprint: string
+    readonly amount: string
+    readonly symbol: string
+    readonly chainName: string
+    readonly assetId: string
+    readonly sourceAddress: string
+    readonly expectedReceive: string
+    readonly expectedSymbol: string
+    readonly quoteDifference?: string
+    readonly networkFee?: string
+    readonly networkFeeSymbol?: string
+  }> {
+    if (input.scope.network !== this.options.network)
+      throw new Error('Active Wallet Account changed')
+    const source = this.resolveShieldCatalogToken(input.source.chainId, input.source.assetId)
+    if (!source.chainId.startsWith('eip155:')) throw new Error('Shield chain is invalid.')
+    const amountRaw = parseDisplayUnitAmount(input.amount, source.decimals)
+    if (!/^[1-9]\d*$/.test(amountRaw)) throw new Error('Shield amount is invalid.')
+    const chainName = this.shieldProductChains().resolve(source.chainId).displayName
+    const review = await this.prepare({
+      network: input.scope.network,
+      keyDomainId: input.scope.keyDomainId,
+      accountId: input.scope.accountId,
+      operation: 'deposit',
+      sourceDomain: 'public',
+      destinationDomain: 'shield',
+      source: {
+        chainId: source.chainId,
+        chainName: source.blockchain,
+        assetId: source.assetId,
+        protocolAssetId: source.protocolAssetId,
+        amountRaw
+      },
+      destination: {
+        chainId: source.chainId,
+        chainName: source.blockchain,
+        assetId: source.assetId,
+        protocolAssetId: source.protocolAssetId
+      },
+      slippageBps: 50
+    })
+    return Object.freeze({
+      planId: review.planId,
+      payloadFingerprint: review.payloadFingerprint,
+      amount: formatBaseUnitDecimalAmount(amountRaw, source.decimals),
+      symbol: source.symbol,
+      chainName,
+      assetId: source.assetId,
+      ...this.shieldApprovalQuoteFields(review, source, source)
+    })
+  }
+
+  async prepareShieldDappTransfer(input: {
+    readonly scope: Readonly<{ network: Network; keyDomainId: string; accountId: string }>
+    readonly token: Readonly<{ chainId: string; assetId: string }>
+    readonly amount: string
+    readonly destination: Readonly<{ chainId: string; assetId: string; address: string }>
+  }): Promise<{
+    readonly planId: string
+    readonly payloadFingerprint: string
+    readonly amount: string
+    readonly symbol: string
+    readonly chainName: string
+    readonly assetId: string
+    readonly destinationAddress: string
+    readonly destinationChainName: string
+    readonly destinationSymbol: string
+    readonly destinationAssetId: string
+    readonly sourceAddress: string
+    readonly expectedReceive: string
+    readonly expectedSymbol: string
+    readonly quoteDifference?: string
+    readonly networkFee?: string
+    readonly networkFeeSymbol?: string
+  }> {
+    if (input.scope.network !== this.options.network)
+      throw new Error('Active Wallet Account changed')
+    const source = this.resolveShieldCatalogToken(input.token.chainId, input.token.assetId)
+    const destination = this.resolveShieldCatalogToken(
+      input.destination.chainId,
+      input.destination.assetId
+    )
+    if (!destination.chainId.startsWith('eip155:')) {
+      throw new Error('Shield destination chain is invalid.')
+    }
+    const recipient = this.shieldQuoteRecipient(destination.chainId, input.destination.address)
+    let amountRaw: string
+    try {
+      amountRaw = parseDisplayUnitAmount(input.amount, source.decimals)
+    } catch {
+      throw new Error('Shield amount is invalid.')
+    }
+    if (!/^[1-9]\d*$/.test(amountRaw)) throw new Error('Shield amount is invalid.')
+    const chains = this.shieldProductChains()
+    const review = await this.prepare({
+      network: input.scope.network,
+      keyDomainId: input.scope.keyDomainId,
+      accountId: input.scope.accountId,
+      operation: 'withdraw',
+      sourceDomain: 'shield',
+      destinationDomain: 'public',
+      source: {
+        chainId: source.chainId,
+        chainName: source.blockchain,
+        assetId: source.assetId,
+        protocolAssetId: source.protocolAssetId,
+        amountRaw
+      },
+      destination: {
+        chainId: destination.chainId,
+        chainName: destination.blockchain,
+        assetId: destination.assetId,
+        protocolAssetId: destination.protocolAssetId
+      },
+      externalRecipient: recipient,
+      slippageBps: 50
+    })
+    return Object.freeze({
+      planId: review.planId,
+      payloadFingerprint: review.payloadFingerprint,
+      amount: formatBaseUnitDecimalAmount(amountRaw, source.decimals),
+      symbol: source.symbol,
+      chainName: chains.resolve(source.chainId).displayName,
+      assetId: source.assetId,
+      destinationAddress: recipient,
+      destinationChainName: chains.resolve(destination.chainId).displayName,
+      destinationSymbol: destination.symbol,
+      destinationAssetId: destination.assetId,
+      ...this.shieldApprovalQuoteFields(review, source, destination)
+    })
+  }
+
+  async refreshShieldDappBalances(
+    scope: Readonly<{ network: Network; keyDomainId: string; accountId: string }>,
+    authorize: boolean
+  ): Promise<readonly ShieldDappBalance[]> {
+    const balances = await this.refreshBalances(scope, authorize)
+    const { tokens, managedAssets, chains } = this.shieldCatalogInputs()
+    const view = buildConfidentialPortfolioView(
+      balances,
+      tokens,
+      managedAssets,
+      filterConfidentialPortfolioMappings(this.options.assetMappings, this.options.network),
+      this.options.assets
+    )
+    return projectShieldDappBalances(view, chainId => {
+      try {
+        return chains.resolve(chainId).displayName
+      } catch {
+        return chainId
+      }
+    })
+  }
+
+  reportStoredShieldDappPlan(plan: ConfidentialFundingPlan): ShieldDappOperationReport {
+    return shieldDappOperationReport(
+      plan.planId,
+      shieldDappPlanAction(plan),
+      projectShieldDappPlanStatus(plan),
+      this.shieldDappPlanDetails(plan)
+    )
+  }
+
+  async readShieldDappStatus(input: {
+    readonly scope: Readonly<{ network: Network; keyDomainId: string; accountId: string }>
+    readonly operationId: string
+  }): Promise<ShieldDappOperationReport> {
+    if (input.scope.network !== this.options.network)
+      throw new Error('Confidential network changed')
+    const plan = await this.options.store.getPlan(input.operationId).catch(() => null)
+    if (plan) {
+      if (!this.shieldRecordInScope(plan, input.scope)) {
+        return unknownShieldDappOperation(input.operationId)
+      }
+      const current = await this.observeShieldPlan(plan)
+      return this.reportStoredShieldDappPlan(current)
+    }
+    const deposit = await this.options.store.getExternalDeposit(input.operationId).catch(() => null)
+    if (!deposit || !this.shieldRecordInScope(deposit, input.scope)) {
+      return unknownShieldDappOperation(input.operationId)
+    }
+    let current = deposit
+    try {
+      current = await this.refreshExternalDeposit(deposit.depositId)
+    } catch {
+      current =
+        (await this.options.store.getExternalDeposit(deposit.depositId).catch(() => null)) ??
+        deposit
+    }
+    return shieldDappOperationReport(
+      current.depositId,
+      'receive',
+      projectShieldDappDepositStatus(current),
+      this.shieldDappDepositDetails(current)
+    )
+  }
+
+  private shieldApprovalQuoteFields(
+    review: ConfidentialFundingReview,
+    source: Readonly<{ decimals: number; symbol: string }>,
+    destination: Readonly<{ decimals: number; symbol: string }>
+  ): Readonly<{
+    sourceAddress: string
+    expectedReceive: string
+    expectedSymbol: string
+    quoteDifference?: string
+    networkFee?: string
+    networkFeeSymbol?: string
+  }> {
+    const differenceRaw = shieldSameDecimalsQuoteDifferenceRaw(
+      review.sourceAmountRaw,
+      review.expectedOutputRaw,
+      source.decimals === destination.decimals
+    )
+    const networkFee = review.sourceNetworkFee
+    return Object.freeze({
+      sourceAddress: review.sourceAddress,
+      expectedReceive: formatBaseUnitDecimalAmount(review.expectedOutputRaw, destination.decimals),
+      expectedSymbol: destination.symbol,
+      ...(differenceRaw
+        ? { quoteDifference: formatBaseUnitDecimalAmount(differenceRaw, source.decimals) }
+        : {}),
+      ...(networkFee
+        ? {
+            networkFee: formatBaseUnitDecimalAmount(networkFee.raw, networkFee.decimals),
+            networkFeeSymbol: networkFee.symbol
+          }
+        : {})
+    })
+  }
+
+  private shieldCatalogTokenDisplay(
+    chainId: string,
+    assetId: string
+  ): Readonly<{ symbol?: string; decimals?: number }> {
+    try {
+      const token = this.listShieldDappCatalog().tokens.find(
+        candidate => candidate.chainId === chainId && candidate.assetId === assetId
+      )
+      return token ? { symbol: token.symbol, decimals: token.decimals } : {}
+    } catch {
+      return {}
+    }
+  }
+
+  private shieldDappPlanDetails(plan: ConfidentialFundingPlan): ShieldDappOperationDetails {
+    const hashes: string[] = []
+    const depositHash = plan.preparedDeposit?.transactionHash
+    if (typeof depositHash === 'string') hashes.push(depositHash)
+    for (const row of plan.withdraws ?? []) {
+      if (typeof row?.transactionHash === 'string') hashes.push(row.transactionHash)
+    }
+    return projectShieldDappOperationDetails({
+      ...(plan.source
+        ? {
+            source: {
+              chainId: plan.source.chainId,
+              assetId: plan.source.assetId,
+              amountRaw: plan.source.amountRaw,
+              ...this.shieldCatalogTokenDisplay(plan.source.chainId, plan.source.assetId)
+            }
+          }
+        : {}),
+      ...(plan.destination
+        ? {
+            destination: {
+              chainId: plan.destination.chainId,
+              assetId: plan.destination.assetId,
+              amountRaw: plan.expectedOutputRaw,
+              ...this.shieldCatalogTokenDisplay(plan.destination.chainId, plan.destination.assetId)
+            }
+          }
+        : {}),
+      transactionHashes: hashes,
+      ...(typeof plan.orderId === 'string' ? { orderId: plan.orderId } : {})
+    })
+  }
+
+  private shieldDappDepositDetails(record: {
+    readonly source?: Readonly<{ chainId?: string; assetId?: string; amountRaw?: string }>
+    readonly amountRaw?: string
+    readonly sourceSymbol?: string
+    readonly sourceDecimals?: number
+  }): ShieldDappOperationDetails {
+    if (!record.source) return Object.freeze({})
+    return projectShieldDappOperationDetails({
+      source: {
+        chainId: record.source.chainId,
+        assetId: record.source.assetId,
+        amountRaw: record.amountRaw ?? record.source.amountRaw,
+        ...(typeof record.sourceSymbol === 'string' ? { symbol: record.sourceSymbol } : {}),
+        ...(typeof record.sourceDecimals === 'number' ? { decimals: record.sourceDecimals } : {})
+      }
+    })
+  }
+
+  private shieldRecordInScope(
+    record: Readonly<{ network: Network; keyDomainId: string; accountId: string }>,
+    scope: Readonly<{ network: Network; keyDomainId: string; accountId: string }>
+  ): boolean {
+    return (
+      record.network === this.options.network &&
+      record.network === scope.network &&
+      record.keyDomainId === scope.keyDomainId &&
+      record.accountId === scope.accountId
+    )
+  }
+
+  private async observeShieldPlan(plan: ConfidentialFundingPlan): Promise<ConfidentialFundingPlan> {
+    if (plan.phase === 'needs-auth') {
+      const settled = await this.finishArrivedShieldDeposit(plan).catch(() => null)
+      if (settled) return settled
+      if (plan.resumePhase !== 'deposit-confirming' && plan.resumePhase !== 'deposit-signed') {
+        return plan
+      }
+      const session = await this.readUsableSessionForPlan(plan).catch(() => null)
+      if (!session) return plan
+      const resumed = await this.updatePlan(plan, {
+        phase: plan.resumePhase,
+        resumePhase: undefined
+      })
+      try {
+        return await this.continuePlan(resumed.planId)
+      } catch {
+        return (await this.options.store.getPlan(plan.planId).catch(() => null)) ?? resumed
+      }
+    }
+    if (
+      plan.phase === 'prepared' ||
+      needsConfidentialSubmissionCheck(plan) ||
+      (isTerminalPhase(plan.phase) && !isRecoverableLocalFailure(plan))
+    ) {
+      return plan
+    }
+    const settled = await this.finishArrivedShieldDeposit(plan).catch(() => null)
+    if (settled) return settled
+    try {
+      return await this.continuePlan(plan.planId)
+    } catch {
+      return (await this.options.store.getPlan(plan.planId).catch(() => null)) ?? plan
+    }
+  }
+
+  private shieldDepositObservationPhase(
+    plan: ConfidentialFundingPlan
+  ): 'deposit-confirming' | 'deposit-signed' | undefined {
+    if (plan.operation !== 'deposit' || !plan.requiresDeposit || !plan.depositQuote)
+      return undefined
+    const phase = plan.phase === 'needs-auth' ? plan.resumePhase : plan.phase
+    return phase === 'deposit-confirming' || phase === 'deposit-signed' ? phase : undefined
+  }
+
+  /**
+   * Complete a broadcast Shield receive from the provider receipt or the cached
+   * balance. A missing confidential session must not hide funds that already arrived.
+   */
+  private async finishArrivedShieldDeposit(
+    plan: ConfidentialFundingPlan
+  ): Promise<ConfidentialFundingPlan | null> {
+    if (!this.shieldDepositObservationPhase(plan) || !plan.depositQuote) return null
+    const status = await this.readStatus(plan, plan.depositQuote.quote.depositAddress, 'deposit')
+    const snapshot = await this.options.store
+      .getBalanceSnapshot(plan.network, plan.keyDomainId, plan.accountId)
+      .catch(() => null)
+    let balances = snapshot && snapshot.updatedAt > 0 ? snapshot.balances : null
+    const arrived = (rows: typeof balances) =>
+      shieldDepositHasArrived({
+        protocolStatus: status?.status ?? '',
+        settledAmountOutRaw: status?.settledAmountOutRaw,
+        minimumOutputRaw: plan.minimumOutputRaw,
+        baselineRaw: plan.confidentialBaselineRaw,
+        availableRaw:
+          getConfidentialAvailableForAsset(rows ?? [], plan.source.protocolAssetId) ?? '0',
+        balanceRead: rows !== null
+      })
+    if (!arrived(balances)) {
+      const session = await this.readUsableSessionForPlan(plan).catch(() => null)
+      if (!session) return null
+      balances = await this.readAndCacheBalancesForPlan(plan, session.accessToken).catch(() => null)
+      if (!arrived(balances)) return null
+    }
+    await this.ensureGraph(plan)
+    const transactionHash = plan.preparedDeposit?.transactionHash
+    await this.applyGraphStatus(
+      plan,
+      'origin',
+      'final',
+      transactionHash ? { transactionHash } : undefined
+    )
+    await this.applyGraphStatus(plan, 'relay', 'final')
+    const ready = await this.updatePlan(plan, { phase: 'ready', resumePhase: undefined })
+    await this.options
+      .refreshPortfolio?.({
+        keyDomainId: ready.keyDomainId,
+        accountId: ready.accountId,
+        chainIds: [ready.source.chainId],
+        domain: 'confidential',
+        balanceUpdated: true
+      })
+      .catch(() => {})
+    void this.options
+      .refreshPortfolio?.({
+        keyDomainId: ready.keyDomainId,
+        accountId: ready.accountId,
+        chainIds: [ready.source.chainId],
+        domain: 'chain'
+      })
+      .catch(() => {})
+    return ready
   }
 
   async cancel(planId: string): Promise<void> {
@@ -2982,6 +3672,8 @@ export class ConfidentialFundingCoordinator {
     if (plan.phase === 'needs-auth') return plan
     const session = await this.readUsableSessionForPlan(plan)
     if (!session) {
+      const settled = await this.finishArrivedShieldDeposit(plan)
+      if (settled) return settled
       return this.updatePlan(plan, {
         phase: 'needs-auth',
         resumePhase: plan.phase
@@ -3130,19 +3822,30 @@ export class ConfidentialFundingCoordinator {
       }
       if (plan.operation === 'deposit') {
         if (
-          normalizedStatus !== 'SUCCESS' ||
-          !status?.settledAmountOutRaw ||
-          BigInt(status.settledAmountOutRaw) < BigInt(plan.minimumOutputRaw) ||
-          balances === null
+          !shieldDepositHasArrived({
+            protocolStatus: status?.status ?? '',
+            settledAmountOutRaw: status?.settledAmountOutRaw,
+            minimumOutputRaw: plan.minimumOutputRaw,
+            baselineRaw: plan.confidentialBaselineRaw,
+            availableRaw: available,
+            balanceRead: balances !== null
+          })
         ) {
           await this.scheduleMonitoring()
           return plan
         }
         await this.applyGraphStatus(plan, 'origin', 'final', { transactionHash })
         await this.applyGraphStatus(plan, 'relay', 'final')
+        const settledOutputRaw =
+          status?.settledAmountOutRaw !== undefined &&
+          isPositiveRaw(status.settledAmountOutRaw) &&
+          isRawAmount(plan.minimumOutputRaw) &&
+          BigInt(status.settledAmountOutRaw) >= BigInt(plan.minimumOutputRaw)
+            ? status.settledAmountOutRaw
+            : undefined
         const ready = await this.updatePlan(plan, {
           phase: 'ready',
-          settledOutputRaw: status.settledAmountOutRaw
+          ...(settledOutputRaw === undefined ? {} : { settledOutputRaw })
         })
         await this.options
           .refreshPortfolio?.({

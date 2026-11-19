@@ -465,9 +465,14 @@ export function ApprovalPage() {
       setAction(parsed.request.action)
       setData(requestData)
       if (
-        ['connect', 'sendTransaction', 'signMessage', 'shieldFunds'].includes(
-          parsed.request.action
-        ) &&
+        [
+          'connect',
+          'sendTransaction',
+          'signMessage',
+          'shieldFunds',
+          'shieldReceive',
+          'shieldTransfer'
+        ].includes(parsed.request.action) &&
         parsed.request.walletId &&
         parsed.request.accountId
       ) {
@@ -1713,6 +1718,153 @@ export function ApprovalPage() {
         onReject={() => void handleDecision(false)}
         onConfirm={() => void handleDecision(true)}
       />
+    )
+  }
+
+  if (action === 'shieldTransfer' || action === 'shieldReceive') {
+    const amount = typeof data.amount === 'string' ? data.amount : ''
+    const symbol = typeof data.symbol === 'string' ? data.symbol : ''
+    const sourceAddress = typeof data.sourceAddress === 'string' ? data.sourceAddress : ''
+    const expectedReceive = typeof data.expectedReceive === 'string' ? data.expectedReceive : ''
+    const expectedSymbol =
+      typeof data.expectedSymbol === 'string' && data.expectedSymbol.length > 0
+        ? data.expectedSymbol
+        : symbol
+    const quoteDifference = typeof data.quoteDifference === 'string' ? data.quoteDifference : ''
+    const networkFee = typeof data.networkFee === 'string' ? data.networkFee : ''
+    const networkFeeSymbol = typeof data.networkFeeSymbol === 'string' ? data.networkFeeSymbol : ''
+    const destinationSymbol =
+      typeof data.destinationSymbol === 'string' ? data.destinationSymbol : symbol
+    const destinationChainName =
+      typeof data.destinationChainName === 'string' ? data.destinationChainName : ''
+    const destinationAddress =
+      typeof data.destinationAddress === 'string' ? data.destinationAddress : ''
+    const chainName = typeof data.chainName === 'string' ? data.chainName : ''
+    const isTransfer = action === 'shieldTransfer'
+    const ready =
+      amount.length > 0 &&
+      symbol.length > 0 &&
+      sourceAddress.length > 0 &&
+      expectedReceive.length > 0 &&
+      (isTransfer
+        ? destinationChainName.length > 0 && destinationAddress.length > 0
+        : chainName.length > 0)
+    return (
+      <ApprovalWindowLayout
+        footer={
+          <div className="flex gap-3">
+            <Button
+              variant="outline"
+              className="flex-1"
+              onClick={() => void handleDecision(false)}
+              disabled={isLoading}
+              size="lg"
+            >
+              Reject
+            </Button>
+            <Button
+              className="flex-1 bg-primary hover:bg-primary/90"
+              onClick={() => void handleDecision(true)}
+              isLoading={isLoading}
+              disabled={isLoading || !ready}
+              size="lg"
+            >
+              Confirm
+            </Button>
+          </div>
+        }
+      >
+        <div className="space-y-4">
+          <DAppRequestHeader
+            domain={dappDomain}
+            pageUrl={dappPageUrl}
+            action={isTransfer ? 'Send from Shield' : 'Receive into Shield'}
+            description={
+              ready
+                ? isTransfer
+                  ? `${amount} ${symbol} to ${destinationAddress} on ${destinationChainName}`
+                  : `${amount} ${symbol} on ${chainName}`
+                : isTransfer
+                  ? 'Review this transfer.'
+                  : 'Review this receive.'
+            }
+          />
+          {ready ? (
+            <ApprovalDetailCard title="Amount">
+              <div className="space-y-3 text-sm">
+                <div className="flex justify-between gap-3">
+                  <span className="text-muted">Privacy layer</span>
+                  <span className="text-right">
+                    <span className="block">NEAR Confidential</span>
+                    <span className="block text-muted">near-confidential</span>
+                  </span>
+                </div>
+                <div className="flex justify-between gap-3">
+                  <span className="text-muted">From</span>
+                  <span className="flex min-w-0 flex-col items-end gap-1" title={sourceAddress}>
+                    <span>
+                      {accountDisplayName} · {isTransfer ? 'Shield · NEAR Confidential' : chainName}
+                    </span>
+                    <span className="font-mono">{formatSortAddress(sourceAddress)}</span>
+                  </span>
+                </div>
+                <div className="flex justify-between gap-3">
+                  <span className="text-muted">To</span>
+                  {isTransfer ? (
+                    <span
+                      className="flex min-w-0 flex-col items-end gap-1"
+                      title={destinationAddress}
+                    >
+                      <span>
+                        {destinationSymbol} on {destinationChainName}
+                      </span>
+                      <span className="font-mono">{formatSortAddress(destinationAddress)}</span>
+                    </span>
+                  ) : (
+                    <span className="text-right">
+                      {accountDisplayName} · Shield · NEAR Confidential
+                    </span>
+                  )}
+                </div>
+                <div className="flex justify-between gap-3">
+                  <span className="text-muted">Amount</span>
+                  <span className="font-sans font-medium tabular-nums">
+                    {amount} {symbol}
+                  </span>
+                </div>
+                <div className="flex justify-between gap-3">
+                  <span className="text-muted">Estimated receive</span>
+                  <span className="font-sans font-medium tabular-nums">
+                    {expectedReceive} {expectedSymbol}
+                  </span>
+                </div>
+                {quoteDifference.length > 0 ? (
+                  <div className="flex justify-between gap-3">
+                    <span className="text-muted">Quote difference</span>
+                    <span className="font-sans tabular-nums">
+                      {quoteDifference} {symbol}
+                    </span>
+                  </div>
+                ) : null}
+                {networkFee.length > 0 && networkFeeSymbol.length > 0 ? (
+                  <div className="flex justify-between gap-3">
+                    <span className="text-muted">Max network fee</span>
+                    <span className="font-sans tabular-nums">
+                      {networkFee} {networkFeeSymbol}
+                    </span>
+                  </div>
+                ) : null}
+              </div>
+            </ApprovalDetailCard>
+          ) : (
+            <WarningBox>
+              {isTransfer
+                ? 'The Shield transfer request is invalid or expired.'
+                : 'The Shield receive request is invalid or expired.'}
+            </WarningBox>
+          )}
+        </div>
+      </ApprovalWindowLayout>
     )
   }
 
