@@ -101,14 +101,16 @@ export const WALLET_CONFIG = {
      *  batch. We still re-run it every N batches so a long-running session keeps
      *  advancing toward the live tip and refreshes transparent UTXOs. */
     SESSION_SETUP_REFRESH_EVERY_N_BATCHES: 20,
-    /** Home balance polling interval (ms) */
-    BALANCE_POLL_MS: 1 * 60 * 1000,
+    /** Chain-tip probe interval while the wallet home is visible. */
+    FOREGROUND_PROBE_MS: 60_000,
+    FOREGROUND_BATCH_MAX_BLOCKS: 100,
     /** Base interval for background chain-tip probes (minutes) */
     BACKGROUND_POLL_MINUTES: 30,
     BACKGROUND_POLL_JITTER_MINUTES: 5,
     BACKGROUND_POLL_MAX_BACKOFF_MINUTES: 120,
     BACKGROUND_MIN_GAP_BLOCKS: 10,
     BACKGROUND_MAX_STALE_MS: 60 * 60 * 1000,
+    ROUTINE_MIN_SCAN_INTERVAL_MS: 25 * 60 * 1000,
     BACKGROUND_SYNC_BUDGET_MS: 90 * 1000,
     /** Minimum age of cached wallet state before a dApp balance read requests a sync */
     DAPP_BALANCE_SYNC_STALE_MS: 30 * 1000,
