@@ -1,5 +1,5 @@
 /**
- * Text requests that must leave through the Nym tunnel (transaction status lookups by txid).
+ * Text requests that must leave through the Nym tunnel (zcashd lookups, ZEC swap requests).
  * Extension pages ask the background, which forwards to the offscreen document that owns the
  * tunnel. A failure is returned to the caller; nothing falls back to a direct request.
  */
@@ -92,4 +92,84 @@ export function setNymPrivateFetchRelay(next: Relay): void {
 
 export function nymPrivateTextFetch(request: NymTextRequest): Promise<NymTextResponse> {
   return relay(request)
+}
+
+/**
+ * Relays `request` and waits for its answer. The tunnel cannot withdraw a request it was
+ * handed, so `signal` only stops the wait.
+ */
+export async function nymPrivateTextFetchUntil(
+  request: NymTextRequest,
+  signal?: AbortSignal
+): Promise<NymTextResponse> {
+  if (signal?.aborted) throw signal.reason
+  const relayed = nymPrivateTextFetch(request)
+  if (!signal) return relayed
+  let onAbort: (() => void) | undefined
+  try {
+    return await Promise.race([
+      relayed,
+      new Promise<never>((_, reject) => {
+        onAbort = () => reject(signal.reason)
+        signal.addEventListener('abort', onAbort, { once: true })
+        if (signal.aborted) onAbort()
+      })
+    ])
+  } finally {
+    if (onAbort) signal.removeEventListener('abort', onAbort)
+  }
+}
+
+/** The relay could not answer; nothing was retried on the direct path. */
+export class NymPrivateFetchError extends TypeError {
+  constructor(message: string) {
+    super(message)
+    this.name = 'NymPrivateFetchError'
+  }
+}
+
+const NULL_BODY_STATUSES = new Set([204, 205, 304])
+
+/**
+ * A fetch for text GET and POST requests that must leave through the Nym tunnel, so callers
+ * keep their own HTTP status, size, and timeout handling. Relay failures reject with
+ * `NymPrivateFetchError`.
+ */
+export async function nymPrivateFetch(
+  input: RequestInfo | URL,
+  init: RequestInit = {}
+): Promise<Response> {
+  const signal = init.signal ?? undefined
+  const method = (init.method ?? 'GET').toUpperCase()
+  if ((method !== 'GET' && method !== 'POST') || input instanceof Request) {
+    throw new NymPrivateFetchError('Private requests support GET and POST URLs only')
+  }
+  if (init.body !== undefined && init.body !== null && typeof init.body !== 'string') {
+    throw new NymPrivateFetchError('Private requests need a text body')
+  }
+  let response: NymTextResponse
+  try {
+    response = await nymPrivateTextFetchUntil(
+      {
+        url: input instanceof URL ? input.href : input,
+        method,
+        headers: [...new Headers(init.headers).entries()],
+        bodyText: init.body ?? null
+      },
+      signal
+    )
+  } catch (error) {
+    if (signal?.aborted) throw signal.reason
+    throw new NymPrivateFetchError(
+      error instanceof Error ? error.message : 'Private network unavailable'
+    )
+  }
+  if (response.status < 200 || response.status > 599) {
+    throw new NymPrivateFetchError('Private network returned an invalid HTTP status')
+  }
+  return new Response(NULL_BODY_STATUSES.has(response.status) ? null : response.bodyText, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers
+  })
 }

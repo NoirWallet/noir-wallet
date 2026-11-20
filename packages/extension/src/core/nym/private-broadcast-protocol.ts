@@ -125,8 +125,13 @@ export function nymRequestLabel(request: NymFetchRequest): string {
   let method: string | null = null
   let category: keyof NymRouteSwitches | null = null
   try {
-    method = lightwalletdMethod(new URL(request.url))
+    const url = new URL(request.url)
+    method = lightwalletdMethod(url)
     category = lightwalletdRouteCategory(method)
+    if (!method) {
+      method = intentsSwapMethod(url)
+      if (method) category = 'zecSwap'
+    }
     if (!method && request.body) {
       const body: unknown = JSON.parse(new TextDecoder().decode(request.body))
       if (body && typeof body === 'object' && !Array.isArray(body)) {
@@ -146,7 +151,8 @@ export function nymRequestLabel(request: NymFetchRequest): string {
     feeQuote: '手续费报价',
     transactionLookup: '交易查询',
     transparentHistory: '透明地址历史',
-    transparentUtxos: '透明地址UTXO'
+    transparentUtxos: '透明地址UTXO',
+    zecSwap: 'ZEC兑换'
   }
   const prefix = category ? `【nym-${categories[category]}】 ` : ''
   return `${prefix}${method || 'request'} @ ${nymDestinationHost(request.url)}`
@@ -160,6 +166,14 @@ export interface NymRouteSwitches {
   readonly transactionLookup: boolean
   readonly transparentHistory: boolean
   readonly transparentUtxos: boolean
+  /** Intents quote and status reads for swaps that spend ZEC; callers classify them. */
+  readonly zecSwap: boolean
+}
+
+/** Only ZEC swap requests reach the tunnel at an Intents quote or status path. */
+function intentsSwapMethod(url: URL): string | null {
+  const method = url.pathname.slice(url.pathname.lastIndexOf('/') + 1)
+  return method === 'quote' || method === 'status' ? method : null
 }
 
 /** The node height read accompanies transaction monitoring. */

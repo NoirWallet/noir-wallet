@@ -25,7 +25,13 @@ export const NYM_PRIVATE_BROADCAST = Object.freeze({
     transactionLookup: true,
     transparentHistory: true,
     // Includes address balance reads and the streaming UTXO endpoint used during sync.
-    transparentUtxos: true
+    transparentUtxos: true,
+    /**
+     * Intents quotes and status reads for swaps that spend ZEC: they hand the swap service the
+     * refund and deposit addresses seconds before and after the routed broadcast. Confidential
+     * quotes stay direct because their signed session already identifies the account there.
+     */
+    zecSwap: true
   }),
   /**
    * Worker-side bound on a routed fee quote. Covers a warm tunnel and a tunnel build already
@@ -44,8 +50,9 @@ export const NYM_PRIVATE_BROADCAST = Object.freeze({
   fetchTimeoutMs: 150_000,
   maxTunnelBuildAttempts: 3,
   /**
-   * Background wait for one txid status lookup. A lookup that outlasts a tunnel rebuild
-   * reports an error and the monitor retries on its next poll; the rebuild continues.
+   * Wait for one relayed request (txid status lookup, ZEC swap quote or status). A request
+   * that outlasts a tunnel rebuild reports an error and its caller retries on its next poll
+   * or quote; the rebuild continues.
    */
   relayTimeoutMs: 240_000
 })

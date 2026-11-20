@@ -1,6 +1,6 @@
 import { NYM_PRIVATE_BROADCAST } from '../config/nym-private-broadcast.ts'
 import { requiresZcashNodeRpcNymRoute } from '../core/nym/private-broadcast-protocol.ts'
-import { nymPrivateTextFetch } from '../core/nym/private-fetch-relay.ts'
+import { nymPrivateTextFetchUntil } from '../core/nym/private-fetch-relay.ts'
 import { readNymPrivateBroadcastEnabled } from '../infrastructure/chains/nym-private-broadcast-preferences.ts'
 import { FetchHttpError, fetchJsonWithTimeout } from './fetch-utils.ts'
 
@@ -85,30 +85,15 @@ async function privateNodeRpc<T>(
   body: string,
   signal?: AbortSignal
 ): Promise<JsonRpcResponse<T>> {
-  if (signal?.aborted) throw signal.reason
-  const request = nymPrivateTextFetch({
-    url: baseUrl,
-    method: 'POST',
-    headers: [['content-type', 'application/json']],
-    bodyText: body
-  })
-  // The tunnel request cannot be cancelled; stop waiting for it instead.
-  let onAbort: (() => void) | undefined
-  let response: Awaited<typeof request>
-  try {
-    response = await (signal
-      ? Promise.race([
-          request,
-          new Promise<never>((_, reject) => {
-            onAbort = () => reject(signal.reason)
-            signal.addEventListener('abort', onAbort, { once: true })
-            if (signal.aborted) onAbort()
-          })
-        ])
-      : request)
-  } finally {
-    if (onAbort) signal?.removeEventListener('abort', onAbort)
-  }
+  const response = await nymPrivateTextFetchUntil(
+    {
+      url: baseUrl,
+      method: 'POST',
+      headers: [['content-type', 'application/json']],
+      bodyText: body
+    },
+    signal
+  )
   // Match fetchJsonWithTimeout: a non-2xx status is an HTTP error, not a JSON-RPC result.
   if (response.status < 200 || response.status > 299) {
     throw new FetchHttpError(response.status, response.statusText)

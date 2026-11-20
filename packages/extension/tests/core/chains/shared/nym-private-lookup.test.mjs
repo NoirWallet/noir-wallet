@@ -8,9 +8,47 @@ const { lookupTransaction, getAddressTxids, getVerboseTransaction, getBlockCount
   await import('../../../../src/lib/zcash-node-rpc.ts')
 const { parseNymTextReply, parseNymTextRequest, setNymPrivateFetchRelay } =
   await import('../../../../src/core/nym/private-fetch-relay.ts')
+const { fetchQuote, fetchSwapStatus } = await import('../../../../src/core/services/intents-api.ts')
+const { NYM_BROADCAST_UNAVAILABLE_MESSAGE } =
+  await import('../../../../src/core/zcash/wallet-rpc-errors.ts')
 
 const NODE = 'https://node.example'
 const TXID = 'ab'.repeat(32)
+const ZEC_DEPOSIT = `t1${'Z'.repeat(33)}`
+const ZEC_QUOTE = {
+  originAsset: 'nep141:zec.omft.near',
+  destinationAsset: 'nep141:wrap.near',
+  amount: '100000000',
+  refundTo: `t1${'R'.repeat(33)}`,
+  recipient: 'recipient.near'
+}
+const QUOTE_URL = 'https://api.rhea.finance/api/1click/quote'
+const STATUS_URLS = [
+  `https://api.rhea.finance/api/1click/status?depositAddress=${ZEC_DEPOSIT}`,
+  `https://1click.chaindefuser.com/v0/status?depositAddress=${ZEC_DEPOSIT}`
+]
+
+/** Swap status reads log their final failure; keep that out of the test output. */
+function silenceConsoleError(t) {
+  const original = console.error
+  console.error = () => {}
+  t.after(() => {
+    console.error = original
+  })
+}
+
+function stubDirectSwapFetch(t) {
+  const calls = []
+  const original = globalThis.fetch
+  globalThis.fetch = async input => {
+    calls.push(String(input))
+    return Response.json({ status: 'PENDING_DEPOSIT' })
+  }
+  t.after(() => {
+    globalThis.fetch = original
+  })
+  return calls
+}
 
 function stubDirectFetch(t, result = { txid: TXID, confirmations: 1 }) {
   const calls = []
@@ -264,6 +302,91 @@ test('an already aborted sensitive JSON-RPC request stops before reading setting
   )
   assert.deepEqual(directCalls, [])
   assert.equal(relayCalls, 0)
+})
+
+test('swaps that spend ZEC quote and read status through the Nym relay only', async t => {
+  stubNymPreference(t, true)
+  const directCalls = stubDirectSwapFetch(t)
+  const relayed = []
+  setNymPrivateFetchRelay(async request => {
+    relayed.push(request)
+    if (request.url === STATUS_URLS[0]) return reply(503, { message: 'Unavailable' })
+    return reply(200, request.method === 'POST' ? { message: 'No route' } : { status: 'SUCCESS' })
+  })
+
+  assert.deepEqual(await fetchQuote(ZEC_QUOTE), { quoteStatus: 'error', message: 'No route' })
+  assert.deepEqual(await fetchSwapStatus(ZEC_DEPOSIT), { status: 'SUCCESS' })
+  assert.deepEqual(
+    relayed.map(({ method, url }) => [method, url]),
+    [['POST', QUOTE_URL], ...STATUS_URLS.map(url => ['GET', url])]
+  )
+  assert.equal(JSON.parse(relayed[0].bodyText).refundTo, ZEC_QUOTE.refundTo)
+  assert.deepEqual(directCalls, [])
+})
+
+test('a Nym failure fails ZEC swap requests without a direct fallback', async t => {
+  stubNymPreference(t, true)
+  silenceConsoleError(t)
+  const directCalls = stubDirectSwapFetch(t)
+  setNymPrivateFetchRelay(async () => {
+    throw new Error('Private broadcast network unavailable: no gateway')
+  })
+
+  assert.deepEqual(await fetchQuote(ZEC_QUOTE), {
+    quoteStatus: 'error',
+    message: NYM_BROADCAST_UNAVAILABLE_MESSAGE
+  })
+  assert.equal(await fetchSwapStatus(ZEC_DEPOSIT), null)
+  assert.deepEqual(directCalls, [])
+})
+
+test('an unreadable Nym preference blocks ZEC swap requests without any request', async t => {
+  stubNymPreference(t, null)
+  silenceConsoleError(t)
+  const directCalls = stubDirectSwapFetch(t)
+  let relayCalls = 0
+  setNymPrivateFetchRelay(async () => {
+    relayCalls += 1
+    return reply(200, { status: 'SUCCESS' })
+  })
+
+  assert.equal((await fetchQuote(ZEC_QUOTE)).quoteStatus, 'error')
+  assert.equal(await fetchSwapStatus(ZEC_DEPOSIT), null)
+  assert.deepEqual(directCalls, [])
+  assert.equal(relayCalls, 0)
+})
+
+test('swaps that do not spend ZEC stay on the direct path while Nym is on', async t => {
+  stubNymPreference(t, true)
+  const directCalls = stubDirectSwapFetch(t)
+  setNymPrivateFetchRelay(async () => {
+    throw new Error('relay must not be used')
+  })
+
+  await fetchQuote({
+    ...ZEC_QUOTE,
+    originAsset: 'nep141:wrap.near',
+    destinationAsset: 'nep141:zec.omft.near'
+  })
+  assert.deepEqual(await fetchSwapStatus('0x1111111111111111111111111111111111111111'), {
+    status: 'PENDING_DEPOSIT'
+  })
+  assert.deepEqual(directCalls, [
+    QUOTE_URL,
+    'https://api.rhea.finance/api/1click/status?depositAddress=0x1111111111111111111111111111111111111111'
+  ])
+})
+
+test('with Nym routing turned off ZEC swap requests use the direct path', async t => {
+  stubNymPreference(t, false)
+  const directCalls = stubDirectSwapFetch(t)
+  setNymPrivateFetchRelay(async () => {
+    throw new Error('relay must not be used')
+  })
+
+  await fetchQuote(ZEC_QUOTE)
+  assert.deepEqual(await fetchSwapStatus(ZEC_DEPOSIT), { status: 'PENDING_DEPOSIT' })
+  assert.deepEqual(directCalls, [QUOTE_URL, STATUS_URLS[0]])
 })
 
 test('relay messages accept only bounded HTTPS text requests and well-formed replies', () => {
