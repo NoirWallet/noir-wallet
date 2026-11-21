@@ -29,6 +29,13 @@ export interface PrivateBroadcastFetchController {
    * before a routed request. Null when it cannot be learned; such a request is blocked.
    */
   readRoutingChoice(): Promise<boolean | null>
+  /**
+   * Runs one wallet sync step. While a step runs and no send does, the transaction,
+   * transparent history and UTXO reads go direct (unless `routeWalletSync` is set).
+   */
+  duringWalletSync<T>(operation: () => Promise<T>): Promise<T>
+  /** Marks a send as queued or running until the returned call; meanwhile nothing goes direct. */
+  beginSend(): () => void
   readonly stats: Readonly<PrivateBroadcastStats>
 }
 
@@ -56,11 +63,11 @@ function abortReason(signal: AbortSignal): unknown {
 
 /**
  * Replaces the Worker's global fetch so broadcast requests (and the requests `routes` switches
- * on) follow the user's Nym routing choice, asked from the offscreen document before every
- * such request. With routing on, the request uses the Nym tunnel and never the original
- * fetch. When the choice cannot be learned or the tunnel fails, the request rejects with one
- * of two fixed messages (never sent, or outcome unknown); tunnel details stay in the
- * offscreen document.
+ * on, except wallet sync's own reads) follow the user's Nym routing choice, asked from the
+ * offscreen document before every such request. With routing on, the request uses the Nym
+ * tunnel and never the original fetch. When the choice cannot be learned or the tunnel fails,
+ * the request rejects with one of two fixed messages (never sent, or outcome unknown); tunnel
+ * details stay in the offscreen document.
  */
 export function installNymPrivateBroadcastFetch(
   scope: PrivateBroadcastFetchScope,
@@ -69,6 +76,8 @@ export function installNymPrivateBroadcastFetch(
     modeTimeoutMs: number
     base: string
     routes: NymRouteSwitches
+    /** Route wallet sync's own requests too, instead of sending them direct. */
+    routeWalletSync: boolean
   }
 ): PrivateBroadcastFetchController {
   const directFetch = scope.fetch.bind(scope)
@@ -76,6 +85,12 @@ export function installNymPrivateBroadcastFetch(
   const stats: PrivateBroadcastStats = { routed: 0, blocked: 0, direct: 0 }
   let port: MessagePort | null = null
   let nextId = 1
+  let walletSyncSteps = 0
+  let sends = 0
+
+  // The WASM's requests carry no caller, so a sync overlapping a send (of another wallet, or
+  // after the scheduler's wait for sync to stop ran out) keeps every request routed.
+  const walletSyncDirect = () => !options.routeWalletSync && walletSyncSteps > 0 && sends === 0
 
   scope.addEventListener('message', event => {
     if (event.data?.type !== NYM_PRIVATE_BROADCAST_PORT_MESSAGE) return
@@ -213,7 +228,7 @@ export function installNymPrivateBroadcastFetch(
 
   scope.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
     const url = requestUrl(input, options.base)
-    if (!url || !requiresNymRoute(url, options.routes)) {
+    if (!url || !requiresNymRoute(url, options.routes, walletSyncDirect())) {
       return directFetch(input, init)
     }
     let request: Request
@@ -239,6 +254,23 @@ export function installNymPrivateBroadcastFetch(
         return mode.kind === 'mode' && typeof mode.enabled === 'boolean' ? mode.enabled : null
       } catch {
         return null
+      }
+    },
+    async duringWalletSync(operation) {
+      walletSyncSteps += 1
+      try {
+        return await operation()
+      } finally {
+        walletSyncSteps -= 1
+      }
+    },
+    beginSend() {
+      sends += 1
+      let ended = false
+      return () => {
+        if (ended) return
+        ended = true
+        sends -= 1
       }
     },
     stats

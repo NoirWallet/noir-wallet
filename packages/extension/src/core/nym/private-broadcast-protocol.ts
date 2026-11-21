@@ -216,10 +216,25 @@ export function requiresZcashNodeRpcNymRoute(method: string, routes: NymRouteSwi
   return category !== null && routes[category]
 }
 
-/** Classify Zcash RPC methods independently of which configured endpoint serves them. */
-export function requiresNymRoute(url: URL, routes: NymRouteSwitches): boolean {
+/** The categories wallet sync itself requests; broadcasts and fee quotes belong to sends. */
+const WALLET_SYNC_CATEGORIES: ReadonlySet<keyof NymRouteSwitches> = new Set([
+  'transactionLookup',
+  'transparentHistory',
+  'transparentUtxos'
+])
+
+/**
+ * Classify Zcash RPC methods independently of which configured endpoint serves them.
+ * `walletSyncDirect` releases the categories wallet sync requests to the direct path.
+ */
+export function requiresNymRoute(
+  url: URL,
+  routes: NymRouteSwitches,
+  walletSyncDirect = false
+): boolean {
   const category = lightwalletdRouteCategory(lightwalletdMethod(url))
-  return category !== null && routes[category]
+  if (category === null || !routes[category]) return false
+  return !(walletSyncDirect && WALLET_SYNC_CATEGORIES.has(category))
 }
 
 /**

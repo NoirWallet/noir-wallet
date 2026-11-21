@@ -39,7 +39,7 @@ const ROUTED_METHODS = [
   ['GetTaddressBalanceStream', 'transparentUtxos']
 ]
 
-function createScope(overrides = {}) {
+function createScope(overrides = {}, { routeWalletSync = false } = {}) {
   const routes = { ...ALL_ROUTES, ...overrides }
   const listeners = []
   const directCalls = []
@@ -58,7 +58,8 @@ function createScope(overrides = {}) {
     requestTimeoutMs: 200,
     modeTimeoutMs: 100,
     base: 'chrome-extension://test/worker.js',
-    routes
+    routes,
+    routeWalletSync
   })
   const connect = handler => {
     const channel = new MessageChannel()
@@ -501,6 +502,58 @@ test('each enabled category uses the tunnel and fails closed; disabled categorie
       }
     }
   }
+})
+
+test('wallet sync reads go direct only while a sync step runs and no send is under way', async () => {
+  const syncMethods = ROUTED_METHODS.filter(
+    ([, category]) => category !== 'broadcast' && category !== 'feeQuote'
+  ).map(([method]) => method)
+  for (const [method] of ROUTED_METHODS) {
+    const url = new URL(`${LIGHTWALLETD}/${SERVICE}/${method}`)
+    assert.equal(requiresNymRoute(url, ALL_ROUTES, true), !syncMethods.includes(method), method)
+  }
+
+  const read = (scope, method) =>
+    scope.fetch(new Request(`${LIGHTWALLETD}/${SERVICE}/${method}`, { method: 'POST', body: '' }))
+  const unavailable = /Private broadcast network unavailable/
+  // No tunnel port is connected, so a routed request rejects and never reaches the direct fetch.
+  const { scope, controller, directCalls } = createScope()
+
+  await controller.duringWalletSync(async () => {
+    for (const method of syncMethods) await read(scope, method)
+    assert.equal(directCalls.length, syncMethods.length)
+    await assert.rejects(send(scope), unavailable)
+    await assert.rejects(read(scope, 'GetStandardFee'), unavailable)
+
+    const endSend = controller.beginSend()
+    await assert.rejects(read(scope, 'GetTransaction'), unavailable)
+    endSend()
+    endSend()
+    await read(scope, 'GetTransaction')
+  })
+  assert.equal(directCalls.length, syncMethods.length + 1)
+
+  await assert.rejects(read(scope, 'GetAddressUtxosStream'), unavailable)
+  await assert.rejects(
+    controller.duringWalletSync(async () => {
+      throw new Error('sync failed')
+    }),
+    /sync failed/
+  )
+  await assert.rejects(read(scope, 'GetAddressUtxosStream'), unavailable)
+
+  const endSend = controller.beginSend()
+  await controller.duringWalletSync(async () => {
+    await assert.rejects(read(scope, 'GetTaddressTxids'), unavailable)
+  })
+  endSend()
+  assert.equal(directCalls.length, syncMethods.length + 1)
+
+  const routedSync = createScope({}, { routeWalletSync: true })
+  await routedSync.controller.duringWalletSync(async () => {
+    await assert.rejects(read(routedSync.scope, 'GetAddressUtxosStream'), unavailable)
+  })
+  assert.deepEqual(routedSync.directCalls, [])
 })
 
 test('the routing choice is reported as on, off, or unknown when it cannot be learned', async () => {

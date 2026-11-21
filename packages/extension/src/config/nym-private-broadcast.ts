@@ -34,6 +34,12 @@ export const NYM_PRIVATE_BROADCAST = Object.freeze({
     zecSwap: true
   }),
   /**
+   * Off: wallet sync's own transaction, transparent history and UTXO reads go direct, since
+   * routed they held every sync on the mixnet and failed it whenever the tunnel failed. The
+   * same reads outside sync, and any read while a send is queued or running, stay routed.
+   */
+  routeWalletSync: false,
+  /**
    * Worker-side bound on a routed fee quote. Covers a warm tunnel and a tunnel build already
    * under way, and stays under the Worker RPC's 60 s LIGHT bound so a slow tunnel yields the
    * fallback rate instead of an RPC error.
