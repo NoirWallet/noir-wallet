@@ -5,12 +5,19 @@ import { supportsEvmPrivateExecution } from '@/core/chains/evm'
 import type { AccountNetworksView } from '@/popup/services/account-networks-client'
 import { PortfolioShell } from './PortfolioShell'
 import { resolvePortfolioChainSelection } from '@/popup/services/portfolio-presentation'
+import { withNearConfidentialZecChain } from '@/popup/services/near-confidential-holdings'
 import type { AssetPriceReadModel } from '@/core/prices'
 import { ListSkeleton } from '../ui/skeleton'
 import { useSettingsStore } from '@/store/settings-store'
 import { useWalletStore } from '@/store/wallet-store'
-import { getPortfolioRecoveryDelayMs, hasPortfolioBalanceRefreshIssue } from './portfolio-recovery'
-import { hasRetryablePortfolioPriceGap, summarizePortfolioFiat } from './portfolio-prices'
+import {
+  getPortfolioRecoveryDelayMs,
+  hasPortfolioBalanceRefreshIssue
+} from '@/popup/services/portfolio-recovery'
+import {
+  hasRetryablePortfolioPriceGap,
+  summarizePortfolioFiat
+} from '@/popup/services/portfolio-prices'
 import {
   isPortfolioModelForScope,
   shouldRefreshPortfolioFromNetwork
@@ -21,7 +28,6 @@ const FAST_TRANSACTION_RECHECK_INTERVAL_MS = 5_000
 
 interface MultichainPortfolioPanelProps {
   domain?: AssetDomain
-  hideToolbar?: boolean
   walletId: string | null
   accountId: string | null
   model: PortfolioReadModel | null
@@ -59,7 +65,6 @@ function PortfolioState({
 
 export function MultichainPortfolioPanel({
   domain = 'all',
-  hideToolbar = false,
   walletId,
   accountId,
   model,
@@ -115,11 +120,18 @@ export function MultichainPortfolioPanel({
     activeAccount?.walletId === walletId && activeAccount?.accountId === accountId
       ? activeAccount
       : null
-  const domainModel = visibleModel
-    ? projectPortfolioForDomain(visibleModel, domain, {
-        evmPrivateAvailable: supportsEvmPrivateExecution(scopedAccount?.walletSource)
-      })
-    : null
+  const projectedModel =
+    domain === 'all'
+      ? visibleModel
+      : visibleModel
+        ? projectPortfolioForDomain(visibleModel, domain, {
+            evmPrivateAvailable: supportsEvmPrivateExecution(scopedAccount?.walletSource)
+          })
+        : null
+  const domainModel =
+    domain === 'all' || domain === 'shield'
+      ? withNearConfidentialZecChain(projectedModel, network)
+      : projectedModel
   const availableChainIds = resolvePortfolioChainSelection(
     domainModel,
     null,
@@ -127,7 +139,7 @@ export function MultichainPortfolioPanel({
   )
   const selectedChainIds = resolvePortfolioChainSelection(
     domainModel,
-    hideToolbar ? null : persistedChainSelection,
+    persistedChainSelection,
     __ENABLED_CHAIN_FEATURE_FLAGS__
   )
   const balanceRecoveryNeeded =
@@ -204,7 +216,6 @@ export function MultichainPortfolioPanel({
       sourceModel={visibleModel}
       network={network}
       domain={domain}
-      hideToolbar={hideToolbar}
       prices={prices}
       priceStatus={priceStatus}
       balancesHidden={balancesHidden}

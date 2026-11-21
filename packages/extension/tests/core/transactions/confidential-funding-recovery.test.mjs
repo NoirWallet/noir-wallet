@@ -16,10 +16,11 @@ import { parseTransactionGraph } from '../../../src/core/transactions/domain/ind
 import { confidentialPrivateTokenId } from '../../../src/core/services/confidential-funding/confidential-funding-portfolio.ts'
 import { ZCASH_CHAIN_IDS } from '../../../src/core/chains/registry/chain-ids.ts'
 import { createConfidentialFundingClient } from '../../../src/popup/services/confidential-funding-client.ts'
+import { getActivityAction } from '../../../src/popup/services/activity-action-label.ts'
 import {
   getActivityDetailTitle,
   getActivityRouteTitle
-} from '../../../src/popup/components/transaction/multichain-activity-presentation.ts'
+} from '../../../src/popup/services/multichain-activity-presentation.ts'
 
 const scope = { keyDomainId: 'wallet:one', accountId: 'account:one' }
 const signerId = '0x1111111111111111111111111111111111111111'
@@ -545,7 +546,10 @@ function directPreparationHarness(protocolTokens, getNativeZecActiveAccount) {
       get: id =>
         id === assetId
           ? nativeAsset
-          : { asset: { id, chainId: id.split('/')[0] }, metadata: { decimals: id === zcashAssetId ? 8 : 18 } },
+          : {
+              asset: { id, chainId: id.split('/')[0] },
+              metadata: { decimals: id === zcashAssetId ? 8 : 18 }
+            },
       list: () => [nativeAsset]
     },
     evmNetworks: [],
@@ -691,7 +695,7 @@ test.describe('confidential funding persisted recovery', () => {
       { purpose: 'send' }
     ]) {
       await expect(h.coordinator.prepare({ ...request, ...invalid })).rejects.toThrow(
-        'Zcash Move must receive into the current account'
+        'ZEC transfers must use a receive address from the current account'
       )
     }
     expect(h.state.quoteCalls).toHaveLength(0)
@@ -717,7 +721,7 @@ test.describe('confidential funding persisted recovery', () => {
       })
       active = { ...active, accountId: 'account:other' }
       await expect(h.coordinator.confirm(review.planId, review.payloadFingerprint)).rejects.toThrow(
-        'Zcash Move must receive into the current account'
+        'ZEC transfers must use a receive address from the current account'
       )
       active = { ...active, accountId: scope.accountId }
       h.plans.set(review.planId, { ...stored, purpose: undefined })
@@ -817,6 +821,23 @@ test.describe('confidential funding persisted recovery', () => {
     }
     expect(getActivityRouteTitle(activity, {})).toBe('Swap')
     expect(getActivityDetailTitle(activity)).toBe('Shield Swap')
+    expect(getActivityAction(activity, { viewedDomain: 'shield' })).toEqual({
+      label: 'Swap',
+      side: 'none'
+    })
+    expect(
+      getActivityAction(
+        activity,
+        { viewedDomain: 'shield', shieldProvider: 'near-confidential' },
+        {
+          destinationFundingSource: 'transparent'
+        }
+      )
+    ).toEqual({ label: 'Withdraw', side: 'source' })
+    expect(getActivityAction(activity, { viewedDomain: 'public' })).toEqual({
+      label: 'Receive',
+      side: 'destination'
+    })
   })
 
   test('quotes a Confidential ZEC to EVM swap and an EVM to Confidential ZEC swap', async () => {
@@ -944,6 +965,8 @@ test.describe('confidential funding persisted recovery', () => {
       operation: 'cluster',
       sourceDomain: 'public'
     }
+    const session = h.state.session
+    h.state.session = null
     const preview = await h.coordinator.preview(cluster)
     expect(preview).toEqual({
       amountOutRaw: '54',
@@ -956,9 +979,11 @@ test.describe('confidential funding persisted recovery', () => {
     expect(h.state.quoteCalls[0]).toMatchObject({
       amountRaw: '60',
       depositType: 'ORIGIN_CHAIN',
-      recipientType: 'CONFIDENTIAL_INTENTS'
+      recipientType: 'CONFIDENTIAL_INTENTS',
+      referral: 'noir_receive'
     })
     expect(h.state.quoteCalls.slice(1)).toHaveLength(3)
+    expect(h.state.quoteCalls.slice(1).every(quote => quote.referral === 'noir_send')).toBe(true)
     expect(
       h.state.quoteCalls.slice(1).reduce((sum, quote) => sum + BigInt(quote.amountRaw), 0n)
     ).toBe(57n)
@@ -967,10 +992,10 @@ test.describe('confidential funding persisted recovery', () => {
     expect(h.plans.size).toBe(0)
 
     h.state.quoteCalls.length = 0
-    const shieldPreview = await h.coordinator.preview({
-      ...cluster,
-      sourceDomain: 'shield'
-    })
+    const shieldCluster = { ...cluster, sourceDomain: 'shield' }
+    await expect(h.coordinator.preview(shieldCluster)).rejects.toThrow(/Refresh Shield balances/)
+    h.state.session = session
+    const shieldPreview = await h.coordinator.preview(shieldCluster)
     expect(shieldPreview).toMatchObject({
       amountOutRaw: '57',
       minimumOutputRaw: '54',
@@ -998,6 +1023,7 @@ test.describe('confidential funding persisted recovery', () => {
       estimateGas: async () => '21000'
     }
     h.coordinator.rpcByChain.set('eip155:1', rpc)
+    h.state.session = null
     const privateCluster = { ...cluster, sourceDomain: 'private', destinationDomain: 'public' }
     const fees = await Promise.all([
       h.coordinator.preview(privateCluster, true),
@@ -1025,7 +1051,10 @@ test.describe('confidential funding persisted recovery', () => {
     })
 
     h.coordinator.rpcByChain.set('eip155:1', rpc)
-    const changedAmount = { ...privateCluster, source: { ...privateCluster.source, amountRaw: '63' } }
+    const changedAmount = {
+      ...privateCluster,
+      source: { ...privateCluster.source, amountRaw: '63' }
+    }
     const changedReview = await h.coordinator.prepare(changedAmount)
     expect(changedReview.sourceAmountRaw).toBe('63')
     expect(h.state.formalQuotes).toBe(2)
@@ -1106,6 +1135,23 @@ test.describe('confidential funding persisted recovery', () => {
       now: stored.createdAt
     })
     expect(graph.root.kind).toBe('swap')
+    const activity = {
+      ...graph.root,
+      source: 'wallet-v2',
+      snapshot: graph.root.intent,
+      segments: graph.segments
+    }
+    expect(getActivityRouteTitle(activity, {})).toBe('Swap')
+    expect(getActivityAction(activity, { viewedDomain: 'shield' })).toEqual({
+      label: 'Swap',
+      side: 'none'
+    })
+    expect(
+      getActivityAction(activity, {
+        viewedDomain: 'shield',
+        shieldProvider: 'near-confidential'
+      })
+    ).toEqual({ label: 'Swap', side: 'none' })
     expect(graph.segments.find(segment => segment.role === 'destination').target.kind).toBe(
       'protocol'
     )

@@ -14,13 +14,14 @@ import {
   getAddressBookContactIconChain,
   getAddressBookNetworkChoice,
   getAddressBookNetworkChoices
-} from '../address-book/address-book-network'
+} from '@/popup/services/address-book-network'
 import { InlineError } from '../common/InlineError'
 import { ChainIcon } from '../common/ChainIcon'
 import { Button } from '../ui/button'
-import { Input } from '../ui/input'
+import { SearchInput } from '../ui/input'
 import { ListSkeleton } from '../ui/skeleton'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '../ui/tabs'
+import { Tabs, TabsContent } from '../ui/tabs'
+import { PageTabsList, PageTabsTrigger } from '../common/PageTabs'
 import { Tooltip } from '../ui/tooltip'
 import { ExecutionAccountBadge } from '../account/ExecutionAccountSelector'
 import {
@@ -28,12 +29,9 @@ import {
   buildMyWalletRecipientGroups,
   buildSavedRecipientList,
   getMyAccountRecipientUnavailableReason
-} from './recipient-selector-model'
+} from '@/popup/services/recipient-selector-model'
 
 const EMPTY_ADDRESSES: readonly string[] = Object.freeze([])
-const RECIPIENT_TAB_CLASS =
-  'relative h-10 rounded-none border-0 bg-transparent px-3 text-sm text-muted shadow-none after:absolute after:inset-x-3 after:bottom-0 after:h-0.5 after:rounded-full after:bg-transparent data-[state=active]:bg-transparent data-[state=active]:text-foreground data-[state=active]:shadow-none data-[state=active]:after:bg-primary dark:data-[state=active]:border-0 dark:data-[state=active]:bg-transparent'
-
 function addressSchemeLabel(scheme: string): string | null {
   const labels: Readonly<Record<string, string>> = Object.freeze({
     'zcash-shielded-unified': 'Shield',
@@ -191,23 +189,19 @@ export function RecipientSelector({
   return (
     <Tabs defaultValue="accounts" className="min-h-0 min-w-0 w-full max-w-full gap-0">
       <div className="px-1 pb-3">
-        <Input
+        <SearchInput
           value={query}
           onChange={event => setQuery(event.target.value)}
           placeholder="Search accounts or addresses"
           aria-label="Search accounts or addresses"
           className="h-[46px] rounded-lg text-sm"
-          startContent={<Icon icon="lucide:search" width={18} height={18} className="text-muted" />}
+          iconSize={18}
         />
       </div>
-      <TabsList className="grid h-10 min-w-0 w-full grid-cols-2 rounded-none border-b border-border bg-transparent p-0">
-        <TabsTrigger value="accounts" className={RECIPIENT_TAB_CLASS}>
-          My Wallets
-        </TabsTrigger>
-        <TabsTrigger value="address-book" className={RECIPIENT_TAB_CLASS}>
-          Address Book
-        </TabsTrigger>
-      </TabsList>
+      <PageTabsList className="w-full border-b border-white/8 px-3">
+        <PageTabsTrigger value="accounts">My Wallets</PageTabsTrigger>
+        <PageTabsTrigger value="address-book">Address Book</PageTabsTrigger>
+      </PageTabsList>
 
       <TabsContent
         value="accounts"

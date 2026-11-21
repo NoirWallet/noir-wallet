@@ -12,7 +12,7 @@ import {
 } from '@/lib/number-format'
 import { cn } from '@/lib/utils'
 import { ExecutionAccountBadge } from '../account/ExecutionAccountSelector'
-import { ZcashFundingBadge } from '../account/ZcashFundingBadge'
+import { ZcashFundingBadge } from '../zcash/ZcashFundingBadge'
 import { TokenIcon } from '../tokens/TokenIcon'
 import { Button } from '../ui/button'
 import { Skeleton } from '../ui/skeleton'
@@ -20,68 +20,31 @@ import { BalanceHelp } from '../transaction/BalanceHelp'
 import { SendRecipientInputCard } from '../transaction/SendInputCards'
 import { safeBig } from '@/lib/big'
 import { shouldDeferSwapAmountFocus } from '@/popup/services/swap-page-model'
+import {
+  getRheaProviderIconUrl,
+  providerDisplayName
+} from '@/popup/services/swap-provider-presentation'
 import { InlineError } from '../common/InlineError'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog'
 import nearIntentsIcon from '@/images/figma-near-confidential.svg'
 
-const PROVIDER_NAMES: Readonly<Record<string, string>> = {
-  bitget: 'Bitget',
-  okx: 'OKX',
-  binance: 'Binance',
-  '1inch': '1inch',
-  paraswap: 'ParaSwap',
-  kodiak: 'Kodiak',
-  openocean: 'OpenOcean',
-  cow: 'CoW',
-  zerox: 'Robinhood',
-  jupiter: 'Jupiter',
-  titan: 'Titan',
-  dflow: 'DFlow',
-  hyperion: 'Hyperion',
-  'near-smart': 'SmartV1',
-  'near-smartx': 'SmartV2',
-  nearintents: 'NEAR Intents',
-  'preswap-nearintents': 'NEAR Intents',
-  rango: 'Rango',
-  lifi: 'LI.FI',
-  jumper: 'Jumper',
-  bungee: 'Bungee',
-  swapkit: 'SwapKit',
-  omnibridge: 'OmniBridge',
-  stableflow: 'StableFlow',
-  'near-mca-withdraw': 'NEAR Intents',
-  'near-confidential': 'NEAR Confidential Intents'
-}
-const PROVIDER_MARKS: Readonly<Record<string, { readonly slug: string; readonly color: string }>> =
-  {
-    binance: { slug: 'binance', color: '#F0B90B' },
-    okx: { slug: 'okx', color: '#FFFFFF' }
-  }
-
-function providerDisplayName(router: string): string {
-  return PROVIDER_NAMES[router.trim().toLowerCase()] ?? router
-}
-
 function ProviderMark({ router, size }: { readonly router: string; readonly size: 24 | 28 }) {
-  const normalized = router.trim().toLowerCase()
-  const mark = PROVIDER_MARKS[normalized]
-  const [failedRouter, setFailedRouter] = useState<string | null>(null)
-  if (normalized === 'near-confidential' || providerDisplayName(router) === 'NEAR Intents') {
-    return (
-      <img src={nearIntentsIcon} alt="" width={size} height={size} className="shrink-0 rounded" />
-    )
-  }
-  if (mark && failedRouter !== normalized) {
+  const iconUrl =
+    router.trim().toLowerCase() === 'near-confidential'
+      ? nearIntentsIcon
+      : getRheaProviderIconUrl(router)
+  const [failedIcon, setFailedIcon] = useState<string | null>(null)
+  if (iconUrl && failedIcon !== iconUrl) {
     return (
       <img
-        src={`https://cdn.jsdelivr.net/npm/simple-icons@v15/icons/${mark.slug}.svg`}
+        src={iconUrl}
         crossOrigin="anonymous"
+        referrerPolicy="no-referrer"
         alt=""
         width={size}
         height={size}
-        className={cn('shrink-0 rounded p-1', size === 24 ? 'size-6' : 'size-7')}
-        style={{ backgroundColor: mark.color }}
-        onError={() => setFailedRouter(normalized)}
+        className={cn('shrink-0 rounded object-contain', size === 24 ? 'size-6' : 'size-7')}
+        onError={() => setFailedIcon(iconUrl)}
       />
     )
   }
@@ -252,6 +215,14 @@ interface SwapAssetCardProps {
   validationMessage?: string
   balanceHelp?: boolean
   pendingBalance?: string
+}
+
+interface SwapDestinationPanelProps extends Omit<SwapAssetCardProps, 'direction' | 'isReadOnly'> {
+  canSwitchAssets: boolean
+  reverseUnavailableReason?: string | null
+  switchingTokens?: boolean
+  hideSwitchAssets?: boolean
+  onSwitchAssets: () => void
 }
 
 function SwapAssetCardSkeleton({ direction }: { readonly direction: 'From' | 'To' }) {
@@ -498,7 +469,8 @@ export function SwapAssetCard({
               className={cn(
                 'flex h-[26px] items-center justify-end whitespace-nowrap font-sans text-xl font-semibold leading-[26px]',
                 amount ? 'overflow-x-auto' : 'overflow-hidden',
-                isEstimatedAmount && 'text-muted'
+                isEstimatedAmount && 'text-muted',
+                isAmountLoading && amount && 'swap-quote-shimmer'
               )}
             >
               {isAmountLoading && !amount ? (
@@ -566,6 +538,62 @@ export function SwapAssetCard({
         </div>
       )}
     </section>
+  )
+}
+
+export function SwapDestinationPanel({
+  canSwitchAssets,
+  reverseUnavailableReason,
+  switchingTokens = false,
+  hideSwitchAssets = false,
+  onSwitchAssets,
+  ...cardProps
+}: SwapDestinationPanelProps) {
+  const reverseReasonId = useId()
+  return (
+    <div className="relative border-t border-white/10 pt-2">
+      {!hideSwitchAssets && (
+        <span
+          tabIndex={reverseUnavailableReason ? 0 : undefined}
+          aria-label={reverseUnavailableReason ?? undefined}
+          aria-describedby={reverseUnavailableReason ? reverseReasonId : undefined}
+          title={
+            reverseUnavailableReason ?? (switchingTokens ? 'Switching assets' : 'Switch assets')
+          }
+          className="group absolute -top-3.5 left-1/2 z-10 -translate-x-1/2"
+        >
+          <Button
+            type="button"
+            onClick={onSwitchAssets}
+            disabled={!canSwitchAssets}
+            aria-label="Switch assets"
+            aria-busy={switchingTokens}
+            title={
+              reverseUnavailableReason ?? (switchingTokens ? 'Switching assets' : 'Switch assets')
+            }
+            className="size-7 rounded-md bg-[#373741] p-0 text-foreground hover:bg-popover disabled:opacity-40"
+            variant="secondary"
+          >
+            <Icon
+              icon={switchingTokens ? 'lucide:loader-circle' : 'lucide:arrow-down-up'}
+              className={switchingTokens ? 'animate-spin' : undefined}
+              width={16}
+              height={16}
+            />
+          </Button>
+          {reverseUnavailableReason && (
+            <span
+              id={reverseReasonId}
+              role="tooltip"
+              className="pointer-events-none absolute bottom-full left-1/2 z-20 mb-2 w-48 -translate-x-1/2 rounded bg-popover p-2 text-center text-xs text-foreground opacity-0 shadow-md group-hover:opacity-100 group-focus:opacity-100"
+            >
+              {reverseUnavailableReason}
+            </span>
+          )}
+        </span>
+      )}
+      <SwapAssetCard {...cardProps} direction="To" isReadOnly />
+    </div>
   )
 }
 
@@ -692,118 +720,76 @@ export function SwapInputView({
             validationMessage={balanceValidationMessage}
           />
 
-          <div className="relative border-t border-white/10 pt-2">
-            {!hideSwitchAssets && (
-              <span
-                tabIndex={reverseUnavailableReason ? 0 : undefined}
-                aria-label={reverseUnavailableReason ?? undefined}
-                aria-describedby={reverseUnavailableReason ? 'swap-reverse-reason' : undefined}
-                title={
-                  reverseUnavailableReason ??
-                  (switchingTokens ? 'Switching assets' : 'Switch assets')
-                }
-                className="group absolute -top-3.5 left-1/2 z-10 -translate-x-1/2"
-              >
-                <Button
+          <SwapDestinationPanel
+            canSwitchAssets={canSwitchTokens}
+            reverseUnavailableReason={reverseUnavailableReason}
+            switchingTokens={switchingTokens}
+            hideSwitchAssets={hideSwitchAssets}
+            onSwitchAssets={onSwitchTokens}
+            token={tokenOut}
+            zcashFundingSource={isZecDestination ? addressType : undefined}
+            amount={estimatedOut}
+            fiatValue={toFiat}
+            accountAddress={hideAccountDetails ? undefined : destinationAddress}
+            accountBadge={hideAccountDetails ? undefined : destinationBadge}
+            accountFallbackLabel={
+              hideAccountDetails
+                ? undefined
+                : requiresRecipientAddress
+                  ? 'Custom address'
+                  : 'Wallet'
+            }
+            accountAction={
+              !hideAccountDetails &&
+              !hideReceiveAddress &&
+              tokenOut &&
+              !destinationAssetsLoading ? (
+                <button
                   type="button"
-                  onClick={onSwitchTokens}
-                  disabled={!canSwitchTokens}
-                  aria-label="Switch assets"
-                  aria-busy={switchingTokens}
-                  title={
-                    reverseUnavailableReason ??
-                    (switchingTokens ? 'Switching assets' : 'Switch assets')
+                  onClick={() =>
+                    onSelectDestinationAccount
+                      ? onSelectDestinationAccount()
+                      : setRecipientSelectorOpen(true)
                   }
-                  className="size-7 rounded-md bg-[#373741] p-0 text-foreground hover:bg-popover disabled:opacity-40"
-                  variant="secondary"
+                  aria-label="Choose receive account"
+                  title={destinationAddress || 'Choose receive account'}
+                  className="flex min-w-0 items-center gap-1.5 text-xs transition-colors hover:text-primary"
                 >
-                  <Icon
-                    icon={switchingTokens ? 'lucide:loader-circle' : 'lucide:arrow-down-up'}
-                    className={switchingTokens ? 'animate-spin' : undefined}
-                    width={16}
-                    height={16}
-                  />
-                </Button>
-                {reverseUnavailableReason && (
-                  <span
-                    id="swap-reverse-reason"
-                    role="tooltip"
-                    className="pointer-events-none absolute bottom-full left-1/2 z-20 mb-2 w-48 -translate-x-1/2 rounded bg-popover p-2 text-center text-xs text-foreground opacity-0 shadow-md group-hover:opacity-100 group-focus:opacity-100"
-                  >
-                    {reverseUnavailableReason}
+                  <span className="min-w-0 truncate font-mono text-xs text-muted">
+                    {destinationAddress
+                      ? formatSortAddress(destinationAddress)
+                      : requiresRecipientAddress
+                        ? 'Custom address'
+                        : 'Wallet'}
                   </span>
-                )}
-              </span>
-            )}
-
-            <SwapAssetCard
-              direction="To"
-              token={tokenOut}
-              zcashFundingSource={isZecDestination ? addressType : undefined}
-              amount={estimatedOut}
-              fiatValue={toFiat}
-              accountAddress={hideAccountDetails ? undefined : destinationAddress}
-              accountBadge={hideAccountDetails ? undefined : destinationBadge}
-              accountFallbackLabel={
-                hideAccountDetails
-                  ? undefined
-                  : requiresRecipientAddress
-                    ? 'Custom address'
-                    : 'Wallet'
-              }
-              accountAction={
-                !hideAccountDetails &&
-                !hideReceiveAddress &&
-                tokenOut &&
-                !destinationAssetsLoading ? (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      onSelectDestinationAccount
-                        ? onSelectDestinationAccount()
-                        : setRecipientSelectorOpen(true)
-                    }
-                    aria-label="Choose receive account"
-                    title={destinationAddress || 'Choose receive account'}
-                    className="flex min-w-0 items-center gap-1.5 text-xs transition-colors hover:text-primary"
-                  >
-                    <span className="min-w-0 truncate font-mono text-xs text-muted">
-                      {destinationAddress
-                        ? formatSortAddress(destinationAddress)
-                        : requiresRecipientAddress
-                          ? 'Custom address'
-                          : 'Wallet'}
-                    </span>
-                    {destinationBadge &&
-                      (destinationBadge === 'Public' || destinationBadge === 'Private' ? (
-                        <ExecutionAccountBadge
-                          mode={destinationBadge === 'Public' ? 'main' : 'private'}
-                          className="h-[17px] px-1.5"
-                        />
-                      ) : (
-                        <span
-                          className={cn(
-                            'shrink-0 rounded px-1.5 text-[10px] font-medium leading-[17px]',
-                            destinationBadge === 'Shield'
-                              ? 'bg-success/10 text-success'
-                              : 'bg-white/7 text-muted'
-                          )}
-                        >
-                          {destinationBadge}
-                        </span>
-                      ))}
-                    <Icon icon="lucide:chevron-down" width={12} height={12} className="shrink-0" />
-                  </button>
-                ) : undefined
-              }
-              onTokenSelect={() => onSelectToken('out')}
-              tokenSelectDisabled={destinationAssetsLoading}
-              tokenSelectLocked={destinationAssetLocked}
-              isReadOnly
-              isAmountLoading={isQuoting}
-              isEstimatedAmount={isEstimatedOut}
-            />
-          </div>
+                  {destinationBadge &&
+                    (destinationBadge === 'Public' || destinationBadge === 'Private' ? (
+                      <ExecutionAccountBadge
+                        mode={destinationBadge === 'Public' ? 'main' : 'private'}
+                        className="h-[17px] px-1.5"
+                      />
+                    ) : (
+                      <span
+                        className={cn(
+                          'shrink-0 rounded px-1.5 text-[10px] font-medium leading-[17px]',
+                          destinationBadge === 'Shield'
+                            ? 'bg-success/10 text-success'
+                            : 'bg-white/7 text-muted'
+                        )}
+                      >
+                        {destinationBadge}
+                      </span>
+                    ))}
+                  <Icon icon="lucide:chevron-down" width={12} height={12} className="shrink-0" />
+                </button>
+              ) : undefined
+            }
+            onTokenSelect={() => onSelectToken('out')}
+            tokenSelectDisabled={destinationAssetsLoading}
+            tokenSelectLocked={destinationAssetLocked}
+            isAmountLoading={isQuoting}
+            isEstimatedAmount={isEstimatedOut}
+          />
         </div>
 
         {showProviderCard && providerName && tokenOut && (

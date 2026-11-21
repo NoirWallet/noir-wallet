@@ -35,14 +35,13 @@ import { Button } from '../ui/button'
 import {
   getActivityApprovalDetails,
   getActivityInteractionPresentation
-} from './activity-interaction-adapters'
-import { resolveActivityChainId } from './activity-chain'
+} from '@/popup/services/activity-interaction-adapters'
+import { resolveActivityChainId } from '@/core/activity/activity-chain'
 import { getActivityTransactionReferences } from '@/popup/services/activity-transaction-references'
 import {
   getActivityDetailTitle,
   getActivityAccountRouteLabel,
   getActivityRouteTitle,
-  isDirectAccountMove,
   getClusterBatchStatusLabel,
   getClusterChildStatusLabel,
   getActivitySwapSourceMethodLabel,
@@ -54,7 +53,7 @@ import {
   buildActivityExecutionAddressModes,
   isLegacyPrivateShieldWithdrawDestination,
   isActivityRecoveryTransition
-} from './multichain-activity-presentation'
+} from '@/popup/services/multichain-activity-presentation'
 import { ActivityTransactionBody, buildActivityTransactionView } from './ActivityTransactionBody'
 import { resolveScopedZcashActivityTransaction } from '@/popup/services/zcash-activity-detail'
 import { InlineError } from '../common/InlineError'
@@ -62,13 +61,15 @@ import { swapApprovalContinuationClient } from '@/popup/services/swap-approval-c
 import { useActiveAccountNetworks } from '@/popup/hooks/useActiveAccountNetworks'
 import { resolveEffectiveActiveAccountIdentity } from '@/popup/lib/effective-active-account'
 import { selectActivityObservation } from '@/popup/services/activity-observation'
-import { EvmPendingTransactionActions } from './EvmPendingTransactionActions'
+import { EvmPendingTransactionActions } from '../evm/EvmPendingTransactionActions'
+import { getActivityAction, type ActivityPerspective } from '@/popup/services/activity-action-label'
 
 interface MultichainActivityDetailProps {
   readonly item: ActivityItem
   readonly network: Network
   readonly portfolio?: PortfolioReadModel | null
   readonly accountNetworks?: readonly AccountNetworkView[]
+  readonly perspective?: ActivityPerspective
   readonly onSpeedUp?: (transaction: Transaction) => void
   readonly onClose?: () => void
   readonly onContinueSwap?: (transactionId: string) => void
@@ -79,6 +80,7 @@ export function MultichainActivityDetail({
   network,
   portfolio,
   accountNetworks = [],
+  perspective,
   onSpeedUp,
   onClose,
   onContinueSwap
@@ -364,13 +366,7 @@ export function MultichainActivityDetail({
   const swapSourceMethod = getActivitySwapSourceMethodLabel(visibleItem, swap?.source?.symbol)
   const amount = visibleItem.snapshot?.primaryAmount
   const asset = amount ? assetMetadata.get(amount.assetId) : undefined
-  const direction = visibleItem.snapshot?.direction
-  const isShieldMove = Boolean(
-    visibleItem.snapshot?.shield &&
-    direction === 'self' &&
-    visibleItem.snapshot.shield.operation !== 'swap'
-  )
-  const isMove = isShieldMove || (swap !== null && isDirectAccountMove(visibleItem, swap))
+  const isMove = Boolean(swap && getActivityAction(visibleItem, perspective, swap).side !== 'none')
   const status = getActivityStatusPresentation(visibleItem)
   const primaryOnchainSegment = visibleItem.segments.find(
     segment => segment.target.kind === 'onchain'
@@ -392,8 +388,13 @@ export function MultichainActivityDetail({
   const interaction = getActivityInteractionPresentation(visibleItem, primaryChainId)
   const approval = getActivityApprovalDetails(visibleItem, assetMetadata)
   const title = swap
-    ? getActivityRouteTitle(visibleItem, swap)
-    : getActivityDetailTitle(visibleItem, interaction?.title)
+    ? getActivityRouteTitle(visibleItem, swap, perspective)
+    : getActivityDetailTitle(visibleItem, interaction?.title, perspective, {
+        sourceAccountMode: senderMode,
+        destinationAccountMode: recipientMode,
+        sourceNetwork: '',
+        destinationNetwork: ''
+      })
   const fee = visibleItem.snapshot?.feeLimit
   const feeAsset = fee ? assetMetadata.get(fee.assetId) : undefined
   const recoveryAction = getActivityRecoveryAction(
@@ -565,6 +566,7 @@ export function MultichainActivityDetail({
     assetMetadata,
     chainMetadata,
     executionAddressModes,
+    perspective,
     settledDestination: getClusterSettledDestination(visibleItem, activeConfidentialPlan),
     legacyPrivateShieldWithdrawDestination,
     confidentialPlan: activeConfidentialPlan,
@@ -598,7 +600,7 @@ export function MultichainActivityDetail({
         {swap?.sourceAccountMode &&
           swap.destinationAccountMode &&
           swap.sourceAccountMode !== swap.destinationAccountMode && (
-            <DetailRow label={isMove ? 'Move direction' : 'Account'}>
+            <DetailRow label={isMove ? 'Direction' : 'Account'}>
               {swap.destinationFundingSource ? (
                 <span className="text-sm">{getActivityAccountRouteLabel(swap)}</span>
               ) : (
