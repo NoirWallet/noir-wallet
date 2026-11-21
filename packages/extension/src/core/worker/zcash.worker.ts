@@ -667,10 +667,15 @@ async function initializeWasm() {
   await initPromise
 }
 
-/** RPCs that broadcast; from the moment one arrives until it ends, no routed request goes direct. */
+/**
+ * RPCs that build or broadcast a transaction, including the sync each build runs first. From
+ * the moment one arrives until it ends, no routed request goes direct.
+ */
 const SEND_RPC_METHODS: ReadonlySet<string> = new Set([
   'transaction.send',
   'transaction.oneclick_shield',
+  'pczt.create',
+  'pczt.shieldCreate',
   'pczt.proveSend'
 ])
 
