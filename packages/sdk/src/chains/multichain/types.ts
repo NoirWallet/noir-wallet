@@ -36,9 +36,17 @@ export interface MultichainRequestArguments {
     | 'wallet_getSession'
     | 'wallet_getTokenList'
     | 'wallet_openTokenManager'
+    | 'wallet_openCampaign'
     | 'wallet_revokeSession'
     | 'wallet_invokeMethod'
   params?: readonly unknown[] | Readonly<Record<string, unknown>>
+}
+
+/** Opens a Noir Wallet campaign flow. Only the campaign's own pages may call it. */
+export interface WalletCampaignOpenRequest {
+  readonly campaign: string
+  readonly screen: 'shield'
+  readonly protocol?: 'near-confidential'
 }
 
 export type MultichainProviderListener = (session: Caip25Session) => void
@@ -58,6 +66,8 @@ export interface MultichainProvider {
   getSession(): Promise<Caip25Session | null>
   getTokenList(): Promise<readonly WalletTokenMetadata[]>
   openTokenManager(): Promise<null>
+  /** Missing on older wallets; feature-detect before rendering the action. */
+  openCampaign?(request: WalletCampaignOpenRequest): Promise<null>
   invokeMethod<T = unknown>(params: Caip27InvokeMethodRequest): Promise<T>
   revokeSession(): Promise<null>
   on(event: 'wallet_sessionChanged', handler: MultichainProviderListener): MultichainProvider

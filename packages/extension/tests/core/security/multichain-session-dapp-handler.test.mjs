@@ -36,6 +36,7 @@ function createHandler({
   readFirstPartySnapshot,
   readTokenList,
   openTokenManager,
+  openWalletPath,
   executionAccounts = [address]
 } = {}) {
   let stored = null
@@ -46,6 +47,7 @@ function createHandler({
     network: 'mainnet',
     readTokenList,
     openTokenManager,
+    openWalletPath,
     ...(activeChainIds === undefined ? {} : { activeChainIds }),
     ...(readFirstPartySnapshot === undefined ? {} : { readFirstPartySnapshot }),
     evmNetworks: [ethereum, custom].map(chainId => ({
@@ -186,6 +188,53 @@ test('token metadata and manager require the current authorized account and reje
   await expect(
     handler.request({ method: 'wallet_getTokenList' }, origin, {})
   ).rejects.toMatchObject({ code: 4100 })
+})
+
+test('only the campaign page origin can open its shield flow, without a session', async () => {
+  const opened = []
+  const { handler, getStored } = createHandler({
+    openWalletPath: async path => {
+      opened.push(path)
+    }
+  })
+  const params = { campaign: 'shield-and-win-1', screen: 'shield', protocol: 'near-confidential' }
+  const open = (origin, value) =>
+    handler.request(
+      { method: 'wallet_openCampaign', ...(value === undefined ? {} : { params: value }) },
+      origin,
+      {}
+    )
+  for (const origin of [
+    'https://dapp.example',
+    'https://app.zknoir.com',
+    'http://noirwallet.pages.dev',
+    'https://evil.noirwallet.pages.dev',
+    'https://noirwallet.pages.dev.evil.example',
+    'https://noirwallet.pages.dev:8443'
+  ]) {
+    await expect(open(origin, params)).rejects.toMatchObject({ code: 4100 })
+  }
+  const origin = 'https://noirwallet.pages.dev'
+  for (const value of [
+    undefined,
+    [],
+    { campaign: 'shield-and-win-1' },
+    { ...params, protocol: 'zcash-shield' },
+    { ...params, recipient: 'zs1example' }
+  ]) {
+    await expect(open(origin, value)).rejects.toMatchObject({ code: -32602 })
+  }
+  await expect(open(origin, { ...params, campaign: 'other-campaign' })).rejects.toMatchObject({
+    code: 4100
+  })
+  await expect(open(origin, { ...params, screen: 'claim' })).rejects.toMatchObject({ code: 4200 })
+  expect(opened).toEqual([])
+
+  await expect(open(origin, params)).resolves.toBeNull()
+  expect(opened).toEqual([
+    '/transfer?entry=shield&provider=near-confidential&mode=public&from=public&to=shield'
+  ])
+  expect(getStored()).toBeNull()
 })
 
 test('creates one shared EVM approval while preserving atomic chain scopes and methods', async () => {

@@ -9,6 +9,7 @@ import {
 import '@/lib/buffer-polyfill'
 import { lookupTokenContractIcon } from './token-contract-icon'
 import { openTokenManager } from './token-manager-window'
+import { openWalletTab } from './wallet-tab'
 import { handleEvmWalletChoiceMessage } from './evm-wallet-choice'
 import { isZcashHardwareKeySource } from '@/core/wallet/hardware-wallet-data'
 import {
@@ -1445,6 +1446,7 @@ async function reloadMultichainRuntime(
     : undefined
   multichainSessionDAppHandler = new BackgroundMultichainSessionDAppHandler({
     openTokenManager,
+    openWalletPath: openWalletTab,
     readTokenList: async scope => {
       const model = await portfolioCoordinator?.readCachedActive()
       if (

@@ -18,6 +18,7 @@ export type {
   MultichainProvider,
   MultichainProviderListener,
   MultichainRequestArguments,
+  WalletCampaignOpenRequest,
   WalletTokenMetadata
 } from './chains/multichain'
 

@@ -441,3 +441,12 @@ Call `wallet.multichain.openTokenManager()` from a user action to open the exist
 management page; it resolves to `null`. These methods are also available through `request()`
 as `wallet_getTokenList` and `wallet_openTokenManager`, without parameters. Older providers may
 not support them; feature-detect the convenience methods before rendering the action.
+
+## Campaign pages
+
+A Noir Wallet campaign page calls `wallet.multichain.openCampaign({ campaign, screen: 'shield' })`
+(or `wallet_openCampaign` through `request()`) from a user action to open that campaign's shield
+flow in the wallet; it resolves to `null`. It needs no session, returns no wallet data, and the
+user still reviews the shield in the wallet. Only the campaign's own origin may call it: other
+origins and unknown campaigns reject with `4100`, an unsupported screen with `4200`, and malformed
+parameters with `-32602`.

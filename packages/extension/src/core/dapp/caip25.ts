@@ -7,6 +7,7 @@ export const CAIP25_RUNTIME_METHODS = Object.freeze([
   'wallet_getSession',
   'wallet_getTokenList',
   'wallet_openTokenManager',
+  'wallet_openCampaign',
   'wallet_revokeSession',
   'wallet_invokeMethod'
 ] as const)

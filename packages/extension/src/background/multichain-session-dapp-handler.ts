@@ -14,6 +14,7 @@ import {
   type Caip25StoredScope
 } from '@/core/dapp/caip25'
 import { BITCOIN_DAPP_RUNTIME_METHODS } from '@/core/dapp/bitcoin-provider'
+import { resolveCampaignOpenPath } from '@/core/dapp/campaign-pages'
 import { EVM_DAPP_RUNTIME_METHODS } from '@/core/dapp/eip1193'
 import {
   NEAR_DAPP_RUNTIME_METHODS,
@@ -129,6 +130,8 @@ export interface BackgroundMultichainSessionDAppHandlerOptions {
     }>[]
   >
   readonly openTokenManager?: () => Promise<void>
+  /** Opens a wallet route, such as a campaign flow, in a wallet tab. */
+  readonly openWalletPath?: (path: string) => Promise<void>
   readonly analytics?: DAppAnalyticsSink
   readonly network: Network
   readonly evmNetworks: readonly EvmNetworkConfig[]
@@ -389,6 +392,8 @@ export class BackgroundMultichainSessionDAppHandler {
       case 'wallet_openTokenManager':
         parseCaip25NoParams(request.params)
         return this.handleTokenAccess(origin, request.method === 'wallet_openTokenManager')
+      case 'wallet_openCampaign':
+        return this.openCampaign(request.params, origin)
       case 'wallet_revokeSession':
         parseCaip25NoParams(request.params)
         await this.options.zcash.revokeAllPermissions(origin)
@@ -406,6 +411,15 @@ export class BackgroundMultichainSessionDAppHandler {
         .filter(connection => connection.caip25Session !== undefined)
         .map(connection => this.notifySessionChanged(connection.origin))
     )
+  }
+
+  private async openCampaign(params: unknown, origin: string): Promise<null> {
+    const path = resolveCampaignOpenPath(params, origin)
+    if (!this.options.openWalletPath) {
+      throw new Caip25ProviderError(4200, 'Campaign pages are unavailable.')
+    }
+    await this.options.openWalletPath(path)
+    return null
   }
 
   private async handleTokenAccess(origin: string, openManager: boolean): Promise<unknown> {
