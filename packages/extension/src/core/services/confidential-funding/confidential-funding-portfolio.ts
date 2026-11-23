@@ -509,12 +509,17 @@ export function projectShieldDappDepositStatus(record: {
 }
 
 export function shieldDappPlanAction(plan: {
-  readonly operation?: 'deposit' | 'withdraw' | 'cluster' | 'swap'
+  readonly operation?: 'deposit' | 'withdraw' | 'cluster' | 'swap' | 'confidential-transfer'
   readonly sourceDomain?: 'public' | 'private' | 'shield'
   readonly destinationDomain?: 'public' | 'private' | 'shield'
 }): 'receive' | 'transfer' {
   if (plan.operation === 'deposit') return 'receive'
-  if (plan.operation === 'withdraw' || plan.operation === 'swap' || plan.operation === 'cluster') {
+  if (
+    plan.operation === 'withdraw' ||
+    plan.operation === 'swap' ||
+    plan.operation === 'cluster' ||
+    plan.operation === 'confidential-transfer'
+  ) {
     return 'transfer'
   }
   if (plan.destinationDomain === 'shield' && plan.sourceDomain !== 'shield') return 'receive'

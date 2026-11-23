@@ -171,7 +171,8 @@ function parsePlan(value: unknown): ConfidentialFundingPlan {
       plan.operation !== 'deposit' &&
       plan.operation !== 'withdraw' &&
       plan.operation !== 'cluster' &&
-      plan.operation !== 'swap') ||
+      plan.operation !== 'swap' &&
+      plan.operation !== 'confidential-transfer') ||
     (plan.purpose !== undefined &&
       (!['move', 'native-zec-swap'].includes(plan.purpose) ||
         plan.operation !== 'withdraw' ||
@@ -222,11 +223,38 @@ function parsePlan(value: unknown): ConfidentialFundingPlan {
         (plan.withdraws[0].signedPayload !== undefined && !plan.frozenRequest) ||
         plan.depositQuote !== undefined ||
         plan.preparedDeposit !== undefined)) ||
+    (plan.operation === 'confidential-transfer' &&
+      (plan.sourceDomain !== 'shield' ||
+        plan.destinationDomain !== 'shield' ||
+        plan.source.chainId !== plan.destination.chainId ||
+        plan.source.assetId !== plan.destination.assetId ||
+        plan.source.protocolAssetId !== plan.destination.protocolAssetId ||
+        plan.source.address.toLowerCase() !== plan.signerId.toLowerCase() ||
+        plan.destination.address.toLowerCase() === plan.signerId.toLowerCase() ||
+        !/^0x[0-9a-fA-F]{40}$/.test(plan.destination.address) ||
+        /^0x0{40}$/i.test(plan.destination.address) ||
+        plan.requiresDeposit ||
+        plan.externalRecipient !== undefined ||
+        plan.withdraws.length !== 1 ||
+        plan.splitSourceAmounts[0] !== plan.source.amountRaw ||
+        !plan.swapQuote ||
+        plan.swapQuote.quoteRequest.dry !== false ||
+        plan.swapQuote.quoteRequest.recipientType !== 'CONFIDENTIAL_INTENTS' ||
+        plan.swapQuote.quoteRequest.depositType !== 'CONFIDENTIAL_INTENTS' ||
+        plan.swapQuote.quoteRequest.refundType !== 'CONFIDENTIAL_INTENTS' ||
+        String(plan.swapQuote.quoteRequest.recipient).toLowerCase() !==
+          plan.destination.address.toLowerCase() ||
+        plan.swapQuote.quoteRequest.originAsset !== plan.source.protocolAssetId ||
+        plan.swapQuote.quoteRequest.destinationAsset !== plan.destination.protocolAssetId ||
+        (plan.withdraws[0].signedPayload !== undefined && !plan.frozenRequest) ||
+        plan.depositQuote !== undefined ||
+        plan.preparedDeposit !== undefined)) ||
     (plan.purpose === 'native-zec-swap' &&
       (!plan.swapQuote ||
         plan.swapQuote.quoteRequest.dry !== false ||
         plan.reviewedAppFeesFingerprint !== undefined)) ||
     (plan.operation !== 'swap' &&
+      plan.operation !== 'confidential-transfer' &&
       plan.purpose !== 'native-zec-swap' &&
       plan.swapQuote !== undefined) ||
     (plan.reviewedAppFeesFingerprint !== undefined &&

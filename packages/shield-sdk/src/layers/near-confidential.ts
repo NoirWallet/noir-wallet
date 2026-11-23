@@ -15,6 +15,30 @@ function exactKeys(value: Record<string, unknown>, allowed: readonly string[]): 
   return Object.keys(value).every(key => allowed.includes(key))
 }
 
+/** 1Click rejects a confidential account id that is not entirely lowercase. */
+function lowercaseConfidentialAccountId(accountId: string): string {
+  return accountId.toLowerCase()
+}
+
+function withLowercaseConfidentialAccountId(
+  input: Readonly<Record<string, unknown>>
+): Readonly<Record<string, unknown>> {
+  const destination = input.destination
+  if (
+    !isRecord(destination) ||
+    destination.kind !== 'confidential' ||
+    typeof destination.accountId !== 'string'
+  ) {
+    return input
+  }
+  const accountId = lowercaseConfidentialAccountId(destination.accountId)
+  if (accountId === destination.accountId) return input
+  return Object.freeze({
+    ...input,
+    destination: Object.freeze({ ...destination, accountId })
+  })
+}
+
 export function assertNearConfidentialLayer(value: unknown): ShieldLayer {
   if (value !== NEAR_CONFIDENTIAL_LAYER) {
     throw new ShieldError('INVALID_PARAMS', 'Shield layer must be "near-confidential".')
@@ -66,6 +90,12 @@ export function prepareReceive(input: unknown): Readonly<Record<string, unknown>
   })
 }
 
+export function prepareQuote(
+  input: Readonly<Record<string, unknown>>
+): Readonly<Record<string, unknown>> {
+  return withLowercaseConfidentialAccountId(input)
+}
+
 export function prepareTransfer(input: unknown): Readonly<Record<string, unknown>> {
   if (!isRecord(input) || !exactKeys(input, ['layer', 'token', 'amount', 'destination'])) {
     throw new ShieldError('INVALID_PARAMS', 'Shield transfer parameters are invalid.')
@@ -95,7 +125,10 @@ export function prepareTransfer(input: unknown): Readonly<Record<string, unknown
       layer: NEAR_CONFIDENTIAL_LAYER,
       token,
       amount: assertShieldAmount(input.amount, 255),
-      destination: Object.freeze({ kind: 'confidential', accountId: destination.accountId })
+      destination: Object.freeze({
+        kind: 'confidential',
+        accountId: lowercaseConfidentialAccountId(destination.accountId)
+      })
     })
   }
   if (

@@ -142,7 +142,9 @@ function SwapActivityRow({
   const destinationSymbol = presentation.destination?.symbol ?? 'Asset'
   const action = getActivityRouteTitle(item, presentation)
   const isShieldSend =
-    item.snapshot?.shield?.operation === 'withdraw' && item.snapshot.direction === 'outgoing'
+    (item.snapshot?.shield?.operation === 'withdraw' ||
+      item.snapshot?.shield?.operation === 'confidential-transfer') &&
+    item.snapshot.direction === 'outgoing'
   const route = `${presentation.sourceNetwork} → ${presentation.destinationNetwork}`
   const accountRoute =
     presentation.isExternalDeposit || isOwnedAccountTransfer(presentation)

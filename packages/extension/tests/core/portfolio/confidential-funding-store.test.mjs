@@ -354,3 +354,105 @@ test('persists external Shield deposit quote bindings across a restart', async (
     restoreLocks()
   }
 })
+
+test('persists a confidential account transfer and rejects a transfer to the same account', async () => {
+  const local = storageArea()
+  const session = storageArea()
+  const previousChrome = globalThis.chrome
+  globalThis.chrome = { storage: { local, session } }
+  const restoreLocks = installWebLocksStub()
+  try {
+    const store = new ChromeConfidentialFundingStore()
+    const signerId = '0x1111111111111111111111111111111111111111'
+    const recipient = '0x2222222222222222222222222222222222222222'
+    const source = {
+      chainId: 'eip155:1',
+      chainName: 'eth',
+      assetId: 'eip155:1/slip44:60',
+      protocolAssetId: 'nep141:eth.omft.near',
+      amountRaw: '1000',
+      address: signerId
+    }
+    const deadline = new Date(60_000).toISOString()
+    const plan = {
+      schemaVersion: 1,
+      planId: 'plan-transfer',
+      transactionId: 'tx:confidential:plan-transfer',
+      network: 'mainnet',
+      keyDomainId: 'wallet:one',
+      accountId: 'account:one',
+      phase: 'prepared',
+      operation: 'confidential-transfer',
+      sourceDomain: 'shield',
+      destinationDomain: 'shield',
+      source,
+      destination: { ...source, address: recipient },
+      signerId,
+      addressIndex: 0,
+      slippageBps: 50,
+      requiresDeposit: false,
+      confidentialBaselineRaw: '1000',
+      expectedOutputRaw: '990',
+      minimumOutputRaw: '980',
+      approvalFingerprint: 'b'.repeat(64),
+      approvalExpiresAt: 60_000,
+      splitSourceAmounts: ['1000'],
+      swapQuote: {
+        correlationId: 'quote-transfer',
+        quoteRequest: {
+          dry: false,
+          swapType: 'EXACT_INPUT',
+          confidentiality: 'basic',
+          originAsset: source.protocolAssetId,
+          destinationAsset: source.protocolAssetId,
+          amount: '1000',
+          refundTo: signerId,
+          recipient,
+          depositType: 'CONFIDENTIAL_INTENTS',
+          refundType: 'CONFIDENTIAL_INTENTS',
+          recipientType: 'CONFIDENTIAL_INTENTS',
+          slippageTolerance: 50
+        },
+        quote: {
+          amountIn: '1000',
+          amountOut: '990',
+          minAmountOut: '980',
+          depositAddress: 'deposit.near',
+          deadline
+        }
+      },
+      withdraws: [
+        {
+          sequence: 0,
+          sourceAmountRaw: '1000',
+          amountRaw: '990',
+          depositAddress: 'deposit.near',
+          destinationAddress: recipient,
+          destinationChain: 'eth',
+          token: source.protocolAssetId,
+          deadline: 60_000,
+          status: 'PREPARED'
+        }
+      ],
+      createdAt: 1000,
+      updatedAt: 1000
+    }
+    await store.putPlan(plan)
+    expect(await store.listPlans()).toEqual([plan])
+    await expect(
+      store.putPlan({
+        ...plan,
+        planId: 'plan-self',
+        transactionId: 'tx:confidential:plan-self',
+        destination: { ...source, address: signerId },
+        swapQuote: {
+          ...plan.swapQuote,
+          quoteRequest: { ...plan.swapQuote.quoteRequest, recipient: signerId }
+        }
+      })
+    ).rejects.toThrow('Stored confidential funding plan bindings are invalid')
+  } finally {
+    globalThis.chrome = previousChrome
+    restoreLocks()
+  }
+})

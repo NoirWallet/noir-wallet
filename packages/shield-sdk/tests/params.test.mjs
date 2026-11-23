@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { prepareReceive, prepareTransfer } from '../src/layers/near-confidential.ts'
+import { prepareQuote, prepareReceive, prepareTransfer } from '../src/layers/near-confidential.ts'
 import { ShieldError } from '../src/types.ts'
 
 test('receive keeps the layer and normalizes the source chain', () => {
@@ -46,6 +46,37 @@ test('transfer accepts a public address or a confidential account id', () => {
   })
   assert.equal('peaAddress' in internal, false)
   assert.equal('peaAddress' in internal.destination, false)
+
+  const checksummed = '0x229E549c97C22b139b8C05fba770D94C086853d8'
+  const normalized = prepareTransfer({
+    layer: 'near-confidential',
+    token: { chainId: 1, assetId: 'eip155:1/slip44:60' },
+    amount: '1',
+    destination: { kind: 'confidential', accountId: checksummed }
+  })
+  assert.equal(normalized.destination.accountId, checksummed.toLowerCase())
+
+  const quote = prepareQuote({
+    layer: 'near-confidential',
+    action: 'transfer',
+    amount: '1',
+    token: { chainId: 1, assetId: 'eip155:1/slip44:60' },
+    destination: { kind: 'confidential', accountId: checksummed }
+  })
+  assert.equal(quote.destination.accountId, checksummed.toLowerCase())
+  const publicQuote = prepareQuote({
+    layer: 'near-confidential',
+    action: 'transfer',
+    amount: '1',
+    token: { chainId: 1, assetId: 'eip155:1/slip44:60' },
+    destination: {
+      kind: 'public',
+      chainId: 'eip155:1',
+      assetId: 'eip155:1/slip44:60',
+      address: checksummed
+    }
+  })
+  assert.equal(publicQuote.destination.address, checksummed)
 })
 
 test('rejects another layer, peaAddress, and a missing asset', () => {

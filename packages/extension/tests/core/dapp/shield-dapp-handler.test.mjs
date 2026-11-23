@@ -252,29 +252,162 @@ test('rejected Shield receive cancels the prepared plan and returns 4001', async
   assert.deepEqual(calls, ['prepare', ['cancel', operationId]])
 })
 
-test('confidential Shield transfer stays unconfirmed by the protocol', async () => {
-  await assert.rejects(
-    handleShieldDAppRequest({
-      method: 'shield_transfer',
-      params: {
-        layer: 'near-confidential',
-        token: { chainId: 'eip155:56', assetId: 'eip155:56/slip44:714' },
-        amount: '0.10',
-        destination: { kind: 'confidential', accountId: 'someone.near' }
-      },
-      coordinator: {
-        prepareShieldDappTransfer: async () => {
-          throw new Error('not called')
+test('confidential Shield transfer accepts another EVM account', async () => {
+  const accountId = '0x3333333333333333333333333333333333333333'
+  const calls = []
+  await handleShieldDAppRequest({
+    method: 'shield_getQuote',
+    params: {
+      layer: 'near-confidential',
+      action: 'transfer',
+      token: { chainId: 'eip155:56', assetId: 'eip155:56/slip44:714' },
+      amount: '0.10',
+      destination: { kind: 'confidential', accountId }
+    },
+    coordinator: {
+      quoteShieldDapp: async input => {
+        calls.push(input.destination)
+        return {
+          layer: 'near-confidential',
+          action: 'transfer',
+          amount: '0.10',
+          fee: '0',
+          expectedReceive: '0.10',
+          expiresAt: 1,
+          source: { chainId: 'eip155:56', assetId: 'eip155:56/slip44:714', symbol: 'BNB' },
+          destination: { chainId: 'eip155:56', assetId: 'eip155:56/slip44:714', symbol: 'BNB' }
+        }
+      }
+    },
+    scope
+  })
+  const prepared = await handleShieldDAppRequest({
+    method: 'shield_transfer',
+    params: {
+      layer: 'near-confidential',
+      token: { chainId: 'eip155:56', assetId: 'eip155:56/slip44:714' },
+      amount: '0.10',
+      destination: { kind: 'confidential', accountId }
+    },
+    coordinator: {
+      prepareShieldDappTransfer: async input => {
+        calls.push(input.destination)
+        return {
+          planId: operationId,
+          payloadFingerprint: 'c'.repeat(64),
+          amount: '0.10',
+          symbol: 'BNB',
+          chainName: 'BNB Smart Chain',
+          assetId: 'eip155:56/slip44:714',
+          destinationAddress: accountId,
+          destinationChainName: 'NEAR Confidential',
+          destinationSymbol: 'BNB',
+          destinationAssetId: 'eip155:56/slip44:714',
+          sourceAddress: '0x2222222222222222222222222222222222222222',
+          expectedReceive: '0.099',
+          expectedSymbol: 'BNB'
         }
       },
-      scope,
-      requestApproval: async () => true
-    }),
-    error =>
-      error instanceof ShieldProviderError &&
-      error.code === 4200 &&
-      /not confirmed by the protocol/i.test(error.message)
-  )
+      confirm: async () => ({ planId: operationId, operation: 'confidential-transfer' }),
+      reportStoredShieldDappPlan: () => ({
+        id: operationId,
+        layer: 'near-confidential',
+        action: 'transfer',
+        status: 'authorized'
+      }),
+      cancel: async () => {
+        throw new Error('not called')
+      }
+    },
+    scope,
+    requestApproval: async (_action, summary) => {
+      calls.push(summary.destinationChainName)
+      return true
+    }
+  })
+  assert.deepEqual(calls, [
+    { kind: 'confidential', accountId },
+    { kind: 'confidential', accountId },
+    'NEAR Confidential'
+  ])
+  assert.equal(prepared.status, 'authorized')
+})
+
+test('confidential Shield transfer returns a started plan without confirming again', async () => {
+  const calls = []
+  const report = await handleShieldDAppRequest({
+    method: 'shield_transfer',
+    params: {
+      layer: 'near-confidential',
+      token: { chainId: 'eip155:56', assetId: 'eip155:56/slip44:714' },
+      amount: '0.10',
+      destination: {
+        kind: 'confidential',
+        accountId: '0x3333333333333333333333333333333333333333'
+      }
+    },
+    coordinator: {
+      prepareShieldDappTransfer: async () => ({
+        planId: operationId,
+        phase: 'submitting',
+        payloadFingerprint: 'c'.repeat(64),
+        amount: '0.10',
+        symbol: 'BNB',
+        chainName: 'BNB Smart Chain',
+        assetId: 'eip155:56/slip44:714',
+        destinationAddress: '0x3333333333333333333333333333333333333333',
+        destinationChainName: 'NEAR Confidential',
+        destinationSymbol: 'BNB',
+        destinationAssetId: 'eip155:56/slip44:714',
+        sourceAddress: '0x2222222222222222222222222222222222222222',
+        expectedReceive: '0.099',
+        expectedSymbol: 'BNB'
+      }),
+      getPlan: async planId => {
+        calls.push(['get', planId])
+        return { planId, phase: 'submitting' }
+      },
+      reportStoredShieldDappPlan: plan => ({
+        id: plan.planId,
+        layer: 'near-confidential',
+        action: 'transfer',
+        status: 'submitting'
+      }),
+      confirm: async () => {
+        throw new Error('not called')
+      }
+    },
+    scope,
+    requestApproval: async () => {
+      throw new Error('not called')
+    }
+  })
+  assert.deepEqual(calls, [['get', operationId]])
+  assert.equal(report.status, 'submitting')
+})
+
+test('confidential Shield transfer rejects a non-EVM or zero account', async () => {
+  for (const accountId of ['someone.near', '0x0000000000000000000000000000000000000000']) {
+    await assert.rejects(
+      handleShieldDAppRequest({
+        method: 'shield_transfer',
+        params: {
+          layer: 'near-confidential',
+          token: { chainId: 'eip155:56', assetId: 'eip155:56/slip44:714' },
+          amount: '0.10',
+          destination: { kind: 'confidential', accountId }
+        },
+        coordinator: {
+          prepareShieldDappTransfer: async () => {
+            throw new Error('not called')
+          }
+        },
+        scope,
+        requestApproval: async () => true
+      }),
+      error => error instanceof ShieldProviderError && error.code === -32602
+    )
+  }
 })
 
 test('status refresh rejects a missing or malformed operation id', async () => {

@@ -1,4 +1,5 @@
 import type { Network } from '@/types'
+import { isAddress } from 'viem'
 import type { ConfidentialFundingCoordinator } from './confidential-funding-coordinator'
 import { ShieldProviderError } from '@/core/dapp/shield-provider'
 import type { ShieldDappOperationReport } from '@/core/services/confidential-funding/confidential-funding-portfolio'
@@ -174,18 +175,25 @@ function readQuoteAmount(value: unknown): string {
   return value
 }
 
-function readPublicDestination(
-  value: unknown
-): Readonly<{ chainId: string; assetId: string; address: string }> {
+type ShieldTransferDestination =
+  | Readonly<{ kind: 'public'; chainId: string; assetId: string; address: string }>
+  | Readonly<{ kind: 'confidential'; accountId: string }>
+
+function readTransferDestination(value: unknown): ShieldTransferDestination {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     throw new ShieldProviderError(-32602, 'Shield destination is invalid.')
   }
   const record = value as Record<string, unknown>
   if (record.kind === 'confidential') {
-    throw new ShieldProviderError(
-      4200,
-      'Shield transfer to another confidential account is not confirmed by the protocol.'
-    )
+    const keys = Object.keys(record)
+    if (keys.length !== 2 || keys.some(key => key !== 'kind' && key !== 'accountId')) {
+      throw new ShieldProviderError(-32602, 'Shield destination is invalid.')
+    }
+    const accountId = record.accountId
+    if (typeof accountId !== 'string' || !isAddress(accountId) || /^0x0{40}$/i.test(accountId)) {
+      throw new ShieldProviderError(-32602, 'Confidential recipient account ID is invalid.')
+    }
+    return Object.freeze({ kind: 'confidential', accountId })
   }
   if (record.kind !== 'public') {
     throw new ShieldProviderError(-32602, 'Shield destination is invalid.')
@@ -208,7 +216,7 @@ function readPublicDestination(
   ) {
     throw new ShieldProviderError(-32602, 'Shield destination address is invalid.')
   }
-  return Object.freeze({ ...token, address })
+  return Object.freeze({ kind: 'public', ...token, address })
 }
 
 function requireCatalogQuery(params: unknown): void {
@@ -313,7 +321,7 @@ export async function handleShieldDAppRequest(input: {
         action: 'transfer',
         amount,
         source: readTokenRef(record.token, 'Shield token'),
-        destination: readPublicDestination(record.destination)
+        destination: readTransferDestination(record.destination)
       })
     }
     throw new ShieldProviderError(-32602, 'Shield quote requires action "receive" or "transfer".')
@@ -375,6 +383,12 @@ const SHIELD_APPROVAL_FIELDS = [
   'destinationAssetId'
 ] as const
 
+function shieldApprovalAwaiting(
+  phase: string | undefined
+): phase is undefined | 'prepared' | 'needs-auth' {
+  return phase === undefined || phase === 'prepared' || phase === 'needs-auth'
+}
+
 function shieldApprovalSummary(prepared: object): Readonly<Record<string, string>> {
   const record = prepared as Record<string, unknown>
   const summary: Record<string, string> = { layer: NEAR_CONFIDENTIAL_LAYER }
@@ -408,6 +422,11 @@ async function receiveShield(input: {
     amount: readQuoteAmount(record.amount),
     source: readTokenRef(record.source, 'Shield source')
   })
+  if (!shieldApprovalAwaiting(prepared.phase)) {
+    return input.coordinator.reportStoredShieldDappPlan(
+      await input.coordinator.getPlan(prepared.planId)
+    )
+  }
   const rejectPrepared = async () => {
     await input.coordinator.cancel(prepared.planId).catch(() => undefined)
   }
@@ -452,8 +471,13 @@ async function transferShield(input: {
     scope: input.scope,
     amount: readQuoteAmount(record.amount),
     token: readTokenRef(record.token, 'Shield token'),
-    destination: readPublicDestination(record.destination)
+    destination: readTransferDestination(record.destination)
   })
+  if (!shieldApprovalAwaiting(prepared.phase)) {
+    return input.coordinator.reportStoredShieldDappPlan(
+      await input.coordinator.getPlan(prepared.planId)
+    )
+  }
   const rejectPrepared = async () => {
     await input.coordinator.cancel(prepared.planId).catch(() => undefined)
   }

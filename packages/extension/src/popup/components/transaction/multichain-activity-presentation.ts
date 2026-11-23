@@ -166,15 +166,21 @@ export function getActivityAccountRouteLabel(route: ActivitySwapPresentation): s
 
 export function getActivityRouteTitle(item: ActivityItem, route: ActivitySwapPresentation): string {
   if (item.snapshot?.shield) {
-    if (item.snapshot.direction === 'self' && item.snapshot.shield.operation !== 'swap')
+    if (
+      item.snapshot.direction === 'self' &&
+      item.snapshot.shield.operation !== 'swap' &&
+      item.snapshot.shield.operation !== 'confidential-transfer'
+    )
       return 'Move'
     return item.snapshot.shield.operation === 'cluster'
       ? 'Move'
       : item.snapshot.shield.operation === 'deposit'
         ? 'Receive'
-        : item.snapshot.shield.operation === 'swap'
-          ? 'Swap'
-          : 'Send'
+        : item.snapshot.shield.operation === 'confidential-transfer'
+          ? 'Send'
+          : item.snapshot.shield.operation === 'swap'
+            ? 'Swap'
+            : 'Send'
   }
   if (isDirectAccountMove(item, route)) return 'Move'
   if (isAccountModeTransfer(item, route)) {
@@ -618,15 +624,21 @@ function isSignedOrderOrigin(segment: ActivitySegment): boolean {
 
 export function getActivityDetailTitle(item: ActivityItem, interactionTitle?: string): string {
   if (item.snapshot?.shield) {
-    if (item.snapshot.direction === 'self' && item.snapshot.shield.operation !== 'swap')
+    if (
+      item.snapshot.direction === 'self' &&
+      item.snapshot.shield.operation !== 'swap' &&
+      item.snapshot.shield.operation !== 'confidential-transfer'
+    )
       return 'Move'
     return item.snapshot.shield.operation === 'cluster'
       ? 'Move'
       : item.snapshot.shield.operation === 'deposit'
         ? 'Receive'
-        : item.snapshot.shield.operation === 'swap'
-          ? 'Shield Swap'
-          : 'Send'
+        : item.snapshot.shield.operation === 'confidential-transfer'
+          ? 'Send'
+          : item.snapshot.shield.operation === 'swap'
+            ? 'Shield Swap'
+            : 'Send'
   }
   if (isConfidentialFundingActivity(item)) return 'Add to Confidential'
   if (item.failureCode === 'refunded') return 'Refund'
@@ -1070,9 +1082,11 @@ function getActivityTitle(item: ActivityItem, chainId?: string): string {
       ? 'Move'
       : item.snapshot.shield.operation === 'deposit'
         ? 'Receive'
-        : item.snapshot.shield.operation === 'swap'
-          ? 'Shield Swap'
-          : 'Send'
+        : item.snapshot.shield.operation === 'confidential-transfer'
+          ? 'Send'
+          : item.snapshot.shield.operation === 'swap'
+            ? 'Shield Swap'
+            : 'Send'
   if (isConfidentialFundingActivity(item)) return 'Added to Confidential'
   if (item.failureCode === 'refunded') return 'Refunded'
   const interaction = getActivityInteractionPresentation(item, chainId)

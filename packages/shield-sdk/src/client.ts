@@ -1,4 +1,4 @@
-import { nearConfidentialLayer } from './layers/near-confidential'
+import { nearConfidentialLayer, prepareQuote } from './layers/near-confidential'
 import { createShieldOperation, snapshotFromReport, type ShieldStatusReport } from './operation'
 import { sendShieldRequest } from './provider'
 import {
@@ -111,7 +111,7 @@ export class NoirShieldSDK {
   }
 
   async getQuote(input: Readonly<Record<string, unknown>>): Promise<ShieldQuote> {
-    return sendShieldRequest<ShieldQuote>('shield_getQuote', input)
+    return sendShieldRequest<ShieldQuote>('shield_getQuote', prepareQuote(input))
   }
 
   async getTransactionStatus(
