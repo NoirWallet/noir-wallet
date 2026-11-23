@@ -782,6 +782,7 @@ const TRUSTED_RUNTIME_SCHEMAS: Readonly<Record<string, RuntimeMessageSchema>> = 
     required: { action: isPortfolioAction },
     optional: {
       forceDiscovery: isBoolean,
+      refreshConfidential: isBoolean,
       automatic: isBoolean,
       chainIds: isChainIdArray,
       expectedWalletId: isShortString,
@@ -862,6 +863,19 @@ const TRUSTED_RUNTIME_SCHEMAS: Readonly<Record<string, RuntimeMessageSchema>> = 
       executionMode: value => value === 'main' || value === 'private',
       feeSelection: isEvmFeeSelection
     }
+  },
+  ESTIMATE_EVM_REPLACEMENT_FEE: {
+    required: {
+      chainId: isShortString,
+      originalTransactionId: isShortString,
+      action: value => value === 'cancel' || value === 'speed-up',
+      feeSelection: isEvmFeeSelection
+    },
+    optional: { executionMode: value => value === 'main' || value === 'private' }
+  },
+  ESTIMATE_EVM_NONCE_RECOVERY_FEE: {
+    required: { chainId: isShortString, feeSelection: isEvmFeeSelection },
+    optional: { executionMode: value => value === 'main' || value === 'private' }
   },
   GET_EVM_NONCE_RECOVERY: {
     required: { chainId: isShortString },
@@ -1201,6 +1215,8 @@ const TRUSTED_RUNTIME_CONTEXTS: Readonly<Record<string, readonly OwnExtensionSen
     PREPARE_EVM_CONTRACT_CALL: ['extension-page'],
     PREPARE_EVM_CANCEL: ['extension-page'],
     PREPARE_EVM_SPEED_UP: ['extension-page'],
+    ESTIMATE_EVM_REPLACEMENT_FEE: ['extension-page'],
+    ESTIMATE_EVM_NONCE_RECOVERY_FEE: ['extension-page'],
     GET_EVM_NONCE_RECOVERY: ['extension-page'],
     PREPARE_EVM_NONCE_RECOVERY: ['extension-page'],
     GET_PENDING_EVM_TRANSFER: ['extension-page'],

@@ -1,6 +1,5 @@
 import type { Network } from '@/types'
 import {
-  NOIR_MOVE_REFERRAL,
   NOIR_RECEIVE_REFERRAL,
   NOIR_SEND_REFERRAL,
   NOIR_SWAP_REFERRAL,
@@ -274,15 +273,12 @@ export type PrepareConfidentialFundingInput = ConfidentialFundingRouteInput &
       }>
   )
 
-function fundingReferral(input: {
-  readonly operation?: 'deposit' | 'withdraw' | 'swap' | 'cluster' | 'confidential-transfer'
-  readonly externalRecipient?: string
-  readonly purpose?: 'move' | 'native-zec-swap'
-}): NoirIntentsReferral {
-  if (input.operation === 'swap' || input.purpose === 'native-zec-swap') return NOIR_SWAP_REFERRAL
-  if (input.operation === 'confidential-transfer') return NOIR_SEND_REFERRAL
-  if (input.purpose === 'move') return NOIR_MOVE_REFERRAL
-  return input.externalRecipient ? NOIR_SEND_REFERRAL : NOIR_MOVE_REFERRAL
+function withdrawalReferral(
+  input: Pick<ConfidentialFundingPlan, 'operation' | 'purpose'>
+): NoirIntentsReferral {
+  return input.operation === 'swap' || input.purpose === 'native-zec-swap'
+    ? NOIR_SWAP_REFERRAL
+    : NOIR_SEND_REFERRAL
 }
 
 function directConfidentialRecipientType(
@@ -1547,13 +1543,15 @@ export class ConfidentialFundingCoordinator {
     ) {
       throw new Error('Confidential funding account or network changed')
     }
-    const session = await this.options.store.getSession(
-      input.network,
-      input.keyDomainId,
-      input.accountId
-    )
-    if (!session || session.expiresAt <= this.now() + SESSION_REFRESH_BUFFER_MS) {
-      throw new Error(CONFIDENTIAL_SESSION_REQUIRED_ERROR)
+    if (input.operation !== 'cluster' || input.sourceDomain === 'shield') {
+      const session = await this.options.store.getSession(
+        input.network,
+        input.keyDomainId,
+        input.accountId
+      )
+      if (!session || session.expiresAt <= this.now() + SESSION_REFRESH_BUFFER_MS) {
+        throw new Error(CONFIDENTIAL_SESSION_REQUIRED_ERROR)
+      }
     }
     if (input.operation === 'cluster') {
       if (clusterFeeOnly)
@@ -1581,7 +1579,7 @@ export class ConfidentialFundingCoordinator {
     }
     const quote = await this.options.api.quote({
       ...binding,
-      referral: fundingReferral(input),
+      referral: withdrawalReferral(input),
       dry: true
     })
     assertConfidentialQuoteBinding(quote, binding, this.now())
@@ -1622,12 +1620,11 @@ export class ConfidentialFundingCoordinator {
         ? undefined
         : await this.options.api.quote({
             ...depositBinding,
-            referral: fundingReferral(input),
+            referral: NOIR_RECEIVE_REFERRAL,
             dry: true
           })
     if (depositQuote) assertConfidentialQuoteBinding(depositQuote, depositBinding, this.now())
     const previews = await this.prepareWithdrawPreviews({
-      referral: fundingReferral(input),
       sourceAsset: input.source.protocolAssetId,
       destinationAsset: input.destination.protocolAssetId,
       spendRaw: depositQuote?.quote.amountOut ?? input.source.amountRaw,
@@ -1716,7 +1713,7 @@ export class ConfidentialFundingCoordinator {
     mode: 'prefetch' | 'review'
   ): Promise<ConfidentialQuote> {
     const binding = clusterDepositBinding(input, identity)
-    const referral = fundingReferral(input)
+    const referral = NOIR_RECEIVE_REFERRAL
     const key = await fingerprintConfidentialValue({
       network: input.network,
       keyDomainId: input.keyDomainId,
@@ -1902,7 +1899,7 @@ export class ConfidentialFundingCoordinator {
     const baseline = getConfidentialAvailableForAsset(balances, input.source.protocolAssetId) ?? '0'
     const requiresDeposit = true
     const depositQuote = await this.options.api.quote({
-      referral: fundingReferral(input),
+      referral: NOIR_RECEIVE_REFERRAL,
       originAsset: input.source.protocolAssetId,
       destinationAsset: input.source.protocolAssetId,
       amountRaw: input.source.amountRaw,
@@ -1934,7 +1931,6 @@ export class ConfidentialFundingCoordinator {
     )
     const spendRaw = depositQuote.quote.amountOut
     const previews = await this.prepareWithdrawPreviews({
-      referral: fundingReferral(input),
       sourceAsset: input.source.protocolAssetId,
       destinationAsset: input.destination.protocolAssetId,
       spendRaw,
@@ -2121,7 +2117,7 @@ export class ConfidentialFundingCoordinator {
     }
     const quote = await this.options.api.quote({
       originAsset: input.source.protocolAssetId,
-      referral: fundingReferral(input),
+      referral: input.operation === 'deposit' ? NOIR_RECEIVE_REFERRAL : withdrawalReferral(input),
       destinationAsset: isDeposit
         ? input.source.protocolAssetId
         : input.destination.protocolAssetId,
@@ -2304,18 +2300,21 @@ export class ConfidentialFundingCoordinator {
     if (duplicate && (duplicate.phase !== 'prepared' || duplicate.approvalExpiresAt > this.now()))
       return reviewFromPlan(duplicate, this.options.assets)
 
-    const session = await this.readUsableSession(sourceIdentity)
-    if (!session) throw new Error(CONFIDENTIAL_SESSION_REQUIRED_ERROR)
-    const balances = await this.readAndCacheBalances(sourceIdentity, session.accessToken)
-    const baseline = getConfidentialAvailableForAsset(balances, input.source.protocolAssetId) ?? '0'
     const requiresDeposit = input.sourceDomain !== 'shield'
-    if (!requiresDeposit)
+    // On-chain funding reads the baseline at confirmation, before broadcasting the deposit.
+    let baseline = '0'
+    if (!requiresDeposit) {
+      const session = await this.readUsableSession(sourceIdentity)
+      if (!session) throw new Error(CONFIDENTIAL_SESSION_REQUIRED_ERROR)
+      const balances = await this.readAndCacheBalances(sourceIdentity, session.accessToken)
+      baseline = getConfidentialAvailableForAsset(balances, input.source.protocolAssetId) ?? '0'
       this.assertUnreservedBalance(
         accountPlans,
         input.source.protocolAssetId,
         input.source.amountRaw,
         baseline
       )
+    }
     const sourceAddress =
       input.sourceDomain === 'private'
         ? sourceIdentity.peaAddress.toLowerCase()
@@ -2329,7 +2328,6 @@ export class ConfidentialFundingCoordinator {
       : undefined
     const spendRaw = depositQuote?.quote.amountOut ?? input.source.amountRaw
     const previews = await this.prepareWithdrawPreviews({
-      referral: fundingReferral(input),
       sourceAsset: input.source.protocolAssetId,
       destinationAsset: input.destination.protocolAssetId,
       spendRaw,
@@ -4223,7 +4221,6 @@ export class ConfidentialFundingCoordinator {
   }
 
   private async prepareWithdrawPreviews(input: {
-    readonly referral: NoirIntentsReferral
     readonly sourceAsset: string
     readonly destinationAsset: string
     readonly spendRaw: string
@@ -4236,7 +4233,7 @@ export class ConfidentialFundingCoordinator {
       const quotes = await Promise.all(
         amounts.map(amountRaw =>
           this.options.api.quote({
-            referral: input.referral,
+            referral: NOIR_SEND_REFERRAL,
             originAsset: input.sourceAsset,
             destinationAsset: input.destinationAsset,
             amountRaw,
@@ -4290,7 +4287,7 @@ export class ConfidentialFundingCoordinator {
     const quotes = await Promise.all(
       plan.splitSourceAmounts.map(sourceAmountRaw =>
         this.options.api.quote({
-          referral: fundingReferral(plan),
+          referral: NOIR_SEND_REFERRAL,
           originAsset: plan.source.protocolAssetId,
           destinationAsset: plan.destination.protocolAssetId,
           amountRaw: sourceAmountRaw,
@@ -4429,7 +4426,7 @@ export class ConfidentialFundingCoordinator {
     const quotes = await Promise.all(
       plan.splitSourceAmounts.map(sourceAmountRaw =>
         this.options.api.quote({
-          referral: fundingReferral(plan),
+          referral: NOIR_SEND_REFERRAL,
           originAsset: plan.source.protocolAssetId,
           destinationAsset: plan.destination.protocolAssetId,
           amountRaw: sourceAmountRaw,
@@ -4592,7 +4589,7 @@ export class ConfidentialFundingCoordinator {
       const quote =
         frozenQuote ??
         (await this.options.api.quote({
-          referral: fundingReferral(plan),
+          referral: withdrawalReferral(plan),
           originAsset: plan.source.protocolAssetId,
           destinationAsset: plan.destination.protocolAssetId,
           amountRaw: plan.source.amountRaw,
@@ -5237,7 +5234,15 @@ export class ConfidentialFundingCoordinator {
       const status = normalizeStatus(row.status)
       if (status === 'SUCCESS' || status === 'COMPLETED') {
         await this.applyGraphStatus(plan, `withdraw:${row.sequence}`, 'final', {
-          ...(row.transactionHash ? { transactionHash: row.transactionHash } : {})
+          ...(row.transactionHash ? { transactionHash: row.transactionHash } : {}),
+          ...(plan.operation === 'withdraw' && row.transactionHash && row.settledOutputRaw
+            ? {
+                settledAmount: {
+                  assetId: parseAssetId(plan.destination.assetId).id,
+                  amountRaw: row.settledOutputRaw
+                }
+              }
+            : {})
         })
       } else if (['FAILED', 'REFUNDED', 'EXPIRED', 'CANCELLED'].includes(status)) {
         await this.applyGraphStatus(
@@ -5814,14 +5819,14 @@ export class ConfidentialFundingCoordinator {
       throw new Error(
         isNativeZecSwap
           ? 'Native ZEC swap must receive into the current account'
-          : 'Zcash Move must receive into the current account'
+          : 'ZEC transfers must use a receive address from the current account'
       )
     const parsed = parseZcashAddress(value.externalRecipient, this.options.network)
     if (
       !parsed.scheme.startsWith('zcash-transparent-') &&
       !value.externalRecipient.startsWith(this.options.network === 'mainnet' ? 'u1' : 'utest1')
     )
-      throw new Error('Zcash Move requires a transparent or unified receive address')
+      throw new Error('This ZEC transfer requires a transparent or unified receive address')
   }
 
   private assertSameAccount(

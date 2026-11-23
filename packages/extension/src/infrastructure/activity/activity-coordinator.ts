@@ -14,7 +14,10 @@ type ActivityStorageRepository = Pick<StorageV2ReadRepository, 'getActivePointer
 export interface ActivityCoordinatorOptions {
   readonly storageRepository: ActivityStorageRepository
   readonly transactionRepository: TransactionRepository
-  readonly loadZcashTransactions: (scope: ActivityScope) => Promise<readonly Transaction[]>
+  readonly loadZcashTransactions: (
+    scope: ActivityScope,
+    options: ActivityReadOptions
+  ) => Promise<readonly Transaction[]>
   readonly loadSupplementalItems?: (
     scope: ActivityScope,
     accountMode: 'main' | 'private' | 'all',
@@ -36,7 +39,8 @@ export interface ActivityCoordinatorOptions {
   ) => Promise<readonly string[]>
   readonly filterLocalGraphs?: (
     scope: ActivityScope,
-    graphs: readonly TransactionGraph[]
+    graphs: readonly TransactionGraph[],
+    privateExecutionAddresses: readonly string[]
   ) => Promise<readonly TransactionGraph[]>
 }
 
@@ -71,15 +75,20 @@ export class ActivityCoordinator {
         limit: options.protocolProvider ? 10_000 : 200,
         ...(options.protocolProvider ? { protocolProvider: options.protocolProvider } : {})
       }),
-      options.protocolProvider ? Promise.resolve([]) : this.options.loadZcashTransactions(scope),
+      options.protocolProvider
+        ? Promise.resolve([])
+        : this.options.loadZcashTransactions(scope, options),
       options.protocolProvider
         ? Promise.resolve([])
         : this.loadSupplementalItems(scope, accountMode, options)
     ])
+    const privateExecutionAddresses = await this.loadPrivateExecutionAddresses(
+      scope,
+      storedLocalGraphs
+    )
     const localGraphs = this.options.filterLocalGraphs
-      ? await this.options.filterLocalGraphs(scope, storedLocalGraphs)
+      ? await this.options.filterLocalGraphs(scope, storedLocalGraphs, privateExecutionAddresses)
       : storedLocalGraphs
-    const privateExecutionAddresses = await this.loadPrivateExecutionAddresses(scope, localGraphs)
     const destinationReceipts = new Map<string, Transaction[]>()
     for (const transaction of zcashTransactions) {
       if (transaction.type !== 'receive' || !transaction.txHash) continue

@@ -1,10 +1,11 @@
-import { Icon } from '@iconify/react'
 import type { ReactNode } from 'react'
 import type { RheaSwapReviewView, RheaSwapToken } from '@/core/services/rhea-swap'
 import { formatChainName, formatSortAddress, formatSymbol } from '@/lib/format'
 import { formatBaseUnitDecimalAmount } from '@/lib/number-format'
 import { AmountDisplay } from '@/popup/components/common/AmountDisplay'
 import { InlineError } from '@/popup/components/common/InlineError'
+import { quoteReviewPrimaryAction } from '@/popup/services/quote-review'
+import { RouteProviderLabel } from './RouteProviderLabel'
 import { TransactionReviewView } from './TransactionReviewView'
 
 export function CrossChainSendReviewView({
@@ -15,11 +16,14 @@ export function CrossChainSendReviewView({
   review,
   routeCost,
   sourceNetworkFee,
+  combinedNetworkFee,
+  sourceFeeControl,
   executionTarget,
   approval,
   isPreparingReview,
   isSending,
   reviewedQuoteReady,
+  quoteExpired,
   quoteAcceptanceLabel,
   quoteChanges,
   transferPreparationError,
@@ -27,7 +31,6 @@ export function CrossChainSendReviewView({
   onRefresh,
   onAccept,
   onRetryPreparation,
-  onRetryExpired,
   onCancel,
   onConfirm
 }: {
@@ -38,11 +41,14 @@ export function CrossChainSendReviewView({
   readonly review: Pick<RheaSwapReviewView, 'amountIn' | 'estimatedOut' | 'recipient' | 'router'>
   readonly routeCost: string | null
   readonly sourceNetworkFee: { readonly amount: string; readonly symbol: string } | null
+  readonly combinedNetworkFee?: { readonly amount: string; readonly symbol: string }
+  readonly sourceFeeControl?: ReactNode
   readonly executionTarget: { readonly label: string; readonly address: string } | null
   readonly approval?: { readonly amountRaw: string; readonly spender: string }
   readonly isPreparingReview: boolean
   readonly isSending: boolean
   readonly reviewedQuoteReady: boolean
+  readonly quoteExpired: boolean
   readonly quoteAcceptanceLabel?: string
   readonly quoteChanges?: ReactNode
   readonly transferPreparationError: string | null
@@ -50,10 +56,24 @@ export function CrossChainSendReviewView({
   readonly onRefresh: () => void
   readonly onAccept: () => void
   readonly onRetryPreparation: () => void
-  readonly onRetryExpired: () => void
   readonly onCancel: () => void
   readonly onConfirm: () => void
 }) {
+  const primaryAction = quoteReviewPrimaryAction({
+    confirmLabel: combinedNetworkFee
+      ? 'Approve & Send'
+      : approval
+        ? 'Approve Token'
+        : 'Confirm Send',
+    onConfirm,
+    confirmDisabled: !reviewedQuoteReady || Boolean(transferPreparationError) || insufficientFunds,
+    refresh: transferPreparationError
+      ? { onClick: onRetryPreparation, retry: true }
+      : !reviewedQuoteReady
+        ? { onClick: onRefresh }
+        : undefined,
+    accept: quoteAcceptanceLabel ? { label: quoteAcceptanceLabel, onClick: onAccept } : undefined
+  })
   return (
     <TransactionReviewView
       title="Review Send"
@@ -111,11 +131,25 @@ export function CrossChainSendReviewView({
             <AmountDisplay value={routeCost} symbol={formatSymbol(source.symbol)} profile="fee" />
           )
         },
+        ...(combinedNetworkFee
+          ? [
+              {
+                label: 'Max network fee',
+                content: (
+                  <AmountDisplay
+                    value={combinedNetworkFee.amount}
+                    symbol={combinedNetworkFee.symbol}
+                    profile="fee"
+                  />
+                )
+              }
+            ]
+          : []),
         ...(sourceNetworkFee
           ? [
               {
-                label: 'Source network fee',
-                content: (
+                label: combinedNetworkFee ? 'Approval fee' : 'Source network fee',
+                content: sourceFeeControl ?? (
                   <AmountDisplay
                     value={sourceNetworkFee.amount}
                     symbol={sourceNetworkFee.symbol}
@@ -158,43 +192,26 @@ export function CrossChainSendReviewView({
               }
             ]
           : []),
-        { label: 'Provider', content: review.router }
+        { label: 'Provider', content: <RouteProviderLabel router={review.router} /> }
       ]}
-      afterRows={
-        <>
-          {quoteChanges}
-          <button
-            type="button"
-            className="inline-flex min-h-8 items-center gap-1 text-xs text-muted hover:text-foreground disabled:opacity-50"
-            onClick={onRefresh}
-            disabled={isPreparingReview || isSending}
-          >
-            <Icon icon="lucide:refresh-cw" width={14} /> Refresh quote
-          </button>
-        </>
-      }
+      afterRows={reviewedQuoteReady ? quoteChanges : undefined}
       error={
         transferPreparationError ? (
-          <InlineError
-            message={transferPreparationError}
-            onRetry={onRetryPreparation}
-            retrying={isPreparingReview}
-          />
+          <InlineError message={transferPreparationError} />
         ) : !isPreparingReview && !reviewedQuoteReady ? (
-          <InlineError message="Quote expired. Refresh it." onRetry={onRetryExpired} />
+          <InlineError
+            message={quoteExpired ? 'Quote expired.' : 'Quote unavailable.'}
+            tone={quoteExpired ? 'muted' : 'error'}
+          />
         ) : insufficientFunds ? (
           <InlineError message="Amount exceeds balance at this fee." />
         ) : undefined
       }
-      confirmLabel={quoteAcceptanceLabel ?? (approval ? 'Approve Token' : 'Confirm Send')}
-      confirmTone={quoteAcceptanceLabel ? 'warning' : 'default'}
-      confirming={isSending || isPreparingReview}
+      {...primaryAction}
+      confirming={isSending}
+      preparing={isPreparingReview}
       submitting={isSending}
-      confirmDisabled={
-        !reviewedQuoteReady || Boolean(transferPreparationError) || insufficientFunds
-      }
       onCancel={onCancel}
-      onConfirm={quoteAcceptanceLabel ? onAccept : onConfirm}
     />
   )
 }

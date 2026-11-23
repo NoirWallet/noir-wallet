@@ -8,6 +8,24 @@ export type PrivateBalanceTransferDirection = 'main-to-private' | 'private-to-ma
 
 export type TransferDomain = Exclude<AssetDomain, 'all'>
 
+export function balanceTransferDomainLabel(domain: TransferDomain) {
+  return domain === 'shield' ? 'Shield' : domain === 'private' ? 'Incognito' : 'Public'
+}
+
+export function resolveBalanceTransferIntent(value: string | null | undefined) {
+  return value === 'deposit' || value === 'withdraw' ? value : null
+}
+
+export type BalanceTransferIntent = NonNullable<ReturnType<typeof resolveBalanceTransferIntent>>
+
+export function balanceTransferLabel(intent: BalanceTransferIntent): 'Deposit' | 'Withdraw' {
+  return intent === 'deposit' ? 'Deposit' : 'Withdraw'
+}
+
+export function fixedTransferSide(intent: BalanceTransferIntent | null): 'to' | 'from' | null {
+  return intent === 'deposit' ? 'to' : intent === 'withdraw' ? 'from' : null
+}
+
 export function getTransferDomainBalanceRaw(
   asset: PortfolioAssetView,
   domain: TransferDomain
@@ -100,7 +118,7 @@ export function resolvePrivateBalanceTransferSource(input: {
         sender: input.privateAddress,
         recipient: input.mainAddress,
         executionMode: 'private' as const,
-        sourceLabel: 'Confidential' as const
+        sourceLabel: 'Incognito' as const
       }
 }
 
@@ -113,7 +131,7 @@ export function resolvePrivateBalanceTransferAmount(input: {
   readonly amount: string
   readonly decimals: number
   readonly availableRaw: string
-  readonly sourceLabel: 'Public' | 'Private' | 'Shield' | 'Confidential'
+  readonly sourceLabel: ReturnType<typeof balanceTransferDomainLabel>
 }): PrivateBalanceTransferAmountState {
   if (input.amount.length === 0 || input.amount === '.')
     return Object.freeze({ amountRaw: null, error: null })

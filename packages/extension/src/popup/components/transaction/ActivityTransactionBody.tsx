@@ -24,7 +24,7 @@ import { ChainIcon } from '../common/ChainIcon'
 import { CopyFeedbackIcon, CopyToast, useCopyToClipboard } from '../common/CopyToast'
 import { DetailRow } from '../common/DetailRow'
 import { PrivateAddressWarningDialog } from '../account/PrivateAddressWarningDialog'
-import { ZcashFundingBadge } from '../account/ZcashFundingBadge'
+import { ZcashFundingBadge } from '../zcash/ZcashFundingBadge'
 import { TokenIcon } from '../tokens/TokenIcon'
 import { ActivityInteractionIcon } from './ActivityInteractionIcon'
 import { ActivityRouteTokenIcons } from './ActivityRouteTokenIcons'
@@ -33,9 +33,11 @@ import { TransactionReferenceValue } from './TransactionReferenceValue'
 import {
   getActivityApprovalDetails,
   getActivityInteractionPresentation
-} from './activity-interaction-adapters'
-import { resolveActivityChainId } from './activity-chain'
+} from '@/popup/services/activity-interaction-adapters'
+import { resolveActivityChainId } from '@/core/activity/activity-chain'
+import { getActivityAction, type ActivityPerspective } from '@/popup/services/activity-action-label'
 import {
+  getActivityCancellationPresentation,
   getActivityDisplayChanges,
   getActivityProgressSteps,
   getActivityStatusPresentation,
@@ -44,7 +46,7 @@ import {
   isDirectAccountMove,
   isOwnedAccountTransfer,
   resolveActivityChainMetadata
-} from './multichain-activity-presentation'
+} from '@/popup/services/multichain-activity-presentation'
 
 type ActivitySwap = NonNullable<ReturnType<typeof getActivitySwapPresentation>>
 type ActivityStatus = ReturnType<typeof getActivityStatusPresentation>
@@ -98,6 +100,7 @@ export interface ActivityTransactionView {
   readonly isShieldSend: boolean
   readonly isMove: boolean
   readonly isRefunded: boolean
+  readonly actionSide: 'source' | 'destination' | 'none'
 }
 
 export function buildActivityTransactionView(input: {
@@ -106,8 +109,8 @@ export function buildActivityTransactionView(input: {
   readonly assetMetadata: ReadonlyMap<string, ActivityAssetMetadata>
   readonly chainMetadata: ReadonlyMap<string, ActivityChainMetadata>
   readonly executionAddressModes?: ReadonlyMap<string, 'Public' | 'Confidential'>
+  readonly perspective?: ActivityPerspective
   readonly settledDestination?: Parameters<typeof getActivitySwapPresentation>[4]
-  readonly legacyPrivateShieldWithdrawDestination?: boolean
   readonly fallback?: ActivityTransactionFallback
   readonly refunded?: boolean
   readonly replacementHash?: string
@@ -121,8 +124,7 @@ export function buildActivityTransactionView(input: {
     assetMetadata,
     chainMetadata,
     input.executionAddressModes,
-    input.settledDestination,
-    input.legacyPrivateShieldWithdrawDestination
+    input.settledDestination
   )
   const sourceAmount = item.snapshot?.primaryAmount
   const destinationAmount = item.snapshot?.counterAmount
@@ -159,6 +161,18 @@ export function buildActivityTransactionView(input: {
             : rawSwap.destinationNetwork
       }
     : null
+  const action = getActivityAction(
+    item,
+    input.perspective,
+    swap ?? {
+      sourceAccountMode: item.snapshot?.sender?.address
+        ? input.executionAddressModes?.get(item.snapshot.sender.address.toLowerCase())
+        : undefined,
+      destinationAccountMode: item.snapshot?.recipient?.address
+        ? input.executionAddressModes?.get(item.snapshot.recipient.address.toLowerCase())
+        : undefined
+    }
+  )
   const asset = sourceAmount ? assetMetadata.get(sourceAmount.assetId) : undefined
   const displayMetadata = asset?.metadata ?? sourceAmount?.metadata
   const amount =
@@ -167,11 +181,12 @@ export function buildActivityTransactionView(input: {
           value: formatBaseUnitAmount(sourceAmount.amountRaw, displayMetadata.decimals),
           symbol: displayMetadata.symbol,
           prefix:
+            action.side === 'destination' ||
             item.failureCode === 'refunded' ||
             item.kind === 'receive' ||
             item.snapshot?.direction === 'incoming'
               ? '+'
-              : item.snapshot?.direction === 'outgoing'
+              : action.side === 'source' || item.snapshot?.direction === 'outgoing'
                 ? '−'
                 : ''
         }
@@ -179,11 +194,19 @@ export function buildActivityTransactionView(input: {
         ? {
             value: fallback.source.value,
             symbol: fallback.source.symbol,
-            prefix: item.snapshot?.direction === 'incoming' ? '+' : '−'
+            prefix:
+              action.side === 'destination' || item.snapshot?.direction === 'incoming' ? '+' : '−'
           }
         : null
   const changes = getActivityDisplayChanges(item, assetMetadata)
     .filter(change => !change.isRaw)
+    .sort((left, right) =>
+      left.direction === right.direction || action.side === 'none'
+        ? 0
+        : left.direction === (action.side === 'destination' ? 'incoming' : 'outgoing')
+          ? -1
+          : 1
+    )
     .slice(0, 2)
   const showChanges =
     getActivityAssetEffects(item) !== undefined &&
@@ -305,11 +328,14 @@ export function buildActivityTransactionView(input: {
         : (resolveActivityChainMetadata(chainId, chainMetadata)?.displayName ?? 'Unknown network')
     ),
     isCrossChain: item.segments.length > 1,
-    isIncoming: item.kind === 'receive' || direction === 'incoming',
+    isIncoming:
+      action.side === 'destination' ||
+      (action.side === 'none' && (item.kind === 'receive' || direction === 'incoming')),
     isShieldMove,
     isShieldSend,
     isMove,
-    isRefunded: input.refunded === true || item.failureCode === 'refunded'
+    isRefunded: input.refunded === true || item.failureCode === 'refunded',
+    actionSide: action.side
   }
 }
 
@@ -327,10 +353,10 @@ export function ActivityTransactionHero({ view }: { readonly view: ActivityTrans
     return (
       <div className="flex flex-col items-center py-7 text-center" data-activity-swap-detail>
         <ActivityRouteTokenIcons item={item} route={swap} size="detail" />
-        {swap.isExternalDeposit ? (
+        {swap.isExternalDeposit || view.actionSide === 'destination' ? (
           <div className="mt-4 max-w-full">
             <p className="text-sm text-muted">
-              {view.isRefunded ? 'Deposit' : swap.destinationIsSettled ? 'Received' : 'Expected'}
+              {view.isRefunded ? 'Refund' : swap.destinationIsSettled ? 'Received' : 'Expected'}
             </p>
             <div
               className={cn(
@@ -350,6 +376,8 @@ export function ActivityTransactionHero({ view }: { readonly view: ActivityTrans
                   prefix="+"
                   symbol={swap.destination.symbol}
                 />
+              ) : swap.source ? (
+                <AmountDisplay value={swap.source.exact} prefix="+" symbol={swap.source.symbol} />
               ) : (
                 '—'
               )}
@@ -364,20 +392,25 @@ export function ActivityTransactionHero({ view }: { readonly view: ActivityTrans
                 '—'
               )}
             </div>
-            {swap.destination && !swap.hideDestinationCredit && !view.isRefunded && (
-              <div className="mt-1 max-w-full break-all font-sans text-sm text-muted tabular-nums">
-                {view.isShieldSend
-                  ? 'Recipient receives'
-                  : swap.destinationIsSettled
-                    ? 'Received'
-                    : 'Expected'}{' '}
-                <AmountDisplay
-                  value={swap.destination.exact}
-                  prefix={view.isShieldSend ? '' : '+'}
-                  symbol={swap.destination.symbol}
-                />
-              </div>
-            )}
+            {swap.destination &&
+              !swap.hideDestinationCredit &&
+              !view.isRefunded &&
+              (view.actionSide !== 'source' ||
+                view.isShieldSend ||
+                !isOwnedAccountTransfer(swap)) && (
+                <div className="mt-1 max-w-full break-all font-sans text-sm text-muted tabular-nums">
+                  {view.isShieldSend
+                    ? 'Recipient receives'
+                    : swap.destinationIsSettled
+                      ? 'Received'
+                      : 'Expected'}{' '}
+                  <AmountDisplay
+                    value={swap.destination.exact}
+                    prefix={view.isShieldSend ? '' : '+'}
+                    symbol={swap.destination.symbol}
+                  />
+                </div>
+              )}
           </>
         )}
       </div>
@@ -481,15 +514,30 @@ export function ActivityTransactionRoute({ view }: { readonly view: ActivityTran
 }
 
 export function ActivityTransactionStatus({ view }: { readonly view: ActivityTransactionView }) {
+  const cancellation = getActivityCancellationPresentation(view.item)
   return (
-    <DetailRow label="Status">
-      <span
-        data-activity-status-value
-        className={cn('text-sm', getTransactionStatusToneClassName(view.statusTone))}
-      >
-        {view.statusLabel}
-      </span>
-    </DetailRow>
+    <>
+      <DetailRow label="Status">
+        <span
+          data-activity-status-value
+          className={cn('text-sm', getTransactionStatusToneClassName(view.statusTone))}
+        >
+          {view.statusLabel}
+        </span>
+      </DetailRow>
+      {cancellation && (
+        <DetailRow label="Cancellation">
+          <span
+            className={cn(
+              'pl-2 text-right text-sm',
+              getTransactionStatusToneClassName(cancellation.tone)
+            )}
+          >
+            {cancellation.label}
+          </span>
+        </DetailRow>
+      )}
+    </>
   )
 }
 
@@ -715,7 +763,13 @@ export function ActivityTransactionProgress({ view }: { readonly view: ActivityT
   if (!view.isCrossChain) return null
   const referenceByStepId = new Map<string, ReactNode>()
   for (const segment of view.item.segments) {
-    const reference = view.references.find(candidate => candidate.id === segment.id)
+    const hash = segment.evidence?.transactionHash
+    const reference =
+      segment.target.kind === 'onchain' &&
+      hash &&
+      isActivityTransactionHash(hash, segment.target.chainId)
+        ? { hash, chainId: segment.target.chainId }
+        : view.references.find(candidate => candidate.id === segment.id)
     const replacement = view.replacementReferences.find(candidate => candidate.id === segment.id)
     if (!reference && !replacement) continue
     referenceByStepId.set(

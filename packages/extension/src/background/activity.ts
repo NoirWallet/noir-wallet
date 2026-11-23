@@ -1,5 +1,9 @@
 import { DEFAULT_NETWORK } from '@/lib/runtime-network'
-import { projectExternalShieldDepositActivityGraph } from '@/core/services/confidential-funding'
+import {
+  isLegacyShieldWithdrawActivityGraph,
+  projectExternalShieldDepositActivityGraph,
+  projectLegacyShieldWithdrawActivityGraph
+} from '@/core/services/confidential-funding'
 import { supportsEvmPrivateExecution } from '@/core/chains/evm'
 import type { ChainEndpointSettings } from '@/core/chains/chain-endpoint-settings'
 import { keySourceSupportsChainFamily, resolveKeyDomain } from '@/core/accounts/application'
@@ -10,6 +14,7 @@ import {
 } from '@/core/activity'
 import type { TransactionGraph } from '@/core/transactions/domain'
 import { buildAccountKey } from '@/core/wallet/account-scope'
+import { getZcashChainId } from '@/core/chains/registry/product-chain-definitions'
 import {
   ActivityCoordinator,
   createConfiguredActivityHistorySources
@@ -38,6 +43,7 @@ import { getBitcoinAccountPreferences } from './bitcoin-account-preferences'
 import type { BitcoinSupportedAddressType } from '@/core/chains/bitcoin'
 import { credentialSession } from './credential-session'
 import { ChromeConfidentialFundingStore } from './confidential-funding-store'
+import { refreshZcashReceiveConfirmations } from './zcash-receive-confirmations'
 
 const ACTIVITY_REFRESH_TTL_MS = 5 * 60_000
 const PENDING_ACTIVITY_REFRESH_TTL_MS = 30_000
@@ -753,14 +759,22 @@ export function createBackgroundActivityCoordinator(
 
   const filterLocalGraphs = async (
     scope: ActivityScope,
-    graphs: readonly TransactionGraph[]
+    graphs: readonly TransactionGraph[],
+    privateExecutionAddresses: readonly string[]
   ): Promise<readonly TransactionGraph[]> => {
-    const externalRecords = graphs.some(
+    const fundingStore = new ChromeConfidentialFundingStore()
+    const hasExternalRecords = graphs.some(
       graph =>
         graph.root.status === 'failed' && graph.root.id.startsWith('tx:confidential-external:')
     )
-      ? await new ChromeConfidentialFundingStore().listExternalDeposits().catch(() => [])
-      : []
+    const legacyWithdrawIds =
+      privateExecutionAddresses.length === 0
+        ? []
+        : graphs.filter(isLegacyShieldWithdrawActivityGraph).map(graph => graph.root.id)
+    const [externalRecords, legacyWithdrawPlans] = await Promise.all([
+      hasExternalRecords ? fundingStore.listExternalDeposits().catch(() => []) : [],
+      fundingStore.getPlansForTransactions(legacyWithdrawIds).catch(() => new Map())
+    ])
     const externalByTransactionId = new Map(
       externalRecords
         .filter(
@@ -773,7 +787,14 @@ export function createBackgroundActivityCoordinator(
     )
     const projectedGraphs = graphs.map(graph => {
       const record = externalByTransactionId.get(graph.root.id)
-      return record ? projectExternalShieldDepositActivityGraph(graph, record) : graph
+      return record
+        ? projectExternalShieldDepositActivityGraph(graph, record)
+        : projectLegacyShieldWithdrawActivityGraph(
+            graph,
+            legacyWithdrawPlans.get(graph.root.id),
+            DEFAULT_NETWORK,
+            privateExecutionAddresses
+          )
     })
     if (!bitcoinDiscovery) return projectedGraphs
     const context = await loadActiveBitcoinDiscoveryContext(
@@ -817,8 +838,20 @@ export function createBackgroundActivityCoordinator(
   return new ActivityCoordinator({
     storageRepository,
     transactionRepository: new IndexedDbTransactionRepository(),
-    loadZcashTransactions: scope =>
-      loadTransactions(buildAccountKey(DEFAULT_NETWORK, scope.keyDomainId, scope.accountId)),
+    loadZcashTransactions: (scope, options) => {
+      const network = DEFAULT_NETWORK
+      const readCached = () =>
+        loadTransactions(buildAccountKey(network, scope.keyDomainId, scope.accountId))
+      if (
+        options.includeSupplemental !== false &&
+        (!options.chainIds || options.chainIds.includes(getZcashChainId(network)))
+      ) {
+        return refreshZcashReceiveConfirmations(network, scope.keyDomainId, scope.accountId).catch(
+          readCached
+        )
+      }
+      return readCached()
+    },
     loadSupplementalItems,
     loadCachedSupplementalItems,
     loadSupplementalHasMore,

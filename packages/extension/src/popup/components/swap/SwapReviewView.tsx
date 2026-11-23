@@ -12,9 +12,9 @@ import {
 } from '@/lib/number-format'
 
 import type { FeeTier } from '@/config/fee'
-import type { NetworkFeeTier } from '@/core/transactions/domain'
-import { FeeTierPicker } from '../transaction/FeeTierPicker'
+import { quoteReviewPrimaryAction } from '@/popup/services/quote-review'
 import { NetworkFeeTierPicker } from '../transaction/NetworkFeeTierPicker'
+import { RouteProviderLabel } from '../transaction/RouteProviderLabel'
 import { ReviewDownTriangle } from '../transaction/TransactionReviewView'
 
 import { TokenIcon } from '../tokens/TokenIcon'
@@ -26,7 +26,7 @@ import type { FundingSource } from '@/types/wallet'
 export interface SwapReviewAccount {
   readonly name?: string
   readonly address?: string
-  readonly badge?: 'Public' | 'Private' | 'Shield' | 'Transparent' | 'Confidential'
+  readonly badge?: 'Public' | 'Incognito' | 'Shield' | 'Transparent' | 'Confidential'
 }
 
 interface SwapReviewViewProps {
@@ -45,6 +45,7 @@ interface SwapReviewViewProps {
   confirmDisabled?: boolean
   onAcceptNewPrice?: () => void
   onRefreshQuote?: () => void
+  quoteExpired?: boolean
   quoteRefreshing?: boolean
   provider?: string
   sendMethod?: string
@@ -70,9 +71,8 @@ interface SwapReviewViewProps {
   onRetryFee?: () => void
   fundingSource?: FundingSource
   sourceNetworkFee?: { readonly amount: string; readonly symbol: string } | null
-  sourceFeeTier?: NetworkFeeTier
-  sourceFeeFamily?: 'evm' | 'bitcoin'
-  onSourceFeeTierChange?: (tier: NetworkFeeTier) => void | Promise<void>
+  combinedNetworkFee?: { readonly amount: string; readonly symbol: string }
+  sourceFeeControl?: ReactNode
   sourceTransferDetails?: {
     readonly network: string
     readonly chainIcon: string
@@ -87,6 +87,7 @@ interface SwapReviewViewProps {
     readonly spender: string
     readonly amount: string
     readonly symbol: string
+    readonly signsOrder?: boolean
   }
   hasSigningReview?: boolean
   signingActionLabel?: string
@@ -114,6 +115,7 @@ export function SwapReviewView({
   confirmDisabled,
   onAcceptNewPrice,
   onRefreshQuote,
+  quoteExpired,
   quoteRefreshing,
   provider,
   sendMethod,
@@ -135,9 +137,8 @@ export function SwapReviewView({
   onRetryFee,
   fundingSource,
   sourceNetworkFee,
-  sourceFeeTier,
-  sourceFeeFamily,
-  onSourceFeeTierChange,
+  combinedNetworkFee,
+  sourceFeeControl,
   sourceTransferDetails,
   destinationDetails,
   approvalDetails,
@@ -160,7 +161,33 @@ export function SwapReviewView({
       : fundingSource === 'transparent'
         ? 'Transparent'
         : undefined)
-  const actionLabel = hasSigningReview ? signingActionLabel : confirmLabel
+  const actionLabel = combinedNetworkFee
+    ? 'Approve & Swap'
+    : hasSigningReview
+      ? signingActionLabel
+      : approvalDetails
+        ? 'Approve token'
+        : confirmLabel
+  const primaryAction = quoteReviewPrimaryAction({
+    confirmLabel: actionLabel,
+    onConfirm,
+    confirmDisabled:
+      insufficient ||
+      feeUnavailable ||
+      Boolean(preparationError) ||
+      quoteExpired ||
+      confirmDisabled,
+    refresh:
+      preparationError && onRetryPreparation
+        ? { onClick: onRetryPreparation, retry: true }
+        : quoteExpired && onRefreshQuote
+          ? { onClick: onRefreshQuote }
+          : undefined,
+    accept:
+      quoteAcceptanceLabel && onAcceptNewPrice
+        ? { label: quoteAcceptanceLabel, onClick: onAcceptNewPrice }
+        : undefined
+  })
 
   return (
     <>
@@ -246,6 +273,20 @@ export function SwapReviewView({
               />
             )}
           </DetailItem>
+          {combinedNetworkFee && (
+            <DetailItem label="Max network fee">
+              <AmountDisplay
+                value={combinedNetworkFee.amount}
+                symbol={combinedNetworkFee.symbol}
+                profile="fee"
+              />
+            </DetailItem>
+          )}
+          {provider && (
+            <DetailItem label="Provider">
+              <RouteProviderLabel router={provider} />
+            </DetailItem>
+          )}
           {onRefreshQuote && (
             <div className="flex items-center justify-between gap-3 py-2">
               <button
@@ -257,25 +298,10 @@ export function SwapReviewView({
                 {showMore ? 'Show less' : 'Show more'}
                 <Icon icon={showMore ? 'lucide:chevron-up' : 'lucide:chevron-down'} width={14} />
               </button>
-              <button
-                type="button"
-                onClick={onRefreshQuote}
-                disabled={isLoading || quoteRefreshing}
-                className="inline-flex min-h-8 shrink-0 items-center gap-1 text-xs text-muted hover:text-foreground disabled:opacity-50"
-                aria-label="Refresh quote"
-              >
-                <Icon
-                  icon="lucide:refresh-cw"
-                  width={14}
-                  className={quoteRefreshing ? 'animate-spin' : undefined}
-                />
-                Refresh quote
-              </button>
             </div>
           )}
           {(!onRefreshQuote || showMore) && (
             <>
-              {provider && <DetailItem label="Provider">{provider}</DetailItem>}
               {onRefreshQuote && sourceAddress && (
                 <DetailItem label="Used account">
                   <span title={sourceAddress} className="text-xs">
@@ -284,21 +310,11 @@ export function SwapReviewView({
                   </span>
                 </DetailItem>
               )}
-              <DetailItem label="Network fee">
+              <DetailItem label={combinedNetworkFee ? 'Approval fee' : 'Network fee'}>
                 {quoteRefreshing ? (
                   <span className="inline-block h-4 w-24 animate-pulse rounded bg-card" />
-                ) : sourceNetworkFee &&
-                  sourceFeeTier &&
-                  sourceFeeFamily &&
-                  onSourceFeeTierChange ? (
-                  <NetworkFeeTierPicker
-                    chainFamily={sourceFeeFamily}
-                    tier={sourceFeeTier}
-                    amount={sourceNetworkFee.amount}
-                    symbol={sourceNetworkFee.symbol}
-                    onTierChange={onSourceFeeTierChange}
-                    disabled={isLoading}
-                  />
+                ) : sourceFeeControl ? (
+                  sourceFeeControl
                 ) : sourceNetworkFee ? (
                   <AmountDisplay
                     value={sourceNetworkFee.amount}
@@ -307,7 +323,8 @@ export function SwapReviewView({
                     className="font-sans tabular-nums"
                   />
                 ) : feeTier && onFeeTierChange && feeByTier ? (
-                  <FeeTierPicker
+                  <NetworkFeeTierPicker
+                    chainFamily="zcash"
                     tier={feeTier}
                     onTierChange={onFeeTierChange}
                     feeByTier={feeByTier}
@@ -381,7 +398,9 @@ export function SwapReviewView({
                   aria-expanded={showApprovalDetails}
                   className="flex w-full items-center justify-between gap-3 py-3 text-sm"
                 >
-                  <span className="shrink-0 text-muted">Step 1 of 2</span>
+                  <span className="shrink-0 text-muted">
+                    {combinedNetworkFee ? 'Token approval' : 'Step 1 of 2'}
+                  </span>
                   <span className="inline-flex min-w-0 items-center gap-1.5 text-right font-medium">
                     <span className="truncate">Approve {formatSymbol(approvalDetails.symbol)}</span>
                     <Icon
@@ -412,17 +431,20 @@ export function SwapReviewView({
                   </div>
                 )}
               </div>
-              <DetailItem label="Step 2 of 2">Sign Swap Order</DetailItem>
+              {!combinedNetworkFee && (
+                <DetailItem label="Step 2 of 2">
+                  {approvalDetails.signsOrder ? 'Sign Swap Order' : 'Swap'}
+                </DetailItem>
+              )}
             </>
           )}
         </div>
 
-        {quoteChanges}
-        {preparationError && (
+        {!quoteExpired && !quoteRefreshing && !preparationError && quoteChanges}
+        {(preparationError || (quoteExpired && !quoteRefreshing)) && (
           <InlineError
-            message={preparationError}
-            onRetry={onRetryPreparation}
-            retrying={isLoading}
+            message={preparationError ?? 'Quote expired.'}
+            tone={preparationError ? 'error' : 'muted'}
             className="mt-3 px-1"
           />
         )}
@@ -458,30 +480,17 @@ export function SwapReviewView({
           <Button
             type="button"
             size="wallet"
-            onClick={quoteAcceptanceLabel ? onAcceptNewPrice : onConfirm}
-            disabled={
-              isLoading ||
-              insufficient ||
-              feeUnavailable ||
-              Boolean(preparationError) ||
-              confirmDisabled ||
-              (Boolean(quoteAcceptanceLabel) && !onAcceptNewPrice)
-            }
-            isLoading={isLoading}
+            onClick={primaryAction.onConfirm}
+            disabled={isLoading || quoteRefreshing || primaryAction.confirmDisabled}
+            isLoading={isLoading || quoteRefreshing}
             aria-label={
-              quoteAcceptanceLabel
-                ? quoteAcceptanceLabel
-                : approvalDetails
-                  ? 'Confirm token approval'
-                  : actionLabel
+              primaryAction.onConfirm === onConfirm && approvalDetails && !combinedNetworkFee
+                ? 'Confirm token approval'
+                : primaryAction.confirmLabel
             }
-            className={`min-w-0 flex-[2] text-sm text-black ${quoteAcceptanceLabel ? 'bg-warning hover:bg-warning/90' : ''}`}
+            className={`min-w-0 flex-[2] text-sm text-black ${primaryAction.confirmTone === 'warning' ? 'bg-warning hover:bg-warning/90' : ''}`}
           >
-            {quoteAcceptanceLabel
-              ? quoteAcceptanceLabel
-              : actionLabel === 'Confirm Swap'
-                ? 'Confirm'
-                : actionLabel}
+            {primaryAction.confirmLabel === 'Confirm Swap' ? 'Confirm' : primaryAction.confirmLabel}
           </Button>
         </div>
       </div>
@@ -547,7 +556,7 @@ function QuoteAssetRow({
                     className={
                       badge === 'Shield'
                         ? 'shrink-0 rounded bg-success/15 px-2 py-0.5 text-[11px] text-success'
-                        : badge === 'Private' || badge === 'Confidential'
+                        : badge === 'Incognito' || badge === 'Confidential'
                           ? 'shrink-0 rounded bg-private/12 px-2 py-0.5 text-[11px] text-private'
                           : 'shrink-0 rounded border border-dashed border-border px-2 py-0.5 text-[11px] text-muted'
                     }
