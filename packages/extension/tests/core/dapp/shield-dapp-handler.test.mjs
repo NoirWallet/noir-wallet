@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { handleShieldDAppRequest } from '../../../src/background/shield-dapp-handler.ts'
+import {
+  handleShieldDAppRequest,
+  resolveShieldDappScope
+} from '../../../src/background/shield-dapp-handler.ts'
 import { ShieldProviderError } from '../../../src/core/dapp/shield-provider.ts'
 
 const scope = {
@@ -293,5 +296,49 @@ test('status refresh rejects a missing or malformed operation id', async () => {
       scope
     }),
     error => error instanceof ShieldProviderError && error.code === -32602
+  )
+})
+
+test('imported EVM account supplies a Shield scope after the retained pointer is cleared', () => {
+  assert.deepEqual(
+    resolveShieldDappScope({
+      network: 'mainnet',
+      activeAccount: { walletId: 'wallet:private-key-v2:evm', accountId: 'account:evm' },
+      retainedWalletId: null,
+      retainedAccountId: null
+    }),
+    {
+      network: 'mainnet',
+      keyDomainId: 'wallet:private-key-v2:evm',
+      accountId: 'account:evm'
+    }
+  )
+})
+
+test('Shield scope stays empty when neither active nor retained account is selected', () => {
+  assert.equal(
+    resolveShieldDappScope({
+      network: 'mainnet',
+      activeAccount: null,
+      retainedWalletId: null,
+      retainedAccountId: null
+    }),
+    null
+  )
+})
+
+test('Shield scope prefers the Storage V2 account over a stale retained pointer', () => {
+  assert.deepEqual(
+    resolveShieldDappScope({
+      network: 'mainnet',
+      activeAccount: { walletId: 'wallet:private-key-v2:evm', accountId: 'account:evm' },
+      retainedWalletId: 'wallet:mnemonic',
+      retainedAccountId: 'account:mnemonic'
+    }),
+    {
+      network: 'mainnet',
+      keyDomainId: 'wallet:private-key-v2:evm',
+      accountId: 'account:evm'
+    }
   )
 })

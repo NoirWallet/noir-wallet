@@ -41,7 +41,7 @@ import {
   type ZcashOperationAnalyticsContext
 } from '@/lib/analytics/operations'
 import { dappHandler } from './dapp-handler'
-import { handleShieldDAppRequest } from './shield-dapp-handler'
+import { handleShieldDAppRequest, resolveShieldDappScope } from './shield-dapp-handler'
 import { isShieldUnlockRetryError, toShieldProviderErrorShape } from '@/core/dapp/shield-provider'
 import { evmDAppOperationStore } from './evm-dapp-operation-store'
 import { backgroundZcashWalletRuntime } from './zcash-wallet-runtime'
@@ -2775,26 +2775,30 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
         if (chainId === 'shield') {
           if (!(await credentialSession.hasUnlockSession())) await promptUnlock()
           await rehydrateWalletStore()
-          const readShieldScope = () => {
+          const readShieldScope = async () => {
             const wallet = useWalletStore.getState()
-            return wallet.currentWalletId &&
-              wallet.currentAccountId &&
-              wallet.currentNetwork === DEFAULT_NETWORK
-              ? {
-                  network: wallet.currentNetwork,
-                  keyDomainId: wallet.currentWalletId,
-                  accountId: wallet.currentAccountId
-                }
-              : null
+            if (wallet.currentNetwork !== DEFAULT_NETWORK) return null
+            const active = await accountNetworksCoordinator.readActiveAccount()
+            return resolveShieldDappScope({
+              network: wallet.currentNetwork,
+              activeAccount: active
+                ? {
+                    walletId: active.reference.walletId,
+                    accountId: active.reference.accountId
+                  }
+                : null,
+              retainedWalletId: wallet.currentWalletId,
+              retainedAccountId: wallet.currentAccountId
+            })
           }
           // Signing acquires this same account-context lock. Holding it around
           // the handler deadlocks the first connect and drops the dApp response.
-          const requestShield = () =>
+          const requestShield = async () =>
             handleShieldDAppRequest({
               method: request.method,
               params: request.params,
               coordinator: confidentialFundingCoordinator,
-              scope: readShieldScope(),
+              scope: await readShieldScope(),
               requestApproval: async (action, summary) => {
                 const decision = await dappHandler.requestExternalApproval(origin, action, summary)
                 return decision.approved

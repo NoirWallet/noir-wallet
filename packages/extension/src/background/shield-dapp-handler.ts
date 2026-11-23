@@ -18,6 +18,31 @@ type ShieldScope = Readonly<{
   accountId: string
 }>
 
+/**
+ * Imported private-key accounts live in Storage V2 and clear the retained
+ * wallet-store pointer. Prefer that active account, and keep the retained
+ * pointer only when Storage V2 has not selected one.
+ */
+export function resolveShieldDappScope(input: {
+  readonly network: Network
+  readonly activeAccount: Readonly<{ walletId: string; accountId: string }> | null
+  readonly retainedWalletId: string | null
+  readonly retainedAccountId: string | null
+}): ShieldScope | null {
+  const retained =
+    input.retainedWalletId && input.retainedAccountId
+      ? { walletId: input.retainedWalletId, accountId: input.retainedAccountId }
+      : null
+  const selected =
+    input.activeAccount?.walletId && input.activeAccount.accountId ? input.activeAccount : retained
+  if (!selected) return null
+  return Object.freeze({
+    network: input.network,
+    keyDomainId: selected.walletId,
+    accountId: selected.accountId
+  })
+}
+
 function readParams(params: unknown): Record<string, unknown> {
   if (typeof params !== 'object' || params === null || Array.isArray(params)) {
     throw new ShieldProviderError(-32602, 'Shield request params must be an object.')
