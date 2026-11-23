@@ -180,6 +180,29 @@ export interface ShieldDappToken {
   readonly decimals: number
 }
 
+/**
+ * Destination chain keeps the source token. A shared identity wins over the
+ * symbol. Without an identity, the symbol is used only when it is unique.
+ */
+export function selectShieldSameTokenAsset(input: {
+  readonly sourceAssetId: string
+  readonly sourceSymbol: string
+  readonly destinationChainId: string
+  readonly tokens: readonly ShieldDappToken[]
+  readonly identityFor: (assetId: string) => string | null
+}): ShieldDappToken | null {
+  const onChain = input.tokens.filter(token => token.chainId === input.destinationChainId)
+  const source = onChain.find(token => token.assetId === input.sourceAssetId)
+  if (source) return source
+  const sourceIdentity = input.identityFor(input.sourceAssetId)
+  if (sourceIdentity) {
+    const matches = onChain.filter(token => input.identityFor(token.assetId) === sourceIdentity)
+    return matches.length === 1 ? matches[0] : null
+  }
+  const symbols = onChain.filter(token => token.symbol === input.sourceSymbol)
+  return symbols.length === 1 ? symbols[0] : null
+}
+
 interface CatalogAsset {
   readonly asset: {
     readonly chainId: string

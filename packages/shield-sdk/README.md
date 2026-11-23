@@ -35,12 +35,11 @@ const received = await receive.wait()
 
 const transfer = await shieldSdk.shield.transfer({
   layer: 'near-confidential',
-  token: { chainId: 'eip155:56', assetId: 'eip155:56/slip44:714' },
+  token: { chainId: 1, assetId: 'eip155:1/slip44:60' },
   amount: '0.05',
   destination: {
     kind: 'public',
-    chainId: 1,
-    assetId: 'eip155:1/slip44:60',
+    chainId: 8453,
     address: '0x1111111111111111111111111111111111111111'
   }
 })
@@ -59,4 +58,4 @@ const restored = await shieldSdk.getTransactionStatus({
 })
 ```
 
-`wait({ signal, timeoutMs })` only ends the client wait. A timeout or abort does not mark the operation failed and does not submit it again. Amounts are decimal strings. The token is a chain plus an asset id. `56`, `eip155:56`, and canonical hex all normalize to `eip155:56`.
+`wait({ signal, timeoutMs })` only ends the client wait. A timeout or abort does not mark the operation failed and does not submit it again. Amounts are decimal strings. The token is a chain plus an asset id. `56`, `eip155:56`, and canonical hex all normalize to `eip155:56`. A transfer destination names a chain and a recipient. The wallet settles that same token on the destination chain.

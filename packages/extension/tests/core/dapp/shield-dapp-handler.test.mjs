@@ -54,7 +54,6 @@ test('public Shield transfer prepares, asks for approval, and confirms', async (
       destination: {
         kind: 'public',
         chainId: 'eip155:1',
-        assetId: 'eip155:1/slip44:60',
         address: '0x1111111111111111111111111111111111111111'
       }
     },
@@ -290,8 +289,7 @@ test('confidential Shield transfer accepts another EVM account', async () => {
       destination: {
         kind: 'confidential',
         accountId,
-        chainId: 'eip155:1',
-        assetId: 'eip155:1/slip44:60'
+        chainId: 'eip155:1'
       }
     },
     coordinator: {
@@ -335,8 +333,7 @@ test('confidential Shield transfer accepts another EVM account', async () => {
     {
       kind: 'confidential',
       accountId,
-      chainId: 'eip155:1',
-      assetId: 'eip155:1/slip44:60'
+      chainId: 'eip155:1'
     },
     'NEAR Confidential'
   ])
@@ -394,6 +391,36 @@ test('confidential Shield transfer returns a started plan without confirming aga
   })
   assert.deepEqual(calls, [['get', operationId]])
   assert.equal(report.status, 'submitting')
+})
+
+test('Shield transfer rejects a selected destination token', async () => {
+  await assert.rejects(
+    handleShieldDAppRequest({
+      method: 'shield_transfer',
+      params: {
+        layer: 'near-confidential',
+        token: { chainId: 'eip155:56', assetId: 'eip155:56/slip44:714' },
+        amount: '0.10',
+        destination: {
+          kind: 'public',
+          chainId: 'eip155:1',
+          assetId: 'eip155:1/slip44:60',
+          address: '0x1111111111111111111111111111111111111111'
+        }
+      },
+      coordinator: {
+        prepareShieldDappTransfer: async () => {
+          throw new Error('not called')
+        }
+      },
+      scope,
+      requestApproval: async () => true
+    }),
+    error =>
+      error instanceof ShieldProviderError &&
+      error.code === -32602 &&
+      error.message === 'Shield destination token cannot be selected.'
+  )
 })
 
 test('confidential Shield transfer rejects a non-EVM or zero account', async () => {

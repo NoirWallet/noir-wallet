@@ -90,9 +90,20 @@ export function prepareReceive(input: unknown): Readonly<Record<string, unknown>
   })
 }
 
+function rejectDestinationToken(destination: unknown): void {
+  if (!isRecord(destination)) return
+  if (
+    Object.prototype.hasOwnProperty.call(destination, 'assetId') ||
+    Object.prototype.hasOwnProperty.call(destination, 'symbol')
+  ) {
+    throw new ShieldError('INVALID_PARAMS', 'Shield destination token cannot be selected.')
+  }
+}
+
 export function prepareQuote(
   input: Readonly<Record<string, unknown>>
 ): Readonly<Record<string, unknown>> {
+  rejectDestinationToken(input.destination)
   return withLowercaseConfidentialAccountId(input)
 }
 
@@ -109,10 +120,11 @@ export function prepareTransfer(input: unknown): Readonly<Record<string, unknown
   assertNearConfidentialLayer(input.layer)
   const token = tokenRef(input.token, 'Token')
   const destination = input.destination
+  rejectDestinationToken(destination)
   if (!isRecord(destination) || destination.kind === 'confidential') {
     if (
       !isRecord(destination) ||
-      !exactKeys(destination, ['kind', 'accountId', 'chainId', 'assetId', 'symbol']) ||
+      !exactKeys(destination, ['kind', 'accountId', 'chainId']) ||
       destination.kind !== 'confidential' ||
       typeof destination.accountId !== 'string' ||
       destination.accountId.trim() !== destination.accountId ||
@@ -121,19 +133,9 @@ export function prepareTransfer(input: unknown): Readonly<Record<string, unknown
     ) {
       throw new ShieldError('INVALID_PARAMS', 'Confidential recipient account ID is invalid.')
     }
-    const destinationToken =
-      destination.chainId !== undefined ||
-      destination.assetId !== undefined ||
-      destination.symbol !== undefined
-        ? tokenRef(
-            {
-              chainId: destination.chainId,
-              ...(destination.assetId !== undefined ? { assetId: destination.assetId } : {}),
-              ...(destination.symbol !== undefined ? { symbol: destination.symbol } : {})
-            },
-            'Destination'
-          )
-        : undefined
+    const chainId = Object.prototype.hasOwnProperty.call(destination, 'chainId')
+      ? normalizeShieldChainId(destination.chainId)
+      : undefined
     return Object.freeze({
       layer: NEAR_CONFIDENTIAL_LAYER,
       token,
@@ -141,13 +143,13 @@ export function prepareTransfer(input: unknown): Readonly<Record<string, unknown
       destination: Object.freeze({
         kind: 'confidential',
         accountId: lowercaseConfidentialAccountId(destination.accountId),
-        ...(destinationToken ?? {})
+        ...(chainId !== undefined ? { chainId } : {})
       })
     })
   }
   if (
     destination.kind !== 'public' ||
-    !exactKeys(destination, ['kind', 'chainId', 'assetId', 'symbol', 'address']) ||
+    !exactKeys(destination, ['kind', 'chainId', 'address']) ||
     typeof destination.address !== 'string'
   ) {
     throw new ShieldError('INVALID_PARAMS', 'Public Shield destination is invalid.')
@@ -160,8 +162,6 @@ export function prepareTransfer(input: unknown): Readonly<Record<string, unknown
     destination: Object.freeze({
       kind: 'public',
       chainId: normalizeShieldChainId(destination.chainId),
-      ...(typeof destination.assetId === 'string' ? { assetId: destination.assetId } : {}),
-      ...(typeof destination.symbol === 'string' ? { symbol: destination.symbol } : {}),
       address
     })
   })

@@ -176,94 +176,46 @@ function readQuoteAmount(value: unknown): string {
 }
 
 type ShieldTransferDestination =
-  | Readonly<{ kind: 'public'; chainId: string; assetId: string; address: string }>
-  | Readonly<{
-      kind: 'confidential'
-      accountId: string
-      chainId?: string
-      assetId?: string
-      symbol?: string
-    }>
-
-function readConfidentialSymbol(value: unknown): string {
-  if (
-    typeof value !== 'string' ||
-    value.length === 0 ||
-    value.length > 32 ||
-    value !== value.trim()
-  ) {
-    throw new ShieldProviderError(-32602, 'Shield destination is invalid.')
-  }
-  return value
-}
-
-function readConfidentialDestinationToken(
-  record: Record<string, unknown>
-): Readonly<{ chainId: string; assetId?: string; symbol?: string }> | undefined {
-  const present = ['chainId', 'assetId', 'symbol'].filter(key =>
-    Object.prototype.hasOwnProperty.call(record, key)
-  )
-  if (present.length === 0) return undefined
-  if (
-    !present.includes('chainId') ||
-    (!present.includes('assetId') && !present.includes('symbol'))
-  ) {
-    throw new ShieldProviderError(-32602, 'Shield destination is invalid.')
-  }
-  if (present.includes('assetId')) {
-    const token = readTokenRef(
-      {
-        chainId: record.chainId,
-        assetId: record.assetId,
-        ...(present.includes('symbol') ? { symbol: record.symbol } : {})
-      },
-      'Shield destination'
-    )
-    return Object.freeze({
-      ...token,
-      ...(present.includes('symbol') ? { symbol: readConfidentialSymbol(record.symbol) } : {})
-    })
-  }
-  return Object.freeze({
-    chainId: normalizeShieldChainId(record.chainId),
-    symbol: readConfidentialSymbol(record.symbol)
-  })
-}
+  | Readonly<{ kind: 'public'; chainId: string; address: string }>
+  | Readonly<{ kind: 'confidential'; accountId: string; chainId?: string }>
 
 function readTransferDestination(value: unknown): ShieldTransferDestination {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     throw new ShieldProviderError(-32602, 'Shield destination is invalid.')
   }
   const record = value as Record<string, unknown>
+  if (
+    Object.prototype.hasOwnProperty.call(record, 'assetId') ||
+    Object.prototype.hasOwnProperty.call(record, 'symbol')
+  ) {
+    throw new ShieldProviderError(-32602, 'Shield destination token cannot be selected.')
+  }
   if (record.kind === 'confidential') {
     const keys = Object.keys(record)
-    if (
-      keys.length < 2 ||
-      keys.some(key => !['kind', 'accountId', 'chainId', 'assetId', 'symbol'].includes(key))
-    ) {
+    if (keys.length < 2 || keys.some(key => !['kind', 'accountId', 'chainId'].includes(key))) {
       throw new ShieldProviderError(-32602, 'Shield destination is invalid.')
     }
     const accountId = record.accountId
     if (typeof accountId !== 'string' || !isAddress(accountId) || /^0x0{40}$/i.test(accountId)) {
       throw new ShieldProviderError(-32602, 'Confidential recipient account ID is invalid.')
     }
+    const chainId = Object.prototype.hasOwnProperty.call(record, 'chainId')
+      ? normalizeShieldChainId(record.chainId)
+      : undefined
     return Object.freeze({
       kind: 'confidential',
       accountId,
-      ...readConfidentialDestinationToken(record)
+      ...(chainId !== undefined ? { chainId } : {})
     })
   }
   if (record.kind !== 'public') {
     throw new ShieldProviderError(-32602, 'Shield destination is invalid.')
   }
   const keys = Object.keys(record)
-  if (keys.some(key => !['kind', 'chainId', 'assetId', 'address', 'symbol'].includes(key))) {
+  if (keys.length !== 3 || keys.some(key => !['kind', 'chainId', 'address'].includes(key))) {
     throw new ShieldProviderError(-32602, 'Shield destination is invalid.')
   }
-  const token = readTokenRef(
-    { chainId: record.chainId, assetId: record.assetId },
-    'Shield destination'
-  )
+  const chainId = normalizeShieldChainId(record.chainId)
   const address = record.address
   if (
     typeof address !== 'string' ||
@@ -274,7 +226,7 @@ function readTransferDestination(value: unknown): ShieldTransferDestination {
   ) {
     throw new ShieldProviderError(-32602, 'Shield destination address is invalid.')
   }
-  return Object.freeze({ kind: 'public', ...token, address })
+  return Object.freeze({ kind: 'public', chainId, address })
 }
 
 function requireCatalogQuery(params: unknown): void {

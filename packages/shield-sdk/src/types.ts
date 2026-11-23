@@ -18,20 +18,20 @@ export interface ShieldTokenRef {
   readonly symbol?: string
 }
 
+/**
+ * Recipient on a chain. The settled asset is the request token on that chain.
+ * A destination token is not part of the request.
+ */
 export type ShieldTransferDestination =
   | Readonly<{
       kind: 'public'
       chainId: ShieldChainIdInput
-      assetId?: string
-      symbol?: string
       address: string
     }>
   | Readonly<{
       kind: 'confidential'
       accountId: string
       chainId?: ShieldChainIdInput
-      assetId?: string
-      symbol?: string
     }>
 
 export type ShieldAction = 'receive' | 'transfer'

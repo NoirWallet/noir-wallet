@@ -165,12 +165,20 @@ label,
   box-shadow: 0 18px 48px rgba(0, 0, 0, 0.32);
 }
 
+.token-panel .input {
+  width: 100%;
+}
+
 .token-list {
   max-height: 260px;
   margin: 8px 0 0;
   padding: 0;
   overflow: auto;
   list-style: none;
+}
+
+.token-list-plain {
+  margin-top: 0;
 }
 
 .token-option {

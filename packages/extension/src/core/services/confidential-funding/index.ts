@@ -54,6 +54,7 @@ export {
   projectShieldDappOperationDetails,
   projectShieldDappPlanStatus,
   projectShieldDappQuote,
+  selectShieldSameTokenAsset,
   shieldDappOperationReport,
   shieldDappPlanAction,
   shieldSameDecimalsQuoteDifferenceRaw,

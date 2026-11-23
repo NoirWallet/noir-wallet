@@ -12,6 +12,7 @@ import {
   projectShieldDappOperationDetails,
   projectShieldDappPlanStatus,
   projectShieldDappQuote,
+  selectShieldSameTokenAsset,
   shieldSameDecimalsQuoteDifferenceRaw,
   confidentialPrivateTokenId,
   filterConfidentialPortfolioMappings,
@@ -1047,4 +1048,53 @@ test('reads a Shield operation only for the active account and refreshes an in-f
       amount: '0.1'
     }
   })
+})
+
+test('selects the same Shield token on another chain', () => {
+  const tokens = [
+    { chainId: 'eip155:1', assetId: 'eip155:1/slip44:60', symbol: 'ETH', decimals: 18 },
+    { chainId: 'eip155:8453', assetId: 'eip155:8453/slip44:60', symbol: 'ETH', decimals: 18 },
+    { chainId: 'eip155:8453', assetId: 'eip155:8453/erc20:0xusdc', symbol: 'USDC', decimals: 6 },
+    { chainId: 'eip155:137', assetId: 'eip155:137/erc20:0xone', symbol: 'UNKNOWN', decimals: 6 },
+    { chainId: 'eip155:137', assetId: 'eip155:137/erc20:0xtwo', symbol: 'UNKNOWN', decimals: 6 },
+    { chainId: 'eip155:10', assetId: 'eip155:10/erc20:0xonly', symbol: 'ONLY', decimals: 6 }
+  ]
+  const identityFor = assetId =>
+    assetId.endsWith('/slip44:60') ? 'eth' : assetId.endsWith('usdc') ? 'usdc' : null
+  expect(
+    selectShieldSameTokenAsset({
+      sourceAssetId: 'eip155:1/slip44:60',
+      sourceSymbol: 'ETH',
+      destinationChainId: 'eip155:8453',
+      tokens,
+      identityFor
+    })?.assetId
+  ).toBe('eip155:8453/slip44:60')
+  expect(
+    selectShieldSameTokenAsset({
+      sourceAssetId: 'eip155:1/slip44:60',
+      sourceSymbol: 'ETH',
+      destinationChainId: 'eip155:56',
+      tokens,
+      identityFor
+    })
+  ).toBeNull()
+  expect(
+    selectShieldSameTokenAsset({
+      sourceAssetId: 'eip155:1/erc20:0xunknown',
+      sourceSymbol: 'UNKNOWN',
+      destinationChainId: 'eip155:137',
+      tokens,
+      identityFor
+    })
+  ).toBeNull()
+  expect(
+    selectShieldSameTokenAsset({
+      sourceAssetId: 'eip155:1/erc20:0xonly',
+      sourceSymbol: 'ONLY',
+      destinationChainId: 'eip155:10',
+      tokens,
+      identityFor
+    })?.assetId
+  ).toBe('eip155:10/erc20:0xonly')
 })

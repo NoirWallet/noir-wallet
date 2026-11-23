@@ -37,6 +37,8 @@ import { parseAccountId } from '@/core/accounts/domain'
 import { parseKeyDomainId } from '@/core/keyring/domain'
 import type { AssetDefinitionInput, AssetRegistry } from '@/core/chains/registry'
 import { parseAssetId, parseChainId } from '@/core/chains/registry'
+import { getCrossChainSendAssetGroup } from '@/core/chains/cross-chain-asset-group'
+import { getAssetMarketMappings } from '@/core/prices/asset-market-mappings'
 import {
   createInitialProductChainRegistry,
   getZcashChainId,
@@ -52,6 +54,7 @@ import {
   projectShieldDappOperationDetails,
   projectShieldDappPlanStatus,
   projectShieldDappQuote,
+  selectShieldSameTokenAsset,
   shieldDappOperationReport,
   shieldDappPlanAction,
   shieldSameDecimalsQuoteDifferenceRaw,
@@ -3030,20 +3033,36 @@ export class ConfidentialFundingCoordinator {
     })
   }
 
-  private resolveConfidentialTransferToken(
-    source: ReturnType<ConfidentialFundingCoordinator['resolveShieldCatalogToken']>,
-    destination: Readonly<{ chainId?: string; assetId?: string; symbol?: string }>
-  ) {
-    if (!destination.chainId && !destination.assetId && !destination.symbol) return source
-    if (!destination.chainId) throw new Error('Shield token is not available.')
-    if (destination.assetId) {
-      return this.resolveShieldCatalogToken(destination.chainId, destination.assetId)
+  private shieldTokenIdentity(assetId: string): string | null {
+    if (this.options.network === 'mainnet') {
+      try {
+        const group = getCrossChainSendAssetGroup(parseAssetId(assetId))
+        if (group) return group
+      } catch {
+        return null
+      }
     }
-    const matches = this.listShieldDappCatalog().tokens.filter(
-      token => token.chainId === destination.chainId && token.symbol === destination.symbol
+    return (
+      getAssetMarketMappings(this.options.network, this.options.assets).find(
+        mapping => mapping.assetId === assetId
+      )?.marketAssetId ?? null
     )
-    if (matches.length !== 1) throw new Error('Shield token is not available.')
-    return this.resolveShieldCatalogToken(matches[0].chainId, matches[0].assetId)
+  }
+
+  private resolveTransferDestinationToken(
+    source: ReturnType<ConfidentialFundingCoordinator['resolveShieldCatalogToken']>,
+    destinationChainId?: string
+  ) {
+    if (!destinationChainId || destinationChainId === source.chainId) return source
+    const selected = selectShieldSameTokenAsset({
+      sourceAssetId: source.assetId,
+      sourceSymbol: source.symbol,
+      destinationChainId,
+      tokens: this.listShieldDappCatalog().tokens,
+      identityFor: assetId => this.shieldTokenIdentity(assetId)
+    })
+    if (!selected) throw new Error('Shield token is not available.')
+    return this.resolveShieldCatalogToken(selected.chainId, selected.assetId)
   }
 
   private shieldQuoteRecipient(chainId: string, address: string): string {
@@ -3066,14 +3085,8 @@ export class ConfidentialFundingCoordinator {
     readonly amount: string
     readonly source: Readonly<{ chainId: string; assetId: string }>
     readonly destination?:
-      | Readonly<{ kind: 'public'; chainId: string; assetId: string; address: string }>
-      | Readonly<{
-          kind: 'confidential'
-          accountId: string
-          chainId?: string
-          assetId?: string
-          symbol?: string
-        }>
+      | Readonly<{ kind: 'public'; chainId: string; address: string }>
+      | Readonly<{ kind: 'confidential'; accountId: string; chainId?: string }>
   }) {
     if (input.scope.network !== this.options.network)
       throw new Error('Confidential network changed')
@@ -3109,9 +3122,9 @@ export class ConfidentialFundingCoordinator {
     }
     const publicDestination = input.destination?.kind === 'public' ? input.destination : undefined
     const destination = publicDestination
-      ? this.resolveShieldCatalogToken(publicDestination.chainId, publicDestination.assetId)
+      ? this.resolveTransferDestinationToken(source, publicDestination.chainId)
       : confidentialDestination
-        ? this.resolveConfidentialTransferToken(source, confidentialDestination)
+        ? this.resolveTransferDestinationToken(source, confidentialDestination.chainId)
         : source
     const recipient = confidentialDestination
       ? confidentialDestination.accountId
@@ -3249,14 +3262,8 @@ export class ConfidentialFundingCoordinator {
     readonly token: Readonly<{ chainId: string; assetId: string }>
     readonly amount: string
     readonly destination:
-      | Readonly<{ kind: 'public'; chainId: string; assetId: string; address: string }>
-      | Readonly<{
-          kind: 'confidential'
-          accountId: string
-          chainId?: string
-          assetId?: string
-          symbol?: string
-        }>
+      | Readonly<{ kind: 'public'; chainId: string; address: string }>
+      | Readonly<{ kind: 'confidential'; accountId: string; chainId?: string }>
   }): Promise<{
     readonly planId: string
     readonly phase: ConfidentialFundingPlan['phase']
@@ -3280,7 +3287,7 @@ export class ConfidentialFundingCoordinator {
       throw new Error('Active Wallet Account changed')
     const source = this.resolveShieldCatalogToken(input.token.chainId, input.token.assetId)
     if (input.destination.kind === 'confidential') {
-      const target = this.resolveConfidentialTransferToken(source, input.destination)
+      const target = this.resolveTransferDestinationToken(source, input.destination.chainId)
       let amountRaw: string
       try {
         amountRaw = parseDisplayUnitAmount(input.amount, source.decimals)
@@ -3327,10 +3334,7 @@ export class ConfidentialFundingCoordinator {
         ...this.shieldApprovalQuoteFields(review, source, target)
       })
     }
-    const destination = this.resolveShieldCatalogToken(
-      input.destination.chainId,
-      input.destination.assetId
-    )
+    const destination = this.resolveTransferDestinationToken(source, input.destination.chainId)
     if (!destination.chainId.startsWith('eip155:')) {
       throw new Error('Shield destination chain is invalid.')
     }

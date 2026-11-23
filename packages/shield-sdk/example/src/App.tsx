@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { getNoirWallet } from '@noir-wallet/sdk'
 import {
   NoirShieldSDK,
@@ -9,7 +9,8 @@ import {
   type ShieldOperationHandle,
   type ShieldTokenInfo
 } from '@noir-wallet/shield-sdk'
-import { TokenPicker } from './token-picker'
+import { OptionPicker } from './option-picker'
+import { TokenPicker, chainTitle } from './token-picker'
 
 const sdk = new NoirShieldSDK()
 const LAYER = 'near-confidential' as const
@@ -45,8 +46,7 @@ export default function App() {
   const [chainId, setChainId] = useState('56')
   const [assetId, setAssetId] = useState('eip155:56/slip44:714')
   const [amount, setAmount] = useState('0.10')
-  const [destinationChainId, setDestinationChainId] = useState('1')
-  const [destinationAssetId, setDestinationAssetId] = useState('eip155:1/slip44:60')
+  const [destinationChainId, setDestinationChainId] = useState('56')
   const [address, setAddress] = useState('0x1111111111111111111111111111111111111111')
   const [accountId, setAccountId] = useState('0x2222222222222222222222222222222222222222')
   const [operationId, setOperationId] = useState('')
@@ -61,11 +61,9 @@ export default function App() {
   const chainIdRef = useRef(chainId)
   const assetIdRef = useRef(assetId)
   const destinationChainIdRef = useRef(destinationChainId)
-  const destinationAssetIdRef = useRef(destinationAssetId)
   chainIdRef.current = chainId
   assetIdRef.current = assetId
   destinationChainIdRef.current = destinationChainId
-  destinationAssetIdRef.current = destinationAssetId
 
   const refreshWallet = useCallback(() => setWallet(readWallet()), [])
 
@@ -108,16 +106,11 @@ export default function App() {
           setAssetId(pick.assetId)
         }
         if (action === 'transfer') {
-          const destinationSelected = nextTokens.find(
-            token =>
-              token.chainId === destinationChainIdRef.current &&
-              token.assetId === destinationAssetIdRef.current
+          const knownChain = nextChains.some(
+            chain => chain.chainId === destinationChainIdRef.current
           )
-          const destinationPick = destinationSelected ?? nextTokens[0]
-          if (destinationPick && !destinationSelected) {
-            setDestinationChainId(destinationPick.chainId)
-            setDestinationAssetId(destinationPick.assetId)
-          }
+          const sourceChain = pick?.chainId ?? nextChains[0]?.chainId
+          if (!knownChain && sourceChain) setDestinationChainId(sourceChain)
         }
         setCatalogFailed(false)
         setCatalogNote(`${nextChains.length} chains · ${nextTokens.length} tokens`)
@@ -179,19 +172,32 @@ export default function App() {
   }
 
   const source = { chainId, assetId }
+  const destinationChains = useMemo(() => {
+    const sourceToken = tokens.find(token => token.chainId === chainId && token.assetId === assetId)
+    return chains.filter(chain =>
+      tokens.some(
+        token =>
+          token.chainId === chain.chainId && (!sourceToken || token.symbol === sourceToken.symbol)
+      )
+    )
+  }, [assetId, chainId, chains, tokens])
+  useEffect(() => {
+    if (action !== 'transfer' || destinationChains.length === 0) return
+    if (!destinationChains.some(chain => chain.chainId === destinationChainId)) {
+      setDestinationChainId(destinationChains[0].chainId)
+    }
+  }, [action, destinationChainId, destinationChains])
   const destination =
     destinationKind === 'public'
       ? {
           kind: 'public' as const,
           chainId: destinationChainId,
-          assetId: destinationAssetId,
           address
         }
       : {
           kind: 'confidential' as const,
           accountId,
-          chainId: destinationChainId,
-          assetId: destinationAssetId
+          chainId: destinationChainId
         }
   const locked = busy !== 'idle'
 
@@ -251,17 +257,19 @@ export default function App() {
           <h2>Catalog</h2>
           <p className={catalogFailed ? 'hint error' : 'hint'}>{catalogNote}</p>
           <div className="fields">
-            <label>
-              Action
-              <select
-                className="input"
+            <div className="field">
+              <span>Action</span>
+              <OptionPicker
                 value={action}
-                onChange={event => setAction(event.target.value as ShieldAction)}
-              >
-                <option value="receive">receive</option>
-                <option value="transfer">transfer</option>
-              </select>
-            </label>
+                placeholder="Select an action"
+                emptyLabel="No actions."
+                options={[
+                  { value: 'receive', title: 'receive' },
+                  { value: 'transfer', title: 'transfer' }
+                ]}
+                onSelect={setAction}
+              />
+            </div>
           </div>
           <div className="balances">
             <div className="row">
@@ -336,54 +344,43 @@ export default function App() {
               />
             </div>
             {action === 'transfer' ? (
-              <label>
-                Destination kind
-                <select
-                  className="input"
+              <div className="field">
+                <span>Destination kind</span>
+                <OptionPicker
                   value={destinationKind}
-                  onChange={event => setDestinationKind(event.target.value as DestinationKind)}
-                >
-                  <option value="public">Public chain address</option>
-                  <option value="confidential">Confidential account</option>
-                </select>
-              </label>
+                  placeholder="Select a destination"
+                  emptyLabel="No destination kinds."
+                  options={[
+                    { value: 'public', title: 'Public chain address' },
+                    { value: 'confidential', title: 'Confidential account' }
+                  ]}
+                  onSelect={setDestinationKind}
+                />
+              </div>
             ) : null}
             {action === 'transfer' ? (
               <p className="hint span-2">
                 {destinationKind === 'public'
-                  ? 'Funds leave Shield and settle to the public-chain address below.'
-                  : 'Funds stay on NEAR Confidential and go to another account. The destination token can be on a different chain.'}
+                  ? 'Funds leave Shield and settle as the same token on the destination chain.'
+                  : 'Funds stay on NEAR Confidential and settle as the same token on the destination chain.'}
               </p>
             ) : null}
             {action === 'transfer' ? (
               <>
-                <label>
-                  Destination chain
-                  <input
-                    className="input"
-                    value={destinationChainId}
-                    onChange={event => setDestinationChainId(event.target.value)}
-                  />
-                </label>
-                <label>
-                  Destination asset
-                  <input
-                    className="input"
-                    value={destinationAssetId}
-                    onChange={event => setDestinationAssetId(event.target.value)}
-                  />
-                </label>
                 <div className="field">
-                  <span>Destination token</span>
-                  <TokenPicker
-                    tokens={tokens}
-                    chains={chains}
-                    chainId={destinationChainId}
-                    assetId={destinationAssetId}
-                    onSelect={token => {
-                      setDestinationChainId(token.chainId)
-                      setDestinationAssetId(token.assetId)
-                    }}
+                  <span>Destination chain</span>
+                  <OptionPicker
+                    searchable
+                    value={destinationChainId}
+                    placeholder="Select a destination chain"
+                    emptyLabel="Load chains first."
+                    searchPlaceholder="Search chain"
+                    options={destinationChains.map(chain => ({
+                      value: chain.chainId,
+                      title: chainTitle(chain.chainId, chains),
+                      detail: chain.chainId
+                    }))}
+                    onSelect={setDestinationChainId}
                   />
                 </div>
                 {destinationKind === 'public' ? (

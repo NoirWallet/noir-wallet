@@ -26,12 +26,12 @@ test('transfer accepts a public address or a confidential account id', () => {
     destination: {
       kind: 'public',
       chainId: 'eip155:1',
-      assetId: 'eip155:1/slip44:60',
       address: '0x1111111111111111111111111111111111111111'
     }
   })
   assert.equal(pub.destination.kind, 'public')
   assert.equal(pub.destination.chainId, 'eip155:1')
+  assert.equal('assetId' in pub.destination, false)
   assert.equal(pub.token.chainId, 'eip155:56')
 
   const internal = prepareTransfer({
@@ -51,17 +51,13 @@ test('transfer accepts a public address or a confidential account id', () => {
     destination: {
       kind: 'confidential',
       accountId: 'recipient.account',
-      chainId: '0x1',
-      assetId: 'eip155:1/slip44:60',
-      symbol: 'ETH'
+      chainId: '0x1'
     }
   })
   assert.deepEqual(crossChain.destination, {
     kind: 'confidential',
     accountId: 'recipient.account',
-    chainId: 'eip155:1',
-    assetId: 'eip155:1/slip44:60',
-    symbol: 'ETH'
+    chainId: 'eip155:1'
   })
   assert.throws(
     () =>
@@ -69,9 +65,14 @@ test('transfer accepts a public address or a confidential account id', () => {
         layer: 'near-confidential',
         token: { chainId: 1, assetId: 'eip155:1/slip44:60' },
         amount: '1',
-        destination: { kind: 'confidential', accountId: 'recipient.account', chainId: 1 }
+        destination: {
+          kind: 'confidential',
+          accountId: 'recipient.account',
+          chainId: 1,
+          assetId: 'eip155:1/slip44:60'
+        }
       }),
-    ShieldError
+    /destination token cannot be selected/
   )
   assert.equal('peaAddress' in internal, false)
   assert.equal('peaAddress' in internal.destination, false)
@@ -101,11 +102,26 @@ test('transfer accepts a public address or a confidential account id', () => {
     destination: {
       kind: 'public',
       chainId: 'eip155:1',
-      assetId: 'eip155:1/slip44:60',
       address: checksummed
     }
   })
   assert.equal(publicQuote.destination.address, checksummed)
+  assert.throws(
+    () =>
+      prepareQuote({
+        layer: 'near-confidential',
+        action: 'transfer',
+        amount: '1',
+        token: { chainId: 1, assetId: 'eip155:1/slip44:60' },
+        destination: {
+          kind: 'public',
+          chainId: 'eip155:1',
+          symbol: 'ETH',
+          address: checksummed
+        }
+      }),
+    /destination token cannot be selected/
+  )
 })
 
 test('rejects another layer, peaAddress, and a missing asset', () => {
