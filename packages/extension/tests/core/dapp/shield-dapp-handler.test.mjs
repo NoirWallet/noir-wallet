@@ -287,7 +287,12 @@ test('confidential Shield transfer accepts another EVM account', async () => {
       layer: 'near-confidential',
       token: { chainId: 'eip155:56', assetId: 'eip155:56/slip44:714' },
       amount: '0.10',
-      destination: { kind: 'confidential', accountId }
+      destination: {
+        kind: 'confidential',
+        accountId,
+        chainId: 'eip155:1',
+        assetId: 'eip155:1/slip44:60'
+      }
     },
     coordinator: {
       prepareShieldDappTransfer: async input => {
@@ -327,7 +332,12 @@ test('confidential Shield transfer accepts another EVM account', async () => {
   })
   assert.deepEqual(calls, [
     { kind: 'confidential', accountId },
-    { kind: 'confidential', accountId },
+    {
+      kind: 'confidential',
+      accountId,
+      chainId: 'eip155:1',
+      assetId: 'eip155:1/slip44:60'
+    },
     'NEAR Confidential'
   ])
   assert.equal(prepared.status, 'authorized')

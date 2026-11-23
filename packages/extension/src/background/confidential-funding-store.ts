@@ -227,9 +227,6 @@ function parsePlan(value: unknown): ConfidentialFundingPlan {
     (plan.operation === 'confidential-transfer' &&
       (plan.sourceDomain !== 'shield' ||
         plan.destinationDomain !== 'shield' ||
-        plan.source.chainId !== plan.destination.chainId ||
-        plan.source.assetId !== plan.destination.assetId ||
-        plan.source.protocolAssetId !== plan.destination.protocolAssetId ||
         plan.source.address.toLowerCase() !== plan.signerId.toLowerCase() ||
         plan.destination.address.toLowerCase() === plan.signerId.toLowerCase() ||
         !/^0x[0-9a-fA-F]{40}$/.test(plan.destination.address) ||

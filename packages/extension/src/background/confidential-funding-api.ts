@@ -913,8 +913,7 @@ export class ConfidentialFundingApi {
       input.refundType === 'CONFIDENTIAL_INTENTS' &&
       input.recipientType === 'CONFIDENTIAL_INTENTS' &&
       input.recipient.toLowerCase() !== input.signerId.toLowerCase() &&
-      input.refundTo === undefined &&
-      input.originAsset === input.destinationAsset
+      input.refundTo === undefined
     if (!isWithdrawal && !isDeposit && !isInternalSwap && !isConfidentialAccountTransfer) {
       throw new Error('Confidential quote route is invalid')
     }

@@ -29,6 +29,9 @@ export type ShieldTransferDestination =
   | Readonly<{
       kind: 'confidential'
       accountId: string
+      chainId?: ShieldChainIdInput
+      assetId?: string
+      symbol?: string
     }>
 
 export type ShieldAction = 'receive' | 'transfer'

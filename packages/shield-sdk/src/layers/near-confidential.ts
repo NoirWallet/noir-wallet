@@ -112,7 +112,7 @@ export function prepareTransfer(input: unknown): Readonly<Record<string, unknown
   if (!isRecord(destination) || destination.kind === 'confidential') {
     if (
       !isRecord(destination) ||
-      !exactKeys(destination, ['kind', 'accountId']) ||
+      !exactKeys(destination, ['kind', 'accountId', 'chainId', 'assetId', 'symbol']) ||
       destination.kind !== 'confidential' ||
       typeof destination.accountId !== 'string' ||
       destination.accountId.trim() !== destination.accountId ||
@@ -121,13 +121,27 @@ export function prepareTransfer(input: unknown): Readonly<Record<string, unknown
     ) {
       throw new ShieldError('INVALID_PARAMS', 'Confidential recipient account ID is invalid.')
     }
+    const destinationToken =
+      destination.chainId !== undefined ||
+      destination.assetId !== undefined ||
+      destination.symbol !== undefined
+        ? tokenRef(
+            {
+              chainId: destination.chainId,
+              ...(destination.assetId !== undefined ? { assetId: destination.assetId } : {}),
+              ...(destination.symbol !== undefined ? { symbol: destination.symbol } : {})
+            },
+            'Destination'
+          )
+        : undefined
     return Object.freeze({
       layer: NEAR_CONFIDENTIAL_LAYER,
       token,
       amount: assertShieldAmount(input.amount, 255),
       destination: Object.freeze({
         kind: 'confidential',
-        accountId: lowercaseConfidentialAccountId(destination.accountId)
+        accountId: lowercaseConfidentialAccountId(destination.accountId),
+        ...(destinationToken ?? {})
       })
     })
   }

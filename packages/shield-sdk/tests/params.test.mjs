@@ -44,6 +44,35 @@ test('transfer accepts a public address or a confidential account id', () => {
     kind: 'confidential',
     accountId: 'recipient.account'
   })
+  const crossChain = prepareTransfer({
+    layer: 'near-confidential',
+    token: { chainId: 56, assetId: 'eip155:56/slip44:714' },
+    amount: '1',
+    destination: {
+      kind: 'confidential',
+      accountId: 'recipient.account',
+      chainId: '0x1',
+      assetId: 'eip155:1/slip44:60',
+      symbol: 'ETH'
+    }
+  })
+  assert.deepEqual(crossChain.destination, {
+    kind: 'confidential',
+    accountId: 'recipient.account',
+    chainId: 'eip155:1',
+    assetId: 'eip155:1/slip44:60',
+    symbol: 'ETH'
+  })
+  assert.throws(
+    () =>
+      prepareTransfer({
+        layer: 'near-confidential',
+        token: { chainId: 1, assetId: 'eip155:1/slip44:60' },
+        amount: '1',
+        destination: { kind: 'confidential', accountId: 'recipient.account', chainId: 1 }
+      }),
+    ShieldError
+  )
   assert.equal('peaAddress' in internal, false)
   assert.equal('peaAddress' in internal.destination, false)
 

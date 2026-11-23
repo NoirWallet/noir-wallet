@@ -179,6 +179,20 @@ export default function App() {
   }
 
   const source = { chainId, assetId }
+  const destination =
+    destinationKind === 'public'
+      ? {
+          kind: 'public' as const,
+          chainId: destinationChainId,
+          assetId: destinationAssetId,
+          address
+        }
+      : {
+          kind: 'confidential' as const,
+          accountId,
+          chainId: destinationChainId,
+          assetId: destinationAssetId
+        }
   const locked = busy !== 'idle'
 
   return (
@@ -338,10 +352,10 @@ export default function App() {
               <p className="hint span-2">
                 {destinationKind === 'public'
                   ? 'Funds leave Shield and settle to the public-chain address below.'
-                  : 'Funds stay on NEAR Confidential and go to another account ID. This wallet rejects the path because the protocol has not confirmed it.'}
+                  : 'Funds stay on NEAR Confidential and go to another account. The destination token can be on a different chain.'}
               </p>
             ) : null}
-            {action === 'transfer' && destinationKind === 'public' ? (
+            {action === 'transfer' ? (
               <>
                 <label>
                   Destination chain
@@ -372,25 +386,26 @@ export default function App() {
                     }}
                   />
                 </div>
-                <label>
-                  Public address
-                  <input
-                    className="input"
-                    value={address}
-                    onChange={event => setAddress(event.target.value)}
-                  />
-                </label>
+                {destinationKind === 'public' ? (
+                  <label>
+                    Public address
+                    <input
+                      className="input"
+                      value={address}
+                      onChange={event => setAddress(event.target.value)}
+                    />
+                  </label>
+                ) : (
+                  <label>
+                    Confidential account ID
+                    <input
+                      className="input"
+                      value={accountId}
+                      onChange={event => setAccountId(event.target.value)}
+                    />
+                  </label>
+                )}
               </>
-            ) : null}
-            {action === 'transfer' && destinationKind === 'confidential' ? (
-              <label>
-                Confidential account ID
-                <input
-                  className="input"
-                  value={accountId}
-                  onChange={event => setAccountId(event.target.value)}
-                />
-              </label>
             ) : null}
           </div>
           {chains.length > 0 ? (
@@ -411,15 +426,7 @@ export default function App() {
                       ? { source }
                       : {
                           token: source,
-                          destination:
-                            destinationKind === 'public'
-                              ? {
-                                  kind: 'public',
-                                  chainId: destinationChainId,
-                                  assetId: destinationAssetId,
-                                  address
-                                }
-                              : { kind: 'confidential', accountId }
+                          destination
                         })
                   })
                 )
@@ -450,15 +457,7 @@ export default function App() {
                     layer: LAYER,
                     token: source,
                     amount,
-                    destination:
-                      destinationKind === 'public'
-                        ? {
-                            kind: 'public',
-                            chainId: destinationChainId,
-                            assetId: destinationAssetId,
-                            address
-                          }
-                        : { kind: 'confidential', accountId }
+                    destination
                   })
                   return remember(operation)
                 })

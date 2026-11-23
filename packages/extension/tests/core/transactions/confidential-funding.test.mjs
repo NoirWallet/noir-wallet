@@ -1214,6 +1214,25 @@ test.describe('confidential funding safety rules', () => {
         dry: true,
         appFees: [{ recipient: 'platform.near', fee: 50 }]
       })
+      const crossChainStart = quoteRequests.length
+      await api.quote({
+        ...withdrawal,
+        referral: 'noir_send',
+        recipientType: 'CONFIDENTIAL_INTENTS',
+        dry: true
+      })
+      expect(quoteRequests[crossChainStart + 1]).toMatchObject({
+        referral: 'noir_send',
+        originAsset: withdrawal.originAsset,
+        destinationAsset: withdrawal.destinationAsset,
+        depositType: 'CONFIDENTIAL_INTENTS',
+        refundType: 'CONFIDENTIAL_INTENTS',
+        recipientType: 'CONFIDENTIAL_INTENTS',
+        recipient: withdrawal.recipient,
+        refundTo: withdrawal.signerId,
+        dry: true,
+        appFees: [{ recipient: 'platform.near', fee: 50 }]
+      })
       await expect(
         api.quote({
           ...withdrawal,
@@ -1261,7 +1280,7 @@ test.describe('confidential funding safety rules', () => {
           withdrawal
         )
       ).rejects.toThrow('fee rate is invalid')
-      expect(quoteRequests).toHaveLength(23)
+      expect(quoteRequests).toHaveLength(25)
     } finally {
       globalThis.fetch = originalFetch
     }
@@ -1813,6 +1832,8 @@ test('confidential account transfer freezes the signed-intent quote for the othe
   const recipient = '0x3333333333333333333333333333333333333333'
   const assetId = 'eip155:1/slip44:60'
   const protocolAssetId = 'nep141:eth.omft.near'
+  const destinationAssetId = 'eip155:56/slip44:714'
+  const destinationProtocolAssetId = 'nep141:bnb.omft.near'
   const plans = new Map()
   const quotes = []
   let intentDepositAddress = null
@@ -1828,7 +1849,10 @@ test('confidential account transfer freezes the signed-intent quote for the othe
       get: () => ({ metadata: { decimals: 18, symbol: 'ETH' } }),
       list: () => []
     },
-    assetMappings: [{ assetId, protocolAssetId }],
+    assetMappings: [
+      { assetId, protocolAssetId },
+      { assetId: destinationAssetId, protocolAssetId: destinationProtocolAssetId }
+    ],
     repository,
     store: {
       getSession: async () => ({
@@ -1934,10 +1958,10 @@ test('confidential account transfer freezes the signed-intent quote for the othe
       amountRaw: '1000'
     },
     destination: {
-      chainId: 'eip155:1',
-      chainName: 'eth',
-      assetId,
-      protocolAssetId
+      chainId: 'eip155:56',
+      chainName: 'bsc',
+      assetId: destinationAssetId,
+      protocolAssetId: destinationProtocolAssetId
     },
     confidentialRecipient: recipient,
     slippageBps: 50
@@ -1951,7 +1975,7 @@ test('confidential account transfer freezes the signed-intent quote for the othe
   expect(quotes).toHaveLength(1)
   expect(quotes[0]).toMatchObject({
     originAsset: protocolAssetId,
-    destinationAsset: protocolAssetId,
+    destinationAsset: destinationProtocolAssetId,
     recipient,
     signerId,
     depositType: 'CONFIDENTIAL_INTENTS',
@@ -1961,7 +1985,9 @@ test('confidential account transfer freezes the signed-intent quote for the othe
     referral: 'noir_send'
   })
   expect(stored.swapQuote.quoteRequest.dry).toBe(false)
+  expect(stored.swapQuote.quoteRequest.destinationAsset).toBe(destinationProtocolAssetId)
   expect(stored.destination.address).toBe(recipient)
+  expect(stored.destination.assetId).toBe(destinationAssetId)
   const confirmed = await coordinator.confirm(review.planId, review.payloadFingerprint)
   expect(quotes).toHaveLength(1)
   expect(intentDepositAddress).toBe('deposit.near')

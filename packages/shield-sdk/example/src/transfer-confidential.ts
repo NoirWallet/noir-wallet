@@ -10,7 +10,9 @@ export async function transferToConfidentialAccountExample() {
     amount: '0.05',
     destination: {
       kind: 'confidential',
-      accountId: '0x2222222222222222222222222222222222222222'
+      accountId: '0x2222222222222222222222222222222222222222',
+      chainId: 1,
+      assetId: 'eip155:1/slip44:60'
     }
   })
   return transfer.wait()

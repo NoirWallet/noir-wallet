@@ -3030,6 +3030,22 @@ export class ConfidentialFundingCoordinator {
     })
   }
 
+  private resolveConfidentialTransferToken(
+    source: ReturnType<ConfidentialFundingCoordinator['resolveShieldCatalogToken']>,
+    destination: Readonly<{ chainId?: string; assetId?: string; symbol?: string }>
+  ) {
+    if (!destination.chainId && !destination.assetId && !destination.symbol) return source
+    if (!destination.chainId) throw new Error('Shield token is not available.')
+    if (destination.assetId) {
+      return this.resolveShieldCatalogToken(destination.chainId, destination.assetId)
+    }
+    const matches = this.listShieldDappCatalog().tokens.filter(
+      token => token.chainId === destination.chainId && token.symbol === destination.symbol
+    )
+    if (matches.length !== 1) throw new Error('Shield token is not available.')
+    return this.resolveShieldCatalogToken(matches[0].chainId, matches[0].assetId)
+  }
+
   private shieldQuoteRecipient(chainId: string, address: string): string {
     if (chainId.startsWith('eip155:')) {
       if (!isAddress(address) || /^0x0{40}$/i.test(address)) {
@@ -3051,7 +3067,13 @@ export class ConfidentialFundingCoordinator {
     readonly source: Readonly<{ chainId: string; assetId: string }>
     readonly destination?:
       | Readonly<{ kind: 'public'; chainId: string; assetId: string; address: string }>
-      | Readonly<{ kind: 'confidential'; accountId: string }>
+      | Readonly<{
+          kind: 'confidential'
+          accountId: string
+          chainId?: string
+          assetId?: string
+          symbol?: string
+        }>
   }) {
     if (input.scope.network !== this.options.network)
       throw new Error('Confidential network changed')
@@ -3088,7 +3110,9 @@ export class ConfidentialFundingCoordinator {
     const publicDestination = input.destination?.kind === 'public' ? input.destination : undefined
     const destination = publicDestination
       ? this.resolveShieldCatalogToken(publicDestination.chainId, publicDestination.assetId)
-      : source
+      : confidentialDestination
+        ? this.resolveConfidentialTransferToken(source, confidentialDestination)
+        : source
     const recipient = confidentialDestination
       ? confidentialDestination.accountId
       : publicDestination
@@ -3110,7 +3134,7 @@ export class ConfidentialFundingCoordinator {
         : confidentialDestination
           ? {
               originAsset: source.protocolAssetId,
-              destinationAsset: source.protocolAssetId,
+              destinationAsset: destination.protocolAssetId,
               amountRaw,
               signerId: identity.address,
               recipient,
@@ -3226,7 +3250,13 @@ export class ConfidentialFundingCoordinator {
     readonly amount: string
     readonly destination:
       | Readonly<{ kind: 'public'; chainId: string; assetId: string; address: string }>
-      | Readonly<{ kind: 'confidential'; accountId: string }>
+      | Readonly<{
+          kind: 'confidential'
+          accountId: string
+          chainId?: string
+          assetId?: string
+          symbol?: string
+        }>
   }): Promise<{
     readonly planId: string
     readonly phase: ConfidentialFundingPlan['phase']
@@ -3250,7 +3280,7 @@ export class ConfidentialFundingCoordinator {
       throw new Error('Active Wallet Account changed')
     const source = this.resolveShieldCatalogToken(input.token.chainId, input.token.assetId)
     if (input.destination.kind === 'confidential') {
-      if (!source.chainId.startsWith('eip155:')) throw new Error('Shield chain is invalid.')
+      const target = this.resolveConfidentialTransferToken(source, input.destination)
       let amountRaw: string
       try {
         amountRaw = parseDisplayUnitAmount(input.amount, source.decimals)
@@ -3274,10 +3304,10 @@ export class ConfidentialFundingCoordinator {
           amountRaw
         },
         destination: {
-          chainId: source.chainId,
-          chainName: source.blockchain,
-          assetId: source.assetId,
-          protocolAssetId: source.protocolAssetId
+          chainId: target.chainId,
+          chainName: target.blockchain,
+          assetId: target.assetId,
+          protocolAssetId: target.protocolAssetId
         },
         confidentialRecipient: input.destination.accountId,
         slippageBps: 50
@@ -3292,9 +3322,9 @@ export class ConfidentialFundingCoordinator {
         assetId: source.assetId,
         destinationAddress: input.destination.accountId,
         destinationChainName: 'NEAR Confidential',
-        destinationSymbol: source.symbol,
-        destinationAssetId: source.assetId,
-        ...this.shieldApprovalQuoteFields(review, source, source)
+        destinationSymbol: target.symbol,
+        destinationAssetId: target.assetId,
+        ...this.shieldApprovalQuoteFields(review, source, target)
       })
     }
     const destination = this.resolveShieldCatalogToken(
@@ -4081,7 +4111,9 @@ export class ConfidentialFundingCoordinator {
     const zcashChainId = getZcashChainId(this.options.network)
     const shieldSpend =
       value.sourceDomain === 'shield' &&
-      (value.operation === 'withdraw' || value.operation === 'swap')
+      (value.operation === 'withdraw' ||
+        value.operation === 'swap' ||
+        value.operation === 'confidential-transfer')
     const sourceIsEvm = sourceChain.namespace === 'eip155'
     const destinationIsEvm = destinationChain.namespace === 'eip155'
     const sourceAllowed = sourceIsEvm || (shieldSpend && sourceChain.id === zcashChainId)
@@ -4091,7 +4123,7 @@ export class ConfidentialFundingCoordinator {
         value.operation === 'withdraw' &&
         value.destinationDomain === 'public' &&
         destinationChain.id === zcashChainId) ||
-      (value.operation === 'swap' &&
+      ((value.operation === 'swap' || value.operation === 'confidential-transfer') &&
         value.destinationDomain === 'shield' &&
         destinationChain.id === zcashChainId)
     if (
@@ -4122,9 +4154,6 @@ export class ConfidentialFundingCoordinator {
         (value.operation === 'confidential-transfer' &&
           (value.sourceDomain !== 'shield' ||
             value.destinationDomain !== 'shield' ||
-            value.source.chainId !== value.destination.chainId ||
-            value.source.assetId !== value.destination.assetId ||
-            value.source.protocolAssetId !== value.destination.protocolAssetId ||
             value.externalRecipient !== undefined ||
             value.purpose !== undefined ||
             typeof value.confidentialRecipient !== 'string' ||
