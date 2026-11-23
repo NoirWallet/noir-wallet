@@ -2207,7 +2207,7 @@ test.describe('confidential funding persisted recovery', () => {
         )
       })
     await withOrigin('broadcast')
-    const coordinatorFor = (originReady, providerStatus) =>
+    const coordinatorFor = (originReady, providerStatus, balancesFail = false) =>
       new ConfidentialFundingCoordinator({
         network: 'mainnet',
         api: {
@@ -2215,9 +2215,10 @@ test.describe('confidential funding persisted recovery', () => {
             providerStatus === 'SUCCESS'
               ? { status: 'SUCCESS', settledAmountOutRaw: '980' }
               : { status: 'PROCESSING' },
-          getBalances: async () => [
-            { tokenId: confidentialPrivateTokenId(protocolAssetId), available: '5000' }
-          ]
+          getBalances: async () => {
+            if (balancesFail) throw new Error('balance service unavailable')
+            return [{ tokenId: confidentialPrivateTokenId(protocolAssetId), available: '5000' }]
+          }
         },
         store: {
           getPlan: async () => structuredClone(plan),
@@ -2275,6 +2276,9 @@ test.describe('confidential funding persisted recovery', () => {
     })
     await repository.deleteByAccountScope(scope)
     await withOrigin('final')
+    expect((await coordinatorFor(true, 'SUCCESS', true).continuePlan(planId)).phase).toBe(
+      'deposit-confirming'
+    )
     expect((await coordinatorFor(true, 'SUCCESS').continuePlan(planId)).phase).toBe('ready')
     const settled = await repository.get(scope, transactionId)
     expect(settled.segments.find(segment => segment.role === 'origin').status).toBe('final')

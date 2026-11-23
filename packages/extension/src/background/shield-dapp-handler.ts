@@ -469,10 +469,11 @@ export async function handleShieldDAppRequest(input: {
     })
   }
   if (input.method === 'shield_receive' || input.method === 'shield_transfer') {
-    const { scope } = await requireGrantedShieldSite(site)
+    const { origin, scope } = await requireGrantedShieldSite(site)
     const request = {
       params: input.params,
       coordinator: input.coordinator,
+      origin,
       scope,
       requestApproval: input.requestApproval,
       verifySite: () => requireGrantedShieldSite(site)
@@ -518,6 +519,7 @@ function shieldApprovalSummary(prepared: object): Readonly<Record<string, string
 interface ShieldOperationRequest {
   readonly params: unknown
   readonly coordinator: ConfidentialFundingCoordinator
+  readonly origin: string
   readonly scope: ShieldScope
   readonly requestApproval?: (
     action: ShieldApprovalAction,
@@ -560,6 +562,7 @@ async function receiveShield(input: ShieldOperationRequest): Promise<ShieldDappO
     throw new ShieldProviderError(-32602, 'Shield receive is invalid.')
   }
   const prepared = await input.coordinator.prepareShieldDappReceive({
+    origin: input.origin,
     scope: input.scope,
     amount: readQuoteAmount(record.amount),
     source: readTokenRef(record.source, 'Shield source')
@@ -601,6 +604,7 @@ async function transferShield(input: ShieldOperationRequest): Promise<ShieldDapp
     throw new ShieldProviderError(-32602, 'Shield transfer is invalid.')
   }
   const prepared = await input.coordinator.prepareShieldDappTransfer({
+    origin: input.origin,
     scope: input.scope,
     amount: readQuoteAmount(record.amount),
     token: readTokenRef(record.token, 'Shield token'),

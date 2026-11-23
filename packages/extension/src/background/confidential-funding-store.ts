@@ -809,6 +809,19 @@ export class ChromeConfidentialFundingStore {
     await chrome.storage.local.remove(this.shieldGrantKey(grant))
   }
 
+  async listShieldSiteGrants(network: Network): Promise<readonly ShieldSiteGrant[]> {
+    const values = await chrome.storage.local.get(null)
+    return Object.entries(values).flatMap(([key, value]) => {
+      if (!key.startsWith(SHIELD_GRANT_PREFIX)) return []
+      try {
+        const grant = parseShieldSiteGrant(value)
+        return grant.network === network && key === this.shieldGrantKey(grant) ? [grant] : []
+      } catch {
+        return []
+      }
+    })
+  }
+
   async deleteShieldSiteGrantsByAccountScope(
     keyDomainId: string,
     accountId: string

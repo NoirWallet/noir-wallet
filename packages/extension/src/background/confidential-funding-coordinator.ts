@@ -3021,7 +3021,8 @@ export class ConfidentialFundingCoordinator {
 
   /**
    * Complete a Shield receive from this deposit's provider receipt.
-   * The source transaction must already be final. Balance reads only refresh the cache.
+   * The source transaction must already be final, and the balance cache must
+   * refresh first so the activity never reports arrival beside a stale balance.
    */
   private async finishArrivedShieldDeposit(
     plan: ConfidentialFundingPlan
@@ -3029,11 +3030,12 @@ export class ConfidentialFundingCoordinator {
     if (!this.shieldDepositObservationPhase(plan) || !plan.depositQuote) return null
     const status = await this.readStatus(plan, plan.depositQuote.quote.depositAddress, 'deposit')
     const session = await this.readUsableSessionForPlan(plan).catch(() => null)
-    if (session) {
-      await this.readAndCacheBalancesForPlan(plan, session.accessToken).catch(() => null)
-    }
+    const balances = session
+      ? await this.readAndCacheBalancesForPlan(plan, session.accessToken).catch(() => null)
+      : null
     const settledOutputRaw = status?.settledAmountOutRaw
     if (
+      balances === null ||
       typeof settledOutputRaw !== 'string' ||
       !shieldDepositHasArrived({
         protocolStatus: status?.status ?? '',
@@ -3370,6 +3372,7 @@ export class ConfidentialFundingCoordinator {
       }
       if (plan.operation === 'deposit') {
         if (
+          balances === null ||
           !shieldDepositHasArrived({
             protocolStatus: status?.status ?? '',
             settledAmountOutRaw: status?.settledAmountOutRaw,

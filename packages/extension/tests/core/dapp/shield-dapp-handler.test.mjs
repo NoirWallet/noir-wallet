@@ -142,6 +142,7 @@ test('public Shield transfer prepares, asks for approval, and confirms', async (
   )
 
   assert.equal(calls[0][0], 'prepare')
+  assert.equal(calls[0][1].origin, site)
   assert.equal(calls[0][1].amount, '0.10')
   assert.equal(calls[0][1].destination.address, '0x1111111111111111111111111111111111111111')
   assert.equal(calls[1][0], 'approval')

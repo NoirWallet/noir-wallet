@@ -15,6 +15,7 @@ import {
 } from '@/core/chains/registry'
 import {
   assertConfidentialQuoteBinding,
+  fingerprintConfidentialValue,
   type ConfidentialFundingPlan,
   type ConfidentialFundingReview,
   type ConfidentialQuote,
@@ -90,6 +91,11 @@ export interface ShieldDappCoordinatorOptions extends Pick<
     plan: ConfidentialFundingPlan
   ) => Promise<ConfidentialFundingPlan | null>
   readonly isIdleShieldPlan: (plan: ConfidentialFundingPlan) => boolean
+}
+
+/** Plans are reused only for the same site, so one site cannot cancel or observe another's plan. */
+async function shieldDappDedupKey(origin: string): Promise<string> {
+  return `shield-dapp:${await fingerprintConfidentialValue(origin)}`
 }
 
 function quoteDeadline(quote: ConfidentialQuote): number {
@@ -388,6 +394,7 @@ export class ShieldDappCoordinator {
   }
 
   async prepareShieldDappReceive(input: {
+    readonly origin: string
     readonly scope: ShieldAccountScope
     readonly source: Readonly<{ chainId: string; assetId: string }>
     readonly amount: string
@@ -433,7 +440,8 @@ export class ShieldDappCoordinator {
         assetId: source.assetId,
         protocolAssetId: source.protocolAssetId
       },
-      slippageBps: 50
+      slippageBps: 50,
+      dedupKey: await shieldDappDedupKey(input.origin)
     })
     return Object.freeze({
       planId: review.planId,
@@ -448,6 +456,7 @@ export class ShieldDappCoordinator {
   }
 
   async prepareShieldDappTransfer(input: {
+    readonly origin: string
     readonly scope: ShieldAccountScope
     readonly token: Readonly<{ chainId: string; assetId: string }>
     readonly amount: string
@@ -507,7 +516,8 @@ export class ShieldDappCoordinator {
           protocolAssetId: target.protocolAssetId
         },
         confidentialRecipient: input.destination.accountId,
-        slippageBps: 50
+        slippageBps: 50,
+        dedupKey: await shieldDappDedupKey(input.origin)
       })
       return Object.freeze({
         planId: review.planId,
@@ -558,7 +568,8 @@ export class ShieldDappCoordinator {
         protocolAssetId: destination.protocolAssetId
       },
       externalRecipient: recipient,
-      slippageBps: 50
+      slippageBps: 50,
+      dedupKey: await shieldDappDedupKey(input.origin)
     })
     return Object.freeze({
       planId: review.planId,
