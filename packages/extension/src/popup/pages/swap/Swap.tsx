@@ -171,7 +171,6 @@ import {
 import { parseKeyDomainId } from '@/core/keyring/domain'
 import { parseAccountId } from '@/core/accounts/domain'
 import {
-  ExecutionAccountBadge,
   ExecutionAccountSelectorDialog,
   AccountAddressSelectorButton
 } from '../../components/account/ExecutionAccountSelector'
@@ -266,6 +265,7 @@ import {
 import { swapApprovalContinuationClient } from '@/popup/services/swap-approval-continuation-client'
 import type { SwapApprovalContinuation } from '@/background/swap-approval-continuation'
 import { TransactionReviewView } from '@/popup/components/transaction/TransactionReviewView'
+import { TransactionReviewParty } from '@/popup/components/transaction/TransactionReviewParty'
 import { NetworkFeeTierPicker } from '@/popup/components/transaction/NetworkFeeTierPicker'
 import type { EvmFeeSelection } from '@/infrastructure/chains/evm'
 import {
@@ -1324,10 +1324,7 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
   const combinedSwapConsent = useRef<{
     readonly scope: string
     readonly requestKey: string
-    readonly quoteHandle: string
-    readonly estimatedOut: string
-    readonly minAmountOut: string
-    readonly router: RheaSwapReviewView['router']
+    readonly review: RheaSwapReviewView
     readonly feeLimit: CombinedSwapFeeLimit
     readonly transaction: RheaSwapEvmCallView
     readonly owner: string
@@ -3419,6 +3416,7 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
         refundAddress: resolvedRefundAddress,
         slippageBps,
         recipientType: 'CONFIDENTIAL_INTENTS' as const,
+        userAction: 'swap' as const,
         fundingSource
       } as const
       return {
@@ -3636,9 +3634,14 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
           if (lockedAssetFlowRequested || feeTierOverride) setTransferPreparationError(message)
           return
         }
-        const review = await measure('rhea-prepare', () =>
-          rheaSwapClient.prepare(result.quoteHandle)
-        )
+        const consent = combinedSwapConsent.current
+        const review =
+          !newlyQuoted &&
+          consent?.scope === walletSourcesScope &&
+          consent.requestKey === requestKey &&
+          consent.review.quoteHandle === result.quoteHandle
+            ? consent.review
+            : await measure('rhea-prepare', () => rheaSwapClient.prepare(result.quoteHandle))
         if (requestSequence !== quoteRequestSequence.current) {
           if (newlyQuoted) await rheaSwapClient.discard(result.quoteHandle).catch(() => {})
           return
@@ -4139,6 +4142,7 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
       quoteResult,
       liveQuoteRequest,
       liveQuoteKey,
+      walletSourcesScope,
       quoteReceivedAt,
       viewStep,
       hasInsufficientFunds,
@@ -5182,10 +5186,7 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
             combinedSwapConsent.current = {
               scope: walletSourcesScope,
               requestKey: liveQuoteRequest.key,
-              quoteHandle: rheaReview.quoteHandle,
-              estimatedOut: rheaReview.estimatedOut,
-              minAmountOut: rheaReview.minAmountOut,
-              router: rheaReview.router,
+              review: rheaReview,
               feeLimit: combined.limit,
               transaction: combined.transaction,
               owner: preparedQuoteTransfer.source.refundAddress
@@ -5373,10 +5374,7 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
     if (
       consent.scope !== walletSourcesScope ||
       consent.requestKey !== liveQuoteRequest?.key ||
-      consent.quoteHandle !== rheaReview?.quoteHandle ||
-      consent.estimatedOut !== rheaReview.estimatedOut ||
-      consent.minAmountOut !== rheaReview.minAmountOut ||
-      consent.router !== rheaReview.router ||
+      consent.review !== rheaReview ||
       !rheaQuoteAccepted ||
       pendingRheaEvmAfterApproval ||
       summary?.schema !== 'evm.transaction.v1' ||
@@ -6602,39 +6600,29 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
           privateBalanceTransferReview.executionId === rheaReview.executionId
             ? privateBalanceTransferReview
             : null
-        const sourceMode = isPrivateFunding ? 'main' : 'private'
-        const destinationMode = isPrivateFunding ? 'private' : 'main'
         const reviewRows = [
           {
             label: 'From',
             content: (
-              <span className="inline-flex min-w-0 max-w-full items-center justify-end gap-1.5">
-                <span
-                  className="truncate font-mono text-muted"
-                  title={walletOwnedSource.refundAddress}
-                >
-                  {formatSortAddress(walletOwnedSource.refundAddress)}
-                </span>
-                <ExecutionAccountBadge mode={sourceMode} />
-              </span>
+              <TransactionReviewParty
+                accountName={accountDisplayName}
+                domain={isPrivateFunding ? 'public' : 'private'}
+                address={walletOwnedSource.refundAddress}
+                chain={walletOwnedSource.chain.chain}
+              />
             )
           },
           {
             label: 'To',
-            content: <ExecutionAccountBadge mode={destinationMode} />
+            content: (
+              <TransactionReviewParty
+                accountName={accountDisplayName}
+                domain={isPrivateFunding ? 'private' : 'public'}
+                address={transferReview?.recipient}
+                chain={walletDestinationTarget?.chain ?? walletOwnedSource.chain.chain}
+              />
+            )
           },
-          ...(transferReview
-            ? [
-                {
-                  label: 'Address',
-                  content: (
-                    <span className="font-mono text-muted" title={transferReview.recipient}>
-                      {formatSortAddress(transferReview.recipient)}
-                    </span>
-                  )
-                }
-              ]
-            : []),
           {
             label: 'You receive',
             content: (
@@ -6765,6 +6753,14 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
             destination={swap.tokenOut}
             sourceNetwork={walletOwnedSource?.chain.chain.displayName}
             sourceAddress={walletOwnedSource?.refundAddress}
+            sourceAccountName={walletOwnedSource ? accountDisplayName : undefined}
+            sourceDomain={
+              walletOwnedSource
+                ? executionSourceMode === 'private'
+                  ? 'private'
+                  : 'public'
+                : undefined
+            }
             review={rheaReview}
             routeCost={routeCost}
             sourceNetworkFee={sourceNetworkFee}
@@ -7676,14 +7672,12 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
               {
                 label: publicPrivacySendRequested ? 'Send from' : 'From',
                 content: walletOwnedSource ? (
-                  <span className="inline-flex items-center justify-end gap-1.5">
-                    <span className="font-mono text-muted" title={walletOwnedSource.refundAddress}>
-                      {formatSortAddress(walletOwnedSource.refundAddress)}
-                    </span>
-                    <ExecutionAccountBadge
-                      mode={isPrivateFunding || publicPrivacySendRequested ? 'main' : 'private'}
-                    />
-                  </span>
+                  <TransactionReviewParty
+                    accountName={accountDisplayName}
+                    domain={isPrivateFunding || publicPrivacySendRequested ? 'public' : 'private'}
+                    address={walletOwnedSource.refundAddress}
+                    chain={walletOwnedSource.chain.chain}
+                  />
                 ) : (
                   <Skeleton className="h-4 w-32" />
                 )
@@ -7693,29 +7687,36 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
                     {
                       label: 'To',
                       content: (
-                        <ExecutionAccountBadge mode={isPrivateFunding ? 'private' : 'main'} />
+                        <TransactionReviewParty
+                          accountName={accountDisplayName}
+                          domain={isPrivateFunding ? 'private' : 'public'}
+                          address={resolvedRecipientAddress || privateTransferRecipient}
+                          chain={walletDestinationTarget?.chain ?? walletOwnedSource?.chain.chain}
+                        />
                       )
                     }
                   ]
                 : []),
-              {
-                label: publicPrivacySendRequested
-                  ? 'Recipient'
-                  : balanceAction
-                    ? 'Address'
-                    : 'Send To',
-                content:
-                  resolvedRecipientAddress || privateTransferRecipient ? (
-                    <span
-                      className="font-mono text-muted"
-                      title={resolvedRecipientAddress || privateTransferRecipient}
-                    >
-                      {formatSortAddress(resolvedRecipientAddress || privateTransferRecipient)}
-                    </span>
-                  ) : (
-                    <Skeleton className="h-4 w-32" />
-                  )
-              },
+              ...(!privateBalanceTransferRequested
+                ? [
+                    {
+                      label: publicPrivacySendRequested
+                        ? 'Recipient'
+                        : balanceAction
+                          ? 'Address'
+                          : 'Send To',
+                      content:
+                        resolvedRecipientAddress || privateTransferRecipient ? (
+                          <TransactionReviewParty
+                            address={resolvedRecipientAddress || privateTransferRecipient}
+                            chain={walletDestinationTarget?.chain}
+                          />
+                        ) : (
+                          <Skeleton className="h-4 w-32" />
+                        )
+                    }
+                  ]
+                : []),
               { label: 'You receive', content: <Skeleton className="h-4 w-24" /> },
               { label: 'Network fee', content: <Skeleton className="h-8 w-28" /> }
             ]}

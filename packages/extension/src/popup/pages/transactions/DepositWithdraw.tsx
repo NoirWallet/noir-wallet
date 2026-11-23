@@ -67,6 +67,8 @@ import {
   ZcashTransferSyncStatus
 } from '@/popup/components/zcash/ZcashTransferDetails'
 import { useZcashTransfer } from '@/popup/hooks/useZcashTransfer'
+import type { FundingSource } from '@/types'
+import { isZcashHardwareKeySource } from '@/core/wallet/hardware-wallet-data'
 import {
   hasNativeZecConfidentialSwapRoute,
   resolveShieldNativeZecSwapAvailable
@@ -91,11 +93,10 @@ import { resolvePortfolioTransferAvailability } from '@/popup/services/transfer-
 import { assetPriceClient } from '@/popup/services/asset-price-client'
 import {
   listBalanceTransferAssetPickerRows,
-  listTransferSameChainDestinationAssets
+  listPrivateTransferDestinationAssets
 } from '@/popup/services/balance-transfer-asset-picker'
 import {
   confidentialFundingClient,
-  estimateNativeClusterMaximum,
   previewClusterNetworkFeeTiers,
   previewReviewedConfidentialDepositFeeTiers
 } from '@/popup/services/confidential-funding-client'
@@ -125,12 +126,15 @@ import {
   shieldQuoteFeeRaw
 } from '@/popup/services/shield-transfer'
 import { TransactionReviewView } from '@/popup/components/transaction/TransactionReviewView'
+import { TransactionReviewParty } from '@/popup/components/transaction/TransactionReviewParty'
 import { openConfidentialActivity } from '@/popup/components/transaction/ConfidentialActivitySheet'
 import { homeActivityPath } from '@/popup/services/home-navigation'
 import { resolveNativeRouteMaximum } from '@/popup/services/transfer-maximum'
 import {
   balanceTransferDomainLabel as domainLabel,
   balanceTransferLabel,
+  buildCrossChainPrivateWithdrawReviewPath,
+  buildPrivateDepositReviewPath,
   fixedTransferSide,
   normalizePrivateBalanceTransferInput,
   getPrivateTransferChainIds,
@@ -143,7 +147,6 @@ import {
   type TransferDomain
 } from '@/popup/services/private-balance-transfer'
 import {
-  buildAddToPrivateEvmPath,
   buildMoveToMainEvmPath,
   getEvmTokenFeeBalanceError
 } from '@/popup/services/evm-send-validation'
@@ -165,6 +168,17 @@ import {
 } from '@/popup/services/shield-transfer-preference'
 
 type TransferAsset = { asset: PortfolioAssetView; chain: PortfolioChainView }
+
+function ConfidentialAssetBadge({ children, size }: { children: ReactNode; size: number }) {
+  return (
+    <span className="relative inline-flex shrink-0">
+      {children}
+      <span className="absolute -bottom-0.5 -right-0.5 overflow-hidden rounded-full border border-background">
+        <ShieldProviderLogo provider="near-confidential" size={size} />
+      </span>
+    </span>
+  )
+}
 type TransferPickerRow =
   | ReturnType<typeof listBalanceTransferAssetPickerRows>[number]
   | ShieldTokenPickerItem
@@ -245,10 +259,6 @@ function TransferBalanceOption({
   )
 }
 
-function formatMoveReviewAddress(address: string): string {
-  return address.length > 12 ? `${address.slice(0, 7)}...${address.slice(-5)}` : address
-}
-
 function MethodCard({
   title,
   detail,
@@ -279,7 +289,7 @@ function MethodCard({
       onClick={onClick}
       disabled={disabled}
       className={cn(
-        'relative flex min-h-[180px] min-w-0 flex-col rounded-xl border bg-wallet-surface px-3 py-3 text-left text-xs leading-4 disabled:cursor-not-allowed disabled:opacity-50',
+        'relative flex min-w-0 flex-col rounded-xl border bg-wallet-surface px-3 py-3 text-left text-xs leading-4 disabled:cursor-not-allowed disabled:opacity-50 max-[359px]:px-2',
         selected ? 'border-primary/60' : 'border-white/10'
       )}
     >
@@ -302,7 +312,7 @@ function MethodCard({
         <span className="text-muted">Privacy</span>
         <span>{title === 'Cluster' ? 'Strong' : 'Standard'}</span>
       </span>
-      <span className="mt-2 flex min-h-8 justify-between gap-2">
+      <span className="mt-2 flex justify-between gap-1">
         <span className="shrink-0 text-muted">Time</span>
         <span className="min-w-0 text-right">
           {loading ? (
@@ -313,14 +323,17 @@ function MethodCard({
         </span>
       </span>
       <span className="mt-2 flex justify-between gap-2">
-        <span className="text-muted">Quote difference</span>
+        <span className="shrink-0 text-muted">Fee</span>
         <span className="min-w-0 break-words text-right">
-          {loading ? <Skeleton className="ml-auto h-4 w-full max-w-24" /> : fee.routeDifference}
+          {loading ? (
+            <Skeleton className="ml-auto h-4 w-20 max-w-full" />
+          ) : (
+            <>
+              <span className="block">{fee.value}</span>
+              {fee.detail && <span className="block text-muted">{fee.detail}</span>}
+            </>
+          )}
         </span>
-      </span>
-      <span className="mt-2 flex justify-between gap-2">
-        <span className="text-muted">Network fee cap</span>
-        <span className="min-w-0 break-words text-right">{fee.networkFeeCap}</span>
       </span>
     </button>
   )
@@ -337,18 +350,23 @@ export function DepositWithdraw({ receiveEntry = false }: { readonly receiveEntr
 
 function NativeZcashReceiveForm({
   destination,
+  fundingSource,
   retryPath,
   asset,
   accounts,
   onStateChange
 }: {
   readonly destination: 'shielded' | 'confidential'
+  readonly fundingSource: FundingSource
   readonly retryPath: string
   readonly asset: ReactNode
   readonly accounts: ReactNode
   readonly onStateChange: (state: { readonly reviewing: boolean; readonly busy: boolean }) => void
 }) {
-  const transfer = useZcashTransfer({ shieldReceive: { destination, retryPath }, onStateChange })
+  const transfer = useZcashTransfer({
+    shieldReceive: { destination, fundingSource, retryPath },
+    onStateChange
+  })
   const { action } = transfer
   if (!transfer.available) {
     return (
@@ -487,6 +505,9 @@ function DepositWithdrawForm({ receiveEntry }: { readonly receiveEntry: boolean 
   const [providerPickerOpen, setProviderPickerOpen] = useState(false)
   const [receiveExternal, setReceiveExternal] = useState(
     () => shieldDepositSource(routeFrom) === 'external'
+  )
+  const [receiveFundingSource, setReceiveFundingSource] = useState<FundingSource>(() =>
+    routeFrom === 'zcash-shield' ? 'shielded' : 'transparent'
   )
   const [preferredReceiveProvider, setPreferredReceiveProvider] = useState<ShieldProvider | null>(
     () => {
@@ -756,6 +777,10 @@ function DepositWithdrawForm({ receiveEntry }: { readonly receiveEntry: boolean 
     () => shieldBalances ?? shieldPortfolioBalances(portfolio),
     [shieldBalances, portfolio]
   )
+  const shieldAssets = useMemo(
+    () => listShieldFundingAssets(portfolio, managedAssets, catalogTokens, currentNetwork),
+    [portfolio, managedAssets, catalogTokens, currentNetwork]
+  )
   const assets = useMemo<TransferAsset[]>(() => {
     if (!portfolio) return []
     const chains = new Map(portfolio.chains.map(chain => [chain.chain.id, chain]))
@@ -767,12 +792,6 @@ function DepositWithdrawForm({ receiveEntry }: { readonly receiveEntry: boolean 
         ? [{ asset, chain }]
         : []
     })
-    const shieldAssets = listShieldFundingAssets(
-      portfolio,
-      managedAssets,
-      catalogTokens,
-      currentNetwork
-    )
     const fallbackAssets = shieldEntry
       ? shieldAssets
       : shieldFundingSources(shieldAssets, currentShieldBalances)
@@ -786,15 +805,7 @@ function DepositWithdrawForm({ receiveEntry }: { readonly receiveEntry: boolean 
         )
         .map(({ asset, chain }) => ({ asset, chain }))
     ]
-  }, [
-    portfolio,
-    currentShieldBalances,
-    managedAssets,
-    catalogTokens,
-    currentNetwork,
-    eligibleChainIds,
-    shieldEntry
-  ])
+  }, [portfolio, currentShieldBalances, shieldAssets, eligibleChainIds, shieldEntry])
   const defaultAssetId = useMemo(
     () =>
       shieldEntry
@@ -908,14 +919,44 @@ function DepositWithdrawForm({ receiveEntry }: { readonly receiveEntry: boolean 
     zcashPublicAddress &&
     !getFundingSourceUnavailableReason(currentWallet?.keySource, 'transparent')
   )
+  const supportsConfidentialZec =
+    receiveEntry &&
+    canLoadShield &&
+    currentNetwork === 'mainnet' &&
+    !isZcashHardwareKeySource(currentWallet?.keySource) &&
+    Boolean(zcashPublicAddress) &&
+    hasNativeZecConfidentialSwapRoute(
+      activeAccount,
+      currentNetwork,
+      __ENABLED_CHAIN_FEATURE_FLAGS__
+    ) &&
+    resolveShieldNativeZecSwapAvailable({
+      network: currentNetwork,
+      portfolio: null,
+      enabledFlags: __ENABLED_CHAIN_FEATURE_FLAGS__,
+      zcashAccountEnabled: true
+    })
+  const canSpendShieldedZec = Boolean(
+    zcashReceiveAddress &&
+    supportsConfidentialZec &&
+    !getFundingSourceUnavailableReason(currentWallet?.keySource, 'shielded')
+  )
   const defaultReceiveZec =
     zcashReceiveAddress && (preferredReceiveProvider === 'zcash-shield' || !canLoadShield)
   const receiveAssetId = receiveEntry
     ? (selectedAssetId ?? (defaultReceiveZec ? zcashAssetId : defaultAssetId))
     : null
   const receiveZec = receiveAssetId === zcashAssetId
-  const externalReceive = receiveEntry && (receiveExternal || (receiveZec && !canSpendPublicZec))
-  const receiveSource = externalReceive ? 'external' : receiveZec ? 'public' : from
+  const shieldedZecReceive = receiveZec && receiveFundingSource === 'shielded' && !receiveExternal
+  const externalReceive =
+    receiveEntry && (receiveExternal || (receiveZec && !shieldedZecReceive && !canSpendPublicZec))
+  const receiveSource = externalReceive
+    ? 'external'
+    : shieldedZecReceive
+      ? 'zcash-shield'
+      : receiveZec
+        ? 'public'
+        : from
   const selected =
     assets.find(
       item =>
@@ -1027,7 +1068,7 @@ function DepositWithdrawForm({ receiveEntry }: { readonly receiveEntry: boolean 
                   ? {}
                   : {
                       availableRaw: parseDisplayUnitAmount(
-                        getFundingBalance(zcashBalance, 'transparent').available,
+                        getFundingBalance(zcashBalance, receiveFundingSource).available,
                         ZEC_DECIMALS
                       ),
                       priceUsd: zecPrice
@@ -1081,7 +1122,28 @@ function DepositWithdrawForm({ receiveEntry }: { readonly receiveEntry: boolean 
     (from === 'public' && to === 'private') || (from === 'private' && to === 'public')
   const shieldPair =
     !externalReceive && isShieldTransferRoute(from, to) && selected?.chain.chain.family === 'evm'
-  const clusterPair = isClusterTransferRoute(from, to) && selected?.chain.chain.family === 'evm'
+  const privateTransferOptions = useMemo(
+    () =>
+      supportedPair && selected
+        ? listPrivateTransferDestinationAssets({
+            source: selected,
+            assets,
+            catalogAssets: shieldAssets,
+            eligibleChainIds
+          })
+        : [],
+    [supportedPair, selected, assets, shieldAssets, eligibleChainIds]
+  )
+  const privateTransferDestination = supportedPair
+    ? destinationAssetId
+      ? (privateTransferOptions.find(item => item.asset.asset.id === destinationAssetId) ?? null)
+      : selected
+    : null
+  const crossChainPrivateTransfer = supportedPair && destinationAssetId !== null
+  const clusterPair =
+    !crossChainPrivateTransfer &&
+    isClusterTransferRoute(from, to) &&
+    selected?.chain.chain.family === 'evm'
   const clusterSelected = method === 'cluster' && clusterPair
   const fundingRoute = Boolean(shieldPair || clusterSelected)
   const fundingReady = !shieldPair || shieldConnection === 'connected'
@@ -1108,38 +1170,23 @@ function DepositWithdrawForm({ receiveEntry }: { readonly receiveEntry: boolean 
   const { available: receiveProviders, selected: receiveProvider } = resolveShieldReceiveProvider({
     nativeZec: receiveZec,
     preferred: preferredReceiveProvider,
-    canReceiveNativeZec: Boolean(zcashReceiveAddress) && (externalReceive || canSpendPublicZec),
+    canReceiveNativeZec:
+      !shieldedZecReceive && Boolean(zcashReceiveAddress) && (externalReceive || canSpendPublicZec),
     nearSupportsAsset:
       receiveEntry &&
       canLoadShield &&
       (externalReceive
         ? Boolean(externalAsset)
         : receiveZec
-          ? canSpendPublicZec &&
-            currentNetwork === 'mainnet' &&
-            hasNativeZecConfidentialSwapRoute(
-              activeAccount,
-              currentNetwork,
-              __ENABLED_CHAIN_FEATURE_FLAGS__
-            ) &&
-            resolveShieldNativeZecSwapAvailable({
-              network: currentNetwork,
-              portfolio: null,
-              enabledFlags: __ENABLED_CHAIN_FEATURE_FLAGS__,
-              zcashAccountEnabled: true
-            })
+          ? supportsConfidentialZec &&
+            (shieldedZecReceive ? canSpendShieldedZec : canSpendPublicZec)
           : Boolean(managedAsset))
   })
   const nativeReceive = receiveEntry && receiveZec && !externalReceive && receiveProvider !== null
   const clusterAvailable = Boolean(clusterPair && managedAsset && effective)
   const destinationOptions = useMemo(() => {
     if (from !== 'shield' || !selected || !managedAsset) return []
-    const options = listShieldFundingAssets(
-      portfolio,
-      managedAssets,
-      catalogTokens,
-      currentNetwork
-    ).filter(item =>
+    const options = shieldAssets.filter(item =>
       activeAccount?.networks.some(
         network =>
           network.chain.id === item.chain.chain.id &&
@@ -1158,45 +1205,11 @@ function DepositWithdrawForm({ receiveEntry }: { readonly receiveEntry: boolean 
     activeAccount,
     selected,
     managedAsset,
-    portfolio,
-    managedAssets,
-    catalogTokens,
+    shieldAssets,
     currentNetwork,
     eligibleChainIds
   ])
-  const sameChainDestinationOptions = useMemo(
-    () =>
-      selected && to !== 'shield' && from !== 'shield'
-        ? listTransferSameChainDestinationAssets({
-            source: selected,
-            assets,
-            from,
-            eligibleChainIds,
-            managedAssets,
-            catalogTokens,
-            network: currentNetwork,
-            destinationChainIds:
-              activeAccount?.networks.flatMap(network =>
-                network.addresses.some(address => address.preferredForReceive) &&
-                network.privateExecutionAddress
-                  ? [network.chain.id]
-                  : []
-              ) ?? []
-          })
-        : [],
-    [
-      selected,
-      to,
-      from,
-      assets,
-      eligibleChainIds,
-      activeAccount,
-      managedAssets,
-      catalogTokens,
-      currentNetwork
-    ]
-  )
-  const networkAssets = from === 'shield' ? destinationOptions : sameChainDestinationOptions
+  const networkAssets = from === 'shield' ? destinationOptions : privateTransferOptions
   const destinationNetworkOptions: ChainSelectorOption[] = [
     ...new Map(networkAssets.map(item => [item.chain.chain.id, item])).values()
   ].map(item => ({
@@ -1257,8 +1270,11 @@ function DepositWithdrawForm({ receiveEntry }: { readonly receiveEntry: boolean 
     to,
     currentShieldBalances
   ])
-  const targetAsset = from === 'shield' ? destination : selected
-  const canSelectTargetNetwork = from !== 'public' || to !== 'private'
+  const targetAsset =
+    from === 'shield' ? destination : supportedPair ? privateTransferDestination : selected
+  const canSelectTargetNetwork =
+    from === 'shield' ||
+    (supportedPair && (privateTransferOptions.length > 1 || crossChainPrivateTransfer))
   const targetNetwork = activeAccount?.networks.find(
     item => item.chain.id === targetAsset?.chain.chain.id
   )
@@ -1281,11 +1297,16 @@ function DepositWithdrawForm({ receiveEntry }: { readonly receiveEntry: boolean 
             ) ?? null)
           : null))
       : sourceRaw
-  const routeKey = `${scopeKey}:${selected?.asset.asset.id ?? ''}:${from}:${to}:${destination?.asset.asset.id ?? ''}`
+  const routeKey = `${scopeKey}:${selected?.asset.asset.id ?? ''}:${from}:${to}:${destination?.asset.asset.id ?? destinationAssetId ?? ''}`
   const routeState =
     selected?.chain.chain.family === 'evm' &&
     eligible &&
     supportedPair &&
+    (!crossChainPrivateTransfer ||
+      (privateTransferDestination &&
+        privateTransferDestination.chain.chain.id !== selected.chain.chain.id &&
+        mainAddress &&
+        targetAddress)) &&
     toWalletEvmQuoteToken(selected.asset)
       ? 'supported'
       : 'unsupported'
@@ -1335,31 +1356,10 @@ function DepositWithdrawForm({ receiveEntry }: { readonly receiveEntry: boolean 
       chain: selected!.chain,
       managed: managedAsset!
     })
-  const exactClusterMaximum = clusterSelected && selected?.asset.asset.kind === 'native'
-  const clusterMax = useBalanceTransferEstimate({
-    enabled: Boolean(
-      maxSelected && exactClusterMaximum && shieldAvailable && managedAsset && effective && eligible
-    ),
-    requestKey: `${routeKey}:${shieldAvailable?.amountRaw ?? ''}:${JSON.stringify(evmMoveFee)}:${retry}`,
-    estimate: signal =>
-      estimateNativeClusterMaximum({
-        availableRaw: shieldAvailable!.amountRaw,
-        probeRaw: maximumRaw,
-        estimateNetworkFee: amountRaw =>
-          confidentialFundingClient.previewClusterNetworkFee({
-            ...buildClusterPreviewRequest(amountRaw),
-            feeSelection: evmMoveFee
-          }),
-        signal
-      })
-  })
-  const resolvedMaxRaw = exactClusterMaximum ? clusterMax.value : maximumRaw
   const maxAmount =
-    selected && resolvedMaxRaw !== null
-      ? formatBaseUnitDecimalAmount(resolvedMaxRaw, selected.asset.metadata.decimals)
-      : exactClusterMaximum
-        ? ''
-        : ((fundingRoute ? shieldAvailable : available)?.display ?? '')
+    selected && maximumRaw !== null
+      ? formatBaseUnitDecimalAmount(maximumRaw, selected.asset.metadata.decimals)
+      : ((fundingRoute ? shieldAvailable : available)?.display ?? '')
   const currentAmount = maxSelected ? maxAmount : amount
   useEffect(() => {
     if (maxSelected) setAmount(maxAmount)
@@ -1396,10 +1396,11 @@ function DepositWithdrawForm({ receiveEntry }: { readonly receiveEntry: boolean 
       return null
     }
   }, [selected, currentAmount])
-  const methodEstimateKey = `${routeKey}:${estimateAmountRaw ?? ''}:${source?.sender}:${source?.recipient}:${source?.executionMode}:${retry}`
+  const directRecipient = crossChainPrivateTransfer ? targetAddress : source?.recipient
+  const methodEstimateKey = `${routeKey}:${estimateAmountRaw ?? ''}:${source?.sender}:${directRecipient}:${source?.executionMode}:${retry}`
   const canEstimateMethods = Boolean(
     draftScope === scopeKey &&
-    clusterPair &&
+    (clusterPair || crossChainPrivateTransfer) &&
     selected &&
     eligible &&
     source &&
@@ -1413,17 +1414,20 @@ function DepositWithdrawForm({ receiveEntry }: { readonly receiveEntry: boolean 
       estimateDirectTransfer({
         asset: selected!.asset,
         chain: selected!.chain,
+        ...(crossChainPrivateTransfer
+          ? { destinationAsset: privateTransferDestination!.asset }
+          : {}),
         nativeFeeAsset: nativeFeeAsset ?? null,
         amountRaw: estimateAmountRaw!,
         sender: source!.sender,
-        recipient: source!.recipient,
+        recipient: directRecipient!,
         executionMode: source!.executionMode,
         signal
       })
   })
   const clusterEstimateKey = `${methodEstimateKey}:${managedAsset?.protocolAssetId ?? ''}`
   const clusterEstimate = useBalanceTransferEstimate({
-    enabled: canEstimateMethods && Boolean(managedAsset && effective),
+    enabled: canEstimateMethods && clusterPair && Boolean(managedAsset && effective),
     requestKey: clusterEstimateKey,
     estimate: async signal => {
       const preview = await confidentialFundingClient.preview(
@@ -1448,7 +1452,8 @@ function DepositWithdrawForm({ receiveEntry }: { readonly receiveEntry: boolean 
       ? { ...clusterEstimate.value, sourceNetworkFee: clusterNetworkFee }
       : clusterEstimate.value
   const directQuoted = Boolean(canEstimateMethods && methodAvailable && directEstimate.value)
-  const selectedEstimate = method === 'cluster' ? clusterEstimate : directEstimate
+  const selectedEstimate = clusterSelected ? clusterEstimate : directEstimate
+  const maxLoading = maxSelected && selectedEstimate.loading
   const clusterUnavailable = getSwapQuoteFailureMessage(clusterEstimate.errorMessage) === 'no route'
   const directUnavailable =
     directEstimate.errorMessage === 'Move route unavailable' ||
@@ -1465,13 +1470,12 @@ function DepositWithdrawForm({ receiveEntry }: { readonly receiveEntry: boolean 
       : null
   }, [selected, selectedEstimate.errorMessage])
   const showGenericEstimateError =
-    clusterPair &&
+    (clusterPair || crossChainPrivateTransfer) &&
     selectedEstimate.error &&
     !quoteMinimumError &&
     !clusterEstimate.loading &&
     !directEstimate.loading
   const transferError =
-    clusterMax.errorMessage ??
     amountError ??
     quoteMinimumError ??
     confidentialRouteError ??
@@ -1519,6 +1523,7 @@ function DepositWithdrawForm({ receiveEntry }: { readonly receiveEntry: boolean 
     supportedPair &&
     routeState === 'supported' &&
     (!clusterPair || (method === 'directly' && directQuoted)) &&
+    (!crossChainPrivateTransfer || directQuoted) &&
     !tokenFeeBalanceError &&
     (direction === 'main-to-private' ? publicRaw !== null : privateRaw !== null) &&
     (!maxSelected || amount === currentAmount) &&
@@ -1546,6 +1551,7 @@ function DepositWithdrawForm({ receiveEntry }: { readonly receiveEntry: boolean 
     if (receiveEntry) {
       if (receiveAssetId) setSelectedAssetId(receiveAssetId)
       setReceiveExternal(false)
+      setReceiveFundingSource('transparent')
     } else if (selected) setSelectedAssetId(selected.asset.asset.id)
     if (side === 'from') {
       setFrom(domain)
@@ -1564,29 +1570,31 @@ function DepositWithdrawForm({ receiveEntry }: { readonly receiveEntry: boolean 
     setDomainPicker(side)
   }
   const review = () => {
-    if (!canReview || !selected || !mainAddress) return
-    const wallet = useWalletStore.getState()
-    if (
-      wallet.currentWalletId !== currentWalletId ||
-      wallet.currentAccountId !== currentAccountId ||
-      wallet.currentNetwork !== currentNetwork
-    )
-      return
+    if (!canReview || !selected || !effective || !mainAddress || !scopeStillCurrent()) return
     const activityDomain = fixedSide === 'to' ? to : fixedSide === 'from' ? from : walletMode
     navigate(
       direction === 'main-to-private'
-        ? buildAddToPrivateEvmPath({
-            assetId: selected.asset.asset.id,
-            chainId: selected.chain.chain.id,
+        ? buildPrivateDepositReviewPath({
+            sourceAssetId: selected.asset.asset.id,
+            destinationAssetId: privateTransferDestination!.asset.asset.id,
             amount: currentAmount,
             maximum: maxSelected
           })
-        : buildMoveToMainEvmPath({
-            assetId: selected.asset.asset.id,
-            mainAddress,
-            amount: currentAmount,
-            maximum: maxSelected
-          }),
+        : crossChainPrivateTransfer
+          ? buildCrossChainPrivateWithdrawReviewPath({
+              sourceAssetId: selected.asset.asset.id,
+              destinationAssetId: privateTransferDestination!.asset.asset.id,
+              walletId: effective.walletId,
+              accountId: effective.accountId,
+              amount: currentAmount,
+              maximum: maxSelected
+            })
+          : buildMoveToMainEvmPath({
+              assetId: selected.asset.asset.id,
+              mainAddress,
+              amount: currentAmount,
+              maximum: maxSelected
+            }),
       { state: { activityDomain } }
     )
   }
@@ -1694,9 +1702,8 @@ function DepositWithdrawForm({ receiveEntry }: { readonly receiveEntry: boolean 
       !available ||
       BigInt(available.amountRaw) === 0n
   const handleMax = () => {
-    if (!selected || maxDisabled || resolvedMaxRaw === '0' || clusterMax.loading) return
+    if (!selected || maxDisabled || maximumRaw === '0' || maxLoading) return
     setSelectedAssetId(selected.asset.asset.id)
-    if (clusterMax.error) setRetry(current => current + 1)
     setMaxSelected(true)
     setAmount(maxAmount)
   }
@@ -1823,7 +1830,7 @@ function DepositWithdrawForm({ receiveEntry }: { readonly receiveEntry: boolean 
       setConfirmUncertain(false)
       reviewAttempt.current = null
       updateFeeRefresh(null)
-      const domain = (fixedSide === 'to' ? to : from) === 'private' ? 'private' : 'shield'
+      const domain = plan.sourceDomain ?? from
       void openConfidentialActivity(
         plan,
         () => navigate(homeActivityPath(domain, plan.transactionId)),
@@ -2012,31 +2019,27 @@ function DepositWithdrawForm({ receiveEntry }: { readonly receiveEntry: boolean 
           rows={[
             {
               label: 'From',
-              content:
-                from === 'shield' ? (
-                  `${accountName} · Shield · NEAR Confidential`
-                ) : (
-                  <span>
-                    {accountName} · {domainLabel(from)} · {selected.chain.chain.displayName}
-                    <span className="ml-auto mt-1 block max-w-full font-mono text-xs">
-                      {formatMoveReviewAddress(activeShieldReview.sourceAddress)}
-                    </span>
-                  </span>
-                )
+              content: (
+                <TransactionReviewParty
+                  accountName={accountName}
+                  domain={from}
+                  confidential={from === 'shield'}
+                  address={from === 'shield' ? undefined : activeShieldReview.sourceAddress}
+                  chain={selected.chain.chain}
+                />
+              )
             },
             {
               label: 'To',
-              content:
-                to === 'shield' ? (
-                  `${accountName} · Shield · NEAR Confidential`
-                ) : (
-                  <span>
-                    {accountName} · {domainLabel(to)} · {targetAsset?.chain.chain.displayName}
-                    <span className="ml-auto mt-1 block max-w-full font-mono text-xs">
-                      {formatMoveReviewAddress(activeShieldReview.destinationAddress)}
-                    </span>
-                  </span>
-                )
+              content: (
+                <TransactionReviewParty
+                  accountName={accountName}
+                  domain={to}
+                  confidential={to === 'shield'}
+                  address={to === 'shield' ? undefined : activeShieldReview.destinationAddress}
+                  chain={targetAsset?.chain.chain ?? selected.chain.chain}
+                />
+              )
             },
             {
               label: 'Estimated receive',
@@ -2164,6 +2167,27 @@ function DepositWithdrawForm({ receiveEntry }: { readonly receiveEntry: boolean 
   const assetSymbol = receiveZec
     ? 'ZEC'
     : symbol || formatSymbol(externalAsset?.token.symbol ?? pendingAssetHint?.symbol)
+  const confidentialAssetSource = !receiveEntry && from === 'shield'
+  const assetIcon = (
+    <TokenIcon
+      assetId={selected?.asset.asset.id ?? receiveAssetId ?? selectedAssetId ?? undefined}
+      symbol={assetSymbol}
+      icon={selected?.asset.metadata.iconUrl ?? pendingAssetHint?.iconUrl}
+      nativeChain={receiveZec ? 'zcash' : undefined}
+      blockchain={
+        receiveZec
+          ? 'zec'
+          : externalAsset
+            ? resolveChainIconAlias(
+                externalAsset.chain.family,
+                externalAsset.chain.displayName,
+                externalAsset.chain.id
+              )
+            : networkIcon
+      }
+      size={26}
+    />
+  )
   const assetControl = (
     <button
       type="button"
@@ -2172,30 +2196,7 @@ function DepositWithdrawForm({ receiveEntry }: { readonly receiveEntry: boolean 
       className="wallet-interactive flex h-9 max-w-full items-center gap-2 rounded-full bg-card px-2 text-base font-medium leading-[21px] hover:bg-wallet-selected active:brightness-95 focus-visible:outline-2 focus-visible:outline-primary"
       aria-label="Select transfer asset"
     >
-      {assetSymbol ? (
-        <TokenIcon
-          assetId={selected?.asset.asset.id ?? receiveAssetId ?? selectedAssetId ?? undefined}
-          symbol={assetSymbol}
-          icon={selected?.asset.metadata.iconUrl ?? pendingAssetHint?.iconUrl}
-          nativeChain={receiveZec ? 'zcash' : undefined}
-          blockchain={
-            receiveZec
-              ? 'zec'
-              : externalAsset
-                ? resolveChainIconAlias(
-                    externalAsset.chain.family,
-                    externalAsset.chain.displayName,
-                    externalAsset.chain.id
-                  )
-                : from !== 'shield'
-                  ? networkIcon
-                  : undefined
-          }
-          size={26}
-        />
-      ) : (
-        <Icon icon="lucide:coins" width={20} height={20} />
-      )}
+      {assetSymbol ? assetIcon : <Icon icon="lucide:coins" width={20} height={20} />}
       <span className="max-w-32 truncate">
         {assetSymbol || (loadState === 'loading' ? '…' : 'Select asset')}
       </span>
@@ -2207,13 +2208,19 @@ function DepositWithdrawForm({ receiveEntry }: { readonly receiveEntry: boolean 
       <BalanceTransferAccountCard
         label="From"
         accountName={accountName}
-        domain={receiveSource === 'private' ? 'private' : 'public'}
-        address={receiveZec ? (zcashPublicAddress ?? '') : addressFor(from)}
+        domain={shieldedZecReceive ? 'shield' : receiveSource === 'private' ? 'private' : 'public'}
+        transparent={receiveZec && !shieldedZecReceive}
+        address={
+          receiveZec
+            ? ((shieldedZecReceive ? zcashReceiveAddress : zcashPublicAddress) ?? '')
+            : addressFor(from)
+        }
         networkName=""
         network={networkIcon}
         onNetworkClick={() => setAssetPickerOpen(true)}
         onAccountClick={() => openDomainPicker('from')}
         external={externalReceive}
+        provider={shieldedZecReceive ? 'zcash-shield' : null}
       />
       <BalanceTransferAccountCard
         label="To"
@@ -2234,14 +2241,14 @@ function DepositWithdrawForm({ receiveEntry }: { readonly receiveEntry: boolean 
     `/receive?${new URLSearchParams({
       mode: 'shield',
       provider: receiveProvider,
-      from: 'public',
+      from: shieldedZecReceive ? 'zcash-shield' : 'public',
       assetId: zcashAssetId,
       walletId: currentWalletId ?? '',
       accountId: currentAccountId ?? ''
     })}`
 
   return (
-    <div className="page-container">
+    <div className="page-container" data-wallet-mode={receiveEntry ? 'public' : walletMode}>
       {(!nativeReceive || !nativeReceiveState.reviewing) && (
         <PageHeader
           title={receiveEntry ? 'Receive' : actionLabel}
@@ -2252,8 +2259,9 @@ function DepositWithdrawForm({ receiveEntry }: { readonly receiveEntry: boolean 
       )}
       {nativeRetryPath ? (
         <NativeZcashReceiveForm
-          key={receiveProvider}
+          key={`${receiveProvider}:${receiveFundingSource}`}
           destination={receiveProvider === 'zcash-shield' ? 'shielded' : 'confidential'}
+          fundingSource={receiveFundingSource}
           retryPath={nativeRetryPath}
           asset={assetControl}
           accounts={receiveAccounts}
@@ -2302,7 +2310,9 @@ function DepositWithdrawForm({ receiveEntry }: { readonly receiveEntry: boolean 
               }}
               max={{
                 onClick: handleMax,
-                disabled: !selected || maxDisabled || resolvedMaxRaw === '0' || clusterMax.loading
+                selected: maxSelected,
+                loading: maxLoading,
+                disabled: !selected || maxDisabled || maximumRaw === '0' || maxLoading
               }}
             />
             {receiveEntry ? (
@@ -2319,6 +2329,8 @@ function DepositWithdrawForm({ receiveEntry }: { readonly receiveEntry: boolean 
                         userEditedMove.current = true
                         if (from === 'shield' && destination)
                           setSelectedAssetId(destination.asset.asset.id)
+                        else if (crossChainPrivateTransfer && privateTransferDestination)
+                          setSelectedAssetId(privateTransferDestination.asset.asset.id)
                         else if (selected) setSelectedAssetId(selected.asset.asset.id)
                         setDestinationAssetId(null)
                         setFrom(to)
@@ -2348,7 +2360,10 @@ function DepositWithdrawForm({ receiveEntry }: { readonly receiveEntry: boolean 
                     accountName={accountName}
                     domain={to}
                     address={to === 'shield' ? '' : targetAddress}
-                    networkName={targetAsset?.chain.chain.displayName}
+                    networkName={
+                      targetAsset?.chain.chain.displayName ??
+                      (crossChainPrivateTransfer ? 'Select network' : undefined)
+                    }
                     network={
                       targetAsset
                         ? resolveChainIconAlias(
@@ -2494,7 +2509,8 @@ function DepositWithdrawForm({ receiveEntry }: { readonly receiveEntry: boolean 
                 (!transferError &&
                   clusterPair &&
                   (clusterSelected || method === 'directly') &&
-                  selectedEstimate.loading)
+                  selectedEstimate.loading) ||
+                (crossChainPrivateTransfer && directEstimate.loading)
               }
               onClick={fundingRoute ? () => void prepareShield() : review}
             >
@@ -2535,38 +2551,47 @@ function DepositWithdrawForm({ receiveEntry }: { readonly receiveEntry: boolean 
           rows={shieldAssetPicker ? providerAssetRows : pickerRows}
           adapter={transferAssetSearch}
           isDisabled={item => 'key' in item && Boolean(item.disabledReason)}
-          toItem={item =>
-            'key' in item
-              ? shieldTokenSelectionItem(item, balancesHidden)
-              : {
-                  key: item.asset.asset.id,
-                  symbol: formatSymbol(item.asset.metadata.symbol),
-                  icon: (
-                    <TokenIcon
-                      assetId={item.asset.asset.id}
-                      symbol={formatSymbol(item.asset.metadata.symbol)}
-                      icon={item.asset.metadata.iconUrl}
-                      blockchain={resolveChainIconAlias(
-                        item.chain.chain.family,
-                        item.chain.chain.displayName,
-                        item.chain.chain.id
-                      )}
-                      size={32}
-                    />
-                  ),
-                  subtitle: item.chain.chain.displayName,
-                  balance: (
-                    <span className="block truncate text-base tabular-nums">
-                      {formatTokenQuantity(
-                        formatBaseUnitAmount(item.sourceRaw, item.asset.metadata.decimals)
-                      )}
-                      <span className="block truncate text-xs text-muted">
-                        {item.valueUsd !== null ? formatFiatAmount(item.valueUsd) : '—'}
-                      </span>
-                    </span>
-                  )
-                }
-          }
+          toItem={item => {
+            if ('key' in item) {
+              if (!confidentialAssetSource) return shieldTokenSelectionItem(item, balancesHidden)
+              const row = shieldTokenSelectionItem(
+                { ...item, badgeBlockchain: undefined },
+                balancesHidden
+              )
+              return {
+                ...row,
+                icon: <ConfidentialAssetBadge size={14}>{row.icon}</ConfidentialAssetBadge>
+              }
+            }
+            return {
+              key: item.asset.asset.id,
+              symbol: formatSymbol(item.asset.metadata.symbol),
+              icon: (
+                <TokenIcon
+                  assetId={item.asset.asset.id}
+                  symbol={formatSymbol(item.asset.metadata.symbol)}
+                  icon={item.asset.metadata.iconUrl}
+                  blockchain={resolveChainIconAlias(
+                    item.chain.chain.family,
+                    item.chain.chain.displayName,
+                    item.chain.chain.id
+                  )}
+                  size={32}
+                />
+              ),
+              subtitle: item.chain.chain.displayName,
+              balance: (
+                <span className="block truncate text-base tabular-nums">
+                  {formatTokenQuantity(
+                    formatBaseUnitAmount(item.sourceRaw, item.asset.metadata.decimals)
+                  )}
+                  <span className="block truncate text-xs text-muted">
+                    {item.valueUsd !== null ? formatFiatAmount(item.valueUsd) : '—'}
+                  </span>
+                </span>
+              )
+            }
+          }}
           onSelect={item => {
             const key = 'key' in item ? item.key : item.asset.asset.id
             if (
@@ -2577,6 +2602,7 @@ function DepositWithdrawForm({ receiveEntry }: { readonly receiveEntry: boolean 
               return
             userEditedMove.current = true
             setSelectedAssetId(key)
+            if (receiveEntry && key !== zcashAssetId) setReceiveFundingSource('transparent')
             setDestinationAssetId(null)
             setAmount('')
             setMaxSelected(false)
@@ -2603,11 +2629,9 @@ function DepositWithdrawForm({ receiveEntry }: { readonly receiveEntry: boolean 
           userEditedMove.current = true
           if (from === 'shield') {
             setDestinationAssetId(item.asset.asset.id)
-          } else if (item.asset.asset.id !== selected?.asset.asset.id) {
-            setSelectedAssetId(item.asset.asset.id)
-            setDestinationAssetId(null)
-            setAmount('')
-            setMaxSelected(false)
+          } else if (supportedPair) {
+            const differentChain = item.chain.chain.id !== selected?.chain.chain.id
+            setDestinationAssetId(differentChain ? item.asset.asset.id : null)
           }
           setShieldError(null)
         }}
@@ -2618,7 +2642,11 @@ function DepositWithdrawForm({ receiveEntry }: { readonly receiveEntry: boolean 
           if (!open) setDomainPicker(null)
         }}
       >
-        <DialogContent position="bottom" className="bg-wallet-surface p-4">
+        <DialogContent
+          position="bottom"
+          data-wallet-mode={walletMode}
+          className="bg-wallet-surface p-4"
+        >
           <DialogHeader className="text-left">
             <DialogTitle className="text-sm font-medium leading-[18px]">
               {domainPicker === 'from' ? 'From' : 'To'} · {walletDisplayName} · {pickerAccountName}
@@ -2663,6 +2691,24 @@ function DepositWithdrawForm({ receiveEntry }: { readonly receiveEntry: boolean 
                   />
                 )
               })}
+            {receiveEntry && domainPicker === 'from' && receiveZec && canSpendShieldedZec && (
+              <TransferBalanceOption
+                label={SHIELD_PROVIDERS['zcash-shield'].detailName}
+                icon={<ShieldProviderLogo provider="zcash-shield" size={18} />}
+                address={zcashReceiveAddress ?? ''}
+                balance={formatTokenQuantity(getFundingBalance(zcashBalance, 'shielded').available)}
+                selected={pickerIsActive && shieldedZecReceive}
+                disabled={!pickerIsActive}
+                onSelect={() => {
+                  if (!pickerIsActive) return
+                  setSelectedAssetId(zcashAssetId)
+                  setReceiveExternal(false)
+                  setReceiveFundingSource('shielded')
+                  setPreferredReceiveProvider('near-confidential')
+                  setDomainPicker(null)
+                }}
+              />
+            )}
             {receiveEntry && domainPicker === 'from' && (
               <TransferBalanceOption
                 label="External transfer"
@@ -2672,6 +2718,7 @@ function DepositWithdrawForm({ receiveEntry }: { readonly receiveEntry: boolean 
                 onSelect={() => {
                   if (receiveAssetId) setSelectedAssetId(receiveAssetId)
                   setReceiveExternal(true)
+                  setReceiveFundingSource('transparent')
                   setAssetChainId('all')
                   setDomainPicker(null)
                 }}

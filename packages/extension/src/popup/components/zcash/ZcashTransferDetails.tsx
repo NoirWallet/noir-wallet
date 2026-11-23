@@ -1,13 +1,10 @@
 import { QuoteReviewChanges } from '@/popup/components/transaction/QuoteReviewChanges'
 import { InlineError } from '@/popup/components/common/InlineError'
 import { ZcashSyncProgress } from '@/popup/components/zcash/ZcashSyncProgress'
-import {
-  SendRouteInfoCard,
-  SendRecipientAddress
-} from '@/popup/components/transaction/SendInputCards'
-import { formatSortAddress } from '@/lib/format'
+import { SendRouteInfoCard } from '@/popup/components/transaction/SendInputCards'
 import { formatBaseUnitDecimalAmount } from '@/lib/number-format'
-import { cn } from '@/lib/utils'
+import { TransactionReviewParty } from '@/popup/components/transaction/TransactionReviewParty'
+import { ZcashFundingBadge } from './ZcashFundingBadge'
 import { AmountDisplay } from '@/popup/components/common/AmountDisplay'
 import {
   TransactionReviewDialog,
@@ -17,10 +14,29 @@ import nearLogo from '@/images/figma-near-confidential.svg'
 import zcashShieldLogo from '@/images/figma-zcash-shield.svg'
 import { NetworkFeeTierPicker } from '@/popup/components/transaction/NetworkFeeTierPicker'
 import { ZEC_DECIMALS } from '@/config/wallet'
+import { Icon } from '@iconify/react'
+import { SlippageSettingContent } from '@/popup/components/swap/SlippageSetting'
+import { openModal } from '@/popup/provider/ModalManager'
 
 import type { ZcashTransferState } from '@/popup/hooks/useZcashTransfer'
 
 export function ZcashTransferRoute({ route }: { readonly route: ZcashTransferState['route'] }) {
+  const { slippage } = route
+  const openSlippageSettings = () => {
+    if (!slippage) return
+    void openModal<number>({
+      title: 'Slippage',
+      body: resolve => (
+        <SlippageSettingContent
+          currentSlippage={slippage.value}
+          onSave={value => {
+            slippage.onChange(value)
+            resolve(value)
+          }}
+        />
+      )
+    })
+  }
   return (
     <>
       <div className="order-5">
@@ -49,6 +65,22 @@ export function ZcashTransferRoute({ route }: { readonly route: ZcashTransferSta
               '—'
             )
           }
+          extra={
+            slippage && (
+              <div className="flex min-h-5 items-center justify-between gap-3">
+                <span className="text-muted">Slippage</span>
+                <button
+                  type="button"
+                  aria-label={`Slippage settings, currently ${slippage.value}%`}
+                  onClick={openSlippageSettings}
+                  className="wallet-interactive inline-flex items-center gap-2 rounded text-foreground hover:text-primary"
+                >
+                  {slippage.value}%
+                  <Icon icon="lucide:settings-2" width={15} height={15} />
+                </button>
+              </div>
+            )
+          }
           time={route.time}
           estimatedReceive={route.estimatedReceive}
         />
@@ -75,6 +107,7 @@ export function ZcashTransferSyncStatus({ sync }: { readonly sync: ZcashTransfer
 export function ZcashTransferReview({ transfer }: { readonly transfer: ZcashTransferState }) {
   const { review, networkName, action } = transfer
   const { quote } = review
+  const chain = { name: networkName, icon: 'zcash' }
   return (
     <TransactionReviewDialog
       open={review.open}
@@ -95,35 +128,24 @@ export function ZcashTransferReview({ transfer }: { readonly transfer: ZcashTran
           {
             label: review.selfTransfer ? 'From' : 'Send from',
             content: (
-              <span className="min-w-0 text-right">
-                <span className="flex items-center justify-end gap-1.5">
-                  {review.from.accountDisplayName}
-                  <span
-                    className={cn(
-                      'rounded px-1.5 py-0.5 text-xs',
-                      review.from.fundingSource === 'shielded'
-                        ? 'bg-primary/10 text-primary'
-                        : 'bg-white/10 text-muted'
-                    )}
-                  >
-                    {review.from.fundingSource === 'shielded' ? 'Shield' : 'Transparent'}
-                  </span>
-                </span>
-                <span
-                  className="block truncate text-xs font-normal leading-4 text-muted"
-                  title={review.from.address}
-                >
-                  {formatSortAddress(review.from.address)}
-                </span>
-              </span>
+              <TransactionReviewParty
+                accountName={review.from.accountDisplayName}
+                badge={<ZcashFundingBadge source={review.from.fundingSource} />}
+                address={review.from.address}
+                chain={chain}
+              />
             )
           },
           {
             label: review.selfTransfer ? 'To' : 'Recipient',
-            content: review.confidential ? (
-              'NEAR Confidential'
-            ) : (
-              <SendRecipientAddress address={review.to.address} name={review.to.name} />
+            content: (
+              <TransactionReviewParty
+                accountName={review.confidential ? undefined : review.to.name}
+                domain={review.confidential ? 'shield' : undefined}
+                confidential={review.confidential}
+                address={review.confidential ? undefined : review.to.address}
+                chain={chain}
+              />
             )
           },
           ...(review.confidential && quote
@@ -145,13 +167,13 @@ export function ZcashTransferReview({ transfer }: { readonly transfer: ZcashTran
                       symbol="ZEC"
                     />
                   )
+                },
+                {
+                  label: 'Refund address',
+                  content: <TransactionReviewParty address={quote.refundAddress} chain={chain} />
                 }
               ]
             : []),
-          {
-            label: 'Network',
-            content: networkName
-          },
           ...(review.memo ? [{ label: 'Memo', content: review.memo }] : []),
           {
             label: 'Network fee',
