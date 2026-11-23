@@ -27,6 +27,7 @@ const SUPPORTED_APPROVAL_ACTIONS = [
   'nearConnect',
   'nearTransaction',
   'nearMessage',
+  'shieldConnect',
   'shieldReceive',
   'shieldTransfer'
 ] as const

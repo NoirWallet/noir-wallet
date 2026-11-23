@@ -1872,7 +1872,7 @@ test.describe('confidential funding persisted recovery', () => {
     expect(settled.segments.find(segment => segment.role === 'relay').status).toBe('failed')
   })
 
-  test('completes a Shield receive once the confidential balance arrives ahead of provider success', async () => {
+  test('does not complete a Shield receive from another credit of the same asset', async () => {
     const planId = 'credited-direct-deposit'
     const transactionId = `tx:confidential:${planId}`
     const depositAddress = '0x3333333333333333333333333333333333333333'
@@ -1992,13 +1992,14 @@ test.describe('confidential funding persisted recovery', () => {
       })
 
     expect((await coordinatorFor('0').continuePlan(planId)).phase).toBe('deposit-confirming')
-    expect((await coordinatorFor('980').continuePlan(planId)).phase).toBe('ready')
+    expect((await coordinatorFor('980').continuePlan(planId)).phase).toBe('deposit-confirming')
     const settled = await repository.get(scope, transactionId)
-    expect(settled.root.status).toBe('final')
-    expect(settled.segments.find(segment => segment.role === 'relay').status).toBe('final')
+    expect(settled.root.status).not.toBe('final')
+    expect(settled.segments.find(segment => segment.role === 'origin').status).toBe('final')
+    expect(settled.segments.find(segment => segment.role === 'relay').status).toBe('confirming')
   })
 
-  test('finishes an arrived Shield receive that was parked for authorization', async () => {
+  test('does not finish a parked Shield receive from a cached balance', async () => {
     const planId = 'needs-auth-direct-deposit'
     const transactionId = `tx:confidential:${planId}`
     const protocolAssetId = 'nep141:eth.omft.near'
@@ -2112,10 +2113,173 @@ test.describe('confidential funding persisted recovery', () => {
         scope: { network: 'mainnet', ...scope },
         operationId: planId
       })
-    ).toMatchObject({ status: 'ready', action: 'receive' })
+    ).toMatchObject({ status: 'needs-auth', action: 'receive' })
     const settled = await repository.get(scope, transactionId)
-    expect(settled.root.status).toBe('final')
+    expect(settled.root.status).not.toBe('final')
+    expect(settled.segments.find(segment => segment.role === 'origin').status).toBe('final')
+    expect(settled.segments.find(segment => segment.role === 'relay').status).toBe('confirming')
+  })
+
+  test('completes a Shield receive only after its own settlement and a confirmed source', async () => {
+    const planId = 'settled-direct-deposit'
+    const transactionId = `tx:confidential:${planId}`
+    const protocolAssetId = 'nep141:eth.omft.near'
+    const transactionHash = `0x${'cd'.repeat(32)}`
+    let plan = serializeConfidentialFundingPlan({
+      schemaVersion: 1,
+      planId,
+      transactionId,
+      network: 'mainnet',
+      ...scope,
+      operation: 'deposit',
+      sourceDomain: 'public',
+      destinationDomain: 'shield',
+      phase: 'deposit-confirming',
+      source: {
+        chainId: 'eip155:1',
+        chainName: 'eth',
+        assetId: 'eip155:1/slip44:60',
+        protocolAssetId,
+        amountRaw: '1000',
+        address: signerId
+      },
+      destination: {
+        chainId: 'eip155:1',
+        chainName: 'eth',
+        assetId: 'eip155:1/slip44:60',
+        protocolAssetId,
+        address: signerId
+      },
+      signerId,
+      addressIndex: 0,
+      slippageBps: 100,
+      requiresDeposit: true,
+      confidentialBaselineRaw: '0',
+      depositQuote: {
+        correlationId: 'quote-one',
+        quoteRequest: {},
+        quote: {
+          amountIn: '1000',
+          amountOut: '990',
+          minAmountOut: '980',
+          depositAddress: '0x3333333333333333333333333333333333333333',
+          deadline: new Date(60_000).toISOString()
+        }
+      },
+      preparedDeposit: {
+        commandId: 'command-one',
+        payloadFingerprint: 'a'.repeat(64),
+        expiresAt: 60_000,
+        preparedTransfer: {}
+      },
+      approvalFingerprint: 'b'.repeat(64),
+      approvalExpiresAt: 60_000,
+      expectedOutputRaw: '990',
+      minimumOutputRaw: '980',
+      splitSourceAmounts: [],
+      withdraws: [],
+      createdAt: now,
+      updatedAt: now
+    })
+    const repository = new SignedTransactionRepository()
+    const graph = createConfidentialFundingGraph({
+      planId,
+      operation: 'deposit',
+      sourceDomain: 'public',
+      destinationDomain: 'shield',
+      scope,
+      source: { ...plan.source, transactionHash },
+      destination: { ...plan.destination, expectedAmountRaw: plan.expectedOutputRaw },
+      withdrawDepositAddresses: [],
+      requiresDeposit: true,
+      now
+    })
+    const withOrigin = originStatus =>
+      repository.create({
+        ...graph,
+        root: { ...graph.root, status: originStatus === 'final' ? 'confirming' : 'broadcast' },
+        segments: graph.segments.map(segment =>
+          segment.role === 'origin'
+            ? { ...segment, status: originStatus }
+            : segment.role === 'relay'
+              ? { ...segment, status: 'confirming' }
+              : segment
+        )
+      })
+    await withOrigin('broadcast')
+    const coordinatorFor = (originReady, providerStatus) =>
+      new ConfidentialFundingCoordinator({
+        network: 'mainnet',
+        api: {
+          getStatus: async () =>
+            providerStatus === 'SUCCESS'
+              ? { status: 'SUCCESS', settledAmountOutRaw: '980' }
+              : { status: 'PROCESSING' },
+          getBalances: async () => [
+            { tokenId: confidentialPrivateTokenId(protocolAssetId), available: '5000' }
+          ]
+        },
+        store: {
+          getPlan: async () => structuredClone(plan),
+          putPlan: async next => {
+            plan = serializeConfidentialFundingPlan(next)
+          },
+          getSession: async () =>
+            originReady
+              ? {
+                  accessToken: 'session',
+                  refreshToken: 'refresh',
+                  expiresAt: 1_000_000,
+                  refreshExpiresAt: 2_000_000
+                }
+              : null,
+          putBalances: async () => {},
+          getBalanceSnapshot: async () => ({
+            balances: [{ tokenId: confidentialPrivateTokenId(protocolAssetId), available: '5000' }],
+            updatedAt: now,
+            fresh: true
+          })
+        },
+        signer: {},
+        repository,
+        assets: {},
+        evmNetworks: [],
+        assetMappings: [],
+        now: () => now,
+        scheduleMonitoring: async () => {}
+      })
+
+    plan = serializeConfidentialFundingPlan({
+      ...plan,
+      phase: 'needs-auth',
+      resumePhase: 'deposit-confirming'
+    })
+    expect(
+      (
+        await coordinatorFor(false, 'SUCCESS').readShieldDappStatus({
+          scope: { network: 'mainnet', ...scope },
+          operationId: planId
+        })
+      ).status
+    ).toBe('needs-auth')
+    expect(
+      (await repository.get(scope, transactionId)).segments.find(
+        segment => segment.role === 'origin'
+      ).status
+    ).toBe('broadcast')
+
+    plan = serializeConfidentialFundingPlan({
+      ...plan,
+      phase: 'deposit-confirming',
+      resumePhase: undefined
+    })
+    await repository.deleteByAccountScope(scope)
+    await withOrigin('final')
+    expect((await coordinatorFor(true, 'SUCCESS').continuePlan(planId)).phase).toBe('ready')
+    const settled = await repository.get(scope, transactionId)
+    expect(settled.segments.find(segment => segment.role === 'origin').status).toBe('final')
     expect(settled.segments.find(segment => segment.role === 'relay').status).toBe('final')
+    expect(settled.root.status).toBe('final')
   })
 
   test('recovers one approved Shield withdraw without signing again or expanding the amount', async () => {

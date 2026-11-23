@@ -1,8 +1,8 @@
 import type { Network } from '@/types'
 import { isAddress } from 'viem'
 import type { ConfidentialFundingCoordinator } from './confidential-funding-coordinator'
-import { ShieldProviderError } from '@/core/dapp/shield-provider'
-import type { ShieldDappOperationReport } from '@/core/services/confidential-funding/confidential-funding-portfolio'
+import { ShieldProviderError, isShieldUnlockRetryError } from '@/core/dapp/shield-provider'
+import type { ShieldDappOperationReport } from '@/core/services/confidential-funding/shield-dapp-projection'
 
 const NEAR_CONFIDENTIAL_LAYER = 'near-confidential'
 const CATALOG_KEYS = new Set([
@@ -251,17 +251,88 @@ function requireCatalogQuery(params: unknown): void {
   }
 }
 
-type ShieldApprovalAction = 'shieldReceive' | 'shieldTransfer'
+type ShieldApprovalAction = 'shieldConnect' | 'shieldReceive' | 'shieldTransfer'
+
+function requireShieldOrigin(origin: string | undefined): string {
+  if (typeof origin !== 'string' || origin.length === 0 || origin.length > 2048) {
+    throw new ShieldProviderError(4100, 'This site is not authorized for Shield.')
+  }
+  try {
+    const url = new URL(origin)
+    if ((url.protocol !== 'https:' && url.protocol !== 'http:') || url.origin !== origin) {
+      throw new Error('invalid origin')
+    }
+  } catch (error) {
+    if (error instanceof ShieldProviderError) throw error
+    throw new ShieldProviderError(4100, 'This site is not authorized for Shield.')
+  }
+  return origin
+}
+
+function sameShieldScope(left: ShieldScope, right: ShieldScope): boolean {
+  return (
+    left.network === right.network &&
+    left.keyDomainId === right.keyDomainId &&
+    left.accountId === right.accountId
+  )
+}
+
+async function readAuthorizedShieldScope(input: {
+  readonly readScope?: () => Promise<ShieldScope | null>
+}): Promise<ShieldScope> {
+  if (!input.readScope) {
+    throw new ShieldProviderError(4900, 'Shield approval is unavailable.')
+  }
+  const scope = await input.readScope()
+  if (!scope) {
+    throw new ShieldProviderError(4100, 'Select an active account before using Shield.')
+  }
+  return scope
+}
+
+type ShieldSite = Readonly<{ origin: string; scope: ShieldScope }>
+
+async function readCurrentShieldSite(input: {
+  readonly origin?: string
+  readonly scope: ShieldScope
+  readonly readScope?: () => Promise<ShieldScope | null>
+}): Promise<ShieldSite> {
+  const origin = requireShieldOrigin(input.origin)
+  const scope = await readAuthorizedShieldScope(input)
+  if (!sameShieldScope(scope, input.scope)) {
+    throw new ShieldProviderError(
+      4100,
+      'This site authorization changed. Review the request again.'
+    )
+  }
+  return Object.freeze({ origin, scope })
+}
+
+async function requireGrantedShieldSite(input: {
+  readonly origin?: string
+  readonly scope: ShieldScope
+  readonly readScope?: () => Promise<ShieldScope | null>
+  readonly coordinator: ConfidentialFundingCoordinator
+}): Promise<ShieldSite> {
+  const site = await readCurrentShieldSite(input)
+  if (!(await input.coordinator.shieldDappAuthorized(site.origin, site.scope))) {
+    throw new ShieldProviderError(4100, 'This site is not authorized for Shield.')
+  }
+  return site
+}
 
 export async function handleShieldDAppRequest(input: {
   readonly method: string
   readonly params: unknown
   readonly coordinator: ConfidentialFundingCoordinator | null
+  readonly origin?: string
   readonly scope: ShieldScope | null
+  readonly readScope?: () => Promise<ShieldScope | null>
   readonly requestApproval?: (
     action: ShieldApprovalAction,
     summary: Readonly<Record<string, string>>
   ) => Promise<boolean>
+  readonly unlock?: () => Promise<void>
 }): Promise<
   Readonly<
     | { layer: typeof NEAR_CONFIDENTIAL_LAYER; connected: true }
@@ -288,17 +359,55 @@ export async function handleShieldDAppRequest(input: {
   if (!input.scope) {
     throw new ShieldProviderError(4100, 'Select an active account before using Shield.')
   }
+  const site = {
+    origin: input.origin,
+    scope: input.scope,
+    readScope: input.readScope,
+    coordinator: input.coordinator
+  }
   if (input.method === 'shield_connect') {
     requireLayerOnly(input.params, 'Shield connect')
-    await input.coordinator.openShieldDappSession(input.scope)
+    const { origin, scope } = await readCurrentShieldSite(site)
+    if (!input.requestApproval) {
+      throw new ShieldProviderError(4900, 'Shield approval is unavailable.')
+    }
+    let approved = false
+    try {
+      approved = await input.requestApproval('shieldConnect', { layer: NEAR_CONFIDENTIAL_LAYER })
+    } catch {
+      throw new ShieldProviderError(4900, 'Shield approval is unavailable.')
+    }
+    if (!approved) {
+      throw new ShieldProviderError(4001, 'The Shield connection was rejected.')
+    }
+    const grant = async () => {
+      const current = await readCurrentShieldSite(site)
+      if (current.origin !== origin || !sameShieldScope(current.scope, scope)) {
+        throw new ShieldProviderError(
+          4100,
+          'This site authorization changed. Review the request again.'
+        )
+      }
+      await site.coordinator.grantShieldDapp(origin, current.scope)
+    }
+    try {
+      await grant()
+    } catch (error) {
+      // Retrying the whole request after unlock would ask for a second approval.
+      if (!input.unlock || !isShieldUnlockRetryError(error)) throw error
+      await input.unlock()
+      await grant()
+    }
     return Object.freeze({ layer: NEAR_CONFIDENTIAL_LAYER, connected: true })
   }
   if (input.method === 'shield_disconnect') {
     requireLayerOnly(input.params, 'Shield disconnect')
-    await input.coordinator.closeShieldDappSession(input.scope)
+    const { origin, scope } = await readCurrentShieldSite(site)
+    await input.coordinator.revokeShieldDapp(origin, scope)
     return Object.freeze({ layer: NEAR_CONFIDENTIAL_LAYER, connected: false })
   }
   if (input.method === 'shield_getQuote') {
+    const { scope } = await requireGrantedShieldSite(site)
     const record = readParams(input.params)
     const keys = Object.keys(record)
     if (record.layer !== NEAR_CONFIDENTIAL_LAYER) {
@@ -313,7 +422,7 @@ export async function handleShieldDAppRequest(input: {
         throw new ShieldProviderError(-32602, 'Shield receive quote is invalid.')
       }
       return input.coordinator.quoteShieldDapp({
-        scope: input.scope,
+        scope,
         action: 'receive',
         amount,
         source: readTokenRef(record.source, 'Shield source')
@@ -327,7 +436,7 @@ export async function handleShieldDAppRequest(input: {
         throw new ShieldProviderError(-32602, 'Shield transfer quote is invalid.')
       }
       return input.coordinator.quoteShieldDapp({
-        scope: input.scope,
+        scope,
         action: 'transfer',
         amount,
         source: readTokenRef(record.token, 'Shield token'),
@@ -338,7 +447,8 @@ export async function handleShieldDAppRequest(input: {
   }
   if (input.method === 'shield_refreshBalances') {
     requireLayerOnly(input.params, 'Shield balance refresh')
-    const balances = await input.coordinator.refreshShieldDappBalances(input.scope, true)
+    const { scope } = await requireGrantedShieldSite(site)
+    const balances = await input.coordinator.refreshShieldDappBalances(scope, false)
     return Object.freeze({ layer: NEAR_CONFIDENTIAL_LAYER, balances })
   }
   if (
@@ -352,26 +462,22 @@ export async function handleShieldDAppRequest(input: {
       : Object.freeze({ layer: NEAR_CONFIDENTIAL_LAYER, tokens: catalog.tokens })
   }
   if (input.method === 'shield_getTransactionStatus') {
+    const { scope } = await requireGrantedShieldSite(site)
     return input.coordinator.readShieldDappStatus({
-      scope: input.scope,
+      scope,
       operationId: readShieldOperationId(input.params)
     })
   }
-  if (input.method === 'shield_receive') {
-    return receiveShield({
+  if (input.method === 'shield_receive' || input.method === 'shield_transfer') {
+    const { scope } = await requireGrantedShieldSite(site)
+    const request = {
       params: input.params,
       coordinator: input.coordinator,
-      scope: input.scope,
-      requestApproval: input.requestApproval
-    })
-  }
-  if (input.method === 'shield_transfer') {
-    return transferShield({
-      params: input.params,
-      coordinator: input.coordinator,
-      scope: input.scope,
-      requestApproval: input.requestApproval
-    })
+      scope,
+      requestApproval: input.requestApproval,
+      verifySite: () => requireGrantedShieldSite(site)
+    }
+    return input.method === 'shield_receive' ? receiveShield(request) : transferShield(request)
   }
   throw new ShieldProviderError(4200, 'The requested Shield method is not supported.')
 }
@@ -409,7 +515,7 @@ function shieldApprovalSummary(prepared: object): Readonly<Record<string, string
   return Object.freeze(summary)
 }
 
-async function receiveShield(input: {
+interface ShieldOperationRequest {
   readonly params: unknown
   readonly coordinator: ConfidentialFundingCoordinator
   readonly scope: ShieldScope
@@ -417,7 +523,33 @@ async function receiveShield(input: {
     action: ShieldApprovalAction,
     summary: Readonly<Record<string, string>>
   ) => Promise<boolean>
-}): Promise<ShieldDappOperationReport> {
+  readonly verifySite: () => Promise<ShieldSite>
+}
+
+async function confirmApprovedShieldPlan(
+  input: ShieldOperationRequest,
+  prepared: Readonly<{ planId: string; payloadFingerprint: string }>,
+  rejectPrepared: () => Promise<void>
+): Promise<ShieldDappOperationReport> {
+  let current: ShieldSite
+  try {
+    current = await input.verifySite()
+  } catch (error) {
+    await rejectPrepared()
+    throw error
+  }
+  if (!sameShieldScope(current.scope, input.scope)) {
+    await rejectPrepared()
+    throw new ShieldProviderError(
+      4100,
+      'This site authorization changed. Review the request again.'
+    )
+  }
+  const plan = await input.coordinator.confirm(prepared.planId, prepared.payloadFingerprint)
+  return input.coordinator.reportStoredShieldDappPlan(plan)
+}
+
+async function receiveShield(input: ShieldOperationRequest): Promise<ShieldDappOperationReport> {
   const record = readParams(input.params)
   const keys = Object.keys(record)
   if (
@@ -455,19 +587,10 @@ async function receiveShield(input: {
     await rejectPrepared()
     throw new ShieldProviderError(4001, 'The Shield receive was rejected.')
   }
-  const plan = await input.coordinator.confirm(prepared.planId, prepared.payloadFingerprint)
-  return input.coordinator.reportStoredShieldDappPlan(plan)
+  return confirmApprovedShieldPlan(input, prepared, rejectPrepared)
 }
 
-async function transferShield(input: {
-  readonly params: unknown
-  readonly coordinator: ConfidentialFundingCoordinator
-  readonly scope: ShieldScope
-  readonly requestApproval?: (
-    action: ShieldApprovalAction,
-    summary: Readonly<Record<string, string>>
-  ) => Promise<boolean>
-}): Promise<ShieldDappOperationReport> {
+async function transferShield(input: ShieldOperationRequest): Promise<ShieldDappOperationReport> {
   const record = readParams(input.params)
   const keys = Object.keys(record)
   if (
@@ -506,6 +629,5 @@ async function transferShield(input: {
     await rejectPrepared()
     throw new ShieldProviderError(4001, 'The Shield transfer was rejected.')
   }
-  const plan = await input.coordinator.confirm(prepared.planId, prepared.payloadFingerprint)
-  return input.coordinator.reportStoredShieldDappPlan(plan)
+  return confirmApprovedShieldPlan(input, prepared, rejectPrepared)
 }

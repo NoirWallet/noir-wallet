@@ -40,8 +40,13 @@ import {
   type ZcashOperationAnalyticsContext
 } from '@/lib/analytics/operations'
 import { dappHandler } from './dapp-handler'
-import { handleShieldDAppRequest, resolveShieldDappScope } from './shield-dapp-handler'
-import { isShieldUnlockRetryError, toShieldProviderErrorShape } from '@/core/dapp/shield-provider'
+import {
+  attachShieldFundingRuntime,
+  createBackgroundShieldFundingRuntime,
+  handleShieldDappChainRequest,
+  routeConfidentialFundingMessage
+} from './shield-runtime'
+import { toShieldProviderErrorShape } from '@/core/dapp/shield-provider'
 import { evmDAppOperationStore } from './evm-dapp-operation-store'
 import { backgroundZcashWalletRuntime } from './zcash-wallet-runtime'
 import { UI_CONFIG } from '@/config/extension'
@@ -250,14 +255,9 @@ import {
   type BackgroundEvmTransferRouter
 } from './evm-transfer'
 
-import {
-  CONFIDENTIAL_FUNDING_MONITOR_ALARM,
-  createBackgroundConfidentialFundingCoordinator
-} from './confidential-funding'
+import { CONFIDENTIAL_FUNDING_MONITOR_ALARM } from './confidential-funding'
 import type { ConfidentialFundingCoordinator } from './confidential-funding-coordinator'
 import type { NativeZecIntentsSwapReview } from '@/core/services/native-zec-intents-swap'
-import { getConfidentialFundingMessageHandler } from './confidential-funding-messages'
-import { ExternalShieldDepositError } from '@/core/services/confidential-funding/confidential-external-deposit'
 import { ChromeConfidentialFundingStore } from './confidential-funding-store'
 import { createEvmWalletRuntimeError } from '@/core/chains/evm'
 import {
@@ -1327,88 +1327,21 @@ async function reloadMultichainRuntime(
   evmTransferController = evmTransferRuntime?.activeController ?? null
   evmTransferRouter = evmTransferRuntime?.router ?? null
   confidentialFundingCoordinator = evmFeatureRuntimePolicy.newOperationsEnabled
-    ? createBackgroundConfidentialFundingCoordinator(
-        catalog,
+    ? createBackgroundShieldFundingRuntime({
+        evmNetworks: catalog,
         customEvmNetworks,
-        userAssets.definitions,
-        intentsProtocolAssets,
-        intentsFullCatalogTokens,
-        settings,
-        async target => {
-          const coordinator = portfolioCoordinator
-          if (!coordinator) return
-          if (target.balanceUpdated) {
-            const model = await coordinator.readCachedActive()
-            if (
-              model?.scope.keyDomainId === target.keyDomainId &&
-              model.scope.accountId === target.accountId
-            ) {
-              await chrome.runtime
-                .sendMessage({
-                  type: 'PORTFOLIO_UPDATED',
-                  walletId: target.keyDomainId,
-                  accountId: target.accountId
-                })
-                .catch(() => {})
-            }
-            return
-          }
-          await coordinator.invalidate(
-            {
-              network: DEFAULT_NETWORK,
-              keyDomainId: target.keyDomainId,
-              accountId: target.accountId
-            },
-            target.chainIds,
-            { domain: target.domain ?? 'chain' }
-          )
-        },
-        confidentialFundingStore,
-        () => {
-          const state = useWalletStore.getState()
-          const walletId = state.currentWalletId
-          const accountId = state.currentAccountId
-          const nativeAccount =
-            walletId && accountId ? state.getAccount(walletId, accountId) : undefined
-          const addresses =
-            nativeAccount && isAccountNetworkEnabled(nativeAccount, state.currentNetwork, 'zcash')
-              ? nativeAccount.addresses
-              : undefined
-          return {
-            network: state.currentNetwork,
-            walletId,
-            accountId,
-            refundAddresses: [
-              addresses?.transparent,
-              addresses?.shielded,
-              addresses?.fullUnified
-            ].filter((address): address is string => Boolean(address))
-          }
-        }
-      )
+        userEvmAssets: userAssets.definitions,
+        protocolAssets: intentsProtocolAssets,
+        protocolTokens: intentsFullCatalogTokens,
+        endpointSettings: settings,
+        store: confidentialFundingStore,
+        getPortfolioCoordinator: () => portfolioCoordinator
+      })
     : null
-  const nativeSwapBalanceCoordinator = confidentialFundingCoordinator
-  transactionMonitor.setConfidentialBalanceRefresher(
-    nativeSwapBalanceCoordinator
-      ? scope =>
-          nativeSwapBalanceCoordinator.refreshBalances(
-            {
-              network: DEFAULT_NETWORK,
-              keyDomainId: scope.walletId,
-              accountId: scope.accountId
-            },
-            false
-          )
-      : undefined
-  )
-  if (!isRuntimeReconfiguration) {
-    void confidentialFundingCoordinator?.resumeAll().catch(error => {
-      console.warn(
-        '[Confidential Funding] Startup recovery failed:',
-        error instanceof Error ? error.name : 'UnknownError'
-      )
-    })
-  }
+  attachShieldFundingRuntime(confidentialFundingCoordinator, {
+    transactionMonitor,
+    resumeRecovery: !isRuntimeReconfiguration
+  })
   bitcoinTransferController =
     bitcoinFeatureRuntimePolicy.newOperationsEnabled && hasBackgroundBitcoinTransferCapability()
       ? createBackgroundBitcoinTransferController()
@@ -1945,6 +1878,7 @@ async function switchGlobalNetworkMode(target: Network): Promise<{ restartRequir
         nearTransferController?.cancelAllAwaitingApprovals()
       ])
       await dappManager.clearConnections()
+      await confidentialFundingStore.clearShieldSiteGrants()
       await performWalletLockState()
       networkRestartRequired = true
       await persistNetworkMode(target)
@@ -2809,45 +2743,16 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
         }
         let result: unknown
         if (chainId === 'shield') {
-          if (!(await credentialSession.hasUnlockSession())) await promptUnlock()
-          await rehydrateWalletStore()
-          const readShieldScope = async () => {
-            const wallet = useWalletStore.getState()
-            if (wallet.currentNetwork !== DEFAULT_NETWORK) return null
-            const active = await accountNetworksCoordinator.readActiveAccount()
-            return resolveShieldDappScope({
-              network: wallet.currentNetwork,
-              activeAccount: active
-                ? {
-                    walletId: active.reference.walletId,
-                    accountId: active.reference.accountId
-                  }
-                : null,
-              retainedWalletId: wallet.currentWalletId,
-              retainedAccountId: wallet.currentAccountId
-            })
-          }
-          // Signing acquires this same account-context lock. Holding it around
-          // the handler deadlocks the first connect and drops the dApp response.
-          const requestShield = async () =>
-            handleShieldDAppRequest({
-              method: request.method,
-              params: request.params,
-              coordinator: confidentialFundingCoordinator,
-              scope: await readShieldScope(),
-              requestApproval: async (action, summary) => {
-                const decision = await dappHandler.requestExternalApproval(origin, action, summary)
-                return decision.approved
-              }
-            })
-          try {
-            result = await requestShield()
-          } catch (error) {
-            if (!isShieldUnlockRetryError(error)) throw error
-            await promptUnlock()
-            await rehydrateWalletStore()
-            result = await requestShield()
-          }
+          result = await handleShieldDappChainRequest({
+            method: request.method,
+            params: request.params,
+            origin,
+            getCoordinator: () => confidentialFundingCoordinator,
+            promptUnlock: () => promptUnlock(),
+            readActiveAccount: () => accountNetworksCoordinator.readActiveAccount(),
+            requestExternalApproval: (approvalOrigin, action, summary) =>
+              dappHandler.requestExternalApproval(approvalOrigin, action, summary)
+          })
         } else if (chainId === 'multichain') {
           if (!multichainSessionDAppHandler) {
             throw new Error('Multichain session runtime is unavailable')
@@ -4656,74 +4561,12 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
     return true
   }
 
-  const confidentialFundingHandler = getConfidentialFundingMessageHandler(message.type)
-  if (confidentialFundingHandler) {
-    if (
-      (message.type === 'PREPARE_NATIVE_ZEC_INTENTS_SWAP' ||
-        message.type === 'GET_NATIVE_ZEC_INTENTS_SWAP' ||
-        message.type === 'GET_NATIVE_ZEC_INTENTS_SWAP_STATUS' ||
-        message.type === 'CANCEL_NATIVE_ZEC_INTENTS_SWAP') &&
-      getOwnExtensionSenderContext(sender, chrome.runtime.id) !== 'extension-page'
-    ) {
-      sendResponse({ error: 'Unauthorized native ZEC Intents Swap request' })
-      return true
-    }
-    const coordinator = confidentialFundingCoordinator
-    if (!coordinator) {
-      sendResponse({ error: 'Confidential funding is unavailable in this network' })
-      return true
-    }
-    if (
-      message.type === 'CHECK_CONFIDENTIAL_FUNDING_SUBMISSION' &&
-      getOwnExtensionSenderContext(sender, chrome.runtime.id) !== 'extension-page'
-    ) {
-      sendResponse({ error: 'Unauthorized confidential funding request' })
-      return true
-    }
-    const operation = Promise.resolve().then(async () => {
-      if (
-        message.type === 'CREATE_EXTERNAL_SHIELD_DEPOSIT' &&
-        !coordinator.hasExternalDepositAsset(message.request.source)
-      ) {
-        // The receive page can refresh its catalog after this runtime was constructed.
-        await refreshIntentsProtocolAssets(true)
-      }
-      if (
-        (message.type === 'PREVIEW_CONFIDENTIAL_FUNDING' ||
-          message.type === 'PREPARE_CONFIDENTIAL_FUNDING') &&
-        !coordinator.hasCurrentFundingAssets(message.request)
-      ) {
-        await refreshIntentsProtocolAssets(true)
-      }
-      const currentCoordinator = confidentialFundingCoordinator
-      if (!currentCoordinator)
-        throw new Error('Confidential funding is unavailable in this network')
-      return confidentialFundingHandler(
-        { coordinator: currentCoordinator, accountContextTransition },
-        message
-      )
+  if (
+    routeConfidentialFundingMessage(message, sender, sendResponse, {
+      getCoordinator: () => confidentialFundingCoordinator,
+      refreshIntentsProtocolAssets
     })
-    void operation
-      .then(result => sendResponse({ result }))
-      .catch(error => {
-        console.error('[Confidential Funding] Request failed', {
-          operation: message.type,
-          errorName: error instanceof Error ? error.name : 'UnknownError',
-          ...(error instanceof ExternalShieldDepositError ? { failureStage: error.stage } : {})
-        })
-        sendResponse({
-          error: error instanceof Error ? error.message : 'Confidential funding request failed',
-          ...(message.type === 'REFRESH_CONFIDENTIAL_BALANCES' &&
-          error instanceof Error &&
-          'balanceErrorCode' in error &&
-          ['authorization_required', 'account_unavailable', 'balance_unavailable'].includes(
-            String(error.balanceErrorCode)
-          )
-            ? { balanceErrorCode: error.balanceErrorCode }
-            : {}),
-          ...(error instanceof ExternalShieldDepositError ? { depositStage: error.stage } : {})
-        })
-      })
+  ) {
     return true
   }
 

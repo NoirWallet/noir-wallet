@@ -6,6 +6,13 @@ import { ConfidentialFundingCoordinator } from '../../../src/background/confiden
 import {
   buildConfidentialPortfolioView,
   excludeDeprecatedConfidentialAssets,
+  confidentialPrivateTokenId,
+  filterConfidentialPortfolioMappings,
+  getConfidentialAvailableForAsset,
+  mergeConfidentialBalancesIntoPortfolio,
+  projectConfidentialOnlyEvmAssets
+} from '../../../src/core/services/confidential-funding/confidential-funding-portfolio.ts'
+import {
   projectShieldDappBalances,
   projectShieldDappCatalog,
   projectShieldDappDepositStatus,
@@ -13,13 +20,8 @@ import {
   projectShieldDappPlanStatus,
   projectShieldDappQuote,
   selectShieldSameTokenAsset,
-  shieldSameDecimalsQuoteDifferenceRaw,
-  confidentialPrivateTokenId,
-  filterConfidentialPortfolioMappings,
-  getConfidentialAvailableForAsset,
-  mergeConfidentialBalancesIntoPortfolio,
-  projectConfidentialOnlyEvmAssets
-} from '../../../src/core/services/confidential-funding/confidential-funding-portfolio.ts'
+  shieldSameDecimalsQuoteDifferenceRaw
+} from '../../../src/core/services/confidential-funding/shield-dapp-projection.ts'
 import {
   createAssetRegistry,
   createInitialProductChainRegistry,

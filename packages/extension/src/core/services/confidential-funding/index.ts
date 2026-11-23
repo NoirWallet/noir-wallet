@@ -48,6 +48,14 @@ export {
   CONFIDENTIAL_PRIVATE_TREASURY_ACCOUNT_ID,
   confidentialPrivateTokenId,
   buildConfidentialPortfolioView,
+  filterConfidentialPortfolioMappings,
+  getConfidentialAvailableForAsset,
+  mergeConfidentialBalancesIntoPortfolio,
+  projectConfidentialOnlyEvmAssets,
+  type ConfidentialPortfolioAssetMapping,
+  type ConfidentialPortfolioBalance
+} from './confidential-funding-portfolio'
+export {
   projectShieldDappBalances,
   projectShieldDappCatalog,
   projectShieldDappDepositStatus,
@@ -59,12 +67,6 @@ export {
   shieldDappPlanAction,
   shieldSameDecimalsQuoteDifferenceRaw,
   unknownShieldDappOperation,
-  filterConfidentialPortfolioMappings,
-  getConfidentialAvailableForAsset,
-  mergeConfidentialBalancesIntoPortfolio,
-  projectConfidentialOnlyEvmAssets,
-  type ConfidentialPortfolioAssetMapping,
-  type ConfidentialPortfolioBalance,
   type ShieldDappBalance,
   type ShieldDappChain,
   type ShieldDappOperationDetails,
@@ -72,4 +74,4 @@ export {
   type ShieldDappOperationStatus,
   type ShieldDappStatusProjection,
   type ShieldDappToken
-} from './confidential-funding-portfolio'
+} from './shield-dapp-projection'

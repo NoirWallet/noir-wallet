@@ -807,6 +807,7 @@ export class WalletCleanupCoordinator {
       confidentialFundingStore.deleteExternalDepositsByAccountScope(walletId, accountId),
       confidentialFundingStore.deleteBalancesByAccountScope(walletId, accountId),
       confidentialFundingStore.deleteSessionsByAccountScope(walletId, accountId),
+      confidentialFundingStore.deleteShieldSiteGrantsByAccountScope(walletId, accountId),
       chrome.storage.local.remove(LEGACY_LENDING_MARKET_CACHE_STORAGE_KEY),
       this.activityHistoryCache.deleteByScope(scope),
       dappExecutionModeCoordinator.removeAccount(walletId, accountId),

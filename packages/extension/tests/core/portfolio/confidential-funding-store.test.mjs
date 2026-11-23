@@ -463,3 +463,64 @@ test('persists a confidential account transfer and rejects a transfer to the sam
     restoreLocks()
   }
 })
+
+test('Shield site grants stay bound to one origin, network, and account', async () => {
+  const local = storageArea()
+  const session = storageArea()
+  const previousChrome = globalThis.chrome
+  globalThis.chrome = { storage: { local, session } }
+  const restoreLocks = installWebLocksStub()
+  try {
+    const store = new ChromeConfidentialFundingStore()
+    const auth = {
+      accessToken: 'access',
+      refreshToken: 'refresh',
+      expiresAt: 60_000,
+      refreshExpiresAt: 120_000
+    }
+    const shop = {
+      origin: 'https://shop.example',
+      network: 'mainnet',
+      keyDomainId: 'wallet:one',
+      accountId: 'account:one'
+    }
+    const other = { ...shop, origin: 'https://other.example' }
+    await store.putSession('mainnet', 'wallet:one', 'account:one', auth)
+    await store.putShieldSiteGrant(shop)
+    await store.putShieldSiteGrant(other)
+    expect(
+      await store.hasShieldSiteGrant(shop.origin, 'mainnet', 'wallet:one', 'account:one')
+    ).toBe(true)
+    await store.deleteShieldSiteGrant(shop.origin, 'mainnet', 'wallet:one', 'account:one')
+    expect(
+      await store.hasShieldSiteGrant(shop.origin, 'mainnet', 'wallet:one', 'account:one')
+    ).toBe(false)
+    expect(
+      await store.hasShieldSiteGrant(other.origin, 'mainnet', 'wallet:one', 'account:one')
+    ).toBe(true)
+    expect(await store.getSession('mainnet', 'wallet:one', 'account:one')).toEqual(auth)
+    await store.deleteShieldSiteGrantsByAccountScope('wallet:one', 'account:one')
+    expect(
+      await store.hasShieldSiteGrant(other.origin, 'mainnet', 'wallet:one', 'account:one')
+    ).toBe(false)
+    expect(await store.getSession('mainnet', 'wallet:one', 'account:one')).toEqual(auth)
+
+    const secondAccount = { ...shop, accountId: 'account:two' }
+    await store.putShieldSiteGrant(shop)
+    await store.putShieldSiteGrant(secondAccount)
+    await store.putShieldSiteGrant(other)
+    await store.deleteShieldSiteGrantsByOrigin(shop.origin)
+    expect(
+      await store.hasShieldSiteGrant(shop.origin, 'mainnet', 'wallet:one', 'account:one')
+    ).toBe(false)
+    expect(
+      await store.hasShieldSiteGrant(shop.origin, 'mainnet', 'wallet:one', 'account:two')
+    ).toBe(false)
+    expect(
+      await store.hasShieldSiteGrant(other.origin, 'mainnet', 'wallet:one', 'account:one')
+    ).toBe(true)
+  } finally {
+    globalThis.chrome = previousChrome
+    restoreLocks()
+  }
+})
