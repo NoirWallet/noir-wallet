@@ -708,6 +708,7 @@ export class ConfidentialFundingCoordinator {
       assetMappings: options.assetMappings,
       protocolTokens: options.protocolTokens,
       getProtocolTokens: options.getProtocolTokens,
+      getNativeZecActiveAccount: options.getNativeZecActiveAccount,
       now: this.now,
       prepare: value => this.prepare(value),
       refreshBalances: (scope, authorize) => this.refreshBalances(scope, authorize),

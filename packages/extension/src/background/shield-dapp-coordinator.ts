@@ -72,6 +72,7 @@ export interface ShieldDappCoordinatorOptions extends Pick<
   | 'assetMappings'
   | 'protocolTokens'
   | 'getProtocolTokens'
+  | 'getNativeZecActiveAccount'
 > {
   readonly now: () => number
   readonly prepare: (value: PrepareConfidentialFundingInput) => Promise<ConfidentialFundingReview>
@@ -102,6 +103,37 @@ function quoteDeadline(quote: ConfidentialQuote): number {
   const value = Date.parse(quote.quote.deadline)
   if (!Number.isSafeInteger(value)) throw new Error('Confidential quote deadline is invalid')
   return value
+}
+
+/**
+ * A Zcash origin-chain deposit refunds to a transparent address.
+ * The confidential signer is an EVM account, which the quote service rejects as refundTo.
+ */
+export function selectOwnedTransparentZcashRefundAddress(input: {
+  readonly network: Network
+  readonly scope: ShieldAccountScope
+  readonly account:
+    | ReturnType<NonNullable<ShieldDappCoordinatorOptions['getNativeZecActiveAccount']>>
+    | undefined
+}): string {
+  const refundTo = input.account?.refundAddresses.find(address => {
+    try {
+      return parseZcashAddress(address, input.network).scheme.startsWith('zcash-transparent-')
+    } catch {
+      return false
+    }
+  })
+  if (
+    !input.account ||
+    input.account.network !== input.network ||
+    input.account.network !== input.scope.network ||
+    input.account.walletId !== input.scope.keyDomainId ||
+    input.account.accountId !== input.scope.accountId ||
+    !refundTo
+  ) {
+    throw new Error('Shield quote refund address is invalid.')
+  }
+  return refundTo
 }
 
 export class ShieldDappCoordinator {
@@ -327,6 +359,14 @@ export class ShieldDappCoordinator {
       : publicDestination
         ? this.shieldQuoteRecipient(publicDestination.chainId, publicDestination.address)
         : identity.address
+    const zcashReceiveRefundTo =
+      input.action === 'receive' && source.chainId === getZcashChainId(this.options.network)
+        ? selectOwnedTransparentZcashRefundAddress({
+            network: this.options.network,
+            scope: input.scope,
+            account: this.options.getNativeZecActiveAccount?.()
+          })
+        : undefined
     const binding = Object.freeze(
       input.action === 'receive'
         ? {
@@ -334,6 +374,7 @@ export class ShieldDappCoordinator {
             destinationAsset: source.protocolAssetId,
             amountRaw,
             signerId: identity.address,
+            ...(zcashReceiveRefundTo ? { refundTo: zcashReceiveRefundTo } : {}),
             recipient: identity.address,
             depositType: 'ORIGIN_CHAIN' as const,
             refundType: 'ORIGIN_CHAIN' as const,
