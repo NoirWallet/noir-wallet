@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Icon } from '@iconify/react'
 import type { UR } from '@ngraveio/bc-ur'
+import type { UrScanDecoder } from '@/lib/ur-scan-decoder'
 import { QRScanner } from '@/popup/components/hardware/QRScanner'
 import { FlowButton } from './FlowButton'
 import type { ScanOutcome } from '@/popup/multisig/qr-driver'
@@ -15,6 +16,7 @@ interface QrScanPanelProps extends QrPanelHeadingProps {
   description: string
   /** Whether the camera is open; the page's footer button opens it. */
   scanning: boolean
+  decoder?: UrScanDecoder
   /** The reply was accepted and the page is about to move on. */
   accepted?: boolean
   /** Hands a complete code to the session and reports what became of it. */
@@ -37,6 +39,7 @@ export function QrScanPanel({
   scanning,
   accepted = false,
   onScan,
+  decoder,
   ...heading
 }: QrScanPanelProps) {
   const [scanAttempt, setScanAttempt] = useState(0)
@@ -60,8 +63,10 @@ export function QrScanPanel({
     // A check that throws leaves the session untouched, like a code it does not recognise.
     const outcome = await onScan(ur).catch((): ScanOutcome => 'ignored')
     if (outcome === 'duplicate') toast.info('Already scanned')
-    else if (outcome === 'ignored') toast.error('Unrecognized code')
-    else return
+    else if (outcome === 'ignored') {
+      decoder?.allowRetry(ur)
+      toast.error('Unrecognized code')
+    } else return
     setRejected(true)
   }
 
@@ -75,6 +80,7 @@ export function QrScanPanel({
           </p>
           <QRScanner
             key={scanAttempt}
+            decoder={decoder}
             onScan={ur => void handleScan(ur)}
             className="mt-4 w-full max-w-[320px]"
           />

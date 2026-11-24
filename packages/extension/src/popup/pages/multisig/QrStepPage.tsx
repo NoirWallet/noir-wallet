@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useParams } from 'react-router-dom'
+import { UrScanDecoder } from '@/lib/ur-scan-decoder'
 import { Icon } from '@iconify/react'
 import { scanMarked, type CreateSessionState } from '@/core/multisig/create-session'
 import type { QrStep } from '@/core/multisig/qr-plan'
@@ -196,6 +197,7 @@ function QrShowStep({
  * all.
  */
 function QrScanStep({ session, step, counter }: QrStepViewProps<ScanStep>) {
+  const [decoder] = useState(() => new UrScanDecoder())
   const ingestScan = useCreateSessionStore(state => state.ingestScan)
   const [scanning, setScanning] = useState(false)
   const isReceived = (slot: DeviceSlot) => {
@@ -214,6 +216,7 @@ function QrScanStep({ session, step, counter }: QrStepViewProps<ScanStep>) {
       <QrScanPanel
         // The scanner stops after each code, so a fresh one opens for the next phone.
         key={receivedCount}
+        decoder={decoder}
         counter={counter}
         ringLabel={<StepLabel counter={counter} />}
         title={step.title}

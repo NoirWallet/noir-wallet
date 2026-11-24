@@ -301,9 +301,9 @@ export function SendSigning({
   }
 
   const scanQr = async (ur: UR) => {
-    if (view !== 'active' || isTerminal.current || !transport.current) return
+    if (view !== 'active' || isTerminal.current || !transport.current) return 'ignored' as const
     const outcome = await transport.current.ingestQr(ur)
-    if (isTerminal.current || isDisposed.current) return
+    if (isTerminal.current || isDisposed.current) return outcome
     if (outcome !== 'accepted' && !isDisposed.current) {
       setFeedback(
         outcome === 'duplicate'
@@ -314,6 +314,7 @@ export function SendSigning({
     } else if (!isDisposed.current) {
       setFeedback(null)
     }
+    return outcome
   }
 
   const selectedPhones = group.devices.filter(device =>

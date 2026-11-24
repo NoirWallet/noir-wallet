@@ -7541,13 +7541,6 @@ async function ensureZcashAccountProvisioningSession(): Promise<void> {
     if (!unlocked.success) {
       throw new Error('Wallet credential session could not authorize account setup')
     }
-    const account = backgroundZcashWalletRuntime.getCurrentAccount()
-    const walletId = useWalletStore.getState().currentWalletId
-    if (account && isFrostAccount(account) && walletId) {
-      if (!(await credentialSession.bindZcashCredential(walletId)))
-        throw new Error('Unable to bind the Zcash credential session')
-      await backgroundZcashWalletRuntime.resumeDeferredFrostRestore()
-    }
   }
 }
 

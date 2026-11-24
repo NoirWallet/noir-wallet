@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import { expect } from '@playwright/test'
 import { UR, URDecoder } from '@ngraveio/bc-ur'
+import { UrScanDecoder } from '../../../src/lib/ur-scan-decoder'
 import { createEnvelopeFactory, parseEnvelope } from '../../../src/core/multisig/messages'
 import {
   createEnvelopeUREncoder,
@@ -19,6 +20,52 @@ const envelope = createEnvelopeFactory({
 })('DKG_R1', 'device-2', { commitment: 'a'.repeat(120), note: 'héllo ✓' })
 
 test.describe('multisig ur', () => {
+  const second = { ...envelope, sender_id: 'device-3' }
+
+  test('switching phones keeps the first frame of the new sequence', () => {
+    const scan = new UrScanDecoder()
+    const a = createEnvelopeUREncoder(envelope, 50)
+    const b = createEnvelopeUREncoder(second, 50)
+    expect(scan.receive(a.nextPart()).ur).toBeNull()
+    for (let i = 1; i < b.fragmentsLength; i++) {
+      const part = scan.receive(b.nextPart())
+      expect(part.ur).toBeNull()
+      expect(part.progress).toBeLessThanOrEqual(99)
+    }
+    const result = scan.receive(b.nextPart())
+    expect(result.progress).toBe(100)
+    expect(decodeEnvelopeUR(result.ur!)).toEqual(second)
+  })
+
+  test('mixed frames from a completed phone do not interrupt the next phone', () => {
+    const scan = new UrScanDecoder()
+    const a = createEnvelopeUREncoder(envelope, 50)
+    const b = createEnvelopeUREncoder(second, 50)
+    const received = []
+    for (const encoder of [a, b]) {
+      for (let i = 0; i < encoder.fragmentsLength; i++) {
+        if (encoder === b) expect(scan.receive(a.nextPart()).ur).toBeNull()
+        const { ur } = scan.receive(encoder.nextPart())
+        if (ur) received.push(decodeEnvelopeUR(ur))
+      }
+    }
+    expect(received).toEqual([envelope, second])
+  })
+
+  test('invalid frames discard partial progress and preserve completed codes', () => {
+    const scan = new UrScanDecoder()
+    const a = createEnvelopeUREncoder(envelope, 50)
+    for (let i = 0; i < a.fragmentsLength; i++) scan.receive(a.nextPart())
+    const b = createEnvelopeUREncoder(second, 50)
+    scan.receive(b.nextPart())
+    expect(() => scan.receive('ur:bytes/invalid')).toThrow()
+    expect(scan.receive(a.nextPart())).toEqual({ ur: null, progress: 0 })
+    const retry = createEnvelopeUREncoder(second, 50)
+    for (let i = 1; i < retry.fragmentsLength; i++)
+      expect(scan.receive(retry.nextPart()).ur).toBeNull()
+    expect(decodeEnvelopeUR(scan.receive(retry.nextPart()).ur!)).toEqual(second)
+  })
+
   test('encodes two envelopes as a JSON array and decodeEnvelopeUR rejects an array', () => {
     const ur = encodeEnvelopesUR([envelope, envelope])
     const bytes = decodeCborByteString(ur.cbor)

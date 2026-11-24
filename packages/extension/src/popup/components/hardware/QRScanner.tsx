@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Icon } from '@iconify/react'
 import jsQR from 'jsqr'
-import { URDecoder, type UR } from '@/lib/keystone'
+import type { UR } from '@ngraveio/bc-ur'
+import { UrScanDecoder } from '@/lib/ur-scan-decoder'
 
 const SCAN_INTERVAL_MS = 100
 /** Downscale camera frames before jsQR to keep decoding fast */
@@ -10,6 +11,7 @@ const MAX_SCAN_DIMENSION = 640
 interface QRScannerProps {
   /** Called once when a complete (possibly multi-frame) UR has been assembled */
   onScan: (ur: UR) => void
+  decoder?: UrScanDecoder
   className?: string
 }
 
@@ -20,10 +22,11 @@ type CameraState = 'starting' | 'active' | 'denied' | 'error'
  * Designed for full-tab pages (camera permission prompts don't survive
  * in popup windows).
  */
-export function QRScanner({ onScan, className }: QRScannerProps) {
+export function QRScanner({ onScan, className, decoder }: QRScannerProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
-  const decoderRef = useRef(new URDecoder())
+  const [localDecoder] = useState(() => decoder ?? new UrScanDecoder())
+  const scanDecoder = decoder ?? localDecoder
   const completedRef = useRef(false)
   const onScanRef = useRef(onScan)
   onScanRef.current = onScan
@@ -63,29 +66,19 @@ export function QRScanner({ onScan, className }: QRScannerProps) {
       return
     }
 
-    const decoder = decoderRef.current
     try {
-      decoder.receivePart(text.toLowerCase())
+      const { ur, progress } = scanDecoder.receive(text)
+      setProgress(progress)
       setFrameError(null)
-    } catch {
-      // Mixed content from a different UR sequence — restart accumulation
-      decoderRef.current = new URDecoder()
-      return
-    }
-
-    setProgress(Math.round(decoder.estimatedPercentComplete() * 100))
-
-    if (decoder.isComplete()) {
-      if (decoder.isSuccess()) {
+      if (ur) {
         completedRef.current = true
-        onScanRef.current(decoder.resultUR())
-      } else {
-        setFrameError(decoder.resultError() || 'Failed to decode QR sequence')
-        decoderRef.current = new URDecoder()
-        setProgress(0)
+        onScanRef.current(ur)
       }
+    } catch {
+      setFrameError('Failed to decode QR sequence')
+      setProgress(0)
     }
-  }, [])
+  }, [scanDecoder])
 
   useEffect(() => {
     let stream: MediaStream | null = null

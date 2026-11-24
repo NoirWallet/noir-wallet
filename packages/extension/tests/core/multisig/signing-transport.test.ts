@@ -3,7 +3,8 @@ import { expect } from '@playwright/test'
 import { createEnvelopeFactory } from '../../../src/core/multisig/messages'
 import { buildRoster } from '../../../src/core/multisig/roster'
 import { bytesToBase64 } from '../../../src/lib/bytes'
-import { encodeEnvelopeUR } from '../../../src/lib/multisig-ur'
+import { createEnvelopeUREncoder, encodeEnvelopeUR } from '../../../src/lib/multisig-ur'
+import { UrScanDecoder } from '../../../src/lib/ur-scan-decoder'
 import { createBleSigningTransport } from '../../../src/popup/multisig/ble-signing-transport'
 import { createQrSigningTransport } from '../../../src/popup/multisig/signing-transport'
 import { identityFromSeed } from './helpers/identity'
@@ -60,6 +61,40 @@ test('QR signing carrier keeps both phone recipients and rejects foreign or repe
   expect(transport.getOutbound()).toEqual([])
 })
 
+test('two phones deliver commitments and shares once across continuous camera scans', async () => {
+  const received: string[] = []
+  const transport = createQrSigningTransport({
+    binding,
+    now: () => 1_000,
+    async onEnvelope(message) {
+      received.push(`${message.sender_id}:${message.message_type}`)
+    }
+  })
+  const scan = new UrScanDecoder()
+  const phones = ['device-2', 'device-3'].map(senderId =>
+    createEnvelopeFactory({ groupId, sessionId, senderId })
+  )
+  let previous: ReturnType<typeof createEnvelopeUREncoder> | undefined
+  for (const type of ['SIGN_COMMITMENTS', 'SIGN_SHARE'] as const) {
+    for (const phone of phones) {
+      const encoder = createEnvelopeUREncoder(phone(type, 'device-1'), 50)
+      for (let i = 0; i < encoder.fragmentsLength; i++) {
+        if (previous) expect(scan.receive(previous.nextPart()).ur).toBeNull()
+        const { ur } = scan.receive(encoder.nextPart())
+        if (ur) expect(await transport.ingestQr(ur)).toBe('accepted')
+      }
+      previous = encoder
+    }
+  }
+  expect(received).toEqual([
+    'device-2:SIGN_COMMITMENTS',
+    'device-3:SIGN_COMMITMENTS',
+    'device-2:SIGN_SHARE',
+    'device-3:SIGN_SHARE'
+  ])
+  transport.dispose()
+})
+
 test('QR signing carrier propagates cryptographic rejection without consuming the scan', async () => {
   let shouldReject = true
   let calls = 0
@@ -72,10 +107,18 @@ test('QR signing carrier propagates cryptographic rejection without consuming th
     }
   })
   const phone = createEnvelopeFactory({ groupId, sessionId, senderId: 'device-2' })
-  const code = encodeEnvelopeUR(phone('SIGN_SHARE', 'device-1'))
+  const message = phone('SIGN_SHARE', 'device-1')
+  const scan = new UrScanDecoder()
+  const read = () => {
+    const encoder = createEnvelopeUREncoder(message, 50)
+    for (let i = 1; i < encoder.fragmentsLength; i++) scan.receive(encoder.nextPart())
+    return scan.receive(encoder.nextPart()).ur!
+  }
+  const code = read()
   await expect(transport.ingestQr(code)).rejects.toThrow('signature rejected')
+  scan.allowRetry(code)
   shouldReject = false
-  expect(await transport.ingestQr(code)).toBe('accepted')
+  expect(await transport.ingestQr(read())).toBe('accepted')
   expect(calls).toBe(2)
   transport.dispose()
 })

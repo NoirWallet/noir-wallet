@@ -1,4 +1,6 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
+import { UrScanDecoder } from '@/lib/ur-scan-decoder'
+import type { SigningScanOutcome } from '@/popup/multisig/signing-transport'
 import type { UR } from '@ngraveio/bc-ur'
 import { QRScanner } from '@/popup/components/hardware/QRScanner'
 import { EncoderAnimatedQR } from '@/popup/components/hardware/AnimatedQR'
@@ -20,8 +22,9 @@ export function SendSigningActive({
   outbound: readonly MultisigEnvelope[]
   isScanning: boolean
   scanCount: number
-  onScan: (ur: UR) => Promise<void>
+  onScan: (ur: UR) => Promise<SigningScanOutcome>
 }) {
+  const [decoder] = useState(() => new UrScanDecoder())
   const qrEncoder = useMemo(
     () => (outbound.length ? createEnvelopesUREncoder(outbound) : null),
     [outbound]
@@ -61,7 +64,11 @@ export function SendSigningActive({
           <div className="text-sm">Scan a selected phone’s response</div>
           <QRScanner
             key={scanCount}
-            onScan={ur => void onScan(ur).catch(() => {})}
+            decoder={decoder}
+            onScan={async ur => {
+              const outcome = await onScan(ur).catch(() => 'ignored')
+              if (outcome === 'ignored') decoder.allowRetry(ur)
+            }}
             className="w-full max-w-[320px]"
           />
         </div>

@@ -16,7 +16,11 @@ import {
   accountSourceEquals,
   parseAccountSource
 } from '../../../src/core/accounts/domain/account-source.ts'
-import { isValidZcashBirthdayHeight } from '../../../src/core/wallet/birthday-height.ts'
+import {
+  getFullZcashRecoveryBirthdayHeight,
+  isValidZcashBirthdayHeight
+} from '../../../src/core/wallet/birthday-height.ts'
+import { selectNextZcashAccountIndex } from '../../../src/core/wallet/account-index.ts'
 import { isZcashHardwareKeySource } from '../../../src/core/wallet/hardware-wallet-data.ts'
 import { mapWasmAccountAddresses } from '../../../src/core/zcash/account-addresses.ts'
 
@@ -40,6 +44,10 @@ function createRuntime(overrides = {}) {
     currentNetwork: 'mainnet',
     setCurrentNetwork() {},
     getWallet: id => (id === wallet.id ? wallet : null),
+    updateWallet(id, update) {
+      assert.equal(id, wallet.id)
+      Object.assign(wallet, update(wallet))
+    },
     getAccount: (id, accountId) =>
       id === wallet.id ? (wallet.accounts.find(account => account.id === accountId) ?? null) : null
   }
@@ -74,7 +82,13 @@ function createRuntime(overrides = {}) {
       accountSourceEquals,
       parseAccountSource
     },
-    '@/core/wallet/birthday-height': { isValidZcashBirthdayHeight },
+    '@/core/wallet/birthday-height': {
+      getFullZcashRecoveryBirthdayHeight,
+      isValidZcashBirthdayHeight
+    },
+    '@/core/wallet/account-index': { selectNextZcashAccountIndex },
+    '@/lib/indexed-db': { getBlockedAccountIndexes: async () => [3] },
+    '@/lib/wallet-metadata-storage': { getDeletedAccountIndexes: async () => [2] },
     '@/store/wallet-store': {
       useWalletStore: { getState: () => walletState },
       async prepareWalletStoreForUse() {},
@@ -82,6 +96,7 @@ function createRuntime(overrides = {}) {
     },
     '@/core/wallet/secure-storage': {
       SecureStorage: {
+        loadWalletSeedPhrase: overrides.loadWalletSeedPhrase,
         async getLoginAttempts() {
           return { isLocked: false }
         },
@@ -151,6 +166,81 @@ function createRuntime(overrides = {}) {
   runtime.broadcastSyncProgress = () => {}
   return { runtime, walletState, accountData, oldBalance, events }
 }
+
+test('HD account preview and creation use the parent wallet when FROST is selected', async () => {
+  for (const network of ['mainnet', 'testnet']) {
+    for (const failDerivation of [true, false]) {
+      const seed = 'synthetic parent phrase'
+      const birthdayHeight = getFullZcashRecoveryBirthdayHeight(network)
+      const addresses = { transparent: 't-test', unified: 'u-test', full_unified: 'full-test' }
+      const { runtime, walletState } = createRuntime({
+        loadWalletSeedPhrase: async (walletId, password) => {
+          assert.deepEqual([walletId, password], ['wallet', 'test password'])
+          return seed
+        },
+        workerClient: {
+          async mnemonicToAddresses(...args) {
+            assert.deepEqual(args, [seed, 4, network])
+            if (failDerivation) throw new Error('derivation failed')
+            return addresses
+          }
+        }
+      })
+      const frost = {
+        id: 'vault',
+        source: { kind: 'frost-vault', version: 1, groupId: 'group', network }
+      }
+      const wallet = walletState.wallets[0]
+      wallet.accounts.push(frost)
+      walletState.currentAccountId = frost.id
+      walletState.currentNetwork = network
+      runtime.network = network
+      runtime.password = 'test password'
+      runtime.ensureSingleWalletSyncTarget = async () => {}
+      const created = []
+      const core = {
+        accountSource: frost.source,
+        ensureInitialized: async () => {},
+        getAllAccountIds: async () => [7, 8],
+        getAccountHdIndex: async id => (id === 7 ? 0 : null),
+        getAddresses: async () => {
+          throw new Error('External account cannot derive addresses')
+        },
+        createAccount: async (...args) => created.push(args)
+      }
+      runtime.walletCores.set(wallet.id, core)
+      const preview = () => runtime.previewNextSoftwareAccount(wallet.id)
+      const create = () =>
+        runtime.addNewAccountAuthoritatively(wallet.id, 'New HD', {
+          birthdayHeight,
+          expectedDerivationIndex: 4
+        })
+      if (failDerivation) {
+        await assert.rejects(preview, /derivation failed/)
+        await assert.rejects(create, /derivation failed/)
+        assert.deepEqual(created, [])
+        assert.equal(wallet.accounts.length, 2)
+      } else {
+        assert.deepEqual(await preview(), {
+          derivationIndex: 4,
+          transparentAddress: addresses.transparent
+        })
+        assert.equal(walletState.currentAccountId, frost.id)
+        assert.equal(core.accountSource, frost.source)
+        assert.equal(wallet.accounts.length, 2)
+        const id = await create()
+        assert.deepEqual(created, [[seed, 4, birthdayHeight]])
+        const account = wallet.accounts.find(candidate => candidate.id === id)
+        assert.equal(account.derivationIndex, 4)
+        assert.equal(account.birthdayHeight, birthdayHeight)
+        assert.deepEqual(account.addresses, mapWasmAccountAddresses(addresses))
+        assert.equal(account.source, undefined)
+      }
+      assert.equal(walletState.currentAccountId, frost.id)
+      assert.deepEqual(wallet.accounts[1], frost)
+    }
+  }
+})
 
 function withSummary(fixture) {
   const started = deferred()

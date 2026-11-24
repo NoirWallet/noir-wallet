@@ -2265,7 +2265,13 @@ export class BackgroundZcashWalletRuntime {
         ],
         wasmIndexes
       )
-      const addresses = await core.getAddresses(seedPhrase, this.network, derivationIndex)
+      const addresses = mapWasmAccountAddresses(
+        await getWorkerClient(walletId).mnemonicToAddresses(
+          seedPhrase,
+          derivationIndex,
+          this.network
+        )
+      )
       return { derivationIndex, transparentAddress: addresses.transparent }
     })
   }
@@ -2348,7 +2354,9 @@ export class BackgroundZcashWalletRuntime {
         throw new Error('Account list changed. Please retry account setup.')
       }
       const name = accountName || `Account_${nextIndex}_${Date.now()}`
-      const addresses = await core.getAddresses(seedPhrase, this.network, nextIndex)
+      const addresses = mapWasmAccountAddresses(
+        await getWorkerClient(walletId).mnemonicToAddresses(seedPhrase, nextIndex, this.network)
+      )
 
       let birthdayHeight = options.birthdayHeight ?? 0
       if (options.birthdayHeight === undefined) {
