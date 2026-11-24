@@ -353,12 +353,11 @@ export class ShieldDappCoordinator {
       : confidentialDestination
         ? this.resolveTransferDestinationToken(source, confidentialDestination.chainId)
         : source
-    // The connected account can receive a different chain asset into its own Shield balance.
-    // The same asset sent back to that account is not a transfer.
+    // A different destination chain may credit the connected account. The same chain cannot.
     if (
       confidentialDestination &&
       confidentialDestination.accountId.toLowerCase() === identity.address.toLowerCase() &&
-      destination.protocolAssetId === source.protocolAssetId
+      destination.chainId === source.chainId
     ) {
       throw new Error('Shield recipient account is invalid.')
     }

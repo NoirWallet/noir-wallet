@@ -268,7 +268,8 @@ function parsePlan(value: unknown): ConfidentialFundingPlan {
       (plan.sourceDomain !== 'shield' ||
         plan.destinationDomain !== 'shield' ||
         plan.source.address.toLowerCase() !== plan.signerId.toLowerCase() ||
-        plan.destination.address.toLowerCase() === plan.signerId.toLowerCase() ||
+        (plan.source.chainId === plan.destination.chainId &&
+          plan.destination.address.toLowerCase() === plan.signerId.toLowerCase()) ||
         !/^0x[0-9a-fA-F]{40}$/.test(plan.destination.address) ||
         /^0x0{40}$/i.test(plan.destination.address) ||
         plan.requiresDeposit ||

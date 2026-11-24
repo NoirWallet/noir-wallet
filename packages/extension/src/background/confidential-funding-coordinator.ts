@@ -2078,10 +2078,11 @@ export class ConfidentialFundingCoordinator {
         ? sourceIdentity.peaAddress.toLowerCase()
         : sourceIdentity.address
     const isConfidentialTransfer = input.operation === 'confidential-transfer'
+    // Same-chain Shield sends cannot credit the connected account. A different chain can.
     if (
       isConfidentialTransfer &&
       input.confidentialRecipient?.toLowerCase() === sourceIdentity.address.toLowerCase() &&
-      input.source.protocolAssetId === input.destination.protocolAssetId
+      input.source.chainId === input.destination.chainId
     ) {
       throw new Error('Shield recipient account is invalid.')
     }
