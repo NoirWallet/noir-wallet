@@ -551,6 +551,35 @@ async function confirmApprovedShieldPlan(
   return input.coordinator.reportStoredShieldDappPlan(plan)
 }
 
+async function approveExternalShieldReceive(
+  input: ShieldOperationRequest,
+  prepared: Readonly<{ planId: string }>
+): Promise<ShieldDappOperationReport> {
+  if (!input.requestApproval) {
+    throw new ShieldProviderError(4900, 'Shield approval is unavailable.')
+  }
+  let approved = false
+  try {
+    approved = await input.requestApproval('shieldReceive', shieldApprovalSummary(prepared))
+  } catch {
+    throw new ShieldProviderError(4900, 'Shield approval is unavailable.')
+  }
+  if (!approved) {
+    throw new ShieldProviderError(4001, 'The Shield receive was rejected.')
+  }
+  const current = await input.verifySite()
+  if (!sameShieldScope(current.scope, input.scope)) {
+    throw new ShieldProviderError(
+      4100,
+      'This site authorization changed. Review the request again.'
+    )
+  }
+  return input.coordinator.readShieldDappStatus({
+    scope: current.scope,
+    operationId: prepared.planId
+  })
+}
+
 async function receiveShield(input: ShieldOperationRequest): Promise<ShieldDappOperationReport> {
   const record = readParams(input.params)
   const keys = Object.keys(record)
@@ -567,6 +596,9 @@ async function receiveShield(input: ShieldOperationRequest): Promise<ShieldDappO
     amount: readQuoteAmount(record.amount),
     source: readTokenRef(record.source, 'Shield source')
   })
+  if (prepared.phase === 'awaiting-payment') {
+    return approveExternalShieldReceive(input, prepared)
+  }
   if (!shieldApprovalAwaiting(prepared.phase)) {
     return input.coordinator.reportStoredShieldDappPlan(
       await input.coordinator.getPlan(prepared.planId)

@@ -711,6 +711,7 @@ export class ConfidentialFundingCoordinator {
       getNativeZecActiveAccount: options.getNativeZecActiveAccount,
       now: this.now,
       prepare: value => this.prepare(value),
+      createExternalDeposit: value => this.createExternalDeposit(value),
       refreshBalances: (scope, authorize) => this.refreshBalances(scope, authorize),
       requireConfidentialSession: scope => this.requireConfidentialSession(scope, true),
       refreshExternalDeposit: depositId => this.refreshExternalDeposit(depositId),

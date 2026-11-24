@@ -4,7 +4,7 @@ import { isAddress } from 'viem'
 import { parseZcashAddress } from '@/core/address-book/address-book'
 import { formatBaseUnitDecimalAmount, parseDisplayUnitAmount } from '@/lib/number-format'
 import { resolveManagedIntentsAssets } from '@/core/services/intents-managed-assets'
-import { getCrossChainSendAssetGroup } from '@/core/chains/cross-chain-asset-group'
+import { getPrivateCrossChainTransferAssetGroup } from '@/core/chains/cross-chain-asset-group'
 import { getAssetMarketMappings } from '@/core/prices/asset-market-mappings'
 import {
   createInitialProductChainRegistry,
@@ -19,6 +19,7 @@ import {
   type ConfidentialFundingPlan,
   type ConfidentialFundingReview,
   type ConfidentialQuote,
+  type CreateExternalShieldDepositInput,
   type ExternalShieldDeposit
 } from '@/core/services/confidential-funding'
 import {
@@ -76,6 +77,9 @@ export interface ShieldDappCoordinatorOptions extends Pick<
 > {
   readonly now: () => number
   readonly prepare: (value: PrepareConfidentialFundingInput) => Promise<ConfidentialFundingReview>
+  readonly createExternalDeposit: (
+    value: CreateExternalShieldDepositInput
+  ) => Promise<ExternalShieldDeposit>
   readonly refreshBalances: (
     scope: ShieldAccountScope,
     authorize: boolean
@@ -264,7 +268,8 @@ export class ShieldDappCoordinator {
   private shieldTokenIdentity(assetId: string): string | null {
     if (this.options.network === 'mainnet') {
       try {
-        const group = getCrossChainSendAssetGroup(parseAssetId(assetId))
+        // BNB USDC shares the private USDC group. Public send does not map that contract.
+        const group = getPrivateCrossChainTransferAssetGroup(parseAssetId(assetId))
         if (group) return group
       } catch {
         return null
@@ -444,7 +449,7 @@ export class ShieldDappCoordinator {
     readonly amount: string
   }): Promise<{
     readonly planId: string
-    readonly phase: ConfidentialFundingPlan['phase']
+    readonly phase: ConfidentialFundingPlan['phase'] | 'awaiting-payment'
     readonly payloadFingerprint: string
     readonly amount: string
     readonly symbol: string
@@ -460,8 +465,11 @@ export class ShieldDappCoordinator {
     if (input.scope.network !== this.options.network)
       throw new Error('Active Wallet Account changed')
     const source = this.resolveShieldCatalogToken(input.source.chainId, input.source.assetId)
-    if (!source.chainId.startsWith('eip155:')) throw new Error('Shield chain is invalid.')
     const amountRaw = parseDisplayUnitAmount(input.amount, source.decimals)
+    if (source.chainId === getZcashChainId(this.options.network)) {
+      return this.prepareShieldDappZcashReceive(input, source, amountRaw)
+    }
+    if (!source.chainId.startsWith('eip155:')) throw new Error('Shield chain is invalid.')
     if (!/^[1-9]\d*$/.test(amountRaw)) throw new Error('Shield amount is invalid.')
     const chainName = this.shieldProductChains().resolve(source.chainId).displayName
     const review = await this.options.prepare({
@@ -496,6 +504,71 @@ export class ShieldDappCoordinator {
       chainName,
       assetId: source.assetId,
       ...this.shieldApprovalQuoteFields(review, source, source)
+    })
+  }
+
+  /**
+   * ZEC receive is an external deposit. The connected account's transparent address is the refund target.
+   * The stored deposit stays awaiting payment until that address sends ZEC.
+   */
+  private async prepareShieldDappZcashReceive(
+    input: {
+      readonly origin: string
+      readonly scope: ShieldAccountScope
+    },
+    source: ShieldCatalogToken,
+    amountRaw: string
+  ) {
+    if (!/^[1-9]\d*$/.test(amountRaw)) throw new Error('Shield amount is invalid.')
+    const refundTo = selectOwnedTransparentZcashRefundAddress({
+      network: this.options.network,
+      scope: input.scope,
+      account: this.options.getNativeZecActiveAccount?.()
+    })
+    const chainName = this.shieldProductChains().resolve(source.chainId).displayName
+    const requestId = await fingerprintConfidentialValue({
+      origin: input.origin,
+      keyDomainId: input.scope.keyDomainId,
+      accountId: input.scope.accountId,
+      assetId: source.assetId,
+      protocolAssetId: source.protocolAssetId,
+      amountRaw,
+      refundTo
+    })
+    const deposit = await this.options.createExternalDeposit({
+      network: input.scope.network,
+      keyDomainId: input.scope.keyDomainId,
+      accountId: input.scope.accountId,
+      source: {
+        chainId: source.chainId,
+        chainName,
+        assetId: source.assetId,
+        protocolAssetId: source.protocolAssetId,
+        amountRaw
+      },
+      refundAddress: refundTo,
+      slippageBps: 50,
+      requestId
+    })
+    const differenceRaw = shieldSameDecimalsQuoteDifferenceRaw(
+      amountRaw,
+      deposit.expectedOutputRaw,
+      true
+    )
+    return Object.freeze({
+      planId: deposit.depositId,
+      phase: 'awaiting-payment' as const,
+      payloadFingerprint: requestId,
+      amount: formatBaseUnitDecimalAmount(amountRaw, source.decimals),
+      symbol: source.symbol,
+      chainName,
+      assetId: source.assetId,
+      sourceAddress: refundTo,
+      expectedReceive: formatBaseUnitDecimalAmount(deposit.expectedOutputRaw, source.decimals),
+      expectedSymbol: source.symbol,
+      ...(differenceRaw
+        ? { quoteDifference: formatBaseUnitDecimalAmount(differenceRaw, source.decimals) }
+        : {})
     })
   }
 
@@ -782,16 +855,39 @@ export class ShieldDappCoordinator {
     readonly amountRaw?: string
     readonly sourceSymbol?: string
     readonly sourceDecimals?: number
+    readonly depositAddress?: string
+    readonly depositMemo?: string
   }): ShieldDappOperationDetails {
-    if (!record.source) return Object.freeze({})
-    return projectShieldDappOperationDetails({
-      source: {
-        chainId: record.source.chainId,
-        assetId: record.source.assetId,
-        amountRaw: record.amountRaw ?? record.source.amountRaw,
-        ...(typeof record.sourceSymbol === 'string' ? { symbol: record.sourceSymbol } : {}),
-        ...(typeof record.sourceDecimals === 'number' ? { decimals: record.sourceDecimals } : {})
-      }
+    const depositAddress =
+      typeof record.depositAddress === 'string' &&
+      record.depositAddress.length > 0 &&
+      record.depositAddress.length <= 256
+        ? record.depositAddress
+        : undefined
+    const depositMemo =
+      typeof record.depositMemo === 'string' &&
+      record.depositMemo.length > 0 &&
+      record.depositMemo.length <= 256
+        ? record.depositMemo
+        : undefined
+    if (!record.source) {
+      return Object.freeze({
+        ...(depositAddress ? { depositAddress } : {}),
+        ...(depositMemo ? { depositMemo } : {})
+      })
+    }
+    return Object.freeze({
+      ...projectShieldDappOperationDetails({
+        source: {
+          chainId: record.source.chainId,
+          assetId: record.source.assetId,
+          amountRaw: record.amountRaw ?? record.source.amountRaw,
+          ...(typeof record.sourceSymbol === 'string' ? { symbol: record.sourceSymbol } : {}),
+          ...(typeof record.sourceDecimals === 'number' ? { decimals: record.sourceDecimals } : {})
+        }
+      }),
+      ...(depositAddress ? { depositAddress } : {}),
+      ...(depositMemo ? { depositMemo } : {})
     })
   }
 
