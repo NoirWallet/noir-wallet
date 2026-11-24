@@ -342,18 +342,21 @@ export class ShieldDappCoordinator {
     }
     const confidentialDestination =
       input.destination?.kind === 'confidential' ? input.destination : undefined
-    if (
-      confidentialDestination &&
-      confidentialDestination.accountId.toLowerCase() === identity.address.toLowerCase()
-    ) {
-      throw new Error('Shield recipient account is invalid.')
-    }
     const publicDestination = input.destination?.kind === 'public' ? input.destination : undefined
     const destination = publicDestination
       ? this.resolveTransferDestinationToken(source, publicDestination.chainId)
       : confidentialDestination
         ? this.resolveTransferDestinationToken(source, confidentialDestination.chainId)
         : source
+    // The connected account can receive a different chain asset into its own Shield balance.
+    // The same asset sent back to that account is not a transfer.
+    if (
+      confidentialDestination &&
+      confidentialDestination.accountId.toLowerCase() === identity.address.toLowerCase() &&
+      destination.protocolAssetId === source.protocolAssetId
+    ) {
+      throw new Error('Shield recipient account is invalid.')
+    }
     const recipient = confidentialDestination
       ? confidentialDestination.accountId
       : publicDestination

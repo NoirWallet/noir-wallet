@@ -2079,7 +2079,8 @@ export class ConfidentialFundingCoordinator {
     const isConfidentialTransfer = input.operation === 'confidential-transfer'
     if (
       isConfidentialTransfer &&
-      input.confidentialRecipient?.toLowerCase() === sourceIdentity.address.toLowerCase()
+      input.confidentialRecipient?.toLowerCase() === sourceIdentity.address.toLowerCase() &&
+      input.source.protocolAssetId === input.destination.protocolAssetId
     ) {
       throw new Error('Shield recipient account is invalid.')
     }
@@ -5179,7 +5180,8 @@ export class ConfidentialFundingCoordinator {
               ? plan.source.address.toLowerCase() !== identity.address.toLowerCase() ||
                 !isAddress(plan.destination.address) ||
                 /^0x0{40}$/i.test(plan.destination.address) ||
-                plan.destination.address.toLowerCase() === identity.address.toLowerCase()
+                (plan.destination.address.toLowerCase() === identity.address.toLowerCase() &&
+                  plan.source.protocolAssetId === plan.destination.protocolAssetId)
               : plan.externalRecipient
                 ? !isValidExternalRecipient(
                     plan.externalRecipient,

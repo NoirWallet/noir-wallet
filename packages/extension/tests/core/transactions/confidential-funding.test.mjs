@@ -2023,9 +2023,26 @@ test('confidential account transfer freezes the signed-intent quote for the othe
     slippageBps: 50
   }
   await expect(
-    coordinator.prepare({ ...request, confidentialRecipient: signerId })
+    coordinator.prepare({
+      ...request,
+      confidentialRecipient: signerId,
+      destination: {
+        chainId: 'eip155:1',
+        chainName: 'eth',
+        assetId,
+        protocolAssetId
+      }
+    })
   ).rejects.toThrow('Shield recipient account is invalid.')
   expect(quotes).toEqual([])
+  const ownReview = await coordinator.prepare({ ...request, confidentialRecipient: signerId })
+  expect(quotes).toHaveLength(1)
+  expect(quotes[0]).toMatchObject({
+    recipient: signerId,
+    destinationAsset: destinationProtocolAssetId
+  })
+  plans.delete(ownReview.planId)
+  quotes.length = 0
   const review = await coordinator.prepare(request)
   const stored = await coordinatorOptionsPlan(plans, review.planId)
   expect(quotes).toHaveLength(1)
