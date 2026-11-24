@@ -507,8 +507,8 @@ export class ShieldDappCoordinator {
   }
 
   /**
-   * ZEC receive is an external deposit. The connected account's transparent address is the refund target.
-   * The stored deposit stays awaiting payment until that address sends ZEC.
+   * ZEC receive quotes an external deposit. The connected account's transparent address is the refund
+   * target and the account that pays it. Confirmation broadcasts that transparent payment.
    */
   private async prepareShieldDappZcashReceive(
     input: {
@@ -525,15 +525,9 @@ export class ShieldDappCoordinator {
       account: this.options.getNativeZecActiveAccount?.()
     })
     const chainName = this.shieldProductChains().resolve(source.chainId).displayName
-    const requestId = await fingerprintConfidentialValue({
-      origin: input.origin,
-      keyDomainId: input.scope.keyDomainId,
-      accountId: input.scope.accountId,
-      assetId: source.assetId,
-      protocolAssetId: source.protocolAssetId,
-      amountRaw,
-      refundTo
-    })
+    // Each Receive click is its own deposit. A stable fingerprint would return an
+    // earlier quote for the same amount, including one that is still unpaid.
+    const requestId = crypto.randomUUID()
     const deposit = await this.options.createExternalDeposit({
       network: input.scope.network,
       keyDomainId: input.scope.keyDomainId,
@@ -556,7 +550,7 @@ export class ShieldDappCoordinator {
     )
     return Object.freeze({
       planId: deposit.depositId,
-      phase: 'awaiting-payment' as const,
+      phase: deposit.phase,
       payloadFingerprint: requestId,
       amount: formatBaseUnitDecimalAmount(amountRaw, source.decimals),
       symbol: source.symbol,
@@ -651,7 +645,10 @@ export class ShieldDappCoordinator {
       })
     }
     const destination = this.resolveTransferDestinationToken(source, input.destination.chainId)
-    if (!destination.chainId.startsWith('eip155:')) {
+    const zcashChainId = getZcashChainId(this.options.network)
+    // Same-chain public ZEC, including this account's transparent address, is a withdraw.
+    // Same-chain confidential sends back to this account are rejected earlier.
+    if (!destination.chainId.startsWith('eip155:') && destination.chainId !== zcashChainId) {
       throw new Error('Shield destination chain is invalid.')
     }
     const recipient = this.shieldQuoteRecipient(destination.chainId, input.destination.address)

@@ -237,8 +237,9 @@ test('Shield receive approval shows the source account, quote, and network fee',
   })
 })
 
-test('ZEC receive approves the external deposit and returns its payment address', async () => {
+test('ZEC receive confirms by broadcasting the transparent deposit', async () => {
   const depositAddress = 't1Ku2KLyndDPsR32jwnrTMd3yvi9tfFP8ML'
+  const calls = []
   let summary = null
   const result = await handleShieldDAppRequest(
     grantedSite({
@@ -264,13 +265,16 @@ test('ZEC receive approves the external deposit and returns its payment address'
           expectedReceive: '0.099',
           expectedSymbol: 'ZEC'
         }),
-        readShieldDappStatus: async input => ({
-          id: input.operationId,
-          layer: 'near-confidential',
-          action: 'receive',
-          status: 'awaiting-payment',
-          depositAddress
-        }),
+        submitShieldDappZcashReceive: async input => {
+          calls.push(input.operationId)
+          return {
+            id: input.operationId,
+            layer: 'near-confidential',
+            action: 'receive',
+            status: 'processing',
+            depositAddress
+          }
+        },
         confirm: async () => {
           throw new Error('not called')
         },
@@ -289,11 +293,12 @@ test('ZEC receive approves the external deposit and returns its payment address'
   assert.equal(summary.action, 'shieldReceive')
   assert.equal(summary.approval.symbol, 'ZEC')
   assert.equal(summary.approval.chainName, 'Zcash')
+  assert.deepEqual(calls, [operationId])
   assert.deepEqual(result, {
     id: operationId,
     layer: 'near-confidential',
     action: 'receive',
-    status: 'awaiting-payment',
+    status: 'processing',
     depositAddress
   })
 })

@@ -443,6 +443,8 @@ test.describe('confidential funding safety rules', () => {
       }
     })()
     let quoteCalls = 0
+    let quotedDepositAddress = '0x3333333333333333333333333333333333333333'
+    let quotedDepositMemo = 'memo-1'
     let catalogBlockchain = 'base'
     let balanceReads = 0
     let simulateConcurrentBalanceReads = false
@@ -480,8 +482,8 @@ test.describe('confidential funding safety rules', () => {
               amountIn: '1000',
               amountOut: '990',
               minAmountOut: '980',
-              depositAddress: '0x3333333333333333333333333333333333333333',
-              depositMemo: 'memo-1',
+              depositAddress: quotedDepositAddress,
+              depositMemo: quotedDepositMemo,
               deadline: new Date(60_000).toISOString()
             }
           }
@@ -718,6 +720,18 @@ test.describe('confidential funding safety rules', () => {
     await expect(
       coordinator.createExternalDeposit({ ...request, refundAddress: address })
     ).rejects.toThrow('request ID was reused')
+    const openDeposit = records.get(created.depositId)
+    records.set(created.depositId, { ...openDeposit, phase: 'ready' })
+    quotedDepositAddress = '0x5555555555555555555555555555555555555555'
+    quotedDepositMemo = 'memo-2'
+    const repeated = await coordinator.createExternalDeposit(request)
+    expect(repeated.depositId).not.toBe(created.depositId)
+    expect(repeated.phase).toBe('awaiting-payment')
+    expect(quoteCalls).toBe(2)
+    records.delete(repeated.depositId)
+    records.set(created.depositId, openDeposit)
+    quotedDepositAddress = '0x3333333333333333333333333333333333333333'
+    quotedDepositMemo = 'memo-1'
     const unfunded = await coordinator.refreshExternalDeposit(created.depositId)
     const afterInitialStatus = statusCalls
     await Promise.all([

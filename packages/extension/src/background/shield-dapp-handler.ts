@@ -574,7 +574,7 @@ async function approveExternalShieldReceive(
       'This site authorization changed. Review the request again.'
     )
   }
-  return input.coordinator.readShieldDappStatus({
+  return input.coordinator.submitShieldDappZcashReceive({
     scope: current.scope,
     operationId: prepared.planId
   })
@@ -598,6 +598,17 @@ async function receiveShield(input: ShieldOperationRequest): Promise<ShieldDappO
   })
   if (prepared.phase === 'awaiting-payment') {
     return approveExternalShieldReceive(input, prepared)
+  }
+  if (
+    prepared.phase === 'processing' ||
+    prepared.phase === 'ready' ||
+    prepared.phase === 'refunded' ||
+    prepared.phase === 'failed'
+  ) {
+    return input.coordinator.readShieldDappStatus({
+      scope: input.scope,
+      operationId: prepared.planId
+    })
   }
   if (!shieldApprovalAwaiting(prepared.phase)) {
     return input.coordinator.reportStoredShieldDappPlan(
