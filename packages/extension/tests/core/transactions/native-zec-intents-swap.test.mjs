@@ -492,7 +492,7 @@ test('native ZEC Confidential destination binds the internal ZEC asset and activ
     expect(values.get(`native_zec_intents_swap:${review.quoteId}`).schemaVersion).toBe(2)
     expect(await coordinator.get(review.quoteId)).toMatchObject({
       quoteBinding: review.quoteBinding,
-      appFeeBps: 20
+      appFeeBps: 2
     })
     await expect(coordinator.prepare({ ...request, userAction: undefined })).rejects.toThrow(
       'request ID was reused with different details'
@@ -517,7 +517,7 @@ test('native ZEC Confidential destination binds the internal ZEC asset and activ
     )
     expect(transparentQuote).toMatchObject({
       referral: 'noir_swap',
-      appFees: [{ recipient: 'noir_swap.near', fee: 20 }]
+      appFees: [{ recipient: 'noir_swap.near', fee: 2 }]
     })
     expect(transparentQuote).not.toHaveProperty('user')
     expect(transparentQuote).not.toHaveProperty('userChainFamily')
@@ -525,7 +525,7 @@ test('native ZEC Confidential destination binds the internal ZEC asset and activ
       quoteRequests.find(quote => !quote.dry && quote.refundTo === shieldedRefundAddress)
     ).toMatchObject({
       referral: 'noir_swap',
-      appFees: [{ recipient: 'noir_swap.near', fee: 20 }],
+      appFees: [{ recipient: 'noir_swap.near', fee: 2 }],
       refundType: 'ORIGIN_CHAIN',
       refundTo: shieldedRefundAddress,
       user: shieldedViewer.walletAddress,
@@ -541,8 +541,11 @@ test('native ZEC Confidential destination binds the internal ZEC asset and activ
     })
     expect(await coordinator.cancel(review.quoteId)).toBe(true)
     await coordinator.prepare({ ...request, userAction: undefined })
-    expect(quoteRequests.at(-1)).toMatchObject({ dry: false, referral: 'noir_receive' })
-    expect(quoteRequests.at(-1)).not.toHaveProperty('appFees')
+    expect(quoteRequests.at(-1)).toMatchObject({
+      dry: false,
+      referral: 'noir_receive',
+      appFees: [{ recipient: 'noir_swap.near', fee: 2 }]
+    })
   } finally {
     globalThis.chrome = originalChrome
     globalThis.fetch = originalFetch

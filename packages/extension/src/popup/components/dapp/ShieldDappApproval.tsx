@@ -198,7 +198,7 @@ export function ShieldDappApproval(props: ShieldDappApprovalProps) {
               </div>
               {quoteDifference.length > 0 ? (
                 <div className="flex justify-between gap-3">
-                  <span className="text-muted">Quote difference</span>
+                  <span className="text-muted">Fee</span>
                   <span className="font-sans tabular-nums">
                     {quoteDifference} {symbol}
                   </span>
@@ -206,7 +206,7 @@ export function ShieldDappApproval(props: ShieldDappApprovalProps) {
               ) : null}
               {networkFee.length > 0 && networkFeeSymbol.length > 0 ? (
                 <div className="flex justify-between gap-3">
-                  <span className="text-muted">Max network fee</span>
+                  <span className="text-muted">{quoteDifference ? 'Max network fee' : 'Fee'}</span>
                   <span className="font-sans tabular-nums">
                     {networkFee} {networkFeeSymbol}
                   </span>

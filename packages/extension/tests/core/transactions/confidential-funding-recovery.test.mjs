@@ -1437,7 +1437,7 @@ test.describe('confidential funding persisted recovery', () => {
     const protocolAssetId = 'nep141:eth.omft.near'
     const depositAddress = '0x3333333333333333333333333333333333333333'
     const transactionHash = `0x${'ab'.repeat(32)}`
-    const state = { prepared: null, broadcasts: 0, depositStatus: 'PROCESSING' }
+    const state = { prepared: null, broadcasts: 0, depositStatus: 'PROCESSING', authorized: false }
     const reverseKeys = (_key, value) =>
       value && typeof value === 'object' && !Array.isArray(value)
         ? Object.fromEntries(Object.entries(value).reverse())
@@ -1454,12 +1454,15 @@ test.describe('confidential funding persisted recovery', () => {
       deletePlan: async id => {
         plans.delete(id)
       },
-      getSession: async () => ({
-        accessToken: 'session',
-        refreshToken: 'refresh',
-        expiresAt: Date.now() + 600_000,
-        refreshExpiresAt: Date.now() + 1_200_000
-      }),
+      getSession: async () =>
+        state.authorized
+          ? {
+              accessToken: 'session',
+              refreshToken: 'refresh',
+              expiresAt: Date.now() + 600_000,
+              refreshExpiresAt: Date.now() + 1_200_000
+            }
+          : null,
       putBalances: async () => {}
     }
     const asset = {
@@ -1488,6 +1491,9 @@ test.describe('confidential funding persisted recovery', () => {
       confirmTransaction: async () => ({ rawTransaction: '0xdeadbeef', transactionHash })
     }
     const api = {
+      createAuthPayload: async () => {
+        throw new Error('Shield authorization declined')
+      },
       getBalances: async () => [],
       getStatus: async () => ({
         status: state.depositStatus,
@@ -1603,6 +1609,11 @@ test.describe('confidential funding persisted recovery', () => {
     )
     expect(state.broadcasts).toBe(0)
     await store.putPlan(stored)
+    await expect(coordinator.confirm(review.planId, review.payloadFingerprint)).rejects.toThrow(
+      'Shield authorization declined'
+    )
+    expect(state.broadcasts).toBe(0)
+    state.authorized = true
     await repository.create(
       createConfidentialFundingGraph({
         planId: review.planId,

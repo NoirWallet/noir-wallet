@@ -223,7 +223,7 @@ export function SendTransferView({
             },
             ...(review.beforeFeeRows ?? []),
             {
-              label: 'Network fee',
+              label: 'Fee',
               content: review.feeContent ?? (
                 <AmountDisplay value={review.fee} symbol={feeSymbol} profile="fee" />
               )

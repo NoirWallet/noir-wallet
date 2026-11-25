@@ -7,7 +7,7 @@ import type { ConfidentialFundingReview } from '@/core/services/confidential-fun
 import type { SwapToken } from '@/core/services/intents-api'
 import Big from '@/lib/big'
 import { resolveChainIconAlias } from '@/lib/chain-icon'
-import { formatInsufficientBalance, formatSortAddress } from '@/lib/format'
+import { formatInsufficientBalance } from '@/lib/format'
 import {
   formatBaseUnitDecimalAmount,
   formatTokenQuantity,
@@ -92,7 +92,6 @@ export function buildShieldDestinationPickerRows({
     | { kind: 'native-zec'; fundingSource: 'transparent' | 'shielded' }
     | { kind: 'confidential' }
   ))[] {
-  const origins = shieldOriginIdentifiers(options)
   const prices = new Map(tokens.map(token => [token.assetId, token.price]))
   const nativePrice = prices.get(ZEC_ZCASH_ASSET)
   const excludedProtocolAssetId = source?.managed.protocolAssetId
@@ -119,16 +118,13 @@ export function buildShieldDestinationPickerRows({
         availableRaw: availableRaw ?? undefined,
         displayBalance: availableRaw === null ? '—' : undefined,
         priceUsd: nativePrice,
-        title: address,
         ariaLabel: `ZEC ${fundingSource} on Zcash`
       })),
     ...options
       .filter(asset => asset.managed.protocolAssetId !== excludedProtocolAssetId)
       .map(asset => {
-        const chain = asset.chain.chain
         const { id, reference } = asset.asset.asset
         const { symbol, name, iconUrl, decimals } = asset.asset.metadata
-        const origin = origins.get(id)
         return {
           kind: 'confidential' as const,
           key: id,
@@ -141,65 +137,10 @@ export function buildShieldDestinationPickerRows({
           ...shieldSwapPickerChain(asset),
           availableRaw: balances ? shieldFundingAvailableRaw(asset, balances) : undefined,
           displayBalance: balances ? undefined : '—',
-          priceUsd: prices.get(asset.managed.protocolAssetId),
-          title: asset.managed.protocolAssetId,
-          subtitle: origin ? `${chain.displayName} · ${origin}` : chain.displayName
+          priceUsd: prices.get(asset.managed.protocolAssetId)
         }
       })
   ]
-}
-
-export function shieldOriginIdentifiers(
-  options: readonly ShieldFundingAsset[]
-): ReadonlyMap<string, string | null> {
-  const groups = new Map<string, ShieldFundingAsset[]>()
-  for (const asset of options) {
-    const key = `${asset.chain.chain.id}\0${asset.asset.metadata.symbol}`
-    const group = groups.get(key) ?? []
-    group.push(asset)
-    groups.set(key, group)
-  }
-  const result = new Map<string, string | null>()
-  for (const group of groups.values()) {
-    const references = new Map<string, number>()
-    for (const asset of group) {
-      const reference = asset.asset.asset.reference
-      references.set(reference, (references.get(reference) ?? 0) + 1)
-    }
-    const identities = group.map(asset =>
-      (references.get(asset.asset.asset.reference) ?? 0) > 1
-        ? asset.managed.protocolAssetId
-        : asset.asset.asset.reference
-    )
-    const unresolved = new Set(group.map((_, index) => index))
-    if (group.length === 1 && group[0].asset.asset.kind === 'native') {
-      result.set(group[0].asset.asset.id, null)
-      continue
-    }
-    const assignUnique = (labels: readonly string[]) => {
-      const counts = new Map<string, number>()
-      for (const label of labels) counts.set(label, (counts.get(label) ?? 0) + 1)
-      for (const index of unresolved) {
-        if (counts.get(labels[index]) === 1) {
-          result.set(group[index].asset.asset.id, labels[index])
-          unresolved.delete(index)
-        }
-      }
-    }
-    assignUnique(identities.map(identity => formatSortAddress(identity)))
-    const longest = identities.reduce((max, identity) => Math.max(max, identity.length), 0)
-    for (let visible = 7; unresolved.size > 0 && visible <= longest; visible += 1) {
-      assignUnique(
-        identities.map(identity =>
-          identity.length > visible * 2
-            ? `${identity.slice(0, visible)}...${identity.slice(-visible)}`
-            : identity
-        )
-      )
-    }
-    for (const index of unresolved) result.set(group[index].asset.asset.id, identities[index])
-  }
-  return result
 }
 
 export function shieldSwapFormBalance(

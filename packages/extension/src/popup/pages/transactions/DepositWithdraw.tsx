@@ -2433,7 +2433,7 @@ function DepositWithdrawForm({
       targetAsset && targetAsset.asset.metadata.decimals !== selected.asset.metadata.decimals
         ? null
         : shieldQuoteFeeRaw(activeShieldReview)
-    const quoteDifference =
+    const routeFee =
       quoteFeeRaw !== null && BigInt(quoteFeeRaw) > 0n ? (
         <AmountDisplay
           value={formatBaseUnitAmount(quoteFeeRaw, selected.asset.metadata.decimals)}
@@ -2530,11 +2530,11 @@ function DepositWithdrawForm({
             ...(activeShieldReview.operation === 'cluster'
               ? [{ label: 'Split transfers', content: `${activeShieldReview.withdrawCount}` }]
               : []),
-            ...(quoteDifference ? [{ label: 'Quote difference', content: quoteDifference }] : []),
+            ...(routeFee ? [{ label: 'Fee', content: routeFee }] : []),
             ...(networkFee
               ? [
                   {
-                    label: 'Max network fee',
+                    label: routeFee ? 'Max network fee' : 'Fee',
                     content: activeShieldReview.sourceEvmFee ? (
                       <NetworkFeeTierPicker
                         chainFamily="evm"

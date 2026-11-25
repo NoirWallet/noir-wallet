@@ -1106,7 +1106,9 @@ test.describe('confidential funding safety rules', () => {
     let tamper = false
     let drySucceeds = false
     let finalMinimumTooHigh = false
+    let omitTransferFee = false
     const bridgeMinimumRaw = '35000000000001'
+    const transferFee = { recipient: 'noir_swap.near', fee: 2 }
     const depositMemo = ' exact memo + '
     const viewer = { chainFamily: 'evm', walletAddress: refundTo, signingMode: 'private' }
     globalThis.fetch = async (_url, init) => {
@@ -1123,7 +1125,11 @@ test.describe('confidential funding safety rules', () => {
       return new Response(
         JSON.stringify({
           correlationId: 'flex-quote',
-          quoteRequest: { ...request, recipient: tamper ? refundTo : request.recipient },
+          quoteRequest: {
+            ...request,
+            recipient: tamper ? refundTo : request.recipient,
+            ...(omitTransferFee ? { appFees: [] } : {})
+          },
           quote: {
             amountIn: request.amount,
             minAmountIn: finalMinimumTooHigh && !request.dry ? '38500000000003' : bridgeMinimumRaw,
@@ -1143,9 +1149,16 @@ test.describe('confidential funding safety rules', () => {
       const quote = await api.quoteFlexibleDeposit(input)
       expect(requests.map(request => [request.dry, request.amount, request.swapType])).toEqual([
         [true, '1', 'FLEX_INPUT'],
+        [true, '38500000000002', 'FLEX_INPUT'],
         [false, '38500000000002', 'FLEX_INPUT']
       ])
-      expect(requests.map(request => request.slippageTolerance)).toEqual([125, 125])
+      expect(requests.map(request => request.slippageTolerance)).toEqual([125, 125, 125])
+      expect(requests.map(request => request.appFees)).toEqual([
+        undefined,
+        undefined,
+        [transferFee]
+      ])
+      expect(quote.quoteRequest.appFees).toEqual([transferFee])
       expect(requests[0].user).toBeUndefined()
       expect(requests[0].userChainFamily).toBeUndefined()
       expect(requests[1]).toMatchObject({ refundTo, refundType: 'ORIGIN_CHAIN' })
@@ -1163,13 +1176,14 @@ test.describe('confidential funding safety rules', () => {
       })
       tamper = true
       await expect(api.quoteFlexibleDeposit(input)).rejects.toThrow(
-        'Flexible external Shield quote does not match'
+        'Confidential provider fee quote is invalid'
       )
       tamper = false
       drySucceeds = true
       const discovered = await api.quoteFlexibleDeposit(input)
-      expect(requests.slice(-2).map(request => [request.dry, request.amount])).toEqual([
+      expect(requests.slice(-3).map(request => [request.dry, request.amount])).toEqual([
         [true, '1'],
+        [true, '38500000000002'],
         [false, '38500000000002']
       ])
       expect(discovered.quote).toMatchObject({
@@ -1180,6 +1194,9 @@ test.describe('confidential funding safety rules', () => {
       await expect(api.quoteFlexibleDeposit(input)).rejects.toThrow(
         'Flexible external Shield quote does not match'
       )
+      finalMinimumTooHigh = false
+      omitTransferFee = true
+      await expect(api.quoteFlexibleDeposit(input)).rejects.toThrow('app fees do not match')
     } finally {
       globalThis.fetch = originalFetch
     }
@@ -1322,9 +1339,10 @@ test.describe('confidential funding safety rules', () => {
     )
   })
 
-  test('uses the wallet app fee once for confidential Swap and binds the automatic provider fee', async () => {
+  test('charges the swap fee only for internal swaps and binds transfer and provider fees', async () => {
     const originalFetch = globalThis.fetch
     const swapFee = { recipient: 'noir_swap.near', fee: 20 }
+    const transferFee = { recipient: 'noir_swap.near', fee: 2 }
     let echoedFees
     const quoteRequests = []
     let providerFee = { recipient: 'provider.near', fee: 20 }
@@ -1373,6 +1391,7 @@ test.describe('confidential funding safety rules', () => {
       }
       for (const input of [
         withdrawal,
+        { ...withdrawal, referral: 'noir_swap' },
         {
           ...withdrawal,
           destinationAsset: withdrawal.originAsset,
@@ -1391,9 +1410,12 @@ test.describe('confidential funding safety rules', () => {
         expect(quote.quoteRequest).toMatchObject({
           referral: input.referral,
           dry: input.dry,
-          appFees: [providerFee]
+          appFees: [transferFee, providerFee]
         })
-        expect(quoteRequests.splice(0).every(request => request.appFees === undefined)).toBe(true)
+        expect(quoteRequests.splice(0).map(request => request.appFees)).toEqual([
+          undefined,
+          [transferFee]
+        ])
       }
       const swap = {
         ...withdrawal,
@@ -1402,7 +1424,7 @@ test.describe('confidential funding safety rules', () => {
         recipientType: 'CONFIDENTIAL_INTENTS',
         dry: true
       }
-      for (const input of [swap, { ...withdrawal, referral: 'noir_swap' }]) {
+      for (const input of [swap, { ...swap, dry: false }]) {
         const quote = await api.quote(input)
         expect(quote.quoteRequest.appFees).toEqual([swapFee, providerFee])
         const [probe, final] = quoteRequests.splice(0)
@@ -1522,11 +1544,11 @@ test.describe('confidential funding safety rules', () => {
     }
   })
 
-  test('binds native ZEC Shield Swap to both fees and external deposits to the provider fee', async () => {
+  test('binds native ZEC Shield Swap and external deposits to the transfer and provider fees', async () => {
     const originalFetch = globalThis.fetch
     const requests = []
     const providerFee = { recipient: 'provider.near', fee: 25 }
-    const swapFee = { recipient: 'noir_swap.near', fee: 20 }
+    const transferFee = { recipient: 'noir_swap.near', fee: 2 }
     let formalFees
     let formalDestinationAsset
     globalThis.fetch = async (url, init) => {
@@ -1570,22 +1592,22 @@ test.describe('confidential funding safety rules', () => {
       }
       const quote = await api.quote(input)
       expect(requests.map(request => request.dry)).toEqual([true, false])
-      expect(requests.splice(0).map(request => request.appFees)).toEqual([undefined, [swapFee]])
-      expect(quote.quoteRequest.appFees).toEqual([swapFee, providerFee])
+      expect(requests.splice(0).map(request => request.appFees)).toEqual([undefined, [transferFee]])
+      expect(quote.quoteRequest.appFees).toEqual([transferFee, providerFee])
 
       const deposit = await api.quote({
         ...input,
         referral: 'noir_receive',
         destinationAsset: input.originAsset
       })
-      expect(requests.every(request => request.appFees === undefined)).toBe(true)
-      expect(deposit.quoteRequest.appFees).toEqual([providerFee])
+      expect(requests.map(request => request.appFees)).toEqual([undefined, [transferFee]])
+      expect(deposit.quoteRequest.appFees).toEqual([transferFee, providerFee])
 
       formalFees = [providerFee]
       await expect(api.quote(input)).rejects.toThrow('app fees do not match')
-      formalFees = [swapFee, { ...providerFee, fee: 26 }]
+      formalFees = [transferFee, { ...providerFee, fee: 26 }]
       await expect(api.quote(input)).rejects.toThrow('app fees do not match')
-      formalFees = [swapFee, { ...providerFee, recipient: 'other.near' }]
+      formalFees = [transferFee, { ...providerFee, recipient: 'other.near' }]
       await expect(api.quote(input)).rejects.toThrow('app fees do not match')
       formalFees = undefined
       formalDestinationAsset = 'nep141:other.omft.near'

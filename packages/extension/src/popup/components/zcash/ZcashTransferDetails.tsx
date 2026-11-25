@@ -152,7 +152,7 @@ export function ZcashTransferReview({ transfer }: { readonly transfer: ZcashTran
             : []),
           ...(review.memo ? [{ label: 'Memo', content: review.memo }] : []),
           {
-            label: 'Network fee',
+            label: 'Fee',
             content: (
               <NetworkFeeTierPicker
                 chainFamily="zcash"

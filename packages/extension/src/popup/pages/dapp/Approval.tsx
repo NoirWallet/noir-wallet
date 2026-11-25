@@ -1524,7 +1524,7 @@ export function Approval() {
                     </span>
                   </div>
                   <div className="flex justify-between gap-3">
-                    <span className="text-muted">Network fee</span>
+                    <span className="text-muted">Fee</span>
                     <span className="font-sans tabular-nums">
                       <AmountDisplay
                         value={formatBaseUnitDecimalAmount(

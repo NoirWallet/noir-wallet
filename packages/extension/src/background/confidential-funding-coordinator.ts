@@ -2138,10 +2138,20 @@ export class ConfidentialFundingCoordinator {
       return reviewFromPlan(duplicate, this.options.assets)
     }
 
-    const session = await this.readUsableSession(sourceIdentity)
-    if (!session) throw new Error(CONFIDENTIAL_SESSION_REQUIRED_ERROR)
-    const balances = await this.readAndCacheBalances(sourceIdentity, session.accessToken)
-    const baseline = getConfidentialAvailableForAsset(balances, input.source.protocolAssetId) ?? '0'
+    const isDeposit = input.operation === 'deposit'
+    let baseline = '0'
+    if (!isDeposit) {
+      const session = await this.readUsableSession(sourceIdentity)
+      if (!session) throw new Error(CONFIDENTIAL_SESSION_REQUIRED_ERROR)
+      const balances = await this.readAndCacheBalances(sourceIdentity, session.accessToken)
+      baseline = getConfidentialAvailableForAsset(balances, input.source.protocolAssetId) ?? '0'
+      this.assertUnreservedBalance(
+        plans,
+        input.source.protocolAssetId,
+        input.source.amountRaw,
+        baseline
+      )
+    }
     const sourceAddress =
       input.sourceDomain === 'private'
         ? requireConfidentialPea(sourceIdentity).toLowerCase()
@@ -2161,18 +2171,9 @@ export class ConfidentialFundingCoordinator {
         (input.destinationDomain === 'private'
           ? requireConfidentialPea(destinationIdentity)
           : destinationIdentity.address))
-    const isDeposit = input.operation === 'deposit'
     const isSwap = input.operation === 'swap'
     const isFrozenSwap = isSwap || input.purpose === 'native-zec-swap'
     const isFrozenQuote = isFrozenSwap || isConfidentialTransfer
-    if (!isDeposit) {
-      this.assertUnreservedBalance(
-        plans,
-        input.source.protocolAssetId,
-        input.source.amountRaw,
-        baseline
-      )
-    }
     const quote = await this.options.api.quote({
       originAsset: input.source.protocolAssetId,
       referral: input.operation === 'deposit' ? NOIR_RECEIVE_REFERRAL : withdrawalReferral(input),

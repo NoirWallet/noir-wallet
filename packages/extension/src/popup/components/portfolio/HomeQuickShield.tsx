@@ -7,7 +7,7 @@ import { useSwapTokenCatalog } from '@/popup/hooks/useSwapTokenCatalog'
 import { isPortfolioModelForScope } from '@/popup/services/portfolio-cache'
 import {
   getQuickShieldAssets,
-  summarizeQuickShieldAssets,
+  getQuickShieldTotalUsd,
   type QuickShieldAsset
 } from '@/popup/services/quick-shield'
 import { ShieldFundsForm } from '@/popup/pages/transactions/ShieldFunds'
@@ -109,7 +109,7 @@ export function useHomeQuickShield({
         ? 'h-[50dvh]'
         : 'h-[85dvh]'
       : 'h-[85dvh]'
-  const { totalUsd, partial } = summarizeQuickShieldAssets(assets)
+  const totalUsd = getQuickShieldTotalUsd(assets)
   const label =
     assets.length === 0
       ? undefined
@@ -117,7 +117,7 @@ export function useHomeQuickShield({
         ? '••••'
         : totalUsd === null
           ? undefined
-          : `${formatFiatAmount(totalUsd, { showSign: true })}${partial ? ' (priced assets)' : ''}`
+          : formatFiatAmount(totalUsd, { showSign: true })
 
   return {
     eligible: assets.length > 0,
@@ -193,6 +193,10 @@ export function useHomeQuickShield({
                       item.chain.displayName,
                       item.chain.id
                     ),
+                    zcashFundingSource:
+                      item.chain.family === 'zcash' && item.asset.asset.kind === 'native'
+                        ? ('transparent' as const)
+                        : undefined,
                     availableRaw: item.availableRaw,
                     decimals: item.asset.metadata.decimals,
                     valueUsd: item.valueUsd
