@@ -151,7 +151,10 @@ import type { FundingSource } from '@/types/wallet'
 import { PageHeader } from '../../components/common/PageHeader'
 import type { BalanceDomain } from '../../components/account/BalanceDomainTabs'
 import { homeActivityPath } from '@/popup/services/home-navigation'
-import { TransactionModeDropdown } from '@/popup/components/transaction/TransactionModeDropdown'
+import {
+  swapModeLabels,
+  TransactionModeDropdown
+} from '@/popup/components/transaction/TransactionModeDropdown'
 import {
   balanceTransferLabel,
   resolveCrossChainPrivateWithdrawRoute
@@ -5780,9 +5783,10 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
             (!privateSwapRequested || isSelectablePrivateSource(token))
         )
       await openModal({
+        position: crossChainSendRequested ? 'bottom' : 'fullscreen',
         showCloseButton: false,
         scroll: 'body',
-        fixedHeight: true,
+        fixedHeight: crossChainSendRequested,
         className: 'gap-0 p-0',
         body: resolve => (
           <TokenSelectorContent
@@ -7499,7 +7503,7 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
                 !(shieldNativeZecSwap
                   ? nativeZecConfidentialAvailable
                   : confidentialShieldAvailable)
-              ? 'Shield Swap is unavailable for this account.'
+              ? `${swapModeLabels.shield} is unavailable for this account.`
               : shieldNativeZecSwap && !nativeZecShieldAvailable
                 ? 'Zcash source is unavailable for this account.'
                 : crossChainPrivateSourceUnavailable
@@ -7788,7 +7792,7 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
   if (restoringShieldPair) {
     return (
       <div className="page-container" aria-busy="true">
-        <PageHeader title="Shield Swap" {...getHeaderProps()} />
+        <PageHeader title={swapModeLabels.shield} {...getHeaderProps()} />
         <div className="space-y-6 px-4 py-5">
           <Skeleton className="h-16 w-full" />
           <Skeleton className="h-16 w-full" />

@@ -1191,7 +1191,7 @@ export function AssetDetail() {
             ) : (
               <>
                 <WalletActionButton
-                  icon={<WalletActionIcon action="send" />}
+                  icon={<WalletActionIcon action="send" shielded={detailMode === 'shield'} />}
                   label="Send"
                   disabled={
                     detailMode === 'shield'
@@ -1209,7 +1209,7 @@ export function AssetDetail() {
                   }}
                 />
                 <WalletActionButton
-                  icon={<WalletActionIcon action="receive" />}
+                  icon={<WalletActionIcon action="receive" shielded={detailMode === 'shield'} />}
                   label="Receive"
                   disabled={
                     detailMode === 'public'
@@ -1312,6 +1312,7 @@ export function AssetDetail() {
                 return (
                   <AssetDetailBalanceRow
                     key={domain}
+                    shielded={domain === 'shield'}
                     onSelect={() => selectDetailMode(domain)}
                     label={
                       domain === 'shield' ? 'Shield' : domain === 'private' ? 'Incognito' : 'Public'
@@ -1384,6 +1385,7 @@ export function AssetDetail() {
             {!confidentialOnlyDetail && (
               <AssetDetailBalanceRow
                 label="Zcash Shield"
+                shielded
                 onSelect={isTotalDetail ? () => selectDetailMode('shield') : undefined}
                 actions={isTotalDetail ? zcashActions('shielded') : undefined}
                 subtitle={renderBalanceAddress(
@@ -1406,6 +1408,7 @@ export function AssetDetail() {
             {(hasConfidentialCapability || confidentialOnlyDetail) && (
               <AssetDetailBalanceRow
                 label="NEAR Confidential"
+                shielded
                 onSelect={isTotalDetail ? () => selectDetailMode('shield') : undefined}
                 actions={isTotalDetail ? confidentialActions() : undefined}
                 balance={

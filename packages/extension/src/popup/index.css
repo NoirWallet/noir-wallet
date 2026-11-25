@@ -275,7 +275,11 @@ html[data-surface='side-panel'] #root {
 }
 
 .home-wallet-header {
-  background: linear-gradient(160deg, #1d1d1d, #292929);
+  background: #202020;
+}
+
+.home-balance-header {
+  background: linear-gradient(160deg, #202020, #292929);
 }
 
 .page-container[data-home-domain] {

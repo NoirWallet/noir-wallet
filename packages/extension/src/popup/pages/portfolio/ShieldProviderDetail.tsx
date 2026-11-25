@@ -329,7 +329,7 @@ function ShieldProviderContent() {
             {SHIELD_ACTIONS.map(({ action, label }) => (
               <WalletActionButton
                 key={action}
-                icon={<WalletActionIcon action={action} />}
+                icon={<WalletActionIcon action={action} shielded />}
                 label={label}
                 disabled={
                   !account ||
