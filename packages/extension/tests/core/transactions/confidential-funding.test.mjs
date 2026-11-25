@@ -1426,11 +1426,12 @@ test.describe('confidential funding safety rules', () => {
     }
   })
 
-  test('binds an external confidential deposit to the automatic 1Click fee', async () => {
+  test('binds native ZEC Shield Swap to both fees and external deposits to the provider fee', async () => {
     const originalFetch = globalThis.fetch
     const requests = []
     const providerFee = { recipient: 'provider.near', fee: 25 }
-    let formalFees = [providerFee]
+    const swapFee = { recipient: 'noir_swap.near', fee: 20 }
+    let formalFees
     let formalDestinationAsset
     globalThis.fetch = async (url, init) => {
       expect(url).toBe('https://example.test/1click/quote')
@@ -1443,7 +1444,9 @@ test.describe('confidential funding safety rules', () => {
           ...(formalDestinationAsset && !request.dry
             ? { destinationAsset: formalDestinationAsset }
             : {}),
-          appFees: request.dry ? [providerFee] : formalFees
+          appFees: request.dry
+            ? [providerFee]
+            : (formalFees ?? [...(request.appFees ?? []), providerFee])
         },
         quote: {
           amountIn: request.amount,
@@ -1471,14 +1474,24 @@ test.describe('confidential funding safety rules', () => {
       }
       const quote = await api.quote(input)
       expect(requests.map(request => request.dry)).toEqual([true, false])
-      expect(requests.every(request => request.appFees === undefined)).toBe(true)
-      expect(quote.quoteRequest.appFees).toEqual([providerFee])
+      expect(requests.splice(0).map(request => request.appFees)).toEqual([undefined, [swapFee]])
+      expect(quote.quoteRequest.appFees).toEqual([swapFee, providerFee])
 
-      formalFees = [{ ...providerFee, fee: 26 }]
-      await expect(api.quote(input)).rejects.toThrow('app fees do not match')
-      formalFees = [{ recipient: 'other.near', fee: 25 }]
-      await expect(api.quote(input)).rejects.toThrow('app fees do not match')
+      const deposit = await api.quote({
+        ...input,
+        referral: 'noir_receive',
+        destinationAsset: input.originAsset
+      })
+      expect(requests.every(request => request.appFees === undefined)).toBe(true)
+      expect(deposit.quoteRequest.appFees).toEqual([providerFee])
+
       formalFees = [providerFee]
+      await expect(api.quote(input)).rejects.toThrow('app fees do not match')
+      formalFees = [swapFee, { ...providerFee, fee: 26 }]
+      await expect(api.quote(input)).rejects.toThrow('app fees do not match')
+      formalFees = [swapFee, { ...providerFee, recipient: 'other.near' }]
+      await expect(api.quote(input)).rejects.toThrow('app fees do not match')
+      formalFees = undefined
       formalDestinationAsset = 'nep141:other.omft.near'
       await expect(api.quote(input)).rejects.toThrow('does not match the requested funding route')
     } finally {
