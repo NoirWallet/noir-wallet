@@ -53,6 +53,8 @@ test('uses the 1Click route and refund owner for all basic confidential quotes a
   const usdcAddress = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913'
   const depositAddress = '0x4444444444444444444444444444444444444444'
   const usdc = { assetId: `nep141:base-${usdcAddress}.omft.near`, symbol: 'USDC', decimals: 6 }
+  const sol = { assetId: 'nep141:sol.omft.near', blockchain: 'sol', symbol: 'SOL', decimals: 9 }
+  const solRecipient = 'A7eWgQaB7C5qS3kfLWmBp4fPJg8gVd5m6kPmMRYn3ntH'
   const asset = { chain: '8453', address: usdcAddress, symbol: 'USDC', decimals: 6 }
   const request = {
     fromChain: '8453',
@@ -73,6 +75,7 @@ test('uses the 1Click route and refund owner for all basic confidential quotes a
   const fees = [{ recipient: 'noir_swap.near', fee: 2 }]
   const originalFetch = globalThis.fetch
   let referral
+  let destination = usdc
   let repeatFeeInBaseline = false
   let repeatFeeInBuild = false
   globalThis.fetch = async (url, init) => {
@@ -81,11 +84,12 @@ test('uses the 1Click route and refund owner for all basic confidential quotes a
     expect(body).toMatchObject({
       referral,
       originAsset: usdc.assetId,
-      destinationAsset: usdc.assetId,
+      destinationAsset: destination.assetId,
       amount: request.amountIn,
       refundTo: request.sender,
-      recipient: request.recipient,
-      recipientType: 'DESTINATION_CHAIN'
+      recipient: destination === sol ? solRecipient : request.recipient,
+      recipientType: 'DESTINATION_CHAIN',
+      confidentiality: 'basic'
     })
     if (body.dry || referral === 'noir_swap') {
       expect(body.user).toBeUndefined()
@@ -93,8 +97,9 @@ test('uses the 1Click route and refund owner for all basic confidential quotes a
     } else {
       expect(body).toMatchObject({ user: request.sender, userChainFamily: 'evm' })
     }
-    if (body.appFees) expect(body.appFees).toEqual(fees)
-    else if (referral !== 'noir_swap') expect(body.dry).toBe(true)
+    if (referral === 'noir_swap') expect(body.appFees).toBeUndefined()
+    else if (body.appFees) expect(body.appFees).toEqual(fees)
+    else expect(body.dry).toBe(true)
     const appFees =
       repeatFeeInBaseline || (repeatFeeInBuild && !body.dry)
         ? body.appFees
@@ -107,7 +112,7 @@ test('uses the 1Click route and refund owner for all basic confidential quotes a
       quote: {
         amountIn: body.amount,
         amountOut: body.appFees ? '999800' : '1000000',
-        minAmountOut: '994801',
+        minAmountOut: body.appFees ? '994801' : '995000',
         deadline: body.deadline,
         depositAddress: body.dry ? undefined : depositAddress
       }
@@ -122,7 +127,7 @@ test('uses the 1Click route and refund owner for all basic confidential quotes a
         reads.push(input)
         return status
       },
-      async () => [usdc]
+      async () => [usdc, sol]
     )
     const client = new RheaSwapCatalogClient({
       baseUrl: config.rheaSwapApiUrl,
@@ -141,7 +146,7 @@ test('uses the 1Click route and refund owner for all basic confidential quotes a
       const privateRefund = purpose === 'private-dapp-transfer'
       expect(quote).toMatchObject({
         estimatedOut: privateRefund ? '1000000' : '999800',
-        minAmountOut: '994801'
+        minAmountOut: privateRefund ? '995000' : '994801'
       })
       const review = await service.prepare(quote.quoteHandle)
       const prepared = await service.readPreparedBuild(quote.quoteHandle)
@@ -197,7 +202,36 @@ test('uses the 1Click route and refund owner for all basic confidential quotes a
         destinationHash
       })
     }
+    referral = 'noir_swap'
+    destination = sol
+    const crossChainQuote = await service.quote(
+      {
+        ...request,
+        toChain: 'solana',
+        tokenOut: {
+          chain: 'solana',
+          address: 'So11111111111111111111111111111111111111112',
+          decimals: 9
+        },
+        recipient: solRecipient
+      },
+      undefined,
+      { ...scope, purpose: 'private-cross-chain-send' }
+    )
+    await expect(service.prepare(crossChainQuote.quoteHandle)).resolves.toMatchObject({
+      isCrossChain: true,
+      tokenOut: { chain: 'solana', symbol: 'SOL' }
+    })
+    const record = await sessions.get(crossChainQuote.quoteHandle)
+    await sessions.put({
+      ...record,
+      build: undefined,
+      quoteRaw: { ...record.quoteRaw, bestQuote: { ...record.quoteRaw.bestQuote, bridge: null } }
+    })
+    await expect(service.prepare(crossChainQuote.quoteHandle)).rejects.toThrow('Get a new quote')
+
     referral = 'noir_move'
+    destination = usdc
     repeatFeeInBaseline = true
     await expect(
       service.quote(request, undefined, { ...scope, purpose: 'public-private-move' })
@@ -1504,8 +1538,7 @@ test('quote and build remain bound across a session-store reload', async () => {
     },
     async reportRaw(request) {
       calls.push(['report', request])
-      if (calls.length === 1) throw new Error('temporary report failure')
-      return { id: 1, from_hash: request.from_hash }
+      throw new Error('Legacy confidential receipts must not be reported to CrossChain DEX')
     },
     async getOrderStatusRaw(request) {
       calls.push(['status', request])
@@ -1731,10 +1764,6 @@ test('quote and build remain bound across a session-store reload', async () => {
     orderId: 'order-1',
     reportStatus: 'pending'
   })
-  await expect(service.reportSubmission(quoteView.quoteHandle)).rejects.toThrow(
-    'temporary report failure'
-  )
-
   const restored = new RheaSwapService(client, sessions, { now: () => 40_000 })
   await expect(restored.hasRecordedOrder(quoteView.quoteHandle)).resolves.toBe(true)
   await expect(restored.readPrivateSwapRequest(quoteView.quoteHandle)).resolves.toMatchObject({
@@ -1757,17 +1786,7 @@ test('quote and build remain bound across a session-store reload', async () => {
     status: 'completed',
     destinationHash: `0x${'ab'.repeat(32)}`
   })
-  expect(calls.map(([stage]) => stage)).toEqual(['report', 'report', 'status'])
-  expect(calls[2][1]).toEqual({ orderId: 'order-1', router: 'nearintents' })
-  expect(calls[0][1]).toMatchObject({
-    from_hash: 'source-hash',
-    from_chain: 'zcash',
-    to_chain: 'near',
-    amount_in: quote.amountIn,
-    estimated_out: quote.estimatedOut,
-    router: 'nearintents',
-    deposit_address: 't1deposit'
-  })
+  expect(calls).toEqual([['status', { orderId: 'order-1', router: 'nearintents' }]])
 
   const publicRouteService = new RheaSwapService(
     {

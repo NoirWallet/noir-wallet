@@ -789,9 +789,10 @@ export class RheaSwapService {
     if (!record.submission) throw new Error('RHEA Swap has not been submitted')
     if (record.submission.reportStatus === 'reported') return this.toSubmissionView(record)
     try {
-      const result = this.isOneClickOrder(record)
-        ? undefined
-        : await this.client.reportRaw(record.submission.reportRequest, { signal })
+      const result =
+        record.request.confidentiality === 'basic'
+          ? undefined
+          : await this.client.reportRaw(record.submission.reportRequest, { signal })
       const recordId = readRheaSwapReportRecordId(result?.id)
       const updated = Object.freeze({
         ...record,
