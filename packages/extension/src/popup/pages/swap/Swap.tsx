@@ -162,6 +162,7 @@ import { TransactionNotice } from '../../components/transaction/TransactionNotic
 import { ZcashSyncProgress } from '../../components/zcash/ZcashSyncProgress'
 import { useZcashSyncReadStatus } from '@/popup/hooks/usePersistedExtensionContextSync'
 import { AmountDisplay } from '../../components/common/AmountDisplay'
+import { QuoteFeeAmount } from '../../components/transaction/QuoteFeeAmount'
 import { Button } from '../../components/ui/button'
 import { Skeleton } from '../../components/ui/skeleton'
 import { SwapApprovalSubmittedView } from '@/popup/components/transaction/SwapApprovalSubmittedView'
@@ -6671,7 +6672,11 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
           })}
           slippage={swap.slippage}
           provider="near-confidential"
-          appFeeBps={review?.appFeeBps}
+          appFee={
+            review?.appFeeBps
+              ? { sourceAmountRaw: review.amountZats, bps: review.appFeeBps }
+              : undefined
+          }
           preparationError={
             transferPreparationError ?? (!review && !swap.isQuoting ? swap.quoteError : null)
           }
@@ -6791,6 +6796,7 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
         ) : undefined
 
       if (privateBalanceTransferRequested && walletOwnedSource) {
+        const sourceToken = swap.tokenIn
         const transferReview =
           privateBalanceTransferReview?.quoteHandle === rheaReview.quoteHandle &&
           privateBalanceTransferReview.executionId === rheaReview.executionId
@@ -6828,10 +6834,31 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
               />
             )
           },
-          ...(sourceNetworkFee
+          ...(rheaReview.appFeeBps
             ? [
                 {
                   label: 'Fee',
+                  content: (
+                    <QuoteFeeAmount
+                      sourceAmountRaw={rheaReview.amountIn}
+                      decimals={sourceToken.decimals}
+                      symbol={sourceToken.symbol}
+                      bps={rheaReview.appFeeBps}
+                      total={getCrossChainSendRouteCost({
+                        source: sourceToken,
+                        destination: swap.tokenOut,
+                        amountInRaw: rheaReview.amountIn,
+                        estimatedOutRaw: rheaReview.estimatedOut
+                      })}
+                    />
+                  )
+                }
+              ]
+            : []),
+          ...(sourceNetworkFee
+            ? [
+                {
+                  label: 'Network fee',
                   content: sourceFeeControl ?? (
                     <AmountDisplay
                       value={sourceNetworkFee.amount}
@@ -7041,6 +7068,11 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
           tokenOut={swap.tokenOut}
           amountIn={reviewedAmountIn}
           amountOut={reviewedAmountOut}
+          appFee={
+            rheaReview.appFeeBps
+              ? { sourceAmountRaw: rheaReview.amountIn, bps: rheaReview.appFeeBps }
+              : undefined
+          }
           minAmountOut={minAmountOut}
           priceImpact={priceImpact}
           fromFiat={fromFiat}
@@ -7269,6 +7301,11 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
               : ''
           }
           routeCost={routeCost}
+          appFee={
+            activeQuote?.appFeeBps && liveQuoteRequest
+              ? { sourceAmountRaw: liveQuoteRequest.amount, bps: activeQuote.appFeeBps }
+              : undefined
+          }
           recipient={
             crossChainDraftPending
               ? (crossChainSendDraft?.recipient ?? resolvedRecipientAddress)
@@ -7425,6 +7462,27 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
         recipientError={recipientError}
         slippage={swap.slippage}
         networkFee={networkFee}
+        quoteFee={
+          swap.tokenIn && nativeReview?.appFeeBps ? (
+            <QuoteFeeAmount
+              sourceAmountRaw={nativeReview.amountZats}
+              decimals={swap.tokenIn.decimals}
+              symbol={swap.tokenIn.symbol}
+              bps={nativeReview.appFeeBps}
+            />
+          ) : swap.tokenIn &&
+            liveQuoteRequest &&
+            liveQuoteKey === liveQuoteRequest.key &&
+            quoteResult?.appFeeBps &&
+            isRheaSwapQuoteFresh(quoteResult) ? (
+            <QuoteFeeAmount
+              sourceAmountRaw={liveQuoteRequest.amount}
+              decimals={swap.tokenIn.decimals}
+              symbol={swap.tokenIn.symbol}
+              bps={quoteResult.appFeeBps}
+            />
+          ) : undefined
+        }
         isQuoting={swap.isQuoting}
         quoteError={
           activeSharedPair &&
@@ -7978,7 +8036,7 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
                   ]
                 : []),
               { label: 'You receive', content: <Skeleton className="h-4 w-24" /> },
-              { label: 'Fee', content: <Skeleton className="h-8 w-28" /> }
+              { label: 'Network fee', content: <Skeleton className="h-8 w-28" /> }
             ]}
             error={
               transferPreparationStatusError ? (

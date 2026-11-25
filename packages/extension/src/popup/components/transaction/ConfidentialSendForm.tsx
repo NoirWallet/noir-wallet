@@ -29,6 +29,7 @@ import {
   SendRouteInfoCard
 } from '@/popup/components/transaction/SendInputCards'
 import { AmountDisplay } from '@/popup/components/common/AmountDisplay'
+import { QuoteFeeAmount } from '@/popup/components/transaction/QuoteFeeAmount'
 import { ChainSelector, type ChainSelectorOption } from '@/popup/components/common/ChainSelector'
 import { SHIELD_PROVIDERS } from '@/popup/components/portfolio/shield-providers'
 import type { ShieldTokenPickerItem } from '@/popup/services/shield-transfer'
@@ -1107,11 +1108,13 @@ export function ConfidentialSendForm({
                   prepared.request.source.amountRaw,
                   prepared.review.expectedOutputRaw
                 )
-                return fee ? (
-                  <AmountDisplay
-                    value={formatBaseUnitDecimalAmount(fee.raw, fee.decimals)}
-                    symbol={formatSymbol(prepared.source.asset.metadata.symbol)}
-                    profile="fee"
+                return fee || prepared.review.quoteAppFeeBps ? (
+                  <QuoteFeeAmount
+                    sourceAmountRaw={prepared.review.sourceAmountRaw}
+                    decimals={prepared.source.asset.metadata.decimals}
+                    symbol={prepared.source.asset.metadata.symbol}
+                    bps={prepared.review.quoteAppFeeBps}
+                    total={fee && formatBaseUnitDecimalAmount(fee.raw, fee.decimals)}
                   />
                 ) : (
                   'Unavailable'
@@ -1153,14 +1156,17 @@ export function ConfidentialSendForm({
     <>
       <div>
         <SendRouteInfoCard
-          feeLabel="Fee (est.)"
           fee={
             preview && previewRequest && !previewLoading && !previewError ? (
-              previewFee ? (
-                <AmountDisplay
-                  value={formatBaseUnitDecimalAmount(previewFee.raw, previewFee.decimals)}
-                  symbol={formatSymbol(source?.asset.metadata.symbol)}
-                  profile="fee"
+              source && previewRequest && (previewFee || preview.appFeeBps) ? (
+                <QuoteFeeAmount
+                  sourceAmountRaw={previewRequest.source.amountRaw}
+                  decimals={source.asset.metadata.decimals}
+                  symbol={source.asset.metadata.symbol}
+                  bps={preview.appFeeBps}
+                  total={
+                    previewFee && formatBaseUnitDecimalAmount(previewFee.raw, previewFee.decimals)
+                  }
                 />
               ) : (
                 'Unavailable'

@@ -155,7 +155,7 @@ export function SendTransferView({
           <>
             <div>
               <SendRouteInfoCard
-                fee={
+                networkFee={
                   <span>
                     {state.feePreviewLoading && (
                       <Icon
@@ -223,7 +223,7 @@ export function SendTransferView({
             },
             ...(review.beforeFeeRows ?? []),
             {
-              label: 'Fee',
+              label: 'Network fee',
               content: review.feeContent ?? (
                 <AmountDisplay value={review.fee} symbol={feeSymbol} profile="fee" />
               )

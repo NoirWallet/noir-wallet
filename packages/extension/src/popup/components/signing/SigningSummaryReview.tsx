@@ -91,7 +91,7 @@ function ReviewValue({
 }
 
 function ReviewLabel({ label }: { label: string }) {
-  if (label === 'Maximum fee' || label === 'RPC total fee') return 'Fee'
+  if (label === 'Maximum fee' || label === 'RPC total fee' || label === 'Fee') return 'Network fee'
   const separatorIndex = label.indexOf('.')
   if (separatorIndex < 0) return label
 
@@ -537,9 +537,12 @@ export function SigningSummaryReview({
         {notice}
 
         {source.kind === 'wallet' && feeControl && (
-          <section aria-label="Fee" className="rounded-xl border border-border bg-card/35 p-3">
+          <section
+            aria-label="Network fee"
+            className="rounded-xl border border-border bg-card/35 p-3"
+          >
             <div className="flex items-center justify-between gap-3">
-              <span className="text-xs text-muted">Fee</span>
+              <span className="text-xs text-muted">Network fee</span>
               {feeControl}
             </div>
           </section>

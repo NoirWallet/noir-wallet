@@ -103,6 +103,7 @@ interface PreparedReview {
 
 interface PrivateSendPreview {
   readonly key: string
+  readonly sourceAmountRaw: string
   readonly quote: RheaSwapQuoteView
   readonly routeCost: string | null
   readonly estimatedReceive: string
@@ -624,6 +625,7 @@ export function useEvmSendTransfer({
           heldQuoteHandle = quote.quoteHandle
           setPrivatePreview({
             key: request.key,
+            sourceAmountRaw: request.amountRaw,
             quote,
             routeCost: getPublicPrivateSendRouteCost({
               amountInRaw: request.amountRaw,

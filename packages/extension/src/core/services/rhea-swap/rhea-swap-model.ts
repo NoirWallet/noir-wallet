@@ -548,6 +548,7 @@ export type RheaSwapQuoteMode = 'fast' | 'best-price'
 
 export interface RheaSwapQuoteView {
   readonly quoteHandle: string
+  readonly appFeeBps?: number
   readonly recipient: string
   readonly estimatedOut: string
   readonly minAmountOut: string

@@ -15,7 +15,12 @@ export interface QuoteTerms {
 }
 
 export function rheaQuoteTerms(quote: RheaSwapQuoteView): QuoteTerms {
-  return { expected: quote.estimatedOut, minimum: quote.minAmountOut, route: quote.router }
+  return {
+    expected: quote.estimatedOut,
+    minimum: quote.minAmountOut,
+    route: quote.router,
+    ...(quote.appFeeBps !== undefined ? { appFeeBps: quote.appFeeBps } : {})
+  }
 }
 
 export function confidentialQuoteTerms(

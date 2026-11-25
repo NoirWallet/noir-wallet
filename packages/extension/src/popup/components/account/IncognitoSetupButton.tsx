@@ -124,7 +124,8 @@ export function IncognitoSetupDialog({
             <img className="mt-4 size-[70px] opacity-35" src={incognitoWatermark} alt="" />
           </div>
           <DialogDescription className="px-3 pt-3 leading-[18px] text-wallet-secondary">
-            Use a separate address for DeFi. Your existing recovery phrase backs up this wallet too.
+            Create an Incognito account to keep your DeFi positions separate from your public
+            wallet. The same recovery phrase backs up both accounts.
           </DialogDescription>
           {error && <InlineError message={error} />}
           <Button
