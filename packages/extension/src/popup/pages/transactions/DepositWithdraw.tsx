@@ -620,7 +620,7 @@ function DepositWithdrawForm({
   const [from, setFrom] = useState<TransferDomain>(initialDraft.from)
   const [to, setTo] = useState<TransferDomain>(initialDraft.to)
   const usesConfidentialBalances =
-    (from === 'shield' || to === 'shield') &&
+    from === 'shield' &&
     (!receiveEntry || (!receiveExternal && preferredReceiveProvider !== 'zcash-shield'))
   const {
     model: portfolio,
@@ -658,7 +658,10 @@ function DepositWithdrawForm({
   const canLoadShield =
     getPrivateTransferChainIds(activeAccount, currentNetwork === 'mainnet').length > 0
   const shieldPickerOpen =
-    domainPicker !== null && !receiveEntry && pickerAccountId === effective?.accountId
+    domainPicker !== null &&
+    !receiveEntry &&
+    !fixedDirection &&
+    pickerAccountId === effective?.accountId
   const shieldBalanceKey = `${currentNetwork}:${effective?.walletId ?? ''}:${effective?.accountId ?? ''}`
   const {
     balances: shieldBalances,
@@ -1410,7 +1413,8 @@ function DepositWithdrawForm({
     !crossChainPrivateTransfer
   const clusterSelected = method === 'cluster' && clusterPair
   const fundingRoute = Boolean(shieldPair || clusterSelected)
-  const fundingReady = !shieldPair || shieldConnection === 'connected'
+  const fundingReady =
+    !shieldPair || (from === 'shield' ? shieldConnection === 'connected' : canLoadShield)
   useEffect(() => {
     if (!supportedPair && !fundingRoute) return
     let cancelled = false
@@ -3038,7 +3042,10 @@ function DepositWithdrawForm({
                 message="Assets could not be loaded."
                 onRetry={() => void refreshPortfolio(true, { forceDiscovery: true })}
               />
-            ) : shieldPair && shieldConnection === 'required' && !shieldConnecting ? (
+            ) : shieldPair &&
+              from === 'shield' &&
+              shieldConnection === 'required' &&
+              !shieldConnecting ? (
               <TransactionNotice
                 className="mt-2"
                 message={shieldError ?? 'Shield balance unavailable.'}
@@ -3064,6 +3071,7 @@ function DepositWithdrawForm({
               isLoading={
                 preparingShield ||
                 (shieldPair &&
+                  from === 'shield' &&
                   (shieldConnecting ||
                     shieldConnection === 'checking' ||
                     shieldConnection === 'busy')) ||

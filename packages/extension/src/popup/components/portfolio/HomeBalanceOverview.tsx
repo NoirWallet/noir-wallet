@@ -22,6 +22,8 @@ export interface HomeBalanceOverviewProps {
   readonly modeSelectionDisabled: boolean
   readonly quickShieldLabel?: string
   readonly onQuickShield?: (trigger: HTMLButtonElement) => void
+  readonly shieldEmpty: boolean
+  readonly onExploreShieldProviders: () => void
   readonly onToggleHidden: () => void
   readonly onSelect: (domain: HomeAssetDomain) => void
 }
@@ -37,6 +39,8 @@ export function HomeBalanceOverview({
   modeSelectionDisabled,
   quickShieldLabel,
   onQuickShield,
+  shieldEmpty,
+  onExploreShieldProviders,
   onToggleHidden,
   onSelect
 }: HomeBalanceOverviewProps) {
@@ -48,6 +52,7 @@ export function HomeBalanceOverview({
   function balance(cardDomain: HomeAssetDomain | 'all', skeleton: string) {
     if (hidden) return <span aria-label="Balance hidden">••••</span>
     if (display.loading[cardDomain]) return <BalanceSkeleton className={skeleton} />
+    if (cardDomain === 'shield' && shieldEmpty) return <span className="tabular-nums">$0.00</span>
     return (
       <span
         className="tabular-nums wrap-anywhere"
@@ -125,7 +130,26 @@ export function HomeBalanceOverview({
                       />
                       {cardDomain === 'shield' && (
                         <div className="min-w-0 flex-1 pt-2 text-[13px] leading-[17px]">
-                          <p className="home-balance-description">Total across privacy providers</p>
+                          {shieldEmpty ? (
+                            <>
+                              <p className="home-balance-description">
+                                Your combined balance across privacy providers. Shielding keeps this
+                                balance hidden from public view onchain.
+                              </p>
+                              <button
+                                type="button"
+                                className="wallet-interactive mt-1 inline-flex items-center gap-1 rounded text-[#28f4af] hover:underline focus-visible:outline-2 focus-visible:outline-ring"
+                                onClick={onExploreShieldProviders}
+                              >
+                                Explore privacy providers
+                                <Icon icon="lucide:arrow-right" width={13} aria-hidden="true" />
+                              </button>
+                            </>
+                          ) : (
+                            <p className="home-balance-description">
+                              Total across privacy providers
+                            </p>
+                          )}
                           {quickShieldLabel && onQuickShield && (
                             <div className="mt-1 flex flex-wrap items-center justify-between gap-x-2">
                               <span className="min-w-0 wrap-anywhere">

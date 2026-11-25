@@ -35,10 +35,8 @@ import type { ShieldTokenPickerItem } from '@/popup/services/shield-transfer'
 import { resolveTransferMaximum } from '@/popup/services/transfer-maximum'
 import { sortSendAssetsByBalanceValue, sortSendNetworks } from '@/popup/services/send-asset-order'
 import { RecipientSelector } from '@/popup/components/transaction/RecipientSelector'
-import {
-  TransactionReviewExchangeSummary,
-  TransactionReviewView
-} from '@/popup/components/transaction/TransactionReviewView'
+import { TransactionReviewView } from '@/popup/components/transaction/TransactionReviewView'
+import { formatSendFiatValue } from '@/popup/services/send-transfer-model'
 import { TransactionReviewParty } from '@/popup/components/transaction/TransactionReviewParty'
 import { QuoteReviewChanges } from '@/popup/components/transaction/QuoteReviewChanges'
 import { openConfidentialActivity } from '@/popup/components/transaction/ConfidentialActivitySheet'
@@ -1008,32 +1006,13 @@ export function ConfidentialSendForm({
             blockchain: withdrawChainIconAlias(prepared.source.chain.chain)
           }}
           amount={prepared.amount}
+          amountPrefix="-"
+          fiatValue={formatSendFiatValue(
+            prepared.amount,
+            findAssetPrice(pickerPrices, prepared.source.asset.asset.id)?.priceUsd ??
+              catalogPrices.get(prepared.source.managed.protocolAssetId)
+          )}
           network={prepared.destination.chain.chain.displayName}
-          summary={
-            <TransactionReviewExchangeSummary
-              presentation="single"
-              destinationLabel="Recipient receive"
-              destinationPrefix=""
-              source={{
-                asset: {
-                  assetId: prepared.source.asset.asset.id,
-                  symbol: formatSymbol(prepared.source.asset.metadata.symbol),
-                  icon: prepared.source.asset.metadata.iconUrl,
-                  blockchain: withdrawChainIconAlias(prepared.source.chain.chain)
-                },
-                amount: prepared.amount
-              }}
-              destination={{
-                asset: {
-                  assetId: prepared.destination.asset.asset.id,
-                  symbol: formatSymbol(prepared.destination.asset.metadata.symbol),
-                  icon: prepared.destination.asset.metadata.iconUrl,
-                  blockchain: withdrawChainIconAlias(prepared.destination.chain.chain)
-                },
-                amount: output
-              }}
-            />
-          }
           rows={[
             {
               label: 'From',
