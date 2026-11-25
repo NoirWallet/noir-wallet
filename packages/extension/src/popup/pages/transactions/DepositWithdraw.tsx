@@ -1404,8 +1404,11 @@ function DepositWithdrawForm({
       : selected
     : null
   const crossChainPrivateTransfer = supportedPair && destinationAssetId !== null
-  const clusterPair = isClusterTransferRoute(from, to) && selected?.chain.chain.family === 'evm'
-  const clusterSelected = method === 'cluster' && clusterPair && !crossChainPrivateTransfer
+  const clusterPair =
+    isClusterTransferRoute(from, to) &&
+    selected?.chain.chain.family === 'evm' &&
+    !crossChainPrivateTransfer
+  const clusterSelected = method === 'cluster' && clusterPair
   const fundingRoute = Boolean(shieldPair || clusterSelected)
   const fundingReady = !shieldPair || shieldConnection === 'connected'
   useEffect(() => {
@@ -1453,9 +1456,7 @@ function DepositWithdrawForm({
           : Boolean(managedAsset))
   })
   const nativeReceive = receiveEntry && receiveZec && !externalReceive && receiveProvider !== null
-  const clusterAvailable = Boolean(
-    clusterPair && !crossChainPrivateTransfer && managedAsset && effective
-  )
+  const clusterAvailable = Boolean(clusterPair && managedAsset && effective)
   const destinationOptions = useMemo(() => {
     if (from !== 'shield' || !selected || !managedAsset) return []
     if (fixedDirection === 'unshield') return [{ ...selected, managed: managedAsset }]

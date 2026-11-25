@@ -3419,7 +3419,7 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
     currentQuote: quoteResult,
     currentKey: liveQuoteKey,
     outputDecimals: swap.tokenOut?.decimals,
-    maxSelected,
+    immediate: maxSelected || (isPrivateFunding && autoReviewRequested),
     walletId: effectiveWalletId,
     accountId: effectiveAccountId,
     sequence: quoteRequestSequence,
@@ -7717,6 +7717,27 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
         )))
   const ordinarySwapInput = ordinarySwapRequested && viewStep === 'input' && !resumingApprovalReview
   const swapControlsDisabled = balanceDomainPending || shieldBusy || isPreparingReview || isSending
+  const restoringShieldPair =
+    ordinarySwapInput &&
+    shieldSwapSelected &&
+    useSharedSwapPair &&
+    (!swapPreferencesHydrated ||
+      (!accountNetworksError &&
+        !shieldSourceInitialized.current &&
+        isSameSwapAsset(ZEC_ZCASH_ASSET, sharedSwapPair.tokenInId) &&
+        (!accountNetworksReady || defaultShieldZecSource === 'native-shielded')))
+
+  if (restoringShieldPair) {
+    return (
+      <div className="page-container" aria-busy="true">
+        <PageHeader title="Shield Swap" {...getHeaderProps()} />
+        <div className="space-y-6 px-4 py-5">
+          <Skeleton className="h-16 w-full" />
+          <Skeleton className="h-16 w-full" />
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div
