@@ -56,7 +56,7 @@ export function ZcashTransferRoute({
                 {...route.appFee}
                 decimals={ZEC_DECIMALS}
                 symbol="ZEC"
-                total={route.routeCost}
+                fallbackAmount={route.routeCost}
               />
             ) : route.confidential && !route.feeControl ? (
               <AmountDisplay value={route.routeCost} symbol="ZEC" profile="fee" />

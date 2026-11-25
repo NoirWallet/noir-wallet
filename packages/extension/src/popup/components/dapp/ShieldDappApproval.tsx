@@ -208,7 +208,7 @@ export function ShieldDappApproval(props: ShieldDappApprovalProps) {
                       decimals={Number(readText(record, 'feeSourceDecimals'))}
                       symbol={symbol}
                       bps={feeBps}
-                      total={quoteDifference || null}
+                      fallbackAmount={quoteDifference || null}
                     />
                   </span>
                 </div>

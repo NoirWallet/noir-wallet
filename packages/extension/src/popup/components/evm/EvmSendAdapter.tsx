@@ -387,7 +387,7 @@ function EvmSendRouteDetails({
                   decimals={asset.metadata.decimals}
                   symbol={asset.metadata.symbol}
                   bps={privatePreview.quote.appFeeBps}
-                  total={privatePreview.routeCost}
+                  fallbackAmount={privatePreview.routeCost}
                 />
               ) : privateRouteCostFiat ? (
                 `~${privateRouteCostFiat}`

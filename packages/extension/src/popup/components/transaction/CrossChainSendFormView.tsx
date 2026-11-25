@@ -174,7 +174,7 @@ export function CrossChainSendFormView({
                 {...appFee}
                 decimals={tokenIn.decimals}
                 symbol={sourceSymbol}
-                total={routeCost}
+                fallbackAmount={routeCost}
               />
             ) : isQuoting || routeCost === undefined ? (
               '—'

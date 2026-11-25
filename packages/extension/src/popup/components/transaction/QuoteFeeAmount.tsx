@@ -6,7 +6,7 @@ interface QuoteFeeAmountProps {
   readonly decimals: number
   readonly symbol: string
   readonly bps?: number
-  readonly total?: string | null
+  readonly fallbackAmount?: string | null
 }
 
 export function QuoteFeeAmount({
@@ -14,25 +14,23 @@ export function QuoteFeeAmount({
   decimals,
   symbol,
   bps,
-  total
+  fallbackAmount
 }: QuoteFeeAmountProps) {
   const rate = bps !== undefined && bps > 0 ? bps : null
   const estimate = rate === null ? null : estimateBpsFeeAmount(sourceAmountRaw, decimals, rate)
-  const amountAndRate =
-    rate !== null && estimate !== null ? (
+  if (rate !== null && estimate !== null) {
+    return (
       <>
-        <AmountDisplay value={estimate} symbol={symbol} profile="fee" prefix="≈ " />{' '}
+        <AmountDisplay value={estimate} symbol={symbol} profile="fee" />{' '}
         <span className="whitespace-nowrap">
           ({formatPercentage(rate, { decimals: -2, maxDigits: 2 })})
         </span>
       </>
-    ) : null
-
-  if (total == null) return amountAndRate ?? '—'
-  return (
-    <>
-      <AmountDisplay value={total} symbol={symbol} profile="fee" />
-      {amountAndRate && <span className="block text-muted">Incl. {amountAndRate}</span>}
-    </>
+    )
+  }
+  return fallbackAmount == null ? (
+    '—'
+  ) : (
+    <AmountDisplay value={fallbackAmount} symbol={symbol} profile="fee" />
   )
 }

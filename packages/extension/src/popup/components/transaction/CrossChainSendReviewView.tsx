@@ -150,7 +150,7 @@ export function CrossChainSendReviewView({
               decimals={source.decimals}
               symbol={source.symbol}
               bps={review.appFeeBps}
-              total={routeCost}
+              fallbackAmount={routeCost}
             />
           ) : routeCost === null ? (
             'Unavailable'

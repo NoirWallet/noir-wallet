@@ -105,7 +105,11 @@ import {
 } from '@/popup/services/shield-swap-zec-sources'
 import { ZEC_DECIMALS } from '@/config/wallet'
 import { ZEC_ZCASH_ASSET } from '@/config/intents'
-import { confidentialQuoteTerms, quoteReviewPrimaryAction } from '@/popup/services/quote-review'
+import {
+  confidentialQuoteTerms,
+  quoteReviewPrimaryAction,
+  shieldSwapPreviewTerms
+} from '@/popup/services/quote-review'
 
 function shieldSwapQuoteErrorMessage(cause: unknown): string {
   const quoteMessage = getSwapQuoteFailureMessage(cause)
@@ -712,7 +716,6 @@ function ShieldSwapForm({
     setBusy(true)
     setError(null)
     quoteReview.reset()
-    quoteReview.begin(draftKey, confidentialQuoteTerms(preview))
     try {
       const request = buildShieldSwapRequest({
         network,
@@ -726,6 +729,7 @@ function ShieldSwapForm({
         nativeZecFundingSource: nativeZecDestination ?? undefined,
         slippageBps
       })
+      quoteReview.begin(draftKey, shieldSwapPreviewTerms(preview, request.operation))
       const review = await confidentialFundingClient.prepare(request)
       if (!draftStillCurrent()) {
         if (review.phase === 'prepared')

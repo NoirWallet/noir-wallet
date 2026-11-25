@@ -6844,7 +6844,7 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
                       decimals={sourceToken.decimals}
                       symbol={sourceToken.symbol}
                       bps={rheaReview.appFeeBps}
-                      total={getCrossChainSendRouteCost({
+                      fallbackAmount={getCrossChainSendRouteCost({
                         source: sourceToken,
                         destination: swap.tokenOut,
                         amountInRaw: rheaReview.amountIn,

@@ -40,6 +40,13 @@ export function confidentialQuoteTerms(
       }
 }
 
+export function shieldSwapPreviewTerms(
+  preview: ConfidentialFundingPreview,
+  operation: ConfidentialFundingReview['operation']
+): QuoteTerms {
+  return operation === 'swap' ? { appFeeBps: preview.appFeeBps } : confidentialQuoteTerms(preview)
+}
+
 export function nativeZecQuoteTerms(quote: NativeZecIntentsSwapReview): QuoteTerms {
   return {
     expected: quote.expectedOutputRaw,

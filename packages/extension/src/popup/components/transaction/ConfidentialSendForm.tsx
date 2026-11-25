@@ -1114,7 +1114,7 @@ export function ConfidentialSendForm({
                     decimals={prepared.source.asset.metadata.decimals}
                     symbol={prepared.source.asset.metadata.symbol}
                     bps={prepared.review.quoteAppFeeBps}
-                    total={fee && formatBaseUnitDecimalAmount(fee.raw, fee.decimals)}
+                    fallbackAmount={fee && formatBaseUnitDecimalAmount(fee.raw, fee.decimals)}
                   />
                 ) : (
                   'Unavailable'
@@ -1164,7 +1164,7 @@ export function ConfidentialSendForm({
                   decimals={source.asset.metadata.decimals}
                   symbol={source.asset.metadata.symbol}
                   bps={preview.appFeeBps}
-                  total={
+                  fallbackAmount={
                     previewFee && formatBaseUnitDecimalAmount(previewFee.raw, previewFee.decimals)
                   }
                 />

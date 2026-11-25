@@ -2452,7 +2452,7 @@ function DepositWithdrawForm({
           decimals={selected.asset.metadata.decimals}
           symbol={symbol}
           bps={appFeeBps}
-          total={routeFee}
+          fallbackAmount={routeFee}
         />
       ) : null
     const networkFee = activeShieldReview.sourceNetworkFee
