@@ -211,7 +211,6 @@ export function ConfidentialSendForm({
   const cancelledPlanId = useRef<string | null>(null)
   const reviewRequestId = useRef(0)
   const {
-    balances: currentBalances,
     spendableBalances,
     loading: loadingBalances,
     connecting,
@@ -345,8 +344,8 @@ export function ConfidentialSendForm({
     () => listShieldFundingAssets(model, managedAssets, catalogTokens, network),
     [model, managedAssets, catalogTokens, network]
   )
-  const portfolioBalances = useMemo(() => shieldPortfolioBalances(model), [model])
-  const displayBalances = currentBalances ?? portfolioBalances
+  const portfolioBalances = useMemo(() => shieldPortfolioBalances(model, 'spendableRaw'), [model])
+  const displayBalances = spendableBalances ?? portfolioBalances
   const fundedSources = useMemo(
     () => shieldFundingSources(options, displayBalances),
     [options, displayBalances]
@@ -501,7 +500,7 @@ export function ConfidentialSendForm({
     if (!catalogSettled || !awaitingCatalog || !source) return
     applyRouteSelection(source.asset.asset.id, destination?.chain.chain.id ?? source.chain.chain.id)
   }, [catalogSettled, awaitingCatalog, source, destination, applyRouteSelection])
-  const availableRaw = shieldFundingAvailableRaw(source, spendableBalances ?? displayBalances)
+  const availableRaw = shieldFundingAvailableRaw(source, displayBalances)
   const balanceAuthorizationRequired = balanceErrorCode === 'authorization_required'
   const balanceErrorMessage = balanceAuthorizationRequired
     ? 'Connect your Shield account to load balances.'
@@ -510,7 +509,7 @@ export function ConfidentialSendForm({
       : 'Unable to load Shield balances.'
   const displayedAsset = source?.asset ?? initialAsset
   const amountState =
-    source && (spendableBalances ?? displayBalances)
+    source && displayBalances
       ? resolvePrivateBalanceTransferAmount({
           amount,
           decimals: source.asset.metadata.decimals,
@@ -551,7 +550,7 @@ export function ConfidentialSendForm({
     if (
       !account ||
       !canManageNear ||
-      !currentBalances ||
+      !spendableBalances ||
       !source ||
       !destination ||
       !previewAmountRaw ||
@@ -573,7 +572,7 @@ export function ConfidentialSendForm({
     account?.walletId,
     account?.accountId,
     canManageNear,
-    currentBalances,
+    spendableBalances,
     source,
     destination,
     previewAmountRaw,
@@ -1311,7 +1310,7 @@ export function ConfidentialSendForm({
             loading={busy || previewLoading}
             disabled={
               !canManageNear ||
-              !currentBalances ||
+              !spendableBalances ||
               !source ||
               !destination ||
               !amountState?.amountRaw ||
