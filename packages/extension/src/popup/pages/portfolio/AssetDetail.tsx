@@ -49,10 +49,8 @@ import zcashChainIcon from '@/images/zcash-chain.svg'
 import { AssetDetailBalanceRow } from './AssetDetailBalanceRow'
 import { withConfidentialAssetPrices } from '@/popup/services/portfolio-prices'
 import { PrivateAddressWarningDialog } from '@/popup/components/account/PrivateAddressWarningDialog'
-import {
-  getPrivateTransferChainIds,
-  type BalanceTransferIntent
-} from '@/popup/services/private-balance-transfer'
+import type { BalanceTransferIntent } from '@/popup/services/private-balance-transfer'
+import { getShieldTransferChainIds } from '@/popup/services/shield-transfer'
 import {
   resolveNearConfidentialZecDetail,
   resolveNearConfidentialZecHolding
@@ -331,10 +329,11 @@ export function AssetDetail() {
     evmAccountNetwork?.privateExecutionAddress &&
     evmMainAddress
   )
+  const shieldChainIds = getShieldTransferChainIds(storageV2Account, currentNetwork === 'mainnet')
+  const hasConfidentialCapability = shieldChainIds.length > 0
+  const evmShieldEligible = Boolean(chain && shieldChainIds.includes(chain.chain.id))
   const refreshConfidentialBalances =
-    privateTransferEligible ||
-    (chain?.chain.family === 'zcash' &&
-      getPrivateTransferChainIds(storageV2Account, currentNetwork === 'mainnet').length > 0)
+    evmShieldEligible || (chain?.chain.family === 'zcash' && hasConfidentialCapability)
   const loadingConfidentialBalance =
     refreshConfidentialBalances &&
     Boolean(portfolioScopeKey) &&
@@ -346,7 +345,8 @@ export function AssetDetail() {
           asset,
           visibleModel,
           privateTransferEligible,
-          findAssetPrice(displayPrices, asset.asset.id)?.priceUsd
+          findAssetPrice(displayPrices, asset.asset.id)?.priceUsd,
+          evmShieldEligible
         )
       : null
   const nearConfidentialZec = asset
@@ -358,8 +358,6 @@ export function AssetDetail() {
         assetId: asset.asset.id
       })
     : null
-  const hasConfidentialCapability =
-    currentNetwork === 'mainnet' && getPrivateTransferChainIds(storageV2Account, true).length > 0
   const modeScopeKey = JSON.stringify([currentNetwork, effectiveWalletId, effectiveAccountId])
   const enabledIncognito = useSettingsStore(state => state.incognitoCardScopes[modeScopeKey])
   const { state: executionMode } = useDAppExecutionMode(

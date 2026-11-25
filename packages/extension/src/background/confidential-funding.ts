@@ -16,7 +16,9 @@ import { getCachedTokens, type SwapToken } from '@/core/services/intents-api'
 import { resolveIntentsEvmAssets } from '@/core/services/intents-evm-assets'
 import { loadActiveEvmPortfolioContext } from '@/infrastructure/chains/evm'
 import { EvmMultichainSigningClient } from '@/infrastructure/keyring/multichain/evm-signing-client'
+import { HardwareEvmSigningContextResolver } from '@/infrastructure/keyring/hardware-evm-signing-context'
 import {
+  IndexedDbCredentialRepository,
   IndexedDbStorageV2Repository,
   IndexedDbTransactionRepository
 } from '@/infrastructure/persistence/repositories'
@@ -30,6 +32,11 @@ import {
 } from './confidential-funding-coordinator'
 import { ConfidentialFundingSigner } from './confidential-funding-signer'
 import { ChromeConfidentialFundingStore } from './confidential-funding-store'
+import { requestLedgerSignature } from './ledger-signing-coordinator'
+import {
+  requestKeystoneEvmPersonalSignature,
+  requestKeystoneEvmTransactionSignature
+} from './keystone-evm-message-signing'
 import { queryOneClickOrderStatus } from './one-click-status'
 
 export function createBackgroundConfidentialFundingCoordinator(
@@ -100,6 +107,12 @@ export function createBackgroundConfidentialFundingCoordinator(
   ])
   const storage = new IndexedDbStorageV2Repository()
   const signerClient = new EvmMultichainSigningClient({ credentials: credentialSession })
+  const hardware = new HardwareEvmSigningContextResolver({
+    storageRepository: storage,
+    credentialRepository: new IndexedDbCredentialRepository(),
+    credentials: credentialSession,
+    network: DEFAULT_NETWORK
+  })
   const near = resolveNearRuntimeNetworkConfig(DEFAULT_NETWORK, endpointSettings)
   const mappings = new Map(
     [
@@ -118,7 +131,26 @@ export function createBackgroundConfidentialFundingCoordinator(
     signer: new ConfidentialFundingSigner(
       signerClient,
       chainId => loadActiveEvmPortfolioContext(storage, chainId),
-      operation => accountContextTransition.runActiveOperation(operation)
+      operation => accountContextTransition.runActiveOperation(operation),
+      DEFAULT_NETWORK === 'mainnet'
+        ? {
+            resolve: chainAccount => hardware.resolve(chainAccount),
+            request: (vendor, request, binding, masterFingerprintHex) => {
+              if (vendor === 'ledger') return requestLedgerSignature(request, binding)
+              if (!masterFingerprintHex) throw new Error('Keystone account fingerprint unavailable')
+              if (request.kind === 'personal-sign') {
+                return requestKeystoneEvmPersonalSignature(
+                  { ...request, address: request.expectedAddress, masterFingerprintHex },
+                  binding
+                )
+              }
+              return requestKeystoneEvmTransactionSignature(
+                { ...request, address: request.expectedAddress, masterFingerprintHex },
+                binding
+              )
+            }
+          }
+        : undefined
     ),
     repository: new IndexedDbTransactionRepository(),
     assets,

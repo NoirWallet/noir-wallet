@@ -53,6 +53,8 @@ export function HomeShieldProviders({
     error,
     refreshBalances
   } = useShieldBalances({
+    hardware: account?.walletSource.kind === 'hardware',
+    authorizationPath: '/shield-provider?provider=near-confidential',
     active: true,
     authorizeOnMount: false,
     enabled: canManageNear && near.status !== 'ready',

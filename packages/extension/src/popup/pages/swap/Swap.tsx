@@ -154,9 +154,9 @@ import { homeActivityPath } from '@/popup/services/home-navigation'
 import { TransactionModeDropdown } from '@/popup/components/transaction/TransactionModeDropdown'
 import {
   balanceTransferLabel,
-  getPrivateTransferChainIds,
   resolveCrossChainPrivateWithdrawRoute
 } from '@/popup/services/private-balance-transfer'
+import { getShieldTransferChainIds } from '@/popup/services/shield-transfer'
 import { supportsEvmPrivateExecution } from '@/core/chains/evm'
 import { TransactionNotice } from '../../components/transaction/TransactionNotice'
 import { ZcashSyncProgress } from '../../components/zcash/ZcashSyncProgress'
@@ -641,7 +641,7 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
     )
   )
   const confidentialShieldAvailable =
-    getPrivateTransferChainIds(storageV2Account, currentNetwork === 'mainnet').length > 0
+    getShieldTransferChainIds(storageV2Account, currentNetwork === 'mainnet').length > 0
   const nativeZecConfidentialAvailable = hasNativeZecConfidentialSwapRoute(
     storageV2Account,
     currentNetwork,

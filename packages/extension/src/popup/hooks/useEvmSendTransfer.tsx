@@ -48,7 +48,7 @@ import {
 import { useEvmSendSupport } from '@/popup/hooks/useEvmSendSupport'
 import { carryQuotePreview } from '@/popup/hooks/useQuoteReview'
 import { rheaQuoteTerms } from '@/popup/services/quote-review'
-import { getPrivateTransferChainIds } from '@/popup/services/private-balance-transfer'
+import { getShieldTransferChainIds } from '@/popup/services/shield-transfer'
 import {
   isCurrentAccountPrivateEvmAddress,
   resolveEvmAddressRole
@@ -207,7 +207,7 @@ export function useEvmSendTransfer({
       ? catalogAccount
       : null
   const shieldSourceAvailable =
-    getPrivateTransferChainIds(activeAccount, networkMode === 'mainnet').length > 0
+    getShieldTransferChainIds(activeAccount, networkMode === 'mainnet').length > 0
   const accountDisplayName =
     activeAccount && walletId && accountId
       ? getAccountDisplayName(

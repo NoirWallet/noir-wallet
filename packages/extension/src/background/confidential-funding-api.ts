@@ -777,7 +777,7 @@ export class ConfidentialFundingApi {
 
   async createAuthPayload(
     signerId: string
-  ): Promise<Readonly<{ standard: 'erc191'; payload: string }>> {
+  ): Promise<Readonly<{ standard: 'erc191'; payload: string; expiresAt: number }>> {
     const response = await requestJson(this.nearRpcUrl, {
       method: 'POST',
       body: JSON.stringify({
@@ -821,6 +821,7 @@ export class ConfidentialFundingApi {
     nonce.set(random, 17)
     return Object.freeze({
       standard: 'erc191' as const,
+      expiresAt: deadline.getTime(),
       payload: JSON.stringify({
         signer_id: signerId,
         verifying_contract: INTENTS_CONTRACT,

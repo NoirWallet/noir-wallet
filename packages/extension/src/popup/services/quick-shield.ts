@@ -8,9 +8,8 @@ import type { SwapToken } from '@/core/services/intents-api'
 import type { Network } from '@/types'
 import { getAssetDomainRaw, type ShieldProvider } from './asset-domains'
 import { resolveManagedIntentsCatalog } from './intents-asset-manager-client'
-import { getPrivateTransferChainIds } from './private-balance-transfer'
 import { getPortfolioAssetUsdValue } from './portfolio-prices'
-import { listShieldFundingAssets } from './shield-transfer'
+import { getShieldTransferChainIds, listShieldFundingAssets } from './shield-transfer'
 import { getConfidentialZcashTransferRecipients } from './zcash-self-transfer'
 import { hasNativeZecConfidentialSwapRoute } from './shield-swap-zec-sources'
 import type { AccountNetworksView } from './account-networks-client'
@@ -48,7 +47,7 @@ export function getQuickShieldAssets({
   readonly enabledFlags: readonly ChainFeatureFlagValue[]
 }): QuickShieldAsset[] {
   const nearChains = new Set(
-    getPrivateTransferChainIds(
+    getShieldTransferChainIds(
       account,
       network === 'mainnet' && isNewWalletFamilyEnabled('evm', enabledFlags)
     )

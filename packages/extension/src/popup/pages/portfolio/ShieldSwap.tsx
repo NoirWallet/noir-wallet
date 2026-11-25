@@ -26,7 +26,7 @@ import { useConfidentialFundingPreview } from '@/popup/hooks/useConfidentialFund
 import { useQuoteReview, useQuoteReviewTimer } from '@/popup/hooks/useQuoteReview'
 import { useShieldBalances } from '@/popup/hooks/useShieldBalances'
 import { resolveEffectiveActiveAccountIdentity } from '@/popup/lib/effective-active-account'
-import { getPrivateTransferChainIds } from '@/popup/services/private-balance-transfer'
+import { getShieldTransferChainIds } from '@/popup/services/shield-transfer'
 import { getEvmNetworkConfigs } from '@/config/networks'
 import { useNavigate } from '@/popup/provider/Router'
 import {
@@ -37,6 +37,8 @@ import {
 import { estimateSwapOutputFromPrices, getSwapAmountValues } from '@/popup/services/swap-estimate'
 import { AmountDisplay } from '@/popup/components/common/AmountDisplay'
 import { TransactionNotice } from '@/popup/components/transaction/TransactionNotice'
+import { ShieldHardwareTabNotice } from '@/popup/components/transaction/ShieldHardwareTabNotice'
+import { needsShieldHardwareTab } from '@/popup/services/shield-hardware-tab'
 import { getSwapQuoteNotice } from '@/popup/services/swap-quote-error-message'
 import { ShieldTokenPicker } from '@/popup/components/tokens/ShieldTokenPicker'
 import { useTokenSelectorReady } from '@/popup/hooks/useTokenSelectorWindow'
@@ -68,7 +70,7 @@ import {
   SWAP_QUOTE_DISPLAY_ERROR
 } from '@/popup/services/swap-quote-error-message'
 import {
-  hasShieldTransferStarted,
+  canOpenShieldActivity,
   formatShieldQuoteTime,
   isUnsignedShieldTerminal,
   getZcashTokenPickerChain,
@@ -182,7 +184,7 @@ function ShieldSwapForm({
     nativeAccount: activeAccount
   })
   const canManageNear =
-    providerIsNear && getPrivateTransferChainIds(activeAccount, network === 'mainnet').length > 0
+    providerIsNear && getShieldTransferChainIds(activeAccount, network === 'mainnet').length > 0
   const zcashAccountEnabled =
     activeAccount?.networks.some(item => item.chain.family === 'zcash') ?? false
   const scopeKey = `${network}:${account?.walletId ?? ''}:${account?.accountId ?? ''}`
@@ -228,6 +230,7 @@ function ShieldSwapForm({
     error: balanceError,
     refreshBalances: loadBalances
   } = useShieldBalances({
+    hardware: activeAccount?.walletSource.kind === 'hardware',
     active,
     enabled: canManageNear,
     scopeKey,
@@ -762,7 +765,7 @@ function ShieldSwapForm({
   const inspectPlan = async (planId: string) => {
     const plan = await confidentialFundingClient.get(planId)
     if (!scopeStillCurrent()) return 'changed'
-    if (hasShieldTransferStarted(plan)) {
+    if (canOpenShieldActivity(plan)) {
       openActivity(plan.transactionId)
       return 'started'
     }
@@ -930,7 +933,7 @@ function ShieldSwapForm({
         prepared.review.planId,
         prepared.review.payloadFingerprint
       )
-      if (hasShieldTransferStarted(plan)) openActivity(plan.transactionId)
+      if (canOpenShieldActivity(plan)) openActivity(plan.transactionId)
       else await inspectPlan(plan.planId)
     } catch (cause) {
       try {
@@ -956,10 +959,10 @@ function ShieldSwapForm({
 
   const finishActivity = useCallback(() => {
     setActiveActivity(null)
-    void loadBalances().then(success => {
+    void loadBalances(true, activeAccount?.walletSource.kind !== 'hardware').then(success => {
       if (success && latestScope.current === scopeKey) setBalanceRefreshRequired(false)
     })
-  }, [loadBalances, scopeKey])
+  }, [activeAccount?.walletSource.kind, loadBalances, scopeKey])
   const viewActivity = useCallback(() => {
     const transactionId = activeActivity?.plan.transactionId
     setActiveActivity(null)
@@ -990,6 +993,26 @@ function ShieldSwapForm({
         />
       </div>
     )
+  }
+
+  if (
+    active &&
+    canManageNear &&
+    needsShieldHardwareTab(activeAccount?.walletSource.kind === 'hardware')
+  ) {
+    const query = new URLSearchParams({
+      balanceDomain: 'shield',
+      provider: 'near-confidential',
+      shieldZecSource: 'intents'
+    })
+    if (account) {
+      query.set('sourceWalletId', account.walletId)
+      query.set('sourceAccountId', account.accountId)
+    }
+    if (preferredSourceId) query.set('source', preferredSourceId)
+    if (preferredDestinationId) query.set('destination', preferredDestinationId)
+    if (nativeZecDestination) query.set('nativeZecDestination', nativeZecDestination)
+    return <ShieldHardwareTabNotice path={`/swap?${query}`} />
   }
 
   if (prepared) {

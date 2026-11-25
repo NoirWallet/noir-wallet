@@ -71,7 +71,8 @@ export function getAssetDetailCategories(
   asset: PortfolioAssetView,
   model: PortfolioReadModel | null,
   privateEligible: boolean,
-  priceUsd?: string
+  priceUsd?: string,
+  shieldEligible = privateEligible
 ): {
   domains: readonly AssetDomain[]
   raw: Record<AssetDomain, string | null>
@@ -116,7 +117,7 @@ export function getAssetDetailCategories(
 
   const domains: AssetDomain[] = ['all', 'public']
   if (zcash) domains.push('shield')
-  if (evm && (privateEligible || (raw.shield !== null && BigInt(raw.shield) > 0n))) {
+  if (evm && (shieldEligible || (raw.shield !== null && BigInt(raw.shield) > 0n))) {
     domains.push('shield')
   }
   if (evm && (privateEligible || (raw.private !== null && BigInt(raw.private) > 0n))) {
