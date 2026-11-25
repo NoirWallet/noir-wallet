@@ -738,7 +738,9 @@ export function Home() {
   const shieldPortfolioEmpty =
     portfolioSettled &&
     !balanceDisplay.loading.shield &&
-    multichainPortfolio?.assets.every(asset => getAssetDomainRaw(asset, 'shield') === '0')
+    multichainPortfolio !== null &&
+    multichainPortfolio.assets.every(asset => getAssetDomainRaw(asset, 'shield') === '0') &&
+    !multichainPortfolio.confidential?.assets.some(asset => BigInt(asset.availableRaw) > 0n)
   const showShieldEmpty = isShieldView && quickShield.eligible && shieldPortfolioEmpty
   const showProviders = isShieldView
   const dappModeControl =
@@ -881,6 +883,10 @@ export function Home() {
                 : undefined
             }
             onQuickShield={quickShield.onOpen}
+            shieldEmpty={shieldPortfolioEmpty}
+            onExploreShieldProviders={() =>
+              navigate.replace(homeTabPath(location.search, 'providers'))
+            }
             onToggleHidden={() => setBalancesHidden(!balancesHidden)}
             onSelect={selectAssetDomain}
           />
