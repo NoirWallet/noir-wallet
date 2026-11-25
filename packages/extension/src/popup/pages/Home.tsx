@@ -945,13 +945,13 @@ export function Home() {
             ) : (
               <>
                 <WalletActionButton
-                  icon={<WalletActionIcon action="send" />}
+                  icon={<WalletActionIcon action="send" shielded={isShieldView} />}
                   label="Send"
                   disabled={isShieldView && shieldActions.providersFor('send').length === 0}
                   onClick={openSend}
                 />
                 <WalletActionButton
-                  icon={<WalletActionIcon action="receive" />}
+                  icon={<WalletActionIcon action="receive" shielded={isShieldView} />}
                   label="Receive"
                   disabled={isShieldView && shieldActions.providersFor('receive').length === 0}
                   onClick={() =>
