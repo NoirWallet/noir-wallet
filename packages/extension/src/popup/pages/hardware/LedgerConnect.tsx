@@ -151,7 +151,9 @@ export function LedgerConnect() {
   const target = wallets.find(wallet => wallet.id === targetWalletId)
   const accountIndex = ledgerLogicalAccountIndex(targetAccount, target?.accounts ?? [])
   const registeredFamilies = ledgerRegisteredFamilies(existingCredential, accountIndex, network)
-  const canAddZcash = ledgerCanAddZcashAccount(existingCredential, accountIndex, network)
+  const canAddZcash =
+    (!targetWalletId || targetAccount !== 'new') &&
+    ledgerCanAddZcashAccount(existingCredential, accountIndex, network)
   const availableFamilies = ledgerAvailableFamilies(network)
   const selectedFamilies = families.filter(
     family => availableFamilies.includes(family) && (family !== 'zcash' || canAddZcash)
