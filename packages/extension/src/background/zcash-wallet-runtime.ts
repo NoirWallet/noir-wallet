@@ -1513,7 +1513,11 @@ export class BackgroundZcashWalletRuntime {
     }
   }
 
-  private async setPrimaryWalletState(wallet: WalletItem, password: string): Promise<void> {
+  private async setPrimaryWalletState(
+    wallet: WalletItem,
+    password: string,
+    startSync = true
+  ): Promise<void> {
     this.store.setWallets([wallet])
     this.store.setCurrentAccount(wallet.id, wallet.accounts[0].id)
     this.store.setCurrentNetwork(this.network)
@@ -1522,7 +1526,7 @@ export class BackgroundZcashWalletRuntime {
     this.setSessionPassword(password)
     this.sessionCredentialWalletId = null
 
-    this.startSyncFor(wallet.id)
+    if (startSync) this.startSyncFor(wallet.id)
 
     logger.refreshCache(this.store.wallets)
   }
@@ -3831,6 +3835,9 @@ export class BackgroundZcashWalletRuntime {
         if (existing.keySource !== (params.keySource ?? 'keystone')) {
           throw new Error('This Zcash account is already connected to another hardware device')
         }
+        if (params.existingLedgerWalletId && existing.id !== params.existingLedgerWalletId) {
+          throw new Error('This Zcash account is already added to another Ledger wallet.')
+        }
         await this.switchWallet(existing.id)
         return existing.id
       }
@@ -3868,7 +3875,7 @@ export class BackgroundZcashWalletRuntime {
       this.currentWalletId = walletId
       await core.initialize()
 
-      await core.createAccountFromUfvk({
+      const wasmAccountId = await core.createAccountFromUfvk({
         accountName: name,
         ufvk: params.ufvk,
         seedFingerprintHex: params.seedFingerprintHex,
@@ -3878,8 +3885,8 @@ export class BackgroundZcashWalletRuntime {
       })
 
       const [addresses, actualBirthday] = await Promise.all([
-        core.getUnifiedAddresses(),
-        core.getAccountBirthday()
+        core.getUnifiedAddresses(wasmAccountId),
+        core.getAccountBirthday(wasmAccountId)
       ])
 
       const account: AccountData = {
@@ -3902,13 +3909,14 @@ export class BackgroundZcashWalletRuntime {
         keySource: params.keySource ?? 'keystone'
       }
 
+      const startSync = params.existingLedgerWalletId === undefined
       if (isFirstWallet) {
-        await this.setPrimaryWalletState(wallet, password)
+        await this.setPrimaryWalletState(wallet, password, startSync)
       } else {
         await this.addWalletToList(wallet)
         this.store.setCurrentAccount(walletId, account.id)
         await flushWalletStore()
-        this.startSyncFor(walletId)
+        if (startSync) this.startSyncFor(walletId)
       }
 
       logger.log('Hardware wallet created', walletId)
