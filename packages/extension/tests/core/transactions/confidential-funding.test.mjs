@@ -1239,7 +1239,7 @@ test.describe('confidential funding safety rules', () => {
 
   test('uses the wallet app fee once for confidential Swap and binds the automatic provider fee', async () => {
     const originalFetch = globalThis.fetch
-    const swapFee = { recipient: 'noir_swap.near', fee: 35 }
+    const swapFee = { recipient: 'noir_swap.near', fee: 20 }
     let echoedFees
     const quoteRequests = []
     let providerFee = { recipient: 'provider.near', fee: 20 }

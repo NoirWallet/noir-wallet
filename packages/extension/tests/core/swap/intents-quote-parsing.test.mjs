@@ -91,7 +91,7 @@ test('Intents settlement checks the quoted raw minimum with destination precisio
   ).toBe('mismatch')
 })
 
-test('swap quote sends the configured 35 bps app fee', async () => {
+test('swap quote sends the configured 20 bps app fee', async () => {
   const originalFetch = globalThis.fetch
   let submittedBody
   globalThis.fetch = async (_input, init) => {
@@ -111,7 +111,7 @@ test('swap quote sends the configured 35 bps app fee', async () => {
       recipient: 'recipient.near'
     })
     expect(result.quoteStatus).toBe('error')
-    expect(submittedBody.appFees).toEqual([{ recipient: 'noir_swap.near', fee: 35 }])
+    expect(submittedBody.appFees).toEqual([{ recipient: 'noir_swap.near', fee: 20 }])
   } finally {
     globalThis.fetch = originalFetch
   }
