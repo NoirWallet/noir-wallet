@@ -22,6 +22,7 @@ import { useSpeedUp } from '../hooks/useSpeedUp'
 import { useResyncZcash } from '../hooks/useResyncZcash'
 import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popover'
 import { ExtensionUpdateBanner } from '../components/shell/ExtensionUpdateBanner'
+import { HomeAdBanner } from '../components/shell/HomeAdBanner'
 import { LegacyPoolPrivacyNotice } from '../components/zcash/LegacyPoolPrivacyNotice'
 import { useLegacyPoolPrivacyNotice } from '../hooks/useLegacyPoolPrivacyNotice'
 import { hasLegacyOrchardBalance } from '@/lib/legacy-pool-privacy-notice'
@@ -982,6 +983,8 @@ export function Home() {
               onClick={openSwap}
             />
           </div>
+
+          <HomeAdBanner />
 
           {/* Tabs */}
           <Tabs

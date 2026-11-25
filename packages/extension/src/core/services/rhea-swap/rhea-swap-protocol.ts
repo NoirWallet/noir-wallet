@@ -1,3 +1,10 @@
+import { isNoirPublicConfidentialTransferReferral } from '@/config/intents'
+import {
+  parseOneClickDepositMemo,
+  parseOneClickViewer,
+  type OneClickOrder
+} from '@/core/services/near-intents/one-click-order'
+
 export type ChainRef = `${number}` | 'solana' | 'aptos' | 'near' | 'tron' | 'btc' | 'zcash' | 'sui'
 
 export interface AssetRef {
@@ -59,6 +66,18 @@ export interface SwapQuoteDataRaw extends Record<string, unknown> {
 
 export type SwapBuildDataRaw = Record<string, unknown>
 export type SwapOrderStatusDataRaw = Record<string, unknown>
+
+export const ONE_CLICK_CONFIDENTIAL_BRIDGE = 'noir-1click-confidential'
+
+export function isOneClickConfidentialRoute(
+  confidentiality: QuoteRequest['confidentiality'],
+  referral: string | undefined,
+  bridge: unknown
+): boolean {
+  if (confidentiality !== 'basic') return false
+  if (isNoirPublicConfidentialTransferReferral(referral)) return true
+  return isRecord(bridge) && bridge.provider === ONE_CLICK_CONFIDENTIAL_BRIDGE
+}
 
 export function readRheaSwapReportRecordId(value: unknown): string | undefined {
   const id = typeof value === 'number' && Number.isSafeInteger(value) ? String(value) : value
@@ -186,8 +205,7 @@ interface NearTransaction {
   actions: unknown[]
 }
 
-interface DepositInfo {
-  depositAddress: string
+interface DepositInfo extends OneClickOrder {
   orderId?: string
   timeEstimate?: number | string
 }
@@ -681,10 +699,21 @@ export function normalizeBuild(
   const depositAddress = optionalText(depositData?.depositAddress)
   const depositOrderId = optionalText(depositData?.orderId, 256)
   const timeEstimate = depositData?.timeEstimate
+  const ownerStatus = isOneClickConfidentialRoute(
+    request.confidentiality,
+    request.referral,
+    request.bridge
+  )
   const deposit = depositAddress
     ? {
         depositAddress,
         orderId: depositOrderId,
+        ...(!ownerStatus || depositData?.depositMemo == null
+          ? {}
+          : { depositMemo: parseOneClickDepositMemo(depositData.depositMemo) }),
+        ...(!ownerStatus || depositData?.viewer === undefined
+          ? {}
+          : { viewer: parseOneClickViewer(depositData.viewer) }),
         ...(typeof timeEstimate === 'string' || typeof timeEstimate === 'number'
           ? { timeEstimate }
           : {})

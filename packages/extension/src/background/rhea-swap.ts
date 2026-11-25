@@ -536,7 +536,11 @@ export function createBackgroundRheaSwapService(): RheaSwapService | null {
     ...(confidentialConfig
       ? {
           publicConfidentialTransfer: new PublicConfidentialTransfer(
-            new ConfidentialFundingApi(confidentialConfig, '', accessToken)
+            new ConfidentialFundingApi(confidentialConfig, '', accessToken),
+            async input => (await import('./one-click-status')).queryOneClickOrderStatus(input),
+            undefined,
+            async (...input) =>
+              (await import('./one-click-status')).resolveZcashOneClickViewer(...input)
           )
         }
       : {})

@@ -956,6 +956,10 @@ it('uses the native RHEA paths and retries quote reads without replaying writes'
     assert.equal(error.message, 'RHEA Swap HTTP 503')
     return true
   })
+  const confidential = { confidentiality: 'basic' }
+  await assert.rejects(api.quote(confidential), /require 1Click/)
+  await assert.rejects(api.build(confidential), /require 1Click/)
+  await assert.rejects(api.report(confidential), /require 1Click/)
   assert.deepEqual(
     requests.map(request => request.url.pathname),
     [
