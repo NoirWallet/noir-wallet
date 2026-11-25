@@ -174,7 +174,7 @@ export function HomeBalanceOverview({
                           {quickShieldLabel && onQuickShield && (
                             <div className="mt-1 flex flex-wrap items-center justify-between gap-x-2">
                               <span className="min-w-0 wrap-anywhere">
-                                {quickShieldLabel} available to shield
+                                {quickShieldLabel} remains unshielded.
                               </span>
                               <button
                                 type="button"
