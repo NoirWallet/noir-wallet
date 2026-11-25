@@ -4,7 +4,6 @@ import { URDecoder } from '@ngraveio/bc-ur'
 import {
   buildRestoreConfig,
   encodeGroupConfig,
-  RestoreUnsupportedError,
   parseGroupConfig,
   GROUP_CONFIG_VERSION
 } from '../../../src/core/multisig/recover-config'
@@ -84,17 +83,19 @@ const RESTORE_INTEROP_VECTOR =
 // The identity the restored phone sent in its request. The interop vector below carries it as is.
 const PHONE_IDENTITY = Uint8Array.of(1, ...new Uint8Array(64))
 
+const memberIdentity = (byte: number) => Uint8Array.of(1, ...new Uint8Array(64).fill(byte))
+
 function restoreInput(overrides: Partial<Parameters<typeof buildRestoreConfig>[0]> = {}) {
   return {
     publicKeyPackage: bytesToBase64(Uint8Array.from({ length: 10 }, (_, index) => index)),
     ufvk: 'uviewtest1abc',
     fingerprint: bytesToHex(Uint8Array.from({ length: 32 }, (_, index) => (index * 5 + 1) % 256)),
-    participants: 2,
-    owner: {
-      identityPublicKey: Uint8Array.of(1, ...new Uint8Array(64).fill(0x11)),
-      name: 'This browser'
-    },
-    phoneName: 'My iPhone',
+    members: [
+      { identityPublicKey: memberIdentity(0x11), name: 'This browser' },
+      // The identity the lost phone had; the config must carry the one from the request instead.
+      { identityPublicKey: memberIdentity(0x22), name: 'My iPhone' }
+    ],
+    phoneSlot: 1,
     phoneIdentityPublicKey: PHONE_IDENTITY,
     ...overrides
   }
@@ -117,10 +118,30 @@ test('the restore config is byte-identical to the vector the iOS side parses', (
   expect(bytesToHex(buildRestoreConfig(restoreInput()))).toBe(RESTORE_INTEROP_VECTOR)
 })
 
-test('only 2-of-2 groups can be restored, and a bad fingerprint is refused', () => {
-  expect(() => buildRestoreConfig(restoreInput({ participants: 3 }))).toThrow(
-    RestoreUnsupportedError
-  )
+test('a 3-device restore keeps the other phone and replaces only the restored slot', () => {
+  const members = [
+    ...restoreInput().members,
+    { identityPublicKey: memberIdentity(0x33), name: 'Second iPhone' }
+  ]
+  for (const phoneSlot of [1, 2]) {
+    const parsed = parseGroupConfig(buildRestoreConfig(restoreInput({ members, phoneSlot })))!
+    expect(parsed.roster.map(member => member.slot)).toEqual([0, 1, 2])
+    for (const member of parsed.roster) {
+      expect(Array.from(member.identityPublicKey)).toEqual(
+        Array.from(
+          member.slot === phoneSlot ? PHONE_IDENTITY : members[member.slot].identityPublicKey
+        )
+      )
+    }
+  }
+})
+
+test('a restore into the browser slot, an unknown slot, a taken identity or a bad fingerprint is refused', () => {
+  expect(() => buildRestoreConfig(restoreInput({ phoneSlot: 0 }))).toThrow('Invalid phone slot')
+  expect(() => buildRestoreConfig(restoreInput({ phoneSlot: 2 }))).toThrow('Invalid phone slot')
+  expect(() =>
+    buildRestoreConfig(restoreInput({ phoneIdentityPublicKey: memberIdentity(0x11) }))
+  ).toThrow('Duplicate identity in roster')
   expect(() => buildRestoreConfig(restoreInput({ fingerprint: 'AB'.repeat(32) }))).toThrow()
 })
 

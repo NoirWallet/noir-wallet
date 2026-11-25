@@ -9,16 +9,19 @@ import {
 } from '../../../src/core/multisig/dkg-rpc'
 import type { VaultWasm } from '../../../src/core/multisig/dkg-protocol'
 import {
+  effectiveSigningRoster,
   parseSealedVaultRecord,
   openVaultRecord,
   type SealedVaultRecord
 } from '../../../src/core/multisig/vault-record'
+import { parseGroupConfig } from '../../../src/core/multisig/recover-config'
 import { buildRoster } from '../../../src/core/multisig/roster'
 import { generateDeviceIdentity } from '../../../src/core/multisig/identity'
 import { createEnvelopeSigner, signEnvelope } from '../../../src/core/multisig/envelope-signing'
 import type { MultisigEnvelope } from '../../../src/core/multisig/messages'
 import { base64ToBytes, bytesToBase64 } from '../../../src/lib/bytes'
 import { Phone, callVaultDkg, runRounds, type Round2Complete } from './helpers/raw-phone'
+import { makePhoneRecoverRequest, openPhoneRecoverReply } from './helpers/recover-phone'
 import { TEST_MNEMONIC, loadVaultWasm } from './helpers/vault-wasm'
 
 let wasm: VaultWasm
@@ -284,6 +287,65 @@ for (const shape of [
     await call(handler, 'vault.dkg.close', { sessionId })
   })
 }
+
+test('a 3-device group restores whichever phone proves its share and leaves the others alone', async () => {
+  const shape = { participants: 3, threshold: 2 } as const
+  const { handler, sessionId, phones, signers, identities } = await authenticatedSetup(shape)
+  const r2 = await runRounds(wasm, handler, shape, sessionId, phones, (slot, type, payload) =>
+    signers[slot].next(type, 'device-1', payload)
+  )
+  for (const phone of phones) {
+    phone.finish(r2.inboxes[String(phone.slot)], r2.sealedQsk[String(phone.slot)], true)
+  }
+  await call(handler, 'vault.dkg.close', { sessionId })
+  const created = await openVaultRecord(r2.record, TEST_MNEMONIC)
+  created.share.fill(0)
+  const publicKeyPackage = base64ToBytes(created.header.publicKeyPackage)
+  const original = identities.map(identity => bytesToBase64(identity.publicKey))
+
+  const prepare = (record: SealedVaultRecord, request: Uint8Array) =>
+    call(handler, 'vault.record.recoverPrepare', {
+      record,
+      ownerWalletId: WALLET_ID,
+      request: bytesToBase64(request)
+    })
+  const restore = async (record: SealedVaultRecord, phone: Phone) => {
+    const identity = (await generateDeviceIdentity()).publicKey
+    const { request, ephemeralSecret } = makePhoneRecoverRequest(
+      phone.keyPackage(),
+      publicKeyPackage,
+      identity
+    )
+    const prepared = await prepare(record, request)
+    const config = parseGroupConfig(
+      await openPhoneRecoverReply(request, ephemeralSecret, base64ToBytes(prepared.reply))
+    )
+    const opened = await openVaultRecord(prepared.record, TEST_MNEMONIC)
+    opened.share.fill(0)
+    if (opened.header.version !== 2) throw new Error('Expected v2 record')
+    const signing = effectiveSigningRoster(opened.header).participants.map(
+      peer => peer.identityPublicKey
+    )
+    // The phone is told the roster the wallet will sign with, not the one from creation.
+    expect(config?.roster.map(member => bytesToBase64(member.identityPublicKey))).toEqual(signing)
+    return { record: prepared.record, identity: bytesToBase64(identity), signing }
+  }
+
+  const second = await restore(r2.record, phones[1])
+  expect(second.signing).toEqual([original[0], original[1], second.identity])
+  const first = await restore(second.record, phones[0])
+  expect(first.signing).toEqual([original[0], first.identity, second.identity])
+
+  // A phone cannot come back under the identity another member signs with.
+  for (const taken of [original[0], second.identity]) {
+    const { request } = makePhoneRecoverRequest(
+      phones[0].keyPackage(),
+      publicKeyPackage,
+      base64ToBytes(taken)
+    )
+    await expect(prepare(first.record, request)).rejects.toThrow('Vault record cannot be opened')
+  }
+})
 
 /** Runs a whole ceremony of the given shape through the handler and returns the final answer. */
 async function runCeremony(

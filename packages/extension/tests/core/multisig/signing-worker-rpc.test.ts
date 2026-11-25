@@ -324,7 +324,7 @@ test('restored phone identity is pinned for both review and signing ingress', as
   if (opened.header.version !== 2) throw new Error('Expected v2 record')
   const restored = await generateDeviceIdentity()
   const sealedRecord = await sealVaultRecord(
-    { ...opened.header, recoveredPhoneIdentityPublicKey: bytesToBase64(restored.publicKey) },
+    { ...opened.header, recoveredPhoneIdentities: { 1: bytesToBase64(restored.publicKey) } },
     opened.share,
     TEST_MNEMONIC
   )

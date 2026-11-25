@@ -17,6 +17,7 @@ import {
 import { parseEnvelope, type MultisigEnvelope } from './messages'
 import { isBase64Text, isDkgSessionIdText, isDkgShape, type VaultWasm } from './dkg-protocol'
 import {
+  effectiveSigningRoster,
   isVaultGroupId,
   isVaultWalletId,
   openVaultRecord,
@@ -432,12 +433,7 @@ export function createVaultDkgRpcHandler(
       const opened = await openVaultRecord(request.record, mnemonic)
       share = opened.share
       const { header } = opened
-      if (
-        header.version !== 2 ||
-        header.ownerWalletId !== request.ownerWalletId ||
-        header.participants !== 2 ||
-        header.threshold !== 2
-      )
+      if (header.version !== 2 || header.ownerWalletId !== request.ownerWalletId)
         throw new Error('unsupported recovery')
       const ak = hexToBytes(header.groupVerifyingKey)
       const backup = wasm.ShareBackup.from_bytes(share, ak, 0)
@@ -458,27 +454,40 @@ export function createVaultDkgRpcHandler(
       const checked = checkRecoverRequest(bytes, {
         publicKeyPackage: base64ToBytes(header.publicKeyPackage),
         nowSeconds: Math.floor(Date.now() / 1000),
-        expectedSlot: 1
+        ownSlot: 0
       })
-      if (!checked.ok) throw new Error('invalid phone proof')
+      // The roster as it signs today, so a phone restored earlier keeps its current identity.
+      const members = effectiveSigningRoster(header).participants
+      if (
+        !checked.ok ||
+        (checked.slot !== 1 && checked.slot !== 2) ||
+        checked.slot >= members.length
+      )
+        throw new Error('invalid phone proof')
+      const phoneSlot = checked.slot
       const phoneIdentity = bytesToBase64(checked.request.identityPublicKey)
-      if (phoneIdentity === header.roster.participants[0].identityPublicKey)
+      if (members.some(peer => peer.slot !== phoneSlot && peer.identityPublicKey === phoneIdentity))
         throw new Error('duplicate identity')
       config = buildRestoreConfig({
         publicKeyPackage: header.publicKeyPackage,
         ufvk: header.ufvk,
         fingerprint: header.fingerprint,
-        participants: header.participants,
-        owner: {
-          identityPublicKey: base64ToBytes(header.roster.participants[0].identityPublicKey),
-          name: 'Noir Wallet'
-        },
-        phoneName: 'iPhone',
+        members: members.map(peer => ({
+          identityPublicKey: base64ToBytes(peer.identityPublicKey),
+          name: peer.slot === 0 ? 'Noir Wallet' : 'iPhone'
+        })),
+        phoneSlot,
         phoneIdentityPublicKey: checked.request.identityPublicKey
       })
       const reply = await sealRecoverReply(bytes, config)
       const record = await sealVaultRecord(
-        { ...header, recoveredPhoneIdentityPublicKey: phoneIdentity },
+        {
+          ...header,
+          recoveredPhoneIdentities: {
+            ...header.recoveredPhoneIdentities,
+            [phoneSlot]: phoneIdentity
+          }
+        },
         share,
         mnemonic
       )

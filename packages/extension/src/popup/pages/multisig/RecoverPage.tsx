@@ -43,7 +43,7 @@ export function RecoverPage() {
     wallet.currentWalletId === location.scope.walletId &&
     wallet.currentAccountId === location.scope.accountId &&
     account.source.network === location.scope.network &&
-    group?.threshold === '2-of-2' &&
+    group &&
     !group.mock
   )
   return (
@@ -64,7 +64,7 @@ export function RecoverPage() {
       ) : isAvailable && location ? (
         <PhoneRecovery key={`${search}:${isAvailable}`} location={location} />
       ) : (
-        <InlineError message="Open phone recovery from the active 2-of-2 multisig account. This account or network is unavailable." />
+        <InlineError message="Open phone recovery from the active multisig account. This account or network is unavailable." />
       )}
     </MultisigTabLayout>
   )

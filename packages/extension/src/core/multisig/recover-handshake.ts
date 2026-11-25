@@ -160,13 +160,14 @@ export type RecoverRequestCheck =
   | { ok: false; reason: 'format' | 'stale' | 'not-this-wallet' | 'wrong-device' | 'proof' }
 
 /**
- * Whether the scanned bytes are a request from a phone that holds a share of this wallet.
+ * Whether the scanned bytes are a request from a phone that holds a share of this wallet. The
+ * returned slot is the one whose share the phone proved, so the words decide which phone it is.
  *
- * @param expectedSlot The slot the restored phone must hold (1 for a 2-of-2: slot 0 is this browser).
+ * @param ownSlot This device's slot (0 for the browser), which a phone can never be restored into.
  */
 export function checkRecoverRequest(
   bytes: Uint8Array,
-  options: { publicKeyPackage: Uint8Array; nowSeconds: number; expectedSlot: number }
+  options: { publicKeyPackage: Uint8Array; nowSeconds: number; ownSlot: number }
 ): RecoverRequestCheck {
   const request = parseRecoverRequest(bytes)
   if (!request) return { ok: false, reason: 'format' }
@@ -178,7 +179,7 @@ export function checkRecoverRequest(
   }
   const slot = slotOfVerifyingShare(options.publicKeyPackage, request.verifyingShare)
   if (slot === null) return { ok: false, reason: 'not-this-wallet' }
-  if (slot !== options.expectedSlot) return { ok: false, reason: 'wrong-device' }
+  if (slot === options.ownSlot) return { ok: false, reason: 'wrong-device' }
   if (
     !verifyShareProof(request.verifyingShare, recoverRequestSignedBytes(request), request.signature)
   ) {

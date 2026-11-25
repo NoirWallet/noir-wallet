@@ -58,7 +58,7 @@ test.describe('multisig vault record', () => {
       birthdayHeight: 123,
       rosterVersion: 1 as const,
       roster: original,
-      recoveredPhoneIdentityPublicKey: restoredIdentity
+      recoveredPhoneIdentities: { 1: restoredIdentity }
     }
     const sealed = await sealVaultRecord(header, SHARE, MNEMONIC)
     const opened = await openVaultRecord(sealed, MNEMONIC)
@@ -72,11 +72,111 @@ test.describe('multisig vault record', () => {
     opened.share.fill(0)
     await expect(
       sealVaultRecord(
-        { ...header, recoveredPhoneIdentityPublicKey: original.participants[0].identityPublicKey },
+        { ...header, recoveredPhoneIdentities: { 1: original.participants[0].identityPublicKey } },
         SHARE,
         MNEMONIC
       )
     ).rejects.toThrow('Invalid vault record')
+
+    // A record written before 3-device restore names its one restored phone in the old field.
+    const { recoveredPhoneIdentities: _recovered, ...unrestored } = header
+    const legacy = await openVaultRecord(
+      await sealVaultRecord(
+        { ...unrestored, recoveredPhoneIdentityPublicKey: restoredIdentity } as VaultRecordHeader,
+        SHARE,
+        MNEMONIC
+      ),
+      MNEMONIC
+    )
+    expect(legacy.header).toEqual(header)
+    legacy.share.fill(0)
+  })
+
+  test('a 3-device group restores either phone without touching the other members', async () => {
+    const identity = (byte: number) =>
+      bytesToBase64(Uint8Array.of(1, ...new Uint8Array(64).fill(byte)))
+    const transport = (byte: number) => bytesToBase64(new Uint8Array(32).fill(byte))
+    const original = buildRoster({
+      groupId: HEADER.groupId,
+      threshold: 2,
+      identities: new Map([0, 1, 2].map(slot => [slot, identity(slot + 1)])),
+      transportPublicKeys: new Map([0, 1, 2].map(slot => [slot, transport(slot + 1)]))
+    })
+    const header = {
+      ...HEADER,
+      version: 2 as const,
+      participants: 3 as const,
+      threshold: 2 as const,
+      accountId: 'account-1',
+      ownerWalletId: 'wallet-1',
+      birthdayHeight: 123,
+      rosterVersion: 1 as const,
+      roster: original
+    }
+    const reopen = async (recoveredPhoneIdentities: Record<number, string>) => {
+      const opened = await openVaultRecord(
+        await sealVaultRecord({ ...header, recoveredPhoneIdentities }, SHARE, MNEMONIC),
+        MNEMONIC
+      )
+      opened.share.fill(0)
+      if (opened.header.version !== 2) throw new Error('Expected v2 record')
+      expect(opened.header.roster.rosterHash).toBe(original.rosterHash)
+      return effectiveSigningRoster(opened.header).participants
+    }
+
+    const secondRestored = await reopen({ 2: identity(9) })
+    expect(secondRestored.slice(0, 2)).toEqual(original.participants.slice(0, 2))
+    expect(secondRestored[2].identityPublicKey).toBe(identity(9))
+    expect(secondRestored[2].transportPublicKey).not.toBe(transport(3))
+
+    const bothRestored = await reopen({ 1: identity(8), 2: identity(9) })
+    expect(bothRestored[0]).toEqual(original.participants[0])
+    expect(bothRestored.map(peer => peer.identityPublicKey)).toEqual([
+      identity(1),
+      identity(8),
+      identity(9)
+    ])
+    // A reinstalled phone can come back with the identity it already had.
+    expect((await reopen({ 1: identity(2) }))[1].identityPublicKey).toBe(identity(2))
+
+    for (const refused of [
+      {},
+      { 0: identity(9) },
+      { 3: identity(9) },
+      { 1: identity(1) },
+      { 1: identity(3) },
+      { 1: identity(9), 2: identity(9) },
+      { 1: 'not-an-identity' }
+    ]) {
+      await expect(
+        sealVaultRecord({ ...header, recoveredPhoneIdentities: refused }, SHARE, MNEMONIC)
+      ).rejects.toThrow('Invalid vault record')
+    }
+    // The old field never described a 3-device group, and the two fields cannot be mixed.
+    await expect(
+      sealVaultRecord(
+        { ...header, recoveredPhoneIdentityPublicKey: identity(9) } as VaultRecordHeader,
+        SHARE,
+        MNEMONIC
+      )
+    ).rejects.toThrow('Invalid vault record')
+    const twoDevice = {
+      ...header,
+      participants: 2 as const,
+      roster: buildRoster({
+        groupId: HEADER.groupId,
+        threshold: 2,
+        identities: new Map([0, 1].map(slot => [slot, identity(slot + 1)]))
+      })
+    }
+    for (const refused of [
+      { recoveredPhoneIdentities: { 2: identity(9) } },
+      { recoveredPhoneIdentities: { 1: identity(9) }, recoveredPhoneIdentityPublicKey: identity(9) }
+    ]) {
+      await expect(
+        sealVaultRecord({ ...twoDevice, ...refused } as VaultRecordHeader, SHARE, MNEMONIC)
+      ).rejects.toThrow('Invalid vault record')
+    }
   })
 
   test('v2 authenticates ownership and immutable roster, while legacy stays readable only', async () => {

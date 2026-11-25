@@ -63,7 +63,7 @@ const ISSUED_AT = 1_700_000_000
 const options = {
   publicKeyPackage: PUBLIC_KEY_PACKAGE,
   nowSeconds: ISSUED_AT + 30,
-  expectedSlot: 1
+  ownSlot: 0
 }
 
 test('accepts the phone request made by the core and reads its fields', () => {
@@ -145,7 +145,7 @@ test('refuses a request that is stale, for another wallet, for the browser slot 
     ok: false,
     reason: 'stale'
   })
-  expect(checkRecoverRequest(REQUEST, { ...options, expectedSlot: 0 })).toEqual({
+  expect(checkRecoverRequest(REQUEST, { ...options, ownSlot: 1 })).toEqual({
     ok: false,
     reason: 'wrong-device'
   })

@@ -923,10 +923,7 @@ export function Home() {
             <MultisigBadge
               threshold={multisigGroup.threshold}
               onClick={
-                multisigScope &&
-                isIndependentMultisig &&
-                !multisigGroup.mock &&
-                multisigGroup.threshold === '2-of-2'
+                multisigScope && isIndependentMultisig && !multisigGroup.mock
                   ? () => {
                       const scope = multisigScope
                       void openModal({

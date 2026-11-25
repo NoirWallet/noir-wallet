@@ -143,14 +143,9 @@ export function parseGroupConfig(bytes: Uint8Array): GroupConfig | null {
   return { publicKeyPackage: pkp.slice(), ufvk, fingerprint: fingerprint.slice(), roster }
 }
 
-/** The restore flow only knows how to build a roster for two devices; see `buildRestoreConfig`. */
-export class RestoreUnsupportedError extends Error {}
-
 /**
- * The group config for a phone being restored, with the identity from its recovery request.
- *
- * Only 2-of-2 groups are supported: the roster needs every member's identity, and the extension
- * does not keep the other phone's identity, so a 3-device roster would have to be guessed.
+ * The group config for a phone being restored: every member of the group, with the identity from
+ * the phone's recovery request in its slot.
  *
  * @param input.publicKeyPackage base64, from the sealed vault header
  * @param input.fingerprint 64 lowercase hex, from the sealed vault header
@@ -159,21 +154,30 @@ export function buildRestoreConfig(input: {
   publicKeyPackage: string
   ufvk: string
   fingerprint: string
-  participants: number
-  owner: { identityPublicKey: Uint8Array; name: string }
-  phoneName: string
+  /** Every member in slot order, with the identity this wallet currently signs with. */
+  members: readonly { identityPublicKey: Uint8Array; name: string }[]
+  /** Roster slot of the phone being restored; slot 0 is this browser. */
+  phoneSlot: number
   /** The phone's fresh identity, from its recovery request. */
   phoneIdentityPublicKey: Uint8Array
 }): Uint8Array {
-  if (input.participants !== 2) throw new RestoreUnsupportedError('Only 2-of-2 groups')
   if (!/^[0-9a-f]{64}$/.test(input.fingerprint)) throw new Error('Invalid fingerprint')
+  if (
+    !Number.isInteger(input.phoneSlot) ||
+    input.phoneSlot < 1 ||
+    input.phoneSlot >= input.members.length
+  ) {
+    throw new Error('Invalid phone slot')
+  }
   return encodeGroupConfig({
     publicKeyPackage: base64ToBytes(input.publicKeyPackage),
     ufvk: input.ufvk,
     fingerprint: hexToBytes(input.fingerprint),
-    roster: [
-      { slot: 0, identityPublicKey: input.owner.identityPublicKey, name: input.owner.name },
-      { slot: 1, identityPublicKey: input.phoneIdentityPublicKey, name: input.phoneName }
-    ]
+    roster: input.members.map((member, slot) => ({
+      slot,
+      identityPublicKey:
+        slot === input.phoneSlot ? input.phoneIdentityPublicKey : member.identityPublicKey,
+      name: member.name
+    }))
   })
 }

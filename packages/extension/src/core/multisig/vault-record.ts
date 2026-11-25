@@ -35,11 +35,15 @@ export type VaultRecordBinding = {
   rosterVersion: 1
   roster: RosterManifest
 }
+/** Roster slots a phone can hold; slot 0 is this browser and is never restored. */
+type PhoneRosterSlot = 1 | 2
+/** The identity (base64 of 65 bytes) each restored phone now signs with, by roster slot. */
+type RecoveredPhoneIdentities = Readonly<Partial<Record<PhoneRosterSlot, string>>>
 export type VaultRecordHeaderV2 = Omit<VaultRecordHeaderV1, 'version'> &
   VaultRecordBinding & {
     version: 2
     ownerWalletId: string
-    recoveredPhoneIdentityPublicKey?: string
+    recoveredPhoneIdentities?: RecoveredPhoneIdentities
   }
 export type VaultRecordHeader = VaultRecordHeaderV1 | VaultRecordHeaderV2
 export type VaultRecordScope = {
@@ -230,10 +234,42 @@ export function isVaultRecordHeaderV2(header: VaultRecordHeader): header is Vaul
   return header.version === 2
 }
 
+const PHONE_ROSTER_SLOTS: readonly PhoneRosterSlot[] = [1, 2]
+
+/**
+ * A restored phone may keep the identity it had before (the keychain can outlive a reinstall), but
+ * it can never take the identity another slot signs with.
+ */
+function parseRecoveredPhoneIdentities(
+  value: unknown,
+  roster: RosterManifest
+): RecoveredPhoneIdentities | null {
+  if (!isRecord(value)) return null
+  const keys = Object.keys(value)
+  if (keys.length === 0 || keys.some(key => !PHONE_ROSTER_SLOTS.map(String).includes(key)))
+    return null
+  const identities = roster.participants.map(participant => participant.identityPublicKey)
+  const recovered: Partial<Record<PhoneRosterSlot, string>> = {}
+  for (const slot of PHONE_ROSTER_SLOTS) {
+    const identity = value[slot]
+    if (identity === undefined) continue
+    if (slot >= identities.length || typeof identity !== 'string') return null
+    const parsed = parseIdentityPublicKey(identity)
+    if (!parsed || bytesToBase64(parsed.bytes) !== identity) return null
+    recovered[slot] = identity
+    identities[slot] = identity
+  }
+  if (new Set(identities).size !== identities.length) return null
+  return Object.freeze(recovered)
+}
+
 function parseHeader(value: unknown): VaultRecordHeader | null {
   if (isRecord(value) && value.version === 2) {
-    const recoveredPhoneIdentityPublicKey = value.recoveredPhoneIdentityPublicKey
+    // Records written before 3-device restore name the one restored phone of a 2-device group.
+    const legacyRecovered = value.recoveredPhoneIdentityPublicKey
+    const recoveredValue = value.recoveredPhoneIdentities
     if (
+      (legacyRecovered !== undefined && recoveredValue !== undefined) ||
       !hasExactKeys(value, [
         ...HEADER_KEYS,
         'accountId',
@@ -241,9 +277,8 @@ function parseHeader(value: unknown): VaultRecordHeader | null {
         'birthdayHeight',
         'rosterVersion',
         'roster',
-        ...(recoveredPhoneIdentityPublicKey === undefined
-          ? []
-          : ['recoveredPhoneIdentityPublicKey'])
+        ...(legacyRecovered === undefined ? [] : ['recoveredPhoneIdentityPublicKey']),
+        ...(recoveredValue === undefined ? [] : ['recoveredPhoneIdentities'])
       ]) ||
       !isVaultWalletId(value.ownerWalletId)
     )
@@ -254,7 +289,8 @@ function parseHeader(value: unknown): VaultRecordHeader | null {
       birthdayHeight,
       rosterVersion,
       roster,
-      recoveredPhoneIdentityPublicKey: _recovered,
+      recoveredPhoneIdentityPublicKey: _legacyRecovered,
+      recoveredPhoneIdentities: _recovered,
       ...legacy
     } = value
     const base = parseHeader({ ...legacy, version: 1 })
@@ -267,25 +303,16 @@ function parseHeader(value: unknown): VaultRecordHeader | null {
       binding.roster.participants.length !== base.participants
     )
       return null
-    if (recoveredPhoneIdentityPublicKey !== undefined) {
-      if (typeof recoveredPhoneIdentityPublicKey !== 'string') return null
-      const parsedIdentity = parseIdentityPublicKey(recoveredPhoneIdentityPublicKey)
-      if (
-        base.participants !== 2 ||
-        base.threshold !== 2 ||
-        !parsedIdentity ||
-        bytesToBase64(parsedIdentity.bytes) !== recoveredPhoneIdentityPublicKey ||
-        recoveredPhoneIdentityPublicKey === binding.roster.participants[0].identityPublicKey
-      )
-        return null
+    if (legacyRecovered === undefined && recoveredValue === undefined) {
+      return { ...base, version: 2, ownerWalletId, ...binding }
     }
-    return {
-      ...base,
-      version: 2,
-      ownerWalletId,
-      ...binding,
-      ...(recoveredPhoneIdentityPublicKey === undefined ? {} : { recoveredPhoneIdentityPublicKey })
-    }
+    if (legacyRecovered !== undefined && base.participants !== 2) return null
+    const recoveredPhoneIdentities = parseRecoveredPhoneIdentities(
+      legacyRecovered === undefined ? recoveredValue : { 1: legacyRecovered },
+      binding.roster
+    )
+    if (!recoveredPhoneIdentities) return null
+    return { ...base, version: 2, ownerWalletId, ...binding, recoveredPhoneIdentities }
   }
   if (!isRecord(value) || !hasExactKeys(value, HEADER_KEYS)) return null
   const {
@@ -329,19 +356,22 @@ function parseHeader(value: unknown): VaultRecordHeader | null {
 
 /** Keep the DKG roster intact for creation evidence; only signing adopts a restored phone. */
 export function effectiveSigningRoster(header: VaultRecordHeaderV2): RosterManifest {
-  if (!header.recoveredPhoneIdentityPublicKey) return header.roster
-  if (header.participants !== 2 || header.threshold !== 2) throw new Error('Invalid vault record')
+  const recovered: Partial<Record<number, string>> | undefined = header.recoveredPhoneIdentities
+  if (!recovered) return header.roster
+  const { participants } = header.roster
   return buildRoster({
     groupId: header.groupId,
     threshold: header.threshold,
-    identities: new Map([
-      [0, header.roster.participants[0].identityPublicKey],
-      [1, header.recoveredPhoneIdentityPublicKey]
-    ]),
-    transportPublicKeys: new Map([
-      [0, header.roster.participants[0].transportPublicKey],
-      [1, QR_TRANSPORT_PUBLIC_KEY]
-    ])
+    identities: new Map(
+      participants.map(peer => [peer.slot, recovered[peer.slot] ?? peer.identityPublicKey])
+    ),
+    // A restored phone never took part in the creation channel, so it has no transport key.
+    transportPublicKeys: new Map(
+      participants.map(peer => [
+        peer.slot,
+        recovered[peer.slot] ? QR_TRANSPORT_PUBLIC_KEY : peer.transportPublicKey
+      ])
+    )
   })
 }
 
