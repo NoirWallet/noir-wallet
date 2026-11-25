@@ -7,6 +7,7 @@ import type { CreateExternalShieldDepositInput } from '@/core/services/confident
 import { ExternalShieldDepositError } from '@/core/services/confidential-funding/confidential-external-deposit'
 import { isAccountNetworkEnabled } from '@/core/wallet/account-network-selection'
 import { mergeShieldedReceiveAddressHistory } from '@/core/wallet/shielded-address-history'
+import { developmentErrorArgs } from '@/lib/development-console'
 import { getOwnExtensionSenderContext } from '@/lib/runtime-message-security'
 import { DEFAULT_NETWORK } from '@/lib/runtime-network'
 import { rehydrateWalletStore, useWalletStore } from '@/store/wallet-store'
@@ -259,11 +260,15 @@ export function routeConfidentialFundingMessage(
   void operation
     .then(result => sendResponse({ result }))
     .catch(error => {
-      console.error('[Confidential Funding] Request failed', {
-        operation: message.type,
-        errorName: error instanceof Error ? error.name : 'UnknownError',
-        ...(error instanceof ExternalShieldDepositError ? { failureStage: error.stage } : {})
-      })
+      console.error(
+        '[Confidential Funding] Request failed',
+        {
+          operation: message.type,
+          errorName: error instanceof Error ? error.name : 'UnknownError',
+          ...(error instanceof ExternalShieldDepositError ? { failureStage: error.stage } : {})
+        },
+        ...developmentErrorArgs(error)
+      )
       sendResponse({
         error: error instanceof Error ? error.message : 'Confidential funding request failed',
         ...(message.type === 'REFRESH_CONFIDENTIAL_BALANCES' &&

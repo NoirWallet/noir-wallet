@@ -8,6 +8,8 @@ import {
 } from '@/config/intents'
 import { trackEvent } from '@/background/analytics/reporter'
 import { DedupPromise, SerialTaskQueue } from '@/lib/async-utils'
+import { developmentErrorArgs, logDevelopmentError } from '@/lib/development-console'
+import { logger } from '@/lib/logger'
 import { withMetadataLock } from '@/lib/wallet-metadata-storage'
 import {
   projectConfidentialPlanResult,
@@ -35,6 +37,7 @@ import { resolveManagedIntentsAssets } from '@/core/services/intents-managed-ass
 import type { ChainId } from '@/core/chains/domain'
 import { parseAccountId } from '@/core/accounts/domain'
 import { parseKeyDomainId } from '@/core/keyring/domain'
+import { KeyringError } from '@/core/keyring/protocol/errors'
 import {
   getZcashChainId,
   parseAssetId,
@@ -93,6 +96,7 @@ import {
   createConfiguredEvmRpcClient,
   createEvmTransactionSegmentEvent,
   estimateEvmTransferFee,
+  EvmRpcError,
   EvmTransactionError,
   isEvmSpeedUpReplacement,
   observeEvmTransaction,
@@ -473,6 +477,15 @@ function definitiveHistoryAuthRejection(error: unknown): boolean {
 
 function normalizeStatus(value: string): string {
   return value.trim().toUpperCase()
+}
+
+function confirmationFailureDetails(error: unknown): string {
+  if (error instanceof ConfidentialFundingApiError)
+    return `source=confidential-api httpStatus=${error.status ?? 'unavailable'} businessCode=${error.businessCode ?? 'unavailable'}`
+  if (error instanceof EvmRpcError) return `source=evm-rpc code=${error.code}`
+  if (error instanceof EvmTransactionError) return `source=evm-transaction code=${error.code}`
+  if (error instanceof KeyringError) return `source=keyring code=${error.code}`
+  return 'source=unclassified'
 }
 
 function failureCode(status: string): TransactionFailureCode {
@@ -2545,7 +2558,10 @@ export class ConfidentialFundingCoordinator {
       }
       return existing.promise
     }
-    const operation = this.confirmExclusive(planId, approvalFingerprint)
+    const diagnostic: { stage: string; failureDetails?: string } = {
+      stage: 'approval-validation'
+    }
+    const operation = this.confirmExclusive(planId, approvalFingerprint, diagnostic)
     this.confirmingByPlan.set(planId, { fingerprint: approvalFingerprint, promise: operation })
     void operation.then(
       plan => {
@@ -2562,9 +2578,13 @@ export class ConfidentialFundingCoordinator {
           void this.continuePlan(planId)
         }
       },
-      () => {
+      (error: unknown) => {
         if (this.confirmingByPlan.get(planId)?.promise === operation)
           this.confirmingByPlan.delete(planId)
+        const reason = diagnostic.failureDetails ?? confirmationFailureDetails(error)
+        logger.warn(
+          `[Confidential Funding] Confirmation failed stage=${diagnostic.stage} ${reason}`
+        )
       }
     )
     return operation
@@ -2572,7 +2592,8 @@ export class ConfidentialFundingCoordinator {
 
   private async confirmExclusive(
     planId: string,
-    approvalFingerprint: string
+    approvalFingerprint: string,
+    diagnostic: { stage: string; failureDetails?: string }
   ): Promise<ConfidentialFundingPlan> {
     let plan = await this.requirePlan(planId)
     if (
@@ -2595,6 +2616,7 @@ export class ConfidentialFundingCoordinator {
     ) {
       throw new Error('Confidential funding approval is unavailable or expired')
     }
+    diagnostic.stage = 'account-validation'
     const identity = await this.requirePlanIdentity(plan)
     const hardware = identity.context.keyDomainSource.kind === 'hardware'
     const resumingUnsigned = plan.phase === 'needs-auth' && isUnsignedDirectWithdraw(plan)
@@ -2610,6 +2632,7 @@ export class ConfidentialFundingCoordinator {
       }
     }
     if (keepsFrozenConfidentialQuote(plan) && plan.phase === 'prepared') {
+      diagnostic.stage = 'quote-validation'
       if (!plan.swapQuote) throw new Error('Shield swap quote is unavailable')
       if (Date.parse(String(plan.swapQuote.quoteRequest.deadline ?? '')) <= this.now()) {
         throw new Error('Shield swap quote has expired')
@@ -2634,12 +2657,16 @@ export class ConfidentialFundingCoordinator {
     }
     const approvalExpiresAt =
       plan.phase === 'prepared' || resumingUnsigned ? plan.approvalExpiresAt : undefined
+    diagnostic.stage = 'session-authorization'
     await this.ensureSession(identity, true, hardware ? approvalExpiresAt : undefined)
+    diagnostic.stage = 'account-validation'
     await this.requirePlanIdentity(plan)
+    diagnostic.stage = 'approval-validation'
     if (hardware && approvalExpiresAt !== undefined && approvalExpiresAt <= this.now()) {
       throw new Error('Confidential funding approval expired. Review the transfer again.')
     }
     if (plan.operation === 'cluster' && (plan.phase === 'prepared' || hardware)) {
+      diagnostic.stage = 'history-authorization'
       try {
         await this.ensureOrderHistoryToken(plan, true, approvalExpiresAt)
       } catch (error) {
@@ -2655,9 +2682,12 @@ export class ConfidentialFundingCoordinator {
       }
     }
     if (plan.phase === 'needs-auth') {
+      diagnostic.stage = 'resume-authorization'
       const resumePhase = plan.resumePhase ?? 'authorized'
       if (hardware && resumePhase === 'signing-withdraws') {
+        diagnostic.stage = 'intent-signing'
         plan = await this.signAndFreezeWithdraws(plan, hardware ? approvalExpiresAt : undefined)
+        diagnostic.stage = 'monitoring'
         await this.scheduleMonitoring()
         void this.continuePlan(plan.planId)
         return plan
@@ -2670,11 +2700,15 @@ export class ConfidentialFundingCoordinator {
       return plan
     }
 
+    diagnostic.stage = 'funding-preflight'
     plan = await this.reconcileDepositRequirement(plan, identity)
+    diagnostic.stage = 'account-validation'
     await this.requirePlanIdentity(plan)
+    diagnostic.stage = 'approval-validation'
     if (hardware && plan.approvalExpiresAt <= this.now()) {
       throw new Error('Confidential funding approval expired. Review the transfer again.')
     }
+    diagnostic.stage = 'plan-authorization'
     plan = await this.updatePlan(plan, { phase: 'authorized' })
 
     if (!plan.requiresDeposit) {
@@ -2684,6 +2718,7 @@ export class ConfidentialFundingCoordinator {
         plan.operation === 'swap' ||
         plan.operation === 'confidential-transfer'
       ) {
+        diagnostic.stage = 'intent-signing'
         plan = await this.updatePlan(plan, { phase: 'signing-withdraws' })
         try {
           plan = await this.signAndFreezeWithdraws(plan, hardware ? approvalExpiresAt : undefined)
@@ -2699,14 +2734,17 @@ export class ConfidentialFundingCoordinator {
           }
           throw error
         }
+        diagnostic.stage = 'monitoring'
         await this.scheduleMonitoring()
         void this.continuePlan(plan.planId)
         return plan
       }
+      diagnostic.stage = 'activity-persistence'
       await this.ensureGraph(plan)
       void this.continuePlan(plan.planId)
       return plan
     }
+    diagnostic.stage = 'deposit-signing'
     if (!plan.preparedDeposit) throw new Error('Confidential funding deposit was not prepared')
     let signed: Awaited<ReturnType<ConfidentialFundingSigner['confirmTransaction']>>
     try {
@@ -2726,9 +2764,12 @@ export class ConfidentialFundingCoordinator {
         }
       }
     } catch (error) {
+      diagnostic.failureDetails = confirmationFailureDetails(error)
+      logDevelopmentError('[Confidential Funding] Deposit signing failed', error)
       await this.updatePlan(plan, { phase: 'failed', errorStatus: 'DEPOSIT_SIGNING_INTERRUPTED' })
       throw error
     }
+    diagnostic.stage = 'signed-deposit-persistence'
     plan = await this.updatePlan(plan, {
       phase: 'deposit-signed',
       preparedDeposit: Object.freeze({
@@ -2737,21 +2778,27 @@ export class ConfidentialFundingCoordinator {
         transactionHash: signed.transactionHash
       })
     })
+    diagnostic.stage = 'activity-persistence'
     await this.ensureGraph(plan)
     try {
+      diagnostic.stage = 'deposit-broadcast'
       await broadcastSignedEvmTransaction({
         rawTransaction: signed.rawTransaction,
         expectedTransactionHash: signed.transactionHash,
         rpc: this.requireRpc(plan.source.chainId)
       })
+      diagnostic.stage = 'broadcast-persistence'
       plan = await this.updatePlan(plan, { phase: 'deposit-confirming' })
       await this.applyGraphStatus(plan, 'origin', 'broadcast', {
         transactionHash: signed.transactionHash
       })
-    } catch {
+    } catch (error) {
+      diagnostic.failureDetails = confirmationFailureDetails(error)
+      logDevelopmentError(`[Confidential Funding] ${diagnostic.stage} failed`, error)
       await this.scheduleMonitoring()
       throw new Error('Confidential funding deposit is signed and will retry broadcasting')
     }
+    diagnostic.stage = 'monitoring'
     await this.scheduleMonitoring()
     void this.continuePlan(plan.planId)
     return plan
@@ -3386,10 +3433,12 @@ export class ConfidentialFundingCoordinator {
           })
           .catch(() => {})
       }
-      return this.updatePlan(plan, {
+      const failed = await this.updatePlan(plan, {
         phase: 'failed',
         errorStatus: 'DEPOSIT_SIGNING_INTERRUPTED'
       })
+      logger.warn('[Confidential Funding] Recovered unsigned deposit stage=deposit-signing')
+      return failed
     }
     if (
       (plan.operation === 'withdraw' ||
@@ -3456,6 +3505,7 @@ export class ConfidentialFundingCoordinator {
         })
       } catch (error) {
         if (!(error instanceof Error && /already known|known transaction/i.test(error.message))) {
+          logDevelopmentError('[Confidential Funding] Deposit broadcast retry failed', error)
           await this.scheduleMonitoring()
           return plan
         }
@@ -4964,13 +5014,17 @@ export class ConfidentialFundingCoordinator {
       await this.scheduleMonitoring()
       return plan
     }
-    console.error('[Confidential Funding] Continuation failed', {
-      planId: plan.planId,
-      phase: plan.phase,
-      errorName: error instanceof Error ? error.name : 'UnknownError',
-      serviceStatus: error instanceof ConfidentialFundingApiError ? error.status : null,
-      retryable: retryableFundingError(error)
-    })
+    console.error(
+      '[Confidential Funding] Continuation failed',
+      {
+        planId: plan.planId,
+        phase: plan.phase,
+        errorName: error instanceof Error ? error.name : 'UnknownError',
+        serviceStatus: error instanceof ConfidentialFundingApiError ? error.status : null,
+        retryable: retryableFundingError(error)
+      },
+      ...developmentErrorArgs(error)
+    )
     if (authenticationError(error)) {
       if (error instanceof ConfidentialFundingApiError && [401, 403].includes(error.status ?? -1)) {
         await this.options.store.deleteSession(plan.network, plan.keyDomainId, plan.accountId)
@@ -5016,7 +5070,8 @@ export class ConfidentialFundingCoordinator {
       const refreshed = await this.options.api.refresh(session)
       await this.options.store.putSession(this.options.network, keyDomainId, accountId, refreshed)
       return refreshed
-    } catch {
+    } catch (error) {
+      logDevelopmentError('[Confidential Funding] Session refresh failed', error)
       return null
     }
   }
@@ -5407,14 +5462,18 @@ export class ConfidentialFundingCoordinator {
         ? await this.readOwnerStatus(plan, order)
         : null
     } catch (error) {
-      console.warn('[Confidential Funding] Status request failed', {
-        planId: plan.planId,
-        phase: plan.phase,
-        stage,
-        ...(sequence === undefined ? {} : { sequence }),
-        errorName: error instanceof Error ? error.name : 'UnknownError',
-        serviceStatus: error instanceof ConfidentialFundingApiError ? error.status : null
-      })
+      console.warn(
+        '[Confidential Funding] Status request failed',
+        {
+          planId: plan.planId,
+          phase: plan.phase,
+          stage,
+          ...(sequence === undefined ? {} : { sequence }),
+          errorName: error instanceof Error ? error.name : 'UnknownError',
+          serviceStatus: error instanceof ConfidentialFundingApiError ? error.status : null
+        },
+        ...developmentErrorArgs(error)
+      )
       return null
     }
   }

@@ -21,6 +21,7 @@ import {
   requestOneClickQuote
 } from '@/core/services/near-intents/one-click-quote'
 import { DedupPromise } from '@/lib/async-utils'
+import { logDevelopmentError } from '@/lib/development-console'
 import { parseSiweMessage } from 'viem/siwe'
 import { isAddress } from 'viem'
 import type {
@@ -457,7 +458,8 @@ async function readJson(response: Response): Promise<unknown> {
   let body: unknown = null
   try {
     body = text ? JSON.parse(text) : null
-  } catch {
+  } catch (error) {
+    logDevelopmentError('[Confidential Funding] Invalid JSON response', error)
     throw new ConfidentialFundingApiError(
       response.ok
         ? 'Confidential service returned invalid data'
@@ -518,6 +520,7 @@ async function requestJson(
     return await readJson(response)
   } catch (error) {
     if (error instanceof ConfidentialFundingApiError) throw error
+    logDevelopmentError('[Confidential Funding] HTTP request error', error)
     throw new ConfidentialFundingApiError(
       'Confidential service is temporarily unavailable',
       null,
