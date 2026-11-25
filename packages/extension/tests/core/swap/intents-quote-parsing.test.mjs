@@ -1,5 +1,6 @@
 import { test } from 'node:test'
 import { expect } from '@playwright/test'
+import { ONE_CLICK_TOKEN_CATALOG_URL } from '../../../src/config/intents.ts'
 
 import {
   fetchQuote,
@@ -34,7 +35,7 @@ test('Intents token directory stays cached for one hour', async () => {
   }
   Date.now = () => now
   globalThis.fetch = async input => {
-    expect(String(input)).toBe('https://1click.chaindefuser.com/v0/tokens')
+    expect(String(input)).toBe('https://api.zknoir.com/v1/1click/v0/tokens')
     calls++
     return Response.json([token])
   }
@@ -288,7 +289,7 @@ test.describe('CoinGecko token icon parsing', () => {
     globalThis.fetch = async input => {
       const url = String(input)
       requestedUrls.push(url)
-      if (url === 'https://1click.chaindefuser.com/v0/tokens') {
+      if (url === ONE_CLICK_TOKEN_CATALOG_URL) {
         return Response.json([token])
       }
       if (url.startsWith('https://api.rhea.finance/get_multichain_lending_tokens_data')) {
@@ -337,7 +338,7 @@ test.describe('CoinGecko token icon parsing', () => {
     globalThis.fetch = async input => {
       const url = String(input)
       requestedUrls.push(url)
-      if (url === 'https://1click.chaindefuser.com/v0/tokens') {
+      if (url === ONE_CLICK_TOKEN_CATALOG_URL) {
         return Response.json([token])
       }
       if (url.startsWith('https://api.rhea.finance/get_multichain_lending_tokens_data')) {
@@ -395,7 +396,7 @@ test.describe('CoinGecko token icon parsing', () => {
     globalThis.fetch = async input => {
       const url = String(input)
       requestedUrls.push(url)
-      if (url === 'https://1click.chaindefuser.com/v0/tokens') {
+      if (url === ONE_CLICK_TOKEN_CATALOG_URL) {
         catalogRequests += 1
         return Response.json([
           goodToken,

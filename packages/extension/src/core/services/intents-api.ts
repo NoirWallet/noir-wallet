@@ -5,6 +5,7 @@
 import {
   ZEC_ZCASH_ASSET,
   WNEAR_NEAR_ASSET,
+  ONE_CLICK_TOKEN_CATALOG_URL,
   RHEA_TOKEN_ICONS_API,
   NOIR_SWAP_APP_FEES,
   NOIR_SWAP_REFERRAL
@@ -21,7 +22,6 @@ import Big from 'big.js'
 import type { QuoteBinding } from '@/types/wallet'
 
 const INTENTS_API_BASE = 'https://api.rhea.finance/api/1click'
-const ONECLICK_TOKENS_API = 'https://1click.chaindefuser.com/v0/tokens'
 const ONECLICK_STATUS_API = 'https://1click.chaindefuser.com/v0/status'
 const COINGECKO_MARKETS_API = 'https://api.coingecko.com/api/v3/coins/markets'
 const WALLET_TOKEN_BLOCKCHAINS = new Set(['sol', 'near'])
@@ -591,7 +591,7 @@ function enrichTokenIcons(tokens: SwapToken[]): SwapToken[] {
 }
 
 async function fetchAllTokens(): Promise<SwapToken[]> {
-  const response = await fetchWithTimeout(ONECLICK_TOKENS_API)
+  const response = await fetchWithTimeout(ONE_CLICK_TOKEN_CATALOG_URL)
   const tokens = parseSwapTokenCatalogResponse(await response.json())
   tokenCache = enrichTokenIcons(tokens)
   tokenCacheTime = Date.now()

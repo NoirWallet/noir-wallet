@@ -1,5 +1,6 @@
 import type { Network } from '@/types'
 
+export const ONE_CLICK_TOKEN_CATALOG_URL = 'https://api.zknoir.com/v1/1click/v0/tokens'
 export const RHEA_TOKEN_ICONS_API = 'https://api.rhea.finance/get_multichain_lending_tokens_data'
 
 export interface ConfidentialFundingNetworkConfig {
