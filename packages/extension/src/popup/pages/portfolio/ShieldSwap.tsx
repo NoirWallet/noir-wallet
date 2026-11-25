@@ -319,8 +319,8 @@ function ShieldSwapForm({
       }),
     [network, sourceChoices, displayBalances, model, zcashAccountEnabled]
   )
-  const preferredSourceId = sharedPair?.tokenInId ?? fromId
-  const preferredDestinationId = sharedPair?.tokenOutId ?? toId
+  const preferredSourceId = fromId ?? sharedPair?.tokenInId ?? null
+  const preferredDestinationId = toId ?? sharedPair?.tokenOutId ?? null
   const confidentialFromAssetId = preferredSourceId
     ? resolveShieldConfidentialFromAssetId(preferredSourceId, zecSourceOptions)
     : null
@@ -343,11 +343,6 @@ function ShieldSwapForm({
         ) ??
         sourceChoices.find(asset => asset.asset.asset.id !== toId) ??
         null)
-  useEffect(() => {
-    if (active && !preferredSourceId && from && displayBalances) {
-      setFromId(from.asset.asset.id)
-    }
-  }, [active, preferredSourceId, from, displayBalances])
   const ethereumUsdcContract = getEvmNetworkConfigs(network)
     .find(config => config.chainId === 'eip155:1')
     ?.usdcContract?.toLowerCase()
@@ -1263,7 +1258,8 @@ function ShieldSwapForm({
           token={fromToken}
           fallbackAssetId={preferredSourceId ?? undefined}
           fallbackSymbol={
-            sharedPair?.tokenInSymbol ?? findSavedSwapToken(tokens, preferredSourceId)?.symbol
+            findSavedSwapToken(tokens, preferredSourceId)?.symbol ??
+            (fromId === null ? sharedPair?.tokenInSymbol : undefined)
           }
           tokenBadgeBlockchain={fromPickerChain?.badgeBlockchain}
           tokenNetworkLabel="NEAR Confidential"
@@ -1307,7 +1303,8 @@ function ShieldSwapForm({
           token={toToken}
           fallbackAssetId={preferredDestinationId ?? undefined}
           fallbackSymbol={
-            sharedPair?.tokenOutSymbol ?? findSavedSwapToken(tokens, preferredDestinationId)?.symbol
+            findSavedSwapToken(tokens, preferredDestinationId)?.symbol ??
+            (toId === null ? sharedPair?.tokenOutSymbol : undefined)
           }
           tokenBadgeBlockchain={
             nativeDestinationChain?.badgeBlockchain ?? toPickerChain?.badgeBlockchain
