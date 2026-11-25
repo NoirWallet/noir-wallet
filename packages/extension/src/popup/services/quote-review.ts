@@ -36,7 +36,11 @@ export function confidentialQuoteTerms(
 }
 
 export function nativeZecQuoteTerms(quote: NativeZecIntentsSwapReview): QuoteTerms {
-  return { expected: quote.expectedOutputRaw, minimum: quote.minimumOutputRaw }
+  return {
+    expected: quote.expectedOutputRaw,
+    minimum: quote.minimumOutputRaw,
+    appFeeBps: quote.appFeeBps
+  }
 }
 
 export interface QuoteTermsChange {

@@ -960,7 +960,7 @@ export class ConfidentialFundingApi {
         )
       : isPublicTransfer
         ? NOIR_PUBLIC_CONFIDENTIAL_TRANSFER_APP_FEES
-        : !isDeposit && input.referral === NOIR_SWAP_REFERRAL
+        : input.referral === NOIR_SWAP_REFERRAL
           ? NOIR_SWAP_APP_FEES
           : []
     let providerFees: readonly IntentsAppFee[] = []

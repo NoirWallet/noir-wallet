@@ -425,7 +425,6 @@ test('native ZEC Confidential destination binds the internal ZEC asset and activ
       quoteConfidential: input =>
         api.quote({
           ...input,
-          referral: 'noir_swap',
           recipient: input.signerId,
           depositType: 'ORIGIN_CHAIN',
           refundType: 'ORIGIN_CHAIN',
@@ -476,7 +475,10 @@ test('native ZEC Confidential destination binds the internal ZEC asset and activ
       }
     })
     expect(values.get(`native_zec_intents_swap:${review.quoteId}`).schemaVersion).toBe(2)
-    expect((await coordinator.get(review.quoteId)).quoteBinding).toEqual(review.quoteBinding)
+    expect(await coordinator.get(review.quoteId)).toMatchObject({
+      quoteBinding: review.quoteBinding,
+      appFeeBps: 20
+    })
     await expect(coordinator.prepare({ ...request, userAction: undefined })).rejects.toThrow(
       'request ID was reused with different details'
     )
@@ -498,12 +500,17 @@ test('native ZEC Confidential destination binds the internal ZEC asset and activ
     const transparentQuote = quoteRequests.find(
       quote => !quote.dry && quote.refundTo === refundAddress
     )
-    expect(transparentQuote).toBeDefined()
+    expect(transparentQuote).toMatchObject({
+      referral: 'noir_swap',
+      appFees: [{ recipient: 'noir_swap.near', fee: 20 }]
+    })
     expect(transparentQuote).not.toHaveProperty('user')
     expect(transparentQuote).not.toHaveProperty('userChainFamily')
     expect(
       quoteRequests.find(quote => !quote.dry && quote.refundTo === shieldedRefundAddress)
     ).toMatchObject({
+      referral: 'noir_swap',
+      appFees: [{ recipient: 'noir_swap.near', fee: 20 }],
       refundType: 'ORIGIN_CHAIN',
       refundTo: shieldedRefundAddress,
       user: shieldedViewer.walletAddress,
@@ -517,6 +524,10 @@ test('native ZEC Confidential destination binds the internal ZEC asset and activ
         viewer: shieldedViewer
       }
     })
+    expect(await coordinator.cancel(review.quoteId)).toBe(true)
+    await coordinator.prepare({ ...request, userAction: undefined })
+    expect(quoteRequests.at(-1)).toMatchObject({ dry: false, referral: 'noir_receive' })
+    expect(quoteRequests.at(-1)).not.toHaveProperty('appFees')
   } finally {
     globalThis.chrome = originalChrome
     globalThis.fetch = originalFetch
