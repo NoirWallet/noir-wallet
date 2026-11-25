@@ -1,3 +1,5 @@
+import { isNoirPublicConfidentialTransferReferral } from '@/config/intents'
+
 export type ChainRef = `${number}` | 'solana' | 'aptos' | 'near' | 'tron' | 'btc' | 'zcash' | 'sui'
 
 export interface AssetRef {
@@ -59,6 +61,21 @@ export interface SwapQuoteDataRaw extends Record<string, unknown> {
 
 export type SwapBuildDataRaw = Record<string, unknown>
 export type SwapOrderStatusDataRaw = Record<string, unknown>
+
+export const ONE_CLICK_CONFIDENTIAL_BRIDGE = 'noir-1click-confidential'
+
+export function isOneClickConfidentialQuote(
+  confidentiality: QuoteRequest['confidentiality'],
+  referral: string | undefined,
+  raw: SwapQuoteDataRaw
+): boolean {
+  if (confidentiality !== 'basic') return false
+  const bridge = raw.bestQuote.bridge
+  return (
+    isNoirPublicConfidentialTransferReferral(referral) ||
+    (isRecord(bridge) && bridge.provider === ONE_CLICK_CONFIDENTIAL_BRIDGE)
+  )
+}
 
 export function readRheaSwapReportRecordId(value: unknown): string | undefined {
   const id = typeof value === 'number' && Number.isSafeInteger(value) ? String(value) : value

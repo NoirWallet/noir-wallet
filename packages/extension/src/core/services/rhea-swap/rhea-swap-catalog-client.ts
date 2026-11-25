@@ -1,5 +1,4 @@
 import { DedupPromise } from '@/lib/async-utils'
-import { isNoirPublicConfidentialTransferReferral } from '@/config/intents'
 import {
   RHEA_SWAP_CHAIN_CATALOG,
   RHEA_SWAP_TOKEN_CATALOG_TTL_MS,
@@ -9,6 +8,7 @@ import { RheaSwapApi } from './rhea-swap-api'
 import { RheaSwapHttpError } from './rhea-swap-error'
 import {
   createSwapBuildRequest,
+  isOneClickConfidentialQuote,
   normalizeBuild,
   normalizeQuote,
   serializeQuoteRequest,
@@ -181,9 +181,10 @@ export class RheaSwapCatalogClient {
   }
 
   async quote(request: QuoteRequest, options: ApiRequestOptions = {}): Promise<Quote> {
-    const raw = isNoirPublicConfidentialTransferReferral(request.extensions?.referral)
-      ? await this.requirePublicConfidentialTransfer().quote(request, options.signal)
-      : await this.api.quote(serializeQuoteRequest(request), options.signal)
+    const raw =
+      request.confidentiality === 'basic'
+        ? await this.requirePublicConfidentialTransfer().quote(request, options.signal)
+        : await this.api.quote(serializeQuoteRequest(request), options.signal)
     return normalizeQuote(request, raw, this.now())
   }
 
@@ -192,9 +193,20 @@ export class RheaSwapCatalogClient {
       throw new RheaSwapHttpError('QUOTE_EXPIRED', 'build', 'Quote expired. Get a new quote.')
     }
     const request = createSwapBuildRequest(input.quote)
-    const raw = isNoirPublicConfidentialTransferReferral(request.referral)
-      ? await this.requirePublicConfidentialTransfer().build(input.quote, input.signal)
-      : await this.api.build(request, input.signal)
+    if (
+      request.confidentiality === 'basic' &&
+      !isOneClickConfidentialQuote(request.confidentiality, request.referral, input.quote.raw)
+    ) {
+      throw new RheaSwapHttpError(
+        'QUOTE_EXPIRED',
+        'build',
+        'Confidential route changed. Get a new quote.'
+      )
+    }
+    const raw =
+      request.confidentiality === 'basic'
+        ? await this.requirePublicConfidentialTransfer().build(input.quote, input.signal)
+        : await this.api.build(request, input.signal)
     return normalizeBuild(raw, crypto.randomUUID(), request)
   }
 

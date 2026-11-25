@@ -877,7 +877,7 @@ export class ConfidentialFundingApi {
       readonly recipientType: 'CONFIDENTIAL_INTENTS' | 'DESTINATION_CHAIN'
       readonly slippageBps: number
       readonly dry: boolean
-      readonly settlement?: 'cluster'
+      readonly settlement?: 'cluster' | 'onchain-transfer'
     },
     signal?: AbortSignal
   ): Promise<ConfidentialQuote> {
@@ -886,11 +886,13 @@ export class ConfidentialFundingApi {
     const isClusterWithdrawal = input.settlement === 'cluster'
     const isDeposit =
       input.depositType === 'ORIGIN_CHAIN' && input.recipientType === 'CONFIDENTIAL_INTENTS'
-    const isPublicTransfer =
+    const isOnchainRoute =
       input.depositType === 'ORIGIN_CHAIN' &&
       input.refundType === 'ORIGIN_CHAIN' &&
-      input.recipientType === 'DESTINATION_CHAIN' &&
-      isNoirPublicConfidentialTransferReferral(input.referral)
+      input.recipientType === 'DESTINATION_CHAIN'
+    const isPublicTransfer =
+      isOnchainRoute && isNoirPublicConfidentialTransferReferral(input.referral)
+    const isOnchainTransfer = input.settlement === 'onchain-transfer'
     const isInternalSwap =
       input.depositType === 'CONFIDENTIAL_INTENTS' &&
       input.refundType === 'CONFIDENTIAL_INTENTS' &&
@@ -906,11 +908,13 @@ export class ConfidentialFundingApi {
       input.refundTo === undefined
     if (
       (isClusterWithdrawal && !isWithdrawal) ||
+      (isOnchainTransfer && (!isOnchainRoute || input.referral !== NOIR_SWAP_REFERRAL)) ||
       (!isWithdrawal &&
         !isDeposit &&
         !isInternalSwap &&
         !isConfidentialAccountTransfer &&
-        !isPublicTransfer)
+        !isPublicTransfer &&
+        !isOnchainTransfer)
     ) {
       throw new Error('Confidential quote route is invalid')
     }
@@ -943,7 +947,7 @@ export class ConfidentialFundingApi {
         )
       : isPublicTransfer
         ? NOIR_PUBLIC_CONFIDENTIAL_TRANSFER_APP_FEES
-        : !isDeposit && input.referral === NOIR_SWAP_REFERRAL
+        : !isDeposit && !isOnchainTransfer && input.referral === NOIR_SWAP_REFERRAL
           ? NOIR_SWAP_APP_FEES
           : []
     let providerFees: readonly IntentsAppFee[] = []
@@ -966,7 +970,9 @@ export class ConfidentialFundingApi {
       throw new Error('Confidential quote does not match the requested funding route')
     }
     assertQuoteAppFees(quote, appFees, providerFees)
-    if (isPublicTransfer || isClusterWithdrawal) assertConfidentialQuoteBinding(quote, input)
+    if (isPublicTransfer || isOnchainTransfer || isClusterWithdrawal) {
+      assertConfidentialQuoteBinding(quote, input)
+    }
     return quote
   }
 

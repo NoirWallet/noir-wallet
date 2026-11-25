@@ -1,4 +1,5 @@
 import {
+  isOneClickConfidentialQuote,
   normalizeBuild,
   normalizeOrderStatus,
   normalizeQuote,
@@ -39,7 +40,6 @@ import { isRheaIntentsRoute } from '@/core/transactions/domain/protocol'
 import { readRheaDestinationHash } from './rhea-order-status'
 import { getRheaSwapQuoteDeadline, isRheaSwapQuoteFresh } from './rhea-swap-quote-validity'
 import { DedupPromise, SerialTaskQueue } from '@/lib/async-utils'
-import { isNoirPublicConfidentialTransferReferral } from '@/config/intents'
 
 const MAXIMUM_SESSION_RECORDS = 16
 
@@ -788,7 +788,10 @@ export class RheaSwapService {
     if (!record.submission) throw new Error('RHEA Swap has not been submitted')
     if (record.submission.reportStatus === 'reported') return this.toSubmissionView(record)
     try {
-      const result = await this.client.reportRaw(record.submission.reportRequest, { signal })
+      const result =
+        record.request.confidentiality === 'basic'
+          ? undefined
+          : await this.client.reportRaw(record.submission.reportRequest, { signal })
       const recordId = readRheaSwapReportRecordId(result?.id)
       const updated = Object.freeze({
         ...record,
@@ -822,7 +825,13 @@ export class RheaSwapService {
     const submission = record.submission
     if (!submission) throw new Error('RHEA Swap has not been submitted')
     let status: SwapOrderStatusDataRaw
-    if (isNoirPublicConfidentialTransferReferral(record.request.extensions?.referral)) {
+    if (
+      isOneClickConfidentialQuote(
+        record.request.confidentiality,
+        record.request.extensions?.referral,
+        record.quoteRaw
+      )
+    ) {
       if (!this.client.getPublicConfidentialTransferStatus || !submission.orderId) {
         throw new Error('Confidential transfer order is unavailable')
       }
@@ -1063,9 +1072,6 @@ export class RheaSwapService {
       estimated_out: build.estimatedOut,
       router: build.router,
       tx_type: build.isCrossChain ? 'cross-chain' : 'same-chain',
-      ...(build.request.confidentiality === undefined
-        ? {}
-        : { confidentiality: build.request.confidentiality }),
       ...(reference.orderId ? { swapId: reference.orderId } : {})
     })
   }
