@@ -31,7 +31,8 @@ export function WalletActionIcon({
         aria-hidden="true"
         width={size}
         height={size}
-        className={cn('object-contain', className)}
+        style={{ width: size, height: size }}
+        className={cn('shrink-0 object-contain', className)}
       />
     )
   }
