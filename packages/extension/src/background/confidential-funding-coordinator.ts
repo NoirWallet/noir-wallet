@@ -291,11 +291,13 @@ function directConfidentialRecipientType(
 function keepsFrozenConfidentialQuote(plan: {
   readonly operation?: string
   readonly purpose?: string
+  readonly swapQuote?: ConfidentialQuote
 }): boolean {
   return (
     plan.operation === 'swap' ||
     plan.operation === 'confidential-transfer' ||
-    plan.purpose === 'native-zec-swap'
+    plan.purpose === 'native-zec-swap' ||
+    (plan.operation === 'withdraw' && plan.swapQuote !== undefined)
   )
 }
 
@@ -534,9 +536,7 @@ function reviewFromPlan(
   const quoteTimeEstimateSeconds =
     plan.operation === 'deposit'
       ? plan.depositQuote?.quote.timeEstimate
-      : plan.operation === 'swap' ||
-          plan.operation === 'confidential-transfer' ||
-          plan.purpose === 'native-zec-swap'
+      : keepsFrozenConfidentialQuote(plan)
         ? plan.swapQuote?.quote.timeEstimate
         : plan.operation === 'withdraw'
           ? plan.quoteTimeEstimateSeconds
@@ -2179,8 +2179,6 @@ export class ConfidentialFundingCoordinator {
           ? requireConfidentialPea(destinationIdentity)
           : destinationIdentity.address))
     const isSwap = input.operation === 'swap'
-    const isFrozenSwap = isSwap || input.purpose === 'native-zec-swap'
-    const isFrozenQuote = isFrozenSwap || isConfidentialTransfer
     const quote = await this.options.api.quote({
       originAsset: input.source.protocolAssetId,
       referral: input.operation === 'deposit' ? NOIR_RECEIVE_REFERRAL : withdrawalReferral(input),
@@ -2199,7 +2197,7 @@ export class ConfidentialFundingCoordinator {
           ? 'CONFIDENTIAL_INTENTS'
           : 'DESTINATION_CHAIN',
       slippageBps: input.slippageBps,
-      dry: !isDeposit && !isFrozenQuote
+      dry: false
     })
     assertConfidentialQuoteBinding(
       quote,
@@ -2225,11 +2223,13 @@ export class ConfidentialFundingCoordinator {
     if (isDeposit && !quote.quote.depositAddress) {
       throw new Error('Confidential deposit quote has no destination')
     }
-    if (isFrozenQuote && (quote.quoteRequest.dry !== false || !quote.quote.depositAddress)) {
+    if (!isDeposit && (quote.quoteRequest.dry !== false || !quote.quote.depositAddress)) {
       throw new Error(
         isConfidentialTransfer
           ? 'Shield transfer quote has no active destination'
-          : 'Shield swap quote has no active destination'
+          : isSwap || input.purpose === 'native-zec-swap'
+            ? 'Shield swap quote has no active destination'
+            : 'Shield withdraw quote has no active destination'
       )
     }
 
@@ -2271,7 +2271,7 @@ export class ConfidentialFundingCoordinator {
     const planId = this.createId()
     const approvalExpiresAt = Math.min(
       quoteDeadline(quote),
-      ...(isFrozenQuote ? [Date.parse(String(quote.quoteRequest.deadline ?? ''))] : []),
+      isDeposit ? Number.MAX_SAFE_INTEGER : Date.parse(String(quote.quoteRequest.deadline ?? '')),
       preparedDeposit?.expiresAt ?? Number.MAX_SAFE_INTEGER
     )
     if (!Number.isSafeInteger(approvalExpiresAt) || approvalExpiresAt <= this.now()) {
@@ -2300,19 +2300,7 @@ export class ConfidentialFundingCoordinator {
       slippageBps: input.slippageBps,
       requiresDeposit: isDeposit,
       confidentialBaselineRaw: baseline,
-      ...(isDeposit ? { depositQuote: quote, preparedDeposit } : {}),
-      ...(isFrozenQuote ? { swapQuote: quote } : {}),
-      ...(!isDeposit && !isFrozenQuote && validQuoteTimeEstimateSeconds(quote.quote.timeEstimate)
-        ? { quoteTimeEstimateSeconds: quote.quote.timeEstimate }
-        : {}),
-      ...(!isDeposit && !isFrozenQuote
-        ? {
-            reviewedAppFeesFingerprint: await fingerprintDirectConfidentialApproval([
-              readConfidentialQuoteAppFees(quote)
-            ]),
-            reviewedAppFeeBps: confidentialQuoteAppFeeBps(quote)
-          }
-        : {}),
+      ...(isDeposit ? { depositQuote: quote, preparedDeposit } : { swapQuote: quote }),
       approvalFingerprint: '0'.repeat(64),
       approvalExpiresAt,
       expectedOutputRaw: quote.quote.amountOut,
@@ -2633,9 +2621,9 @@ export class ConfidentialFundingCoordinator {
     }
     if (keepsFrozenConfidentialQuote(plan) && plan.phase === 'prepared') {
       diagnostic.stage = 'quote-validation'
-      if (!plan.swapQuote) throw new Error('Shield swap quote is unavailable')
+      if (!plan.swapQuote) throw new Error('Shield quote is unavailable')
       if (Date.parse(String(plan.swapQuote.quoteRequest.deadline ?? '')) <= this.now()) {
-        throw new Error('Shield swap quote has expired')
+        throw new Error('Shield quote has expired')
       }
       assertConfidentialQuoteBinding(
         plan.swapQuote,

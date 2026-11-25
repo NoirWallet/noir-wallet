@@ -505,12 +505,7 @@ function directPreparationHarness(protocolTokens, getNativeZecActiveAccount) {
     quote: async input => {
       state.lastQuoteRequest = input
       state.quoteCalls.push(input)
-      if (!input.dry) {
-        state.formalQuotes += 1
-        if (input.recipientType !== 'CONFIDENTIAL_INTENTS' && !state.formalQuoteAppFees) {
-          throw new Error('formal quote unavailable in this test')
-        }
-      }
+      if (!input.dry) state.formalQuotes += 1
       state.lastQuoteAmountRaw = input.amountRaw
       state.lastQuoteDeadline = new Date(state.now + 60_000).toISOString()
       return {
@@ -1325,9 +1320,13 @@ test.describe('confidential funding persisted recovery', () => {
     expect(h.state.signatures).toBe(1)
   })
 
-  test('ignores formal quote metadata when direct Shield withdrawal fees are unchanged', async () => {
+  test('uses the reviewed Unshield quote for the wallet recipient without repricing', async () => {
     const h = directPreparationHarness()
-    const review = await h.coordinator.prepare(h.request('60'))
+    const review = await h.coordinator.prepare({ ...h.request('60'), destinationDomain: 'public' })
+    expect(review.destinationAddress).toBe(signerId)
+    expect(review.quoteAppFeeBps).toBe(50)
+    expect(h.state.signatures).toBe(0)
+    expect(h.state.formalQuotes).toBe(1)
     h.state.formalQuoteAppFees = [
       { recipient: 'platform.near', fee: 50, limitOrderId: 'quote-specific' }
     ]
@@ -1342,13 +1341,18 @@ test.describe('confidential funding persisted recovery', () => {
     const h = directPreparationHarness()
     const review = await h.coordinator.prepare(h.request('60'))
     const stored = await h.coordinator.getPlan(review.planId)
-    expect(stored.reviewedAppFeesFingerprint).toMatch(/^[0-9a-f]{64}$/)
-    h.state.formalQuoteAppFees = [
-      { recipient: 'platform.near', fee: 50 },
-      { recipient: 'provider.near', fee: 20 }
-    ]
+    h.plans.set(review.planId, {
+      ...stored,
+      swapQuote: {
+        ...stored.swapQuote,
+        quoteRequest: {
+          ...stored.swapQuote.quoteRequest,
+          appFees: [{ recipient: 'platform.near', fee: 70 }]
+        }
+      }
+    })
     await expect(h.coordinator.confirm(review.planId, review.payloadFingerprint)).rejects.toThrow(
-      'Shield withdraw fees changed'
+      'approval content changed'
     )
     expect(h.state.formalQuotes).toBe(1)
     expect(h.state.signatures).toBe(0)
@@ -1367,6 +1371,11 @@ test.describe('confidential funding persisted recovery', () => {
     expect(review.externalRecipient).toBe(externalRecipient)
     const stored = await h.coordinator.getPlan(review.planId)
     expect(stored.externalRecipient).toBe(externalRecipient)
+    expect(stored.swapQuote.quoteRequest).toMatchObject({
+      recipient: externalRecipient,
+      recipientType: 'DESTINATION_CHAIN',
+      dry: false
+    })
     expect(stored.withdraws[0].destinationAddress).toBe(externalRecipient)
     expect(stored.destination.address).toBe(externalRecipient)
     const graph = createConfidentialFundingGraph({
@@ -1395,6 +1404,11 @@ test.describe('confidential funding persisted recovery', () => {
     await expect(h.coordinator.confirm(review.planId, review.payloadFingerprint)).rejects.toThrow(
       'approval content changed'
     )
+    h.plans.set(review.planId, stored)
+    await expect(h.coordinator.confirm(review.planId, review.payloadFingerprint)).rejects.toThrow(
+      'unexpected signature'
+    )
+    expect(h.state.formalQuotes).toBe(1)
     await expect(
       h.coordinator.prepare({ ...request, externalRecipient: 'not-an-address' })
     ).rejects.toThrow('request is invalid')
@@ -1838,7 +1852,7 @@ test.describe('confidential funding persisted recovery', () => {
       ...base,
       planId: 'credited-cluster',
       operation: 'cluster',
-      reviewedAppFeeBps: undefined,
+      swapQuote: undefined,
       sourceDomain: 'public',
       destinationDomain: 'private',
       phase: 'signing-withdraws',
@@ -1875,10 +1889,10 @@ test.describe('confidential funding persisted recovery', () => {
     const second = await h.coordinator.prepare(h.request('10'))
     const confirming = h.coordinator.confirm(second.planId, second.payloadFingerprint)
     await expect(h.coordinator.cancel(second.planId)).rejects.toThrow('in progress')
-    await expect(confirming).rejects.toThrow('formal quote unavailable')
+    await expect(confirming).rejects.toThrow('unexpected signature')
     expect((await h.coordinator.getPlan(second.planId)).phase).toBe('failed')
-    expect(h.state.formalQuotes).toBe(1)
-    expect(h.state.signatures).toBe(0)
+    expect(h.state.formalQuotes).toBe(2)
+    expect(h.state.signatures).toBe(1)
   })
 
   test('settles a refunded Shield deposit after its on-chain origin is final', async () => {
