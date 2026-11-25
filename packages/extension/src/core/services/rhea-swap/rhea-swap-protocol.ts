@@ -1,6 +1,9 @@
 import { isNoirPublicConfidentialTransferReferral } from '@/config/intents'
-import type { OneClickOrder } from '@/core/services/one-click-order'
-import { parseOneClickDepositMemo, parseOneClickViewer } from '@/core/transactions/domain/protocol'
+import {
+  parseOneClickDepositMemo,
+  parseOneClickViewer,
+  type OneClickOrder
+} from '@/core/services/near-intents/one-click-order'
 
 export type ChainRef = `${number}` | 'solana' | 'aptos' | 'near' | 'tron' | 'btc' | 'zcash' | 'sui'
 
@@ -63,6 +66,18 @@ export interface SwapQuoteDataRaw extends Record<string, unknown> {
 
 export type SwapBuildDataRaw = Record<string, unknown>
 export type SwapOrderStatusDataRaw = Record<string, unknown>
+
+export const ONE_CLICK_CONFIDENTIAL_BRIDGE = 'noir-1click-confidential'
+
+export function isOneClickConfidentialRoute(
+  confidentiality: QuoteRequest['confidentiality'],
+  referral: string | undefined,
+  bridge: unknown
+): boolean {
+  if (confidentiality !== 'basic') return false
+  if (isNoirPublicConfidentialTransferReferral(referral)) return true
+  return isRecord(bridge) && bridge.provider === ONE_CLICK_CONFIDENTIAL_BRIDGE
+}
 
 export function readRheaSwapReportRecordId(value: unknown): string | undefined {
   const id = typeof value === 'number' && Number.isSafeInteger(value) ? String(value) : value
@@ -684,7 +699,11 @@ export function normalizeBuild(
   const depositAddress = optionalText(depositData?.depositAddress)
   const depositOrderId = optionalText(depositData?.orderId, 256)
   const timeEstimate = depositData?.timeEstimate
-  const ownerStatus = isNoirPublicConfidentialTransferReferral(request.referral)
+  const ownerStatus = isOneClickConfidentialRoute(
+    request.confidentiality,
+    request.referral,
+    request.bridge
+  )
   const deposit = depositAddress
     ? {
         depositAddress,

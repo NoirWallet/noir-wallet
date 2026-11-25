@@ -1,4 +1,7 @@
-import { oneClickTokenKey, type OneClickTokenStore } from './one-click-status-client'
+import {
+  oneClickTokenKey,
+  type OneClickTokenStore
+} from '@/core/services/near-intents/one-click-status-client'
 import { withUndeletedWalletAccountMetadata } from '@/lib/wallet-metadata-storage'
 
 const DATABASE = 'noir-one-click-status'

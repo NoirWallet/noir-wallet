@@ -30,6 +30,7 @@ import {
 } from '@/lib/intents-progress'
 import {
   markNativeZecIntentsSwapTerminal,
+  readNativeZecIntentsStatusViewer,
   readNativeZecIntentsSwapMetadata,
   readNativeZecIntentsSwapStatus
 } from './native-zec-intents-swap'
@@ -136,9 +137,14 @@ export class TransactionMonitor {
           if (
             !needsRelayStatusRecovery({ ...transaction, depositAddress }) ||
             !depositAddress ||
-            (!needsConfidentialSettlement &&
-              Date.now() - transaction.timestamp >= INTENTS_PROGRESS_STALE_MS) ||
             alreadyMonitored.has(depositAddress)
+          ) {
+            continue
+          }
+          if (
+            !needsConfidentialSettlement &&
+            Date.now() - transaction.timestamp >= INTENTS_PROGRESS_STALE_MS &&
+            !this.canRecoverStaleOrder(transaction, accountScope, depositAddress)
           ) {
             continue
           }
@@ -207,6 +213,34 @@ export class TransactionMonitor {
       await this.saveToStorage()
       this.scheduleNextCheck()
       console.log('[TransactionMonitor]', `Restored ${added} pending withdraw monitor(s)`)
+    }
+  }
+
+  private canRecoverStaleOrder(
+    transaction: Transaction,
+    scope: AccountScope,
+    depositAddress: string
+  ): boolean {
+    const binding = transaction.quoteBinding
+    if (!binding || binding.depositAddress !== depositAddress) return false
+    const wallet = useWalletStore
+      .getState()
+      .wallets.find(candidate => candidate.id === scope.walletId)
+    if (!wallet || wallet.keySource === 'ledger' || wallet.keySource === 'keystone') return false
+    if (binding.provider !== 'near-intents' || !binding.refundTo) {
+      return (
+        binding.oneClickOrder?.depositAddress === depositAddress && !!binding.oneClickOrder.viewer
+      )
+    }
+    try {
+      const viewer = readNativeZecIntentsStatusViewer(binding, transaction.network)
+      if (!viewer) return false
+      if (viewer.signingMode === 'derived') return true
+      const account = wallet.accounts.find(candidate => candidate.id === scope.accountId)
+      const addresses = account?.networkAddresses?.[transaction.network] ?? account?.addresses
+      return addresses?.transparent === viewer.walletAddress
+    } catch {
+      return false
     }
   }
 

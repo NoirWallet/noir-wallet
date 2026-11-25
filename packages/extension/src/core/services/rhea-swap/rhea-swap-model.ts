@@ -9,7 +9,7 @@ import type {
   SwapTokenListItem
 } from './rhea-swap-protocol'
 import type { SwapToken } from '@/core/services/intents-api'
-import type { OneClickViewer } from '@/core/services/one-click-order'
+import type { OneClickViewer } from '@/core/services/near-intents/one-click-order'
 import type { SigningSummary } from '@/core/keyring/domain'
 import type { TransactionGraph } from '@/core/transactions/domain'
 import {
@@ -58,7 +58,8 @@ export function rheaSwapReferral(purpose?: PrivateQuotePurpose): string {
 
 export function publicConfidentialRefundViewer(
   fromChain: ChainRef,
-  walletAddress: string
+  walletAddress: string,
+  purpose?: PrivateQuotePurpose
 ): OneClickViewer | undefined {
   if (fromChain === 'zcash') {
     return parseZcashAddress(walletAddress, 'mainnet').scheme === 'zcash-transparent-p2pkh'
@@ -66,7 +67,16 @@ export function publicConfidentialRefundViewer(
       : undefined
   }
   if (/^0x[0-9a-f]{40}$/i.test(walletAddress)) {
-    return { chainFamily: 'evm', walletAddress: walletAddress.toLowerCase(), signingMode: 'public' }
+    const privateRefund =
+      purpose === 'private-transfer' ||
+      purpose === 'private-cross-chain-send' ||
+      purpose === 'private-cross-chain-withdraw' ||
+      purpose === 'private-dapp-transfer'
+    return {
+      chainFamily: 'evm',
+      walletAddress: walletAddress.toLowerCase(),
+      signingMode: privateRefund ? 'private' : 'public'
+    }
   }
 }
 

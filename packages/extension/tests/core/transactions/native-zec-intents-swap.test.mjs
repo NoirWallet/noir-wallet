@@ -14,6 +14,7 @@ globalThis.chrome = {
 const {
   markNativeZecIntentsSwapTerminal,
   NativeZecIntentsSwapCoordinator,
+  readNativeZecIntentsStatusViewer,
   readNativeZecIntentsSwapStatus
 } = await import('../../../src/background/native-zec-intents-swap.ts')
 const { ConfidentialFundingApi } =
@@ -78,6 +79,20 @@ test('native ZEC Intents spend binds the approved quote and survives coordinator
     slippageBps: 50,
     createdAt: Date.now()
   }
+  expect(readNativeZecIntentsStatusViewer(quoteBinding, 'mainnet')).toEqual({
+    chainFamily: 'zcash',
+    walletAddress: refundAddress,
+    signingMode: 'transparent'
+  })
+  expect(
+    readNativeZecIntentsStatusViewer({ ...quoteBinding, refundTo: oldShieldedAddress }, 'mainnet')
+  ).toBeUndefined()
+  expect(
+    readNativeZecIntentsStatusViewer(
+      { ...quoteBinding, refundTo: oldShieldedAddress, oneClickOrder: shieldedOrder },
+      'mainnet'
+    )
+  ).toEqual(shieldedOrder.viewer)
   const values = new Map([
     [`native_zec_intents_swap:${quoteId}`, structuredClone(record)],
     [

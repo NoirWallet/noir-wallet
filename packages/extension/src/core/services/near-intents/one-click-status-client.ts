@@ -1,4 +1,4 @@
-import type { OneClickOrder, OneClickViewer } from '@/core/services/one-click-order'
+import type { OneClickOrder, OneClickViewer } from './one-click-order'
 import { DedupPromise } from '@/lib/async-utils'
 import { FetchHttpError, FetchTimeoutError, fetchJsonWithTimeout } from '@/lib/fetch-utils'
 import type { Network } from '@/types/wallet'

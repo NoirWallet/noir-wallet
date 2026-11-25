@@ -22,7 +22,8 @@ import { assertMainnetProtocolFeature } from '@/lib/runtime-network'
 import Big from 'big.js'
 import { formatUnits } from 'viem'
 import type { QuoteBinding } from '@/types/wallet'
-import { oneClickQuoteViewerFields, type OneClickViewer } from './one-click-order'
+import { parseOneClickDepositMemo, type OneClickViewer } from './near-intents/one-click-order'
+import { requestOneClickQuote } from './near-intents/one-click-quote'
 
 const COINGECKO_MARKETS_API = 'https://api.coingecko.com/api/v3/coins/markets'
 const WALLET_TOKEN_BLOCKCHAINS = new Set(['sol', 'near'])
@@ -291,25 +292,16 @@ export async function fetchIntentsWalletTokens(): Promise<readonly SwapToken[]> 
   return Object.freeze(tokens)
 }
 
-export function parseOneClickDepositMemo(value: unknown): string | undefined {
-  if (value == null || value === '') return undefined
-  if (
-    typeof value !== 'string' ||
-    value.length > 512 ||
-    /[\u0000-\u001f\u007f-\u009f]/.test(value)
-  ) {
-    throw new Error('Invalid Near Intents deposit memo')
-  }
-  return value
-}
-
 export function parseQuoteSuccessResponse(value: unknown): QuoteResult {
   if (!isRecord(value) || !isRecord(value.quote)) {
     throw new Error('Invalid Near Intents quote response')
   }
   const quote = value.quote
   const deadline = readQuoteString(quote.deadline, 'deadline')
-  const depositMemo = parseOneClickDepositMemo(quote.depositMemo)
+  const depositMemo =
+    quote.depositMemo == null || quote.depositMemo === ''
+      ? undefined
+      : parseOneClickDepositMemo(quote.depositMemo, 'Near Intents deposit memo')
   if (!Number.isSafeInteger(Date.parse(deadline))) {
     throw new Error('Invalid Near Intents deadline')
   }
@@ -730,18 +722,15 @@ export async function fetchQuote(params: QuoteParams): Promise<QuoteResult> {
       referral: NOIR_SWAP_REFERRAL,
       quoteWaitingTimeMs: 3000,
       slippageTolerance: params.slippageTolerance ?? 50,
-      appFees: NOIR_SWAP_APP_FEES,
-      ...oneClickQuoteViewerFields(params.viewer)
+      appFees: NOIR_SWAP_APP_FEES
     }
 
-    const response = await fetchWithTimeout(`${oneClickApiUrl}/quote`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(requestBody),
-      timeoutMs: 20000,
-      maxBytes: 1024 * 1024,
-      signal: params.signal
-    })
+    const response = await requestOneClickQuote(
+      oneClickApiUrl,
+      requestBody,
+      (url, init) => fetchWithTimeout(url, { ...init, timeoutMs: 20000, maxBytes: 1024 * 1024 }),
+      { viewer: params.viewer, signal: params.signal }
+    )
 
     const data = await response.json()
 

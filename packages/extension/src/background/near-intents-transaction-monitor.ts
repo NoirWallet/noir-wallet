@@ -6,7 +6,7 @@ import type {
   TransactionAccountScope
 } from '@/core/transactions/domain'
 import { parseSwapStatusResponse } from '@/core/services/intents-api'
-import type { OneClickViewer } from '@/core/services/one-click-order'
+import type { OneClickViewer } from '@/core/services/near-intents/one-click-order'
 import {
   NearIntentsTransactionMonitor,
   parseNearIntentsStatusObservation,

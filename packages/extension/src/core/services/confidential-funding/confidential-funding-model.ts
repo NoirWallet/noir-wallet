@@ -1,5 +1,5 @@
 import type { Network } from '@/types'
-import type { OneClickOrder } from '@/core/services/one-click-order'
+import type { OneClickOrder } from '@/core/services/near-intents/one-click-order'
 import { confidentialPrivateTokenId } from './confidential-funding-portfolio'
 
 export const CONFIDENTIAL_WITHDRAW_MIN_COUNT = 2

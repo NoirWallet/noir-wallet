@@ -6604,7 +6604,11 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
         ? { accountKey: currentAccountKey, walletId: currentWalletId, accountId: currentAccountId }
         : null
     void Promise.allSettled([
-      transactionMonitor.recheckNow(),
+      accountScope && currentNetwork === 'mainnet'
+        ? transactionMonitor
+            .restorePendingWithdrawals([accountScope])
+            .then(() => transactionMonitor.recheckNow())
+        : transactionMonitor.recheckNow(),
       accountScope
         ? zcashTxMonitor
             .restoreStuckWithdrawals([accountScope])

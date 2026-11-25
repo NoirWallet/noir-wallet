@@ -1,5 +1,5 @@
 import type { Network, QuoteBinding } from '@/types/wallet'
-import type { OneClickOrder } from './one-click-order'
+import type { OneClickOrder } from './near-intents/one-click-order'
 
 export interface PrepareNativeZecIntentsSwapInput {
   readonly network: Network

@@ -9,7 +9,6 @@ import type { EvmNetworkConfig } from '@/config/networks'
 import { getNearNetworkConfig, getSolanaNetworkConfig } from '@/config/networks'
 import {
   fetchQuote,
-  parseOneClickDepositMemo,
   parseSwapStatusResponse,
   refreshSwapTokenCatalog,
   type SwapStatus
@@ -21,7 +20,12 @@ import {
 import { resolveManagedIntentsAsset } from '@/core/services/intents-managed-assets'
 import { resolveIntentsEvmChainId } from '@/core/services/intents-evm-assets'
 import { resolveIntentsWalletAsset } from '@/core/services/intents-wallet-assets'
-import type { OneClickOrder, OneClickViewer } from '@/core/services/one-click-order'
+import {
+  createOneClickOrder,
+  parseOneClickDepositMemo,
+  type OneClickOrder,
+  type OneClickViewer
+} from '@/core/services/near-intents/one-click-order'
 import {
   sameNativeZecQuoteBinding,
   zatsToZec,
@@ -74,9 +78,9 @@ function assertNativeZecOrder(
     throw new Error('Native ZEC 1Click order binding is invalid')
   }
   const viewer = order.viewer
+  if (order.depositMemo !== undefined) parseOneClickDepositMemo(order.depositMemo)
   if (
     order.depositAddress !== depositAddress ||
-    parseOneClickDepositMemo(order.depositMemo) !== order.depositMemo ||
     (viewer !== undefined &&
       (!viewer ||
         viewer.chainFamily !== 'zcash' ||
@@ -232,6 +236,21 @@ export async function markNativeZecIntentsSwapTerminal(
   })
 }
 
+export function readNativeZecIntentsStatusViewer(
+  binding: QuoteBinding,
+  network: Network
+): OneClickViewer | undefined {
+  if (binding.provider !== 'near-intents' || !binding.depositAddress || !binding.refundTo) return
+  if (binding.oneClickOrder !== undefined) {
+    assertNativeZecOrder(binding.oneClickOrder, binding.depositAddress, binding.refundTo, network)
+    if (binding.oneClickOrder.viewer) return binding.oneClickOrder.viewer
+  }
+  const refund = parseZcashAddress(binding.refundTo, network)
+  if (refund.scheme === 'zcash-transparent-p2pkh') {
+    return { chainFamily: 'zcash', walletAddress: refund.address, signingMode: 'transparent' }
+  }
+}
+
 export async function readNativeZecIntentsSwapStatus(
   binding: QuoteBinding,
   scope: NativeZecAccountScope & { readonly signal?: AbortSignal }
@@ -251,19 +270,13 @@ export async function readNativeZecIntentsSwapStatus(
   ) {
     throw new Error('Native ZEC Intents status quote binding changed')
   }
-  const storedOrder = binding.oneClickOrder
-  if (storedOrder !== undefined) {
-    assertNativeZecOrder(storedOrder, binding.depositAddress, binding.refundTo, scope.network)
-  }
-  const refund = parseZcashAddress(binding.refundTo, scope.network)
-  if (!storedOrder?.viewer && refund.scheme !== 'zcash-transparent-p2pkh') {
-    return null
-  }
-  const viewer =
-    storedOrder?.viewer ??
-    (await resolveZcashOneClickViewer(scope, binding.refundTo, 'transparent'))
+  const viewer = readNativeZecIntentsStatusViewer(binding, scope.network)
   if (!viewer) return null
-  const order = { ...storedOrder, depositAddress: binding.depositAddress, viewer }
+  const order = createOneClickOrder(
+    binding.depositAddress,
+    binding.oneClickOrder?.depositMemo,
+    viewer
+  )
   const status = await queryOneClickOrderStatus({ ...scope, order })
   return status === null ? null : parseSwapStatusResponse(status, record?.destinationDecimals)
 }
@@ -646,12 +659,7 @@ export class NativeZecIntentsSwapCoordinator {
         throw new Error('Native ZEC Confidential account changed after quoting')
       }
       const quoteId = crypto.randomUUID()
-      const depositMemo = parseOneClickDepositMemo(quote.depositMemo)
-      const oneClickOrder: OneClickOrder = Object.freeze({
-        depositAddress: quote.depositAddress,
-        ...(depositMemo === undefined ? {} : { depositMemo }),
-        ...(viewer ? { viewer: Object.freeze({ ...viewer }) } : {})
-      })
+      const oneClickOrder = createOneClickOrder(quote.depositAddress, quote.depositMemo, viewer)
       assertNativeZecOrder(oneClickOrder, quote.depositAddress, input.refundAddress, input.network)
       const quoteBinding: QuoteBinding = Object.freeze({
         provider: 'near-intents',

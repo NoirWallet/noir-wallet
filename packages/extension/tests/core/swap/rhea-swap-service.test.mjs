@@ -49,7 +49,7 @@ const quoteRequest = Object.freeze({
   recipient: 'alice.near'
 })
 
-test('uses the same 2 bps 1Click route for public confidential transfer quotes and builds', async () => {
+test('uses the 1Click route and refund owner for all basic confidential quotes and builds', async () => {
   const usdcAddress = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913'
   const depositAddress = '0x4444444444444444444444444444444444444444'
   const usdc = { assetId: `nep141:base-${usdcAddress}.omft.near`, symbol: 'USDC', decimals: 6 }
@@ -87,9 +87,14 @@ test('uses the same 2 bps 1Click route for public confidential transfer quotes a
       recipient: request.recipient,
       recipientType: 'DESTINATION_CHAIN'
     })
-    if (!body.dry) expect(body).toMatchObject({ user: request.sender, userChainFamily: 'evm' })
+    if (body.dry || referral === 'noir_swap') {
+      expect(body.user).toBeUndefined()
+      expect(body.userChainFamily).toBeUndefined()
+    } else {
+      expect(body).toMatchObject({ user: request.sender, userChainFamily: 'evm' })
+    }
     if (body.appFees) expect(body.appFees).toEqual(fees)
-    else expect(body.dry).toBe(true)
+    else if (referral !== 'noir_swap') expect(body.dry).toBe(true)
     const appFees =
       repeatFeeInBaseline || (repeatFeeInBuild && !body.dry)
         ? body.appFees
@@ -123,16 +128,28 @@ test('uses the same 2 bps 1Click route for public confidential transfer quotes a
       baseUrl: config.rheaSwapApiUrl,
       publicConfidentialTransfer: adapter
     })
-    const service = new RheaSwapService(client, new MemoryRheaSwapQuoteSessionStore())
+    const sessions = new MemoryRheaSwapQuoteSessionStore()
+    const service = new RheaSwapService(client, sessions)
     const scope = { walletId: 'wallet', accountId: 'account' }
     for (const [purpose, expectedReferral] of [
       ['public-private-send', 'noir_privately'],
-      ['public-private-move', 'noir_move']
+      ['public-private-move', 'noir_move'],
+      ['private-dapp-transfer', 'noir_swap']
     ]) {
       referral = expectedReferral
       const quote = await service.quote(request, undefined, { ...scope, purpose })
-      expect(quote).toMatchObject({ estimatedOut: '999800', minAmountOut: '994801' })
+      const privateRefund = purpose === 'private-dapp-transfer'
+      expect(quote).toMatchObject({
+        estimatedOut: privateRefund ? '1000000' : '999800',
+        minAmountOut: '994801'
+      })
       const review = await service.prepare(quote.quoteHandle)
+      const prepared = await service.readPreparedBuild(quote.quoteHandle)
+      expect(prepared.deposit?.viewer).toEqual({
+        chainFamily: 'evm',
+        walletAddress: request.sender,
+        signingMode: privateRefund ? 'private' : 'public'
+      })
       expect(review).toMatchObject({
         amountIn: request.amountIn,
         estimatedOut: quote.estimatedOut,
@@ -144,14 +161,21 @@ test('uses the same 2 bps 1Click route for public confidential transfer quotes a
         functionName: 'transfer',
         args: [depositAddress, BigInt(request.amountIn)]
       })
-      repeatFeeInBuild = true
-      await expect(service.prepare(quote.quoteHandle)).rejects.toThrow('app fees do not match')
-      repeatFeeInBuild = false
+      if (!privateRefund) {
+        repeatFeeInBuild = true
+        await expect(service.prepare(quote.quoteHandle)).rejects.toThrow('app fees do not match')
+        repeatFeeInBuild = false
+      }
       const sourceHash = `0x${'10'.repeat(32)}`
       const destinationHash = `0x${'20'.repeat(32)}`
       await service.recordTransactionSubmission(quote.quoteHandle, sourceHash)
+      const restarted = new RheaSwapService(client, sessions)
+      await expect(restarted.reportSubmission(quote.quoteHandle)).resolves.toMatchObject({
+        reportStatus: 'reported',
+        orderId: depositAddress
+      })
       status = null
-      await expect(service.getOrderStatus(quote.quoteHandle)).resolves.toMatchObject({
+      await expect(restarted.getOrderStatus(quote.quoteHandle)).resolves.toMatchObject({
         status: 'unknown',
         destinationHash: null
       })
@@ -160,7 +184,11 @@ test('uses the same 2 bps 1Click route for public confidential transfer quotes a
         ...scope,
         order: {
           depositAddress,
-          viewer: { chainFamily: 'evm', walletAddress: request.sender, signingMode: 'public' }
+          viewer: {
+            chainFamily: 'evm',
+            walletAddress: request.sender,
+            signingMode: privateRefund ? 'private' : 'public'
+          }
         }
       })
       status = { status: 'SUCCESS', toHash: destinationHash }
@@ -169,6 +197,7 @@ test('uses the same 2 bps 1Click route for public confidential transfer quotes a
         destinationHash
       })
     }
+    referral = 'noir_move'
     repeatFeeInBaseline = true
     await expect(
       service.quote(request, undefined, { ...scope, purpose: 'public-private-move' })

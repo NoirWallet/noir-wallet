@@ -10,7 +10,7 @@ import { getBitcoinChainId } from '@/core/chains/registry'
 import { readActiveStorageV2Snapshot } from '@/core/keyring/application/active-storage-v2-snapshot'
 import type { KeyDomainId } from '@/core/keyring/domain'
 import type { PreparedSigningCommand, SigningCommandId, SigningResult } from '@/core/keyring/ports'
-import type { OneClickViewer } from '@/core/services/one-click-order'
+import type { OneClickViewer } from '@/core/services/near-intents/one-click-order'
 import { isRetryableWalletRpcError } from '@/core/zcash/wallet-rpc-errors'
 import { detectBitcoinAddressType } from '@/infrastructure/chains/bitcoin/bitcoin-transaction-model'
 import { parseEvmAccountBinding } from '@/infrastructure/chains/evm/evm-account'
@@ -25,7 +25,7 @@ import type {
   OneClickAccount,
   OneClickChallenge,
   OneClickTokenScope
-} from './one-click-status-client'
+} from '@/core/services/near-intents/one-click-status-client'
 
 const storage = new IndexedDbStorageV2Repository()
 const evmSigner = new EvmMultichainSigningClient({ credentials: credentialSession })

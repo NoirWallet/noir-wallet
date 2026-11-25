@@ -26,7 +26,7 @@ import { parseZcashAddress } from '@/core/address-book/address-book'
 import { isValidExternalRecipient } from './confidential-funding-recipient'
 import type { PortfolioReadModel } from '@/core/portfolio'
 import type { SwapToken } from '@/core/services/intents-api'
-import type { OneClickOrder, OneClickViewer } from '@/core/services/one-click-order'
+import type { OneClickOrder, OneClickViewer } from '@/core/services/near-intents/one-click-order'
 import { ZEC_ZCASH_ASSET } from '@/config/intents'
 import {
   resolveIntentsEvmAssets,

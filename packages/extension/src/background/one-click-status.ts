@@ -1,6 +1,9 @@
 import { getConfidentialFundingNetworkConfig } from '@/config/intents'
-import type { OneClickOrder } from '@/core/services/one-click-order'
-import { OneClickStatusClient, type OneClickAccount } from './one-click-status-client'
+import type { OneClickOrder } from '@/core/services/near-intents/one-click-order'
+import {
+  OneClickStatusClient,
+  type OneClickAccount
+} from '@/core/services/near-intents/one-click-status-client'
 import { loadOneClickWallet, resolveOneClickSigner } from './one-click-status-signing'
 import { oneClickStatusTokens } from './one-click-status-tokens'
 

@@ -5,7 +5,7 @@
 export type Network = 'mainnet' | 'testnet'
 
 import type { AccountNetworkFamily } from '@/core/wallet/account-network-selection'
-import type { OneClickOrder } from '@/core/services/one-click-order'
+import type { OneClickOrder } from '@/core/services/near-intents/one-click-order'
 
 export type AddressType = 'transparent' | 'shielded'
 export type FundingSource = AddressType

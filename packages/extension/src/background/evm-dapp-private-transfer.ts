@@ -4,8 +4,12 @@ import type { EvmNetworkConfig } from '@/config/networks'
 import { Eip1193ProviderError } from '@/core/dapp/eip1193'
 import { getConfidentialFundingNetworkConfig } from '@/config/intents'
 import { parseNearIntentsTransactionBinding, parseTransactionId } from '@/core/transactions/domain'
-import { parseOneClickDepositMemo, parseOneClickViewer } from '@/core/transactions/domain/protocol'
-import type { OneClickOrder, OneClickViewer } from '@/core/services/one-click-order'
+import {
+  parseOneClickDepositMemo,
+  parseOneClickViewer,
+  type OneClickOrder,
+  type OneClickViewer
+} from '@/core/services/near-intents/one-click-order'
 import { ConfidentialFundingApi, parseConfidentialOneClickStatus } from './confidential-funding-api'
 import type { queryOneClickOrderStatus } from './one-click-status'
 import {

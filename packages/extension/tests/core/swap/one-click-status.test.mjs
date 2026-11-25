@@ -4,7 +4,7 @@ import {
   OneClickStatusClient,
   oneClickTokenKey,
   parseOneClickChallenge
-} from '../../../src/background/one-click-status-client.ts'
+} from '../../../src/core/services/near-intents/one-click-status-client.ts'
 import { FetchHttpError, FetchTimeoutError } from '../../../src/lib/fetch-utils.ts'
 
 const now = Date.parse('2026-11-25T00:00:00Z')
