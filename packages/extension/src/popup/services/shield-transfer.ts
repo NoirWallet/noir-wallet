@@ -124,12 +124,13 @@ function confidentialHolding(
 }
 
 export function shieldPortfolioBalances(
-  model: PortfolioReadModel | null
+  model: PortfolioReadModel | null,
+  field: 'availableRaw' | 'spendableRaw' = 'availableRaw'
 ): readonly Readonly<{ tokenId: string; available: string }>[] | null {
   return model?.confidential?.status === 'ready'
     ? model.confidential.assets.map(asset => ({
         tokenId: asset.tokenId,
-        available: asset.availableRaw
+        available: asset[field] ?? asset.availableRaw
       }))
     : null
 }
