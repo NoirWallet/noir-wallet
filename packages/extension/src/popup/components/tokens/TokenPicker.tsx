@@ -7,7 +7,6 @@ import { ListSkeleton } from '../ui/skeleton'
 import { SearchInput } from '../ui/input'
 import { Button } from '../ui/button'
 import {
-  hasTokenPickerBalance,
   isExtraTokenPickerAsset,
   sortTokenPickerRows,
   type TokenPickerBalance,
@@ -126,7 +125,7 @@ export function TokenPicker<Row>({
         : orderedRows,
     [orderedRows, deferredNetwork, deferredSearch, adapter]
   )
-  const grouped = policy === 'grouped' || policy === 'grouped-source'
+  const grouped = policy === 'grouped'
   const extras = useMemo(
     () =>
       grouped && balance && !deferredSearch.trim()
@@ -139,16 +138,10 @@ export function TokenPicker<Row>({
     () => (extras?.size && !showExtraAssets ? matching.filter(row => !extras.has(row)) : matching),
     [extras, matching, showExtraAssets]
   )
-  const disabledReason = (row: Row) =>
-    policy === 'grouped-source' && balance && !hasTokenPickerBalance(balance(row))
-      ? 'No available balance'
-      : undefined
   const virtualWindow = useTokenSelectorWindow(
     `${filter?.queryKey ?? `${deferredNetwork}:${deferredSearch}`}:${showExtraAssets}`,
     filtered.length,
-    isDisabled || policy === 'grouped-source'
-      ? index => Boolean(isDisabled?.(filtered[index]!) || disabledReason(filtered[index]!))
-      : undefined
+    isDisabled ? index => isDisabled(filtered[index]!) : undefined
   )
   const entries = useMemo(
     () =>
@@ -324,7 +317,7 @@ export function TokenPicker<Row>({
             {entries.map(({ row, item }, index) => (
               <TokenPickerRow
                 key={item.key}
-                item={{ ...item, disabledReason: item.disabledReason ?? disabledReason(row) }}
+                item={item}
                 selected={selectedKey === item.key}
                 onSelect={() => onSelect(row)}
                 position={{
