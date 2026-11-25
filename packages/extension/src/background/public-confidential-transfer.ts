@@ -9,6 +9,7 @@ import { parseZcashAddress } from '@/core/address-book/address-book'
 import { getEvmRouteAssetIdentity } from '@/core/chains/cross-chain-asset-group'
 import { fetchSwapTokens, type SwapToken } from '@/core/services/intents-api'
 import { isDeprecatedIntentsToken } from '@/core/services/intents-evm-assets'
+import { confidentialQuoteAppFeeBps } from '@/core/services/confidential-funding'
 import type { OneClickOrder, OneClickViewer } from '@/core/services/near-intents/one-click-order'
 import { isEvmNativeQuoteAddress, resolveRheaSwapCanonicalAssetId } from '@/core/services/rhea-swap'
 import type { PublicConfidentialBuildScope } from '@/core/services/rhea-swap/rhea-swap-catalog-client'
@@ -94,6 +95,7 @@ export class PublicConfidentialTransfer {
         router: ROUTER,
         estimatedOut: result.quote.amountOut,
         minAmountOut: result.quote.minAmountOut,
+        appFeeBps: confidentialQuoteAppFeeBps(result),
         expiresAt: Date.parse(result.quote.deadline),
         bridge: {
           provider: ONE_CLICK_CONFIDENTIAL_BRIDGE,

@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useLocation, useNavigate as useRouterNavigate, useSearchParams } from 'react-router-dom'
 import { Icon } from '@iconify/react'
+import { NOIR_PUBLIC_CONFIDENTIAL_TRANSFER_APP_FEES } from '@/config/intents'
 import type { PortfolioAssetView, PortfolioChainView } from '@/core/portfolio'
 import { findAssetPrice, type AssetPriceReadModel } from '@/core/prices'
 import {
@@ -43,6 +44,7 @@ import { TransactionNotice } from '@/popup/components/transaction/TransactionNot
 import { ShieldHardwareTabNotice } from '@/popup/components/transaction/ShieldHardwareTabNotice'
 import { needsShieldHardwareTab } from '@/popup/services/shield-hardware-tab'
 import { AmountDisplay } from '@/popup/components/common/AmountDisplay'
+import { QuoteFeeAmount } from '@/popup/components/transaction/QuoteFeeAmount'
 import { TokenIcon } from '@/popup/components/tokens/TokenIcon'
 import { TokenSelectorDialog } from '@/popup/components/tokens/TokenSelectorDialog'
 import { TokenPicker, type TokenPickerAdapter } from '@/popup/components/tokens/TokenPicker'
@@ -351,11 +353,16 @@ function MethodCard({
           ) : (
             <>
               <span className="block">{fee.value}</span>
-              {fee.detail && <span className="block text-muted">{fee.detail}</span>}
             </>
           )}
         </span>
       </span>
+      {fee.networkFee && !loading && (
+        <span className="mt-2 flex justify-between gap-2">
+          <span className="shrink-0 text-muted">Network fee</span>
+          <span className="min-w-0 break-words text-right">{fee.networkFee}</span>
+        </span>
+      )}
     </button>
   )
 }
@@ -2434,11 +2441,18 @@ function DepositWithdrawForm({
         ? null
         : shieldQuoteFeeRaw(activeShieldReview)
     const routeFee =
-      quoteFeeRaw !== null && BigInt(quoteFeeRaw) > 0n ? (
-        <AmountDisplay
-          value={formatBaseUnitAmount(quoteFeeRaw, selected.asset.metadata.decimals)}
+      quoteFeeRaw !== null && BigInt(quoteFeeRaw) > 0n
+        ? formatBaseUnitDecimalAmount(quoteFeeRaw, selected.asset.metadata.decimals)
+        : null
+    const appFeeBps = activeShieldReview.quoteAppFeeBps ?? 0
+    const quoteFee =
+      routeFee !== null || appFeeBps > 0 ? (
+        <QuoteFeeAmount
+          sourceAmountRaw={activeShieldReview.sourceAmountRaw}
+          decimals={selected.asset.metadata.decimals}
           symbol={symbol}
-          profile="fee"
+          bps={appFeeBps}
+          fallbackAmount={routeFee}
         />
       ) : null
     const networkFee = activeShieldReview.sourceNetworkFee
@@ -2530,11 +2544,11 @@ function DepositWithdrawForm({
             ...(activeShieldReview.operation === 'cluster'
               ? [{ label: 'Split transfers', content: `${activeShieldReview.withdrawCount}` }]
               : []),
-            ...(routeFee ? [{ label: 'Fee', content: routeFee }] : []),
+            ...(quoteFee ? [{ label: 'Fee', content: quoteFee }] : []),
             ...(networkFee
               ? [
                   {
-                    label: routeFee ? 'Max network fee' : 'Fee',
+                    label: 'Network fee',
                     content: activeShieldReview.sourceEvmFee ? (
                       <NetworkFeeTierPicker
                         chainFamily="evm"
@@ -2995,6 +3009,19 @@ function DepositWithdrawForm({
               <p role="status" className="mt-3 text-center text-sm text-muted">
                 No transferable assets
               </p>
+            )}
+            {shieldPair && !clusterSelected && selected && shieldAmountState?.amountRaw && (
+              <div className="mt-3 flex justify-between gap-3 border-t border-border/60 pt-3 text-xs">
+                <span className="text-muted">Fee</span>
+                <span className="text-right">
+                  <QuoteFeeAmount
+                    sourceAmountRaw={shieldAmountState.amountRaw}
+                    decimals={selected.asset.metadata.decimals}
+                    symbol={symbol}
+                    bps={NOIR_PUBLIC_CONFIDENTIAL_TRANSFER_APP_FEES[0]?.fee}
+                  />
+                </span>
+              </div>
             )}
             {selected?.chain.chain.family === 'evm' && clusterPair && (
               <div

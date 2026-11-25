@@ -15,6 +15,7 @@ import {
 } from '@/core/chains/registry'
 import {
   assertConfidentialQuoteBinding,
+  confidentialQuoteAppFeeBps,
   fingerprintConfidentialValue,
   type ConfidentialFundingPlan,
   type ConfidentialFundingReview,
@@ -559,6 +560,9 @@ export class ShieldDappCoordinator {
       sourceAddress: refundTo,
       expectedReceive: formatBaseUnitDecimalAmount(deposit.expectedOutputRaw, source.decimals),
       expectedSymbol: source.symbol,
+      feeSourceAmountRaw: amountRaw,
+      feeSourceDecimals: String(source.decimals),
+      feeBps: String(confidentialQuoteAppFeeBps(deposit.quote)),
       ...(differenceRaw
         ? { quoteDifference: formatBaseUnitDecimalAmount(differenceRaw, source.decimals) }
         : {})
@@ -774,6 +778,9 @@ export class ShieldDappCoordinator {
     expectedReceive: string
     expectedSymbol: string
     quoteDifference?: string
+    feeSourceAmountRaw: string
+    feeSourceDecimals: string
+    feeBps: string
     networkFee?: string
     networkFeeSymbol?: string
   }> {
@@ -787,6 +794,9 @@ export class ShieldDappCoordinator {
       sourceAddress: review.sourceAddress,
       expectedReceive: formatBaseUnitDecimalAmount(review.expectedOutputRaw, destination.decimals),
       expectedSymbol: destination.symbol,
+      feeSourceAmountRaw: review.sourceAmountRaw,
+      feeSourceDecimals: String(source.decimals),
+      feeBps: String(review.quoteAppFeeBps ?? 0),
       ...(differenceRaw
         ? { quoteDifference: formatBaseUnitDecimalAmount(differenceRaw, source.decimals) }
         : {}),

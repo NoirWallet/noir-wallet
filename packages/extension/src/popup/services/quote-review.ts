@@ -15,7 +15,12 @@ export interface QuoteTerms {
 }
 
 export function rheaQuoteTerms(quote: RheaSwapQuoteView): QuoteTerms {
-  return { expected: quote.estimatedOut, minimum: quote.minAmountOut, route: quote.router }
+  return {
+    expected: quote.estimatedOut,
+    minimum: quote.minAmountOut,
+    route: quote.router,
+    ...(quote.appFeeBps !== undefined ? { appFeeBps: quote.appFeeBps } : {})
+  }
 }
 
 export function confidentialQuoteTerms(
@@ -33,6 +38,13 @@ export function confidentialQuoteTerms(
         minimum: quote.minimumOutputRaw,
         appFeeBps: quote.appFeeBps
       }
+}
+
+export function shieldSwapPreviewTerms(
+  preview: ConfidentialFundingPreview,
+  operation: ConfidentialFundingReview['operation']
+): QuoteTerms {
+  return operation === 'swap' ? { appFeeBps: preview.appFeeBps } : confidentialQuoteTerms(preview)
 }
 
 export function nativeZecQuoteTerms(quote: NativeZecIntentsSwapReview): QuoteTerms {

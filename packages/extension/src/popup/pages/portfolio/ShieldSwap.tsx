@@ -36,6 +36,7 @@ import {
 } from '@/popup/components/swap/SwapInputView'
 import { estimateSwapOutputFromPrices, getSwapAmountValues } from '@/popup/services/swap-estimate'
 import { AmountDisplay } from '@/popup/components/common/AmountDisplay'
+import { QuoteFeeAmount } from '@/popup/components/transaction/QuoteFeeAmount'
 import { TransactionNotice } from '@/popup/components/transaction/TransactionNotice'
 import { ShieldHardwareTabNotice } from '@/popup/components/transaction/ShieldHardwareTabNotice'
 import { needsShieldHardwareTab } from '@/popup/services/shield-hardware-tab'
@@ -104,7 +105,11 @@ import {
 } from '@/popup/services/shield-swap-zec-sources'
 import { ZEC_DECIMALS } from '@/config/wallet'
 import { ZEC_ZCASH_ASSET } from '@/config/intents'
-import { confidentialQuoteTerms, quoteReviewPrimaryAction } from '@/popup/services/quote-review'
+import {
+  confidentialQuoteTerms,
+  quoteReviewPrimaryAction,
+  shieldSwapPreviewTerms
+} from '@/popup/services/quote-review'
 
 function shieldSwapQuoteErrorMessage(cause: unknown): string {
   const quoteMessage = getSwapQuoteFailureMessage(cause)
@@ -711,7 +716,6 @@ function ShieldSwapForm({
     setBusy(true)
     setError(null)
     quoteReview.reset()
-    quoteReview.begin(draftKey, confidentialQuoteTerms(preview))
     try {
       const request = buildShieldSwapRequest({
         network,
@@ -725,6 +729,7 @@ function ShieldSwapForm({
         nativeZecFundingSource: nativeZecDestination ?? undefined,
         slippageBps
       })
+      quoteReview.begin(draftKey, shieldSwapPreviewTerms(preview, request.operation))
       const review = await confidentialFundingClient.prepare(request)
       if (!draftStillCurrent()) {
         if (review.phase === 'prepared')
@@ -1047,11 +1052,11 @@ function ShieldSwapForm({
     const feeAmount =
       !prepared.review.quoteWithdrawFeeRaw || prepared.review.quoteWithdrawFeeRaw === '0'
         ? null
-        : formatBaseUnitAmount(
+        : formatBaseUnitDecimalAmount(
             prepared.review.quoteWithdrawFeeRaw,
             prepared.to.asset.metadata.decimals
           )
-    const feePercent = (prepared.review.quoteAppFeeBps ?? 0) / 100
+    const appFeeBps = prepared.review.quoteAppFeeBps ?? 0
     const currentRate = formatShieldSwapPreviewRate(
       prepared.amount,
       prepared.review.expectedOutputRaw,
@@ -1154,14 +1159,21 @@ function ShieldSwapForm({
             },
             ...(showReviewMore
               ? [
-                  ...(feePercent > 0 || feeAmount !== null
+                  ...(appFeeBps > 0 || feeAmount !== null
                     ? [
                         {
                           label: 'Fee',
                           content: (
                             <>
-                              {feePercent > 0 && `${feePercent}%`}
-                              {feePercent > 0 && feeAmount !== null && ' + '}
+                              {appFeeBps > 0 && (
+                                <QuoteFeeAmount
+                                  sourceAmountRaw={prepared.review.sourceAmountRaw}
+                                  decimals={prepared.from.asset.metadata.decimals}
+                                  symbol={prepared.from.asset.metadata.symbol}
+                                  bps={appFeeBps}
+                                />
+                              )}
+                              {appFeeBps > 0 && feeAmount !== null && ' + '}
                               {feeAmount !== null && (
                                 <AmountDisplay
                                   value={feeAmount}
@@ -1311,7 +1323,7 @@ function ShieldSwapForm({
           isAmountLoading={previewLoading}
           isEstimatedAmount={previewLoading && Boolean(displayOutput)}
         />
-        {preview && from && to && previewOutput && (
+        {preview && previewRequest && from && to && previewOutput && (
           <SwapProviderCard
             slippage={slippage}
             providerName="near-confidential"
@@ -1323,7 +1335,14 @@ function ShieldSwapForm({
                   {preview.appFeeBps !== undefined && (
                     <div className="flex items-center justify-between gap-2">
                       <span>Fee</span>
-                      <span className="text-foreground">{preview.appFeeBps / 100}%</span>
+                      <span className="text-right text-foreground">
+                        <QuoteFeeAmount
+                          sourceAmountRaw={previewRequest.source.amountRaw}
+                          decimals={from.asset.metadata.decimals}
+                          symbol={from.asset.metadata.symbol}
+                          bps={preview.appFeeBps}
+                        />
+                      </span>
                     </div>
                   )}
                   {preview.timeEstimateSeconds !== undefined && (

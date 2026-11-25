@@ -143,7 +143,7 @@ function ReplacementReviewContent({
             {originalAmount}
           </TransactionActionRow>
         )}
-        <TransactionActionRow label="Fee">
+        <TransactionActionRow label="Network fee">
           <NetworkFeeTierPicker
             chainFamily="evm"
             tier={selection.kind === 'tier' ? selection.tier : 'standard'}

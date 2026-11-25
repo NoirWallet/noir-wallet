@@ -57,6 +57,7 @@ import {
   createExternalShieldDepositGraph,
   fingerprintConfidentialValue,
   fingerprintDirectConfidentialApproval,
+  confidentialQuoteAppFeeBps,
   filterConfidentialPortfolioMappings,
   getConfidentialAvailableForAsset,
   mergeConfidentialBalancesIntoPortfolio,
@@ -527,6 +528,8 @@ function reviewFromPlan(
         : plan.operation === 'withdraw'
           ? plan.quoteTimeEstimateSeconds
           : undefined
+  const quoteAppFeeBps =
+    plan.reviewedAppFeeBps ?? confidentialQuoteAppFeeBps(plan.swapQuote ?? plan.depositQuote)
   return Object.freeze({
     planId: plan.planId,
     ...(plan.purpose ? { purpose: plan.purpose } : {}),
@@ -554,6 +557,9 @@ function reviewFromPlan(
     ...(validQuoteTimeEstimateSeconds(quoteTimeEstimateSeconds)
       ? { quoteTimeEstimateSeconds }
       : {}),
+    ...(quoteAppFeeBps > 0 || plan.operation === 'swap' || plan.purpose === 'native-zec-swap'
+      ? { quoteAppFeeBps }
+      : {}),
     ...(plan.operation === 'swap' || plan.purpose === 'native-zec-swap'
       ? {
           slippageBps: plan.slippageBps,
@@ -562,19 +568,7 @@ function reviewFromPlan(
             : {}),
           ...(plan.swapQuote?.quote.refundFee !== undefined
             ? { quoteRefundFeeRaw: plan.swapQuote.quote.refundFee }
-            : {}),
-          quoteAppFeeBps: Array.isArray(plan.swapQuote?.quoteRequest.appFees)
-            ? plan.swapQuote.quoteRequest.appFees.reduce(
-                (total: number, fee: unknown) =>
-                  total +
-                  (fee &&
-                  typeof fee === 'object' &&
-                  typeof (fee as { fee?: unknown }).fee === 'number'
-                    ? (fee as { fee: number }).fee
-                    : 0),
-                0
-              )
-            : 0
+            : {})
         }
       : {}),
     ...(prepared && sourceFeeAsset
@@ -1641,7 +1635,7 @@ export class ConfidentialFundingCoordinator {
     if (!Number.isSafeInteger(expiresAt) || expiresAt <= this.now()) {
       throw new Error('Confidential quote has expired')
     }
-    const appFeeBps = readConfidentialQuoteAppFees(quote).reduce((sum, fee) => sum + fee.fee, 0)
+    const appFeeBps = confidentialQuoteAppFeeBps(quote)
     return Object.freeze({
       amountOutRaw: quote.quote.amountOut,
       minimumOutputRaw: quote.quote.minAmountOut,
@@ -2302,7 +2296,8 @@ export class ConfidentialFundingCoordinator {
         ? {
             reviewedAppFeesFingerprint: await fingerprintDirectConfidentialApproval([
               readConfidentialQuoteAppFees(quote)
-            ])
+            ]),
+            reviewedAppFeeBps: confidentialQuoteAppFeeBps(quote)
           }
         : {}),
       approvalFingerprint: '0'.repeat(64),

@@ -1,5 +1,6 @@
 import {
   CONFIDENTIAL_FUNDING_PURPOSES,
+  confidentialQuoteAppFeeBps,
   type ConfidentialFundingPhase,
   type ConfidentialFundingPlan,
   type ConfidentialFundingPreview,
@@ -27,7 +28,7 @@ export type ConfidentialBalanceErrorCode =
   | 'account_unavailable'
   | 'balance_unavailable'
 export type ExternalShieldDeposit = Omit<StoredExternalShieldDeposit, 'quote'> &
-  Readonly<{ minimumInputRaw?: string }>
+  Readonly<{ minimumInputRaw?: string; quoteAppFeeBps?: number }>
 export type { CreateExternalShieldDepositInput, ExternalShieldDepositScope }
 
 export { CONFIDENTIAL_SESSION_REQUIRED_ERROR as CONFIDENTIAL_PREVIEW_CONNECTION_ERROR } from '@/core/services/confidential-funding'
@@ -221,6 +222,10 @@ function parseReview(value: unknown): ConfidentialFundingReview {
     !/^\d+$/.test(review.sourceAmountRaw) ||
     !/^\d+$/.test(review.expectedOutputRaw) ||
     !/^\d+$/.test(review.minimumOutputRaw) ||
+    (review.quoteAppFeeBps !== undefined &&
+      (!Number.isSafeInteger(review.quoteAppFeeBps) ||
+        review.quoteAppFeeBps < 0 ||
+        review.quoteAppFeeBps > 10_000)) ||
     !/^0x[0-9a-fA-F]{40}$/.test(review.sourceAddress) ||
     (review.externalRecipient === undefined &&
       !/^0x[0-9a-fA-F]{40}$/.test(review.destinationAddress)) ||
@@ -394,8 +399,13 @@ function parseExternalDeposit(value: unknown): ExternalShieldDeposit {
   }
   const { quote, ...view } = value
   const minimumInputRaw = isRecord(quote) && isRecord(quote.quote) ? quote.quote.minAmountIn : null
+  const quoteAppFeeBps =
+    isRecord(quote) && isRecord(quote.quoteRequest)
+      ? confidentialQuoteAppFeeBps({ quoteRequest: quote.quoteRequest })
+      : 0
   return Object.freeze({
     ...view,
+    ...(quoteAppFeeBps > 0 ? { quoteAppFeeBps } : {}),
     ...(value.amountMode === 'minimum' &&
     typeof minimumInputRaw === 'string' &&
     /^[1-9]\d{0,77}$/.test(minimumInputRaw)

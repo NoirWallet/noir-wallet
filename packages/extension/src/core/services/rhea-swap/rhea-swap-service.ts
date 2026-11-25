@@ -1260,11 +1260,15 @@ export class RheaSwapService {
 
   private toQuoteView(record: RheaSwapQuoteSessionRecord, quote: Quote): RheaSwapQuoteView {
     if (!record.request.recipient) throw new Error('RHEA Swap quote is missing its recipient')
+    const bps = record.request.confidentiality === 'basic' ? quote.route.raw.appFeeBps : undefined
     return Object.freeze({
       quoteHandle: record.quoteHandle,
       recipient: record.request.recipient,
       estimatedOut: quote.estimatedOut,
       minAmountOut: quote.minAmountOut,
+      ...(typeof bps === 'number' && Number.isSafeInteger(bps) && bps >= 0 && bps <= 10_000
+        ? { appFeeBps: bps }
+        : {}),
       router: quote.route.router,
       alternatives: Object.freeze(
         this.selectableAlternatives(quote).map((route, index) =>

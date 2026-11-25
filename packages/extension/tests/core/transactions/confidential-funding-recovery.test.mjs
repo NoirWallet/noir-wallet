@@ -1838,6 +1838,7 @@ test.describe('confidential funding persisted recovery', () => {
       ...base,
       planId: 'credited-cluster',
       operation: 'cluster',
+      reviewedAppFeeBps: undefined,
       sourceDomain: 'public',
       destinationDomain: 'private',
       phase: 'signing-withdraws',

@@ -21,6 +21,7 @@ import {
   useCopyToClipboard
 } from '@/popup/components/common/CopyToast'
 import { TransactionNotice } from '@/popup/components/transaction/TransactionNotice'
+import { QuoteFeeAmount } from '@/popup/components/transaction/QuoteFeeAmount'
 import { Skeleton } from '@/popup/components/ui/skeleton'
 import { ShieldProviderLogo, SHIELD_PROVIDERS } from './shield-providers'
 import { TokenIcon } from '@/popup/components/tokens/TokenIcon'
@@ -147,6 +148,7 @@ export function ShieldReceiveAddress({
       : null
   const payment = currentRecord ? depositPaymentProgress(currentRecord, now) : null
   const canPay = payment?.canPay ?? false
+  const appFeeBps = currentRecord?.quoteAppFeeBps ?? 0
   const refundAddress = defaultDepositRefundAddress(asset?.chain ?? null, account?.networks ?? [])
   const sourceAssetId = asset ? depositSourceAssetId(asset.token, asset.chain) : null
   const nearReady =
@@ -594,6 +596,19 @@ export function ShieldReceiveAddress({
           {showRefundInfo && (!inline || !canPay || payment?.hasDeposit) && (
             <p className="mt-2 text-xs text-muted">
               If this deposit cannot complete, funds return to this address on the sending network.
+            </p>
+          )}
+          {canPay && appFeeBps > 0 && currentRecord.amountMode !== 'minimum' && (
+            <p className="mt-2 flex justify-between gap-3 text-xs">
+              <span className="text-muted">Fee</span>
+              <span className="text-right">
+                <QuoteFeeAmount
+                  sourceAmountRaw={currentRecord.amountRaw}
+                  decimals={currentRecord.sourceDecimals}
+                  symbol={symbol}
+                  bps={appFeeBps}
+                />
+              </span>
             </p>
           )}
           {(!canPay || payment?.hasDeposit) && (

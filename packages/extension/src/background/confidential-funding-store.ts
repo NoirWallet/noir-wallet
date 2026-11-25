@@ -299,6 +299,11 @@ function parsePlan(value: unknown): ConfidentialFundingPlan {
     (plan.reviewedAppFeesFingerprint !== undefined &&
       ((plan.operation !== 'withdraw' && plan.operation !== 'cluster') ||
         !/^[0-9a-f]{64}$/.test(plan.reviewedAppFeesFingerprint))) ||
+    (plan.reviewedAppFeeBps !== undefined &&
+      (plan.operation !== 'withdraw' ||
+        !Number.isSafeInteger(plan.reviewedAppFeeBps) ||
+        plan.reviewedAppFeeBps < 0 ||
+        plan.reviewedAppFeeBps > 10_000)) ||
     (plan.operation === 'cluster' &&
       (!['public', 'private', 'shield'].includes(plan.sourceDomain ?? '') ||
         !['public', 'private'].includes(plan.destinationDomain ?? '') ||

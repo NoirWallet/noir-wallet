@@ -20,6 +20,7 @@ import {
   compareQuoteTerms,
   isQuoteReviewAccepted,
   quoteReviewActionLabel,
+  shieldSwapPreviewTerms,
   stageQuoteReview
 } from '../../../src/popup/services/quote-review.ts'
 import {
@@ -633,6 +634,49 @@ it('keeps an explicit preview baseline across replacement quotes with a lower mi
     'Accept new route'
   )
   assert.deepEqual(compareQuoteTerms(baseline, { ...baseline, withdrawFee: '1' }), [])
+})
+
+it('uses the first firm Shield Swap price and still requires consent for later price changes', () => {
+  const preview = {
+    amountOutRaw: '3098100',
+    minimumOutputRaw: '3067100',
+    appFeeBps: 20,
+    expiresAt: 15_000
+  }
+  const session = {
+    scope: 'shield-swap',
+    baseline: shieldSwapPreviewTerms(preview, 'swap'),
+    candidate: null
+  }
+  const firmQuote = {
+    id: 'firm-quote',
+    terms: { expected: '3098300', minimum: '3067317', appFeeBps: 20 },
+    expiresAt: 20_000
+  }
+  const initial = stageQuoteReview(session, session.scope, firmQuote)
+  assert.equal(isQuoteReviewAccepted(initial, session.scope, firmQuote.id, 10_000), true)
+
+  const refreshedQuote = {
+    ...firmQuote,
+    id: 'refreshed-quote',
+    terms: { ...firmQuote.terms, minimum: '3067000' }
+  }
+  const refreshed = stageQuoteReview(initial, session.scope, refreshedQuote)
+  assert.equal(isQuoteReviewAccepted(refreshed, session.scope, refreshedQuote.id, 10_000), false)
+  assert.deepEqual(compareQuoteTerms(refreshed.baseline, refreshedQuote.terms), [
+    { field: 'minimum', previous: '3067317', current: '3067000' }
+  ])
+
+  const changedFee = { ...firmQuote, terms: { ...firmQuote.terms, appFeeBps: 30 } }
+  const initialWithChangedFee = stageQuoteReview(session, session.scope, changedFee)
+  assert.equal(
+    isQuoteReviewAccepted(initialWithChangedFee, session.scope, firmQuote.id, 10_000),
+    false
+  )
+
+  const withdrawSession = { ...session, baseline: shieldSwapPreviewTerms(preview, 'withdraw') }
+  const changedWithdraw = stageQuoteReview(withdrawSession, session.scope, firmQuote)
+  assert.equal(isQuoteReviewAccepted(changedWithdraw, session.scope, firmQuote.id, 10_000), false)
 })
 
 it('binds the Public to Private preview to its account, quote inputs and fee context', () => {
