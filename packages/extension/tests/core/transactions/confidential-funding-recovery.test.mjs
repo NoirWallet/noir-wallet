@@ -28,6 +28,29 @@ const signerId = '0x1111111111111111111111111111111111111111'
 const peaAddress = '0x2222222222222222222222222222222222222222'
 const now = 1_000
 
+function ownerOrder(depositAddress, walletAddress = signerId) {
+  return {
+    depositAddress,
+    viewer: {
+      chainFamily: 'evm',
+      walletAddress,
+      signingMode: walletAddress === peaAddress ? 'private' : 'public'
+    }
+  }
+}
+
+function ownerStatus({ status, settledAmountOutRaw, transactionHash }) {
+  return {
+    status,
+    ...(settledAmountOutRaw ? { swapDetails: { amountOut: settledAmountOutRaw } } : {}),
+    ...(transactionHash ? { toHash: transactionHash } : {})
+  }
+}
+
+function settlementHash(sequence) {
+  return `0x${String(sequence + 1).repeat(64)}`
+}
+
 class SignedTransactionRepository extends InMemoryTransactionRepository {
   async create(graph) {
     assertPersistableTransactionGraph(parseTransactionGraph(graph))
@@ -47,6 +70,7 @@ async function harness(
     sourceAmountRaw: '1000',
     amountRaw: '990',
     depositAddress: `deposit-${sequence}.near`,
+    oneClickOrder: ownerOrder(`deposit-${sequence}.near`),
     destinationAddress: peaAddress,
     destinationChain: 'eth',
     token: 'nep141:eth.omft.near',
@@ -116,6 +140,7 @@ async function harness(
       ? {
           depositQuote: {
             correlationId: 'deposit-quote',
+            oneClickOrder: ownerOrder('origin-deposit.near'),
             quoteRequest: {},
             quote: {
               amountIn: '3000',
@@ -269,7 +294,7 @@ async function harness(
           ? { settledAmountOutRaw: state.settledOutputs.get(sequence) }
           : {}),
         ...(status === 'SUCCESS' || state.processingHashes.has(sequence)
-          ? { transactionHash: `hash-${sequence}` }
+          ? { transactionHash: settlementHash(sequence) }
           : {})
       }
     },
@@ -358,6 +383,8 @@ async function harness(
     new ConfidentialFundingCoordinator({
       network: 'mainnet',
       api,
+      queryOneClickOrderStatus: async ({ order }) =>
+        ownerStatus(await api.getStatus(order.depositAddress)),
       store,
       signer,
       repository,
@@ -483,6 +510,9 @@ function directPreparationHarness(protocolTokens, getNativeZecActiveAccount) {
       state.lastQuoteDeadline = new Date(state.now + 60_000).toISOString()
       return {
         correlationId: 'quote-one',
+        ...(!input.dry
+          ? { oneClickOrder: ownerOrder('deposit.near', input.viewer?.walletAddress) }
+          : {}),
         quoteRequest: {
           swapType: 'EXACT_INPUT',
           confidentiality: 'basic',
@@ -541,6 +571,7 @@ function directPreparationHarness(protocolTokens, getNativeZecActiveAccount) {
     network: 'mainnet',
     getNativeZecActiveAccount,
     api,
+    queryOneClickOrderStatus: async () => ownerStatus(await api.getStatus()),
     store,
     signer,
     repository,
@@ -1431,6 +1462,7 @@ test.describe('confidential funding persisted recovery', () => {
       }),
       quote: async input => ({
         correlationId: 'quote-one',
+        oneClickOrder: ownerOrder(depositAddress, input.viewer.walletAddress),
         quoteRequest: {
           swapType: 'EXACT_INPUT',
           confidentiality: 'basic',
@@ -1457,6 +1489,7 @@ test.describe('confidential funding persisted recovery', () => {
     const coordinator = new ConfidentialFundingCoordinator({
       network: 'mainnet',
       api,
+      queryOneClickOrderStatus: async () => ownerStatus(await api.getStatus()),
       store,
       signer,
       repository,
@@ -1840,6 +1873,7 @@ test.describe('confidential funding persisted recovery', () => {
       confidentialBaselineRaw: '0',
       depositQuote: {
         correlationId: 'quote-one',
+        oneClickOrder: ownerOrder(depositAddress),
         quoteRequest: {},
         quote: {
           amountIn: '1000',
@@ -1890,8 +1924,8 @@ test.describe('confidential funding persisted recovery', () => {
     })
     const coordinator = new ConfidentialFundingCoordinator({
       network: 'mainnet',
+      queryOneClickOrderStatus: async () => ({ status: 'REFUNDED' }),
       api: {
-        getStatus: async () => ({ status: 'REFUNDED' }),
         getBalances: async () => []
       },
       store: {
@@ -2174,6 +2208,7 @@ test.describe('confidential funding persisted recovery', () => {
     const planId = 'settled-direct-deposit'
     const transactionId = `tx:confidential:${planId}`
     const protocolAssetId = 'nep141:eth.omft.near'
+    const depositAddress = '0x3333333333333333333333333333333333333333'
     const transactionHash = `0x${'cd'.repeat(32)}`
     let plan = serializeConfidentialFundingPlan({
       schemaVersion: 1,
@@ -2207,12 +2242,13 @@ test.describe('confidential funding persisted recovery', () => {
       confidentialBaselineRaw: '0',
       depositQuote: {
         correlationId: 'quote-one',
+        oneClickOrder: ownerOrder(depositAddress),
         quoteRequest: {},
         quote: {
           amountIn: '1000',
           amountOut: '990',
           minAmountOut: '980',
-          depositAddress: '0x3333333333333333333333333333333333333333',
+          depositAddress,
           deadline: new Date(60_000).toISOString()
         }
       },
@@ -2260,11 +2296,11 @@ test.describe('confidential funding persisted recovery', () => {
     const coordinatorFor = (originReady, providerStatus, balancesFail = false) =>
       new ConfidentialFundingCoordinator({
         network: 'mainnet',
+        queryOneClickOrderStatus: async () =>
+          providerStatus === 'SUCCESS'
+            ? { status: 'SUCCESS', swapDetails: { amountOut: '980' } }
+            : { status: 'PROCESSING' },
         api: {
-          getStatus: async () =>
-            providerStatus === 'SUCCESS'
-              ? { status: 'SUCCESS', settledAmountOutRaw: '980' }
-              : { status: 'PROCESSING' },
           getBalances: async () => {
             if (balancesFail) throw new Error('balance service unavailable')
             return [{ tokenId: confidentialPrivateTokenId(protocolAssetId), available: '5000' }]
@@ -2684,7 +2720,7 @@ test.describe('confidential funding persisted recovery', () => {
       'SUCCESS',
       'PROCESSING'
     ])
-    expect(intermediate.withdraws[0].transactionHash).toBe('hash-0')
+    expect(intermediate.withdraws[0].transactionHash).toBe(settlementHash(0))
     expect(h.state.refreshTargets).toEqual([
       confidentialTarget,
       chainTarget,
@@ -2694,7 +2730,7 @@ test.describe('confidential funding persisted recovery', () => {
     h.state.statuses = ['FAILED', 'PROCESSING', 'SUCCESS']
     const ready = await h.restart().continuePlan(h.initial.planId)
     expect(ready.phase).toBe('ready')
-    expect(ready.withdraws.map(row => row.transactionHash)).toEqual(['hash-0', 'hash-1', 'hash-2'])
+    expect(ready.withdraws.map(row => row.transactionHash)).toEqual([0, 1, 2].map(settlementHash))
     expect(ready.withdraws.map(row => row.settledOutputRaw)).toEqual(['80', '90', '100'])
     const graph = await h.repository.get(scope, h.initial.transactionId)
     expect(graph.root.status).toBe('final')
@@ -2772,11 +2808,11 @@ test.describe('confidential funding persisted recovery', () => {
     h.state.processingHashes.add(0)
     const pending = await h.restart().continuePlan(h.initial.planId)
     expect(pending.phase).toBe('processing')
-    expect(pending.withdraws[0].transactionHash).toBe('hash-0')
+    expect(pending.withdraws[0].transactionHash).toBe(settlementHash(0))
     const graph = await h.repository.get(scope, h.initial.transactionId)
     expect(graph.segments.find(segment => segment.id.endsWith(':withdraw:0'))).toMatchObject({
       status: 'confirming',
-      evidence: { transactionHash: 'hash-0' }
+      evidence: { transactionHash: settlementHash(0) }
     })
   })
 

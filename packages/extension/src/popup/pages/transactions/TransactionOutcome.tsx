@@ -6,7 +6,6 @@ import { useTransactionResultStore } from '@/store/transaction-result-store'
 import { useAccountDataStore } from '@/store/account-data-store'
 import { useWalletStore } from '@/store/wallet-store'
 import { useLocation, useNavigate } from '../../provider/Router'
-import { pollingSwapStatus } from '@/core/services/intents-api'
 import {
   getConfirmationFailureResultCopy,
   getConfirmedTransactionResultCopy,
@@ -198,10 +197,7 @@ export function TransactionOutcome() {
   const rheaQuoteHandle = data?.type === 'swap' ? data.rheaQuoteHandle : undefined
   const nativeIntentsInternalDestination =
     data?.type === 'swap' && data.nativeIntentsInternalDestination === true
-  const nativeIntentsQuoteHandle =
-    nativeIntentsInternalDestination && data.type === 'swap'
-      ? data.nativeIntentsQuoteHandle
-      : undefined
+  const nativeIntentsQuoteHandle = data?.type === 'swap' ? data.nativeIntentsQuoteHandle : undefined
   const waitsForZcashDestination =
     data?.type === 'swap' &&
     !nativeIntentsInternalDestination &&
@@ -356,32 +352,7 @@ export function TransactionOutcome() {
   }, [confidentialFundingPlanId, updateConfidentialFunding])
 
   useEffect(() => {
-    if (
-      nativeIntentsInternalDestination ||
-      swapStatusPollingProvider !== 'near-intents' ||
-      !swapDepositAddress
-    )
-      return
-
-    const controller = new AbortController()
-    void pollingSwapStatus(swapDepositAddress, status => updateSwapStatus(status), {
-      interval: 5_000,
-      signal: controller.signal
-    }).catch(error => {
-      if (error instanceof DOMException && error.name === 'AbortError') return
-      console.error('[TransactionOutcome] Status polling failed:', error)
-    })
-
-    return () => controller.abort()
-  }, [
-    nativeIntentsInternalDestination,
-    swapDepositAddress,
-    swapStatusPollingProvider,
-    updateSwapStatus
-  ])
-
-  useEffect(() => {
-    if (!nativeIntentsInternalDestination || !nativeIntentsQuoteHandle) return
+    if (!nativeIntentsQuoteHandle) return
     let active = true
     let timer: ReturnType<typeof setTimeout> | undefined
     const recheck = async () => {
@@ -392,7 +363,6 @@ export function TransactionOutcome() {
         const wallet = useWalletStore.getState()
         if (
           current?.type !== 'swap' ||
-          !current.nativeIntentsInternalDestination ||
           current.nativeIntentsQuoteHandle !== nativeIntentsQuoteHandle ||
           wallet.currentNetwork !== currentNetwork ||
           wallet.currentWalletId !== effectiveWalletId ||
@@ -414,7 +384,6 @@ export function TransactionOutcome() {
       if (timer !== undefined) clearTimeout(timer)
     }
   }, [
-    nativeIntentsInternalDestination,
     nativeIntentsQuoteHandle,
     currentNetwork,
     effectiveWalletId,

@@ -31,10 +31,6 @@ const txSyncSource = readFileSync(
   new URL('../../../src/background/tx-sync.ts', import.meta.url),
   'utf-8'
 )
-const resultStoreSource = readFileSync(
-  new URL('../../../src/store/transaction-result-store.ts', import.meta.url),
-  'utf-8'
-)
 const swapSource = readFileSync(
   new URL('../../../src/popup/pages/swap/Swap.tsx', import.meta.url),
   'utf-8'
@@ -157,10 +153,7 @@ describe('Cross-chain transaction lifecycle regressions', () => {
     )
   })
 
-  it('polls an open cross-chain result every five seconds with cancellation', () => {
-    assert.match(resultStoreSource, /depositAddress:\s*string/)
-    assert.match(swapSource, /type:\s*'swap',[\s\S]*?depositAddress:\s*swap\.depositAddress/)
-    assert.match(resultPageSource, /pollingSwapStatus\([\s\S]*?interval:\s*5_000/)
+  it('tracks Zcash destination confirmations to spendability and cancels on cleanup', () => {
     assert.match(
       resultPageSource,
       /pollingTransactionConfirmations\([\s\S]*?SPENDABILITY_CONFIRMATIONS/
