@@ -1,7 +1,9 @@
 import type { ChainId } from '@/core/chains/domain'
 import { supportsEvmConfidentialShield } from '@/core/chains/evm'
 import type { ConfidentialSignedPayload } from '@/core/services/confidential-funding'
-import { hexToBytes, toHex, verifyMessage, type Hex } from 'viem'
+import { secp256k1 } from '@noble/curves/secp256k1'
+import { hashMessage, hexToBytes, toHex, type Hex } from 'viem'
+import { publicKeyToAddress } from 'viem/accounts'
 import { parseEvmAccountBinding, type ActiveEvmPortfolioContext } from '@/infrastructure/chains/evm'
 import {
   assertEvmSigningSummaryMatchesPrepared,
@@ -44,7 +46,7 @@ function encodeBase58(bytes: Uint8Array): string {
   return output
 }
 
-function normalizeSignature(value: string): string {
+function parseSignature(value: string): Uint8Array {
   const hex = value.replace(/^0x/, '')
   if (!/^[0-9a-fA-F]{130}$/.test(hex)) throw new Error('Confidential ERC-191 signature is invalid')
   const bytes = Uint8Array.from(hex.match(/.{2}/g) ?? [], byte => Number.parseInt(byte, 16))
@@ -52,6 +54,10 @@ function normalizeSignature(value: string): string {
   if (bytes[64] !== 0 && bytes[64] !== 1) {
     throw new Error('Confidential ERC-191 signature recovery byte is invalid')
   }
+  return bytes
+}
+
+function encodeSignature(bytes: Uint8Array): string {
   return `secp256k1:${encodeBase58(bytes)}`
 }
 
@@ -172,18 +178,21 @@ export class ConfidentialFundingSigner {
         await digestLedgerPayload(bytes),
         Math.min(input.expiresAt ?? Infinity, Date.now() + 5 * 60_000)
       )
-      const signature = normalizeSignature(signatureHex)
-      if (
-        !(await verifyMessage({
-          address: input.identity.address as Hex,
-          message: { raw: messageHex },
-          signature: signatureHex as Hex
-        }))
-      ) {
+      const signature = parseSignature(signatureHex)
+      const messageHash = hashMessage({ raw: messageHex })
+      const publicKey = secp256k1.Signature.fromCompact(signature.subarray(0, 64))
+        .addRecoveryBit(signature[64])
+        .recoverPublicKey(messageHash.slice(2))
+        .toHex(false)
+      if (publicKeyToAddress(`0x${publicKey}`).toLowerCase() !== input.identity.address) {
         throw new Error('Confidential signature does not match the active EVM account')
       }
       await this.assertCurrentIdentity(input.identity, input.chainId)
-      return Object.freeze({ standard: 'erc191', payload: input.payload, signature })
+      return Object.freeze({
+        standard: 'erc191',
+        payload: input.payload,
+        signature: encodeSignature(signature)
+      })
     }
     return this.runActiveOperation(async () => {
       await this.assertCurrentIdentity(input.identity, input.chainId)
@@ -221,7 +230,7 @@ export class ConfidentialFundingSigner {
         return Object.freeze({
           standard: 'erc191' as const,
           payload: input.payload,
-          signature: normalizeSignature(result.signature.value)
+          signature: encodeSignature(parseSignature(result.signature.value))
         })
       } finally {
         if (!consumed) {
