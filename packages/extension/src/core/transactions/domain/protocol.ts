@@ -279,9 +279,7 @@ export function parseRheaSwapTransactionBinding(value: unknown): RheaSwapTransac
     value.kind !== 'swap' ||
     (value.userAction !== undefined && value.userAction !== 'transfer') ||
     (value.balanceTransfer !== undefined &&
-      (value.balanceTransfer !== 'withdraw' ||
-        value.userAction !== 'transfer' ||
-        value.isCrossChain !== true)) ||
+      (value.balanceTransfer !== 'withdraw' || value.userAction !== 'transfer')) ||
     !Number.isSafeInteger(value.expiresAt) ||
     (value.expiresAt as number) <= 0 ||
     typeof value.isCrossChain !== 'boolean'
@@ -294,7 +292,9 @@ export function parseRheaSwapTransactionBinding(value: unknown): RheaSwapTransac
     value.balanceTransfer === 'withdraw' &&
     (!origin.chainId.startsWith('eip155:') ||
       !destination.chainId.startsWith('eip155:') ||
-      origin.chainId === destination.chainId)
+      (origin.chainId === destination.chainId
+        ? origin.assetId !== destination.assetId
+        : !value.isCrossChain))
   ) {
     throw new Error('Invalid RHEA Swap Withdraw binding')
   }

@@ -749,13 +749,15 @@ async function requireCurrentPrivateSwapQuote(
     throw new Error('Private quote execution mode changed. Get a new quote.')
   }
   if (binding) {
-    const isWithdraw = quote.scope.purpose === 'private-cross-chain-withdraw'
+    const isCrossChainWithdraw = quote.scope.purpose === 'private-cross-chain-withdraw'
+    const isSameChainWithdraw = quote.scope.purpose === 'private-transfer'
+    const isWithdraw = isCrossChainWithdraw || isSameChainWithdraw
     if (
       binding.quoteHandle !== quoteHandle ||
       binding.sender.toLowerCase() !== quote.request.sender.toLowerCase() ||
       binding.destination.recipient.toLowerCase() !== quote.request.recipient?.toLowerCase() ||
       (binding.balanceTransfer !== undefined && !isWithdraw) ||
-      (isWithdraw &&
+      (isCrossChainWithdraw &&
         (!binding.isCrossChain ||
           binding.origin.protocolChainId !== quote.request.fromChain ||
           binding.destination.protocolChainId !== quote.request.toChain ||
@@ -763,9 +765,15 @@ async function requireCurrentPrivateSwapQuote(
             getPrivateWithdrawAsset(quote.request.fromChain, quote.request.tokenIn)?.id ||
           binding.destination.assetId !==
             getPrivateWithdrawAsset(quote.request.toChain, quote.request.tokenOut)?.id)) ||
-      ((quote.scope.purpose === 'private-transfer' ||
+      (isSameChainWithdraw &&
+        (binding.origin.protocolChainId !== quote.request.fromChain ||
+          binding.destination.protocolChainId !== quote.request.toChain ||
+          !binding.origin.chainId.startsWith('eip155:') ||
+          binding.origin.chainId !== binding.destination.chainId ||
+          binding.origin.assetId !== binding.destination.assetId ||
+          binding.sender.toLowerCase() === binding.destination.recipient.toLowerCase())) ||
+      ((isWithdraw ||
         quote.scope.purpose === 'private-cross-chain-send' ||
-        quote.scope.purpose === 'private-cross-chain-withdraw' ||
         quote.scope.purpose === 'private-dapp-transfer' ||
         quote.scope.purpose === 'public-private-send' ||
         quote.scope.purpose === 'public-cross-chain-send') &&
