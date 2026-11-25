@@ -290,6 +290,7 @@ async function harness(
         peaAddress,
         addressIndex: 0,
         context: {
+          keyDomainSource: { kind: 'software' },
           chainAccount: {
             scope: { ...scope, accountId: state.identityAccount, chainId: 'eip155:1' }
           }
@@ -383,6 +384,7 @@ function directPreparationHarness(protocolTokens, getNativeZecActiveAccount) {
     signatures: 0,
     preparedDeposits: 0,
     allowSigning: false,
+    hardware: false,
     identityChains: [],
     signingChains: [],
     formalQuotes: 0,
@@ -446,6 +448,9 @@ function directPreparationHarness(protocolTokens, getNativeZecActiveAccount) {
         peaAddress,
         addressIndex: 0,
         context: {
+          keyDomainSource: state.hardware
+            ? { kind: 'hardware', vendor: 'ledger' }
+            : { kind: 'software' },
           chainAccount: { scope: { ...scope, accountId: state.identityAccount, chainId } }
         }
       }
@@ -554,7 +559,7 @@ function directPreparationHarness(protocolTokens, getNativeZecActiveAccount) {
             },
       list: () => [nativeAsset]
     },
-    evmNetworks: [],
+    evmNetworks: [{ chainId: 'eip155:1', rpcUrl: 'https://rpc.example.test' }],
     ...(protocolTokens ? { protocolTokens } : {}),
     assetMappings: [
       { assetId, protocolAssetId },
@@ -596,6 +601,31 @@ function directPreparationHarness(protocolTokens, getNativeZecActiveAccount) {
 }
 
 test.describe('confidential funding persisted recovery', () => {
+  test('waits for a user before resuming an unsigned hardware Shield intent', async () => {
+    const h = directPreparationHarness()
+    h.state.hardware = true
+    const review = await h.coordinator.prepare({
+      ...h.request('100'),
+      destinationDomain: 'public',
+      externalRecipient: '0x3333333333333333333333333333333333333333'
+    })
+    const prepared = await h.coordinator.getPlan(review.planId)
+    h.plans.set(review.planId, { ...prepared, phase: 'signing-withdraws' })
+    await expect(h.coordinator.continuePlan(review.planId)).resolves.toMatchObject({
+      phase: 'needs-auth',
+      resumePhase: 'signing-withdraws'
+    })
+    expect(h.state.signatures).toBe(0)
+    h.state.formalQuoteAppFees = [{ recipient: 'platform.near', fee: 50 }]
+    h.state.allowSigning = true
+    await expect(
+      h.coordinator.confirm(review.planId, review.payloadFingerprint)
+    ).resolves.toMatchObject({
+      phase: 'submitting'
+    })
+    expect(h.state.signatures).toBe(1)
+  })
+
   test('spends a mapped Confidential ZEC balance through an EVM signer without enabling Zcash on-chain sends', async () => {
     const h = directPreparationHarness([
       { assetId: 'nep141:eth.omft.near', blockchain: 'eth', decimals: 18 },
@@ -1411,7 +1441,10 @@ test.describe('confidential funding persisted recovery', () => {
         address: signerId,
         peaAddress,
         addressIndex: 0,
-        context: { chainAccount: { scope: { ...scope, chainId: 'eip155:1' } } }
+        context: {
+          keyDomainSource: { kind: 'software' },
+          chainAccount: { scope: { ...scope, chainId: 'eip155:1' } }
+        }
       }),
       prepareTransaction: async ({ prepared }) => {
         state.prepared = prepared

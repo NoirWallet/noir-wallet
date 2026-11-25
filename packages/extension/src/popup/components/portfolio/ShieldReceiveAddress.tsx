@@ -45,6 +45,8 @@ import {
   externalShieldDepositClient,
   type ExternalShieldDeposit
 } from '@/popup/services/confidential-funding-client'
+import { buildShieldActionPath } from '@/popup/services/shield-action-selection'
+import { needsShieldHardwareTab, openShieldHardwareTab } from '@/popup/services/shield-hardware-tab'
 
 export interface ShieldReceiveAddressProps {
   readonly provider: ShieldProvider
@@ -97,6 +99,8 @@ export function ShieldReceiveAddress({
   enabled,
   inline = false
 }: ShieldReceiveAddressProps) {
+  const hardwareShield =
+    provider === 'near-confidential' && account?.walletSource.kind === 'hardware'
   const walletId = account?.walletId ?? ''
   const accountId = account?.accountId ?? ''
   const scope = `${network}:${walletId}:${accountId}:${provider}:${asset?.assetId ?? ''}`
@@ -228,6 +232,26 @@ export function ShieldReceiveAddress({
 
   const createAddress = async (newAddress = false) => {
     if (busyRef.current || !canGenerate) return
+    if (needsShieldHardwareTab(hardwareShield)) {
+      busyRef.current = true
+      setBusy(true)
+      setError(null)
+      try {
+        await openShieldHardwareTab(
+          buildShieldActionPath('receive', {
+            account,
+            assetId: asset?.assetId,
+            provider
+          })
+        )
+      } catch {
+        setError('Could not open the wallet tab.')
+      } finally {
+        busyRef.current = false
+        setBusy(false)
+      }
+      return
+    }
     setError(null)
     if (provider === 'zcash-shield') {
       setOpen(true)
@@ -301,8 +325,9 @@ export function ShieldReceiveAddress({
     if (!error) void createAddress()
   })
   useEffect(() => {
-    if (inline && canGenerate && provider === 'near-confidential') createInlineAddress()
-  }, [inline, canGenerate, provider, scope])
+    if (inline && canGenerate && provider === 'near-confidential' && !hardwareShield)
+      createInlineAddress()
+  }, [inline, canGenerate, provider, hardwareShield, scope])
 
   const checkStatus = async () => {
     if (!currentRecord || refreshing) return
@@ -723,6 +748,20 @@ export function ShieldReceiveAddress({
       <>
         {currentRecord || (provider === 'zcash-shield' && zcashAddress) ? (
           addressContent
+        ) : canGenerate && hardwareShield && !error ? (
+          <button
+            type="button"
+            disabled={busy}
+            aria-busy={busy || undefined}
+            onClick={() => void createAddress()}
+            className="wallet-interactive mt-5 h-11 w-full rounded-lg bg-primary text-sm font-medium text-background enabled:hover:brightness-110 enabled:active:brightness-95 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 disabled:opacity-45"
+          >
+            {busy
+              ? 'Generating...'
+              : needsShieldHardwareTab(hardwareShield)
+                ? 'Open wallet tab'
+                : 'Generate QR Code'}
+          </button>
         ) : !error && canGenerate ? (
           <ShieldReceiveAddressSkeleton />
         ) : (

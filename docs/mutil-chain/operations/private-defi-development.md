@@ -1,6 +1,6 @@
 # Confidential DeFi Development and Troubleshooting
 
-This guide covers local setup, data sources, recovery, and diagnosis for mnemonic and imported EVM private-key accounts using a Global PEA, Confidential balances, internal transfers, Confidential Send/Swap, and dApp Confidential asset transfers. Hardware accounts and private keys imported for other chain families do not support Confidential execution. The shared account capability is defined in `packages/extension/src/core/chains/evm/execution-capability.ts`; funding boundaries are enforced in `packages/extension/src/core/services/confidential-funding/` and the routes named below.
+This guide covers local setup, data sources, recovery, and diagnosis for Global PEA, NEAR Confidential Shield, and dApp Confidential transfers. Shield supports mnemonic, imported EVM private-key, and supported Ledger and Keystone EVM accounts on Mainnet. Global PEA requires a mnemonic or imported EVM private-key account. Account capabilities are defined in `packages/extension/src/core/chains/evm/execution-capability.ts`.
 
 ## 1. Account and Balance Model
 
@@ -25,7 +25,7 @@ Public or Private -> 1Click deposit address -> Shield balance
 Shield balance -> one Withdraw Intent -> Public or Private
 ```
 
-Use the NEAR Confidential Shield view or Transfer page. Connect Shield to authenticate its balance, then review and confirm Deposit or Withdraw. Both ends belong to the same Wallet Account. A deposit stays in Shield; a withdrawal spends the selected portion of its existing balance. Private deposits refund to the originating PEA. Cluster signs multiple withdrawals to one selected destination and submits them as one scheduled batch. If submission has an ambiguous result, recovery queries order history without resubmitting the batch. Existing batch plans retain their original recovery behavior.
+Use the NEAR Confidential Shield view or Transfer page. Connect Shield to authenticate its balance, then review and confirm Deposit or Withdraw. For a hardware account, approve the connection and transaction signatures on your device. If Activity shows a transfer awaiting your signature, open it and continue there. Both ends belong to the same Wallet Account. A deposit stays in Shield; a withdrawal spends the selected portion of its existing balance. Private deposits refund to the originating PEA. Cluster signs multiple withdrawals to one selected destination and submits them as one scheduled batch. If submission has an ambiguous result, recovery queries order history without resubmitting the batch. Existing batch plans retain their original recovery behavior.
 
 ### Move to Main
 

@@ -423,6 +423,13 @@ import {
   cancelLedgerSigning,
   cancelAllLedgerSigning
 } from './ledger-signing-coordinator'
+import {
+  cancelAllKeystoneEvmSigning,
+  cancelKeystoneEvmSigning,
+  getKeystoneEvmSigningRequest,
+  registerKeystoneEvmSigningTabLifecycle,
+  submitKeystoneEvmSigningResponse
+} from './keystone-evm-message-signing'
 import { readLedgerProvisioningCredential } from './ledger-signing-bridge'
 
 import type { ChromeTokenVisibilityRepository } from '@/infrastructure/portfolio/chrome-token-visibility'
@@ -2007,6 +2014,7 @@ async function switchGlobalNetworkMode(target: Network): Promise<{ restartRequir
   if (!(await credentialSession.hasUnlockSession())) {
     throw new Error('Unlock the wallet before switching networks')
   }
+  cancelAllKeystoneEvmSigning('Network mode changed. Review this action again.')
   await cancelAllLedgerSigning('Network mode changed. Review this action again.')
   const hardwareMissingTargetMetadata = hasKeystoneWalletMissingNetworkProjection(
     useWalletStore.getState().wallets,
@@ -2228,6 +2236,7 @@ configureLedgerSigningCoordinator(async scope => {
   )
 })
 registerLedgerSigningTabLifecycle()
+registerKeystoneEvmSigningTabLifecycle()
 
 logger.info(`Background service worker started version=${__APP_VERSION__} build=${__BUILD_TIME__}`)
 
@@ -5981,6 +5990,7 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
         }
 
         pendingRequestsManager.cancelContext(walletId, accountId)
+        cancelAllKeystoneEvmSigning('Account network changed. Review this action again.')
         await cancelAllLedgerSigning('Account network changed. Review this action again.')
         syncScheduler.pauseForTx()
         try {
@@ -6700,6 +6710,47 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (
+    isRuntimeRecord(message) &&
+    (message.type === 'GET_KEYSTONE_EVM_DEVICE_SIGNING_REQUEST' ||
+      message.type === 'SUBMIT_KEYSTONE_EVM_DEVICE_SIGNING_RESPONSE' ||
+      message.type === 'CANCEL_KEYSTONE_EVM_DEVICE_SIGNING_REQUEST')
+  ) {
+    const { type, requestId, signatureCborBase64 } = message
+    const tabId = sender.tab?.id
+    const submitting = type === 'SUBMIT_KEYSTONE_EVM_DEVICE_SIGNING_RESPONSE'
+    const expectedKeys = submitting
+      ? ['type', 'requestId', 'signatureCborBase64']
+      : ['type', 'requestId']
+    if (
+      sender.frameId !== 0 ||
+      typeof tabId !== 'number' ||
+      !isOwnExtensionRouteSender(sender, chrome.runtime.id, '/hardware/evm-sign') ||
+      typeof requestId !== 'string' ||
+      !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(requestId) ||
+      !hasExactRuntimeKeys(message, expectedKeys) ||
+      (submitting && typeof signatureCborBase64 !== 'string')
+    ) {
+      sendResponse({ error: 'Invalid Keystone signing request' })
+      return true
+    }
+    if (networkRestartRequired || walletLockCleanupPending) {
+      sendResponse({ error: 'Keystone signing was interrupted. Review this action again.' })
+      return true
+    }
+    const operation =
+      type === 'GET_KEYSTONE_EVM_DEVICE_SIGNING_REQUEST'
+        ? getKeystoneEvmSigningRequest(requestId, tabId)
+        : submitting && typeof signatureCborBase64 === 'string'
+          ? submitKeystoneEvmSigningResponse(requestId, tabId, signatureCborBase64)
+          : cancelKeystoneEvmSigning(requestId, tabId)
+    void operation
+      .then(result => sendResponse({ result: result ?? true }))
+      .catch(error =>
+        sendResponse({ error: error instanceof Error ? error.message : 'Keystone signing failed' })
+      )
+    return true
+  }
   if (isRuntimeRecord(message) && message.type === 'LEDGER_SWAP_APPROVAL_SIGNED') {
     if (getOwnExtensionSenderContext(sender, chrome.runtime.id) === 'service-worker') return false
     sendResponse({ error: 'Unauthorized Ledger continuation sender' })
@@ -7277,6 +7328,7 @@ function beginWalletLockQuiesce(): Promise<
   { readonly success: true } | { readonly success: false; readonly error: unknown }
 > {
   walletLockCleanupPending = true
+  cancelAllKeystoneEvmSigning('Wallet was locked. Review this action again.')
   backgroundZcashWalletRuntime.beginLock()
   void credentialSession.lock().catch(() => {})
   syncScheduler.pauseForTx()
@@ -7320,6 +7372,7 @@ function handleWalletLock(): Promise<void> {
 async function performWalletLockState(): Promise<void> {
   syncScheduler.pauseForTx()
   try {
+    cancelAllKeystoneEvmSigning('Wallet was locked. Review this action again.')
     await cancelAllLedgerSigning('Wallet was locked. Review this action again.')
     pendingRequestsManager.cancelAll()
     syncScheduler.abortSync()
@@ -7385,6 +7438,7 @@ async function performKeyringRuntimesResetAfterCredentialChange(): Promise<void>
 async function handleAccountSwitched({
   refreshPortfolio = true
 }: { refreshPortfolio?: boolean } = {}): Promise<void> {
+  cancelAllKeystoneEvmSigning('Account changed. Review this action again.')
   await cancelAllLedgerSigning('Account changed. Review this action again.')
   try {
     const account = backgroundZcashWalletRuntime.getCurrentAccount()

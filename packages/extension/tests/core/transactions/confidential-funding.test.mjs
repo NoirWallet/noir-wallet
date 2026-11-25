@@ -1,7 +1,9 @@
 import { test } from 'node:test'
 import { expect } from '@playwright/test'
+import { privateKeyToAccount } from 'viem/accounts'
 import { ConfidentialFundingApi } from '../../../src/background/confidential-funding-api.ts'
 import { ConfidentialFundingCoordinator } from '../../../src/background/confidential-funding-coordinator.ts'
+import { ConfidentialFundingSigner } from '../../../src/background/confidential-funding-signer.ts'
 import { createBackgroundConfidentialFundingCoordinator } from '../../../src/background/confidential-funding.ts'
 import { userEvmAssetToDefinition } from '../../../src/core/chains/user-assets/user-evm-asset.ts'
 import { getActiveChainEndpointSettings } from '../../../src/core/chains/chain-endpoint-settings.ts'
@@ -75,6 +77,7 @@ test('passive Confidential balance reads skip identity setup without a session',
         return {
           address: '0x1111111111111111111111111111111111111111',
           context: {
+            keyDomainSource: { kind: 'software' },
             chainAccount: {
               scope: { keyDomainId: scope.keyDomainId, accountId: identityAccountId }
             }
@@ -118,6 +121,73 @@ test('passive Confidential balance reads skip identity setup without a session',
   await expect(coordinator.refreshBalances(scope, true)).resolves.toEqual([])
   expect(signingCalls).toBe(1)
   expect(balanceReads).toBe(2)
+})
+
+test('Shield device signatures bind the exact message, account and approval expiry', async () => {
+  const account = privateKeyToAccount(`0x${'11'.repeat(32)}`)
+  const other = privateKeyToAccount(`0x${'22'.repeat(32)}`)
+  const chainId = 'eip155:1'
+  const path = "m/44'/60'/0'/0/0"
+  const payload = '{"intents":[]}'
+  let accountId = 'account:one'
+  let requests = 0
+  let respond = request => account.signMessage({ message: { raw: request.messageHex } })
+  const signer = new ConfidentialFundingSigner(
+    {},
+    async () => ({
+      generationId: 'generation:one',
+      keyDomainSource: { kind: 'hardware', vendor: 'ledger', capabilities: ['evm'] },
+      chainAccount: {
+        id: `evm:${accountId}`,
+        scope: { keyDomainId: 'wallet:one', accountId, chainId },
+        derivation: { scheme: 'bip44', path },
+        identity: { kind: 'account-identifier', value: account.address }
+      }
+    }),
+    operation => operation(),
+    {
+      resolve: async () => ({ derivationPath: path, address: account.address.toLowerCase() }),
+      request: async (vendor, request, binding) => {
+        requests += 1
+        expect(vendor).toBe('ledger')
+        expect(request.kind).toBe('personal-sign')
+        expect(request.derivationPath).toBe(path)
+        await binding.validate()
+        return { signatureHex: await respond(request) }
+      }
+    }
+  )
+  const identity = await signer.resolveIdentity(chainId)
+  expect(identity.peaAddress).toBeUndefined()
+  await expect(signer.signMessage({ identity, chainId, payload })).resolves.toMatchObject({
+    standard: 'erc191',
+    payload,
+    signature: expect.stringMatching(/^secp256k1:/)
+  })
+
+  respond = request => other.signMessage({ message: { raw: request.messageHex } })
+  await expect(signer.signMessage({ identity, chainId, payload })).rejects.toThrow('does not match')
+
+  respond = () => account.signMessage({ message: 'changed intent' })
+  await expect(signer.signMessage({ identity, chainId, payload })).rejects.toThrow('does not match')
+
+  respond = async () => {
+    throw new Error('User rejected')
+  }
+  await expect(signer.signMessage({ identity, chainId, payload })).rejects.toThrow('User rejected')
+
+  respond = request => {
+    accountId = 'account:new'
+    return account.signMessage({ message: { raw: request.messageHex } })
+  }
+  await expect(signer.signMessage({ identity, chainId, payload })).rejects.toThrow(
+    'Account changed'
+  )
+  accountId = 'account:one'
+  await expect(signer.signMessage({ identity, chainId, payload, expiresAt: 1 })).rejects.toThrow(
+    'expired'
+  )
+  expect(requests).toBe(5)
 })
 
 test('minimum deposit display rounds up without changing the exact payment amount', () => {
@@ -593,6 +663,7 @@ test.describe('confidential funding safety rules', () => {
             addressIndex: 0,
             peaAddress: refundAddress,
             context: {
+              keyDomainSource: { kind: 'software' },
               chainAccount: {
                 scope: {
                   keyDomainId: 'wallet:one',
@@ -2018,6 +2089,7 @@ test('confidential account transfer freezes the signed-intent quote for the othe
         peaAddress: signerId,
         addressIndex: 0,
         context: {
+          keyDomainSource: { kind: 'software' },
           chainAccount: { scope: { keyDomainId: 'wallet:one', accountId: 'account:one' } }
         }
       }),

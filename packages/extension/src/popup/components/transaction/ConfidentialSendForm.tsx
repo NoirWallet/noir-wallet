@@ -20,7 +20,7 @@ import { resolveEffectiveActiveAccountIdentity } from '@/popup/lib/effective-act
 import { assetPriceClient } from '@/popup/services/asset-price-client'
 import { withConfidentialAssetPrices } from '@/popup/services/portfolio-prices'
 import { findAssetPrice } from '@/core/prices'
-import { getPrivateTransferChainIds } from '@/popup/services/private-balance-transfer'
+import { getShieldTransferChainIds } from '@/popup/services/shield-transfer'
 import { useNavigate } from '@/popup/provider/Router'
 import { useSwapPreferences } from '@/store/swap-store'
 import {
@@ -41,6 +41,9 @@ import { TransactionReviewParty } from '@/popup/components/transaction/Transacti
 import { QuoteReviewChanges } from '@/popup/components/transaction/QuoteReviewChanges'
 import { openConfidentialActivity } from '@/popup/components/transaction/ConfidentialActivitySheet'
 import { TransactionNotice } from '@/popup/components/transaction/TransactionNotice'
+import { ShieldHardwareTabNotice } from '@/popup/components/transaction/ShieldHardwareTabNotice'
+import { needsShieldHardwareTab } from '@/popup/services/shield-hardware-tab'
+import { buildShieldActionPath } from '@/popup/services/shield-action-selection'
 import { getSwapQuoteNotice } from '@/popup/services/swap-quote-error-message'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/popup/components/ui/dialog'
 import {
@@ -52,7 +55,7 @@ import { resolveManagedIntentsCatalog } from '@/popup/services/intents-asset-man
 import { swapTokenCatalogClient } from '@/popup/services/swap-token-catalog-client'
 import {
   buildExternalShieldWithdrawRequest,
-  hasShieldTransferStarted,
+  canOpenShieldActivity,
   isUnsignedShieldTerminal,
   matchesExternalShieldWithdrawReview,
   listShieldFundingAssets,
@@ -141,7 +144,7 @@ export function ConfidentialSendForm({
     nativeAccount: activeAccount
   })
   const canManageNear =
-    providerIsNear && getPrivateTransferChainIds(activeAccount, network === 'mainnet').length > 0
+    providerIsNear && getShieldTransferChainIds(activeAccount, network === 'mainnet').length > 0
   const scopeKey = `${network}:${account?.walletId ?? ''}:${account?.accountId ?? ''}`
   const latestScope = useRef(scopeKey)
   latestScope.current = scopeKey
@@ -215,6 +218,7 @@ export function ConfidentialSendForm({
     errorCode: balanceErrorCode,
     refreshBalances: loadBalances
   } = useShieldBalances({
+    hardware: activeAccount?.walletSource.kind === 'hardware',
     active,
     enabled: canManageNear,
     scopeKey,
@@ -743,7 +747,7 @@ export function ConfidentialSendForm({
   const inspectPlan = async (planId: string) => {
     const plan = await confidentialFundingClient.get(planId)
     if (!scopeStillCurrent()) return 'changed'
-    if (hasShieldTransferStarted(plan)) {
+    if (canOpenShieldActivity(plan)) {
       openActivity(plan.transactionId)
       return 'started'
     }
@@ -924,7 +928,7 @@ export function ConfidentialSendForm({
         prepared.review.planId,
         prepared.review.payloadFingerprint
       )
-      if (hasShieldTransferStarted(plan)) openActivity(plan.transactionId)
+      if (canOpenShieldActivity(plan)) openActivity(plan.transactionId)
       else await inspectPlan(plan.planId)
     } catch (cause) {
       if (!scopeStillCurrent()) return
@@ -960,6 +964,21 @@ export function ConfidentialSendForm({
         />
       </div>
     )
+  }
+
+  if (
+    active &&
+    canManageNear &&
+    needsShieldHardwareTab(activeAccount?.walletSource.kind === 'hardware')
+  ) {
+    const path = buildShieldActionPath('send', {
+      account,
+      assetId: entry.assetId,
+      provider: 'near-confidential'
+    })
+    const query = new URLSearchParams(path.split('?')[1])
+    if (entry.networkId) query.set('networkId', entry.networkId)
+    return <ShieldHardwareTabNotice path={`/send?${query}`} />
   }
 
   if (prepared) {

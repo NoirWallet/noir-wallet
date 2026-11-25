@@ -34,6 +34,7 @@ import { offerSaveRecipient } from '@/popup/services/save-recipient-prompt'
 import { evmWalletClient } from '@/popup/services/evm-wallet-client'
 import { resolveSwapStatusPollingProvider } from '@/popup/services/swap-page-model'
 import { homeActivityPath } from '@/popup/services/home-navigation'
+import { needsShieldHardwareTab, openShieldHardwareTab } from '@/popup/services/shield-hardware-tab'
 import {
   confidentialFundingClient,
   getConfidentialFundingResult
@@ -734,6 +735,17 @@ export function TransactionOutcome() {
     setResumingConfidentialFunding(true)
     try {
       const current = await confidentialFundingClient.get(confidentialFundingPlanId)
+      if (
+        current.phase !== 'needs-auth' ||
+        current.network !== currentNetwork ||
+        current.keyDomainId !== activeAccount?.walletId ||
+        current.accountId !== activeAccount.accountId
+      )
+        return
+      if (needsShieldHardwareTab(activeAccount?.walletSource.kind === 'hardware')) {
+        await openShieldHardwareTab(homeActivityPath('shield', current.transactionId))
+        return
+      }
       const plan = await confidentialFundingClient.confirm(
         current.planId,
         current.approvalFingerprint
