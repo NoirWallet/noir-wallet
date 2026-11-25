@@ -244,7 +244,7 @@ function getEvmSendReview(state: EvmSendTransferState): SendReview | null {
         )
       },
       {
-        label: 'Network fee',
+        label: 'Fee',
         content: (
           <NetworkFeeTierPicker
             chainFamily="evm"

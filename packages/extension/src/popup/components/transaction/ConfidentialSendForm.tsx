@@ -1099,7 +1099,7 @@ export function ConfidentialSendForm({
                 ]
               : []),
             {
-              label: 'Fee (est.)',
+              label: 'Fee',
               content: (() => {
                 const fee = estimateShieldSendRouteFee(
                   prepared.source,

@@ -87,7 +87,7 @@ export function NetworkFeeTierPicker(props: LiveFeePickerProps | ZcashFeePickerP
         )}
       </FeePickerDialog>
     )
-    return props.hideLabel ? picker : <DetailRow label="Network Fee">{picker}</DetailRow>
+    return props.hideLabel ? picker : <DetailRow label="Fee">{picker}</DetailRow>
   }
 
   const {

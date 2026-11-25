@@ -108,6 +108,7 @@ interface SwapInputViewProps {
   topContent?: ReactNode
   hideAccountDetails?: boolean
   addressType: AddressType
+  destinationIsConfidential?: boolean
   destinationAddress?: string
   spendableBalance: string
   availableBalance?: string
@@ -595,6 +596,7 @@ export function SwapInputView({
   topContent,
   hideAccountDetails = false,
   addressType,
+  destinationIsConfidential = false,
   destinationAddress,
   spendableBalance,
   availableBalance,
@@ -705,7 +707,10 @@ export function SwapInputView({
             token={tokenOut}
             fallbackAssetId={tokenOutAssetId}
             fallbackSymbol={tokenOutSymbol}
-            zcashFundingSource={isZecDestination ? addressType : undefined}
+            tokenNetworkLabel={destinationIsConfidential ? 'NEAR Confidential' : undefined}
+            zcashFundingSource={
+              isZecDestination && !destinationIsConfidential ? addressType : undefined
+            }
             amount={estimatedOut}
             fiatValue={toFiat}
             accountAddress={hideAccountDetails ? undefined : destinationAddress}

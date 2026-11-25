@@ -166,7 +166,7 @@ export function SpeedUpConfirmSheet({
               <TransactionActionRow label="Amount">
                 <AmountDisplay value={displayedAmount} symbol="ZEC" />
               </TransactionActionRow>
-              <TransactionActionRow label="Network Fee">
+              <TransactionActionRow label="Fee">
                 <NetworkFeeTierPicker
                   chainFamily="zcash"
                   tier={tier}

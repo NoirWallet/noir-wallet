@@ -6831,7 +6831,7 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
           ...(sourceNetworkFee
             ? [
                 {
-                  label: 'Network fee',
+                  label: 'Fee',
                   content: sourceFeeControl ?? (
                     <AmountDisplay
                       value={sourceNetworkFee.amount}
@@ -7417,6 +7417,7 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
         hideAccountDetails={ordinarySwapRequested}
         sourceZcashFundingSource={fundingSource}
         addressType={zecDestinationType}
+        destinationIsConfidential={shieldNativeZecSwap && swap.isZecSource}
         destinationAddress={resolvedRecipientAddress}
         spendableBalance={spendableBalance}
         availableBalance={zcashFundingBalance.available}
@@ -7977,7 +7978,7 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
                   ]
                 : []),
               { label: 'You receive', content: <Skeleton className="h-4 w-24" /> },
-              { label: 'Network fee', content: <Skeleton className="h-8 w-28" /> }
+              { label: 'Fee', content: <Skeleton className="h-8 w-28" /> }
             ]}
             error={
               transferPreparationStatusError ? (

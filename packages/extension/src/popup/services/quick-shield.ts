@@ -110,13 +110,11 @@ export function getQuickShieldAssets({
   return rows.sort((left, right) => new Big(right.valueUsd ?? 0).cmp(left.valueUsd ?? 0))
 }
 
-export function summarizeQuickShieldAssets(assets: readonly QuickShieldAsset[]) {
-  let pricedCount = 0
-  let total = new Big(0)
+export function getQuickShieldTotalUsd(assets: readonly QuickShieldAsset[]): string | null {
+  let total: Big | null = null
   for (const { valueUsd } of assets) {
     if (valueUsd === null) continue
-    total = total.plus(valueUsd)
-    pricedCount++
+    total = total === null ? new Big(valueUsd) : total.plus(valueUsd)
   }
-  return { totalUsd: pricedCount ? total.toFixed() : null, partial: pricedCount < assets.length }
+  return total?.toFixed() ?? null
 }

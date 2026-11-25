@@ -280,7 +280,7 @@ export function DAppNetworkCard({ chain, network, chainId, fee }: DAppNetworkCar
       )}
       {fee && (
         <div className="flex items-center justify-between gap-3">
-          <span className="text-sm text-muted">Network fee</span>
+          <span className="text-sm text-muted">Fee</span>
           {fee}
         </div>
       )}

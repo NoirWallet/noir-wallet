@@ -137,7 +137,7 @@ export function CrossChainSendReviewView({
           )
         },
         {
-          label: 'Route cost (est.)',
+          label: 'Fee',
           content: isPreparingReview ? (
             'Updating...'
           ) : routeCost === null ? (

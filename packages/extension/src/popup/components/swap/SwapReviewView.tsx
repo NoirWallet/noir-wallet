@@ -301,7 +301,7 @@ export function SwapReviewView({
             <DetailItem label="Service fee">{appFeeBps / 100}%</DetailItem>
           )}
           {combinedNetworkFee && (
-            <DetailItem label="Max network fee">
+            <DetailItem label="Fee">
               <AmountDisplay
                 value={combinedNetworkFee.amount}
                 symbol={combinedNetworkFee.symbol}
@@ -340,7 +340,7 @@ export function SwapReviewView({
                   />
                 </DetailItem>
               )}
-              <DetailItem label={combinedNetworkFee ? 'Approval fee' : 'Network fee'}>
+              <DetailItem label={combinedNetworkFee ? 'Approval fee' : 'Fee'}>
                 {quoteRefreshing ? (
                   <span className="inline-block h-4 w-24 animate-pulse rounded bg-card" />
                 ) : sourceFeeControl ? (
