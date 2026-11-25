@@ -250,7 +250,11 @@ function parsePlan(value: unknown): ConfidentialFundingPlan {
         !['public', 'private'].includes(plan.destinationDomain ?? '') ||
         plan.requiresDeposit ||
         plan.withdraws.length !== 1 ||
-        plan.splitSourceAmounts[0] !== plan.source.amountRaw)) ||
+        plan.splitSourceAmounts[0] !== plan.source.amountRaw ||
+        (plan.swapQuote !== undefined &&
+          (plan.swapQuote.quoteRequest.dry !== false ||
+            plan.swapQuote.quoteRequest.recipientType !== 'DESTINATION_CHAIN' ||
+            !plan.swapQuote.quote.depositAddress)))) ||
     (plan.operation === 'swap' &&
       (plan.sourceDomain !== 'shield' ||
         plan.destinationDomain !== 'shield' ||
@@ -294,6 +298,7 @@ function parsePlan(value: unknown): ConfidentialFundingPlan {
         plan.reviewedAppFeesFingerprint !== undefined)) ||
     (plan.operation !== 'swap' &&
       plan.operation !== 'confidential-transfer' &&
+      plan.operation !== 'withdraw' &&
       plan.purpose !== 'native-zec-swap' &&
       plan.swapQuote !== undefined) ||
     (plan.reviewedAppFeesFingerprint !== undefined &&
