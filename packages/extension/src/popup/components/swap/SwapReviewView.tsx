@@ -66,6 +66,7 @@ interface SwapReviewViewProps {
   arrivalEstimate?: string
   isLoading?: boolean
   submitting?: boolean
+  appFeeBps?: number
   preparationError?: string | null
   onRetryPreparation?: () => void
   /** Selected fee tier (read-only display on review). */
@@ -135,6 +136,7 @@ export function SwapReviewView({
   onConfirm,
   isLoading,
   submitting,
+  appFeeBps,
   preparationError,
   onRetryPreparation,
   feeTier,
@@ -295,6 +297,9 @@ export function SwapReviewView({
               />
             )}
           </DetailItem>
+          {appFeeBps !== undefined && appFeeBps > 0 && (
+            <DetailItem label="Service fee">{appFeeBps / 100}%</DetailItem>
+          )}
           {combinedNetworkFee && (
             <DetailItem label="Max network fee">
               <AmountDisplay

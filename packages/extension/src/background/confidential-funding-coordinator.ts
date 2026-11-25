@@ -695,7 +695,6 @@ export class ConfidentialFundingCoordinator {
       },
       quoteConfidential: input =>
         options.api.quote({
-          referral: NOIR_SWAP_REFERRAL,
           ...input,
           recipient: input.signerId,
           depositType: 'ORIGIN_CHAIN',

@@ -5,7 +5,12 @@ import { getZcashChainId, parseAssetId, parseChainId } from '@/core/chains/regis
 import { parseZcashAddress } from '@/core/address-book/address-book'
 import { parseNearAccountId } from '@/core/chains/near'
 import { parseSolanaPublicKey } from '@/core/chains/solana'
-import { ZEC_ZCASH_ASSET, getConfidentialFundingNetworkConfig } from '@/config/intents'
+import {
+  NOIR_RECEIVE_REFERRAL,
+  NOIR_SWAP_REFERRAL,
+  ZEC_ZCASH_ASSET,
+  getConfidentialFundingNetworkConfig
+} from '@/config/intents'
 import type { EvmNetworkConfig } from '@/config/networks'
 import { getNearNetworkConfig, getSolanaNetworkConfig } from '@/config/networks'
 import {
@@ -32,6 +37,7 @@ import {
 import { SerialTaskQueue } from '@/lib/async-utils'
 import { withUndeletedWalletAccountMetadata } from '@/lib/wallet-metadata-storage'
 import { withMetadataLock } from '@/lib/wallet-metadata-storage'
+import { readConfidentialQuoteAppFees } from './confidential-funding-api'
 import { credentialSession } from './credential-session'
 import { ConfidentialFundingApi } from './confidential-funding-api'
 import type { Network, QuoteBinding } from '@/types/wallet'
@@ -94,6 +100,10 @@ function parseRecord(value: unknown): NativeZecIntentsSwapRecord {
     !AMOUNT_PATTERN.test(record.expectedOutputRaw) ||
     !AMOUNT_PATTERN.test(record.minimumOutputRaw) ||
     BigInt(record.minimumOutputRaw) > BigInt(record.expectedOutputRaw) ||
+    (record.appFeeBps !== undefined &&
+      (!Number.isSafeInteger(record.appFeeBps) ||
+        record.appFeeBps < 0 ||
+        record.appFeeBps > 10_000)) ||
     !record.quoteBinding ||
     record.quoteBinding.provider !== 'near-intents' ||
     record.quoteBinding.isCrossChain !== true ||
@@ -277,6 +287,7 @@ export class NativeZecIntentsSwapCoordinator {
       ) => Promise<void>
       quoteConfidential?: (
         input: Readonly<{
+          referral: typeof NOIR_SWAP_REFERRAL | typeof NOIR_RECEIVE_REFERRAL
           originAsset: string
           destinationAsset: string
           amountRaw: string
@@ -516,6 +527,7 @@ export class NativeZecIntentsSwapCoordinator {
       }
       const confidentialQuote = confidential
         ? await this.options.quoteConfidential?.({
+            referral: input.userAction === 'swap' ? NOIR_SWAP_REFERRAL : NOIR_RECEIVE_REFERRAL,
             originAsset: ZEC_ZCASH_ASSET,
             destinationAsset: input.destination.protocolAssetId,
             amountRaw: input.amountZats,
@@ -554,6 +566,9 @@ export class NativeZecIntentsSwapCoordinator {
       if (!quote || (!confidential && result?.quoteStatus !== 'success')) {
         throw new Error(result?.message ?? 'Native ZEC Intents quote is unavailable')
       }
+      const appFeeBps = confidentialQuote
+        ? readConfidentialQuoteAppFees(confidentialQuote).reduce((total, fee) => total + fee.fee, 0)
+        : undefined
       const expiresAt = Date.parse(quote.deadline)
       if (
         quote.amountIn !== input.amountZats ||
@@ -634,6 +649,7 @@ export class NativeZecIntentsSwapCoordinator {
           : {}),
         expectedOutputRaw: quote.amountOut,
         minimumOutputRaw: quote.minAmountOut,
+        ...(appFeeBps === undefined ? {} : { appFeeBps }),
         expiresAt,
         quoteBinding,
         slippageBps: input.slippageBps,
