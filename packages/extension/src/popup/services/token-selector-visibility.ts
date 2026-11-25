@@ -13,7 +13,7 @@ export interface TokenPickerBalance {
   readonly valueUsd?: string | null
 }
 
-export type TokenPickerPolicy = 'all' | 'grouped' | 'grouped-source' | 'funded' | 'withdrawal'
+export type TokenPickerPolicy = 'all' | 'grouped' | 'funded' | 'withdrawal'
 
 function balanceAmount(asset: TokenPickerBalance): string | null {
   return asset.availableRaw === undefined
@@ -44,7 +44,7 @@ export function sortTokenPickerRows<Row>(
   policy: TokenPickerPolicy
 ): Row[] {
   const fundedOnly = policy === 'funded' || policy === 'withdrawal'
-  const grouped = policy === 'grouped' || policy === 'grouped-source'
+  const grouped = policy === 'grouped'
   return rows
     .map(row => {
       const asset = getAsset(row)

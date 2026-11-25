@@ -1426,7 +1426,7 @@ function ShieldSwapForm({
         {active && picker === 'from' && (
           <ShieldTokenPicker
             rows={fromPickerItems}
-            policy="grouped-source"
+            policy="grouped"
             balancesHidden={hidden}
             loading={!fromPickerReady || status === 'loading'}
             selectedKey={
