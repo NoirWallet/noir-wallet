@@ -36,6 +36,7 @@ export interface NativeZecIntentsSwapReview {
   readonly fundingSource?: 'transparent' | 'shielded'
   readonly expectedOutputRaw: string
   readonly minimumOutputRaw: string
+  readonly appFeeBps?: number
   readonly expiresAt: number
   readonly quoteBinding: QuoteBinding
 }

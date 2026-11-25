@@ -6673,6 +6673,7 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
           })}
           slippage={swap.slippage}
           provider="near-confidential"
+          appFeeBps={review?.appFeeBps}
           preparationError={
             transferPreparationError ?? (!review && !swap.isQuoting ? swap.quoteError : null)
           }

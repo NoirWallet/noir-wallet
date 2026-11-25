@@ -246,6 +246,7 @@ test('native ZEC Confidential destination binds the internal ZEC asset and activ
   let switchDuringAuthorization = false
   let switchDuringIdentityResolution = false
   let identityResolutionCount = 0
+  let quoteReferral
   const originalChrome = globalThis.chrome
   const originalFetch = globalThis.fetch
   const originalLocks = Object.getOwnPropertyDescriptor(globalThis.navigator, 'locks')
@@ -306,29 +307,33 @@ test('native ZEC Confidential destination binds the internal ZEC asset and activ
       authorizeConfidentialIdentity: async () => {
         if (switchDuringAuthorization) activeAccountId = 'account-two'
       },
-      quoteConfidential: async input => ({
-        correlationId: 'quote-one',
-        quoteRequest: {
-          swapType: 'EXACT_INPUT',
-          confidentiality: 'basic',
-          originAsset: protocolAssetId,
-          destinationAsset: input.destinationAsset,
-          amount: input.amountRaw,
-          refundTo: input.refundTo,
-          recipient,
-          depositType: 'ORIGIN_CHAIN',
-          refundType: 'ORIGIN_CHAIN',
-          recipientType: 'CONFIDENTIAL_INTENTS',
-          slippageTolerance: input.slippageBps
-        },
-        quote: {
-          amountIn: input.amountRaw,
-          amountOut: input.amountRaw,
-          minAmountOut: input.amountRaw,
-          depositAddress,
-          deadline: new Date(Date.now() + 600_000).toISOString()
+      quoteConfidential: async input => {
+        quoteReferral = input.referral
+        return {
+          correlationId: 'quote-one',
+          quoteRequest: {
+            swapType: 'EXACT_INPUT',
+            confidentiality: 'basic',
+            originAsset: protocolAssetId,
+            destinationAsset: input.destinationAsset,
+            amount: input.amountRaw,
+            refundTo: input.refundTo,
+            recipient,
+            depositType: 'ORIGIN_CHAIN',
+            refundType: 'ORIGIN_CHAIN',
+            recipientType: 'CONFIDENTIAL_INTENTS',
+            slippageTolerance: input.slippageBps,
+            appFees: [{ recipient: 'noir_swap.near', fee: 20 }]
+          },
+          quote: {
+            amountIn: input.amountRaw,
+            amountOut: input.amountRaw,
+            minAmountOut: input.amountRaw,
+            depositAddress,
+            deadline: new Date(Date.now() + 600_000).toISOString()
+          }
         }
-      })
+      }
     })
     const request = {
       network: 'mainnet',
@@ -355,6 +360,7 @@ test('native ZEC Confidential destination binds the internal ZEC asset and activ
     activeAccountId = 'account-one'
     switchDuringIdentityResolution = false
     const review = await coordinator.prepare(request)
+    expect(quoteReferral).toBe('noir_swap')
     expect(review.destination).toEqual({ ...destination, recipient })
     expect(review.quoteBinding).toMatchObject({
       destinationChain: destination.chainId,
@@ -364,7 +370,10 @@ test('native ZEC Confidential destination binds the internal ZEC asset and activ
       userAction: 'swap'
     })
     expect(values.get(`native_zec_intents_swap:${review.quoteId}`).schemaVersion).toBe(2)
-    expect((await coordinator.get(review.quoteId)).quoteBinding).toEqual(review.quoteBinding)
+    expect(await coordinator.get(review.quoteId)).toMatchObject({
+      quoteBinding: review.quoteBinding,
+      appFeeBps: 20
+    })
     await expect(coordinator.prepare({ ...request, userAction: undefined })).rejects.toThrow(
       'request ID was reused with different details'
     )
@@ -377,6 +386,13 @@ test('native ZEC Confidential destination binds the internal ZEC asset and activ
         destination: { ...destination, recipient: refundAddress }
       })
     ).rejects.toThrow('Native ZEC Intents destination is invalid')
+    expect(await coordinator.cancel(review.quoteId)).toBe(true)
+    const shieldedReview = await coordinator.prepare({ ...request, fundingSource: 'shielded' })
+    expect(shieldedReview).toMatchObject({ fundingSource: 'shielded', appFeeBps: 20 })
+    expect(quoteReferral).toBe('noir_swap')
+    expect(await coordinator.cancel(shieldedReview.quoteId)).toBe(true)
+    await coordinator.prepare({ ...request, userAction: undefined })
+    expect(quoteReferral).toBe('noir_receive')
   } finally {
     globalThis.chrome = originalChrome
     globalThis.fetch = originalFetch
