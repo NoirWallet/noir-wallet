@@ -26,6 +26,7 @@ import { parseZcashAddress } from '@/core/address-book/address-book'
 import { isValidExternalRecipient } from './confidential-funding-recipient'
 import type { PortfolioReadModel } from '@/core/portfolio'
 import type { SwapToken } from '@/core/services/intents-api'
+import type { OneClickOrder, OneClickViewer } from '@/core/services/one-click-order'
 import { ZEC_ZCASH_ASSET } from '@/config/intents'
 import {
   resolveIntentsEvmAssets,
@@ -106,6 +107,7 @@ import type { NetworkFeeTier } from '@/core/transactions/domain'
 import {
   ConfidentialFundingApi,
   ConfidentialFundingApiError,
+  parseConfidentialOneClickStatus,
   readConfidentialQuoteAppFees,
   type ConfidentialBalance,
   type ConfidentialPrivateOrder,
@@ -123,6 +125,7 @@ import {
 } from './native-zec-intents-swap'
 import { ShieldDappCoordinator } from './shield-dapp-coordinator'
 import type { ShieldDappOperationReport } from '@/core/services/confidential-funding/shield-dapp-projection'
+import type { queryOneClickOrderStatus } from './one-click-status'
 import type { PrepareNativeZecIntentsSwapInput } from '@/core/services/native-zec-intents-swap'
 import type { QuoteBinding } from '@/types/wallet'
 
@@ -312,6 +315,7 @@ function clusterDepositBinding(input: ClusterFundingInput, identity: Confidentia
 export interface ConfidentialFundingCoordinatorOptions {
   readonly network: Network
   readonly api: ConfidentialFundingApi
+  readonly queryOneClickOrderStatus: typeof queryOneClickOrderStatus
   readonly store: ChromeConfidentialFundingStore
   readonly signer: ConfidentialFundingSigner
   readonly repository: TransactionRepository
@@ -347,6 +351,15 @@ export interface ConfidentialFundingCoordinatorOptions {
   ) => Promise<void>
   readonly now?: () => number
   readonly createId?: () => string
+}
+
+function evmRefundViewer(refundTo: string, identity: ConfidentialSigningIdentity): OneClickViewer {
+  const address = refundTo.toLowerCase()
+  if (address === identity.address.toLowerCase())
+    return { chainFamily: 'evm', walletAddress: refundTo, signingMode: 'public' }
+  if (address === identity.peaAddress.toLowerCase())
+    return { chainFamily: 'evm', walletAddress: refundTo, signingMode: 'private' }
+  throw new Error('Confidential refund address does not belong to the current account')
 }
 
 function isPositiveRaw(value: string): boolean {
@@ -654,7 +667,7 @@ export class ConfidentialFundingCoordinator {
     string,
     Readonly<{ promise: Promise<ExternalShieldDeposit>; force: boolean }>
   >()
-  private readonly oneClickStatusQueries = new Map<string, Promise<ConfidentialStatus>>()
+  private readonly oneClickStatusQueries = new Map<string, Promise<ConfidentialStatus | null>>()
   private readonly oneClickStatusState = new Map<
     string,
     | { kind: 'fresh'; until: number; status: ConfidentialStatus }
@@ -877,10 +890,14 @@ export class ConfidentialFundingCoordinator {
       }
     }
     if (isZcash) {
+      const active = this.options.getNativeZecActiveAccount?.()
       if (
-        !parseZcashAddress(input.refundAddress, input.network).scheme.startsWith(
-          'zcash-transparent-'
-        )
+        parseZcashAddress(input.refundAddress, input.network).scheme !==
+          'zcash-transparent-p2pkh' ||
+        active?.network !== input.network ||
+        active.walletId !== input.keyDomainId ||
+        active.accountId !== input.accountId ||
+        !active.refundAddresses.includes(input.refundAddress)
       ) {
         throw new Error('External Shield deposit requires a transparent Zcash refund address')
       }
@@ -933,12 +950,16 @@ export class ConfidentialFundingCoordinator {
       }
       return existing
     }
+    const viewer: OneClickViewer = isZcash
+      ? { chainFamily: 'zcash', walletAddress: input.refundAddress, signingMode: 'transparent' }
+      : evmRefundViewer(input.refundAddress, identity)
     setStage('quote')
     const quote = minimumMode
       ? await this.options.api.quoteFlexibleDeposit({
           originAsset: input.source.protocolAssetId,
           signerId: identity.address,
           refundTo: input.refundAddress,
+          viewer,
           slippageBps
         })
       : await this.options.api.quote({
@@ -948,6 +969,7 @@ export class ConfidentialFundingCoordinator {
           amountRaw: input.source.amountRaw!,
           signerId: identity.address,
           refundTo: input.refundAddress,
+          viewer,
           recipient: identity.address,
           depositType: 'ORIGIN_CHAIN',
           refundType: 'ORIGIN_CHAIN',
@@ -1080,16 +1102,34 @@ export class ConfidentialFundingCoordinator {
     )
   }
 
-  private oneClickStatusKey(depositAddress: string, depositMemo?: string): string {
-    return `${depositAddress}\0${depositMemo ?? ''}`
+  private async readOwnerStatus(
+    scope: ExternalShieldDepositScope,
+    order?: OneClickOrder
+  ): Promise<ConfidentialStatus | null> {
+    if (!order?.viewer) return null
+    const value = await this.options.queryOneClickOrderStatus({
+      network: scope.network,
+      walletId: scope.keyDomainId,
+      accountId: scope.accountId,
+      order
+    })
+    return value === null
+      ? null
+      : parseConfidentialOneClickStatus(value, order.depositAddress, order.depositMemo)
   }
 
   private async fetchOneClickDepositStatus(
-    depositAddress: string,
-    depositMemo?: string,
+    record: ExternalShieldDeposit,
     force = false
-  ): Promise<ConfidentialStatus> {
-    const key = this.oneClickStatusKey(depositAddress, depositMemo)
+  ): Promise<ConfidentialStatus | null> {
+    const order = record.quote.oneClickOrder
+    if (
+      !order?.viewer ||
+      order.depositAddress !== record.depositAddress ||
+      order.depositMemo !== record.depositMemo
+    )
+      return null
+    const key = record.depositId
     const pending = this.oneClickStatusQueries.get(key)
     if (pending) return pending
     const state = this.oneClickStatusState.get(key)
@@ -1099,14 +1139,15 @@ export class ConfidentialFundingCoordinator {
       if (!force) return state.status
     }
 
-    const operation = this.options.api
-      .getOneClickStatus(depositAddress, depositMemo)
+    const operation = this.readOwnerStatus(record, order)
       .then(status => {
-        this.oneClickStatusState.set(key, {
-          kind: 'fresh',
-          until: this.now() + EXTERNAL_DEPOSIT_STATUS_FRESH_MS,
-          status
-        })
+        if (status) {
+          this.oneClickStatusState.set(key, {
+            kind: 'fresh',
+            until: this.now() + EXTERNAL_DEPOSIT_STATUS_FRESH_MS,
+            status
+          })
+        }
         return status
       })
       .catch(error => {
@@ -1143,7 +1184,7 @@ export class ConfidentialFundingCoordinator {
     force = false
   ): Promise<ConfidentialStatus | null> {
     try {
-      return await this.fetchOneClickDepositStatus(record.depositAddress, record.depositMemo, force)
+      return await this.fetchOneClickDepositStatus(record, force)
     } catch (error) {
       if (
         error instanceof ConfidentialFundingApiError &&
@@ -1754,7 +1795,14 @@ export class ConfidentialFundingCoordinator {
       return quote
     }
     const fetchQuote = () =>
-      this.options.api.quote({ ...binding, referral, dry: false }).then(validate)
+      this.options.api
+        .quote({
+          ...binding,
+          referral,
+          dry: false,
+          viewer: evmRefundViewer(binding.refundTo, identity)
+        })
+        .then(validate)
     const cache = this.clusterDepositPrefetches
     for (const [key, entry] of cache) {
       if (entry.expiresAt <= this.now()) cache.delete(key)
@@ -1924,6 +1972,7 @@ export class ConfidentialFundingCoordinator {
       recipient: sourceIdentity.address,
       depositType: 'ORIGIN_CHAIN',
       refundType: 'ORIGIN_CHAIN',
+      viewer: evmRefundViewer(sourceIdentity.address, sourceIdentity),
       recipientType: 'CONFIDENTIAL_INTENTS',
       slippageBps: input.slippageBps,
       dry: false
@@ -2143,6 +2192,7 @@ export class ConfidentialFundingCoordinator {
       amountRaw: input.source.amountRaw,
       signerId: sourceIdentity.address,
       ...(isDeposit ? { refundTo: sourceAddress } : {}),
+      ...(isDeposit ? { viewer: evmRefundViewer(sourceAddress, sourceIdentity) } : {}),
       recipient: isDeposit ? sourceIdentity.address : destinationAddress,
       depositType: isDeposit ? 'ORIGIN_CHAIN' : 'CONFIDENTIAL_INTENTS',
       refundType: isDeposit ? 'ORIGIN_CHAIN' : 'CONFIDENTIAL_INTENTS',
@@ -3894,6 +3944,7 @@ export class ConfidentialFundingCoordinator {
           sourceAmountRaw,
           amountRaw,
           depositAddress: quote.quote.depositAddress,
+          ...(quote.oneClickOrder ? { oneClickOrder: quote.oneClickOrder } : {}),
           destinationAddress: plan.destination.address,
           destinationChain: plan.destination.chainName,
           token: plan.destination.protocolAssetId,
@@ -4048,6 +4099,7 @@ export class ConfidentialFundingCoordinator {
         sourceAmountRaw: plan.splitSourceAmounts[sequence],
         amountRaw: quote.quote.amountOut,
         depositAddress: quote.quote.depositAddress,
+        ...(quote.oneClickOrder ? { oneClickOrder: quote.oneClickOrder } : {}),
         destinationAddress: plan.destination.address,
         destinationChain: plan.destination.chainName,
         token: plan.destination.protocolAssetId,
@@ -4193,6 +4245,7 @@ export class ConfidentialFundingCoordinator {
         ...row,
         amountRaw: quote.quote.amountOut,
         depositAddress: quote.quote.depositAddress,
+        ...(quote.oneClickOrder ? { oneClickOrder: quote.oneClickOrder } : {}),
         deadline: binding.deadline,
         status: 'SIGNED',
         signedPayload
@@ -5246,12 +5299,14 @@ export class ConfidentialFundingCoordinator {
     sequence?: number
   ) {
     try {
-      const chainId = parseChainId(
-        stage === 'deposit' ? plan.source.chainId : plan.destination.chainId
-      ).reference
-      return plan.operation === 'swap' || plan.operation === 'confidential-transfer'
-        ? await this.options.api.getOneClickStatus(depositAddress)
-        : await this.options.api.getStatus(depositAddress, chainId)
+      const order =
+        stage === 'deposit'
+          ? plan.depositQuote?.oneClickOrder
+          : plan.withdraws.find(row => row.sequence === sequence)?.oneClickOrder
+      return order?.depositAddress === depositAddress &&
+        (stage !== 'deposit' || order.depositMemo === plan.depositQuote?.quote.depositMemo)
+        ? await this.readOwnerStatus(plan, order)
+        : null
     } catch (error) {
       console.warn('[Confidential Funding] Status request failed', {
         planId: plan.planId,

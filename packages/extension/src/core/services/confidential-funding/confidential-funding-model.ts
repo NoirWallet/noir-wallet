@@ -1,4 +1,5 @@
 import type { Network } from '@/types'
+import type { OneClickOrder } from '@/core/services/one-click-order'
 import { confidentialPrivateTokenId } from './confidential-funding-portfolio'
 
 export const CONFIDENTIAL_WITHDRAW_MIN_COUNT = 2
@@ -30,6 +31,7 @@ export type ConfidentialSignedPayload = Readonly<{
 
 export interface ConfidentialQuote {
   readonly correlationId: string
+  readonly oneClickOrder?: OneClickOrder
   readonly quoteRequest: Readonly<Record<string, unknown>>
   readonly quote: Readonly<{
     amountIn: string
@@ -64,6 +66,7 @@ export interface ConfidentialWithdrawRow {
   readonly amountRaw: string
   readonly settledOutputRaw?: string
   readonly depositAddress: string
+  readonly oneClickOrder?: OneClickOrder
   readonly destinationAddress: string
   readonly destinationChain: string
   readonly token: string

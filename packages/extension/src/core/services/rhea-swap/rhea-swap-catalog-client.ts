@@ -1,5 +1,6 @@
 import { DedupPromise } from '@/lib/async-utils'
 import { isNoirPublicConfidentialTransferReferral } from '@/config/intents'
+import type { OneClickOrder } from '@/core/services/one-click-order'
 import {
   RHEA_SWAP_CHAIN_CATALOG,
   RHEA_SWAP_TOKEN_CATALOG_TTL_MS,
@@ -23,6 +24,11 @@ import {
   type SwapTokenListItem
 } from './rhea-swap-protocol'
 
+interface PublicConfidentialStatusScope {
+  readonly walletId: string
+  readonly accountId: string
+}
+
 interface RheaSwapClientConfig {
   baseUrl: string
   apiKey?: string
@@ -34,7 +40,11 @@ interface RheaSwapClientConfig {
   publicConfidentialTransfer?: {
     quote(request: QuoteRequest, signal?: AbortSignal): Promise<SwapQuoteDataRaw>
     build(quote: Quote, signal?: AbortSignal): Promise<SwapBuildDataRaw>
-    getStatus(depositAddress: string, signal?: AbortSignal): Promise<SwapOrderStatusDataRaw>
+    getStatus(
+      order: OneClickOrder,
+      scope: PublicConfidentialStatusScope,
+      signal?: AbortSignal
+    ): Promise<SwapOrderStatusDataRaw | null>
   }
 }
 
@@ -199,10 +209,11 @@ export class RheaSwapCatalogClient {
   }
 
   getPublicConfidentialTransferStatus(
-    depositAddress: string,
+    order: OneClickOrder,
+    scope: PublicConfidentialStatusScope,
     signal?: AbortSignal
-  ): Promise<SwapOrderStatusDataRaw> {
-    return this.requirePublicConfidentialTransfer().getStatus(depositAddress, signal)
+  ): Promise<SwapOrderStatusDataRaw | null> {
+    return this.requirePublicConfidentialTransfer().getStatus(order, scope, signal)
   }
 
   private requirePublicConfidentialTransfer() {

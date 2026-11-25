@@ -1,5 +1,6 @@
 import { parseAssetDisplayMetadata, parseAssetId, parseChainId } from '@/core/chains/registry'
 import type { AssetDisplayMetadata, AssetId, ChainId } from '@/core/chains/domain'
+import type { OneClickViewer } from '@/core/services/one-click-order'
 
 const RAW_AMOUNT_PATTERN = /^(0|[1-9][0-9]{0,77})$/
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/
@@ -23,6 +24,8 @@ export interface NearIntentsTransactionBinding {
   readonly kind: 'swap' | 'supply'
   readonly userAction?: 'transfer'
   readonly depositAddress: string
+  readonly depositMemo?: string
+  readonly viewer?: OneClickViewer
   readonly refundAddress: string
   readonly expiresAt: number
   readonly origin: NearIntentsAssetBinding
@@ -167,11 +170,10 @@ export function parseNearIntentsTransactionBinding(value: unknown): NearIntentsT
     'origin',
     'destination'
   ]
-  assertExactKeys(
-    value,
-    value.userAction === undefined ? requiredKeys : [...requiredKeys, 'userAction'],
-    'Near Intents binding'
+  const optionalKeys = ['userAction', 'depositMemo', 'viewer'].filter(
+    key => value[key] !== undefined
   )
+  assertExactKeys(value, [...requiredKeys, ...optionalKeys], 'Near Intents binding')
   if (
     value.schemaVersion !== 1 ||
     value.provider !== 'near-intents' ||
@@ -189,10 +191,57 @@ export function parseNearIntentsTransactionBinding(value: unknown): NearIntentsT
     kind: value.kind,
     ...(value.userAction === undefined ? {} : { userAction: 'transfer' as const }),
     depositAddress: parseString(value.depositAddress, 'Near Intents deposit address'),
+    ...(value.depositMemo === undefined
+      ? {}
+      : { depositMemo: parseOneClickDepositMemo(value.depositMemo) }),
+    ...(value.viewer === undefined ? {} : { viewer: parseOneClickViewer(value.viewer) }),
     refundAddress: parseString(value.refundAddress, 'Near Intents refund address'),
     expiresAt: value.expiresAt as number,
     origin: parseAssetBinding(value.origin, 'Near Intents origin'),
     destination: parseDestinationBinding(value.destination)
+  })
+}
+
+export function parseOneClickDepositMemo(value: unknown): string {
+  if (
+    typeof value !== 'string' ||
+    !value ||
+    value.length > STRING_LIMIT ||
+    CONTROL_CHARACTERS.test(value)
+  ) {
+    throw new Error('1Click deposit memo is invalid')
+  }
+  return value
+}
+
+export function parseOneClickViewer(value: unknown): OneClickViewer {
+  if (!isRecord(value)) throw new Error('1Click viewer must be an object')
+  const { chainFamily, signingMode } = value
+  assertExactKeys(
+    value,
+    signingMode === undefined
+      ? ['chainFamily', 'walletAddress']
+      : ['chainFamily', 'walletAddress', 'signingMode'],
+    '1Click viewer'
+  )
+  if (
+    (chainFamily !== 'evm' &&
+      chainFamily !== 'solana' &&
+      chainFamily !== 'near' &&
+      chainFamily !== 'btc' &&
+      chainFamily !== 'zcash') ||
+    (signingMode !== undefined &&
+      signingMode !== 'derived' &&
+      signingMode !== 'transparent' &&
+      signingMode !== 'public' &&
+      signingMode !== 'private')
+  ) {
+    throw new Error('1Click viewer is invalid')
+  }
+  return Object.freeze({
+    chainFamily,
+    walletAddress: parseString(value.walletAddress, '1Click viewer address'),
+    ...(signingMode === undefined ? {} : { signingMode })
   })
 }
 

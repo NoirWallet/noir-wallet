@@ -1,6 +1,6 @@
 import {
-  fetchSwapStatus,
   getCachedTokens,
+  parseSwapStatusResponse,
   refreshSwapTokenCatalog,
   evaluateIntentsStatusQuoteBinding,
   type SwapStatus
@@ -33,6 +33,7 @@ import {
   readNativeZecIntentsSwapMetadata,
   readNativeZecIntentsSwapStatus
 } from './native-zec-intents-swap'
+import { queryOneClickOrderStatus } from './one-click-status'
 
 export type PendingTransaction = IntentsProgressEntry &
   Partial<Pick<AccountScope, 'walletId' | 'accountId'>>
@@ -307,10 +308,20 @@ export class TransactionMonitor {
       ) {
         throw new Error('Native ZEC Intents monitor deposit address changed')
       }
-      const status =
-        binding?.provider === 'near-intents' && binding.quoteHandle
-          ? await readNativeZecIntentsSwapStatus(binding)
-          : await fetchSwapStatus(tx.depositAddress)
+      const scope = resolveAccountScope(tx, useWalletStore.getState().wallets)
+      let status: SwapStatus | null = null
+      if (scope && transaction && binding) {
+        const identity = { ...scope, network: transaction.network }
+        if (binding.provider === 'near-intents' && binding.refundTo) {
+          status = await readNativeZecIntentsSwapStatus(binding, identity)
+        } else if (binding.oneClickOrder?.depositAddress === tx.depositAddress) {
+          const response = await queryOneClickOrderStatus({
+            ...identity,
+            order: binding.oneClickOrder
+          })
+          if (response !== null) status = parseSwapStatusResponse(response)
+        }
+      }
 
       if (!status) {
         if (isIntentsProgressStale(tx)) await this.handleStale(tx)

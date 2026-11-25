@@ -87,6 +87,7 @@ test('uses the same 2 bps 1Click route for public confidential transfer quotes a
       recipient: request.recipient,
       recipientType: 'DESTINATION_CHAIN'
     })
+    if (!body.dry) expect(body).toMatchObject({ user: request.sender, userChainFamily: 'evm' })
     if (body.appFees) expect(body.appFees).toEqual(fees)
     else expect(body.dry).toBe(true)
     const appFees =
@@ -108,8 +109,14 @@ test('uses the same 2 bps 1Click route for public confidential transfer quotes a
     })
   }
   try {
+    let status = null
+    const reads = []
     const adapter = new PublicConfidentialTransfer(
       new ConfidentialFundingApi(config, '', ''),
+      async input => {
+        reads.push(input)
+        return status
+      },
       async () => [usdc]
     )
     const client = new RheaSwapCatalogClient({
@@ -140,6 +147,27 @@ test('uses the same 2 bps 1Click route for public confidential transfer quotes a
       repeatFeeInBuild = true
       await expect(service.prepare(quote.quoteHandle)).rejects.toThrow('app fees do not match')
       repeatFeeInBuild = false
+      const sourceHash = `0x${'10'.repeat(32)}`
+      const destinationHash = `0x${'20'.repeat(32)}`
+      await service.recordTransactionSubmission(quote.quoteHandle, sourceHash)
+      status = null
+      await expect(service.getOrderStatus(quote.quoteHandle)).resolves.toMatchObject({
+        status: 'unknown',
+        destinationHash: null
+      })
+      expect(reads.at(-1)).toMatchObject({
+        network: 'mainnet',
+        ...scope,
+        order: {
+          depositAddress,
+          viewer: { chainFamily: 'evm', walletAddress: request.sender, signingMode: 'public' }
+        }
+      })
+      status = { status: 'SUCCESS', toHash: destinationHash }
+      await expect(service.getOrderStatus(quote.quoteHandle)).resolves.toMatchObject({
+        status: 'completed',
+        destinationHash
+      })
     }
     repeatFeeInBaseline = true
     await expect(

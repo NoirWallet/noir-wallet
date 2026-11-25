@@ -5,7 +5,9 @@ import { parseZcashAddress } from '@/core/address-book/address-book'
 import { getEvmRouteAssetIdentity } from '@/core/chains/cross-chain-asset-group'
 import { fetchSwapTokens, type SwapToken } from '@/core/services/intents-api'
 import { isDeprecatedIntentsToken } from '@/core/services/intents-evm-assets'
+import type { OneClickOrder, OneClickViewer } from '@/core/services/one-click-order'
 import { isEvmNativeQuoteAddress, resolveRheaSwapCanonicalAssetId } from '@/core/services/rhea-swap'
+import { publicConfidentialRefundViewer } from '@/core/services/rhea-swap/rhea-swap-model'
 import type {
   AssetRef,
   Quote,
@@ -13,7 +15,11 @@ import type {
   SwapBuildDataRaw,
   SwapQuoteDataRaw
 } from '@/core/services/rhea-swap/rhea-swap-protocol'
-import type { ConfidentialFundingApi } from './confidential-funding-api'
+import {
+  parseConfidentialOneClickStatus,
+  type ConfidentialFundingApi
+} from './confidential-funding-api'
+import type { queryOneClickOrderStatus } from './one-click-status'
 
 const ROUTER = 'nearintents'
 
@@ -38,7 +44,8 @@ function resolveAsset(asset: AssetRef, tokens: readonly SwapToken[]): SwapToken 
 
 export class PublicConfidentialTransfer {
   constructor(
-    private readonly api: Pick<ConfidentialFundingApi, 'quote' | 'getOneClickStatus'>,
+    private readonly api: Pick<ConfidentialFundingApi, 'quote'>,
+    private readonly queryStatus: typeof queryOneClickOrderStatus,
     private readonly getTokens: () => Promise<readonly SwapToken[]> = fetchSwapTokens
   ) {}
 
@@ -64,6 +71,7 @@ export class PublicConfidentialTransfer {
 
   async build(quote: Quote, signal?: AbortSignal): Promise<SwapBuildDataRaw> {
     const { request, bridge } = quote.buildContext
+    const viewer = publicConfidentialRefundViewer(quote.fromChain, request.sender)
     const { origin, destination } = await this.resolveAssets(quote, signal)
     if (
       typeof bridge !== 'object' ||
@@ -87,7 +95,8 @@ export class PublicConfidentialTransfer {
       origin.assetId,
       destination.assetId,
       false,
-      signal
+      signal,
+      viewer
     )
     const { amountIn, amountOut, minAmountOut, depositAddress, depositMemo, timeEstimate } =
       result.quote
@@ -108,13 +117,19 @@ export class PublicConfidentialTransfer {
       amountIn,
       estimatedOut: amountOut,
       minAmountOut,
-      deposit: { depositAddress, timeEstimate },
+      deposit: { depositAddress, ...(viewer === undefined ? {} : { viewer }), timeEstimate },
       tx
     }
   }
 
-  async getStatus(depositAddress: string, signal?: AbortSignal): Promise<Record<string, unknown>> {
-    const result = await this.api.getOneClickStatus(depositAddress, undefined, signal)
+  async getStatus(
+    order: OneClickOrder,
+    scope: Readonly<{ walletId: string; accountId: string }>,
+    signal?: AbortSignal
+  ): Promise<Record<string, unknown> | null> {
+    const value = await this.queryStatus({ network: 'mainnet', ...scope, order, signal })
+    if (value === null) return null
+    const result = parseConfidentialOneClickStatus(value, order.depositAddress, order.depositMemo)
     return { status: result.status, toHash: result.transactionHash }
   }
 
@@ -135,7 +150,8 @@ export class PublicConfidentialTransfer {
     originAsset: string,
     destinationAsset: string,
     dry: boolean,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    viewer?: OneClickViewer
   ) {
     const referral = request.extensions?.referral
     if (
@@ -158,7 +174,8 @@ export class PublicConfidentialTransfer {
         refundType: 'ORIGIN_CHAIN',
         recipientType: 'DESTINATION_CHAIN',
         slippageBps: request.slippageBps,
-        dry
+        dry,
+        ...(viewer === undefined ? {} : { viewer })
       },
       signal
     )

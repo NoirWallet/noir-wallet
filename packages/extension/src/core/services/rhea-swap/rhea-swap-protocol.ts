@@ -1,3 +1,7 @@
+import { isNoirPublicConfidentialTransferReferral } from '@/config/intents'
+import type { OneClickOrder } from '@/core/services/one-click-order'
+import { parseOneClickDepositMemo, parseOneClickViewer } from '@/core/transactions/domain/protocol'
+
 export type ChainRef = `${number}` | 'solana' | 'aptos' | 'near' | 'tron' | 'btc' | 'zcash' | 'sui'
 
 export interface AssetRef {
@@ -186,8 +190,7 @@ interface NearTransaction {
   actions: unknown[]
 }
 
-interface DepositInfo {
-  depositAddress: string
+interface DepositInfo extends OneClickOrder {
   orderId?: string
   timeEstimate?: number | string
 }
@@ -681,10 +684,17 @@ export function normalizeBuild(
   const depositAddress = optionalText(depositData?.depositAddress)
   const depositOrderId = optionalText(depositData?.orderId, 256)
   const timeEstimate = depositData?.timeEstimate
+  const ownerStatus = isNoirPublicConfidentialTransferReferral(request.referral)
   const deposit = depositAddress
     ? {
         depositAddress,
         orderId: depositOrderId,
+        ...(!ownerStatus || depositData?.depositMemo == null
+          ? {}
+          : { depositMemo: parseOneClickDepositMemo(depositData.depositMemo) }),
+        ...(!ownerStatus || depositData?.viewer === undefined
+          ? {}
+          : { viewer: parseOneClickViewer(depositData.viewer) }),
         ...(typeof timeEstimate === 'string' || typeof timeEstimate === 'number'
           ? { timeEstimate }
           : {})

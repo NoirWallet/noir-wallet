@@ -1,4 +1,5 @@
 import type { Network, QuoteBinding } from '@/types/wallet'
+import type { OneClickOrder } from './one-click-order'
 
 export interface PrepareNativeZecIntentsSwapInput {
   readonly network: Network
@@ -57,8 +58,25 @@ export function sameNativeZecQuoteBinding(left: QuoteBinding, right: QuoteBindin
     Object.entries(left).every(
       ([key, value]) =>
         Object.prototype.hasOwnProperty.call(right, key) &&
-        right[key as keyof QuoteBinding] === value
+        (key === 'oneClickOrder'
+          ? sameNativeZecOneClickOrder(left.oneClickOrder, right.oneClickOrder)
+          : right[key as keyof QuoteBinding] === value)
     )
+  )
+}
+
+function sameNativeZecOneClickOrder(
+  left: OneClickOrder | undefined,
+  right: OneClickOrder | undefined
+): boolean {
+  if (!left || !right) return left === right
+  return (
+    left.depositAddress === right.depositAddress &&
+    left.depositMemo === right.depositMemo &&
+    Boolean(left.viewer) === Boolean(right.viewer) &&
+    left.viewer?.chainFamily === right.viewer?.chainFamily &&
+    left.viewer?.walletAddress === right.viewer?.walletAddress &&
+    left.viewer?.signingMode === right.viewer?.signingMode
   )
 }
 

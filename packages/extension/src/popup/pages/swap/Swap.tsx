@@ -4370,12 +4370,11 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
           signedOrder,
           sourceExecutionMode: executionSourceMode,
           rheaQuoteHandle: quoteResult?.quoteHandle,
-          ...(shieldNativeZecSwap &&
-          swap.isZecSource &&
-          nativeIntentsQuote?.review.recipientType === 'CONFIDENTIAL_INTENTS'
+          ...(nativeIntentsQuote && swap.isZecSource
             ? {
                 nativeIntentsQuoteHandle: nativeIntentsQuote.review.quoteId,
-                nativeIntentsInternalDestination: true
+                nativeIntentsInternalDestination:
+                  nativeIntentsQuote.review.recipientType === 'CONFIDENTIAL_INTENTS'
               }
             : {}),
           router:
@@ -4409,7 +4408,6 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
       swap,
       quoteResult?.quoteHandle,
       nativeIntentsQuote,
-      shieldNativeZecSwap,
       swap.isZecSource,
       navigate,
       setResult,

@@ -20,6 +20,7 @@ import {
   RHEA_SWAP_CHAIN_CATALOG,
   isEvmNativeQuoteAddress,
   parseRheaSwapQuoteRequest,
+  publicConfidentialRefundViewer,
   toRheaSwapExecutionView,
   toRheaSwapToken,
   toRheaSwapProtocolRequest,
@@ -821,15 +822,9 @@ export class RheaSwapService {
     const record = await this.requireSession(quoteHandle)
     const submission = record.submission
     if (!submission) throw new Error('RHEA Swap has not been submitted')
-    let status: SwapOrderStatusDataRaw
-    if (isNoirPublicConfidentialTransferReferral(record.request.extensions?.referral)) {
-      if (!this.client.getPublicConfidentialTransferStatus || !submission.orderId) {
-        throw new Error('Confidential transfer order is unavailable')
-      }
-      status = await this.client.getPublicConfidentialTransferStatus(submission.orderId, signal)
-    } else {
-      status = await this.readOrderObservation(submission, signal)
-    }
+    const status = isNoirPublicConfidentialTransferReferral(record.request.extensions?.referral)
+      ? ((await this.readPublicConfidentialObservation(record, submission.orderId, signal)) ?? {})
+      : await this.readOrderObservation(submission, signal)
     return Object.freeze({
       quoteHandle: record.quoteHandle,
       orderId: record.submission.orderId,
@@ -837,6 +832,27 @@ export class RheaSwapService {
       status: normalizeOrderStatus(status),
       destinationHash: readRheaDestinationHash(status) ?? null
     })
+  }
+
+  private async readPublicConfidentialObservation(
+    record: RheaSwapQuoteSessionRecord,
+    orderId: string | null,
+    signal?: AbortSignal
+  ): Promise<SwapOrderStatusDataRaw | null> {
+    const scope = record.privateSwapScope
+    if (!scope || !record.build || !this.client.getPublicConfidentialTransferStatus) return null
+    const order = this.readBuild(record, true).deposit
+    if (!order || order.depositAddress !== orderId) return null
+    const viewer =
+      order.viewer ??
+      publicConfidentialRefundViewer(record.request.fromChain, record.request.sender)
+    if (!viewer) return null
+    const { depositAddress, depositMemo } = order
+    return this.client.getPublicConfidentialTransferStatus(
+      { depositAddress, ...(depositMemo === undefined ? {} : { depositMemo }), viewer },
+      { walletId: scope.walletId, accountId: scope.accountId },
+      signal
+    )
   }
 
   private async readOrderObservation(
