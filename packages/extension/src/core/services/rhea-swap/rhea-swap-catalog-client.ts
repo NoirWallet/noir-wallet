@@ -1,14 +1,16 @@
 import { DedupPromise } from '@/lib/async-utils'
+import type { OneClickOrder } from '@/core/services/near-intents/one-click-order'
 import {
   RHEA_SWAP_CHAIN_CATALOG,
   RHEA_SWAP_TOKEN_CATALOG_TTL_MS,
-  toRheaSwapToken
+  toRheaSwapToken,
+  type PrivateQuotePurpose
 } from './rhea-swap-model'
 import { RheaSwapApi } from './rhea-swap-api'
 import { RheaSwapHttpError } from './rhea-swap-error'
 import {
   createSwapBuildRequest,
-  isOneClickConfidentialQuote,
+  isOneClickConfidentialRoute,
   normalizeBuild,
   normalizeQuote,
   serializeQuoteRequest,
@@ -23,6 +25,15 @@ import {
   type SwapTokenListItem
 } from './rhea-swap-protocol'
 
+interface PublicConfidentialStatusScope {
+  readonly walletId: string
+  readonly accountId: string
+}
+
+export interface PublicConfidentialBuildScope extends PublicConfidentialStatusScope {
+  readonly purpose?: PrivateQuotePurpose
+}
+
 interface RheaSwapClientConfig {
   baseUrl: string
   apiKey?: string
@@ -33,8 +44,16 @@ interface RheaSwapClientConfig {
   retry?: { maxRetries?: number; baseDelayMs?: number; maxDelayMs?: number; jitter?: boolean }
   publicConfidentialTransfer?: {
     quote(request: QuoteRequest, signal?: AbortSignal): Promise<SwapQuoteDataRaw>
-    build(quote: Quote, signal?: AbortSignal): Promise<SwapBuildDataRaw>
-    getStatus(depositAddress: string, signal?: AbortSignal): Promise<SwapOrderStatusDataRaw>
+    build(
+      quote: Quote,
+      signal?: AbortSignal,
+      scope?: PublicConfidentialBuildScope
+    ): Promise<SwapBuildDataRaw>
+    getStatus(
+      order: OneClickOrder,
+      scope: PublicConfidentialStatusScope,
+      signal?: AbortSignal
+    ): Promise<SwapOrderStatusDataRaw | null>
   }
 }
 
@@ -188,14 +207,18 @@ export class RheaSwapCatalogClient {
     return normalizeQuote(request, raw, this.now())
   }
 
-  async buildSwap(input: { quote: Quote; signal?: AbortSignal }): Promise<SwapBuild> {
+  async buildSwap(input: {
+    quote: Quote
+    signal?: AbortSignal
+    scope?: PublicConfidentialBuildScope
+  }): Promise<SwapBuild> {
     if (this.now() - input.quote.receivedAt > MAXIMUM_BUILD_QUOTE_AGE_MS) {
       throw new RheaSwapHttpError('QUOTE_EXPIRED', 'build', 'Quote expired. Get a new quote.')
     }
     const request = createSwapBuildRequest(input.quote)
     if (
       request.confidentiality === 'basic' &&
-      !isOneClickConfidentialQuote(request.confidentiality, request.referral, input.quote.raw)
+      !isOneClickConfidentialRoute(request.confidentiality, request.referral, request.bridge)
     ) {
       throw new RheaSwapHttpError(
         'QUOTE_EXPIRED',
@@ -205,16 +228,21 @@ export class RheaSwapCatalogClient {
     }
     const raw =
       request.confidentiality === 'basic'
-        ? await this.requirePublicConfidentialTransfer().build(input.quote, input.signal)
+        ? await this.requirePublicConfidentialTransfer().build(
+            input.quote,
+            input.signal,
+            input.scope
+          )
         : await this.api.build(request, input.signal)
     return normalizeBuild(raw, crypto.randomUUID(), request)
   }
 
   getPublicConfidentialTransferStatus(
-    depositAddress: string,
+    order: OneClickOrder,
+    scope: PublicConfidentialStatusScope,
     signal?: AbortSignal
-  ): Promise<SwapOrderStatusDataRaw> {
-    return this.requirePublicConfidentialTransfer().getStatus(depositAddress, signal)
+  ): Promise<SwapOrderStatusDataRaw | null> {
+    return this.requirePublicConfidentialTransfer().getStatus(order, scope, signal)
   }
 
   private requirePublicConfidentialTransfer() {
@@ -241,7 +269,8 @@ export class RheaSwapCatalogClient {
     body: SwapReportRequestRaw,
     options: ApiRequestOptions = {}
   ): Promise<{ id?: number | string; from_hash?: string }> {
-    const raw = await this.api.report(body, options.signal)
+    const { confidentiality: _legacyConfidentiality, ...report } = body
+    const raw = await this.api.report(report, options.signal)
     if (
       !isRecord(raw) ||
       (raw.id !== undefined && typeof raw.id !== 'number' && typeof raw.id !== 'string') ||

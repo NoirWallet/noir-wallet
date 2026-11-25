@@ -49,7 +49,7 @@ const quoteRequest = Object.freeze({
   recipient: 'alice.near'
 })
 
-test('uses 1Click for confidential quotes, builds and settlement without a CrossChain DEX report', async () => {
+test('uses the 1Click route and refund owner for all basic confidential quotes and builds', async () => {
   const usdcAddress = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913'
   const depositAddress = '0x4444444444444444444444444444444444444444'
   const usdc = { assetId: `nep141:base-${usdcAddress}.omft.near`, symbol: 'USDC', decimals: 6 }
@@ -74,18 +74,11 @@ test('uses 1Click for confidential quotes, builds and settlement without a Cross
   }
   const fees = [{ recipient: 'noir_swap.near', fee: 2 }]
   const originalFetch = globalThis.fetch
-  const destinationHash = `0x${'ab'.repeat(32)}`
   let referral
   let destination = usdc
   let repeatFeeInBaseline = false
   let repeatFeeInBuild = false
   globalThis.fetch = async (url, init) => {
-    if (url === `${config.oneClickApiUrl}/status?depositAddress=${depositAddress}`) {
-      return Response.json({
-        status: 'SUCCESS',
-        swapDetails: { destinationChainTxHashes: [{ hash: destinationHash }] }
-      })
-    }
     expect(url).toBe(`${config.oneClickApiUrl}/quote`)
     const body = JSON.parse(init.body)
     expect(body).toMatchObject({
@@ -98,6 +91,12 @@ test('uses 1Click for confidential quotes, builds and settlement without a Cross
       recipientType: 'DESTINATION_CHAIN',
       confidentiality: 'basic'
     })
+    if (body.dry || referral === 'noir_swap') {
+      expect(body.user).toBeUndefined()
+      expect(body.userChainFamily).toBeUndefined()
+    } else {
+      expect(body).toMatchObject({ user: request.sender, userChainFamily: 'evm' })
+    }
     if (referral === 'noir_swap') expect(body.appFees).toBeUndefined()
     else if (body.appFees) expect(body.appFees).toEqual(fees)
     else expect(body.dry).toBe(true)
@@ -120,8 +119,14 @@ test('uses 1Click for confidential quotes, builds and settlement without a Cross
     })
   }
   try {
+    let status = null
+    const reads = []
     const adapter = new PublicConfidentialTransfer(
       new ConfidentialFundingApi(config, '', ''),
+      async input => {
+        reads.push(input)
+        return status
+      },
       async () => [usdc, sol]
     )
     const client = new RheaSwapCatalogClient({
@@ -138,12 +143,18 @@ test('uses 1Click for confidential quotes, builds and settlement without a Cross
     ]) {
       referral = expectedReferral
       const quote = await service.quote(request, undefined, { ...scope, purpose })
-      expect(quote).toMatchObject(
-        referral === 'noir_swap'
-          ? { estimatedOut: '1000000', minAmountOut: '995000' }
-          : { estimatedOut: '999800', minAmountOut: '994801' }
-      )
+      const privateRefund = purpose === 'private-dapp-transfer'
+      expect(quote).toMatchObject({
+        estimatedOut: privateRefund ? '1000000' : '999800',
+        minAmountOut: privateRefund ? '995000' : '994801'
+      })
       const review = await service.prepare(quote.quoteHandle)
+      const prepared = await service.readPreparedBuild(quote.quoteHandle)
+      expect(prepared.deposit?.viewer).toEqual({
+        chainFamily: 'evm',
+        walletAddress: request.sender,
+        signingMode: privateRefund ? 'private' : 'public'
+      })
       expect(review).toMatchObject({
         amountIn: request.amountIn,
         estimatedOut: quote.estimatedOut,
@@ -155,22 +166,41 @@ test('uses 1Click for confidential quotes, builds and settlement without a Cross
         functionName: 'transfer',
         args: [depositAddress, BigInt(request.amountIn)]
       })
-      if (referral === 'noir_swap') {
-        await service.recordTransactionSubmission(quote.quoteHandle, `0x${'cd'.repeat(32)}`)
-        const restarted = new RheaSwapService(client, sessions)
-        await expect(restarted.reportSubmission(quote.quoteHandle)).resolves.toMatchObject({
-          reportStatus: 'reported',
-          orderId: depositAddress
-        })
-        await expect(restarted.getOrderStatus(quote.quoteHandle)).resolves.toMatchObject({
-          status: 'completed',
-          destinationHash
-        })
-      } else {
+      if (!privateRefund) {
         repeatFeeInBuild = true
         await expect(service.prepare(quote.quoteHandle)).rejects.toThrow('app fees do not match')
         repeatFeeInBuild = false
       }
+      const sourceHash = `0x${'10'.repeat(32)}`
+      const destinationHash = `0x${'20'.repeat(32)}`
+      await service.recordTransactionSubmission(quote.quoteHandle, sourceHash)
+      const restarted = new RheaSwapService(client, sessions)
+      await expect(restarted.reportSubmission(quote.quoteHandle)).resolves.toMatchObject({
+        reportStatus: 'reported',
+        orderId: depositAddress
+      })
+      status = null
+      await expect(restarted.getOrderStatus(quote.quoteHandle)).resolves.toMatchObject({
+        status: 'unknown',
+        destinationHash: null
+      })
+      expect(reads.at(-1)).toMatchObject({
+        network: 'mainnet',
+        ...scope,
+        order: {
+          depositAddress,
+          viewer: {
+            chainFamily: 'evm',
+            walletAddress: request.sender,
+            signingMode: privateRefund ? 'private' : 'public'
+          }
+        }
+      })
+      status = { status: 'SUCCESS', toHash: destinationHash }
+      await expect(service.getOrderStatus(quote.quoteHandle)).resolves.toMatchObject({
+        status: 'completed',
+        destinationHash
+      })
     }
     referral = 'noir_swap'
     destination = sol

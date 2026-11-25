@@ -11,6 +11,15 @@ import {
 } from '@/config/intents'
 import { parseNearAccountId } from '@/core/chains/near/identifiers'
 import { readRheaDestinationHash } from '@/core/services/rhea-swap/rhea-order-status'
+import {
+  createOneClickOrder,
+  parseOneClickDepositMemo,
+  type OneClickViewer
+} from '@/core/services/near-intents/one-click-order'
+import {
+  matchesOneClickQuoteViewer,
+  requestOneClickQuote
+} from '@/core/services/near-intents/one-click-quote'
 import { DedupPromise } from '@/lib/async-utils'
 import { parseSiweMessage } from 'viem/siwe'
 import { isAddress } from 'viem'
@@ -137,14 +146,7 @@ function optionalString(record: Record<string, unknown>, key: string): string | 
 function optionalDepositMemo(record: Record<string, unknown>): string | undefined {
   const value = record.depositMemo ?? record.memo
   if (value === undefined || value === null) return undefined
-  if (
-    typeof value !== 'string' ||
-    !value ||
-    value.length > 512 ||
-    /[\u0000-\u001f\u007f-\u009f]/.test(value)
-  ) {
-    throw new Error('Confidential deposit memo is invalid')
-  }
+  const memo = parseOneClickDepositMemo(value, 'Confidential deposit memo')
   if (
     record.depositMemo !== undefined &&
     record.memo !== undefined &&
@@ -152,7 +154,7 @@ function optionalDepositMemo(record: Record<string, unknown>): string | undefine
   ) {
     throw new Error('Confidential deposit memo is ambiguous')
   }
-  return value
+  return memo
 }
 
 function positiveRaw(value: unknown, label: string): string {
@@ -397,7 +399,7 @@ function base64Encode(value: Uint8Array): string {
   return btoa(binary)
 }
 
-function parseQuote(value: unknown): ConfidentialQuote {
+function parseQuote(value: unknown, viewer?: OneClickViewer): ConfidentialQuote {
   if (!isRecord(value) || !isRecord(value.quote) || !isRecord(value.quoteRequest)) {
     throw new Error('Confidential quote response is invalid')
   }
@@ -410,10 +412,17 @@ function parseQuote(value: unknown): ConfidentialQuote {
     throw new Error('Confidential quote deadline is invalid')
   }
   const depositMemo = optionalDepositMemo(quote)
+  const depositAddress = typeof quote.depositAddress === 'string' ? quote.depositAddress : ''
+  if (!matchesOneClickQuoteViewer(value.quoteRequest, viewer)) {
+    throw new Error('Confidential quote has an unexpected status viewer')
+  }
   const withdrawFee = optionalRaw(quote.withdrawFee)
   const refundFee = optionalRaw(quote.refundFee)
   return Object.freeze({
     correlationId: requiredString(value, 'correlationId', 'Confidential correlation ID'),
+    ...(viewer && depositAddress
+      ? { oneClickOrder: createOneClickOrder(depositAddress, depositMemo, viewer) }
+      : {}),
     quoteRequest: Object.freeze({ ...value.quoteRequest }),
     quote: Object.freeze({
       amountIn: positiveRaw(quote.amountIn, 'Confidential input amount'),
@@ -425,7 +434,7 @@ function parseQuote(value: unknown): ConfidentialQuote {
         quote.minAmountOut ?? quote.amountOut,
         'Confidential minimum output'
       ),
-      depositAddress: optionalString(quote, 'depositAddress') ?? '',
+      depositAddress,
       ...(depositMemo ? { depositMemo } : {}),
       deadline,
       ...(withdrawFee ? { withdrawFee } : {}),
@@ -878,6 +887,7 @@ export class ConfidentialFundingApi {
       readonly slippageBps: number
       readonly dry: boolean
       readonly settlement?: 'cluster' | 'onchain-transfer'
+      readonly viewer?: OneClickViewer
     },
     signal?: AbortSignal
   ): Promise<ConfidentialQuote> {
@@ -960,12 +970,22 @@ export class ConfidentialFundingApi {
         throw new Error('Confidential provider fee quote already includes the wallet fee recipient')
       }
     }
-    const value = await requestJson(this.oneClickUrl('/quote'), {
-      method: 'POST',
-      signal,
-      body: JSON.stringify({ ...request, ...(appFees.length > 0 ? { appFees } : {}) })
-    })
-    const quote = parseQuote(value)
+    const viewer = input.dry
+      ? undefined
+      : (input.viewer ??
+        (input.refundType === 'CONFIDENTIAL_INTENTS'
+          ? ({ chainFamily: 'evm', walletAddress: input.signerId, signingMode: 'public' } as const)
+          : undefined))
+    const value = await requestOneClickQuote(
+      this.config.oneClickApiUrl,
+      {
+        ...request,
+        ...(appFees.length > 0 ? { appFees } : {})
+      },
+      requestJson,
+      { viewer, signal }
+    )
+    const quote = parseQuote(value, viewer)
     if (Object.entries(request).some(([key, value]) => quote.quoteRequest[key] !== value)) {
       throw new Error('Confidential quote does not match the requested funding route')
     }
@@ -981,6 +1001,7 @@ export class ConfidentialFundingApi {
     readonly signerId: string
     readonly refundTo: string
     readonly slippageBps: number
+    readonly viewer?: OneClickViewer
   }): Promise<ConfidentialQuote> {
     const request = {
       dry: true,
@@ -1014,10 +1035,7 @@ export class ConfidentialFundingApi {
     let minimumInputRaw: string
     try {
       const quote = parseQuote(
-        await requestJson(this.oneClickUrl('/quote'), {
-          method: 'POST',
-          body: JSON.stringify(request)
-        })
+        await requestOneClickQuote(this.config.oneClickApiUrl, request, requestJson)
       )
       assertFlexibleExternalDepositQuoteBinding(quote, binding, Date.now(), true)
       minimumInputRaw = quote.quote.minAmountIn!
@@ -1036,10 +1054,13 @@ export class ConfidentialFundingApi {
     const amountRaw = (minimum + (minimum + 9n) / 10n).toString()
     if (amountRaw.length > 78) throw new Error('Confidential input amount is invalid')
     const quote = parseQuote(
-      await requestJson(this.oneClickUrl('/quote'), {
-        method: 'POST',
-        body: JSON.stringify({ ...request, dry: false, amount: amountRaw })
-      })
+      await requestOneClickQuote(
+        this.config.oneClickApiUrl,
+        { ...request, dry: false, amount: amountRaw },
+        requestJson,
+        { viewer: input.viewer }
+      ),
+      input.viewer
     )
     assertFlexibleExternalDepositQuoteBinding(quote, { ...binding, amountRaw })
     return quote
@@ -1051,6 +1072,7 @@ export class ConfidentialFundingApi {
     readonly sender: string
     readonly recipient: string
     readonly slippageBps: number
+    readonly viewer?: OneClickViewer
   }): Promise<ConfidentialExactOutputQuote> {
     const request = {
       dry: false,
@@ -1070,11 +1092,10 @@ export class ConfidentialFundingApi {
       confidentiality: 'basic'
     }
     const { fees: providerFees } = await this.quoteProviderFees(request)
-    const value = await requestJson(this.oneClickUrl('/quote'), {
-      method: 'POST',
-      body: JSON.stringify(request)
+    const value = await requestOneClickQuote(this.config.oneClickApiUrl, request, requestJson, {
+      viewer: input.viewer
     })
-    const quote = parseQuote(value)
+    const quote = parseQuote(value, input.viewer)
     const rawQuote = isRecord(value) && isRecord(value.quote) ? value.quote : null
     const minimumInputRaw = positiveRaw(rawQuote?.minAmountIn, 'Confidential minimum input')
     const expirationValues = [
@@ -1116,11 +1137,7 @@ export class ConfidentialFundingApi {
   ) {
     const baseline = { ...request, dry: true }
     const quote = parseQuote(
-      await requestJson(this.oneClickUrl('/quote'), {
-        method: 'POST',
-        signal,
-        body: JSON.stringify(baseline)
-      })
+      await requestOneClickQuote(this.config.oneClickApiUrl, baseline, requestJson, { signal })
     )
     const fees = readConfidentialQuoteAppFees(quote)
     if (
@@ -1206,44 +1223,39 @@ export class ConfidentialFundingApi {
       ...(errorStatus ? { errorStatus } : {})
     })
   }
+}
 
-  async getOneClickStatus(
-    depositAddress: string,
-    depositMemo?: string,
-    signal?: AbortSignal
-  ): Promise<ConfidentialStatus> {
-    const query = new URLSearchParams({ depositAddress })
-    if (depositMemo) query.set('depositMemo', depositMemo)
-    const value = await requestJson(`${this.oneClickUrl('/status')}?${query.toString()}`, {
-      signal
-    })
-    if (!isRecord(value)) throw new Error('Shield swap status response is invalid')
-    const quoteResponse = isRecord(value.quoteResponse) ? value.quoteResponse : {}
-    const statusQuote = isRecord(quoteResponse.quote) ? quoteResponse.quote : {}
-    const echoedAddress = optionalString(statusQuote, 'depositAddress')
-    if (
-      echoedAddress &&
-      (isAddress(depositAddress)
-        ? echoedAddress.toLowerCase() !== depositAddress.toLowerCase()
-        : echoedAddress !== depositAddress)
-    ) {
-      throw new Error('Shield swap status does not match its quote')
-    }
-    const echoedMemo = optionalDepositMemo(statusQuote)
-    if (depositMemo !== undefined && echoedMemo !== undefined && echoedMemo !== depositMemo) {
-      throw new Error('Shield swap status memo does not match its quote')
-    }
-    const details = isRecord(value.swapDetails) ? value.swapDetails : {}
-    const settledAmountOutRaw = optionalRaw(details.amountOut)
-    const depositedAmountRaw = optionalRaw(details.depositedAmount)
-    const errorStatus = optionalString(details, 'refundReason')
-    const transactionHash = readRheaDestinationHash(value)
-    return Object.freeze({
-      status: requiredString(value, 'status', 'Shield swap status'),
-      ...(transactionHash ? { transactionHash } : {}),
-      ...(settledAmountOutRaw ? { amountOutRaw: settledAmountOutRaw, settledAmountOutRaw } : {}),
-      ...(depositedAmountRaw ? { depositedAmountRaw } : {}),
-      ...(errorStatus ? { errorStatus } : {})
-    })
+export function parseConfidentialOneClickStatus(
+  value: unknown,
+  depositAddress: string,
+  depositMemo?: string
+): ConfidentialStatus {
+  if (!isRecord(value)) throw new Error('Shield swap status response is invalid')
+  const quoteResponse = isRecord(value.quoteResponse) ? value.quoteResponse : {}
+  const statusQuote = isRecord(quoteResponse.quote) ? quoteResponse.quote : {}
+  const echoedAddress = optionalString(statusQuote, 'depositAddress')
+  if (
+    echoedAddress &&
+    (isAddress(depositAddress)
+      ? echoedAddress.toLowerCase() !== depositAddress.toLowerCase()
+      : echoedAddress !== depositAddress)
+  ) {
+    throw new Error('Shield swap status does not match its quote')
   }
+  const echoedMemo = optionalDepositMemo(statusQuote)
+  if (echoedMemo !== undefined && echoedMemo !== depositMemo) {
+    throw new Error('Shield swap status memo does not match its quote')
+  }
+  const details = isRecord(value.swapDetails) ? value.swapDetails : {}
+  const settledAmountOutRaw = optionalRaw(details.amountOut)
+  const depositedAmountRaw = optionalRaw(details.depositedAmount)
+  const errorStatus = optionalString(details, 'refundReason')
+  const transactionHash = readRheaDestinationHash(value)
+  return Object.freeze({
+    status: requiredString(value, 'status', 'Shield swap status'),
+    ...(transactionHash ? { transactionHash } : {}),
+    ...(settledAmountOutRaw ? { amountOutRaw: settledAmountOutRaw, settledAmountOutRaw } : {}),
+    ...(depositedAmountRaw ? { depositedAmountRaw } : {}),
+    ...(errorStatus ? { errorStatus } : {})
+  })
 }

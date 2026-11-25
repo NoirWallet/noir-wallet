@@ -30,6 +30,7 @@ import {
 } from './confidential-funding-coordinator'
 import { ConfidentialFundingSigner } from './confidential-funding-signer'
 import { ChromeConfidentialFundingStore } from './confidential-funding-store'
+import { queryOneClickOrderStatus } from './one-click-status'
 
 export function createBackgroundConfidentialFundingCoordinator(
   evmNetworks: readonly EvmNetworkConfig[],
@@ -112,6 +113,7 @@ export function createBackgroundConfidentialFundingCoordinator(
   return new ConfidentialFundingCoordinator({
     network: DEFAULT_NETWORK,
     api: new ConfidentialFundingApi(config, near.rpcUrl, __RHEA_SWAP_ACCESS_TOKEN__),
+    queryOneClickOrderStatus,
     store,
     signer: new ConfidentialFundingSigner(
       signerClient,

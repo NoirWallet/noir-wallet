@@ -97,7 +97,7 @@ import {
 import { transactionRecorder } from './transaction-recorder'
 import { subscribeTransactionPortfolioInvalidations } from '@/infrastructure/persistence/repositories/transaction-portfolio-invalidation'
 import { useAccountDataStore } from '@/store/account-data-store'
-import { syncScheduler, SYNC_KEEPALIVE_ALARM } from './sync-scheduler'
+import { syncScheduler, SYNC_KEEPALIVE_ALARM, withTxSyncPause } from './sync-scheduler'
 import {
   catchUpAfterOnChainTx,
   markWalletNeedsCatchUp,
@@ -6604,7 +6604,11 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
         ? { accountKey: currentAccountKey, walletId: currentWalletId, accountId: currentAccountId }
         : null
     void Promise.allSettled([
-      transactionMonitor.recheckNow(),
+      accountScope && currentNetwork === 'mainnet'
+        ? transactionMonitor
+            .restorePendingWithdrawals([accountScope])
+            .then(() => transactionMonitor.recheckNow())
+        : transactionMonitor.recheckNow(),
       accountScope
         ? zcashTxMonitor
             .restoreStuckWithdrawals([accountScope])
@@ -7431,28 +7435,6 @@ async function handleDAppDisconnect(origin: string): Promise<boolean> {
   } catch (error: any) {
     console.warn('Disconnect error:', error)
     throw error
-  }
-}
-
-/**
- * Pause sync, wait for the wallet's in-flight batch to go idle, run the
- * tx-critical work, then resume sync. Worker soft-read RPCs (account restore)
- * are blocked while a sync batch mutates wallet state, so every transaction
- * build/broadcast must run inside this window.
- */
-async function withTxSyncPause<T>(walletId: string | undefined, fn: () => Promise<T>): Promise<T> {
-  try {
-    syncScheduler.pauseForTx()
-    const syncWaitMs = WALLET_CONFIG.SYNC.MAX_BLOCKING_WAIT_MS
-    const syncIdle = walletId
-      ? await syncScheduler.waitForWalletSyncIdle(walletId, syncWaitMs)
-      : await syncScheduler.waitForActiveSyncIdle(syncWaitMs)
-    if (!syncIdle) {
-      throw new Error('Wallet is syncing. Please try again after sync completes.')
-    }
-    return await fn()
-  } finally {
-    syncScheduler.resumeAfterTx()
   }
 }
 

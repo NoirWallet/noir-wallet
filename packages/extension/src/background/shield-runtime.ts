@@ -6,6 +6,7 @@ import type { SwapToken } from '@/core/services/intents-api'
 import type { CreateExternalShieldDepositInput } from '@/core/services/confidential-funding'
 import { ExternalShieldDepositError } from '@/core/services/confidential-funding/confidential-external-deposit'
 import { isAccountNetworkEnabled } from '@/core/wallet/account-network-selection'
+import { mergeShieldedReceiveAddressHistory } from '@/core/wallet/shielded-address-history'
 import { getOwnExtensionSenderContext } from '@/lib/runtime-message-security'
 import { DEFAULT_NETWORK } from '@/lib/runtime-network'
 import { rehydrateWalletStore, useWalletStore } from '@/store/wallet-store'
@@ -78,21 +79,27 @@ export function createBackgroundShieldFundingRuntime(deps: {
         const state = useWalletStore.getState()
         const walletId = state.currentWalletId
         const accountId = state.currentAccountId
-        const nativeAccount =
-          walletId && accountId ? state.getAccount(walletId, accountId) : undefined
-        const addresses =
-          nativeAccount && isAccountNetworkEnabled(nativeAccount, state.currentNetwork, 'zcash')
-            ? nativeAccount.addresses
-            : undefined
+        const network = state.currentNetwork
+        const account = walletId && accountId ? state.getAccount(walletId, accountId) : undefined
+        const zcashAccount =
+          account && isAccountNetworkEnabled(account, network, 'zcash') ? account : undefined
+        const addresses = zcashAccount?.addresses
+        const history = mergeShieldedReceiveAddressHistory(
+          zcashAccount?.networkShieldedReceiveAddressHistory?.[network]
+        )
         return {
-          network: state.currentNetwork,
+          network,
           walletId,
           accountId,
           refundAddresses: [
             addresses?.transparent,
             addresses?.shielded,
             addresses?.fullUnified
-          ].filter((address): address is string => Boolean(address))
+          ].filter((address): address is string => Boolean(address)),
+          shieldedRefundAddressHistory: history.flatMap(({ shielded, fullUnified }) => [
+            shielded,
+            fullUnified
+          ])
         }
       }
     }
