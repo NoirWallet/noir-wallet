@@ -1,5 +1,7 @@
 import { test } from 'node:test'
 import { expect } from '@playwright/test'
+import { createInitialProductChainRegistry } from '../../../src/core/chains/registry/index.ts'
+import { getHomeAccountCapabilities } from '../../../src/popup/services/home-account-capabilities.ts'
 
 import {
   homeAssetDomainPath,
@@ -25,5 +27,41 @@ test.describe('Home navigation', () => {
     expect(legacyShieldHomePath('?domain=shield&mode=private')).toBeNull()
     expect(legacyShieldHomePath('?tab=activity')).toBeNull()
     expect(homeAssetDomainPath('', 'shield')).toBe('/?domain=shield')
+  })
+
+  test('gates hardware Home actions by the active chain and the supported funding source', () => {
+    const chains = createInitialProductChainRegistry('mainnet').list()
+    const zcash = chains.find(chain => chain.family === 'zcash')
+    const evm = chains.find(chain => chain.family === 'evm')
+    const capabilitiesFor = (chains, vendor, enabledFlags = ['chain.zcash', 'chain.evm']) =>
+      getHomeAccountCapabilities({
+        account: {
+          walletSource: {
+            kind: 'hardware',
+            hardware: { vendor, capabilities: ['zcash', 'evm'] }
+          },
+          networks: chains.map(chain => ({ chain, addresses: [] }))
+        },
+        network: 'mainnet',
+        enabledFlags
+      })
+
+    const evmHome = capabilitiesFor([evm], 'keystone')
+    expect(evmHome).toMatchObject({ hasZcash: false, canSend: true, canReceive: true })
+    expect(capabilitiesFor([evm], 'ledger')).toEqual(evmHome)
+    expect(capabilitiesFor([zcash], 'keystone')).toMatchObject({
+      hasZcash: true,
+      canSend: true,
+      canReceive: true,
+      sendFromShieldedZcash: true,
+      canShieldFromHome: false,
+      canSwapFromPublic: false
+    })
+    expect(capabilitiesFor([zcash], 'ledger')).toMatchObject({
+      hasZcash: true,
+      sendFromShieldedZcash: false,
+      canShieldFromHome: true
+    })
+    expect(capabilitiesFor([zcash, evm], 'ledger', ['chain.evm'])).toEqual(evmHome)
   })
 })

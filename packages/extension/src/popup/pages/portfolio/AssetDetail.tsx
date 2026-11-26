@@ -469,6 +469,7 @@ export function AssetDetail() {
         : undefined
       : storageV2Account.walletSource.kind
     : currentWallet?.keySource
+  const canUseTransparentZcash = !getFundingSourceUnavailableReason(zcashKeySource, 'transparent')
   const zcashFundingSource = getFundingSourceUnavailableReason(zcashKeySource, 'transparent')
     ? 'shielded'
     : 'transparent'
@@ -652,7 +653,7 @@ export function AssetDetail() {
       query.set('sourceWalletId', effectiveWalletId)
       query.set('sourceAccountId', effectiveAccountId)
     }
-    if (chain?.chain.family === 'zcash' && fundingSource === 'shielded') {
+    if (chain?.chain.family === 'zcash' && fundingSource === 'shielded' && canUseTransparentZcash) {
       query.set('balanceDomain', 'shield')
       query.set('shieldZecSource', 'native')
     } else {
@@ -713,6 +714,32 @@ export function AssetDetail() {
   const zcashActions = (privacy: 'transparent' | 'shielded') => {
     const unavailable = Boolean(getFundingSourceUnavailableReason(zcashKeySource, privacy))
     if (privacy === 'shielded') {
+      if (!canUseTransparentZcash) {
+        return [
+          {
+            action: 'send' as const,
+            label: 'Send',
+            onClick: () => handleShieldAction('send', 'zcash-shield')
+          },
+          {
+            action: 'receive' as const,
+            label: 'Receive',
+            disabled: !canReceive,
+            onClick: () => handleShieldAction('receive', 'zcash-shield')
+          },
+          {
+            action: 'unshield' as const,
+            label: 'Unshield',
+            onClick: () => handleShieldFunds('unshield')
+          },
+          {
+            action: 'swap' as const,
+            label: 'Swap',
+            disabled: !canSwap || currentNetwork !== 'mainnet',
+            onClick: () => handleSwap('public', 'shielded')
+          }
+        ]
+      }
       return SHIELD_ACTIONS.map(({ action, label }) => ({
         action,
         label,
@@ -890,6 +917,9 @@ export function AssetDetail() {
     chain.chain.id
   )
   const isZcashAsset = chain.chain.family === 'zcash'
+  const shieldedFundingOnly = isZcashAsset && !canUseTransparentZcash
+  const shieldedFundingOnlyDetail = shieldedFundingOnly && detailMode === 'shield'
+  const publicDetailWithoutFunding = shieldedFundingOnly && detailMode === 'public'
   const isTotalDetail = detailMode === 'all'
   const nativeRaw = categories?.raw[detailMode] ?? null
   const displayRaw = confidentialOnlyDetail
@@ -1165,6 +1195,7 @@ export function AssetDetail() {
         {detailMode !== 'all' && (
           <div
             data-wallet-action-domain={detailMode}
+            inert={accountContextChanging}
             className="wallet-action-row grid auto-cols-fr grid-flow-col items-start gap-2 pb-3"
           >
             {detailMode === 'private' ? (
@@ -1190,24 +1221,28 @@ export function AssetDetail() {
               </>
             ) : (
               <>
-                <WalletActionButton
-                  icon={<WalletActionIcon action="send" shielded={detailMode === 'shield'} />}
-                  label="Send"
-                  disabled={
-                    detailMode === 'shield'
-                      ? !hasConfidentialCapability &&
-                        (Boolean(confidentialOnlyDetail) ||
-                          !isZcashAsset ||
-                          Boolean(getFundingSourceUnavailableReason(zcashKeySource, 'shielded')))
-                      : !canSend ||
-                        (isZcashAsset &&
-                          Boolean(getFundingSourceUnavailableReason(zcashKeySource, 'transparent')))
-                  }
-                  onClick={() => {
-                    if (detailMode === 'shield') handleShieldAction('send')
-                    else handleSend('public')
-                  }}
-                />
+                {!publicDetailWithoutFunding && (
+                  <WalletActionButton
+                    icon={<WalletActionIcon action="send" shielded={detailMode === 'shield'} />}
+                    label="Send"
+                    disabled={
+                      detailMode === 'shield'
+                        ? !hasConfidentialCapability &&
+                          (Boolean(confidentialOnlyDetail) ||
+                            !isZcashAsset ||
+                            Boolean(getFundingSourceUnavailableReason(zcashKeySource, 'shielded')))
+                        : !canSend ||
+                          (isZcashAsset &&
+                            Boolean(
+                              getFundingSourceUnavailableReason(zcashKeySource, 'transparent')
+                            ))
+                    }
+                    onClick={() => {
+                      if (detailMode === 'shield') handleShieldAction('send')
+                      else handleSend('public')
+                    }}
+                  />
+                )}
                 <WalletActionButton
                   icon={<WalletActionIcon action="receive" shielded={detailMode === 'shield'} />}
                   label="Receive"
@@ -1220,12 +1255,14 @@ export function AssetDetail() {
                     detailMode === 'shield' ? handleShieldAction('receive') : handleReceive()
                   }
                 />
-                <WalletActionButton
-                  icon={<WalletActionIcon action="shield" />}
-                  label="Shield"
-                  disabled={!hasConfidentialCapability && !isZcashAsset}
-                  onClick={() => handleShieldFunds('shield')}
-                />
+                {(!isZcashAsset || canUseTransparentZcash) && (
+                  <WalletActionButton
+                    icon={<WalletActionIcon action="shield" />}
+                    label="Shield"
+                    disabled={!hasConfidentialCapability && !isZcashAsset}
+                    onClick={() => handleShieldFunds('shield')}
+                  />
+                )}
                 {detailMode === 'shield' && (
                   <WalletActionButton
                     icon={<WalletActionIcon action="unshield" />}
@@ -1234,22 +1271,30 @@ export function AssetDetail() {
                     onClick={() => handleShieldFunds('unshield')}
                   />
                 )}
-                <WalletActionButton
-                  icon={<WalletActionIcon action="swap" />}
-                  label="Swap"
-                  disabled={
-                    detailMode === 'shield'
-                      ? !hasConfidentialCapability && !canSwapNativeZec
-                      : !canSwap ||
-                        (isZcashAsset &&
-                          Boolean(getFundingSourceUnavailableReason(zcashKeySource, 'transparent')))
-                  }
-                  onClick={() =>
-                    detailMode === 'shield'
-                      ? handleShieldAction('swap')
-                      : handleSwap('public', 'transparent')
-                  }
-                />
+                {!publicDetailWithoutFunding && (
+                  <WalletActionButton
+                    icon={<WalletActionIcon action="swap" />}
+                    label="Swap"
+                    disabled={
+                      shieldedFundingOnlyDetail
+                        ? !canSwap || currentNetwork !== 'mainnet'
+                        : detailMode === 'shield'
+                          ? !hasConfidentialCapability && !canSwapNativeZec
+                          : !canSwap ||
+                            (isZcashAsset &&
+                              Boolean(
+                                getFundingSourceUnavailableReason(zcashKeySource, 'transparent')
+                              ))
+                    }
+                    onClick={() =>
+                      shieldedFundingOnlyDetail
+                        ? handleSwap('public', 'shielded')
+                        : detailMode === 'shield'
+                          ? handleShieldAction('swap')
+                          : handleSwap('public', 'transparent')
+                    }
+                  />
+                )}
               </>
             )}
           </div>

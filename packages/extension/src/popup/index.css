@@ -318,6 +318,17 @@ html[data-surface='side-panel'] #root {
   --public-card-size: var(--balance-card-expanded);
 }
 
+.home-balance-stack[data-without-shield='true'] {
+  grid-template-rows: var(--public-card-size, var(--balance-card-collapsed));
+}
+
+.home-balance-stack[data-without-shield='true']:has(> [data-balance-domain='private']) {
+  grid-template-rows: var(--public-card-size, var(--balance-card-collapsed)) var(
+      --private-card-size,
+      var(--balance-card-collapsed)
+    );
+}
+
 .home-balance-stack[data-active-domain='private'] {
   --private-card-size: var(--balance-card-expanded);
 }

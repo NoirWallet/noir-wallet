@@ -15,6 +15,8 @@ const balanceCards = [
 export interface HomeBalanceOverviewProps {
   readonly domain: HomeAssetDomain
   readonly display: HomeAssetDomainDisplay
+  readonly showShield: boolean
+  readonly compactPublic: boolean
   readonly showIncognito: boolean
   readonly incognitoEnabled: boolean
   readonly onEnableIncognito?: () => Promise<boolean>
@@ -24,7 +26,7 @@ export interface HomeBalanceOverviewProps {
   readonly quickShieldLabel?: string
   readonly onQuickShield?: (trigger: HTMLButtonElement) => void
   readonly shieldEmpty: boolean
-  readonly onExploreShieldProviders: () => void
+  readonly onExploreShieldProviders?: () => void
   readonly onToggleHidden: () => void
   readonly onSelect: (domain: HomeAssetDomain) => void
 }
@@ -32,6 +34,8 @@ export interface HomeBalanceOverviewProps {
 export function HomeBalanceOverview({
   domain,
   display,
+  showShield,
+  compactPublic,
   showIncognito,
   incognitoEnabled,
   onEnableIncognito,
@@ -46,14 +50,27 @@ export function HomeBalanceOverview({
   onSelect
 }: HomeBalanceOverviewProps) {
   const [collapsedDomain, setCollapsedDomain] = useState<HomeAssetDomain | null>(null)
-  const expandedDomain = collapsedDomain === domain ? null : domain
+  const expandedDomain = !compactPublic && collapsedDomain === domain ? null : domain
   const selectCard = (cardDomain: HomeAssetDomain) => {
     setCollapsedDomain(cardDomain === expandedDomain ? cardDomain : null)
     onSelect(cardDomain)
   }
   const canSetUpIncognito = showIncognito && !incognitoEnabled
   const cards = balanceCards.filter(
-    card => card.domain !== 'private' || (showIncognito && incognitoEnabled)
+    card =>
+      (card.domain !== 'shield' || showShield) &&
+      (card.domain !== 'private' || (showIncognito && incognitoEnabled))
+  )
+  const visibilityToggle = (
+    <button
+      type="button"
+      aria-label={hidden ? 'Show balances' : 'Hide balances'}
+      aria-pressed={hidden}
+      onClick={onToggleHidden}
+      className="wallet-interactive flex size-7 shrink-0 items-center justify-center rounded-md text-inherit hover:bg-current/10 focus-visible:outline-2 focus-visible:outline-ring"
+    >
+      <Icon icon={hidden ? 'lucide:eye-off' : 'lucide:eye'} width={15} />
+    </button>
   )
 
   function balance(cardDomain: HomeAssetDomain | 'all', skeleton: string) {
@@ -76,31 +93,27 @@ export function HomeBalanceOverview({
 
   return (
     <section aria-label="Wallet balances" className="shrink-0 px-4">
-      <div className="mb-1.5 flex h-[27px] items-center gap-1">
-        <div data-testid="home-total-assets" className="flex min-w-0 items-baseline gap-1.5">
-          <span className="text-sm text-[#bcbcc8]">Total</span>
-          <div className="min-w-0 text-sm leading-5">{balance('all', 'h-4 w-20')}</div>
+      {!compactPublic && (
+        <div className="mb-1.5 flex h-[27px] items-center gap-1">
+          <div data-testid="home-total-assets" className="flex min-w-0 items-baseline gap-1.5">
+            <span className="text-sm text-[#bcbcc8]">Total</span>
+            <div className="min-w-0 text-sm leading-5">{balance('all', 'h-4 w-20')}</div>
+          </div>
+          <div className="text-muted">{visibilityToggle}</div>
         </div>
-        <button
-          type="button"
-          aria-label={hidden ? 'Show balances' : 'Hide balances'}
-          aria-pressed={hidden}
-          onClick={onToggleHidden}
-          className="wallet-interactive flex size-7 shrink-0 items-center justify-center rounded-md text-muted hover:bg-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
-        >
-          <Icon icon={hidden ? 'lucide:eye-off' : 'lucide:eye'} width={15} />
-        </button>
-      </div>
+      )}
 
       <div
         role="group"
         aria-label="Wallet balance mode"
         className="home-balance-stack relative isolate"
         data-active-domain={expandedDomain ?? undefined}
+        data-without-shield={!showShield || undefined}
       >
         {cards.map(({ domain: cardDomain, label, icon }) => {
           const selected = cardDomain === domain
           const expanded = cardDomain === expandedDomain
+          const compactCard = compactPublic && cardDomain === 'public'
           return (
             <div
               key={cardDomain}
@@ -114,9 +127,9 @@ export function HomeBalanceOverview({
                   aria-label={`${label} balance`}
                   aria-pressed={selected}
                   aria-expanded={expanded}
-                  disabled={modeSelectionDisabled}
+                  disabled={modeSelectionDisabled || compactCard}
                   onClick={() => selectCard(cardDomain)}
-                  className="wallet-interactive home-balance-card-button flex w-full min-w-0 items-baseline justify-between gap-2 rounded-t-2xl px-3.5 text-left enabled:hover:brightness-110 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
+                  className={`wallet-interactive home-balance-card-button flex w-full min-w-0 rounded-t-2xl px-3.5 text-left enabled:hover:brightness-110 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring ${compactCard ? 'flex-col items-start gap-1 pr-12' : 'items-baseline justify-between gap-2'}`}
                 >
                   <span className="home-balance-card-label flex shrink-0 items-center gap-2">
                     <span className="home-balance-indicator size-2 shrink-0 rounded-full" />
@@ -129,11 +142,13 @@ export function HomeBalanceOverview({
                     )}
                   </span>
                 </button>
+                {compactCard && <div className="absolute right-3.5 top-2">{visibilityToggle}</div>}
                 <div
                   className="home-balance-card-body cursor-pointer"
                   inert={!expanded}
                   onClick={event => {
                     if (
+                      !compactCard &&
                       !modeSelectionDisabled &&
                       event.target instanceof Element &&
                       !event.target.closest('button, a')
@@ -149,7 +164,7 @@ export function HomeBalanceOverview({
                         className="home-balance-watermark size-[60px] shrink-0"
                         aria-hidden="true"
                       />
-                      {cardDomain === 'shield' && (
+                      {cardDomain === 'shield' && onExploreShieldProviders && (
                         <div className="min-w-0 flex-1 pt-2 text-[13px] leading-[17px]">
                           {shieldEmpty ? (
                             <>
