@@ -1,4 +1,5 @@
 import manifest from '../../lib/wasm-pkg/wasm-integrity.json'
+import { fetchArrayBufferWithTimeout } from '@/lib/fetch-utils'
 
 export const PINNED_ZCASH_ABI_VERSION = 'zcash-wallet-df660f6-v1'
 export const PINNED_ZCASH_SOURCE_COMMIT = 'df660f6c576fee7b258c0e9c860d3226dc01ba7a'
@@ -58,9 +59,7 @@ async function sha256(bytes: ArrayBuffer): Promise<string> {
 
 export async function loadPinnedZcashWasmBinary(wasmUrl: string): Promise<ArrayBuffer> {
   const binary = parseStaticManifest()
-  const response = await fetch(wasmUrl)
-  if (!response.ok) throw new Error('Unable to load the Zcash WASM binary')
-  const bytes = await response.arrayBuffer()
+  const bytes = await fetchArrayBufferWithTimeout(wasmUrl, { maxBytes: binary.bytes })
   if (bytes.byteLength !== binary.bytes || (await sha256(bytes)) !== binary.sha256) {
     throw new Error('Zcash WASM binary integrity check failed')
   }

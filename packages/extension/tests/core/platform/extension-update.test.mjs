@@ -183,17 +183,12 @@ it('retains detected versions across remote failures and clears installed versio
   }
   globalThis.fetch = async () => {
     if (failRequest) throw new Error('Remote unavailable')
-    return {
-      ok: true,
-      headers: { get: () => null },
-      text: async () =>
-        JSON.stringify({
-          schemaVersion: 1,
-          releases: {
-            '1.0.29': { changes: ['Update'], notifyUpdate }
-          }
-        })
-    }
+    return Response.json({
+      schemaVersion: 1,
+      releases: {
+        '1.0.29': { changes: ['Update'], notifyUpdate }
+      }
+    })
   }
 
   try {

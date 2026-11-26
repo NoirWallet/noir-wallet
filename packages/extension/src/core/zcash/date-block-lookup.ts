@@ -18,11 +18,7 @@ interface DateBlockLookupOptions {
 export async function lookupBlockHeightByTime(
   targetTimestamp: number,
   network: Network,
-  {
-    signal,
-    fetchFunction = fetch,
-    timeoutMs = DATE_BLOCK_LOOKUP_TIMEOUT_MS
-  }: DateBlockLookupOptions = {}
+  { signal, fetchFunction, timeoutMs = DATE_BLOCK_LOOKUP_TIMEOUT_MS }: DateBlockLookupOptions = {}
 ): Promise<number> {
   if (
     !Number.isSafeInteger(targetTimestamp) ||

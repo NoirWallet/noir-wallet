@@ -3,7 +3,7 @@ import {
   parseNearAccountId,
   parseNearPublicKey
 } from '@/core/chains/near'
-import { fetchWithTimeout } from '@/lib/fetch-utils'
+import { FetchResponseTooLargeError, fetchWithTimeout, jsonRequestInit } from '@/lib/fetch-utils'
 import type { Network } from '@/types'
 
 import type { NearReadRpc } from './near-rpc-types'
@@ -23,45 +23,11 @@ export interface DiscoverNearAccountsInput {
   readonly publicKey: string
   readonly rpc: Pick<NearReadRpc, 'getAccount' | 'getAccessKey'>
   readonly signal?: AbortSignal
-  readonly fetchImpl?: typeof fetchWithTimeout
+  readonly fetchImpl?: typeof fetch
 }
 
 function discoveryOrigin(network: Network): string {
   return network === 'mainnet' ? 'https://api.fastnear.com' : 'https://test.api.fastnear.com'
-}
-
-async function readBoundedText(response: Response): Promise<string> {
-  if (!response.body) {
-    const text = await response.text()
-    if (new TextEncoder().encode(text).byteLength > MAXIMUM_DISCOVERY_RESPONSE_BYTES) {
-      throw new Error('NEAR account discovery response is too large')
-    }
-    return text
-  }
-  const reader = response.body.getReader()
-  const chunks: Uint8Array[] = []
-  let total = 0
-  try {
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      total += value.byteLength
-      if (total > MAXIMUM_DISCOVERY_RESPONSE_BYTES) {
-        await reader.cancel()
-        throw new Error('NEAR account discovery response is too large')
-      }
-      chunks.push(value)
-    }
-  } finally {
-    reader.releaseLock()
-  }
-  const bytes = new Uint8Array(total)
-  let offset = 0
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset)
-    offset += chunk.byteLength
-  }
-  return new TextDecoder().decode(bytes)
 }
 
 function parseDiscoveryResponse(value: unknown, expectedPublicKey: string): readonly string[] {
@@ -91,21 +57,30 @@ export async function discoverNearAccounts(
 ): Promise<NearAccountDiscoveryResult> {
   const publicKey = parseNearPublicKey(input.publicKey)
   const implicitAccountId = nearImplicitAccountIdFromPublicKey(publicKey)
-  const fetchImpl = input.fetchImpl ?? fetchWithTimeout
-  const response = await fetchImpl(
+  const response = await fetchWithTimeout(
     `${discoveryOrigin(input.network)}/v0/public_key/${encodeURIComponent(publicKey)}`,
     {
-      method: 'GET',
-      cache: 'no-store',
-      credentials: 'omit',
+      ...jsonRequestInit({
+        method: 'GET',
+        cache: 'no-store',
+        credentials: 'omit',
+        signal: input.signal
+      }),
       timeoutMs: DISCOVERY_TIMEOUT_MS,
-      ...(input.signal === undefined ? {} : { signal: input.signal })
+      maxBytes: MAXIMUM_DISCOVERY_RESPONSE_BYTES,
+      fetcher: input.fetchImpl,
+      acceptHttpErrors: 'status-only'
     }
-  )
+  ).catch(error => {
+    if (error instanceof FetchResponseTooLargeError) {
+      throw new Error('NEAR account discovery response is too large')
+    }
+    throw error
+  })
   if (!response.ok) {
     throw new Error(`NEAR account discovery failed with HTTP ${response.status}`)
   }
-  const discovered = parseDiscoveryResponse(JSON.parse(await readBoundedText(response)), publicKey)
+  const discovered = parseDiscoveryResponse(await response.json(), publicKey)
   const namedCandidates = discovered.filter(accountId => accountId !== implicitAccountId)
   const verified = (
     await Promise.all(

@@ -1,6 +1,6 @@
 import { getNearNetworkConfigs } from '@/config/networks'
 import { parseChainId } from '@/core/chains/registry'
-import { fetchWithTimeout } from '@/lib/fetch-utils'
+import { FetchResponseTooLargeError, fetchWithTimeout, jsonRequestInit } from '@/lib/fetch-utils'
 
 import { readNearAccountId } from './near-rpc-codecs'
 
@@ -24,7 +24,7 @@ export interface NearAccountTokenInventoryClient {
 
 export interface FastNearAccountTokenClientConfig {
   readonly chainId: string
-  readonly fetchImpl?: typeof fetchWithTimeout
+  readonly fetchImpl?: typeof fetch
 }
 
 function readRecord(value: unknown): Record<string, unknown> {
@@ -43,18 +43,6 @@ function hasExactKeys(value: Record<string, unknown>, required: readonly string[
     Object.keys(value).length === required.length &&
     required.every(key => Object.prototype.hasOwnProperty.call(value, key))
   )
-}
-
-async function readBoundedJson(response: Response): Promise<unknown> {
-  const text = await response.text()
-  if (new TextEncoder().encode(text).byteLength > MAXIMUM_RESPONSE_BYTES) {
-    throw new Error('FastNear fungible token response is too large')
-  }
-  try {
-    return JSON.parse(text)
-  } catch {
-    throw new Error('Invalid FastNear fungible token response')
-  }
 }
 
 function parseResponse(
@@ -106,21 +94,31 @@ export function createFastNearAccountTokenClient(
   if (chainId.namespace !== 'near' || !network) throw new Error('Unsupported NEAR chain ID')
   const origin =
     network.network === 'mainnet' ? 'https://api.fastnear.com' : 'https://test.api.fastnear.com'
-  const fetchImpl = config.fetchImpl ?? fetchWithTimeout
   return Object.freeze({
     getFungibleTokenBalances: async (accountIdValue: string, signal?: AbortSignal) => {
       const accountId = readNearAccountId(accountIdValue, 'FastNear account ID')
-      const response = await fetchImpl(`${origin}/v1/account/${encodeURIComponent(accountId)}/ft`, {
-        method: 'GET',
-        cache: 'no-store',
-        credentials: 'omit',
-        timeoutMs: REQUEST_TIMEOUT_MS,
-        ...(signal === undefined ? {} : { signal })
+      const response = await fetchWithTimeout(
+        `${origin}/v1/account/${encodeURIComponent(accountId)}/ft`,
+        {
+          ...jsonRequestInit({ method: 'GET', cache: 'no-store', credentials: 'omit', signal }),
+          timeoutMs: REQUEST_TIMEOUT_MS,
+          maxBytes: MAXIMUM_RESPONSE_BYTES,
+          fetcher: config.fetchImpl,
+          acceptHttpErrors: 'status-only'
+        }
+      ).catch(error => {
+        if (error instanceof FetchResponseTooLargeError) {
+          throw new Error('FastNear fungible token response is too large')
+        }
+        throw error
       })
       if (!response.ok) {
         throw new Error(`FastNear fungible token request failed with HTTP ${response.status}`)
       }
-      return parseResponse(await readBoundedJson(response), accountId)
+      const decoded: unknown = await response.json().catch(() => {
+        throw new Error('Invalid FastNear fungible token response')
+      })
+      return parseResponse(decoded, accountId)
     }
   })
 }

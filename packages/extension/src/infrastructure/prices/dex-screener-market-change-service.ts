@@ -1,6 +1,6 @@
 import { DEFAULT_REQUEST_TIMEOUT_MS } from '@/config/extension'
 import Big from 'big.js'
-import { readBoundedResponseText } from '@/lib/fetch-utils'
+import { FetchHttpError, FetchResponseTooLargeError, fetchJsonWithTimeout } from '@/lib/fetch-utils'
 import { parseAssetId } from '@/core/chains/registry'
 import {
   MAXIMUM_ASSET_PRICE_ITEMS,
@@ -180,14 +180,6 @@ function parseCacheSnapshot(value: unknown): MarketChangeCacheSnapshot | null {
   })
 }
 
-async function readBoundedResponse(response: Response, maximumBytes: number): Promise<string> {
-  return readBoundedResponseText(
-    response,
-    maximumBytes,
-    () => new Error('Market change response exceeds the allowed size')
-  )
-}
-
 function parsePoolResponse(value: unknown, pool: TrustedDexScreenerPool): PoolOutcome {
   if (!isRecord(value) || !Array.isArray(value.pairs) || value.pairs.length > MAXIMUM_PAIR_COUNT) {
     throw new Error('Invalid market change response')
@@ -268,12 +260,9 @@ function materialize(
 
 export class DexScreenerMarketChangeService {
   private readonly options: Required<
-    Pick<
-      DexScreenerMarketChangeServiceOptions,
-      'fetch' | 'now' | 'timeoutMs' | 'maximumResponseBytes'
-    >
+    Pick<DexScreenerMarketChangeServiceOptions, 'now' | 'timeoutMs' | 'maximumResponseBytes'>
   > &
-    Pick<DexScreenerMarketChangeServiceOptions, 'mappings' | 'cache'>
+    Pick<DexScreenerMarketChangeServiceOptions, 'mappings' | 'cache' | 'fetch'>
   private readonly refreshGate = new DedupPromise<MarketChangeReadModel>()
 
   constructor(options: DexScreenerMarketChangeServiceOptions) {
@@ -328,11 +317,10 @@ export class DexScreenerMarketChangeService {
     ) {
       throw new Error('Invalid market change response limit')
     }
-    const fetchImplementation = options.fetch ?? globalThis.fetch.bind(globalThis)
     this.options = {
       mappings: Object.freeze(mappings),
       cache: options.cache,
-      fetch: (input, init) => fetchImplementation(input, init),
+      fetch: options.fetch,
       now: options.now ?? Date.now,
       timeoutMs,
       maximumResponseBytes
@@ -363,29 +351,28 @@ export class DexScreenerMarketChangeService {
   }
 
   private async fetchPool(pool: TrustedDexScreenerPool): Promise<PoolOutcome> {
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), this.options.timeoutMs)
     try {
       const url = `${DEX_SCREENER_PAIR_URL}/${encodeURIComponent(pool.chainId)}/${encodeURIComponent(pool.pairAddress)}`
-      const response = await this.options.fetch(url, {
+      const value = await fetchJsonWithTimeout(url, {
         method: 'GET',
         cache: 'no-store',
         credentials: 'omit',
         redirect: 'error',
         referrerPolicy: 'no-referrer',
-        signal: controller.signal
+        fetcher: this.options.fetch,
+        timeoutMs: this.options.timeoutMs,
+        maxBytes: this.options.maximumResponseBytes
       })
-      if (!response.ok) throw new Error('Market change endpoint is unavailable')
-      const text = await readBoundedResponse(response, this.options.maximumResponseBytes)
-      return parsePoolResponse(JSON.parse(text) as unknown, pool)
+      return parsePoolResponse(value, pool)
     } catch (error) {
-      console.warn(
-        `[Asset Prices] DEX Screener refresh failed for ${pool.chainId}:`,
-        error instanceof Error ? error.message : 'Unknown error'
-      )
+      let message = error instanceof Error ? error.message : 'Unknown error'
+      if (error instanceof FetchHttpError) {
+        message = 'Market change endpoint is unavailable'
+      } else if (error instanceof FetchResponseTooLargeError) {
+        message = 'Market change response exceeds the allowed size'
+      }
+      console.warn(`[Asset Prices] DEX Screener refresh failed for ${pool.chainId}:`, message)
       return Object.freeze({ status: 'failed' })
-    } finally {
-      clearTimeout(timeout)
     }
   }
 

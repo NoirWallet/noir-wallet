@@ -46,24 +46,28 @@ describe('bounded fetch response consumption', () => {
       }
     )
   })
-  test('honors external abort during body consumption', async () => {
-    const stalled = hangingResponse()
-    const controller = new AbortController()
-    const reason = new Error('Caller cancelled')
-    await withFetch(
-      async () => stalled.response,
-      async () => {
-        const pending = fetchJsonWithTimeout('https://example.test/data', {
-          signal: controller.signal,
-          timeoutMs: 1000
-        })
-        await new Promise(resolve => setTimeout(resolve, 0))
-        controller.abort(reason)
-        await assert.rejects(pending, error => error === reason)
-        assert.equal(stalled.wasCancelled(), true)
-      }
-    )
-  })
+  for (const signalSource of ['options', 'Request']) {
+    test(`honors external abort from ${signalSource} during body consumption`, async () => {
+      const stalled = hangingResponse()
+      const controller = new AbortController()
+      const reason = new Error('Caller cancelled')
+      const url = 'https://example.test/data'
+      await withFetch(
+        async () => stalled.response,
+        async () => {
+          const [input, signal] =
+            signalSource === 'Request'
+              ? [new Request(url, { signal: controller.signal }), undefined]
+              : [url, controller.signal]
+          const pending = fetchJsonWithTimeout(input, { signal, timeoutMs: 1000 })
+          await new Promise(resolve => setTimeout(resolve, 0))
+          controller.abort(reason)
+          await assert.rejects(pending, error => error === reason)
+          assert.equal(stalled.wasCancelled(), true)
+        }
+      )
+    })
+  }
   test('rejects an oversized Content-Length before reading', async () => {
     let cancelled = false
     const response = new Response(
@@ -160,6 +164,20 @@ describe('bounded fetch response consumption', () => {
           fetchJsonWithTimeout('https://example.test/data', { timeoutMs: 20 }),
           FetchTimeoutError
         )
+        assert.equal(stalled.wasCancelled(), true)
+      }
+    )
+  })
+  test('preserves an authoritative HTTP status when its ignored body stalls', async () => {
+    const stalled = hangingResponse(404)
+    await withFetch(
+      async () => stalled.response,
+      async () => {
+        const response = await fetchWithTimeout('https://example.test/data', {
+          timeoutMs: 200,
+          acceptHttpErrors: 'status-only'
+        })
+        assert.equal(response.status, 404)
         assert.equal(stalled.wasCancelled(), true)
       }
     )

@@ -7,6 +7,7 @@ import {
 } from '@/config/rpc-endpoints'
 import type { Network } from '@/types'
 import { isValidMarginalFeeZats } from '@/config/fee'
+import { FetchResponseTooLargeError, fetchWithTimeout, jsonRequestInit } from '@/lib/fetch-utils'
 
 export interface RpcRegistryChain {
   id: string
@@ -112,23 +113,17 @@ export function parseRpcRegistryDocument(value: unknown): RpcRegistryDocument | 
   return { version: 1, updatedAt: candidate.updatedAt, chains }
 }
 
-export async function fetchRpcRegistry(
-  fetchFunction: typeof fetch = fetch
-): Promise<RpcRegistryDocument> {
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), RPC_REGISTRY_FETCH_TIMEOUT_MS)
-  try {
-    const response = await fetchFunction(RPC_REGISTRY_URL, {
-      cache: 'no-store',
-      signal: controller.signal
-    })
-    if (!response.ok) throw new Error(`RPC registry returned HTTP ${response.status}`)
-    const registry = parseRpcRegistryDocument(await response.json())
-    if (!registry) throw new Error('RPC registry returned an invalid document')
-    return registry
-  } finally {
-    clearTimeout(timer)
-  }
+export async function fetchRpcRegistry(fetchFunction?: typeof fetch): Promise<RpcRegistryDocument> {
+  const response = await fetchWithTimeout(RPC_REGISTRY_URL, {
+    ...jsonRequestInit({ cache: 'no-store' }),
+    timeoutMs: RPC_REGISTRY_FETCH_TIMEOUT_MS,
+    fetcher: fetchFunction,
+    acceptHttpErrors: 'status-only'
+  })
+  if (!response.ok) throw new Error(`RPC registry returned HTTP ${response.status}`)
+  const registry = parseRpcRegistryDocument(await response.json())
+  if (!registry) throw new Error('RPC registry returned an invalid document')
+  return registry
 }
 
 export async function selectPreferredRpcEndpoint(
@@ -158,45 +153,25 @@ export async function selectPreferredRpcEndpoint(
 
 export async function probeRpcEndpoint(
   endpoint: RpcEndpointOption,
-  fetchFunction: typeof fetch = fetch,
+  fetchFunction?: typeof fetch,
   timeoutMs = RPC_PROBE_TIMEOUT_MS
 ): Promise<number> {
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), timeoutMs)
   const startedAt = performance.now()
-  try {
-    const response = await fetchFunction(
-      `${endpoint.url}/cash.z.wallet.sdk.rpc.CompactTxStreamer/GetLatestBlock`,
-      {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/grpc-web+proto',
-          'x-grpc-web': '1'
-        },
-        body: new Uint8Array(5),
-        cache: 'no-store',
-        credentials: 'omit',
-        redirect: 'error',
-        referrerPolicy: 'no-referrer',
-        signal: controller.signal
-      }
-    )
-    if (response.status !== 200) throw new Error(`RPC probe returned HTTP ${response.status}`)
-    const contentType = response.headers.get('content-type')?.toLowerCase() ?? ''
-    if (!/^application\/grpc-web(?:\+proto)?(?:;|$)/.test(contentType)) {
-      throw new Error(`RPC probe returned ${contentType || 'no content type'}`)
-    }
-
-    assertSuccessfulGrpcWebResponse(await readBoundedGrpcWebResponse(response))
-    return Math.round(performance.now() - startedAt)
-  } finally {
-    clearTimeout(timer)
-  }
+  await fetchGrpcWebData(
+    endpoint.url,
+    'GetLatestBlock',
+    new Uint8Array(5),
+    fetchFunction,
+    timeoutMs,
+    undefined,
+    'probe'
+  )
+  return Math.round(performance.now() - startedAt)
 }
 
 export async function fetchLatestBlockHeight(
   rpcUrl: string,
-  fetchFunction: typeof fetch = fetch,
+  fetchFunction?: typeof fetch,
   timeoutMs = RPC_PROBE_TIMEOUT_MS,
   signal?: AbortSignal
 ): Promise<number> {
@@ -214,7 +189,7 @@ export async function fetchLatestBlockHeight(
 
 export async function fetchStandardMarginalFee(
   rpcUrl: string,
-  fetchFunction: typeof fetch = fetch,
+  fetchFunction?: typeof fetch,
   timeoutMs = RPC_PROBE_TIMEOUT_MS,
   signal?: AbortSignal
 ): Promise<number> {
@@ -273,7 +248,7 @@ export async function fetchStandardMarginalFee(
 export async function fetchBlockTime(
   rpcUrl: string,
   height: number,
-  fetchFunction: typeof fetch = fetch,
+  fetchFunction?: typeof fetch,
   timeoutMs = RPC_PROBE_TIMEOUT_MS,
   signal?: AbortSignal
 ): Promise<number> {
@@ -300,19 +275,15 @@ async function fetchGrpcWebData(
   rpcUrl: string,
   method: string,
   body: Uint8Array,
-  fetchFunction: typeof fetch,
+  fetchFunction: typeof fetch | undefined,
   timeoutMs: number,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  requestLabel = method
 ): Promise<Uint8Array[]> {
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error('RPC request timed out')
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), timeoutMs)
-  const abort = () => controller.abort()
-  signal?.addEventListener('abort', abort, { once: true })
   try {
-    if (signal?.aborted) controller.abort()
     const baseUrl = rpcUrl.replace(/\/+$/, '')
-    const response = await fetchFunction(
+    const response = await fetchWithTimeout(
       `${baseUrl}/cash.z.wallet.sdk.rpc.CompactTxStreamer/${method}`,
       {
         method: 'POST',
@@ -325,63 +296,26 @@ async function fetchGrpcWebData(
         credentials: 'omit',
         redirect: 'error',
         referrerPolicy: 'no-referrer',
-        signal: controller.signal
+        signal,
+        timeoutMs,
+        maxBytes: MAX_GRPC_WEB_RESPONSE_BYTES,
+        fetcher: fetchFunction,
+        acceptHttpErrors: 'status-only'
       }
     )
     if (response.status !== 200) {
-      throw new Error(`RPC ${method} returned HTTP ${response.status}`)
+      throw new Error(`RPC ${requestLabel} returned HTTP ${response.status}`)
     }
     const contentType = response.headers.get('content-type')?.toLowerCase() ?? ''
     if (!/^application\/grpc-web(?:\+proto)?(?:;|$)/.test(contentType)) {
-      throw new Error(`RPC ${method} returned ${contentType || 'no content type'}`)
+      throw new Error(`RPC ${requestLabel} returned ${contentType || 'no content type'}`)
     }
 
-    return parseSuccessfulGrpcWebResponse(await readBoundedGrpcWebResponse(response))
-  } finally {
-    clearTimeout(timer)
-    signal?.removeEventListener('abort', abort)
+    return parseSuccessfulGrpcWebResponse(new Uint8Array(await response.arrayBuffer()))
+  } catch (error) {
+    if (error instanceof FetchResponseTooLargeError) throw new Error('RPC response is too large')
+    throw error
   }
-}
-
-async function readBoundedGrpcWebResponse(response: Response): Promise<Uint8Array> {
-  const contentLength = Number(response.headers.get('content-length'))
-  if (Number.isFinite(contentLength) && contentLength > MAX_GRPC_WEB_RESPONSE_BYTES) {
-    throw new Error('RPC response is too large')
-  }
-
-  if (!response.body) {
-    const body = new Uint8Array(await response.arrayBuffer())
-    if (body.byteLength > MAX_GRPC_WEB_RESPONSE_BYTES) {
-      throw new Error('RPC response is too large')
-    }
-    return body
-  }
-
-  const reader = response.body.getReader()
-  const chunks: Uint8Array[] = []
-  let totalLength = 0
-  try {
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      totalLength += value.byteLength
-      if (totalLength > MAX_GRPC_WEB_RESPONSE_BYTES) {
-        await reader.cancel()
-        throw new Error('RPC response is too large')
-      }
-      chunks.push(value)
-    }
-  } finally {
-    reader.releaseLock()
-  }
-
-  const body = new Uint8Array(totalLength)
-  let offset = 0
-  for (const chunk of chunks) {
-    body.set(chunk, offset)
-    offset += chunk.byteLength
-  }
-  return body
 }
 
 function parseSuccessfulGrpcWebResponse(body: Uint8Array): Uint8Array[] {
@@ -410,10 +344,6 @@ function parseSuccessfulGrpcWebResponse(body: Uint8Array): Uint8Array[] {
   if (grpcStatus !== '0')
     throw new Error(`RPC probe returned gRPC status ${grpcStatus ?? 'missing'}`)
   return dataFrames
-}
-
-function assertSuccessfulGrpcWebResponse(body: Uint8Array): void {
-  parseSuccessfulGrpcWebResponse(body)
 }
 
 function readVarint(bytes: Uint8Array, start: number): { value: number; next: number } {

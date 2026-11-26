@@ -1,9 +1,11 @@
+import { fetchWithTimeout } from '@/lib/fetch-utils'
 import { ANALYTICS_COUNTRY_ENDPOINT, GA_CONFIG } from '../../config/analytics'
 import { isGoogleAnalyticsEnabled } from './preferences'
 
 const COUNTRY_CACHE_MS = 45 * 60 * 1000
 const COUNTRY_FAILURE_CACHE_MS = 60 * 1000
 const COUNTRY_TIMEOUT_MS = 2500
+const COUNTRY_TRACE_MAX_CHARS = 4096
 const COUNTRY_CACHE_KEY = 'ga_country_cache'
 
 let cacheWrite: Promise<void> = Promise.resolve()
@@ -49,35 +51,26 @@ export async function getAnalyticsCountry(): Promise<string | undefined> {
     controller = abortController
     let country: string | undefined
     let cacheDuration = COUNTRY_CACHE_MS
-    let timeout: ReturnType<typeof setTimeout> | undefined
     try {
-      const trace = await Promise.race([
-        (async () => {
-          const response = await fetch(ANALYTICS_COUNTRY_ENDPOINT, {
-            method: 'GET',
-            credentials: 'omit',
-            referrerPolicy: 'no-referrer',
-            cache: 'no-store',
-            redirect: 'error',
-            signal: abortController.signal
-          })
-          if (!response.ok) throw new Error('Analytics country lookup failed')
-          return response.text()
-        })(),
-        new Promise<never>((_, reject) => {
-          timeout = setTimeout(() => {
-            abortController.abort()
-            reject(new Error('Analytics country lookup timed out'))
-          }, COUNTRY_TIMEOUT_MS)
-        })
-      ])
-      if (trace.length > 4096) throw new Error('Analytics country response is too large')
+      const response = await fetchWithTimeout(ANALYTICS_COUNTRY_ENDPOINT, {
+        method: 'GET',
+        credentials: 'omit',
+        referrerPolicy: 'no-referrer',
+        cache: 'no-store',
+        redirect: 'error',
+        signal: abortController.signal,
+        timeoutMs: COUNTRY_TIMEOUT_MS,
+        maxBytes: COUNTRY_TRACE_MAX_CHARS * 3
+      })
+      const trace = await response.text()
+      if (trace.length > COUNTRY_TRACE_MAX_CHARS) {
+        throw new Error('Analytics country response is too large')
+      }
       country = parseCountry(trace.match(/^loc=([A-Z]{2})\r?$/m)?.[1])
       if (!country) cacheDuration = COUNTRY_FAILURE_CACHE_MS
     } catch {
       cacheDuration = COUNTRY_FAILURE_CACHE_MS
     } finally {
-      if (timeout) clearTimeout(timeout)
       if (controller === abortController) controller = undefined
     }
     if (!(await isGoogleAnalyticsEnabled()) || currentGeneration !== generation) return undefined

@@ -31,7 +31,7 @@ export interface BitcoinEsploraFailoverClientConfig {
 }
 
 interface BitcoinEsploraFailoverDependencies {
-  readonly fetchImplementation?: (input: string, init: RequestInit) => Promise<Response>
+  readonly fetchImplementation?: typeof fetch
   readonly now?: () => number
   readonly delay?: (milliseconds: number, signal?: AbortSignal) => Promise<void>
 }
@@ -133,7 +133,7 @@ function createRequestStartPacer(
 
 function parseEndpoints(
   config: BitcoinEsploraFailoverClientConfig,
-  fetchImplementation: (input: string, init: RequestInit) => Promise<Response>
+  fetchImplementation?: typeof fetch
 ): EndpointState[] {
   if (
     !Array.isArray(config.endpoints) ||
@@ -204,7 +204,7 @@ export function createBitcoinEsploraFailoverClient(
   config: BitcoinEsploraFailoverClientConfig,
   dependencies: BitcoinEsploraFailoverDependencies = {}
 ): BitcoinDiscoveryRpc & BitcoinTransactionRpc & BitcoinActivityHistoryRpc {
-  const fetchImplementation = dependencies.fetchImplementation ?? fetch
+  const fetchImplementation = dependencies.fetchImplementation
   const now = dependencies.now ?? Date.now
   const minimumRequestIntervalMs = parseMinimumRequestInterval(config.minimumRequestIntervalMs)
   const paceRequestStart = createRequestStartPacer(

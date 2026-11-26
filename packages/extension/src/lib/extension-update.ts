@@ -1,3 +1,5 @@
+import { fetchJsonWithTimeout } from '@/lib/fetch-utils'
+
 export const EXTENSION_UPDATE_STORAGE_KEY = 'extension_update_notice'
 export const PRODUCT_RELEASE_NOTES_URL = 'https://www.zknoir.com/changelog.json'
 
@@ -165,41 +167,16 @@ export function shouldNotifyExtensionUpdate(
   return shouldNotify
 }
 
-async function fetchProductReleaseNotesManifest(): Promise<unknown> {
-  const controller = new AbortController()
-  const timeout = globalThis.setTimeout(() => controller.abort(), RELEASE_NOTES_TIMEOUT_MS)
-
-  try {
-    const response = await fetch(PRODUCT_RELEASE_NOTES_URL, {
-      cache: 'no-store',
-      credentials: 'omit',
-      signal: controller.signal
-    })
-    if (!response.ok) {
-      throw new Error(`release notes request failed with status ${response.status}`)
-    }
-
-    const contentLength = Number(response.headers.get('content-length'))
-    if (Number.isFinite(contentLength) && contentLength > RELEASE_NOTES_MAX_BYTES) {
-      throw new Error('release notes response is too large')
-    }
-
-    const body = await response.text()
-    if (new TextEncoder().encode(body).byteLength > RELEASE_NOTES_MAX_BYTES) {
-      throw new Error('release notes response is too large')
-    }
-
-    return JSON.parse(body) as unknown
-  } finally {
-    globalThis.clearTimeout(timeout)
-  }
-}
-
 export async function fetchShouldNotifyExtensionUpdate(
   currentVersion: string,
   availableVersion: string
 ): Promise<boolean> {
-  const manifest = await fetchProductReleaseNotesManifest()
+  const manifest = await fetchJsonWithTimeout(PRODUCT_RELEASE_NOTES_URL, {
+    cache: 'no-store',
+    credentials: 'omit',
+    timeoutMs: RELEASE_NOTES_TIMEOUT_MS,
+    maxBytes: RELEASE_NOTES_MAX_BYTES
+  })
   return shouldNotifyExtensionUpdate(manifest, currentVersion, availableVersion)
 }
 

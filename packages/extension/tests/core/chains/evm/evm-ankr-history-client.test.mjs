@@ -314,7 +314,7 @@ test('discarding an aborted batch also discards responses from a fetch that igno
   ])
 })
 
-test('a canceled batch caller does not cancel another caller for the same address', async () => {
+test('a batch canceled before dispatch leaves the concurrent caller for the same address active', async () => {
   let releaseResponses
   const responseGate = new Promise(resolve => {
     releaseResponses = resolve
@@ -347,7 +347,7 @@ test('a canceled batch caller does not cancel another caller for the same addres
 
   expect((await first).get('eip155:1')).toEqual([])
   expect((await second).get('eip155:1')).toHaveLength(1)
-  expect(requests).toBe(4)
+  expect(requests).toBe(2)
   expect(cache.records.get('eip155:1').successfulSyncAt).toBe(10_000)
 })
 
