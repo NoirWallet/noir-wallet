@@ -56,6 +56,11 @@ import { developmentConsoleErrors } from '../../lib/development-console'
 import { traceDebugStage } from '../../lib/debug-performance'
 import { loadVotingState, saveVotingState } from '../../lib/indexed-db'
 import { validateVotingDecisions } from '../../lib/voting'
+
+type RecoveryWebWallet = WebWallet & {
+  enhance_transaction?: (txid: string) => Promise<void>
+  rescan_range?: (startHeight: number, endExclusive: number) => Promise<void>
+}
 import { assertRheaSwapSubmissionDeadline } from '../services/rhea-swap/rhea-swap-quote-validity'
 
 /**
@@ -565,6 +570,7 @@ const originalConsole = {
 const debugLogsEnabled = typeof __DEBUG_LOGS__ !== 'boolean' || __DEBUG_LOGS__
 
 let activeWalletId: string | undefined
+let activeRecoveryCalls = 0
 
 function forwardLog(level: 'log' | 'warn' | 'error' | 'info', ...args: any[]) {
   if (!debugLogsEnabled) return
@@ -592,11 +598,22 @@ function forwardLog(level: 'log' | 'warn' | 'error' | 'info', ...args: any[]) {
   }
 }
 
-if (__DEBUG_LOGS__) {
-  console.log = (...args) => forwardLog('log', ...args)
-  console.warn = (...args) => forwardLog('warn', ...args)
-  console.error = (...args) => forwardLog('error', ...args)
-  console.info = (...args) => forwardLog('info', ...args)
+for (const level of ['log', 'warn', 'error', 'info', 'debug'] as const) {
+  const write = console[level].bind(console)
+  console[level] = (...args: unknown[]) => {
+    if (activeRecoveryCalls > 0) return
+    if (__DEBUG_LOGS__ && level !== 'debug') forwardLog(level, ...args)
+    else write(...args)
+  }
+}
+
+async function runWasmRecovery<T>(operation: () => Promise<T>): Promise<T> {
+  activeRecoveryCalls += 1
+  try {
+    return await operation()
+  } finally {
+    activeRecoveryCalls -= 1
+  }
 }
 
 //
@@ -665,7 +682,7 @@ self.addEventListener('message', async (event: MessageEvent<RPCRequest<any>>) =>
 
   try {
     // Ensure WASM is initialized for all methods
-    if (!isWasmInitialized) {
+    if (method !== 'wallet.getRecoveryCapabilities' && !isWasmInitialized) {
       await initializeWasm()
     }
 
@@ -1136,6 +1153,64 @@ self.addEventListener('message', async (event: MessageEvent<RPCRequest<any>>) =>
           subtreeRootsFresh.add(walletId)
           summaryGateClosed.delete(walletId)
           return processed
+        })
+        break
+      }
+      case 'wallet.getRecoveryCapabilities': {
+        const prototype: RecoveryWebWallet = WebWallet.prototype
+        result = {
+          transaction: typeof prototype.enhance_transaction === 'function',
+          range: typeof prototype.rescan_range === 'function'
+        } satisfies RPCSchema['wallet.getRecoveryCapabilities']['response']
+        break
+      }
+      case 'wallet.enhanceTransaction': {
+        const { walletId, txid } = payload as RPCSchema['wallet.enhanceTransaction']['request']
+        if (typeof txid !== 'string' || !/^[a-f0-9]{64}$/i.test(txid)) {
+          throw new Error('Invalid Zcash transaction ID')
+        }
+        result = await runForWallet(
+          walletId,
+          async (): Promise<RPCSchema['wallet.enhanceTransaction']['response']> => {
+            const wallet: RecoveryWebWallet = getWallet(walletId)
+            const enhance = wallet.enhance_transaction
+            if (typeof enhance !== 'function') {
+              throw new Error('Zcash transaction recovery is unsupported')
+            }
+            try {
+              await runWasmRecovery(() => enhance.call(wallet, txid))
+              return 'applied'
+            } catch (error) {
+              if (error instanceof Error && error.name === 'TransactionNotFound') return 'not-found'
+              throw new Error('Zcash transaction recovery failed')
+            }
+          }
+        )
+        break
+      }
+      case 'wallet.rescanRange': {
+        const { walletId, startHeight, endExclusive } =
+          payload as RPCSchema['wallet.rescanRange']['request']
+        if (
+          !Number.isInteger(startHeight) ||
+          !Number.isInteger(endExclusive) ||
+          startHeight < 0 ||
+          startHeight > endExclusive ||
+          endExclusive > 0xffffffff
+        ) {
+          throw new Error('Invalid Zcash recovery range')
+        }
+        await runForWallet(walletId, async () => {
+          const wallet: RecoveryWebWallet = getWallet(walletId)
+          const rescan = wallet.rescan_range
+          if (typeof rescan !== 'function') {
+            throw new Error('Zcash range recovery is unsupported')
+          }
+          try {
+            await runWasmRecovery(() => rescan.call(wallet, startHeight, endExclusive))
+          } catch {
+            throw new Error('Zcash range recovery failed')
+          }
         })
         break
       }

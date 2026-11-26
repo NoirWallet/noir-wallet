@@ -21,7 +21,10 @@ import type {
   RPCResponse,
   RPCMethod,
   JournalReplayOptions,
-  ZcashTransactionContext
+  SyncOwner,
+  ZcashRecoveryCapabilities,
+  ZcashTransactionContext,
+  ZcashTransactionRecoveryResult
 } from './types'
 import type { Network } from '@/types'
 import { DEFAULT_NETWORK, getNetworkConfig } from '@/lib/runtime-network'
@@ -34,7 +37,10 @@ import { readZeroIndexerOptionsForWorker } from '@/infrastructure/chains/zero-in
 import type { ZeroIndexerOptions } from '@/core/zcash/zero-indexer'
 
 const { LIGHT, MEDIUM, WASM_HEAVY, TRANSACTION } = WALLET_CONFIG.SYNC.RPC_TIMEOUT_MS
-const syncOwner = { ownerId: crypto.randomUUID(), ownerStartedAt: performance.timeOrigin }
+const syncOwner: SyncOwner = {
+  ownerId: crypto.randomUUID(),
+  ownerStartedAt: performance.timeOrigin
+}
 
 // Worker instance singleton
 let worker: Worker | null = null
@@ -122,6 +128,9 @@ const RPC_TIMEOUTS: Record<string, number> = {
   'wallet.syncNextBatchOptimized': WASM_HEAVY,
   'wallet.dbToBytes': WASM_HEAVY,
   'wallet.persistDb': WASM_HEAVY,
+  'wallet.getRecoveryCapabilities': LIGHT,
+  'wallet.enhanceTransaction': WASM_HEAVY,
+  'wallet.rescanRange': WASM_HEAVY,
   'wallet.getLatestHeight': LIGHT,
   'wallet.getWalletSummary': LIGHT,
   'wallet.getAccountIds': LIGHT,
@@ -164,6 +173,8 @@ const WORKER_RECOVERY_ON_TIMEOUT_METHODS = new Set([
   'init',
   'wallet.dbToBytes',
   'wallet.persistDb',
+  'wallet.enhanceTransaction',
+  'wallet.rescanRange',
   'wallet.prepareSyncBatchWithJournal',
   'wallet.prepareSyncBatch',
   'wallet.syncSessionSetup',
@@ -971,6 +982,30 @@ export class ZcashWorkerClient {
     return this.request('wallet.reconcile', { walletId: this.wid(), ...syncOwner, force })
   }
 
+  async getRecoveryCapabilities(): Promise<ZcashRecoveryCapabilities> {
+    return this.request('wallet.getRecoveryCapabilities', {})
+  }
+
+  async enhanceTransaction(
+    txid: string,
+    owner: SyncOwner = syncOwner
+  ): Promise<ZcashTransactionRecoveryResult> {
+    return this.request('wallet.enhanceTransaction', { ...owner, walletId: this.wid(), txid })
+  }
+
+  async rescanRange(
+    startHeight: number,
+    endExclusive: number,
+    owner: SyncOwner = syncOwner
+  ): Promise<void> {
+    return this.request('wallet.rescanRange', {
+      ...owner,
+      walletId: this.wid(),
+      startHeight,
+      endExclusive
+    })
+  }
+
   async sync(): Promise<void> {
     await this.ensureInitialized()
     return this.request('wallet.sync', { walletId: this.wid() })
@@ -1045,14 +1080,18 @@ export class ZcashWorkerClient {
     return this.request('wallet.getAccountBirthday', { walletId: this.wid(), accountId })
   }
 
-  async persistDb(key: string, options?: { allowDuringSyncSession?: boolean }): Promise<void> {
+  async persistDb(
+    key: string,
+    options?: { allowDuringSyncSession?: boolean; requireWrite?: boolean }
+  ): Promise<void> {
     await this.ensureInitialized()
     if (this.environment === 'extension') {
-      await this.request('wallet.persistDb', {
+      const saved = await this.request('wallet.persistDb', {
         walletId: this.wid(),
         key,
         allowDuringSyncSession: options?.allowDuringSyncSession
       })
+      if (options?.requireWrite && saved !== true) throw new Error('Wallet snapshot was not saved')
     } else {
       const { saveWalletDb } = await import('@/lib/indexed-db')
       const result = await this.requestToWorker('wallet.dbToBytes', { walletId: this.wid() })

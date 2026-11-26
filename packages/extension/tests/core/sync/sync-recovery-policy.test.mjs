@@ -84,29 +84,35 @@ test('stable spendability metadata failure reloads a snapshot once and requests 
   )
 })
 
-test('locked passive sync needs a snapshot and sufficient chain gap or staleness', () => {
+test('a routine scan waits for a block gap or a sustained lag and needs a usable wallet', () => {
   const state = {
     isSchedulerRunning: false,
-    isWalletUiOpen: false,
-    hasPendingTransactions: false,
     isWalletLocked: true,
     hasPersistedSnapshot: true,
     currentHeight: 100,
     networkHeight: 100,
-    lastSyncTime: 1_000,
+    lagObservedAt: 1_000,
     now: 2_000,
     minBlockGap: WALLET_CONFIG.SYNC.BACKGROUND_MIN_GAP_BLOCKS,
-    maxStaleMs: 10_000
+    maxLagMs: WALLET_CONFIG.SYNC.ROUTINE_MAX_LAG_MS
   }
   assert.equal(shouldRequestPeriodicSync(state), false)
   assert.equal(
     shouldRequestPeriodicSync({ ...state, hasPersistedSnapshot: false, networkHeight: 120 }),
     false
   )
-  assert.equal(shouldRequestPeriodicSync({ ...state, networkHeight: 101 }), true)
-  assert.equal(shouldRequestPeriodicSync({ ...state, now: 11_001 }), true)
-  assert.equal(shouldRequestPeriodicSync({ ...state, hasPendingTransactions: true }), true)
-  assert.equal(shouldRequestPeriodicSync({ ...state, isSchedulerRunning: true }), false)
+  assert.equal(shouldRequestPeriodicSync({ ...state, networkHeight: 101 }), false)
+  assert.equal(shouldRequestPeriodicSync({ ...state, networkHeight: 103 }), true)
+  const afterLagWindow = state.lagObservedAt + state.maxLagMs
+  assert.equal(
+    shouldRequestPeriodicSync({ ...state, networkHeight: 101, now: afterLagWindow }),
+    true
+  )
+  assert.equal(shouldRequestPeriodicSync({ ...state, now: afterLagWindow }), false)
+  assert.equal(
+    shouldRequestPeriodicSync({ ...state, networkHeight: 120, isSchedulerRunning: true }),
+    false
+  )
 })
 
 test('passive retry delay is bounded and budgeted jobs do not resume at startup', () => {

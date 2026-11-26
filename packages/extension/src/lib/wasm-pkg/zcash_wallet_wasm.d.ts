@@ -35,7 +35,11 @@ export interface CompactBlockCdnOptions {
 export interface ZeroIndexerOptions {
   /** Ordered endpoints for Orchard transaction broadcast and status lookup. */
   urls: string[]
-  /** Positive per-endpoint timeout for send and GetTransaction, in milliseconds. Defaults to 30000. */
+  /**
+   * Positive per-endpoint timeout for send and GetTransaction, in milliseconds. Defaults to 30000.
+   * It also bounds transaction lookups that go straight to lightwalletd, so a server that never
+   * answers cannot hold a sync.
+   */
   sendTimeoutMs?: number
 }
 
@@ -435,6 +439,18 @@ export class WebWallet {
    * A thrown value rejects this call unchanged.
    */
   db_to_bytes_chunked(callback: Function): Promise<void>
+  /**
+   * Attempts to enhance the given transaction immediately, and reports any failure to the
+   * caller.
+   *
+   * Ordinary syncing retries a queued request by itself; this is for a user who knows about a
+   * transaction (for example from an exchange) that the wallet has not picked up yet.
+   *
+   * # Arguments
+   *
+   * * `txid` - The transaction id in canonical (byte-reversed) hexadecimal.
+   */
+  enhance_transaction(txid: string): Promise<void>
   estimate_orchard_migration_fee(
     account_id: number,
     to_address: string,
@@ -617,6 +633,39 @@ export class WebWallet {
    * Returns a UnifiedAddresses object. `transparent` and `address_index` will be null.
    */
   get_next_shielded_address(account_id: number): Promise<any>
+  /**
+   * Reports the transactions whose enhancement has not completed, so that a caller can tell the
+   * user that some transaction data still needs refreshing instead of showing a stale history.
+   *
+   * The list is derived from the wallet's persistent request queue, so it survives a snapshot
+   * restore; the per-transaction failure details are remembered only for this instance.
+   *
+   * # Returns
+   *
+   * `{ deferredEnhancements: [{ txid, kind?, attempts }] }`, where `txid` is canonical
+   * (byte-reversed) hexadecimal and `kind` is `"fetch"` when the transaction could not be
+   * downloaded or `"decode"` when its bytes were unusable.
+   *
+   * A failure while writing the wallet is reported by the sync itself, not here, because the
+   * wallet may hold a partial update that a caller must not build on.
+   *
+   * `transparentHistoryIncomplete` is set while the wallet knows of transparent address history
+   * it has not read yet, so an output on one of those addresses may already have been spent.
+   * It does not mean transparent payments are unavailable: a build is only refused when it
+   * would draw on one of the addresses still being read, and it succeeds again once that
+   * history is read.
+   *
+   * That refusal is thrown as an `Error` whose `name` is `"TransparentHistoryIncomplete"`; the
+   * message carries the reason. Only errors a caller is expected to handle carry a name this
+   * way (`"TransparentHistoryIncomplete"`, `"TransactionNotFound"` with a `txId` property, and
+   * `"TransactionSubmissionUnknown"`); everything else arrives as a plain `Error` whose message
+   * describes what went wrong.
+   *
+   * A transaction that keeps failing is retried less often as `attempts` grows, so a stuck
+   * request cannot cost an attempt on every sync; it is never dropped, and
+   * `enhance_transaction` retries it immediately on request.
+   */
+  get_sync_diagnostics(): Promise<any>
   get_transaction_history(account_id: number): Promise<any>
   /**
    * Get addresses for an account
@@ -808,6 +857,14 @@ export class WebWallet {
    * Replay multiple journal entries in sequence (for recovery).
    */
   replay_journal_entries(entries: Uint8Array[]): Promise<void>
+  /**
+   * Scans the pending blocks within the requested range and commits the results together.
+   *
+   * The range is half-open and is clamped to the wallet birthday and known chain tip.
+   * The wallet needs an account and a known chain tip. An already scanned or empty range
+   * requires no sync. If the call fails, the wallet keeps its prior scan results.
+   */
+  rescan_range(start_height: number, end_height: number): Promise<void>
   /**
    * Scan a journal entry for recovery (replay from base snapshot + journal).
    * Returns true if more scan ranges remain.
@@ -1276,6 +1333,7 @@ export interface InitOutput {
   ) => number
   readonly webwallet_db_to_bytes: (a: number) => number
   readonly webwallet_db_to_bytes_chunked: (a: number, b: number) => number
+  readonly webwallet_enhance_transaction: (a: number, b: number, c: number) => number
   readonly webwallet_estimate_orchard_migration_fee: (
     a: number,
     b: number,
@@ -1347,6 +1405,7 @@ export interface InitOutput {
   readonly webwallet_get_latest_block: (a: number) => number
   readonly webwallet_get_latest_height: (a: number) => number
   readonly webwallet_get_next_shielded_address: (a: number, b: number) => number
+  readonly webwallet_get_sync_diagnostics: (a: number) => number
   readonly webwallet_get_transaction_history: (a: number, b: number) => number
   readonly webwallet_get_unified_addresses: (a: number, b: number) => number
   readonly webwallet_get_wallet_summary: (a: number) => number
@@ -1494,6 +1553,7 @@ export interface InitOutput {
   readonly webwallet_prepare_sync_batch: (a: number, b: number, c: number) => number
   readonly webwallet_prepare_sync_batch_optimized: (a: number, b: number) => number
   readonly webwallet_replay_journal_entries: (a: number, b: number, c: number) => number
+  readonly webwallet_rescan_range: (a: number, b: number, c: number) => number
   readonly webwallet_scan_journal_entry: (a: number, b: number, c: number) => number
   readonly webwallet_send_authorized_transactions: (a: number, b: number, c: number) => number
   readonly webwallet_set_zero_indexer_options: (a: number, b: number, c: number) => void
@@ -1535,11 +1595,11 @@ export interface InitOutput {
   readonly rustsecp256k1_v0_14_default_illegal_callback_fn: (a: number, b: number) => void
   readonly rustsecp256k1_v0_14_context_create: (a: number) => number
   readonly rustsecp256k1_v0_14_context_destroy: (a: number) => void
-  readonly __wasm_bindgen_func_elem_16563: (a: number, b: number, c: number, d: number) => void
-  readonly __wasm_bindgen_func_elem_16580: (a: number, b: number, c: number, d: number) => void
-  readonly __wasm_bindgen_func_elem_12470: (a: number, b: number, c: number) => void
-  readonly __wasm_bindgen_func_elem_16565: (a: number, b: number, c: number) => void
-  readonly __wasm_bindgen_func_elem_12393: (a: number, b: number) => void
+  readonly __wasm_bindgen_func_elem_16651: (a: number, b: number, c: number, d: number) => void
+  readonly __wasm_bindgen_func_elem_16668: (a: number, b: number, c: number, d: number) => void
+  readonly __wasm_bindgen_func_elem_12558: (a: number, b: number, c: number) => void
+  readonly __wasm_bindgen_func_elem_16653: (a: number, b: number, c: number) => void
+  readonly __wasm_bindgen_func_elem_12481: (a: number, b: number) => void
   readonly memory: WebAssembly.Memory
   readonly __wbindgen_export: (a: number, b: number) => number
   readonly __wbindgen_export2: (a: number, b: number, c: number, d: number) => number

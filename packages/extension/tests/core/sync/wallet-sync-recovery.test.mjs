@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import ts from 'typescript'
 import { ZcashWorkerClient } from '../../../src/core/worker/client.ts'
+import { isValidZcashBirthdayHeight } from '../../../src/core/wallet/birthday-height.ts'
 
 const describe = it.describe
 
@@ -30,6 +31,129 @@ const zcashSettingsSource = readFileSync(
   new URL('../../../src/popup/pages/account/ZcashSettings.tsx', import.meta.url),
   'utf-8'
 )
+
+function manualRecoveryHarness({ transaction, historyAccount, failAt, walletTip = 500 } = {}) {
+  const source = readFileSync(
+    new URL('../../../src/background/zcash-recovery.ts', import.meta.url),
+    'utf8'
+  )
+  const compiled = ts.transpileModule(source, {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
+  }).outputText
+  const accountId = 'selected-account'
+  const calls = []
+  const saved = []
+  const module = { exports: {} }
+  const dependencies = {
+    '@/lib/runtime-network': {
+      getNetworkConfig: () => ({ nodeRpcUrl: 'node', rpcUrl: 'lightwalletd' })
+    },
+    '@/core/wallet/birthday-height': { isValidZcashBirthdayHeight },
+    '@/core/wallet/account-network-selection': { isAccountNetworkEnabled: () => true },
+    '@/core/wallet/account-scope': { buildAccountKey: (_network, _wallet, account) => account },
+    '@/infrastructure/chains/rpc-registry-client': { fetchLatestBlockHeight: async () => 500 },
+    '@/lib/indexed-db': { loadTransactions: async key => (key === accountId ? saved : []) },
+    '@/lib/zcash-node-rpc': { getVerboseTransaction: async () => transaction },
+    '@/lib/tx-history-dedup': { normalizeTxHash: value => value.toLowerCase() },
+    '@/store/wallet-store': {
+      useWalletStore: {
+        getState: () => ({ getWallet: () => ({ accounts: [{ birthdayHeight: 25 }] }) })
+      }
+    },
+    './sync-scheduler': { syncScheduler: { runRecoveryStep: execute => execute() } },
+    './zcash-wallet-runtime': {
+      backgroundZcashWalletRuntime: {
+        runRecoveryMutation: async (_walletId, _accountId, assertScope, mutate) => {
+          await assertScope()
+          return mutate({
+            enhanceTransaction: async () => 'applied',
+            getWalletSummary: async () => ({ chain_tip_height: walletTip }),
+            getLatestHeight: async () => walletTip,
+            syncSessionSetup: async () => assert.fail('Setup cannot use a tip below the range'),
+            rescanRange: async (start, end) => {
+              calls.push([start, end])
+              if (start === failAt) throw new Error('Checkpoint failed')
+            }
+          })
+        },
+        hasRecoveryTransaction: async (_walletId, account) =>
+          calls.length > 0 && historyAccount === account,
+        refreshBalances: async () => {},
+        refreshTransactionHistoryFromWasm: async () => {
+          if (transaction && historyAccount === accountId) {
+            saved.push({ id: 'history-entry', txHash: transaction.txid, network: 'mainnet' })
+          }
+        }
+      }
+    }
+  }
+  new Function('require', 'module', 'exports', compiled)(
+    key => dependencies[key],
+    module,
+    module.exports
+  )
+  return {
+    ...module.exports,
+    calls,
+    scope: {
+      network: 'mainnet',
+      walletId: 'wallet',
+      accountId,
+      scopeVersion: 1,
+      assertCurrent: async () => {},
+      isCurrent: () => true
+    }
+  }
+}
+
+it('transaction recovery scans the confirmed block once and verifies the selected account', async () => {
+  const txid = 'a'.repeat(64)
+  const transaction = { txid, height: 80, confirmations: 3 }
+  const otherAccount = manualRecoveryHarness({ transaction, historyAccount: 'other-account' })
+  assert.deepEqual(await otherAccount.requestZcashTransactionRecovery(otherAccount.scope, txid), {
+    status: 'not-found'
+  })
+  assert.deepEqual(otherAccount.calls, [[80, 81]])
+
+  const selected = manualRecoveryHarness({ transaction, historyAccount: 'selected-account' })
+  assert.deepEqual(
+    await selected.requestZcashTransactionRecovery(selected.scope, txid.toUpperCase()),
+    { status: 'restored', transactionId: 'history-entry' }
+  )
+  assert.deepEqual(await selected.requestZcashTransactionRecovery(selected.scope, txid), {
+    status: 'already-present',
+    transactionId: 'history-entry'
+  })
+  assert.deepEqual(selected.calls, [[80, 81]])
+
+  const mismatched = manualRecoveryHarness({
+    transaction: { ...transaction, txid: 'b'.repeat(64) }
+  })
+  assert.deepEqual(await mismatched.requestZcashTransactionRecovery(mismatched.scope, txid), {
+    status: 'unavailable'
+  })
+  assert.deepEqual(mismatched.calls, [])
+})
+
+it('range recovery only reports checkpoints saved before a failed batch', async () => {
+  const harness = manualRecoveryHarness({ failAt: 130 })
+  assert.deepEqual(await harness.requestZcashRangeRecovery(harness.scope, 30, 249), {
+    checkedThrough: 129
+  })
+  assert.deepEqual(harness.calls, [
+    [30, 130],
+    [130, 230]
+  ])
+})
+
+it('a wallet node below the requested range cannot start a scan', async () => {
+  const harness = manualRecoveryHarness({ walletTip: 24 })
+  await assert.rejects(
+    harness.requestZcashRangeRecovery(harness.scope, 25, 40),
+    /wallet node has not reached the requested height/
+  )
+  assert.deepEqual(harness.calls, [])
+})
 
 function syncSessionHarness() {
   const source = ts.createSourceFile('offscreen.ts', offscreenSource, ts.ScriptTarget.Latest, true)
@@ -238,7 +362,7 @@ describe('Wallet sync recovery', () => {
     assert.ok(zcashSettingsSource.includes("from '../../hooks/useResyncZcash'"))
     assert.ok(!zcashSettingsSource.includes('backgroundZcashWalletRuntime.resyncZcashWallet('))
 
-    const handlerStart = backgroundSource.indexOf('async function handleResyncZcashWallet(')
+    const handlerStart = backgroundSource.indexOf('function createZcashRecoveryScope(')
     const handlerEnd = backgroundSource.indexOf(
       'async function handleSwitchWalletAccount(',
       handlerStart
@@ -246,9 +370,11 @@ describe('Wallet sync recovery', () => {
     const handlerSource = backgroundSource.slice(handlerStart, handlerEnd)
 
     assert.ok(handlerStart >= 0 && handlerEnd > handlerStart)
-    assert.ok(handlerSource.includes('assertActiveBackgroundAccountScope(walletId, accountId)'))
+    assert.ok(
+      handlerSource.includes('assertActiveBackgroundAccountScope(walletId, accountId, accountKey)')
+    )
     assert.ok(handlerSource.includes('credentialSession.hasUnlockSession()'))
-    assert.ok(handlerSource.includes('credentialSession.getProvisioningPassword()'))
+    assert.ok(handlerSource.includes('await ensureZcashAccountProvisioningSession()'))
     assert.ok(handlerSource.includes('backgroundZcashWalletRuntime.resyncZcashWallet('))
   })
 
@@ -257,10 +383,14 @@ describe('Wallet sync recovery', () => {
     const quiesceEnd = syncSchedulerSource.indexOf('onAccountSwitched(', quiesceStart)
     const quiesceSource = syncSchedulerSource.slice(quiesceStart, quiesceEnd)
     const addAccountStart = backgroundSource.indexOf('async function handleAddWalletAccount(')
-    const resyncStart = backgroundSource.indexOf('async function handleResyncZcashWallet(')
-    const addAccountSource = backgroundSource.slice(addAccountStart, resyncStart)
+    const resyncStart = backgroundSource.indexOf("if (message.type === 'RESYNC_ZCASH_WALLET')")
+    const addAccountEnd = backgroundSource.indexOf(
+      'function createZcashRecoveryScope(',
+      addAccountStart
+    )
+    const addAccountSource = backgroundSource.slice(addAccountStart, addAccountEnd)
     const resyncEnd = backgroundSource.indexOf(
-      'async function handleSwitchWalletAccount(',
+      "if (message.type === 'RESCAN_ZCASH_TRANSACTION'",
       resyncStart
     )
     const resyncSource = backgroundSource.slice(resyncStart, resyncEnd)
@@ -270,35 +400,9 @@ describe('Wallet sync recovery', () => {
     assert.ok(quiesceSource.includes('await signalSyncAbort(walletId)'))
     assert.ok(quiesceSource.includes('return this.waitForWalletSyncIdle(walletId, timeoutMs)'))
     assert.ok(addAccountSource.includes('syncScheduler.quiesceWalletForMutation(walletId)'))
-    assert.ok(resyncSource.includes('syncScheduler.quiesceWalletForMutation(walletId)'))
+    assert.ok(resyncSource.includes('syncScheduler.runRecoveryStep('))
     assert.ok(!addAccountSource.includes('waitForWalletSyncIdle(walletId, 30_000)'))
     assert.ok(!resyncSource.includes('waitForWalletSyncIdle(walletId, 30_000)'))
-  })
-
-  it('rechecks a transaction pause after asynchronous sync preflight', () => {
-    const preflightStart = syncSchedulerSource.indexOf(
-      'await backgroundZcashWalletRuntime.initialize()'
-    )
-    const credentialCheck = syncSchedulerSource.indexOf(
-      'await credentialSession.hasUnlockSession()',
-      preflightStart
-    )
-    const walletReady = syncSchedulerSource.indexOf(
-      'await backgroundZcashWalletRuntime.waitForWalletReady(',
-      credentialCheck
-    )
-    const syncStart = syncSchedulerSource.indexOf(
-      'await this.runSyncForWallet(syncTarget, accountId, passiveRun)',
-      walletReady
-    )
-
-    assert.ok(preflightStart >= 0 && credentialCheck > preflightStart)
-    assert.ok(walletReady > credentialCheck && syncStart > walletReady)
-    assert.ok(
-      syncSchedulerSource.slice(preflightStart, credentialCheck).includes('yieldToTxPause()')
-    )
-    assert.ok(syncSchedulerSource.slice(credentialCheck, walletReady).includes('yieldToTxPause()'))
-    assert.ok(syncSchedulerSource.slice(walletReady, syncStart).includes('yieldToTxPause()'))
   })
 
   it('does not treat optimistic sync UI state as an active operation during recovery', () => {

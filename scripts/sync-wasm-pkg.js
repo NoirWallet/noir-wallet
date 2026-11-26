@@ -15,8 +15,8 @@ import {
 } from './lib/wasm-package-integrity.mjs'
 
 const SOURCE_REPOSITORY = 'https://github.com/NoirWallet/zcash-wallet-wasm.git'
-const SOURCE_COMMIT = 'cb8da9dc60d51dbf3958657be35427210d544541'
-const ABI_VERSION = 'zcash-wallet-cb8da9d-v1'
+const SOURCE_COMMIT = 'df660f6c576fee7b258c0e9c860d3226dc01ba7a'
+const ABI_VERSION = 'zcash-wallet-df660f6-v1'
 const RUST_TOOLCHAIN = 'nightly-2026-10-20'
 const RUST_VERSION = '1.101.0-nightly'
 const WASM_PACK_VERSION = '0.14.0'
@@ -37,6 +37,8 @@ const CAPABILITIES = Object.freeze(
     'zcash.message.transparent.sign',
     'zcash.pczt',
     'zcash.sync',
+    'zcash.sync.rescan-range',
+    'zcash.transaction.enhance',
     'zcash.transaction.orchard-zero-indexer-broadcast',
     'zcash.transaction.sign',
     'zcash.voting.shielded'

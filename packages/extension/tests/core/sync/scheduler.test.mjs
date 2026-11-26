@@ -35,6 +35,7 @@ function createSchedulerHarness() {
   const messages = []
   const runtime = {
     getNetwork: () => 'mainnet',
+    getWalletScannedHeight: () => 20,
     hasTransactionHistoryRefreshFailure: () => false,
     finishSyncPreflight: () => {},
     initialize: async () => {
@@ -151,7 +152,7 @@ test('a wallet with Zcash disabled cannot start foreground or transaction catch-
 
   scheduler.onRequestSync()
   assert.equal(scheduled, 0)
-  assert.equal(await scheduler.runTransactionCatchUp('wallet-a', 'account-a'), 'skipped')
+  assert.equal(await scheduler.runTransactionCatchUp('mainnet', 'wallet-a', 'account-a'), 'skipped')
 })
 
 test('quarantined wallet stays idle until explicit recovery removes its marker', async () => {
@@ -174,7 +175,7 @@ test('quarantined wallet stays idle until explicit recovery removes its marker',
   assert.equal(harness.getInitializationCount(), 1)
 })
 
-test('another confirmed transaction during catch-up triggers a subsequent wallet scan', async () => {
+test('settlement for a different height is queued behind an active scan and account operations', async () => {
   const { scheduler } = createSchedulerHarness()
   let startFirstScan
   let finishFirstScan
@@ -184,22 +185,38 @@ test('another confirmed transaction during catch-up triggers a subsequent wallet
   const firstFinished = new Promise(resolve => {
     finishFirstScan = resolve
   })
-  let scans = 0
-  scheduler.runSyncForWallet = async () => {
-    scans++
-    if (scans === 1) {
+  const scannedTargets = []
+  scheduler.runSyncForWallet = async (
+    _walletId,
+    _accountId,
+    _passive,
+    _transaction,
+    _routine,
+    requiredHeight
+  ) => {
+    scannedTargets.push(requiredHeight)
+    if (scannedTargets.length === 1) {
       startFirstScan()
       await firstFinished
     }
     return 'completed'
   }
 
-  const first = scheduler.runTransactionCatchUp('wallet-a', 'account-a')
+  const first = scheduler.runTransactionCatchUp('mainnet', 'wallet-a', 'account-a', 19)
   await firstStarted
-  const second = scheduler.runTransactionCatchUp('wallet-a', 'account-a')
+  const duplicate = scheduler.runTransactionCatchUp('mainnet', 'wallet-a', 'account-a', 19)
+  const second = scheduler.runTransactionCatchUp('mainnet', 'wallet-a', 'account-a', 21)
+  scheduler.pauseForTx()
   finishFirstScan()
-  assert.deepEqual(await Promise.all([first, second]), ['completed', 'completed'])
-  assert.equal(scans, 2)
+  assert.deepEqual(await Promise.all([first, duplicate]), ['completed', 'completed'])
+  assert.deepEqual(scannedTargets, [19])
+  scheduler.resumeAfterTx()
+  assert.equal(await second, 'partial')
+  assert.deepEqual(scannedTargets, [19, 21])
+  assert.equal(
+    await scheduler.runTransactionCatchUp('testnet', 'wallet-a', 'account-a', 19),
+    'skipped'
+  )
 })
 
 test('sync snapshot reads the current background balance for the requested account and network', () => {
@@ -293,7 +310,7 @@ function createPauseScheduler(overrides = {}) {
     '@/lib/indexed-db': { getWalletPersistenceQuarantine: async () => null },
     '@/lib/sync-abort': {
       clearSyncAbort: overrides.clearSyncAbort ?? (async () => {}),
-      signalSyncAbort: async () => {}
+      signalSyncAbort: overrides.signalSyncAbort ?? (async () => {})
     },
     '@/config/wallet': { WALLET_CONFIG: { SYNC: { INIT_READY_TIMEOUT_MS: 1000 } } },
     '@/store/wallet-store': {
@@ -309,7 +326,9 @@ function createPauseScheduler(overrides = {}) {
       }
     },
     '@/core/wallet/account-network-selection': { isAccountNetworkEnabled },
-    './credential-session': { credentialSession: { hasUnlockSession: async () => true } },
+    './credential-session': {
+      credentialSession: { hasUnlockSession: overrides.hasUnlockSession ?? (async () => true) }
+    },
     '../core/wallet/pending-zcash-tx': {
       hasPendingZcashTxForWallet: overrides.hasPendingZcashTxForWallet ?? (async () => false)
     },
@@ -355,6 +374,70 @@ test('a paused partial scan releases its wallet without waiting for history I/O'
   scheduler.scheduleRun = () => retriggers++
   scheduler.resumeAfterTx()
   assert.equal(retriggers, 1)
+})
+
+test('transactions that start during async preflight prevent the scan', async () => {
+  for (const stage of ['initialize', 'hasUnlockSession', 'waitForWalletReady']) {
+    const started = deferred()
+    const release = deferred()
+    let scans = 0
+    const pauseAtStage = async () => {
+      started.resolve()
+      await release.promise
+      return true
+    }
+    const scheduler = createPauseScheduler({
+      hasUnlockSession: stage === 'hasUnlockSession' ? pauseAtStage : undefined,
+      runtime: {
+        ...(stage === 'initialize' ? { initialize: pauseAtStage } : {}),
+        ...(stage === 'waitForWalletReady' ? { waitForWalletReady: pauseAtStage } : {})
+      }
+    })
+    scheduler.runSyncForWallet = async () => {
+      scans++
+      return 'completed'
+    }
+    scheduler.foregroundWalletId = 'wallet'
+    const run = scheduler.run()
+    await started.promise
+    scheduler.pauseForTx()
+    release.resolve()
+    await run
+    assert.equal(scans, 0, stage)
+  }
+})
+
+test('a routine scan yields cooperatively and is reconsidered after the transaction', async () => {
+  const started = deferred()
+  const checkpoint = deferred()
+  let reconsidered = 0
+  let hardAborts = 0
+  let scheduled = 0
+  const scheduler = createPauseScheduler({
+    signalSyncAbort: async () => hardAborts++,
+    runtime: {
+      syncBlocks: async (isAborted, _walletId, _accountId, options) => {
+        assert.equal(options.routine, true)
+        started.resolve(isAborted)
+        await checkpoint.promise
+        return { status: 'partial' }
+      }
+    }
+  })
+  scheduler.onRoutineYielded = () => reconsidered++
+  scheduler.scheduleRun = () => scheduled++
+  const task = scheduler.runSyncForWallet('wallet', 'account', true, false, true)
+  const isAborted = await started.promise
+  assert.equal(isAborted(), false)
+  scheduler.pauseForTx()
+  assert.equal(isAborted(), true)
+  assert.equal(hardAborts, 0)
+  assert.equal(reconsidered, 0)
+  checkpoint.resolve()
+  assert.equal(await task, 'partial')
+  scheduler.resumeAfterTx()
+  assert.equal(reconsidered, 1)
+  assert.equal(scheduled, 0)
 })
 
 test('a pause during balance refresh prevents later history I/O', async () => {

@@ -56,6 +56,7 @@ import type { AssetPriceReadModel } from '@/core/prices'
 import { summarizePortfolioFiat } from '@/popup/services/portfolio-prices'
 import { useActiveAccountNetworks } from '../hooks/useActiveAccountNetworks'
 import { useHomePortfolio } from '../hooks/useHomePortfolio'
+import { useHomeZcashTipProbe } from '../hooks/useHomeZcashTipProbe'
 import { useHomeScrollPosition } from '../hooks/useHomeScrollPosition'
 import { getAssetDomainRaw } from '../services/asset-domains'
 import { useSettingsStore } from '@/store/settings-store'
@@ -257,6 +258,15 @@ export function Home() {
   const supportsZcash =
     storageV2Account?.networks.some(network => network.chain.family === 'zcash') ??
     Boolean(currentAccount)
+  useHomeZcashTipProbe(
+    storageV2Account?.active &&
+      supportsZcash &&
+      effectiveWalletId &&
+      effectiveAccountId &&
+      !accountContextChanging
+      ? modeScopeKey
+      : null
+  )
   const supportsSwap =
     storageV2Account?.networks.some(network =>
       ['zcash', 'evm', 'bitcoin'].includes(network.chain.family)

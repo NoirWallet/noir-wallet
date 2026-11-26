@@ -196,11 +196,6 @@ export class ZcashTxMonitor {
     await this.runCheck()
   }
 
-  async hasPendingTransactions(): Promise<boolean> {
-    await this.loadFromStorage()
-    return this.pendingTxs.size > 0
-  }
-
   private scheduleNextCheck() {
     if (!this.hasCurrentNetworkTransactions()) {
       chrome.alarms.clear(ALARM_NAME)
@@ -389,16 +384,17 @@ export class ZcashTxMonitor {
     switch (action) {
       case 'confirm':
         console.info(TAG, 'Tx confirmed on-chain:', tx.txHash)
-        if (isIntentsSettledTransaction(tx.type)) {
-          await this.finalizeIntentsOriginTx(
-            tx,
-            lookup.status === 'confirmed' ? lookup.confirmations : undefined
-          )
-          return
-        }
         const requiredScanHeight =
           tx.requiredScanHeight ??
           (rpcUrl ? ((await getBlockCount(rpcUrl)) ?? undefined) : undefined)
+        if (isIntentsSettledTransaction(tx.type)) {
+          await this.finalizeIntentsOriginTx(
+            tx,
+            lookup.status === 'confirmed' ? lookup.confirmations : undefined,
+            requiredScanHeight
+          )
+          return
+        }
         await this.finalizeTx(
           tx,
           'success',
@@ -460,20 +456,29 @@ export class ZcashTxMonitor {
    * confirmed. Keep the activity non-terminal until Intents reports SUCCESS,
    * FAILED, or REFUNDED.
    */
-  private async finalizeIntentsOriginTx(tx: PendingZcashTx, confirmations?: number) {
-    const records = await loadTransactions(tx.accountKey)
-    if (!records.some(record => record.id === tx.transactionId)) return
-    const requiredConfirmations = getRequiredConfirmations(tx.type ?? 'send')
-    await transactionRecorder.updateTransaction(tx.accountKey, tx.transactionId, {
-      status: 'pending',
-      notified: false,
-      ...(confirmations != null ? { confirmations, requiredConfirmations } : {})
-    })
-    await this.removePersistedTask(tx)
-
-    void finalizeTxCatchUp(tx.accountKey).catch(err => {
-      console.error(TAG, 'Post-confirm catch-up failed:', err)
-    })
+  private async finalizeIntentsOriginTx(
+    tx: PendingZcashTx,
+    confirmations?: number,
+    requiredScanHeight?: number
+  ) {
+    if (this.finalizing.has(tx.txHash)) return
+    this.finalizing.add(tx.txHash)
+    try {
+      const records = await loadTransactions(tx.accountKey)
+      const record = records.find(candidate => candidate.id === tx.transactionId)
+      if (!record) return
+      if (!tx.settlementPending && record.status !== 'success' && record.status !== 'failed') {
+        const requiredConfirmations = getRequiredConfirmations(tx.type ?? 'send')
+        await transactionRecorder.updateTransaction(tx.accountKey, tx.transactionId, {
+          status: 'pending',
+          notified: false,
+          ...(confirmations != null ? { confirmations, requiredConfirmations } : {})
+        })
+      }
+      if (await this.settleWallet(tx, requiredScanHeight)) await this.removePersistedTask(tx)
+    } finally {
+      this.finalizing.delete(tx.txHash)
+    }
   }
 
   private async updateConfirmingStatus(tx: PendingZcashTx, confirmations: number) {
@@ -513,7 +518,7 @@ export class ZcashTxMonitor {
     }
     this.destinationCatchUpInFlight.add(tx.txHash)
     try {
-      await finalizeTxCatchUp(tx.accountKey)
+      if (!(await finalizeTxCatchUp(tx.accountKey))) return
       if (!this.pendingTxs.has(tx.txHash)) return
       const updated = { ...tx, destinationCatchUpConfirmations: threshold }
       this.pendingTxs.set(tx.txHash, updated)
@@ -526,6 +531,31 @@ export class ZcashTxMonitor {
     } finally {
       this.destinationCatchUpInFlight.delete(tx.txHash)
     }
+  }
+
+  private async settleWallet(tx: PendingZcashTx, requiredScanHeight?: number): Promise<boolean> {
+    if (!tx.settlementPending || (tx.requiredScanHeight == null && requiredScanHeight != null)) {
+      const updated = {
+        ...tx,
+        settlementPending: true,
+        requiredScanHeight: tx.requiredScanHeight ?? requiredScanHeight
+      }
+      this.pendingTxs.set(tx.txHash, updated)
+      try {
+        await this.saveToStorage()
+        tx = updated
+      } catch (error) {
+        if (this.pendingTxs.get(tx.txHash) === updated) this.pendingTxs.set(tx.txHash, tx)
+        throw error
+      }
+    }
+
+    const caughtUp = await finalizeTxCatchUp(tx.accountKey, tx.requiredScanHeight)
+    const parsed = parseAccountKey(tx.accountKey)
+    const scannedHeight = parsed
+      ? backgroundZcashWalletRuntime.getWalletScannedHeight(parsed.walletId)
+      : 0
+    return isWalletSettlementComplete(caughtUp, scannedHeight, tx.requiredScanHeight)
   }
 
   // ── Finalize (success / failed) ──────────────────────────────
@@ -546,26 +576,7 @@ export class ZcashTxMonitor {
         if (confirmations != null) {
           await this.updateConfirmingStatus(tx, confirmations)
         }
-        if (!tx.settlementPending) {
-          tx.settlementPending = true
-          tx.requiredScanHeight = requiredScanHeight
-          this.pendingTxs.set(tx.txHash, tx)
-          await this.saveToStorage()
-        }
-
-        const caughtUp = await finalizeTxCatchUp(tx.accountKey)
-        const parsed = parseAccountKey(tx.accountKey)
-        const scannedHeight = parsed
-          ? backgroundZcashWalletRuntime.getWalletScannedHeight(parsed.walletId)
-          : 0
-        if (!isWalletSettlementComplete(caughtUp, scannedHeight, tx.requiredScanHeight)) {
-          console.log(TAG, 'Confirmed tx is waiting for wallet settlement:', {
-            txHash: tx.txHash,
-            scannedHeight,
-            requiredScanHeight: tx.requiredScanHeight
-          })
-          return
-        }
+        if (!(await this.settleWallet(tx, requiredScanHeight))) return
       }
 
       const { found, shouldNotify, statusMatches } = await this.updateIndexedDB(

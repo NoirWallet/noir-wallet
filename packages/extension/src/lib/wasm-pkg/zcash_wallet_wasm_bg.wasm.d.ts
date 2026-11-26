@@ -187,6 +187,7 @@ export const webwallet_create_account_ufvk: (
 ) => number
 export const webwallet_db_to_bytes: (a: number) => number
 export const webwallet_db_to_bytes_chunked: (a: number, b: number) => number
+export const webwallet_enhance_transaction: (a: number, b: number, c: number) => number
 export const webwallet_estimate_orchard_migration_fee: (
   a: number,
   b: number,
@@ -258,6 +259,7 @@ export const webwallet_get_ironwood_activation_height: (a: number) => number
 export const webwallet_get_latest_block: (a: number) => number
 export const webwallet_get_latest_height: (a: number) => number
 export const webwallet_get_next_shielded_address: (a: number, b: number) => number
+export const webwallet_get_sync_diagnostics: (a: number) => number
 export const webwallet_get_transaction_history: (a: number, b: number) => number
 export const webwallet_get_unified_addresses: (a: number, b: number) => number
 export const webwallet_get_wallet_summary: (a: number) => number
@@ -405,6 +407,7 @@ export const webwallet_pczt_shield_create: (a: number, b: number, c: bigint) => 
 export const webwallet_prepare_sync_batch: (a: number, b: number, c: number) => number
 export const webwallet_prepare_sync_batch_optimized: (a: number, b: number) => number
 export const webwallet_replay_journal_entries: (a: number, b: number, c: number) => number
+export const webwallet_rescan_range: (a: number, b: number, c: number) => number
 export const webwallet_scan_journal_entry: (a: number, b: number, c: number) => number
 export const webwallet_send_authorized_transactions: (a: number, b: number, c: number) => number
 export const webwallet_set_zero_indexer_options: (a: number, b: number, c: number) => void
@@ -446,11 +449,11 @@ export const rustsecp256k1_v0_14_default_error_callback_fn: (a: number, b: numbe
 export const rustsecp256k1_v0_14_default_illegal_callback_fn: (a: number, b: number) => void
 export const rustsecp256k1_v0_14_context_create: (a: number) => number
 export const rustsecp256k1_v0_14_context_destroy: (a: number) => void
-export const __wasm_bindgen_func_elem_16563: (a: number, b: number, c: number, d: number) => void
-export const __wasm_bindgen_func_elem_16580: (a: number, b: number, c: number, d: number) => void
-export const __wasm_bindgen_func_elem_12470: (a: number, b: number, c: number) => void
-export const __wasm_bindgen_func_elem_16565: (a: number, b: number, c: number) => void
-export const __wasm_bindgen_func_elem_12393: (a: number, b: number) => void
+export const __wasm_bindgen_func_elem_16651: (a: number, b: number, c: number, d: number) => void
+export const __wasm_bindgen_func_elem_16668: (a: number, b: number, c: number, d: number) => void
+export const __wasm_bindgen_func_elem_12558: (a: number, b: number, c: number) => void
+export const __wasm_bindgen_func_elem_16653: (a: number, b: number, c: number) => void
+export const __wasm_bindgen_func_elem_12481: (a: number, b: number) => void
 export const memory: WebAssembly.Memory
 export const __wbindgen_export: (a: number, b: number) => number
 export const __wbindgen_export2: (a: number, b: number, c: number, d: number) => number

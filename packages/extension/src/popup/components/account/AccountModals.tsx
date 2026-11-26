@@ -251,7 +251,7 @@ export function ResyncZcashContent({
           }
           className="flex-1 h-[45px]"
         >
-          Resync
+          {isLoading ? 'Starting resync…' : 'Resync'}
         </Button>
       </div>
     </div>

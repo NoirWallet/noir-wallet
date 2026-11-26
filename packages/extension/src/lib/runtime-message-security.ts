@@ -571,6 +571,21 @@ const TRUSTED_RUNTIME_SCHEMAS: Readonly<Record<string, RuntimeMessageSchema>> = 
       birthdayHeight: isPositiveBirthdayHeight
     }
   },
+  RESCAN_ZCASH_TRANSACTION: {
+    required: {
+      walletId: isShortString,
+      accountId: isShortString,
+      txid: value => typeof value === 'string' && /^[0-9a-f]{64}$/i.test(value.trim())
+    }
+  },
+  RESCAN_ZCASH_RANGE: {
+    required: {
+      walletId: isShortString,
+      accountId: isShortString,
+      startHeight: isPositiveBirthdayHeight,
+      endHeight: isPositiveBirthdayHeight
+    }
+  },
   GET_ZCASH_SEED_PHRASE: {
     required: { password: isLegacyPasswordString },
     optional: { walletId: isShortString }
@@ -634,7 +649,9 @@ const TRUSTED_RUNTIME_SCHEMAS: Readonly<Record<string, RuntimeMessageSchema>> = 
   },
   GET_WALLET_SESSION_STATE: {},
   CHECK_WALLET_AUTO_LOCK: {},
-  GET_BACKGROUND_INITIALIZATION_STATE: {},
+  GET_BACKGROUND_INITIALIZATION_STATE: {
+    optional: { includeZcashRecovery: value => typeof value === 'boolean' }
+  },
   GET_NETWORK_MODE: {},
   GET_ZERO_INDEXER_OPTIONS: { required: { network: isNetworkMode } },
   GET_ZERO_INDEXER_ENABLED: {},
@@ -1138,6 +1155,8 @@ const TRUSTED_RUNTIME_CONTEXTS: Readonly<Record<string, readonly OwnExtensionSen
     IMPORT_PRIVATE_KEY_WALLET: ['extension-page'],
     EXPORT_PRIVATE_KEY: ['extension-page'],
     RESYNC_ZCASH_WALLET: ['extension-page'],
+    RESCAN_ZCASH_TRANSACTION: ['extension-page'],
+    RESCAN_ZCASH_RANGE: ['extension-page'],
     GET_ZCASH_SEED_PHRASE: ['extension-page'],
     GET_ZCASH_BLOCK_BY_TIME: ['extension-page'],
     GET_ZCASH_BLOCK_TIME: ['extension-page'],
