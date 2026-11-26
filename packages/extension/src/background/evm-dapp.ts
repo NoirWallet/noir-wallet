@@ -57,8 +57,8 @@ async function notifySendQueueBlocked(reason: EvmDAppSendQueueBlock): Promise<vo
     title: 'Transaction not sent',
     message:
       reason === 'nonce-recovery-required'
-        ? 'Open Activity to review the pending transaction before retrying.'
-        : 'Unable to verify the send queue. Try again.'
+        ? 'An earlier transaction needs attention. In Activity, choose Recover transaction.'
+        : 'Unable to verify the send queue. In Activity, choose Recover transaction to check it again.'
   })
 }
 

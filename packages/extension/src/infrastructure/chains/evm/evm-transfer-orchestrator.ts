@@ -1,4 +1,5 @@
 import { writeLocalActivity } from '@/infrastructure/persistence/repositories/local-activity'
+import { parseTransaction, type TransactionSerialized } from 'viem'
 import { KeyringError } from '@/core/keyring/ports'
 import type { ChainAccount } from '@/core/accounts/domain'
 import { parseAccountId } from '@/core/accounts/domain'
@@ -1290,6 +1291,22 @@ export class EvmTransferOrchestrator {
 
   clearPendingTransfers(): Promise<number> {
     return this.pendingStore.clear()
+  }
+
+  async clearActivity(scopeValue: TransactionAccountScope, chainId: ChainId): Promise<void> {
+    const scope = normalizeScope(scopeValue)
+    const pending = (await this.pendingStore.list()).filter(candidate => {
+      if (!scopesMatch(candidate.scope, scope)) return false
+      if (candidate.phase !== 'signed') return candidate.prepared.chainId === chainId
+      const signed = parseTransaction(candidate.rawTransaction as TransactionSerialized)
+      return `eip155:${signed.chainId}` === chainId
+    })
+
+    for (const candidate of pending) {
+      if (candidate.phase !== 'signed') await this.cancelPendingSigning(candidate)
+      await this.pendingStore.delete(candidate.transactionId)
+    }
+    await this.repository.deleteByAccountScope(scope, chainId)
   }
 
   cancelAllAwaitingApprovals(signal?: AbortSignal): Promise<number> {

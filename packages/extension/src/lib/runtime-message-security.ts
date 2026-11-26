@@ -648,6 +648,14 @@ const TRUSTED_RUNTIME_SCHEMAS: Readonly<Record<string, RuntimeMessageSchema>> = 
   GET_EXTENSION_DISPLAY_MODE: {},
   SET_EXTENSION_DISPLAY_MODE: { required: { sidePanelMode: isBoolean } },
   SWITCH_NETWORK_MODE: { required: { networkMode: isNetworkMode } },
+  CLEAR_EVM_ACTIVITY: {
+    required: {
+      networkMode: isNetworkMode,
+      chainId: isEvmChainId,
+      walletId: isShortString,
+      accountId: isShortString
+    }
+  },
   GET_ACTIVITY: {
     optional: {
       action: isPortfolioAction,
@@ -1174,6 +1182,7 @@ const TRUSTED_RUNTIME_CONTEXTS: Readonly<Record<string, readonly OwnExtensionSen
     COMPLETE_ACCOUNT_INCOGNITO_SETUP: ['extension-page'],
     SET_DAPP_EXECUTION_MODE: ['extension-page'],
     SWITCH_NETWORK_MODE: ['extension-page'],
+    CLEAR_EVM_ACTIVITY: ['extension-page'],
     GET_ACTIVITY: ['extension-page'],
     GET_BITCOIN_ACTIVITY: ['extension-page'],
     GET_BITCOIN_WALLET_IDENTITY: ['extension-page'],

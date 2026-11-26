@@ -315,9 +315,11 @@ export function getEvmSendPrepareError(error: unknown, nativeSymbol?: string): s
     return 'The network is unavailable. Check your connection and try again.'
   }
   if (error.code === 'nonce-recovery-required') {
-    return 'An earlier transaction needs attention. Open Activity to resolve its nonce before sending.'
+    return 'An earlier transaction needs attention. Open Activity in this balance mode and choose Recover transaction.'
   }
-  if (error.code === 'nonce-queue-unavailable') return error.message
+  if (error.code === 'nonce-queue-unavailable') {
+    return 'Unable to verify the send queue. Open Activity in this balance mode and choose Recover transaction.'
+  }
   if (error.code === 'account-unavailable') return 'This wallet does not have an EVM account.'
   if (error.code === 'expired') return 'The review expired. Prepare the transfer again.'
   if (error.code === 'review-unavailable') {

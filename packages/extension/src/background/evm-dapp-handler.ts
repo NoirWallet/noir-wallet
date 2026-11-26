@@ -160,7 +160,7 @@ export function mapEvmTransactionPreparationError(error: unknown): unknown {
     return new Eip1193ProviderError(
       -32000,
       reason === 'nonce-recovery-required'
-        ? 'Open Activity in Noir Wallet to review the pending transaction before retrying. No transaction was sent.'
+        ? 'Open Activity in Noir Wallet and choose Recover transaction before retrying. No transaction was sent.'
         : createEvmWalletRuntimeError(reason).message
     )
   }

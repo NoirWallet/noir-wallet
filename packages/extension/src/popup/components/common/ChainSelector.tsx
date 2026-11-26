@@ -19,6 +19,7 @@ export interface ChainSelectorOption {
 interface ChainSelectorProps {
   readonly open: boolean
   readonly onOpenChange: (open: boolean) => void
+  readonly onCloseAutoFocus?: (event: Event) => void
   readonly options: readonly ChainSelectorOption[]
   readonly selectedId?: string | null
   readonly onSelect: (id: string) => void | Promise<void>
@@ -34,6 +35,7 @@ interface ChainSelectorProps {
 export function ChainSelector({
   open,
   onOpenChange,
+  onCloseAutoFocus,
   options,
   selectedId,
   onSelect,
@@ -88,6 +90,7 @@ export function ChainSelector({
         scroll="body"
         className="gap-0 p-0"
         onOpenAutoFocus={event => event.preventDefault()}
+        onCloseAutoFocus={onCloseAutoFocus}
       >
         <DialogTitle className="sr-only">{title}</DialogTitle>
         <DialogDescription className="sr-only">Choose a network</DialogDescription>

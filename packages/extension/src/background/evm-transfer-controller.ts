@@ -766,6 +766,21 @@ export class BackgroundEvmTransferController {
     return this.orchestrator.clearPendingTransfers()
   }
 
+  async clearActivity(
+    expected: TransactionAccountScope,
+    assertAvailable: () => Promise<void>
+  ): Promise<void> {
+    await accountContextTransition.runActiveOperation(async () => {
+      const { chainAccount } = await this.requireActiveContext()
+      const { keyDomainId, accountId, chainId } = chainAccount.scope
+      if (keyDomainId !== expected.keyDomainId || accountId !== expected.accountId) {
+        throw new Error('The active account changed')
+      }
+      await assertAvailable()
+      await this.orchestrator.clearActivity({ keyDomainId, accountId }, chainId)
+    })
+  }
+
   cancelAllAwaitingApprovals(): Promise<number> {
     return this.orchestrator.cancelAllAwaitingApprovals()
   }

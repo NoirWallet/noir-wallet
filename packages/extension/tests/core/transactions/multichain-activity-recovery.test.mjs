@@ -4,6 +4,7 @@ import {
   getActivityRecoveryAction,
   isActivityRecoveryTransition
 } from '../../../src/popup/services/multichain-activity-presentation.ts'
+import { readEvmActivityRecoveryReview } from '../../../src/popup/services/evm-activity-recovery.ts'
 
 const chainId = 'eip155:11155111'
 const bitcoinChainId = 'bip122:000000000933ea01ad0ee984209779ba'
@@ -36,6 +37,41 @@ function activity(overrides = {}) {
 }
 
 test.describe('Multichain Activity recovery action', () => {
+  test('accepts a paid nonce recovery review only for the selected signer and checked nonce', () => {
+    const { scope } = activity()
+    const address = '0x1111111111111111111111111111111111111111'
+    const target = { scope, chainId, address, executionMode: 'private' }
+    const fields = {
+      nonce: '9',
+      from: address,
+      to: address,
+      valueWei: '0',
+      maximumFeeWei: '21000',
+      calldata: { byteLength: 0 }
+    }
+    const preparedReview = (fieldOverrides = {}, rootOverrides = {}, selectedChain = chainId) => ({
+      graph: { root: { scope, kind: 'cancel', status: 'prepared', ...rootOverrides } },
+      review: {
+        chainId: selectedChain,
+        summary: { schema: 'evm.transaction.v1', fields: { ...fields, ...fieldOverrides } }
+      }
+    })
+    expect(readEvmActivityRecoveryReview(preparedReview(), target, '9')).toEqual({
+      nonce: '9',
+      maximumFeeWei: '21000'
+    })
+    for (const review of [
+      preparedReview({ nonce: '10' }),
+      preparedReview({ from: '0x2222222222222222222222222222222222222222' }),
+      preparedReview({ valueWei: '1' }),
+      preparedReview({ calldata: { byteLength: 4 } }),
+      preparedReview({}, { scope: { ...scope, accountId: 'account:2' } }),
+      preparedReview({}, {}, 'eip155:1')
+    ]) {
+      expect(readEvmActivityRecoveryReview(review, target, '9')).toBeNull()
+    }
+  })
+
   test('offers an EVM broadcast retry only for the exact locally signed transaction', () => {
     expect(getActivityRecoveryAction(activity(), [chainId])).toBe('retry-evm-broadcast')
   })

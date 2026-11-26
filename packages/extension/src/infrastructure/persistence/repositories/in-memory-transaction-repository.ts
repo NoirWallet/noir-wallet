@@ -5,6 +5,8 @@ import {
   type TransactionGraph,
   type TransactionId
 } from '@/core/transactions/domain'
+import type { ChainId } from '@/core/chains/domain'
+import { parseChainId } from '@/core/chains/registry'
 import type {
   ApplyTransactionSegmentEventInput,
   BackfillConfidentialEvmOriginInput,
@@ -25,6 +27,7 @@ import {
   transactionEventFingerprint,
   transactionGraphFingerprint,
   transactionGraphMatchesScope,
+  transactionGraphOriginatesOn,
   transactionScopeKey
 } from './transaction-repository-support'
 
@@ -190,14 +193,22 @@ export class InMemoryTransactionRepository implements TransactionRepository {
     )
   }
 
-  async deleteByAccountScope(scopeValue: TransactionAccountScope): Promise<number> {
+  async deleteByAccountScope(
+    scopeValue: TransactionAccountScope,
+    originChainId?: ChainId
+  ): Promise<number> {
     const scope = parseTransactionRepositoryScope(scopeValue)
+    const chainId = originChainId === undefined ? undefined : parseChainId(originChainId).id
     const accountKey = transactionScopeKey(scope)
     const transactionIds = this.byAccount.get(accountKey)
     if (!transactionIds) return 0
 
+    let deleted = 0
     for (const transactionId of transactionIds) {
       const graph = this.graphs.get(transactionId)
+      if (chainId !== undefined && (!graph || !transactionGraphOriginatesOn(graph, chainId))) {
+        continue
+      }
       if (graph) {
         for (const segment of graph.segments) {
           if (segment.target.kind !== 'onchain') continue
@@ -210,8 +221,10 @@ export class InMemoryTransactionRepository implements TransactionRepository {
       }
       this.graphs.delete(transactionId)
       this.eventFingerprints.delete(transactionId)
+      transactionIds.delete(transactionId)
+      deleted++
     }
-    this.byAccount.delete(accountKey)
-    return transactionIds.size
+    if (transactionIds.size === 0) this.byAccount.delete(accountKey)
+    return deleted
   }
 }
