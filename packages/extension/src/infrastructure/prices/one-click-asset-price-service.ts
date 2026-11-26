@@ -1,9 +1,8 @@
 import { DEFAULT_REQUEST_TIMEOUT_MS } from '@/config/extension'
-import { ONE_CLICK_TOKEN_CATALOG_URL } from '@/config/intents'
 import Big from 'big.js'
-import { readBoundedResponseText } from '@/lib/fetch-utils'
 import { parseAssetId } from '@/core/chains/registry'
 import { isDeprecatedIntentsToken } from '@/core/services/intents-evm-assets'
+import { fetchOneClickTokenCatalog } from '@/core/services/near-intents/one-click-token-catalog'
 import {
   ASSET_PRICE_EXPIRES_MS,
   ASSET_PRICE_FRESH_MS,
@@ -142,14 +141,6 @@ function parseCacheSnapshot(value: unknown): AssetPriceCacheSnapshot | null {
   })
 }
 
-async function readBoundedResponse(response: Response, maximumBytes: number): Promise<string> {
-  return readBoundedResponseText(
-    response,
-    maximumBytes,
-    () => new Error('Asset price response exceeds the allowed size')
-  )
-}
-
 function materialize(
   snapshot: AssetPriceCacheSnapshot | null,
   mappings: readonly OneClickAssetPriceSourceMapping[],
@@ -191,9 +182,9 @@ function materialize(
 
 export class OneClickAssetPriceService {
   private readonly options: Required<
-    Pick<OneClickAssetPriceServiceOptions, 'fetch' | 'now' | 'timeoutMs' | 'maximumResponseBytes'>
+    Pick<OneClickAssetPriceServiceOptions, 'now' | 'maximumResponseBytes'>
   > &
-    Pick<OneClickAssetPriceServiceOptions, 'mappings' | 'cache'>
+    Pick<OneClickAssetPriceServiceOptions, 'mappings' | 'cache' | 'fetch' | 'timeoutMs'>
   private readonly refreshGates = new Map<string, DedupPromise<AssetPriceReadModel>>()
 
   constructor(options: OneClickAssetPriceServiceOptions) {
@@ -252,13 +243,12 @@ export class OneClickAssetPriceService {
     ) {
       throw new Error('Invalid asset price response limit')
     }
-    const fetchImplementation = options.fetch ?? globalThis.fetch.bind(globalThis)
     this.options = {
       mappings: Object.freeze(mappings),
       cache: options.cache,
-      fetch: (input, init) => fetchImplementation(input, init),
+      fetch: options.fetch,
       now: options.now ?? Date.now,
-      timeoutMs,
+      timeoutMs: options.timeoutMs,
       maximumResponseBytes
     }
   }
@@ -313,20 +303,12 @@ export class OneClickAssetPriceService {
       return materialize(cached, this.options.mappings, now)
     }
 
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), this.options.timeoutMs)
     try {
-      const response = await this.options.fetch(ONE_CLICK_TOKEN_CATALOG_URL, {
-        method: 'GET',
-        cache: 'no-store',
-        credentials: 'omit',
-        redirect: 'error',
-        referrerPolicy: 'no-referrer',
-        signal: controller.signal
+      const decoded = await fetchOneClickTokenCatalog({
+        fetcher: this.options.fetch,
+        timeoutMs: this.options.timeoutMs,
+        maxBytes: this.options.maximumResponseBytes
       })
-      if (!response.ok) throw new Error('Asset price endpoint is unavailable')
-      const text = await readBoundedResponse(response, this.options.maximumResponseBytes)
-      const decoded: unknown = JSON.parse(text)
       if (!Array.isArray(decoded) || decoded.length > MAXIMUM_TOKEN_COUNT) {
         throw new Error('Invalid asset price response')
       }
@@ -465,8 +447,6 @@ export class OneClickAssetPriceService {
         error instanceof Error ? error.message : 'Unknown error'
       )
       return materialize(cached, this.options.mappings, now)
-    } finally {
-      clearTimeout(timeout)
     }
   }
 }

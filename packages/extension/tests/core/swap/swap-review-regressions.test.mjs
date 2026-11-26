@@ -962,7 +962,7 @@ it('uses the native RHEA paths and retries quote reads without replaying writes'
       requests.push({
         url: new URL(url),
         method: init.method,
-        auth: init.headers.Authorization,
+        auth: new Headers(init.headers).get('Authorization'),
         body: init.body && JSON.parse(init.body)
       })
       const path = new URL(url).pathname

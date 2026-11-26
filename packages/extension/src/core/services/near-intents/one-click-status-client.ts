@@ -1,6 +1,11 @@
 import type { OneClickOrder, OneClickViewer } from './one-click-order'
 import { DedupPromise } from '@/lib/async-utils'
-import { FetchHttpError, FetchTimeoutError, fetchJsonWithTimeout } from '@/lib/fetch-utils'
+import {
+  FetchHttpError,
+  FetchTimeoutError,
+  fetchJsonWithTimeout,
+  jsonRequestInit
+} from '@/lib/fetch-utils'
 import type { Network } from '@/types/wallet'
 
 export interface OneClickAccount {
@@ -158,11 +163,7 @@ export class OneClickStatusClient {
     if (!sign) return null
     const authUrl = new URL('/api/1click/status/auth/', scope.endpoint)
     const post = (path: string, body: unknown) =>
-      this.requestJson(new URL(path, authUrl), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
-      })
+      this.requestJson(new URL(path, authUrl), jsonRequestInit({ method: 'POST' }, body))
     const challenge = parseOneClickChallenge(
       await post('challenge', {
         chainFamily: scope.viewer.chainFamily,

@@ -39,6 +39,23 @@ export class FetchHttpError extends Error {
 interface FetchOptions extends RequestInit {
   timeoutMs?: number
   maxBytes?: number
+  fetcher?: typeof fetch
+  acceptHttpErrors?: boolean
+}
+
+export function jsonRequestInit(
+  init: RequestInit = {},
+  payload?: unknown,
+  defaultHeaders?: HeadersInit
+): RequestInit {
+  const headers = new Headers(defaultHeaders)
+  new Headers(init.headers).forEach((value, name) => headers.set(name, value))
+  if (!headers.has('Accept')) headers.set('Accept', 'application/json')
+  const body = payload === undefined ? init.body : JSON.stringify(payload)
+  if (body != null && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json')
+  }
+  return { ...init, headers, body }
 }
 
 function joinChunks(chunks: Uint8Array[], length: number): Uint8Array<ArrayBuffer> {
@@ -126,6 +143,8 @@ async function fetchBytes(
   const {
     timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
     maxBytes = DEFAULT_MAX_BYTES,
+    fetcher,
+    acceptHttpErrors = false,
     signal: externalSignal,
     ...fetchInit
   } = init || {}
@@ -148,12 +167,13 @@ async function fetchBytes(
     return await Promise.race([
       (async () => {
         if (controller.signal.aborted) throw controller.signal.reason
-        const response = await fetch(input, { ...fetchInit, signal: controller.signal })
+        const requestInit = { ...fetchInit, signal: controller.signal }
+        const response = await (fetcher ? fetcher(input, requestInit) : fetch(input, requestInit))
         if (controller.signal.aborted) {
           void response.body?.cancel().catch(() => {})
           throw controller.signal.reason
         }
-        if (!response.ok) {
+        if (!response.ok && !acceptHttpErrors) {
           let detail: string | undefined
           try {
             const body = await readBody(
