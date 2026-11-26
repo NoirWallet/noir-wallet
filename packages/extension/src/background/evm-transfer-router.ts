@@ -114,6 +114,10 @@ export interface BackgroundEvmTransferRouteController {
   readonly cancelAwaitingApprovalsForScope: (scope: TransactionAccountScope) => Promise<number>
   readonly cancelAwaitingApprovalsExceptScope: (scope: TransactionAccountScope) => Promise<number>
   readonly clearPendingTransfers: () => Promise<number>
+  readonly clearActivity: (
+    expected: TransactionAccountScope,
+    assertAvailable: () => Promise<void>
+  ) => Promise<void>
   readonly cancelAllAwaitingApprovals: () => Promise<number>
 }
 
@@ -352,6 +356,14 @@ export class BackgroundEvmTransferRouter {
       throw new Error('EVM nonce recovery returned the wrong chain')
     }
     return state
+  }
+
+  clearActivity(
+    chainId: string,
+    expected: TransactionAccountScope,
+    assertAvailable: () => Promise<void>
+  ): Promise<void> {
+    return this.requireController(parseChainId(chainId).id).clearActivity(expected, assertAvailable)
   }
 
   async estimateReplacementFee(

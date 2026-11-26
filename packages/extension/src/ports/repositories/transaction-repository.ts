@@ -77,5 +77,5 @@ export interface TransactionRepository {
     transactionId: TransactionId,
     eventId: TransactionEventId
   ): Promise<boolean>
-  deleteByAccountScope(scope: TransactionAccountScope): Promise<number>
+  deleteByAccountScope(scope: TransactionAccountScope, originChainId?: ChainId): Promise<number>
 }

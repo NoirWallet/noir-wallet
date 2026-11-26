@@ -16,6 +16,8 @@ import type {
   TransactionRepository
 } from '@/ports/repositories'
 import { DEFAULT_NETWORK } from '@/lib/runtime-network'
+import { parseChainId } from '@/core/chains/registry'
+import type { ChainId } from '@/core/chains/domain'
 import {
   TRANSACTION_V2_DATABASE,
   TRANSACTION_V2_DATABASE_INDEXES,
@@ -40,6 +42,7 @@ import {
   transactionEventFingerprint,
   transactionGraphFingerprint,
   transactionGraphMatchesScope,
+  transactionGraphOriginatesOn,
   transactionScopeKey
 } from './transaction-repository-support'
 import {
@@ -495,8 +498,12 @@ export class IndexedDbTransactionRepository implements TransactionRepository {
     )
   }
 
-  async deleteByAccountScope(scopeValue: TransactionAccountScope): Promise<number> {
+  async deleteByAccountScope(
+    scopeValue: TransactionAccountScope,
+    originChainId?: ChainId
+  ): Promise<number> {
     const scope = parseTransactionRepositoryScope(scopeValue)
+    const chainId = originChainId === undefined ? undefined : parseChainId(originChainId).id
     return runWithTransactionV2Database(this.databaseName, database =>
       runTransaction(
         database,
@@ -516,15 +523,25 @@ export class IndexedDbTransactionRepository implements TransactionRepository {
           if (transactionIds.length > TRANSACTION_REPOSITORY_LIMITS.recordsPerAccount) {
             throw new Error('Transaction repository Account capacity is corrupted')
           }
+          let deleted = 0
           for (const rawTransactionId of transactionIds) {
             if (typeof rawTransactionId !== 'string') {
               throw new Error('Invalid persisted transaction ID key')
             }
             const transactionId = parseTransactionId(rawTransactionId)
+            if (chainId !== undefined) {
+              const value = await requestResult<unknown>(graphStore.get(transactionId))
+              const { graph } = parseStoredTransactionGraphRecord(value)
+              if (!transactionGraphMatchesScope(graph, scope)) {
+                throw new Error('Persisted transaction Account index mismatch')
+              }
+              if (!transactionGraphOriginatesOn(graph, chainId)) continue
+            }
             graphStore.delete(transactionId)
             await deleteEventsForTransaction(eventStore, transactionId)
+            deleted++
           }
-          return transactionIds.length
+          return deleted
         }
       )
     )

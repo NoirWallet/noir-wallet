@@ -3869,6 +3869,41 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
     return true
   }
 
+  if (message.type === 'CLEAR_EVM_ACTIVITY') {
+    void Promise.resolve()
+      .then(async () => {
+        if (!evmTransferRouter) throw new Error('EVM transfers are unavailable')
+        await evmTransferRouter.clearActivity(
+          message.chainId as string,
+          {
+            keyDomainId: parseKeyDomainId(message.walletId),
+            accountId: parseAccountId(message.accountId)
+          },
+          async () => {
+            const settings = await chainEndpointSettingsCoordinator.read()
+            if (
+              networkRestartRequired ||
+              message.networkMode !== DEFAULT_NETWORK ||
+              walletLockCleanupPending ||
+              resolveActiveEvmNetworkConfig(DEFAULT_NETWORK, settings).chainId !==
+                message.chainId ||
+              !(await credentialSession.hasUnlockSession())
+            ) {
+              throw new Error('The wallet is locked or the active network changed')
+            }
+          }
+        )
+        void chrome.runtime.sendMessage({ type: 'TRANSACTION_UPDATED' }).catch(() => {})
+        sendResponse({ result: true })
+      })
+      .catch(() =>
+        sendResponse({
+          error: 'Could not clear activity. Check the account and network and try again.'
+        })
+      )
+    return true
+  }
+
   if (message.type === 'GET_CHAIN_ENDPOINT_SETTINGS') {
     void chainEndpointSettingsCoordinator
       .read()
