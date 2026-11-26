@@ -39,7 +39,7 @@ import {
 import { useTransaction } from '@/popup/hooks/useTransaction'
 import { useFeeEstimate } from '@/popup/hooks/useFeeEstimate'
 import { useMaxTransferEstimate } from '@/popup/hooks/useMaxTransferEstimate'
-import { useCachedAssetPrices } from '@/popup/hooks/useCachedAssetPrices'
+import { useAssetPrices, useZcashUsdPrice } from '@/popup/hooks/useAssetPrices'
 import { findAssetPrice } from '@/core/prices'
 import { useSettingsStore } from '@/store/settings-store'
 import { useSwapPreferences } from '@/store/swap-store'
@@ -238,7 +238,7 @@ export function useZcashTransfer({
   )
   const syncBlocked = isSelfMove && (syncReadStatus !== 'available' || syncState.isSyncing)
   const feeSyncScope = syncState.isSyncing ? 'syncing' : 'idle'
-  const zecPrice = useWalletStore(state => state.zecPrice)
+  const zecPrice = useZcashUsdPrice(currentNetwork)
   const { setResult, updateStep } = useTransactionResultStore()
 
   const currentWallet = useWalletStore(state => state.getCurrentWallet())
@@ -397,7 +397,7 @@ export function useZcashTransfer({
     !getFundingSourceUnavailableReason(currentWallet?.keySource, 'transparent')
   const sendPrivately = privateSendAvailable && privateSendScope === privacyScope
   const usesBufferedMaximum = isSelfMove || sendPrivately || Boolean(shieldReceive)
-  const cachedAssetPrices = useCachedAssetPrices(currentNetwork, active && usesBufferedMaximum)
+  const cachedAssetPrices = useAssetPrices(currentNetwork, active && usesBufferedMaximum)
   const memoUnsupported = Boolean(!isSelfMove && !sendPrivately && memo && !recipientSupportsMemo)
   const {
     preview: privatePreview,

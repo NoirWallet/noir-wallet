@@ -25,7 +25,6 @@ interface WalletStore {
   currentNetwork: Network
 
   // Market data
-  zecPrice: number
 
   // Wallet tree (metadata only, no balances)
   wallets: WalletItem[]
@@ -38,7 +37,6 @@ interface WalletStore {
   setCurrentAccount: (walletId: string, accountId: string) => void
   clearCurrentAccount: () => void
   setCurrentNetwork: (network: Network) => void
-  setZecPrice: (price: number) => void
 
   setWallets: (wallets: WalletItem[]) => void
   addWallet: (wallet: WalletItem) => void
@@ -73,7 +71,6 @@ export const useWalletStore = create<WalletStore>()(
       currentWalletId: null,
       currentAccountId: null,
       currentNetwork: DEFAULT_NETWORK,
-      zecPrice: 0,
       wallets: [],
       accountDisplayNames: {},
 
@@ -96,8 +93,6 @@ export const useWalletStore = create<WalletStore>()(
           currentNetwork: network,
           wallets: state.wallets.map(wallet => projectWalletNetwork(wallet, network))
         })),
-
-      setZecPrice: price => set({ zecPrice: price }),
 
       setWallets: wallets =>
         set(state => ({
@@ -225,7 +220,6 @@ export const useWalletStore = create<WalletStore>()(
           currentWalletId: null,
           currentAccountId: null,
           currentNetwork: DEFAULT_NETWORK,
-          zecPrice: 0,
           wallets: [],
           accountDisplayNames: {}
         })
@@ -237,7 +231,6 @@ export const useWalletStore = create<WalletStore>()(
         currentWalletId: state.currentWalletId,
         currentAccountId: state.currentAccountId,
         currentNetwork: state.currentNetwork,
-        zecPrice: state.zecPrice,
         wallets: state.wallets,
         accountDisplayNames: state.accountDisplayNames
       }),
@@ -316,7 +309,6 @@ export async function flushWalletStore(): Promise<void> {
       currentWalletId: state.currentWalletId,
       currentAccountId: state.currentAccountId,
       currentNetwork: state.currentNetwork,
-      zecPrice: state.zecPrice,
       wallets: state.wallets,
       accountDisplayNames: state.accountDisplayNames
     },

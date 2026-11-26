@@ -1,70 +1,97 @@
-import { parseAssetPriceReadModel, type AssetPriceReadModel } from '@/core/prices'
+import { ASSET_PRICE_PORT, type AssetPriceSnapshot } from '@/core/prices/asset-price-channel'
+import { parseAssetPriceReadModel } from '@/core/prices'
+import type { Network } from '@/types'
 
-type AssetPriceRuntimeMessenger = (message: Readonly<Record<string, unknown>>) => Promise<unknown>
+type PriceMessenger = (message: {
+  type: 'REFRESH_ASSET_PRICES'
+  network: Network
+  assetId?: string
+}) => Promise<unknown>
 
-type AssetPriceStorageChanges = Pick<
-  typeof chrome.storage.onChanged,
-  'addListener' | 'removeListener'
->
-
-const ASSET_PRICE_CACHE_STORAGE_KEYS = new Set([
-  'asset_price_cache_v1',
-  'asset_market_change_cache_v1',
-  'defi_llama_market_change_cache_v1',
-  'user_asset_market_cache_v1',
-  'user_asset_one_click_price_cache_v1',
-  'four_meme_price_cache_v1'
-])
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
-  const prototype = Object.getPrototypeOf(value)
-  return prototype === Object.prototype || prototype === null
-}
-
-export function createAssetPriceClient(
-  sendMessage: AssetPriceRuntimeMessenger,
-  storageChanges?: AssetPriceStorageChanges
-) {
+export function parseAssetPriceSnapshot(value: unknown): AssetPriceSnapshot {
+  if (!value || typeof value !== 'object') throw new Error('Invalid asset price snapshot')
+  const { network, revision, prices } = value as AssetPriceSnapshot
+  if (
+    (network !== 'mainnet' && network !== 'testnet') ||
+    !Number.isSafeInteger(revision) ||
+    revision < 0
+  )
+    throw new Error('Invalid asset price snapshot')
   return Object.freeze({
-    async getPrices(
-      action: 'read' | 'refresh',
-      assetId?: string
-    ): Promise<AssetPriceReadModel | null> {
-      const response = await sendMessage({
-        type: 'GET_ASSET_PRICES',
-        action,
-        ...(assetId ? { assetId } : {})
-      })
-      if (
-        !isRecord(response) ||
-        Object.keys(response).length !== 1 ||
-        !Object.prototype.hasOwnProperty.call(response, 'result')
-      ) {
-        throw new Error('Invalid asset price response')
-      }
-      return response.result === null ? null : parseAssetPriceReadModel(response.result)
-    },
-
-    onCacheChanged(listener: () => void): () => void {
-      const changesEvent = storageChanges ?? chrome.storage.onChanged
-      const handleStorageChanged = (
-        changes: Record<string, chrome.storage.StorageChange>,
-        areaName: string
-      ) => {
-        if (
-          areaName === 'local' &&
-          Object.keys(changes).some(key => ASSET_PRICE_CACHE_STORAGE_KEYS.has(key))
-        ) {
-          listener()
-        }
-      }
-      changesEvent.addListener(handleStorageChanged)
-      return () => changesEvent.removeListener(handleStorageChanged)
-    }
+    network,
+    revision,
+    prices: prices === null ? null : parseAssetPriceReadModel(prices)
   })
 }
 
-export const assetPriceClient = createAssetPriceClient(message =>
-  chrome.runtime.sendMessage(message)
-)
+export class AssetPriceClient {
+  private snapshot: AssetPriceSnapshot | null = null
+  private connection: chrome.runtime.Port | null = null
+  private reconnect: ReturnType<typeof setTimeout> | undefined
+  private readonly listeners = new Set<() => void>()
+
+  constructor(private readonly sendMessage: PriceMessenger) {}
+
+  getSnapshot = () => this.snapshot
+
+  subscribe = (listener: () => void): (() => void) => {
+    this.listeners.add(listener)
+    this.connect()
+    return () => {
+      this.listeners.delete(listener)
+    }
+  }
+
+  async refresh(network: Network, assetId?: string) {
+    const response = await this.sendMessage({
+      type: 'REFRESH_ASSET_PRICES',
+      network,
+      ...(assetId ? { assetId } : {})
+    })
+    if (
+      !response ||
+      typeof response !== 'object' ||
+      !('result' in response) ||
+      Object.keys(response).length !== 1
+    ) {
+      throw new Error('Invalid asset price response')
+    }
+    return response.result === null ? null : parseAssetPriceReadModel(response.result)
+  }
+
+  private connect(): void {
+    if (this.connection || this.reconnect || typeof document === 'undefined') return
+    const port = chrome.runtime.connect({ name: ASSET_PRICE_PORT })
+    this.connection = port
+    let revision = -1
+    const notify = () => port.postMessage(document.visibilityState === 'visible')
+    port.onMessage.addListener((message: unknown) => {
+      if (this.connection !== port) return
+      try {
+        const incoming = parseAssetPriceSnapshot(message)
+        if (incoming.revision <= revision) return
+        if (revision === -1) notify()
+        revision = incoming.revision
+        if (incoming.prices === null && this.snapshot?.network === incoming.network) return
+        this.snapshot = incoming
+        this.listeners.forEach(listener => listener())
+      } catch {}
+    })
+    document.addEventListener('visibilitychange', notify)
+    port.onDisconnect.addListener(() => {
+      void chrome.runtime.lastError
+      document.removeEventListener('visibilitychange', notify)
+      if (this.connection !== port) return
+      this.connection = null
+      this.reconnect = setTimeout(() => {
+        this.reconnect = undefined
+        if (document.visibilityState === 'visible') this.connect()
+        else document.addEventListener('visibilitychange', this.resume, { once: true })
+      }, 1_000)
+    })
+  }
+
+  private resume = () => this.connect()
+}
+
+export const assetPriceClient = new AssetPriceClient(message => chrome.runtime.sendMessage(message))

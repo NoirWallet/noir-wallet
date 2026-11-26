@@ -3,8 +3,6 @@
  */
 
 import {
-  ZEC_ZCASH_ASSET,
-  WNEAR_NEAR_ASSET,
   RHEA_TOKEN_ICONS_API,
   NOIR_SWAP_APP_FEES,
   NOIR_SWAP_REFERRAL,
@@ -623,16 +621,11 @@ export function refreshSwapTokenCatalog(): Promise<SwapToken[]> {
 /**
  * Fetches the full swap token list (with USD prices) from the 1Click API.
  * Cached with a TTL; concurrent callers share one in-flight request.
- * Pass `forceRefresh` to bypass the cache — used by price polling.
  */
-export async function fetchSwapTokens(forceRefresh = false): Promise<SwapToken[]> {
+export async function fetchSwapTokens(): Promise<SwapToken[]> {
   assertMainnetProtocolFeature('Swap')
   const now = Date.now()
-  if (
-    !forceRefresh &&
-    tokenCache.length > 0 &&
-    now - tokenCacheTime < INTENTS_SWAP_TOKEN_CATALOG_TTL_MS
-  ) {
+  if (tokenCache.length > 0 && now - tokenCacheTime < INTENTS_SWAP_TOKEN_CATALOG_TTL_MS) {
     return tokenCache
   }
 
@@ -649,32 +642,6 @@ export async function fetchSwapTokens(forceRefresh = false): Promise<SwapToken[]
  */
 export function getCachedTokens(): SwapToken[] {
   return tokenCache
-}
-
-/**
- * Gets the ZEC token from the token list, prioritizing native ZEC
- */
-export function getZecToken(tokens: SwapToken[]): SwapToken | null {
-  return (
-    tokens.find(t => t.blockchain === 'zec' || t.blockchain === 'zcash') ||
-    tokens.find(t => t.symbol === 'ZEC' && t.assetId === ZEC_ZCASH_ASSET) ||
-    null
-  )
-}
-
-/**
- * Gets non-ZEC tokens for the token selector
- */
-export function getOtherTokens(tokens: SwapToken[]): SwapToken[] {
-  return tokens.filter(t => t.blockchain !== 'zec' && t.blockchain !== 'zcash')
-}
-
-/**
- * Default "to" token for the swap form: native NEAR (wNEAR), falling back to
- * the first non-ZEC token when unavailable.
- */
-export function getDefaultToToken(tokens: SwapToken[]): SwapToken | null {
-  return tokens.find(t => t.assetId === WNEAR_NEAR_ASSET) || getOtherTokens(tokens)[0] || null
 }
 
 /**

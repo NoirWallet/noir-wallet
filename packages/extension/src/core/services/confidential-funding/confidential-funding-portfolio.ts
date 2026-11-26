@@ -1,4 +1,3 @@
-import Big from '@/lib/big'
 import type {
   PortfolioAssetView,
   PortfolioReadModel,
@@ -100,7 +99,6 @@ export function buildConfidentialPortfolioView(
         ? registered.metadata
         : null
     const iconUrl = token ? (token.icon ?? token.coingeckoIcon ?? undefined) : undefined
-    const priceUsd = token && token.price > 0 ? new Big(token.price).toFixed() : undefined
     return [
       Object.freeze({
         tokenId: balance.tokenId,
@@ -115,13 +113,7 @@ export function buildConfidentialPortfolioView(
               name: bundledMetadata?.name ?? token.symbol,
               decimals: token.decimals,
               ...(iconUrl ? { iconUrl } : {}),
-              ...(token.coingeckoId ? { coingeckoId: token.coingeckoId } : {}),
-              ...(priceUsd && priceUsd.length <= 128
-                ? {
-                    priceUsd,
-                    priceUpdatedAt: token.priceUpdatedAt
-                  }
-                : {})
+              ...(token.coingeckoId ? { coingeckoId: token.coingeckoId } : {})
             }
           : {})
       })

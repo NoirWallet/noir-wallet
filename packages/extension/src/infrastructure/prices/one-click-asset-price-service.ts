@@ -2,7 +2,10 @@ import { DEFAULT_REQUEST_TIMEOUT_MS } from '@/config/extension'
 import Big from 'big.js'
 import { parseAssetId } from '@/core/chains/registry'
 import { isDeprecatedIntentsToken } from '@/core/services/intents-evm-assets'
-import { fetchOneClickTokenCatalog } from '@/core/services/near-intents/one-click-token-catalog'
+import {
+  fetchOneClickTokenCatalog,
+  ONE_CLICK_TOKEN_REFRESH_INTERVAL_MS
+} from '@/core/services/near-intents/one-click-token-catalog'
 import {
   ASSET_PRICE_EXPIRES_MS,
   ASSET_PRICE_FRESH_MS,
@@ -18,7 +21,6 @@ import type { OneClickContractAssetPriceSourceMapping } from '@/core/prices/user
 import { DedupPromise } from '@/lib/async-utils'
 
 const PRICE_CACHE_VERSION = 1
-const NETWORK_REFRESH_INTERVAL_MS = 60 * 1000
 const MAX_CLOCK_SKEW_MS = 5 * 60 * 1000
 const DEFAULT_MAXIMUM_RESPONSE_BYTES = 2 * 1024 * 1024
 const MAXIMUM_RESPONSE_BYTES = 4 * 1024 * 1024
@@ -297,7 +299,7 @@ export class OneClickAssetPriceService {
     if (
       cached &&
       now - cached.fetchedAt >= 0 &&
-      now - cached.fetchedAt < NETWORK_REFRESH_INTERVAL_MS &&
+      now - cached.fetchedAt < ONE_CLICK_TOKEN_REFRESH_INTERVAL_MS &&
       (!assetId || cached.quotes.some(quote => quote.assetId === assetId))
     ) {
       return materialize(cached, this.options.mappings, now)

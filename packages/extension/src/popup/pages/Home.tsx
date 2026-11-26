@@ -52,8 +52,7 @@ import {
   type HomeAssetDomain
 } from '../services/home-navigation'
 import { assetPriceClient } from '../services/asset-price-client'
-import { parseAssetId } from '@/core/chains/registry'
-import type { AssetPriceReadModel } from '@/core/prices'
+import { useAssetPrices } from '@/popup/hooks/useAssetPrices'
 import { summarizePortfolioFiat } from '@/popup/services/portfolio-prices'
 import { useActiveAccountNetworks } from '../hooks/useActiveAccountNetworks'
 import { useHomePortfolio } from '../hooks/useHomePortfolio'
@@ -63,7 +62,6 @@ import { getAssetDomainRaw } from '../services/asset-domains'
 import { useSettingsStore } from '@/store/settings-store'
 import { getChainEndpointRuntimeKey } from '@/core/chains/chain-endpoint-settings'
 import { ZcashSyncProgress } from '../components/zcash/ZcashSyncProgress'
-import { automaticRefreshSession } from '../services/automatic-refresh-session'
 import { useDAppExecutionMode } from '../hooks/useDAppExecutionMode'
 import { DAppExecutionModeClientError } from '../services/dapp-execution-mode-client'
 import { useDialog } from '../hooks/useDialog'
@@ -72,8 +70,6 @@ import type { DAppExecutionMode } from '@/core/dapp/dapp-execution-mode'
 import { resolveEffectiveActiveAccountIdentity } from '../lib/effective-active-account'
 import {
   getHomeAssetBreakdown,
-  readHomePrices,
-  rememberHomePrices,
   resolveHomeCachedTotal,
   resolveHomeAssetDomainDisplay,
   resolveHomePortfolioTotalStatus
@@ -112,7 +108,6 @@ export function Home() {
   const {
     getCurrentAccount,
     getCurrentWallet,
-    setZecPrice,
     currentNetwork,
     currentWalletId,
     currentAccountId,
@@ -120,11 +115,12 @@ export function Home() {
   } = useWalletStore()
   const { balances, portfolioValues, getCurrentSyncState, setPortfolioValueFor } =
     useAccountDataStore()
-  const [assetPrices, setAssetPrices] = useState(() => readHomePrices(currentNetwork))
-  const assetPricesRef = useRef(assetPrices)
-  const [assetPriceStatus, setAssetPriceStatus] = useState<'loading' | 'ready' | 'error'>(
-    assetPrices ? 'ready' : 'loading'
-  )
+  const assetPrices = useAssetPrices(currentNetwork)
+  const assetPriceStatus = !assetPrices
+    ? 'loading'
+    : assetPrices.status === 'error'
+      ? 'error'
+      : 'ready'
   const [syncActionPending, setSyncActionPending] = useState(false)
   const [focusTransactionId, setFocusTransactionId] = useState<string | null>(() =>
     new URLSearchParams(location.search).get('transactionId')
@@ -390,7 +386,6 @@ export function Home() {
     navigate.navigate(sendPath, {
       state: {
         initialPortfolio: multichainPortfolio,
-        initialPrices: assetPrices,
         walletId: effectiveWalletId,
         accountId: effectiveAccountId,
         network: currentNetwork,
@@ -468,111 +463,9 @@ export function Home() {
   )
   const legacyPoolPrivacyNotice = useLegacyPoolPrivacyNotice(hasLegacyPoolBalance)
 
-  const applyAssetPrices = useCallback(
-    (prices: AssetPriceReadModel | null) => {
-      if (!prices) return
-      const previous = assetPricesRef.current
-      if (prices.status === 'error' && previous && previous.status !== 'error') return
-      rememberHomePrices(network, prices)
-      assetPricesRef.current = prices
-      setAssetPrices(prices)
-      const zec = prices.quotes.find(quote => {
-        const asset = parseAssetId(quote.assetId)
-        return asset.namespace === 'slip44' && asset.reference === '133'
-      })
-      if (zec) setZecPrice(Number(zec.priceUsd))
-    },
-    [network, setZecPrice]
-  )
-
   const refreshAssetPrices = useCallback(async () => {
-    const refreshScope = `asset-prices:${network}`
-    const claimed = await automaticRefreshSession.claim(refreshScope, ['quotes'])
-    if (claimed.length === 0) return
-    if (!assetPricesRef.current) setAssetPriceStatus('loading')
-    try {
-      const refreshed = await assetPriceClient.getPrices('refresh')
-      applyAssetPrices(refreshed)
-      setAssetPriceStatus(
-        assetPricesRef.current && assetPricesRef.current.status !== 'error' ? 'ready' : 'error'
-      )
-      if (
-        !refreshed ||
-        refreshed.status !== 'ready' ||
-        refreshed.quotes.some(quote => quote.freshness === 'stale')
-      ) {
-        await automaticRefreshSession.release(refreshScope, claimed)
-      }
-    } catch (error) {
-      await automaticRefreshSession.release(refreshScope, claimed)
-      setAssetPriceStatus(
-        assetPricesRef.current && assetPricesRef.current.status !== 'error' ? 'ready' : 'error'
-      )
-      console.error('Failed to fetch asset prices:', error)
-    }
-  }, [applyAssetPrices, network])
-
-  useEffect(() => {
-    let cancelled = false
-    const hydrate = async () => {
-      try {
-        const cached = await assetPriceClient.getPrices('read')
-        if (cancelled) return
-        applyAssetPrices(cached)
-        setAssetPriceStatus(
-          assetPricesRef.current && assetPricesRef.current.status !== 'error' ? 'ready' : 'error'
-        )
-        if (
-          !cached ||
-          cached.status === 'error' ||
-          cached.fetchedAt <= 0 ||
-          Date.now() - cached.fetchedAt >= 60_000
-        ) {
-          await refreshAssetPrices()
-        }
-      } catch (error) {
-        if (cancelled) return
-        setAssetPriceStatus(assetPricesRef.current ? 'ready' : 'error')
-        console.error('Failed to read cached asset prices:', error)
-        await refreshAssetPrices()
-      }
-    }
-    void hydrate()
-    const interval = setInterval(() => void refreshAssetPrices(), 60000)
-    return () => {
-      cancelled = true
-      clearInterval(interval)
-    }
-  }, [applyAssetPrices, refreshAssetPrices])
-
-  useEffect(() => {
-    let cancelled = false
-    let readScheduled = false
-    const unsubscribe = assetPriceClient.onCacheChanged(() => {
-      if (readScheduled) return
-      readScheduled = true
-      queueMicrotask(() => {
-        readScheduled = false
-        if (cancelled) return
-        void assetPriceClient
-          .getPrices('read')
-          .then(cached => {
-            if (cancelled) return
-            applyAssetPrices(cached)
-            setAssetPriceStatus(
-              assetPricesRef.current && assetPricesRef.current.status !== 'error'
-                ? 'ready'
-                : 'error'
-            )
-          })
-          .catch(() => {})
-      })
-    })
-    return () => {
-      cancelled = true
-      unsubscribe()
-    }
-  }, [applyAssetPrices])
+    await assetPriceClient.refresh(network).catch(() => {})
+  }, [network])
 
   const multichainFiat = useMemo(
     () => summarizePortfolioFiat(multichainPortfolio, assetPrices),

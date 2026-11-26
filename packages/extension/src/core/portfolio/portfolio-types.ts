@@ -99,8 +99,6 @@ export interface ConfidentialPortfolioAssetView {
   readonly decimals?: number
   readonly iconUrl?: string
   readonly coingeckoId?: string
-  readonly priceUsd?: string
-  readonly priceUpdatedAt?: string
 }
 
 export interface ConfidentialPortfolioView {

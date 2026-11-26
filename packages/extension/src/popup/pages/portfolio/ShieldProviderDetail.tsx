@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useSearchParams } from 'react-router-dom'
 import { Icon } from '@iconify/react'
 import type { ActivityItem } from '@/core/activity'
-import type { AssetPriceReadModel } from '@/core/prices'
 import { useWalletStore } from '@/store/wallet-store'
 import { useAccountDataStore } from '@/store/account-data-store'
 import Big from '@/lib/big'
@@ -14,7 +13,7 @@ import { resolveEffectiveActiveAccountIdentity } from '@/popup/lib/effective-act
 import { useNavigate } from '@/popup/provider/Router'
 import { WalletActionIcon } from '@/popup/components/portfolio/WalletActionIcon'
 import { WalletActionButton } from '@/popup/components/portfolio/WalletActionButton'
-import { assetPriceClient } from '@/popup/services/asset-price-client'
+import { useAssetPrices } from '@/popup/hooks/useAssetPrices'
 import { useSwapTokenCatalog } from '@/popup/hooks/useSwapTokenCatalog'
 import { resolveManagedIntentsCatalog } from '@/popup/services/intents-asset-manager-client'
 import {
@@ -98,8 +97,8 @@ function ShieldProviderContent() {
     : undefined
   const scopeKey = `${currentNetwork}:${account?.walletId ?? ''}:${account?.accountId ?? ''}`
   const { model, status } = useHomePortfolio(account?.walletId ?? null, account?.accountId ?? null)
-  const [prices, setPrices] = useState<AssetPriceReadModel | null>(null)
-  const [pricesLoading, setPricesLoading] = useState(true)
+  const prices = useAssetPrices(currentNetwork)
+  const pricesLoading = prices === null
   const directoryTokens = useSwapTokenCatalog(provider === 'near-confidential')
   const [detailTab, setDetailTab] = useState<'assets' | 'activity'>('assets')
   const appliedAssetSelection = useRef<string | null>(null)
@@ -110,25 +109,6 @@ function ShieldProviderContent() {
   const balancesHidden = useSettingsStore(state => state.balancesHidden)
   const hasZcashAccount =
     activeAccount?.networks.some(network => network.chain.family === 'zcash') ?? false
-
-  useEffect(() => {
-    let active = true
-    const load = async () => {
-      try {
-        const cached = await assetPriceClient.getPrices('read')
-        if (active && cached) setPrices(cached)
-      } catch {}
-      try {
-        const refreshed = await assetPriceClient.getPrices('refresh')
-        if (active && refreshed) setPrices(refreshed)
-      } catch {}
-      if (active) setPricesLoading(false)
-    }
-    void load()
-    return () => {
-      active = false
-    }
-  }, [])
 
   const near = useMemo(() => summarizeNearConfidentialHoldings(model, prices), [model, prices])
   const managedAssets = useMemo(
