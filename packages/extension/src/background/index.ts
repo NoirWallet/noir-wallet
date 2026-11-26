@@ -13,6 +13,10 @@ import { handleEvmWalletChoiceMessage } from './evm-wallet-choice'
 import { isZcashHardwareKeySource } from '@/core/wallet/hardware-wallet-data'
 import { isNativeHardwareWalletId } from '@/core/wallet/native-hardware-identity'
 import {
+  getHardwareSignOriginTab,
+  registerHardwareSignOriginLifecycle
+} from '@/lib/hardware-sign-launcher'
+import {
   isAccountChainEnabled,
   isAccountNetworkEnabled,
   parseSelectedChainIds,
@@ -2242,6 +2246,7 @@ configureLedgerSigningCoordinator(async scope => {
 })
 registerLedgerSigningTabLifecycle()
 registerKeystoneEvmSigningTabLifecycle()
+registerHardwareSignOriginLifecycle()
 
 logger.info(`Background service worker started version=${__APP_VERSION__} build=${__BUILD_TIME__}`)
 
@@ -6885,30 +6890,34 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true
   }
   if (isRuntimeRecord(message) && message.type === 'CONTINUE_LEDGER_SWAP_IN_PANEL') {
-    const windowId = sender.tab?.windowId
+    const tab = sender.tab
+    const transactionId = message.transactionId
     if (
       !hasExactRuntimeKeys(message, ['type', 'transactionId']) ||
       !isOwnExtensionRouteSender(sender, chrome.runtime.id, '/hardware/ledger-sign') ||
-      typeof windowId !== 'number' ||
-      !Number.isInteger(windowId) ||
-      typeof message.transactionId !== 'string' ||
-      message.transactionId.length === 0 ||
-      message.transactionId.length > 128 ||
-      message.transactionId.trim() !== message.transactionId
+      !tab ||
+      !Number.isInteger(tab.windowId) ||
+      typeof transactionId !== 'string' ||
+      transactionId.length === 0 ||
+      transactionId.length > 128 ||
+      transactionId.trim() !== transactionId
     ) {
       sendResponse({ error: 'Unauthorized Ledger continuation sender' })
       return true
     }
-    void chrome.runtime
-      .sendMessage({
+    void (async () => {
+      const originTabId = await getHardwareSignOriginTab(tab, sender.url)
+      const windowId =
+        originTabId === undefined ? tab.windowId : (await chrome.tabs.get(originTabId)).windowId
+      return chrome.runtime.sendMessage({
         type: 'LEDGER_SWAP_APPROVAL_SIGNED',
-        transactionId: message.transactionId,
+        transactionId,
         windowId
       })
-      .then(
-        handled => sendResponse({ result: handled === true }),
-        () => sendResponse({ result: false })
-      )
+    })().then(
+      handled => sendResponse({ result: handled === true }),
+      () => sendResponse({ result: false })
+    )
     return true
   }
   if (isRuntimeRecord(message) && message.type === 'REFRESH_EXTENSION_UPDATE') {

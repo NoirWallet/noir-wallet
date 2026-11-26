@@ -1,4 +1,4 @@
-import { formatFeeAmount, formatReviewAmount } from '@/lib/number-format'
+import { compactFractionalZeros, formatFeeAmount, formatReviewAmount } from '@/lib/number-format'
 import { formatSymbol } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
@@ -21,10 +21,14 @@ export function AmountDisplay({
 }: AmountDisplayProps) {
   const symbol = formatSymbol(rawSymbol)
   const review = formatReviewAmount(value)
-  const display = profile === 'fee' ? formatFeeAmount(value) : review.display
+  const rounded = profile === 'fee' ? formatFeeAmount(value) : review.display
+  const display = profile === 'fee' ? compactFractionalZeros(rounded) : rounded
 
   return (
-    <span className={cn('break-all font-sans tabular-nums', className)}>
+    <span
+      className={cn('break-all font-sans tabular-nums', className)}
+      title={display !== rounded ? `${review.exact}${symbol ? ` ${symbol}` : ''}` : undefined}
+    >
       {review.exact !== null ? prefix : ''}
       {display}
       {symbol &&

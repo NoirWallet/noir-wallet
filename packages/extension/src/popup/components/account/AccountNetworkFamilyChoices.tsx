@@ -70,10 +70,9 @@ export function AccountNetworkFamilyChoices({
             )}
             <label
               className={cn(
-                'flex min-h-14 cursor-pointer items-center gap-3 rounded-md px-1 hover:bg-white/5',
-                variant === 'import' && 'min-h-[66px] px-0',
-                variant === 'management' &&
-                  'min-h-[71px] rounded-lg bg-wallet-surface px-4 hover:bg-white/10'
+                'flex min-h-14 cursor-pointer items-center gap-3 rounded-md px-3 hover:bg-wallet-selected',
+                variant === 'import' && 'min-h-[66px]',
+                variant === 'management' && 'min-h-[71px] rounded-lg bg-wallet-surface px-4'
               )}
             >
               {family === 'evm' ? (

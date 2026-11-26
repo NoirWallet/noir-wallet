@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Icon } from '@iconify/react'
 import { formatSortAddress } from '@/lib/format'
+import { isSidePanelSurface } from '@/lib/extension-display-mode'
 import { DEFAULT_NETWORK } from '@/lib/runtime-network'
 import { resolveEvmNetworkCatalog } from '@/core/chains/evm-runtime-config'
 import { createInitialProductChainRegistry } from '@/core/chains/registry'
@@ -47,8 +48,16 @@ import {
   type AddTokenCandidate
 } from '@/popup/services/add-token-model'
 import { isSelectableChainFamily } from '@/popup/services/chain-selection-availability'
+import { useNavigate } from '@/popup/provider/Router'
+
+const FULL_TAB_ADD_TOKEN_DIALOG =
+  'min-[600px]:inset-y-0 min-[600px]:m-auto min-[600px]:h-fit min-[600px]:max-w-[420px] min-[600px]:rounded-2xl min-[600px]:border min-[600px]:border-border min-[600px]:data-[state=open]:slide-in-from-bottom-0 min-[600px]:data-[state=closed]:slide-out-to-bottom-0'
 
 export function ManageTokens() {
+  const { goBackIfAvailable, replace } = useNavigate()
+  const addTokenDialogClassName = isSidePanelSurface(window.location.search)
+    ? undefined
+    : FULL_TAB_ADD_TOKEN_DIALOG
   const settings = useSettingsStore(state => state.chainEndpointSettings)
   const networks = useMemo(() => resolveEvmNetworkCatalog(DEFAULT_NETWORK, settings), [settings])
   const networkByChainId = useMemo(
@@ -364,9 +373,17 @@ export function ManageTokens() {
     if (asset.registered) await setHidden(asset.assetId, !visible)
   }
 
+  const goBack = () => {
+    if (goBackIfAvailable()) return
+    if (window.location.hash === '#/manage-tokens') {
+      window.history.replaceState(window.history.state, '', '#/')
+    }
+    replace('/')
+  }
+
   return (
     <div className="page-container">
-      <PageHeader title="Manage Tokens" showBack />
+      <PageHeader title="Manage Tokens" showBack onBack={goBack} />
 
       <div className="page-content space-y-3 pb-5">
         <SearchInput
@@ -498,7 +515,7 @@ export function ManageTokens() {
       </div>
 
       <Dialog open={addOpen} onOpenChange={setAddDialogOpen}>
-        <DialogContent position="bottom">
+        <DialogContent position="bottom" className={addTokenDialogClassName}>
           <DialogHeader className="mb-6">
             <DialogTitle>Add Token</DialogTitle>
           </DialogHeader>
@@ -596,6 +613,7 @@ export function ManageTokens() {
             onOpenChange={setNetworkSelectorOpen}
             options={addTokenNetworkOptions}
             selectedId={chainId}
+            dialogClassName={addTokenDialogClassName}
             onSelect={id => {
               setChainId(id)
               setCandidate(null)

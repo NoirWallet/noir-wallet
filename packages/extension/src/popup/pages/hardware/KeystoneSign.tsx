@@ -55,6 +55,7 @@ import {
   TRANSACTION_PENDING_MESSAGE
 } from '@/lib/transaction-status-copy'
 import { publishHardwareSignResult } from '@/lib/hardware-sign-result'
+import { focusHardwareSignOrigin } from '@/lib/hardware-sign-launcher'
 import { toHardwarePcztError } from '@/core/zcash/hardware-pczt'
 import {
   formatHardwareSigningError,
@@ -158,6 +159,7 @@ export function KeystoneSign() {
     invalidated.current = true
     ledgerAbort.current?.abort()
     if (requestId) await clearHardwareSignRequest(requestId).catch(() => {})
+    await focusHardwareSignOrigin().catch(() => false)
     window.close()
   }
 
@@ -511,7 +513,7 @@ export function KeystoneSign() {
       )
       setTxHash(hash)
       setStep('success')
-      if (request.reportToOrigin && originResultPublished) {
+      if (request.reportToOrigin && request.kind !== 'swap' && originResultPublished) {
         window.setTimeout(() => window.close(), 800)
       }
     } catch (e) {
@@ -850,7 +852,11 @@ export function KeystoneSign() {
             timestamp={resultView.timestamp}
             customTitle={resultCopy.title}
             customDescription={resultCopy.description}
-            onDone={() => window.close()}
+            onDone={() => {
+              void focusHardwareSignOrigin()
+                .catch(() => false)
+                .then(() => window.close())
+            }}
             onCancel={resultView.step === 'failed' ? () => window.close() : undefined}
           />
         </div>

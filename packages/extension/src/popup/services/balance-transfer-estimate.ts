@@ -2,7 +2,11 @@ import type { PortfolioAssetView, PortfolioChainView } from '@/core/portfolio'
 import { resolveRheaPrivateTransferToken, type RheaSwapQuoteMode } from '@/core/services/rhea-swap'
 import { preferWalletEvmQuoteToken, toWalletEvmQuoteToken } from './token-address-discovery'
 import type { ConfidentialFundingPreview } from '@/core/services/confidential-funding'
-import { formatBaseUnitDecimalAmount, formatFeeAmount } from '@/lib/number-format'
+import {
+  compactFractionalZeros,
+  formatBaseUnitDecimalAmount,
+  formatFeeAmount
+} from '@/lib/number-format'
 import { evmWalletClient, type EvmFeeEstimate } from './evm-wallet-client'
 import { rheaSwapClient } from './rhea-swap-client'
 import { requiredRheaEvmApproval } from './rhea-evm-approval'
@@ -220,7 +224,7 @@ export function formatBalanceTransferFee(
   const format = (raw: string, decimals: number, symbol: string) => {
     const value = BigInt(raw)
     const amount = formatBaseUnitDecimalAmount(value < 0n ? -value : value, decimals)
-    const display = formatFeeAmount(amount)
+    const display = compactFractionalZeros(formatFeeAmount(amount))
     return `${display.startsWith('<') ? '' : '≈ '}${value < 0n ? '-' : ''}${display} ${symbol}`
   }
   return {

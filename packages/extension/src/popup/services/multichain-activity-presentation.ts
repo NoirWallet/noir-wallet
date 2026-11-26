@@ -226,25 +226,60 @@ export function getClusterChildStatusLabel(
   }
 }
 
-export function getClusterBatchStatusLabel(plan: ConfidentialFundingPlan): string {
-  switch (plan.phase) {
-    case 'ready':
-      return 'Received'
-    case 'partial':
-      return 'Partially received'
-    case 'refunded':
-      return 'Refunded'
-    case 'failed':
-      return 'Failed'
-    case 'expired':
-      return 'Expired'
-    case 'cancelled':
-      return 'Cancelled'
-    case 'needs-auth':
-      return 'Action required'
-    default:
-      return 'Processing'
+function getScopedClusterPlan(item: ActivityItem, plan?: ConfidentialFundingPlan | null) {
+  return plan?.operation === 'cluster' &&
+    plan.transactionId === item.id &&
+    plan.keyDomainId === item.scope.keyDomainId &&
+    plan.accountId === item.scope.accountId
+    ? plan
+    : null
+}
+
+export function getClusterActivityOutcome(
+  item: ActivityItem | null,
+  plan?: ConfidentialFundingPlan | null
+): 'received' | 'partial' | 'refunded' | 'failed' | null {
+  if (item && (item.snapshot?.shield?.operation !== 'cluster' || item.reconfirming)) return null
+  const destinations = item?.segments.filter(segment => segment.role === 'destination') ?? []
+  if (item?.segments.some(segment => segment.reconfirming)) return null
+  const phase = (
+    item ? getScopedClusterPlan(item, plan) : plan?.operation === 'cluster' ? plan : null
+  )?.phase
+  if (phase === 'refunded' || item?.failureCode === 'refunded') return 'refunded'
+  if (phase === 'partial') return 'partial'
+  if (phase === 'failed' || phase === 'expired' || phase === 'cancelled') return 'failed'
+  const received = destinations.filter(segment => segment.status === 'final').length
+  const allSettled = destinations.every(segment => ['final', 'failed'].includes(segment.status))
+  if (allSettled && received > 0) {
+    return received === destinations.length ? 'received' : 'partial'
   }
+  if (
+    phase === 'ready' ||
+    (item?.status === 'final' &&
+      item.completeness === 'complete' &&
+      item.segments.some(segment => segment.role === 'relay' && segment.status === 'final') &&
+      !destinations.some(segment => segment.status === 'failed'))
+  )
+    return 'received'
+  return item?.status === 'failed' ? 'failed' : null
+}
+
+function hasClusterReceiptEvidence(item: ActivityItem, plan: ConfidentialFundingPlan | null) {
+  const phase = plan?.phase === 'needs-auth' ? plan.resumePhase : plan?.phase
+  return (
+    Boolean(plan?.orderId) ||
+    Boolean(plan?.requiresDeposit && (phase === 'signing-withdraws' || phase === 'submitting')) ||
+    item.segments.some(segment => {
+      if (segment.reconfirming) return false
+      if (segment.role === 'relay') return segment.status === 'final'
+      return (
+        segment.role === 'destination' &&
+        (segment.status === 'final' ||
+          segment.failureCode === 'refunded' ||
+          Boolean(segment.evidence?.transactionHash))
+      )
+    })
+  )
 }
 
 export function hasMatchingActivityTokenIcons(route: ActivitySwapPresentation): boolean {
@@ -762,7 +797,8 @@ function isConfidentialFundingActivity(item: ActivityItem): boolean {
 }
 
 function isPartiallyCompleted(item: ActivityItem): boolean {
-  if (!isConfidentialFundingActivity(item)) return false
+  if (!isConfidentialFundingActivity(item) || item.snapshot?.shield?.operation === 'cluster')
+    return false
   const destinations = item.segments.filter(segment => segment.role === 'destination')
   return (
     destinations.some(segment => segment.status === 'final') &&
@@ -980,7 +1016,35 @@ export function getActivityCancellationPresentation(
   return { label: 'Pending', tone: 'neutral' }
 }
 
-export function getActivityStatusPresentation(item: ActivityItem): ActivityStatusPresentation {
+export function getActivityStatusPresentation(
+  item: ActivityItem,
+  plan?: ConfidentialFundingPlan | null
+): ActivityStatusPresentation {
+  if (item.snapshot?.shield?.operation === 'cluster') {
+    switch (getClusterActivityOutcome(item, plan)) {
+      case 'received':
+        return { label: 'Received', tone: 'success' }
+      case 'partial':
+        return { label: 'Partially received', tone: 'warning' }
+      case 'refunded':
+        return { label: 'Refunded', tone: 'neutral' }
+      case 'failed': {
+        const phase = getScopedClusterPlan(item, plan)?.phase
+        if (phase === 'expired') return { label: 'Expired', tone: 'neutral' }
+        if (phase === 'cancelled') return { label: 'Cancelled', tone: 'neutral' }
+        if (item.status !== 'failed') return { label: 'Failed', tone: 'error' }
+        break
+      }
+      default:
+        if (item.reconfirming || item.segments.some(segment => segment.reconfirming)) {
+          return { label: 'Reconfirming', tone: 'warning' }
+        }
+        if (getScopedClusterPlan(item, plan)?.phase === 'needs-auth') {
+          return { label: 'Action required', tone: 'warning' }
+        }
+        if (item.status === 'final') return { label: 'Finalizing', tone: 'neutral' }
+    }
+  }
   if (isPartiallyCompleted(item)) return { label: 'Partially completed', tone: 'warning' }
   if (item.kind === 'approve' && (item.status === 'broadcast' || item.status === 'confirming')) {
     return { label: 'Confirming', tone: 'neutral' }
@@ -1076,10 +1140,17 @@ function resolveShieldAuthorizationOrigin(
 
 export function getActivityProgressSteps(
   item: ActivityItem,
-  chainName: (chainId: string) => string
+  chainName: (chainId: string) => string,
+  confidentialPlan?: ConfidentialFundingPlan | null
 ): readonly TransactionProgressStep[] {
+  const cluster = item.snapshot?.shield?.operation === 'cluster'
+  const clusterOutcome = cluster ? getClusterActivityOutcome(item, confidentialPlan) : null
+  const clusterReceipt =
+    cluster && hasClusterReceiptEvidence(item, getScopedClusterPlan(item, confidentialPlan))
   const origin = item.segments.find(segment => segment.role === 'origin')
-  const shieldSendAuthorization = resolveShieldAuthorizationOrigin(item, origin)
+  const shieldSendAuthorization = cluster
+    ? undefined
+    : resolveShieldAuthorizationOrigin(item, origin)
   return item.segments
     .filter(
       segment =>
@@ -1092,6 +1163,29 @@ export function getActivityProgressSteps(
           segment.status !== 'created')
     )
     .map(segment => {
+      if (cluster && segment.role === 'relay') {
+        const failed = segment.status === 'failed'
+        const waitingForReceipt =
+          !clusterOutcome && (segment.status === 'confirming' || origin?.status === 'final')
+        return {
+          id: segment.id,
+          label: 'Confidential Intents Received',
+          state: clusterReceipt
+            ? 'complete'
+            : failed
+              ? 'failed'
+              : waitingForReceipt
+                ? 'active'
+                : 'pending',
+          statusLabel: clusterReceipt
+            ? 'Received'
+            : failed
+              ? getActivitySegmentStatusPresentation(segment, item).label
+              : waitingForReceipt
+                ? 'Waiting for receipt'
+                : 'Not started'
+        } as const
+      }
       if (
         shieldSendAuthorization &&
         segment.role === 'relay' &&
@@ -1117,6 +1211,8 @@ export function getActivityProgressSteps(
         } as const
       }
       const presentation = getActivitySegmentStatusPresentation(segment, item)
+      const clusterAuthorization =
+        cluster && segment.role === 'origin' && segment.target.kind === 'protocol'
       const signedOrderSubmitted =
         isSignedOrderOrigin(segment) &&
         (segment.status === 'broadcast' ||
@@ -1135,7 +1231,7 @@ export function getActivityProgressSteps(
         item.source === 'zcash-v1' && intentsRelay && segment.status === 'confirming'
       const waitingLabel = intentsRelay ? 'Waiting for Intents' : 'Waiting for relay'
       const state =
-        segment.status === 'final' || signedOrderSubmitted
+        (segment.status === 'final' && (!cluster || !segment.reconfirming)) || signedOrderSubmitted
           ? 'complete'
           : segment.status === 'failed'
             ? 'failed'
@@ -1144,27 +1240,34 @@ export function getActivityProgressSteps(
               : 'pending'
       return {
         id: segment.id,
-        label: getActivitySegmentLabel(segment, item),
+        label: clusterAuthorization
+          ? 'Shield authorization'
+          : getActivitySegmentLabel(segment, item),
         detail:
           segment.target.kind === 'onchain'
             ? chainName(segment.target.chainId)
             : isInternalSwapProvider(segment.target.provider)
               ? undefined
               : segment.target.provider,
-        state,
-        statusLabel: signedOrderSubmitted
-          ? 'Submitted'
-          : segment.status === 'final' && segment.target.kind !== 'onchain'
-            ? 'Completed'
-            : waitingForRelay || legacyRelayUnverified
-              ? waitingLabel
-              : intentsRelay &&
-                  segment.status === 'created' &&
-                  (origin?.status === 'broadcast' || origin?.status === 'confirming')
-                ? 'Waiting for deposit'
-                : intentsRelay && segment.status === 'confirming'
-                  ? 'Processing'
-                  : presentation.label
+        state: clusterOutcome && state === 'active' ? 'pending' : state,
+        statusLabel:
+          clusterOutcome && state === 'active'
+            ? 'Unconfirmed'
+            : signedOrderSubmitted
+              ? 'Submitted'
+              : state === 'complete' && segment.target.kind !== 'onchain'
+                ? clusterAuthorization
+                  ? 'Signed'
+                  : 'Completed'
+                : waitingForRelay || legacyRelayUnverified
+                  ? waitingLabel
+                  : intentsRelay &&
+                      segment.status === 'created' &&
+                      (origin?.status === 'broadcast' || origin?.status === 'confirming')
+                    ? 'Waiting for deposit'
+                    : intentsRelay && segment.status === 'confirming'
+                      ? 'Processing'
+                      : presentation.label
       }
     })
 }

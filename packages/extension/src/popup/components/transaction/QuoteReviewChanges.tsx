@@ -1,4 +1,5 @@
 import {
+  compactFractionalZeros,
   formatBaseUnitDecimalAmount,
   formatFeeAmount,
   formatPercentage,
@@ -37,13 +38,14 @@ function QuoteReviewAmount({
 }) {
   const amount = formatBaseUnitDecimalAmount(String(value), asset.decimals)
   const review = formatReviewAmount(amount)
-  const display = profile === 'fee' ? formatFeeAmount(amount) : review.display
+  const rounded = profile === 'fee' ? formatFeeAmount(amount) : review.display
+  const display = profile === 'fee' ? compactFractionalZeros(rounded) : rounded
   const symbol = formatSymbol(asset.symbol)
   const { copyToClipboard, isCopied, showToast, copyFailed } = useCopyToClipboard()
   const text = (
     <>
       {display}
-      {display !== review.full && !display.includes('<') && '…'}{' '}
+      {rounded !== review.full && !rounded.includes('<') && '…'}{' '}
       <span className="whitespace-nowrap">{symbol}</span>
     </>
   )

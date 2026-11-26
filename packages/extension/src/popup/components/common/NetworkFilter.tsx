@@ -8,9 +8,17 @@ import {
   selectableChainOptions
 } from '@/popup/services/chain-selection-availability'
 
-export function NetworkFilterToolbar({ children }: { readonly children: ReactNode }) {
+export function NetworkFilterToolbar({
+  children,
+  wrap = false
+}: {
+  readonly children: ReactNode
+  readonly wrap?: boolean
+}) {
   return (
-    <div className="flex h-[45px] shrink-0 items-center justify-between gap-2 pt-[9px] pr-2 pb-1 pl-4">
+    <div
+      className={`flex min-h-[45px] shrink-0 items-center justify-between gap-2 pt-[9px] pr-2 pb-1 pl-4 ${wrap ? 'flex-wrap' : ''}`}
+    >
       {children}
     </div>
   )

@@ -22,7 +22,10 @@ import type { ActivityPerspective } from '@/popup/services/activity-action-label
 import type { ActivityItem } from '@/core/activity'
 import type { ConfidentialFundingPlan } from '@/core/services/confidential-funding'
 import type { Network } from '@/types'
-import { getActivityStatusPresentation } from '@/popup/services/multichain-activity-presentation'
+import {
+  getActivityStatusPresentation,
+  getClusterActivityOutcome
+} from '@/popup/services/multichain-activity-presentation'
 import { EvmPendingTransactionActions } from '../evm/EvmPendingTransactionActions'
 
 export interface ConfidentialActivityTarget {
@@ -114,6 +117,7 @@ export function ConfidentialActivityView({
     let pendingPlanUpdate = false
     let pendingUpdate = false
     let refunded = false
+    let observedPlan: ConfidentialFundingPlan | null = null
     const delayTimer = setTimeout(() => {
       if (active) setStillLoading(true)
     }, 10_000)
@@ -137,6 +141,7 @@ export function ConfidentialActivityView({
             nextPlan.accountId === plan.accountId
           ) {
             refunded = nextPlan.phase === 'refunded'
+            observedPlan = nextPlan
             setConfidentialPlan(nextPlan)
           }
         })
@@ -178,12 +183,13 @@ export function ConfidentialActivityView({
           const current = activityRef.current
           if (
             !refunded &&
-            !(
-              current?.status === 'failed' ||
-              (current?.status === 'final' &&
-                current.completeness === 'complete' &&
-                current.reconfirming !== true)
-            )
+            !(current?.snapshot?.shield?.operation === 'cluster' ||
+            observedPlan?.operation === 'cluster'
+              ? getClusterActivityOutcome(current, observedPlan)
+              : current?.status === 'failed' ||
+                (current?.status === 'final' &&
+                  current.completeness === 'complete' &&
+                  current.reconfirming !== true))
           ) {
             retryTimer = setTimeout(load, 3_000)
           }
@@ -238,14 +244,19 @@ export function ConfidentialActivityView({
       ? activity
       : null
   const scopedPlan =
-    scopedActivity &&
+    matchesAccount &&
     confidentialPlan?.transactionId === plan.transactionId &&
     confidentialPlan.network === plan.network &&
     confidentialPlan.keyDomainId === plan.keyDomainId &&
     confidentialPlan.accountId === plan.accountId
       ? confidentialPlan
       : null
-  const refunded = scopedPlan?.phase === 'refunded' || scopedActivity?.failureCode === 'refunded'
+  const cluster =
+    scopedActivity?.snapshot?.shield?.operation === 'cluster' || scopedPlan?.operation === 'cluster'
+  const clusterOutcome = getClusterActivityOutcome(scopedActivity, scopedPlan)
+  const refunded = cluster
+    ? clusterOutcome === 'refunded'
+    : scopedPlan?.phase === 'refunded' || scopedActivity?.failureCode === 'refunded'
   const activityView = scopedActivity
     ? buildActivityTransactionView({
         item: scopedActivity,
@@ -272,19 +283,29 @@ export function ConfidentialActivityView({
           : undefined
       })
     : null
-  const confirmed =
-    scopedActivity?.status === 'final' &&
-    scopedActivity.reconfirming !== true &&
-    scopedActivity.completeness === 'complete'
-  const failed = scopedActivity?.status === 'failed' && !refunded
+  const confirmed = cluster
+    ? clusterOutcome === 'received'
+    : scopedActivity?.status === 'final' &&
+      scopedActivity.reconfirming !== true &&
+      scopedActivity.completeness === 'complete'
+  const partial = clusterOutcome === 'partial'
+  const failed = cluster
+    ? clusterOutcome === 'failed'
+    : scopedActivity?.status === 'failed' && !refunded
   const failedPresentation =
-    failed && scopedActivity ? getActivityStatusPresentation(scopedActivity) : null
+    failed && scopedActivity ? getActivityStatusPresentation(scopedActivity, scopedPlan) : null
   const neutralFailure = failedPresentation?.tone === 'neutral'
   const origin = scopedActivity?.segments.find(segment => segment.role === 'origin')
-  const destination = scopedActivity?.segments.find(segment => segment.role === 'destination')
-  const progressTitle =
-    destination && ['broadcast', 'confirming'].includes(destination.status)
-      ? 'Destination processing'
+  const destinationProcessing = scopedActivity?.segments.some(
+    segment =>
+      segment.role === 'destination' && ['broadcast', 'confirming'].includes(segment.status)
+  )
+  const relay = cluster && scopedActivity?.segments.find(segment => segment.role === 'relay')
+  const receipt = relay && activityView?.progressSteps.find(step => step.id === relay.id)
+  const progressTitle = destinationProcessing
+    ? 'Destination processing'
+    : receipt && receipt.state === 'complete'
+      ? receipt.label
       : origin?.status === 'final'
         ? 'Source confirmed'
         : origin?.evidence?.transactionHash
@@ -296,7 +317,7 @@ export function ConfidentialActivityView({
       {inDialog && <DialogTitle className="sr-only">Transaction activity</DialogTitle>}
       <TransactionResult
         status={
-          refunded
+          refunded || partial
             ? 'neutral'
             : confirmed
               ? 'success'
@@ -309,13 +330,15 @@ export function ConfidentialActivityView({
         title={
           refunded
             ? 'Transaction Refunded'
-            : confirmed
-              ? 'Transaction Confirmed'
-              : neutralFailure
-                ? `Transaction ${failedPresentation.label}`
-                : failed
-                  ? 'Transaction Failed'
-                  : progressTitle
+            : partial
+              ? 'Partially received'
+              : confirmed
+                ? 'Transaction Confirmed'
+                : neutralFailure
+                  ? `Transaction ${failedPresentation.label}`
+                  : failed
+                    ? 'Transaction Failed'
+                    : progressTitle
         }
         onClose={inDialog ? undefined : onDone}
         footer={
@@ -349,7 +372,7 @@ export function ConfidentialActivityView({
                 )}
               />
             )}
-            {confirmed || failed || refunded ? (
+            {confirmed || failed || refunded || partial ? (
               <Button onClick={onDone} className="h-[45px] w-full">
                 Done
               </Button>
@@ -358,7 +381,7 @@ export function ConfidentialActivityView({
                 variant="outline"
                 className="h-[45px] w-full"
                 onClick={() => {
-                  onDone()
+                  if (inDialog) onDone()
                   onViewActivity()
                 }}
               >

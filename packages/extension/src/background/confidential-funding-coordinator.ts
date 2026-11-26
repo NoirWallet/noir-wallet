@@ -102,6 +102,7 @@ import {
   observeEvmTransaction,
   parseEvmFeeSelection,
   parsePreparedEvmTransfer,
+  readEvmTransferFeeFloor,
   type EvmBroadcastRpc,
   type EvmFeeSelection,
   type EvmTransactionRpc
@@ -112,6 +113,7 @@ import {
   ConfidentialFundingApi,
   ConfidentialFundingApiError,
   parseConfidentialOneClickStatus,
+  readConfidentialBridgeMinimum,
   readConfidentialQuoteAppFees,
   type ConfidentialBalance,
   type ConfidentialPrivateOrder,
@@ -302,6 +304,32 @@ function keepsFrozenConfidentialQuote(plan: {
 }
 
 type ClusterFundingInput = Extract<PrepareConfidentialFundingInput, { operation: 'cluster' }>
+
+export async function previewPrivateShieldDepositMaximum(
+  availableRaw: string,
+  proposedRaw: string,
+  native: boolean,
+  readFeeFloor: () => ReturnType<typeof readEvmTransferFeeFloor>,
+  validateAmount: (amountRaw: string) => Promise<void>
+): Promise<string | null> {
+  const available = BigInt(availableRaw)
+  if (available === 0n) return '0'
+  const { nativeBalance, minimumFee } = await readFeeFloor()
+  if (nativeBalance < minimumFee) return '0'
+  const nativeUpperBound = nativeBalance - minimumFee
+  const upperBound = native && nativeUpperBound < available ? nativeUpperBound : available
+  if (upperBound === 0n) return '0'
+  const proposed = BigInt(proposedRaw)
+  const candidate = proposed > 0n && proposed <= upperBound ? proposed : upperBound
+  try {
+    await validateAmount(candidate.toString())
+    return candidate === proposed ? proposedRaw : null
+  } catch (error) {
+    const minimum = readConfidentialBridgeMinimum(error)
+    if (minimum !== null && minimum > candidate) return minimum > upperBound ? '0' : null
+    throw error
+  }
+}
 
 function clusterDepositBinding(input: ClusterFundingInput, identity: ConfidentialSigningIdentity) {
   return {
@@ -649,6 +677,7 @@ function directApprovalIntent(plan: ConfidentialFundingPlan): unknown {
 
 export class ConfidentialFundingCoordinator {
   private readonly authenticating = new Map<string, Promise<ConfidentialSession>>()
+  private readonly sessionRefreshes = new Map<string, Promise<ConfidentialSession | null>>()
   private readonly balanceRefreshes = new Map<
     string,
     DedupPromise<readonly ConfidentialBalance[]>
@@ -1572,6 +1601,75 @@ export class ConfidentialFundingCoordinator {
     else await this.scheduleMonitoring()
   }
 
+  async previewPrivateDepositMaximum(value: PrepareConfidentialFundingInput, proposedRaw: string) {
+    const input = this.parseInput(value)
+    const asset = this.options.assets.get(input.source.assetId)
+    if (
+      input.operation !== 'deposit' ||
+      input.sourceDomain !== 'private' ||
+      input.network !== this.options.network ||
+      input.source.assetId !== input.destination.assetId ||
+      !asset ||
+      !/^(0|[1-9]\d{0,77})$/.test(proposedRaw) ||
+      BigInt(proposedRaw) > BigInt(input.source.amountRaw)
+    ) {
+      throw new Error('Incognito Shield maximum route is invalid')
+    }
+    const identity = await this.options.signer.resolveIdentity(input.source.chainId)
+    const { scope } = identity.context.chainAccount
+    if (scope.keyDomainId !== input.keyDomainId || scope.accountId !== input.accountId) {
+      throw new Error('Confidential funding account or network changed')
+    }
+    const refundTo = requireConfidentialPea(identity).toLowerCase()
+    const rpc = this.requireRpc(input.source.chainId)
+    let quoteExpiresAt: number | undefined
+    const maximum = await previewPrivateShieldDepositMaximum(
+      input.source.amountRaw,
+      proposedRaw,
+      asset.asset.kind === 'native',
+      () =>
+        readEvmTransferFeeFloor({
+          chainId: input.source.chainId,
+          sender: refundTo,
+          rpc,
+          ...(input.feeSelection
+            ? { feeSelection: input.feeSelection }
+            : { feeTier: input.feeTier })
+        }),
+      async amountRaw => {
+        const binding = {
+          originAsset: input.source.protocolAssetId,
+          destinationAsset: input.source.protocolAssetId,
+          amountRaw,
+          signerId: identity.address,
+          refundTo,
+          recipient: identity.address,
+          depositType: 'ORIGIN_CHAIN',
+          refundType: 'ORIGIN_CHAIN',
+          recipientType: 'CONFIDENTIAL_INTENTS',
+          slippageBps: input.slippageBps
+        } as const
+        const quote = await this.options.api.quote({
+          ...binding,
+          referral: NOIR_RECEIVE_REFERRAL,
+          dry: true
+        })
+        if (quote.quoteRequest.dry !== true) throw new Error('Shield preview quote is invalid')
+        assertConfidentialQuoteBinding(quote, binding, this.now())
+        quoteExpiresAt = quoteDeadline(quote)
+      }
+    )
+    const currentIdentity = await this.options.signer.resolveIdentity(input.source.chainId)
+    this.assertSameAccount(identity, currentIdentity)
+    if (requireConfidentialPea(currentIdentity).toLowerCase() !== refundTo) {
+      throw new Error('Confidential funding execution address changed')
+    }
+    if (quoteExpiresAt !== undefined && quoteExpiresAt <= this.now()) {
+      throw new Error('Shield preview quote has expired')
+    }
+    return maximum
+  }
+
   async preview(value: PrepareConfidentialFundingInput): Promise<ConfidentialFundingPreview>
   async preview(
     value: PrepareConfidentialFundingInput,
@@ -1600,11 +1698,10 @@ export class ConfidentialFundingCoordinator {
       throw new Error('Confidential funding account or network changed')
     }
     if (input.operation !== 'cluster' || input.sourceDomain === 'shield') {
-      const session = await this.options.store.getSession(
-        input.network,
-        input.keyDomainId,
-        input.accountId
-      )
+      const session =
+        input.operation === 'withdraw' && input.externalRecipient
+          ? await this.readUsableSession(sourceIdentity)
+          : await this.options.store.getSession(input.network, input.keyDomainId, input.accountId)
       if (!session || session.expiresAt <= this.now() + SESSION_REFRESH_BUFFER_MS) {
         throw new Error(CONFIDENTIAL_SESSION_REQUIRED_ERROR)
       }
@@ -2150,7 +2247,19 @@ export class ConfidentialFundingCoordinator {
     if (!isDeposit) {
       const session = await this.readUsableSession(sourceIdentity)
       if (!session) throw new Error(CONFIDENTIAL_SESSION_REQUIRED_ERROR)
-      const balances = await this.readAndCacheBalances(sourceIdentity, session.accessToken)
+      const balances = await this.readAndCacheBalances(sourceIdentity, session.accessToken).catch(
+        (error: unknown) => {
+          if (
+            input.operation === 'withdraw' &&
+            input.externalRecipient &&
+            error instanceof ConfidentialFundingApiError &&
+            error.status === 401
+          ) {
+            throw new Error(CONFIDENTIAL_SESSION_REQUIRED_ERROR)
+          }
+          throw error
+        }
+      )
       baseline = getConfidentialAvailableForAsset(balances, input.source.protocolAssetId) ?? '0'
       this.assertUnreservedBalance(
         plans,
@@ -5046,6 +5155,9 @@ export class ConfidentialFundingCoordinator {
   }
 
   private async readUsableSessionForScope(keyDomainId: string, accountId: string) {
+    const key = JSON.stringify([keyDomainId, accountId])
+    const pending = this.sessionRefreshes.get(key)
+    if (pending) return pending
     const session = await this.options.store.getSession(
       this.options.network,
       keyDomainId,
@@ -5054,6 +5166,22 @@ export class ConfidentialFundingCoordinator {
     if (!session) return null
     if (session.expiresAt > this.now() + SESSION_REFRESH_BUFFER_MS) return session
     if (session.refreshExpiresAt <= this.now()) return null
+    const concurrentRefresh = this.sessionRefreshes.get(key)
+    if (concurrentRefresh) return concurrentRefresh
+    const refresh = this.refreshStoredSession(keyDomainId, accountId, session)
+    this.sessionRefreshes.set(key, refresh)
+    try {
+      return await refresh
+    } finally {
+      this.sessionRefreshes.delete(key)
+    }
+  }
+
+  private async refreshStoredSession(
+    keyDomainId: string,
+    accountId: string,
+    session: ConfidentialSession
+  ) {
     try {
       const refreshed = await this.options.api.refresh(session)
       await this.options.store.putSession(this.options.network, keyDomainId, accountId, refreshed)

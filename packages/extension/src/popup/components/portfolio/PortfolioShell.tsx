@@ -39,6 +39,7 @@ type PortfolioViewMode = 'assets' | 'chains'
 
 interface PortfolioShellProps {
   readonly listHeader?: ReactNode
+  readonly syncProgress?: ReactNode
   readonly domain: AssetDomain
   readonly model: PortfolioReadModel
   readonly sourceModel: PortfolioReadModel
@@ -234,6 +235,7 @@ function PortfolioViewIcon({
 
 export function PortfolioShell({
   listHeader,
+  syncProgress,
   model,
   sourceModel,
   network,
@@ -265,7 +267,7 @@ export function PortfolioShell({
     lowValueAssetGroups,
     sortedChains,
     networkOptions,
-    pendingStarterZcash,
+    pendingZcash,
     unavailableChains,
     hasPendingBalances
   } = useMemo(
@@ -340,7 +342,7 @@ export function PortfolioShell({
       className="flex min-h-0 flex-1 flex-col"
     >
       <h2 className="sr-only">Portfolio</h2>
-      <NetworkFilterToolbar>
+      <NetworkFilterToolbar wrap={Boolean(syncProgress)}>
         <NetworkFilter
           ariaLabelPrefix="Filter portfolio by network"
           options={networkOptions}
@@ -348,7 +350,8 @@ export function PortfolioShell({
           onSelectionChange={onSelectedChainIdsChange}
         />
 
-        <div className="flex shrink-0 items-center gap-1">
+        {syncProgress && <div className="shrink-0">{syncProgress}</div>}
+        <div className="ml-auto flex shrink-0 items-center gap-1">
           {refreshing && (
             <span role="status" aria-label="Portfolio data is syncing" className="sr-only">
               Syncing portfolio
@@ -441,15 +444,12 @@ export function PortfolioShell({
           />
         ) : view === 'assets' ? (
           <div className="pb-2">
-            {pendingStarterZcash && (
+            {pendingZcash && (
               <button
                 type="button"
-                aria-label={`View ZEC details on ${pendingStarterZcash.chain.displayName}`}
-                className={cn(
-                  portfolioAssetRowClassName,
-                  'wallet-interactive hover:bg-foreground/[0.03] active:bg-foreground/[0.06] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary'
-                )}
-                onClick={() => selectAsset(`${pendingStarterZcash.chain.id}/slip44:133`)}
+                aria-label={`View ZEC details on ${pendingZcash.chain.displayName}`}
+                className={portfolioAssetRowClassName}
+                onClick={() => selectAsset(`${pendingZcash.chain.id}/slip44:133`)}
               >
                 <PortfolioAssetRowContent
                   icon={<TokenIcon symbol="ZEC" nativeChain="zcash" size={36} />}

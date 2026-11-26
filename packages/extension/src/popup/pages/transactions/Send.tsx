@@ -1608,9 +1608,11 @@ function SendAssetFlow() {
                 policy="funded"
                 balancesHidden={nearPicker?.balancesHidden ?? false}
                 selectedKey={
-                  currentSession.shieldProvider === 'zcash-shield'
-                    ? 'zcash:shielded'
-                    : nearPicker?.selectedAssetId
+                  sourcePicker.initial
+                    ? undefined
+                    : currentSession.shieldProvider === 'zcash-shield'
+                      ? 'zcash:shielded'
+                      : nearPicker?.selectedAssetId
                 }
                 onSelect={item => {
                   if (item.zcashFundingSource) selectZcash(item.zcashFundingSource)

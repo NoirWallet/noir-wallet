@@ -58,6 +58,7 @@ import { Receive } from './pages/portfolio/Receive'
 
 // Swap Page
 import { Swap } from './pages/swap/Swap'
+import { RETURN_TO_LEDGER_SWAP_EVENT } from './services/swap-approval-continuation-client'
 
 // Hardware Wallet Pages (full-tab flows)
 import { KeystoneConnect } from './pages/hardware/KeystoneConnect'
@@ -338,7 +339,10 @@ function AppContent() {
         } catch {
           return
         }
-        navigate(`/swap?resumeApproval=${encodeURIComponent(transactionId)}`)
+        const needsRestore = window.dispatchEvent(
+          new CustomEvent(RETURN_TO_LEDGER_SWAP_EVENT, { detail: transactionId, cancelable: true })
+        )
+        if (needsRestore) navigate(`/swap?resumeApproval=${encodeURIComponent(transactionId)}`)
         sendResponse(true)
         return
       }

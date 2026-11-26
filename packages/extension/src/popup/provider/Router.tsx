@@ -79,6 +79,11 @@ export function useNavigate() {
     },
     [navigate, trackActivity]
   )
+  const goBackIfAvailable = useCallback(() => {
+    if (getPreviousPath?.() === undefined) return false
+    goBack()
+    return true
+  }, [getPreviousPath, goBack])
   const goBackIfPrevious = useCallback(
     (path: string) => {
       if (getPreviousPath?.() !== path) return false
@@ -96,8 +101,15 @@ export function useNavigate() {
   )
 
   return useMemo(
-    () => ({ navigate: navigateTo, goBack, goBackIfPrevious, goBackSteps, replace }),
-    [goBack, goBackIfPrevious, goBackSteps, navigateTo, replace]
+    () => ({
+      navigate: navigateTo,
+      goBack,
+      goBackIfAvailable,
+      goBackIfPrevious,
+      goBackSteps,
+      replace
+    }),
+    [goBack, goBackIfAvailable, goBackIfPrevious, goBackSteps, navigateTo, replace]
   )
 }
 
