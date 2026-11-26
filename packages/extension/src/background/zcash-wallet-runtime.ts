@@ -56,7 +56,8 @@ import {
   commitWalletMetadataDeletion,
   getDeletedAccountIndexes,
   markWalletBackupVerified,
-  readWalletMetadata
+  readWalletMetadata,
+  selectReimportedWalletDefaultAccount
 } from '@/lib/wallet-metadata-storage'
 import {
   getWalletsNeedingSecretPhraseBackup,
@@ -1587,15 +1588,19 @@ export class BackgroundZcashWalletRuntime {
       throw new Error('Invalid seed phrase')
     }
 
-    for (const existingWallet of this.store.wallets) {
-      const existingSeedPhrase = await SecureStorage.loadWalletSeedPhrase(
-        existingWallet.id,
-        password
+    if (
+      await this.reuseImportedWallet(
+        normalizedSeedPhrase,
+        password,
+        accountName,
+        birthdayHeight,
+        selectedNetworkFamilies
       )
-      if (existingSeedPhrase === normalizedSeedPhrase) {
-        await this.switchWallet(existingWallet.id)
-        return
-      }
+    ) {
+      await SecureStorage.saveLastActivityTime()
+      this.setSessionPassword(password)
+      this.sessionCredentialWalletId = null
+      return
     }
 
     const preImportWalletId = this.store.currentWalletId
@@ -1624,6 +1629,75 @@ export class BackgroundZcashWalletRuntime {
       },
       password
     )
+  }
+
+  private async reuseImportedWallet(
+    seedPhrase: string,
+    password: string,
+    accountName: string,
+    birthdayHeight?: number,
+    selectedNetworkFamilies?: readonly AccountNetworkFamily[]
+  ): Promise<string | null> {
+    const generation = this.passwordGeneration
+    const network = this.network
+    const isCurrent = () => this.passwordGeneration === generation && this.network === network
+
+    for (const wallet of this.store.wallets) {
+      if (wallet.keySource !== undefined && wallet.keySource !== 'software') continue
+      const storedPhrase = await SecureStorage.loadWalletSeedPhrase(wallet.id, password)
+      if (storedPhrase?.trim().replace(/\s+/g, ' ') !== seedPhrase) continue
+
+      await this.ensureSingleWalletSyncTarget(wallet.id)
+      let recoveredAccount: AccountData | undefined
+      if (!wallet.accounts.some(account => account.derivationIndex === 0)) {
+        const addresses = await this.getOrCreateWalletCore(wallet.id).getAddresses(
+          seedPhrase,
+          network,
+          0
+        )
+        const recoveryHeight = birthdayHeight || getFullZcashRecoveryBirthdayHeight(network)
+        recoveredAccount = {
+          id: crypto.randomUUID(),
+          name: accountName,
+          addresses,
+          derivationIndex: 0,
+          birthdayHeight: recoveryHeight,
+          networkAddresses: { [network]: addresses },
+          networkBirthdayHeights: { [network]: recoveryHeight },
+          ...(selectedNetworkFamilies === undefined
+            ? {}
+            : {
+                networkSelections: {
+                  mainnet: selectedNetworkFamilies,
+                  testnet: selectedNetworkFamilies
+                }
+              }),
+          isPinned: false,
+          isHidden: false
+        }
+      }
+
+      const accountId = await selectReimportedWalletDefaultAccount(
+        wallet,
+        network,
+        recoveredAccount,
+        isCurrent
+      )
+      await rehydrateWalletStore()
+      if (
+        !isCurrent() ||
+        this.store.currentWalletId !== wallet.id ||
+        this.store.currentAccountId !== accountId
+      ) {
+        throw new Error('Wallet changed during import. Please try again.')
+      }
+      this.currentWalletId = wallet.id
+      logger.refreshCache(this.store.wallets)
+      return wallet.id
+    }
+
+    if (!isCurrent()) throw new Error('Wallet changed during import. Please try again.')
+    return null
   }
 
   private async readAuthorizedSeedPhrase(
@@ -3722,7 +3796,8 @@ export class BackgroundZcashWalletRuntime {
     accountName: string = 'Account 1',
     selectedNetworkFamilies?: readonly AccountNetworkFamily[]
   ): Promise<string> {
-    if (!this.password) {
+    const password = this.password
+    if (!password) {
       throw new Error('Wallet is locked. Please unlock and try again.')
     }
 
@@ -3735,16 +3810,17 @@ export class BackgroundZcashWalletRuntime {
       throw new Error('Invalid seed phrase')
     }
 
-    for (const existingWallet of this.store.wallets) {
-      const existingSeedPhrase = await SecureStorage.loadWalletSeedPhrase(
-        existingWallet.id,
-        this.password
-      )
-      if (existingSeedPhrase === normalizedSeedPhrase) {
-        await this.switchWallet(existingWallet.id)
-        return existingWallet.id
-      }
+    if (this.password !== password) {
+      throw new Error('Wallet changed during import. Please try again.')
     }
+    const existingWalletId = await this.reuseImportedWallet(
+      normalizedSeedPhrase,
+      password,
+      accountName,
+      birthdayHeight,
+      selectedNetworkFamilies
+    )
+    if (existingWalletId) return existingWalletId
 
     const preImportWalletId = this.store.currentWalletId
     if (preImportWalletId) {
@@ -3755,7 +3831,7 @@ export class BackgroundZcashWalletRuntime {
 
     const wallet = await this.internalCreateWalletItem(
       normalizedSeedPhrase,
-      this.password,
+      password,
       accountName,
       walletName || `Wallet ${Date.now()}`,
       false, // shouldReset (ignored if skipInit)

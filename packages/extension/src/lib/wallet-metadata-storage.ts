@@ -1,4 +1,4 @@
-import type { Network, WalletItem } from '@/types'
+import type { AccountData, Network, WalletItem } from '@/types'
 import {
   isAccountChainEnabled,
   isAccountNetworkEnabled,
@@ -421,17 +421,122 @@ export function writeWalletMetadata(value: unknown): Promise<void> {
       DELETED_WALLETS_KEY,
       DELETED_ACCOUNTS_KEY
     ])
-    const current = parseSnapshot(saved[WALLET_STATE_KEY])
+    const deletedWallets = parseDeletedIds(saved[DELETED_WALLETS_KEY])
+    const deletedAccounts = parseDeletedIds(saved[DELETED_ACCOUNTS_KEY])
+    const stored = parseSnapshot(saved[WALLET_STATE_KEY])
+    const current = stored && filterDeleted(stored, deletedWallets, deletedAccounts)
+    const incoming = filterDeleted(snapshot, deletedWallets, deletedAccounts)
+    const state = { ...incoming.state }
+    const wallets = incoming.state.wallets.map(wallet => {
+      const prior = current?.state.wallets.find(
+        candidate =>
+          candidate.id === wallet.id &&
+          candidate.createdAt === wallet.createdAt &&
+          candidate.seedPhraseKey === wallet.seedPhraseKey
+      )
+      const defaultAccount = prior?.accounts.find(account => account.derivationIndex === 0)
+      if (
+        !defaultAccount ||
+        (wallet.keySource !== undefined && wallet.keySource !== 'software') ||
+        wallet.accounts.some(account => account.derivationIndex === 0)
+      ) {
+        return wallet
+      }
+      if (
+        snapshot.state.currentWalletId === wallet.id &&
+        current?.state.currentWalletId === wallet.id &&
+        current.state.currentAccountId === defaultAccount.id
+      ) {
+        state.currentWalletId = wallet.id
+        state.currentAccountId = defaultAccount.id
+      }
+      return { ...wallet, accounts: [defaultAccount, ...wallet.accounts] }
+    })
+    state.wallets = wallets
     await chrome.storage.local.set({
-      [WALLET_STATE_KEY]: filterDeleted(
-        preserveAccountNetworkSelections(
-          preserveRetainedNames(preserveBackupVerification(snapshot, current), current),
-          current
-        ),
-        parseDeletedIds(saved[DELETED_WALLETS_KEY]),
-        parseDeletedIds(saved[DELETED_ACCOUNTS_KEY])
+      [WALLET_STATE_KEY]: preserveAccountNetworkSelections(
+        preserveRetainedNames(preserveBackupVerification({ ...incoming, state }, current), current),
+        current
       )
     })
+  })
+}
+
+export function selectReimportedWalletDefaultAccount(
+  expectedWallet: Pick<WalletItem, 'id' | 'createdAt' | 'seedPhraseKey' | 'keySource'>,
+  network: Network,
+  recoveredAccount: AccountData | undefined,
+  isCurrent: () => boolean
+): Promise<string> {
+  return withMetadataLock(async () => {
+    const saved = await chrome.storage.local.get([
+      WALLET_STATE_KEY,
+      DELETED_WALLETS_KEY,
+      DELETED_ACCOUNTS_KEY,
+      PENDING_ACCOUNT_CLEANUP_KEY,
+      LEGACY_PENDING_CLEANUP_KEY
+    ])
+    const stored = parseSnapshot(saved[WALLET_STATE_KEY])
+    const deletedAccounts = parseDeletedIds(saved[DELETED_ACCOUNTS_KEY])
+    const snapshot =
+      stored && filterDeleted(stored, parseDeletedIds(saved[DELETED_WALLETS_KEY]), deletedAccounts)
+    const wallet = snapshot?.state.wallets.find(candidate => candidate.id === expectedWallet.id)
+    if (
+      !snapshot ||
+      !wallet ||
+      wallet.createdAt !== expectedWallet.createdAt ||
+      wallet.seedPhraseKey !== expectedWallet.seedPhraseKey ||
+      wallet.keySource !== expectedWallet.keySource ||
+      (wallet.keySource !== undefined && wallet.keySource !== 'software') ||
+      (snapshot.state.currentNetwork ?? network) !== network ||
+      !isCurrent()
+    ) {
+      throw new Error('Wallet changed during import. Please try again.')
+    }
+
+    if (
+      parseDeletedIds(saved[LEGACY_PENDING_CLEANUP_KEY]).has(wallet.id) ||
+      Object.keys(parsePendingAccounts(saved[PENDING_ACCOUNT_CLEANUP_KEY])).some(
+        key => key.startsWith(`mainnet_${wallet.id}_`) || key.startsWith(`testnet_${wallet.id}_`)
+      )
+    ) {
+      throw new Error('Wallet cleanup is still pending. Please try again.')
+    }
+
+    const account = wallet.accounts.find(item => item.derivationIndex === 0) ?? recoveredAccount
+    if (
+      account?.derivationIndex !== 0 ||
+      deletedAccounts.has(`mainnet_${wallet.id}_${account.id}`) ||
+      deletedAccounts.has(`testnet_${wallet.id}_${account.id}`) ||
+      wallet.accounts.some(item => item.id === account.id && item.derivationIndex !== 0)
+    ) {
+      throw new Error('Wallet account changed during import. Please try again.')
+    }
+    if (
+      wallet.accounts[0]?.id !== account.id ||
+      snapshot.state.currentWalletId !== wallet.id ||
+      snapshot.state.currentAccountId !== account.id
+    ) {
+      await chrome.storage.local.set({
+        [WALLET_STATE_KEY]: {
+          ...snapshot,
+          state: {
+            ...snapshot.state,
+            currentWalletId: wallet.id,
+            currentAccountId: account.id,
+            wallets: snapshot.state.wallets.map(item =>
+              item.id === wallet.id
+                ? {
+                    ...item,
+                    accounts: [account, ...item.accounts.filter(prior => prior.id !== account.id)]
+                  }
+                : item
+            )
+          }
+        }
+      })
+    }
+    return account.id
   })
 }
 
